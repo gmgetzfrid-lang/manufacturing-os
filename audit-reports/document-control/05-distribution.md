@@ -861,3 +861,30 @@ SELECT DISTINCT t.id, t.number
 *Assigned (2026-10-20, the integrator at the P29 merge):* limb (b) → document-control **P30 TRANSMITTAL READ AT THE DATABASE** (after intelligence I-30); limb (a) landed with P29 (`20261231` HOLD — paste guide row 179). *Ruled by the integrator at the P29 merge, 2026-10-20 (DEC-90):* residual (v), tokens a member may have read before `20261231` is pasted, is handled as an operator step rather than a forced rotation (rotating every live link would break outside recipients' working links): after the paste a Document Controller runs the read-only identification query above (transmittal id and number only) and revokes / re-issues any link an unentitled member could have read. Recorded on the paste row.
 
 ---
+
+<a id="dist-19"></a>
+
+## DIST-19 · Non-response on a document is not recorded on the record — every review / acknowledgment reminder overwrites one `notified_at`, distribution acks carry no nag columns, and the only evidence of chasing is purgeable notification rows (the document half of drafting-flow `EVID-8`)
+
+- **Severity:** MEDIUM
+- **Severity note:** author-graded, as drafting-flow `EVID-8` was: an auditor asking "was this reviewer chased, how often, and was it escalated before the alternate signed?" gets one timestamp (the last nag) and whatever bell rows the purge has not yet removed. No unsafe document issues from this; the defect is in the evidence.
+- **Status:** OPEN
+- **Assigned:** document-control **P38 DOCUMENT NOTICE RECORD** (the integrator at the DF-P7 merge, 2026-10-21, `DEC-31`). *Was:* unassigned — the integrator assigns (`DEC-31`). Proposed: the next document-control package that holds `lib/reviewControl.ts`, `lib/acknowledgments.ts` and `lib/distributionAcks.ts`, with one `DEC-30` migration.
+- **Verification:** CONFIRMED by reading the code at `c22c90a` (drafting-flow Round G, DF-P7 CONSENT); no runtime reproduction was added, because the files are document-control's.
+- **Independently verified:** no — opened by drafting-flow DF-P7 on its own reading.
+- **Locations:** `lib/reviewControl.ts:1422` (the review-reminder scan overwrites `document_review_signoffs.notified_at` with `now()` on every nag that landed); `lib/acknowledgments.ts:601` (the acknowledgment re-send overwrites `document_acknowledgments.notified_at` the same way); `supabase/migrations/20260825_work_packages_acks.sql:98-111` with `20261032` and `20261035` (`distribution_acks`: `requested_at`, `acknowledged_at`, `acknowledged_by`, `superseded_at` — no nag or escalation column); `lib/distributionAcks.ts:424-470` (the nudge cooldown is derived from recently sent `notifications` rows, which the bell purge removes).
+- **Opened:** 2026-10-21, drafting-flow Round G, DF-P7 CONSENT — the document half of drafting-flow `EVID-8` (`drafting-flow/10-audit-evidence.md`). That finding's plan pointed the document half at document-control P4/P5, which left it. Under `DEC-31` it is opened here rather than edited across the boundary.
+
+**Mechanism.** Each document reminder path keeps at most one fact about chasing: when the last reminder went out. The review scan stamps `notified_at` only when every notice landed (`DELIV-7` dw1), and the next nag overwrites it. The acknowledgment re-send does the same. Distribution acks keep no reminder fact at all: the cooldown reads the `notifications` table, so once the purge runs nobody can tell whether a recipient was nudged once, five times or never. Activating an alternate after a timeout writes no audit row that names the non-response that caused it.
+
+**Failure scenario.** A reviewer on Rev C of PID-4412 is reminded on days 3, 6 and 9, and the alternate signs on day 10. Six weeks later the bell rows are purged. The record shows `notified_at = day 9` and an alternate's signature. Nothing shows the first two reminders, and nothing ties the alternate's activation to the reviewer's silence.
+
+**Remediation (illustrative).** The ticket side's shape (`ticket_notice_events`, `20261255`): an append-only per-person event table for document reminders (`delivered` / `warned` / `escalated` / `expired`, with the notification it names), or `nag_count` / `first_notified_at` / `last_notified_at` / `escalated_at` / `escalated_to` on the three tables, and one audit row per alternate activation with the system actor. The three readers above then count from the record rather than from `notifications`.
+
+**Done-when.**
+- [ ] `document_review_signoffs`, `document_acknowledgments` and `distribution_acks` keep every reminder (count, first, last, escalation), or an append-only event table does, and nothing overwrites it.
+- [ ] Each reminder and each alternate activation leaves a durable row, the activation an audit row with the system actor.
+- [ ] One query answers asked / reminded / escalated / signed for a revision and a person, after the bell rows are purged.
+- [ ] `lib/distributionAcks.ts`'s cooldown reads the record, not `notifications` (REGRESSION: one nudge per cooldown, as today).
+
+---

@@ -520,6 +520,7 @@ export const CALLABLE_DEFINERS: readonly DefinerDecision[] = [
     reason: "anon and PUBLIC revoked by 20261191_notif_roundG_kind_split.sql; authenticated keeps EXECUTE. It returns only notifications the caller sent (n.actor_user_id = auth.uid()), of two kinds, from a workspace where the caller is active, at most 30 days back; with no session, nothing. Named by the app: lib/sentNotices.ts.",
     evidence: ["AND EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = p_org AND m.uid = auth.uid() AND m.status = 'active')", "AND n.actor_user_id = auth.uid()"],
   },
+  { signature: "open_consent_window(uuid,uuid,text,uuid[],timestamp with time zone,timestamp with time zone,text,text,jsonb)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261255_df_roundG_consent_window.sql: REVOKE … FROM PUBLIC, anon, authenticated; GRANT … TO service_role); its body also refuses any caller with a session (auth.uid() IS NOT NULL → 42501). It writes a consent window's notification rows, their delivered events and the ticket's stamp in one transaction (DEC-38, drafting-flow DF-P7). Named by the server code: lib/consentWindowScan.ts." },
   {
     signature: "org_capability_allows(uuid,text,uuid)",
     decision: "policy-helper",
@@ -578,6 +579,7 @@ export const CALLABLE_DEFINERS: readonly DefinerDecision[] = [
     reason: "anon and PUBLIC revoked by 20261136_prj_roundG_quality_signoff.sql; authenticated keeps EXECUTE. It answers maySign and otherSigners for auth.uid() only (the service-only quality_signer_eligible / quality_other_signers, called with the caller's uid), and only for a project_visible_to_me. Named by the app: components/permissions/PermissionsExplorer.tsx, lib/checklists.ts.",
     evidence: ["'maySign', quality_signer_eligible(p.org_id, p.id, auth.uid()),", "WHERE p.id = p_project AND project_visible_to_me(p.id);"],
   },
+  { signature: "record_consent_window_warning(uuid,uuid,uuid[],text,text,jsonb)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261255_df_roundG_consent_window.sql: REVOKE … FROM PUBLIC, anon, authenticated; GRANT … TO service_role); its body also refuses any caller with a session (auth.uid() IS NOT NULL → 42501). It writes a consent window's reminder rows, their warned events and the ticket's stamp in one transaction (DEC-39, drafting-flow DF-P7). Named by the server code: lib/consentWindowScan.ts (the maintenance cron's step)." },
   {
     signature: "reattach_stranded_milestones(uuid,uuid,uuid,text,integer)",
     decision: "signed-in",

@@ -25,6 +25,16 @@
 //      queue and the requester — once each, stamped on the ticket
 //      (lib/ticketSla.ts runTicketSlaScan). Escalation notifies; it never
 //      advances, closes or reassigns a request.
+//   5c. Consent windows (drafting-flow GAP-109 / GAP-113, DF-P7): a window
+//      the workflow route could not open is retried; a running window is
+//      reminded at its configured fraction (the people asked and the
+//      assignment queue, recorded with its rows); an expired one with no
+//      objection is closed — the auto-advance is a recorded system act
+//      (audit row first, then the compare-and-set, then the append-only
+//      ticket_notice_events), written into the ticket's own history naming
+//      everyone asked (lib/consentWindowScan.ts runConsentWindowScan). Only
+//      on a slot a workspace configured as a consent window; never on
+//      engineered work. A no-op until 20261255 is pasted.
 //   6. Compliance clocks per org — including the hold aging sweep (HLD-14):
 //      a hold past its expected release, or open past HOLD_AGING_DAYS with
 //      no date, nudges its opener and the release pool once.
@@ -113,6 +123,7 @@ import { formatRecordDate, formatRecordTime, orgTimeZone } from "@/lib/recordTim
 import { runTicketSlaScan, type SlaScanReport } from "@/lib/ticketSla";
 import { runDepartureBackstop, type DepartureBackstopReport, type DepartureRpcClient } from "@/lib/ticketDepartureBackstop";
 import { drainAuditDeadLetters, type AuditOutboxReport } from "@/lib/auditOutboxDrain";
+import { runConsentWindowScan, type ConsentScanReport } from "@/lib/consentWindowScan";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -190,6 +201,8 @@ async function handler(req: NextRequest) {
     auditOutbox?: AuditOutboxReport;
     /** GAP-106: the drafting-request SLA step (5b). */
     ticketSla?: Omit<SlaScanReport, "errors">;
+    /** GAP-109 (DF-P7): the consent-window step (5c). */
+    consentWindows?: Omit<ConsentScanReport, "errors">;
     /** EDGE-4 (fix pass 3): the departure backstop (5b(i)). */
     ticketDeparture?: Omit<DepartureBackstopReport, "errors">;
     /** DELIV-11: what the drain did — an empty queue, a batch that failed, and
@@ -476,6 +489,30 @@ async function handler(req: NextRequest) {
       if (sla.truncated) result.errors.push("ticket-sla: this run stopped before every open request was read (its read cap or time ran out) — the next run starts again with the soonest-due; a request leaves the scan once its breach is sent");
     } catch (e) {
       result.errors.push(`ticket-sla: ${(e as Error).message}`);
+    }
+  }
+
+  // 5c. CONSENT WINDOWS (drafting-flow GAP-109 / GAP-113, DF-P7) — one step
+  //     on this cron (a third vercel.json entry fails deployment; see step
+  //     10). Retries a window the workflow route could not open, reminds at
+  //     the configured fraction, and closes an expired window with no
+  //     objection as a recorded system act (lib/consentWindowScan.ts). Never
+  //     throws; every failure is a line. Its time: at most CONSENT_WINDOW_MS,
+  //     and it stops TICKET_SLA_RESERVE_MS before the run's end, as the SLA
+  //     step does; with less than CONSENT_WINDOW_MIN_MS it is not run, and
+  //     says so (the next run picks up every window it did not reach).
+  const consentDeadlineAt = Math.min(Date.now() + CONSENT_WINDOW_MS, runEnd - TICKET_SLA_RESERVE_MS);
+  if (consentDeadlineAt - Date.now() < CONSENT_WINDOW_MIN_MS) {
+    result.errors.push(`consent-window: not run — ${Math.max(0, Math.round(left() / 1000))} s of the run were left, and it stops ${TICKET_SLA_RESERVE_MS / 1000} s before the run's end; the next run reminds and closes what is due`);
+  } else {
+    try {
+      const cw = await runConsentWindowScan({ client: sb as unknown as Parameters<typeof runConsentWindowScan>[0]["client"], deadlineAt: consentDeadlineAt, origin: publicOrigin() || req.nextUrl.origin });
+      const { errors: cwErrors, ...cwCounts } = cw;
+      result.consentWindows = cwCounts;
+      for (const line of cwErrors) { result.errors.push(line); console.error(`[cron/maintenance] ${line}`); }
+      if (cw.truncated) result.errors.push("consent-window: this run stopped before every window was read (its read cap or time ran out) — the next run continues; nothing is closed without its turn");
+    } catch (e) {
+      result.errors.push(`consent-window: ${(e as Error).message}`);
     }
   }
 
@@ -1126,6 +1163,10 @@ const EMBED_DRAIN_MIN_MS = 20_000;
 const TICKET_SLA_RESERVE_MS = DIGEST_FLOOR_MS + AFTER_DIGEST_RESERVE_MS + EMBED_DRAIN_MIN_MS;
 /** Below this much time of its own the SLA scan is not run (it says so). */
 const TICKET_SLA_MIN_MS = 5_000;
+/** GAP-109 (step 5c, DF-P7): the consent-window step's share of the run, and
+ *  below what it is not run (it says so). */
+const CONSENT_WINDOW_MS = 20_000;
+const CONSENT_WINDOW_MIN_MS = 3_000;
 /** EDGE-4 (step 5b(i), fix pass 3): the departure backstop's share of the run,
  *  and below what it is not run (it says so). */
 const TICKET_DEPARTURE_MS = 15_000;

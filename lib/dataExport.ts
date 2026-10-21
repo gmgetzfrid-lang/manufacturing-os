@@ -38,7 +38,7 @@ import { signStorageGet } from "@/lib/untrustedContent";
 // coverage tripwire test can import them without pulling in AWS clients.
 // Adding a table to the schema without deciding its backup fate fails the
 // test suite — see that file for the contract.
-import { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES, REDACT_COLUMNS, EXPORT_KEYED_BY, EXPORT_OMITTED_COLUMNS, exportOrderKey, exportSelectFor, omitExportColumns, redactRow } from "@/lib/exportTables";
+import { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES, REDACT_COLUMNS, EXPORT_KEYED_BY, EXPORT_OMITTED_COLUMNS, exportOrderKey, exportSelectFor, omitExportColumns, redactRow, transformExportRow, EXPORT_ROW_TRANSFORMS } from "@/lib/exportTables";
 export { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES, EXPORT_EXCLUDED_TABLES, REDACT_COLUMNS } from "@/lib/exportTables";
 // BKP-2 / BKP-9: the file manifest reads the ONE storage-key registry the
 // orphan sweep reads too — a key column registered there is in every backup
@@ -457,6 +457,10 @@ export async function runOrgExport(params: {
     }. After a restore, share links and vendor intake links must be RE-ISSUED (restored rows arrive revoked), ` +
     "a restored transmittal has no portal link (an issued one arrives VOIDED on the register; issue a new transmittal to send again), " +
     "and export destinations must have their credentials re-entered (restored rows arrive disabled).",
+    // DEC-90 ruling (6) (DF-P7 merge-time fix pass).
+    `PRIVATE fields left out of some rows: ${
+      Object.entries(EXPORT_ROW_TRANSFORMS).map(([t, x]) => `${t}: ${x.reason}`).join("; ")
+    }.`,
     `Presigned URLs for files expire ${expiresIn} seconds (${(expiresIn / 3600).toFixed(1)} hours) from exportedAt.`,
     "Re-running an export at any time is free and unlimited.",
     "The schema DDL for this snapshot is bundled in the ZIP under schema/ (base schema.sql + migrations/).",
@@ -1391,7 +1395,10 @@ async function dumpTable(
     // redaction map in lib/exportTables.ts is applied to EVERY dumped row, so
     // no consumer of the envelope (ZIP, webhook, bucket, JSON download) can
     // carry a live token or an encrypted destination credential.
-    out.push(...rows.map((r) => redactRow(table, r as Record<string, unknown>)));
+    // DEC-90 ruling (6) (DF-P7 merge-time fix pass): then the table's own row
+    // transform (lib/exportTables.ts EXPORT_ROW_TRANSFORMS) — a private field
+    // inside a JSON column; a table with none passes through untouched.
+    out.push(...rows.map((r) => transformExportRow(table, redactRow(table, r as Record<string, unknown>))));
   }
   return { rows: out, short: read.short };
 }

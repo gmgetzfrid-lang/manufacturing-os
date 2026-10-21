@@ -47,6 +47,10 @@ import type { CapabilityId } from "@/lib/capabilityPolicy";
 import { currentRoster } from "@/lib/workflow";
 import { parseSourceDocument } from "@/lib/sourceDocRef";
 import type { Ticket } from "@/types/schema";
+import {
+  CONSENT_REFUSED_CAPABILITIES, CONSENT_WINDOW_MIN_DAYS, CONSENT_WINDOW_MAX_DAYS, CONSENT_WINDOW_DEFAULT_DAYS,
+  CONSENT_WARN_FRACTION_MIN, CONSENT_WARN_FRACTION_MAX, CONSENT_WINDOW_MIGRATION,
+} from "@/lib/consentWindow";
 
 export type RoutingSlotMode = "blocking" | "consent_window" | "notify_only";
 export const ROUTING_SLOT_MODES: readonly RoutingSlotMode[] = ["blocking", "consent_window", "notify_only"];
@@ -89,6 +93,18 @@ export interface RoutingSlot {
    *  Refused on a blocking or consent slot: a condition must never be able
    *  to drop a sign-off (routingForWorkClass). */
   work_classes?: string[];
+  /** GAP-109 (DF-P7): a CONSENT-WINDOW slot's window — whole working days
+   *  (1–30; default 3) and the fraction of it at which the people asked are
+   *  reminded (0.1–0.9; default 2/3). Refused on any other mode. */
+  window_days?: number;
+  warn_fraction?: number;
+  /** GAP-109 (DF-P7 fix pass 3): the post-DF-P7 opt-in — stamped by
+   *  setRoutingControl on every consent-window slot a controller saves
+   *  under the consent-window label. A consent_window slot stored before it
+   *  (when the editor said "waits like a sign-off") has none, and keeps
+   *  waiting like a sign-off (lib/consentWindow.ts planConsentWindow). Kept
+   *  only on a consent-window slot. */
+  consent_confirmed?: true;
 }
 
 export interface RoutingControl {
@@ -177,6 +193,22 @@ export function parseRoutingControl(raw: unknown): { ok: true; control: RoutingC
       if (wcl.length && slot.mode !== "notify_only") return { ok: false, error: `slot "${kind}": only a notify-only slot can be limited to some work classes — a sign-off applies to every request` };
       if (wcl.length) slot.work_classes = [...new Set(wcl)];
     }
+    // GAP-109 (DF-P7): only a consent-window slot has a window.
+    for (const key of ["window_days", "warn_fraction"] as const) {
+      if (o[key] === undefined || o[key] === null) continue;
+      if (slot.mode !== "consent_window") return { ok: false, error: `slot "${kind}": only a consent-window slot has a ${key === "window_days" ? "window length" : "reminder point"}` };
+      const v = o[key];
+      if (key === "window_days") {
+        if (typeof v !== "number" || !Number.isInteger(v) || v < CONSENT_WINDOW_MIN_DAYS || v > CONSENT_WINDOW_MAX_DAYS) return { ok: false, error: `slot "${kind}": window_days is a whole number of working days from ${CONSENT_WINDOW_MIN_DAYS} to ${CONSENT_WINDOW_MAX_DAYS}` };
+        slot.window_days = v;
+      } else {
+        if (typeof v !== "number" || !(v >= CONSENT_WARN_FRACTION_MIN && v <= CONSENT_WARN_FRACTION_MAX)) return { ok: false, error: `slot "${kind}": warn_fraction is a fraction of the window from ${CONSENT_WARN_FRACTION_MIN} to ${CONSENT_WARN_FRACTION_MAX}` };
+        slot.warn_fraction = v;
+      }
+    }
+    // Fix pass 3: the opt-in rides only a consent-window slot (a slot
+    // switched to another mode simply drops it).
+    if (o.consent_confirmed === true && slot.mode === "consent_window") slot.consent_confirmed = true;
     slots.push(slot);
   }
   // independent_of may name a party or another slot of THIS table.
@@ -320,12 +352,14 @@ export async function ticketReviewRouting(ticket: {
 /** The label a slot is shown under. */
 export const slotLabel = (s: Pick<RoutingSlot, "kind" | "label">): string => s.label?.trim() || s.kind;
 
-/** The words for a mode, as a person reads them. consent_window waits like a
- *  blocking slot until consent windows exist (GAP-109 needs GAP-113's
- *  delivery record first — DEC-38: no delivery record, no silent advance). */
+/** The words for a mode, as a person reads them. GAP-109 (DF-P7): a
+ *  consent_window slot advances on silence only where lib/consentWindow.ts
+ *  planConsentWindow allows it (never on engineered work, never as the
+ *  engineering sign-off, never with nobody to ask, never before 20261255) —
+ *  everywhere else it waits like a sign-off, and the request says why. */
 export const MODE_LABEL: Record<RoutingSlotMode, string> = {
   blocking: "Must sign off",
-  consent_window: "Must sign off (consent windows are not available yet, so this waits like a sign-off)",
+  consent_window: `May object within a window (default ${CONSENT_WINDOW_DEFAULT_DAYS} working days) — silence counts as no objection only once database update ${CONSENT_WINDOW_MIGRATION} is applied, on one consent slot per table, never on engineered work, never as the engineering sign-off and never with only the drafter to ask; otherwise it waits like a sign-off`,
   notify_only: "Told, no sign-off",
 };
 
@@ -393,12 +427,64 @@ export function seededSlotsFor(ticket: {
   return out;
 }
 
+/** A routing slot as a save compares it with the stored table: its parsed
+ *  shape with object keys in a fixed order, the opt-in left out (the opt-in
+ *  is what the comparison decides, never part of it). */
+function slotFingerprint(s: RoutingSlot): string {
+  const canon = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(canon);
+    if (v && typeof v === "object") return Object.fromEntries(Object.keys(v as Record<string, unknown>).sort().map((k) => [k, canon((v as Record<string, unknown>)[k])]));
+    return v;
+  };
+  const rest: Record<string, unknown> = { ...s };
+  delete rest.consent_confirmed;
+  return JSON.stringify(canon(rest));
+}
+
+/**
+ * DEC-90 rulings (2) and (3) for DF-P7 (merge-time fix pass): the slots of
+ * `control` an editor TOUCHED in this save — new (no stored slot of that
+ * kind) or changed (its parsed shape differs from the stored slot's, the
+ * opt-in aside). `stored` is the raw value stored at the level (null: none
+ * declared — every slot is new; a stored value that does not parse is
+ * replaced whole — every slot is new). Pure.
+ */
+export function touchedSlotKinds(control: RoutingControl, stored: unknown): Set<string> {
+  const parsedDraft = parseRoutingControl(control);
+  const draftSlots = parsedDraft && parsedDraft.ok ? parsedDraft.control.slots : control.slots;
+  const parsedStored = parseRoutingControl(stored);
+  const before = new Map((parsedStored && parsedStored.ok ? parsedStored.control.slots : []).map((s) => [s.kind, slotFingerprint(s)]));
+  return new Set(draftSlots.filter((s) => before.get(s.kind) !== slotFingerprint(s)).map((s) => s.kind));
+}
+
+/** The stored slots carrying the opt-in, by kind (pure). */
+function storedConfirmedKinds(stored: unknown): Set<string> {
+  const p = parseRoutingControl(stored);
+  return new Set(p && p.ok ? p.control.slots.filter((s) => s.mode === "consent_window" && s.consent_confirmed === true).map((s) => s.kind) : []);
+}
+
 /** Validate an editor's draft before it is written; the same rule the
- *  resolver applies to a stored value. */
-export function validateRoutingDraft(control: RoutingControl | null): string | null {
+ *  resolver applies to a stored value. `stored` (the raw value stored at
+ *  the level, null for none) lets an untouched stored slot pass — see
+ *  below; omitted, every slot is treated as new. */
+export function validateRoutingDraft(control: RoutingControl | null, stored?: unknown): string | null {
   if (control === null) return null;
   const p = parseRoutingControl(control);
-  return p && !p.ok ? p.error : null;
+  if (p && !p.ok) return p.error;
+  // GAP-109 / DEC-90 ruling (1) for DF-P7: silence never stands in for the
+  // engineering sign-off — the highest class of review — so a table that
+  // puts a consent window on a slot filled by an engineering capability is
+  // refused with the reason. DEC-90 ruling (2) (merge-time fix pass, no
+  // regression): refused only when THAT slot is new or changed in this
+  // save. A stored one the editor did not touch passes — a save that
+  // edits another slot's label works exactly as before — and it waits as a
+  // sign-off (lib/consentWindow.ts planConsentWindow; the cron re-reads the
+  // slot and never opens or closes a window on it), so no in-flight review
+  // changes.
+  const touched = p?.ok && stored !== undefined ? touchedSlotKinds(p.control, stored) : null;
+  const eng = p?.ok ? p.control.slots.find((s) => s.mode === "consent_window" && !!s.fill.capability && CONSENT_REFUSED_CAPABILITIES.includes(s.fill.capability) && (!touched || touched.has(s.kind))) : undefined;
+  if (eng) return `slot "${eng.kind}": a consent window cannot stand in for the engineering sign-off — make it a "must sign off" slot`;
+  return null;
 }
 
 /**
@@ -415,16 +501,56 @@ export async function setRoutingControl(input: {
   id: string;
   control: RoutingControl | null;
 }): Promise<void> {
-  const invalid = validateRoutingDraft(input.control);
+  // DEC-90 rulings (2) and (3) (DF-P7 merge-time fix pass): the save is
+  // compared with the table stored at this level — only a slot the editor
+  // touched is held to the new consent rule, and only a consent slot the
+  // editor touched is opted into the consent window. A stored table that
+  // cannot be read is never guessed at (that would opt untouched slots in).
+  let stored: unknown = null;
+  if (input.control !== null) {
+    const before = await readRoutingControlAt(input.level, input.id);
+    if (!before.ok) {
+      if (before.missing) throw new Error("Review routing needs database update 20261241 — ask an Admin to apply it, then try again.");
+      throw new Error(`The routing table was not saved — the table stored here could not be read to compare with: ${before.error}. Try again in a moment.`);
+    }
+    stored = before.value;
+  }
+  const invalid = validateRoutingDraft(input.control, stored);
   if (invalid) throw new Error(`This routing table can't be saved: ${invalid}.`);
   const table = input.level === "library" ? "libraries" : input.level === "collection" ? "collections" : "documents";
-  const res = await checkedWrite(supabase.from(table).update({ routing_control: input.control }).eq("id", input.id).select("id"));
+  const res = await checkedWrite(supabase.from(table).update({ routing_control: confirmConsentSlots(input.control, stored) }).eq("id", input.id).select("id"));
   if (res.ok) return;
   if (res.pgCode === "42703" || res.pgCode === "PGRST204") throw new Error("Review routing needs database update 20261241 — ask an Admin to apply it, then try again.");
   if (res.code === "refused") {
     throw new Error(`The routing table was not saved — only a document controller can set the routing of a ${input.level === "library" ? "library" : input.level === "collection" ? "folder" : "document"}.`);
   }
   throw new Error(res.error);
+}
+
+/** GAP-109 (DF-P7 fix pass 3): the table as a controller saves it under the
+ *  consent-window label — a consent-window slot carries the opt-in
+ *  (`consent_confirmed: true`), every other slot none. A save is the
+ *  re-confirmation DEC-44 (DF-P7-consent) item 18 asks for.
+ *  DEC-90 ruling (3) (merge-time fix pass, fail-safe opt-in): with `stored`
+ *  (the raw value stored at the level, null for none) the opt-in is stamped
+ *  ONLY on a consent slot that is new or changed in this save (the editor
+ *  touched it); an untouched consent slot keeps exactly what is stored — a
+ *  pre-DF-P7 consent slot is never opted into silence by an unrelated edit.
+ *  Omitted `stored`: every consent slot is stamped. Pure. */
+export function confirmConsentSlots(control: RoutingControl | null, stored?: unknown): RoutingControl | null {
+  if (control === null) return null;
+  const touched = stored !== undefined ? touchedSlotKinds(control, stored) : null;
+  const confirmedBefore = stored !== undefined ? storedConfirmedKinds(stored) : null;
+  return {
+    ...control,
+    slots: control.slots.map((s) => {
+      const rest = { ...s };
+      delete rest.consent_confirmed;
+      if (s.mode !== "consent_window") return rest;
+      const optIn = !touched || touched.has(s.kind.trim()) || !!confirmedBefore?.has(s.kind.trim());
+      return optIn ? { ...rest, consent_confirmed: true as const } : rest;
+    }),
+  };
 }
 
 /** Read the routing table declared AT one level (not the effective one). */

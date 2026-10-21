@@ -526,6 +526,28 @@
    "sequencingNotes": [
     "Added by the integrator at the N10 merge, 2026-10-14 (DEC-31). Regression-first: a push is an extra channel — every bell row and email stays exactly as today."
    ]
+  },
+  {
+   "name": "N18 DELIVERY RECORD — whether a notice reached a person is a fact on the record: delivery and bounce, 'not sent by their choice' for every producer, retention, and one per-recipient answer",
+   "findings": [
+    "drafting-flow EVID-9 done-whens 1, 2, 3 and 4 (assigned at the DF-P7 merge, 2026-10-21, DEC-31): a Resend delivery / bounce webhook writes the outcome per email row; every producer records 'not emailed by the person's choice' in a status the send-queued drain and the purge both leave alone (DF-P7's ticket_notice_events not_emailed is the drafting model; never re-queued); the purge keeps these facts for the retention period; one query answers 'what reached this person about this item' across statuses",
+    "drafting-flow EVID-13 remainder (assigned at the DF-P7 merge, 2026-10-21, DEC-31): the purge and per-recipient states the DF-P1 Partial named (read_at stays the recipient's own act; a superseded notice stays a mark)"
+   ],
+   "files": [
+    "app/api/notifications/send-queued/route.ts",
+    "lib/notify/dispatch.ts",
+    "app/api/webhooks/** (the Resend delivery route, new)",
+    "the notifications purge",
+    "supabase/migrations/** (one DEC-30 file if a status or column is needed)",
+    "tests"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "drafting-flow DF-P7 merged"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the DF-P7 merge, 2026-10-21 (DEC-31). Parallel-safe with the drafting-flow ticket packages and document-control P38."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

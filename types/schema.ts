@@ -1154,6 +1154,18 @@ export interface TicketReviewSlot {
    *  occupant must not also be. */
   independentOf: string[];
   timeoutDays: number | null;
+  /** GAP-109 (DF-P7): a consent_window slot's window, from its routing slot
+   *  (lib/routingControl.ts window_days / warn_fraction; defaults in
+   *  lib/consentWindow.ts) — copied when the roster opens, so a later edit
+   *  of the routing table never rewrites a running window. */
+  windowDays?: number | null;
+  warnFraction?: number | null;
+  /** GAP-109 (DF-P7 fix pass 3): true when the routing slot carries the
+   *  post-DF-P7 opt-in (lib/routingControl.ts consent_confirmed — stamped
+   *  when a controller saves the table under the consent-window label). A
+   *  consent slot without it was configured when the editor said it "waits
+   *  like a sign-off", and it still does (planConsentWindow). */
+  consentConfirmed?: boolean;
   /** True when the slot's own fill resolved to nobody and the management
    *  tier was rostered instead (a stop never resolves to nobody). */
   fallback: boolean;
@@ -1168,7 +1180,40 @@ export interface TicketReviewSlot {
   satisfiedByName?: string | null;
   satisfiedAt?: string | null;
   signatureId?: string | null;
-  via?: "primary" | "alternate" | "override" | null;
+  /** "consent" (GAP-109, DF-P7): satisfied by a consent window that closed
+   *  with no objection — a recorded system act, no signer, no signature. */
+  via?: "primary" | "alternate" | "override" | "consent" | null;
+}
+
+/** GAP-109 / GAP-113 (DF-P7): what the roster decided about its consent
+ *  window when it opened (lib/consentWindow.ts planConsentWindow). */
+export type TicketConsentPlan =
+  | { kind: "open"; slot: string; label: string; recipients: string[]; windowDays: number; warnFraction: number }
+  /** DEC-90 ruling (4) (DF-P7 final fix pass): the planned window was opened
+   *  (open_consent_window landed) — marked by compare-and-set so the cron's
+   *  "still to open" read no longer returns it. Same fields as `open`. */
+  | { kind: "opened"; slot: string; label: string; recipients: string[]; windowDays: number; warnFraction: number }
+  | { kind: "sign_off"; slot: string | null; label: string | null; reason: string }
+  | { kind: "blocked"; slot: string; label: string; reason: string };
+
+/** GAP-109 / GAP-113 (DF-P7): the mirror of tickets.consent_window_* on the
+ *  roster, written in the same statement as the columns (open_consent_window,
+ *  record_consent_window_warning, the objection and the advance) — what the
+ *  engine and the request page read. The columns are the record. */
+export interface TicketConsentWindowMark {
+  slot: string;
+  openedAt: string;
+  warnAt: string;
+  closesAt: string;
+  recipients: string[];
+  warnedAt?: string | null;
+  objectedAt?: string | null;
+  objectedBy?: string | null;
+  expiredAt?: string | null;
+  /** Set when the window closed with no objection but did NOT advance (the
+   *  slot waits for a sign-off) — why, as lib/consentWindow.ts
+   *  consentHeldAction words it (DF-P7 fix pass). */
+  heldReason?: "undelivered" | "producer_floor" | "independence" | "source_moved" | "source_unchecked" | "record_mismatch" | "no_longer_member" | "engineered" | null;
 }
 
 /** drafting-flow DF-P5 ROSTER: the review roster a submission opened. */
@@ -1195,6 +1240,10 @@ export interface TicketReviewRoster {
    *  table carried no blocking engineering slot and the org-wide engineering
    *  gate applied, so the seed's engineering slot was appended. */
   engineeringGateAdded?: boolean;
+  /** GAP-109 (DF-P7): the consent window's plan, decided when the roster
+   *  opened, and — once open_consent_window has stamped it — the window. */
+  consentPlan?: TicketConsentPlan | null;
+  consentWindow?: TicketConsentWindowMark | null;
   closedAt?: string | null;
   closedReason?: string | null;
 }

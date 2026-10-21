@@ -45,7 +45,7 @@ interface DraftSlot {
    *  — a fill's other sources (a fill naming roles AND people), the
    *  override (`waivable_by`) and named alternate people. Carried through a
    *  save untouched, never silently dropped; the slot says they are there. */
-  kept?: { fill?: RoutingSlotFill; waivableBy?: RoutingSlot["waivable_by"]; alternateUsers?: string[]; workClasses?: string[] };
+  kept?: { fill?: RoutingSlotFill; waivableBy?: RoutingSlot["waivable_by"]; alternateUsers?: string[]; workClasses?: string[]; windowDays?: number; warnFraction?: number };
 }
 
 const emptySlot = (n: number): DraftSlot => ({
@@ -77,6 +77,10 @@ export function draftToControl(slots: DraftSlot[]): RoutingControl {
         ...(d.kept?.waivableBy ? { waivable_by: d.kept.waivableBy } : {}),
         // DF-P6 (GAP-102): a notify-only slot's work classes, kept as stored.
         ...(d.kept?.workClasses?.length ? { work_classes: d.kept.workClasses } : {}),
+        // DF-P7 (merge-time fix pass): a consent slot's window, kept as stored
+        // (a slot switched to another mode drops it — only a consent slot has one).
+        ...(d.mode === "consent_window" && d.kept?.windowDays !== undefined ? { window_days: d.kept.windowDays } : {}),
+        ...(d.mode === "consent_window" && d.kept?.warnFraction !== undefined ? { warn_fraction: d.kept.warnFraction } : {}),
       };
     }),
   };
@@ -94,6 +98,8 @@ export function controlToDraft(c: RoutingControl): DraftSlot[] {
       ...(s.waivable_by ? { waivableBy: s.waivable_by } : {}),
       ...(s.alternates?.users?.length ? { alternateUsers: s.alternates.users } : {}),
       ...(s.work_classes?.length ? { workClasses: s.work_classes } : {}),
+      ...(s.window_days !== undefined ? { windowDays: s.window_days } : {}),
+      ...(s.warn_fraction !== undefined ? { warnFraction: s.warn_fraction } : {}),
     };
     return {
       kind: s.kind, label: s.label ?? "", mode: s.mode, fillKind,
@@ -117,6 +123,8 @@ export function keptNote(d: Pick<DraftSlot, "kept">): string | null {
   if (k.waivableBy) parts.push("an override (who may sign in place of the slot's people)");
   if (k.alternateUsers?.length) parts.push(`${k.alternateUsers.length} named alternate ${k.alternateUsers.length === 1 ? "person" : "people"}`);
   if (k.workClasses?.length) parts.push(`told only for the work classes ${k.workClasses.join(", ")}`);
+  if (k.windowDays !== undefined) parts.push(`a consent window of ${k.windowDays} working day${k.windowDays === 1 ? "" : "s"}`);
+  if (k.warnFraction !== undefined) parts.push(`a reminder at ${Math.round(k.warnFraction * 100)}% of the window`);
   return parts.length ? `This slot also carries settings this editor does not show — ${parts.join("; ")}. Saving keeps them as they are.` : null;
 }
 
@@ -149,6 +157,10 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
   // DF-P5 fix pass 4: whether this level declared a table when it was read
   // (declaring one where there was none is what changes in-flight reviews).
   const [storedDeclared, setStoredDeclared] = useState(false);
+  // DEC-90 ruling (2) (DF-P7 merge-time fix pass): the table stored here as
+  // read, so a slot the editor did not touch is never held to a rule that
+  // is only for new or changed slots.
+  const [storedValue, setStoredValue] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const [userQuery, setUserQuery] = useState<{ index: number; q: string; hits: OrgUser[] } | null>(null);
@@ -164,6 +176,7 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
       } else {
         const parsed = parseRoutingControl(r.value);
         setStoredDeclared(parsed !== null);
+        setStoredValue(r.value);
         if (parsed === null) { setInherit(true); setSlots([]); }
         else if (parsed.ok) { setInherit(false); setSlots(controlToDraft(parsed.control)); }
         else { setInherit(false); setSlots([]); setStoredError(parsed.error); }
@@ -188,7 +201,7 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
 
   const patch = (i: number, p: Partial<DraftSlot>) => setSlots((all) => all.map((s, j) => (j === i ? { ...s, ...p } : s)));
   const draft = inherit ? null : draftToControl(slots);
-  const problem = inherit ? null : validateRoutingDraft(draft);
+  const problem = inherit ? null : validateRoutingDraft(draft, storedValue);
 
   const levelWord = level === "library" ? "library" : level === "collection" ? "folder" : "document";
 
@@ -206,6 +219,7 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
       await setRoutingControl({ level, id, control: draft });
       setStoredError(null);
       setStoredDeclared(!inherit);
+      setStoredValue(draft);
       setMsg({ tone: "ok", text: inherit ? "Routing cleared — this level inherits." : routingSavedNote(levelWord) });
     } catch (e) {
       setMsg({ tone: "error", text: (e as Error).message });
