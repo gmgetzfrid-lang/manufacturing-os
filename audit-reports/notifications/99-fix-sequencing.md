@@ -588,6 +588,11 @@ document — only `/requests` does) and `TRAIL-5` (`tally(section, false)`
 hardcodes `actionRequired` to zero for every notification-sourced item, so a red
 badge can never come from a notification).
 
+*Landed (2026-10-21, notifications Round G, N11 TRAIL — `DEC-44 (N11-trail-markers)`):*
+- *`TRAIL-1` / `TRAIL-6` / `TRAIL-11` / `TAX-10` / `DELIV-3` dw3: the attention provider resolves each document its rows name ONCE per pass, under the viewer's own client, and fans it up the folder chain through `lib/containerChain.ts` `folderChainFromMap` (`lib/attentionRollup.ts`); `useAttentionRollup()` / `useAttentionFor()` give a count on library cards and on the folders on the path, a dot on the document row and the project card (`components/documents/AttentionDot.tsx`). A failed read is "?", never zero. A new surface that wants a marker reads `useAttentionRollup()` once and calls `attentionFor` per row — no query, no channel.*
+- *The N4 hand-offs: `RT-1` dw4 (the bell and the sidebar badge read `useAttentionStatus().stale`) and `RT-12` (`table_views` syncs by the saver's Broadcast; it stays unpublished; the tripwire's `NOT_PUBLISHED` is empty) are RESOLVED; `markRead` / `markManyRead` / `markAllRead` in `lib/inAppNotifications.ts` are checked writes — a row's refusal is said through `AttentionStatus.markError` (the bell's drawer, `components/cockpit/AttentionFeed.tsx`), "Mark all read" rethrows to its awaiting callers (all of which catch). The N3 hand-off line above ("Still open from N3's hand-off …") is closed by this.*
+- *New, for the integrator to assign: `TAX-18` (LOW, `03-taxonomy.md`) — the three document pokes (`sendHeadsUp`, `nudgeStaleHolders`, `notify_personnel`) keep three names; `TAX-10` done-when 4's document half, to decide once N12's `GAP-206` "Nudge" exists.*
+
 ---
 
 ## Phase 4 — The taxonomy

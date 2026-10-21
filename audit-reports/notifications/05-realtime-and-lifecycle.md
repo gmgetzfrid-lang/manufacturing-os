@@ -33,7 +33,7 @@ Channels, teardown, multi-tab drift, and what happens to events that fire while 
 ## RT-1 · Every realtime event that fires while the tab is asleep, backgrounded or disconnected is permanently lost from the live UI — nothing reconciles on reconnect, refocus, or visibility change
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N11 TRAIL (done-when 4 on the persistent surfaces: the header bell and the sidebar badge read `useAttentionStatus().stale` and show the stale state — a line in the bell's panel, a mark on the badge; N11 owns the badge below the sidebar and reads the same provider) — by the integrator, 2026-10-13 (N4 integrator fix pass, DEC-31; fleet plan `audit-reports/fleet-plans/notifications.json` updated at the N4 merge).
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:219-230`, `components/providers/NotificationListener.tsx:73`, `components/providers/NotificationListener.tsx:100`, `components/providers/RoleContext.tsx:343-354`
@@ -84,6 +84,21 @@ What landed (`hooks/useTicketNotifications.ts`, `useAttentionFeedState`):
 - Partly met: `CHANNEL_ERROR` / `TIMED_OUT` set a visible "Reconnecting — the counts may be out of date" state — in the feed surfaces only (the center, `/inbox`, the dashboard widget). **Not met** on the persistent header bell and sidebar badge, the surfaces of the finding's own failure scenario: they still fail silently (`components/notifications/NotificationBell.tsx`, `components/navigation/Sidebar.tsx` are not this package's files). The state they need is there — `useAttentionStatus().stale`. (The first pass checked this box outright; the second review fix narrowed it and re-opened the finding.)
 
 **Scope / residual.** Stays OPEN for done-when 4 on the bell and the sidebar badge: each reads `useAttentionStatus().stale` and shows the stale state (a line in the bell's panel, a mark on the badge) — owner: notifications N11 TRAIL (assigned by the integrator, 2026-10-13 — the Assigned line above; recorded in `99-fix-sequencing.md`). Done-when 1–3 are met: the bell's NUMBER now reconciles on rejoin, return and every visible minute, so its staleness is bounded by one minute while the tab is visible. `NotificationListener`'s toast channel keeps no status callback: a toast missed while the socket was down is the bell row the reconciled feed now shows (`DEC-74` §7 — the toast is the ephemeral echo).
+
+**Resolution (2026-10-21, notifications Round G).** Package N11 TRAIL, branch `fleet/N11-trail-markers`, commit `1675bda` — done-when 4 on the persistent surfaces (the Partial above). **Reproduced first** on `9bc7884`: `components/notifications/NotificationBell.tsx` and `components/navigation/Sidebar.tsx` read neither `useAttentionStatus` nor `stale` (`grep -c` 0 each at `9bc7884`), so a dropped connection left their numbers unmarked.
+
+What landed:
+- **The bell** (`components/notifications/NotificationBell.tsx`): reads `useAttentionStatus()` (:71); while `stale` the count carries an amber mark (:150, `data-bell-stale`), the trigger's accessible name and title say "reconnecting, the count may be out of date" (`bellLabel(attention, stale)`, :43; :134, :138), and the drawer says `BELL_STALE_LINE` ("Reconnecting — the count may be out of date until the live connection is back.", `role="status"`, :208) — the feed surfaces' words.
+- **The sidebar badge** (`components/navigation/Sidebar.tsx` `SidebarLeaf`): reads `useAttentionStatus().stale` (:545); while stale each badge is marked (`opacity-70 ring-2 ring-amber-400`, `data-badge-stale`, :581-582) and its name and title say the count may be out of date (:579-580).
+- Test: `lib/__tests__/attentionRollup.test.ts` "RT-1 dw4 …" — the REAL provider, sidebar and bell: live, no mark; `CHANNEL_ERROR`, the bell's mark, name and drawer line and the badge's mark and name; the rejoin (`SUBSCRIBED`) clears all of them.
+
+**Done-when.**
+- ✓ The status callback reconciles every rejoin (N4, Partial above — unchanged).
+- ✓ `visibilitychange` + `focus` refetch (N4 — unchanged).
+- ✓ The 60 s visible-only safety net (N4 — unchanged).
+- ✓ `CHANNEL_ERROR` / `TIMED_OUT` set a visible "reconnecting — counts may be stale" state — on the feed surfaces (N4) and now on the header bell and the sidebar badge, the surfaces of the finding's own failure scenario.
+
+**Scope / residual.** None. `NotificationListener`'s toast channel keeps no status callback, as N4 recorded (`DEC-74` §7).
 
 ---
 
@@ -730,7 +745,7 @@ Remaining step (either closes it): (a) the integrator ratifies `DEC-94` item 4's
 ## RT-12 · Two subscribed tables are not in the supabase_realtime publication — the milestone board and the shared table-view sync listen to a channel that can never fire
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED (code; `20261200` inventory comparison — done-when 1 — pending at the integrator's paste, DEC-30)
 - **Assigned:** notifications N11 TRAIL (the `table_views` cross-client sync in `lib/tableViews.ts` — a Realtime Broadcast from the saver on its own channel, or an opaque primary key before publishing; N11 holds the library page that is `lib/tableViews.ts`'s one consumer, `app/(protected)/documents/[libraryId]/page.tsx`; the tripwire's `table_views` exception in `lib/__tests__/realtimePublication.test.ts` goes with it) — by the integrator, 2026-10-13 (N4 integrator fix pass, DEC-31; fleet plan `audit-reports/fleet-plans/notifications.json` updated at the N4 merge).
 - **Verification:** SUSPECTED
 - **Locations:** `components/projects/ScheduleTab.tsx:106-120`, `lib/tableViews.ts:259-264`, `supabase/schema.sql:1139-1147`, `supabase/migrations/20260727_checkout_activity_fix.sql:50-54`, `supabase/migrations/20260729_checkout_episodes.sql:97-98`
@@ -773,5 +788,17 @@ What landed:
 - ✓ Done-when 3 — the tripwire.
 
 **Scope / residual.** Stays OPEN for `table_views`' cross-client sync. Owner: notifications N11 TRAIL (assigned 2026-10-13, above). The fix that leaks nothing: replace the `postgres_changes` listener with a Realtime Broadcast message the saver sends on its own channel, or give `table_views` an opaque primary key before publishing it.
+
+**Resolution (2026-10-21, notifications Round G).** Package N11 TRAIL, branch `fleet/N11-trail-markers`, commit `a76f821` — the `table_views` half (the Partial above). **Reproduced first** on `9bc7884`: `lib/tableViews.ts:261` subscribed `postgres_changes` on `table_views`, a table in no `ALTER PUBLICATION` (and deliberately so — `DEC-105` §5), so another tab's or person's saved view never streamed in.
+
+**Decided and recorded:** `table_views` stays UNPUBLISHED (a DELETE event would carry its composite id — workspace, person, library — to every subscriber, across workspaces) and its cross-client sync is a **Realtime Broadcast from the saver** (`lib/tableViews.ts`): `saveTableView` and `deleteTableView` announce AFTER the write landed (`announceTableViewChange`, :34; :197, :282) on the view's own topic (`tableViewTopic(id)`, :25) with an EMPTY payload — over the tab's joined channel when it already listens to that topic, else over REST on a short-lived channel that is removed; `listenTableView` joins the topic with a `broadcast` binding (:308-309) and re-reads the row under its own RLS. Nothing reaches anyone who did not already have it: only a viewer who knows the view's id is on its topic, and what it re-reads is what RLS lets it read; a forged message on a known topic causes one more read of a row the listener may read anyway. A refused write announces nothing (and throws, as before); a failed announcement never fails the save. The opaque-key alternative (re-keying the table) was not taken: it needs a migration and a key change on a live table for no gain over the Broadcast. The tripwire's `NOT_PUBLISHED` exception is gone with the `postgres_changes` listener (`lib/__tests__/realtimePublication.test.ts`, "RT-12 (N11) …" pins the Broadcast and that `table_views` is still unpublished).
+- Tests: `lib/__tests__/tableViewsBroadcast.test.ts` (4) — the listener's topic and binding and its re-read; the REST announcement on a short-lived channel; the joined channel kept; a refused write announces nothing and a failed announcement never fails the save.
+
+**Done-when.**
+- Not done here (`DEC-30`) — done-when 1: `20261200`'s inventory rows report the live publication; comparing them against the subscriptions is the integrator's at the paste (unchanged from N4's Partial). With this change the code subscribes `postgres_changes` only on published tables, so the comparison has no exception left to account for.
+- ✓ Done-when 2 — no subscribed table is missing from the publication: `milestones` is published (`20261106`, re-asserted by `20261200`); `table_views` is no longer subscribed through `postgres_changes` (its sync is the Broadcast), and stays unpublished by decision (`DEC-105` §5).
+- ✓ Done-when 3 — the tripwire (N4), now with no named exception.
+
+**Scope / residual.** Pending only the `20261200` paste comparison (done-when 1, integrator). No migration in this package.
 
 ---

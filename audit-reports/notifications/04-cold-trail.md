@@ -32,7 +32,7 @@ The central complaint: a badge says something needs attention, and the trail doe
 ## TRAIL-1 · The trail has exactly one link: the sidebar row. No page below /documents, /projects or any library consumes notification state at all
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/navigation/Sidebar.tsx:124`, `app/(protected)/documents/page.tsx:389-467`, `app/(protected)/documents/[libraryId]/page.tsx:3958-4185`, `components/documents/FolderTree.tsx:150-223`, `components/documents/FolderGrid.tsx`, `components/documents/DocGridView.tsx`, `components/documents/InspectorPanel.tsx:411-430`, `app/(protected)/projects/page.tsx:199-261`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **CRITICAL → MEDIUM** by this pass. The finding's central assertion — 'the trail has exactly one link' and the user 'opens the right one by guessing' — is wrong: badge → Notification Center → row → the exact document is a working chain, and the deep-link handler even resolves the doc's folder. What genuinely survives is narrower: no ambient per-library/per-folder/per-row marker exists while browsing, so attention state is invisible unless you enter through a notification row. That is a MEDIUM wayfinding gap, not a CRITICAL dead end.
@@ -73,6 +73,27 @@ ProjectCard, projects/page.tsx:216-228 — status pill + Private/Public pill onl
 - [ ] the folder tree and folder grid render a per-folder rollup for the currently-open library
 - [ ] the document list/grid renders a per-row marker for a document the current user has an unread or action-required notification about
 - [ ] opening the badged document clears its marker and decrements the ancestors' counts
+
+**Resolution (2026-10-21, notifications Round G).** Package N11 TRAIL, branch `fleet/N11-trail-markers`, commits `1675bda` (code), `a76f821` (RT-12). **Reproduced first** on `9bc7884`: `grep -ciE 'useTicketNotifications|useAttention|AttentionContext'` over `app/(protected)/documents/page.tsx`, `app/(protected)/documents/[libraryId]/page.tsx`, `app/(protected)/projects/page.tsx`, `components/documents/FolderRail.tsx`, `components/documents/FolderGrid.tsx` and `components/documents/DocGridView.tsx` answered 0 for each — no surface below the sidebar read the feed (the verifier's correction holds: FolderRail / FolderGrid are the live tree and grid; FolderTree is MoveModal's).
+
+What landed (GAP-202 step 3, in the plan's order — selector and roll-up in the provider → the marker → library cards → folder rail / grid → document rows → project cards → tests):
+- **The roll-up** — `lib/attentionRollup.ts` (new): `resolvePlacements` (:178) places each document a feed row names through the VIEWER's own reads (`documents` id → `library_id`, `collection_id`; the documents' own folders → `path_ids`), chunked (`PLACE_CHUNK` 100) and capped per pass (`PLACE_CAP` 500, :166-167); the folder chain is the container-chain resolver's `folderChainFromMap` (DEC-36 — no third walk); `buildAttentionRollup` (:131) counts only the rows the sidebar badge counts (the same `sectionForKind` section and `isActionRow` action flag) into per-library, per-folder (every folder on the path), per-document and per-project marks; `attentionFor` (:247) answers one target. A read that fails (or ids past the cap) leaves the level `unknown`; a document the viewer cannot read returns no row and is placed nowhere.
+- **The provider** — `hooks/useTicketNotifications.ts`: step 5 of the feed pass (:775-806) resolves the placements ONCE per pass for the window and the tallied rows below it, replacing the TRAIL-12-only read (the same read now also carries `collection_id`; the unlinked ids are asked first, so TRAIL-12's links are unchanged); the memo carries the badge's rows into `buildAttentionRollup` (:1031, :1056); rows below the window the tally could not reach make the container level unknown (:1063); `AttentionFeedState.rollup`, `useAttentionRollup()` (:1168), `useAttentionFor(target)` (:1176). No query and no channel per surface or per row.
+- **The marker** — `components/documents/AttentionDot.tsx` (new): the requests queue's vocabulary (red pulsing = action, blue = new; the pulse `motion-safe:` only), a count or a dot, `?` for unknown, nothing for a null mark.
+- **The surfaces** — `/documents` library card (`app/(protected)/documents/page.tsx:605`); `FolderRail` (tree rows a count, :146; icon rail a dot, :239) and `FolderGrid` (:318) through an optional `attentionFor` prop; `DocGridView` (:103, :144) and the library page's details-table row (`app/(protected)/documents/[libraryId]/page.tsx:4591`, in the row's left gutter, positioned against the row like the selected-row accent) and mobile card (:4427); the page passes `folderAttention` / `docAttention` from `useAttentionRollup()` (:327-332).
+- **Density and source** — the integrator's rulings under `DEC-90` (the plan's defaults): a count on the library card and on the folders on the path to a badged document; a dot (no number) on the document row; nothing on unaffected rows; notification-derived, matching the sidebar (the register-state alternative, `lib/docControlRegister.ts`, recorded as the future path). Recorded as `DEC-44 (N11-trail-markers)`.
+- Tests: `lib/__tests__/attentionRollup.test.ts` (31) — the roll-up to every folder on the path and the library, clearing when read (pure and rendered through the provider); the permission trap both directions (pure and rendered: a row about a document the viewer cannot read still badges Documents, as before, and counts in no library or folder); a refused documents read is `unknown` and renders `?` on every card, a refused folders read leaves library counts known; past the cap unknown with bounded reads; 40 folder tiles reading the roll-up add no query and no channel; no document rows → no documents read at all; FolderRail / FolderGrid / DocGridView markup with an all-null lookup byte-equal to the markup without one; the density (counts on the path only, a dot on the document, none elsewhere); no service-role client in the provider files.
+- Verified on `fleet/N11-trail-markers`: `npx tsc --noEmit` exit 0; `npx eslint --max-warnings=0` on the 20 changed code and test files exit 0; `npx vitest run` (full suite) exit 0 — 677 files, 15128 passed, 1 expected fail. (One earlier full run failed one timing-based case in `lib/__tests__/sessSixRoleNull.test.ts` — RoleContext's SIGNED_IN re-emit, no file of this package's — which passed alone three times and in the next full run.) `next build` is the integrator's.
+
+**Done-when.**
+- ✓ `/documents` library cards render a per-library count derived from the same feed the sidebar badge uses (the badge's rows, section and action rule).
+- ✓ The folder tree (the rail's tree rows; its icon rail a dot) and the folder grid render a per-folder roll-up for the open library — fanned up the folder path.
+- ✓ The document list and grid (details table, List / Medium / Large icons, mobile cards) render a per-row dot for a document the viewer has an unread or action-required notification about.
+- ✓ Opening the badged document clears its marker and decrements the ancestors' counts: opening it marks its notifications read (`markResourceNotificationsRead`, `app/(protected)/documents/[libraryId]/page.tsx:1448` — TRAIL-4, N9), the UPDATE refetches the feed, and the roll-up is recomputed from the rows left (test "reading the document clears its folder and library markers on the next pass").
+
+**GAP-202 acceptance, item by item.** 1 ✓ — the badge opens the center scoped to its section (`components/navigation/Sidebar.tsx:578`, N3 TAX-1 / TRAIL-3). 2 ✓ — here. 3 ✓ — visiting a document or a project marks its rows read (`app/(protected)/documents/[libraryId]/page.tsx:1448`, `app/(protected)/projects/[id]/page.tsx:280`, N9 TRAIL-4). 4 ✓ — here, tested both directions. 5 ✓ — `tally(section, actionRequired)` (`hooks/useTicketNotifications.ts:1030`, N2 TRAIL-5). 6 ✓ — here.
+
+**Scope / residual.** Rows are placed only by what they name: a document, a library, a project. A row about another resource (a checkout session, a milestone, a work package) badges its section and lists in the center as before but marks no container — never guessed from a link or a title (GAP-202 "Never guess"). The documents and folders reads cost one documents read (≤5 chunks) and one folders read per feed pass while document rows exist (before: one documents read only when a row had no link). A folder the viewer cannot read contributes no chain (that document counts on its library only); the icon rail shows a dot, not a number (32 px). Rows below the window past the 1,000-row tally (`REMAINDER_TALLY_CAP`) make the container level unknown; a document row's dot reflects the rows read. No migration.
 
 ---
 
@@ -340,7 +361,7 @@ Sidebar.tsx:22 (the contract this violates): `//     Badges: red = action requir
 ## TRAIL-6 · A notification row cannot be rolled up to a container: it carries no library_id or collection_id, and resource_id is TEXT while documents.id is uuid
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260621_in_app_notifications.sql:13-27`, `lib/inAppNotifications.ts:140-155`, `lib/holds.ts:232-251`, `hooks/useTicketNotifications.ts:176`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Factually correct — the row genuinely cannot be rolled up to a library or folder without a second query, and holds.ts:232-241 only fetches library_id to build the link string, never persisting it. Downgraded to LOW: this describes a feature that was never built (container badges) rather than a defect in shipped behavior, and notifications_org_resource_idx (org_id, resource_type, resource_id) makes the extra lookup cheap and indexed.
@@ -380,6 +401,21 @@ link: doc?.library_id ? `/documents/${doc.library_id}?doc=${input.documentId}` :
 - [ ] a notification about a document carries its library id (column or metadata) at insert time for every producer that emits resourceType 'document'
 - [ ] the attention hook exposes a per-library and per-folder rollup map alongside sectionCounts
 - [ ] the folder rollup fans a document's count up collections.pathIds so an ancestor folder shows its subtree's total
+
+**Resolution (2026-10-21, notifications Round G).** Package N11 TRAIL, branch `fleet/N11-trail-markers`, commit `1675bda`. **Reproduced first** on `9bc7884`: the row still carries no container (`supabase/migrations/20260621_in_app_notifications.sql:19-22`); the hook exposed `sectionCounts` only (no per-library or per-folder map — `grep -n 'byLibrary\|byFolder\|path_ids'` over `hooks/useTicketNotifications.ts` on `9bc7884`: nothing); `lib/branches.ts` wrote `metadata: { branchId }` and `components/documents/EditOverlapBanner.tsx` no metadata, though both held the library.
+
+What landed — the record's shape (b) ("keep the join and do it once in the hook"), the one the plan and `DEC-90` ruling 3 name (no notifications-per-container table, no service-role roll-up, no third chain walk):
+- The provider resolves each document a row names ONCE per pass to its library and folder through the viewer's own reads, and fans it up the folder's `path_ids` through the container-chain resolver (`lib/attentionRollup.ts` `resolvePlacements`, `folderChainFromMap`); `useAttentionRollup()` / `useAttentionFor()` expose the per-library, per-folder, per-document and per-project marks beside `sectionCounts` (TRAIL-1's Resolution has the detail).
+- The free producers carry `metadata.libraryId` at emit time where they already hold it: `lib/branches.ts:154` (`announceBranchOpened`) and `components/documents/EditOverlapBanner.tsx:264` (`sendHeadsUp`). A hint for a reader of the row only — the roll-up never counts from it (a browser-written row's metadata is its writer's word).
+- The TEXT `resource_id` needs no cast: the join is an `.in('id', …)` read in the app, not SQL.
+- Tests: `lib/__tests__/attentionRollup.test.ts`; `lib/__tests__/notifProducersFree.test.ts` (the branch-alert pin follows the extra key — the clear is a jsonb containment match on `branchId`, unchanged).
+
+**Done-when.**
+- Not met as written — "every producer that emits resourceType 'document'": met for the producers outside document-control's files (`lib/branches.ts`, `components/documents/EditOverlapBanner.tsx`); the document-control producers (`lib/holds.ts`, `lib/distributionAcks.ts`, `lib/staleCopies.ts`, `lib/postPublish.ts`) and the rest are NOT edited — the fleet plan's ruling (`audit-reports/fleet-plans/notifications.json`, N11's files entry; `DEC-90` ruling 3 as given to this package) reads them through the provider's resolution instead, which is the record's own shape (b), so the roll-up needs no producer change. Recorded RESOLVED on that ruling; if the integrator reads done-when 1 as binding, this finding reopens on it for the document-control producers (owner: document-control).
+- ✓ The attention hook exposes a per-library and per-folder roll-up map alongside `sectionCounts` (`AttentionFeedState.rollup`, `useAttentionRollup`, `useAttentionFor`).
+- ✓ The folder roll-up fans a document's count up `collections.path_ids`, so an ancestor folder shows its subtree's total (test: Unit 12 → P&IDs → Piping all carry it).
+
+**Scope / residual.** No column, no migration (GAP-202 "Do not": a per-container count is derived, never stored).
 
 ---
 
@@ -611,7 +647,7 @@ Sidebar.tsx:229: `{ label: 'Documents', hint: 'Libraries · board · locks · pa
 ## TRAIL-11 · The one place the chain DOES continue — the requests queue — proves the pattern and shows it was never applied to documents or projects
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/page.tsx:1027-1039`, `app/(protected)/requests/page.tsx:1128-1144`, `app/(protected)/projects/page.tsx:199-261`, `app/(protected)/documents/page.tsx:389-467`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Verified: the per-row attention dot exists only in the requests portal. Downgraded to LOW — this is the same missing-capability observation as TRAIL-5/TRAIL-6 restated as a UX-consistency complaint, and it describes an unbuilt feature rather than incorrect behavior.
@@ -642,6 +678,17 @@ Case-insensitive grep for `badge|notif|attention|unread` in app/(protected)/docu
 - [ ] library cards, folder rows and document rows render the same red-action / blue-unread dot vocabulary
 - [ ] project cards render it too
 - [ ] the dot's source of truth is documented as either notification-derived or state-derived, consistently across sections
+
+**Resolution (2026-10-21, notifications Round G).** Package N11 TRAIL, branch `fleet/N11-trail-markers`, commit `1675bda`. **Reproduced first** on `9bc7884`: the per-row red / blue dot existed only in the requests queue (`app/(protected)/requests/page.tsx:1853-1854` at `9bc7884`); `app/(protected)/projects/page.tsx` and the documents surfaces read no attention state (TRAIL-1's census).
+
+What landed: `components/documents/AttentionDot.tsx` — ONE marker in the queue's vocabulary (a red pulsing mark = something here needs your action; a blue mark = new for you; the pulse is `motion-safe:` only, so reduced motion keeps a still mark), as a count on library cards and on the folders on the path to a badged document and as a dot (no number) on the document row and the project card (`DEC-90` ruling 1, the plan's default). Project cards: `app/(protected)/projects/page.tsx:254` (rows about the project — `resource_type 'project'`, the Projects badge's section). The requests queue's own dots are drafting-flow's file and unchanged.
+
+**Done-when.**
+- ✓ Library cards, folder rows and document rows render the same red-action / blue-unread vocabulary — the card and the folder as a red or blue count (the sidebar badge's form, so "Library A: 3" narrows the search), the document row as the queue's dot.
+- ✓ Project cards render it too (a dot).
+- ✓ The source of truth is documented as notification-derived, consistently across the sections: `components/documents/AttentionDot.tsx` and `lib/attentionRollup.ts` headers, `DEC-44 (N11-trail-markers)`; the queue's dots stay state-derived (ticket state) and the register-state alternative (`lib/docControlRegister.ts`) is recorded as the future path for per-document compliance pills.
+
+**Scope / residual.** None beyond TRAIL-1's.
 
 ---
 
