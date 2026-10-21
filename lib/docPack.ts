@@ -27,7 +27,7 @@ import { applyStampToPdfDoc, type StampTextMapping } from "@/lib/stamping";
 import { recordIntent } from "@/lib/intents";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { mintedSheetToken, packSheetVerifyUrl } from "@/lib/printSheetTokens";
-import { mintSheetTokens, settleSheetTokens, type MintedSheetTokens } from "@/lib/printSheetTokensClient";
+import { linkSheetTokensToCover, mintSheetTokens, settleSheetTokens, type MintedSheetTokens } from "@/lib/printSheetTokensClient";
 import { documentStanding, isUndefinedColumnError } from "@/lib/verifyVerdict";
 import { ackGateDocuments } from "@/lib/downloads";
 import type { PackLeftOutCode } from "@/lib/packLeftOut";
@@ -127,6 +127,25 @@ export class PackTooLargeError extends Error {
   constructor(message: string, readonly parts: number, readonly perPack: number, readonly split: string[][] | null = null) {
     super(message);
     this.name = "PackTooLargeError";
+  }
+}
+
+/** PS-P10 (PHYS-19 c3): the server REFUSED to link the pack's sheet codes
+ *  to the cover's print record (a 400 marked code cover_mismatch) — the
+ *  cover is not this print's (DEC-90 ruling (1)) — so the print is STOPPED
+ *  before the download (nothing downloaded, no pin moved; the minted codes
+ *  are voided). A link that only FAILS (no answer, a 5xx, 401, 404, 409, or
+ *  an unmarked 400 — after one retry) does not throw this: the pack prints
+ *  unlinked, as before PS-P10.
+ *  Retrying the print is safe. */
+export class SheetTokenCoverLinkError extends Error {
+  readonly code = "sheet_token_cover_link" as const;
+  constructor(readonly detail: string) {
+    super(
+      `This pack's sheet codes could not be linked to its print record (${detail}) — nothing was downloaded and no pin moved. ` +
+      "Print the pack again.",
+    );
+    this.name = "SheetTokenCoverLinkError";
   }
 }
 
@@ -600,8 +619,23 @@ async function buildAndDownloadDocPackOnce(tokenPrint: SheetTokenPrint, input: {
    *  failed to fetch. The returned document is PREPENDED. A throw here
    *  aborts the print with nothing downloaded and no pins moved.
    *  VFY-19: it also receives every sheet THIS build left out, with its
-   *  code, so the snapshot can record what the paper does not hold. */
-  buildCoverAfter?: (included: PackSheetRef[], skipped: PackSkip[]) => Promise<PDFDocument | null>;
+   *  code, so the snapshot can record what the paper does not hold.
+   *  PS-P10 (PHYS-19 c3): a cover that records a print snapshot AWAITS
+   *  `cover.linkPrint(id)` — the pack's sheet tokens are linked to the
+   *  cover's print by key there and then, before the download (the server
+   *  checks it). It throws SheetTokenCoverLinkError only when the server
+   *  REFUSES the link (a 400 marked cover_mismatch), which stops the print
+   *  like any throw here. A link that fails (no answer, a 5xx, 401, 404,
+   *  409, an unmarked 400 — after one retry)
+   *  warns and resolves: the pack prints unlinked, as before PS-P10. With no
+   *  token minted (today's QR on every sheet) or before database update
+   *  20261240 it resolves and links nothing. A cover that does not call it
+   *  leaves the link NULL. */
+  buildCoverAfter?: (
+    included: PackSheetRef[],
+    skipped: PackSkip[],
+    cover: { linkPrint: (coverPrintId: string) => Promise<void> },
+  ) => Promise<PDFDocument | null>;
   /** PKG-6: runs after the download has been triggered — the place for
    *  state that must only ever assert an EXISTING print (pin refresh).
    *  Must not throw: the paper is already in the user's hands, so the
@@ -838,7 +872,31 @@ async function buildAndDownloadDocPackOnce(tokenPrint: SheetTokenPrint, input: {
   // caller records while building it — cannot describe a sheet that isn't
   // in the PDF.
   if (input.buildCoverAfter) {
-    const cover = await input.buildCoverAfter([...includedSheets], [...skipped]);
+    const cover = await input.buildCoverAfter([...includedSheets], [...skipped], {
+      linkPrint: async (coverPrintId: string) => {
+        const minted = tokenPrint.minted;
+        if (!minted) return; // no per-print code on this paper: nothing to link
+        const link = () => linkSheetTokensToCover({
+          orgId: input.orgId, printId: minted.printId, coverPrintId,
+          printedDocumentIds: includedSheets.map((s) => s.documentId),
+        });
+        let r = await link();
+        // One retry for a transient failure (no answer, or a 5xx) — a refusal
+        // is never retried.
+        if (!r.ok && (r.status === 0 || r.status >= 500)) r = await link();
+        if (r.ok) return;
+        // Only the server's marked REFUSAL (a 400 with code cover_mismatch —
+        // the cover is not this print's, DEC-90 ruling (1)) stops the print.
+        // Anything else that is still failing after the retry (no answer, a
+        // 5xx, 401, 404, 409, or any other 400 — a malformed body, an older
+        // route's "Unknown action" during deploy skew) FAILS OPEN: the pack
+        // prints unlinked, exactly as it did before PS-P10 (REGRESSION FIRST —
+        // a recall of an unlinked print by its cover answers the truthful 404,
+        // and the print history marks it "not linked" with no Recall).
+        if (r.refused) throw new SheetTokenCoverLinkError(r.error);
+        console.warn("[print-sheet-tokens] the pack's sheet codes could not be linked to its print record — printing unlinked:", r.error);
+      },
+    });
     if (cover) {
       const coverPages = await merged.copyPages(cover, cover.getPageIndices());
       coverPages.forEach((p, i) => merged.insertPage(i, p));
@@ -875,6 +933,8 @@ async function buildAndDownloadDocPackOnce(tokenPrint: SheetTokenPrint, input: {
     // and the pins are written, never awaited (DEC-90, the integrator at the
     // PS-P9 merge): nothing waits on it — an unsettled print keeps every
     // token live, which is what a downloaded pack needs. Never throws.
+    // (PS-P10: the link to the cover's print was written before the
+    // download — it never rides on this settle.)
     if (tokenPrint.minted) {
       void settleSheetTokens({ orgId: input.orgId, printId: tokenPrint.minted.printId, printedDocumentIds: includedSheets.map((s) => s.documentId) });
     }

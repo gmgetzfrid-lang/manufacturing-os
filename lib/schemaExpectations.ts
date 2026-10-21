@@ -117,6 +117,7 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "export_runs", migration: "20260530_data_export_schedules.sql" },
   { table: "intake_attempts", migration: "20261105_prj_roundG_intake_review_and_attempts.sql" },
   { table: "knowledge_chunks", migration: "20260911_knowledge_ai.sql" },
+  { table: "knowledge_document_assets", migration: "20261235_intel_roundG_knowledge_document_assets.sql" },
   { table: "knowledge_documents", migration: "20260911_knowledge_ai.sql" },
   { table: "knowledge_libraries", migration: "20260911_knowledge_ai.sql" },
   { table: "knowledge_library_links", migration: "20260915_knowledge_links.sql" },
@@ -281,6 +282,7 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   { table: "document_equipment_suggestions", column: "applied_columns", migration: "20261171_intel_roundG_provenance.sql", feature: "The Bridge remembers which equipment columns it wrote on each document (BR-11)" },
   { table: "document_equipment_suggestions", column: "dismissed", migration: "20261171_intel_roundG_provenance.sql", feature: "The Bridge remembers a dismissed tag (BR-9)" },
   // intelligence I-16 (CB-6): the codebook version a site code was filed under.
+  { table: "print_sheet_tokens", column: "cover_print_id", migration: "20261240_ps_roundG_sheet_token_cover_link.sql", feature: "A work-package pack's sheet codes linked by key to its cover's print — the controller's Recall from the print history, a recalled pack's cover reading PACK RECALLED, and the history's recalled / stopped / not-linked marks (/api/print-sheet-tokens link / void / history, /api/verify-package; PHYS-19, PHYS-20, DACL-8 (c))" },
   { table: "codebook_config", column: "codebook_version", migration: "20261178_intel_roundG_codebook_lifecycle.sql", feature: "The Site Codebook's version, moved once per change (CB-6)" },
   { table: "codebook_entries", column: "codebook_version", migration: "20261178_intel_roundG_codebook_lifecycle.sql", feature: "The codebook version each code was written in (CB-6)" },
   { table: "assets", column: "codebook_version", migration: "20261178_intel_roundG_codebook_lifecycle.sql", feature: "The codebook version an asset's site code was filed under — what a re-decode compares (CB-6)" },

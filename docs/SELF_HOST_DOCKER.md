@@ -55,6 +55,27 @@ docker run -p 3000:3000 \
   manufacturing-os
 ```
 
+### Subscription enforcement (`SUBSCRIPTION_ENFORCE`, runtime, default off)
+
+Leave it unset and nothing is ever refused for billing reasons: a workspace
+whose subscription lapsed, or whose free trial ended, works exactly as an
+active one, and the server only logs what it would have refused (`subscription
+gate would refuse org …`, at most once per workspace per hour). Set it to
+exactly `true` (server environment; no rebuild) and, for a lapsed workspace —
+canceled, unpaid, paused, or a trial past its end (`past_due` is the grace
+period and keeps access) — the server refuses adding members and starting new
+file uploads with a sentence saying why, and a strip above every page says the
+same. It is a **soft** lockout: pages still render, documents can still be
+opened and downloaded, and other row writes (metadata, tickets, comments) are
+**not** refused — the database cannot read this switch, and a policy keyed on
+subscription state would lock an active workspace out the moment a billing
+webhook was missed. The escape hatches always stay open: Admin → Billing (to
+renew), Admin → Data export and Admin → Storage & Backup (the whole workspace
+out), every download, and the profile page. Nothing is deleted either way.
+Read a quiet week of the log lines before switching it on; unset it to switch
+it off again. Note that with it on, a lapsed workspace's Admin restoring files
+from a backup is refused at each file (restore uploads through the same route).
+
 ---
 
 ## Hosted platforms

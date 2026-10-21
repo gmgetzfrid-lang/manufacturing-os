@@ -46,6 +46,13 @@ export const ORG_SCOPED_TABLES = [
   "document_supersessions",
   "document_holds",
   "document_assets",
+  // intelligence I-26 (20261235, GAP-307 acceptance 3) — a knowledge upload's
+  // own document↔equipment relation, with document_assets' provenance
+  // columns (asserted_by, model, source revision). EXPORTED, by the
+  // integrator at the I-26 merge (2026-10-20, DEC-90): GAP-303 acceptance 4
+  // holds that provenance survives export and restore. Restored after
+  // knowledge_documents and assets (lib/dataRestore.ts). No bearer column.
+  "knowledge_document_assets",
   "document_sets",
   "document_shares",
   "project_intake_links",
@@ -321,7 +328,7 @@ export const EXPORT_EXCLUDED_TABLES: Record<string, string> = {
   knowledge_line_traces:
     "cached AI line traces over drawing sheets — regenerated on demand from the drawings themselves; no authored data lives here",
   signup_attempts:
-    "global anti-abuse log keyed on client IP (not org-scoped) — rolling rate-limit window with no customer data; nothing to restore",
+    "the two public sign-up doors' per-IP rate-limit window (client IP and the address typed at the door; 20261010) — personal data about people who may never have joined, not org-scoped, kept two days (prune_signup_attempts, run daily by the maintenance cron — ORG-12), service-role only; never exported, nothing to restore",
   intake_attempts:
     "the contractor intake door's rate-limit window (hashed token, client IP; 20261105) — a two-day rolling anti-abuse log, service-role only, no customer data; nothing to restore",
   verify_scans:

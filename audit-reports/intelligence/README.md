@@ -56,7 +56,7 @@ It is not a missing brain. It is a missing memory.
 
 ## Findings
 
-**275 findings** — 9 CRITICAL, 59 HIGH, 151 MEDIUM, 56 LOW — plus **15 gap specs** (`GAP-313`, `GAP-314` opened at I-13, 2026-10-01; `GAP-315` opened at I-09, 2026-10-01; `GOV-15` opened at the I-05 merge, 2026-10-01; `ILIFE-14` opened at the admin-and-org P2 merge, 2026-10-01; `DACL-13` (LOW) opened at I-31 and resolved at its merge, 2026-10-20; `AREA-12` (LOW) opened at I-15, 2026-10-20; `PR-13` (MEDIUM) opened at I-25, 2026-10-20).
+**277 findings** — 9 CRITICAL, 59 HIGH, 152 MEDIUM, 57 LOW — plus **16 gap specs** (`GAP-313`, `GAP-314` opened at I-13, 2026-10-01; `GAP-315` opened at I-09, 2026-10-01; `GAP-316` opened at I-26, 2026-10-20 (owner: I-32); `GOV-15` opened at the I-05 merge, 2026-10-01; `ILIFE-14` opened at the admin-and-org P2 merge, 2026-10-01; `DACL-13` (LOW) opened at I-31 and resolved at its merge, 2026-10-20; `AREA-12` (LOW) opened at I-15, 2026-10-20; `PR-13` (MEDIUM) opened at I-25, 2026-10-20; `GOV-16` (LOW) opened at I-32, 2026-10-20, and resolved at its merge, 2026-10-21, by the integrator's ruling (DEC-90); `PR-14` (MEDIUM) opened at I-33, 2026-10-20).
 
 > **One finding here carries `Status: REFUTED`** — `IEDGE-9`. An independent pass disproved it; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue it as work.**
 
@@ -67,7 +67,7 @@ It is not a missing brain. It is a missing memory.
 | 01 | [Ingestion](./01-ingestion.md) | 13 | PDF → chunks, and what is lost on the way — `ING-13` opened by the I-02b integration (intelligence Round G), 2026-10-01 |
 | 02 | [Ask & retrieval](./02-ask-and-retrieval.md) | 11 | Ranking, grounding, citation verification, the injection surface |
 | 03 | [Semantic layer](./03-semantic-layer.md) | 13 | Coverage, drift, chunks that never embed |
-| 04 | [AI governance](./04-ai-governance.md) | 15 | Keys, allowlist, metering, calls that bypass governance — `GOV-15` opened by the integrator at the I-05 merge (intelligence Round G), 2026-10-01 |
+| 04 | [AI governance](./04-ai-governance.md) | 16 | Keys, allowlist, metering, calls that bypass governance — `GOV-15` opened by the integrator at the I-05 merge (intelligence Round G), 2026-10-01; `GOV-16` (LOW) opened by I-32, 2026-10-20, and resolved at its merge, 2026-10-21 |
 | 05 | [**Knowledge ACL**](./05-knowledge-acl.md) | 12 | **Your leak question, half one** — `KACL-12` opened by intelligence Round G (I-01A), 2026-09-30 |
 | 06 | [**Document ACL leaks**](./06-document-acl-leaks.md) | 13 | **Your leak question, half two** — `DACL-13` (LOW) opened by intelligence Round G I-31 and resolved by the integrator at its merge, 2026-10-20 |
 | 07 | [Graph model](./07-graph-model.md) | 14 | Every edge, every cap, what is not modelled |
@@ -83,9 +83,9 @@ It is not a missing brain. It is a missing memory.
 | 17 | [Hub UX](./17-hub-ux.md) | 12 | What a new org sees; whether the numbers are real |
 | 18 | [Lifecycle](./18-lifecycle.md) | 15 | Export, restore, delete, orphans — `ILIFE-15` opened by admin-and-org P14 and resolved by the integrator at its merge, 2026-10-14 |
 | 19 | [Wiring](./19-wiring.md) | 10 | De-facto links, dead FKs, one-directional joins |
-| 20 | [Prompts](./20-prompts.md) | 13 | Every prompt read as a contract — `PR-13` (MEDIUM) opened by intelligence Round G I-25, 2026-10-20 (owner: I-33) |
+| 20 | [Prompts](./20-prompts.md) | 14 | Every prompt read as a contract — `PR-13` (MEDIUM) opened by intelligence Round G I-25, 2026-10-20 (owner: I-33; the remainder, shipping the evaluator on, the integrator after a verification campaign — DEC-90 at the I-33 merge); `PR-14` (MEDIUM) opened by intelligence Round G I-33, 2026-10-20 (owner: the integrator, with the I-33 verification campaign) |
 | 21 | [Edges & invariants](./21-edges-and-invariants.md) | 12 | The critic, plus what is sound. **Verified by hand** — record at the top of the file |
-| 90 | [**Gap register**](./90-gap-register.md) | 12 specs | `GAP-301`+ |
+| 90 | [**Gap register**](./90-gap-register.md) | 16 specs | `GAP-301`+ |
 | 99 | [**Execution order**](./99-fix-sequencing.md) | — | Binding. Three redo-pairs |
 
 **`01`–`20` were adversarially verified** — 273 raw findings, **246 survived**,

@@ -4,6 +4,7 @@
 // flipping between them feels like two different products.
 
 import { DIRECTED_EDGE_TYPES, type GraphNode, type GraphNodeType, type GraphEdge, type GraphEdgeType } from "@/lib/orgGraph";
+import { AI_READ_MARK, SWEEP_SHEET_MARK } from "@/lib/relationProvenance";
 
 export const NODE_COLORS: Record<GraphNodeType, string> = {
   document: "#3b82f6",
@@ -79,21 +80,33 @@ export const LIBRARY_VIA_LABELS = {
  *  the coverage report mark it. */
 export const TAG_MACHINE_RGB = "249,115,22";
 export const TAG_MACHINE_LABEL = "Read from a drawing (not yet a person's link)";
-export const AI_READ_MARK = "AI-read, unconfirmed";
+/** The marks live in lib/relationProvenance.ts — one wording for the graph,
+ *  the asset hub and its provenance view (I-32). */
+export { AI_READ_MARK, SWEEP_SHEET_MARK };
 
-export function edgeRgbFor(e: Pick<GraphEdge, "type" | "via" | "assertedBy">): string {
+/** I-32: a machine reading a person also tagged the document with
+ *  (`personAlso`) is a person's link too — the person's slate, as the asset
+ *  hub and its provenance view say "tagged · also on drawing". */
+export function edgeRgbFor(e: Pick<GraphEdge, "type" | "via" | "assertedBy" | "personAlso">): string {
   if (e.type === "library" && e.via) return LIBRARY_VIA_RGB[e.via] ?? EDGE_RGB.library;
-  if (e.type === "tag" && e.assertedBy === "machine") return TAG_MACHINE_RGB;
+  if (e.type === "tag" && e.assertedBy === "machine" && !e.personAlso) return TAG_MACHINE_RGB;
   return EDGE_RGB[e.type] ?? "148,163,184";
 }
 
-export function edgeLabelFor(e: Pick<GraphEdge, "type" | "via" | "assertedBy" | "sheet" | "pages" | "aiRead">): string {
+/** I-32 (GOV-9 criterion 4, the graph's label limb): every sheet address the
+ *  label shows carries its mark — read off an AI transcription "AI-read,
+ *  unconfirmed"; the sweep's address on a person's link "read by the
+ *  equipment sweep, unconfirmed" (lib/relationProvenance.ts). */
+export function edgeLabelFor(e: Pick<GraphEdge, "type" | "via" | "assertedBy" | "sheet" | "pages" | "aiRead" | "personAlso" | "sheetUnconfirmed">): string {
   if (e.type === "library" && e.via) return LIBRARY_VIA_LABELS[e.via] ?? EDGE_LABELS.library;
   if (e.type === "tag") {
-    const base = e.assertedBy === "machine" ? "Read from the drawing" : EDGE_LABELS.tag;
+    const base = e.assertedBy === "machine"
+      ? (e.personAlso ? "Tagged, and read from the drawing" : "Read from the drawing")
+      : EDGE_LABELS.tag;
     const where = e.sheet ? ` · ${e.sheet}`
       : e.pages && e.pages.length > 0 ? ` · page${e.pages.length === 1 ? "" : "s"} ${e.pages.join(", ")}` : "";
-    return `${base}${where}${e.aiRead ? ` (${AI_READ_MARK})` : ""}`;
+    const mark = e.aiRead ? AI_READ_MARK : e.sheet && e.sheetUnconfirmed ? SWEEP_SHEET_MARK : null;
+    return `${base}${where}${mark ? ` (${mark})` : ""}`;
   }
   return EDGE_LABELS[e.type] ?? "Connected";
 }

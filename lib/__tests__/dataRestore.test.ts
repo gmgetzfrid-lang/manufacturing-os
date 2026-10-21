@@ -271,6 +271,9 @@ describe("FK order — every parent is restored before its child (census of supa
     // public-surfaces PS-P9 (20261237): a sheet token names the version it printed.
     expect(fk("print_sheet_tokens", "version_id")).toBe("document_versions");
     expect(fk("print_sheet_tokens", "document_id")).toBe("documents");
+    // intelligence I-26 (20261235): a knowledge upload's equipment relation.
+    expect(fk("knowledge_document_assets", "knowledge_document_id")).toBe("knowledge_documents");
+    expect(fk("knowledge_document_assets", "asset_id")).toBe("assets");
   });
 
   it("for EVERY foreign key between two tables RESTORE_TABLE_ORDER places, the parent comes first", () => {
@@ -300,6 +303,10 @@ describe("FK order — every parent is restored before its child (census of supa
     // documents and versions they name.
     before("documents", "print_sheet_tokens");
     before("document_versions", "print_sheet_tokens");
+    // I-26 (the integrator at its merge, DEC-90): the knowledge relation
+    // after the upload and the asset it names.
+    before("knowledge_documents", "knowledge_document_assets");
+    before("assets", "knowledge_document_assets");
   });
 
   it("orderTablesForRestore follows the order", () => {
@@ -482,7 +489,7 @@ describe("BKP-5 / ORG-1 (fix pass 2) — every foreign key onto users is read be
 
 describe("ORG-1 (fix pass 2) — a pointer is cleared instead of refusing its row only where that never widens access", () => {
   const schema = censusSchema();
-  it("every clearWhenMissing rule is a nullable ON DELETE SET NULL foreign key — and the set is exactly the three reviewed pointers", () => {
+  it("every clearWhenMissing rule is a nullable ON DELETE SET NULL foreign key — and the set is exactly the four reviewed pointers", () => {
     const clearable = Object.entries(RESTORE_PARENT_RULES).flatMap(([t, rules]) => rules.filter((r) => r.clearWhenMissing).map((r) => ({ t, r })));
     for (const { t, r } of clearable) {
       const f = schema.get(t)?.fks.find((x) => x.columns.length === 1 && x.columns[0] === r.column && x.parent === r.parent);
@@ -493,7 +500,10 @@ describe("ORG-1 (fix pass 2) — a pointer is cleared instead of refusing its ro
     // cleared, it would land at the library root — wider than the backup. Never cleared.
     // tickets.library_id (drafting-flow DF-P4 fix pass): cleared as the live FK clears it; the
     // library is not in the ticket's capability resource, so a cleared one widens nothing.
-    expect(clearable.map(({ t, r }) => `${t}.${r.column}`).sort()).toEqual(["libraries.owner_team_id", "projects.sow_document_id", "tickets.library_id"]);
+    // print_sheet_tokens.cover_print_id (public-surfaces PS-P10 fix pass): the link from a pack
+    // sheet's token to its cover's print gates no verdict and no read; cleared, the token keeps
+    // its sheet's verdict and only a recall by the cover's print id stops reaching it.
+    expect(clearable.map(({ t, r }) => `${t}.${r.column}`).sort()).toEqual(["libraries.owner_team_id", "print_sheet_tokens.cover_print_id", "projects.sow_document_id", "tickets.library_id"]);
     expect(restoreParentRulesFor("documents").find((r) => r.column === "collection_id")?.clearWhenMissing).toBeUndefined();
   });
 });

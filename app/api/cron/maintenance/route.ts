@@ -181,6 +181,8 @@ async function handler(req: NextRequest) {
     intakeStagingSwept?: number;
     reviewHealthNudges?: number;
     verifyScansPruned?: number;
+    /** ORG-12: step 4e — prune_signup_attempts() ran (it returns no count). */
+    signupAttemptsPruned?: boolean;
     /** N10 (GAP-205): step 7c — device registrations of people with no
      *  active membership left, removed. */
     pushSubscriptionsPruned?: number;
@@ -387,6 +389,25 @@ async function handler(req: NextRequest) {
     }
   } catch (e) {
     intakeLine(`verify-scans: ${(e as Error).message}`);
+  }
+
+  // 4e. PUBLIC DOOR attempt log (ORG-12 / BILL-14, admin-and-org Round G
+  //     P5) — prune_signup_attempts() keeps two days: the hour the per-IP
+  //     window reads (lib/publicDoorLimiter.ts) plus a short tail an
+  //     operator can read back when a door is abused. The rows hold client
+  //     addresses and typed email addresses, so they are not kept longer than
+  //     that. One step on this cron (a third vercel.json entry fails
+  //     deployment); no-op until 20261010 is applied — and only then: an RPC
+  //     that exists and fails is reported.
+  try {
+    const { error: signupPruneErr } = await sb.rpc("prune_signup_attempts");
+    if (signupPruneErr) {
+      if (!isMissingFunction(signupPruneErr)) intakeLine(`signup-attempts: ${signupPruneErr.message}`);
+    } else {
+      result.signupAttemptsPruned = true;
+    }
+  } catch (e) {
+    intakeLine(`signup-attempts: ${(e as Error).message}`);
   }
 
   // 5. Stale-checkout escalation. Sessions active for 14+ days notify the

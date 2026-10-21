@@ -65,6 +65,7 @@ vi.mock("@/lib/supabaseAdmin", () => ({
 }));
 vi.mock("@/lib/serverAuth", () => ({
   assertOrgHasAccess: async () => null,
+  enforceOrgAccess: async () => null,
   callerScopedClient: () => makeFakeSupabase(s.db),
 }));
 vi.mock("@/lib/adminGate", () => ({

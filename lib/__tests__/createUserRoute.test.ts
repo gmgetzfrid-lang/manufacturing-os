@@ -378,3 +378,50 @@ describe("POST /api/admin/create-user — guard and insert-path pins (adversaria
     expect(memberWrites()).toHaveLength(0);
   });
 });
+
+// admin-and-org Round G P5 (review fix, BILL-10 / ORG-9 (b)): adding a seat
+// passes the subscription gate through enforceOrgAccess, the ONE reading of
+// SUBSCRIPTION_ENFORCE the upload routes and the lapsed-workspace strip share.
+describe("POST /api/admin/create-user — the subscription gate (SURF-15, through enforceOrgAccess)", () => {
+  const prevEnforce = process.env.SUBSCRIPTION_ENFORCE;
+  const restore = () => {
+    if (prevEnforce === undefined) delete process.env.SUBSCRIPTION_ENFORCE; else process.env.SUBSCRIPTION_ENFORCE = prevEnforce;
+  };
+  const addingToCanceled = () => {
+    mockState.queues = {
+      org_members: [
+        { data: { role: "Admin" } },              // caller
+        { data: null },                           // no existing member
+        { data: null, error: null },              // insert
+        { data: null, error: null },              // roles seed
+      ],
+      orgs: [{ data: { subscription_status: "canceled", trial_ends_at: null } }],
+      users: [
+        { data: [{ id: "uid-a", email: "new@corp.com" }] },
+        { data: null },
+      ],
+    };
+    return POST(makeRequest({ email: "new@corp.com", password: "x", orgId: "org-1", role: "Viewer" }));
+  };
+
+  it("switch ON: a lapsed workspace's seat is refused 402 with the sentence, and nothing is written", async () => {
+    process.env.SUBSCRIPTION_ENFORCE = "true";
+    try {
+      const res = await addingToCanceled();
+      expect(res.status).toBe(402);
+      expect(String((await res.json()).error)).toMatch(/^This workspace's subscription was canceled, so adding members and uploading new files are paused/);
+      expect(memberWrites()).toHaveLength(0);
+    } finally { restore(); }
+  });
+
+  it("switch OFF (the default): the seat is added as before; the would-be refusal is logged with the route's name", async () => {
+    delete process.env.SUBSCRIPTION_ENFORCE;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const res = await addingToCanceled();
+      expect(res.status).toBe(200);
+      expect(memberWrites().length).toBeGreaterThan(0);
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[create-user\] subscription gate would refuse org org-1 \(SUBSCRIPTION_ENFORCE off\): This workspace's subscription was canceled/));
+    } finally { warn.mockRestore(); restore(); }
+  });
+});

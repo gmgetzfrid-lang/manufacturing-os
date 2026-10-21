@@ -442,6 +442,68 @@ function inFlightOf(docs: readonly DocRow[], beingRead: ReadonlySet<string>): Se
     .map((d) => d.id));
 }
 
+/** GOV-9 criterion 4 (intelligence Round G I-26): the pages an AI model
+ *  transcribed (knowledge_chunks.source 'vision', 20261122), per document —
+ *  a title block read off one is a reading, never the sheet's identity. Only
+ *  documents that counted an AI-vision page (vision_pages > 0) are read. Any
+ *  read that fails or is cut — a missing column too: the document counted
+ *  vision pages but which ones is not recorded — fails toward the warning:
+ *  every page of that document reads as AI-read (`wholeDoc`). */
+async function readAiReadPages(docs: readonly DocRow[]): Promise<{ pages: Map<string, Set<number>>; wholeDoc: Set<string> }> {
+  const pages = new Map<string, Set<number>>();
+  const wholeDoc = new Set<string>();
+  const ids = docs.filter((d) => Number(d.vision_pages ?? 0) > 0).map((d) => d.id);
+  for (let i = 0; i < ids.length; i += DOC_SLICE) {
+    const slice = ids.slice(i, i + DOC_SLICE);
+    try {
+      const r = await readAllPages<{ document_id: string; page: number }>((from, to, withCount) => supabaseAdmin
+        .from("knowledge_chunks").select("document_id, page", withCount ? { count: "exact" } : undefined)
+        .in("document_id", slice).eq("source", "vision").order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<PageResult<{ document_id: string; page: number }>>, maxIndexRows());
+      if (r.error || r.capped) { for (const id of slice) wholeDoc.add(id); continue; }
+      for (const c of r.rows) {
+        const set = pages.get(c.document_id) ?? new Set<number>();
+        set.add(Number(c.page));
+        pages.set(c.document_id, set);
+      }
+    } catch {
+      for (const id of slice) wholeDoc.add(id);
+    }
+  }
+  return { pages, wholeDoc };
+}
+
+/** GOV-9 criterion 4: a declared number (a `self` row) is AI-read when every
+ *  page it stands on was transcribed by an AI model — a text layer that
+ *  declares it too confirms it. No page known: AI-read when the document
+ *  counted any AI-vision page (fails toward the warning). */
+function selfIsAiRead(
+  docId: string, tag: string, selfPages: ReadonlyMap<string, ReadonlyMap<string, number[]>>,
+  ai: { pages: ReadonlyMap<string, ReadonlySet<number>>; wholeDoc: ReadonlySet<string> }, visionPages: number,
+): boolean {
+  if (ai.wholeDoc.has(docId)) return true;
+  const on = selfPages.get(docId)?.get(tag) ?? [];
+  const read = ai.pages.get(docId);
+  if (on.length === 0) return visionPages > 0;
+  return !!read && on.every((p) => read.has(p));
+}
+
+/** GOV-9 criterion 4 (I-26 review, DEC-90): the sheet's declared identity
+ *  is AI-read when a `self` row that DERIVES it — the base itself, or a
+ *  sheet-addressed form of it (`<base>-SHn`) — was read only off an AI
+ *  transcription. Any other `self` row on the sheet (an unrelated number a
+ *  vision page carries) says nothing about the identity and never marks it. */
+function identityIsAiRead(
+  docId: string, tags: readonly string[], base: string | null,
+  selfPages: ReadonlyMap<string, ReadonlyMap<string, number[]>>,
+  ai: { pages: ReadonlyMap<string, ReadonlySet<number>>; wholeDoc: ReadonlySet<string> }, visionPages: number,
+): boolean {
+  if (!base) return false;
+  return tags
+    .filter((t) => t === base || t.replace(/-SH\d+$/, "") === base)
+    .some((t) => selfIsAiRead(docId, t, selfPages, ai, visionPages));
+}
+
 /** Index maps the census, audit and readout share. */
 function indexMaps(index: IndexRead) {
   const selfByDoc = new Map<string, string[]>();
@@ -633,6 +695,7 @@ export async function GET(req: NextRequest) {
   for (const o of index.opc) cover(o.document_id, [o.page]);
   const indexUnread = new Set(index.unread);
 
+  const aiRead = await readAiReadPages(docs);
   const sheets = docs.map((d) => {
     const st = text.stats.get(d.id) ?? { chunks: 0, chars: 0, lower: 0, upper: 0 };
     const tags = tagsByDoc.get(d.id) ?? 0;
@@ -657,6 +720,10 @@ export async function GET(req: NextRequest) {
         || (letters > 0 && st.lower / letters <= DRAWING_MAX_LOWERCASE_RATIO) ? "drawing"
       : text.charsKnown ? "prose" : "unknown";
     const identity = declaredSheetIdentity(selfByDoc.get(d.id) ?? []);
+    // GOV-9 criterion 4: a number declared only through an AI model's
+    // transcription of the title block is AI-read, unconfirmed — never shown
+    // as the sheet's identity.
+    const declaredAiRead = identityIsAiRead(d.id, selfByDoc.get(d.id) ?? [], identity.base, selfPages, aiRead, visionPages);
     // An SHX export, by what it gave (DWG-7): thin text, nothing but its own
     // title block's number, no references to OTHER drawings. Only such a
     // sheet is worth the SHX advice — a legend, cover or index sheet of a
@@ -700,6 +767,7 @@ export async function GET(req: NextRequest) {
       declared: identity.base
         ? (identity.sheetsDeclared > 1 ? `${identity.base} (${identity.sheetsDeclared} sh)` : identity.base)
         : null,
+      ...(declaredAiRead ? { declaredAiRead: true } : {}),
       // Parked (ING-6 / DEC-58): which pages wait on AI vision, and why.
       waiting: d.status !== "error" && !accepted && (parked || failedPages.length > 0)
         ? { pages: failedPages, reason: d.error ?? null, retryAfter: d.vision_retry_after ?? null }
@@ -712,6 +780,16 @@ export async function GET(req: NextRequest) {
     };
   }).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 
+  // GOV-9 criterion 4: the title blocks read only off an AI transcription.
+  const aiDeclared = sheets.filter((s) => "declaredAiRead" in s && s.declaredAiRead);
+  if (aiDeclared.length > 0) {
+    suggestions.push(
+      `${aiDeclared.length} sheet(s) declare their drawing number only through an AI model's transcription of the title block ` +
+      `(${aiDeclared.slice(0, 4).map((s) => `${s.name} ≡ ${s.declared}`).join("; ")}${aiDeclared.length > 4 ? "; …" : ""}). ` +
+      "Those numbers are AI-read and unconfirmed — a reading, not the sheet's identity: the audit below matches references " +
+      "to them as read, so check each against the drawing before relying on what the audit says about it.",
+    );
+  }
   const drawingNoTags = sheets.filter((s) => s.looksLike === "drawing");
   const proseNoTags = sheets.filter((s) => s.looksLike === "prose");
   const shxNoTags = sheets.filter((s) => s.shxLike);
@@ -1276,6 +1354,16 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
 
   const nameById = new Map(docs.map((d) => [d.id, d.name]));
   const { selfByDoc, selfPages, refsByDoc } = indexMaps(index);
+  // GOV-9 criterion 4: the sheet numbers this record files under that were
+  // read only off an AI transcription of a title block — said with the
+  // result (AI-read, unconfirmed), never presented as the sheet's identity.
+  const aiRead = await readAiReadPages(docs);
+  const identityAiRead = docs
+    .filter((d) => {
+      const tags = selfByDoc.get(d.id) ?? [];
+      return identityIsAiRead(d.id, tags, declaredSheetIdentity(tags).base, selfPages, aiRead, Number(d.vision_pages ?? 0));
+    })
+    .map((d) => declaredSheetIdentity(selfByDoc.get(d.id) ?? []).base as string);
   // A sheet not read whole is no evidence of what it lacks (review fix pass
   // 4): what is not found on it is unchecked, never a defect of the sheet
   // that points at it.
@@ -1615,6 +1703,8 @@ async function recordAudit(orgId: string, libraryId: string, userId: string) {
     // DWG-13: what was NOT re-audited, and why.
     alreadyRecorded,
     notRecorded,
+    // GOV-9 criterion 4: numbers read only off an AI transcription (unconfirmed).
+    ...(identityAiRead.length > 0 ? { identityAiRead: [...new Set(identityAiRead)].sort() } : {}),
     // Stored verdicts left as they are: one a computation would lower
     // (keptStored — a provisional one is written back as what it settled,
     // its marker dropped: review fix pass 10), and one a computation differs

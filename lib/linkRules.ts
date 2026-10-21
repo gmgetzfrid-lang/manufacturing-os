@@ -42,8 +42,21 @@ export interface LinkRule {
   disabled_reason?: string | null;
 }
 
-const missing = (e: { code?: string; message?: string } | null) =>
-  !!e && (e.code === "42P01" || /does not exist/i.test(e.message ?? ""));
+/** A pre-migration database: the TABLE is missing — never a missing COLUMN
+ *  (42703, "column … does not exist"), which is a real error and is shown,
+ *  never read as "not installed" (IRLS-12's residual; the same test as
+ *  lib/processFlows.ts missingTable). */
+const missing = (e: { code?: string; message?: string } | null): boolean => {
+  // 42703 / PGRST204 is a missing COLUMN — on an INSERT / UPDATE its text is
+  // 'column "x" of relation "y" does not exist', which the relation test
+  // below would otherwise match (IRLS-12's residual: 42P01 only, never 42703).
+  if (!e || e.code === "42703" || e.code === "PGRST204") return false;
+  const m = e.message ?? "";
+  if (/column "?[\w.]+"? of relation/i.test(m)) return false;
+  return e.code === "42P01" || e.code === "PGRST205"
+    || /relation "?[\w.]+"? does not exist/i.test(m)
+    || /could not find the table/i.test(m);
+};
 
 /** A column this database does not have yet: 20261125 adds share_requested,
  *  shared_by, shared_at and disabled_reason, and PostgREST answers PGRST204

@@ -120,7 +120,10 @@ describe("recallRetiredDocument (DIST-1)", () => {
     // no recall (nobody holds a copy) and no recall audit row — only PROD-17's watcher FYI (N15)
     expect(state.emits.filter((x) => x.category === "recall")).toHaveLength(0);
     expect(state.emits).toHaveLength(1);
-    expect(state.audits).toHaveLength(0);
+    // DIST-16 done-when 2 (document-control P28, the integrator's fix pass):
+    // the FYI is on the record — one watchers-only row naming nobody
+    expect(state.audits).toHaveLength(1);
+    expect(state.audits[0]).toMatchObject({ type: "DISTRIBUTION_RECALL", documentId: "d1", details: { retirement: true, newStatus: "Void", recipientCount: 0, recipients: [], watchersOnly: true } });
   });
 
   it("PROD-17 (notifications N15): the document's followers are told it was retired, in a watcher's words, minus the copy holders the recall tells", async () => {

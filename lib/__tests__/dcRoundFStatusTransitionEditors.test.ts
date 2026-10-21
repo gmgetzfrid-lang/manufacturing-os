@@ -222,6 +222,8 @@ describe("REV-18 — the bulk editor", () => {
     await open([DOCS[4]]);
     // (P15 / VFY-20: "IFC" is no longer offered — Issued → Archived is the not-an-issue change here.)
     await act(async () => setValue(labelled("New value") as HTMLSelectElement, "Archived"));
+    // REV-31 (document-control P28, the integrator's fix pass at the merge): a change to Archived asks one reason
+    await act(async () => setValue(labelled("Reason for archiving") as HTMLInputElement, "tidy"));
     await click(button("Apply to 1"));
     await tick();
     const items = Array.from(host.querySelectorAll('[data-testid="bulk-refused-rows"] li')).map((li) => li.textContent);

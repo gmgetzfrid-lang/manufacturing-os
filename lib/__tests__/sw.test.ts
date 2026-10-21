@@ -1025,7 +1025,10 @@ describe("lib/swSession — the page's side of the contract", () => {
       "components/navigation/Sidebar.tsx",
       "app/(protected)/profile/page.tsx",
       "app/(protected)/layout.tsx",
-      "components/subscription/SubscriptionGate.tsx",
+      // (components/subscription/SubscriptionGate.tsx signed out from its
+      // full-page curtain until admin-and-org Round G P5's review fix made it
+      // a strip above the page; it has no sign-out of its own now — the
+      // census below still holds it to the one helper if it ever does)
     ]) {
       const s = src(p);
       expect(s, p).toMatch(/from "@\/lib\/swSession"|from '@\/lib\/swSession'/);

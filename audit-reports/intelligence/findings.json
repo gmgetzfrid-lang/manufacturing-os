@@ -25,17 +25,17 @@
     "audit-reports/intelligence/21-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 275,
-    "gaps": 15,
+    "findings": 277,
+    "gaps": 16,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 59,
-      "MEDIUM": 151,
-      "LOW": 56
+      "MEDIUM": 152,
+      "LOW": 57
     },
     "by_status": {
-      "RESOLVED": 244,
-      "OPEN": 23,
+      "RESOLVED": 249,
+      "OPEN": 20,
       "RESOLVED (2026-10-14, by the integrator's ruling at the I-17 integrator fix pass — done-when 3 met as narrowed under DEC-90; PASTE pending: `20261128`, unchanged — until it is pasted the live registry keeps 20261045's overlays and DELETE stays with the writer tier)": 1,
       "REFUTED": 2,
       "WONTFIX": 3,
@@ -330,7 +330,7 @@
       "id": "AREA-4",
       "title": "Owner question 5, answered: a P&ID given to an area never populates that area's equipment — the Bridge aborts before creating a single asset unless a controller first maps a metadata column on the source library, from a modal the Operating Areas page cannot reach",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3554,7 +3554,7 @@
       "id": "GOV-9",
       "title": "AI page transcriptions are cited to the reader as verbatim quotes from the controlled drawing, with no per-citation provenance",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -5603,6 +5603,30 @@
       "report": "audit-reports/intelligence/20-prompts.md"
     },
     {
+      "id": "PR-14",
+      "title": "Model arithmetic outside the substitution step: an answer never marked arithmetic, or one saved before I-25, still shows the model's number",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by the rule's own scope: each shape below returns unchanged from `withholdModelResults` and `presentComputedResults` on branch `fleet/I-33-calc-evaluator`)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/knowledgeAskGuards.ts",
+        "app/api/knowledge/ask/route.ts",
+        "app/(protected)/knowledge/[id]/page.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial",
+      "challenges": [
+        "adversarial"
+      ],
+      "refuted": false,
+      "summary": "PR-13's, unchanged: an engineer asks for a hydrotest pressure without typing values; the model ignores the protocol and answers \"The factor is 1.5 [1]. For your vessel the test pressure is 428 psig.\" — no Substituted line, nothing marked, 428 psig shown and stored with no label.",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/20-prompts.md"
+    },
+    {
       "id": "SEM-1",
       "title": "A library embedded under two models silently loses half its corpus, and which half is nondeterministic",
       "severity": "MEDIUM",
@@ -6002,7 +6026,7 @@
       "id": "AREA-12",
       "title": "The shape wizard's document ↔ equipment link takes a 23505 for \"already linked\" and never adopts the drawing's row",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -6473,6 +6497,32 @@
       "summary": "The owner asks for \"which equipment is on which sheet\" on the map. The rows already exist — tag, page, x, y, per document — and the graph can never draw them, because the only consumer able to read them is a server route. Any attempt to add a sheet edge type to buildOrgGraph returns an empty result set with no error (PostgREST reports a permission failure that optional() at orgGraph.ts:152 would s",
       "area": "intelligence",
       "report": "audit-reports/intelligence/07-graph-model.md"
+    },
+    {
+      "id": "GOV-16",
+      "title": "An adopted pair's sheet address reads as fact on ⌘K and in the coverage report",
+      "severity": "LOW",
+      "status": "RESOLVED",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading, on `a21c718`)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/search.ts:180",
+        "lib/globalSearch.ts:105",
+        "lib/bridgeCoverage.ts:130",
+        "components/assets/CoverageReport.tsx:30",
+        "lib/equipmentBridgeServer.ts:256-259"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "The sweep reads P-101 on PID-1, \"PID-1 SHT 4\", off an AI transcription. A controller links P-101 to PID-1 from the registry drawer: a 23505, then an adopt. ⌘K for P-101 now says \"appears on PID-1 SHT 4\", with no mark, where the graph and the hub say it is unconfirmed.",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/04-ai-governance.md"
     },
     {
       "id": "GPV-4",
@@ -7300,7 +7350,7 @@
       "id": "WIRE-8",
       "title": "Transmittal↔document and ticket↔document are unindexed JSONB scans, and the ticket link is written in two incompatible shapes",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -7565,6 +7615,17 @@
       "verdict": null,
       "actionable": true,
       "effort": "M",
+      "depends_on": [],
+      "related": [],
+      "report": "audit-reports/intelligence/90-gap-register.md"
+    },
+    {
+      "id": "GAP-316",
+      "title": "One view of how an asset came to be believed",
+      "kind": "gap",
+      "verdict": null,
+      "actionable": true,
+      "effort": null,
       "depends_on": [],
       "related": [],
       "report": "audit-reports/intelligence/90-gap-register.md"

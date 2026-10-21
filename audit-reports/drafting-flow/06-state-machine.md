@@ -353,6 +353,8 @@ app/api/verify-ticket/route.ts:82-83 (verdict from deliverable_rev alone) —
 
 **Ruled by the integrator at the DF-P12 merge, 2026-10-20 (DEC-90).** (R2) `issuedMoreThanOnce` counts only PROVEN issue lines — those at or after `tickets.history_guarded_from`; with no index (before `20261221` is pasted, or on a row not yet stamped) it never fires, so a member-appended duplicate line can never grey out a current deliverable. Safe for `LEAK-7` (b) because ruling R1 (`LEAK-7`) already answers those rows by DF-P10's no-rev rule. The other two pre-paste demotions are RATIFIED as fail-safe and kept: the `CLOSED` issued-label rule (it reads the server-written `revision_count`) and the `?a=` identity check (it only demotes). So before the paste exactly two DF-P12 demotions act, and none can be driven by member-written history. Code: `lib/verifyTicketVerdict.ts` `issuedMoreThanOnce(history, revisionCount, rev, guardedFrom)` and its call in `ticketVerdict` (the `!proven` condition dropped: two proven lines for one label demote whatever else is proven). Tests: `lib/__tests__/dfRoundG_P12_deliverable.test.ts` "R2 (the integrator's ruling at the DF-P12 merge, DEC-90) — …" (i)–(iii), and the review-fix-2 and identity pins re-pinned to the ruling. Server-minted attachment ids (`SM-15`) are allocated to drafting-flow DF-P15 DELIVERABLE PAGE WIRING (allocated by the integrator at the DF-P12 merge).
 
+*Cross-note (2026-10-20, drafting-flow Round G, DF-P15 — `SM-15` done-when 3):* the file's identity on the QR (`?a=`, done-when 3 above) is now unique on a ticket for every file appended since DF-P15: the workflow route mints every new attachment's id on the server and never keeps a client's (`SM-15`, RESOLVED). An id a hostile client duplicated before that deploy stays duplicated and keeps answering "cannot confirm" (fail-safe), as before.
+
 ---
 
 <a id="sm-6"></a>
@@ -942,7 +944,7 @@ if (action.requiresFile) {
 ## SM-15 · A ticket file's `id` is the client's when it sends one, so a participant can make the printed file's identity ambiguous and grey out every scan of the current deliverable
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P15 DELIVERABLE PAGE WIRING (allocated by the integrator at the DF-P12 merge) — the workflow route mints a ticket file's id on the server (`crypto.randomUUID()`) for any new attachment, and never keeps a client id already on the ticket. Ruled by the integrator at the DF-P12 merge, 2026-10-20 (DEC-90); opened by drafting-flow Round G DF-P12's review fix pass, 2026-10-14 (DEC-31).
 - **Verification:** CONFIRMED by reading on DF-P12's branch (not exercised against a live database).
 - **Locations:** `app/api/tickets/workflow-action/route.ts:208` (`vetTicketAttachment`: `id: typeof a.id === "string" && a.id ? a.id : crypto.randomUUID()`), `lib/verifyTicketVerdict.ts:324` (`printedFileConfirmed`: `named.length !== 1` → not confirmed), `app/api/tickets/copy/route.ts:184` (`named.length !== 1` → 404)
@@ -958,13 +960,24 @@ if (action.requiresFile) {
 - [ ] A route test: an attachment posted with the id of a file already on the ticket does not produce a second attachment carrying that id
 - [ ] `SM-5`'s Resolution and `DEC-110` rationale 4 then say the identity is unique on a ticket
 
+**Resolution (2026-10-20, drafting-flow Round G).** DF-P15 DELIVERABLE PAGE WIRING, as ruled (`DEC-90` ruling (4)). Reproduced on `0041bd8`: `vetTicketAttachment` kept the client's `id` (`id: typeof a.id === "string" && a.id ? a.id : crypto.randomUUID()`, `app/api/tickets/workflow-action/route.ts:216` on the base) — an `attach_file` carrying the current Final's id appended a second attachment with that id.
+- `app/api/tickets/workflow-action/route.ts` `vetTicketAttachment` (:224) mints the id of every entry the route appends (`attach_file`'s `attachment`, `submit_final`'s `finalAttachment`, a `redlineAttachment`) with `crypto.randomUUID()`, always — never the client's, whether or not it is already on the ticket. Every attachment already on the ticket is untouched (its id included): the route only appends. The audit row names the file by the id it was stored under. No caller depended on its own id: the page mints one per upload and never reads it back (`app/(protected)/requests/[id]/page.tsx` `handleFileUpload`, `handleIFCUpload`, the redline), and no other caller posts files to this route.
+- Tests: `lib/__tests__/dfRoundG_P15_routes.test.ts` "SM-15 — …" (an attachment posted with the current Final's id: the Final keeps its id, the new entry gets a server UUID, exactly one attachment carries "f-1", the audit row names the new id — fails on the base; a client id new to the ticket is not kept either, and a file with no id gets one as before; REGRESSION: the vetting is unchanged). Four existing pins that asserted the client's id was kept were updated to the server-minted one (`dfRoundG_P0.test.ts` LEAK-8 / SM-13, `dfRoundG_P1_rails.test.ts` AUTHZ-11 ×2, `sweepRoundE_A.test.ts` WF-9 — now found by key).
+
+**Done-when.**
+- ✓ `vetTicketAttachment` mints the id on the server for every file it appends (stronger than "not already listed by its key": a re-sent listed key is a new entry and gets a new id too, so no appended entry can share an id).
+- ✓ A route test: an attachment posted with the id of a file already on the ticket does not produce a second attachment carrying that id.
+- ✓ `SM-5`'s record and `DEC-110` rationale 4 now say the identity is unique on a ticket for every file appended since DF-P15 (cross-note on `SM-5` below its ruling; `DEC-110` Landed line).
+
+**Scope / residual.** An id a hostile client already duplicated BEFORE this deploy stays duplicated (no data repair: rewriting a file's id would break the `?a=` of every print already made of it); such a file scans "cannot confirm" and the page keeps its browser copy path, said (`EVID-16`'s `unaddressable`) — fail-safe, never green, never mis-issued. No owner needed.
+
 ---
 
 <a id="sm-16"></a>
 ## SM-16 · A reopen clears a request's outcome but keeps the reason recorded with it, so the old reason rides along to however the request ends next
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P15 DELIVERABLE PAGE WIRING — by the integrator at the DF-P16 merge, 2026-10-20 (it holds the workflow route next). *Was:* proposed — drafting-flow, the next package that holds `app/api/tickets/workflow-action/route.ts` and `lib/ticketTransitions.ts` (the integrator assigns, `DEC-31`: a remainder is a new id with an owner). Opened by drafting-flow Round G DF-P16's review fix pass, 2026-10-20, from the package reviewer's finding; both files are other packages' in this round, so it is recorded here, not fixed.
 - **Verification:** CONFIRMED by reading (not exercised against a live database).
 - **Independently verified:** — opened 2026-10-20 by DF-P16's review fix pass from the package reviewer's finding; not yet challenged by a second party.
@@ -984,6 +997,40 @@ if (action.requiresFile) {
 **Done when.**
 - [ ] `reopen_ticket` removes `metadata.outcome_reason` on the same write that nulls `tickets.outcome`, with a route test (close with a reason → reopen → the row carries no `outcome_reason`)
 - [ ] Existing rows: a counts-only inventory of ended or open requests whose `metadata.outcome_reason.category` differs from `tickets.outcome` (no rewrite needed to stop a wrong credit — every reader in the app credits a reason only to the outcome it was recorded with; see the residual below)
+
+**Resolution (2026-10-20, drafting-flow Round G).** DF-P15 DELIVERABLE PAGE WIRING, as ruled (`DEC-90` ruling (5)). Reproduced on `0041bd8`: `reopen_ticket` nulled `tickets.outcome` (`lib/ticketTransitions.ts:532-543`) and the route wrote no `metadata`, so `metadata.outcome_reason` survived the reopen.
+- `app/api/tickets/workflow-action/route.ts` (:736–754): on `reopen_ticket`, when the row's `metadata` carries `outcome_reason`, the route removes it from `metadata` and writes the result on the SAME compare-and-set update that nulls `tickets.outcome` (one write); the reopen's history line keeps the old reason ("[The reason it had ended, cleared by the reopen: Withdrawn — Requester left the site]"). A reopen of a request with no recorded reason writes no `metadata` at all, as before. `lib/ticketTransitions.ts` is not edited (the route already merges the reason on the ending write; the clearing sits beside it).
+- Tests: `lib/__tests__/dfRoundG_P15_routes.test.ts` "SM-16 — …" (close with a reason → reopen → the row carries no `outcome_reason`, the rest of `metadata` stays, the history line keeps the reason, one write — fails on the base; REGRESSION: no reason → no `metadata` key on the update).
+- **Existing rows — counts-only inventory** (read-only; no row content; needs `tickets.outcome`, `20261195` — before that paste it refuses with 42703 and there is nothing to compare against):
+
+```sql
+SELECT check_name AS "check", NULL::boolean AS ok, n::text AS n FROM (
+  SELECT 1 AS ord, 'ended (CLOSED / CANCELED) with a reason whose category is not the outcome' AS check_name, count(*) AS n
+    FROM tickets
+   WHERE status IN ('CLOSED', 'CANCELED')
+     AND jsonb_typeof(metadata -> 'outcome_reason') = 'object'
+     AND (metadata -> 'outcome_reason' ->> 'category') IS DISTINCT FROM outcome
+  UNION ALL
+  SELECT 2, 'open (reopened) and still carrying a reason', count(*)
+    FROM tickets
+   WHERE status NOT IN ('CLOSED', 'CANCELED')
+     AND jsonb_typeof(metadata -> 'outcome_reason') = 'object'
+  UNION ALL
+  SELECT 3, 'ended with a reason that matches the outcome (fine)', count(*)
+    FROM tickets
+   WHERE status IN ('CLOSED', 'CANCELED')
+     AND jsonb_typeof(metadata -> 'outcome_reason') = 'object'
+     AND (metadata -> 'outcome_reason' ->> 'category') = outcome
+) q ORDER BY ord;
+```
+
+Exercised on a throwaway PostgreSQL 16.13 (deleted afterwards) against eight synthetic rows — a stale reason under `completed`, a reason under a NULL outcome (a force close naming none), a matching `duplicate`, a reopened row still carrying a reason, an empty `{}`, a NULL `metadata`, a non-object `outcome_reason`, a row with no reason: answered 2 / 1 / 1 as constructed; on a table without `outcome` it refused with 42703 (`column "outcome" does not exist`). Rows (1) and (2) need no rewrite to stop a wrong credit — every reader credits a reason only to the outcome it was recorded with (`components/requests/RequestOutcomes.tsx` `reasonForOutcome`, DF-P16) — and a row in (2) (reopened before DF-P15) keeps its stale reason until it ends again: an ending that names a reason overwrites it; one that names none leaves it, uncredited. For the integrator: run it at any time for the count; no paste follows from it.
+
+**Done-when.**
+- ✓ `reopen_ticket` removes `metadata.outcome_reason` on the same write that nulls `tickets.outcome`, with a route test (close with a reason → reopen → the row carries no `outcome_reason`).
+- ✓ Existing rows: the counts-only inventory above (ended rows whose reason's category differs from the outcome, and open rows still carrying a reason), exercised on PostgreSQL 16.
+
+**Scope / residual.** A row already in inventory (1) or (2) keeps its stored reason (the readers never credit it to another outcome); a cleanup rewrite is not needed for correctness and is not built. No owner needed.
 
 ---
 

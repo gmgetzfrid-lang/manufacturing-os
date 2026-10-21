@@ -1364,7 +1364,7 @@ describe("VFY-19 — the snapshot records the sheets the print left out, with a 
 
   it("the packages page records the gate's and the builder's left-out sheets on the print", () => {
     const page = src("app/(protected)/packages/page.tsx");
-    expect(page).toContain("buildCoverAfter: async (includedSheets, builderSkipped) => {");
+    expect(page).toContain("buildCoverAfter: async (includedSheets, builderSkipped, cover) => {");
     expect(page).toContain("leftOut: mergeLeftOut(assessment.skipped, builderSkipped).flatMap((s) =>");
     // the members are read FRESH by package id right before the gate (PKG-7 /
     // VFY-19 — never the list loaded earlier, which may be stale or short)

@@ -118,3 +118,127 @@ export async function settleSheetTokens(input: {
     return false;
   }
 }
+
+/** What linking a token print to its cover's print came to (public-surfaces
+ *  PS-P10; PHYS-19 c3). `linked: false` with ok — database update 20261240
+ *  is not pasted yet: the pack prints as today, unlinked. `refused` — the
+ *  server's own cover-mismatch refusal (a 400 carrying `refused: true, code:
+ *  "cover_mismatch"`), the only answer that stops the print; any other
+ *  failure, a bare 400 included (a malformed body, an older route's
+ *  "Unknown action"), is not a refusal. */
+export type SheetTokenCoverLinkResult =
+  | { ok: true; linked: boolean }
+  | { ok: false; refused: boolean; status: number; error: string };
+
+/** Link a work-package pack's token print to the work_package_prints id of
+ *  the cover printed with it, by key (the server checks the cover: same
+ *  workspace, printed by this member, listing exactly `printedDocumentIds` at
+ *  the minted versions). Called by the pack path BEFORE the download and
+ *  awaited — the marked cover_mismatch refusal stops the print; any other
+ *  failure, after one retry, lets the pack print unlinked (lib/docPack.ts).
+ *  Never throws. */
+export async function linkSheetTokensToCover(input: {
+  orgId: string;
+  printId: string;
+  coverPrintId: string;
+  printedDocumentIds: string[];
+}): Promise<SheetTokenCoverLinkResult> {
+  try {
+    const token = await bearer();
+    if (!token) return { ok: false, refused: false, status: 401, error: "You are signed out — sign in and try again." };
+    const res = await postTokenRoute(token, {
+      action: "link", orgId: input.orgId, printId: input.printId, coverPrintId: input.coverPrintId, printed: input.printedDocumentIds,
+    });
+    const body = res.body as { linked?: boolean; available?: boolean; refused?: boolean; code?: string; error?: string } | null;
+    if (res.ok && body?.linked === true) return { ok: true, linked: true };
+    if (res.ok && body?.available === false) return { ok: true, linked: false };
+    const refused = res.status === 400 && body?.refused === true && body?.code === "cover_mismatch";
+    return { ok: false, refused, status: res.status, error: body?.error ?? `HTTP ${res.status}` };
+  } catch (e) {
+    return { ok: false, refused: false, status: 0, error: (e as Error)?.message || "network" };
+  }
+}
+
+/** What a controller's recall of a printed pack came to (public-surfaces
+ *  PS-P10; intelligence DACL-8 residual (c)). */
+export type SheetPrintRecallResult =
+  | { ok: true; voided: number; alreadyVoid: number }
+  | { ok: false; unavailable: boolean; status: number; error: string };
+
+/** Recall a printed work-package pack by its cover's print id: every live
+ *  sheet token of that print is voided ('recalled'), so each of its sheets
+ *  scans "PRINT RECALLED — DO NOT USE" and its cover reads "PACK RECALLED"
+ *  (red, never green — public-surfaces PHYS-20). Admin / Document
+ *  Control only (the server checks the role collection); the reason is
+ *  required and is written to the audit row first. Never throws. */
+export async function recallSheetPrint(input: {
+  orgId: string;
+  coverPrintId: string;
+  reason: string;
+}): Promise<SheetPrintRecallResult> {
+  try {
+    const token = await bearer();
+    if (!token) return { ok: false, unavailable: false, status: 401, error: "You are signed out — sign in and try again." };
+    const res = await postTokenRoute(token, { action: "void", orgId: input.orgId, coverPrintId: input.coverPrintId, reason: input.reason });
+    const body = res.body as { recalled?: boolean; voided?: number; alreadyVoid?: number; available?: boolean; error?: string } | null;
+    if (res.ok && body?.recalled === true) return { ok: true, voided: body.voided ?? 0, alreadyVoid: body.alreadyVoid ?? 0 };
+    return {
+      ok: false,
+      unavailable: body?.available === false,
+      status: res.status,
+      error: body?.error ?? `The recall was not recorded (HTTP ${res.status}) — nothing was changed.`,
+    };
+  } catch (e) {
+    return { ok: false, unavailable: false, status: 0, error: `The recall could not be sent (${(e as Error)?.message || "network"}) — nothing was changed.` };
+  }
+}
+
+/** One work-package print's per-print code state, as the print history shows
+ *  it (public-surfaces PHYS-20 limb 3; the route's `history` action):
+ *  recalled (when, by whom), stopped before its download, linked, or
+ *  unlinked (no code linked to it — the history cannot say whether paper
+ *  left, and a recall by its cover cannot reach it). */
+export type SheetPrintCodeState =
+  | { state: "recalled"; recalledAt: string | null; recalledBy: string | null }
+  | { state: "stopped" }
+  | { state: "linked" }
+  | { state: "unlinked" };
+
+/** What reading the print history's code states came to. `available: false`
+ *  — database update 20261240 is not pasted: no code is linked to any print.
+ *  `ok: false` — not read (the history then shows no state and leaves the
+ *  server to decide a recall). */
+export type SheetPrintStatesResult =
+  | { ok: true; available: true; prints: Map<string, SheetPrintCodeState> }
+  | { ok: true; available: false }
+  | { ok: false; error: string };
+
+const CODE_STATES = new Set(["recalled", "stopped", "linked", "unlinked"]);
+
+/** Read the code state of each of these work-package prints (their
+ *  work_package_prints ids). Never throws. */
+export async function readSheetPrintStates(input: { orgId: string; coverPrintIds: string[] }): Promise<SheetPrintStatesResult> {
+  if (input.coverPrintIds.length === 0) return { ok: true, available: true, prints: new Map() };
+  try {
+    const token = await bearer();
+    if (!token) return { ok: false, error: "signed out" };
+    const res = await postTokenRoute(token, { action: "history", orgId: input.orgId, coverPrintIds: input.coverPrintIds });
+    const body = res.body as { available?: boolean; prints?: Record<string, Record<string, unknown>>; error?: string } | null;
+    if (!res.ok || !body) return { ok: false, error: body?.error ?? `HTTP ${res.status}` };
+    if (body.available === false) return { ok: true, available: false };
+    if (body.available !== true || !body.prints || typeof body.prints !== "object") return { ok: false, error: "unexpected answer" };
+    const prints = new Map<string, SheetPrintCodeState>();
+    for (const [id, p] of Object.entries(body.prints)) {
+      if (!p || !CODE_STATES.has(String(p.state))) continue;
+      prints.set(
+        id.toLowerCase(),
+        p.state === "recalled"
+          ? { state: "recalled", recalledAt: typeof p.recalledAt === "string" ? p.recalledAt : null, recalledBy: typeof p.recalledBy === "string" ? p.recalledBy : null }
+          : ({ state: p.state } as SheetPrintCodeState),
+      );
+    }
+    return { ok: true, available: true, prints };
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message || "network" };
+  }
+}

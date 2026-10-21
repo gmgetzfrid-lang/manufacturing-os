@@ -1,0 +1,52 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- intelligence Round G (I-26) — WIRE-8 done-when 3: an index for the asset
+-- hub's documents.asset_tags containment read.
+--
+-- The asset hub (app/(protected)/assets/[tag]/page.tsx) reads the relation
+-- first (document_assets) and keeps one more read beside it, the only answer
+-- for an unregistered tag: documents WHERE org_id = … AND asset_tags @>
+-- '[{"tag": …}]' (PostgREST .contains). Until this file that containment
+-- had no index and scanned every document of the workspace on every open.
+-- This GIN (jsonb_path_ops) index serves @> on asset_tags; the hub's read
+-- is unchanged and the planner uses the index for it.
+--
+-- WHY THIS FILE IS ONE STATEMENT AND NOTHING ELSE. documents is the most
+-- written table (uploads, check-ins, publishes, every metadata save). A
+-- plain CREATE INDEX holds a SHARE lock and every write to documents waits
+-- for the whole build. CREATE INDEX CONCURRENTLY does not block writes, but
+-- it cannot run inside a transaction block — and the Supabase SQL editor
+-- sends a paste of several statements as one implicit transaction. So this
+-- file holds the one statement only (comments are not statements): no
+-- BEGIN/COMMIT, no inventory, no final SELECT. It is its own paste.
+--
+-- HOW TO APPLY: paste this whole file into the Supabase SQL editor and run
+-- it, alone. It returns no rows ("Success. No rows returned"). It is
+-- idempotent (IF NOT EXISTS). Then, as a SEPARATE paste, run the read-only
+-- check below; it must answer one row with ok = true.
+--
+--   SELECT 'documents_asset_tags_gin exists, is valid and ready, and is GIN (jsonb_path_ops) on asset_tags' AS "check",
+--          EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+--                   WHERE c.relname = 'documents_asset_tags_gin'
+--                     AND i.indrelid = 'public.documents'::regclass
+--                     AND i.indisvalid AND i.indisready
+--                     AND pg_get_indexdef(i.indexrelid) LIKE '%USING gin (asset_tags jsonb_path_ops)%') AS ok,
+--          NULL::text AS n;
+--
+-- IF THE BUILD FAILS (a cancelled paste, a lost connection, a deadlock): a
+-- failed CONCURRENTLY build leaves an INVALID index behind under the same
+-- name, and IF NOT EXISTS would then skip it forever while the check above
+-- reads false. Drop it, then paste this file again:
+--
+--   DROP INDEX CONCURRENTLY IF EXISTS documents_asset_tags_gin;
+--
+-- (also one statement, its own paste). An invalid index is never used by
+-- the planner, so nothing reads wrong in between; the hub's read is just
+-- not faster.
+--
+-- WIDENS nothing; NARROWS nothing; no policy, grant, function, trigger or
+-- data changes. Paste order: any time, independent of every other file
+-- (documents.asset_tags exists since 20260609). Deploy order: none — no app
+-- code waits on it. Before the paste the hub's read scans, as it always
+-- has; after it, the same read uses the index.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE INDEX CONCURRENTLY IF NOT EXISTS documents_asset_tags_gin ON documents USING GIN (asset_tags jsonb_path_ops);

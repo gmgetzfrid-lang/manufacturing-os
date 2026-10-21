@@ -29,6 +29,9 @@ import { tagKey } from "@/lib/codebook";
 import { assetSignInHref, watchForNoSession, type NoSessionAnswer } from "@/lib/assetSignIn";
 import AliasPanel from "@/components/assets/AliasPanel";
 import MentionsPanel from "@/components/assets/MentionsPanel";
+import { ScheduledWorkPanel } from "@/components/assets/AreaWorkPanel";
+import AssetProvenancePanel from "@/components/assets/AssetProvenancePanel";
+import { sheetMarkOf, sheetReadingOf } from "@/lib/relationProvenance";
 import { stateStyle, documentState } from "@/lib/stateColors";
 
 interface HubDoc {
@@ -48,6 +51,9 @@ interface HubDoc {
      *  the relation alone cannot say so. */
     personTagged: boolean;
     model: string | null;           // the AI model, when a page was transcribed
+    /** I-32 (GOV-9 criterion 4): the mark the sheet address carries — one
+     *  reading with the graph and the provenance view (lib/relationProvenance). */
+    sheetMark: string | null;
     sourceRevision: string | null;  // the revision it was read from
     vanished: boolean;              // GAP-309: not read on the current revision
     superseded: boolean;            // read from an earlier revision
@@ -267,6 +273,7 @@ export default function AssetHubPage() {
             machine: (l.asserted_by ? l.asserted_by === "machine" : l.source === "drawing") && !personTagged,
             personTagged,
             model: l.model ?? null,
+            sheetMark: sheetMarkOf(sheetReadingOf(l)),
             sourceRevision: l.source_revision ?? null,
             vanished: !!l.vanished_at,
             superseded: !!l.superseded_at,
@@ -458,8 +465,9 @@ export default function AssetHubPage() {
                     <span className="font-mono text-xs font-bold text-[var(--color-text)] truncate flex-1">{d.number}{d.title && d.title !== d.number ? <span className="font-sans font-normal text-[var(--color-text-muted)]"> — {d.title}</span> : ""}</span>
                     {/* GAP-301: the sheet the tag is on; GAP-303: who said so. */}
                     {/* GOV-9: a sheet address read off an AI transcription is unconfirmed — said here
-                        when no "AI-read" badge stands beside it. */}
-                    {d.link?.sheetLabel && <span className="text-[10px] font-bold font-mono text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded shrink-0">{d.link.sheetLabel}{d.link.model && !d.link.machine ? " (AI-read, unconfirmed)" : ""}</span>}
+                        when no "AI-read" badge stands beside it. I-32: so is the sweep's address on a
+                        person's link (adopted: the row no longer names the model). */}
+                    {d.link?.sheetLabel && <span className="text-[10px] font-bold font-mono text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded shrink-0">{d.link.sheetLabel}{d.link.sheetMark && !d.link.machine ? ` (${d.link.sheetMark})` : ""}</span>}
                     {d.link?.personTagged && d.link.source === "drawing" && (
                       <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded shrink-0"
                         title={`Tagged on this document by a person (its equipment tags). The equipment sweep also read it off the drawing${d.link.model ? ` from an AI transcription (${d.link.model})` : ""}${d.link.sourceRevision ? `, Rev ${d.link.sourceRevision}` : ""}.`}>
@@ -508,11 +516,25 @@ export default function AssetHubPage() {
           </div>
         )}
 
+        {/* GAP-303 acceptance 1 / GAP-316 (I-32): how we came to believe this —
+            every relation with who or what asserted it, read under the
+            viewer's own access. Closed until asked: the hub's load is
+            unchanged. */}
+        {asset?.id && activeOrgId && (
+          <AssetProvenancePanel orgId={activeOrgId} assetId={asset.id} tag={asset.tag || tag} />
+        )}
+
         {/* Every document that TALKS about this equipment, whether or not
             anyone remembered to tag it. Derived from the indexed text, with
             the sentence attached. */}
         {asset?.id && activeOrgId && (
           <MentionsPanel orgId={activeOrgId} assetId={asset.id} tag={tag} />
+        )}
+
+        {/* WIRE-7 (I-26): the open milestones whose location names this
+            equipment — scheduled work, on its page. */}
+        {asset?.id && activeOrgId && (
+          <ScheduledWorkPanel orgId={activeOrgId} asset={{ id: asset.id, tag: asset.tag || tag }} />
         )}
 
         {/* What people actually call it — nicknames, old tags, vendor names */}

@@ -46,8 +46,13 @@ import { isEffectiveOwnerOfDocument } from '@/lib/ownership';
 import { getMyTeamIds } from '@/lib/teams';
 import { handbackPreset, latestFinalAttachment, deliverableStateOf } from '@/lib/ticketHandback';
 import RevUpModal from '@/components/documents/RevUpModal';
+import PublishNewDocumentModal from '@/components/requests/PublishNewDocumentModal';
+import { findTicketNewDocumentVersion, newDocumentNotRecordedMessage, type TicketNewDocumentVersion } from '@/lib/ticketNewDocumentHandback';
+import TicketCopyRecallPanel from '@/components/requests/TicketCopyRecallPanel';
+import { canPutFirstRevisionInContainer } from '@/lib/revisions';
 import { publicOrigin } from '@/lib/publicOrigin';
 import { ticketCopyPlan, recordTicketCopy, type TicketCopyLiveFacts } from '@/lib/ticketDeliverableCopy';
+import { ticketFileCopyPath, takeTicketCopy, serverUnavailableNotice, BROWSER_PATH_NOTE, NON_PDF_PRINT_NOTE, type TicketCopyContext, type TicketCopyRequestChannel } from '@/lib/ticketCopyRequest';
 import { logAuditAction } from '@/lib/audit';
 // Code-split: the redline editor pulls react-pdf/pdfjs + fabric + pdf-lib, none
 // of which the request-detail page needs until the user actually opens markup.
@@ -644,6 +649,16 @@ function RedlineEditorMount({
 // =========================================================================================
 // SUB-COMPONENT: FILE VIEWER MODAL (With Protection)
 // =========================================================================================
+/** EVID-16 done-when 2 (DF-P15): the bearer the server copy route is called with. */
+const copyToken = async (): Promise<string | null> => {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token ?? null;
+  } catch {
+    return null;
+  }
+};
+
 const FileViewerModal = ({
   file,
   isOpen,
@@ -656,6 +671,7 @@ const FileViewerModal = ({
   archived,
   archiveId,
   liveTicket,
+  copyContext,
 }: {
   file: TicketAttachment | null;
   isOpen: boolean;
@@ -674,6 +690,10 @@ const FileViewerModal = ({
    *  file the page knows is superseded, or whose ticket is being re-worked,
    *  is confirmed before stamping and stamped as such. Never the QR's rev. */
   liveTicket?: TicketCopyLiveFacts | null;
+  /** EVID-16 done-when 2 (DF-P15): what decides whether the server copy
+   *  route can issue this file (lib/ticketCopyRequest.ts ticketFileCopyPath)
+   *  — the ticket's workspace, request number, requester and file list. */
+  copyContext?: Omit<TicketCopyContext, 'ticketRowId'> | null;
 }) => {
   const [showCompliance, setShowCompliance] = useState(false);
   // file.url is stored as the raw R2 storage path (orgs/<org>/tickets/...).
@@ -681,28 +701,78 @@ const FileViewerModal = ({
   // / img tags actually load. Without this they show "not found".
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const [resolveError, setResolveError] = useState<string | null>(null);
+  // EVID-16 done-when 2 (DF-P15): the PDF preview of a file the server can
+  // issue is the STAMPED server stream (POST /api/tickets/copy, channel
+  // "view" — recorded as a VIEW on the ticket's audit trail); `previewStamped`
+  // is set only then (false: the file could not be stamped, so the preview
+  // is the original, said). `serverNote`: the route said it cannot issue this
+  // file after all — the browser path, said.
+  const [previewStamped, setPreviewStamped] = useState<boolean | null>(null);
+  const [serverNote, setServerNote] = useState<string | null>(null);
+  // EVID-16 transient fallback (ruled by the integrator at the DF-P15 merge,
+  // 2026-10-20, DEC-90): the server copy was UNAVAILABLE for a print or
+  // download (not refused) — serverNote is then said as such.
+  const [serverUnavailable, setServerUnavailable] = useState(false);
+  // DF-P15 fix (review): the route refused the stamped preview for a
+  // TRANSIENT reason (a storage, membership or scope read failed) — the
+  // presigned inline frame shows the original, said; copies still go
+  // through the server (lib/ticketCopyRequest.ts takeTicketCopy).
+  const [previewFallbackNote, setPreviewFallbackNote] = useState<string | null>(null);
   const { userEmail, activeRole } = useRole();
+  const copyPath = file ? ticketFileCopyPath(file, { ...(copyContext ?? {}), ticketRowId: ticketRowId ?? null }) : null;
+  const viaServer = copyPath?.kind === 'server';
+  const fileIsPdf = !!file && (file.type?.includes('pdf') || file.name.toLowerCase().endsWith('.pdf'));
 
   useEffect(() => {
     // Archived tickets have had their attachment binaries shed to the cold
     // archive — don't try to sign a URL for a key that no longer exists.
-    if (!isOpen || !file?.url || archived) { setResolvedUrl(null); setResolveError(null); return; }
+    if (!isOpen || !file?.url || archived) { setResolvedUrl(null); setResolveError(null); setPreviewStamped(null); setServerNote(null); setServerUnavailable(false); setPreviewFallbackNote(null); return; }
     let alive = true;
+    let objectUrl: string | null = null;
     setResolvedUrl(null);
     setResolveError(null);
+    setPreviewStamped(null);
+    setServerNote(null);
+    setServerUnavailable(false);
+    setPreviewFallbackNote(null);
     // If the stored value already looks like a fully-qualified URL (legacy
     // attachments uploaded before the path-only fix), pass it through.
     if (/^https?:\/\//i.test(file.url)) { setResolvedUrl(file.url); return; }
-    // SEC-7 / DEC-49: this viewer frames the PDF preview — a reviewed inline caller.
-    getSignedUrlForPath(file.url, undefined, { inline: true })
-      .then((u) => { if (alive) setResolvedUrl(u); })
-      .catch((e) => { if (alive) setResolveError((e as Error).message); });
-    return () => { alive = false; };
-  }, [isOpen, file?.url, archived]);
+    const presign = () => {
+      // SEC-7 / DEC-49: this viewer frames the PDF preview — a reviewed inline caller.
+      getSignedUrlForPath(file.url, undefined, { inline: true })
+        .then((u) => { if (alive) setResolvedUrl(u); })
+        .catch((e) => { if (alive) setResolveError((e as Error).message); });
+    };
+    if (viaServer && fileIsPdf && ticketRowId && file.id) {
+      void takeTicketCopy({
+        ticketRowId, attachmentId: file.id, channel: 'view', fallbackName: file.name,
+        getToken: copyToken, confirm: async () => true,
+      }).then((out) => {
+        if (!alive) return;
+        if (out.kind === 'file') {
+          objectUrl = URL.createObjectURL(out.blob);
+          setResolvedUrl(objectUrl);
+          setPreviewStamped(out.stamped);
+        } else if (out.kind === 'browser' && out.previewOnly) {
+          setPreviewFallbackNote(out.message);
+          presign();
+        } else if (out.kind === 'browser') {
+          setServerNote(out.message);
+          presign();
+        } else {
+          setResolveError(out.kind === 'refused' ? out.message : 'The preview was not shown.');
+        }
+      });
+    } else {
+      presign();
+    }
+    return () => { alive = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [isOpen, file?.url, file?.id, file?.name, archived, viaServer, fileIsPdf, ticketRowId]);
 
   if (!isOpen || !file) return null;
 
-  const isPdf = file.type?.includes('pdf') || file.name.toLowerCase().endsWith('.pdf');
+  const isPdf = fileIsPdf;
   const isImage = file.type?.includes('image') || file.name.match(/\.(jpeg|jpg|gif|png)$/i);
 
   // PHYS-2 / PHYS-9 / HAND-3: what this file's copy says — its OWN revision
@@ -733,17 +803,75 @@ const FileViewerModal = ({
     }
   };
 
+  // EVID-16 done-when 2 (DF-P15): a file the server can issue is copied
+  // through POST /api/tickets/copy — stamped and recorded in the request that
+  // issues its bytes; its questions (a superseded file, an unstampable one)
+  // are asked here and the answer sent back. The presigned URL is never used
+  // to copy it. A file the server cannot issue keeps the browser path below,
+  // and the viewer says so (BROWSER_PATH_NOTE / serverNote).
+  const serverCopy = async (channel: Exclude<TicketCopyRequestChannel, 'view'>) => {
+    if (!ticketRowId || !file.id) return { kind: 'browser' as const, message: BROWSER_PATH_NOTE.unaddressable };
+    return takeTicketCopy({
+      ticketRowId, attachmentId: file.id, channel, fallbackName: file.name,
+      getToken: copyToken,
+      confirm: (message) => appConfirm({ message, tone: "danger" }),
+    });
+  };
+
+  // DF-P15 fix: only a PDF prints from the server's stream. A hidden frame
+  // handed a non-PDF blob (application/octet-stream) makes the browser
+  // DOWNLOAD it rather than print it — so an image or other non-PDF file
+  // prints by the browser path (loaded from the file itself, recorded from
+  // the tab, as before DF-P15), and the viewer says so. Its download still
+  // goes through the server.
+  const printViaServer = viaServer && fileIsPdf;
   const handlePrint = async () => {
-    if (!resolvedUrl) { await appAlert({ message: 'Still loading file — try again in a moment.' }); return; }
+    if (!printViaServer) return browserPrint();
+    const out = await serverCopy("print");
+    if (out.kind === 'declined') return;
+    if (out.kind === 'browser') {
+      setServerNote(out.message);
+      setServerUnavailable(out.transient === true);
+      await appAlert({ message: out.transient ? serverUnavailableNotice(out.message) : `The server could not issue this file (${out.message}). It will be stamped and recorded from your browser instead.` });
+      // DF-P15 fix (review): a question the route already asked is not asked again.
+      return browserPrint({ standingConfirmed: out.acknowledged === true });
+    }
+    if (out.kind === 'refused') { await appAlert({ message: out.message, tone: "danger" }); return; }
+    const printUrl = URL.createObjectURL(out.blob);
+    const frame = document.createElement('iframe');
+    frame.style.display = 'none';
+    frame.src = printUrl;
+    document.body.appendChild(frame);
+    frame.onload = () => {
+      frame.contentWindow?.focus();
+      frame.contentWindow?.print();
+    };
+    setTimeout(() => {
+      document.body.removeChild(frame);
+      URL.revokeObjectURL(printUrl);
+    }, 60_000);
+  };
+
+  // The browser path (before DF-P15 every file's): the file is fetched from a
+  // presigned URL, stamped in the tab and recorded from the tab. Kept for a
+  // file the server cannot issue (lib/ticketCopyRequest.ts ticketFileCopyPath).
+  // A preview that is the server's stamped stream is never re-stamped here:
+  // the raw file is signed afresh.
+  const browserSourceUrl = async (): Promise<string> =>
+    (previewStamped === null ? resolvedUrl : null) || (/^https?:\/\//i.test(file.url) ? file.url : await getSignedUrlForPath(file.url));
+
+  const browserPrint = async (opts: { standingConfirmed?: boolean } = {}) => {
+    let sourceUrl: string;
+    try { sourceUrl = await browserSourceUrl(); } catch { await appAlert({ message: 'Still loading file — try again in a moment.' }); return; }
     // Print the STAMPED stream, never the raw file: watermark + rev footer +
     // the verify QR, exactly like a download. Paper is where copies escape.
-    let printUrl = resolvedUrl;
+    let printUrl = sourceUrl;
     let stamped = false;
     const plan = planFor("print");
-    if (!(await confirmStanding(plan))) return;
+    if (!opts.standingConfirmed && !(await confirmStanding(plan))) return;
     try {
       const { stampPdf } = await import("@/lib/stamping");
-      const blob = await stampPdf(resolvedUrl, {
+      const blob = await stampPdf(sourceUrl, {
         userLabel: userEmail?.split("@")[0] || userId || "USER",
         email: userEmail || undefined,
         timestamp: new Date(),
@@ -788,6 +916,36 @@ const FileViewerModal = ({
   };
 
   const performDownload = async () => {
+    if (!viaServer) return browserDownload();
+    let fallBack = false;
+    let standingConfirmed = false;
+    try {
+      const out = await serverCopy("download");
+      if (out.kind === 'declined') return;
+      if (out.kind === 'browser') {
+        setServerNote(out.message);
+        setServerUnavailable(out.transient === true);
+        await appAlert({ message: out.transient ? serverUnavailableNotice(out.message) : `The server could not issue this file (${out.message}). It will be stamped and recorded from your browser instead.` });
+        fallBack = true;
+        standingConfirmed = out.acknowledged === true;
+        return;
+      }
+      if (out.kind === 'refused') { await appAlert({ message: out.message, tone: "danger" }); return; }
+      const href = URL.createObjectURL(out.blob);
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = out.filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(href), 60_000);
+    } finally {
+      setShowCompliance(false);
+      if (fallBack) await browserDownload({ standingConfirmed });
+    }
+  };
+
+  const browserDownload = async (opts: { standingConfirmed?: boolean } = {}) => {
     const now = new Date();
     const expiresAt = file.type === "Draft"
       ? new Date(now.getTime() + 72 * 60 * 60 * 1000)
@@ -795,9 +953,9 @@ const FileViewerModal = ({
 
     let stamped = false;
     const plan = planFor("download");
-    if (!(await confirmStanding(plan))) { setShowCompliance(false); return; }
+    if (!opts.standingConfirmed && !(await confirmStanding(plan))) { setShowCompliance(false); return; }
     try {
-      const downloadUrl = resolvedUrl || (await getSignedUrlForPath(file.url));
+      const downloadUrl = await browserSourceUrl();
       // Every downloaded copy carries a QR that answers "is this still the
       // latest revision of this ticket's deliverable?" — so a copy a PM
       // handed out keeps warning for itself after a new revision lands.
@@ -824,7 +982,7 @@ const FileViewerModal = ({
         tone: "danger",
       });
       const link = document.createElement("a");
-      link.href = resolvedUrl || (await getSignedUrlForPath(file.url));
+      link.href = await browserSourceUrl();
       link.download = file.name;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
@@ -898,6 +1056,23 @@ const FileViewerModal = ({
           </div>
         </div>
         
+        {/* EVID-16 done-when 2 (DF-P15): a file that keeps the browser path says so,
+            and an unstamped server preview is marked. */}
+        {!archived && (serverNote || previewFallbackNote || copyPath?.kind === 'browser' || previewStamped === false || (viaServer && !printViaServer && file.type !== 'Draft')) && (
+          <div role="note" className="px-6 py-2 bg-amber-900/60 border-b border-amber-700 text-amber-100 text-xs relative z-50">
+            {previewStamped === false
+              ? 'Unstamped preview: the watermark / QR stamp could not be applied to this file, so this is the original. Treat it as uncontrolled.'
+              : previewFallbackNote && !serverNote
+                ? `Unstamped preview: the server could not show its stamped preview right now (${previewFallbackNote}), so this is the original from storage. Print and download still go through the server, stamped and recorded there.`
+              : serverNote && serverUnavailable
+                ? serverUnavailableNotice(serverNote)
+              : serverNote
+                ? `The server could not issue this file (${serverNote}). Its copies are stamped and recorded from your browser.`
+                : copyPath?.kind === 'browser' ? BROWSER_PATH_NOTE[copyPath.reason]
+                  : NON_PDF_PRINT_NOTE}
+          </div>
+        )}
+
         <div className="flex-1 overflow-hidden relative bg-slate-900/50 flex items-center justify-center p-8">
           {/* VISUAL PROTECTION LAYER */}
           {file.type === 'Draft' && <WatermarkOverlay />}
@@ -1102,6 +1277,23 @@ export default function TicketDetailView() {
   const [handbackFile, setHandbackFile] = useState<File | null>(null);
   const [handbackBusy, setHandbackBusy] = useState(false);
   const [canPublishSource, setCanPublishSource] = useState(false);
+  // DCW-4 (DF-P15): "Publish as a new document in <library>" — a request
+  // with a target library and no source document.
+  const [canPublishNew, setCanPublishNew] = useState(false);
+  const [targetLibraryName, setTargetLibraryName] = useState<string | null>(null);
+  const [newDocFile, setNewDocFile] = useState<File | null>(null);
+  const [newDocBusy, setNewDocBusy] = useState(false);
+  // DCW-4 (DF-P15 fix, on review): a new document that already carries this
+  // request but is not recorded on it (the hand-back failed after the
+  // create) — offered as "Record <number> on the request", never re-created.
+  // `versionId: null`: created, but its version could not be read back here.
+  const [existingNewDoc, setExistingNewDoc] = useState<(Omit<TicketNewDocumentVersion, 'versionId' | 'documentNumber'> & { versionId: string | null; documentNumber: string | null }) | null>(null);
+  const [recordingExisting, setRecordingExisting] = useState(false);
+  // DCW-4 remainder (ruled by the integrator at the DF-P15 merge, 2026-10-20,
+  // DEC-90; DEC-107 stands): a request with neither a source document nor a
+  // library — the libraries where this publisher may put a first revision,
+  // one of which they choose when publishing it as a new document.
+  const [newDocLibraryChoices, setNewDocLibraryChoices] = useState<Array<{ id: string; name: string }>>([]);
 
   // Admin Override State
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
@@ -1340,6 +1532,129 @@ export default function TicketDetailView() {
     return () => { alive = false; };
   }, [sourceDoc, uid, activeRole, roles, activeOrgId]);
 
+  // DCW-4 (DF-P15): may THIS caller put a new document's first revision into
+  // the request's target library? The same check createDocumentWithFile runs
+  // first (canPutFirstRevisionInContainer: a controller, a publisher on the
+  // library, or the library's owner), so the offer and the creation cannot
+  // disagree. A request with a source document hands back through "Publish
+  // as revision of …" instead. SESS-6: no role known offers nothing.
+  const newDocLibraryId = !sourceRefId && ticket?.libraryId ? ticket.libraryId : null;
+  useEffect(() => {
+    let alive = true;
+    if (!newDocLibraryId || !ticketOrgId || !uid || activeRole === null) { setCanPublishNew(false); setTargetLibraryName(null); return; }
+    (async () => {
+      try {
+        const may = await canPutFirstRevisionInContainer({ orgId: ticketOrgId, libraryId: newDocLibraryId, collectionId: null, actorUserId: uid, actorRole: activeRole ?? undefined });
+        if (!alive) return;
+        setCanPublishNew(may);
+        if (!may) { setTargetLibraryName(null); return; }
+        const { data } = await supabase.from('libraries').select('name').eq('id', newDocLibraryId).eq('org_id', ticketOrgId).maybeSingle();
+        if (alive) setTargetLibraryName((((data as { name?: string | null } | null)?.name) ?? '').trim() || 'the target library');
+      } catch { if (alive) { setCanPublishNew(false); setTargetLibraryName(null); } }
+    })();
+    return () => { alive = false; };
+  }, [newDocLibraryId, ticketOrgId, uid, activeRole]);
+
+  // DCW-4 (DF-P15 fix, on review): a document in the target library that
+  // already carries this request, while the request does not record it (a
+  // hand-back that failed after the create, here or in an earlier visit) —
+  // the page offers to record THAT document and does not offer a second
+  // create. A failed read proves nothing: the offer stays as it was.
+  const newDocRecorded = deliverableStateOf(ticket?.metadata)?.state === 'published';
+  useEffect(() => {
+    let alive = true;
+    if (!newDocLibraryId || !ticketOrgId || !ticket?.id || !canPublishNew || newDocRecorded) {
+      if (newDocRecorded) setExistingNewDoc(null);
+      return;
+    }
+    void findTicketNewDocumentVersion(supabase, { orgId: ticketOrgId, ticketRowId: ticket.id, libraryId: newDocLibraryId }).then((found) => {
+      if (alive && found.kind === 'found') setExistingNewDoc(found.version);
+    });
+    return () => { alive = false; };
+  }, [newDocLibraryId, ticketOrgId, ticket?.id, canPublishNew, newDocRecorded]);
+
+  // DCW-4 remainder (ruled by the integrator at the DF-P15 merge, 2026-10-20,
+  // DEC-90): a request with NEITHER a source document NOR a library (DEC-107:
+  // a library is never required at filing) offers "Publish as a new document"
+  // with a library chosen by the publisher — from the libraries of the
+  // workspace they can see where they may put a first revision: the same
+  // gate as the library offer above (canPutFirstRevisionInContainer),
+  // evaluated per library. None → no offer. A failed read offers nothing
+  // (fail-safe). The request's own library field is never written; the
+  // hand-back route re-checks the publisher's authority on the chosen library.
+  const chooseNewDocLibrary = !!ticket?.id && !sourceRefId && !ticket?.libraryId;
+  useEffect(() => {
+    let alive = true;
+    if (!chooseNewDocLibrary || !ticketOrgId || !uid || activeRole === null) { setNewDocLibraryChoices([]); return; }
+    (async () => {
+      try {
+        const { data, error } = await supabase.from('libraries').select('id, name').eq('org_id', ticketOrgId);
+        if (error) throw error;
+        const rows = ((data as Array<{ id?: string | null; name?: string | null }> | null) ?? []).filter((r): r is { id: string; name?: string | null } => typeof r.id === 'string' && !!r.id);
+        const allowed = await Promise.all(rows.map((r) =>
+          canPutFirstRevisionInContainer({ orgId: ticketOrgId, libraryId: r.id, collectionId: null, actorUserId: uid, actorRole: activeRole ?? undefined }).catch(() => false)));
+        if (!alive) return;
+        setNewDocLibraryChoices(rows.filter((_, i) => allowed[i]).map((r) => ({ id: r.id, name: (r.name ?? '').trim() || 'Untitled library' })));
+      } catch { if (alive) setNewDocLibraryChoices([]); }
+    })();
+    return () => { alive = false; };
+  }, [chooseNewDocLibrary, ticketOrgId, uid, activeRole]);
+  const newDocChoiceIds = useMemo(() => newDocLibraryChoices.map((c) => c.id).join(','), [newDocLibraryChoices]);
+  useEffect(() => {
+    let alive = true;
+    if (!chooseNewDocLibrary || !ticketOrgId || !ticket?.id || !newDocChoiceIds || newDocRecorded) return;
+    void findTicketNewDocumentVersion(supabase, { orgId: ticketOrgId, ticketRowId: ticket.id, libraryId: newDocChoiceIds.split(',') }).then((found) => {
+      if (alive && found.kind === 'found') setExistingNewDoc(found.version);
+    });
+    return () => { alive = false; };
+  }, [chooseNewDocLibrary, ticketOrgId, ticket?.id, newDocChoiceIds, newDocRecorded]);
+
+  const recordExistingNewDocument = async () => {
+    if (!existingNewDoc?.versionId || recordingExisting) return;
+    setRecordingExisting(true);
+    try {
+      const ok = await recordHandback(existingNewDoc.versionId, existingNewDoc.revisionLabel, { newDocumentNumber: existingNewDoc.documentNumber || 'The new document' });
+      if (ok) setExistingNewDoc(null);
+    } finally {
+      setRecordingExisting(false);
+    }
+  };
+
+  // PHYS-18 (DF-P15): the copy recall on the page — shown to the people who
+  // may recall a request's copies: its requester, its assigned drafter and a
+  // controller (Admin / DocCtrl, by the role collection). The ticket as the
+  // recall reads it is memoized on what the verdict reads, so the panel
+  // re-reads the record only when the ticket moves.
+  const canRecallCopies = !!ticket && !!uid && !ticket.archivedAt
+    && (ticket.requesterId === uid || ticket.assignedDrafterId === uid || isAdmin);
+  const recallTicket = useMemo(() => (ticket?.id && ticket.orgId ? {
+    id: ticket.id, orgId: ticket.orgId, status: ticket.status ?? null, deliverableRev: ticket.deliverableRev ?? null,
+    history: ticket.history, revisionCount: ticket.revisionCount ?? null, attachments: ticket.attachments,
+  } : null), [ticket?.id, ticket?.orgId, ticket?.status, ticket?.deliverableRev, ticket?.history, ticket?.revisionCount, ticket?.attachments]);
+
+  // DCW-4 (DF-P15): fetch the Final deliverable's bytes for the new-document
+  // path (as openHandback does for a revision). Nothing is created here.
+  const openNewDocument = async () => {
+    if (!ticket) return;
+    const final = latestFinalAttachment(ticket.attachments);
+    if (!final) return;
+    setNewDocBusy(true);
+    try {
+      const url = /^https?:\/\//i.test(final.url) ? final.url : await getSignedUrlForPath(final.url);
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('The Final deliverable could not be fetched from storage.');
+      const blob = await res.blob();
+      setNewDocFile(new File([blob], final.name, { type: blob.type || 'application/pdf' }));
+    } catch (e) {
+      const msg = e instanceof ArchivedFileError
+        ? 'The Final deliverable was archived offline — restore the archive before publishing it.'
+        : (e as Error).message;
+      showToast({ type: 'error', title: 'Cannot start the publish', message: msg });
+    } finally {
+      setNewDocBusy(false);
+    }
+  };
+
   // Pre-seed the existing rev-up flow with the Final deliverable and open it.
   // Nothing is published here — RevUpModal → revUpDocument does that, with
   // every guard and post-publish side effect (DEC-22: never a second path).
@@ -1371,8 +1686,11 @@ export default function TicketDetailView() {
   // After the publish landed (or opened a review draft), record it on the
   // ticket through the server, which verifies the version row is this
   // request's deliverable before writing anything.
-  const recordHandback = async (versionId: string, revisionLabel: string) => {
-    if (!ticket?.id) return;
+  // DF-P15 fix: the toast says what the register holds — the hand-back
+  // route's own answer (metadata.deliverable.filed_as_draft) decides it, so a
+  // new document filed as a Draft is never announced as an issued revision.
+  const recordHandback = async (versionId: string, revisionLabel: string, opts: { newDocumentNumber?: string } = {}): Promise<boolean> => {
+    if (!ticket?.id) return false;
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) throw new Error('Not authenticated');
@@ -1384,9 +1702,18 @@ export default function TicketDetailView() {
       const out = await res.json().catch(() => ({} as Record<string, unknown>)) as { error?: string; warning?: string; metadata?: Record<string, unknown>; history?: Ticket['history'] };
       if (!res.ok) throw new Error(out.error || 'Could not record the publish on the request');
       setTicket((t) => (t ? { ...t, metadata: out.metadata ?? t.metadata, history: out.history ?? t.history } : t));
-      showToast({ type: 'success', title: `Rev ${revisionLabel} recorded on the request`, message: out.warning ?? 'The deliverable is in the register and the request knows it.' });
+      const filedAsDraft = (out.metadata?.deliverable as { filed_as_draft?: unknown } | undefined)?.filed_as_draft === true;
+      showToast(filedAsDraft
+        ? { type: 'success', title: 'Filed as a Draft document on the request', message: out.warning ?? 'The deliverable is in the register as a Draft — not issued — and the request knows it.' }
+        : { type: 'success', title: `Rev ${revisionLabel} recorded on the request`, message: out.warning ?? 'The deliverable is in the register and the request knows it.' });
+      return true;
     } catch (e) {
-      showToast({ type: 'error', title: 'Published, but not recorded on the request', message: (e as Error).message });
+      // DF-P15 fix (review): a new document's failed hand-back points at the
+      // existing document ("Record … on the request"), never at a second create.
+      showToast(opts.newDocumentNumber
+        ? { type: 'error', title: 'Created, but not recorded on the request', message: newDocumentNotRecordedMessage(opts.newDocumentNumber, (e as Error).message, true) }
+        : { type: 'error', title: 'Published, but not recorded on the request', message: (e as Error).message });
+      return false;
     }
   };
 
@@ -1961,6 +2288,29 @@ export default function TicketDetailView() {
     : null;
   const deliverable = deliverableStateOf(ticket.metadata);
   const canOfferHandback = !!handback && canPublishSource && !!latestFinalAttachment(ticket.attachments) && deliverable?.state !== 'published';
+  // DCW-4 (DF-P15): the new-document offer — same conditions, on the library.
+  const canOfferNewDocument = !!newDocLibraryId && canPublishNew && !ticket.archivedAt && !!latestFinalAttachment(ticket.attachments) && deliverable?.state !== 'published' && !existingNewDoc;
+  // DF-P15 fix (review): the existing new document, offered for recording instead.
+  const canRecordExistingNewDocument = !!newDocLibraryId && canPublishNew && !ticket.archivedAt && deliverable?.state !== 'published' && !!existingNewDoc;
+  // DCW-4 remainder (DEC-90 ruling at the DF-P15 merge): the same offer for a
+  // request with neither a source document nor a library — the publisher
+  // chooses the library (shown only when there is one they may publish into).
+  const canOfferChosenLibraryDocument = chooseNewDocLibrary && newDocLibraryChoices.length > 0 && !ticket.archivedAt && !!latestFinalAttachment(ticket.attachments) && deliverable?.state !== 'published' && !existingNewDoc;
+  const canRecordExistingChosenLibraryDocument = chooseNewDocLibrary && newDocLibraryChoices.length > 0 && !ticket.archivedAt && deliverable?.state !== 'published' && !!existingNewDoc;
+  const onNewDocumentCreated = async (r: { versionId: string | null; revisionLabel: string; versionReadError: string | null; documentId: string; documentNumber: string; creationAuditError: string | null }) => {
+    setNewDocFile(null);
+    // DF-P15 fix (review): from here on the page offers to RECORD this
+    // document, never to create another (cleared once it is recorded).
+    setExistingNewDoc({ versionId: r.versionId, documentId: r.documentId, documentNumber: r.documentNumber, revisionLabel: r.revisionLabel });
+    if (r.creationAuditError) {
+      await appAlert({ message: `${r.documentNumber} was created, but its creation record could not be written (${r.creationAuditError}). Tell Document Control so the record can be completed.`, tone: "danger" });
+    }
+    if (!r.versionId) {
+      showToast({ type: 'error', title: 'Created, but not recorded on the request', message: newDocumentNotRecordedMessage(r.documentNumber, `its first version could not be read back: ${r.versionReadError ?? 'no reason given'}`, false) });
+      return;
+    }
+    if (await recordHandback(r.versionId, r.revisionLabel, { newDocumentNumber: r.documentNumber })) setExistingNewDoc(null);
+  };
 
   return (
     <div className="pb-20">
@@ -1985,6 +2335,41 @@ export default function TicketDetailView() {
           onSuccess={() => { /* onDirectPublished / onReviewSubmitted record the outcome */ }}
           onDirectPublished={(v) => { setShowHandback(false); if (v.id) void recordHandback(v.id, v.revisionLabel); }}
           onReviewSubmitted={(d) => { setShowHandback(false); void recordHandback(d.versionId, d.revisionLabel); }}
+        />
+      )}
+      {newDocFile && newDocLibraryId && canPublishNew && ticket.id && uid && (
+        <PublishNewDocumentModal
+          orgId={ticket.orgId}
+          libraryId={newDocLibraryId}
+          libraryName={targetLibraryName || 'the target library'}
+          ticketRowId={ticket.id}
+          ticketNumber={ticket.ticketId}
+          defaultTitle={ticket.title || ''}
+          file={newDocFile}
+          actorUserId={uid}
+          actorEmail={userEmail || undefined}
+          actorRole={activeRole ?? undefined}
+          onClose={() => setNewDocFile(null)}
+          onCreated={onNewDocumentCreated}
+        />
+      )}
+      {/* DCW-4 remainder (DEC-90 ruling at the DF-P15 merge): a request with neither a
+          source document nor a library — the publisher chooses the library. */}
+      {newDocFile && chooseNewDocLibrary && newDocLibraryChoices.length > 0 && ticket.id && uid && (
+        <PublishNewDocumentModal
+          orgId={ticket.orgId}
+          libraryId={null}
+          libraryName=""
+          libraryChoices={newDocLibraryChoices}
+          ticketRowId={ticket.id}
+          ticketNumber={ticket.ticketId}
+          defaultTitle={ticket.title || ''}
+          file={newDocFile}
+          actorUserId={uid}
+          actorEmail={userEmail || undefined}
+          actorRole={activeRole ?? undefined}
+          onClose={() => setNewDocFile(null)}
+          onCreated={onNewDocumentCreated}
         />
       )}
       {showRedlineEditor && fileToRedline && (
@@ -2014,6 +2399,7 @@ export default function TicketDetailView() {
         archived={!!ticket?.archivedAt}
         archiveId={ticket?.archiveId}
         liveTicket={ticket ? { status: ticket.status, deliverableRev: ticket.deliverableRev ?? null, history: ticket.history, revisionCount: ticket.revisionCount ?? null } : null}
+        copyContext={ticket ? { orgId: ticket.orgId, ticketNumber: ticket.ticketId, requesterId: ticket.requesterId, attachments: ticket.attachments } : null}
         onApprove={(() => {
           const action = liveActions.find(a => a.action === 'approve_draft_ifc' && !a.disabledReason);
           return action ? () => { setViewerFile(null); initiateWorkflowAction(action); } : undefined;
@@ -2705,6 +3091,91 @@ export default function TicketDetailView() {
                    </div>
                  ))}
                </div>
+               {/* DCW-4 (DF-P15): a request with a target library and no source document —
+                   where its deliverable stands in the register, and the offer to publish it
+                   as a new document there (to someone who may). */}
+               {newDocLibraryId && (deliverable || canOfferNewDocument || canRecordExistingNewDocument) && (
+                 <div className="mt-3 flex flex-wrap items-center gap-2 relative z-10">
+                   {deliverable?.state === 'published' && (
+                     <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1">
+                       <CheckCircle2 className="w-3 h-3" /> {deliverable.in_review ? `Draft ${deliverable.revision_label} in document review` : (deliverable as { filed_as_draft?: boolean }).filed_as_draft ? 'Filed in the register as a Draft document' : `Published as Rev ${deliverable.revision_label}`}
+                     </span>
+                   )}
+                   {deliverable?.state === 'not_in_register' && (
+                     <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+                       <AlertTriangle className="w-3 h-3" /> Closed — deliverable not in the register
+                     </span>
+                   )}
+                   {canOfferNewDocument && (
+                     <button
+                       type="button"
+                       onClick={() => { void openNewDocument(); }}
+                       disabled={newDocBusy}
+                       title="Create a new document in the request's target library from its Final deliverable — offered to whoever may add a document there, not to whoever can close the request (DEC-22)"
+                       className="text-[10px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 rounded-md px-2 py-1"
+                     >
+                       {newDocBusy ? 'Preparing…' : `Publish as a new document in ${targetLibraryName || 'the target library'}`}
+                     </button>
+                   )}
+                   {canRecordExistingNewDocument && existingNewDoc && (existingNewDoc.versionId ? (
+                     <button
+                       type="button"
+                       onClick={() => { void recordExistingNewDocument(); }}
+                       disabled={recordingExisting}
+                       title="This request's new document is already in the register but not recorded here — record it (the server checks it carries this request and sits in its library). It is never created a second time."
+                       className="text-[10px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 rounded-md px-2 py-1"
+                     >
+                       {recordingExisting ? 'Recording…' : `Record ${existingNewDoc.documentNumber || 'the existing document'} on the request`}
+                     </button>
+                   ) : (
+                     <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+                       <AlertTriangle className="w-3 h-3" /> {existingNewDoc.documentNumber || 'A new document'} was created but is not recorded here — refresh the page, or tell Document Control
+                     </span>
+                   ))}
+                 </div>
+               )}
+               {/* DCW-4 remainder (DEC-90 ruling at the DF-P15 merge): a request with neither a
+                   source document nor a library — where its deliverable stands, and the offer to
+                   publish it as a new document in a library the publisher chooses. */}
+               {chooseNewDocLibrary && (deliverable?.state === 'published' || canOfferChosenLibraryDocument || canRecordExistingChosenLibraryDocument) && (
+                 <div className="mt-3 flex flex-wrap items-center gap-2 relative z-10">
+                   {deliverable?.state === 'published' && (
+                     <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1">
+                       <CheckCircle2 className="w-3 h-3" /> {deliverable.in_review ? `Draft ${deliverable.revision_label} in document review` : (deliverable as { filed_as_draft?: boolean }).filed_as_draft ? 'Filed in the register as a Draft document' : `Published as Rev ${deliverable.revision_label}`}
+                     </span>
+                   )}
+                   {canOfferChosenLibraryDocument && (
+                     <button
+                       type="button"
+                       onClick={() => { void openNewDocument(); }}
+                       disabled={newDocBusy}
+                       title="This request names no library: create a new document from its Final deliverable in a library you choose — one where you may add a document. The request itself is not changed (DEC-107)."
+                       className="text-[10px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 rounded-md px-2 py-1"
+                     >
+                       {newDocBusy ? 'Preparing…' : 'Publish as a new document'}
+                     </button>
+                   )}
+                   {canRecordExistingChosenLibraryDocument && existingNewDoc && (existingNewDoc.versionId ? (
+                     <button
+                       type="button"
+                       onClick={() => { void recordExistingNewDocument(); }}
+                       disabled={recordingExisting}
+                       title="This request's new document is already in the register but not recorded here — record it (the server checks it carries this request and that you may publish into its library). It is never created a second time."
+                       className="text-[10px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 rounded-md px-2 py-1"
+                     >
+                       {recordingExisting ? 'Recording…' : `Record ${existingNewDoc.documentNumber || 'the existing document'} on the request`}
+                     </button>
+                   ) : (
+                     <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+                       <AlertTriangle className="w-3 h-3" /> {existingNewDoc.documentNumber || 'A new document'} was created but is not recorded here — refresh the page, or tell Document Control
+                     </span>
+                   ))}
+                 </div>
+               )}
+               {/* PHYS-18 (DF-P15): who took a copy of this request's files, and the recall. */}
+               {canRecallCopies && recallTicket && uid && (
+                 <TicketCopyRecallPanel ticket={recallTicket} ticketNumber={ticket.ticketId ?? null} currentUserId={uid} currentUserName={userEmail ?? null} />
+               )}
              </div>
           </div>
 

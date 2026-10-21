@@ -19,6 +19,16 @@
 // doc↔equipment as manual registry links — and appear on the org graph
 // immediately. Only Admin / DocCtrl ever see the entry point; the server
 // enforces the same.
+//
+// AREA-12 (intelligence Round G I-32): a doc↔equipment pair the equipment
+// sweep already relates (a 'drawing' row — a person cannot write one) answers
+// the insert 23505. The pair is then made this person's through the Bridge's
+// 'adopt' (POST /api/equipment-bridge, as the registry drawer and the graph's
+// Connect do), so a later Dismiss of the drawing's reading, or "It left the
+// sheet", cannot take the link the person accepted. The link is counted only
+// once it is the person's (adopted, or already a person's link); a refused
+// adopt is said and not counted; an adopt whose audit record could not be
+// written is counted (the link is theirs) and the missing record is said.
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -47,6 +57,37 @@ interface Row extends Suggestion {
   accepted: boolean;
 }
 
+type HeldPairOutcome =
+  | { kind: "adopted"; auditError?: string }
+  | { kind: "already" }
+  | { kind: "refused"; message: string };
+
+/** AREA-12 — the insert answered 23505: the pair is already linked. A
+ *  person's link (manual, or the document's own tags) needs nothing; a
+ *  'drawing' row — or a row the member's read cannot see — goes to the
+ *  Bridge's adopt, which decides (the graph page's Connect, same order). */
+async function adoptHeldPair(orgId: string, documentId: string, assetId: string): Promise<HeldPairOutcome> {
+  const held = await supabase.from("document_assets").select("source")
+    .eq("org_id", orgId).eq("document_id", documentId).eq("asset_id", assetId).maybeSingle();
+  const heldSource = !held.error && held.data ? String((held.data as { source?: unknown }).source ?? "") : null;
+  if (heldSource !== null && heldSource !== "drawing") return { kind: "already" };
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const res = await fetch("/api/equipment-bridge", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session?.access_token ?? ""}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "adopt", orgId, documentId, assetId }),
+    });
+    const json = await res.json().catch(() => ({})) as { error?: string; auditError?: string; adopted?: boolean; already?: string | null };
+    if (!res.ok) return { kind: "refused", message: json.error ?? `The link could not be made yours (HTTP ${res.status}).` };
+    if (json.adopted === true) return json.auditError ? { kind: "adopted", auditError: String(json.auditError) } : { kind: "adopted" };
+    if (json.already) return { kind: "already" };
+    return { kind: "refused", message: "The existing link could not be found to make it yours — it may have just been removed. Try again." };
+  } catch (e) {
+    return { kind: "refused", message: `The link could not be made yours: ${(e as Error).message}` };
+  }
+}
+
 export default function GraphShapeWizard({
   orgId, userId, userName, question, answer, citedKnowledgeDocIds, onClose,
 }: {
@@ -63,7 +104,11 @@ export default function GraphShapeWizard({
   const [rows, setRows] = useState<Row[]>([]);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [banners, setBanners] = useState<string[]>([]);
   const [written, setWritten] = useState(0);
+  // AREA-12: how many accepted pairs were the equipment sweep's reading and
+  // are now this person's links (adopted on 23505).
+  const [adoptedCount, setAdoptedCount] = useState(0);
   const [manual, setManual] = useState<{ a: string; b: string; label: string }>({ a: "", b: "", label: "" });
 
   useEffect(() => {
@@ -118,8 +163,13 @@ export default function GraphShapeWizard({
   const apply = async () => {
     const accepted = rows.filter((r) => r.accepted);
     if (accepted.length === 0) return;
-    setStage("applying"); setError(null);
+    setStage("applying"); setError(null); setBanners([]);
     let ok = 0;
+    let adopted = 0;
+    // Every message of the batch is kept and shown — a later failure never
+    // hides an earlier missing audit record (AREA-12).
+    const notices: string[] = [];
+    const failures: string[] = [];
     const evidenceDetail = (r: Row) =>
       `${r.reason} — from the question: “${question.slice(0, 160)}”`;
     for (const r of accepted) {
@@ -152,13 +202,24 @@ export default function GraphShapeWizard({
             tag_text: asset.label, source: "manual",
           });
           if (e && e.code !== "23505") throw new Error(e.message);
+          if (e) {
+            // AREA-12: already linked — made this person's, or said.
+            const outcome = await adoptHeldPair(orgId, doc.id, asset.id);
+            if (outcome.kind === "refused") throw new Error(`${doc.label} ↔ ${asset.label}: ${outcome.message}`);
+            if (outcome.kind === "adopted") {
+              adopted += 1;
+              if (outcome.auditError) notices.push(`${doc.label} ↔ ${asset.label}: ${outcome.auditError}`);
+            }
+          }
         }
         ok += 1;
       } catch (e) {
-        setError(`Some links failed: ${(e as Error).message}`);
+        failures.push((e as Error).message);
       }
     }
+    setBanners([...notices, ...(failures.length > 0 ? [`Some links failed: ${failures.join("; ")}`] : [])]);
     setWritten(ok);
+    setAdoptedCount(adopted);
     setStage("done");
   };
 
@@ -215,6 +276,11 @@ export default function GraphShapeWizard({
                   <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
                 </div>
               )}
+              {banners.map((b, i) => (
+                <div key={i} data-testid="shape-banner" className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-[11px] text-rose-700 dark:text-rose-300">
+                  <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {b}
+                </div>
+              ))}
               {note && (
                 <div className="text-[11px] text-[var(--color-text-muted)] bg-[var(--color-surface-2)]/60 rounded-lg px-3 py-2">{note}</div>
               )}
@@ -229,6 +295,13 @@ export default function GraphShapeWizard({
                     Each carries this question as its evidence. They appear in the documents&apos;
                     Related panels and on the org graph now.
                   </div>
+                  {adoptedCount > 0 && (
+                    <div data-testid="shape-adopted" className="text-[11px] text-[var(--color-text-muted)] max-w-sm">
+                      {adoptedCount === 1 ? "One of them was" : `${adoptedCount} of them were`} already read off the drawing by the
+                      equipment sweep — {adoptedCount === 1 ? "that link is" : "those links are"} now yours, so dismissing the
+                      sweep&apos;s reading will not remove {adoptedCount === 1 ? "it" : "them"}.
+                    </div>
+                  )}
                   <Link href="/graph"
                     className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-black text-white bg-violet-600 hover:bg-violet-500">
                     <Waypoints className="w-3.5 h-3.5" /> See it on the graph

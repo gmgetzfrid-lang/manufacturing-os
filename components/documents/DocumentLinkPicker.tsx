@@ -11,6 +11,7 @@ import { Search, Loader2, FileText, Check, X, Upload, FolderPlus, Plus, Library 
 import { supabase } from "@/lib/supabase";
 import { searchDocuments, type DocumentRow } from "@/lib/search";
 import { createDocumentWithFile, type CreationStatus } from "@/lib/revisions";
+import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 import { createFolder, createLibrary, listLibraryFoldersOnce, type PickerFolder } from "@/lib/libraryCollections";
 import { appPrompt, appAlert } from "@/components/providers/DialogProvider";
 import { useRole } from "@/components/providers/RoleContext";
@@ -121,6 +122,19 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
         folderPath: folder ? folder.pathNames : undefined,
         documentNumber: docNum.trim(), title: docTitle.trim() || undefined,
         file, status: fileAs, actorUserId: userId, actorEmail: userEmail ?? undefined, actorRole: activeRole ?? undefined,
+        // GAP-314 (intelligence I-26): the picker asks for the unit decode
+        // itself (below), so a decode that did not run is SAID, not only logged.
+        decodeUnitCode: false,
+      });
+      // The unit decode at create time — after the creation landed, NOT
+      // awaited (the document is created and linked whatever the route does;
+      // the call is bounded). A decode that did not run is shown once it
+      // settles; the route records a document it left without a code.
+      const createdNumber = docNum.trim();
+      void requestUnitCodeDecode(orgId, [documentId], "upload").then((r) => {
+        if (!r.note) return;
+        console.warn(`[DocumentLinkPicker] ${r.note}`);
+        void appAlert({ message: `${createdNumber} was created and linked. ${r.note}` });
       });
       // REV-11: the document exists, but its creation record did not land —
       // say so (Document Control can reconstruct it), never stay silent.

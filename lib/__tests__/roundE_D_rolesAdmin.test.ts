@@ -224,21 +224,16 @@ describe("SURF-9 — one admin-surface registry, mirroring every /admin page", (
     // the gate for exactly that entry rule, so the two cannot drift
     expect(src("app/api/admin/storage-stats/route.ts")).toMatch(/export async function GET[\s\S]*?await authorizeAdminSurface\(req, orgId, "storage"\);/);
   });
-  it("the API routes behind a surface that STILL carry a constant use the surface's role set (pinned until they call the gate themselves — SURF-19's limbs owned by A&O P5 and P7)", () => {
-    // SURF-19 (admin-and-org Round G, P6) converted every other route of this table to the gate
-    // (pinned below); these are left to their owners: stripe checkout / portal (A&O P5, after P4).
-    // purge / archive-cancel were converted by A&O P7 (pinned in the table below).
-    const table: Array<[string, readonly string[]]> = [
-      ["app/api/stripe/checkout/route.ts", adminSurface("billing")!.writes!],
-      ["app/api/stripe/portal/route.ts", adminSurface("billing")!.writes!],
-    ];
-    for (const [file, roles] of table) {
-      const m = /const [A-Z_]*ROLES = (\[[^\]]*\]);/.exec(src(file));
-      expect(m, file).not.toBeNull();
-      expect(setEq(JSON.parse(m![1]) as string[], roles), file).toBe(true);
+  it("no API route behind a surface still carries a role constant — SURF-19's last limb (stripe checkout / portal, A&O P5) is converted", () => {
+    // The "STILL carry a constant" table emptied here: A&O P6 converted the storage and restore
+    // routes, A&O P7 purge / archive-cancel, A&O P5 the two stripe routes (pinned in the table below).
+    for (const file of ["app/api/stripe/checkout/route.ts", "app/api/stripe/portal/route.ts"]) {
+      expect(src(file), file).not.toMatch(/const [A-Z_]*ROLES = /);
     }
+    // the billing surface's writes set is the old constant, so who may pay or open the portal is unchanged
+    expect(setEq(adminSurface("billing")!.writes!, ["Admin", "Manager"])).toBe(true);
   });
-  it("SURF-19 (A&O P6): the storage and restore routes call the gate themselves — surface and intent, no role constant, no authorizeOrgRole", () => {
+  it("SURF-19 (A&O P6, P7, P5): the storage, restore and billing routes call the gate themselves — surface and intent, no role constant, no authorizeOrgRole", () => {
     const table: Array<[string, string, number]> = [
       // [file, the exact gate call, how many handlers make it]
       ["app/api/admin/storage-stats/route.ts", 'authorizeAdminSurface(req, orgId, "storage")', 1],
@@ -257,6 +252,9 @@ describe("SURF-9 — one admin-surface registry, mirroring every /admin page", (
       // A&O P7 (SURF-19's purge / archive-cancel limb): the writes set, preview included.
       ["app/api/admin/purge/route.ts", 'authorizeAdminSurface(req, orgId, "storage", "write")', 2],
       ["app/api/admin/archive-cancel/route.ts", 'authorizeAdminSurface(req, orgId, "storage", "write")', 1],
+      // A&O P5 (SURF-19's stripe limb): the billing surface's writes set.
+      ["app/api/stripe/checkout/route.ts", 'authorizeAdminSurface(req, orgId, "billing", "write")', 1],
+      ["app/api/stripe/portal/route.ts", 'authorizeAdminSurface(req, orgId, "billing", "write")', 1],
     ];
     for (const [file, call, n] of table) {
       const s = src(file);

@@ -167,6 +167,32 @@ export function prettyAuditAction(action: string): string {
   return action.toLowerCase().replace(/_/g, " ").replace(/(^|\s)\w/g, (c) => c.toUpperCase());
 }
 
+/** document-control P28 (DIST-16; the integrator's fix pass at the P28
+ *  merge, 2026-10-21, DEC-90): the label a ROW reads as, where one action
+ *  carries several meanings told apart by its details. A
+ *  DISTRIBUTION_RECALL row is a recall — "Distribution Recall", as every
+ *  recall row has always read — unless its details say it is the withdrawal
+ *  of one (`recallWithdrawn: true` → "Recall withdrawn"), a withdrawal that
+ *  could not be computed (`withdrawalUnavailable: true` → "Recall withdrawal
+ *  could not be computed"), the return to force of a document whose
+ *  retirement notice named nobody to withdraw it from (`recallWithdrawn` with
+ *  `returnedToForce: true` → "Back in force (no recall to withdraw)"), or a
+ *  retirement whose watchers were told and whose copy holders were not
+ *  recalled (`watchersOnly: true`, DIST-16 done-when 2 → "Retirement notice
+ *  (watchers only)") — the last two rows are new with the same pass. Every other row reads
+ *  prettyAuditAction(action), unchanged. The audit viewer's badge and the
+ *  export's "Action" column read it (the "Action code" column keeps the
+ *  action itself). */
+export function auditRowLabel(action: string, details?: Record<string, unknown> | null): string {
+  if (action === "DISTRIBUTION_RECALL" && details) {
+    if (details.withdrawalUnavailable === true) return "Recall withdrawal could not be computed";
+    if (details.recallWithdrawn === true && details.returnedToForce === true) return "Back in force (no recall to withdraw)";
+    if (details.recallWithdrawn === true) return "Recall withdrawn";
+    if (details.watchersOnly === true) return "Retirement notice (watchers only)";
+  }
+  return prettyAuditAction(action);
+}
+
 export const AUDIT_ACTIONS: readonly AuditActionDef[] = (Object.entries(BY_CATEGORY) as Array<[AuditCategory, readonly string[]]>)
   .flatMap(([category, list]) => list.map((action) => ({ action, category, label: prettyAuditAction(action), destructive: DESTRUCTIVE_AUDIT_ACTIONS.has(action) })));
 

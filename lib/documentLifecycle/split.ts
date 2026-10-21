@@ -10,7 +10,7 @@
 import { supabase } from "@/lib/supabase";
 import {
   authorizePublish, notifyHolderOfRetirement, resolveCreationReviewGate, canPutFirstRevisionInContainer,
-  recallOnRetirement, skipsRetirementRecall, recallsCopyHolders,
+  recallOnRetirement, recallsCopyHolders,
 } from "@/lib/revisions";
 import type { DocumentRecord, AssetTag } from "@/types/schema";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
@@ -312,17 +312,23 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
   // only out of a controlled issue (recallsCopyHolders) — a Draft, In
   // Review or Void source gets the watchers' FYI only. The checkout holder
   // was told above (notifyHolderOfRetirement); no package owner is.
-  if (!skipsRetirementRecall(retired.priorStatus)) {
-    recallOnRetirement({
-      orgId, documentId: sourceId, libraryId: sourceLibraryId,
-      docLabel: String(source.documentNumber || source.title || source.name || "document"),
-      newStatus: "Superseded",
-      replacementNote: `Replaced by ${targets.map((t) => t.documentNumber.trim()).join(", ")}.`,
-      actorUserId, actorName: actorEmail || actorUserId,
-      personallyToldElsewhere: { checkoutHolder: true, packageOwners: false },
-      recallCopyHolders: recallsCopyHolders(retired.priorStatus),
-    });
-  }
+  // DIST-16 done-when 2 (document-control P28, the integrator's fix pass at
+  // the merge, 2026-10-21): "already retired" is decided from the source's
+  // recall record (`retiredFrom`, lib/staleCopies.ts recallRetiredDocument),
+  // no longer from its prior status here (skipsRetirementRecall): a source
+  // whose retirement notice stands since its last return to force gets
+  // nothing again; one retired by a door that told nobody has its watchers
+  // told now.
+  recallOnRetirement({
+    orgId, documentId: sourceId, libraryId: sourceLibraryId,
+    docLabel: String(source.documentNumber || source.title || source.name || "document"),
+    newStatus: "Superseded",
+    replacementNote: `Replaced by ${targets.map((t) => t.documentNumber.trim()).join(", ")}.`,
+    actorUserId, actorName: actorEmail || actorUserId,
+    personallyToldElsewhere: { checkoutHolder: true, packageOwners: false },
+    recallCopyHolders: recallsCopyHolders(retired.priorStatus),
+    retiredFrom: retired.priorStatus ?? null,
+  });
 
   return {
     supersededSourceId: sourceId,

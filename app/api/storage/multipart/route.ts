@@ -19,6 +19,7 @@ import {
   assertSafeStorageKey, isWorkspaceLogoKey, isNodeImageKey, NODE_CUSTOMIZE_ROLES, nodeImageUploadProblem,
 } from "@/lib/storageKey";
 import { memberHoldsAny } from "@/lib/roleHeld";
+import { enforceOrgAccess } from "@/lib/serverAuth";
 
 export const runtime = "nodejs";
 
@@ -60,6 +61,15 @@ export async function POST(req: NextRequest) {
     if (!member) return bad("Not a member of this workspace", 403);
     if (nodeImage && !memberHoldsAny(member as { role?: unknown; roles?: unknown }, NODE_CUSTOMIZE_ROLES)) {
       return bad("Only an Admin or a Document Controller can change a folder's or library's cover image or background.", 403);
+    }
+    // BILL-10 (admin-and-org Round G P5, DEC-18): opening a new upload is a
+    // billable resource, gated as upload-url is — refused for a lapsed
+    // workspace only with SUBSCRIPTION_ENFORCE on, logged otherwise. An
+    // upload already open may still sign, complete or abort (an abort must
+    // always work, or its parts would be stored and billed for nothing).
+    if (action === "create") {
+      const gate = await enforceOrgAccess(supabaseAdmin, orgMatch[1], "storage/multipart");
+      if (gate) return bad(gate.error, gate.status);
     }
   }
   if (nodeImage && action === "create") {
