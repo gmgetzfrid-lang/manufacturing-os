@@ -21,6 +21,12 @@
 //   (2) the two refusal codes (TICKET_NUMBER_IN_USE, TICKET_NUMBER_UNSETTLED)
 //       in words a plant admin understands, naming the number (the refusal's
 //       structured `ticketNumber`) and what to do;
+//   (2b) the refused BACKUP row is said as "backup request <id>, not
+//       restored", and the request holding the number (the refusal's
+//       structured `numberHeldBy`) as the renumber lines say it (final fix
+//       pass);
+//   (2c) more than ten lines print in full: a closed <details> does not
+//       print, so a print-only list carries every line (final fix pass);
 //   (3) REGRESSION: every other outcome, count and label renders exactly as
 //       before — the markup of nine results covering every branch of the
 //       panel is pinned by digest, captured from the panel moved verbatim out
@@ -178,6 +184,11 @@ for (const world of ["without the number key", "with the number key"] as const) 
       const run = await drive(env);
       const t = run.tables.find((x) => x.name === "tickets")!;
       expect(t.renumbered).toEqual([{ id: "t-b-1", from: "KE-DDRT-26-0001", to: `DDRT-${YY}-0403`, numberHeldBy: "t-live-1" }]);
+      // the note (and so the RESTORE_CHUNK audit row) never says the old number "now resolves to" the new one:
+      // in this workspace the old number still identifies the request that already had it (drafting-flow EDGE-5 residual (e))
+      const note = t.cleared.find((x) => x.code === TICKET_RENUMBERED)!;
+      expect(note.message).toContain(`labels, transmittals and archives printing "KE-DDRT-26-0001" for this request must be read as "DDRT-${YY}-0403"; in this workspace "KE-DDRT-26-0001" still identifies request t-live-1`);
+      expect(note.message).not.toMatch(/now resolve/);
       const d = render(run);
       expect(headline(d)).toBe("Records restored — 1 request(s) restored under a new number");
       expect(lines(d)).toEqual([{ from: "KE-DDRT-26-0001", to: `DDRT-${YY}-0403`, unconfirmed: false, text: `restored as DDRT-${YY}-0403 — KE-DDRT-26-0001 was taken (request t-live-1 has it)` }]);
@@ -214,6 +225,24 @@ describe("BKP-16 (1) — mixed, many, unconfirmed and unreadable renumberings", 
     const all = byTestId(d, "restore-renumbered-all")[0];
     expect(flat(all.querySelector("summary")!.textContent)).toBe("and 3 more — show all 13");
     expect(Array.from(all.querySelectorAll("li")).map((li) => li.getAttribute("data-renumbered-to"))).toEqual(notes.map((_, i) => `NEW-${i}`));
+    // printed: a closed <details> does not print, so the ten and "show all" are hidden in print and a print-only list holds every line
+    expect(block.querySelector(":scope > ul")!.className.split(" ")).toContain("print:hidden");
+    expect(all.className.split(" ")).toContain("print:hidden");
+    const printed = byTestId(d, "restore-renumbered-all-print");
+    expect(printed).toHaveLength(1);
+    expect(printed[0].parentElement).toBe(block);
+    expect(printed[0].className.split(" ")).toEqual(expect.arrayContaining(["hidden", "print:block"]));
+    expect(Array.from(printed[0].querySelectorAll("li")).map((li) => [li.getAttribute("data-renumbered-from"), li.getAttribute("data-renumbered-to"), flat(li.textContent)]))
+      .toEqual(notes.map((_, i) => [`OLD-${i}`, `NEW-${i}`, `restored as NEW-${i} — OLD-${i} was taken (request h-${i} has it)`]));
+  });
+
+  it("ten or fewer lines: one plain list, no 'show all' and no print-only copy (the markup is as before)", () => {
+    const notes = Array.from({ length: 10 }, (_, i) => renumberNote(`t-${i}`, `OLD-${i}`, `NEW-${i}`, `h-${i}`));
+    const html = markup(result([ticketsWith(notes)]));
+    expect(html).not.toMatch(/print:|<details|-print"/);
+    const d = render(result([ticketsWith(notes)]));
+    expect(byTestId(d, "restore-renumbered")[0].querySelector(":scope > ul")!.className).toBe("ml-3 list-disc pl-4");
+    expect(lines(d)).toHaveLength(10);
   });
 
   it("an entry the database did not confirm (a write with no count) is said as NOT confirmed, never as restored", async () => {
@@ -275,10 +304,12 @@ describe("BKP-16 (2) — the two request-number refusals in words a plant admin 
       return b;
     } };
     const r = await applyRestoreChunk(sb as never, { orgId: ORG, table: "tickets", rows: [ticket("t-b-1", "KE-DDRT-26-0007"), ticket("t-b-2", "KE-DDRT-26-0007")], idRemap: REMAP });
-    expect(r.refused).toEqual([expect.objectContaining({ id: "t-b-2", code: TICKET_NUMBER_IN_USE, ticketNumber: "KE-DDRT-26-0007" })]);
+    expect(r.refused).toEqual([expect.objectContaining({ id: "t-b-2", code: TICKET_NUMBER_IN_USE, ticketNumber: "KE-DDRT-26-0007", numberHeldBy: "t-b-1" })]);
     const d = render(asRun(r));
     const block = flat(byTestId(d, "restore-number-in-use")[0].textContent);
-    expect(block).toBe("tickets: 1 request(s) NOT restored — another request here already has the number, and the restore could not take a new number for it this time. Run the restore again: a re-run gives each one a new number (records already restored are skipped, not duplicated).KE-DDRT-26-0007 (request t-b-2)");
+    expect(block).toBe("tickets: 1 request(s) NOT restored — another request here already has the number, and the restore could not take a new number for it this time. Run the restore again: a re-run gives each one a new number (records already restored are skipped, not duplicated).KE-DDRT-26-0007 (request t-b-1 has it) — backup request t-b-2, not restored");
+    // the refused backup row is never named in the holder's words "(request <id>)"
+    expect(block).not.toMatch(/\(request t-b-2\)/);
     // not repeated under the generic refused line; the headline count is as before
     expect(body(d)).not.toMatch(/row\(s\) refused —/);
     expect(headline(d)).toBe("Records restored — 1 row(s) refused");
@@ -295,7 +326,9 @@ describe("BKP-16 (2) — the two request-number refusals in words a plant admin 
     const block = flat(byTestId(d, "restore-number-unsettled")[0].textContent);
     expect(block).toMatch(/^tickets: 1 request\(s\) NOT restored — several requests in this backup carry the same number, and every one of them tried first was refused or not written, so the restore could not tell which should keep it\. Resolve the duplicates first: fix what kept the other requests carrying the number from being written \(see the refused and not-restored lines above and the audit log's RESTORE_CHUNK rows\), then run the restore again\./);
     expect(block).not.toMatch(/listed here/);
-    expect(block).toMatch(/then run the restore again\.LEGACY-1 \(request t-c-17\)$/);
+    expect(block).toMatch(/then run the restore again\.LEGACY-1 — backup request t-c-17, not restored$/);
+    // no request holds an unsettled number: none is named as having it
+    expect(block).not.toMatch(/has it/);
     // the 17 database refusals (23514) are on the generic line, exactly as before
     expect(body(d)).toContain(`tickets: ${RESTORE_HELD_BACK_ROUNDS + 1} row(s) refused — refused by a database check (see the audit log's RESTORE_CHUNK rows for each id).`);
     expect(headline(d)).toBe(`Records restored — ${RESTORE_HELD_BACK_ROUNDS + 2} row(s) refused`);
@@ -303,7 +336,18 @@ describe("BKP-16 (2) — the two request-number refusals in words a plant admin 
 
   it("a refusal without a number (an older server) still says what to do, naming the request", () => {
     const d = render(result([table("tickets", { rows: 1, refused: [{ id: "t-1", code: TICKET_NUMBER_IN_USE, message: "x" }] })]));
-    expect(flat(byTestId(d, "restore-number-in-use")[0].textContent)).toMatch(/Run the restore again: a re-run gives each one a new number .*a request \(request t-1\)$/);
+    expect(flat(byTestId(d, "restore-number-in-use")[0].textContent)).toMatch(/Run the restore again: a re-run gives each one a new number .*a request — backup request t-1, not restored$/);
+  });
+
+  it("more than ten refused numbers print in full: the print-only list holds every line", () => {
+    const refused = Array.from({ length: 12 }, (_, i) => ({ ...refusal(`t-r-${i}`, TICKET_NUMBER_IN_USE), ticketNumber: `KE-${i}`, numberHeldBy: `h-${i}` }));
+    const d = render(result([table("tickets", { rows: 12, refused })]));
+    const block = byTestId(d, "restore-number-in-use")[0];
+    expect(block.querySelector(":scope > ul")!.querySelectorAll("li")).toHaveLength(10);
+    const printed = byTestId(d, "restore-number-in-use-all-print");
+    expect(printed).toHaveLength(1);
+    expect(Array.from(printed[0].querySelectorAll("li")).map((li) => flat(li.textContent)))
+      .toEqual(refused.map((_, i) => `KE-${i} (request h-${i} has it) — backup request t-r-${i}, not restored`));
   });
 });
 

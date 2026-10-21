@@ -40,28 +40,37 @@ function RenumberLine({ r }: { r: RestoreRenumbering }) {
 }
 
 /** BKP-16: a list of lines, the first RENUMBER_LINES_SHOWN shown and every
- *  line behind "Show all" when there are more. */
+ *  line behind "Show all" when there are more. A browser does not print a
+ *  closed <details>, so when there are more (and only then: a list of ten or
+ *  fewer renders exactly as before) the on-screen list and "Show all" are
+ *  hidden in print and a print-only list carries every line (P17 final fix
+ *  pass). */
 function ShownList({ lines, testId }: { lines: React.ReactNode[]; testId: string }) {
   const more = lines.length - RENUMBER_LINES_SHOWN;
+  if (more <= 0) return <ul className="ml-3 list-disc pl-4">{lines}</ul>;
   return (
     <>
-      <ul className="ml-3 list-disc pl-4">{lines.slice(0, RENUMBER_LINES_SHOWN)}</ul>
-      {more > 0 && (
-        <details data-testid={testId} className="ml-3">
-          <summary className="cursor-pointer font-bold underline">and {fmtNum(more)} more — show all {fmtNum(lines.length)}</summary>
-          <ul className="list-disc pl-4">{lines}</ul>
-        </details>
-      )}
+      <ul className="ml-3 list-disc pl-4 print:hidden">{lines.slice(0, RENUMBER_LINES_SHOWN)}</ul>
+      <details data-testid={testId} className="ml-3 print:hidden">
+        <summary className="cursor-pointer font-bold underline">and {fmtNum(more)} more — show all {fmtNum(lines.length)}</summary>
+        <ul className="list-disc pl-4">{lines}</ul>
+      </details>
+      <ul data-testid={`${testId}-print`} className="ml-3 hidden list-disc pl-4 print:block">{lines}</ul>
     </>
   );
 }
 
 /** BKP-16: a refused request's number, from the refusal's `ticketNumber`
- *  (never parsed from its message); the request's id when it has none. */
+ *  (never parsed from its message), then the refused BACKUP row's id — said
+ *  as the backup request not restored, never in the "(request …)" words the
+ *  renumber lines use for the holder. The request holding the number is
+ *  named from the refusal's `numberHeldBy`, as the renumber lines name it,
+ *  when the server sent one (P17 final fix pass). */
 const refusedNumberLine = (r: RestoreRowRefusal, i: number) => (
   <li key={`${r.id ?? "none"}:${i}`}>
     {r.ticketNumber ? <b>{r.ticketNumber}</b> : <>a request</>}
-    {r.id ? <> (request <span className="font-mono">{r.id}</span>)</> : null}
+    {r.numberHeldBy ? <> (request <span className="font-mono">{r.numberHeldBy}</span> has it)</> : null}
+    {r.id ? <> — backup request <span className="font-mono">{r.id}</span>, not restored</> : null}
   </li>
 );
 
