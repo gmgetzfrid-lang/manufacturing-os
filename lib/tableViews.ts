@@ -16,10 +16,27 @@ const TABLE = "table_views";
 // of that view re-reads the row under its own row-level security. The message
 // carries NOTHING (an empty payload): only a viewer who already knows the
 // view's id is subscribed to its topic, and what it re-reads is what RLS lets
-// it read — so nothing reaches anyone who did not already have it. A forged
-// message on a known topic can only cause one more read of a row the
-// listener may read anyway.
+// it read — so no row data reaches anyone who did not already have it.
+//
+// The message is a HINT, never data (second fix pass): its payload is
+// ignored, and the listener only re-reads. The topic is a PUBLIC Broadcast
+// channel named after the view's id, and that id is guessable (it is built
+// from the workspace, person, library and folder ids), so anyone who knows
+// it can post to the topic or listen on it. Two consequences, recorded:
+//   * a forged or flooded message costs the listener at most about one
+//     re-read per TABLE_VIEW_RESYNC_MS window — the re-reads are coalesced
+//     (one in flight, one trailing re-read after it; LISTENER below);
+//   * RESIDUAL: someone who knows a topic sees WHEN that view is saved or
+//     deleted (an empty message, no content). Closing it needs a PRIVATE
+//     channel, which needs a realtime.messages row-level-security policy —
+//     a migration, not this package's (RT-12's Partial; the new finding
+//     RT-13, audit-reports/notifications/05-realtime-and-lifecycle.md).
 const TABLE_VIEW_EVENT = "table_view_changed";
+
+/** The listener's coalescing window: a burst of change messages (or a
+ *  flood of forged ones) on a view's topic is answered by about one re-read
+ *  per window — one in flight, and at most one trailing re-read after it. */
+export const TABLE_VIEW_RESYNC_MS = 250;
 
 /** The Broadcast topic of one view (the channel name its listeners join). */
 export function tableViewTopic(id: string): string {
@@ -295,24 +312,47 @@ export function listenTableView(
   let alive = true;
   const id = tableViewId(params);
 
+  // LISTENER (second fix pass): at most one read in flight; a hint that
+  // arrives meanwhile asks for exactly one trailing re-read after it; hints
+  // inside one TABLE_VIEW_RESYNC_MS window are one re-read. So a flood of
+  // messages costs about one read per window, and reads never overlap (the
+  // older answer can no longer land after the newer one).
+  let inFlight = false;
+  let again = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
   const fetch = async () => {
-    const { data } = await supabase.from(TABLE).select("*").eq("id", id).limit(1);
-    if (alive) cb(data && data.length > 0 ? fromDb(data[0] as Record<string, unknown>) : null);
+    if (!alive) return;
+    if (inFlight) { again = true; return; }
+    inFlight = true;
+    try {
+      const { data } = await supabase.from(TABLE).select("*").eq("id", id).limit(1);
+      if (alive) cb(data && data.length > 0 ? fromDb(data[0] as Record<string, unknown>) : null);
+    } finally {
+      inFlight = false;
+      if (again && alive) { again = false; hint(); }
+    }
   };
 
-  fetch();
+  /** A change message: a hint to re-read, never data (its payload is not
+   *  read). Coalesced into the window's one re-read. */
+  const hint = () => {
+    if (!alive || timer) return;
+    timer = setTimeout(() => { timer = null; void fetch(); }, TABLE_VIEW_RESYNC_MS);
+  };
+
+  void fetch();
 
   // RT-12: the saver's Broadcast (announceTableViewChange), not
   // postgres_changes — table_views is not published (see the note at the top).
   const channel = supabase
     .channel(tableViewTopic(id))
-    .on("broadcast", { event: TABLE_VIEW_EVENT }, () => {
-      if (alive) fetch();
-    })
+    .on("broadcast", { event: TABLE_VIEW_EVENT }, () => hint())
     .subscribe();
 
   return () => {
     alive = false;
+    if (timer) { clearTimeout(timer); timer = null; }
     supabase.removeChannel(channel);
   };
 }
