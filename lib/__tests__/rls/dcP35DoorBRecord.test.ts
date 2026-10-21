@@ -36,8 +36,12 @@ const between = (s: string, a: string, b: string) => {
   const i = s.indexOf(a);
   return s.slice(i, s.indexOf(b, i + a.length) + b.length);
 };
-/** 20261252 undone: the eight-argument function dropped, 20261151's body and grants put back. */
+/** 20261252 undone: the eight-argument function dropped, 20261151's body and grants put back — after the
+ *  publish guard is put back as it stood before 20261254 (20261253's body; P37), so "before" is the world
+ *  before this file's paste (no door-(b) record of the guard's own, no intake-record ask). */
 const UNDO_252 = [
+  between(mig("20261253_dc_roundG_status_editor_hold_leg.sql"), "CREATE OR REPLACE FUNCTION enforce_document_publish_guard()", "\n$$;"),
+  "REVOKE ALL ON FUNCTION enforce_document_publish_guard() FROM PUBLIC, anon, authenticated, service_role;",
   "DROP FUNCTION IF EXISTS finalize_reviewed_promote(uuid, uuid, uuid, text, uuid, boolean, text, boolean);",
   between(mig(BASE), "CREATE OR REPLACE FUNCTION finalize_reviewed_promote(", "\n$$;"),
   "REVOKE ALL ON FUNCTION finalize_reviewed_promote(uuid, uuid, uuid, text, uuid, boolean, text) FROM PUBLIC, anon;",
@@ -107,6 +111,10 @@ function seed(db: string, w: World): void {
     INSERT INTO document_versions (id, org_id, record_id, revision_label, base_rev, review_state, provenance, intake_link_id, file_url, change_type, created_by, created_by_name, created_at, supersedes_version_id) VALUES
       ('${w.i2A}', '${w.org}', '${w.dIntake}', '2A', 'B', 'in_review', 'external', '${w.link}', 'p35/${tag}/i2a.pdf', 'Major', '${w.link}', 'Contractor Co', now() - interval '1 day', '${w.iA}');
     UPDATE documents SET pending_version_id = '${w.i2A}' WHERE id = '${w.dIntake}';
+    -- the intake route's own record of the genuine submission (service role, no person named) — what
+    -- door (b)'s intake limb asks for since 20261254 (DCK-18, P37)
+    INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, details)
+      VALUES ('INTAKE_SUBMISSION', '${w.dIntake}', 'document', '${w.org}', NULL, jsonb_build_object('versionId', '${w.i2A}', 'company', 'Contractor Co'));
     RESET session_replication_role;
     UPDATE documents SET checked_out_by = '${u.holder}', checked_out_by_name = 'Holder Person', checked_out_at = now()
      WHERE id IN ('${w.dReview}', '${w.dIntake}');
@@ -254,14 +262,14 @@ describe.skipIf(skip !== null)("DCK-18 (20261252): the reviewed promote over ano
     expect(r.out).toBe(`ok:1 / ${w.r2A}|1|0`);
   });
 
-  it("the remainder, pinned (DEC-90 ruling (3) for P35): the three-step PATCH sent by hand over the holder's checkout — door (b) for the guard — lands on both sides and is NOT recorded by this file (recorded on DCK-18 with its owner)", () => {
+  it("the remainder this file left (DEC-90 ruling (3) for P35): the three-step PATCH sent by hand over the holder's checkout — door (b) for the guard — lands on both sides; this file does not record it (before), and since 20261254 the publish guard does (DCK-18, P37 — pinned in dcP37DoorBGuard.test.ts)", () => {
     const threeStep = [
       `UPDATE documents SET current_version_id = '${w.r2A}', rev = 'B', revision = 'B', status = 'Issued', pending_version_id = NULL
         WHERE id = '${w.dReview}' AND pending_version_id = '${w.r2A}' AND current_version_id = '${w.rA}'`,
     ];
     const r = both("publisher", threeStep, left(w, w.dReview));
     expect(r.before).toBe(`ok:1 / ${w.r2A}|0|0`);
-    expect(r.after).toBe(r.before);
+    expect(r.after).toBe(`ok:1 / ${w.r2A}|1|1`);
   });
 });
 

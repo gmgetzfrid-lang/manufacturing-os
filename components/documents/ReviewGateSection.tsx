@@ -32,6 +32,15 @@
 // ratified under DEC-90). The holder's checkout stays open; they are told on
 // their checkout thread and in-app, and the history records the pass
 // (finalizeReviewedRevision → notePromoteOverCheckout).
+//
+// DCK-18 (c) (document-control P37): when the pending draft is a contractor-
+// shaped submission that no project's Intake tab lists (its link is a quote
+// link, gone, or absent — so neither the tab's approve nor its Reject reaches
+// it), Document Control is offered a standalone, recorded retire of it here,
+// with a reason and a confirmation, through lib/revisions.ts voidPendingDraft
+// (lib/strayPendingSubmission.ts). Nobody else sees it; a submission an Intake
+// tab lists is never offered (Reject it there); an unreadable row is never
+// offered.
 
 import React, { useCallback, useEffect, useState } from "react";
 import { appAlert } from "@/components/providers/DialogProvider";
@@ -51,6 +60,8 @@ import HeldSourceNotice from "@/components/documents/lifecycle/HeldSourceNotice"
 import type { DocumentRecord, ReviewControl } from "@/types/schema";
 import { describeProjectSweep } from "@/lib/checklists";
 import { notifyIntakeOutcome } from "@/lib/intakeOutcomeNotice";
+import { appPrompt } from "@/components/providers/DialogProvider";
+import { readStraySubmission, retireStrayPendingSubmission, describeStray, type StraySubmission } from "@/lib/strayPendingSubmission";
 
 /** SAF-19 (P23): the notice route's answer, in the words the Intake tab uses
  *  for the same answers (components/projects/IntakePanel.tsx
@@ -95,6 +106,8 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   // SAF-19 (P23): what the contractor was told after an approval here.
   const [intakeNotice, setIntakeNotice] = useState<string | null>(null);
   useEffect(() => { setIntakeNotice(null); }, [doc.id]);
+  // DCK-18 (c) (P37): a pending submission no Intake tab lists — read for Document Control only.
+  const [stray, setStray] = useState<StraySubmission | null>(null);
 
   const load = useCallback(async () => {
     if (!doc.id) return;
@@ -159,6 +172,17 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   // Admin/DocCtrl + explicitly-configured draft viewers. Everyone else only
   // learns that a review is in progress.
   const isController = hasAnyRole(["Admin", "DocCtrl"]); // OWN-3: collection, not headline
+  // DCK-18 (c) (P37): only a controller's view reads it; any other viewer, a
+  // document with no pending draft and an unreadable row leave it null.
+  useEffect(() => {
+    setStray(null);
+    if (!isController || !doc.id || !pendingVersionId) return;
+    let alive = true;
+    readStraySubmission(doc.id)
+      .then((r) => { if (alive) setStray(r.kind === "stray" && r.stray.versionId === pendingVersionId ? r.stray : null); })
+      .catch(() => { /* unreadable: never offered */ });
+    return () => { alive = false; };
+  }, [isController, doc.id, pendingVersionId]);
   const canSeeDraft = isController || canManage
     || roster.some((r) => r.reviewerUserId === uid)
     || (uid ? (control?.draftViewerIds ?? []).includes(uid) : false)
@@ -242,6 +266,39 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
       // this document; a sweep that could not finish is said, never silent.
       const swept = res.published && res.evidenceSweep ? describeProjectSweep(res.evidenceSweep) : null;
       if (swept && !swept.ok) await appAlert({ tone: "danger", message: swept.text });
+      await load(); onChanged?.();
+    } finally { setBusy(false); }
+  };
+
+  /** DCK-18 (c) (P37): Document Control's standalone retire of the stray
+   *  submission — a reason (required, recorded), then the existing
+   *  void-pending-draft path; the answer is said either way. */
+  const retireStray = async () => {
+    if (!doc.id || !stray || !isController) return;
+    const reason = await appPrompt({
+      title: "Retire this pending submission?",
+      message: `${describeStray(stray)} Retiring it voids any sign-offs on it, marks it retired and clears the document's pending draft; the current Rev ${doc.rev || "—"} stays the controlled copy. This is recorded on the document's history and cannot be undone.`,
+      placeholder: "Why it is retired (recorded)",
+      confirmLabel: "Retire submission",
+      tone: "danger",
+      required: true,
+      minLength: 3,
+    });
+    if (reason === null) return;
+    setBusy(true);
+    try {
+      const res = await retireStrayPendingSubmission({
+        orgId, documentId: doc.id, expectedVersionId: stray.versionId, reason,
+        actorIsController: isController, actorUserId: uid ?? null, actorEmail: userEmail ?? null, actorRole: activeRole ?? null,
+      });
+      if (!res.ok) {
+        await appAlert({ tone: "danger", message: res.reason });
+      } else if (res.recordError) {
+        await appAlert({ tone: "danger", message: `The submission was retired, but the record of it could not be written (${res.recordError}) — note it on the document.` });
+      } else {
+        await appAlert({ message: "The submission was retired and recorded on the document's history." });
+      }
+      setStray(null);
       await load(); onChanged?.();
     } finally { setBusy(false); }
   };
@@ -341,6 +398,18 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
             ))}
           </div>
 
+          {isController && stray && (
+            <div role="note" data-testid="review-stray-submission" className="rounded-lg border border-rose-200 bg-rose-50 p-2.5 text-[11px] text-rose-800 space-y-2">
+              <div>{describeStray(stray)} As Document Control you can retire it here — recorded on the document&apos;s history.</div>
+              <button
+                onClick={() => void retireStray()}
+                disabled={busy}
+                className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-rose-300 bg-white text-rose-700 text-xs font-black hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Retire this submission
+              </button>
+            </div>
+          )}
           {canManage && roster.length === 0 ? (
             // RESCUE, not a dead end: a zero-person roster can never complete,
             // so the disabled button would strand this draft forever.

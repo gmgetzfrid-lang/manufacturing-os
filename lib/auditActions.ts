@@ -100,6 +100,12 @@ const BY_CATEGORY: Record<AuditCategory, readonly string[]> = {
     "INTAKE_QUOTE_LINK_CREATED", "INTAKE_QUOTE_LINK_REVOKED", "INTAKE_QUOTE_SUBMISSION", "INTAKE_REDLINE",
     "INTAKE_REJECTED", "INTAKE_SUBMISSION_DISPLACED", "INTAKE_DISPLACE_UNRESOLVED", "INTAKE_COLLISION_FLAGGED",
     "INTAKE_ASSIGNMENT_CHANGED", "INTAKE_OUTCOME_NOTICE_CLAIMED", "INTAKE_OUTCOME_NOTICE_FAILED", "INTAKE_OUTCOME_NOTIFIED",
+    // document-control P37 (DCK-18 (c)): Document Control's retire of a pending submission no Intake tab lists —
+    // the intent (who, the version shown, why; written before the void) and the outcome.
+    "PENDING_SUBMISSION_RETIRE_REQUESTED", "PENDING_SUBMISSION_RETIRED",
+    // document-control P37 final fix pass (DCK-18 (b)): intake_door_submit_version's own evidence of the
+    // submission it inserted, written in the door's transaction (20261254).
+    "INTAKE_DOOR_SUBMITTED",
   ],
   knowledge: [
     "KNOWLEDGE_ASKED", "KNOWLEDGE_DOC_INDEXED", "KNOWLEDGE_DOC_PARTIAL_ACCEPTED", "KNOWLEDGE_DOC_REJECTED",
@@ -171,6 +177,8 @@ export const DESTRUCTIVE_AUDIT_ACTIONS: ReadonlySet<string> = new Set([
   "FORCE_RELEASE", "REV_HOLD_OVERRIDDEN", "REV_LOCK_OVERRIDDEN", "COST_DOC_AWARD_OVERRIDE",
   "TRANSMITTAL_LINK_REVOKED", "SHARE_LINK_REVOKED", "INTAKE_LINK_REVOKED", "INTAKE_LINKS_REVOKED_WITH_PROJECT",
   "INTAKE_QUOTE_LINK_REVOKED", "DATA_RESTORE",
+  // document-control P37 (DCK-18 (c)): the retire voids the submission's sign-offs, which never return.
+  "PENDING_SUBMISSION_RETIRED",
 ]);
 
 /** "REV_UP" → "Rev Up". */

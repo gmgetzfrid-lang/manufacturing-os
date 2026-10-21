@@ -1131,3 +1131,68 @@ migration, `20261252_dc_roundG_door_b_record.sql` (`DCK-18`):
   before it); no `lib/schemaExpectations.ts` probe (the app tolerates both
   signatures; the file's own result set is the paste check); no new table,
   notification kind or audit action.
+
+⚠ **Paste order — P37 DOOR B GUARD (2026-10-21; corrected at the P37 final
+fix pass).** One one-paste migration, `20261254_dc_roundG_door_b_guard.sql`
+(`DCK-18` remainders, `REV-37`):
+1. **No deploy order.** The guard, `finalize_reviewed_promote`,
+   `retire_over_hold` and `intake_door_submit_version` keep their signatures
+   and answers; the app carrying P37 (the Inspector's retire of a stray
+   pending submission with its intent row, the re-read of a lost flip or
+   park, a failed `INTAKE_SUBMISSION` write kept in the EVID-6 outbox) works
+   on every database. An app before P37 keeps working after the paste.
+2. **Paste after `20261253` (required** — its first statement refuses,
+   changing nothing, without `20261253`'s hold leg, `20261252`'s
+   eight-argument `finalize_reviewed_promote`, `20261253`'s
+   `retire_over_hold` or `20261214`'s `intake_door_submit_version`), so it
+   waits behind row 193 (HOLD behind rows 187 / 150). **Never re-paste
+   `20261253`, `20261252`, `20261245`, `20261214`, `20261193`, `20261185`,
+   `20261184`, `20261182`, `20261174`, `20261165`, `20261164`, `20261159`,
+   `20261151`, `20261144`, `20261139`, `20261105` or any earlier guard /
+   finalize / intake-door migration after it** (a re-pasted `20261214` or
+   `20261184` drops the door's own record of its submissions).
+- **What changes after the paste:** a door-(b) write over another person's
+  checkout made outside `finalize_reviewed_promote` (the three-step PATCH
+  sent by hand) is recorded and the holder told by the guard (a WARNING,
+  never a refusal, if either cannot be written); the contractor door
+  (`intake_door_submit_version`, both its paths) records each submission it
+  files in its own transaction (`INTAKE_DOOR_SUBMITTED`, no person named —
+  one more audit row per submission; a WARNING, never a refusal, if it cannot
+  be written); a door-shaped pending submission that no proof names — that
+  record, the intake route's `INTAKE_SUBMISSION` record, or that record's
+  server dead letter (still in the outbox, or drained) — is no longer
+  promoted over another person's checkout (42501 — the holder checks in,
+  then it is approved; or Document Control retires it); so a genuine
+  submission whose route record was lost is still approved, and only a
+  door-shaped row filed before the paste with no proof is refused; a
+  recorded reversal park of a held document no unreversed split / merge
+  names is refused (42501); a member's own `REV_HOLD_OVERRIDDEN` row is
+  refused (42501) — every database function that records one keeps working
+  (`publish_revision`'s forced branch over a hold through the version proof,
+  added by the P37 fix pass). **What the paste does not do (recorded
+  residual, accepted by the integrator — `REV-37`):** a `REV_HOLD_OVERRIDDEN`
+  row written BEFORE the paste is not re-judged; one a member wrote by hand
+  then (`audit_logs_insert` admitted it) still reads as a reversal's restore
+  evidence for `put_back_retired_issue`'s rollback door. The rail closes the
+  forge-then-call pattern for rows written from the paste on, not for rows
+  already there; inventory row 5 is the operator's look-over of them.
+- **The result set:** eleven probes (all true) and seven counts — (1)
+  pending door-shaped submissions no proof names (expected 0; a genuine
+  pre-paste one whose route record was lost is counted too — the database
+  cannot tell it from a hand-written row); (2) of those, on a checked-out
+  document now (expected 0); (3) `REVIEW_PROMOTED_OVER_CHECKOUT` and (4)
+  `REV_HOLD_OVERRIDDEN` records to date (informational); (5) **operator
+  look-over** — `reversal_restore` `REV_HOLD_OVERRIDDEN` records with no
+  matching `restore_reversed_source` trace (no recorded `DOC_SPLIT` /
+  `DOC_MERGED` of the action the row names, naming the document, recorded no
+  later; or not that function's shape) — expected 0; **owner: the operator
+  at the `20261254` paste, reported to the integrator**; (6) held documents
+  an unreversed split / merge names (informational); (7)
+  `INTAKE_DOOR_SUBMITTED` records to date (0 on a first apply). A non-zero
+  "expected 0": the paste still applies; tell the integrator.
+- **For the integrator at merge, not edited by P37:** the `20261254` row in
+  `MIGRATION-PASTE-ORDER.md` (after row 193's `20261253`); no
+  `lib/schemaExpectations.ts` probe; no new table or notification kind;
+  three new audit actions (`PENDING_SUBMISSION_RETIRE_REQUESTED`,
+  `PENDING_SUBMISSION_RETIRED`, `INTAKE_DOOR_SUBMITTED`, registered in
+  `lib/auditActions.ts`).

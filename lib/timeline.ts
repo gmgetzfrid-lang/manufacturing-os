@@ -563,7 +563,9 @@ const pgList = (xs: string[]) => `(${xs.map((x) => `"${x}"`).join(",")})`;
  *  twice. The document and project timelines, the Activity feed and the
  *  dashboard's Activity widget leave them out; the admin audit page shows
  *  every row. */
-export const SCOPE_STAMP_ACTIONS: ReadonlySet<string> = new Set(["MILESTONE_SCOPE_RECORDED"]);
+// INTAKE_DOOR_SUBMITTED (document-control P37, 20261254): the door's own proof
+// row beside every INTAKE_SUBMISSION — a stamp, not an event (the DC-P37 merge).
+export const SCOPE_STAMP_ACTIONS: ReadonlySet<string> = new Set(["MILESTONE_SCOPE_RECORDED", "INTAKE_DOOR_SUBMITTED"]);
 /** The same set as a PostgREST `not.in` list — `.not("action", "in",
  *  SCOPE_STAMPS_NOT_IN)` — so a capped read leaves the stamps out BEFORE its
  *  row limit and a 100-row window is 100 events, never ~50 (J12 review fix

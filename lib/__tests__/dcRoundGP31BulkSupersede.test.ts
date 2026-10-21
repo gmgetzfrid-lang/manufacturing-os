@@ -122,7 +122,12 @@ afterEach(() => {
   host.remove();
 });
 
-const settle = () => act(async () => { for (let i = 0; i < 30; i++) await new Promise((r) => setTimeout(r, 0)); });
+// 30 macrotask turns, then — while the modal still says "Applying…" — keep yielding (bounded at ~3 s), so a
+// slower turn under load (a module loaded on first use) never reads the result early (the DC-P37 merge).
+const settle = () => act(async () => {
+  for (let i = 0; i < 30; i++) await new Promise((r) => setTimeout(r, 0));
+  for (let i = 0; i < 300 && host?.textContent?.includes("Applying…"); i++) await new Promise((r) => setTimeout(r, 10));
+});
 const button = (label: string) => {
   const b = Array.from(host.querySelectorAll("button")).find((x) => x.textContent?.includes(label));
   if (!b) throw new Error(`no button "${label}"`);

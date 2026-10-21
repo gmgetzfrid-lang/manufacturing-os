@@ -226,7 +226,8 @@ describe("20261164 — restore_reversed_source, the reversal's recorded put-back
     // REV-29 (P25): and 20261192, which re-creates both doors (pinned in dcRoundFNullPriorStatusMigration.test.ts).
     // DCK-18 (P35): and 20261252, which re-creates 20261151's finalize_reviewed_promote (pinned in dcRoundFPromoteTransaction.test.ts).
     // REV-36 (P36): and 20261253 — retire_over_hold and put_back_retired_issue's re-entry limb (pinned in dcRoundGStatusEditorHoldLegMigration.test.ts).
-    expect(setters).toEqual(["20261151_dc_roundF_promote_transaction_and_hold_override.sql", FILE, "20261165_dc_roundF_stamped_put_back.sql", "20261192_dc_roundF_null_prior_status_put_back.sql", "20261252_dc_roundG_door_b_record.sql", "20261253_dc_roundG_status_editor_hold_leg.sql"]);
+    // DCK-18 / REV-37 (P37): and 20261254 — finalize_reviewed_promote and retire_over_hold re-created from their newest bodies (pinned in dcRoundGDoorBGuardMigration.test.ts).
+    expect(setters).toEqual(["20261151_dc_roundF_promote_transaction_and_hold_override.sql", FILE, "20261165_dc_roundF_stamped_put_back.sql", "20261192_dc_roundF_null_prior_status_put_back.sql", "20261252_dc_roundG_door_b_record.sql", "20261253_dc_roundG_status_editor_hold_leg.sql", "20261254_dc_roundG_door_b_guard.sql"]);
     // in this file: the restore's two set_config calls, the COMMENT ON FUNCTION's description,
     // and the probes that quote them — nothing in the guard but its reads
     const here = stripComments(M);

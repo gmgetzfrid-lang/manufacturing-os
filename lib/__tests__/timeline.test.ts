@@ -318,9 +318,9 @@ describe("SEC-21 (projects Round G J12, review fix 6) — the database's scope s
     const events = await getProjectTimeline({ projectId: "p1" });
     expect(events.filter((e) => e.resourceId === "d1").map((e) => e.summary)).toEqual(["Milestone deleted: Hydrotest"]);
   });
-  it("the stamp is classed in the one vocabulary, as MILESTONE_DELETED is; the set names it alone", async () => {
+  it("the stamp is classed in the one vocabulary, as MILESTONE_DELETED is; the set names the database stamps only", async () => {
     const { SCOPE_STAMP_ACTIONS } = await import("@/lib/timeline");
-    expect([...SCOPE_STAMP_ACTIONS]).toEqual(["MILESTONE_SCOPE_RECORDED"]);
+    expect([...SCOPE_STAMP_ACTIONS]).toEqual(["MILESTONE_SCOPE_RECORDED", "INTAKE_DOOR_SUBMITTED"]); // + the intake door's proof row (document-control P37, at its merge)
     expect(PROJECT_EVENT_VOCABULARY.MILESTONE_SCOPE_RECORDED).toBe("noise");
     expect(hiddenProjectActions()).toContain("MILESTONE_SCOPE_RECORDED");
     // the label stays for the raw audit lists (the admin audit page shows every row)
@@ -336,7 +336,7 @@ describe("SEC-21 (projects Round G J12, review fix 6) — the database's scope s
       audit(`d${i}`, "MILESTONE_DELETED", { resource_type: "document", resource_id: "d1", details: { milestoneId: `m${i}`, name: `Task ${i}` }, timestamp: at(1) }),
     ];
   }).flat();
-  const stampFilter = { table: "audit_logs", method: "not", args: ["action", "in", '("MILESTONE_SCOPE_RECORDED")'] };
+  const stampFilter = { table: "audit_logs", method: "not", args: ["action", "in", '("MILESTONE_SCOPE_RECORDED","INTAKE_DOOR_SUBMITTED")'] };
   it("the document timeline's read leaves the stamp out in the query: a 4-row window is 4 deletes, not 2", async () => {
     state.rows.audit_logs = pairs(4);
     const events = await getDocumentTimeline({ documentId: "d1", limit: 4 });
@@ -350,6 +350,6 @@ describe("SEC-21 (projects Round G J12, review fix 6) — the database's scope s
     state.rows.audit_logs = pairs(4);
     const events = await getProjectTimeline({ projectId: "p1", limit: 4 });
     expect(events.filter((e) => e.resourceId === "d1").map((e) => e.summary)).toEqual(["Milestone deleted: Task 3", "Milestone deleted: Task 2", "Milestone deleted: Task 1", "Milestone deleted: Task 0"]);
-    expect(state.calls.filter((c) => c.table === "audit_logs" && c.method === "not" && c.args[1] === "in" && c.args[2] === '("MILESTONE_SCOPE_RECORDED")')).toHaveLength(1);
+    expect(state.calls.filter((c) => c.table === "audit_logs" && c.method === "not" && c.args[1] === "in" && c.args[2] === '("MILESTONE_SCOPE_RECORDED","INTAKE_DOOR_SUBMITTED")')).toHaveLength(1);
   });
 });
