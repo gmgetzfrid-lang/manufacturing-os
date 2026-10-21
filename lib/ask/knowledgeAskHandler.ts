@@ -54,6 +54,7 @@ import { renderKnowledgePages, MAX_DEEP_READ_PAGES } from "@/lib/knowledgePageRe
 import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
 import { loadCatalog, loadPipeClasses } from "@/lib/knowledgeCatalogServer";
 import { pressureClassOf, pressureClassNote } from "@/lib/pressureClass";
+import { settleItems, keywordsOf, dropLibraryAsks, loosened } from "@/lib/ask/settleItems";
 import {
   buildCatalogBlock, pipeClassFacts, findClassMentions, formsForGoal, matchCatalogName, FORM_PURPOSES,
   type CatalogEntry,
@@ -414,6 +415,10 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         'CHECKLIST QUESTIONS ("what do I need to…", "requirements for…") span MANY topics — cover every ' +
         'facet the question implies (qualifications, documentation, testing, safety, materials…), one ' +
         'query per facet. ' +
+        'KEY TERMS: for each technical term in the question that a standard might define or use ' +
+        '("sour gas", "lethal service", "AES", "category M"), add one query with the term as an exact quoted ' +
+        'phrase in double quotes, and one with the term plus the word definition — the library\'s own wording governs, ' +
+        'and a related term is not the same term. ' +
         'PRESSURE CLASS: in piping, "class" with a number (150, 300, 600, 900, 1500, 2500) is the ' +
         'ASME B16.5 pressure class / flange rating, also written 150#, 150 lb, #150, CL150, ANSI 150. ' +
         'Write it as a quoted phrase ("class 150") plus a 150# / 150 lb variant, and never confuse 150 ' +
@@ -779,6 +784,30 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
           const tiered: TieredChunk = { ...c, rank: 1, libraryId: c.library_id, tier: c.library_id === libraryId ? "governing" : "reference" };
           reserved.push(tiered);
           chunks.push(tiered);
+        }
+      }
+    }
+
+    // ── DEFINITIONS: the library's own definition of the question's terms.
+    //    A definitions / glossary document (found by its title, whatever the
+    //    company) is searched for the question's quoted terms, so "sour gas"
+    //    is answered on the documents' definition, not a neighbouring one.
+    {
+      const defDocs = reachableDocs.filter((d) => /\b(definitions?|glossary|terminology|abbreviations)\b/i.test(d.name)).slice(0, 2);
+      const termQueries = [...new Set(queries.filter((q) => q.includes('"')).map((q) => (q.match(/"[^"]+"/g) ?? []).join(" ")).filter(Boolean))].slice(0, 3);
+      if (defDocs.length > 0 && termQueries.length > 0) {
+        const have = new Set(chunks.map((c) => c.id));
+        for (const d of defDocs) {
+          for (const tq of termQueries) {
+            const { data } = await supabaseAdmin.rpc("knowledge_search_document", { p_org: orgId, p_document: d.id, p_query: tq, p_limit: 2 });
+            for (const c of (Array.isArray(data) ? data : []) as RetrievedChunk[]) {
+              if (have.has(c.id)) continue;
+              have.add(c.id);
+              const tiered: TieredChunk = { ...c, libraryId: d.library_id, tier: d.library_id === libraryId ? "governing" : "reference" };
+              reserved.push(tiered);
+              chunks.push(tiered);
+            }
+          }
         }
       }
     }
@@ -1748,6 +1777,14 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "- WHY A RULE EXISTS: state a reason ONLY when a passage states it, and quote that passage [n]. " +
       "When the documents give the requirement but not its reason, the answer says exactly that — " +
       "\"EP 5-2-2 §4.3 states the requirement but not the reason [n]\" — and stops there.\n" +
+      "- THE ASKER'S OWN TERMS: answer for the term the asker used (\"sour gas\"). If a passage defines " +
+      "or uses that exact term, quote it. Never treat a related defined condition (\"wet H2S\") as the " +
+      "same thing unless a passage equates them — say plainly that the documents define <that " +
+      "condition>, not <the asker's term>, quote it, and make which one applies the One question. The " +
+      "Answering for chip states which term you answered for.\n" +
+      "- NEVER ASK FOR WHAT THE LIBRARY HOLDS: a document that appears in WHAT THE LIBRARIES HOLD or among " +
+      "the passages is never a **To settle this:** item — the system searches it for you. If its relevant " +
+      "part isn't in the passages, write \"Searched <document> for <what> — not found in the indexed text\".\n" +
       "- WHEN IT CAN'T BE PROVEN FROM WHAT'S HERE, ASK FOR THE SOURCE: under **To settle this:**, " +
       "name the publication that would answer it. Prefer the ones the passages themselves point to, " +
       "and quote the pointer (\"EP 5-2-2 §2.0 references ASME B16.5 and ASME B31.3 [n] — upload the " +
@@ -1987,57 +2024,97 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         });
       }
     }
-    // ── CHASE: the draft pointed at documents it didn't have ("to settle
-    //    this I need EP 5-2-3") — and they are IN the library. Never send the
-    //    asker to fetch what the tool can read: pull those documents' best
-    //    passages and answer once more. One round, only with time to spare.
-    if (Date.now() - askStarted < 55_000 && reachableDocs.length > 0) {
-      const used = new Set(chunks.map((c) => c.document_id));
-      const desRe = (des: string) => new RegExp(`(^|[^A-Z0-9])${des.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean).join("[^A-Z0-9]*")}(?![0-9])`);
-      const wanted: ReachableDoc[] = [];
-      for (const m of answerOut.text.matchAll(/\b[A-Za-z]{1,8}[- ]?\d+(?:[-.]\d+)*[A-Za-z]?\b/g)) {
+    // ── CHASE: never send the asker for what the library holds. The draft's
+    //    "To settle this" list is a set of SEARCHES the tool can run itself:
+    //    each item is looked for inside the documents it names (even ones
+    //    already read in part — "the Class 150 section of EP 5-2-3") and
+    //    across the whole library. Documents the draft named but never read
+    //    are pulled too. Then the answer is written once more, and it may ask
+    //    only for what the search genuinely did not find. One round, only
+    //    with time to spare.
+    const desRe = (des: string) => new RegExp(`(^|[^A-Z0-9])${des.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean).join("[^A-Z0-9]*")}(?![0-9])`);
+    const docsNamedIn = (text: string, limit: number): ReachableDoc[] => {
+      const out: ReachableDoc[] = [];
+      for (const m of text.matchAll(/\b[A-Za-z]{1,8}[- ]?\d+(?:[-.]\d+)*[A-Za-z]?\b/g)) {
         const sq = squashDes(m[0]);
         if (sq.length < 4 || !/\d/.test(sq) || !/[A-Z]/.test(sq)) continue;
         const re = desRe(m[0]);
         for (const d of reachableDocs) {
-          if (wanted.length >= 3) break;
-          if (used.has(d.id) || wanted.some((w) => w.id === d.id)) continue;
-          if (re.test(d.name.toUpperCase())) wanted.push(d);
+          if (out.length >= limit) return out;
+          if (!out.some((w) => w.id === d.id) && re.test(d.name.toUpperCase())) out.push(d);
         }
       }
-      if (wanted.length > 0) {
-        emit({ t: "reset" });
-        emit({ t: "status", text: `The answer pointed to ${wanted.map((d) => d.name.replace(/\.pdf$/i, "").split(" — ")[0]).join(", ")} — reading ${wanted.length === 1 ? "it" : "them"} from the library and answering again` });
+      return out;
+    };
+    let chased: string[] = [];
+    if (Date.now() - askStarted < 55_000 && reachableDocs.length > 0) {
+      const used = new Set(chunks.map((c) => c.document_id));
+      const unread = docsNamedIn(answerOut.text, 6).filter((d) => !used.has(d.id)).slice(0, 3);
+      const items = settleItems(answerOut.text);
+      if (unread.length > 0 || items.length > 0) {
+        emit({ t: "status", text: items.length > 0
+          ? `Looking up what the answer needs — ${items.length} item${items.length === 1 ? "" : "s"} — in the library instead of asking you`
+          : `The answer pointed to ${unread.map((d) => d.name.split(" — ")[0]).join(", ")} — reading from the library` });
         const firstNew = chunks.length + 1;
         const have = new Set(chunks.map((c) => c.id));
-        for (const d of wanted) {
-          let rows: RetrievedChunk[] = [];
+        const add = (rows: RetrievedChunk[], d: { id: string; library_id: string } | null, max: number) => {
+          let n = 0;
+          for (const c of rows) {
+            if (n >= max || have.has(c.id) || excludedDocIds.has(c.document_id)) continue;
+            have.add(c.id); n++;
+            const libId = d?.library_id ?? (c as TieredChunk).libraryId ?? libraryId;
+            chunks.push({ ...c, libraryId: libId, tier: libId === libraryId || !hasLinks ? "governing" : "reference" });
+          }
+        };
+        const searchDoc = async (d: ReachableDoc, q: string, limit: number) => {
+          const { data, error } = await supabaseAdmin.rpc("knowledge_search_document", { p_org: orgId, p_document: d.id, p_query: q, p_limit: limit });
+          return !error && Array.isArray(data) ? data as RetrievedChunk[] : [];
+        };
+        // 1. Unread documents the draft pointed to.
+        for (const d of unread) {
+          const rows: RetrievedChunk[] = [];
           for (const q of [...queries.slice(0, 3), question]) {
-            const { data, error } = await supabaseAdmin.rpc("knowledge_search_document", {
-              p_org: orgId, p_document: d.id, p_query: q, p_limit: 4,
-            });
-            if (!error && Array.isArray(data)) rows.push(...(data as RetrievedChunk[]).filter((c) => !rows.some((r) => r.id === c.id)));
+            rows.push(...(await searchDoc(d, q, 4)).filter((c) => !rows.some((r) => r.id === c.id)));
             if (rows.length >= 5) break;
           }
-          if (rows.length === 0) {
-            // Nothing matched the wording: its opening pages (scope, the
-            // index of what it covers) beat leaving it unread.
-            const { data: front } = await supabaseAdmin.from("knowledge_chunks").select("id, document_id, page, content, section")
-              .eq("org_id", orgId).eq("document_id", d.id).order("page", { ascending: true }).order("seq", { ascending: true }).limit(4);
-            rows = ((front ?? []) as RetrievedChunk[]).map((c) => ({ ...c, rank: 0 }));
-          }
           docName.set(d.id, d.name);
-          for (const c of rows.slice(0, 5)) {
-            if (have.has(c.id)) continue;
-            have.add(c.id);
-            chunks.push({ ...c, libraryId: d.library_id, tier: d.library_id === libraryId ? "governing" : (hasLinks ? "reference" : "governing") });
+          add(rows, d, 5);
+          chased.push(d.name.split(" — ")[0]);
+        }
+        // 2. Each "to settle" item: inside the documents it names, then the
+        //    whole library (keyword + meaning).
+        for (const item of items) {
+          const q = keywordsOf(item);
+          if (!q) continue;
+          for (const d of docsNamedIn(item, 2)) {
+            docName.set(d.id, d.name);
+            const inDoc = keywordsOf(item.replace(new RegExp(`\\b${d.name.split(" — ")[0].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi"), " "), d.name, 5);
+            let rows = inDoc ? await searchDoc(d, inDoc, 4) : [];
+            if (rows.length === 0 && inDoc) rows = await searchDoc(d, loosened(inDoc), 4);
+            add(rows, d, 3);
           }
+          const flat = (await runSearches([q])).flat() as RetrievedChunk[];
+          add(flat, null, 3);
+          add(await runSemantic([item.slice(0, 300)]), null, 2);
+          chased.push(item.replace(/\*\*/g, "").split(" — ")[0].slice(0, 80));
         }
         if (chunks.length >= firstNew) {
-          const chaseNote = `\n\nCHASED DOCUMENTS: your first draft pointed to ${wanted.map((d) => `**${d.name}**`).join(", ")}. ` +
-            `They ARE in the library — their passages are now attached as [${firstNew}]–[${chunks.length}]. Use them. ` +
-            "Never list a document under To settle this when it is in these libraries; only what is genuinely not here, " +
-            "or a value only the asker knows.";
+          // Names for documents first seen here.
+          const missingNames = [...new Set(chunks.slice(firstNew - 1).map((c) => c.document_id))].filter((id) => !docName.has(id));
+          if (missingNames.length) {
+            const { data: nm } = await supabaseAdmin.from("knowledge_documents").select("id, name").in("id", missingNames);
+            for (const r of (nm ?? []) as Array<{ id: string; name: string }>) docName.set(r.id, r.name);
+          }
+          const chaseNote = `\n\nSEARCHED FOR WHAT YOUR DRAFT ASKED THE USER FOR: ${chased.map((c) => `"${c}"`).join("; ")}. ` +
+            `The library's best passages for those are now attached as [${firstNew}]–[${chunks.length}]. Use them. ` +
+            "Under **To settle this:** never name a document that is in these libraries or among the passages — the system " +
+            "searches them for you. If something was searched for and is still not in the passages, write \"Searched the " +
+            "library for <what> — not found\" instead of asking the user to supply it. Ask the user only for facts only they " +
+            "know (a temperature, a concentration, a design condition) or for a document that is genuinely not in the libraries.";
+          // Only now is the draft replaced — a search that found nothing new
+          // leaves the first answer standing as streamed.
+          emit({ t: "reset" });
+          emit({ t: "status", text: `Found ${chunks.length - firstNew + 1} more passage${chunks.length - firstNew + 1 === 1 ? "" : "s"} — answering again` });
           answerOut = await call({
             system: baseAnswerSystem + orgInstructions + buildPagesNote(pageImages) + chaseNote,
             user: `${conversationBlock}PASSAGES:\n\n${buildPassages(chunks)}${providedInputs}\n\nQUESTION: ${question}`,
@@ -2046,8 +2123,17 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
             ...(answerImages(pageImages).length > 0 ? { images: answerImages(pageImages) } : {}),
             onDelta: (text) => emit({ t: "delta", text }),
           });
+        } else {
+          chased = [];
         }
       }
+    }
+    // Safety net: a "To settle this" item that names a document the library
+    // holds is not a request the asker should get — the search above already
+    // looked there. It is dropped; what remains asks only for what isn't here.
+    {
+      const filtered = dropLibraryAsks(answerOut.text, (line) => docsNamedIn(line, 1).length > 0);
+      if (filtered !== answerOut.text) answerOut = { ...answerOut, text: filtered };
     }
     // The Evidence block is machinery: it leaves the answer text and becomes
     // per-citation highlight spans, each verified against its passage.
