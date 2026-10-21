@@ -37,7 +37,12 @@
 // audit_logs.timestamp DEFAULT NOW(), which the destination baseline read
 // orders by). Its sixth: a JSON path may descend (`col->a->>key`, as
 // PostgREST's arrows do) — the recall's lookup of a DATA_EXPORT row by its
-// record id (`details->fileRecord->>recordId`).
+// record id (`details->fileRecord->>recordId`). Admin-and-org Round G P18:
+// `missingColumns` names columns a table does NOT have (a database a
+// migration has not reached — 20261250's on tickets): a read selecting one
+// answers 42703 (checked before `readError`, as Postgres resolves columns
+// before it checks permissions), and a write carrying one answers PGRST204,
+// as PostgREST does. Unset, every column exists (as before).
 
 export type Row = Record<string, unknown>;
 
@@ -62,7 +67,24 @@ export const db = {
   authUsers: null as Set<string> | null,
   /** Column DEFAULTs per table: an inserted row gets each value it does not carry. */
   defaults: {} as Record<string, () => Row>,
+  /** Columns a table does not have: a select naming one answers 42703, a write carrying one PGRST204. */
+  missingColumns: {} as Record<string, string[]>,
 };
+
+/** The first column of `missingColumns[table]` that `cols` (a select list) or `rows` (a write) names. */
+function missingColumnIn(table: string, op: string, cols: string | undefined, payload: unknown): string | null {
+  const missing = db.missingColumns[table];
+  if (!missing || missing.length === 0) return null;
+  if (op === "select") {
+    const named = String(cols ?? "*").split(",").map((c) => c.trim().split(":").pop()!.split("->")[0]);
+    return missing.find((c) => named.includes(c)) ?? null;
+  }
+  if (op === "insert" || op === "upsert" || op === "update") {
+    const rows = (Array.isArray(payload) ? payload : [payload]) as Row[];
+    return missing.find((c) => rows.some((r) => r && typeof r === "object" && Object.prototype.hasOwnProperty.call(r, c))) ?? null;
+  }
+  return null;
+}
 
 function keysOf(table: string): string[][] { return db.keys[table] ?? [["id"]]; }
 
@@ -226,12 +248,13 @@ function exec(table: string, op: string, payload: unknown, opts: Record<string, 
 export function from(table: string) {
   let op = "select"; let payload: unknown; let opts: Record<string, unknown> | undefined; let single = false; let returning = false;
   let projection: Array<{ name: string; col: string }> | null = null;
+  let selectCols: string | undefined;
   let range: [number, number] | null = null;
   let limit: number | null = null;
   const orders: Array<{ col: string; asc: boolean }> = [];
   const filters: Array<(r: Row) => boolean> = [];
   const b: Record<string, unknown> = {
-    select: (cols?: string) => { if (op === "insert") returning = true; else if (op === "select") projection = projectionOf(cols); return b; },
+    select: (cols?: string) => { if (op === "insert") returning = true; else if (op === "select") { projection = projectionOf(cols); selectCols = cols; } return b; },
     insert: (rows: unknown, o?: Record<string, unknown>) => { op = "insert"; payload = rows; opts = o; return b; },
     upsert: (rows: unknown, o?: Record<string, unknown>) => { op = "upsert"; payload = rows; opts = o; return b; },
     update: (patch: unknown) => { op = "update"; payload = patch; return b; },
@@ -251,6 +274,13 @@ export function from(table: string) {
     maybeSingle: () => { single = true; return b; },
     single: () => { single = true; return b; },
     then: (res: (v: unknown) => void, rej: (e: unknown) => void) => {
+      const gone = missingColumnIn(table, op, selectCols, payload);
+      if (gone) {
+        res(op === "select"
+          ? { data: null, error: { code: "42703", message: `column ${table}.${gone} does not exist` } }
+          : { data: null, error: { code: "PGRST204", message: `Could not find the '${gone}' column of '${table}' in the schema cache` }, count: null });
+        return;
+      }
       try { res(exec(table, op, payload, opts, filters, single, range, orders, limit, returning, projection)); } catch (e) { rej(e); }
     },
   };

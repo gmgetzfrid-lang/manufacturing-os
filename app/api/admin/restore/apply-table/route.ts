@@ -117,6 +117,10 @@ export async function POST(req: NextRequest) {
     ...(notApplied.length ? { notApplied } : {}),
     ...(result.meaningIndex ? { meaningIndex: result.meaningIndex } : {}),
     ...(result.meaningIndexUnchecked ? { meaningIndexUnchecked: result.meaningIndexUnchecked } : {}),
+    // admin-and-org Round G P18 (drafting-flow TIER-1 restore remainder):
+    // the chunk's plain-language lines (requests restored as filed before
+    // the review model) ride the answer and the RESTORE_CHUNK row too.
+    ...(result.notes?.length ? { notes: result.notes } : {}),
   };
   // A chunk that failed before writing anything leaves nothing to record. A
   // statement accepted without a count may have written rows (uncounted), so
@@ -143,6 +147,7 @@ export async function POST(req: NextRequest) {
       ...(cleared.length ? { cleared } : {}),
       ...(notApplied.length ? { notApplied } : {}),
       ...(result.meaningIndex ? { meaningIndex: result.meaningIndex } : {}),
+      ...(result.notes?.length ? { notes: result.notes } : {}),
       ...(!result.ok ? { failed: result.error ?? "write failed" } : {}),
       backupOrgId: parsed.manifest?.orgId ?? Object.keys(idRemap.orgId ?? {})[0] ?? null,
       backupOrgName: parsed.manifest?.orgName ?? null,

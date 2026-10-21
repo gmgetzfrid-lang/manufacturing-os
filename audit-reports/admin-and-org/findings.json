@@ -8,16 +8,16 @@
     "audit-reports/admin-and-org/04-billing.md"
   ],
   "totals": {
-    "findings": 71,
+    "findings": 72,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 5,
       "HIGH": 17,
       "MEDIUM": 29,
-      "LOW": 20
+      "LOW": 21
     },
     "by_status": {
-      "RESOLVED": 62,
+      "RESOLVED": 63,
       "RESOLVED *(2026-10-14, admin-and-org Round G P13 integrator fix pass: the three remaining readers carry the actor note — the Resolution at the end of this record; every done-when met, items 1 and 3 and done-when 2's first form still waiting on `20261201`'s paste, as recorded. Before that: OPEN — 2026-10-14, admin-and-org Round G P13: the three named readers now carry the actor note — the P13 Partial below — but done-when 2's labelled form is still not met on three more readers, named there with their owner. Corrected at the P13 fix pass, DEC-29: P13 first set this RESOLVED on \"every reader\". Set back from RESOLVED by the integrator at the A&O P7 merge, 2026-10-13, DEC-29: done-when 2's labelled form was not met on three readers — the P7 Partial below)*": 1,
       "RESOLVED *(2026-10-14, admin-and-org Round G P13: the three shed sites and `/admin/storage`'s display — the last of the nine sites; see the Resolution at the end)*": 1,
       "RESOLVED *(2026-10-14, admin-and-org Round G P13 — pending the `20261219` paste; see the Resolution below)*": 1,
@@ -1601,6 +1601,33 @@
       ],
       "refuted": false,
       "summary": "After a disaster-recovery restore the admin reads \"tickets: 1 row(s) restored with a pointer cleared — ticketid (a request whose number another request here already carries … restored under a fresh number …)\" under \"Records restored — 1 pointer(s) cleared\", and cannot tell from the page which request now carries which number without opening the RESTORECHUNK audit rows.",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/02-backup-restore.md"
+    },
+    {
+      "id": "BKP-17",
+      "title": "The restore page does not show the review-model lines a tickets restore now writes: the \"filed before the review model\" note, and each cleared declaration, which it counts as \"a pointer cleared\"",
+      "severity": "LOW",
+      "status": "RESOLVED",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading the code at the P18 fix pass (`app/(protected)/admin/restore/RestoreResultPanel.tsx:172`, `:196`, `:202`, `:242-244`; no read of `RestoreTableOutcome.notes` anywhere in the file)",
+      "blast_radius": null,
+      "related": [
+        "TIER-1",
+        "GAP-110",
+        "BKP-16"
+      ],
+      "locations": [
+        "app/(protected)/admin/restore/RestoreResultPanel.tsx:172",
+        "lib/dataRestore.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "An admin restores a backup taken before 20261250 into a database that has it. The page says nothing about the requests marked as filed before the review model; the line is only in the JSON answer and the audit log. A backup with three declarations whose signatures are not on record reads \"Records restored — 3 pointer(s) cleared\" and \"tickets: 3 row(s) restored with a pointer cleared — likeinkind (",
       "area": "admin-and-org",
       "report": "audit-reports/admin-and-org/02-backup-restore.md"
     },

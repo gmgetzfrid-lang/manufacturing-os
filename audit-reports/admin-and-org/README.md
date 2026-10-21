@@ -22,12 +22,12 @@ Org lifecycle and membership, export/backup/restore, the audit log and admin rai
 
 ## Findings
 
-**71 findings** — 5 CRITICAL, 17 HIGH, 29 MEDIUM, 20 LOW.
+**72 findings** — 5 CRITICAL, 17 HIGH, 29 MEDIUM, 21 LOW.
 
 | # | Report | n | Note |
 |---|---|---|---|
 | 01 | [Org lifecycle, membership & teams](./01-org-lifecycle.md) | 24 | `ORG-14` opened at the projects Round G J2b integration, 2026-10-01; `ORG-15` opened by the integrator at the A&O P0 merge, 2026-10-02; `ORG-16` (LOW) opened at the A&O P6 review fix pass, 2026-10-02; `ORG-17` and `ORG-18` (LOW) opened by A&O P10, 2026-10-13; `ORG-19`, `ORG-20` (LOW) opened by P11 and `ORG-21` (LOW) by the integrator at its merge, 2026-10-14; `ORG-22` (LOW) opened by P12 (minted as `ORG-19` on its branch, renumbered at its merge), 2026-10-14; `ORG-24` (LOW) opened by A&O P5 and resolved by the integrator's fix pass at its merge, 2026-10-20 |
-| 02 | [Export, backup, restore & portability](./02-backup-restore.md) | 15 | `BKP-15` (LOW) opened at the intelligence I-09 merge, 2026-10-01 |
+| 02 | [Export, backup, restore & portability](./02-backup-restore.md) | 17 | `BKP-15` (LOW) opened at the intelligence I-09 merge, 2026-10-01; `BKP-16` (LOW) opened by A&O P16's fix pass 3 and resolved by A&O P17, 2026-10-21; `BKP-17` (LOW) opened by A&O P18's fix pass and resolved by its final pass, 2026-10-21 *(this row's count read 15 after `BKP-16` was added; corrected with `BKP-17`)* |
 | 03 | [The audit log & admin rails](./03-audit-log.md) | 16 | The critic — spans all four areas from this run. `ALOG-15` opened by the integrator at the A&O P0 merge, 2026-10-02; `ALOG-16` (MEDIUM) opened by the integrator at the A&O P7 merge, 2026-10-13 |
 | 04 | [Billing, quotas & platform limits](./04-billing.md) | 15 | `BILL-15` (LOW) opened at the A&O P6 second review fix pass, 2026-10-02 |
 

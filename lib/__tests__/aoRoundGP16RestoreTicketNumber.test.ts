@@ -65,7 +65,7 @@ import { POST as beginRoute } from "@/app/api/admin/restore/begin/route";
 import {
   applyRestoreChunk, planRestore, runChunkedRestore, restoreRefusalLabel, ticketsInRestoreOrder,
   raiseTicketCountersToBackupNumbers, restoreNumberYear, renumberedOf, unconfirmedRenumberings,
-  TICKET_NUMBER_IN_USE, TICKET_RENUMBERED,
+  TICKET_NUMBER_IN_USE, TICKET_RENUMBERED, RESTORE_REVIEW_MODEL_COLUMNS,
   type RestorePost, type RestoreEnvelopeLike,
 } from "@/lib/dataRestore";
 import { waitingSince, NON_STEP_HISTORY_ACTIONS, RESTORE_RENUMBERED_HISTORY_ACTION } from "@/lib/ticketAttention";
@@ -120,6 +120,11 @@ beforeEach(() => {
   db.maxRows = 1000;
   db.generated = {};
   db.authUsers = null;
+  // admin-and-org Round G P18: these EDGE-5 pins run against a database
+  // WITHOUT 20261250, where DEC-90 ruling (3) says the restore behaves
+  // exactly as before (the world with the columns is
+  // aoRoundGP18RestoreReviewModel.test.ts's).
+  db.missingColumns = { tickets: [...RESTORE_REVIEW_MODEL_COLUMNS] };
 });
 
 for (const world of ["without the number key", "with the number key"] as const) {

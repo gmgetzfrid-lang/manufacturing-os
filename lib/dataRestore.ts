@@ -25,6 +25,7 @@ import { STORAGE_UNATTRIBUTABLE_CODE } from "@/lib/storageKey";
 import { formatTicketNumber, ticketNumberConfigFromRow } from "@/lib/ticketNumber";
 import { requestNumberYear } from "@/lib/ticketCreate";
 import { RESTORE_RENUMBERED_HISTORY_ACTION } from "@/lib/ticketAttention";
+import { declarationSignatureStands, isMissingReviewModelColumn, type DeclarationSignatureRow } from "@/lib/reviewModel";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Role } from "@/types/schema";
 
@@ -1206,7 +1207,11 @@ export interface RestoreRowRefusal {
   /** admin-and-org BKP-16 (Round G P17): on a TICKET_NUMBER_IN_USE or
    *  TICKET_NUMBER_UNSETTLED refusal, the request number the backup row
    *  carries — so the restore page names it from a field, not from the
-   *  message's text. Additive: every other refusal is unchanged. */
+   *  message's text. Additive: every other refusal is unchanged.
+   *  admin-and-org BKP-17 (Round G P18 final pass): also on a
+   *  DECLARATION_NOT_RESTORED `cleared` note, the number the request is
+   *  restored under (rewritten with the note when EDGE-5 renumbers it), so
+   *  the page lists each request from a field. */
   ticketNumber?: string;
   /** admin-and-org BKP-16 (Round G P17 final fix pass): on a
    *  TICKET_NUMBER_IN_USE refusal, the request of this workspace that holds
@@ -1287,6 +1292,16 @@ export interface RestoreChunkResult {
    *  fresh number, so the old → new pair is never dropped from the report
    *  and the audit row. */
   renumbered: RestoreRenumbering[];
+  /** admin-and-org Round G P18 (drafting-flow TIER-1 restore remainder):
+   *  plain-language lines about the chunk as a whole — one, for `tickets`,
+   *  when requests from a backup taken before the review model were WRITTEN
+   *  as filed before it (filedBeforeReviewModelNote), counting only the rows
+   *  a statement wrote (P18 fix pass 2: never a request already here, held
+   *  elsewhere, refused or in a statement that failed), and only a row
+   *  WRITTEN with engineering_required false (integrator ruling, DEC-90: a
+   *  declaration cleared here is written REQUIRED and never counted).
+   *  Absent when empty. */
+  notes?: string[];
 }
 
 /** admin-and-org P1 (fix pass 5): numbering counters, by table → the counter
@@ -1395,6 +1410,7 @@ export function restoreRefusalLabel(code: string): string {
     case "person_not_restored": return "names a person with no sign-in account yet (a restored placeholder) — re-invite them";
     case "person_not_mapped": return "names a backup member with no email address, whom the restore cannot map to a person of this workspace";
     case "storage_key_outside_workspace": return "carries a storage key under another workspace's prefix";
+    case DECLARATION_NOT_RESTORED: return "a request whose like-in-kind declaration has no e-signature on record in this workspace (a backup carries no signatures) — restored without the declaration, so it now needs an engineer's sign-off (or a recorded management override) before it issues, as any undeclared request does";
     default: return code;
   }
 }
@@ -1842,6 +1858,156 @@ function ticketFilesFolder(row: Record<string, unknown>, from: string): string |
   return list.some((a) => !!a && typeof a === "object" && typeof (a as Record<string, unknown>).url === "string" && ((a as Record<string, unknown>).url as string).startsWith(folder)) ? folder : null;
 }
 
+// ── A restored request keeps the review-model meaning it had ──────────────
+// admin-and-org Round G P18 — drafting-flow TIER-1 and GAP-110 / DEC-34
+// restore remainders (assigned at the DF-P6 merge, DEC-31; rulings under
+// DEC-90, fail-safe, no regression). 20261250 gives tickets
+// review_model_filed and engineering_required (both NOT NULL DEFAULT true for
+// a row filed after the paste) and the like-in-kind declaration
+// (like_in_kind_*, all four or none, the e-signature its record). A restore
+// writes as the service role, so the insert guard leaves its values as sent.
+//   (1) A tickets row from a backup taken before 20261250 carries none of
+//       these keys, so it would land FILED UNDER the review model and
+//       REQUIRED (the defaults) — a request its requester could issue
+//       through today's role-based gate would change lane on restore. Such a
+//       row (no review_model_filed key) is written with
+//       review_model_filed = false and — when it carries no
+//       engineering_required either — engineering_required = false: the
+//       paste's own treatment of a row filed before it (both columns ADDED
+//       DEFAULT false), and with no declaration the app reads false as "the
+//       legacy gate decides" (lib/reviewModel.ts ticketEngineeringRequired —
+//       the SEED, evaluated live), so today's role-based gate decides for it
+//       exactly as it does for a request filed before the paste. A row whose
+//       backup carries a key keeps its value.
+//   (2) e_signatures is never restored (IMMUTABLE_TABLES), so a restored
+//       declaration usually has no signature on record here. A row carrying
+//       a declaration whose e-signature does not stand in THIS workspace
+//       (lib/reviewModel.ts declarationSignatureStands — the workflow route's
+//       and the request page's own test) is written with its four
+//       like_in_kind_* columns cleared together and engineering_required =
+//       true, reported per request in the chunk's `cleared` notes
+//       (DECLARATION_NOT_RESTORED): the route already treats such a
+//       declaration as undeclared, and now every reader agrees.
+//   Both run only when the TARGET has the columns — read once per request
+//   (restoreReviewModelFacts); a database without 20261250 is sent nothing
+//   for them and restores exactly as before. A restore only INSERTS
+//   (ON CONFLICT DO NOTHING), so ticket_update_guard's UPDATE limbs never
+//   fire, and a request already here is never touched.
+
+/** The tickets columns the transform writes (20261250). */
+export const RESTORE_REVIEW_MODEL_COLUMNS: readonly string[] = [
+  "review_model_filed", "engineering_required",
+  "like_in_kind_statement", "like_in_kind_declared_by", "like_in_kind_declared_at", "like_in_kind_signature_id",
+];
+/** The declaration's four columns (20261250's all-or-none CHECK). */
+export const LIKE_IN_KIND_COLUMNS: readonly string[] = ["like_in_kind_statement", "like_in_kind_declared_by", "like_in_kind_declared_at", "like_in_kind_signature_id"];
+/** The `cleared` note's code for a declaration restored without its e-signature. */
+export const DECLARATION_NOT_RESTORED = "declaration_not_restored";
+
+const SIGNATURE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Ruling (1): is this a tickets row from a backup taken before 20261250 (it
+ *  carries no review_model_filed key)? Pure. */
+export function filedBeforeReviewModel(row: Record<string, unknown>): boolean {
+  return !has(row, "review_model_filed");
+}
+
+/** Ruling (1): the row as a request filed before the review model —
+ *  review_model_filed false and, when the backup carries no
+ *  engineering_required either, engineering_required false (the SEED: the
+ *  role-based gate decides). A row carrying review_model_filed is returned as
+ *  it is. Pure; a new object when it changes anything. */
+export function asFiledBeforeReviewModel(row: Record<string, unknown>): Record<string, unknown> {
+  if (!filedBeforeReviewModel(row)) return row;
+  return { ...row, review_model_filed: false, ...(has(row, "engineering_required") ? {} : { engineering_required: false }) };
+}
+
+/** Ruling (2): does the row carry a like-in-kind declaration (any of its four
+ *  columns set)? Pure. */
+export function carriesDeclaration(row: Record<string, unknown>): boolean {
+  return LIKE_IN_KIND_COLUMNS.some((c) => row[c] !== null && row[c] !== undefined);
+}
+
+/** Ruling (2): the values a declaration restored without its e-signature is
+ *  written with — the four columns cleared together, engineering required. */
+export const DECLARATION_NOT_RESTORED_VALUES: Readonly<Record<string, unknown>> = Object.freeze({
+  like_in_kind_statement: null, like_in_kind_declared_by: null, like_in_kind_declared_at: null, like_in_kind_signature_id: null,
+  engineering_required: true,
+});
+
+/** Ruling (2): the per-request note, in words a plant admin reads. */
+export function declarationNotRestoredMessage(row: Record<string, unknown>): string {
+  const number = typeof row.ticket_id === "string" && row.ticket_id ? row.ticket_id : String(row.id ?? "(no id)");
+  const said = typeof row.like_in_kind_statement === "string" && row.like_in_kind_statement.trim()
+    ? ` The declaration read: "${row.like_in_kind_statement.trim().length > 160 ? `${row.like_in_kind_statement.trim().slice(0, 160)}…` : row.like_in_kind_statement.trim()}".`
+    : "";
+  return `like_in_kind_* cleared on request ${number}: its requester declared the work like-in-kind and signed that declaration electronically, but the signature is not on record in this workspace (a backup carries no signatures), so the request was restored as undeclared — it now needs an engineer's sign-off (or a recorded management override) before it issues, as any undeclared request does.${said}`;
+}
+
+/** Ruling (2), a request renumbered on restore (EDGE-5, step 4b): its
+ *  DECLARATION_NOT_RESTORED note is built before the renumbering (step 4),
+ *  naming the number the backup carried — which, in this workspace, names
+ *  the request that holds it. The note is rewritten to name the number the
+ *  request is restored under. Any other note is returned as it is. Pure. */
+export function declarationNoteRenumbered(note: RestoreRowRefusal, from: string, to: string): RestoreRowRefusal {
+  if (note.code !== DECLARATION_NOT_RESTORED) return note;
+  const was = `like_in_kind_* cleared on request ${from}:`;
+  if (!note.message.startsWith(was)) return note;
+  return { ...note, ...(note.ticketNumber !== undefined ? { ticketNumber: to } : {}), message: `like_in_kind_* cleared on request ${to} (restored under this fresh number; "${from}", the number it carried in the backup, names another request in this workspace):${note.message.slice(was.length)}` };
+}
+
+/** Ruling (3), the schema-cache window: just after 20261250 is pasted the
+ *  column check (a SELECT the database answers from its live catalog) finds
+ *  the columns, but the API's schema cache, which the write is checked
+ *  against, may not have reloaded yet — the tickets write is then refused
+ *  PGRST204 naming one of them. Said as what it is, with the remedy. */
+export function reviewModelSchemaCacheMessage(dbMessage: string): string {
+  return `This workspace's database has the review-model columns (20261250), but its API has not reloaded its schema since that migration (it does so shortly after one is applied), so it refused these requests. Wait a minute and run the restore again — what was already restored is kept and skipped. (${dbMessage})`;
+}
+
+/** Ruling (1): the chunk's one line for the `n` requests WRITTEN as filed
+ *  before the review model (P18 fix pass 2: `n` counts the rows a statement
+ *  wrote — a request already in this workspace is kept as it is and never
+ *  counted — and, by the integrator's ruling under DEC-90, only rows written
+ *  with engineering_required false, the legacy gate deciding). */
+export function filedBeforeReviewModelNote(n: number): string {
+  return `${n} request(s) restored from this part of the backup were taken before the review model (they carry no review_model_filed) and are marked as filed before it, so today's role-based engineering gate decides for each exactly as it did before the review model — none is held to the new engineering requirement retroactively.`;
+}
+
+/** What the transform needs to know about the target, read once per
+ *  request: whether it has 20261250's columns, and — when it has — which of
+ *  `rows` carry a declaration whose e-signature does not stand here. A read
+ *  that fails (other than "the column is not there") is an error: nothing is
+ *  written on a guess. Nothing is read when no row needs either rule. */
+export async function restoreReviewModelFacts(
+  sb: RestoreDb, orgId: string, rows: ReadonlyArray<Record<string, unknown>>,
+): Promise<{ ok: true; columns: boolean; unsigned: Set<Record<string, unknown>> } | { ok: false; error: string }> {
+  const unsigned = new Set<Record<string, unknown>>();
+  const declared = rows.filter(carriesDeclaration);
+  if (!declared.length && !rows.some(filedBeforeReviewModel)) return { ok: true, columns: false, unsigned };
+  const probe = await sb.from("tickets").select(RESTORE_REVIEW_MODEL_COLUMNS.join(",")).limit(0);
+  if (probe.error) {
+    if (isMissingReviewModelColumn(probe.error)) return { ok: true, columns: false, unsigned };
+    return { ok: false, error: `Could not check whether this workspace's database has the review-model columns (20261250): ${probe.error.message}` };
+  }
+  const ids = Array.from(new Set(declared.map((r) => r.like_in_kind_signature_id).filter((v): v is string => typeof v === "string" && SIGNATURE_ID_RE.test(v))));
+  const sigs = new Map<string, DeclarationSignatureRow>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await sb.from("e_signatures").select("id, org_id, resource_type, resource_id, signer_user_id").in("id", ids.slice(i, i + 200));
+    if (error) return { ok: false, error: `Could not check the e-signatures of the like-in-kind declarations these requests carry: ${error.message}` };
+    for (const s of ((data ?? []) as DeclarationSignatureRow[])) if (typeof s.id === "string") sigs.set(s.id, s);
+  }
+  for (const r of declared) {
+    const sid = typeof r.like_in_kind_signature_id === "string" ? r.like_in_kind_signature_id : "";
+    const stands = declarationSignatureStands(sigs.get(sid) ?? null, {
+      id: String(r.id ?? ""), orgId,
+      likeInKindDeclaredBy: typeof r.like_in_kind_declared_by === "string" ? r.like_in_kind_declared_by : null,
+    });
+    if (!stands) unsigned.add(r);
+  }
+  return { ok: true, columns: true, unsigned };
+}
+
 /** Write one slice of one table into `orgId` additively (existing keys are
  *  skipped). Never throws for a database refusal; the caller answers with
  *  `status` / `error` when `ok` is false. Order of rules:
@@ -1894,14 +2060,52 @@ export async function applyRestoreChunk(
   let uncounted = 0;
   let advanced = 0;
   const notApplied: RestoreRowRefusal[] = [];
+  // admin-and-org Round G P18 (fix pass 2): the rows written as filed before
+  // the review model — counted in write() under the rule a cleared note is
+  // reported by, so the chunk's line (chunkNotes) speaks only of requests a
+  // statement wrote. A chunk that fails after writing some carries it for
+  // those (they are in `inserted`; a re-run counts them existing).
+  let filedBeforeWritten = 0;
+  const chunkNotes = (): { notes?: string[] } => (filedBeforeWritten > 0 ? { notes: [filedBeforeReviewModelNote(filedBeforeWritten)] } : {});
   const fail = (status: number, error: string, inserted = 0, rowsAfterFilters = 0, code?: string | null): RestoreChunkResult =>
-    ({ ok: false, status, error, ...(code ? { code: String(code) } : {}), inserted, existing, heldElsewhere, uncounted, refused, cleared, advanced, rowsAfterFilters, filtered: params.rows.length - rowsAfterFilters, notApplied, renumbered: renumberedOf(cleared) });
+    ({ ok: false, status, error, ...(code ? { code: String(code) } : {}), inserted, existing, heldElsewhere, uncounted, refused, cleared, advanced, rowsAfterFilters, filtered: params.rows.length - rowsAfterFilters, notApplied, renumbered: renumberedOf(cleared), ...chunkNotes() });
 
   const refusal = restoreTableRefusal(table);
   if (refusal) return fail(400, refusal, 0, params.rows.length);
   if (!orgId) return fail(400, "No target workspace.", 0, params.rows.length);
 
   let mapped = params.rows.map((r) => landRestoredRow(table, bindRestoredRow(table, remapRow(r, idRemap, table), orgId)));
+
+  // admin-and-org Round G P18 (drafting-flow TIER-1 / GAP-110 restore
+  // remainders): a request keeps the review-model meaning it had — only when
+  // this database has 20261250's columns (read once for this request; a read
+  // that fails stops the chunk before any write). Ruling (1) here; ruling (2)
+  // rides the pre-write rules below (step 4, `sets`).
+  let unsignedDeclarations = new Set<Record<string, unknown>>();
+  let reviewModelColumnsFound = false;
+  /** The rows the transform marked filed before the review model — carried
+   *  through every step that sends a new object in its place (the clears /
+   *  sets map, the EDGE-5 renumbering), counted only when written. */
+  const filedBefore = new Set<Record<string, unknown>>();
+  if (table === "tickets" && mapped.length) {
+    const facts = await restoreReviewModelFacts(sb, orgId, mapped);
+    if (!facts.ok) return fail(500, facts.error, 0, params.rows.length);
+    if (facts.columns) {
+      reviewModelColumnsFound = true;
+      mapped = mapped.map((r) => {
+        const out = asFiledBeforeReviewModel(r);
+        if (out !== r) {
+          // the line speaks only for a request left to the legacy gate
+          // (engineering_required false; ruling (2) may still set it true —
+          // checked again where it is counted).
+          if (out.engineering_required === false) filedBefore.add(out);
+          if (facts.unsigned.has(r)) facts.unsigned.add(out);
+        }
+        return out;
+      });
+      unsignedDeclarations = facts.unsigned;
+    }
+  }
 
   // Never resurrect comments onto a ticket that's since been archived to a
   // stub — the JSONB stays cleared, so re-inserting rows would split-brain it.
@@ -2097,17 +2301,40 @@ export async function applyRestoreChunk(
       addClear(r, rule.column, "parent_outside_workspace", `${rule.column} ${typeof v === "string" ? v : String(v)} cleared: not a ${rule.parent} row of this workspace`);
     }
   }
+  // admin-and-org Round G P18, ruling (2): a declaration whose e-signature
+  // does not stand here is written cleared (all four columns) with
+  // engineering required, its note emitted only for a row the write takes —
+  // located like a cleared pointer, so a request already here (kept as it
+  // is) is counted existing and reported nowhere.
+  const sets = new Map<Record<string, unknown>, { values: Readonly<Record<string, unknown>>; note: RestoreRowRefusal }>();
+  for (const r of mapped) {
+    if (!unsignedDeclarations.has(r)) continue;
+    sets.set(r, { values: DECLARATION_NOT_RESTORED_VALUES, note: {
+      id: label(r), code: DECLARATION_NOT_RESTORED, message: declarationNotRestoredMessage(r),
+      ...(typeof r.ticket_id === "string" && r.ticket_id ? { ticketNumber: r.ticket_id } : {}),
+    } });
+  }
 
   // A row refused or cleared above whose key is already held is never
   // written either way: kept here (existing) or held by another workspace —
   // counted as such, never reported as refused. When the keys cannot be read
   // the refusals stand (each is true of the row as it was sent).
-  const flagged = [...refusedRows.map((x) => x.row), ...mapped.filter((r) => clears.has(r))];
+  const flagged = [...refusedRows.map((x) => x.row), ...mapped.filter((r) => clears.has(r) || sets.has(r))];
   const settled = new Set<Record<string, unknown>>();
   let clearsLocated = true;
-  if (flagged.length) {
-    const where = await locateRestoreKeys(sb, table, orgId, flagged);
-    clearsLocated = where.ok;
+  // P18 fix pass 2: a row marked filed before the review model is located in
+  // the same read (never settled by it — it goes on exactly as before), so a
+  // statement that skips some rows counts only the marked rows whose key no
+  // row held before the write (`heldBeforeWrite`). A read that fails leaves
+  // `filedBeforeLocated` false: they are then counted only from a statement
+  // that wrote every row, and every other rule is as before.
+  const filedBeforeOnly = mapped.filter((r) => filedBefore.has(r) && !clears.has(r) && !sets.has(r));
+  const heldBeforeWrite = new Set<string>();
+  let filedBeforeLocated = true;
+  if (flagged.length || filedBeforeOnly.length) {
+    const where = await locateRestoreKeys(sb, table, orgId, [...flagged, ...filedBeforeOnly]);
+    if (flagged.length) clearsLocated = where.ok;
+    filedBeforeLocated = where.ok;
     if (where.ok) {
       for (const r of flagged) {
         const k = restoreKeyOf(table, r);
@@ -2115,9 +2342,20 @@ export async function applyRestoreChunk(
         if (where.here.has(k)) { existing++; settled.add(r); }
         else if (where.elsewhere.has(k)) { heldElsewhere++; settled.add(r); }
       }
+      for (const r of filedBeforeOnly) {
+        const k = restoreKeyOf(table, r);
+        if (k !== null && (where.here.has(k) || where.elsewhere.has(k))) heldBeforeWrite.add(k);
+      }
     }
   }
   for (const { row, why } of refusedRows) if (!settled.has(row)) refused.push(why);
+  // Integrator ruling (5) (DEC-90, P18 final pass): a row settled here ONLY
+  // because ruling (2) flagged it (no refusal, no cleared pointer) reached
+  // EDGE-5's request sets before P18 — its id and number are kept in them
+  // (requestTicketIds / requestTicketNumbers below), so a renumbered
+  // request's holder wording and the fresh-number exclusions are exactly as
+  // they were.
+  const settledOnlyBySets = mapped.filter((r) => settled.has(r) && sets.has(r) && !clears.has(r));
   // Fix pass 3: a clear is reported only for a row the database took — the
   // note rides with the row and is emitted when the statement carrying it is
   // accepted, never for a row the write then refuses or a statement that
@@ -2125,10 +2363,13 @@ export async function applyRestoreChunk(
   const clearNotes = new Map<Record<string, unknown>, RestoreRowRefusal[]>();
   mapped = mapped.filter((r) => !settled.has(r)).map((r) => {
     const list = clears.get(r);
-    if (!list) return r;
+    const set = sets.get(r);
+    if (!list && !set) return r;
     const out = { ...r };
-    for (const { column } of list) out[column] = null;
-    clearNotes.set(out, list.map((x) => x.note));
+    for (const { column } of list ?? []) out[column] = null;
+    if (set) Object.assign(out, set.values);
+    clearNotes.set(out, [...(list ?? []).map((x) => x.note), ...(set ? [set.note] : [])]);
+    if (filedBefore.has(r)) filedBefore.add(out);
     return out;
   });
 
@@ -2164,7 +2405,7 @@ export async function applyRestoreChunk(
   const requestTicketIds = new Set<string>();
   const requestTicketNumbers = new Set<string>();
   if (table === "tickets" && mapped.length) {
-    for (const r of mapped) {
+    for (const r of [...settledOnlyBySets, ...mapped]) {
       if (typeof r.id === "string") requestTicketIds.add(r.id);
       const n = ticketNumberOf(r);
       if (n !== null) requestTicketNumbers.add(n);
@@ -2209,6 +2450,12 @@ export async function applyRestoreChunk(
       for (const r of rows) {
         const k = restoreKeyOf(table, r);
         const notes = clearNotes.get(r);
+        // P18 fix pass 2: a row marked filed before the review model counts
+        // toward the chunk's line only when this statement wrote it.
+        // Integrator ruling (DEC-90, P18 final pass): only a request whose
+        // FINAL engineering_required is false is one the line speaks for —
+        // never a declaration cleared here (written REQUIRED).
+        if (filedBefore.has(r) && r.engineering_required === false && counted && (all || (filedBeforeLocated && k !== null && !heldBeforeWrite.has(k) && !acceptedKeys.has(k)))) filedBeforeWritten++;
         if (notes && counted && (all || (clearsLocated && (k === null || !acceptedKeys.has(k))))) cleared.push(...notes);
         else if (notes && (!counted || !clearsLocated)) cleared.push(...unconfirmedRenumberings(notes));
         if (k !== null) acceptedKeys.add(k);
@@ -2219,6 +2466,9 @@ export async function applyRestoreChunk(
       return null;
     }
     const code = String(up.error.code ?? "");
+    // P18 fix pass: the column check found 20261250's columns, the API's
+    // schema cache has not caught up (reviewModelSchemaCacheMessage).
+    if (reviewModelColumnsFound && code === "PGRST204" && isMissingReviewModelColumn(up.error)) return { error: reviewModelSchemaCacheMessage(up.error.message), code };
     if (!ROW_LEVEL_SQLSTATES.has(code)) return { error: up.error.message, code };
     if (rows.length === 1) {
       refused.push({ id: label(rows[0]), code: restoreRefusalCode(table, code, up.error.message), message: up.error.message });
@@ -2360,8 +2610,11 @@ export async function applyRestoreChunk(
       const ofBackup = requestTicketIds.has(holder) || (carriers?.has(holder) ?? false);
       const holderWhere = ofBackup ? "of this backup (restored first)" : carriers ? "of this workspace" : "already in this workspace";
       const out = renumberedTicketRow(r, n, to, holder, holderWhere, new Date().toISOString(), ofBackup);
+      if (filedBefore.has(r)) filedBefore.add(out);
       const folder = ticketFilesFolder(r, n);
-      clearNotes.set(out, [...(clearNotes.get(r) ?? []), {
+      // P18 fix pass: a cleared declaration's note names the number the
+      // request is restored under, not the one another request holds here.
+      clearNotes.set(out, [...(clearNotes.get(r) ?? []).map((x) => declarationNoteRenumbered(x, n, to)), {
         id: label(r), code: TICKET_RENUMBERED,
         message: `ticket_id "${n}" → "${to}": request ${holder} ${holderWhere} carries "${n}"${ofBackup ? " (the workspace the backup was taken from held the number twice)" : carriers ? " (a request this workspace holds that is not one of this backup's)" : ` (a request the workspace held before this restore, or — where the backup itself carries "${n}" twice — the backup's own request, restored by an earlier part of this restore)`}, so this request was restored under a fresh number rather than beside it or not at all; "${n}" is kept on it as metadata.restore_renumbered.from and in its history — labels, transmittals and archives printing "${n}" for this request must be read as "${to}"; in this workspace "${n}" still identifies request ${holder}${folder ? `; its files stay in the "${n}" folder (${folder})` : ""}`,
         renumbered: { from: n, to, numberHeldBy: holder },
@@ -2429,6 +2682,7 @@ export async function applyRestoreChunk(
   return {
     ok: true, inserted, existing, heldElsewhere, uncounted, refused, cleared, advanced, rowsAfterFilters, filtered: params.rows.length - rowsAfterFilters, notApplied,
     renumbered: renumberedOf(cleared),
+    ...chunkNotes(),
     ...(meaning && "libraries" in meaning && Object.keys(meaning.libraries).length ? { meaningIndex: meaning.libraries } : {}),
     ...(meaning && "error" in meaning ? { meaningIndexUnchecked: meaning.error } : {}),
   };
@@ -2891,6 +3145,9 @@ export interface RestoreTableOutcome {
    *  also one of `cleared` — the page's own line for these is admin-and-org
    *  BKP-16. */
   renumbered: RestoreRenumbering[];
+  /** admin-and-org Round G P18: the chunks' plain-language lines (see
+   *  RestoreChunkResult.notes). Set only when there is one. */
+  notes?: string[];
   error?: string;
 }
 
@@ -3075,6 +3332,10 @@ export async function runChunkedRestore(params: {
         t.renumbered.push(...renumberedOf(res.body.cleared as RestoreRowRefusal[]));
       }
       if (Array.isArray(res.body?.notApplied)) t.notApplied.push(...(res.body.notApplied as RestoreRowRefusal[]));
+      if (Array.isArray(res.body?.notes)) {
+        const lines = (res.body.notes as unknown[]).filter((x): x is string => typeof x === "string");
+        if (lines.length) (t.notes ??= []).push(...lines);
+      }
       const meaning = res.body?.meaningIndex;
       if (meaning && typeof meaning === "object" && !Array.isArray(meaning)) {
         for (const [lib, n] of Object.entries(meaning as Record<string, unknown>)) {
