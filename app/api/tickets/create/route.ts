@@ -825,6 +825,20 @@ async function create(
       ticketId = String((inserted as { id: string }).id);
       break;
     }
+    // DF-P6 fix pass 2 (review, minor 8): a declared request is filed under
+    // the id its signature names, so two concurrent posts of the same
+    // declaration (a double-click, a client retry) collide on the row's id —
+    // not on the request number. The pre-check above ran before either
+    // insert; the id is read again here, and a row under it means the
+    // declaration WAS filed: answered as such (409 declaration_used, naming
+    // the request), never as "nothing was filed" after spending another
+    // number.
+    if (declaration && row.id === declaration.ticketKey && insertFailureKind(insErr) === "duplicate") {
+      const { data: same, error: sameErr } = await supabaseAdmin.from("tickets").select("id, ticket_id").eq("id", declaration.ticketKey).maybeSingle();
+      if (!sameErr && same) {
+        return { status: 409, field: "declaration", code: "declaration_used", error: `This declaration was already filed as ${String((same as { ticket_id?: string }).ticket_id ?? "a request")} — check the queue before you submit it again.` };
+      }
+    }
     const settled = await settleFailedInsert({ orgId, year, seq, ticketNumber, callerId: caller.id, now, err: insErr });
     if (settled.kind === "filed") {
       ticketId = settled.id;

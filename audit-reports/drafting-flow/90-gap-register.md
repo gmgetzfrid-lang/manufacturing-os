@@ -323,6 +323,8 @@ requires its examination scope.
 
 *Landed 2026-10-21 (drafting-flow Round G, DF-P6 REVIEW-MODEL), by the integrator's ruling for this package (no QA/QC role, status or signature slot): a routing slot may be limited to work classes when it is notify-only (`RoutingSlot.work_classes`); a blocking slot never is. Acceptance 2 ✓ in that form (a library's assurance reviewer is told of every issue of the classes they watch; the code class is on the approval); 3 ✓ (the existing document hold); 5 ✓ (no new role, no new status); 1 and 4 ✗ — examination data has no model yet; proposed for the integrator to assign. See `TIER-3`.*
 
+*Corrected at the DF-P6 second review fix pass (2026-10-21, DEC-29): acceptance 2 does not act in production yet — no screen edits a slot's `work_classes` (`RoutingControlSection` only carries stored values) and no screen sets a request's work class (DF-P9), so `TIER-3` is re-recorded OPEN / Partial; owners in 99-fix-sequencing "Hand-offs from DF-P6".*
+
 ---
 
 <a id="gap-103"></a>

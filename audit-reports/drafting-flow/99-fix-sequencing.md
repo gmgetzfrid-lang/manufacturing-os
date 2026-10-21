@@ -585,7 +585,7 @@ DF-P13 SLA DEFAULTS RAIL AND EDITOR resolved `EDGE-16` (code half; migration `20
 
 ## Hand-offs from DF-P6 (Round G) that no package brief carries yet
 
-DF-P6 REVIEW-MODEL resolved `TIER-1`, `TIER-3`, `SM-3`, `DCW-2` and `AUTHZ-6`, and left `TIER-2`, `TIER-4`, `TIER-6`, `TIER-7`, `HAND-7`, `FRIC-2`, `FRIC-4`, `EVID-12` and `GAP-101` OPEN with a `Partial` block each (`TIER-2`, `TIER-4` and `TIER-7` were first recorded RESOLVED and corrected at the review fix pass — DEC-29). Migrations `20261250` (deploy the app FIRST, then paste) and `20261251` (independent) are PASTE pending. The integrator appends each row to the owner's brief, or re-owns it.
+DF-P6 REVIEW-MODEL resolved `TIER-1`, `SM-3`, `DCW-2` and `AUTHZ-6`, and left `TIER-2`, `TIER-3`, `TIER-4`, `TIER-6`, `TIER-7`, `HAND-7`, `FRIC-2`, `FRIC-4`, `EVID-12` and `GAP-101` OPEN with a `Partial` block each (`TIER-2`, `TIER-4` and `TIER-7` were first recorded RESOLVED and corrected at the review fix pass, `TIER-3` at the second — DEC-29). Migrations `20261250` (deploy the app FIRST, then paste) and `20261251` (independent) are PASTE pending. The integrator appends each row to the owner's brief, or re-owns it.
 
 | Finding | Owner | What the owner must add |
 |---|---|---|
@@ -597,8 +597,19 @@ DF-P6 REVIEW-MODEL resolved `TIER-1`, `TIER-3`, `SM-3`, `DCW-2` and `AUTHZ-6`, a
 | intelligence `GAP-312` (equipment after filing) | DF-P9 (the request page), with a server write | The request page lists `ticket_equipment` but cannot add or correct a tag after filing; only `/api/tickets/create` writes the table (clients cannot — `20261251`). A small route (the ticket's participants and the queue) and an "Add equipment" control on `DeclarationCard`. |
 | `EVID-12` dw1 (the transaction form) | DF-P8 PROJECTS (the next holder of the workflow route) | A transition-and-audit RPC so the status write and its audit row commit together. |
 | `TIER-6` (MOC through the work class) | the integrator (no package lists `lib/checkinOutcomes.ts` / `RevUpModal` with it) | A class carrying "needs MOC", read by the check-in and the hand-back. |
+| `TIER-3` dw1 (per work class) | DF-P9 (with the class select), or the routing table's next holder if the integrator re-owns `components/documents/RoutingControlSection.tsx` (DF-P5's file) | A `work_classes` editor on a notify-only slot (pick from `reviewClassOptions(cfg, "workClasses")`; `lib/routingControl.ts` already parses and refuses it on a blocking slot). With DF-P9's class select it acts; the ruled form is a notice, never a sign-off. |
+| `TIER-1` / DEC-90 ruling (2) on restored rows | admin-and-org (owns `lib/dataRestore.ts`) | A ticket restored from a backup taken BEFORE `20261250` lands `review_model_filed = true` and `engineering_required = true` by default (fail-safe, but its requester then loses the paths a pre-paste row keeps): write `review_model_filed = false` for rows from a backup without the column. One line in the restore notes. |
+| `TIER-1` (ruling) | the integrator | DEC-33 as applied refuses a requester-manager's own override on a NEW undeclared request in orgs of 3+; DEC-90 ruling (3) says not to remove an override path a legitimate manager uses today. DF-P6 keeps DEC-33's reading for requests filed after the paste only — rule explicitly. Also confirm the engineering-first exemption (`DEC-44 (DF-P6-review-model)` item 9). |
 
-*DF-P6 review fix pass (2026-10-21): the requests list's and `lib/inbox.ts`'s mappers were NOT edited (DF-P14's / another package's files — fleet rule); `ticketResource` was reverted instead. No migration changed in the fix pass.*
+*DF-P6 review fix pass (2026-10-21): the requests list's and `lib/inbox.ts`'s mappers were NOT edited (DF-P14's / another package's files — fleet rule); `ticketResource` was reverted instead. No migration changed in the fix pass.* *Second review fix pass: `20261250` changed (the `review_model_filed` column, its every-caller guard limb and its insert-guard line; re-exercised on PostgreSQL 16, 11 cases). `reviewModelFieldsFromRow` now also carries `reviewModelFiled`, so the mappers that spread it get it for free.*
+
+### Expected conflicts at merge (DF-P6 → DF-P9)
+
+DF-P6 edits files DF-P9 holds next. DF-P9 must carry these hunks through its rewrite (each is pinned by a test that fails if it is dropped):
+- `app/(protected)/requests/[id]/page.tsx` — (1) the `DeclarationCard` mount; (2) `fromRow` spreads `reviewModelFieldsFromRow(r)` (the engine's `engineeringRequired` / `reviewModelFiled` come from it); (3) the `engineerPickAvailable` effect under `engineerPickQuestionApplies` and its `engineCtx` entry — dropped, the page and the route disagree on "Send for Engineer Final Approval" (enabled on the page, refused at the route, or the reverse); (4) the Engineer Reviewer card's override display (`engineeringOverrideOf`).
+- `components/requests/TicketRosterPanel.tsx` (DF-P5's) — the `seededSlotsFor(…, engineeringGateRequired(…), engineeringOverrideOf(…) !== null)` call (the seeded engineering slot and its `overridden` state).
+- `app/(protected)/admin/requests/page.tsx` — the `ReviewClassesSection` mount.
+
 
 ## Verification you cannot skip
 

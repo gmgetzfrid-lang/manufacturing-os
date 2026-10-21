@@ -27,6 +27,15 @@
 //         `false` with no declaration means "the legacy gate decides" — so
 //         a requester demoted after filing is still routed to an engineer
 //         (DEC-16), exactly as today. No in-flight request changes lane.
+//   * WHO IT BINDS (DF-P6 fix pass 2, review issue 1): DEC-33's limbs that
+//     bind the REQUESTER (the self-override block in orgs of 3+, the
+//     requester's recorded override at PENDING_REVIEW, the engineer-pick
+//     question) apply only to a request FILED under the review model —
+//     `tickets.review_model_filed` (20261250: false on every row that
+//     existed before the paste, true on every row filed after it,
+//     immutable). A pre-paste row the backfill (or a later flag) set
+//     engineering_required true is gated by the requirement, but its
+//     requester keeps every path they have today (reviewModelBinds).
 //
 // DELIVERY, NOT DRAFTING. The requirement is a condition on the issue
 // transitions (approve_draft_ifc, approve_minor_correction,
@@ -78,6 +87,15 @@ export function isDeclaredLikeInKind(ticket: Pick<Ticket, "likeInKindDeclaredAt"
   return !!ticket.likeInKindDeclaredAt && typeof ticket.likeInKindStatement === "string" && ticket.likeInKindStatement.trim().length > 0;
 }
 
+/** DF-P6 fix pass 2 (review, issue 1): do DEC-33's REQUESTER-binding limbs
+ *  apply to this ticket — filed under the review model (review_model_filed,
+ *  20261250) AND the column says engineering is required? A pre-paste row
+ *  (review_model_filed false, or the column not read) keeps today's
+ *  requester paths whatever engineering_required says (DEC-90 ruling (2)). */
+export function reviewModelBinds(ticket: Pick<Ticket, "reviewModelFiled" | "engineeringRequired">): boolean {
+  return ticket.reviewModelFiled === true && ticket.engineeringRequired === true;
+}
+
 /** The column can speak for this ticket (20261250 pasted and read). */
 export function hasReviewModelColumns(ticket: Pick<Ticket, "engineeringRequired">): boolean {
   return ticket.engineeringRequired === true || ticket.engineeringRequired === false;
@@ -99,13 +117,16 @@ export function ticketEngineeringRequired(
 
 export type EngineeringBasis =
   | { kind: "declared"; by: string | null; at: string | null }
-  | { kind: "required"; flagged: boolean }
+  | { kind: "required"; flagged: boolean; legacy: boolean }
   | { kind: "seed" };
 
 /** Why the gate answered as it did — the ticket shows this instead of "your
  *  job title" (GAP-111 acceptance "the ticket shows WHY"). */
-export function engineeringBasis(ticket: Pick<Ticket, "engineeringRequired" | "likeInKindDeclaredAt" | "likeInKindStatement" | "likeInKindDeclaredBy" | "engineerReviewRequestedAt">): EngineeringBasis {
-  if (ticket.engineeringRequired === true) return { kind: "required", flagged: isDeclaredLikeInKind(ticket) || !!ticket.engineerReviewRequestedAt };
+export function engineeringBasis(ticket: Pick<Ticket, "engineeringRequired" | "likeInKindDeclaredAt" | "likeInKindStatement" | "likeInKindDeclaredBy" | "engineerReviewRequestedAt" | "reviewModelFiled">): EngineeringBasis {
+  // `legacy`: filed before the review model (fix pass 2, minor 5) — the
+  // backfill's certain answer under the earlier rule, or a requirement
+  // raised since; never "no declaration was made".
+  if (ticket.engineeringRequired === true) return { kind: "required", flagged: isDeclaredLikeInKind(ticket) || !!ticket.engineerReviewRequestedAt, legacy: ticket.reviewModelFiled !== true && !isDeclaredLikeInKind(ticket) };
   if (ticket.engineeringRequired === false && isDeclaredLikeInKind(ticket)) {
     return { kind: "declared", by: ticket.likeInKindDeclaredBy ?? null, at: ticket.likeInKindDeclaredAt ? String(ticket.likeInKindDeclaredAt) : null };
   }
@@ -122,10 +143,11 @@ export function engineeringBasis(ticket: Pick<Ticket, "engineeringRequired" | "l
  *  database does not have yet reads `undefined` for engineering_required
  *  (the seed decides) and null elsewhere. */
 export function reviewModelFieldsFromRow(row: Record<string, unknown>): Pick<Ticket,
-  "libraryId" | "engineeringRequired" | "likeInKindStatement" | "likeInKindDeclaredBy" | "likeInKindDeclaredAt" | "likeInKindSignatureId" | "workClass" | "codeClass"> {
+  "libraryId" | "engineeringRequired" | "reviewModelFiled" | "likeInKindStatement" | "likeInKindDeclaredBy" | "likeInKindDeclaredAt" | "likeInKindSignatureId" | "workClass" | "codeClass"> {
   return {
     libraryId: typeof row.library_id === "string" ? row.library_id : null,
     engineeringRequired: typeof row.engineering_required === "boolean" ? row.engineering_required : undefined,
+    reviewModelFiled: typeof row.review_model_filed === "boolean" ? row.review_model_filed : undefined,
     likeInKindStatement: typeof row.like_in_kind_statement === "string" ? row.like_in_kind_statement : null,
     likeInKindDeclaredBy: typeof row.like_in_kind_declared_by === "string" ? row.like_in_kind_declared_by : null,
     likeInKindDeclaredAt: typeof row.like_in_kind_declared_at === "string" ? row.like_in_kind_declared_at : null,
@@ -160,7 +182,12 @@ export interface EngineeringOverrideMark { by: string | null; at: string | null 
  *  transition since this fix pass), else from the override's history line
  *  (overrides recorded before the marker). null = no override stands. */
 export function engineeringOverrideOf(ticket: Pick<Ticket, "metadata" | "history" | "engineerApprovedAt">): EngineeringOverrideMark | null {
-  const raw = (ticket.metadata as Record<string, unknown> | undefined)?.engineering_override as { by?: unknown; at?: unknown } | undefined;
+  const meta = (ticket.metadata as Record<string, unknown> | undefined) ?? {};
+  // Fix pass 2 (review, minor 6): a later issue that was not an override
+  // clears the marker (null) — the override is no longer the latest word,
+  // and the history line it left is not read again.
+  if (Object.prototype.hasOwnProperty.call(meta, "engineering_override") && meta.engineering_override === null) return null;
+  const raw = meta.engineering_override as { by?: unknown; at?: unknown } | undefined;
   let mark: EngineeringOverrideMark | null = null;
   if (raw && typeof raw === "object") {
     mark = { by: typeof raw.by === "string" ? raw.by : null, at: typeof raw.at === "string" ? raw.at : null };
@@ -226,7 +253,7 @@ export function reviewClassLabel(value: string | null | undefined, options: read
 
 // ─── Pre-migration tolerance (DEC-30) ────────────────────────────────────
 
-const REVIEW_MODEL_COLUMNS = ["engineering_required", "like_in_kind_statement", "like_in_kind_declared_by", "like_in_kind_declared_at", "like_in_kind_signature_id", "work_class", "code_class"];
+const REVIEW_MODEL_COLUMNS = ["engineering_required", "review_model_filed", "like_in_kind_statement", "like_in_kind_declared_by", "like_in_kind_declared_at", "like_in_kind_signature_id", "work_class", "code_class"];
 
 /** 42703 / PGRST204 naming one of 20261250's columns: the paste has not
  *  happened — today's path, said. Anything else is a real error. */
@@ -274,4 +301,23 @@ export function declarationSignatureRefusal(
     return "The like-in-kind declaration's signature has expired — sign the declaration again.";
   }
   return null;
+}
+
+/** The outcome of checking a FILED request's declaration against its
+ *  e-signature: on record for this request by its declarer ("verified"),
+ *  absent or not matching ("missing"), or the read failed ("unchecked"). */
+export type DeclarationCheck = "verified" | "missing" | "unchecked";
+
+/** DF-P6 fix pass (minor 11) / fix pass 2 (minor 5): does a filed request's
+ *  declaration stand on its e-signature? The workflow route (which treats a
+ *  declaration that does not as undeclared) and the request page's card
+ *  (which then does not say "not required") ask the same question. */
+export function declarationSignatureStands(
+  sig: Pick<DeclarationSignatureRow, "org_id" | "resource_type" | "resource_id" | "signer_user_id"> | null | undefined,
+  ticket: { id: string; orgId: string; likeInKindDeclaredBy?: string | null },
+): boolean {
+  if (!sig) return false;
+  if (sig.org_id !== ticket.orgId || sig.resource_type !== "ticket") return false;
+  if (String(sig.resource_id ?? "").toLowerCase() !== ticket.id.toLowerCase()) return false;
+  return !ticket.likeInKindDeclaredBy || sig.signer_user_id === ticket.likeInKindDeclaredBy;
 }

@@ -27,6 +27,7 @@ import {
   ticketEngineeringRequired, checkDeclarationStatement, declarationSignatureRefusal, declarationSignatureStatement,
   reviewClassOptions, resolveReviewClass, isMissingReviewModelColumn, engineeringBasis, LIKE_IN_KIND_MIN_CHARS, DECLARATION_BLANK_NOTE,
   engineerPickAvailable, engineeringOverrideOf, reviewModelFieldsFromRow, ENGINEERING_OVERRIDE_NOTE,
+  reviewModelBinds, declarationSignatureStands,
 } from "@/lib/reviewModel";
 import { seededSlotsFor } from "@/lib/routingControl";
 import { engineMatrix } from "./helpers/dfP6EngineMatrix";
@@ -44,6 +45,10 @@ const mk = (over: Partial<Ticket> = {}): Ticket => ({
   id: "t1", orgId: "o1", ticketId: "REQ-1", title: "Pump iso", unit: "U-100", requestType: "ISO",
   status: "PENDING_REVIEW", requesterId: "req", requesterRole: "Viewer", assignedDrafterId: "drf", assignedEngineerId: null,
   attachments: [DRAFT], comments: [], history: [], unreadBy: [], watchers: [], revisionCount: 0, deliverableRev: "1A", createdAt: NOW,
+  // DF-P6 fix pass 2 (review, issue 1): a test ticket is one filed under the
+  // review model unless it says otherwise (the binding limbs read it only
+  // together with engineeringRequired true).
+  reviewModelFiled: true,
   ...over,
 } as unknown as Ticket);
 const DECLARED: Partial<Ticket> = {
@@ -332,7 +337,7 @@ describe("fix pass (review, issue 7) — an override is shown as one, never as a
     expect(seededSlotsFor({ status: "PENDING_FINAL_APPROVAL" }, true, true)[1].state).toBe("waiting");
   });
   it("the copy no longer claims an undeclared request cannot issue without an engineer — the override exists", () => {
-    expect(engineeringLine({ engineeringRequired: true })?.text).toMatch(/management may override that, recorded as an override/);
+    expect(engineeringLine({ engineeringRequired: true, reviewModelFiled: true }, "verified")?.text).toMatch(/management may override that, recorded as an override/);
     const flag = WorkflowEngine.getActions(mk({ status: "DRAFTING", ...DECLARED }), "DraftingSupervisor", "ds", undefined, { userRoles: ["DraftingSupervisor"] }).find((a) => a.action === "flag_engineering")!;
     expect(flag.description).toMatch(/management may override it, recorded as an override/);
     expect(flag.description).not.toMatch(/will not issue without/);
@@ -392,12 +397,38 @@ describe("GAP-110 / DEC-34 — the declaration", () => {
     expect(rowToTicket({ id: "t" }).engineeringRequired).toBeUndefined();
   });
   it("the card says why — declared, required, or the earlier rule — and nothing before the paste", () => {
-    expect(engineeringLine({ ...DECLARED })?.required).toBe(false);
-    expect(engineeringLine({ engineeringRequired: true })?.text).toMatch(/no like-in-kind declaration was made/);
-    expect(engineeringLine({ ...DECLARED, engineeringRequired: true })?.text).toMatch(/raised after the requester's like-in-kind declaration/);
-    expect(engineeringLine({ engineeringRequired: false })?.text).toMatch(/earlier rule/);
-    expect(engineeringLine({})).toBeNull();
+    expect(engineeringLine({ ...DECLARED }, "verified")?.required).toBe(false);
+    expect(engineeringLine({ engineeringRequired: true, reviewModelFiled: true }, "verified")?.text).toMatch(/no like-in-kind declaration was made/);
+    expect(engineeringLine({ ...DECLARED, engineeringRequired: true }, "verified")?.text).toMatch(/raised after the requester's like-in-kind declaration/);
+    expect(engineeringLine({ engineeringRequired: false }, "verified")?.text).toMatch(/earlier rule/);
+    expect(engineeringLine({}, "verified")).toBeNull();
     expect(engineeringBasis({ ...DECLARED }).kind).toBe("declared");
+  });
+  it("fix pass 2 (review, minor 5): a pre-paste row the backfill set true says the earlier rule decides, never 'no declaration was made'; a declaration says 'not required' only once its e-signature is checked", () => {
+    for (const filed of [false, undefined]) {
+      const line = engineeringLine({ engineeringRequired: true, reviewModelFiled: filed }, "verified");
+      expect(line?.required, String(filed)).toBe(true);
+      expect(line?.text, String(filed)).toMatch(/Filed before like-in-kind declarations existed/);
+      expect(line?.text, String(filed)).not.toMatch(/no like-in-kind declaration was made/);
+    }
+    expect(engineeringBasis({ engineeringRequired: true, reviewModelFiled: false })).toMatchObject({ kind: "required", legacy: true });
+    expect(engineeringBasis({ engineeringRequired: true, reviewModelFiled: true })).toMatchObject({ kind: "required", legacy: false });
+    // the declared line waits for the check, and a declaration that does not stand reads as engineered work
+    expect(engineeringLine({ ...DECLARED }, "pending")).toBeNull();
+    expect(engineeringLine({ ...DECLARED }, "missing")).toMatchObject({ required: true });
+    expect(engineeringLine({ ...DECLARED }, "missing")?.text).toMatch(/no e-signature on record/);
+    expect(engineeringLine({ ...DECLARED }, "unchecked")?.text).toMatch(/could not be checked/);
+  });
+  it("fix pass 2 (minor 5): declarationSignatureStands — the route's and the card's one question", () => {
+    const t = { id: "7A000000-0000-4000-8000-000000000001", orgId: "o1", likeInKindDeclaredBy: "u1" };
+    const sig = { org_id: "o1", resource_type: "ticket", resource_id: "7a000000-0000-4000-8000-000000000001", signer_user_id: "u1" };
+    expect(declarationSignatureStands(sig, t)).toBe(true);
+    expect(declarationSignatureStands(null, t)).toBe(false);
+    expect(declarationSignatureStands({ ...sig, org_id: "o2" }, t)).toBe(false);
+    expect(declarationSignatureStands({ ...sig, resource_type: "document" }, t)).toBe(false);
+    expect(declarationSignatureStands({ ...sig, resource_id: "other" }, t)).toBe(false);
+    expect(declarationSignatureStands({ ...sig, signer_user_id: "u2" }, t)).toBe(false);
+    expect(declarationSignatureStands({ ...sig, signer_user_id: "u2" }, { ...t, likeInKindDeclaredBy: null })).toBe(true);
   });
   it("isMissingReviewModelColumn: 42703 / PGRST204 naming a 20261250 column only", () => {
     expect(isMissingReviewModelColumn({ code: "PGRST204", message: "Could not find the 'engineering_required' column of 'tickets' in the schema cache" })).toBe(true);
@@ -425,9 +456,18 @@ describe("GAP-101 / TIER-4 / GAP-105 — classes and the resource", () => {
     expect(reviewModelFieldsFromRow({ library_id: "L", work_class: "w", code_class: "c", engineering_required: true })).toMatchObject({ libraryId: "L", workClass: "w", codeClass: "c", engineeringRequired: true });
     expect(reviewModelFieldsFromRow({}).engineeringRequired).toBeUndefined();
   });
-  it("a rule scoped to a code class narrows a ticket capability there (TIER-4: 'this code's approvals by these people'); a work/code-class rule is refused on a capability the database evaluates", () => {
+  it("the evaluator reads a code-class rule (TIER-4), but the validator refuses library / work-class / code-class rules on a request capability until the request presents those fields (fix pass 2, major 3); a work/code-class rule is refused on a capability the database evaluates", () => {
     const policy: CapabilityPolicy = { caps: { "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { codeClass: ["c1"] } }, { tokens: ["Engineer"] }] } };
-    expect(validateCapabilityPolicy(policy)).toBeNull();
+    expect(validateCapabilityPolicy(policy)).toMatch(/request type or a unit only.*code class/);
+    expect(validateCapabilityPolicy({ caps: { "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { workClass: ["w"] } }, { tokens: ["Engineer"] }] } })).toMatch(/work class/);
+    expect(validateCapabilityPolicy({ caps: { "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { libraryId: ["L"] } }, { tokens: ["Engineer"] }] } })).toMatch(/library/);
+    // a request type / unit rule on a request capability is still accepted
+    expect(validateCapabilityPolicy({ caps: { "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { requestType: ["ISO"] } }, { tokens: ["Engineer"] }] } })).toBeNull();
+    // a library rule on a capability that is evaluated per library is untouched
+    expect(validateCapabilityPolicy({ caps: { "transmittal.issue": [{ tokens: ["Admin", "DocCtrl"] }, { tokens: ["Admin", "DocCtrl"], when: { libraryId: ["ifc"] } }] } })).toBeNull();
+    // the AUTHZ-6 wording names only the keys that bind today
+    expect(CAPABILITY_DEFS.find((d) => d.id === "ticket.direct_approve")!.description).toMatch(/scoped to a request type or a unit narrows it there/);
+    expect(CAPABILITY_DEFS.find((d) => d.id === "ticket.direct_approve")!.description).not.toMatch(/library|work class|code class/);
     expect(policyAllows(policy, "ticket.direct_approve", "Engineer-2", null, null, { codeClass: "c1" })).toBe(false);
     expect(policyAllows(policy, "ticket.direct_approve", "Engineer-3", null, null, { codeClass: "c1" })).toBe(true);
     expect(policyAllows(policy, "ticket.direct_approve", "Engineer-2", null, null, { codeClass: "c2" })).toBe(true);
@@ -530,5 +570,99 @@ describe("DCW-2 / GAP-104 — document control as a party: a per-library slot on
     const sign = dc.find((a) => a.action === "sign_slot")!;
     const res = computeTransition(t, inputFor(sign, { uid: "dc", role: "DocCtrl" }));
     expect(res.updates.status).toBeUndefined();
+  });
+});
+
+describe("fix pass 2 (review, issue 1) — a pre-paste row the backfill set true keeps today's requester paths (DEC-90 ruling (2))", () => {
+  it("GOLDEN: every entry of the base snapshot whose legacy gate requires an engineer (the rows the backfill may set true — a Viewer requester in the matrix), evaluated with engineeringRequired true and reviewModelFiled false, is offered exactly what the base offered — the only difference SM-3's rename at PENDING_FINAL_APPROVAL", () => {
+    const golden = JSON.parse(readFileSync(join(process.cwd(), "lib", "__tests__", "dfP6EngineBase7893129.golden.json"), "utf8")) as { base: string; entries: number; lists: string[]; seq: number[] };
+    const absent = engineMatrix();
+    const backfilled = engineMatrix({ engineeringRequired: true, reviewModelFiled: false });
+    const keys = Object.keys(absent);
+    expect(Object.keys(backfilled)).toEqual(keys);
+    let compared = 0;
+    keys.forEach((k, i) => {
+      const [req] = k.split("|");
+      // the legacy gate's answer for the entry's requester (snapshot and current role)
+      if (!engineerApprovalRequired(req, [req], null, "req", { requestType: "ISO", unit: "U-100" })) return;
+      const cur = backfilled[k];
+      const sm3 = cur.replace(/\boverride_engineer_final\|/g, "engineer_approve_final|");
+      if (sm3 !== cur) expect(k.split("|")[1], k).toBe("PENDING_FINAL_APPROVAL");
+      expect(sm3, k).toBe(golden.lists[golden.seq[i]]);
+      compared++;
+    });
+    expect(compared).toBeGreaterThan(1000);
+  });
+  it("the reviewer's case: a legacy row with no role stamped (backfilled true), its requester now a Manager, at PENDING_FINAL_APPROVAL with an engineer assigned, in an org of 5 — the requester keeps the enabled override and minor correction (renamed, recorded); the same request filed under the review model is the binding case", () => {
+    const base = { status: "PENDING_FINAL_APPROVAL" as TicketStatus, requesterRole: undefined, assignedEngineerId: "eng", engineeringRequired: true };
+    const ctx: WorkflowContext = { userRoles: ["Manager"], requesterRoles: ["Manager"], activeMemberCount: 5 };
+    const legacy = WorkflowEngine.getActions(mk({ ...base, reviewModelFiled: false }), "Manager", "req", undefined, ctx);
+    expect(legacy.find((a) => a.action === "override_engineer_final")?.disabledReason).toBeUndefined();
+    expect(legacy.find((a) => a.action === "approve_minor_correction")?.disabledReason).toBeUndefined();
+    expect(legacy.find((a) => a.action === "override_engineer_final")?.engineeringOverride).toBe(true);
+    const filed = WorkflowEngine.getActions(mk({ ...base, reviewModelFiled: true }), "Manager", "req", undefined, ctx);
+    expect(filed.find((a) => a.action === "override_engineer_final")?.disabledReason).toBe(SELF_OVERRIDE_REASON);
+    expect(filed.find((a) => a.action === "approve_minor_correction")?.disabledReason).toBe(SELF_OVERRIDE_REASON);
+  });
+  it("at PENDING_REVIEW a legacy row is never offered the review-model override, and the engineer-pick question does not apply to it (no member read, no flag) — while a row filed under the model asks it", () => {
+    const t = (filed: boolean) => mk({ status: "PENDING_REVIEW", requesterRole: "Manager", engineeringRequired: true, reviewModelFiled: filed });
+    expect(engineerPickQuestionApplies(t(false), "req", "Manager", ["Manager"], undefined, ["Manager"])).toBe(false);
+    expect(engineerPickQuestionApplies(t(true), "req", "Manager", ["Manager"], undefined, ["Manager"])).toBe(true);
+    const acts = WorkflowEngine.getActions(t(false), "Manager", "req", undefined, { userRoles: ["Manager"], requesterRoles: ["Manager"], activeMemberCount: 2 });
+    expect(acts.some((a) => a.action === "approve_draft_ifc" && a.engineeringOverride)).toBe(false);
+    expect(acts.find((a) => a.action === "request_final_engineer_approval")?.disabledReason).toBeUndefined();
+    expect(reviewModelBinds({ reviewModelFiled: false, engineeringRequired: true })).toBe(false);
+    expect(reviewModelBinds({ reviewModelFiled: undefined, engineeringRequired: true })).toBe(false);
+    expect(reviewModelBinds({ reviewModelFiled: true, engineeringRequired: false })).toBe(false);
+    expect(reviewModelBinds({ reviewModelFiled: true, engineeringRequired: true })).toBe(true);
+  });
+  it("the mappers carry review_model_filed (undefined before the paste)", () => {
+    expect(reviewModelFieldsFromRow({ review_model_filed: false }).reviewModelFiled).toBe(false);
+    expect(reviewModelFieldsFromRow({ review_model_filed: true }).reviewModelFiled).toBe(true);
+    expect(reviewModelFieldsFromRow({}).reviewModelFiled).toBeUndefined();
+    expect(rowToTicket({ id: "t", review_model_filed: false, engineering_required: true })).toMatchObject({ reviewModelFiled: false, engineeringRequired: true });
+    expect(isMissingReviewModelColumn({ code: "42703", message: 'column "review_model_filed" does not exist' })).toBe(true);
+  });
+});
+
+describe("fix pass 2 (review, minor 6) — a later issue that was not an override clears the override marker", () => {
+  const overridden = { status: "PENDING_REVIEW" as TicketStatus, requesterRole: "Engineer-2" as Role, metadata: { engineering_override: { by: "boss@x.io", at: "2026-10-01T00:00:00.000Z" } } };
+  it("the requester-engineer's direct approval of a later cycle writes engineering_override: null — the card and the seeded roster no longer say 'override'", () => {
+    const t = mk(overridden);
+    const a = WorkflowEngine.getActions(t, "Engineer-2", "req", undefined, { userRoles: ["Engineer-2"], requesterRoles: ["Engineer-2"] }).find((x) => x.action === "approve_draft_ifc")!;
+    const r = computeTransition(t, inputFor(a, { uid: "req", role: "Engineer-2" }));
+    expect(r.newStatus).toBe("PENDING_IFC");
+    expect((r.updates.metadata as Record<string, unknown>).engineering_override).toBeNull();
+    expect(engineeringOverrideOf({ ...t, metadata: r.updates.metadata as Record<string, unknown> })).toBeNull();
+  });
+  it("a cleared marker is not read back from the old override's history line", () => {
+    expect(engineeringOverrideOf({ metadata: { engineering_override: null }, history: [{ action: "x", user: "boss@x.io", role: "Manager", date: NOW, details: `ok [${ENGINEERING_OVERRIDE_NOTE}]` }] as Ticket["history"] })).toBeNull();
+  });
+  it("a history-only override (before the marker) is cleared by the next non-override issue too; an override keeps writing its marker", () => {
+    const hist = [{ action: "x", user: "boss@x.io", role: "Manager", date: NOW, details: `ok [${ENGINEERING_OVERRIDE_NOTE}]` }] as Ticket["history"];
+    const t = mk({ status: "PENDING_REVIEW", requesterRole: "Engineer-2", history: hist });
+    const a = WorkflowEngine.getActions(t, "Engineer-2", "req", undefined, { userRoles: ["Engineer-2"], requesterRoles: ["Engineer-2"] }).find((x) => x.action === "approve_draft_ifc")!;
+    expect((computeTransition(t, inputFor(a, { uid: "req", role: "Engineer-2" })).updates.metadata as Record<string, unknown>).engineering_override).toBeNull();
+    // a ticket that never had an override is not given an engineering_override key
+    const clean = mk({ status: "PENDING_REVIEW", requesterRole: "Engineer-2" });
+    const r2 = computeTransition(clean, inputFor(a, { uid: "req", role: "Engineer-2" }));
+    expect(r2.updates.metadata === undefined || !("engineering_override" in (r2.updates.metadata as Record<string, unknown>))).toBe(true);
+    // an override still writes its marker
+    const ov = computeTransition(mk({ status: "PENDING_FINAL_APPROVAL", requesterRole: "Viewer", assignedEngineerId: "eng", engineeringRequired: true }), inputFor({ action: "override_engineer_final", label: "Override", variant: "warning", engineeringOverride: true }, { uid: "boss", role: "Manager" }));
+    expect((ov.updates.metadata as Record<string, unknown>).engineering_override).toMatchObject({ action: "override_engineer_final" });
+  });
+});
+
+describe("fix pass 2 (review, minor 7) — an engineering-first type's mandatory review does not raise a declared request's requirement", () => {
+  it("request_eng_review as the type's mandatory loop on a declared request leaves engineering_required alone; any other request_eng_review still raises it", () => {
+    const t = mk({ status: "PENDING_ASSIGNMENT", ...DECLARED });
+    const a = { action: "request_eng_review", label: "Flag", variant: "secondary" } as WorkflowAction;
+    const loop = computeTransition(t, inputFor(a, { uid: "ds", role: "DraftingSupervisor" }, { engineeringFirstLoop: true }));
+    expect(loop.newStatus).toBe("PENDING_ENG_TEAM");
+    expect("engineering_required" in loop.updates).toBe(false);
+    expect(computeTransition(t, inputFor(a, { uid: "ds", role: "DraftingSupervisor" })).updates.engineering_required).toBe(true);
+    // an undeclared request is already required; the loop flag does not matter for it
+    const undeclared = mk({ status: "PENDING_ASSIGNMENT", engineeringRequired: true });
+    expect(computeTransition(undeclared, inputFor(a, { uid: "ds", role: "DraftingSupervisor" }, { engineeringFirstLoop: true })).updates.engineering_required).toBe(true);
   });
 });

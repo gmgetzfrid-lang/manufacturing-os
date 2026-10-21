@@ -23,6 +23,18 @@
 --         work_class / code_class TEXT — set by triage from the workspace's
 --                        own lists (org_configurations 'drafting'
 --                        workClasses / codeClasses, seeded EMPTY).
+--         review_model_filed BOOLEAN NOT NULL — false on every row that
+--                        exists before this paste, true on every row filed
+--                        after it (added DEFAULT false, then SET DEFAULT
+--                        true — the engineering_required pattern); never
+--                        changed (ticket_update_guard, every caller). DEC-33's
+--                        limbs that bind the REQUESTER (the self-override
+--                        block, the requester's recorded override, the
+--                        engineer-pick question) apply only where it is true,
+--                        so a pre-paste row the backfill (2) or a later flag
+--                        sets engineering_required true keeps every requester
+--                        path it has today (DF-P6 fix pass 2, review issue 1;
+--                        lib/reviewModel.ts reviewModelBinds).
 --   (2) THE BACKFILL (DEC-90 ruling (2) for DF-P6 — fail-safe, no flag day):
 --       the column is ADDED with DEFAULT false, so every row that exists
 --       before the paste starts false, and only then is the default moved to
@@ -42,7 +54,10 @@
 --       today, and a row left false is gated by the legacy gate exactly as
 --       today (a requester demoted after filing still routes to an engineer —
 --       DEC-16). The only difference: a row set true stays required if its
---       requester is later promoted (fail-safe).
+--       requester is later promoted (fail-safe). Every pre-paste row carries
+--       review_model_filed false, so whatever engineering_required says its
+--       requester keeps today's paths (the requester-binding limbs of DEC-33
+--       never apply to it).
 --   (3) ticket_update_guard RE-CREATED FROM ITS NEWEST BODY (20261221 —
 --       found by scanning; lineDiff-pinned by
 --       lib/__tests__/dfRoundG_P6_reviewModelMigration.test.ts). Every line of
@@ -50,15 +65,17 @@
 --       trust index, library_id, outcome, the departure pass, the
 --       last_modified rule). Added:
 --         (a) for EVERY caller, the service role included (ahead of its early
---             return): the four declaration columns never change after
---             INSERT, and engineering_required never goes true → false;
+--             return): the four declaration columns and review_model_filed
+--             never change after INSERT, and engineering_required never goes
+--             true → false;
 --         (b) for a client: engineering_required, work_class and code_class
 --             are workflow-owned.
 --   (4) ticket_review_model_insert_guard() (new; SECURITY INVOKER, search_path
 --       pinned) + trg_ticket_review_model_insert_guard BEFORE INSERT: a row a
 --       signed-in client inserts (no app path does — 20261208 dropped the
 --       client INSERT policy; this holds if a re-paste ever brings it back)
---       is born engineered, undeclared and unclassified. The create route
+--       is born engineered, undeclared, unclassified and filed under the
+--       review model. The create route
 --       (service role) is the one writer of a declaration.
 --
 -- PASTE / DEPLOY ORDER. Paste AFTER 20261221 (the first statement refuses
@@ -194,6 +211,10 @@ ALTER TABLE tickets ADD COLUMN IF NOT EXISTS engineering_required BOOLEAN NOT NU
 ALTER TABLE tickets ALTER COLUMN engineering_required SET DEFAULT true;
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS work_class TEXT;
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS code_class TEXT;
+-- The same pattern: every row that exists now was filed before the review
+-- model (false); every row filed from here on, under it (true).
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS review_model_filed BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE tickets ALTER COLUMN review_model_filed SET DEFAULT true;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tickets_like_in_kind_all_or_none' AND conrelid = 'public.tickets'::regclass) THEN
@@ -214,6 +235,8 @@ END
 $$;
 COMMENT ON COLUMN tickets.engineering_required IS
   'drafting-flow GAP-111 / DEC-33 (20261250): engineering review is required before the request may issue. True unless the requester declared the work like-in-kind at filing; raised (never lowered — ticket_update_guard refuses true → false for every caller) by request_eng_review, the assigner''s flag or an engineering class. A pre-20261250 row left false WITHOUT a declaration is gated by the legacy role-based gate (the app''s seed).';
+COMMENT ON COLUMN tickets.review_model_filed IS
+  'drafting-flow DEC-33 (20261250, DF-P6 fix pass 2): the request was filed under the review model — false on every row that existed before 20261250, true on every row filed after it; never changed (ticket_update_guard). The requirement''s limbs that bind the requester apply only where it is true; a pre-20261250 row keeps the requester paths it had (DEC-90 ruling (2)).';
 COMMENT ON COLUMN tickets.like_in_kind_statement IS
   'drafting-flow GAP-110 / DEC-34 (20261250): the requester''s like-in-kind declaration as they typed it; with _declared_by / _declared_at / _signature_id (the e-signature that is its record). Set at filing only; immutable.';
 
@@ -289,6 +312,11 @@ BEGIN
   END IF;
   IF OLD.engineering_required AND NOT NEW.engineering_required THEN
     RAISE EXCEPTION 'tickets: engineering_required only ratchets up — it cannot be cleared';
+  END IF;
+  -- Whether the request was filed under the review model is a fact of its
+  -- filing (DF-P6 fix pass 2): nobody changes it.
+  IF NEW.review_model_filed IS DISTINCT FROM OLD.review_model_filed THEN
+    RAISE EXCEPTION 'tickets: review_model_filed is set when the request is filed and cannot be changed';
   END IF;
 
   -- The workflow-action route (service role) is the transition authority.
@@ -466,6 +494,7 @@ BEGIN
   -- The create route (service role) is the one writer of a declaration.
   IF auth.uid() IS NULL THEN RETURN NEW; END IF;
   NEW.engineering_required := true;
+  NEW.review_model_filed := true;
   NEW.like_in_kind_statement := NULL;
   NEW.like_in_kind_declared_by := NULL;
   NEW.like_in_kind_declared_at := NULL;
@@ -486,12 +515,15 @@ COMMIT;
 
 -- ── Verification + inventory (ONE result set) ───────────────────────────────
 -- expect ok = true on every probe; the inventory rows carry n.
-SELECT 'GAP-110 / GAP-111 / GAP-101: tickets carries the declaration (statement, declared_by, declared_at, signature_id), engineering_required (boolean, NOT NULL, DEFAULT true), work_class and code_class' AS check,
+SELECT 'GAP-110 / GAP-111 / GAP-101: tickets carries the declaration (statement, declared_by, declared_at, signature_id), engineering_required and review_model_filed (boolean, NOT NULL, DEFAULT true), work_class and code_class' AS check,
        ((SELECT COUNT(*) FROM information_schema.columns
           WHERE table_schema = 'public' AND table_name = 'tickets'
             AND column_name IN ('like_in_kind_statement', 'like_in_kind_declared_by', 'like_in_kind_declared_at', 'like_in_kind_signature_id', 'work_class', 'code_class')) = 6
         AND EXISTS (SELECT 1 FROM information_schema.columns
                      WHERE table_schema = 'public' AND table_name = 'tickets' AND column_name = 'engineering_required'
+                       AND data_type = 'boolean' AND is_nullable = 'NO' AND column_default = 'true')
+        AND EXISTS (SELECT 1 FROM information_schema.columns
+                     WHERE table_schema = 'public' AND table_name = 'tickets' AND column_name = 'review_model_filed'
                        AND data_type = 'boolean' AND is_nullable = 'NO' AND column_default = 'true')) AS ok,
        NULL::text AS n
 UNION ALL
@@ -501,13 +533,15 @@ SELECT 'the declaration is all-or-none, its statement 20 to 2000 characters; a c
            AND conname IN ('tickets_like_in_kind_all_or_none', 'tickets_like_in_kind_statement_length', 'tickets_review_class_length')) = 3,
        NULL
 UNION ALL
-SELECT 'ticket_update_guard: the declaration never changes and engineering_required never clears (every caller, ahead of the service-role return); the new columns are workflow-owned; the issued-Rev / revisionRound limbs, the history trust index, library_id, outcome, the departure pass and the last_modified rule kept; SECURITY DEFINER, search_path pinned, trigger enabled',
+SELECT 'ticket_update_guard: the declaration and review_model_filed never change and engineering_required never clears (every caller, ahead of the service-role return); the new columns are workflow-owned; the issued-Rev / revisionRound limbs, the history trust index, library_id, outcome, the departure pass and the last_modified rule kept; SECURITY DEFINER, search_path pinned, trigger enabled',
        EXISTS (SELECT 1 FROM pg_proc p JOIN pg_trigger tg ON tg.tgfoid = p.oid
                 WHERE p.proname = 'ticket_update_guard' AND p.prosecdef
                   AND p.proconfig @> ARRAY['search_path=public']
                   AND tg.tgrelid = 'public.tickets'::regclass AND tg.tgname = 'trg_ticket_update_guard' AND tg.tgenabled = 'O'
                   AND p.prosrc LIKE '%IF OLD.engineering_required AND NOT NEW.engineering_required THEN%'
                   AND p.prosrc LIKE '%OR NEW.like_in_kind_signature_id IS DISTINCT FROM OLD.like_in_kind_signature_id THEN%'
+                  AND p.prosrc LIKE '%IF NEW.review_model_filed IS DISTINCT FROM OLD.review_model_filed THEN%'
+                  AND position('IF NEW.review_model_filed IS DISTINCT FROM OLD.review_model_filed THEN' IN p.prosrc) < position('IF auth.uid() IS NULL THEN RETURN NEW; END IF;' IN p.prosrc)
                   AND position('IF OLD.engineering_required AND NOT NEW.engineering_required THEN' IN p.prosrc) < position('IF auth.uid() IS NULL THEN RETURN NEW; END IF;' IN p.prosrc)
                   AND p.prosrc LIKE '%v_bad := array_append(v_bad, ''engineering_required'');%'
                   AND p.prosrc LIKE '%v_bad := array_append(v_bad, ''work_class'');%'
@@ -522,12 +556,13 @@ SELECT 'ticket_update_guard: the declaration never changes and engineering_requi
                   AND p.prosrc LIKE '%tickets: last_modified cannot be cleared%'),
        NULL
 UNION ALL
-SELECT 'ticket_review_model_insert_guard: a client insert is born engineered, undeclared and unclassified; SECURITY INVOKER, search_path pinned, trigger enabled',
+SELECT 'ticket_review_model_insert_guard: a client insert is born engineered, undeclared, unclassified and filed under the review model; SECURITY INVOKER, search_path pinned, trigger enabled',
        EXISTS (SELECT 1 FROM pg_proc p JOIN pg_trigger tg ON tg.tgfoid = p.oid
                 WHERE p.proname = 'ticket_review_model_insert_guard' AND NOT p.prosecdef
                   AND p.proconfig @> ARRAY['search_path=public']
                   AND tg.tgrelid = 'public.tickets'::regclass AND tg.tgname = 'trg_ticket_review_model_insert_guard' AND tg.tgenabled = 'O'
                   AND p.prosrc LIKE '%NEW.engineering_required := true;%'
+                  AND p.prosrc LIKE '%NEW.review_model_filed := true;%'
                   AND p.prosrc LIKE '%NEW.like_in_kind_statement := NULL;%'),
        NULL
 UNION ALL
@@ -542,4 +577,8 @@ SELECT inventory, NULL, n FROM (SELECT ord, inventory, n FROM df_round_g_250_bef
 UNION ALL
 SELECT 'after: open tickets with engineering_required = true / false (false = declared like-in-kind, or left to the legacy gate)', NULL,
        (SELECT COUNT(*) FILTER (WHERE engineering_required)::text || ' / ' || COUNT(*) FILTER (WHERE NOT engineering_required)::text
+          FROM tickets WHERE archived_at IS NULL AND status NOT IN ('CLOSED', 'CANCELED'))
+UNION ALL
+SELECT 'after: open tickets filed before the review model (review_model_filed false — the requester keeps today''s paths)', NULL,
+       (SELECT COUNT(*) FILTER (WHERE NOT review_model_filed)::text
           FROM tickets WHERE archived_at IS NULL AND status NOT IN ('CLOSED', 'CANCELED'));

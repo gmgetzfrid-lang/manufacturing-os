@@ -59,7 +59,7 @@ export default function LikeInKindField({
           id="request-declaration"
           data-testid="request-declaration"
           className="w-full p-3 h-20 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none resize-none text-sm"
-          placeholder="e.g. Replacing the 6&quot; spiral-wound gasket on the P-101 discharge flange with an identical gasket — same size, rating and material."
+          placeholder="What is being replaced, and with what?"
           value={declaration}
           maxLength={LIKE_IN_KIND_MAX_CHARS}
           onChange={(e) => onDeclarationChange(e.target.value)}
@@ -79,7 +79,7 @@ export default function LikeInKindField({
           id="request-equipment"
           data-testid="request-equipment"
           className="w-full p-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-orange-500 outline-none text-sm"
-          placeholder="e.g. P-101, FV-2201"
+          placeholder="Equipment tags, separated by commas"
           value={equipment}
           onChange={(e) => onEquipmentChange(e.target.value)}
           disabled={disabled}

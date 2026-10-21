@@ -1887,6 +1887,26 @@ describe("DF-P6 — GAP-110 / DEC-34: the like-in-kind declaration at filing; GA
     expect(tickets()).toHaveLength(1);
   });
 
+  it("fix pass 2 (review, minor 8): two concurrent posts of one declaration — the second's insert collides on the row's id (tickets_pkey) after the pre-check passed: answered 409 declaration_used naming the filed request, never 'nothing was filed', and no second number is spent", async () => {
+    s.tables.e_signatures = [sigRow()];
+    let raced = false;
+    s.hooks.push((table: string, op: string) => {
+      if (table === "tickets" && op === "insert" && !raced) {
+        raced = true;
+        // the concurrent request lands first, under the same signed id
+        s.tables.tickets.push({ id: KEY, org_id: ORG, ticket_id: `KE-DDRT-${YY}-0009`, requester_id: REQ, status: "PENDING_ASSIGNMENT" });
+      }
+    });
+    s.errors["tickets.insert"] = [{ code: "23505", message: 'duplicate key value violates unique constraint "tickets_pkey"' }];
+    const res = await POST(req(declared()));
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("declaration_used");
+    expect(body.error).toMatch(new RegExp(`KE-DDRT-${YY}-0009`));
+    expect(tickets()).toHaveLength(1);
+    expect(nextTicketRpc()).toHaveLength(1);
+  });
+
   it("fix pass (review, minor 10): an id that already has a history — another person's signature, any other signature over it, or an audit row that is not this declaration's capture — is refused 409 declaration_key_used BEFORE a number is spent; the requester's own re-sign of the same id is not", async () => {
     const OTHER_SIG = "5a000000-0000-4000-8000-000000000002";
     const cases: Array<[Row[], Row[]]> = [

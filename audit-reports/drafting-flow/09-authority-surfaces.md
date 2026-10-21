@@ -410,11 +410,11 @@ export function policyAllows(
 Tests: `lib/__tests__/reviewModel.test.ts` "AUTHZ-6 — the capability descriptions state their reach".
 
 **Done-when.**
-- ✓ `policyAllows` takes the resource (DF-P1 / DEC-13; the resource now also carries the library and the classes).
+- ✓ `policyAllows` takes the resource (DF-P1 / DEC-13). *Corrected at the DF-P6 second review fix pass (DEC-29): this line first added "the resource now also carries the library and the classes" — stale after the first fix pass reverted `lib/workflow.ts` `ticketResource` to request type and unit (the requests list and `lib/inbox.ts` do not carry the fields yet; 99-fix-sequencing "Hand-offs from DF-P6").*
 - ✓ The default no longer makes a plain Requester an approver on tickets they do not own (WF-8).
-- ✓ The `CAPABILITY_DEFS` descriptions state the reach, so an admin editing the policy sees the blast radius.
+- ✓ The `CAPABILITY_DEFS` descriptions state the reach, so an admin editing the policy sees the blast radius. *Corrected at the DF-P6 second review fix pass (DEC-29): the `ticket.direct_approve` description first said a rule scoped to "a request type, unit, library, work class or code class" narrows it; only request type and unit bind today. It now says so, `components/requests/ReviewClassesSection.tsx` no longer tells admins a rule can be scoped to a code class, and `validateCapabilityPolicy` refuses a library-, work-class- or code-class-scoped rule on a `ticket.*` capability (it would never match — a setting that looks like a narrowing and does nothing) until the resource carries those fields. Pinned: `lib/__tests__/reviewModel.test.ts` "the evaluator reads a code-class rule (TIER-4), but the validator refuses …".*
 
-**Scope / residual.** None.
+**Scope / residual.** None beyond the resource hand-off (`TIER-4`, `GAP-105`).
 
 ---
 

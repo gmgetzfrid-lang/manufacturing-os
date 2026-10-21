@@ -12,7 +12,7 @@ import type { Ticket, TicketAttachment, TicketComment, TicketHistoryEntry, Ticke
 import { currentRoster, issueReadyFor, rosterEngineerApprovedAt, ISSUE_MARK_ACTIONS, slotBlocks, slotAlternatesActive } from "@/lib/workflow";
 import { lastIssuedFromHistory } from "@/lib/verifyTicketVerdict";
 import { defaultOutcome } from "@/lib/ticketOutcome";
-import { reviewModelFieldsFromRow, ENGINEERING_OVERRIDE_NOTE } from "@/lib/reviewModel";
+import { reviewModelFieldsFromRow, ENGINEERING_OVERRIDE_NOTE, isDeclaredLikeInKind } from "@/lib/reviewModel";
 
 export interface TransitionActor {
   uid?: string | null;
@@ -74,6 +74,13 @@ export interface TransitionInput {
    *  transition may write engineering_required (only ever true). False /
    *  absent before the paste: nothing is written for it. */
   reviewModelColumns?: boolean;
+  /** DF-P6 fix pass 2 (review, minor 7): this request_eng_review is the
+   *  request type's MANDATORY engineering-first loop (DRAFT-2 — the type
+   *  cannot be assigned without it). On a declared like-in-kind request it
+   *  does not raise engineering_required: the loop is the type's, not a
+   *  finding that the work is engineered (DEC-90 ruling (8) — no added wait
+   *  for a declared request). Set by the route. */
+  engineeringFirstLoop?: boolean;
   /** HAND-7 done-when 3 (DF-P6): an issuing approval over a moved source —
    *  the moved documents as a person reads them, and whether the approver
    *  acknowledged it (null: the page did not ask — recorded as such). */
@@ -493,8 +500,12 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
         updates.unread_by = [input.engineer.id];
         // GAP-111 / DEC-33 (DF-P6): flagging for engineering BINDS the issue
         // point — the requirement is set, for good (approve_team below
-        // leaves it; the database refuses the way back).
-        if (input.reviewModelColumns) updates.engineering_required = true;
+        // leaves it; the database refuses the way back). Fix pass 2 (minor
+        // 7): not the engineering-first type's mandatory loop on a declared
+        // request — that review is the type's, and adds no wait at issue.
+        if (input.reviewModelColumns && !(input.engineeringFirstLoop && ticket.engineeringRequired === false && isDeclaredLikeInKind(ticket))) {
+          updates.engineering_required = true;
+        }
       }
       break;
     case "flag_engineering":
@@ -745,6 +756,19 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
     // (lib/reviewModel.ts engineeringOverrideOf).
     const meta = ((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>;
     updates.metadata = { ...meta, engineering_override: { by: input.actor.email || actorUid || null, uid: actorUid ?? null, at: now, action: input.actionType } };
+  } else if (updates.status === "PENDING_IFC" && ticket.status !== "PENDING_IFC") {
+    // DF-P6 fix pass 2 (review, minor 6): an issue that was NOT an override
+    // (a later cycle approved by its requester or signed by an engineer)
+    // clears a standing override marker — null, so neither the card nor the
+    // seeded roster reads the old override (nor its history line) as the
+    // latest word.
+    const meta = ((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>;
+    const standing = meta.engineering_override !== undefined
+      ? meta.engineering_override !== null
+      : (ticket.history ?? []).some((h) => typeof (h as { details?: unknown }).details === "string" && String((h as { details?: unknown }).details).includes(ENGINEERING_OVERRIDE_NOTE));
+    if (standing) {
+      updates.metadata = { ...meta, engineering_override: null };
+    }
   }
   // HAND-7 done-when 3 (DF-P6): an approval over a moved source names what
   // moved and whether the approver acknowledged it.

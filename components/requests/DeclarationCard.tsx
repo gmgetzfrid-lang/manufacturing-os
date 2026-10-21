@@ -9,7 +9,13 @@
 //     the declaration (GAP-111: the assigner's flag, an engineering review,
 //     an engineering class). "Because of your job title" is never the
 //     answer; a request filed before the declaration existed says the
-//     workspace's earlier rule decides for it (the seed).
+//     workspace's earlier rule decides for it (the seed) — also when the
+//     backfill or a later flag set its requirement (DF-P6 fix pass 2, minor
+//     5: never "no declaration was made" for a request filed before
+//     declarations existed). A declaration is said to stand only once its
+//     e-signature is checked as the workflow route checks it
+//     (declarationSignatureStands); one that does not stand reads as
+//     engineered work, as the route treats it.
 //   * The work class and the code class triage recorded (GAP-101, TIER-4) —
 //     the workspace's own words.
 //   * The equipment the request names, through the registry and the
@@ -27,16 +33,36 @@ import { ShieldCheck, ShieldAlert, Wrench, FileText, AlertTriangle } from "lucid
 import { supabase } from "@/lib/supabase";
 import { isMissingSchemaError } from "@/lib/checkedWrite";
 import { lookupTag, type TagLookupHit } from "@/lib/search";
-import { engineeringBasis } from "@/lib/reviewModel";
+import { engineeringBasis, isDeclaredLikeInKind, declarationSignatureStands, type DeclarationCheck, type DeclarationSignatureRow } from "@/lib/reviewModel";
 import type { Ticket } from "@/types/schema";
 
 interface EquipmentRow { tag: string; asset_id: string | null }
 
-/** The sentence the card leads with (pure; exported for tests). */
-export function engineeringLine(ticket: Pick<Ticket, "engineeringRequired" | "likeInKindDeclaredAt" | "likeInKindStatement" | "likeInKindDeclaredBy" | "engineerReviewRequestedAt">): { required: boolean | null; text: string } | null {
+/** The sentence the card leads with (pure; exported for tests).
+ *  `declaration`: the declaration's e-signature check — "pending" while the
+ *  card reads it (nothing is said yet). Only a declared request asks. */
+export function engineeringLine(
+  ticket: Pick<Ticket, "engineeringRequired" | "likeInKindDeclaredAt" | "likeInKindStatement" | "likeInKindDeclaredBy" | "engineerReviewRequestedAt" | "reviewModelFiled">,
+  declaration: DeclarationCheck | "pending",
+): { required: boolean | null; text: string } | null {
   const basis = engineeringBasis(ticket);
   if (basis.kind === "declared") {
+    if (declaration === "pending") return null;
+    if (declaration !== "verified") {
+      return {
+        required: true,
+        text: declaration === "missing"
+          ? "Engineering review is required: the requester's like-in-kind declaration has no e-signature on record for this request, so it does not stand — the request is treated as engineered work."
+          : "Engineering review is required for now: the like-in-kind declaration's e-signature could not be checked, so the request is treated as engineered work until it can be.",
+      };
+    }
     return { required: false, text: "Engineering review is not required: the requester declared this work like-in-kind when they filed it." };
+  }
+  if (basis.kind === "required" && basis.legacy) {
+    return {
+      required: true,
+      text: "Filed before like-in-kind declarations existed: an engineer's sign-off is required — under the workspace's earlier rule (the requester's roles), or because it was raised since (see the history).",
+    };
   }
   if (basis.kind === "required") {
     return {
@@ -55,6 +81,23 @@ export default function DeclarationCard({ ticket }: { ticket: Ticket }) {
   const [equipment, setEquipment] = useState<EquipmentRow[] | null>(null);
   const [sheets, setSheets] = useState<Map<string, TagLookupHit>>(new Map());
   const [equipmentError, setEquipmentError] = useState<string | null>(null);
+  // The declaration's e-signature, checked as the workflow route checks it
+  // (RLS-scoped read of e_signatures by its id).
+  const declared = ticket.engineeringRequired === false && isDeclaredLikeInKind(ticket);
+  const [declaration, setDeclaration] = useState<DeclarationCheck | "pending">("pending");
+  useEffect(() => {
+    if (!declared || !ticket.id) return;
+    let alive = true;
+    const sigId = ticket.likeInKindSignatureId ?? "";
+    void (async () => {
+      if (!sigId) { if (alive) setDeclaration("missing"); return; }
+      const { data, error } = await supabase.from("e_signatures").select("id, org_id, resource_type, resource_id, signer_user_id").eq("id", sigId).maybeSingle();
+      if (!alive) return;
+      if (error) { setDeclaration("unchecked"); return; }
+      setDeclaration(declarationSignatureStands(data as DeclarationSignatureRow | null, { id: ticket.id!, orgId: ticket.orgId, likeInKindDeclaredBy: ticket.likeInKindDeclaredBy }) ? "verified" : "missing");
+    })();
+    return () => { alive = false; };
+  }, [declared, ticket.id, ticket.orgId, ticket.likeInKindSignatureId, ticket.likeInKindDeclaredBy]);
 
   useEffect(() => {
     if (!ticket.id) return;
@@ -85,7 +128,7 @@ export default function DeclarationCard({ ticket }: { ticket: Ticket }) {
     return () => { alive = false; };
   }, [ticket.id, ticket.orgId]);
 
-  const line = engineeringLine(ticket);
+  const line = engineeringLine(ticket, declared ? declaration : "verified");
   const hasClasses = !!ticket.workClass || !!ticket.codeClass;
   const hasEquipment = (equipment?.length ?? 0) > 0;
   if (!line && !hasClasses && !hasEquipment && !equipmentError) return null;

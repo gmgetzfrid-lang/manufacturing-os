@@ -28,7 +28,7 @@ import {
 import type { Role, TicketAttachment, TicketHistoryEntry, TicketOutcome, TicketReviewRoster } from "@/types/schema";
 import { TICKET_INTENT_TTL_MS } from "@/lib/intents";
 import { parseSourceDocument, parseSourceDocuments, revDrift } from "@/lib/sourceDocRef";
-import { reviewClassOptions, resolveReviewClass, hasReviewModelColumns, isDeclaredLikeInKind, engineerPickAvailable as pickAvailableFrom } from "@/lib/reviewModel";
+import { reviewClassOptions, resolveReviewClass, hasReviewModelColumns, isDeclaredLikeInKind, engineerPickAvailable as pickAvailableFrom, declarationSignatureStands, type DeclarationSignatureRow } from "@/lib/reviewModel";
 import { unitOptionsFor, resolveUnit, unitListReadFailure } from "@/lib/ticketCreate";
 import { heldRoles } from "@/lib/roleHeld";
 import { noteDeliverableNotInRegister, noteDeliverableNotInLibrary, deliverableStateOf } from "@/lib/ticketHandback";
@@ -398,12 +398,28 @@ export async function POST(req: NextRequest) {
     : [callerRole];
 
   // GAP-2/DEC-12: the independence predicates bind at >= 3 active members.
-  const { count: activeMemberCount } = await supabaseAdmin
+  // DF-P6 fix pass 2 (review, major 2): the count is CHECKED. Since DF-P6 it
+  // also decides the requester's own override of the engineering sign-off
+  // (lib/workflow.ts selfOverrideBlocked and the PENDING_REVIEW override),
+  // so a failed read never reads as "a small org": an issuing approval or
+  // an override is refused (503, nothing written); any other action is
+  // evaluated with separation of duties ACTIVE (fail closed) and its audit
+  // row says the count was not checked.
+  const { count: memberCountRead, error: memberCountErr } = await supabaseAdmin
     .from("org_members")
     .select("uid", { count: "exact", head: true })
     .eq("org_id", ticket.orgId)
     .eq("status", "active");
-  const sodActive = (activeMemberCount ?? 0) >= 3;
+  const memberCountUnchecked = !!memberCountErr;
+  if (memberCountUnchecked && ISSUING_APPROVALS.has(body.actionType)) {
+    console.error(`[workflow-action] active member count unreadable for org ${ticket.orgId}: ${memberCountErr?.message ?? "unknown"}`);
+    return NextResponse.json(
+      { error: "This workspace's members could not be counted, so the approval was not applied (it decides who may approve or override). Try again in a moment.", code: "member_count_unreadable" },
+      { status: 503 },
+    );
+  }
+  const activeMemberCount = memberCountUnchecked ? Math.max(memberCountRead ?? 0, 3) : (memberCountRead ?? 0);
+  const sodActive = activeMemberCount >= 3;
 
   // WF-15: close-without-review is a property of the CONFIGURED type.
   let closeWithoutReviewTypes: string[] = ["RFI"];
@@ -470,10 +486,9 @@ export async function POST(req: NextRequest) {
     const { data: dsig, error: dsigErr } = UUID_RE.test(sigId)
       ? await supabaseAdmin.from("e_signatures").select("id, org_id, resource_type, resource_id, signer_user_id").eq("id", sigId).maybeSingle()
       : { data: null, error: null };
-    const d = dsig as { org_id?: string; resource_type?: string; resource_id?: string; signer_user_id?: string } | null;
+    // The request page's card asks the same question (declarationSignatureStands).
     if (dsigErr) declarationUnverified = "unchecked";
-    else if (!d || d.org_id !== ticket.orgId || d.resource_type !== "ticket" || String(d.resource_id ?? "").toLowerCase() !== body.ticketId.toLowerCase()
-      || (!!ticket.likeInKindDeclaredBy && d.signer_user_id !== ticket.likeInKindDeclaredBy)) declarationUnverified = "missing";
+    else if (!declarationSignatureStands(dsig as DeclarationSignatureRow | null, { id: body.ticketId, orgId: ticket.orgId, likeInKindDeclaredBy: ticket.likeInKindDeclaredBy })) declarationUnverified = "missing";
     if (declarationUnverified) ticket.engineeringRequired = true;
   }
   // DF-P6 fix pass (review, issues 1 and 2): can the requester pick an
@@ -493,6 +508,7 @@ export async function POST(req: NextRequest) {
   const engineCtx = {
     ...(engineerPickAvailable === undefined ? {} : { engineerPickAvailable }),
     userRoles: callerRoles,
+    // (fix pass 2: already fail-closed above when the count could not be read)
     activeMemberCount: activeMemberCount ?? 0,
     engineeringFirstTypes,
     closeWithoutReviewTypes,
@@ -1125,6 +1141,11 @@ export async function POST(req: NextRequest) {
     engineeringOverride: action.engineeringOverride === true,
     reviewClass,
     reviewModelColumns,
+    // DF-P6 fix pass 2 (minor 7): the engineering-first type's mandatory loop
+    // (the engine's engineeringFirstPending — before it, the type cannot be
+    // assigned) on a request still waiting for it.
+    engineeringFirstLoop: action.action === "request_eng_review" && engineeringFirstTypes.includes(ticket.requestType)
+      && !ticket.engineerReviewRequestedAt && !ticket.assignedEngineerId,
     sourceDrift,
     actor: { uid: caller.id, email: callerEmail, role: callerRole },
   };
@@ -1418,7 +1439,7 @@ export async function POST(req: NextRequest) {
       // engineering requirement (null before 20261250), a declared minor
       // correction (TIER-7), the classes triage set, a moved source.
       ...(ISSUING_APPROVALS.has(action.action) || action.action === "flag_engineering" || action.action === "request_eng_review"
-        ? { engineeringRequired: reviewModelColumns ? ticket.engineeringRequired === true : null, likeInKindDeclared: !!ticket.likeInKindDeclaredAt }
+        ? { engineeringRequired: reviewModelColumns ? ticket.engineeringRequired === true : null, likeInKindDeclared: !!ticket.likeInKindDeclaredAt, reviewModelFiled: typeof ticket.reviewModelFiled === "boolean" ? ticket.reviewModelFiled : null }
         : {}),
       ...(action.action === "approve_minor_correction" ? { declaredClass: "minor_correction" } : {}),
       ...(reviewClass ? { reviewClass: { workClass: reviewClass.workClass?.value ?? null, codeClass: reviewClass.codeClass?.value ?? null } } : {}),
@@ -1427,6 +1448,9 @@ export async function POST(req: NextRequest) {
       // DF-P6 fix pass (minor 11): a declaration whose e-signature is not on
       // record (or could not be read) was evaluated as undeclared.
       ...(declarationUnverified ? { declarationUnverified } : {}),
+      // Fix pass 2 (major 2): the active-member count could not be read —
+      // this action was evaluated with separation of duties active.
+      ...(memberCountUnchecked ? { memberCountUnchecked: true } : {}),
       ...(action.action === "reassign_drafter" && body.assignment
         ? { from_drafter_id: ticket.assignedDrafterId ?? null, to_drafter_id: body.assignment.id, reason: body.comment ?? null }
         : {}),

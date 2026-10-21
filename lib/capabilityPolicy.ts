@@ -126,7 +126,7 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
   { id: "ticket.requester_review", area: "Requests", label: "Requester review",
     description: "Review a returned draft in the requester's place on a request that has NO requester (one filed without, or whose requester is gone from the record). A request's own requester always can on their own request, whatever this row says; a role here never acts on another person's request.", defaultRoles: ["Requester"] },
   { id: "ticket.direct_approve", area: "Requests", label: "Direct engineering approval",
-    description: "Approve a draft to IFC on ANY request in review in this workspace, without being its requester — anyone holding a role ticked here may do so on every request (a rule scoped to a request type, unit, library, work class or code class narrows it there). On a request that requires engineering review, an approval by someone holding no Engineer role is recorded as an override of the engineering sign-off.", defaultRoles: ["Engineer"] },
+    description: "Approve a draft to IFC on ANY request in review in this workspace, without being its requester — anyone holding a role ticked here may do so on every request (a rule scoped to a request type or a unit narrows it there). On a request that requires engineering review, an approval by someone holding no Engineer role is recorded as an override of the engineering sign-off.", defaultRoles: ["Engineer"] },
   { id: "ticket.final_approve", area: "Requests", label: "Final engineering approval",
     description: "Sign off at the final-approval stage when unassigned (the assigned engineer always can).",
     defaultRoles: ["Engineer"],
@@ -273,7 +273,10 @@ export type ResourceKey = (typeof RESOURCE_KEYS)[number];
  *  org_capability_allows_for's key list — pinned to RESOURCE_KEYS — is not
  *  re-created for them. On any other capability a rule naming them is
  *  refused at save: the database's evaluator would read it as
- *  unconditional. */
+ *  unconditional. DF-P6 fix pass 2 (review, major 3): on a `ticket.*`
+ *  capability it is refused too, for now — the request does not present its
+ *  classes to the policy yet (lib/workflow.ts ticketResource), so the rule
+ *  would never apply; the refusal lifts when the mappers carry them. */
 export const TICKET_RESOURCE_KEYS = ["workClass", "codeClass"] as const;
 export type TicketResourceKey = (typeof TICKET_RESOURCE_KEYS)[number];
 /** Every key a `when` clause may name (the SQL-mirrored ones first). */
@@ -754,6 +757,20 @@ export function validateCapabilityPolicy(policy: CapabilityPolicy): string | nul
         // these keys and would treat the rule as unconditional elsewhere.
         if (!isTicketResourceCap(def.id) && TICKET_RESOURCE_KEYS.some((k) => (r.when?.[k]?.length ?? 0) > 0)) {
           return `${def.label}: a rule can be scoped to a work class or a code class on a drafting-request capability only.`;
+        }
+        // DF-P6 fix pass 2 (review, major 3): a request presents only its
+        // type and its unit to the policy today (lib/workflow.ts
+        // ticketResource — the requests list and the inbox build their
+        // Ticket without the library or the classes; 99-fix-sequencing
+        // "Hand-offs from DF-P6"). A rule scoped to a library, a work class
+        // or a code class on a request capability would never match — it
+        // looks like a narrowing and does nothing — so it is refused until
+        // the request carries those fields.
+        if (isTicketResourceCap(def.id)) {
+          const dead = (["libraryId", ...TICKET_RESOURCE_KEYS] as const).filter((k) => (r.when?.[k]?.length ?? 0) > 0);
+          if (dead.length > 0) {
+            return `${def.label}: a rule on a drafting-request capability can be scoped to a request type or a unit only — requests do not yet present their ${dead.map((k) => (k === "libraryId" ? "library" : k === "workClass" ? "work class" : "code class")).join(" or ")} to the permission policy, so the rule would never apply.`;
+          }
         }
         // QUAL-4: only a capability evaluated per project may be scoped to
         // one (PROJECT_SCOPED_CAPS). Anywhere else the rule never matches —

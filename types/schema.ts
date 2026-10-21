@@ -1326,6 +1326,12 @@ export interface Ticket {
    *  without a like-in-kind declaration = a row that predates the column
    *  (the seed still decides for it — lib/reviewModel.ts). */
   engineeringRequired?: boolean | null;
+  /** DF-P6 fix pass 2 (20261250): the request was filed under the review
+   *  model — false on every row that existed before the paste, true on
+   *  every row filed after it; never changed. DEC-33's limbs that bind the
+   *  REQUESTER apply only where it is true (lib/reviewModel.ts
+   *  reviewModelBinds); `undefined` = the column is not there yet. */
+  reviewModelFiled?: boolean | null;
   /** GAP-110 / DEC-34 (DF-P6, 20261250): the requester's like-in-kind
    *  declaration — the typed statement, who made it, when, and the
    *  e-signature that is its record. Set at creation only, never changed. */

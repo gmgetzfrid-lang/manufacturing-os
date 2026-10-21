@@ -74,6 +74,19 @@ describe.skipIf(skip !== null)("DF-P6 — the review model's columns, the ratche
     const id = randomUUID();
     ticket(id, m.manager.uid, { requester_role: `'Manager'` });
     expect(admin(db, `SELECT engineering_required::text || '|' || (like_in_kind_statement IS NULL)::text FROM tickets WHERE id = '${id}'`)).toBe("true|true");
+    // DF-P6 fix pass 2 (review, issue 1): and filed under the review model
+    expect(admin(db, `SELECT review_model_filed::text FROM tickets WHERE id = '${id}'`)).toBe("true");
+  });
+
+  it("DF-P6 fix pass 2 (review, issue 1): review_model_filed never changes — refused for EVERY caller, the service role and the paste owner included", () => {
+    const id = randomUUID();
+    ticket(id, m.manager.uid, { requester_role: `'Manager'` });
+    const r = asCaller(db, SERVICE, `UPDATE tickets SET review_model_filed = false WHERE id = '${id}'`);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toMatch(/review_model_filed is set when the request is filed/);
+    expect(asCaller(db, m.manager.caller, `UPDATE tickets SET review_model_filed = false WHERE id = '${id}'`).ok).toBe(false);
+    expect(() => admin(db, `UPDATE tickets SET review_model_filed = false WHERE id = '${id}'`)).toThrow(/review_model_filed/);
+    expect(admin(db, `SELECT review_model_filed::text FROM tickets WHERE id = '${id}'`)).toBe("true");
   });
 
   it("the declaration is all-or-none and at least 20 characters (CHECK, for every writer)", () => {
@@ -143,7 +156,7 @@ describe.skipIf(skip !== null)("DF-P6 — the review model's columns, the ratche
       "ALTER TABLE tickets DROP CONSTRAINT IF EXISTS tickets_like_in_kind_all_or_none",
       "ALTER TABLE tickets DROP CONSTRAINT IF EXISTS tickets_like_in_kind_statement_length",
       "ALTER TABLE tickets DROP CONSTRAINT IF EXISTS tickets_review_class_length",
-      "ALTER TABLE tickets DROP COLUMN IF EXISTS like_in_kind_statement, DROP COLUMN IF EXISTS like_in_kind_declared_by, DROP COLUMN IF EXISTS like_in_kind_declared_at, DROP COLUMN IF EXISTS like_in_kind_signature_id, DROP COLUMN IF EXISTS engineering_required, DROP COLUMN IF EXISTS work_class, DROP COLUMN IF EXISTS code_class",
+      "ALTER TABLE tickets DROP COLUMN IF EXISTS like_in_kind_statement, DROP COLUMN IF EXISTS like_in_kind_declared_by, DROP COLUMN IF EXISTS like_in_kind_declared_at, DROP COLUMN IF EXISTS like_in_kind_signature_id, DROP COLUMN IF EXISTS engineering_required, DROP COLUMN IF EXISTS work_class, DROP COLUMN IF EXISTS code_class, DROP COLUMN IF EXISTS review_model_filed",
     ].join(";\n"));
     // a second workspace stores its own exempt list: its rows are left to the seed
     const s2 = seedOrg(db, { planner: { role: "Maintenance" } });
@@ -176,7 +189,14 @@ describe.skipIf(skip !== null)("DF-P6 — the review model's columns, the ratche
       const legacy = engineerApprovalRequired(c.role, c.current, null, c.requester, { requestType: "New Drawing" });
       if (got) expect(legacy, c.key).toBe(true);
       else if (!c.seed) expect(legacy, c.key).toBe(false);
+      // DF-P6 fix pass 2 (review, issue 1): every pre-paste row — the ones
+      // the backfill set true included — was filed before the review model.
+      expect(admin(db, `SELECT review_model_filed::text FROM tickets WHERE id = '${ids[i]}'`), c.key).toBe("false");
     });
+    // …and a row filed after the paste was filed under it
+    const after = randomUUID();
+    admin(db, `INSERT INTO tickets (id, org_id, ticket_id, title, request_type, status, requester_id, requester_role) VALUES ('${after}', '${orgId}', 'KE-P6-after', 'T', 'New Drawing', 'PENDING_REVIEW', '${m.manager.uid}', 'Manager')`);
+    expect(admin(db, `SELECT review_model_filed::text || '|' || engineering_required::text FROM tickets WHERE id = '${after}'`)).toBe("true|true");
     // a re-paste changes nothing more
     paste(F250);
     cases.forEach((c, i) => expect(admin(db, `SELECT engineering_required::text FROM tickets WHERE id = '${ids[i]}'`) === "true", c.key).toBe(c.expect));

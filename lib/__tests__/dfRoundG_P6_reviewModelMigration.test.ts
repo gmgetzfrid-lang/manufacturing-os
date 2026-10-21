@@ -94,6 +94,8 @@ describe("20261250 — ticket_update_guard re-created from its NEWEST earlier bo
       "    RAISE EXCEPTION 'tickets: the like-in-kind declaration is set when the request is filed and cannot be changed';",
       "  IF OLD.engineering_required AND NOT NEW.engineering_required THEN",
       "    RAISE EXCEPTION 'tickets: engineering_required only ratchets up — it cannot be cleared';",
+      "  IF NEW.review_model_filed IS DISTINCT FROM OLD.review_model_filed THEN",
+      "    RAISE EXCEPTION 'tickets: review_model_filed is set when the request is filed and cannot be changed';",
       "  IF NEW.engineering_required        IS DISTINCT FROM OLD.engineering_required        THEN v_bad := array_append(v_bad, 'engineering_required'); END IF;",
       "  IF NEW.work_class                  IS DISTINCT FROM OLD.work_class                  THEN v_bad := array_append(v_bad, 'work_class'); END IF;",
       "  IF NEW.code_class                  IS DISTINCT FROM OLD.code_class                  THEN v_bad := array_append(v_bad, 'code_class'); END IF;",
@@ -126,6 +128,11 @@ describe("20261250 — ticket_update_guard re-created from its NEWEST earlier bo
     const body = between(mig(newest), GUARD, "\n$$;");
     expect(body, newest).toContain("IF OLD.engineering_required AND NOT NEW.engineering_required THEN");
     expect(body, newest).toContain("OR NEW.like_in_kind_signature_id IS DISTINCT FROM OLD.like_in_kind_signature_id THEN");
+    // DF-P6 fix pass 2 (review, issue 1): whether a request was filed under
+    // the review model is immutable for every caller too.
+    expect(body, newest).toContain("IF NEW.review_model_filed IS DISTINCT FROM OLD.review_model_filed THEN");
+    expect(body.indexOf("IF NEW.review_model_filed IS DISTINCT FROM OLD.review_model_filed THEN"), newest)
+      .toBeLessThan(body.indexOf("IF auth.uid() IS NULL THEN RETURN NEW; END IF;"));
     expect(body.indexOf("IF OLD.engineering_required AND NOT NEW.engineering_required THEN"), newest)
       .toBeLessThan(body.indexOf("IF auth.uid() IS NULL THEN RETURN NEW; END IF;"));
     for (const c of ["engineering_required", "work_class", "code_class"]) expect(body, newest).toContain(`array_append(v_bad, '${c}')`);
@@ -150,6 +157,14 @@ describe("20261250 — the columns, the backfill, the INSERT guard", () => {
     expect(upd).toContain("WHERE NOT t.engineering_required");
     expect(upd).toContain("AND t.like_in_kind_declared_at IS NULL");
     expect(s).not.toMatch(/SET engineering_required = false/);
+  });
+  it("DF-P6 fix pass 2 (review, issue 1): review_model_filed — every pre-paste row false, every row filed after true, written by nothing (no backfill touches it)", () => {
+    const add = s.indexOf("ADD COLUMN IF NOT EXISTS review_model_filed BOOLEAN NOT NULL DEFAULT false;");
+    const def = s.indexOf("ALTER COLUMN review_model_filed SET DEFAULT true;");
+    expect(add).toBeGreaterThan(0);
+    expect(def).toBeGreaterThan(add);
+    expect(s).not.toMatch(/SET review_model_filed\s*=/);
+    expect(s).not.toMatch(/UPDATE tickets[^;]*review_model_filed/);
   });
   it("the backfill predicate is the inventory's 'certain' predicate, word for word (the count the operator reads is the rows that move)", () => {
     const norm = (x: string) => x.replace(/\s+/g, " ").trim();
@@ -176,14 +191,14 @@ describe("20261250 — the columns, the backfill, the INSERT guard", () => {
     expect(fn).toContain("RETURNS TRIGGER LANGUAGE plpgsql SET search_path = public AS $$");
     expect(fn).not.toContain("SECURITY DEFINER");
     expect(fn).toContain("IF auth.uid() IS NULL THEN RETURN NEW; END IF;");
-    for (const l of ["NEW.engineering_required := true;", "NEW.like_in_kind_statement := NULL;", "NEW.like_in_kind_signature_id := NULL;", "NEW.work_class := NULL;", "NEW.code_class := NULL;"]) expect(fn).toContain(l);
+    for (const l of ["NEW.engineering_required := true;", "NEW.review_model_filed := true;", "NEW.like_in_kind_statement := NULL;", "NEW.like_in_kind_signature_id := NULL;", "NEW.work_class := NULL;", "NEW.code_class := NULL;"]) expect(fn).toContain(l);
     expect(M).toContain("CREATE TRIGGER trg_ticket_review_model_insert_guard\n  BEFORE INSERT ON tickets\n  FOR EACH ROW EXECUTE FUNCTION ticket_review_model_insert_guard();");
     expect(M).toContain("REVOKE ALL ON FUNCTION ticket_review_model_insert_guard() FROM PUBLIC, anon, authenticated, service_role;");
   });
-  it("the app's tolerance list names exactly the seven columns this paste adds (42703 / PGRST204 → today's path)", async () => {
+  it("the app's tolerance list names exactly the eight columns this paste adds (42703 / PGRST204 → today's path)", async () => {
     const { isMissingReviewModelColumn } = await import("@/lib/reviewModel");
     const added = [...s.matchAll(/ALTER TABLE tickets ADD COLUMN IF NOT EXISTS (\w+)/g)].map((m) => m[1]);
-    expect(added).toHaveLength(7);
+    expect(added).toHaveLength(8);
     for (const c of added) expect(isMissingReviewModelColumn({ code: "42703", message: `column tickets.${c} does not exist` }), c).toBe(true);
   });
 });

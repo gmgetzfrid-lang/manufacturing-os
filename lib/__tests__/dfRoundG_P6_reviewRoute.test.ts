@@ -22,9 +22,12 @@ const state = vi.hoisted(() => ({
   rows: {} as Record<string, Array<Record<string, unknown>>>,
   calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
   errors: {} as Record<string, { code?: string; message: string }>,
+  // DF-P6 fix pass 2 (major 2): an error for a head-count read only.
+  countErrors: {} as Record<string, { code?: string; message: string }>,
 }));
 function chain(table: string) {
   const filters: Array<[string, unknown, "eq" | "is" | "in"]> = [];
+  let head = false;
   const rows = () => (state.rows[table] ?? [])
     .filter((r) => filters.every(([k, v, how]) => (how === "is" ? (r[k] ?? null) === v : how === "in" ? (v as unknown[]).includes(r[k]) : r[k] === v)))
     .map((r) => ({ ...r }));
@@ -32,11 +35,13 @@ function chain(table: string) {
   const h: ProxyHandler<Record<string, unknown>> = {
     get(_t, prop: string) {
       if (prop === "then") return (resolve: (v: unknown) => void) => {
+        if (head && state.countErrors[table]) return resolve({ data: null, error: state.countErrors[table], count: null });
         if (state.errors[table]) return resolve({ data: null, error: state.errors[table] });
         return resolve({ data: rows(), error: null, count: rows().length });
       };
       return (...args: unknown[]) => {
         state.calls.push({ table, method: prop, args });
+        if (prop === "select" && (args[1] as { head?: boolean } | undefined)?.head === true) head = true;
         if (prop === "eq") filters.push([String(args[0]), args[1], "eq"]);
         if (prop === "is") filters.push([String(args[0]), args[1], "is"]);
         if (prop === "in") filters.push([String(args[0]), args[1], "in"]);
@@ -91,14 +96,14 @@ const lastHistory = (u: Record<string, unknown>) => (u.history as Array<{ action
 
 beforeEach(() => {
   __resetCapabilityPolicyCache();
-  state.user = null; state.rows = {}; state.calls = []; state.errors = {};
+  state.user = null; state.rows = {}; state.calls = []; state.errors = {}; state.countErrors = {};
 });
 
 describe("TIER-1 / DEC-33 — the gate reads the work, at the route", () => {
   it("a Manager's UNDECLARED request filed after the paste (engineering_required true) cannot be approved to IFC by its requester — refused, nothing written", async () => {
     seed("Manager");
     state.user = { id: "req-1" };
-    state.rows.tickets = [ticketRow({ engineering_required: true, like_in_kind_statement: null, like_in_kind_declared_at: null })];
+    state.rows.tickets = [ticketRow({ engineering_required: true, review_model_filed: true, like_in_kind_statement: null, like_in_kind_declared_at: null })];
     for (const action of ["approve_draft_ifc", "approve_minor_correction"]) {
       const res = await post({ ticketId: "t1", actionType: action, comment: "typo fixed in the title block" });
       expect(res.status, action).toBe(403);
@@ -140,7 +145,8 @@ describe("TIER-1 / DEC-33 — the gate reads the work, at the route", () => {
 });
 
 describe("fix pass (review) — the requester's own override, at the route (issues 1 and 2)", () => {
-  const undeclared = { engineering_required: true, like_in_kind_statement: null, like_in_kind_declared_at: null };
+  // filed under the review model (DF-P6 fix pass 2: review_model_filed true)
+  const undeclared = { engineering_required: true, review_model_filed: true, like_in_kind_statement: null, like_in_kind_declared_at: null };
   it("issue 1: a TWO-member workspace (a Manager and a Drafter, no engineer): the Manager's undeclared request issues by the recorded override — PENDING_IFC, the override on the history line, the marker on the request, authority.override in the audit row, no engineer_approved_at", async () => {
     state.rows.org_members = [member("req-1", "Manager"), member("d-1", "Drafter")];
     state.rows.e_signatures = [];
@@ -369,5 +375,72 @@ describe("fix pass (review, minor 12) — a roster sign-off refused over an unac
     const row = audits().find((a) => a.action === "TICKET_SIGN_SLOT_NOT_APPLIED")!;
     expect(row.details).toMatchObject({ signatureId: SIG, status: 409, code: "source_drift_unacknowledged", refusedBeforeApply: true });
     expect(updates()).toEqual([]);
+  });
+});
+
+describe("fix pass 2 (review, issue 1) — at the route, a pre-paste row the backfill set true keeps its requester's paths", () => {
+  it("a legacy row (no role stamped, backfilled true, review_model_filed false), its requester now a Manager, at PENDING_FINAL_APPROVAL with an engineer assigned, in a workspace of 5: the requester's override is taken (renamed, recorded as an override) — as yesterday", async () => {
+    seed("Manager");
+    state.user = { id: "req-1" };
+    state.rows.tickets = [ticketRow({ requester_role: null, status: "PENDING_FINAL_APPROVAL", assigned_engineer_id: "e-1", engineering_required: true, review_model_filed: false, like_in_kind_statement: null, like_in_kind_declared_at: null })];
+    const res = await post({ ticketId: "t1", actionType: "override_engineer_final" });
+    expect(res.status).toBe(200);
+    expect(updates()[0].status).toBe("PENDING_IFC");
+    expect("engineer_approved_at" in updates()[0]).toBe(false);
+    state.calls = [];
+    expect((await post({ ticketId: "t1", actionType: "approve_minor_correction", comment: "typo in the title block" })).status).toBe(200);
+  });
+  it("the same request filed under the review model is the binding case (403)", async () => {
+    seed("Manager");
+    state.user = { id: "req-1" };
+    state.rows.tickets = [ticketRow({ requester_role: null, status: "PENDING_FINAL_APPROVAL", assigned_engineer_id: "e-1", engineering_required: true, review_model_filed: true, like_in_kind_statement: null, like_in_kind_declared_at: null })];
+    expect((await post({ ticketId: "t1", actionType: "override_engineer_final" })).status).toBe(403);
+    expect(updates()).toEqual([]);
+  });
+});
+
+describe("fix pass 2 (review, major 2) — the active-member count is checked; a failed read never reads as a small workspace", () => {
+  it("an issuing approval or an override is refused 503 (nothing written) when the count cannot be read — the requester's own override is not opened by the failure", async () => {
+    seed("Manager");
+    state.countErrors.org_members = { code: "57014", message: "canceling statement due to statement timeout" };
+    state.user = { id: "req-1" };
+    state.rows.tickets = [ticketRow({ engineering_required: true, review_model_filed: true, like_in_kind_statement: null, like_in_kind_declared_at: null })];
+    for (const action of ["approve_draft_ifc", "approve_minor_correction"]) {
+      const res = await post({ ticketId: "t1", actionType: action, comment: "typo" });
+      expect(res.status, action).toBe(503);
+      expect((await res.json()).code, action).toBe("member_count_unreadable");
+    }
+    state.rows.tickets = [ticketRow({ engineering_required: true, review_model_filed: true, like_in_kind_statement: null, like_in_kind_declared_at: null, status: "PENDING_FINAL_APPROVAL", assigned_engineer_id: "e-1" })];
+    expect((await post({ ticketId: "t1", actionType: "override_engineer_final" })).status).toBe(503);
+    expect(updates()).toEqual([]);
+  });
+  it("any other action is evaluated with separation of duties ACTIVE and its audit row says the count was not checked", async () => {
+    seed("Manager");
+    state.countErrors.org_members = { code: "57014", message: "timeout" };
+    state.user = { id: "req-1" };
+    state.rows.tickets = [ticketRow({ engineering_required: true, review_model_filed: true, like_in_kind_statement: null, like_in_kind_declared_at: null })];
+    const res = await post({ ticketId: "t1", actionType: "request_revision", comment: "the north arrow is missing" });
+    expect(res.status).toBe(200);
+    expect(audits().find((a) => a.action === "TICKET_REQUEST_REVISION")?.details).toMatchObject({ memberCountUnchecked: true });
+  });
+  it("REGRESSION: a read that answers leaves the audit row without the mark", async () => {
+    seed("Manager");
+    state.user = { id: "req-1" };
+    state.rows.tickets = [ticketRow({ engineering_required: true, review_model_filed: true, like_in_kind_statement: null, like_in_kind_declared_at: null })];
+    expect((await post({ ticketId: "t1", actionType: "request_revision", comment: "the north arrow is missing" })).status).toBe(200);
+    expect("memberCountUnchecked" in (audits().find((a) => a.action === "TICKET_REQUEST_REVISION")?.details ?? {})).toBe(false);
+  });
+});
+
+describe("fix pass 2 (review, minor 7) — the engineering-first loop on a declared request", () => {
+  it("request_eng_review as an engineering-first type's mandatory loop on a declared request does not write engineering_required", async () => {
+    seed("Maintenance");
+    state.rows.org_configurations = [{ org_id: "o1", key: "drafting", data: { requestTypes: { options: [{ value: "ISO", label: "ISO", engineeringFirst: true }] } } }];
+    state.user = { id: "ds-1" };
+    state.rows.tickets = [ticketRow({ status: "PENDING_ASSIGNMENT", requester_role: "Maintenance", assigned_drafter_id: null, ...DECLARED })];
+    const res = await post({ ticketId: "t1", actionType: "request_eng_review", comment: "type routes through engineering first", engineer: { id: "e-1", name: "E", email: "e-1@x.io" } });
+    expect(res.status).toBe(200);
+    expect(updates()[0].status).toBe("PENDING_ENG_TEAM");
+    expect("engineering_required" in updates()[0]).toBe(false);
   });
 });

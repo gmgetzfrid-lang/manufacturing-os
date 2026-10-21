@@ -8,6 +8,10 @@
 // `@/types/schema`), so it runs unchanged on either side. Every ticket here
 // is one the review-model columns cannot speak for (`engineeringRequired`
 // absent) — the requests DEC-90 ruling (2) says keep today's path exactly.
+// DF-P6 fix pass 2 (review, issue 1): `over` lays extra ticket fields on
+// every entry (the snapshot itself was taken with none) — so the same matrix
+// pins a pre-paste row the backfill set true (engineeringRequired true,
+// reviewModelFiled false) against the base too.
 
 import { WorkflowEngine } from "@/lib/workflow";
 import { ALL_ROLES, type Role, type Ticket, type TicketAttachment, type TicketStatus } from "@/types/schema";
@@ -22,18 +26,19 @@ export const MATRIX_REQUESTER_ROLES: Role[] = ["Viewer", "Manager", "Engineer-2"
 export const MATRIX_UIDS = ["req", "drf", "eng", "x"];
 export const MATRIX_MEMBER_COUNTS = [0, 5];
 
-function ticketFor(status: TicketStatus, requesterRole: Role, engineerAssigned: boolean): Ticket {
+function ticketFor(status: TicketStatus, requesterRole: Role, engineerAssigned: boolean, over: Record<string, unknown> = {}): Ticket {
   return {
     id: "t1", orgId: "o1", ticketId: "REQ-1", title: "Pump iso", unit: "U-100", requestType: "ISO",
     status, requesterId: "req", requesterRole, assignedDrafterId: status === "PENDING_ASSIGNMENT" ? null : "drf",
     assignedEngineerId: engineerAssigned ? "eng" : null,
     attachments: [DRAFT], comments: [], history: [], unreadBy: [], watchers: [], revisionCount: 0, deliverableRev: "1A", createdAt: NOW,
+    ...over,
   } as unknown as Ticket;
 }
 
 /** One line per (requester role, status, engineer assigned, member count,
  *  actor role, uid): the actions offered, each `action|disabled|optional`. */
-export function engineMatrix(): Record<string, string> {
+export function engineMatrix(over: Record<string, unknown> = {}): Record<string, string> {
   const out: Record<string, string> = {};
   for (const req of MATRIX_REQUESTER_ROLES) {
     for (const status of MATRIX_STATUSES) {
@@ -41,7 +46,7 @@ export function engineMatrix(): Record<string, string> {
         for (const members of MATRIX_MEMBER_COUNTS) {
           for (const actorRole of ALL_ROLES) {
             for (const uid of MATRIX_UIDS) {
-              const acts = WorkflowEngine.getActions(ticketFor(status, req, engineerAssigned), actorRole, uid, undefined, {
+              const acts = WorkflowEngine.getActions(ticketFor(status, req, engineerAssigned, over), actorRole, uid, undefined, {
                 userRoles: [actorRole], requesterRoles: [req], activeMemberCount: members,
               });
               out[`${req}|${status}|${engineerAssigned ? "E" : "-"}|${members}|${actorRole}|${uid}`] = acts

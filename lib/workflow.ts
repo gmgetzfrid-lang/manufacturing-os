@@ -2,7 +2,7 @@ import { Role, TicketStatus, Ticket, type TicketReviewRoster, type TicketReviewS
 import { policyAllows, scopedTokensFor, grantActive, type CapabilityPolicy, type CapabilityResource, type UserGrant } from "@/lib/capabilityPolicy";
 import { isManagementRole } from "@/lib/managementRoles";
 import { CANCEL_OUTCOMES, type TicketOutcome } from "@/lib/ticketOutcome";
-import { ticketEngineeringRequired } from "@/lib/reviewModel";
+import { ticketEngineeringRequired, reviewModelBinds } from "@/lib/reviewModel";
 
 export interface WorkflowAction {
   label: string;
@@ -163,8 +163,9 @@ export const ISSUING_APPROVALS: ReadonlySet<string> = new Set(['approve_draft_if
 
 /** DF-P6 fix pass (review, issues 1 and 2): does `WorkflowContext.
  *  engineerPickAvailable` decide anything for this caller on this ticket?
- *  Only for the requester who holds `ticket.manage`, on a request whose
- *  column says engineering review is required, in serial review. The route and the request
+ *  Only for the requester who holds `ticket.manage`, on a request filed
+ *  under the review model whose column says engineering review is required
+ *  (lib/reviewModel.ts reviewModelBinds), in serial review. The route and the request
  *  page read the members (and set the flag) exactly when this is true, so
  *  both evaluate the engine on the same context. */
 export function engineerPickQuestionApplies(
@@ -176,9 +177,10 @@ export function engineerPickQuestionApplies(
   requesterRoles: readonly string[] | null | undefined,
 ): boolean {
   if (!uid || ticket.requesterId !== uid) return false;
-  // Only where the column says engineering is required — a request it
-  // cannot speak for keeps today's path exactly (no read, no flag).
-  if (ticket.engineeringRequired !== true) return false;
+  // Only on a request FILED under the review model whose column says
+  // engineering is required (fix pass 2, review issue 1: a pre-paste row
+  // the backfill set true keeps today's path exactly — no read, no flag).
+  if (!reviewModelBinds(ticket)) return false;
   if (ticket.status !== 'PENDING_REVIEW' && ticket.status !== 'PENDING_FINAL_APPROVAL') return false;
   if (currentRoster(ticket)) return false;
   if (!policyAllows(policy, 'ticket.manage', userRole, userRoles && userRoles.length > 0 ? [...userRoles] : null, uid, ticketResource(ticket))) return false;
@@ -581,10 +583,11 @@ export const WorkflowEngine = {
     // request in a workspace with no engineer could never issue. Either way
     // it is the recorded override (history note, audit authority.override).
     const noEngineerToPick = ctx?.engineerPickAvailable === false;
-    // Read only where the COLUMN says engineering is required (a request filed
-    // since 20261250, undeclared or flagged): a request the column cannot
-    // speak for keeps today's path exactly (DEC-90 ruling (2)).
-    const selfOverrideBlocked = sod && isRequesterIdentity && ticket.engineeringRequired === true && !noEngineerToPick;
+    // Read only on a request FILED under the review model (review_model_filed,
+    // 20261250) whose column says engineering is required: a pre-paste row —
+    // even one the backfill or a later flag set true — keeps today's
+    // requester paths exactly (DEC-90 ruling (2); fix pass 2, review issue 1).
+    const selfOverrideBlocked = sod && isRequesterIdentity && reviewModelBinds(ticket) && !noEngineerToPick;
     // DEC-13 (DRAFT-1 / GAP-1): a rule scoped to this ticket's type on
     // `ticket.direct_approve` binds the REQUESTER'S own approval too. Identity
     // keeps every review action (request revision, send for engineer
@@ -811,14 +814,14 @@ export const WorkflowEngine = {
               ...(noEngineerToPick ? { disabledReason: NO_ENGINEER_TO_PICK_REASON } : {}),
             });
             // DF-P6 fix pass (review, issue 1): a requester who holds
-            // ticket.manage, on a request the COLUMN says requires
-            // engineering (an undeclared request filed since 20261250 — a
-            // request the column cannot speak for keeps today's path
-            // exactly), may issue it as a recorded override where nobody
-            // else could: below the DEC-12 threshold, or when no engineer
-            // can be picked. In orgs of 3+ with an engineer to pick it is
-            // not offered (DEC-33: the requirement binds the requester).
-            if (isManagement && ticket.engineeringRequired === true && needsEngineerApproval && !isEng
+            // ticket.manage, on a request FILED under the review model whose
+            // column says it requires engineering (a pre-paste row keeps
+            // today's path exactly, whatever the backfill wrote — fix pass
+            // 2, review issue 1), may issue it as a recorded override where
+            // nobody else could: below the DEC-12 threshold, or when no
+            // engineer can be picked. In orgs of 3+ with an engineer to pick
+            // it is not offered (DEC-33: the requirement binds the requester).
+            if (isManagement && reviewModelBinds(ticket) && needsEngineerApproval && !isEng
                 && !requesterScopedOut && !selfOverrideBlocked) {
               actions.push({
                 label: 'Override: Issue Without Engineer Sign-off',

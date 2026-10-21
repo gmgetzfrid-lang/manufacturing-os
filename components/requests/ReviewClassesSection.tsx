@@ -24,7 +24,7 @@ const SECTIONS: Array<{ key: Key; title: string; desc: string; fallbackLabel: st
   },
   {
     key: "codeClasses", fallbackLabel: "Code class", title: "Code Classes",
-    desc: "Optional. Which governing code or service class applies, in your facility's words — set at triage, shown to the reviewer before they approve. A permission rule can be scoped to a code class.",
+    desc: "Optional. Which governing code or service class applies, in your facility's words — set at triage, shown to the reviewer before they approve.",
   },
 ];
 
