@@ -1483,8 +1483,9 @@ export const TICKET_NUMBER_IN_USE = "ticket_number_in_use";
  *  and the holder is kept exactly as it is. The fresh number is allocated as
  *  the service role straight from ticket_number_counters — the table
  *  next_ticket_number (20260724) increments — with a guarded compare-and-set
- *  (UPDATE … SET next_seq = seen + 1 WHERE next_seq = seen), the row created
- *  when absent, in the YEAR of the number it replaces (restoreNumberYear),
+ *  (UPDATE … SET next_seq = seen + K WHERE next_seq = seen: one block of K
+ *  numbers for every request of the chunk renumbered in that year, P16 fix
+ *  pass 5), the row created when absent, in the YEAR of the number it replaces (restoreNumberYear),
  *  and formatted by lib/ticketNumber.ts formatTicketNumber from the
  *  workspace's own prefix / record code / pad. The number the request was
  *  issued is kept on the restored row (metadata.restore_renumbered: from,
@@ -1506,10 +1507,11 @@ export interface RestoreRenumbering {
   unconfirmed?: true;
 }
 
-/** EDGE-5 (P16 fix pass 2): how many numbers one re-mint may try (a
- *  compare-and-set lost to a concurrent filer, or a number some row already
- *  carries, spends an attempt; each spent number is a gap — a gap is
- *  preferred to a number issued twice). */
+/** EDGE-5 (P16 fix pass 2; fix pass 5): how many reservations one re-mint
+ *  of a year may make (a compare-and-set lost to a concurrent filer, or a
+ *  block holding only numbers some row already carries, spends an attempt;
+ *  each spent number is a gap — a gap is preferred to a number issued
+ *  twice). */
 const RESTORE_REMINT_ATTEMPTS = 8;
 
 /** EDGE-5 (P16 fix pass): whether `v` can travel in a PostgREST `in.(…)`
@@ -1638,55 +1640,72 @@ export function restoreNumberYear(from: string, nowMs: number = Date.now()): num
   return year > latest ? fallback : year;
 }
 
-/** EDGE-5 (P16 fix pass 2): one fresh request number of `orgId` for a
- *  restored request (TICKET_RENUMBERED), as the service role. The counter is
+/** EDGE-5 (P16 fix pass 2; fix pass 5 batches it): up to `want` fresh
+ *  request numbers of `orgId` for restored requests (TICKET_RENUMBERED), as
+ *  the service role, ALL FROM ONE RESERVATION where it can. The counter is
  *  ticket_number_counters (org_id, year) — next_seq is the last number issued
  *  (20260724) — for `year` (restoreNumberYear, P16 fix pass 3: the year of
- *  the number it replaces; it was the server's current year); it is taken by
- *  a guarded compare-and-set (UPDATE … SET next_seq = seen + 1 WHERE next_seq
- *  = seen, returning the row), and created at 1 when the workspace has no row
- *  for the year (an insert that skips on conflict). A lost race, or a number
- *  `avoid` or a live request of the workspace already carries, spends that
- *  number (a gap) and tries again, up to RESTORE_REMINT_ATTEMPTS. The prefix,
- *  record code and pad are the workspace's own (orgs, read once per chunk
- *  through `config`; a checked read). A read or write that fails is an error
- *  (the caller stops the chunk); attempts used up is `number: null` with why.
- *  The page's driver raises the counter to the backup's highest number of the
+ *  the number replaced). The block is reserved by ONE guarded compare-and-set
+ *  (UPDATE … SET next_seq = seen + K WHERE next_seq = seen, returning the
+ *  row; K the numbers still wanted), and created as 1..K when the workspace
+ *  has no row for the year (an insert that skips on conflict); all K are then
+ *  checked in ONE read (liveTicketNumbers, cut by URL budget). A number
+ *  `avoid` or a live request already carries is spent (a gap); a lost race
+ *  spends the attempt. What is still wanted is topped up by another, smaller
+ *  reservation, up to RESTORE_REMINT_ATTEMPTS reservations — so a chunk
+ *  costs a bounded number of statements per year, never several per row
+ *  (P16 fix pass 5, the review: one compare-and-set and one check PER ROW
+ *  could pass the function's time limit on a plant merge where most rows
+ *  collide). The prefix, record code and pad are the workspace's own (orgs,
+ *  read once per chunk through `config`; a checked read). A read or write
+ *  that fails is an error (the caller stops the chunk); attempts used up
+ *  returns the numbers taken so far, with why the rest could not be. The
+ *  page's driver raises the counter to the backup's highest number of the
  *  year before any request is written (raiseTicketCountersToBackupNumbers)
  *  and sends the requests that may be renumbered last (ticketsInRestoreOrder),
  *  so a fresh number is not one a backup request still to come carries. */
-async function mintRestoreTicketNumber(
-  sb: RestoreDb, orgId: string, year: number, avoid: ReadonlySet<string>,
+async function mintRestoreTicketNumbers(
+  sb: RestoreDb, orgId: string, year: number, want: number, avoid: ReadonlySet<string>,
   config: () => Promise<{ ok: true; cfg: ReturnType<typeof ticketNumberConfigFromRow> } | { ok: false; error: string }>,
-): Promise<{ ok: true; number: string } | { ok: true; number: null; why: string } | { ok: false; error: string }> {
+): Promise<{ ok: true; numbers: string[]; why: string | null } | { ok: false; error: string }> {
   const read = await config();
   if (!read.ok) return read;
-  for (let attempt = 0; attempt < RESTORE_REMINT_ATTEMPTS; attempt++) {
+  const numbers: string[] = [];
+  const taken = new Set<string>();
+  for (let attempt = 0; attempt < RESTORE_REMINT_ATTEMPTS && numbers.length < want; attempt++) {
+    const need = want - numbers.length;
     const { data, error } = await sb.from("ticket_number_counters").select("next_seq").eq("org_id", orgId).eq("year", year);
     if (error) return { ok: false, error: `the request number counter could not be read: ${error.message}` };
     const held = ((data ?? []) as unknown as Array<Record<string, unknown>>)[0];
-    let seq: number | null = null;
+    let first: number | null = null;
     if (!held) {
-      const made = await sb.from("ticket_number_counters").upsert({ org_id: orgId, year, next_seq: 1 }, { onConflict: "org_id,year", ignoreDuplicates: true, count: "exact" });
+      const made = await sb.from("ticket_number_counters").upsert({ org_id: orgId, year, next_seq: need }, { onConflict: "org_id,year", ignoreDuplicates: true, count: "exact" });
       if (made.error) return { ok: false, error: `the request number counter could not be created: ${made.error.message}` };
-      if (made.count === 1) seq = 1;
+      if (made.count === 1) first = 1;
     } else if (typeof held.next_seq === "number" && Number.isFinite(held.next_seq)) {
       const seen = held.next_seq;
-      const moved = await sb.from("ticket_number_counters").update({ next_seq: seen + 1 }).eq("org_id", orgId).eq("year", year).eq("next_seq", seen).select("next_seq");
+      const moved = await sb.from("ticket_number_counters").update({ next_seq: seen + need }).eq("org_id", orgId).eq("year", year).eq("next_seq", seen).select("next_seq");
       if (moved.error) return { ok: false, error: `the request number counter could not be advanced: ${moved.error.message}` };
-      if (Array.isArray(moved.data) && moved.data.length === 1) seq = seen + 1;
+      if (Array.isArray(moved.data) && moved.data.length === 1) first = seen + 1;
     } else {
       return { ok: false, error: "the request number counter holds no number" };
     }
-    if (seq === null) continue;
-    const number = formatTicketNumber(read.cfg, year, seq);
-    if (avoid.has(number)) continue;
-    const live = await liveTicketNumbers(sb, orgId, [number]);
+    if (first === null) continue;
+    const block = Array.from({ length: need }, (_, i) => formatTicketNumber(read.cfg, year, (first as number) + i))
+      .filter((n) => !avoid.has(n) && !taken.has(n));
+    if (block.length === 0) continue;
+    const live = await liveTicketNumbers(sb, orgId, block);
     if (!live.ok) return { ok: false, error: `the fresh number could not be checked: ${live.error}` };
-    if ((live.live.get(number) ?? []).length > 0) continue;
-    return { ok: true, number };
+    for (const n of block) {
+      if ((live.live.get(n) ?? []).length > 0) continue;
+      taken.add(n);
+      numbers.push(n);
+    }
   }
-  return { ok: true, number: null, why: `${RESTORE_REMINT_ATTEMPTS} numbers were tried and each was taken meanwhile or already carried` };
+  return {
+    ok: true, numbers,
+    why: numbers.length < want ? `${RESTORE_REMINT_ATTEMPTS} reservations on the counter were tried and each was lost to a concurrent filer or held only numbers already carried` : null,
+  };
 }
 
 /** EDGE-5 (P16 fix pass 2; fix pass 3): `row` under the fresh `number`, the
@@ -2182,35 +2201,62 @@ export async function applyRestoreChunk(
       await settleSkipped();
       return fail(500, `Could not re-check the request numbers this restore has just written: ${read.error}`, inserted, rowsAfterFilters);
     }
-    const next: Array<Record<string, unknown>> = [];
+    // P16 fix pass 5 (the review): first sort the round — written as it is,
+    // later, or renumbered — then take the fresh numbers of each year in ONE
+    // reservation (mintRestoreTicketNumbers), so the round costs a bounded
+    // number of statements per year, never a counter step per row.
+    type Renumber = { r: Record<string, unknown>; n: string; holder: string; to: string | null; why: string };
+    const slots: Array<{ r: Record<string, unknown>; renumber: Renumber | null }> = [];
     const later: Array<Record<string, unknown>> = [];
     const claimed = new Set<string>();
+    const byYear = new Map<number, Renumber[]>();
     for (const r of pending) {
       const n = r.ticket_id as string;
       const holder = liveTicketHolder(read.live, r, n);
       if (holder !== null) {
-        const fresh = await mintRestoreTicketNumber(sb, orgId, restoreNumberYear(n), new Set([...requestTicketNumbers, ...minted]), readTicketConfig);
-        if (!fresh.ok) {
-          await settleSkipped();
-          return fail(500, `Could not give request ${label(r) ?? "(no id)"} a fresh number (request ${holder} already carries "${n}"): ${fresh.error}`, inserted, rowsAfterFilters);
-        }
-        if (fresh.number === null) { refused.push(ticketRemintRefusal(label(r), n, holder, fresh.why)); continue; }
-        minted.add(fresh.number);
-        const ofBackup = requestTicketIds.has(holder);
-        const holderWhere = ofBackup ? "of this backup (restored first)" : "of this workspace";
-        const out = renumberedTicketRow(r, n, fresh.number, holder, holderWhere, new Date().toISOString());
-        const folder = ticketFilesFolder(r, n);
-        clearNotes.set(out, [...(clearNotes.get(r) ?? []), {
-          id: label(r), code: TICKET_RENUMBERED,
-          message: `ticket_id "${n}" → "${fresh.number}": request ${holder} ${holderWhere} carries "${n}"${ofBackup ? " (the workspace the backup was taken from held the number twice)" : ""}, so this request was restored under a fresh number rather than beside it or not at all; "${n}" is kept on it as metadata.restore_renumbered.from and in its history — labels, transmittals and archives printing "${n}" for this request now resolve to "${fresh.number}"${folder ? `; its files stay in the "${n}" folder (${folder})` : ""}`,
-          renumbered: { from: n, to: fresh.number, numberHeldBy: holder },
-        }]);
-        next.push(out);
+        const renumber: Renumber = { r, n, holder, to: null, why: "no fresh number was left" };
+        const year = restoreNumberYear(n);
+        const group = byYear.get(year);
+        if (group) group.push(renumber); else byYear.set(year, [renumber]);
+        slots.push({ r, renumber });
         continue;
       }
       if (claimed.has(n)) { later.push(r); continue; }
       claimed.add(n);
-      next.push(r);
+      slots.push({ r, renumber: null });
+    }
+    for (const [year, group] of byYear) {
+      const fresh = await mintRestoreTicketNumbers(sb, orgId, year, group.length, new Set([...requestTicketNumbers, ...minted]), readTicketConfig);
+      if (!fresh.ok) {
+        await settleSkipped();
+        return fail(500, `Could not give request ${label(group[0].r) ?? "(no id)"} a fresh number (request ${group[0].holder} already carries "${group[0].n}")${group.length > 1 ? `, nor ${group.length - 1} other request(s) renumbered in ${year}` : ""}: ${fresh.error}`, inserted, rowsAfterFilters);
+      }
+      group.forEach((g, i) => {
+        g.to = fresh.numbers[i] ?? null;
+        if (g.to !== null) minted.add(g.to);
+        else if (fresh.why) g.why = fresh.why;
+      });
+    }
+    const next: Array<Record<string, unknown>> = [];
+    for (const { r, renumber } of slots) {
+      if (!renumber) { next.push(r); continue; }
+      const { n, holder, to } = renumber;
+      if (to === null) { refused.push(ticketRemintRefusal(label(r), n, holder, renumber.why)); continue; }
+      // P16 fix pass 5 (the review): the holder is named "of this backup" only
+      // when it is a row of THIS request — the driver sends a backup's own
+      // repeat after every other request, so a holder written by an earlier
+      // chunk may be the backup's own request, and the server cannot tell it
+      // from a request the workspace already had: it is then named neutrally.
+      const ofBackup = requestTicketIds.has(holder);
+      const holderWhere = ofBackup ? "of this backup (restored first)" : "already in this workspace";
+      const out = renumberedTicketRow(r, n, to, holder, holderWhere, new Date().toISOString());
+      const folder = ticketFilesFolder(r, n);
+      clearNotes.set(out, [...(clearNotes.get(r) ?? []), {
+        id: label(r), code: TICKET_RENUMBERED,
+        message: `ticket_id "${n}" → "${to}": request ${holder} ${holderWhere} carries "${n}"${ofBackup ? " (the workspace the backup was taken from held the number twice)" : ` (a request the workspace held before this restore, or — where the backup itself carries "${n}" twice — the backup's own request, restored by an earlier part of this restore)`}, so this request was restored under a fresh number rather than beside it or not at all; "${n}" is kept on it as metadata.restore_renumbered.from and in its history — labels, transmittals and archives printing "${n}" for this request now resolve to "${to}"${folder ? `; its files stay in the "${n}" folder (${folder})` : ""}`,
+        renumbered: { from: n, to, numberHeldBy: holder },
+      }]);
+      next.push(out);
     }
     for (let i = 0; i < next.length; i += 500) {
       const failed = await write(next.slice(i, i + 500));
@@ -2540,7 +2586,7 @@ export function restoreSlices<T>(
  *  kept. Such a request is renumbered when it is written
  *  (TICKET_RENUMBERED), and by then every other request of the backup has
  *  been written, so the fresh number it takes is never one a backup request
- *  still to come carries (mintRestoreTicketNumber skips a number already
+ *  still to come carries (mintRestoreTicketNumbers skips a number already
  *  carried here). A backup with no number carried twice is returned in its
  *  own order. Pure. (P16 fix pass 2's groupTicketsByNumber, which kept the
  *  carriers of one number in one request, is replaced: since fix pass 3 a
@@ -2577,21 +2623,59 @@ function ticketNumberSequence(n: string): { year: number; seq: number } | null {
  *  number the restore issues fresh (TICKET_RENUMBERED) — and the next number
  *  a filer is issued — is past every number the backup carries, even where
  *  the backup's counter lagged its requests (numbers not issued through the
- *  counter). A year the backup holds no counter row for is left as it is (no
- *  row is added); a row that needs no raise is returned as it is. Pure. */
+ *  counter). A row that needs no raise is returned as it is. P16 fix pass 5
+ *  (the review: EDGE-5 done-when 3 holds for every (org_id, year) touched): a
+ *  year the backup's requests carry numbers in but the backup holds NO
+ *  counter row for (a backup taken before 2026-08-18, or an incomplete
+ *  export) gets one, { org_id, year, next_seq: the highest sequence }, after
+ *  the backup's own rows, so the restore's counter step creates this
+ *  workspace's counter for that year, or advances it past every number the
+ *  backup carries — the next request filed never repeats a restored number.
+ *  A number that carries no year and sequence (ticketNumberSequence) was not
+ *  issued by a counter and adds nothing. Pure. */
 export function raiseTicketCountersToBackupNumbers(
   counters: ReadonlyArray<Record<string, unknown>>, tickets: ReadonlyArray<Record<string, unknown>>,
 ): Array<Record<string, unknown>> {
-  const highest = new Map<number, number>();
+  const highest = new Map<number, { seq: number; orgId: unknown }>();
   for (const t of tickets) {
     const n = ticketNumberOf(t);
     const parsed = n === null ? null : ticketNumberSequence(n);
-    if (parsed && parsed.seq > (highest.get(parsed.year) ?? 0)) highest.set(parsed.year, parsed.seq);
+    if (parsed && parsed.seq > (highest.get(parsed.year)?.seq ?? 0)) highest.set(parsed.year, { seq: parsed.seq, orgId: t.org_id });
   }
-  return counters.map((c) => {
-    const top = typeof c.year === "number" ? highest.get(c.year) : undefined;
+  const covered = new Set<number>();
+  const raised = counters.map((c) => {
+    if (typeof c.year === "number") covered.add(c.year);
+    const top = typeof c.year === "number" ? highest.get(c.year)?.seq : undefined;
     return top !== undefined && typeof c.next_seq === "number" && Number.isFinite(c.next_seq) && c.next_seq < top ? { ...c, next_seq: top } : c;
   });
+  const added = Array.from(highest).filter(([year]) => !covered.has(year)).sort(([a], [b]) => a - b)
+    .map(([year, { seq, orgId }]) => ({ org_id: orgId ?? counters[0]?.org_id ?? null, year, next_seq: seq }));
+  return [...raised, ...added];
+}
+
+/** drafting-flow EDGE-5 (P16 fix pass 5): the rows the page's driver sends
+ *  for `table` — the backup's tickets in restore order
+ *  (ticketsInRestoreOrder), its ticket counters raised and completed
+ *  (raiseTicketCountersToBackupNumbers), any other table as it is. */
+function driverRows(envelope: RestoreEnvelopeLike, table: string): Array<Record<string, unknown>> {
+  return table === "tickets" ? ticketsInRestoreOrder(tableRows(envelope, table))
+    : table === "ticket_number_counters" ? raiseTicketCountersToBackupNumbers(tableRows(envelope, table), tableRows(envelope, "tickets"))
+    : tableRows(envelope, table);
+}
+
+/** drafting-flow EDGE-5 (P16 fix pass 5): the tables the page's driver
+ *  restores, in FK order — the plan's (restoreOrder), plus
+ *  ticket_number_counters when the backup holds no counter row but its
+ *  requests carry numbers a counter issued (driverRows completes them), so
+ *  that year's counter is created or advanced before any request is
+ *  written. A plan that names the counters table and skips it is kept. */
+function driverOrder(plan: RestorePlan, envelope: RestoreEnvelopeLike): string[] {
+  const order = restoreOrder(plan);
+  const counters = "ticket_number_counters";
+  if (!order.includes("tickets") || order.includes(counters)) return order;
+  const planned = plan.counts.tables.find((t) => t.name === counters);
+  if ((planned && !planned.willImport) || restoreTableRefusal(counters)) return order;
+  return driverRows(envelope, counters).length ? orderTablesForRestore([...order, counters]) : order;
 }
 
 /** intelligence ILIFE-11 criteria 1 and 3 (admin-and-org Round G, P14; the
@@ -2775,8 +2859,8 @@ export async function runChunkedRestore(params: {
   onProgress?: (p: RestoreRunProgress) => void;
 }): Promise<ChunkedRestoreResult> {
   const { orgId, envelope, plan, post } = params;
-  const order = restoreOrder(plan);
-  const rowsTotal = order.reduce((s, t) => s + tableRows(envelope, t).length, 0);
+  const order = driverOrder(plan, envelope);
+  const rowsTotal = order.reduce((s, t) => s + driverRows(envelope, t).length, 0);
   const manifest = { orgId: envelope.manifest.orgId, orgName: envelope.manifest.orgName };
   params.onProgress?.({ phase: "begin", rowsDone: 0, rowsTotal, tablesDone: 0, tablesTotal: order.length });
   const begin = await post(`/api/admin/restore/begin?orgId=${encodeURIComponent(orgId)}`, {
@@ -2799,10 +2883,9 @@ export async function runChunkedRestore(params: {
     // the backup carries is sent after every other request (it is renumbered,
     // and its fresh number then never repeats one still to come); the
     // backup's ticket counters are raised to the highest number its requests
-    // carry for the year, so the restore's counter raise covers them.
-    const rows = table === "tickets" ? ticketsInRestoreOrder(tableRows(envelope, table))
-      : table === "ticket_number_counters" ? raiseTicketCountersToBackupNumbers(tableRows(envelope, table), tableRows(envelope, "tickets"))
-      : tableRows(envelope, table);
+    // carry for the year, so the restore's counter raise covers them — and
+    // (fix pass 5) a year it holds no counter row for gets one (driverRows).
+    const rows = driverRows(envelope, table);
     const t: RestoreTableOutcome = { name: table, rows: rows.length, inserted: 0, existing: 0, heldElsewhere: 0, uncounted: 0, filtered: 0, refused: [], cleared: [], advanced: 0, notApplied: [], renumbered: [] };
     // ILIFE-15: at most RESTORE_CHUNK_ROWS rows a request, as always, and cut
     // earlier when the body would pass RESTORE_CHUNK_BYTES (an old backup's

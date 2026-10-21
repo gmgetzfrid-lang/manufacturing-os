@@ -35,7 +35,12 @@
 // (lib/ticketAttention.ts RESTORE_RENUMBERED_HISTORY_ACTION), so the request
 // page's "waiting since" is the backup row's; and a renumbering in a
 // statement the database accepted without a count is still reported old →
-// new, flagged unconfirmed.
+// new, flagged unconfirmed. P16 fix pass 5 (the review): the fresh numbers of
+// a year are taken in ONE reservation and ONE check per round (a statement
+// bound on a 500-row chunk where every row collides is pinned); a backup with
+// no counter row for a year its requests carry gets one from the driver, so
+// that year's counter is created or advanced; and a holder written by an
+// earlier chunk is named neutrally ("already in this workspace").
 //
 // The routes run for real against the in-memory engine (restoreMemoryDb):
 // `db.keys.tickets` unset is the world WITHOUT the number key (only the id
@@ -143,11 +148,11 @@ for (const world of ["without the number key", "with the number key"] as const) 
       // DEC-90 ruling (3): the restored request's HISTORY records its original number (the request page's timeline)
       expect(b1.history).toEqual([created, {
         action: "Renumbered on restore", user: "restore", date: (b1.metadata as { restore_renumbered: { at: string } }).restore_renumbered.at,
-        details: `Issued as "KE-DDRT-26-0001"; request t-live-1 of this workspace carries that number, so this request was restored as "DDRT-${YY}-0001".`,
+        details: `Issued as "KE-DDRT-26-0001"; request t-live-1 already in this workspace carries that number, so this request was restored as "DDRT-${YY}-0001".`,
       }]);
       expect(r.body.cleared).toEqual([{
         id: "t-b-1", code: RENUMBERED,
-        message: expect.stringMatching(new RegExp(`^ticket_id "KE-DDRT-26-0001" → "DDRT-${YY}-0001": request t-live-1 of this workspace carries "KE-DDRT-26-0001", so this request was restored under a fresh number rather than beside it or not at all`)),
+        message: expect.stringMatching(new RegExp(`^ticket_id "KE-DDRT-26-0001" → "DDRT-${YY}-0001": request t-live-1 already in this workspace carries "KE-DDRT-26-0001" \\(a request the workspace held before this restore, or — where the backup itself carries "KE-DDRT-26-0001" twice — the backup's own request, restored by an earlier part of this restore\\), so this request was restored under a fresh number rather than beside it or not at all`)),
         renumbered: { from: "KE-DDRT-26-0001", to: `DDRT-${YY}-0001`, numberHeldBy: "t-live-1" },
       }]);
       // the renumbering is in the chunk's audit row, old and new
@@ -293,7 +298,7 @@ for (const world of ["without the number key", "with the number key"] as const) 
       const r = await applyRestoreChunk(sb as never, { orgId: ORG, table: "tickets", rows: [ticket("t-b-1", "KE-DDRT-26-0007"), ticket("t-b-2", "KE-DDRT-26-0007")], idRemap: { orgId: { "backup-org": ORG }, uid: {} } });
       expect(r.ok).toBe(true);
       expect(r.inserted).toBe(1);
-      expect(r.refused).toEqual([{ id: "t-b-2", code: IN_USE, message: expect.stringMatching(/^request number "KE-DDRT-26-0007" is already carried in this workspace by request t-b-1 — this request was to be restored under a fresh number, but none could be taken now \(8 numbers were tried.*Run the restore again: a re-run renumbers it$/) }]);
+      expect(r.refused).toEqual([{ id: "t-b-2", code: IN_USE, message: expect.stringMatching(/^request number "KE-DDRT-26-0007" is already carried in this workspace by request t-b-1 — this request was to be restored under a fresh number, but none could be taken now \(8 reservations on the counter were tried and each was lost to a concurrent filer.*Run the restore again: a re-run renumbers it$/) }]);
       expect(r.renumbered).toEqual([]);
       expect(ticketsHere().map((t) => t.id)).toEqual(["t-b-1"]);
       expect(counterHere()).toMatchObject({ next_seq: 5 });
@@ -392,8 +397,51 @@ for (const world of ["without the number key", "with the number key"] as const) 
       // and the page's re-run adds nothing and takes no second number
       const env: RestoreEnvelopeLike = { manifest: { orgId: "backup-org" }, tables: { tickets: [ticket("t-b-1", "KE-DDRT-26-0007"), ticket("t-b-2", "KE-DDRT-26-0007")] } };
       const run = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
-      expect(run).toMatchObject({ stoppedAt: null, totalRefused: 0, totalInserted: 0, totalExisting: 2 });
-      expect(counterHere()).toMatchObject({ next_seq: 1 });
+      // (P16 fix pass 5: the backup holds no counter row, so the driver sends one at its highest number, 0007 — the
+      // workspace's counter, kept as existing, is advanced to it; no request is renumbered, so no number is taken)
+      expect(run).toMatchObject({ stoppedAt: null, totalRefused: 0, totalInserted: 0, totalExisting: 3, totalAdvanced: 1 });
+      expect(run.tables.find((x) => x.name === "tickets")).toMatchObject({ inserted: 0, existing: 2, renumbered: [] });
+      expect(counterHere()).toMatchObject({ next_seq: 7 });
+      expect(numbersIssuedTwice()).toEqual([]);
+    });
+
+    it("P16 fix pass 5 (the review): a 500-row plant-merge chunk where EVERY row collides costs a fixed number of statements — the fresh numbers of the year come from ONE reservation and ONE check, never a counter step per row", async () => {
+      const pad = (i: number) => String(i).padStart(4, "0");
+      db.rows.tickets = Array.from({ length: 500 }, (_, i) => ticket(`t-live-${pad(i)}`, `KE-DDRT-26-${pad(i + 1)}`, ORG));
+      db.rows.ticket_number_counters = [{ org_id: ORG, year: YEAR, next_seq: 500 }];
+      const calls: string[] = [];
+      const sb = { from: (t: string) => { calls.push(t); return from(t); } };
+      const rows = Array.from({ length: 500 }, (_, i) => ticket(`t-b-${pad(i)}`, `KE-DDRT-26-${pad(i + 1)}`));
+      const r = await applyRestoreChunk(sb as never, { orgId: ORG, table: "tickets", rows, idRemap: { orgId: { "backup-org": ORG }, uid: {} } });
+      expect(r).toMatchObject({ ok: true, inserted: 500, refused: [] });
+      expect(r.renumbered).toHaveLength(500);
+      expect(r.renumbered[0]).toEqual({ id: "t-b-0000", from: "KE-DDRT-26-0001", to: `DDRT-${YY}-0501`, numberHeldBy: "t-live-0000" });
+      expect(r.renumbered[499]).toMatchObject({ id: "t-b-0499", to: `DDRT-${YY}-1000` });
+      expect(numbersIssuedTwice()).toEqual([]);
+      expect(counterHere()).toMatchObject({ next_seq: 1000 });
+      // one read and one compare-and-set of the counter for the whole chunk
+      expect(calls.filter((t) => t === "ticket_number_counters")).toHaveLength(2);
+      // and a bound on every statement of the chunk, independent of how many rows collide (it was ~3 per row: 1,500+)
+      expect(calls.length).toBeLessThanOrEqual(40);
+    });
+
+    it("…a reserved block holding numbers already carried is topped up by a second, smaller reservation — every request still renumbered once, the taken numbers spent as gaps", async () => {
+      const pad = (i: number) => String(i).padStart(4, "0");
+      db.rows.tickets = [
+        ...Array.from({ length: 20 }, (_, i) => ticket(`t-live-${pad(i)}`, `KE-DDRT-26-${pad(i + 1)}`, ORG)),
+        // numbers a filer already took past the counter (DDRT-26-0001 … 0010)
+        ...Array.from({ length: 10 }, (_, i) => ticket(`t-own-${pad(i)}`, `DDRT-${YY}-${pad(i + 1)}`, ORG)),
+      ];
+      db.rows.ticket_number_counters = [{ org_id: ORG, year: YEAR, next_seq: 0 }];
+      const calls: string[] = [];
+      const sb = { from: (t: string) => { calls.push(t); return from(t); } };
+      const rows = Array.from({ length: 20 }, (_, i) => ticket(`t-b-${pad(i)}`, `KE-DDRT-26-${pad(i + 1)}`));
+      const r = await applyRestoreChunk(sb as never, { orgId: ORG, table: "tickets", rows, idRemap: { orgId: { "backup-org": ORG }, uid: {} } });
+      expect(r).toMatchObject({ ok: true, inserted: 20, refused: [] });
+      // the first block (0001 … 0020) holds ten numbers already carried: its ten free ones, then 0021 … 0030 from the top-up
+      expect(r.renumbered.map((x) => x.to)).toEqual(Array.from({ length: 20 }, (_, i) => `DDRT-${YY}-${pad(i + 11)}`));
+      expect(counterHere()).toMatchObject({ next_seq: 30 });
+      expect(calls.filter((t) => t === "ticket_number_counters")).toHaveLength(4);
       expect(numbersIssuedTwice()).toEqual([]);
     });
 
@@ -482,7 +530,8 @@ for (const world of ["without the number key", "with the number key"] as const) 
       const run = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
       expect(run).toMatchObject({ stoppedAt: null, totalRefused: 0 });
       const t = run.tables.find((x) => x.name === "tickets")!;
-      expect(t).toMatchObject({ inserted: 2, refused: [], renumbered: [{ id: "t-b-1", from: "KE-DDRT-26-0001", to: `DDRT-${YY}-0001`, numberHeldBy: "t-live-1" }] });
+      // the backup holds no counter row: the driver completes one at its highest number (0402; P16 fix pass 5), so the fresh number is past it
+      expect(t).toMatchObject({ inserted: 2, refused: [], renumbered: [{ id: "t-b-1", from: "KE-DDRT-26-0001", to: `DDRT-${YY}-0403`, numberHeldBy: "t-live-1" }] });
       expect(t.cleared).toEqual([expect.objectContaining({ id: "t-b-1", code: RENUMBERED })]);
       expect(run.tables.find((x) => x.name === "ticket_comments")).toMatchObject({ inserted: 2, refused: [] });
       expect(rowsOf("ticket_comments").map((c) => c.id)).toEqual(["c-1", "c-2"]);
@@ -561,9 +610,13 @@ describe("DEC-90 ruling (4) — every restore that works today restores the same
       };
       const run = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
       expect(run).toMatchObject({ stoppedAt: null, totalRefused: 0 });
-      expect(ticketsHere().map((t) => [t.id, t.ticket_id])).toEqual([["t-1", "KE-DDRT-26-0001"], ["t-2", "KE-DDRT-26-0002"], ["t-1b", `DDRT-${YY}-0001`]]);
-      expect(ticketsHere().find((t) => t.id === "t-1b")!.metadata).toMatchObject({ restore_renumbered: { from: "KE-DDRT-26-0001", to: `DDRT-${YY}-0001`, number_held_by: "t-1" } });
-      expect(run.tables.find((x) => x.name === "tickets")).toMatchObject({ inserted: 3, refused: [], cleared: [expect.objectContaining({ id: "t-1b", code: RENUMBERED })], renumbered: [{ id: "t-1b", from: "KE-DDRT-26-0001", to: `DDRT-${YY}-0001`, numberHeldBy: "t-1" }] });
+      // the backup holds no counter row: the driver sends one at its highest 2026 number (0002; P16 fix pass 5),
+      // which creates this workspace's counter, so the fresh number is past every number the backup carries
+      expect(run.tables.find((x) => x.name === "ticket_number_counters")).toMatchObject({ rows: 1, inserted: 1 });
+      expect(ticketsHere().map((t) => [t.id, t.ticket_id])).toEqual([["t-1", "KE-DDRT-26-0001"], ["t-2", "KE-DDRT-26-0002"], ["t-1b", `DDRT-${YY}-0003`]]);
+      expect(ticketsHere().find((t) => t.id === "t-1b")!.metadata).toMatchObject({ restore_renumbered: { from: "KE-DDRT-26-0001", to: `DDRT-${YY}-0003`, number_held_by: "t-1" } });
+      expect(run.tables.find((x) => x.name === "tickets")).toMatchObject({ inserted: 3, refused: [], cleared: [expect.objectContaining({ id: "t-1b", code: RENUMBERED })], renumbered: [{ id: "t-1b", from: "KE-DDRT-26-0001", to: `DDRT-${YY}-0003`, numberHeldBy: "t-1" }] });
+      expect(counterHere()).toMatchObject({ next_seq: 3 });
       expect(run.tables.find((x) => x.name === "ticket_comments")).toMatchObject({ inserted: 2, refused: [] });
       expect(rowsOf("ticket_comments").map((c) => c.id)).toEqual(["c-1", "c-1b"]);
       expect(numbersIssuedTwice()).toEqual([]);
@@ -582,10 +635,21 @@ describe("DEC-90 ruling (4) — every restore that works today restores the same
       return routePost(path, body);
     };
     const run = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: spy });
-    expect(run).toMatchObject({ stoppedAt: null, totalRefused: 0, totalInserted: 620 });
+    // 620 requests and the counter row the driver completes at the backup's highest number (P16 fix pass 5)
+    expect(run).toMatchObject({ stoppedAt: null, totalRefused: 0, totalInserted: 621 });
+    expect(run.tables.find((x) => x.name === "tickets")).toMatchObject({ inserted: 620 });
     expect(posted.at(-1)!.at(-1)).toBe("t-dup");
     expect(posted.every((rows) => rows.length <= 500)).toBe(true);
-    expect(ticketsHere().find((t) => t.id === "t-dup")!.ticket_id).toBe(`DDRT-${YY}-0001`);
+    const dup = ticketsHere().find((t) => t.id === "t-dup")!;
+    expect(dup.ticket_id).toBe(`DDRT-${YY}-0621`);
+    // P16 fix pass 5 (the review): the holder (t-000) was written by an EARLIER chunk, so the server cannot tell
+    // it is the backup's own request — the history line and the note name it neutrally, never "of this workspace"
+    const line = (dup.history as Array<{ details: string }>).at(-1)!.details;
+    expect(line).toBe(`Issued as "KE-DDRT-26-0001"; request t-000 already in this workspace carries that number, so this request was restored as "DDRT-${YY}-0621".`);
+    expect(line).not.toMatch(/of this workspace/);
+    const note = run.tables.find((x) => x.name === "tickets")!.cleared.find((x) => x.id === "t-dup")!;
+    expect(note.message).toContain(`request t-000 already in this workspace carries "KE-DDRT-26-0001" (a request the workspace held before this restore, or — where the backup itself carries "KE-DDRT-26-0001" twice — the backup's own request, restored by an earlier part of this restore)`);
+    expect(note.message).not.toMatch(/of this workspace carries/);
     expect(numbersIssuedTwice()).toEqual([]);
   });
 
@@ -629,12 +693,45 @@ describe("DEC-90 ruling (4) — every restore that works today restores the same
         tables: { tickets: [ticket("t-1", "KE-DDRT-26-0001"), ticket("t-2", "KE-DDRT-26-0002")], ticket_comments: [{ id: "c-1", org_id: "backup-org", ticket_id: "t-1", body: "a" }] },
       };
       const run = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
-      expect(run).toMatchObject({ stoppedAt: null, totalRefused: 0, totalInserted: 3 });
-      expect(ticketsHere().map((t) => [t.id, t.ticket_id])).toEqual([["t-live", "KE-DDRT-26-0001"], ["t-2", "KE-DDRT-26-0002"], ["t-1", `DDRT-${YY}-0001`]]);
+      // two requests, one comment and the counter row the driver completes at the backup's highest number (0002; P16 fix pass 5)
+      expect(run).toMatchObject({ stoppedAt: null, totalRefused: 0, totalInserted: 4 });
+      expect(ticketsHere().map((t) => [t.id, t.ticket_id])).toEqual([["t-live", "KE-DDRT-26-0001"], ["t-2", "KE-DDRT-26-0002"], ["t-1", `DDRT-${YY}-0003`]]);
       expect(rowsOf("ticket_comments").map((c) => c.id)).toEqual(["c-1"]);
       expect(numbersIssuedTwice()).toEqual([]);
     });
   }
+
+  for (const withKey of [false, true]) {
+    it(`a backup with NO ticket_number_counters rows (taken before 2026-08-18, or an incomplete export; ${withKey ? "with" : "without"} the number key; P16 fix pass 5, the review): the counter of every year its requests carry is created at the highest number restored — the next request filed never repeats one`, async () => {
+      db.keys.ticket_number_counters = [["org_id", "year"]];
+      if (withKey) db.keys.tickets = NUMBER_KEY;
+      const tickets = [
+        ...Array.from({ length: 150 }, (_, i) => ticket(`t-${String(i).padStart(3, "0")}`, `DDRT-26-${String(i + 1).padStart(4, "0")}`)),
+        ticket("t-25", "DDRT-25-0012"),
+      ];
+      const env: RestoreEnvelopeLike = { manifest: { orgId: "backup-org" }, tables: { tickets } };
+      expect(planFor(env).counts.tables.map((t) => t.name)).not.toContain("ticket_number_counters");
+      const run = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
+      expect(run).toMatchObject({ stoppedAt: null, totalRefused: 0 });
+      // the counters go before the requests, as when the backup carries them
+      expect(run.tables.map((t) => t.name)).toEqual(["ticket_number_counters", "tickets"]);
+      expect(run.tables[0]).toMatchObject({ rows: 2, inserted: 2 });
+      expect(rowsOf("ticket_number_counters").filter((c) => c.org_id === ORG).map((c) => [c.year, c.next_seq]).sort()).toEqual([[2025, 12], [2026, 150]]);
+      // the next number issued for 2026 (next_ticket_number: next_seq + 1) is 0151 — never 0001, which a restored request carries
+      expect(ticketsHere().some((t) => t.ticket_id === "DDRT-26-0151")).toBe(false);
+      expect(numbersIssuedTwice()).toEqual([]);
+    });
+  }
+
+  it("…into a workspace whose counter for that year is lower, the completed row advances it (kept, never lowered); a higher one is left as it is", async () => {
+    db.keys.ticket_number_counters = [["org_id", "year"]];
+    db.rows.ticket_number_counters = [{ org_id: ORG, year: 2026, next_seq: 40 }, { org_id: ORG, year: 2025, next_seq: 900 }];
+    const env: RestoreEnvelopeLike = { manifest: { orgId: "backup-org" }, tables: { tickets: [ticket("t-a", "KE-DDRT-26-0150"), ticket("t-b", "KE-DDRT-25-0012")] } };
+    const run = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planFor(env), orgNameChoice: "current", post: routePost });
+    expect(run).toMatchObject({ stoppedAt: null, totalRefused: 0, totalAdvanced: 1 });
+    expect(run.tables[0]).toMatchObject({ name: "ticket_number_counters", rows: 2, inserted: 0, existing: 2, advanced: 1 });
+    expect(rowsOf("ticket_number_counters").map((c) => [c.year, c.next_seq]).sort()).toEqual([[2025, 900], [2026, 150]]);
+  });
 
   it("the fresh number is issued in the YEAR OF THE NUMBER IT REPLACES (P16 fix pass 3, the review) — that year's counter; a number carrying no year takes the server's UTC year, as /api/tickets/create gives a body with no local year", async () => {
     db.keys.ticket_number_counters = [["org_id", "year"]];
@@ -676,11 +773,23 @@ describe("EDGE-5 (P16 fix pass 3) — the driver's order and counters, and the y
     expect(ticketsInRestoreOrder(plain)).toEqual(plain);
   });
 
-  it("raiseTicketCountersToBackupNumbers raises (never lowers) each year's counter to the highest sequence the backup's requests carry for that year, adds no row, and leaves other rows as they are", () => {
+  it("raiseTicketCountersToBackupNumbers raises (never lowers) each year's counter to the highest sequence the backup's requests carry for that year, leaves other rows as they are, and (P16 fix pass 5) adds a row for a year the requests carry and no counter row covers", () => {
     const counters = [{ org_id: "b", year: 2026, next_seq: 2 }, { org_id: "b", year: 2025, next_seq: 90 }, { org_id: "b", year: 2024, next_seq: 1 }];
     const tickets = [r("a", "KE-DDRT-26-0041"), r("b", "AC-DDRT-26-0007"), r("c", "KE-DDRT-25-0012"), r("d", "LEGACY"), r("e", null), r("f", "DDRT-23-0500")];
-    expect(raiseTicketCountersToBackupNumbers(counters, tickets)).toEqual([{ org_id: "b", year: 2026, next_seq: 41 }, { org_id: "b", year: 2025, next_seq: 90 }, { org_id: "b", year: 2024, next_seq: 1 }]);
+    expect(raiseTicketCountersToBackupNumbers(counters, tickets)).toEqual([
+      { org_id: "b", year: 2026, next_seq: 41 }, { org_id: "b", year: 2025, next_seq: 90 }, { org_id: "b", year: 2024, next_seq: 1 },
+      { org_id: "b", year: 2023, next_seq: 500 },
+    ]);
     expect(raiseTicketCountersToBackupNumbers(counters, [])).toEqual(counters);
+  });
+
+  it("…a backup with NO counter rows (taken before 2026-08-18, or an incomplete export) gets one per year its requests carry, at the highest sequence, in year order; a number with no year and sequence adds none (P16 fix pass 5, the review: done-when 3 for every (org_id, year) touched)", () => {
+    const tickets = [
+      { id: "a", org_id: "backup-org", ticket_id: "KE-DDRT-26-0150" }, { id: "b", org_id: "backup-org", ticket_id: "KE-DDRT-25-0009" },
+      { id: "c", org_id: "backup-org", ticket_id: "KE-DDRT-26-0003" }, { id: "d", org_id: "backup-org", ticket_id: "LEGACY7" },
+    ];
+    expect(raiseTicketCountersToBackupNumbers([], tickets)).toEqual([{ org_id: "backup-org", year: 2025, next_seq: 9 }, { org_id: "backup-org", year: 2026, next_seq: 150 }]);
+    expect(raiseTicketCountersToBackupNumbers([], [{ id: "d", ticket_id: "LEGACY7" }])).toEqual([]);
   });
 
   it("restoreNumberYear reads the year a number was issued in; one that carries none (or one past every calendar year now) is the server's UTC year", () => {
