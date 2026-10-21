@@ -1454,7 +1454,7 @@ Fix:
 ## BKP-16 · The restore page reports a request restored under a fresh number as "a pointer cleared", and names its old and new number only inside a note's text
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org (the restore page's owner) — opened by admin-and-org Round G P16 RESTORE TICKET NUMBER KEY's fix pass 3, 2026-10-21, from the package review (`DEC-31`: the page is outside that package's plan). The integrator assigns the package. **Assigned (2026-10-21, the integrator at the P16 merge, DEC-31): admin-and-org P17 RESTORE RENUMBER REPORT** — the restore page reports a renumbered request as its own outcome ("restored as <new> — <old> was taken"), never as a pointer cleared.
 - **Verification:** CONFIRMED by reading the code at the P16 fix pass 3 (`app/(protected)/admin/restore/page.tsx:803`, `:840-844`)
 - **Independently verified:** — (`author`: the P16 review found it; recorded by the P16 fix pass 3; not yet challenged)
@@ -1468,5 +1468,48 @@ Fix:
 **Done when.**
 - The restore page shows each renumbered request on its own line, naming the old and the new number (from `RestoreTableOutcome.renumbered`), and does not count it as a pointer cleared in the headline. An entry flagged `unconfirmed` (P16 fix pass 4: the database accepted its statement without confirming the row, so it MAY have been written under the new number) is said as such, not as restored.
 - A rendered test pins the line.
+
+
+**Resolution (2026-10-21, admin-and-org Round G).** Package P17 RESTORE RENUMBER REPORT, under the integrator's rulings (1)–(4) in its brief (DEC-90: fail-safe, no regression). No migration, no route change.
+
+Reproduced on base `8845807` first. The result panel was moved verbatim out of `page.tsx` and rendered (react-dom/server) over a plant-merge restore driven through the real `begin` / `apply-table` routes: the headline read "Records restored — 1 pointer(s) cleared", and the table line was the generic "restored with a pointer cleared — ticket_id (…)" line. A renumbered request that also had a pointer cleared read "3 pointer(s) cleared" for two pointers and one renumbering. An entry flagged `unconfirmed` was counted as a pointer cleared, like the rest. Eleven of the new tests fail against that base panel.
+
+Fix:
+- **Where the panel lives.** `app/(protected)/admin/restore/RestoreResultPanel.tsx` (new) holds the result panel, moved verbatim out of `page.tsx`. Only `export` was added; the move is checked byte for byte against the base slice. `fmtNum` moved with it. The page imports both (`page.tsx:43`) and renders `<RestoreResultPanel result={applyResult} />` at the same place (`:607`). A Next.js page file may export only its page, so the panel could not be rendered on its own where it was.
+- **Ruling (1) — each renumbered request gets its own line.** `TicketNumberLines` (`RestoreResultPanel.tsx:71`) is rendered after the dangling-flow lines and before the cleared-pointer lines (`:224`). It reads `RestoreTableOutcome.renumbered`, the structured `{ id, from, to, numberHeldBy, unconfirmed? }` P16 already hands the page; no number is parsed from a note's text. Each request is one `<li>` (`RenumberLine`, `:35`): "restored as <new> — <old> was taken (request <holder> has it)". The line also carries the old and new numbers as `data-renumbered-from` / `data-renumbered-to`.
+  - The block's opening line names the table and the count, then explains that the request got the next free number instead of two requests sharing one, and that the issued number stays on the request's history and in the RESTORE_CHUNK audit rows.
+  - Ten lines are shown; the rest sit behind "and N more — show all M" (`ShownList`, `:44`).
+  - **Unconfirmed entries.** An entry flagged `unconfirmed` gets a block of its own: "sent under a new number but NOT confirmed as restored", what to do, and per line "sent as <new> — <old> was taken …; not confirmed as restored". It is never said as restored.
+  - **Unreadable notes.** A `TICKET_RENUMBERED` note whose numbers cannot be read is counted on a line naming the audit rows. It is never dropped, never counted as a pointer, and never said as restored.
+- **The headline.**
+  - The cleared-pointer lines and the headline's pointer count leave out `TICKET_RENUMBERED` notes (`isRenumberNote`, `:26`; `pointersCleared`, `:160`).
+  - Where a renumbering exists, the headline reads "Records restored — N pointer(s) cleared · N request(s) restored under a new number · N request(s) sent under a new number, not confirmed as restored", naming only the parts present (`:180`).
+  - Where there is none, the headline is the base branch, unchanged.
+  - The headlines that outrank it (stopped, held elsewhere, nothing new, refused, dangling, uncounted) are unchanged. The panel's tone is unchanged: a renumbering is still amber, through `totalCleared`.
+- **Ruling (2) — the two refusal codes in plain words.** `TICKET_NUMBER_IN_USE` and `TICKET_NUMBER_UNSETTLED` leave the generic "row(s) refused —" line (`isTicketNumberRefusal`, `:29`). Each gets a block of its own, in a plant admin's words, listing every number and request (`refusedNumberLine`, `:61`):
+  - in use: "NOT restored — another request here already has the number, and the restore could not take a new number for it this time. Run the restore again: a re-run gives each one a new number (records already restored are skipped, not duplicated)";
+  - unsettled: "NOT restored — several requests in this backup carry the same number, and every one of them tried first was refused, so the restore could not tell which should keep it. Resolve the duplicates first: fix what refused the other requests carrying the number …, then run the restore again".
+  - The number comes from a new, additive structured field, `RestoreRowRefusal.ticketNumber` (`lib/dataRestore.ts:1194`), set only on these two refusals (`:1621` and `:2277`). A refusal without it (from an older server) names the request instead.
+  - The headline's refused count is unchanged.
+- **Ruling (3) — every other outcome is pinned.** Nine results covering every branch of the panel are pinned by the sha256 of their markup, captured from the verbatim move before any change: clean, stopped, held elsewhere, nothing new, the mixed case (refused, dangling, cleared pointers, decisions not applied, unmapped, placeholders, filtered, counters), dangling only, uncounted, pointers only, and more than five decisions not applied with a tickets 23505. All nine are byte-identical after the change.
+- **What else did not change.** `RestoreChunkResult`, `RestoreTableOutcome`, `ChunkedRestoreResult`, the counts and the apply-table answer are unchanged, apart from the additive `ticketNumber` on those two refusals, which also rides the RESTORE_CHUNK audit row. P16's digest-pinned traces (`aoRoundGP16RestoreBoundedCalls.test.ts`) are unchanged and green.
+- **Tests.** `lib/__tests__/aoRoundGP17RestoreRenumberReport.test.ts` (21 tests):
+  - the nine regression digests;
+  - the plant-merge restore through the page's driver, in both worlds (with and without the number key);
+  - a renumbering mixed with cleared pointers, more than ten renumberings, an unconfirmed entry from a real write with no count (`applyRestoreChunk`), the unconfirmed headline, an unreadable note, and a headline that outranks it;
+  - `TICKET_NUMBER_IN_USE` from the counter-race stub and `TICKET_NUMBER_UNSETTLED` from the held-back-rounds case, both from real `applyRestoreChunk` answers;
+  - a refusal with no number;
+  - the page renders the moved panel.
+- **Updated pins.** The page's source pins in `restoreApplyRoute.test.ts` (three blocks) and `restoreArchiveRoundTrip.test.ts` (one) now read `page.tsx` plus the panel file. P16's strict refusal pin in `aoRoundGP16RestoreTicketNumber.test.ts` now carries `ticketNumber`.
+
+**Done-when.**
+- [x] The restore page shows each renumbered request on its own line, naming the old and the new number (from `RestoreTableOutcome.renumbered`), and does not count it as a pointer cleared in the headline ✓. An entry flagged `unconfirmed` is said as such ("sent as … — not confirmed as restored"), not as restored ✓. Pinned: "the plant-merge restore through the page's driver" (both worlds), "a renumbered request that also had a pointer cleared", "an entry the database did not confirm …" and "…the headline says it is not confirmed".
+- [x] A rendered test pins the line ✓: `aoRoundGP17RestoreRenumberReport.test.ts` renders the panel with react-dom/server and asserts the headline, each `restore-renumbered-line` (text and both data attributes) and the absence of "pointer".
+
+**Scope / residual.**
+- **No downloadable report.** The brief's rulings speak of the page "and its downloadable/printed report". On `8845807` the restore page offers no download or separate printed report: `app/(protected)/admin/restore/page.tsx` has no download or print control and no print-only styling. A browser print shows this same panel, so the printed page carries the new lines. Nothing was built for a download (DEC-29, DEC-31). If the integrator wants one, it is a new item.
+- **The audit trail.** The RESTORE_CHUNK audit row and the audit-log viewer are unchanged: the note's text and its `renumbered` pair, plus `ticketNumber` on the two refusals.
+- **Holder ids.** The holder is shown as the request's id, the only identifier the outcome carries.
+- **Out of scope.** drafting-flow `EDGE-19` (the renumbered request's files) is not touched.
 
 ---
