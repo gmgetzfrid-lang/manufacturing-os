@@ -23,7 +23,10 @@
 // read cut short by its cap is a read that did not finish: the section says
 // so the same way, never with a count or a "none" (`linksCapped`,
 // `decisionsCapped` — DEC-90 ruling (1), corrected at the second review fix
-// pass).
+// pass). Every read is paged in a stable order past the API's own row
+// ceiling, and a cap is said only when a row past it exists, so a count is
+// exact or the cap is said — never a silently short number (ruled by the
+// integrator at the I-32 merge, 2026-10-21, DEC-90).
 //
 // The service role reads only the caller's identity and the access facts the
 // I-12 predicate needs (memberships, teams, libraries, folders, document ACL
@@ -72,6 +75,61 @@ async function tiered(tiers: readonly string[], read: (cols: string) => PromiseL
   return r;
 }
 
+/** One relation read (document_assets / knowledge_document_assets), paged
+ *  in a stable order (created_at, then id) with `.range()` windows until
+ *  every row the caller may list is in hand or PROVENANCE_LINK_CAP are
+ *  (DEC-90, I-32 merge ruling). The first window also asks for the exact
+ *  count of the caller's rows, so a window the API's own row ceiling
+ *  (max-rows) cut short is never taken for the end: the read keeps going
+ *  until the count is reached or a window comes back empty. `capped` is set
+ *  only when more rows exist past the cap — by the count, or, when no count
+ *  came back, by a one-row probe past it (a probe that fails is a cap: the
+ *  read did not show it finished). Columns a database does not have yet are
+ *  dropped one tier at a time on the first window. */
+async function pagedRelation(
+  tiers: readonly string[],
+  window: (cols: string, from: number, to: number, count: boolean) => PromiseLike<Res & { count?: number | null }>,
+): Promise<{ rows: ProvRelationRow[]; error: PgErr; capped: boolean; total: number | null; probeError?: string }> {
+  let cols = tiers[0];
+  let res: Res & { count?: number | null } = { data: null, error: { message: "no read" } };
+  for (const c of tiers) {
+    cols = c;
+    res = await window(c, 0, PROVENANCE_LINK_CAP - 1, true);
+    if (!columnMissing(res.error)) break;
+  }
+  if (res.error) return { rows: [], error: res.error, capped: false, total: null };
+  const total = typeof res.count === "number" ? res.count : null;
+  const rows: ProvRelationRow[] = [];
+  const seen = new Set<string>(); // a row a concurrent insert pushed onto the next window is listed once
+  let from = 0;
+  for (;;) {
+    const page = (res.data ?? []) as ProvRelationRow[];
+    if (page.length === 0) break;
+    from += page.length;
+    for (const r of page) {
+      const id = r.id ? String(r.id) : null;
+      if (id && seen.has(id)) continue;
+      if (id) seen.add(id);
+      rows.push(r);
+    }
+    if (from >= PROVENANCE_LINK_CAP || (total !== null && from >= total)) break;
+    res = await window(cols, from, PROVENANCE_LINK_CAP - 1, false);
+    if (res.error) return { rows, error: res.error, capped: false, total };
+  }
+  if (from < PROVENANCE_LINK_CAP) return { rows, error: null, capped: false, total };
+  if (total !== null) return { rows, error: null, capped: total > PROVENANCE_LINK_CAP, total };
+  const probe = await window(cols, PROVENANCE_LINK_CAP, PROVENANCE_LINK_CAP, false);
+  if (probe.error) return { rows, error: null, capped: true, total: null, probeError: probe.error.message ?? "the read failed" };
+  return { rows, error: null, capped: ((probe.data ?? []) as unknown[]).length > 0, total: null };
+}
+
+/** The sentence for a relation read its cap cut short. */
+function linksCappedNote(what: string, r: { total: number | null; probeError?: string }): string {
+  if (r.total !== null) return `Only the first ${PROVENANCE_LINK_CAP} of the ${r.total} links to ${what} were read — the other ${r.total - PROVENANCE_LINK_CAP} are not shown.`;
+  if (r.probeError) return `Only the first ${PROVENANCE_LINK_CAP} links to ${what} were read — whether there are more could not be checked (${r.probeError}).`;
+  return `Only the first ${PROVENANCE_LINK_CAP} links to ${what} were read — there are more, not shown.`;
+}
+
 async function readIn<T>(caller: Caller, table: string, cols: string, orgId: string, ids: string[]): Promise<{ rows: T[]; error: string | null }> {
   const rows: T[] = [];
   for (let i = 0; i < ids.length; i += IN_CHUNK) {
@@ -117,42 +175,51 @@ export async function GET(req: NextRequest) {
   if (!asset) return bad("No such equipment in this workspace", 404);
   const key = tagKey(asset.tag);
 
-  // ── The relations, as the caller (20261170 / 20261171 columns dropped one step at a time).
-  const relRes = await tiered([
+  // ── The relations, as the caller (20261170 / 20261171 columns dropped one
+  // step at a time), each paged to completion or PROVENANCE_LINK_CAP.
+  const relRes = await pagedRelation([
     "id, document_id, tag_text, source, sheet_label, pages, asserted_by, asserted_by_user, model, source_revision, vanished_at, superseded_at, created_at",
     "id, document_id, tag_text, source, sheet_label, pages, created_at",
     "id, document_id, tag_text, source, created_at",
-  ], (cols) => caller.from("document_assets").select(cols).eq("org_id", orgId).eq("asset_id", assetId)
-    .order("created_at", { ascending: true }).limit(PROVENANCE_LINK_CAP) as unknown as PromiseLike<Res>);
+  ], (cols, lo, hi, count) => caller.from("document_assets").select(cols, count ? { count: "exact" } : undefined)
+    .eq("org_id", orgId).eq("asset_id", assetId)
+    .order("created_at", { ascending: true }).order("id", { ascending: true }).range(lo, hi) as unknown as PromiseLike<Res>);
   let documentRelations: ProvRelationRow[] = [];
   if (relRes.error) {
     linksIncomplete = true;
-    notes.push(`The links to controlled documents could not be read (${relRes.error.message ?? "read failed"}) — none of them is shown, which is not the same as none.`);
+    notes.push(relRes.rows.length === 0
+      ? `The links to controlled documents could not be read (${relRes.error.message ?? "read failed"}) — none of them is shown, which is not the same as none.`
+      : `The links to controlled documents could not all be read (${relRes.error.message ?? "read failed"}) — only the first ${relRes.rows.length} are shown.`);
+    documentRelations = relRes.rows;
   } else {
-    documentRelations = (relRes.data ?? []) as ProvRelationRow[];
-    if (documentRelations.length >= PROVENANCE_LINK_CAP) {
+    documentRelations = relRes.rows;
+    if (relRes.capped) {
       linksCapped = true;
-      notes.push(`Only the first ${PROVENANCE_LINK_CAP} links to controlled documents were read — there may be more.`);
+      notes.push(linksCappedNote("controlled documents", relRes));
     }
   }
 
   let knowledgeRelationInstalled = true;
   let knowledgeRelations: ProvRelationRow[] = [];
-  const kRes = await tiered([
+  const kRes = await pagedRelation([
     "id, knowledge_document_id, tag_text, source, sheet_label, pages, asserted_by, model, source_revision, created_at",
-  ], (cols) => caller.from("knowledge_document_assets").select(cols).eq("org_id", orgId).eq("asset_id", assetId)
-    .order("created_at", { ascending: true }).limit(PROVENANCE_LINK_CAP) as unknown as PromiseLike<Res>);
-  if (tableMissing(kRes.error)) {
+  ], (cols, lo, hi, count) => caller.from("knowledge_document_assets").select(cols, count ? { count: "exact" } : undefined)
+    .eq("org_id", orgId).eq("asset_id", assetId)
+    .order("created_at", { ascending: true }).order("id", { ascending: true }).range(lo, hi) as unknown as PromiseLike<Res>);
+  if (tableMissing(kRes.error) && kRes.rows.length === 0) {
     // Before 20261235 a knowledge upload's links are not recorded at all.
     knowledgeRelationInstalled = false;
   } else if (kRes.error) {
     linksIncomplete = true;
-    notes.push(`The links to knowledge-library uploads could not be read (${kRes.error.message ?? "read failed"}) — none of them is shown, which is not the same as none.`);
+    notes.push(kRes.rows.length === 0
+      ? `The links to knowledge-library uploads could not be read (${kRes.error.message ?? "read failed"}) — none of them is shown, which is not the same as none.`
+      : `The links to knowledge-library uploads could not all be read (${kRes.error.message ?? "read failed"}) — only the first ${kRes.rows.length} are shown.`);
+    knowledgeRelations = kRes.rows;
   } else {
-    knowledgeRelations = (kRes.data ?? []) as ProvRelationRow[];
-    if (knowledgeRelations.length >= PROVENANCE_LINK_CAP) {
+    knowledgeRelations = kRes.rows;
+    if (kRes.capped) {
       linksCapped = true;
-      notes.push(`Only the first ${PROVENANCE_LINK_CAP} links to knowledge-library uploads were read — there may be more.`);
+      notes.push(linksCappedNote("knowledge-library uploads", kRes));
     }
   }
 
@@ -161,17 +228,21 @@ export async function GET(req: NextRequest) {
   // id, a tag in one of several arrays, in any spelling the one tag grammar
   // folds), so the asset's rows are found here, not by the query: the read
   // pages back through the workspace's decisions, newest first, until they
-  // run out or PROVENANCE_DECISION_CAP have been searched. Past that cap the
-  // older decisions were NOT searched — said in `notes` and by
-  // `decisionsCapped`, never as "none".
+  // run out or PROVENANCE_DECISION_CAP have been searched. A search that
+  // reaches the cap asks for ONE more row (DEC-90, I-32 merge ruling): only
+  // if it exists were older decisions NOT searched — said in `notes` and by
+  // `decisionsCapped`, never as "none". A workspace with exactly the cap's
+  // decisions was searched whole. A probe that fails is a cap (the read did
+  // not show it finished).
   const audits: ProvAuditRow[] = [];
   const seen = new Set<string>(); // a row a newer insert pushed onto the next page is listed once
   let searched = 0;
+  const decisionWindow = (from: number, to: number) => caller.from("audit_logs").select("id, action, resource_type, resource_id, user_id, details, created_at")
+    .eq("org_id", orgId).in("action", [...BRIDGE_DECISION_ACTIONS])
+    .order("created_at", { ascending: false }).order("id", { ascending: false })
+    .range(from, to) as unknown as PromiseLike<Res>;
   for (;;) {
-    const audRes = await caller.from("audit_logs").select("id, action, resource_type, resource_id, user_id, details, created_at")
-      .eq("org_id", orgId).in("action", [...BRIDGE_DECISION_ACTIONS])
-      .order("created_at", { ascending: false }).order("id", { ascending: false })
-      .range(searched, searched + PROVENANCE_DECISION_PAGE - 1) as unknown as Res;
+    const audRes = await decisionWindow(searched, Math.min(searched + PROVENANCE_DECISION_PAGE, PROVENANCE_DECISION_CAP) - 1);
     if (audRes.error) {
       decisionsUnread = true;
       notes.push(searched === 0
@@ -190,6 +261,8 @@ export async function GET(req: NextRequest) {
       if (auditNamesAsset(a.details, asset, key)) audits.push(a);
     }
     if (searched >= PROVENANCE_DECISION_CAP) {
+      const probe = await decisionWindow(searched, searched);
+      if (!probe.error && ((probe.data ?? []) as unknown[]).length === 0) break;
       decisionsCapped = true;
       notes.push(`Only the workspace's latest ${PROVENANCE_DECISION_CAP} equipment-sweep decisions were searched — older ones about this equipment were not searched and are not listed.`);
       break;

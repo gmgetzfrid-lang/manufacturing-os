@@ -87,14 +87,16 @@ export const BRIDGE_DECISION_ACTIONS = [
   "EQUIPMENT_BRIDGE_DISCOVERED",
 ] as const;
 
-/** The most relation rows each relation read takes; reaching it is said,
- *  and the links' section then shows no count (`linksCapped`). */
+/** The most relation rows each relation read takes (paged past the API's
+ *  row ceiling); more rows past it is said, and the links' section then
+ *  shows no count (`linksCapped`). Exactly this many is a complete read. */
 export const PROVENANCE_LINK_CAP = 1000;
 /** The decision read pages back through the workspace's equipment-sweep
  *  decisions this many at a time, newest first … */
 export const PROVENANCE_DECISION_PAGE = 1000;
-/** … and searches at most this many; reaching it is said, and the
- *  decisions' section then shows no count and no "none" (`decisionsCapped`). */
+/** … and searches at most this many; a decision older than them (one probed
+ *  row) is said, and the decisions' section then shows no count and no
+ *  "none" (`decisionsCapped`). Exactly this many is a complete search. */
 export const PROVENANCE_DECISION_CAP = 5000;
 /** GET /api/assets/provenance's 503 when the read predicate cannot decide. */
 export const PROVENANCE_ACCESS_UNCHECKED =

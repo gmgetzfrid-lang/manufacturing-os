@@ -70,7 +70,7 @@ import { NextRequest } from "next/server";
 import { GET as provenanceRoute } from "@/app/api/assets/provenance/route";
 import { makeGraphFake, newGraphFakeDb, resetGraphFakeDb } from "./helpers/graphFakeDb";
 import { runWithServerClient } from "@/lib/serverClientScope";
-import { buildOrgGraph, relationOf, type GraphEdge } from "@/lib/orgGraph";
+import { buildOrgGraph, buildOrgGraphForCaller, relationOf, type GraphEdge } from "@/lib/orgGraph";
 import { edgeRgbFor, edgeLabelFor, EDGE_RGB, TAG_MACHINE_RGB, AI_READ_MARK as THEME_AI_MARK } from "@/components/graph/graphTheme";
 import {
   AI_READ_MARK, SWEEP_SHEET_MARK, assetTagsName, linkStandingOf, relationAsserter, sheetMarkOf, sheetReadingOf,
@@ -263,12 +263,8 @@ describe("GOV-9 criterion 4 (graph label limb) and GAP-303's graph remainder —
     expect(e).toMatchObject({ assertedBy: "machine", personAlso: true, aiRead: true, sheet: "SHT 2" });
     expect(edgeRgbFor(e)).toBe(EDGE_RGB.tag);
     expect(edgeLabelFor(e)).toBe(`Tagged, and read from the drawing · SHT 2 (${AI_READ_MARK})`);
-    // only the documents a machine reading links are asked for their tags
-    const at = gdb.calls.findIndex((c) => c.table === "documents" && c.method === "select" && c.args[0] === "id, asset_tags");
-    expect(at).toBeGreaterThanOrEqual(0);
+    // one tags read, of the documents with tags of their own (the I-32 merge ruling: in the first wave)
     expect(gdb.calls.filter((c) => c.table === "documents" && c.method === "select" && c.args[0] === "id, asset_tags")).toHaveLength(1);
-    const inCall = gdb.calls.slice(at).find((c) => c.table === "documents" && c.method === "in");
-    expect(inCall?.args).toEqual(["id", ["d1", "d2"]]);
   });
 
   it("a person's link carrying the sweep's sheet address shows it unconfirmed — never as a plain fact", async () => {
@@ -312,6 +308,147 @@ describe("GOV-9 criterion 4 (graph label limb) and GAP-303's graph remainder —
     expect(asked).toBeGreaterThan(0);
     expect(tagEdge(g.edges, "d2")).toEqual({ a: "doc:d2", b: "asset:a1", type: "tag", sheet: "SHT 2", pages: [2], assertedBy: "machine", aiRead: true });
     expect(g.truncations.join(" ")).toMatch(/Which equipment-sweep readings a person also tagged could not be read \(statement timeout\)/);
+  });
+});
+
+// ─── I-32 merge (DEC-90, ruled by the integrator 2026-10-21): the person-also
+// tags read adds no serial round trip ─────────────────────────────────────────
+//
+// Every request to the stand-in answers after one tick of a fake clock
+// (ROUND ms), so the time a server assembly takes, divided by ROUND, is the
+// number of sequential request rounds on its critical path. BASE_ROUNDS is
+// that number measured on the integration base (a21c718, before I-32: no
+// person-also read) for the same fixtures.
+
+const ROUND = 10;
+/** Measured on a21c718's lib/orgGraph.ts with this harness, for the plant
+ *  below with and without machine readings (the same either way at the
+ *  base): org-wide 1, scoped 14 (the scope's resolution reads included);
+ *  with a knowledge-mirror mention to resolve, 2 and 16. (The second
+ *  review's build — the tags read awaited after the mirror read — took 2
+ *  and 15 for the machine plant: the round trip this ruling removes.) */
+const BASE_ROUNDS = { org: 1, scoped: 14, orgMirror: 2, scopedMirror: 16 } as const;
+
+function timedClient(client: ReturnType<typeof makeGraphFake>) {
+  const later = <T,>(p: PromiseLike<T>) => new Promise<T>((resolve, reject) => {
+    p.then((v) => { setTimeout(() => resolve(v), ROUND); }, reject);
+  });
+  const wrap = (b: Record<string, unknown>): Record<string, unknown> => {
+    const w: Record<string, unknown> = new Proxy(b, {
+      get: (target, prop: string) => {
+        if (prop === "then") {
+          return (res: (v: unknown) => void, rej: (e: unknown) => void) => later(target as unknown as PromiseLike<unknown>).then(res, rej);
+        }
+        return (...a: unknown[]) => {
+          const r = (target[prop] as (...x: unknown[]) => unknown)(...a);
+          if (r === target) return w;
+          if (r && typeof (r as PromiseLike<unknown>).then === "function") return later(r as PromiseLike<unknown>);
+          return r;
+        };
+      },
+    });
+    return w;
+  };
+  return {
+    ...client,
+    from: (t: string) => wrap(client.from(t) as Record<string, unknown>),
+    rpc: (name: string, args: Record<string, unknown>) => later(client.rpc(name, args)),
+  };
+}
+
+async function roundsOf(scoped: boolean): Promise<{ rounds: number; graph: Awaited<ReturnType<typeof buildOrgGraphForCaller>>["graph"] }> {
+  vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+  try {
+    const t0 = Date.now();
+    const run = runWithServerClient(timedClient(gclient), () => buildOrgGraphForCaller(ORG, {
+      scope: scoped ? { kind: "unit", code: "20" } : null,
+      readable: async (ids) => new Set(ids),
+    }));
+    // Advance the clock only to the next answer; while none is pending (a
+    // module the assembly imports is still loading), let real I/O run.
+    let settled = false;
+    run.then(() => { settled = true; }, () => { settled = true; });
+    while (!settled) {
+      if (vi.getTimerCount() > 0) await vi.advanceTimersToNextTimerAsync();
+      else await new Promise<void>((r) => setImmediate(r));
+    }
+    const { graph } = await run;
+    return { rounds: (Date.now() - t0) / ROUND, graph };
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
+describe("I-32 merge (DEC-90) — the person-also read costs no round trip; a failed one leaves the edges as before", () => {
+  beforeEach(() => { resetGraphFakeDb(gdb, plant()); gdb.rpc.documents_total_for_org = () => ({ data: 4, error: null }); });
+  const noMachine = () => {
+    for (const r of gdb.tables.document_assets) Object.assign(r, { source: "manual", asserted_by: "human", model: null });
+  };
+  const withMirror = () => {
+    gdb.tables.knowledge_documents = [o({ id: "k1", source_document_id: "d1" })];
+    gdb.tables.entity_mentions = [o({ id: "m1", asset_id: "a1", document_id: null, knowledge_document_id: "k1" })];
+  };
+
+  it("no machine reading: the server assembly takes exactly the base's rounds (org-wide and scoped, with and without a mirror read)", async () => {
+    noMachine();
+    expect((await roundsOf(false)).rounds).toBe(BASE_ROUNDS.org);
+    expect((await roundsOf(true)).rounds).toBe(BASE_ROUNDS.scoped);
+    withMirror();
+    expect((await roundsOf(false)).rounds).toBe(BASE_ROUNDS.orgMirror);
+    expect((await roundsOf(true)).rounds).toBe(BASE_ROUNDS.scopedMirror);
+  });
+
+  it("machine readings: at most the base's rounds — even with nothing after the first wave to overlap — and the marks are drawn", async () => {
+    const org = await roundsOf(false);
+    expect(org.rounds).toBeLessThanOrEqual(BASE_ROUNDS.org);
+    expect(tagEdge(org.graph.edges, "d2")).toMatchObject({ personAlso: true });
+    expect(tagEdge(org.graph.edges, "d3")).toMatchObject({ sheetUnconfirmed: true });
+    const scoped = await roundsOf(true);
+    expect(scoped.rounds).toBeLessThanOrEqual(BASE_ROUNDS.scoped);
+    expect(tagEdge(scoped.graph.edges, "d2")).toMatchObject({ personAlso: true });
+    withMirror();
+    expect((await roundsOf(false)).rounds).toBeLessThanOrEqual(BASE_ROUNDS.orgMirror);
+    expect((await roundsOf(true)).rounds).toBeLessThanOrEqual(BASE_ROUNDS.scopedMirror);
+  });
+
+  it("what crosses the wire: only `id, asset_tags`, only documents with tags of their own, in the documents read's own window — no keyed read after the relation", async () => {
+    await map();
+    const tagReads = gdb.calls.filter((c) => c.table === "documents" && c.method === "select" && c.args[0] === "id, asset_tags");
+    expect(tagReads).toHaveLength(1);
+    const at = gdb.calls.indexOf(tagReads[0]);
+    expect(gdb.calls.slice(at + 1, at + 6).map((c) => [c.method, ...c.args])).toEqual([
+      ["eq", "org_id", ORG],
+      ["not", "asset_tags", "eq", "[]"],
+      ["order", "updated_at", { ascending: false, nullsFirst: false }],
+      ["order", "id"],
+      ["range", 0, 999],
+    ]);
+    // the scoped map keys it by the scope's documents (in hand before the relation read)
+    gdb.calls.length = 0;
+    await map({ kind: "unit", code: "20" });
+    const scopedRead = gdb.calls.findIndex((c) => c.table === "documents" && c.method === "select" && c.args[0] === "id, asset_tags");
+    const tail = gdb.calls.slice(scopedRead + 1, scopedRead + 4).map((c) => [c.method, c.args[0]]);
+    expect(tail).toEqual([["eq", "org_id"], ["in", "id"], ["not", "asset_tags"]]);
+  });
+
+  it("a tags read that fails with NO machine reading on the map says nothing — the map is exactly the one without it", async () => {
+    noMachine();
+    const clean = await map();
+    gdb.readError = {};
+    const failed: Record<string, unknown> = new Proxy({}, {
+      get: (_t, p: string) => (p === "then"
+        ? (resolve: (v: unknown) => void) => resolve({ data: null, error: { message: "statement timeout" } })
+        : () => failed),
+    });
+    const failing = { ...gclient, from: (t: string) => {
+      const b = gclient.from(t) as Record<string, unknown>;
+      if (t !== "documents") return b;
+      return new Proxy(b, { get: (target, prop: string) => (prop === "select"
+        ? (cols: string, ...rest: unknown[]) => (cols === "id, asset_tags" ? failed : (target.select as (...a: unknown[]) => unknown)(cols, ...rest))
+        : target[prop]) });
+    } };
+    const g = await runWithServerClient(failing, () => buildOrgGraph(ORG));
+    expect(g).toEqual(clean);
   });
 });
 
@@ -546,9 +683,67 @@ describe("GAP-303 acceptance 1 / GAP-316 — GET /api/assets/provenance", () => 
     expect(s.decisionsCapped).toBe(true);
     expect(s.decisionsUnread).toBe(false);
     expect(s.notes.join(" ")).toMatch(new RegExp(`latest ${PROVENANCE_DECISION_CAP} equipment-sweep decisions were searched — older ones about this equipment were not searched`));
-    // it stopped at the cap: no page past it was asked for
-    const ranges = ctrlDb.calls.filter((c) => c.table === "audit_logs" && c.method === "range").map((c) => c.args[0]);
-    expect(Math.max(...(ranges as number[]))).toBeLessThan(PROVENANCE_DECISION_CAP);
+    // it stopped at the cap: no page past it was asked for — only the one-row probe (DEC-90, I-32 merge ruling)
+    const ranges = ctrlDb.calls.filter((c) => c.table === "audit_logs" && c.method === "range").map((c) => c.args as number[]);
+    expect(ranges.filter(([lo]) => lo >= PROVENANCE_DECISION_CAP)).toEqual([[PROVENANCE_DECISION_CAP, PROVENANCE_DECISION_CAP]]);
+    expect(Math.max(...ranges.slice(0, -1).map(([, hi]) => hi))).toBe(PROVENANCE_DECISION_CAP - 1);
+  });
+
+  // ── I-32 merge (DEC-90, ruled by the integrator 2026-10-21): a cap is said
+  // only when a row past it exists; exactly the cap is a complete read.
+  const BRIDGE_ROWS_IN_FIXTURE = 4; // au1..au4 (au5 is not an equipment-sweep action)
+
+  it("decisions: EXACTLY PROVENANCE_DECISION_CAP is a complete search — not capped, nothing said, the asset's oldest decisions found", async () => {
+    ctrlDb.tables.audit_logs = [...ctrlDb.tables.audit_logs, ...otherDecisions(PROVENANCE_DECISION_CAP - BRIDGE_ROWS_IN_FIXTURE)];
+    const s = await story("tc");
+    expect(s.decisionsCapped).toBe(false);
+    expect(s.decisionsUnread).toBe(false);
+    expect(s.notes).toEqual([]);
+    expect(s.decisions.map((d) => d.action)).toEqual(["EQUIPMENT_BRIDGE_APPLIED", "EQUIPMENT_BRIDGE_RELATION_ADOPTED", "EQUIPMENT_BRIDGE_DISMISSED"]);
+  });
+
+  it("decisions: PROVENANCE_DECISION_CAP + 1 is capped — the one probed row past the cap exists", async () => {
+    ctrlDb.tables.audit_logs = [...ctrlDb.tables.audit_logs, ...otherDecisions(PROVENANCE_DECISION_CAP - BRIDGE_ROWS_IN_FIXTURE + 1)];
+    const s = await story("tc");
+    expect(s.decisionsCapped).toBe(true);
+    expect(s.notes.join(" ")).toMatch(/older ones about this equipment were not searched/);
+  });
+
+  it("decisions: the same two counts under a 300-row API ceiling (short pages) — exact at the cap, capped past it", async () => {
+    ctrlDb.maxRows = 300;
+    ctrlDb.tables.audit_logs = [...ctrlDb.tables.audit_logs, ...otherDecisions(PROVENANCE_DECISION_CAP - BRIDGE_ROWS_IN_FIXTURE)];
+    const exact = await story("tc");
+    expect([exact.decisionsCapped, exact.decisions.length]).toEqual([false, 3]);
+    ctrlDb.tables.audit_logs = [...ctrlDb.tables.audit_logs, ...otherDecisions(1).map((r) => ({ ...r, id: "one-more" }))];
+    expect((await story("tc")).decisionsCapped).toBe(true);
+  });
+
+  it("decisions: a probe past the cap that fails is a cap (fail toward the warning), never a complete search", async () => {
+    ctrlDb.tables.audit_logs = [...ctrlDb.tables.audit_logs, ...otherDecisions(PROVENANCE_DECISION_CAP - BRIDGE_ROWS_IN_FIXTURE)];
+    const base = ctrlClient.from.bind(ctrlClient);
+    st.clients.tc = {
+      ...ctrlClient,
+      from: (t: string) => {
+        const b = base(t) as Record<string, unknown>;
+        if (t !== "audit_logs") return b;
+        const failed: Record<string, unknown> = new Proxy({}, {
+          get: (_t, p: string) => (p === "then" ? (resolve: (v: unknown) => void) => resolve({ data: null, error: { message: "probe timeout" } }) : () => failed),
+        });
+        const wrapped: Record<string, unknown> = new Proxy(b, {
+          get: (target, prop: string) => {
+            if (prop === "then") return target.then;
+            return (...a: unknown[]) => {
+              if (prop === "range" && (a[0] as number) >= PROVENANCE_DECISION_CAP) return failed;
+              const r = (target[prop] as (...x: unknown[]) => unknown)(...a);
+              return r === target ? wrapped : r;
+            };
+          },
+        });
+        return wrapped;
+      },
+    };
+    const s = await story("tc");
+    expect(s.decisionsCapped).toBe(true);
   });
 
   it("a later page that fails marks the decisions unread and says how far the read got", async () => {
@@ -576,7 +771,7 @@ describe("GAP-303 acceptance 1 / GAP-316 — GET /api/assets/provenance", () => 
     expect(s.notes.join(" ")).toMatch(new RegExp(`Only the latest ${PROVENANCE_DECISION_PAGE} of the equipment sweep's recorded decisions could be read \\(page timeout\\)`));
   });
 
-  it("a relation read that reaches PROVENANCE_LINK_CAP sets linksCapped (no exact count) and says there may be more", async () => {
+  it("a relation read past PROVENANCE_LINK_CAP sets linksCapped (no count shown) and says how many were not read", async () => {
     const extra = Array.from({ length: PROVENANCE_LINK_CAP }, (_, i) => o({
       id: `rx${i}`, document_id: "d1", asset_id: "a1", tag_text: "P-101", source: "drawing", sheet_label: null, pages: null,
       asserted_by: "machine", asserted_by_user: null, model: null, source_revision: null, vanished_at: null, superseded_at: null, created_at: "2026-08-01T00:00:00Z",
@@ -585,8 +780,116 @@ describe("GAP-303 acceptance 1 / GAP-316 — GET /api/assets/provenance", () => 
     const s = await story("tc");
     expect(s.linksCapped).toBe(true);
     expect(s.linksIncomplete).toBe(false);
-    expect(s.notes.join(" ")).toMatch(new RegExp(`Only the first ${PROVENANCE_LINK_CAP} links to controlled documents were read — there may be more`));
+    expect(s.notes.join(" ")).toMatch(new RegExp(`Only the first ${PROVENANCE_LINK_CAP} of the ${PROVENANCE_LINK_CAP + 5} links to controlled documents were read — the other 5 are not shown`));
+    // exactly the cap's rows were read — the first by (created_at, id)
+    expect(s.links.filter((l) => l.target.kind === "document")).toHaveLength(PROVENANCE_LINK_CAP);
     expect((await story("tc")).decisionsCapped).toBe(false);
+  });
+
+  // ── I-32 merge (DEC-90): both relation reads paged in a stable order past the API's row ceiling.
+  const extraLinks = (n: number) => Array.from({ length: n }, (_, i) => o({
+    id: `rx${String(i).padStart(5, "0")}`, document_id: "d1", asset_id: "a1", tag_text: "P-101", source: "drawing", sheet_label: null, pages: null,
+    asserted_by: "machine", asserted_by_user: null, model: null, source_revision: null, vanished_at: null, superseded_at: null, created_at: "2026-08-01T00:00:00Z",
+  }));
+  const extraKLinks = (n: number) => Array.from({ length: n }, (_, i) => o({
+    id: `kx${String(i).padStart(5, "0")}`, knowledge_document_id: "kU", asset_id: "a1", tag_text: "P-101", source: "drawing", sheet_label: null, pages: null,
+    asserted_by: "machine", model: null, source_revision: null, created_at: "2026-08-01T00:00:00Z",
+  }));
+  const relWindows = (table: string) => ctrlDb.calls.filter((c) => c.table === table && c.method === "range").map((c) => c.args as number[]);
+
+  it("under a 300-row API ceiling, every relation row is read (exact), never a silently short number — controlled documents and knowledge uploads", async () => {
+    ctrlDb.maxRows = 300;
+    ctrlDb.tables.document_assets = [...ctrlDb.tables.document_assets, ...extraLinks(700)];
+    ctrlDb.tables.knowledge_document_assets = [...ctrlDb.tables.knowledge_document_assets, ...extraKLinks(650)];
+    const s = await story("tc");
+    expect(s.linksCapped).toBe(false);
+    expect(s.linksIncomplete).toBe(false);
+    expect(s.notes).toEqual([]);
+    // every row the controller may read is a link: 5 + 700 controlled, 2 + 650 knowledge
+    expect(s.links.filter((l) => l.target.kind === "document")).toHaveLength(705);
+    expect(s.links.filter((l) => l.target.kind === "knowledge")).toHaveLength(652);
+    const da = relWindows("document_assets");
+    expect(da).toEqual([[0, 999], [300, 999], [600, 999]]); // 705 rows: 300 + 300 + 105, the count says the end
+    expect(relWindows("knowledge_document_assets")).toEqual([[0, 999], [300, 999], [600, 999]]); // 652 rows
+    // a stable order: (created_at, id)
+    const orders = ctrlDb.calls.filter((c) => c.table === "document_assets" && c.method === "order").slice(0, 2).map((c) => c.args[0]);
+    expect(orders).toEqual(["created_at", "id"]);
+  });
+
+  it("under a 300-row API ceiling: EXACTLY PROVENANCE_LINK_CAP rows is complete (not capped); one more is capped, with the count", async () => {
+    ctrlDb.maxRows = 300;
+    ctrlDb.tables.document_assets = [...ctrlDb.tables.document_assets, ...extraLinks(PROVENANCE_LINK_CAP - 5)];
+    ctrlDb.tables.knowledge_document_assets = [...ctrlDb.tables.knowledge_document_assets, ...extraKLinks(PROVENANCE_LINK_CAP - 2)];
+    const exact = await story("tc");
+    expect(exact.linksCapped).toBe(false);
+    expect(exact.notes).toEqual([]);
+    ctrlDb.tables.document_assets.push(...extraLinks(PROVENANCE_LINK_CAP + 1).slice(PROVENANCE_LINK_CAP));
+    ctrlDb.tables.knowledge_document_assets.push(...extraKLinks(PROVENANCE_LINK_CAP + 1).slice(PROVENANCE_LINK_CAP));
+    const over = await story("tc");
+    expect(over.linksCapped).toBe(true);
+    expect(over.notes).toEqual([
+      `Only the first ${PROVENANCE_LINK_CAP} of the ${PROVENANCE_LINK_CAP + 1} links to controlled documents were read — the other 1 are not shown.`,
+      `Only the first ${PROVENANCE_LINK_CAP} of the ${PROVENANCE_LINK_CAP + 1} links to knowledge-library uploads were read — the other 1 are not shown.`,
+    ]);
+    // it stopped at the cap: no window past it
+    expect(Math.max(...relWindows("document_assets").map(([lo]) => lo))).toBeLessThan(PROVENANCE_LINK_CAP);
+  });
+
+  it("with no count from the API, the read pages until an empty window; at the cap one probed row decides — exact is complete, one more is capped", async () => {
+    ctrlDb.maxRows = 300;
+    const base = ctrlClient.from.bind(ctrlClient);
+    // A PostgREST that answers no count (the select's count option dropped).
+    st.clients.tc = {
+      ...ctrlClient,
+      from: (t: string) => {
+        const b = base(t) as Record<string, unknown>;
+        return new Proxy(b, {
+          get: (target, prop: string) => (prop === "select"
+            ? (cols: string) => (target.select as (c: string) => unknown)(cols)
+            : target[prop]),
+        });
+      },
+    };
+    ctrlDb.tables.document_assets = [...ctrlDb.tables.document_assets, ...extraLinks(PROVENANCE_LINK_CAP - 5)];
+    const exact = await story("tc");
+    expect(exact.linksCapped).toBe(false);
+    expect(relWindows("document_assets").slice(-1)).toEqual([[PROVENANCE_LINK_CAP, PROVENANCE_LINK_CAP]]);
+    ctrlDb.tables.document_assets.push(...extraLinks(PROVENANCE_LINK_CAP + 1).slice(PROVENANCE_LINK_CAP));
+    const over = await story("tc");
+    expect(over.linksCapped).toBe(true);
+    expect(over.notes).toEqual([`Only the first ${PROVENANCE_LINK_CAP} links to controlled documents were read — there are more, not shown.`]);
+    // a probe past the cap that fails is a cap, said as unchecked — never a complete read
+    const noCount = st.clients.tc as typeof ctrlClient;
+    st.clients.tc = {
+      ...noCount,
+      from: (t: string) => {
+        const b = noCount.from(t) as Record<string, unknown>;
+        if (t !== "document_assets") return b;
+        const failed: Record<string, unknown> = new Proxy({}, {
+          get: (_t, p: string) => (p === "then" ? (resolve: (v: unknown) => void) => resolve({ data: null, error: { message: "probe timeout" } }) : () => failed),
+        });
+        const wrap = (x: Record<string, unknown>): Record<string, unknown> => new Proxy(x, {
+          get: (target, prop: string) => {
+            if (prop === "then") return target.then;
+            return (...a: unknown[]) => {
+              if (prop === "range" && (a[0] as number) >= PROVENANCE_LINK_CAP) return failed;
+              const r = (target[prop] as (...y: unknown[]) => unknown)(...a);
+              return r && typeof r === "object" && !(r instanceof Promise) ? wrap(r as Record<string, unknown>) : r;
+            };
+          },
+        });
+        return wrap(b);
+      },
+    };
+    ctrlDb.tables.document_assets = ctrlDb.tables.document_assets.slice(0, PROVENANCE_LINK_CAP);
+    const unchecked = await story("tc");
+    expect(unchecked.linksCapped).toBe(true);
+    expect(unchecked.notes).toEqual([`Only the first ${PROVENANCE_LINK_CAP} links to controlled documents were read — whether there are more could not be checked (probe timeout).`]);
+    st.clients.tc = noCount;
+    // a small read with no count: windows until one comes back empty
+    resetGraphFakeDb(ctrlDb, hubDb());
+    expect((await story("tc")).linksCapped).toBe(false);
+    expect(relWindows("document_assets")).toEqual([[0, 999], [5, 999]]);
   });
 
   it("a documents read that fails leaves the discovery's source UNREAD — never 'not one you can open'", async () => {

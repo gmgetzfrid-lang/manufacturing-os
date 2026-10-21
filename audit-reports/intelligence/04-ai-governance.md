@@ -834,9 +834,9 @@ Tests:
    - the drawing audit, its record and the equipment table (I-26);
    - now the org graph's labels, a person's adopted link included (I-32).
 
-   Split under `DEC-31`: an adopted pair's address on ⌘K and on the coverage report still reads without a mark. Those surfaces read the row's `model` alone. It is `GOV-16` (LOW, opened here), which this record does not claim.
+   Split under `DEC-31`: an adopted pair's address on ⌘K and on the coverage report still reads without a mark. Those surfaces read the row's `model` alone. It is `GOV-16` (LOW, opened here), which this record does not claim. Ruled by the integrator at the I-32 merge, 2026-10-21 (DEC-90): `GOV-16` is resolved in the same merge, so ⌘K and the coverage report now carry the mark too (see `GOV-16`).
 
-**Scope / residual.** `GOV-16`. No migration.
+**Scope / residual.** None. `GOV-16` was resolved at the I-32 merge (Ruled by the integrator at the I-32 merge, 2026-10-21 (DEC-90)). No migration.
 
 ---
 
@@ -1712,8 +1712,8 @@ Done-when:
 ## GOV-16 · An adopted pair's sheet address reads as fact on ⌘K and in the coverage report
 
 - **Severity:** LOW
-- **Status:** OPEN
-- **Assigned:** — (opened 2026-10-20 by intelligence Round G I-32 as the remainder of `GOV-9` criterion 4, `DEC-31`; owner to be assigned by the integrator. Proposed: the next package that edits `lib/search.ts` / `lib/globalSearch.ts` and `lib/bridgeCoverage.ts` / `components/assets/CoverageReport.tsx`.)
+- **Status:** RESOLVED
+- **Assigned:** intelligence I-32 PROVENANCE VIEW AND WIZARD ADOPT, the integrator's fix pass at its merge — Ruled by the integrator at the I-32 merge, 2026-10-21 (DEC-90): resolve it in that pass, not leave it unowned. (Opened 2026-10-20 by I-32 as the remainder of `GOV-9` criterion 4, `DEC-31`.)
 - **Verification:** CONFIRMED (by reading, on `a21c718`)
 - **Independently verified:** — (`author`: opened by I-32; not yet challenged by a second party).
 - **Locations:** `lib/search.ts:180` (`aiRead: !!l.model`), `lib/globalSearch.ts:105`, `lib/bridgeCoverage.ts:130`, `components/assets/CoverageReport.tsx:30`, `lib/equipmentBridgeServer.ts:256-259` (`HUMAN_PROVENANCE`)
@@ -1723,9 +1723,19 @@ Done-when:
 **Failure scenario.** The sweep reads P-101 on PID-1, "PID-1 SHT 4", off an AI transcription. A controller links P-101 to PID-1 from the registry drawer: a 23505, then an adopt. ⌘K for P-101 now says "appears on PID-1 SHT 4", with no mark, where the graph and the hub say it is unconfirmed.
 
 **Done when.**
-- [ ] ⌘K and the coverage report read the sheet address through `lib/relationProvenance.ts` `sheetReadingOf` / `sheetMarkOf`. The relation's `source` / `asserted_by` are already selected beside `model`. The sweep's address on a person's link then carries `SWEEP_SHEET_MARK`, and a machine's AI reading keeps `AI_READ_MARK`.
-- [ ] A test on each surface: an adopted pair's sheet is marked, and a machine reading reads exactly as before.
+- [x] ⌘K and the coverage report read the sheet address through `lib/relationProvenance.ts` `sheetReadingOf` / `sheetMarkOf`. The relation's `source` / `asserted_by` are already selected beside `model`. The sweep's address on a person's link then carries `SWEEP_SHEET_MARK`, and a machine's AI reading keeps `AI_READ_MARK`.
+- [x] A test on each surface: an adopted pair's sheet is marked, and a machine reading reads exactly as before.
 
 **Scope.** Display only. No row, no authority and no migration is involved.
+
+**Resolution (2026-10-21, the integrator's fix pass at the I-32 merge; Ruled by the integrator at the I-32 merge, 2026-10-21 (DEC-90)).** Reproduced first (`DEC-29`): with the pre-fix `lib/search.ts`, `lib/globalSearch.ts` and `lib/bridgeCoverage.ts` put back, all five new cases fail. ⌘K reads "FV-2201 appears on PID-3 SHT 7 · Drawing adopted", and the coverage row carries no mark, which the pre-fix `whereText` words "PID-3 · PID-3 SHT 7": both plain facts. Both surfaces now read the row through the one reading the graph and the hub use:
+- **⌘K.** `lookupTag` reads each link with `sheetReadingOf` (`lib/search.ts:188`). It marks a person's link carrying the sweep's address `sheetUnconfirmed: true`, and only that link (`:217`; typed at `:121`). The subtitle's mark comes from `sheetMarkOf` (`sheetMarkSuffix`, `lib/globalSearch.ts:26`, used at `:118`): "(AI-read, unconfirmed)" for an AI reading, as before, and "(read by the equipment sweep, unconfirmed)" for the adopted pair. On a database before `20261171` (no `model` column) an adopted pair still reads as the sweep's.
+- **The coverage report.** `buildCoverage` marks a controlled relation row `sheetUnconfirmed: true` when `sheetReadingOf` says "sweep" (`lib/bridgeCoverage.ts:137`; typed at `:95`). `whereText` words it with `sheetMarkOf` (`components/assets/CoverageReport.tsx:33`; now exported for its test). The knowledge uploads' own relation rows are not adoptable and are untouched.
+- An AI-read machine reading is unchanged everywhere. Every other ⌘K result and coverage row is byte-identical: the field is present only on the adopted pair.
+- Tests (`lib/__tests__/intelRoundGI32SweepSheetMark.test.ts`, 5):
+  - the adopted pair is marked on ⌘K and in the coverage report, and the AI-read reading keeps its mark;
+  - a regression pin re-states the pre-ruling wording, and shows every other lookup document, ⌘K hit and coverage row identical to it, in data and in words. On ⌘K that covers AI-read, text-layer, plain manual and tag-sync rows; in the coverage report it adds knowledge uploads and extracted tags. The report as a whole differs only by the adopted row's flag;
+  - the pre-`20261171` tier.
+  - The existing `globalSearchTags.test.ts`, `bridgeCoverage.test.ts` and `coverageReportRender.test.ts` pass unchanged.
 
 ---

@@ -31,8 +31,11 @@ const uid = (kind: number, n: number) => {
 };
 
 /** A map at every cap, and PENDING_PAIRS_CAP pairs. `long`: 120-character
- *  titles and descriptions. */
-function atTheCaps(long = false): OrgGraphPayload {
+ *  titles and descriptions. `marks` (I-32): the worst case of the person-
+ *  also and sweep-sheet marks — every machine reading's document also
+ *  tagged with its equipment (personAlso), every person's link carrying the
+ *  sweep's sheet address (sheetUnconfirmed). */
+function atTheCaps(long = false, marks = false): OrgGraphPayload {
   const r = emptyGraphRows();
   const words = (s: string) => (long ? `${s} — ${"suction strainer and discharge isolation ".repeat(3)}`.slice(0, 120) : s);
   r.plants = [{ id: uid(1, 0), name: "Refinery", code: "BR" }];
@@ -57,13 +60,21 @@ function atTheCaps(long = false): OrgGraphPayload {
   for (let i = 0; i < GRAPH_CAPS.EDGE_CAP; i++) {
     r.docAssets.push(i % 2
       ? { document_id: D[i % D.length].id, asset_id: A[(i * 7) % A.length].id, source: "drawing", sheet_label: "SHT 4", pages: [4], asserted_by: "machine", model: "vision-x" }
-      : { document_id: D[i % D.length].id, asset_id: A[(i * 7) % A.length].id, source: "manual", asserted_by: "human" });
+      : { document_id: D[i % D.length].id, asset_id: A[(i * 7) % A.length].id, source: "manual", asserted_by: "human", ...(marks ? { sheet_label: "SHT 7" } : {}) });
     r.projectDocs.push({ project_id: P[i % P.length].id, document_id: D[(i * 3) % D.length].id });
     r.related.push({ document_id: D[i % D.length].id, target_document_id: D[(i * 11 + 1) % D.length].id, kind: "document" });
     r.mentions.push({ asset_id: A[(i * 13) % A.length].id, document_id: D[(i * 5) % D.length].id, knowledge_document_id: null });
     r.flows.push({ from_kind: "asset", from_ref: A[i % A.length].id, to_kind: "asset", to_ref: A[(i * 17 + 3) % A.length].id, status: "confirmed" });
   }
   for (let i = 0; i < D.length - 1; i += 2) r.supersessions.push({ superseded_doc_id: D[i].id, replacement_doc_id: D[i + 1].id });
+  if (marks) {
+    r.docTags = new Map();
+    for (const da of r.docAssets) {
+      const tag = A.find((a) => a.id === da.asset_id)!.tag;
+      const cur = (r.docTags.get(da.document_id) as Array<{ tag: string }> | undefined) ?? [];
+      r.docTags.set(da.document_id, [...cur, { tag }]);
+    }
+  }
   const graph = assembleOrgGraph(r);
   const pairs = Array.from({ length: PENDING_PAIRS_CAP }, (_, i) => {
     const a = D[i % D.length].id, b = D[(i * 7 + 1) % D.length].id;
@@ -124,6 +135,33 @@ describe("GAP-313 (fix pass) — the one answer at the caps", () => {
     if ("tooLarge" in left) return;
     expect(unpackGraphPayload(JSON.parse(left.body)).proposals).toEqual({ pairs: [], total: PENDING_PAIRS_CAP, capped: false, error: PAIRS_LEFT_OUT });
     expect(fitGraphPayload(p, withoutPairs - 200)).toEqual({ tooLarge: true, bytes: expect.any(Number) });
+  });
+
+  // I-32 merge (DEC-90, ruled by the integrator 2026-10-21): what the
+  // person-also and sweep-sheet marks add to the answer.
+  it("I-32: an edge carrying personAlso adds 18 bytes on the wire, one carrying sheetUnconfirmed 24 — and the worst case at the caps (every tag edge marked, long titles, every pair) is still within the budget", () => {
+    const edge = (extra: Record<string, unknown>) => bytes(packGraphPayload({
+      graph: { nodes: [{ id: "doc:d", type: "document", label: "D", href: "/d", degree: 1 }, { id: "asset:a", type: "asset", label: "A", href: "/a", degree: 1 }],
+        edges: [{ a: "doc:d", b: "asset:a", type: "tag", sheet: "SHT 4", pages: [4], ...extra }], truncations: [], severed: 0, scope: null },
+      proposals: { pairs: [], total: 0, capped: false, error: null },
+    } as unknown as OrgGraphPayload).graph.edges[0]);
+    expect(edge({ assertedBy: "machine", aiRead: true, personAlso: true }) - edge({ assertedBy: "machine", aiRead: true })).toBe(18); // ,"personAlso":true
+    expect(edge({ assertedBy: "human", sheetUnconfirmed: true }) - edge({ assertedBy: "human" })).toBe(24); // ,"sheetUnconfirmed":true
+    const plain = fitGraphPayload(atTheCaps(true));
+    const marked = atTheCaps(true, true);
+    const tagEdges = marked.graph.edges.filter((e) => e.type === "tag");
+    expect(tagEdges.filter((e) => e.personAlso).length).toBeGreaterThanOrEqual(3000);
+    expect(tagEdges.filter((e) => e.sheetUnconfirmed).length).toBeGreaterThanOrEqual(3000);
+    const fitted = fitGraphPayload(marked);
+    expect("tooLarge" in fitted || "tooLarge" in plain).toBe(false);
+    if ("tooLarge" in fitted || "tooLarge" in plain) return;
+    expect(fitted.pairsLeftOut).toBe(false);
+    // exactly the marks' bytes, plus the sheet the person's links now carry
+    const added = tagEdges.filter((e) => e.personAlso).length * 18 + tagEdges.filter((e) => e.sheetUnconfirmed).length * 24;
+    const sheets = tagEdges.filter((e) => e.sheetUnconfirmed).length * bytes({ sheet: "SHT 7", pages: [] }); // upper bound on the sheet fields
+    expect(fitted.bytes - plain.bytes).toBeGreaterThan(added);
+    expect(fitted.bytes - plain.bytes).toBeLessThanOrEqual(added + sheets);
+    expect(fitted.bytes).toBeLessThan(GRAPH_PAYLOAD_BUDGET);
   });
 
   it("every edge type and every edge field survives the trip", () => {

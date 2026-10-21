@@ -4,7 +4,7 @@
 // It honours what lib/orgGraph.ts, lib/scope.ts and /api/admin/unit-identity
 // depend on: select (columns parsed only to raise a missing-column error;
 // `{ count: "exact", head: true }` answers a count), eq / neq / in / gt / gte /
-// is(col, null) / not(col, "is", null) / contains (array column), order
+// is(col, null) / not(col, "is", null) / not(col, "eq", v) / contains (array column), order
 // (several keys, ascending, nullsFirst) + limit + range — filter, then sort,
 // then window, as PostgREST does — maybeSingle / single, update(...).select()
 // returning the rows that landed, insert, and rpc.
@@ -201,6 +201,14 @@ export function makeGraphFake(db: GraphFakeDb) {
             case "not": {
               const [k, o, v] = args as [string, string, unknown];
               if (o === "is" && v === null) filters.push((r) => r[k] !== null && r[k] !== undefined);
+              // not(col, "eq", v): SQL `NOT col = v` — a NULL column is
+              // excluded too; a JSON literal compares as JSON (jsonb).
+              if (o === "eq") {
+                let lit: unknown = v;
+                if (typeof v === "string") { try { lit = JSON.parse(v); } catch { lit = v; } }
+                filters.push((r) => r[k] !== null && r[k] !== undefined
+                  && r[k] !== v && JSON.stringify(r[k]) !== JSON.stringify(lit));
+              }
               return self;
             }
             case "contains": {

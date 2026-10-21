@@ -30,6 +30,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadCodebookAdmin } from "@/lib/codebookServer";
 import { normalizeTag, splitTag, tagKey } from "@/lib/codebook";
 import { passesExtractorGate } from "@/lib/equipmentBridgeServer";
+import { sheetReadingOf } from "@/lib/relationProvenance";
 
 export interface CoverageAsset {
   id: string; tag: string; tag_normalized: string; unit_code: string | null; code: string | null; origin: string | null;
@@ -87,6 +88,11 @@ export interface CoverageWhere {
   /** GOV-9: the sheet address was read off an AI transcription — shown
    *  unconfirmed wherever it is shown. */
   aiRead?: boolean;
+  /** GOV-16 (I-32 merge): a person's link carrying the sheet address the
+   *  equipment sweep read (an adopted pair — lib/relationProvenance.ts
+   *  sheetReadingOf "sweep"): shown "read by the equipment sweep,
+   *  unconfirmed", never as fact. Present only then. */
+  sheetUnconfirmed?: true;
   pages: number[];
   via: "relation" | "extracted";
   door: "controlled" | "knowledge";
@@ -127,7 +133,9 @@ export function buildCoverage(input: CoverageInput): CoverageReport {
     if (!d) continue; // not readable to the caller (or gone)
     push(r.asset_id, {
       documentId: r.document_id, knowledgeDocumentId: null, name: d.document_number || d.title || "Untitled",
-      sheet: r.sheet_label, aiRead: !!r.model, pages: [], via: "relation", door: "controlled", libraryId: d.library_id,
+      sheet: r.sheet_label, aiRead: !!r.model,
+      ...(sheetReadingOf(r) === "sweep" ? { sheetUnconfirmed: true as const } : {}),
+      pages: [], via: "relation", door: "controlled", libraryId: d.library_id,
     });
   }
   // GAP-307 acceptance 3: a knowledge upload's link is a relation of its

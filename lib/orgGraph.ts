@@ -285,9 +285,9 @@ export interface GraphRows {
    *  library-only upload). A missing key means it could not be resolved. */
   mirrorOf: Map<string, string | null>;
   flows: Array<{ from_kind: string; from_ref: string; to_kind: string; to_ref: string; status: string }>;
-  /** I-32 — document id → its equipment tags (documents.asset_tags), read
-   *  only for the documents a machine reading links (readMachineDocTags). A
-   *  missing key: not read (the edge stays the sweep's alone). */
+  /** I-32 — document id → its equipment tags (documents.asset_tags), for
+   *  the documents a machine reading links (personAlsoTags). A missing key:
+   *  no tags of its own, or not read (the edge stays the sweep's alone). */
   docTags?: Map<string, unknown>;
 }
 
@@ -371,10 +371,11 @@ export async function pageRows<T extends { id: string }>(
 }
 
 /** pageRows over `column IN values`, chunked (IN_CHUNK ids per request, up
- *  to IN_WAVE requests in flight); rows de-duplicated by id, ordered by id. */
+ *  to IN_WAVE requests in flight); rows de-duplicated by id, ordered by id.
+ *  `narrow` adds a filter to every chunk's read. */
 export async function pageIn<T extends { id: string }>(
   table: string, select: string, orgId: string, column: string,
-  values: readonly string[], cap: number,
+  values: readonly string[], cap: number, narrow?: (q: Filterable) => Filterable,
 ): Promise<PagedRows<T>> {
   const seen = new Map<string, T>();
   const uniq = [...new Set(values.filter(Boolean))];
@@ -389,7 +390,7 @@ export async function pageIn<T extends { id: string }>(
     const room = cap - seen.size;
     if (room <= 0) return done({ capped: true });
     const wave = await Promise.all(chunks.slice(w, w + IN_WAVE).map((chunk) =>
-      pageRows<T>(table, select, orgId, room, (q) => q.in(column, chunk))));
+      pageRows<T>(table, select, orgId, room, (q) => (narrow ? narrow(q.in(column, chunk)) : q.in(column, chunk)))));
     for (const r of wave) {
       if (r.missing) return { rows: [...seen.values()], capped: false, missing: true, total: null, error: null };
       for (const row of r.rows) seen.set(String(row.id), row);
@@ -451,25 +452,73 @@ async function readDocAssetsTiered(
   return r;
 }
 
-/** I-32 (GAP-303 graph remainder) — the equipment tags of the documents a
- *  machine reading links, so an edge a person also tagged is drawn as the
- *  asset hub and its provenance view say it ("tagged · also on drawing").
- *  Only those documents are read (one keyed read, chunked), under the same
- *  client as every other read. A read that fails marks nothing: the edges
- *  stay the sweep's alone, as before this file, and the map says so. */
-async function readMachineDocTags(orgId: string, docAssets: readonly DocAssetRow[], notes: string[]): Promise<Map<string, unknown>> {
-  const out = new Map<string, unknown>();
-  const ids = [...new Set(docAssets
-    .filter((r) => r.asserted_by === "machine" || (!r.asserted_by && r.source === "drawing"))
-    .map((r) => String(r.document_id)))];
-  if (ids.length === 0) return out;
-  const r = await pageIn<{ id: string; asset_tags?: unknown }>("documents", "id, asset_tags", orgId, "id", ids, ids.length + 1);
-  if (r.error) {
-    notes.push(`Which equipment-sweep readings a person also tagged could not be read (${r.error.message}) — those links are drawn as the sweep's alone.`);
-    return out;
+/** I-32 (GAP-303 graph remainder) — the documents' own equipment tags
+ *  (documents.asset_tags, typed by a person), so a machine reading a person
+ *  also tagged the document with is drawn as the asset hub and its
+ *  provenance view say it ("tagged · also on drawing").
+ *
+ *  No round trip of its own (DEC-90, ruled by the integrator at the I-32
+ *  merge, 2026-10-21): the read never waits on another read's answer. The
+ *  org-wide map reads it in the first wave, beside the documents read, in
+ *  that read's own order (most recently updated first) — every tagged
+ *  document on the map is among the first DOC_CAP + 1 tagged documents in
+ *  that order; a scoped map reads it beside the relation read, keyed by the
+ *  scope's documents (already in hand). So it adds no wave to any load: the
+ *  documents read it shadows is at least as long.
+ *
+ *  What crosses the wire: `id, asset_tags`, only for documents whose own
+ *  tags are not empty (`asset_tags <> '[]'`, which leaves out NULL too), at
+ *  most DOC_CAP + 1 = 1,501 rows (org-wide: ≤ 2 windows of EDGE_PAGE;
+ *  scoped: ≤ 11 keyed requests of IN_CHUNK, IN_WAVE at a time). The
+ *  (document, asset) decision is made here (personAlsoTags), not by the
+ *  database: the tag's spelling is folded by the one tag grammar (lib/
+ *  codebook tagKey), which a PostgREST filter cannot do without a new
+ *  database function — so no migration.
+ *
+ *  Never throws. A read that fails marks nothing — every edge stays the
+ *  sweep's alone, exactly as before this file — and, when a machine reading
+ *  is on the map, the map says so. */
+type DocTagRow = { id: string; asset_tags?: unknown };
+type DocTagsRead = { rows: DocTagRow[]; error: PgErr | null };
+const DOC_TAG_COLS = "id, asset_tags";
+const failedTagsRead = (e: unknown): DocTagsRead => ({ rows: [], error: { message: e instanceof Error ? e.message : String(e) } });
+
+async function readDocTagsByRecency(orgId: string): Promise<DocTagsRead> {
+  try {
+    return await readByRange<DocTagRow>((from, to) =>
+      (supabase.from("documents").select(DOC_TAG_COLS) as unknown as Filterable).eq("org_id", orgId)
+        .not("asset_tags", "eq", "[]")
+        .order("updated_at", { ascending: false, nullsFirst: false }).order("id").range(from, to), DOC_CAP + 1);
+  } catch (e) {
+    return failedTagsRead(e);
   }
-  for (const d of r.rows) out.set(String(d.id), d.asset_tags ?? null);
-  return out;
+}
+
+async function readDocTagsIn(orgId: string, ids: readonly string[]): Promise<DocTagsRead> {
+  try {
+    const r = await pageIn<DocTagRow>("documents", DOC_TAG_COLS, orgId, "id", ids, ids.length + 1,
+      (q) => q.not("asset_tags", "eq", "[]"));
+    return { rows: r.rows, error: r.error };
+  } catch (e) {
+    return failedTagsRead(e);
+  }
+}
+
+const isMachineRow = (r: DocAssetRow) => r.asserted_by === "machine" || (!r.asserted_by && r.source === "drawing");
+
+/** The tags of the documents a machine reading links (document id → its
+ *  asset_tags); a document missing from the map has none of its own (or was
+ *  not read) — its machine readings stay the sweep's alone. */
+function personAlsoTags(read: DocTagsRead, docAssets: readonly DocAssetRow[], notes: string[]): Map<string, unknown> {
+  const tags = new Map<string, unknown>();
+  const machineDocs = new Set(docAssets.filter(isMachineRow).map((r) => String(r.document_id)));
+  if (machineDocs.size === 0) return tags;
+  if (read.error) {
+    notes.push(`Which equipment-sweep readings a person also tagged could not be read (${read.error.message}) — those links are drawn as the sweep's alone.`);
+    return tags;
+  }
+  for (const d of read.rows) if (machineDocs.has(String(d.id))) tags.set(String(d.id), d.asset_tags ?? null);
+  return tags;
 }
 
 type Res = { data: unknown; error: PgErr | null; count?: number | null };
@@ -678,9 +727,11 @@ function refusedNote(n: number): string {
 async function readOrgRows(
   orgId: string, notes: string[], gate: ReadableDocs | null = null,
 ): Promise<{ rows: GraphRows; mentions: { installed: boolean; capped: boolean }; refused: Set<string> }> {
+  // Windowed (max-rows): DOC_CAP + 1 rows can arrive, so the cap note below
+  // fires exactly when the cap is exceeded.
   const [
     structure, libsRes, projectsRes, docsR, assetsR, plotRes,
-    docAssets, projectDocs, related, supersessions, mentions, flows,
+    docAssets, projectDocs, related, supersessions, mentions, flows, docTagsRead,
   ] = await Promise.all([
     readStructure(orgId, notes),
     supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name").order("id").limit(LIST_CAP + 1) as unknown as PromiseLike<Res>,
@@ -708,6 +759,9 @@ async function readOrgRows(
     // proposed ones are counted). A pre-migration org contributes nothing.
     pageRows<{ id: string; from_kind: string; from_ref: string; to_kind: string; to_ref: string; status: string }>(
       "process_flows", "id, from_kind, from_ref, to_kind, to_ref, status", orgId, EDGE_CAP),
+    // I-32: the documents' own equipment tags (readDocTagsByRecency) — in
+    // this wave, so the person-also marks cost no round trip.
+    readDocTagsByRecency(orgId),
   ]);
 
   // Documents and libraries are the core — a real error there is fatal.
@@ -752,7 +806,7 @@ async function readOrgRows(
   const kdocIds = [...new Set(mentions.rows.filter((m) => !m.document_id && m.knowledge_document_id)
     .map((m) => String(m.knowledge_document_id)))];
   const mirrorOf = await resolveMirrors(orgId, kdocIds, notes);
-  const docTags = await readMachineDocTags(orgId, docAssets.rows, notes);
+  const docTags = personAlsoTags(docTagsRead, docAssets.rows, notes);
 
   const boundLibraries = [...new Set(codebookUnits.map((u) => (u.meta?.knowledgeLibraryId ?? "").trim()).filter(Boolean))];
   let knowledgeLibraries: GraphRows["knowledgeLibraries"] = [];
@@ -832,7 +886,7 @@ async function readScopeRows(
   if (klR.error) notes.push(`Knowledge libraries could not be loaded (${klR.error.message}) — the map is incomplete.`);
 
   const ids = documents.map((d) => d.id);
-  const [docAssets, projectDocs, relA, relB, supA, supB, mentByAsset, mentByDoc, mirrorsOfDocs] = await Promise.all([
+  const [docAssets, projectDocs, relA, relB, supA, supB, mentByAsset, mentByDoc, mirrorsOfDocs, docTagsRead] = await Promise.all([
     readDocAssetsTiered((cols) => pageIn<DocAssetRead>("document_assets", cols, orgId, "document_id", ids, BIG)),
     pageIn<{ id: string; project_id: string; document_id: string }>("project_documents", "id, project_id, document_id", orgId, "document_id", ids, BIG),
     pageIn<{ id: string; document_id: string; target_document_id: string | null; kind: string }>(
@@ -849,6 +903,9 @@ async function readScopeRows(
       "entity_mentions", "id, asset_id, document_id, knowledge_document_id", orgId, "document_id", ids, BIG),
     pageIn<{ id: string; source_document_id: string | null }>(
       "knowledge_documents", "id, source_document_id", orgId, "source_document_id", ids, BIG),
+    // I-32: the scope's documents' own equipment tags — in this wave, keyed
+    // by the documents already in hand, so they cost no round trip.
+    readDocTagsIn(orgId, ids),
   ]);
   const mentByMirror = await pageIn<{ id: string; asset_id: string; document_id: string | null; knowledge_document_id: string | null }>(
     "entity_mentions", "id, asset_id, document_id, knowledge_document_id", orgId, "knowledge_document_id",
@@ -884,7 +941,7 @@ async function readScopeRows(
   const unresolved = [...new Set(mentions.filter((m) => !m.document_id && m.knowledge_document_id && !mirrorOf.has(String(m.knowledge_document_id)))
     .map((m) => String(m.knowledge_document_id)))];
   for (const [k, v] of await resolveMirrors(orgId, unresolved, notes)) mirrorOf.set(k, v);
-  const docTags = await readMachineDocTags(orgId, docAssets.rows, notes);
+  const docTags = personAlsoTags(docTagsRead, docAssets.rows, notes);
 
   return {
     rows: withoutRefused({

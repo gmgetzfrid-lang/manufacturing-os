@@ -17,6 +17,16 @@
 import { searchDocuments, searchAssets, searchTickets, lookupTag } from "@/lib/search";
 import { supabase } from "@/lib/supabase";
 import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
+import { sheetMarkOf } from "@/lib/relationProvenance";
+
+/** GOV-9 / GOV-16: the mark beside a lookup hit's sheet address — " (AI-read,
+ *  unconfirmed)" off an AI transcription, " (read by the equipment sweep,
+ *  unconfirmed)" on a person's link carrying the sweep's address, nothing
+ *  for a machine's text-layer reading (its "read from the drawing" says it). */
+function sheetMarkSuffix(d: { aiRead?: boolean; sheetUnconfirmed?: boolean }): string {
+  const mark = sheetMarkOf(d.aiRead ? "ai" : d.sheetUnconfirmed ? "sweep" : null);
+  return mark ? ` (${mark})` : "";
+}
 
 export type GlobalHitKind = "document" | "ticket" | "project" | "asset" | "note" | "transmittal";
 
@@ -101,8 +111,11 @@ export async function globalSearch({ orgId, query, perKindLimit = 5 }: GlobalSea
           title: d.document_number || d.title || "Untitled",
           // GAP-311: the sheet it is on, when the relation carries it; GOV-9:
           // a sheet address read off an AI transcription is unconfirmed;
-          // GAP-303: who said so — the drawing, a person, or both.
-          subtitle: `${t.asset.tag} appears on ${d.sheetLabel ? `${d.sheetLabel}${d.aiRead ? " (AI-read, unconfirmed)" : ""}` : "this drawing"}${
+          // GOV-16 (I-32 merge): so is the sweep's address on a person's
+          // (adopted) link — both marks from lib/relationProvenance.ts, the
+          // words the graph and the asset hub use; GAP-303: who said so —
+          // the drawing, a person, or both.
+          subtitle: `${t.asset.tag} appears on ${d.sheetLabel ? `${d.sheetLabel}${sheetMarkSuffix(d)}` : "this drawing"}${
             d.fromDrawing ? (d.personTagged ? " (tagged, and read from the drawing)" : " (read from the drawing)") : ""}${d.title && d.document_number ? ` · ${d.title}` : ""}`,
           href: `/documents/${d.library_id}?doc=${d.id}`,
           exact: true,
