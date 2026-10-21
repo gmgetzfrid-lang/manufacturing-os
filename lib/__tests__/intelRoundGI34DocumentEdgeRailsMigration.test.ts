@@ -87,7 +87,17 @@ describe("20261261 — the paste contract (DEC-30)", () => {
     expect(tail).toMatch(/SELECT 'inventory \(before\): ' \|\| what, NULL, n::text FROM _intel_g261_before;\s*$/);
     // counts only — never a customer row
     const inventory = code.slice(temp, begin);
-    expect(inventory.match(/SELECT '[^']*(?:''[^']*)*'(?: AS what)?, COUNT\(\*\)(?: AS n)?/g)).toHaveLength(6);
+    expect(inventory.match(/SELECT '[^']*(?:''[^']*)*'(?: AS what)?, COUNT\(\*\)(?: AS n)?/g)).toHaveLength(7);
+  });
+
+  it("the inventory counts only what a rail hides (ruling (4)): visibility, never is_private; the cross-workspace lineage rows are counted", () => {
+    const inventory = code.slice(code.indexOf("CREATE TEMP TABLE IF NOT EXISTS _intel_g261_before AS"), code.indexOf("\nBEGIN;"));
+    // node_visible reads documents.visibility, never is_private (app-only): counting it would over-count
+    expect(inventory).not.toMatch(/is_private/);
+    expect(inventory).toContain("WHERE d.visibility IN ('private', 'hidden')");
+    // a legacy row whose documents are not both in its workspace is hidden from a member of that workspace alone
+    expect(inventory).toContain("SELECT 'document_supersessions rows whose documents are not both in the row''s workspace");
+    expect(inventory).toMatch(/JOIN documents a ON a\.id = s\.superseded_doc_id\s+JOIN documents b ON b\.id = s\.replacement_doc_id\s+WHERE a\.org_id <> s\.org_id OR b\.org_id <> s\.org_id/);
     expect(code).not.toMatch(/SELECT \*/);
   });
 

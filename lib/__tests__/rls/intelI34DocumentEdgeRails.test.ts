@@ -177,32 +177,46 @@ describe.skipIf(skip !== null)("I-34 / DACL-11: document edge read rails, per ta
     const probes = rows.filter((l) => /\|[tf]\|$/.test(l));
     expect(probes.length).toBe(6);
     for (const p of probes) expect(p, p).toMatch(/\|t\|$/);
-    expect(rows.filter((l) => /^inventory \(before\): .*\|\|\d+$/.test(l)).length).toBe(6);
+    expect(rows.filter((l) => /^inventory \(before\): .*\|\|\d+$/.test(l)).length).toBe(7);
   });
 
-  it("the inventory counts exactly the rows each rail hides from someone (this workspace alone), and a re-paste is clean", () => {
+  it("the inventory counts exactly the rows each rail hides from someone (this workspace alone, plus one legacy cross-workspace lineage row), and a re-paste is clean", () => {
     admin("postgres", `CREATE DATABASE ${pasteOwn} TEMPLATE ${before}`);
+    // a legacy lineage row (20261131's DRLS-13 inventory keeps them) whose replacement sits in ANOTHER workspace
+    const otherLib = randomUUID(), foreign = randomUUID();
     admin(pasteOwn, [
       "SET session_replication_role = replica",
       `DELETE FROM document_supersessions WHERE org_id <> '${orgId}'`,
       `DELETE FROM document_related_resources WHERE org_id <> '${orgId}'`,
       `DELETE FROM entity_mentions WHERE org_id <> '${orgId}'`,
       `DELETE FROM org_members WHERE org_id NOT IN ('${orgId}', '${otherOrg}')`,
+      `INSERT INTO libraries (id, org_id, name, type) VALUES ('${otherLib}', '${otherOrg}', 'I34 other', 'documents')`,
+      `INSERT INTO documents (id, org_id, library_id, name, title, document_number, rev, status, visibility) VALUES ('${foreign}', '${otherOrg}', '${otherLib}', 'foreign.pdf', 'foreign', 'I34-${foreign.slice(0, 8)}', '0', 'Draft', 'normal')`,
+      `INSERT INTO document_supersessions (org_id, superseded_doc_id, replacement_doc_id, reason, created_by) VALUES ('${orgId}', '${open2}', '${foreign}', 'legacy', '${m.docctrl.uid}')`,
     ].join(";\n") + ";");
+    // before the paste the row's own controller reads it (member-wide read)
+    expect(count(pasteOwn, m.docctrl.caller, "document_supersessions")).toBe("4");
     const r = runPsql(mosDb().conn!, pasteOwn, "postgres", { sql: sql() });
     expect(r.error).toBeNull();
     const inv = new Map(r.stdout.split("\n").filter((l) => l.startsWith("inventory (before): "))
       .map((l) => { const parts = l.split("|"); return [parts[0].replace("inventory (before): ", ""), parts[2]] as const; }));
     const pick = (prefix: string) => [...inv.entries()].find(([k]) => k.startsWith(prefix))?.[1];
-    expect(pick("document_supersessions rows")).toBe("3");
+    expect(pick("document_supersessions rows")).toBe("4");
     expect(pick("document_supersessions rows naming a private / hidden document")).toBe("2");
     expect(pick("document_supersessions rows naming a normal document with a read deny")).toBe("0");
+    expect(pick("document_supersessions rows whose documents are not both in the row's workspace")).toBe("1");
     expect(pick("document_related_resources rows naming a private / hidden document")).toBe("2");
     expect(pick("entity_mentions rows on a private / hidden document")).toBe("2");
     // engineer and viewer here; docctrl (DocCtrl held additively) and the other workspace's Admin are controllers
     expect(pick("active members outside the controller tier")).toBe("2");
     // the policy is in place and the Viewer now reads one lineage row
     expect(count(pasteOwn, m.viewer.caller, "document_supersessions")).toBe("1");
+    // the residue the inventory names (document control, DRLS-13): the cross-workspace row is hidden from the
+    // row's own controller too, and a controller's DELETE of it skips it with no error (0 rows), so a
+    // reversal's read-back would report none left — recorded at DACL-11, not fixed here
+    expect(count(pasteOwn, m.docctrl.caller, "document_supersessions")).toBe("3");
+    expect(asCaller(pasteOwn, m.docctrl.caller, `DELETE FROM document_supersessions WHERE replacement_doc_id = '${foreign}'`)).toEqual({ ok: true, rows: 0 });
+    expect(admin(pasteOwn, `SELECT count(*) FROM document_supersessions WHERE replacement_doc_id = '${foreign}'`)).toBe("1");
     const again = runPsql(mosDb().conn!, pasteOwn, "postgres", { sql: sql() });
     expect(again.error).toBeNull();
     for (const p of again.stdout.split("\n").filter((l) => /\|[tf]\|$/.test(l))) expect(p, p).toMatch(/\|t\|$/);

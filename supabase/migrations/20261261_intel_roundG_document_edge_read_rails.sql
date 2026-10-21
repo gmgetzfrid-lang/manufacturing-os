@@ -36,8 +36,16 @@
 --     the rail returns every row they read today;
 --   * the reversal (deleteLineage) is Document Control only
 --     (isControllerPrincipal) and DELETE is controller-only (20261131);
---     node_visible returns true for a controller on every document, so a
---     controller reads, and deletes, exactly today's rows;
+--     node_visible returns true for a controller on every document of its
+--     workspace, so for every same-workspace row a controller reads, and
+--     deletes, exactly today's rows. NOT for a legacy row whose documents are
+--     not both in the row's workspace (20261131's DRLS-13 inventory counts
+--     those and keeps them): the documents membership policy hides the other
+--     workspace's document from a member of the row's workspace alone, so the
+--     rail hides that row from such a member, controllers included — the
+--     reversal no longer sees it, a DELETE skips it with no error and the
+--     read-back reports none left. Counted below; the residue (reconcile or
+--     remove those rows) is document control's (DRLS-13), recorded at DACL-11;
 --   * the related panel / relationship graph (findRelatedDocuments) resolves
 --     every row's other end through documents under the caller's RLS, so a
 --     row the rail hides was never shown — the panel is unchanged;
@@ -46,8 +54,10 @@
 --     was counted as a link "leading off the map" (or, in a unit scope, as
 --     "N more this way" on the visible node) — existence leaked through an
 --     edge count. With the rail it is not returned, so it is not counted; a
---     reader who can see both documents (every controller) gets today's map.
--- No lineage screen loses a row a person can legitimately see today.
+--     reader who can see both documents (every controller, for a
+--     same-workspace row) gets today's map.
+-- No lineage screen loses a same-workspace row a person can legitimately see
+-- today (the cross-workspace legacy rows are the one exception, above).
 --
 -- NARROWS: a member who cannot read one of a supersession's documents no
 -- longer reads that row. WIDENS nothing. The service role (every server route
@@ -65,23 +75,28 @@
 -- 20261259 / 20261260 is touched — any order with them works). Deploy order:
 -- none — no app change. Pre-apply inventory (DEC-30, inventory-first): a TEMP
 -- TABLE captured before the transaction, aggregate counts only — per table,
--- the rows a rail hides from at least one member. Single paste: inventory →
--- BEGIN/DDL/COMMIT → ONE SELECT (check text, ok boolean, n text). Idempotent:
--- a re-paste drops and re-creates the one policy.
+-- the rows a rail hides from at least one member, including the cross-
+-- workspace lineage rows above. documents.is_private is NOT counted:
+-- node_visible never reads it (it is enforced in the app), so no rail hides a
+-- row for it. Single paste: inventory → BEGIN/DDL/COMMIT → ONE SELECT (check
+-- text, ok boolean, n text). Idempotent: a re-paste drops and re-creates the
+-- one policy.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- ── Pre-apply inventory (aggregate only; captured BEFORE the DDL) ───────────
 -- "Restricted" = a private / hidden document (only controllers, its effective
--- owner and its grantees read it). A NORMAL document whose index carries a
--- read deny is counted apart: it is hidden only from the members the deny
--- names, and only where node_visible binds that deny (intelligence I-30).
+-- owner and its grantees read it) — documents.visibility, the column
+-- node_visible reads; is_private is app-only and hides nothing here. A NORMAL
+-- document whose index carries a read deny is counted apart: it is hidden only
+-- from the members the deny names, and only where node_visible binds that deny
+-- (intelligence I-30).
 CREATE TEMP TABLE IF NOT EXISTS _intel_g261_before AS
 WITH restricted AS (
   SELECT d.id FROM documents d
-   WHERE d.visibility IN ('private', 'hidden') OR COALESCE(d.is_private, false)
+   WHERE d.visibility IN ('private', 'hidden')
 ), denied AS (
   SELECT d.id FROM documents d
-   WHERE NOT (d.visibility IN ('private', 'hidden') OR COALESCE(d.is_private, false))
+   WHERE NOT (d.visibility IN ('private', 'hidden'))
      AND d.acl_index IS NOT NULL
      AND EXISTS (SELECT 1 FROM unnest(ARRAY['users', 'roles', 'teams', 'orgs']) s(subj)
                   WHERE jsonb_typeof(d.acl_index -> 'deny' -> s.subj -> 'read') = 'array'
@@ -96,6 +111,12 @@ UNION ALL
 SELECT 'document_supersessions rows naming a normal document with a read deny on either side (the NEW rail hides them only from the members the deny names, where node_visible binds it — I-30)', COUNT(*)
   FROM document_supersessions s
  WHERE s.superseded_doc_id IN (SELECT id FROM denied) OR s.replacement_doc_id IN (SELECT id FROM denied)
+UNION ALL
+SELECT 'document_supersessions rows whose documents are not both in the row''s workspace (the NEW rail hides them from every member who is not also a member of the other workspace, controllers of the row''s workspace included: the reversal can no longer see or delete them — document control, DRLS-13)', COUNT(*)
+  FROM document_supersessions s
+  JOIN documents a ON a.id = s.superseded_doc_id
+  JOIN documents b ON b.id = s.replacement_doc_id
+ WHERE a.org_id <> s.org_id OR b.org_id <> s.org_id
 UNION ALL
 SELECT 'document_related_resources rows naming a private / hidden document at either end (already hidden by 20261126''s rail — unchanged here)', COUNT(*)
   FROM document_related_resources r
