@@ -182,6 +182,9 @@ for (const world of ["without the number key", "with the number key"] as const) 
       expect(headline(d)).toBe("Records restored — 1 request(s) restored under a new number");
       expect(lines(d)).toEqual([{ from: "KE-DDRT-26-0001", to: `DDRT-${YY}-0403`, unconfirmed: false, text: `restored as DDRT-${YY}-0403 — KE-DDRT-26-0001 was taken (request t-live-1 has it)` }]);
       expect(flat(byTestId(d, "restore-renumbered")[0].textContent)).toMatch(/^tickets: 1 request\(s\) restored under a new number — another request here already had its number/);
+      // never "the labels now mean the new one": the old number still opens the request that already had it
+      expect(flat(byTestId(d, "restore-renumbered")[0].textContent)).toContain("Labels, transmittals and archives printed with the old number for this request must be read as the new number. In this workspace the old number still identifies the request that already had it (named on each line).");
+      expect(body(d)).not.toMatch(/now mean the new one/);
       expect(body(d)).not.toMatch(/pointer/);
       expect(body(d)).not.toMatch(/restored with a pointer cleared/);
       // the run's counts are as before: the note still rides `cleared` (and the audit row)
@@ -236,12 +239,22 @@ describe("BKP-16 (1) — mixed, many, unconfirmed and unreadable renumberings", 
     expect(headline(d)).toBe("Records restored — 1 request(s) sent under a new number, not confirmed as restored");
   });
 
-  it("a renumbering note whose numbers cannot be read is never dropped, never counted as a pointer, never said as restored", () => {
+  it("a renumbering note whose numbers cannot be read is never dropped, never counted as a pointer, never said as restored; the headline and its block say the same", () => {
     const bare: RestoreRowRefusal = { id: "t-x", code: TICKET_RENUMBERED, message: "ticket_id renumbered" };
     const d = render(result([ticketsWith([bare])]));
-    expect(headline(d)).toBe("Records restored — 1 request(s) sent under a new number, not confirmed as restored");
+    expect(headline(d)).toBe("Records restored — 1 request(s) given a new number that this page could not read");
+    // the only renumbering: no "more" with nothing above it
+    expect(flat(byTestId(d, "restore-renumbered-unread")[0].textContent)).toBe("tickets: 1 request(s) given a new number that this page could not read — each is named, with its old and new number, in the audit log's RESTORE_CHUNK rows.");
+    expect(body(d)).not.toMatch(/pointer|not confirmed|restored under a new number/);
+  });
+
+  it("an unreadable note beside listed renumberings: 'more' after the listed lines, and the headline counts each kind apart", () => {
+    const bare: RestoreRowRefusal = { id: "t-x", code: TICKET_RENUMBERED, message: "ticket_id renumbered" };
+    const [unconf] = unconfirmedRenumberings([renumberNote("t-2", "KE-3", "KE-4", "h2")]);
+    const d = render(result([ticketsWith([renumberNote("t-1", "KE-1", "KE-2", "h"), unconf, bare, personCleared("t-5")])]));
+    expect(headline(d)).toBe("Records restored — 1 pointer(s) cleared · 1 request(s) restored under a new number · 1 request(s) sent under a new number, not confirmed as restored · 1 request(s) given a new number that this page could not read");
     expect(flat(byTestId(d, "restore-renumbered-unread")[0].textContent)).toBe("tickets: 1 more request(s) given a new number that this page could not read — each is named, with its old and new number, in the audit log's RESTORE_CHUNK rows.");
-    expect(body(d)).not.toMatch(/pointer/);
+    expect(lines(d).map((l) => [l.from, l.unconfirmed])).toEqual([["KE-1", false], ["KE-3", true]]);
   });
 
   it("a headline that outranks it (rows refused) is unchanged, and the renumbering still has its line", () => {
@@ -280,7 +293,8 @@ describe("BKP-16 (2) — the two request-number refusals in words a plant admin 
     expect(unsettled).toEqual([expect.objectContaining({ id: `t-c-${RESTORE_HELD_BACK_ROUNDS + 1}`, ticketNumber: "LEGACY-1" })]);
     const d = render(asRun(r));
     const block = flat(byTestId(d, "restore-number-unsettled")[0].textContent);
-    expect(block).toMatch(/^tickets: 1 request\(s\) NOT restored — several requests in this backup carry the same number, and every one of them tried first was refused, so the restore could not tell which should keep it\. Resolve the duplicates first: /);
+    expect(block).toMatch(/^tickets: 1 request\(s\) NOT restored — several requests in this backup carry the same number, and every one of them tried first was refused or not written, so the restore could not tell which should keep it\. Resolve the duplicates first: fix what kept the other requests carrying the number from being written \(see the refused and not-restored lines above and the audit log's RESTORE_CHUNK rows\), then run the restore again\./);
+    expect(block).not.toMatch(/listed here/);
     expect(block).toMatch(/then run the restore again\.LEGACY-1 \(request t-c-17\)$/);
     // the 17 database refusals (23514) are on the generic line, exactly as before
     expect(body(d)).toContain(`tickets: ${RESTORE_HELD_BACK_ROUNDS + 1} row(s) refused — refused by a database check (see the audit log's RESTORE_CHUNK rows for each id).`);

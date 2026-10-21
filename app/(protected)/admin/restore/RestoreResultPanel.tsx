@@ -86,8 +86,9 @@ function TicketNumberLines({ result }: { result: ChunkedRestoreResult }) {
               <div data-testid="restore-renumbered">
                 <span className="font-mono">{t.name}</span>: {fmtNum(confirmed.length)} request(s) restored under a new number — another
                 request here already had its number, so the restore gave it the next free one instead of filing two requests under one
-                number. The number it was issued stays on it (in its history and the audit log&apos;s RESTORE_CHUNK rows); labels,
-                transmittals and archives printed with that number now mean the new one.
+                number. The number it was issued stays on it (in its history and the audit log&apos;s RESTORE_CHUNK rows). Labels,
+                transmittals and archives printed with the old number for this request must be read as the new number. In this
+                workspace the old number still identifies the request that already had it (named on each line).
                 <ShownList testId="restore-renumbered-all" lines={confirmed.map((r, i) => <RenumberLine key={`${r.id ?? "none"}:${i}`} r={r} />)} />
               </div>
             )}
@@ -102,8 +103,9 @@ function TicketNumberLines({ result }: { result: ChunkedRestoreResult }) {
             )}
             {unread > 0 && (
               <div data-testid="restore-renumbered-unread">
-                <span className="font-mono">{t.name}</span>: {fmtNum(unread)} more request(s) given a new number that this page could
-                not read — each is named, with its old and new number, in the audit log&apos;s RESTORE_CHUNK rows.
+                <span className="font-mono">{t.name}</span>: {fmtNum(unread)}{listed.length > 0 ? " more" : ""} request(s) given a new
+                number that this page could not read — each is named, with its old and new number, in the audit log&apos;s RESTORE_CHUNK
+                rows.
               </div>
             )}
             {inUse.length > 0 && (
@@ -117,9 +119,10 @@ function TicketNumberLines({ result }: { result: ChunkedRestoreResult }) {
             {unsettled.length > 0 && (
               <div data-testid="restore-number-unsettled">
                 <span className="font-mono">{t.name}</span>: {fmtNum(unsettled.length)} request(s) NOT restored — several requests in
-                this backup carry the same number, and every one of them tried first was refused, so the restore could not tell which
-                should keep it. Resolve the duplicates first: fix what refused the other requests carrying the number (their reasons are
-                listed here and in the audit log&apos;s RESTORE_CHUNK rows), then run the restore again.
+                this backup carry the same number, and every one of them tried first was refused or not written, so the restore could
+                not tell which should keep it. Resolve the duplicates first: fix what kept the other requests carrying the number from
+                being written (see the refused and not-restored lines above and the audit log&apos;s RESTORE_CHUNK rows), then run the
+                restore again.
                 <ShownList testId="restore-number-unsettled-all" lines={unsettled.map(refusedNumberLine)} />
               </div>
             )}
@@ -159,8 +162,10 @@ export function RestoreResultPanel({ result }: { result: ChunkedRestoreResult })
   const renumberNotes = result.tables.reduce((s, t) => s + t.cleared.filter(isRenumberNote).length, 0);
   const pointersCleared = Math.max(0, result.totalCleared - renumberNotes);
   const renumberedConfirmed = result.tables.reduce((s, t) => s + (t.renumbered ?? []).filter((r) => !r.unconfirmed).length, 0);
-  // not confirmed as written, or a note whose numbers could not be read — never said as restored
-  const renumberedNotConfirmed = renumberNotes - renumberedConfirmed;
+  // not confirmed as written — never said as restored
+  const renumberedNotConfirmed = result.tables.reduce((s, t) => s + (t.renumbered ?? []).filter((r) => r.unconfirmed).length, 0);
+  // a note whose numbers could not be read — counted as TicketNumberLines counts it, said as its block says it
+  const renumberedUnread = result.tables.reduce((s, t) => s + Math.max(0, t.cleared.filter(isRenumberNote).length - (t.renumbered ?? []).length), 0);
   const elsewhereByTable = result.tables.filter((t) => t.heldElsewhere > 0);
   return (
     <div className={`rounded-2xl border p-4 ${tone}`}>
@@ -182,6 +187,7 @@ export function RestoreResultPanel({ result }: { result: ChunkedRestoreResult })
                           pointersCleared > 0 ? `${fmtNum(pointersCleared)} pointer(s) cleared` : null,
                           renumberedConfirmed > 0 ? `${fmtNum(renumberedConfirmed)} request(s) restored under a new number` : null,
                           renumberedNotConfirmed > 0 ? `${fmtNum(renumberedNotConfirmed)} request(s) sent under a new number, not confirmed as restored` : null,
+                          renumberedUnread > 0 ? `${fmtNum(renumberedUnread)} request(s) given a new number that this page could not read` : null,
                         ].filter(Boolean).join(" · ")}</>
                       : result.totalCleared > 0
                         ? <><AlertTriangle className="w-4 h-4" /> Records restored — {fmtNum(result.totalCleared)} pointer(s) cleared</>
