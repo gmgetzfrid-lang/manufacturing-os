@@ -398,7 +398,7 @@ CREATE TABLE IF NOT EXISTS collections (
 ## HAND-7 · An as-built request records the source revision as a text snapshot with no version id, so nothing detects the drawing moving underneath the drafting cycle
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P9 TICKET-PAGE (done-when 2: mount `SourceDriftBanner` on the ticket page and the queue's 'source moved' chip) and DF-P6 REVIEW-MODEL (done-when 3: approving over a drifted source needs a recorded acknowledgement) — by the integrator, 2026-10-13 (at the DF-P2 merge, DEC-31: DF-P2 has merged and named these limbs in drafting-flow `99-fix-sequencing.md`, "Hand-offs from DF-P2"; fleet plan updated).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/new/page.tsx:291`, `components/documents/CheckInPanel.tsx:262`, `app/api/tickets/workflow-action/route.ts:254`, `lib/revisions.ts:439`
@@ -473,6 +473,20 @@ Tests: `lib/__tests__/dfRoundG_P6_reviewRoute.test.ts` "HAND-7 done-when 3 — a
 **Scope / residual.** The page half → drafting-flow **DF-P9** follow-up: pass the drift labels the page already computes for `SourceDriftBanner` into `getActions` (`sourceDrift`), so the approval says so and carries `requiresSourceDriftAck`, and send `sourceDriftAcknowledged` from the approval dialog; the route should then compute the same labels before `getActions` and refuse an absent acknowledgement (and a failed read, 503) when the action carries the flag. Stays OPEN.
 
 *Assigned (2026-10-21, the integrator at the DF-P6 merge, DEC-31; DF-P9, the package first named, merged on 2026-10-14):* the page half (done-when 3) → drafting-flow **DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS**.
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS — done-when 3, the page half and the binding route half, under DEC-90 ruling (2) for DF-P18 ("the source-drift acknowledgement is required only when an action carries requiresSourceDriftAck; a failed documents read refuses (503) only such an action"). Reproduced on the base: no caller passed `WorkflowContext.sourceDrift`, so no approval carried `requiresSourceDriftAck`; the route applied an approval with no acknowledgement ("not acknowledged (the page did not ask)") and applied it on a failed documents read (`sourceDriftUnchecked`). Landed:
+- The page: `components/requests/SourceDriftBanner.tsx` hands the moved sheets it reads to the page (`onDrift`, `page.tsx:3162`); the page passes their labels into `getActions` (`sourceDrift`, `page.tsx:2405`, worded as the route words them — `lib/requestPageReview.ts` `sourceDriftLabels`), so exactly the issuing approvals (and a roster sign-off) say so and carry `requiresSourceDriftAck`; taking such an action asks first (`appConfirm`, `page.tsx:1964`) and sends `sourceDriftAcknowledged: true` only for the approval it asked about (`driftAckRef`). The roster panel (`components/requests/TicketRosterPanel.tsx`) shows an acknowledgement checkbox when the page passes a move and sends the field with its dry run and its post (`rosterDriftNote`).
+- The route (`app/api/tickets/workflow-action/route.ts`): the labels are computed BEFORE `getActions` (`:588`, only for an issuing approval or a sign-off on a request with source documents — every other action reads nothing) and passed in the engine's context, so the route and the page read one rule; an action carrying the flag without `sourceDriftAcknowledged: true` is refused (409 `source_drift_unacknowledged`, nothing written; a refused sign-off names its minted signature, DF-P5's rule; a dry run is refused with nothing recorded); a documents read that fails refuses such an action (503 `source_drift_unchecked`); with the acknowledgement the history line and the audit row record the move as acknowledged.
+- REGRESSION (ruling (2)): an unmoved source, a request with no source documents and every non-issuing action apply exactly as before; a workspace's page with no move shows no prompt and no checkbox.
+
+Tests: `lib/__tests__/dfRoundG_P6_reviewRoute.test.ts` (DF-P6's "REGRESSION: a page that does not ask yet still approves …" is rewritten to the ruling: absent → 409, unmoved → as before, failed read → 503; plus "a request with NO source documents …" and "a non-issuing action …" REGRESSION cases); `lib/__tests__/dfRoundG_P18_reviewModelPageRoute.test.ts` ("HAND-7 dw3 (DF-P18) — a roster sign-off over a moved source": dry run refused / answered, the post's refusal naming the signature, a failed read → 503, an unmoved source as before); `lib/__tests__/dfRoundG_P18_reviewModelPage.test.ts` ("HAND-7 dw3 — the page passes the drift into getActions": labels, the engine flag only with labels, the page's source pins, the panel's note).
+
+**Done-when.**
+- ✓ (1) DF-P2.
+- ✓ (2) DF-P9.
+- ✓ (3) Approving a deliverable drafted from a superseded base requires an explicit acknowledgement — asked on the page and the roster panel, required by the route for every issuing approval and sign-off it flags; a consent-window close over a moved source already holds for a sign-off (DF-P7, `lib/consentWindowScan.ts` `source_moved`).
+
+**Scope / residual.** None. The route's previous fail-open on a failed read is replaced by the 503 the DF-P6 record named (`DEC-44 (DF-P6-review-model)` reversal (2), now applied — `DEC-44 (DF-P18-review-model-page)` item 2). No migration.
 
 ---
 

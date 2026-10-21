@@ -302,7 +302,7 @@ Tests: `lib/__tests__/dfRoundG_P5_routing.test.ts` ("TIER-5 done-when 3 …" —
 ## FRIC-5 · The drafter is interrupted twice for one deliverable
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** friction
 - **Locations:**
@@ -351,6 +351,15 @@ Tests: `lib/__tests__/dfRoundG_P5_routing.test.ts` ("FRIC-5 — issue-as-is …"
 **Owner of the remainder:** the at-submit checkbox on the request page's Submit (`issueReady` on `submit_draft`, which the route already takes) → the next package holding `app/(protected)/requests/[id]/page.tsx` (DF-P9's page); the integrator may instead rule under DEC-90 (1) that the opt-in ticket action satisfies the done-when. No migration (the mark lives in `metadata`, which is workflow-owned since `20261166` / `20261208`). Stays OPEN.
 
 *Assigned (2026-10-21, the integrator at the DF-P6 merge, DEC-31):* the at-submit "issue as-is" checkbox on the request page → drafting-flow **DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS**.
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS — the at-submit checkbox, under DEC-90 ruling (5) for DF-P18 ("'issue as-is when approved' at submit defaults off and shows only where the ticket's toggle shows today") on DEC-90 ruling (1) for DF-P5 (opt-in per ticket by the drafter). Reproduced on the base: the request page's Submit sent no `issueReady`; the opt-in was only the later ticket action (`mark_issue_ready`). Landed: beside an offered Submit Draft, the request's ASSIGNED DRAFTER (the one person the ticket's own "Issue As-Is When Approved" toggle is offered to) sees an "Issue as-is when approved" checkbox, unticked by default (`page.tsx:2934`, `lib/requestPageReview.ts` `issueReadyAtSubmitOffered`); ticked, the submission carries `issueReady: true` (`submit_draft` — the route and `computeTransition` already take it: the mark is bound to the label the submission creates, and every reviewer then sees the issue-as-is note and confirm DF-P5 built). The choice is for one submission (reset after it lands). Nobody else sees it, and an unticked submit sends exactly today's body.
+
+Tests: `lib/__tests__/dfRoundG_P18_reviewModelPage.test.ts` ("FRIC-5 — issue as-is at submit": who is offered it, default off, sent only for `submit_draft`, only when ticked, only by the assigned drafter, reset after); DF-P5's route tests for `issueReady` on `submit_draft` (unchanged, green).
+
+**Done-when.**
+- ✓ (as ruled) "A clean approval with no corrections does not require the drafter to re-enter the ticket to produce a file that already exists" — the drafter can now choose it AS PART OF SUBMITTING (and still afterwards, until the first sign-off), and a clean approval then issues the approved draft as the final package with no re-entry; with the choice left off (the default, DEC-90 ruling (1) for DF-P5 and ruling (5) for DF-P18) the request returns to the drafter as today, which the record's own owner line allowed the integrator to rule sufficient ("the integrator may instead rule under DEC-90 (1) that the opt-in … satisfies the done-when").
+
+**Scope / residual.** None. No migration.
 
 ---
 

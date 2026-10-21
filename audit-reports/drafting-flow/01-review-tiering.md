@@ -196,7 +196,7 @@ Tests: `lib/__tests__/aoRoundGP18RestoreReviewModel.test.ts` (17; 20 after the f
 ## TIER-2 · There is no work classification at all — like-in-kind and new design are indistinguishable
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / compliance
 - **Locations:**
@@ -268,12 +268,27 @@ Tests: `lib/__tests__/dfRoundG_P6_reviewRoute.test.ts` "GAP-101 / TIER-4 — the
 
 *Assigned (2026-10-21, the integrator at the DF-P6 merge, DEC-31; DF-P9, the package first named, merged on 2026-10-14):* the class select at triage → drafting-flow **DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS**.
 
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS — done-when 2's class limb. Reproduced on the base (`1f928f8`): the route accepted `workClass` / `codeClass` at triage (`app/api/tickets/workflow-action/route.ts`, the GAP-101 / TIER-4 block) but no screen sent one — the assign modal (`app/(protected)/requests/[id]/page.tsx` `AssignmentModal`) carried only the library and the unit, and the engineer picker nothing. Landed:
+- `components/requests/TriageClassSelects.tsx` (new): one select per CONFIGURED list (`lib/reviewModel.ts` `reviewClassOptions`), "No change" by default (sends nothing — triage never clears a class, and a class the list no longer names is never sent back), a class marked "requires engineering" said in the option. With both lists empty it renders nothing.
+- The assign modal mounts it inside the triage fields (`page.tsx:449`, `classOffered` `:356`) and sends `workClass` / `codeClass` with `assign` at `PENDING_ASSIGNMENT` (`classTriagePayload`); the engineer picker (`components/requests/EngineerPickerModal.tsx`, a new optional `extra` slot) mounts it for `request_eng_review` at triage (`page.tsx:2698`). `executeWorkflowAction` sends the two fields only when picked.
+- `lib/requestPageReview.ts` `triageClassSelects`: no select outside `PENDING_ASSIGNMENT`, before `20261250` is pasted (the column unread — the route would only say the class was not recorded), or for a list the workspace left empty (DEC-90 ruling (1) for DF-P18: an unconfigured workspace's triage dialog is today's).
+- `flag_engineering` is NOT given a class at `DRAFTING` / `REVISION_REQ` / `PENDING_REVIEW` (the call DF-P6 left open): a class is set at triage, as the route allows today — `DEC-44 (DF-P18-review-model-page)` item 3.
+
+Tests: `lib/__tests__/dfRoundG_P18_reviewModelPage.test.ts` ("TIER-2 dw2 / TIER-4 dw1 / GAP-101 — the class at triage", incl. the REGRESSION "no select for an unconfigured workspace, outside triage, or before 20261250"); `lib/__tests__/dfRoundG_P18_reviewModelPageRender.test.ts` ("TriageClassSelects": nothing renders unconfigured; one select per list); `lib/__tests__/dfRoundG_P18_reviewModelPageRoute.test.ts` ("GAP-101 / TIER-4 (DF-P18) — the class the triage select sends with assign": recorded, an engineering class raises the requirement; REGRESSION: an assign with no class writes no class column).
+
+**Done-when.**
+- ✓ 1. As recorded (DF-P6).
+- ✓ 2. Set at steps that already exist — the declaration at intake (DF-P6) and the classes at triage, in the assign dialog and the scope-review picker the queue already uses; no step added, never required.
+- ✓ 3. As recorded (WF-15, DF-P2).
+
+**Scope / residual.** A class is set only at triage (route rule unchanged — `DEC-44 (DF-P18-review-model-page)` item 3): a wrong class cannot be corrected later and a request past triage when `20261250` is pasted is not classified. The request's capability resource carrying the classes (scoped rules) is drafting-flow DF-P19's (`TIER-4`'s Assigned line). No migration.
+
 ---
 
 ## TIER-3 · QA/QC does not exist anywhere in the flow
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / compliance
 - **Locations:**
@@ -334,6 +349,19 @@ Tests: `lib/__tests__/reviewModel.test.ts` "GAP-102 / TIER-3 — a notify-only s
 **Scope / residual.** Owners (DEC-31): the slot's `work_classes` editor → drafting-flow **DF-P9** (it holds the class select both read; `RoutingControlSection` is DF-P5's file, already edited by DF-P6 — the integrator may re-own it to the routing table's next holder); the class select → **DF-P9** (`TIER-2`). Rows in 99-fix-sequencing "Hand-offs from DF-P6". Stays OPEN. GAP-102's examination-data acceptance (4: a package missing required examination data cannot issue) is not built — it needs a data model for examination scope; proposed for the integrator to assign (no package lists it). The stop-by-hold path (GAP-102 acceptance 3) is the existing document hold.
 
 *Assigned (2026-10-21, the integrator at the DF-P6 merge, DEC-31; DF-P9, the package first named, merged on 2026-10-14):* the slot's `work_classes` editor and the class select → drafting-flow **DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS** (the integrator re-owns `components/documents/RoutingControlSection.tsx` to it for this editor).
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS — done-when 1's per-class limb, in the ruled form (DEC-90 for DF-P6, as the Partial above records: no QA/QC role, status or signature slot; GAP-102: assurance by notice and a hold, never a sign-off). Reproduced on the base: `components/documents/RoutingControlSection.tsx` only carried a slot's stored `work_classes` through a save (`kept.workClasses`, shown in the "settings this editor does not show" note) and nothing set a request's class. Landed:
+- The routing editor offers, on a NOTIFY-ONLY slot, chips of the workspace's own work classes (`RoutingControlSection.tsx:364`, read from `org_configurations` `'drafting'` through `reviewClassOptions`; `workClassChoices` also lists a stored value the list no longer names, so it can be seen and removed). No chips at all when the workspace has no work classes (DEC-90 ruling (1) for DF-P18); the note no longer lists what the editor now shows (`keptNote(d, shown)`). `lib/routingControl.ts` is unchanged: a class limit on a blocking or consent slot is still refused.
+- With the triage class select (`TIER-2`) the limit acts: `routingForWorkClass` (the route, where the roster opens) leaves the slot out for a request of another class.
+
+Tests: `lib/__tests__/dfRoundG_P18_reviewModelPage.test.ts` ("TIER-3 dw1 and the DF-P7 editor residual — the routing editor": the round trip through the editor and the parser, the note, the blocking-slot refusal, the source pins); DF-P6's `reviewModel.test.ts` "GAP-102 / TIER-3" (unchanged, green).
+
+**Done-when.**
+- ✓ 1. Per library (a blocking routing slot, DF-P5) and per work class (a notify-only slot limited to classes — edited in the routing table, acting on the class triage sets), in the ruled form: a notice plus the existing document hold, never a sign-off (the per-class blocking sign-off is refused by ruling). 
+- ✓ 2. As recorded (no serial hop).
+- ✓ 3. As recorded (no new role).
+
+**Scope / residual.** GAP-102 acceptance 1 and 4 (examination data) are drafting-flow DF-P20's (assigned at the DF-P6 merge). No migration.
 
 ---
 
@@ -396,6 +424,15 @@ Tests: `lib/__tests__/reviewModel.test.ts` "a rule scoped to a code class narrow
 **Scope / residual.** Owners: the assign-modal select → drafting-flow **DF-P9** (as `TIER-2`); the resource carrying `workClass` / `codeClass` (and `libraryId`) → the requests list's and `lib/inbox.ts`'s mappers first (99-fix-sequencing "Hand-offs from DF-P6", spread `lib/reviewModel.ts` `reviewModelFieldsFromRow`), then `ticketResource`. The same limitation as `TIER-2`: a class is set only at triage. Stays OPEN.
 
 *Assigned (2026-10-21, the integrator at the DF-P6 merge, DEC-31; DF-P9, the package first named, merged on 2026-10-14):* the assign-modal select → drafting-flow **DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS**; the request's resource carrying `workClass` / `codeClass` / `libraryId` (scoped rules) → drafting-flow **DF-P19 TICKET RESOURCE LIBRARY AND CLASS DIMENSION**.
+
+**Partial (2026-10-21, drafting-flow Round G).** DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS — the assign-modal select (this package's limb of the Assigned line). The workspace's code classes are picked at triage beside the drafter and with a scope review (`components/requests/TriageClassSelects.tsx`, `app/(protected)/requests/[id]/page.tsx` — see `TIER-2`'s Resolution), so a request now carries its code class from a screen; a class marked "Requires engineering" raises the requirement there, and every issuing approval and roster sign-off states the class in its description before it is taken (DF-P6's engine note, now reachable). Tests: `lib/__tests__/dfRoundG_P18_reviewModelPageRoute.test.ts` (the class sent with `assign` is recorded), `lib/__tests__/dfRoundG_P18_reviewModelPage.test.ts`.
+
+**Done-when.**
+- ✗ (in part) 1. Declared in configuration ✓ and set from a screen ✓ (this package), with its review requirement ("Requires engineering") ✓; a capability rule SCOPED to a code class still binds nothing until the request's resource carries the class — drafting-flow DF-P19 (assigned).
+- ✓ 2. As recorded.
+- ✓ 3. A ticket in a code-governed service surfaces its code to the reviewer before they sign — the class is set at triage from a screen and the approval's description and the request page say it.
+
+**Scope / residual.** → drafting-flow **DF-P19 TICKET RESOURCE LIBRARY AND CLASS DIMENSION** (the resource carrying `workClass` / `codeClass` / `libraryId`, as assigned). Stays OPEN for that limb only.
 
 ---
 
@@ -508,7 +545,7 @@ Tests: `lib/__tests__/dfRoundG_P5_routing.test.ts` ("TIER-5 done-when 1…", "co
 ## TIER-6 · MOC is captured at check-in and re-typed at publish, with no link between them
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance / safety
 - **Locations:**
@@ -563,12 +600,25 @@ its own parallel rule.
 
 *Assigned (2026-10-21, the integrator at the DF-P6 merge, DEC-31):* → drafting-flow **DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS** (after its class select: a configured work class may carry "needs MOC", read by the check-in outcome and the hand-back).
 
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS — the "additionally" clause. Reproduced on the base: MOC applicability was two separate rules — `mocRequirementFor(docClass, outcome)` at check-in (`lib/checkinOutcomes.ts`) and `mocRequired = (docClass === "drawing" || docClassUnknown) && !isMinorLike` in `components/documents/RevUpModal.tsx` — and neither read the work class. Landed:
+- A configured WORK class may carry "Needs MOC" (`lib/reviewModel.ts` `ReviewClassFlags.moc`, edited on Admin → Request forms, `components/requests/ReviewClassesSection.tsx`; stored on the option in `org_configurations` `'drafting'`, no migration; a code class carries none).
+- One rule, in `lib/checkinOutcomes.ts`: `mocRequirementFor(docClass, outcome, classNeedsMoc)` (a real change for a request of a needs-MOC class needs an MOC position whatever the document's class; a correction card stays "none") and `publishMocRequired({ docClass, docClassUnknown, changeType, classNeedsMoc })` (the hand-back's publish asks for the MOC number whatever the change type). `RevUpModal` reads `publishMocRequired` (`RevUpModal.tsx:296`; new optional prop `classMoc`, its label in the field and the refusal), and the request page passes the class only when it needs MOC (`workClassNeedingMoc`, `page.tsx:2538`). `CheckInContext.classNeedsMoc` threads the class to the check-in cards.
+- DEC-90 ruling (3) for DF-P18: a request with no class, or of an unflagged class, gets exactly today's rule — pinned for every document class × outcome × change type, and the check-in cards deep-equal today's with the flag absent or false.
+
+Tests: `lib/__tests__/dfRoundG_P18_reviewModelPage.test.ts` ("TIER-6 — MOC applicability through the class", incl. the two REGRESSION pins); `lib/__tests__/dfRoundG_P18_reviewModelPageRender.test.ts` (the editor writes the flag and keeps the rest); `lib/__tests__/checkinOutcomes.test.ts` unchanged and green.
+
+**Done-when.**
+- ✓ See `LIFE-5` (as recorded).
+- ✓ "MOC applicability is expressed through the same work-class mechanism" — the class the workspace configures and triage sets carries "Needs MOC", read by the one rule both readers share (the check-in cards' engine and the hand-back's publish).
+
+**Scope / residual.** No check-in today has a classed request in its context: a check-in FILES the request, and triage classes it afterwards; the hand-back is where a classed request's MOC is asked (the check-in panel, `components/documents/CheckInPanel.tsx`, is not this package's file and passes no class — the engine takes one when a caller has it). No migration.
+
 ---
 
 ## TIER-7 · "Approve with Minor Correction" is the only tiering the system actually has, and it bypasses the gate
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** safety
 - **Locations:**
@@ -617,6 +667,19 @@ Tests: `lib/__tests__/reviewModel.test.ts` ("REGRESSION …" pins `approve_minor
 **Scope / residual.** Owner: drafting-flow **DF-P9** with the class select (`TIER-2`) — a class the workspace flags "minor correction" that the button requires, with that class's reviewer set — or an integrator ruling that the recorded override closes it. No minimum-length or new prompt was added to the minor correction (a regression for today's users). A built-in "minor correction" class is NOT seeded (DEC-35: the workspace names its classes). Stays OPEN.
 
 *Assigned (2026-10-21, the integrator at the DF-P6 merge, DEC-31; DF-P9, the package first named, merged on 2026-10-14):* → drafting-flow **DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS** (with the class select: a class the workspace flags "minor correction" that the button requires).
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS, under DEC-90 ruling (3) for DF-P18 ("'minor correction' flags change nothing for a request with no class or an unflagged class"). Reproduced on the base: the audit row's `declaredClass: "minor_correction"` was a label; no class could be a minor correction. Landed:
+- A configured WORK class may be flagged "Minor correction" (`lib/reviewModel.ts` `ReviewClassFlags.minorCorrection`, edited on Admin → Request forms; no migration). Its reviewer requirement is the class's own: its "Requires engineering" flag (raised at triage) and the notify-only routing slots limited to it (`TIER-3`).
+- On a request OF such a class, "Approve with Minor Correction" is named as taken under the class before the click — the request page says `minorCorrectionClassNote` beside its buttons (`data-testid="minor-correction-class"`, only when the action is offered), and the workflow route adds the same note to the action's description (`withMinorCorrectionClass`, `route.ts:624`) — and the audit row records `minorCorrectionClass` beside `declaredClass` (`route.ts:1607`). Nothing is enabled, disabled or removed: the engine's gate (DF-P6) still decides who may take it.
+- For no class, an unflagged class or no configuration the action list is the SAME array and the audit row is today's (no key) — pinned at the engine (`withMinorCorrectionClass` returns its input) and at the route.
+- The plan's limb "the button requires a request of such a class when the workspace flags any" is NOT built: on an unclassified or unflagged request it would take away a button a legitimate user has today, which ruling (3) forbids (`DEC-44 (DF-P18-review-model-page)` item 1).
+
+Tests: `lib/__tests__/dfRoundG_P18_reviewModelPage.test.ts` ("TIER-7 / TIER-6 — what a configured work class carries", incl. the REGRESSION identity pin); `lib/__tests__/dfRoundG_P18_reviewModelPageRoute.test.ts` ("TIER-7 (DF-P18)": the class named in the row; REGRESSION for no class / unflagged / no configuration); `lib/__tests__/dfRoundG_P18_reviewModelPageRender.test.ts` (the editor flag).
+
+**Done-when.**
+- ✓ (as amended by ruling) "A minor correction is a work class with its own reviewer requirement, not an unconditional button that bypasses whatever requirement applied" — where the workspace declares one, a minor correction is a work class with its own reviewer requirement, named on the approval and in the record; the button bypasses nothing anywhere (DF-P6: the requester is gated, everyone else's use on an engineering-required request is a recorded override). It is NOT a class for a request with no class or an unflagged class: there the button is today's governed button — DEC-90 ruling (3) for DF-P18, which the record's own text allowed ("— or an integrator ruling", the DF-P6 Partial's owner line).
+
+**Scope / residual.** None. No migration.
 
 ---
 
