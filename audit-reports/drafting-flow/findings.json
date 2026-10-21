@@ -17,16 +17,16 @@
     "audit-reports/drafting-flow/13-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 156,
+    "findings": 157,
     "gaps": 14,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 47,
       "MEDIUM": 67,
-      "LOW": 33
+      "LOW": 34
     },
     "by_status": {
-      "RESOLVED": 99,
+      "RESOLVED": 100,
       "RESOLVED (2026-10-13, DF-P4 — PASTE pending: `20261208`, after `20261195` and after the DF-P2 app deploy; until it is pasted a member's hand-written PostgREST insert can still choose `requester_name`)": 1,
       "RESOLVED (2026-10-13 — done-when 2's `CLOSED` reading ratified by the integrator at DF-P10's review fix pass 6: \"a closed row with no issued label answers cannot confirm\"; the forged-line residual below is owned by drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS)": 1,
       "OPEN": 36,
@@ -3613,6 +3613,35 @@
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
     },
     {
+      "id": "EDGE-20",
+      "title": "A renumbered request's old-folder files are recognised only through the restore's audit row, so a missing row, a departed restoring Admin (before `20261201`) or a second renumbering leaves them outside the request",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading the code at the DF-P17 fix pass (`lib/ticketFilePrefix.ts` `restoreRenumberingConfirmed`; `app/api/admin/restore/apply-table/route.ts:132` writes the `RESTORE_CHUNK` row after the rows land, and answers 500 when that write fails); pinned by `lib/__tests__/dfRoundG_P17_renumberedFilesRoutedWaiting.test.ts` (no audit row / an unstamped row by an inactive Admin → refused as today).",
+      "blast_radius": "a request restored under a fresh number (`EDGE-5`, `TICKET_RENUMBERED`) whose restore's audit row is missing, or is unstamped (written before `20261201`) and whose restoring Admin has since left or been demoted, or sits past a full page of unstamped rows naming the same pair (truncated — DF-P17 final fix pass), or which was renumbered twice — its Final, Source and redline files under the old number's folder",
+      "related": [
+        "EDGE-19",
+        "EDGE-5",
+        "ALOG-7",
+        "SM-5"
+      ],
+      "locations": [
+        "lib/ticketFilePrefix.ts",
+        "app/api/tickets/workflow-action/route.ts",
+        "app/api/tickets/copy/route.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "An Admin restores a backup before 20261201 is pasted; request B is renumbered from KE-…-0007 to …-0123. Months later that Admin leaves (orgmembers.status = 'removed'). B's drafter resubmitting B's listed Final gets 400 \"That file is not stored under this request\"; the copy route answers 409 and print takes the browser path — as before DF-P17, never wider.",
+      "area": "drafting-flow",
+      "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
+    },
+    {
       "id": "EVID-13",
       "title": "Workflow transitions mass-stamp read_at on other users' unread notifications, destroying the only 'who saw it' evidence and making the rows immediately purge-eligible",
       "severity": "LOW",
@@ -4145,7 +4174,7 @@
       "id": "ROUTE-15",
       "title": "On a routed review, \"waiting on\" and the no-actions explanation name the requester, while the roster panel on the same page names the actual slots",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by reading the branch head of `fleet/DF-P5-roster`; not exercised in a browser)",
       "blast_radius": "attention / wrong person shown",

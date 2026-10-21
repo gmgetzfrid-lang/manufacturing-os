@@ -835,6 +835,26 @@
      "sequencingNotes": [
       "Added by the integrator at the DF-P6 merge, 2026-10-21 (DEC-31): no package held an examination-data model. Run last in drafting-flow."
      ]
+    },
+    {
+     "name": "DF-P21 RENUMBERED FILES AFTER THE GUARD PASTES — a renumbered request's old-folder files are recognised by a stored fact the member cannot write, not only by the restore's audit row",
+     "findings": [
+      "drafting-flow EDGE-20 (opened at DF-P17, assigned at its merge, 2026-10-21, DEC-31): once ticket_update_guard (20261221 / 20261250) makes the history and metadata server-written, bind the original number to the request's own server-written restore marker (metadata.restore_renumbered) so a missing audit row, a departed restoring Admin or a second renumbering no longer leaves the old-folder files outside the request; try every matching restore line, not only the newest (the DF-P17 review's nit); a request never renumbered is checked exactly as today (pin)",
+      "drafting-flow EDGE-19 remainder (done-when 1 as worded) — closes with EDGE-20"
+     ],
+     "files": [
+      "lib/ticketFilePrefix.ts",
+      "app/api/tickets/** (the prefix checks only)",
+      "tests"
+     ],
+     "migrationsLikely": 0,
+     "dependsOn": [
+      "the user's paste of 20261221 and 20261250 (ticket_update_guard) — user-held",
+      "drafting-flow DF-P20 merged (serial on the ticket files)"
+     ],
+     "sequencingNotes": [
+      "Added by the integrator at the DF-P17 merge, 2026-10-21 (DEC-31). Waits on the guard pastes; until then the audit-row binding stands (fail-safe: today's answer)."
+     ]
     }
   ],
   "crossAreaFileOverlaps": [

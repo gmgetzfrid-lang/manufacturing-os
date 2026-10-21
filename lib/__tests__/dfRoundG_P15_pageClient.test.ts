@@ -285,7 +285,9 @@ describe("EVID-16 done-when 2 — the page's FileViewerModal is wired to the ser
     expect(modal).toContain("(previewStamped === null ? resolvedUrl : null) || (/^https?:\\/\\//i.test(file.url) ? file.url : await getSignedUrlForPath(file.url));");
   });
   it("the page hands the modal the facts the door reads", () => {
-    expect(page).toContain("copyContext={ticket ? { orgId: ticket.orgId, ticketNumber: ticket.ticketId, requesterId: ticket.requesterId, attachments: ticket.attachments } : null}");
+    // drafting-flow EDGE-19 (DF-P17): plus the history, from which the door
+    // reads a renumbered request's original number (lib/ticketFilePrefix.ts).
+    expect(page).toContain("copyContext={ticket ? { orgId: ticket.orgId, ticketNumber: ticket.ticketId, requesterId: ticket.requesterId, attachments: ticket.attachments, history: ticket.history } : null}");
   });
 });
 

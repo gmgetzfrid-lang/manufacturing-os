@@ -9,7 +9,10 @@
 //
 //   * Which path a file takes (ticketFileCopyPath): the route issues a file
 //     the ticket names ONCE by a well-formed id, stored under the ticket's
-//     own prefix (orgs/<org>/tickets/<number>/) or at the requester's staged
+//     own prefix (orgs/<org>/tickets/<number>/), under its ORIGINAL number's
+//     folder when the restore renumbered it (drafting-flow EDGE-19, DF-P17:
+//     a listed file, the number read from the restore's history line —
+//     lib/ticketFilePrefix.ts), or at the requester's staged
 //     key — the route's own rule, mirrored here so the page never sends it a
 //     file it will refuse by construction. Anything else keeps the page's
 //     BROWSER path (stamped and recorded from the tab, as before DF-P15), and
@@ -81,6 +84,7 @@ import type { TicketAttachment } from "@/types/schema";
 import { TICKET_ATTACHMENT_ID_RE } from "@/lib/verifyTicketVerdict";
 import { isStagedKeyOf } from "@/lib/ticketCreate";
 import { isSafeStorageKey } from "@/lib/storageKey";
+import { ticketFolder, underFolder, restoredFromFolder } from "@/lib/ticketFilePrefix";
 
 export type TicketCopyRequestChannel = "print" | "download" | "view";
 
@@ -122,6 +126,11 @@ export interface TicketCopyContext {
   requesterId?: string | null;
   /** Every file the ticket lists (an id named twice is not addressable). */
   attachments?: ReadonlyArray<{ id?: string | null } | null | undefined> | null;
+  /** drafting-flow EDGE-19 (DF-P17): the ticket's history — a request the
+   *  restore renumbered keeps its files under its ORIGINAL number's folder,
+   *  read from the restore's own history line (lib/ticketFilePrefix.ts
+   *  restoredFromFolder). Absent: the request's own number's folder only. */
+  history?: unknown;
 }
 
 /** Which path this file's copies take — the route's own door, mirrored. */
@@ -135,10 +144,16 @@ export function ticketFileCopyPath(file: Pick<TicketAttachment, "id" | "url">, c
   }
   const org = ctx.orgId ?? "";
   const number = ctx.ticketNumber ?? "";
-  const prefix = `orgs/${org}/tickets/${number}/`;
-  const underTicket = !!org && !!number && key.startsWith(prefix) && key.length > prefix.length;
+  const prefix = ticketFolder(org, number);
+  const underTicket = !!org && !!number && underFolder(key, prefix);
   const staged = !!org && !!ctx.requesterId && isStagedKeyOf(key, org, ctx.requesterId);
-  if (!key || !isSafeStorageKey(key) || !(underTicket || staged)) return { kind: "browser", reason: "outside_request" };
+  // EDGE-19 (DF-P17): a file this ticket lists (named once, above) under the
+  // original number's folder of a request the restore renumbered — the
+  // route's own rule, which confirms the number against the restore's audit
+  // row; a refusal there takes the browser path, as before.
+  const original = !!org && !!number && !underTicket && !staged ? restoredFromFolder({ orgId: org, ticketNumber: number, history: ctx.history }) : null;
+  const underOriginal = !!original && underFolder(key, original);
+  if (!key || !isSafeStorageKey(key) || !(underTicket || staged || underOriginal)) return { kind: "browser", reason: "outside_request" };
   return { kind: "server" };
 }
 

@@ -14,7 +14,10 @@
 //      answered as "not found" otherwise); an archived stub has no file;
 //   2. the file is THIS ticket's (one attachment with that id) and stored
 //      under the ticket's own prefix (orgs/<org>/tickets/<number>/ — what
-//      uploadTicketAttachment mints and the workflow route vets) or, for a
+//      uploadTicketAttachment mints and the workflow route vets; for a
+//      request the restore renumbered, also its ORIGINAL number's folder,
+//      confirmed by the restore's audit row — drafting-flow EDGE-19,
+//      lib/ticketFilePrefix.ts) or, for a
 //      file the requester attached at creation whose re-key under that
 //      prefix never ran (app/api/tickets/create/route.ts step 7: such files
 //      "stay at their staged keys (the row names them there)"), at the
@@ -99,6 +102,7 @@ import { ticketReadScope } from "@/lib/ticketReadScope";
 import { ticketCopyPlan, recordTicketCopy, type TicketCopyChannel } from "@/lib/ticketDeliverableCopy";
 import { TICKET_ATTACHMENT_ID_RE } from "@/lib/verifyTicketVerdict";
 import { isStagedKeyOf } from "@/lib/ticketCreate";
+import { ticketFolder, underFolder, restoredFromNumber, restoreRenumberingConfirmed } from "@/lib/ticketFilePrefix";
 import type { TicketAttachment } from "@/types/schema";
 
 export const runtime = "nodejs";
@@ -273,11 +277,27 @@ export async function POST(req: NextRequest) {
   if (/^https?:\/\//i.test(key)) {
     return json({ error: "legacy_file", message: "This file was recorded before files were stored by path, so the server cannot issue a copy of it. Ask Document Control to re-attach it." }, 409);
   }
-  const prefix = `orgs/${t.org_id}/tickets/${t.ticket_id ?? ""}/`;
-  const underTicket = key.startsWith(prefix) && key.length > prefix.length;
+  const prefix = ticketFolder(t.org_id, t.ticket_id ?? "");
+  const underTicket = underFolder(key, prefix);
   // A creation-time file whose re-key never ran stays at the requester's staged key.
   const staged = !!t.requester_id && isStagedKeyOf(key, t.org_id, t.requester_id);
-  if (!key || !t.ticket_id || !isSafeStorageKey(key) || !(underTicket || staged)) {
+  // drafting-flow EDGE-19 (DF-P17, DEC-90): a request the restore brought
+  // back under a fresh number keeps its files under its ORIGINAL number's
+  // folder (never moved). This file is listed on the request (above), so it
+  // is admitted there when the restore's own history line names that number
+  // AND the restore's audit row confirms it (lib/ticketFilePrefix.ts — the
+  // history is member-writable where ticket_update_guard is not pasted). A
+  // request with no such line is tested exactly as before, with no read.
+  let underOriginal = false;
+  if (key && t.ticket_id && isSafeStorageKey(key) && !underTicket && !staged) {
+    const from = restoredFromNumber({ ticketNumber: t.ticket_id, history: t.history });
+    if (from && underFolder(key, ticketFolder(t.org_id, from))) {
+      const confirmed = await restoreRenumberingConfirmed(supabaseAdmin, { orgId: t.org_id, ticketRowId: t.id, from, to: t.ticket_id });
+      if (confirmed === "unknown") return json({ error: "Couldn't confirm where this request's files are stored — try again in a moment" }, 503);
+      underOriginal = confirmed;
+    }
+  }
+  if (!key || !t.ticket_id || !isSafeStorageKey(key) || !(underTicket || staged || underOriginal)) {
     return json({ error: "That file is not stored under this request" }, 409);
   }
 

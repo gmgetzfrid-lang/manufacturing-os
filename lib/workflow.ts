@@ -374,6 +374,30 @@ export function slotAlternatesActive(
   return slot.timeoutDays !== null && Number.isFinite(opened) && now >= opened + slot.timeoutDays * DAY_MS;
 }
 
+/**
+ * DEC-37: the drafter / requester independence legs of a slot — the reason
+ * slotSignPlan blocks occupant `uid` of `slot` on leg `leg` ("drafter" or
+ * "requester") when separation of duties is active, or null (another leg, or
+ * `uid` is not that party). The one rule slotSignPlan and the waiting-on line
+ * (lib/ticketAttention.ts holdersFor, drafting-flow ROUTE-15) share. Pure.
+ */
+export function slotPartyLegReason(
+  slot: Pick<TicketReviewSlot, "label" | "kind">,
+  leg: string,
+  ticket: { requesterId?: string | null; assignedDrafterId?: string | null },
+  uid: string | null | undefined,
+): string | null {
+  if (!uid) return null;
+  const label = slot.label || slot.kind;
+  if (leg === "drafter" && uid === ticket.assignedDrafterId) {
+    return `Needs a second person: "${label}" must be independent of the drafter, and you are this deliverable's drafter (orgs of 3+).`;
+  }
+  if (leg === "requester" && uid === ticket.requesterId) {
+    return `Needs a second person: "${label}" must be independent of the requester, and you asked for this work (orgs of 3+).`;
+  }
+  return null;
+}
+
 export interface SlotSignPlan {
   /** The open blocking slots this actor's ONE sign-off satisfies now. */
   fillable: Array<{ slot: TicketReviewSlot; via: "primary" | "alternate" | "override" }>;
@@ -412,11 +436,9 @@ export function slotSignPlan(
     let reason: string | null = null;
     if (sodActive) {
       for (const k of slot.independentOf) {
-        if (k === "drafter" && uid === ticket.assignedDrafterId) {
-          reason = `Needs a second person: "${label}" must be independent of the drafter, and you are this deliverable's drafter (orgs of 3+).`;
-        } else if (k === "requester" && uid === ticket.requesterId) {
-          reason = `Needs a second person: "${label}" must be independent of the requester, and you asked for this work (orgs of 3+).`;
-        } else if (k !== "drafter" && k !== "requester" && fillsKind(k)) {
+        if (k === "drafter" || k === "requester") {
+          reason = slotPartyLegReason(slot, k, ticket, uid);
+        } else if (fillsKind(k)) {
           const other = roster.slots.find((s) => s.kind === k);
           reason = `Needs a second person: "${label}" must be independent of "${other?.label || k}", which you sign (orgs of 3+).`;
         }

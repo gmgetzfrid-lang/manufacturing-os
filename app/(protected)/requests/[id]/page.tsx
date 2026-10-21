@@ -19,7 +19,7 @@ import { flaggedRequestTypes } from '@/lib/requestTypes';
 // decisions (UI-1 / UI-4 / UI-7, EDGE-6 / ROUTE-8, SM-13, DCW-1 / DCW-7,
 // PROJ-9, LEAK-9, HAND-7 / HAND-3, FRIC-3 / FRIC-8, DCW-5).
 import { ticketStatusLabel, ticketUnitDisplay } from '@/lib/ticketStatusLabels';
-import { attentionLabel, holdersFor, waitingSince, waitedFor, explainNoActions } from '@/lib/ticketAttention';
+import { attentionLabel, holdersFor, waitingSince, waitedFor, explainNoActions, rosterHolderUids } from '@/lib/ticketAttention';
 import { drafterCandidates, NO_DRAFTER_CANDIDATES, missingRequiredFile, triagePayload, customCategorySections, projectRefOf, engineerCandidates, type DrafterCandidate } from '@/lib/ticketPage';
 import { reviewModelFieldsFromRow, engineerPickAvailable as pickAvailableFrom, engineeringOverrideOf, engineeringSignOffNotRequiredOf, ticketAsDeclarationChecked, type DeclarationCheck } from '@/lib/reviewModel';
 import { loadPickerMembers } from '@/lib/ticketPickerMembers';
@@ -1490,6 +1490,27 @@ export default function TicketDetailView() {
     return () => { alive = false; };
   }, [waitsOnQueue, ticketOrgId]);
 
+  // ROUTE-15 (DF-P17): a routed review waits on its open blocking slots'
+  // signers (lib/ticketAttention.ts holdersFor) — their names, read through
+  // RLS as the roster panel reads them. Unread (or a failed read): each is
+  // described by their slot, never the requester.
+  const [rosterNames, setRosterNames] = useState<Map<string, string> | null>(null);
+  const rosterUidsKey = ticket ? rosterHolderUids(ticket, { activeMemberCount }).join(',') : '';
+  useEffect(() => {
+    let alive = true;
+    const uids = rosterUidsKey ? rosterUidsKey.split(',') : [];
+    if (uids.length === 0 || !ticketOrgId) { setRosterNames(null); return; }
+    void (async () => {
+      const { data, error } = await supabase.from('org_members').select('uid, display_name, email').eq('org_id', ticketOrgId).in('uid', uids);
+      if (!alive) return;
+      if (error) { setRosterNames(null); return; }
+      setRosterNames(new Map(((data ?? []) as Array<{ uid: string; display_name?: string | null; email?: string | null }>)
+        .map((m) => [m.uid, (m.display_name ?? '').trim() || (m.email ?? '').split('@')[0] || ''] as [string, string])
+        .filter(([, n]) => !!n)));
+    })().catch(() => { if (alive) setRosterNames(null); });
+    return () => { alive = false; };
+  }, [rosterUidsKey, ticketOrgId]);
+
   // TIER-5 (DF-P5 fix pass 3): a routed ticket in review with NO roster
   // (reopened, or in review before the routing was set) is not approved on
   // the serial path — the engine renders those approvals disabled with the
@@ -2337,7 +2358,7 @@ export default function TicketDetailView() {
   // and whether the ball is in the viewer's court (the engine offers them a
   // live, non-optional action: the attention rule).
   const requesterRolesCtx = requesterRoles !== null && ticket.requesterId ? new Map([[ticket.requesterId, requesterRoles]]) : null;
-  const holders = holdersFor(ticket, { queueNames, requesterRoles });
+  const holders = holdersFor(ticket, { queueNames, requesterRoles, memberNames: rosterNames, activeMemberCount });
   const waitingLabel = attentionLabel(ticket.status, { hasDrafter: !!ticket.assignedDrafterId });
   const waited = waitedFor(waitingSince(ticket));
   const yourTurn = liveActions.some((a) => !a.optional && !a.disabledReason);
@@ -2493,7 +2514,7 @@ export default function TicketDetailView() {
         archived={!!ticket?.archivedAt}
         archiveId={ticket?.archiveId}
         liveTicket={ticket ? { status: ticket.status, deliverableRev: ticket.deliverableRev ?? null, history: ticket.history, revisionCount: ticket.revisionCount ?? null } : null}
-        copyContext={ticket ? { orgId: ticket.orgId, ticketNumber: ticket.ticketId, requesterId: ticket.requesterId, attachments: ticket.attachments } : null}
+        copyContext={ticket ? { orgId: ticket.orgId, ticketNumber: ticket.ticketId, requesterId: ticket.requesterId, attachments: ticket.attachments, history: ticket.history } : null}
         onApprove={(() => {
           // DF-P6 fix pass 5 (review, major): the viewer's plain green "Approve" offers only a plain
           // approval — an override of the engineering sign-off is taken from its own labelled button.
