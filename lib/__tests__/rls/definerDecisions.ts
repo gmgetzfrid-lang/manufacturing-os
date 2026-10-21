@@ -182,6 +182,7 @@ export const TRIGGER_FUNCTIONS: readonly string[] = [
   "enforce_document_review_control_change()",
   "enforce_document_version_key_guard()",
   "enforce_document_versions_pointer_rail()",
+  "enforce_email_delivery_record()", // 20261258 (EVID-9, notifications N18)
   "enforce_email_requeue_columns()",
   "enforce_hold_override_record_rail()", // 20261254 (REV-37, document-control P37)
   "enforce_intake_link_assignment()",
@@ -520,6 +521,7 @@ export const CALLABLE_DEFINERS: readonly DefinerDecision[] = [
     reason: "anon and PUBLIC revoked by 20261191_notif_roundG_kind_split.sql; authenticated keeps EXECUTE. It returns only notifications the caller sent (n.actor_user_id = auth.uid()), of two kinds, from a workspace where the caller is active, at most 30 days back; with no session, nothing. Named by the app: lib/sentNotices.ts.",
     evidence: ["AND EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = p_org AND m.uid = auth.uid() AND m.status = 'active')", "AND n.actor_user_id = auth.uid()"],
   },
+  { signature: "record_email_delivery(text,text,timestamp with time zone,text)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261258_notif_roundG_delivery_record.sql: REVOKE … FROM PUBLIC, anon, authenticated; GRANT … TO service_role); its body also refuses any caller with a session (auth.uid() IS NOT NULL → 42501). It writes the email provider's signed delivery / bounce report onto the email row its message id names (drafting-flow EVID-9, notifications N18). Named by the server code: app/api/webhooks/resend/route.ts." },
   { signature: "open_consent_window(uuid,uuid,text,uuid[],timestamp with time zone,timestamp with time zone,text,text,jsonb)", decision: "service-only", execute: { anon: false, authenticated: false, service_role: true }, reason: "EXECUTE for service_role only (20261255_df_roundG_consent_window.sql: REVOKE … FROM PUBLIC, anon, authenticated; GRANT … TO service_role); its body also refuses any caller with a session (auth.uid() IS NOT NULL → 42501). It writes a consent window's notification rows, their delivered events and the ticket's stamp in one transaction (DEC-38, drafting-flow DF-P7). Named by the server code: lib/consentWindowScan.ts." },
   {
     signature: "org_capability_allows(uuid,text,uuid)",
