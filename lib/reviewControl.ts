@@ -1021,7 +1021,13 @@ export async function finalizeReviewedRevision(input: {
   // else holds (the guard's door (b), ratified under DEC-90: a review stays
   // finishable). Their checkout stays open; they are told and the history
   // records it. Best-effort, after the point of no return: never blocks.
+  // DCK-18 (document-control P35): since 20261252 the database records the
+  // pass and tells the holder in the promote's own transaction and says so in
+  // its answer; the app then writes only what the database did not (no double
+  // row, no double notice). Before that paste (no report) and on the
+  // three-step path, the app writes both, exactly as since P33.
   await notePromoteOverCheckout({
+    db: atomic.outcome === "promoted" ? atomic.report : null,
     orgId: input.orgId, documentId: input.documentId, libraryId: (docRow.library_id as string) ?? "",
     holderId: (docRow.checked_out_by as string | null) ?? null,
     holderName: (docRow.checked_out_by_name as string | null) ?? null,
@@ -1123,11 +1129,21 @@ export async function notePromoteOverCheckout(p: {
   holderId: string | null; holderName: string | null;
   actorId: string | null; actorEmail: string | null;
   pendingId: string; previousVersionId: string | null; baseRev: string; draftLabel: string | null;
+  /** DCK-18 (P35): what finalize_reviewed_promote (20261252) reported it
+   *  wrote in the promote's own transaction; null when it reported nothing
+   *  (a database before 20261252, or the three-step path) — the app then
+   *  writes the notice and the record itself, as since P33. */
+  db?: PromoteReport | null;
 }): Promise<{ told: boolean }> {
   try {
+    // DCK-18: the database read the checkout inside the promote — nobody
+    // else held it then, so nothing passed a checkout; nothing to tell.
+    if (p.db && !p.db.overCheckout) return { told: false };
     let holderId = p.holderId;
     let holderName = p.holderName;
-    if (!holderId) return { told: false };
+    // (a checkout taken between the read before the promote and the promote
+    // itself is one the database saw: re-read it below)
+    if (!holderId && !p.db?.overCheckout) return { told: false };
     const { data: now, error: nowErr } = await supabase.from("documents")
       .select("checked_out_by, checked_out_by_name").eq("id", p.documentId).maybeSingle();
     if (!nowErr && now) {
@@ -1145,23 +1161,29 @@ export async function notePromoteOverCheckout(p: {
         text: `${who} published the reviewed Rev ${p.baseRev}${draft} while you have this checked out — your checkout stays open. The review's sign-offs were complete; check your work against Rev ${p.baseRev} before you publish.`,
       });
     } catch { /* best-effort: the notification below is the primary signal */ }
-    const { notify: notifyInApp } = await import("@/lib/inAppNotifications");
-    await notifyInApp({
-      orgId: p.orgId, userId: String(holderId), kind: "revision_published_over_checkout",
-      title: `Reviewed Rev ${p.baseRev} published while you're checked out`,
-      body: `${who} published the reviewed revision${draft}. Your checkout stays open — check your work against Rev ${p.baseRev} before you publish.`,
-      link: `/documents/${p.libraryId}?doc=${p.documentId}`, resourceType: "document", resourceId: p.documentId,
-      actorUserId: p.actorId ?? undefined, actorName: who,
-      metadata: { newVersionId: p.pendingId, newRev: p.baseRev, via: "review_promote" },
-    });
-    await logAuditAction({
-      action: "REVIEW_PROMOTED_OVER_CHECKOUT", resourceType: "document", resourceId: p.documentId,
-      orgId: p.orgId, userId: p.actorId ?? "", userEmail: p.actorEmail ?? undefined,
-      details: {
-        via: "review_promote", holderUserId: String(holderId), holderName: holderName ?? null,
-        versionId: p.pendingId, previousVersionId: p.previousVersionId, revisionLabel: p.baseRev,
-      },
-    });
+    // DCK-18: the notice and the record the database already wrote are not
+    // written twice; whichever it could not write, the app writes.
+    if (!p.db?.told) {
+      const { notify: notifyInApp } = await import("@/lib/inAppNotifications");
+      await notifyInApp({
+        orgId: p.orgId, userId: String(holderId), kind: "revision_published_over_checkout",
+        title: `Reviewed Rev ${p.baseRev} published while you're checked out`,
+        body: `${who} published the reviewed revision${draft}. Your checkout stays open — check your work against Rev ${p.baseRev} before you publish.`,
+        link: `/documents/${p.libraryId}?doc=${p.documentId}`, resourceType: "document", resourceId: p.documentId,
+        actorUserId: p.actorId ?? undefined, actorName: who,
+        metadata: { newVersionId: p.pendingId, newRev: p.baseRev, via: "review_promote" },
+      });
+    }
+    if (!p.db?.recorded) {
+      await logAuditAction({
+        action: "REVIEW_PROMOTED_OVER_CHECKOUT", resourceType: "document", resourceId: p.documentId,
+        orgId: p.orgId, userId: p.actorId ?? "", userEmail: p.actorEmail ?? undefined,
+        details: {
+          via: "review_promote", holderUserId: String(holderId), holderName: holderName ?? null,
+          versionId: p.pendingId, previousVersionId: p.previousVersionId, revisionLabel: p.baseRev,
+        },
+      });
+    }
     return { told: true };
   } catch (e) {
     console.warn("[reviewControl] telling the checkout holder about a reviewed promote failed:", (e as Error)?.message ?? e);
@@ -1169,16 +1191,37 @@ export async function notePromoteOverCheckout(p: {
   }
 }
 
+/** DCK-18 (document-control P35): what finalize_reviewed_promote (20261252)
+ *  wrote in the promote's own transaction, read from its answer when asked
+ *  (p_report_over_checkout): whether the promote passed a checkout someone
+ *  other than the actor held, and whether its record
+ *  (REVIEW_PROMOTED_OVER_CHECKOUT, via 'database') and the holder's notice
+ *  landed. */
+export type PromoteReport = { overCheckout: boolean; recorded: boolean; told: boolean };
+
+/** DCK-18: the reporting answers of finalize_reviewed_promote (20261252) —
+ *  'promoted_clear', or 'promoted_over_checkout' followed by '_recorded'
+ *  and / or '_told'. Anything else (the plain 'promoted' included) is not a
+ *  report: null. */
+export function readPromoteReport(data: unknown): PromoteReport | null {
+  if (data === "promoted_clear") return { overCheckout: false, recorded: false, told: false };
+  const m = typeof data === "string" ? /^promoted_over_checkout(_recorded)?(_told)?$/.exec(data) : null;
+  return m ? { overCheckout: true, recorded: !!m[1], told: !!m[2] } : null;
+}
+
 /** RG-12: what finalize_reviewed_promote (20261151) answered. `unavailable`:
  *  the database has no such function yet (PGRST202 / 42883) — the caller
  *  takes the three-step promote; `refused`: the call raised (the publish
  *  guard, a row-level refusal, a bookkeeping write that matched no row — all
- *  rolled back) or answered something unrecognised. */
+ *  rolled back) or answered something unrecognised. DCK-18 (P35): the call
+ *  asks for the report (p_report_over_checkout, 20261252); a database
+ *  before that paste has no such argument (PGRST202 / 42883), and the call
+ *  is made again exactly as before it — `report` is then null. */
 async function promoteReviewedDraftAtomically(p: {
   documentId: string; pendingId: string; previousVersionId: string | null; baseRev: string; actorId: string | null;
   forceHold?: boolean; overrideReason?: string | null;
-}): Promise<{ outcome: "promoted" | "no_match" | "unavailable" } | { outcome: "refused"; reason: string }> {
-  const { data, error } = await supabase.rpc("finalize_reviewed_promote", {
+}): Promise<{ outcome: "promoted"; report: PromoteReport | null } | { outcome: "no_match" | "unavailable" } | { outcome: "refused"; reason: string }> {
+  const args = {
     p_document_id: p.documentId,
     p_pending_id: p.pendingId,
     p_expected_current: p.previousVersionId,
@@ -1187,14 +1230,23 @@ async function promoteReviewedDraftAtomically(p: {
     // REV-20 (P14 final review): sent only with a force, so the call without
     // one is exactly the five named arguments it always was.
     ...(p.forceHold ? { p_force_hold: true, p_override_reason: p.overrideReason?.trim() || null } : {}),
-  });
+  };
+  const missing = (e: { code?: string | null; message?: string | null }) =>
+    e.code === "PGRST202" || e.code === "42883" || /could not find the function/i.test(e.message ?? "");
+  let { data, error } = await supabase.rpc("finalize_reviewed_promote", { ...args, p_report_over_checkout: true });
+  // DCK-18: before 20261252 there is no p_report_over_checkout — the same
+  // call without it, exactly as it always was (and, before 20261151, the
+  // same "no such function" again: the three-step promote).
+  if (error && missing(error)) ({ data, error } = await supabase.rpc("finalize_reviewed_promote", args));
   if (error) {
-    const code = (error as { code?: string | null }).code ?? "";
     const msg = error.message ?? "";
-    if (code === "PGRST202" || code === "42883" || /could not find the function/i.test(msg)) return { outcome: "unavailable" };
+    if (missing(error)) return { outcome: "unavailable" };
     return { outcome: "refused", reason: msg || "The publish was refused." };
   }
-  if (data === "promoted" || data === "no_match") return { outcome: data };
+  if (data === "no_match") return { outcome: data };
+  if (data === "promoted") return { outcome: "promoted", report: null };
+  const report = readPromoteReport(data);
+  if (report) return { outcome: "promoted", report };
   return { outcome: "refused", reason: `The publish could not be confirmed (the database answered ${JSON.stringify(data ?? null)}); reload the document to see whether the revision was published.` };
 }
 

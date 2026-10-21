@@ -229,6 +229,10 @@ describe("20261185 — the guard re-created from its NEWEST earlier body (found 
       "20261164_dc_roundF_reversal_restore.sql",
       "20261165_dc_roundF_stamped_put_back.sql",
       "20261192_dc_roundF_null_prior_status_put_back.sql",
+      // DCK-18 (P35): 20261252 re-creates 20261151's finalize_reviewed_promote (its newest body) — the
+      // flag set and cleared by the same two lines, byte for byte, around the same promote (pinned in
+      // dcRoundFPromoteTransaction.test.ts and dcRoundGDoorBRecordMigration.test.ts).
+      "20261252_dc_roundG_door_b_record.sql",
     ]);
     expect(stripComments(M).replace(/'(?:[^']|'')*'/g, "''")).not.toMatch(/set_config|SET LOCAL/);
   });

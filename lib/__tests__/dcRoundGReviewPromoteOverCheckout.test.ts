@@ -23,6 +23,10 @@ const st = vi.hoisted(() => ({
   notifyThrows: false,
   /** Runs inside the promote (e.g. the holder checks in meanwhile). */
   onPromote: null as null | (() => void),
+  /** DCK-18 (P35): when set, answers each finalize_reviewed_promote call by its arguments
+   *  (a database before 20261252 refuses the report flag). */
+  rpcBy: null as null | ((args: Record<string, unknown>) => { data: unknown; error: { code?: string; message: string } | null }),
+  rpcArgs: [] as Array<Record<string, unknown>>,
 }));
 
 function chain(table: string) {
@@ -61,14 +65,16 @@ function chain(table: string) {
 vi.mock("@/lib/supabase", () => ({
   supabase: {
     from: (t: string) => chain(t),
-    rpc: async (fn: string) => {
+    rpc: async (fn: string, args: Record<string, unknown> = {}) => {
       if (fn === "finalize_reviewed_promote") {
-        if (!st.rpcAnswer.error && st.rpcAnswer.data === "promoted") {
+        st.rpcArgs.push(args);
+        const answer = st.rpcBy ? st.rpcBy(args) : st.rpcAnswer;
+        if (!answer.error && typeof answer.data === "string" && answer.data.startsWith("promoted")) {
           const d = (st.rows.documents ?? [])[0];
           if (d) { d.current_version_id = d.pending_version_id; d.pending_version_id = null; }
           st.onPromote?.();
         }
-        return st.rpcAnswer;
+        return answer;
       }
       return { data: null, error: null };
     },
@@ -91,7 +97,7 @@ vi.mock("@/lib/effectiveDate", () => ({ applyEffectiveDate: vi.fn(async () => un
 vi.mock("@/lib/intents", () => ({ recordIntent: vi.fn(async () => undefined) }));
 vi.mock("@/lib/checklists", () => ({ sweepEvidenceForDocument: vi.fn(async () => ({ projects: 0 })) }));
 
-import { finalizeReviewedRevision, finalizeReasonMessage, finalizeLockRefusalHolder, isFinalizeHoldRefusal } from "@/lib/reviewControl";
+import { finalizeReviewedRevision, finalizeReasonMessage, finalizeLockRefusalHolder, isFinalizeHoldRefusal, readPromoteReport } from "@/lib/reviewControl";
 import { auditActionDef, isDestructiveAuditAction } from "@/lib/auditActions";
 import { summarizeAudit } from "@/lib/timeline";
 
@@ -117,6 +123,8 @@ beforeEach(() => {
   st.rpcAnswer = { data: "promoted", error: null };
   st.notifyThrows = false;
   st.onPromote = null;
+  st.rpcBy = null;
+  st.rpcArgs = [];
 });
 
 describe("DCK-15 — a reviewed promote over someone else's checkout tells the holder and records the pass", () => {
@@ -224,5 +232,99 @@ describe("DCK-15 — the lock leg's refusal, in words that fit the door", () => 
   it("the Intake tab answers its refused approve through finalizeReasonMessage (no copy of its own to drift)", () => {
     const panel = readFileSync(join(process.cwd(), "components", "projects", "IntakePanel.tsx"), "utf8");
     expect(panel).toContain("throw new Error(finalizeReasonMessage(res.reason));");
+  });
+});
+
+describe("DCK-18 (P35) — the database records the pass and tells the holder; the app writes only what it did not", () => {
+  it("the app asks for the report (p_report_over_checkout) on every finalize", async () => {
+    await fin();
+    expect(st.rpcArgs[0]).toMatchObject({ p_document_id: "d1", p_pending_id: "v2", p_expected_current: "v1", p_base_rev: "2", p_actor: "ctl1", p_report_over_checkout: true });
+  });
+
+  it("both written by the database ('promoted_over_checkout_recorded_told'): no second notice, no second record — the holder's thread note (which the database does not write) is still posted, and the publish lands as before", async () => {
+    st.rpcAnswer = { data: "promoted_over_checkout_recorded_told", error: null };
+    expect(await fin()).toEqual({ published: true });
+    expect(st.notices).toEqual([]);
+    expect(passes()).toEqual([]);
+    expect(st.threads).toHaveLength(1);
+    expect(st.audits.map((a) => a.action)).toContain("REVISION_PUBLISHED_AFTER_REVIEW");
+  });
+
+  it("one of the two missing: the app writes exactly that one (a notice the database could not write; a record it could not write); neither: the app writes both, as since P33", async () => {
+    st.rpcAnswer = { data: "promoted_over_checkout_recorded", error: null };
+    expect(await fin()).toEqual({ published: true });
+    expect(st.notices).toHaveLength(1);
+    expect(st.notices[0]).toMatchObject({ userId: "drafter1", kind: "revision_published_over_checkout", metadata: { via: "review_promote" } });
+    expect(passes()).toEqual([]);
+
+    seed(); st.notices = []; st.audits = []; st.threads = [];
+    st.rpcAnswer = { data: "promoted_over_checkout_told", error: null };
+    expect(await fin()).toEqual({ published: true });
+    expect(st.notices).toEqual([]);
+    expect(passes()).toHaveLength(1);
+    expect(passes()[0].details).toMatchObject({ via: "review_promote", holderUserId: "drafter1" });
+
+    seed(); st.notices = []; st.audits = []; st.threads = [];
+    st.rpcAnswer = { data: "promoted_over_checkout", error: null };
+    expect(await fin()).toEqual({ published: true });
+    expect(st.notices).toHaveLength(1);
+    expect(passes()).toHaveLength(1);
+    expect(st.threads).toHaveLength(1);
+  });
+
+  it("'promoted_clear' — the database read the checkout in the promote and nobody else held it: nothing is told or recorded, even if the app's earlier read named a holder", async () => {
+    st.rpcAnswer = { data: "promoted_clear", error: null };
+    expect(await fin()).toEqual({ published: true });
+    expect(st.notices).toEqual([]);
+    expect(st.threads).toEqual([]);
+    expect(passes()).toEqual([]);
+  });
+
+  it("a checkout the database saw but the app's earlier read did not (taken between the read and the promote): the app re-reads the holder and writes what the database did not", async () => {
+    seed(null);
+    st.onPromote = () => { const d = st.rows.documents[0]; d.checked_out_by = "drafter2"; d.checked_out_by_name = "Dee Drafter"; };
+    st.rpcAnswer = { data: "promoted_over_checkout_told", error: null };
+    expect(await fin()).toEqual({ published: true });
+    expect(st.notices).toEqual([]);
+    expect(passes()).toHaveLength(1);
+    expect(passes()[0].details).toMatchObject({ holderUserId: "drafter2", holderName: "Dee Drafter" });
+  });
+
+  it("REGRESSION — before 20261252 (the report flag unknown: PGRST202 / 42883): the call is made again without it, exactly as before, and the app tells and records as since P33", async () => {
+    for (const code of ["PGRST202", "42883"]) {
+      seed(); st.notices = []; st.audits = []; st.threads = []; st.rpcArgs = [];
+      st.rpcBy = (args) => ("p_report_over_checkout" in args
+        ? { data: null, error: { code, message: "Could not find the function public.finalize_reviewed_promote(p_actor, p_base_rev, p_document_id, p_expected_current, p_pending_id, p_report_over_checkout) in the schema cache" } }
+        : { data: "promoted", error: null });
+      expect(await fin()).toEqual({ published: true });
+      expect(st.rpcArgs).toHaveLength(2);
+      expect(Object.keys(st.rpcArgs[1]).sort()).toEqual(["p_actor", "p_base_rev", "p_document_id", "p_expected_current", "p_pending_id"]);
+      expect(st.notices).toHaveLength(1);
+      expect(passes()).toHaveLength(1);
+      expect(st.threads).toHaveLength(1);
+    }
+  });
+
+  it("an app before P35 after the paste (a plain 'promoted' — no report): the app writes both, as it always did (the deploy order is stated: app with or before the paste)", async () => {
+    st.rpcAnswer = { data: "promoted", error: null };
+    expect(await fin()).toEqual({ published: true });
+    expect(st.notices).toHaveLength(1);
+    expect(passes()).toHaveLength(1);
+  });
+
+  it("readPromoteReport: the five reporting answers of 20261252 (read from the migration), nothing else — the plain 'promoted' is no report, and an unknown answer is never read as published", async () => {
+    const sql = readFileSync(join(process.cwd(), "supabase", "migrations", "20261252_dc_roundG_door_b_record.sql"), "utf8");
+    expect(sql).toContain("RETURN CASE WHEN NOT v_over THEN 'promoted_clear'");
+    expect(sql).toContain("ELSE 'promoted_over_checkout'\n                     || CASE WHEN v_recorded THEN '_recorded' ELSE '' END\n                     || CASE WHEN v_told THEN '_told' ELSE '' END");
+    expect(readPromoteReport("promoted_clear")).toEqual({ overCheckout: false, recorded: false, told: false });
+    expect(readPromoteReport("promoted_over_checkout")).toEqual({ overCheckout: true, recorded: false, told: false });
+    expect(readPromoteReport("promoted_over_checkout_recorded")).toEqual({ overCheckout: true, recorded: true, told: false });
+    expect(readPromoteReport("promoted_over_checkout_told")).toEqual({ overCheckout: true, recorded: false, told: true });
+    expect(readPromoteReport("promoted_over_checkout_recorded_told")).toEqual({ overCheckout: true, recorded: true, told: true });
+    for (const x of ["promoted", "no_match", "promoted_over_checkout_told_recorded", "promoted_over", null, 1]) expect(readPromoteReport(x)).toBeNull();
+    st.rpcAnswer = { data: "promoted_over_checkout_told_recorded", error: null };
+    const r = await fin();
+    expect(r.published).toBe(false);
+    expect(r.reason).toMatch(/could not be confirmed/);
   });
 });

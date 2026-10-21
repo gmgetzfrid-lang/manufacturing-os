@@ -241,7 +241,8 @@ describe("20261165 — put_back_retired_issue, the stamped put-back's recorded d
       .split("current_setting(''app.publish_hold_override'', true)").join("");
     const setters = files.filter((f) => /publish_hold_override/.test(withoutFlagReads(stripComments(mig(f)))));
     // REV-29 (P25): and 20261192, which re-creates both doors (pinned in dcRoundFNullPriorStatusMigration.test.ts).
-    expect(setters).toEqual(["20261151_dc_roundF_promote_transaction_and_hold_override.sql", "20261164_dc_roundF_reversal_restore.sql", FILE, "20261192_dc_roundF_null_prior_status_put_back.sql"]);
+    // DCK-18 (P35): and 20261252, which re-creates 20261151's finalize_reviewed_promote (pinned in dcRoundFPromoteTransaction.test.ts).
+    expect(setters).toEqual(["20261151_dc_roundF_promote_transaction_and_hold_override.sql", "20261164_dc_roundF_reversal_restore.sql", FILE, "20261192_dc_roundF_null_prior_status_put_back.sql", "20261252_dc_roundG_door_b_record.sql"]);
     expect(withoutFlagReads(stripComments(G.next))).not.toMatch(/publish_hold_override/);
     expect(stripComments(G.next)).not.toMatch(/set_config/);
     const outsidePutBack = withoutFlagReads(stripComments(M).replace(stripComments(P), ""));

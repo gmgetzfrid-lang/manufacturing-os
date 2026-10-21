@@ -191,7 +191,21 @@ describe("20261151 — the guard and publish_revision re-created from their NEWE
     // REV-29 (P25): and 20261192, which re-creates those two doors (the flag set on exactly the
     // conditions each had) — pinned in dcRoundFNullPriorStatusMigration.test.ts.
     const NULL_PUT_BACK_DOORS = "20261192_dc_roundF_null_prior_status_put_back.sql";
-    for (const f of files.filter((x) => x !== FILE && x !== RESTORE_DOOR && x !== PUT_BACK_DOOR && x !== NULL_PUT_BACK_DOORS)) expect(withoutFlagReads(stripComments(mig(f))), f).not.toMatch(/publish_hold_override/);
+    // DCK-18 (P35): and 20261252, which re-creates THIS file's finalize_reviewed_promote (its newest body) —
+    // its only mentions of the flag are this body's own set / clear, kept byte for byte around the same promote
+    // (the whole body is lineDiff-pinned in dcRoundGDoorBRecordMigration.test.ts).
+    const DOOR_B_RECORD = "20261252_dc_roundG_door_b_record.sql";
+    {
+      const f = between(mig(DOOR_B_RECORD), "CREATE OR REPLACE FUNCTION finalize_reviewed_promote(", "\n$$;");
+      // two in the body (the set and the clear) and one in the file's own prosrc probe that reads them back
+      expect(f.split("publish_hold_override").length - 1).toBe(2);
+      const outside = stripComments(mig(DOOR_B_RECORD).replace(f, "")).split("\n").filter((l) => l.includes("publish_hold_override"));
+      expect(outside).toHaveLength(1);
+      expect(outside[0]).toMatch(/^\s*\(SELECT prosrc LIKE '%.*PERFORM set_config\(''app\.publish_hold_override'', p_document_id::text, true\);%/);
+      expect(f).toContain("  IF v_hold_forced THEN\n    PERFORM set_config('app.publish_hold_override', p_document_id::text, true);\n  END IF;\n  UPDATE documents\n     SET current_version_id = p_pending_id,");
+      expect(f).toContain("  GET DIAGNOSTICS v_n = ROW_COUNT;\n  IF v_hold_forced THEN\n    PERFORM set_config('app.publish_hold_override', '', true);\n  END IF;\n  IF v_n = 0 THEN\n    RETURN 'no_match';");
+    }
+    for (const f of files.filter((x) => x !== FILE && x !== RESTORE_DOOR && x !== PUT_BACK_DOOR && x !== NULL_PUT_BACK_DOORS && x !== DOOR_B_RECORD)) expect(withoutFlagReads(stripComments(mig(f))), f).not.toMatch(/publish_hold_override/);
     expect(withoutFlagReads("SET LOCAL app.publish_hold_override = p_doc::text;")).toMatch(/publish_hold_override/);
   });
 
@@ -439,9 +453,11 @@ describe("RG-12 — finalizeReviewedRevision promotes through finalize_reviewed_
   it("promoted: the RPC is called with the compare-and-set and the base label; none of the three separate writes is issued; the rest of the publish runs (standby rows voided, the record, the pipeline)", async () => {
     const r = await fin();
     expect(r).toEqual({ published: true });
+    // DCK-18 (P35): the call asks for the report (p_report_over_checkout, 20261252); a plain 'promoted' is
+    // no report, and nothing else is sent
     expect(st.rpcCalls.filter((c) => c.fn === "finalize_reviewed_promote")).toEqual([{
       fn: "finalize_reviewed_promote",
-      args: { p_document_id: "d1", p_pending_id: "v2", p_expected_current: "v1", p_base_rev: "2", p_actor: "ctl1" },
+      args: { p_document_id: "d1", p_pending_id: "v2", p_expected_current: "v1", p_base_rev: "2", p_actor: "ctl1", p_report_over_checkout: true },
     }]);
     expect(legacyWrites()).toEqual([]);
     expect(st.writes.some((w) => w.table === "document_review_signoffs" && (w.payload as Row).status === "void")).toBe(true);
@@ -511,19 +527,39 @@ describe("RG-12 — finalizeReviewedRevision promotes through finalize_reviewed_
     expect(src).toContain("await appAlert({ tone: \"danger\", message: finalizeReasonMessage(res.reason) });");
   });
 
-  it("P14 final review — a controller's force rides the call (p_force_hold, the reason trimmed or null); without it the call is exactly the five named arguments", async () => {
+  it("P14 final review — a controller's force rides the call (p_force_hold, the reason trimmed or null); without it the call is exactly the five named arguments (and, since P35, the report flag)", async () => {
     const forced = (overrideReason?: string | null) => finalizeReviewedRevision({ orgId: "o1", documentId: "d1", actorId: "ctl1", actorName: "ctl@example.com", requireRosterComplete: false, forceHold: true, overrideReason });
     expect(await forced("  shutdown work pack issued under MOC-77  ")).toEqual({ published: true });
     expect(st.rpcCalls.filter((c) => c.fn === "finalize_reviewed_promote")[0].args).toEqual({
       p_document_id: "d1", p_pending_id: "v2", p_expected_current: "v1", p_base_rev: "2", p_actor: "ctl1",
-      p_force_hold: true, p_override_reason: "shutdown work pack issued under MOC-77",
+      p_force_hold: true, p_override_reason: "shutdown work pack issued under MOC-77", p_report_over_checkout: true,
     });
     seed(); st.rpcCalls = [];
     await forced("   ");
     expect(st.rpcCalls[0].args).toMatchObject({ p_force_hold: true, p_override_reason: null });
     seed(); st.rpcCalls = [];
     await finalizeReviewedRevision({ orgId: "o1", documentId: "d1", actorId: "ctl1", requireRosterComplete: false, forceHold: false, overrideReason: "ignored" });
-    expect(Object.keys(st.rpcCalls[0].args).sort()).toEqual(["p_actor", "p_base_rev", "p_document_id", "p_expected_current", "p_pending_id"]);
+    expect(Object.keys(st.rpcCalls[0].args).sort()).toEqual(["p_actor", "p_base_rev", "p_document_id", "p_expected_current", "p_pending_id", "p_report_over_checkout"]);
+  });
+
+  it("DCK-18 (P35) — before 20261252 the reporting call has no such argument (PGRST202 / 42883): the same call is made again WITHOUT it, exactly as before the paste (five named arguments, or seven with a force), and its plain 'promoted' publishes", async () => {
+    for (const error of [{ code: "PGRST202", message: "Could not find the function public.finalize_reviewed_promote(p_actor, p_base_rev, p_document_id, p_expected_current, p_pending_id, p_report_over_checkout) in the schema cache" }, { code: "42883", message: "function finalize_reviewed_promote(p_document_id => uuid, p_report_over_checkout => boolean) does not exist" }]) {
+      for (const forceHold of [false, true]) {
+        seed(); st.rpcCalls = []; st.writes = []; st.pipeline = 0;
+        // the first call is answered with the error; the retry with 'promoted'
+        let n = 0;
+        const calls: Array<Record<string, unknown>> = [];
+        st.onRpc = () => { n += 1; calls.push(st.rpcCalls[st.rpcCalls.length - 1].args); st.rpcAnswer = n === 1 ? { data: null, error } : { data: "promoted", error: null }; };
+        expect(await finalizeReviewedRevision({ orgId: "o1", documentId: "d1", actorId: "ctl1", requireRosterComplete: false, forceHold, overrideReason: forceHold ? "MOC-77" : undefined })).toEqual({ published: true });
+        expect(calls).toHaveLength(2);
+        expect(calls[0]).toHaveProperty("p_report_over_checkout", true);
+        expect(Object.keys(calls[1]).sort()).toEqual(forceHold
+          ? ["p_actor", "p_base_rev", "p_document_id", "p_expected_current", "p_force_hold", "p_override_reason", "p_pending_id"]
+          : ["p_actor", "p_base_rev", "p_document_id", "p_expected_current", "p_pending_id"]);
+        expect(legacyWrites()).toEqual([]);
+        expect(st.pipeline).toBe(1);
+      }
+    }
   });
 
   it("P14 final review — a database without the function takes the three checked writes even when forced: that path carries no force and writes nothing more", async () => {
