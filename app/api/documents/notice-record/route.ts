@@ -24,8 +24,13 @@
 //     scan's row — never from what the body claims. The body's `since` is
 //     the browser's clock and is ignored when later than the server's; the
 //     subject is the recipient and the details are `manual` alone (P39 fix
-//     pass). noticed_at is the bell row's created_at; the row id is derived
-//     from the bell row's id, so a repeat writes nothing twice.
+//     pass); the obligation row's own state must support the notice — an
+//     activation only of an activated alternate slot on the draft under
+//     review, a request or reminder only of an open obligation — and the
+//     row's actor_name is the verified caller (actor.email), never the bell
+//     row's free-text actor_name (P39 second fix pass). noticed_at is the
+//     bell row's created_at; the row id is derived from the bell row's id,
+//     so a repeat writes nothing twice.
 // The rows are written by noticeRecorder with the shared client bound to the
 // service role for this request (runWithServerClient): checked, retried once,
 // and deferred to one DOCUMENT_NOTICE_RECORD_DEFERRED audit row (the system

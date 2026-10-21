@@ -66,6 +66,12 @@
 //     the bell row's id (requestNoticeId), so a repeat records nothing twice.
 //     A notice whose bell row is not found (refused, dead-lettered) leaves no
 //     row — "once its notice landed";
+//   · P39 second fix pass: the obligation row's own state must support the
+//     notice (obligationSupports — an unsigned active sign-off on the draft
+//     under review, an activated alternate slot for an activation, a pending
+//     roster row, an unacknowledged distribution row), and a row's actor_name
+//     is the verified writer's (the route's caller), never the bell row's
+//     free-text actor_name;
 //   · in the BROWSER the record cannot be written by the member (20261257
 //     grants no client write), so the rows go through POST
 //     /api/documents/notice-record, which verifies the caller (an active
@@ -636,12 +642,33 @@ export function requestNoticeId(bellId: string): string {
   return `${id.slice(0, 14)}8${id.slice(15)}`;
 }
 
-/** Where each source's obligation row keeps its person, revision and label. */
-const OBLIGATION: Record<DocumentNoticeSource, { table: string; person: string; version: string; label: string }> = {
-  review_signoff: { table: "document_review_signoffs", person: "reviewer_user_id", version: "document_version_id", label: "revision_label" },
-  acknowledgment: { table: "document_acknowledgments", person: "assignee_user_id", version: "document_version_id", label: "revision_label" },
-  distribution_ack: { table: "distribution_acks", person: "recipient_user_id", version: "version_id", label: "rev_label" },
+/** Where each source's obligation row keeps its person, revision and label,
+ *  and the columns its state is read from (obligationSupports — P39 second
+ *  fix pass). */
+const OBLIGATION: Record<DocumentNoticeSource, { table: string; person: string; version: string; label: string; state: string }> = {
+  review_signoff: { table: "document_review_signoffs", person: "reviewer_user_id", version: "document_version_id", label: "revision_label", state: "status, activated, slot" },
+  acknowledgment: { table: "document_acknowledgments", person: "assignee_user_id", version: "document_version_id", label: "revision_label", state: "status" },
+  distribution_ack: { table: "distribution_acks", person: "recipient_user_id", version: "version_id", label: "rev_label", state: "acknowledged_at" },
 };
+
+/** Does the obligation row's own state support a notice of this kind (P39
+ *  second fix pass)? The record never says more than the obligation shows:
+ *  a review request (or reminder) only for an unsigned, active sign-off row
+ *  on the draft under review (`documents.pending_version_id` —
+ *  `pendingVersionId`); an alternate's activation only for such a row that
+ *  is an ALTERNATE slot already activated; a read-&-understood notice only
+ *  for a pending roster row; a distribution notice only for an
+ *  unacknowledged row. Pure. */
+export function obligationSupports(source: DocumentNoticeSource, kind: RequestNoticeKind, o: Record<string, unknown>, pendingVersionId: string | null): boolean {
+  if (source === "review_signoff") {
+    if (o.status !== "pending" || o.activated !== true) return false;
+    if (!pendingVersionId || o.document_version_id !== pendingVersionId) return false;
+    return kind === "alternate_activated" ? o.slot === "alternate" : true;
+  }
+  if (kind === "alternate_activated") return false;
+  if (source === "acknowledgment") return o.status === "pending";
+  return o.acknowledged_at == null;
+}
 
 type BellRow = { id?: unknown; user_id?: unknown; kind?: unknown; actor_user_id?: unknown; actor_name?: unknown; metadata?: unknown; created_at?: unknown };
 
@@ -665,8 +692,17 @@ type BellRow = { id?: unknown; user_id?: unknown; kind?: unknown; actor_user_id?
  * the subject is the recipient (no request path names another), and the
  * details are `manual` alone (on a reminder or an activation). The
  * obligation row (source_id, revision, label) is read here too: the one
- * named, or the person's row on the revision named. A notice with no
- * landed bell row, or no obligation row, is not recorded (counted in
+ * named, or the person's row on the revision named — and only a row whose
+ * own STATE supports the notice (obligationSupports; P39 second fix pass):
+ * a member can never put on the record an activation the sign-off row does
+ * not show, a request on a completed revision, or a chase of a confirmation
+ * already given; an alternate's activation already on the record under
+ * another row (the timeout scan's, or another member's) is not recorded
+ * again. The row's actor_name is the VERIFIED writer's name whenever there
+ * is a writer (the route's caller) — never the bell row's own actor_name,
+ * which its writer chose freely; only a server notice with no writer takes
+ * the bell row's (P39 second fix pass). A notice with no landed bell row,
+ * or no obligation row that supports it, is not recorded (counted in
  * `unmatched`). Throws on a refused read (the caller says it; nothing is
  * written).
  */
@@ -741,20 +777,32 @@ export async function verifiedRequestRows(
 
   const ob = OBLIGATION[input.source];
   const subjects = [...new Set(matched.map((m) => m.n.recipient))];
-  let q = client.from(ob.table).select(`id, ${ob.person}, ${ob.version}, ${ob.label}`)
+  let q = client.from(ob.table).select(`id, ${ob.person}, ${ob.version}, ${ob.label}, ${ob.state}`)
     .eq("org_id", input.orgId).eq("document_id", input.documentId).in(ob.person, subjects);
   if (input.versionId) q = q.eq(ob.version, input.versionId);
   const { data: obData, error: obError } = await q;
   if (obError) throw new Error(`the obligation rows could not be read (${obError.message ?? String(obError)})`);
   const obligations = (obData ?? []) as Array<Record<string, unknown>>;
 
+  // a review notice is only ever about the draft under review (P39 second fix pass)
+  let pendingVersionId: string | null = null;
+  if (input.source === "review_signoff") {
+    const { data: docRow, error: docError } = await client.from("documents").select("pending_version_id")
+      .eq("id", input.documentId).eq("org_id", input.orgId).maybeSingle();
+    if (docError) throw new Error(`the document could not be read (${docError.message ?? String(docError)})`);
+    const pv = (docRow as { pending_version_id?: unknown } | null)?.pending_version_id;
+    pendingVersionId = typeof pv === "string" && pv ? pv : null;
+  }
+
   const rows: DocumentNoticeRow[] = [];
+  const picked: Array<{ row: DocumentNoticeRow; bellId: string }> = [];
   for (const { n, bell, at } of matched) {
     const subject = n.recipient;
-    const mine = obligations.filter((o) => o[ob.person] === subject && (!n.sourceId || o.id === n.sourceId));
+    const mine = obligations.filter((o) => o[ob.person] === subject && (!n.sourceId || o.id === n.sourceId)
+      && obligationSupports(input.source, n.kind, o, pendingVersionId));
     if (mine.length !== 1 || !isText(mine[0].id)) { unmatched += 1; continue; }
     const o = mine[0];
-    rows.push({
+    picked.push({ bellId: String(bell.id), row: {
       id: requestNoticeId(String(bell.id)),
       org_id: input.orgId, document_id: input.documentId,
       version_id: typeof o[ob.version] === "string" ? (o[ob.version] as string) : null,
@@ -762,10 +810,40 @@ export async function verifiedRequestRows(
       source: input.source, source_id: o.id as string, kind: n.kind,
       recipient: n.recipient, subject_user_id: subject,
       notification_id: String(bell.id),
-      actor_name: (typeof bell.actor_name === "string" && bell.actor_name) || writer.name || (writer.uid ? null : "System"),
+      // the verified writer is the row's only "who" (P39 second fix pass): the
+      // bell row's actor_name is free text its writer chose, so it names the
+      // sender only for a server notice with no writer
+      actor_name: writer.uid
+        ? (writer.name || null)
+        : ((typeof bell.actor_name === "string" && bell.actor_name) || "System"),
       details: { ...requestNoticeDetails(n.kind, n.details), ...(writer.uid ? { byMember: true } : {}) },
       noticed_at: new Date(Math.min(at, nowMs)).toISOString(),
-    });
+    } });
+  }
+
+  // an alternate is activated once: an activation already on the record for
+  // that sign-off row under another row (the timeout scan's, or another
+  // member's) is never recorded a second time (P39 second fix pass)
+  const activations = picked.filter((p) => p.row.kind === "alternate_activated");
+  let activatedElsewhere = new Set<string>();
+  if (activations.length > 0) {
+    const { data: actData, error: actError } = await client.from("document_notice_events")
+      .select("id, source_id")
+      .eq("org_id", input.orgId).eq("source", "review_signoff").eq("kind", "alternate_activated")
+      .in("source_id", [...new Set(activations.map((p) => p.row.source_id as string))]);
+    if (actError && !isMissingNoticeSchema(actError)) {
+      throw new Error(`the record could not be read (${actError.message ?? String(actError)})`);
+    }
+    activatedElsewhere = new Set(((actError ? [] : actData ?? []) as Array<{ id?: unknown; source_id?: unknown }>)
+      .filter((r) => isText(r.source_id) && !activations.some((p) => p.row.id === r.id))
+      .map((r) => String(r.source_id)));
+  }
+  for (const p of picked) {
+    if (p.row.kind === "alternate_activated") {
+      if (activatedElsewhere.has(p.row.source_id as string)) { unmatched += 1; continue; }
+      activatedElsewhere.add(p.row.source_id as string);   // one activation per sign-off row, in this request too
+    }
+    rows.push(p.row);
   }
   return { rows, unmatched };
 }

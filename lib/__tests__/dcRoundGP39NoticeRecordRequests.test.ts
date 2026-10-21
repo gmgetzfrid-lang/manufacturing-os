@@ -41,6 +41,8 @@ const db = vi.hoisted(() => ({
   reads: {} as Record<string, number>,
   refuseReadOf: new Set<string>(),
   session: null as null | { access_token: string; user: { id: string } },
+  /** 20261160 pasted: a browser's bell row with no actor is stamped with its writer */
+  stampActor: null as null | string,
   seq: 0,
 }));
 
@@ -92,6 +94,7 @@ function chain(table: string) {
       }
       const at = new Date().toISOString();
       const t = (db.tables[table] ??= []);
+      if (table === "notifications" && db.stampActor) for (const r of rows) if (r.actor_user_id == null) r.actor_user_id = db.stampActor;
       for (const r of rows) {
         if (upsertIgnore && r.id != null && t.some((x) => x.id === r.id)) continue;
         // a stored row's id is a UUID, as the column's default makes it
@@ -229,6 +232,7 @@ beforeEach(() => {
   db.refuseReadOf = new Set();
   db.failBellFor = new Set();
   db.session = null;
+  db.stampActor = null;
   auth.actor = null;
   auth.status = 401;
   auth.unreadable = new Set();
@@ -307,7 +311,7 @@ describe("verifiedRequestRows — a request path's row is built from the bell ro
     expect(rows).toEqual([{
       id: requestNoticeId(String(b.id)), org_id: ORG, document_id: DOC, version_id: VER, revision_label: "C",
       source: "distribution_ack", source_id: U(900), kind: "delivered", recipient: ASG, subject_user_id: ASG,
-      notification_id: b.id, actor_name: "Cal", details: { byMember: true }, noticed_at: b.created_at,
+      notification_id: b.id, actor_name: "cal@x.test", details: { byMember: true }, noticed_at: b.created_at,
     }]);
     expect(rows[0].id).not.toBe(b.id);
     expect(rows[0].id.charAt(14)).toBe("8");
@@ -328,7 +332,7 @@ describe("verifiedRequestRows — a request path's row is built from the bell ro
 
   it("a distribution notice only takes an ackRequest bell row; a read-&-understood notice only one without it", async () => {
     db.tables.distribution_acks = [ackRow()];
-    db.tables.document_acknowledgments = [{ id: U(901), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: ASG }];
+    db.tables.document_acknowledgments = [{ id: U(901), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: ASG, status: "pending" }];
     const plain = bell({ metadata: null });
     const flagged = bell();
     db.tables.notifications = [plain, flagged];
@@ -430,6 +434,85 @@ describe("verifiedRequestRows — a request path's row is built from the bell ro
     expect(requestNoticeDetails("alternate_activated", { manual: true, cause: "x" })).toEqual({ manual: true });
     expect(requestNoticeDetails("reminded", { manual: "yes" })).toEqual({});
   });
+
+  // ── P39 second fix pass: the obligation's own state ──
+  it("a distribution or read-&-understood notice only for an open obligation: never a chase of a confirmation already given, a waived or a voided roster row", async () => {
+    const b = bell();
+    db.tables.notifications = [b];
+    db.tables.distribution_acks = [ackRow({ acknowledged_at: iso(T0 - DAY) })];
+    expect(await verifiedRequestRows(memoryClient, input([{ kind: "reminded", recipient: ASG, notificationId: b.id, details: { manual: true } }]), writer, T0)).toEqual({ rows: [], unmatched: 1 });
+    db.tables.distribution_acks = [ackRow({ acknowledged_at: null })];
+    expect((await verifiedRequestRows(memoryClient, input([{ kind: "reminded", recipient: ASG, notificationId: b.id, details: { manual: true } }]), writer, T0)).rows).toHaveLength(1);
+    const plain = bell({ metadata: null });
+    db.tables.notifications = [plain];
+    for (const status of ["acknowledged", "waived", "void"]) {
+      db.tables.document_acknowledgments = [{ id: U(901), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: ASG, status }];
+      expect(await verifiedRequestRows(memoryClient, input([{ kind: "reminded", recipient: ASG, notificationId: plain.id, details: { manual: true } }], { source: "acknowledgment" }), writer, T0), status).toEqual({ rows: [], unmatched: 1 });
+    }
+    // a pending row on the current revision is taken even when the person has a completed row on an older one
+    db.tables.document_acknowledgments = [
+      { id: U(903), org_id: ORG, document_id: DOC, document_version_id: U(3), revision_label: "B", assignee_user_id: ASG, status: "acknowledged" },
+      { id: U(901), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: ASG, status: "pending" },
+    ];
+    const r = await verifiedRequestRows(memoryClient, input([{ kind: "reminded", recipient: ASG, notificationId: plain.id, details: { manual: true } }], { source: "acknowledgment", versionId: null }), writer, T0);
+    expect(r.rows.map((x) => x.source_id)).toEqual([U(901)]);
+  });
+
+  it("a review notice only for an unsigned, active sign-off on the draft under review; an activation only of an ALTERNATE slot already activated — never once the record holds that activation under another row", async () => {
+    const REVIEW = { source: "review_signoff" as const, versionId: null };
+    const signoff = (over: Row = {}): Row => ({ id: U(700), org_id: ORG, document_id: DOC, document_version_id: VER, reviewer_user_id: ALT, revision_label: "2A", slot: "alternate", activated: true, status: "pending", ...over });
+    const act = bell({ user_id: ALT, kind: "review_alternate_activated", metadata: null });
+    const req = bell({ user_id: ALT, kind: "review_requested", metadata: null });
+    db.tables.notifications = [act, req];
+    const activation = [{ kind: "alternate_activated", recipient: ALT, sourceId: U(700), notificationId: act.id, details: { manual: true } }];
+    const request = [{ kind: "delivered", recipient: ALT, notificationId: req.id }];
+    const run = (notices: Array<Record<string, unknown>>) => verifiedRequestRows(memoryClient, input(notices, REVIEW), writer, T0);
+    // no draft under review (published, withdrawn) — nothing
+    db.tables.document_review_signoffs = [signoff()];
+    expect(await run(activation)).toEqual({ rows: [], unmatched: 1 });
+    db.tables.documents![0].pending_version_id = VER;
+    for (const [why, over] of [
+      ["not activated", { activated: false }], ["a primary slot", { slot: "primary" }], ["signed", { status: "signed" }],
+      ["on an older revision", { document_version_id: U(3) }], ["withdrawn", { status: "void" }],
+    ] as const) {
+      db.tables.document_review_signoffs = [signoff(over)];
+      expect(await run(activation), why).toEqual({ rows: [], unmatched: 1 });
+    }
+    // a request: an active primary (or an activated alternate) still unsigned on the draft
+    db.tables.document_review_signoffs = [signoff({ slot: "primary", activated: true })];
+    expect((await run(request)).rows).toHaveLength(1);
+    db.tables.document_review_signoffs = [signoff({ slot: "alternate", activated: false })];
+    expect(await run(request)).toEqual({ rows: [], unmatched: 1 });
+    // the activation the sign-off row shows: recorded once
+    db.tables.document_review_signoffs = [signoff()];
+    const ok = await run(activation);
+    expect(ok.rows).toEqual([expect.objectContaining({ kind: "alternate_activated", source_id: U(700), notification_id: act.id, actor_name: "cal@x.test" })]);
+    // already on the record under another row (the timeout scan's): never a second, manual one
+    db.tables.document_notice_events = [{ id: U(7100), org_id: ORG, document_id: DOC, source: "review_signoff", source_id: U(700), kind: "alternate_activated", recipient: ALT, notification_id: U(7101), noticed_at: iso(T0 - DAY) }];
+    expect(await run(activation)).toEqual({ rows: [], unmatched: 1 });
+    // a repeat of this request's own row is left to ON CONFLICT
+    db.tables.document_notice_events = [{ ...ok.rows[0] }];
+    expect((await run(activation)).rows).toHaveLength(1);
+    // a refused record read throws (nothing written); before 20261257 the check reads nothing
+    db.tables.document_notice_events = undefined;
+    expect((await run(activation)).rows).toHaveLength(1);
+    db.tables.document_notice_events = [];
+    db.refuseReadOf.add("documents");
+    await expect(run(activation)).rejects.toThrow(/document could not be read/);
+  });
+
+  it("the row's actor_name is the VERIFIED writer's, never the bell row's free text; only a server notice with no writer takes the bell row's", async () => {
+    db.tables.distribution_acks = [ackRow()];
+    const forged = bell({ actor_name: "Jane Smith (Document Control)" });
+    db.tables.notifications = [forged];
+    const viaRoute = await verifiedRequestRows(memoryClient, input([{ kind: "reminded", recipient: ASG, notificationId: forged.id, details: { manual: true } }]), writer, T0);
+    expect(viaRoute.rows[0].actor_name).toBe("cal@x.test");
+    const unnamed = await verifiedRequestRows(memoryClient, input([{ kind: "reminded", recipient: ASG, notificationId: forged.id }]), { uid: CTRL, name: null }, T0);
+    expect(unnamed.rows[0].actor_name).toBeNull();                         // a writer with no name kept: none, never the bell row's
+    const server = bell({ actor_user_id: null, actor_name: "Cal" });
+    db.tables.notifications = [server];
+    expect((await verifiedRequestRows(memoryClient, input([{ kind: "reminded", recipient: ASG, notificationId: server.id }]), { uid: null, name: null }, T0)).rows[0].actor_name).toBe("Cal");
+  });
 });
 
 // ── the request paths, on the server path (the cron, a service-role route) ──
@@ -459,6 +542,7 @@ describe("DIST-20 — every request and manual reminder is a row on the record o
   });
 
   it("openReviewRoster (the review request): one delivered row per primary whose bell row landed; the inactive alternate none", async () => {
+    db.tables.documents![0].pending_version_id = VER;     // the draft under review
     await openReviewRoster({
       orgId: ORG, documentId: DOC, libraryId: LIB, versionId: VER, revisionLabel: "2A", contentHash: "h",
       control: { mode: "require", reviewerIds: [REV], alternateIds: [ALT], alternateBacks: { [ALT]: `person:${REV}` } } as never,
@@ -474,6 +558,7 @@ describe("DIST-20 — every request and manual reminder is a row on the record o
   });
 
   it("the manual activateAlternate: an alternate_activated row (manual) naming its bell row; its audit row exactly as before (no cause); the scan's activation recorded once, by the scan", async () => {
+    db.tables.documents![0].pending_version_id = VER;     // the draft under review
     db.tables.document_review_signoffs = [{ id: U(700), org_id: ORG, document_id: DOC, document_version_id: VER, reviewer_user_id: ALT, revision_label: "2A", slot: "alternate", activated: false, status: "pending", assigned_at: daysBefore(9) }];
     const act = await activateAlternate({ orgId: ORG, documentId: DOC, libraryId: LIB, signoffId: U(700), actorId: CTRL });
     expect(act).toMatchObject({ reviewerUserId: ALT, noticeLanded: true, notificationId: bellsTo(ALT)[0].id });
@@ -627,7 +712,7 @@ describe("DIST-20 — in the browser the notices go to POST /api/documents/notic
 
   it("the route: a signed-in member who can read the document gets the rows the bell rows prove — a landed request is recorded, dated when it landed", async () => {
     auth.actor = { userId: CTRL, email: "cal@x.test" };
-    db.tables.document_acknowledgments = [{ id: U(901), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: ASG }];
+    db.tables.document_acknowledgments = [{ id: U(901), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: ASG, status: "pending" }];
     const b = seedBell();
     const res = await POST(req(body([{ kind: "delivered", recipient: ASG, notificationId: b.id }])));
     expect(res.status).toBe(201);
@@ -637,7 +722,7 @@ describe("DIST-20 — in the browser the notices go to POST /api/documents/notic
 
   it("the route records nothing the bell rows do not prove: a notice naming someone else's bell row, a bell row another member wrote, or one that never landed", async () => {
     auth.actor = { userId: CTRL, email: "cal@x.test" };
-    db.tables.document_acknowledgments = [{ id: U(901), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: ASG }];
+    db.tables.document_acknowledgments = [{ id: U(901), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: ASG, status: "pending" }];
     const theirs = seedBell({ actor_user_id: OTHER });
     const toSomeoneElse = seedBell({ user_id: OTHER });
     const res = await POST(req(body([
@@ -653,8 +738,8 @@ describe("DIST-20 — in the browser the notices go to POST /api/documents/notic
   it("P39 fix pass: through the route a member can neither re-record a scan's own bell row (no actor), nor dress up kind details or a colleague as the subject", async () => {
     auth.actor = { userId: ASG, email: "ash@x.test" };
     db.tables.document_acknowledgments = [
-      { id: U(901), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: ASG },
-      { id: U(902), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: OTHER },
+      { id: U(901), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: ASG, status: "pending" },
+      { id: U(902), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: OTHER, status: "pending" },
     ];
     const scanReminder = seedBell({ actor_user_id: null, actor_name: null });           // the read-&-understood scan's reminder to ASG
     const own = seedBell({ actor_user_id: ASG, user_id: ASG });
@@ -677,6 +762,68 @@ describe("DIST-20 — in the browser the notices go to POST /api/documents/notic
     expect(events()).toEqual([expect.objectContaining({ kind: "reminded", notification_id: b.id, details: { manual: true, byMember: true } })]);
   });
 
+  it("P39 second fix pass — REGRESSION (the review's scenario): a Viewer who plants a review_alternate_activated bell row to a reviewer gets NO alternate_activated row — not for a sign-off on an old revision, not for an alternate never activated", async () => {
+    auth.actor = { userId: OTHER, email: "viewer@x.test" };
+    db.tables.documents![0].pending_version_id = VER;
+    db.tables.document_review_signoffs = [
+      // REV's completed sign-off on an older revision
+      { id: U(710), org_id: ORG, document_id: DOC, document_version_id: U(3), reviewer_user_id: REV, revision_label: "1", slot: "primary", activated: true, status: "signed" },
+      // ALT, a standby alternate on the draft under review, never activated
+      { id: U(711), org_id: ORG, document_id: DOC, document_version_id: VER, reviewer_user_id: ALT, revision_label: "2A", slot: "alternate", activated: false, status: "pending" },
+    ];
+    const toRev = seedBell({ user_id: REV, kind: "review_alternate_activated", actor_user_id: OTHER, actor_name: "Document Control" });
+    const toAlt = seedBell({ user_id: ALT, kind: "review_alternate_activated", actor_user_id: OTHER, actor_name: "Document Control" });
+    const res = await POST(req(body([
+      { kind: "alternate_activated", recipient: REV, notificationId: toRev.id, details: { manual: true } },
+      { kind: "alternate_activated", recipient: ALT, notificationId: toAlt.id, details: { manual: true } },
+    ], { source: "review_signoff", versionId: null })));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ rows: 0, unmatched: 2, outcome: "none" });
+    expect(events()).toEqual([]);
+    expect(db.tables.document_review_signoffs.map((r) => r.activated)).toEqual([true, false]);   // nothing changed, nothing claimed
+  });
+
+  it("P39 second fix pass: through the route a forged bell actor_name never reaches the record — the row names the verified caller; a chase of a confirmation already given is refused", async () => {
+    auth.actor = { userId: ASG, email: "ash@x.test" };
+    db.tables.distribution_acks = [
+      { id: U(801), org_id: ORG, document_id: DOC, version_id: VER, rev_label: "C", recipient_user_id: REV, acknowledged_at: null },
+      { id: U(802), org_id: ORG, document_id: DOC, version_id: VER, rev_label: "C", recipient_user_id: OTHER, acknowledged_at: iso(T0 - DAY) },
+    ];
+    const forged = seedBell({ user_id: REV, actor_user_id: ASG, actor_name: "Jane Smith (Document Control)", metadata: { ackRequest: true } });
+    const done = seedBell({ user_id: OTHER, actor_user_id: ASG, metadata: { ackRequest: true } });
+    const res = await POST(req(body([
+      { kind: "reminded", recipient: REV, notificationId: forged.id, details: { manual: true } },
+      { kind: "reminded", recipient: OTHER, notificationId: done.id, details: { manual: true } },
+    ], { source: "distribution_ack" })));
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ rows: 1, unmatched: 1 });
+    expect(events()).toEqual([expect.objectContaining({ recipient: REV, actor_name: "ash@x.test", details: { manual: true, byMember: true } })]);
+    expect(JSON.stringify(events())).not.toContain("Jane Smith");
+  });
+
+  it("P39 second fix pass — the browser re-send of nudgeAcknowledgment, through the route: NOT recorded until 20261160 is pasted (its bell row names no actor, ruling R3 at the N17 merge), recorded once the rail stamps the writer", async () => {
+    vi.stubGlobal("window", {});
+    db.session = { access_token: "tok", user: { id: CTRL } };
+    auth.actor = { userId: CTRL, email: "cal@x.test" };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => (url === NOTICE_RECORD_ROUTE
+      ? POST(new NextRequest(`http://localhost${url}`, { method: "POST", headers: init.headers as Record<string, string>, body: String(init.body) }))
+      : new Response("{}", { status: 200 }))));
+    db.tables.document_acknowledgments = [{ id: U(901), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: ASG, status: "pending", notified_at: daysBefore(9) }];
+    // before 20261160: the bell row lands with no actor; the route takes only the caller's own rows
+    await nudgeAcknowledgment({ orgId: ORG, rosterId: U(901) });
+    expect(bellsTo(ASG, "ack_requested")).toHaveLength(1);
+    expect(bellsTo(ASG, "ack_requested")[0].actor_user_id ?? null).toBeNull();
+    expect(db.tables.document_acknowledgments[0].notified_at).toBe(iso(T0));   // the re-send itself exactly as before
+    expect(events()).toEqual([]);                                           // the stated gap (DIST-20 done-when 1, not held for this path)
+    // once 20261160 is pasted the rail stamps the writer as the actor: the same call is recorded, no code change
+    db.stampActor = CTRL;
+    await nudgeAcknowledgment({ orgId: ORG, rosterId: U(901) });
+    expect(events()).toEqual([expect.objectContaining({
+      kind: "reminded", source: "acknowledgment", source_id: U(901), recipient: ASG, actor_name: "cal@x.test",
+      notification_id: bellsTo(ASG, "ack_requested")[1].id, details: { manual: true, byMember: true },
+    })]);
+  });
+
   it("the route refuses: no session (401), a document the caller cannot read (403), a malformed or oversized body (400 / 413)", async () => {
     expect((await POST(req(body([{ kind: "delivered", recipient: ASG }])))).status).toBe(401);
     auth.actor = { userId: CTRL, email: "cal@x.test" };
@@ -693,7 +840,7 @@ describe("DIST-20 — in the browser the notices go to POST /api/documents/notic
 
   it("the route before 20261257: 200, outcome missing, nothing written or deferred (today's path)", async () => {
     auth.actor = { userId: CTRL, email: "cal@x.test" };
-    db.tables.document_acknowledgments = [{ id: U(901), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: ASG }];
+    db.tables.document_acknowledgments = [{ id: U(901), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: ASG, status: "pending" }];
     db.tables.document_notice_events = undefined;
     const b = seedBell();
     const res = await POST(req(body([{ kind: "delivered", recipient: ASG, notificationId: b.id }])));
@@ -823,6 +970,12 @@ describe("DIST-20 — pins", () => {
     expect(rc.indexOf('action: "REVIEW_ALTERNATE_ACTIVATED"')).toBeLessThan(rc.indexOf('notices: [{ kind: "alternate_activated"'));
     const da = read("lib/distributionAcks.ts");
     expect(da.indexOf("metadata: { ackRequest: true },\n  });\n  // DIST-20 (P39)")).toBeGreaterThan(0);
+  });
+  it("P39 second fix pass: nudgeAcknowledgment's bell row and its caller are unchanged (ruling R3 at the N17 merge: the re-send names no actor) — its record row waits for 20261160", () => {
+    expect(read("components/documents/AckSection.tsx")).toContain("await nudgeAcknowledgment({ orgId, rosterId });");
+    const ack = read("lib/acknowledgments.ts");
+    const at = ack.search(/\bfunction nudgeAcknowledgment\(/);
+    expect(ack.slice(at, ack.indexOf("\n}\n", at))).not.toMatch(/actorUserId/);
   });
   it("the manual activation's caller and audit row are exactly as before", () => {
     expect(read("components/documents/ReviewGateSection.tsx")).toContain("await activateAlternate({ orgId, documentId: doc.id, libraryId: doc.libraryId, signoffId, actorId: uid });");
