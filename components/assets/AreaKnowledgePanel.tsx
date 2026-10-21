@@ -4,7 +4,9 @@
 // page. Three jobs in one card:
 //
 //   1. ORDER OF OPERATIONS, live: file drawings → connect the area's
-//      knowledge → deep read (flows / equipment / plot) → link equipment
+//      knowledge → populate the area's equipment from its drawings (the
+//      Equipment Bridge's proposals waiting, the sweep launched in place —
+//      AREA-4) → deep read (flows / equipment / plot) → link equipment
 //      files. Each step shows real state and launches its tool — the user
 //      never has to remember the sequence. A step is done when its COVERAGE
 //      is (AREA-8): every flow drawing on the area's shelf (a PFD, P&ID or
@@ -39,6 +41,9 @@ import {
 } from "@/lib/knowledge";
 import { listProcessFlows } from "@/lib/processFlows";
 import { unitGraphHref } from "@/components/assets/UnitOpsPanels";
+import EquipmentSweepModal from "@/components/documents/EquipmentSweepModal";
+import { AreaWorkPanel } from "@/components/assets/AreaWorkPanel";
+import { countAreaEquipmentProposals, type AreaProposals } from "@/lib/areaEquipmentProposals";
 
 /** Bind the area server-side — the same controller bar as every other
  *  knowledge mutation, and a denied write is a loud error, never a silent
@@ -98,6 +103,11 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
   // counted", never "0 of N" (AREA-8).
   const [linksUnread, setLinksUnread] = useState(false);
   const [plotMarkCount, setPlotMarkCount] = useState<number | null>(null);
+  // AREA-4 (I-26): the Equipment Bridge's proposals waiting on the area's
+  // drawings. undefined: counting; null: could not be counted.
+  const [proposals, setProposals] = useState<AreaProposals | null | undefined>(undefined);
+  const [proposalsKey, setProposalsKey] = useState(0);
+  const [sweepLib, setSweepLib] = useState<{ id: string; name: string } | null>(null);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -113,6 +123,21 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
     } catch (e) { setError((e as Error).message); }
   }, [orgId, unit.code]);
   useEffect(() => { void loadStatus(); }, [loadStatus]);
+
+  // AREA-4: re-counted when the shelf or its sources change, and after the
+  // sweep closes or applies.
+  const boundId = status?.boundLibrary?.id ?? null;
+  const sourcesKey = (status?.sources ?? []).map((s) => `${s.type}:${s.sourceId}`).join(",");
+  useEffect(() => {
+    if (!boundId) { setProposals(undefined); return; }
+    let alive = true;
+    const sources = sourcesKey ? sourcesKey.split(",").map((k) => {
+      const [type, sourceId] = k.split(":");
+      return { type: type as "library" | "folder", sourceId };
+    }) : [];
+    void countAreaEquipmentProposals({ orgId, knowledgeLibraryId: boundId, sources }).then((p) => { if (alive) setProposals(p); });
+    return () => { alive = false; };
+  }, [orgId, boundId, sourcesKey, proposalsKey]);
 
   useEffect(() => {
     let alive = true;
@@ -232,6 +257,21 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
     : linkedAssetCount === null ? "loading"
     : areaTotal > 0 && linkedAssetCount >= areaTotal ? "done"
     : linkedAssetCount > 0 ? "partial" : "todo";
+
+  // AREA-4: the populate step — tags waiting is "in progress"; done only
+  // when EVERY drawing on the shelf has been read for equipment and none
+  // waits (a drawing still indexing, or skipped, has no ledger row yet — "no
+  // proposal waiting" alone is not done); some read is "in progress"; a
+  // count that failed is said.
+  const populateState: "done" | "partial" | "todo" | "loading" | "unknown" = status === null ? "loading"
+    : !status.boundLibrary ? "todo"
+    : proposals === undefined ? "loading"
+    : proposals === null ? "unknown"
+    : proposals.tags > 0 ? "partial"
+    : proposals.shelfDocuments > 0 && proposals.readDocuments >= proposals.shelfDocuments ? "done"
+    : proposals.readDocuments > 0 ? "partial" : "todo";
+  const allDrawingsRead = !!proposals && proposals.shelfDocuments > 0 && proposals.readDocuments >= proposals.shelfDocuments;
+  const firstSweep = proposals?.libraries[0] ?? null;
 
   const scrollToFlows = () => {
     document.getElementById("area-flow-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -386,7 +426,59 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
             ? <>Watching {status.sources.length} source{status.sources.length === 1 ? "" : "s"}. New files, revisions, and removals inside them track automatically.</>
             : <>One knowledge library per area keeps its answers pure — asking {unit.label} never surfaces another unit&apos;s drawings. The wizard finds this area&apos;s folders for you.</>}
         </Step>
-        <Step n={3} title="Deep read the drawings"
+        <Step n={3} title="Populate this area's equipment from its drawings"
+          state={populateState}
+          action={status?.canManage && firstSweep ? (
+            <button type="button" data-area-sweep="open" onClick={() => setSweepLib({ id: firstSweep.libraryId, name: firstSweep.libraryName })}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[10px] font-black text-[var(--color-text-muted)] hover:text-violet-700 hover:border-violet-400">
+              {(proposals?.tags ?? 0) > 0 ? "Review proposals" : "Open the sweep"} <ChevronRight className="w-3 h-3" />
+            </button>
+          ) : undefined}>
+          {!status?.boundLibrary ? (
+            <>Connect the area&apos;s knowledge first — the Equipment Bridge reads the tags off its drawings and proposes them for the equipment list.</>
+          ) : proposals === null ? (
+            <span className="block" data-area-proposals="unread">The equipment proposals waiting on this area&apos;s drawings could not be counted. Reload to try again.</span>
+          ) : proposals === undefined ? null : (
+            <>
+              <span className="block" data-area-proposals={proposals.tags}>
+                {proposals.tags > 0
+                  ? <><b>{proposals.tags}</b> equipment tag{proposals.tags === 1 ? "" : "s"} read off <b>{proposals.documents}</b> of this area&apos;s drawing{proposals.documents === 1 ? "" : "s"} {proposals.tags === 1 ? "is" : "are"} waiting for review.</>
+                  : allDrawingsRead
+                    ? <>No equipment proposals are waiting on this area&apos;s {proposals.shelfDocuments} drawing{proposals.shelfDocuments === 1 ? "" : "s"} — every one has been read for equipment.</>
+                    : proposals.readDocuments > 0
+                      ? <>No equipment proposals are waiting on the drawings read so far.</>
+                      : proposals.shelfDocuments === 0
+                        // I-26 review: an empty shelf is not "none read yet" — a P&ID
+                        // uploaded straight into a knowledge library is never on it.
+                        ? <span data-area-shelf-empty="1">This area&apos;s shelf holds no document-control drawings yet, so there is nothing here to read for equipment. For P&amp;IDs uploaded straight into a knowledge library, open the coverage report (&ldquo;Coverage — drawings vs. the equipment list&rdquo;) and use its &ldquo;Discover from knowledge uploads&rdquo;.</span>
+                        : <>None of this area&apos;s drawings has been read for equipment yet.</>}
+                {proposals.shelfDocuments > 0 && !allDrawingsRead && (
+                  <span data-area-drawings-read={proposals.readDocuments}>
+                    {" "}<b>{proposals.readDocuments}</b> of <b>{proposals.shelfDocuments}</b> drawing{proposals.shelfDocuments === 1 ? "" : "s"} read for equipment so far — the rest are still indexing, or have not been read yet.
+                  </span>
+                )}
+                {" "}Applying files each tag in the equipment registry and records which sheets carry it — no document column needs mapping first.
+              </span>
+              {proposals.libraries.length > 1 && (
+                <span className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
+                  {proposals.libraries.map((l) => (
+                    <span key={l.libraryId} data-area-sweep-library={l.libraryId}>
+                      {l.libraryName}{l.tags > 0 ? <> · <b>{l.tags}</b> waiting</> : null}
+                      {status.canManage && (
+                        <button type="button" onClick={() => setSweepLib({ id: l.libraryId, name: l.libraryName })}
+                          className="ml-1 font-bold text-violet-700 dark:text-violet-300 hover:underline">sweep</button>
+                      )}
+                    </span>
+                  ))}
+                </span>
+              )}
+              {!status.canManage && proposals.tags > 0 && (
+                <span className="block">Document Control or an Admin reviews them.</span>
+              )}
+            </>
+          )}
+        </Step>
+        <Step n={4} title="Deep read the drawings"
           state={flowCount === null ? "loading" : readState}
           action={
             <button type="button" onClick={scrollToFlows}
@@ -413,7 +505,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
             <Link href="/plot-plans" className="font-bold text-violet-700 dark:text-violet-300 hover:underline">Plot plans <ExternalLink className="w-2.5 h-2.5 inline" /></Link>
           </span>
         </Step>
-        <Step n={4} title="Link equipment files to assets"
+        <Step n={5} title="Link equipment files to assets"
           state={linkState}>
           {linksUnread ? (
             <span className="block">Equipment with a linked document could not be counted — the document links could not be read. Reload to try again.</span>
@@ -423,6 +515,22 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
           Open any asset below → <b>+ Link document</b> attaches its data sheets and files; drawings that print the tag link themselves.
         </Step>
       </div>
+
+      {/* WIRE-7 (I-26): holds, work packages and milestones in flight on
+          this area — listed through its documents and its equipment. */}
+      <AreaWorkPanel orgId={orgId} unitCode={unit.code} />
+
+      {/* AREA-4: the sweep, launched in place — the same dialog the library
+          page opens; the route keeps its own gates (writer tier, library ACL). */}
+      {sweepLib && (
+        <EquipmentSweepModal
+          orgId={orgId}
+          libraryId={sweepLib.id}
+          libraryName={sweepLib.name}
+          onClose={() => { setSweepLib(null); setProposalsKey((k) => k + 1); }}
+          onApplied={() => setProposalsKey((k) => k + 1)}
+        />
+      )}
 
       {wizardOpen && status && (
         <AreaKnowledgeWizard

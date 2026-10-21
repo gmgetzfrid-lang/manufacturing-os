@@ -26,7 +26,7 @@
   ],
   "totals": {
     "findings": 275,
-    "gaps": 15,
+    "gaps": 16,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 59,
@@ -34,8 +34,8 @@
       "LOW": 56
     },
     "by_status": {
-      "RESOLVED": 244,
-      "OPEN": 23,
+      "RESOLVED": 246,
+      "OPEN": 21,
       "RESOLVED (2026-10-14, by the integrator's ruling at the I-17 integrator fix pass — done-when 3 met as narrowed under DEC-90; PASTE pending: `20261128`, unchanged — until it is pasted the live registry keeps 20261045's overlays and DELETE stays with the writer tier)": 1,
       "REFUTED": 2,
       "WONTFIX": 3,
@@ -330,7 +330,7 @@
       "id": "AREA-4",
       "title": "Owner question 5, answered: a P&ID given to an area never populates that area's equipment — the Bridge aborts before creating a single asset unless a controller first maps a metadata column on the source library, from a modal the Operating Areas page cannot reach",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -7300,7 +7300,7 @@
       "id": "WIRE-8",
       "title": "Transmittal↔document and ticket↔document are unindexed JSONB scans, and the ticket link is written in two incompatible shapes",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -7565,6 +7565,17 @@
       "verdict": null,
       "actionable": true,
       "effort": "M",
+      "depends_on": [],
+      "related": [],
+      "report": "audit-reports/intelligence/90-gap-register.md"
+    },
+    {
+      "id": "GAP-316",
+      "title": "One view of how an asset came to be believed",
+      "kind": "gap",
+      "verdict": null,
+      "actionable": true,
+      "effort": null,
       "depends_on": [],
       "related": [],
       "report": "audit-reports/intelligence/90-gap-register.md"

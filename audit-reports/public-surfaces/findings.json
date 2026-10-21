@@ -8,21 +8,21 @@
     "audit-reports/public-surfaces/04-offline-pwa.md"
   ],
   "totals": {
-    "findings": 68,
+    "findings": 69,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 4,
       "HIGH": 13,
-      "MEDIUM": 21,
+      "MEDIUM": 22,
       "LOW": 30
     },
     "by_status": {
       "RESOLVED": 61,
       "WONTFIX": 1,
       "RESOLVED (2026-10-20, the integrator's ruling R3 at the DF-P12 merge, `DEC-90` — PASTE pending: `20261223` after `20261068`; until it is pasted a ticket copy is recorded without the ticket / file columns and the ticket arm answers \"unavailable\")": 1,
+      "OPEN": 4,
       "RESOLVED (2026-10-14, DF-P12 — PASTE pending: `20261223` after `20261068`; until it is pasted the ticket copy is recorded without the two columns and the ticket arm answers \"unavailable\")": 1,
-      "OPEN — limbs 1, 2 and 4 closed at the PS-P9 merge (limb 1 built for the two \"Print all\" packs and WONTFIX for single copies; limb 2 ruled); limb 3 (the cover's print id) and the settled-print void assigned to PS-P10 (below).": 1,
-      "OPEN": 3
+      "OPEN — limbs 1, 2 and 4 closed at the PS-P9 merge (limb 1 built for the two \"Print all\" packs and WONTFIX for single copies; limb 2 ruled); limb 3 (the cover's print id) built by public-surfaces Round G PS-P10, 2026-10-20, pending `20261240` (below) — Partial, pending the integrator's ruling on done-when 3 carve-outs (a) and (b) (owner: the integrator, DEC-31); it becomes RESOLVED on that confirmation. The settled-print void is intelligence `DACL-8` residual (c), built by the same package. *(PS-P10 fifth review fix pass: this line said RESOLVED with done-when 3 ✓ while two of its carve-outs said the criterion did not hold as written — against DEC-29.)*": 1
     }
   },
   "status_vocabulary": [
@@ -775,6 +775,31 @@
       "report": "audit-reports/public-surfaces/03-physical-bridge.md"
     },
     {
+      "id": "PHYS-20",
+      "title": "A recalled work-package pack's cover QR still answers from its snapshot — green when its revisions are current — and a recalled sheet's scan says its print was \"cancelled when it was made\"",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading the code on PS-P10's branch.",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/verify-package/route.ts:154",
+        "app/api/verify/route.ts:261",
+        "lib/verifyPresent.ts:126-129",
+        "components/documents/PackPrintHistory.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Document Control recalls a pack printed an hour ago because it went to the wrong crew. The crew scans the cover before starting: green. A worker who scans a sheet reads red with a sentence saying the print was never issued.",
+      "area": "public-surfaces",
+      "report": "audit-reports/public-surfaces/03-physical-bridge.md"
+    },
+    {
       "id": "SHR-6",
       "title": "\"never an in-review draft\" is enforced only on the fallback branch — the primary current_version_id path applies no review_state filter at all",
       "severity": "MEDIUM",
@@ -1403,7 +1428,7 @@
       "id": "PHYS-19",
       "title": "The per-print sheet token covers only packs printed through `lib/docPack.ts`: a single download, a markup download, the two other \"Print all\" packs, a share copy and a transmittal copy still carry the document UUID in their verify QR, and the token table has no retention and no link to the cover's print",
       "severity": "LOW",
-      "status": "OPEN — limbs 1, 2 and 4 closed at the PS-P9 merge (limb 1 built for the two \"Print all\" packs and WONTFIX for single copies; limb 2 ruled); limb 3 (the cover's print id) and the settled-print void assigned to PS-P10 (below).",
+      "status": "OPEN — limbs 1, 2 and 4 closed at the PS-P9 merge (limb 1 built for the two \"Print all\" packs and WONTFIX for single copies; limb 2 ruled); limb 3 (the cover's print id) built by public-surfaces Round G PS-P10, 2026-10-20, pending `20261240` (below) — Partial, pending the integrator's ruling on done-when 3 carve-outs (a) and (b) (owner: the integrator, DEC-31); it becomes RESOLVED on that confirmation. The settled-print void is intelligence `DACL-8` residual (c), built by the same package. *(PS-P10 fifth review fix pass: this line said RESOLVED with done-when 3 ✓ while two of its carve-outs said the criterion did not hold as written — against DEC-29.)*",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED by reading the code on PS-P9's branch.",
       "blast_radius": null,

@@ -171,12 +171,15 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
         showToast({
           type: "error",
           title: `Filed ${res.filed} of ${docs.length}`,
-          message: res.errors.slice(0, 3).join("; "),
+          // GAP-314 (intelligence I-26): a unit decode that did not run is
+          // said with the filing's result, never only logged.
+          message: [res.errors.slice(0, 3).join("; "), res.unitCodeNote].filter(Boolean).join(" "),
         });
       } else {
         showToast({
-          type: "success",
+          type: res.unitCodeNote ? "warning" : "success",
           title: `${res.filed} document${res.filed === 1 ? "" : "s"} filed into document control as Draft rev 0.`,
+          ...(res.unitCodeNote ? { message: res.unitCodeNote } : {}),
         });
       }
       onGenerated();

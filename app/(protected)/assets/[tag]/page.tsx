@@ -29,6 +29,7 @@ import { tagKey } from "@/lib/codebook";
 import { assetSignInHref, watchForNoSession, type NoSessionAnswer } from "@/lib/assetSignIn";
 import AliasPanel from "@/components/assets/AliasPanel";
 import MentionsPanel from "@/components/assets/MentionsPanel";
+import { ScheduledWorkPanel } from "@/components/assets/AreaWorkPanel";
 import { stateStyle, documentState } from "@/lib/stateColors";
 
 interface HubDoc {
@@ -513,6 +514,12 @@ export default function AssetHubPage() {
             the sentence attached. */}
         {asset?.id && activeOrgId && (
           <MentionsPanel orgId={activeOrgId} assetId={asset.id} tag={tag} />
+        )}
+
+        {/* WIRE-7 (I-26): the open milestones whose location names this
+            equipment — scheduled work, on its page. */}
+        {asset?.id && activeOrgId && (
+          <ScheduledWorkPanel orgId={activeOrgId} asset={{ id: asset.id, tag: asset.tag || tag }} />
         )}
 
         {/* What people actually call it — nicknames, old tags, vendor names */}

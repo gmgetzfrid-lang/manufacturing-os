@@ -117,12 +117,15 @@ describe("ILIFE-5 / IRLS-7 — deleting a controlled document removes its whole 
     expect(cascades("knowledge_page_entities", "document_id")).toBe(true);
     expect(cascades("entity_mentions", "knowledge_document_id")).toBe(true);
     expect(cascades("knowledge_line_traces", "document_id")).toBe(true);
+    // intelligence I-26 (GAP-307 acceptance 3, 20261235): a knowledge
+    // upload's own equipment relation goes with the upload.
+    expect(/CREATE TABLE IF NOT EXISTS knowledge_document_assets \([\s\S]*?knowledge_document_id\s+UUID NOT NULL REFERENCES knowledge_documents\(id\) ON DELETE CASCADE/.test(all)).toBe(true);
     // The one referrer that does not cascade is deliberate: a process flow
     // keeps its edge and loses only the pointer to the drawing it came from.
     expect(all).toMatch(/source_document_id UUID REFERENCES knowledge_documents\(id\) ON DELETE SET NULL/);
     // No other table references knowledge_documents.
     const referrers = [...all.matchAll(/REFERENCES knowledge_documents\(id\) ON DELETE (\w+)/g)].map((m) => m[1]);
-    expect(referrers.sort()).toEqual(["CASCADE", "CASCADE", "CASCADE", "CASCADE", "SET"]);
+    expect(referrers.sort()).toEqual(["CASCADE", "CASCADE", "CASCADE", "CASCADE", "CASCADE", "SET"]);
   });
 
   it("the verification SELECT checks the key and the whole cascade chain", () => {

@@ -17,10 +17,13 @@
 // workspace does not record).
 
 import { NextRequest, NextResponse } from "next/server";
-import { authorizeOrgRole } from "@/lib/serverAuth";
+import { authorizeAdminSurface } from "@/lib/adminGate";
 import { getStripe, getPriceIdForPlan, isStripeConfigured, customerIdempotencyKey, liveSubscriptionRefusal, type PlanKey } from "@/lib/stripe";
 
-const ADMIN_ROLES = ["Admin", "Manager"];
+// roles-and-permissions SURF-19 (stripe limb, admin-and-org Round G P5): the
+// billing surface's gate decides who may start a checkout or open the portal
+// — its `writes` set (lib/adminSurfaces.ts: Admin, Manager, by the full role
+// collection), the constant this route used to spell.
 
 interface CheckoutBody {
   orgId: string;
@@ -36,7 +39,7 @@ export async function POST(req: NextRequest) {
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
   const { orgId, plan } = body || {};
-  const auth = await authorizeOrgRole(req, orgId, ADMIN_ROLES);
+  const auth = await authorizeAdminSurface(req, orgId, "billing", "write");
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   if (!plan || (plan !== "starter" && plan !== "growth")) {
@@ -112,7 +115,9 @@ export async function POST(req: NextRequest) {
     org_id: orgId,
     user_id: auth.userId,
     user_email: auth.email,
-    user_role: auth.role,
+    // DEC-87 §3: the role the billing surface admitted them by (a Viewer
+    // headline holding Admin additively is recorded as the Admin it acted as).
+    user_role: auth.admittedRole,
     details: { plan, session_id: session.id },
   });
   // CHECKED: the session stands (the customer is on their way to Stripe);

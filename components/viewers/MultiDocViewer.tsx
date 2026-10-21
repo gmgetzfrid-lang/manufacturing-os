@@ -1442,7 +1442,7 @@ export default function MultiDocViewer({ docs, onClose, currentUserId, currentUs
         tagsBarOpen ? (
           <div className="absolute top-[3.4rem] left-1/2 -translate-x-1/2 z-40 max-w-[92vw] w-auto bg-slate-900/85 backdrop-blur border border-slate-700/80 rounded-xl shadow-2xl shadow-black/40 px-2.5 py-1.5 flex items-center gap-2">
             <div className="min-w-0">
-              <EquipmentTagsStrip metadata={activeEntry.doc.metadata as Record<string, unknown>} customColumns={customColumns} orgId={orgId} userId={currentUserId} canManage={false} variant="ribbon" />
+              <EquipmentTagsStrip metadata={activeEntry.doc.metadata as Record<string, unknown>} customColumns={customColumns} orgId={orgId} userId={currentUserId} canManage={false} variant="ribbon" documentId={activeEntry.doc.id ?? null} assetTags={activeEntry.doc.assetTags} />
             </div>
             <button onClick={() => setTagsBarOpen(false)} title="Hide tags for this sheet" className="shrink-0 p-1 rounded text-white/50 hover:text-white hover:bg-white/10"><X className="w-3.5 h-3.5" /></button>
           </div>

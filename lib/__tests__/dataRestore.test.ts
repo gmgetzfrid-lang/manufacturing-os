@@ -271,6 +271,9 @@ describe("FK order — every parent is restored before its child (census of supa
     // public-surfaces PS-P9 (20261237): a sheet token names the version it printed.
     expect(fk("print_sheet_tokens", "version_id")).toBe("document_versions");
     expect(fk("print_sheet_tokens", "document_id")).toBe("documents");
+    // intelligence I-26 (20261235): a knowledge upload's equipment relation.
+    expect(fk("knowledge_document_assets", "knowledge_document_id")).toBe("knowledge_documents");
+    expect(fk("knowledge_document_assets", "asset_id")).toBe("assets");
   });
 
   it("for EVERY foreign key between two tables RESTORE_TABLE_ORDER places, the parent comes first", () => {
@@ -300,6 +303,10 @@ describe("FK order — every parent is restored before its child (census of supa
     // documents and versions they name.
     before("documents", "print_sheet_tokens");
     before("document_versions", "print_sheet_tokens");
+    // I-26 (the integrator at its merge, DEC-90): the knowledge relation
+    // after the upload and the asset it names.
+    before("knowledge_documents", "knowledge_document_assets");
+    before("assets", "knowledge_document_assets");
   });
 
   it("orderTablesForRestore follows the order", () => {
