@@ -80,7 +80,7 @@ CREATE POLICY documents_delete_controllers ON documents
 ## PERS-2 · Client-side whole-array read-modify-write of tickets.comments, .history, .attachments and .watchers with no compare-and-set — the exact split-brain the server routes were built to prevent
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/[id]/page.tsx:967-978`, `app/(protected)/requests/[id]/page.tsx:1005-1014`, `app/(protected)/requests/[id]/page.tsx:1322-1328`, `app/api/tickets/comment/route.ts:202-216`, `supabase/migrations/20260726_ticket_comments.sql:1-18`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed exactly as described, including the stated motive: 20260726_ticket_comments.sql:3-12 says the JSONB read-modify-write is what post_ticket_comment was built to eliminate, yet three client handlers still do whole-array RMW on the same column family. A concurrent server-side comment append or workflow action is silently erased by the client's stale array.
@@ -127,6 +127,17 @@ app/api/tickets/comment/route.ts:202-211 —
 **Scope / residual.** Done-when 2's `lib/projects.ts` history push → DF-P8.
 
 *Assigned (2026-10-14, the integrator at the DF-P9 merge):* the remainder (`lib/projects.ts`'s browser `history` push) → drafting-flow **DF-P8 PROJECTS**, as recorded above.
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P8 PROJECTS. The remainder: `lib/projects.ts` `convertTicketToProject` no longer reads and rewrites `tickets.history` (the whole-array read-modify-write); the line is written by `/api/tickets/project-link` in its compare-and-set (`LEAK-4`).
+
+**Done-when.**
+- ✓ The three handlers route through CAS endpoints (as recorded).
+- ✓ No client code writes the comments / history / attachments / watchers arrays. Test: `dfRoundG_P8_projects.test.ts` "LEAK-4 / EVID-1 / PERS-2 …" (source pin over `lib/projects.ts`).
+- ✓ The concurrent-edit test (as recorded).
+
+**Scope / residual.** None.
+
+**Pending migration:** `20261256` (DEC-30 one paste; deploy first, then paste — either order is safe: before the paste the app takes today's path, a request with no project; independent of every other migration).
 
 ---
 

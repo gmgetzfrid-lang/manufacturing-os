@@ -647,6 +647,22 @@ DF-P7 CONSENT built the consent window (`GAP-109` mechanism 1 on `GAP-113`; `DEC
 **Edits outside the plan's file list, each minimal:** `lib/routingControl.ts` (per-slot window settings; refusing an engineering-capability consent slot; the mode label says when silence counts), `lib/ticketRoster.ts` (copying the settings; the `consent` sentinel in `rosterCompletion`; a null ledger actor), `types/schema.ts` (slot / roster fields), and the census tests (`aoRoundGP0Records`, `exportCoverage`, `notificationWriteRails`, `rls/definerDecisions.ts`, `schemaExpectations`). No new notification kind, capability or cron entry.
 
 
+## Hand-offs from DF-P8 (Round G) that no package brief carries yet
+
+DF-P8 PROJECTS built projects ↔ requests by reference (`GAP-114`; `DEC-40`; DEC-90's rulings (1)–(8) for DF-P8; migration `20261256`). Resolved: `PROJ-4`, `PROJ-6`, `PROJ-8`, `PROJ-12`, `PROJ-13`, `LEAK-4`, `PERS-2`, `DCW-4`, `SM-4`, `SM-7`, notifications `DELIV-16` and `DELIV-7`. Partial, each with a `Partial (2026-10-21, drafting-flow Round G)` block: `PROJ-1`, `PROJ-3`, `PROJ-5`, `PROJ-7`, `PROJ-10`, `EVID-1`, `EVID-12`.
+
+| Finding / item | Owner | What the owner must add |
+|---|---|---|
+| `EVID-12` dw1 (the transition-and-audit RPC) | proposed drafting-flow **DF-P21** (the integrator assigns) | One SQL function for the status write and its audit row, without changing any transition's outcome (per-action columns, the per-column 42703 retries, the hold release after the compare-and-set). Until then the maintenance cron's drain (`lib/ticketAuditDrain.ts`) pairs every DF-P8-or-later attempt row. |
+| `EVID-1` dw3 (actor uid on each history entry) | the next holder of `lib/ticketTransitions.ts` / the workflow route | Each history entry carries the actor's uid beside the email. |
+| `PROJ-1` (a deliverable published into review) | the next holder of `lib/reviewControl.ts` (proposed projects-joint) | When a review completes on a version a request published, reference the document on the request's project (`lib/ticketProject.ts` `referenceDeliverableInProject`). Also: the integrator's ruling on done-when 1's wording ("the same path intake submissions use"). |
+| `PROJ-3` | projects-and-cost `PM-8` | The `project_documents` policy migration and a server-side attach / detach audit row (one fix for `PROJ-3`, `PM-8`, `SEC-17`, `DACL-11`). |
+| `PROJ-5` dw1, dw3 | projects-joint | A `source = 'intake'` value (CHECK widening + the intake door's write) and the project timeline. |
+| `PROJ-7` | intelligence (`lib/orgGraph.ts`) | A ticket node, the document↔ticket edge and now the project↔ticket edge from `tickets.project_id`. |
+| `PROJ-10` dw2 | projects-joint | `milestones.linked_ticket_id`: wire it or drop it. |
+
+**For the integrator.** No new table (no `ROW_AT_MERGE` / export decision). Suggested schema probe: the column `tickets.project_id`. `20261256` is DEC-30 shaped (six counts-only inventory rows before BEGIN, one after-row, six probes); deploy first, then paste — either order is safe. No new notification kind, capability or cron entry (the drain is one step of the maintenance cron).
+
 ## Verification you cannot skip
 
 **No live database and no browser.** The state machine, capability defaults and

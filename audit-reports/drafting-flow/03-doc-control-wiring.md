@@ -208,7 +208,7 @@ inherited, without maintaining a separate drawing-type taxonomy.
 ## DCW-4 · The deliverable never enters a controlled library — the flow ends at an attachment
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P15 DELIVERABLE PAGE WIRING (allocated by the integrator at the DF-P12 merge) — the ticket page's "Publish as a new document in <library>" offer (through `createDocumentWithFile({ …, relatedTicketId })`) and `/api/tickets/handback` accepting a new document's version that carries the ticket. Ruled by the integrator at the DF-P12 merge, 2026-10-20 (DEC-90) (R4).
 - **Assigned:** the remainder (a library-less request that closes with no recorded publication leaves no register-side trace) → drafting-flow DF-P8 PROJECTS (the next drafting-flow package that holds `app/api/tickets/workflow-action/route.ts`; assigned by the integrator at the DF-P15 merge, 2026-10-20, DEC-31) (DEC-31). Ruled by the integrator at the DF-P15 merge, 2026-10-20 (DEC-90): `DEC-107` stands (a request never requires a library at filing); a library-less request's publisher chooses the library.
 - **Verification:** CONFIRMED
@@ -316,6 +316,17 @@ every issued deliverable, or visibly knows it does not.
 - ✗ (in part) "The register knows about every issued deliverable, or visibly knows it does not": holds for a request with a source document or a library (published, or visibly not in the register at the close), and for a library-less request whose deliverable was published. A library-less request that closes with nothing published still ends at an attachment with no register-side trace — it names no place in the register to be missing from (`DEC-107`), and the close writes nothing for it (`DeliverableState` has no library-less "not in the register" shape).
 
 **Scope / residual.** A library-less request closing with no recorded publication → owner: drafting-flow **DF-P8 PROJECTS**, the next drafting-flow package that holds `app/api/tickets/workflow-action/route.ts` (assigned by the integrator at the DF-P15 merge, 2026-10-20, DEC-31): the close records a visible, queryable "not in the register" state for it (a `DeliverableState` shape with no document and no library) with its history line and note, as DF-P4 did for a library-only request. Ruled by the integrator at the DF-P15 merge, 2026-10-20 (DEC-90).
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P8 PROJECTS. The remainder (DEC-90 ruling (5) for DF-P8). `lib/ticketHandback.ts` adds the library-less shape of the not-in-register state (`{ state: "not_in_register", document_id: null, library_id: null, register_rev: null, noted_at }`, read back by `deliverableStateOf`) and `noteDeliverableNotInAnyRegister`. The workflow route's close (`app/api/tickets/workflow-action/route.ts:1736-1750`): a request with neither a source document nor a library that closes with an issued (Final) deliverable and no recorded publication records that state, the history line "Closed — deliverable not in the register" and the note ("… This request names no library, so no register holds it — publish it as a new document to put it under control."). The request page shows the amber chip "Closed — deliverable not in the register" for it (`app/(protected)/requests/[id]/page.tsx`, `data-testid="deliverable-not-in-register"`) and still offers "Publish as a new document". A published deliverable is never overwritten; a library-less request with no Final closes exactly as before (nothing written).
+
+**Done-when.**
+- ✓ `LIFE-1` / `GAP-6` for every request shape (as recorded).
+- ✓ The register knows about every issued deliverable, or visibly knows it does not — now including a library-less request. Tests: `lib/__tests__/dfRoundG_P15_routes.test.ts` "DCW-4 remainder (DF-P8, DEC-90 ruling (5)) …"; `lib/__tests__/dfRoundG_P4_library.test.ts` (with a Final the state is recorded; with no Final nothing is written); `dfRoundG_P8_projects.test.ts` "DCW-4 remainder: the library-less not-in-register shape …".
+
+**Scope / residual.** None. The state lives in `tickets.metadata`, guarded as `SM-2` / `PERS-1` record.
+
+**Pending migration:** none for this limb (it works before and after `20261256`).
+
 ---
 
 ## DCW-5 · A request cannot be filed against a document the requester cannot see

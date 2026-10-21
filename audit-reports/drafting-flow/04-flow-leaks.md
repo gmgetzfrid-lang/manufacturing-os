@@ -195,7 +195,7 @@ unvalidated type string becomes an authority-bearing string. **`WF-15`
 ## LEAK-4 · Attachments and history are written straight to the table, outside the workflow route
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity / audit
 - **Locations:**
@@ -239,6 +239,15 @@ compare-and-set and audit path as every other ticket mutation.
 - ✗ in part — attachment writes go through the route's CAS and audit (✓, WF-9); the request pages' remaining writes are checked and race-safe (✓, this package); history: `lib/projects.ts:1603` still pushes a "Converted to Project" entry from the browser (dormant). **Owner:** drafting-flow **DF-P8** (`GAP-114`), as recorded.
 
 **Scope / residual.** The `lib/projects.ts` history push → DF-P8.
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P8 PROJECTS. The last client history writer is gone (DEC-90 ruling (4) for DF-P8). `convertTicketToProject` no longer reads or rewrites `tickets.history`; the "Converted to Project" line is written by `app/api/tickets/project-link/route.ts` as the service role: audit row first (`TICKET_PROJECT_LINKED`, `recordedBeforeApply`), then ONE compare-and-set on `last_modified` carrying `project_id`, `metadata.project_link` and the history line; a lost race is a 409 with a `_NOT_APPLIED` row naming the attempt.
+
+**Done-when.**
+- ✓ Attachment writes go through the route's CAS and audit path (WF-9, as recorded); the request pages' writes are checked and race-safe (DF-P9); history writes now do too — no client code writes `tickets.history`. Tests: `dfRoundG_P8_projects.test.ts` "LEAK-4 / EVID-1 / PERS-2: convertTicketToProject no longer reads or writes `history` from the browser" and "an audit row that cannot be written refuses the change (500) …; a lost compare-and-set is a 409 …".
+
+**Scope / residual.** None for this finding. The in-place history rewrite risk is `SM-2`'s, as recorded.
+
+**Pending migration:** `20261256` (DEC-30 one paste; deploy first, then paste — either order is safe: before the paste the app takes today's path, a request with no project; independent of every other migration).
 
 ---
 
