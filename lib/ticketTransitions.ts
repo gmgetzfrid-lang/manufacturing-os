@@ -102,8 +102,13 @@ export interface TransitionInput {
    *  closed but did not advance — the slot stays open, waiting for a
    *  sign-off — for `holdReason` (no delivery record, the producer floor,
    *  a moved or unreadable source, a ledger that disagrees), which words the
-   *  history headline (lib/consentWindow.ts consentHeldAction). */
-  consentAdvance?: { roster: TicketReviewRoster; complete: boolean; label: string; details: string; held?: boolean; holdReason?: ConsentHoldReason | null } | null;
+   *  history headline (lib/consentWindow.ts consentHeldAction).
+   *  `issueAsIs` (fix pass 3, FRIC-5): true only when the window's opening
+   *  notice named the drafter's issue-as-is mark (lib/consentWindow.ts
+   *  issueAsIsNamedAtOpen). Otherwise an issuing close takes today's
+   *  PENDING_IFC hop and the mark is withdrawn, said — nobody asked
+   *  consented to an issue-as-is they were never told of. */
+  consentAdvance?: { roster: TicketReviewRoster; complete: boolean; label: string; details: string; held?: boolean; holdReason?: ConsentHoldReason | null; issueAsIs?: boolean } | null;
   actor: TransitionActor;
   now?: string;
 }
@@ -704,7 +709,14 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
           issueRev();
           historyEntry.action = `${historyEntry.action} — every sign-off is in; issued Rev ${updates.deliverable_rev}`;
           currentAttachments = stampIssuedFinals(currentAttachments, updates.deliverable_rev as string, ticket.revisionCount ?? 0); // PHYS-2
-          asIsIssue();
+          // FRIC-5 (fix pass 3): as-is only when the people asked were told.
+          if (input.consentAdvance.issueAsIs === true) asIsIssue();
+          else if (issueReadyFor(ticket)) {
+            const meta = { ...(((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>) };
+            delete meta.issue_ready;
+            updates.metadata = meta;
+            historyEntry.details = `${historyEntry.details ? `${historyEntry.details} ` : ""}[Marked issue-ready, but the consent window's notice did not name it, so silence does not issue the draft as the final package — the drafter issues the final package]`;
+          }
         } else {
           const waiting = roster.slots.filter((x) => slotBlocks(x) && x.status === "open").flatMap((x) => x.primaries);
           updates.unread_by = Array.from(new Set([...(ticket.unreadBy ?? []), ...newUnreadBy, ...waiting])).filter((u) => !!u && u !== actorUid);

@@ -13,7 +13,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import { __resetCapabilityPolicyCache } from "@/lib/capabilityPolicy";
-import { CONSENT_WINDOW_COLUMNS } from "@/lib/consentWindow";
+import { CONSENT_WINDOW_COLUMNS, CONSENT_REASON } from "@/lib/consentWindow";
+import { ISSUE_AS_IS_NOTE } from "@/lib/workflow";
 import type { TicketAttachment, TicketReviewRoster } from "@/types/schema";
 
 const LM = "2026-10-21T00:00:00.000Z";
@@ -108,7 +109,7 @@ const member = (uid: string, role: string, roles = [role]) => ({ org_id: "o1", u
 const DRAFT = { id: "a-d", name: "iso_1A.pdf", url: "orgs/o1/tickets/REQ-1/iso_1A.pdf", type: "Draft", status: "staged" } as TicketAttachment;
 const CONSENT_ROUTING = { slots: [
   { kind: "accept", label: "Requester acceptance", mode: "blocking", fill: { identity: "requester" } },
-  { kind: "ops", label: "Operations", mode: "consent_window", fill: { users: ["o-1"] } },
+  { kind: "ops", label: "Operations", mode: "consent_window", consent_confirmed: true, fill: { users: ["o-1"] } },
 ] };
 const COLS = Object.fromEntries(CONSENT_WINDOW_COLUMNS.map((c) => [c, null]));
 const ticketRow = (over: Record<string, unknown> = {}) => ({
@@ -165,7 +166,7 @@ describe("DEC-38 — the window opens after the review exists, through ONE call 
     expect(line.details).toMatch(/"Operations" may object within 3 working days/);
   });
   it("fix pass 2 (EVID-9 for the window itself): once the RPC lands, the people asked are emailed (an assignment email, an absolute link); the history line names each channel; a person with email off is recorded", async () => {
-    seed({ slots: [CONSENT_ROUTING.slots[0], { kind: "ops", label: "Operations", mode: "consent_window", fill: { users: ["o-1", "e-1"] } }] });
+    seed({ slots: [CONSENT_ROUTING.slots[0], { kind: "ops", label: "Operations", mode: "consent_window", consent_confirmed: true, fill: { users: ["o-1", "e-1"] } }] });
     state.rows.notification_preferences = [{ user_id: "e-1", email_on_assignment: false }];
     state.rpcResult = { data: 2, error: null };
     const { res } = await submit();
@@ -199,7 +200,7 @@ describe("DEC-38 — the window opens after the review exists, through ONE call 
 
 describe("DEC-12 / DEC-37 hold whatever the routing table declares (review blocker)", () => {
   it("the drafter is the consent slot's only occupant (independent_of drafter): BLOCKED — no window, no RPC, the queue told; the drafter's silence can never issue their own work", async () => {
-    seed({ slots: [{ kind: "ops", label: "Peer check", mode: "consent_window", fill: { users: ["d-1"] }, independent_of: ["drafter"] }] });
+    seed({ slots: [{ kind: "ops", label: "Peer check", mode: "consent_window", consent_confirmed: true, fill: { users: ["d-1"] }, independent_of: ["drafter"] }] });
     state.rpcResult = { data: 1, error: null };
     const { res, roster, body } = await submit();
     expect(res.status).toBe(200);
@@ -209,14 +210,14 @@ describe("DEC-12 / DEC-37 hold whatever the routing table declares (review block
     expect(body.consentWarning).toMatch(/waits for a sign-off: the only people its routing names are the drafter/);
   });
   it("the drafter among the occupants: the window asks only the others", async () => {
-    seed({ slots: [CONSENT_ROUTING.slots[0], { kind: "ops", label: "Operations", mode: "consent_window", fill: { users: ["d-1", "o-1"] }, independent_of: ["drafter"] }] });
+    seed({ slots: [CONSENT_ROUTING.slots[0], { kind: "ops", label: "Operations", mode: "consent_window", consent_confirmed: true, fill: { users: ["d-1", "o-1"] }, independent_of: ["drafter"] }] });
     state.rpcResult = { data: 1, error: null };
     const { roster } = await submit();
     expect(roster!.consentPlan).toMatchObject({ kind: "open", recipients: ["o-1"] });
     expect(rpcs("open_consent_window")[0]).toMatchObject({ p_recipients: ["o-1"] });
   });
   it("independent_of requester with the requester the only occupant: BLOCKED — the requester's silence never approves their own request", async () => {
-    seed({ slots: [{ kind: "ops", label: "Operations", mode: "consent_window", fill: { users: ["req-1"] }, independent_of: ["requester"] }] });
+    seed({ slots: [{ kind: "ops", label: "Operations", mode: "consent_window", consent_confirmed: true, fill: { users: ["req-1"] }, independent_of: ["requester"] }] });
     state.rpcResult = { data: 1, error: null };
     const { roster } = await submit();
     expect(roster!.consentPlan).toMatchObject({ kind: "blocked" });
@@ -260,7 +261,7 @@ describe("REGRESSION + DEC-90 rulings — where no window ever opens", () => {
     expect(rpcs("open_consent_window")).toEqual([]);
   });
   it("DEC-39: a consent slot whose routing named nobody active is BLOCKED — no window, the block recorded, the assignment queue told", async () => {
-    seed({ slots: [CONSENT_ROUTING.slots[0], { kind: "ops", label: "Operations", mode: "consent_window", fill: { users: ["gone-1"] } }] });
+    seed({ slots: [CONSENT_ROUTING.slots[0], { kind: "ops", label: "Operations", mode: "consent_window", consent_confirmed: true, fill: { users: ["gone-1"] } }] });
     state.rpcResult = { data: 1, error: null };
     const { res, roster, body } = await submit();
     expect(res.status).toBe(200);
@@ -345,5 +346,37 @@ describe("EVID-9 (route limb) — a person not emailed by their own choice gets 
     state.errors.ticket_notice_events = { code: "PGRST205", message: "Could not find the table 'public.ticket_notice_events' in the schema cache" };
     const { res } = await submit();
     expect(res.status).toBe(200);
+  });
+});
+
+describe("DF-P7 fix pass 3 — the route", () => {
+  it("a consent slot stored WITHOUT the post-DF-P7 opt-in (saved when the editor said it waits like a sign-off): no window, the plan says why", async () => {
+    seed({ slots: [CONSENT_ROUTING.slots[0], { kind: "ops", label: "Operations", mode: "consent_window", fill: { users: ["o-1"] } }] });
+    state.rpcResult = { data: 1, error: null };
+    const { res, roster } = await submit();
+    expect(res.status).toBe(200);
+    expect(roster!.consentPlan).toMatchObject({ kind: "sign_off", slot: "ops", reason: CONSENT_REASON.unconfirmed });
+    expect(rpcs("open_consent_window")).toEqual([]);
+  });
+  it("FRIC-5: a submission marked issue-as-is names the mark in the window's notice, its history line and the line's key (what lets the close issue as-is)", async () => {
+    seed();
+    state.rpcResult = { data: 1, error: null };
+    state.user = { id: "d-1" };
+    state.rows.tickets = [ticketRow()];
+    const res = await post({ ticketId: "t1", actionType: "submit_draft", issueReady: true });
+    expect(res.status).toBe(200);
+    const meta = updates()[0].metadata as { issue_ready?: { rev: string; at: string } };
+    expect(meta.issue_ready?.rev).toBeTruthy();
+    const call = rpcs("open_consent_window")[0];
+    expect(String(call.p_body)).toContain(ISSUE_AS_IS_NOTE);
+    expect(call.p_history).toMatchObject({ consentIssueAsIs: { rev: meta.issue_ready!.rev, at: meta.issue_ready!.at } });
+  });
+  it("…and an unmarked submission's notice carries neither", async () => {
+    seed();
+    state.rpcResult = { data: 1, error: null };
+    await submit();
+    const call = rpcs("open_consent_window")[0];
+    expect(String(call.p_body)).not.toContain(ISSUE_AS_IS_NOTE);
+    expect("consentIssueAsIs" in (call.p_history as Record<string, unknown>)).toBe(false);
   });
 });

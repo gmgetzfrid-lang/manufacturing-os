@@ -37,7 +37,7 @@ import { resolveTicketRecipients, isRoutedStatus } from "@/lib/ticketRouting";
 import { isTicketOutcome, outcomesFor, OUTCOME_LABEL } from "@/lib/ticketOutcome";
 import { parseOutcomeReasons, checkOutcomeReason, checkBareOutcome, type OutcomeReason } from "@/lib/ticketOutcomeReasons";
 import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
-import { planConsentWindow, CONSENT_REASON } from "@/lib/consentWindow";
+import { planConsentWindow, CONSENT_REASON, issueAsIsMarkOf } from "@/lib/consentWindow";
 import { afterRosterOpened, recordNoticeEvents, recordNotEmailed, emailPreferenceOf } from "@/lib/consentWindowScan";
 import { SLA_NOTICE_ACTIONS } from "@/lib/ticketSla";
 import { ticketReadScope } from "@/lib/ticketReadScope";
@@ -1938,6 +1938,13 @@ export async function POST(req: NextRequest) {
       // The window's notices are emailed to whoever's preferences allow it
       // (DF-P7 fix pass 2), on the same public origin as the fan-out.
       origin: publicOrigin() || new URL(req.url).origin,
+      // FRIC-5 (DF-P7 fix pass 3): the issue-as-is mark this submission left
+      // on the draft is named in the notice — the close issues as-is only
+      // on a mark the people asked were told of.
+      issueAsIs: issueAsIsMarkOf({
+        metadata: ((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? null),
+        deliverableRev: ((updates.deliverable_rev as string | undefined) ?? ticket.deliverableRev ?? null),
+      }),
     });
   }
   // The objection's durable record (it survives any bell purge); the

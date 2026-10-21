@@ -15,11 +15,19 @@
 //       `consent_window` (lib/routingControl.ts). Notify-only slots are never
 //       windows. The seed and every unconfigured workspace keep today's
 //       blocking behaviour exactly — they have no roster, so no slot, so no
-//       window.
+//       window. Fix pass 3: the slot must also carry the post-DF-P7 opt-in
+//       (`consent_confirmed`, stamped when a controller saves the table
+//       under the consent-window label — lib/routingControl.ts
+//       setRoutingControl). A consent_window slot stored while the editor
+//       said it "waits like a sign-off" still waits like one, said.
 //   (2) Never on the highest work class: a request whose engineering
 //       requirement holds (DEC-33's engineered lane — lib/workflow.ts
 //       engineeringGateRequired, or an engineering-first type) never gets a
-//       window; its consent slot waits as a sign-off, said. Never on a slot
+//       window; its consent slot waits as a sign-off, said. Checked when the
+//       window is planned (the submission) AND again when it closes (fix
+//       pass 3 — the requester's CURRENT roles, the org's current policy and
+//       engineering-first types, the ticket's column): a request that became
+//       engineered work while the window ran is held ("engineered"). Never on a slot
 //       that IS the engineering sign-off (filled by an engineering
 //       capability, or the gate slot the roster appended): refused when the
 //       routing table is saved (validateRoutingDraft), and a stored one waits
@@ -88,6 +96,7 @@ export const CONSENT_REASON = {
   nobody: "its routing named nobody who could be asked (the management tier was rostered instead), so no window was opened — it waits for a sign-off, and the assignment queue was told",
   onlyParties: "the only people its routing names are the drafter or a party it must be independent of, and their silence is never consent, so no window was opened — it waits for a sign-off, and the assignment queue was told",
   noLongerAskable: "nobody it could ask is still an active member who may be asked, so no window was opened — it waits for a sign-off, and the assignment queue was told",
+  unconfirmed: "this consent slot was saved before consent windows existed (the routing editor then said it waits like a sign-off), so it still waits for a sign-off — a document controller re-saves the routing table to turn the consent window on",
 } as const;
 
 /** Why a window that closed with no objection still did not advance (the
@@ -104,6 +113,8 @@ export function consentHeldAction(label: string, reason: ConsentHoldReason | nul
     case "source_unchecked": return `Consent window closed with no objection — "${label}" waits for a sign-off: the source documents could not be checked, so it does not issue on silence`;
     case "record_mismatch": return `Consent window closed with no objection — "${label}" waits for a sign-off: the review's ledger does not agree with the request's roster, so it does not issue on silence`;
     case "independence": return `Consent window closed with no objection — "${label}" waits for a sign-off: everyone told also signs (or can sign) a sign-off it must be independent of, so their silence is not a second look`;
+    case "no_longer_member": return `Consent window closed — "${label}" waits for a sign-off: nobody told who could have objected is still an active member, so silence is not consent`;
+    case "engineered": return `Consent window closed — "${label}" waits for a sign-off: this request is now engineered work (an engineer's sign-off is required), and a consent window never applies to it`;
     default: return `Consent window closed with no objection — "${label}" still waits for a sign-off`;
   }
 }
@@ -238,6 +249,10 @@ export function planConsentWindow(
   if (!one) return { kind: "sign_off", slot: null, label: null, reason: CONSENT_REASON.multiple };
   if (one.engineering) return { kind: "sign_off", slot: one.kind, label: label!, reason: CONSENT_REASON.engineeringSlot };
   if (ctx.engineeringRequired) return { kind: "sign_off", slot: one.kind, label: label!, reason: CONSENT_REASON.engineered };
+  // Fix pass 3: a slot stored before the consent-window label existed was
+  // chosen as "waits like a sign-off" — it keeps that meaning until a
+  // controller re-saves the table (DEC-90, fail-safe).
+  if (one.consentConfirmed !== true) return { kind: "sign_off", slot: one.kind, label: label!, reason: CONSENT_REASON.unconfirmed };
   if (one.fallback || one.primaries.length === 0) return { kind: "blocked", slot: one.kind, label: label!, reason: CONSENT_REASON.nobody };
   const recipients = consentRecipients(one, { drafterId: ctx.drafterId, requesterId: ctx.requesterId }, consentConflictedPeople(roster.slots, one.kind));
   if (recipients.length === 0) return { kind: "blocked", slot: one.kind, label: label!, reason: CONSENT_REASON.onlyParties };
@@ -465,4 +480,47 @@ export function drafterOnlyOpenSlot(roster: Pick<TicketReviewRoster, "slots">, d
 export function consentIndependenceHolds(asked: readonly string[], drafterId: string | null | undefined, conflicted: ReadonlySet<string>): boolean {
   const others = asked.filter((u) => !!u && u !== drafterId);
   return others.length > 0 && others.every((u) => conflicted.has(u));
+}
+
+/** FRIC-5 × GAP-109 (fix pass 3): the key the window's opening history line
+ *  carries when its notice named the drafter's issue-as-is mark —
+ *  `{ rev, at }` of the mark it named. */
+export const CONSENT_ISSUE_AS_IS_KEY = "consentIssueAsIs";
+
+/** The drafter's issue-as-is mark on the draft under review (FRIC-5 —
+ *  lib/workflow.ts issueReadyFor's rule: bound to the label it was made on),
+ *  or null. Pure. */
+export function issueAsIsMarkOf(ticket: { metadata?: Record<string, unknown> | null; deliverableRev?: string | null }): { rev: string; at: string | null } | null {
+  const mark = (ticket.metadata as Record<string, unknown> | null | undefined)?.issue_ready as { rev?: unknown; at?: unknown } | undefined;
+  if (!ticket.deliverableRev || typeof mark?.rev !== "string" || mark.rev !== ticket.deliverableRev) return null;
+  return { rev: mark.rev, at: typeof mark.at === "string" ? mark.at : null };
+}
+
+/**
+ * FRIC-5 × GAP-109 (fix pass 3): did the notice that opened this window name
+ * the issue-as-is mark the ticket carries NOW? Read from the window's own
+ * opening history line (open_consent_window stamps it with the window's
+ * opened_at, by the machine actor) — the mark it named must be this mark
+ * (same label, same moment). A silent close issues the draft as the final
+ * package only then: nobody asked may have consented to an issue-as-is they
+ * were never told of (the reviewer's own sign-off carries ISSUE_AS_IS_NOTE).
+ * Fail-safe: anything unreadable answers false. Pure.
+ */
+export function issueAsIsNamedAtOpen(
+  ticket: { history?: ReadonlyArray<unknown> | null; metadata?: Record<string, unknown> | null; deliverableRev?: string | null },
+  openedAt: string | null | undefined,
+): boolean {
+  const mark = issueAsIsMarkOf(ticket);
+  if (!mark || !openedAt) return false;
+  const t = Date.parse(openedAt);
+  if (!Number.isFinite(t)) return false;
+  for (const h of ticket.history ?? []) {
+    if (!h || typeof h !== "object") continue;
+    const e = h as Record<string, unknown>;
+    const rec = e[CONSENT_ISSUE_AS_IS_KEY] as { rev?: unknown; at?: unknown } | undefined;
+    if (!rec || typeof rec !== "object" || e.user !== CONSENT_WINDOW_ACTOR) continue;
+    if (Date.parse(String(e.date ?? "")) !== t) continue;
+    if (rec.rev === mark.rev && (typeof rec.at === "string" ? rec.at : null) === mark.at) return true;
+  }
+  return false;
 }

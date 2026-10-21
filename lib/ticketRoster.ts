@@ -385,7 +385,8 @@ export function openRoster(input: {
       independentOf: [...(s.independent_of ?? [])],
       timeoutDays: s.timeoutDays ?? null,
       // GAP-109 (DF-P7): a consent slot's window, frozen when the roster opens.
-      ...(s.mode === "consent_window" ? windowConfigOf(s) : {}),
+      // Fix pass 3: and whether it carries the post-DF-P7 opt-in.
+      ...(s.mode === "consent_window" ? { ...windowConfigOf(s), consentConfirmed: s.consent_confirmed === true } : {}),
       fallback,
       ...((s.fill.capability && ENGINEERING_CAPABILITIES.includes(s.fill.capability)) || s.kind === gateKind ? { engineering: true } : {}),
       status: slotBlocks(s) ? "open" : "told",

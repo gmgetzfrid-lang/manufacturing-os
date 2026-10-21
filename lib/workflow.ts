@@ -1188,7 +1188,11 @@ export const WorkflowEngine = {
     // withdrawn (withdrawing asks nothing of a reviewer). The last approval
     // then issues the approved draft as the final package instead of
     // returning the ticket for a second upload. Optional, never waited on.
-    const nothingSignedYet = ticket.status === 'PENDING_REVIEW' && !(roster?.slots ?? []).some((s) => s.status === 'satisfied');
+    // GAP-109 (DF-P7 fix pass 3): a running consent window is a sign-off in
+    // progress — its people were asked without the issue-as-is note, so the
+    // mark is not offered while it runs (the close never issues as-is on a
+    // mark its notice did not name — lib/consentWindowScan.ts).
+    const nothingSignedYet = ticket.status === 'PENDING_REVIEW' && !(roster?.slots ?? []).some((s) => s.status === 'satisfied') && !windowRunning(roster);
     if (isDrafterIdentity && ticket.deliverableRev && issueReady && (ticket.status === 'PENDING_REVIEW' || ticket.status === 'PENDING_FINAL_APPROVAL')) {
       actions.push({ label: 'Withdraw Issue-As-Is', action: 'clear_issue_ready', variant: 'ghost', optional: true, description: 'The approval returns the request to you to issue the final package, as usual.' });
     } else if (isDrafterIdentity && ticket.deliverableRev && !issueReady && nothingSignedYet) {

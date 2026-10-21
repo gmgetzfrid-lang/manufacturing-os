@@ -98,6 +98,13 @@ export interface RoutingSlot {
    *  reminded (0.1–0.9; default 2/3). Refused on any other mode. */
   window_days?: number;
   warn_fraction?: number;
+  /** GAP-109 (DF-P7 fix pass 3): the post-DF-P7 opt-in — stamped by
+   *  setRoutingControl on every consent-window slot a controller saves
+   *  under the consent-window label. A consent_window slot stored before it
+   *  (when the editor said "waits like a sign-off") has none, and keeps
+   *  waiting like a sign-off (lib/consentWindow.ts planConsentWindow). Kept
+   *  only on a consent-window slot. */
+  consent_confirmed?: true;
 }
 
 export interface RoutingControl {
@@ -199,6 +206,9 @@ export function parseRoutingControl(raw: unknown): { ok: true; control: RoutingC
         slot.warn_fraction = v;
       }
     }
+    // Fix pass 3: the opt-in rides only a consent-window slot (a slot
+    // switched to another mode simply drops it).
+    if (o.consent_confirmed === true && slot.mode === "consent_window") slot.consent_confirmed = true;
     slots.push(slot);
   }
   // independent_of may name a party or another slot of THIS table.
@@ -451,13 +461,29 @@ export async function setRoutingControl(input: {
   const invalid = validateRoutingDraft(input.control);
   if (invalid) throw new Error(`This routing table can't be saved: ${invalid}.`);
   const table = input.level === "library" ? "libraries" : input.level === "collection" ? "collections" : "documents";
-  const res = await checkedWrite(supabase.from(table).update({ routing_control: input.control }).eq("id", input.id).select("id"));
+  const res = await checkedWrite(supabase.from(table).update({ routing_control: confirmConsentSlots(input.control) }).eq("id", input.id).select("id"));
   if (res.ok) return;
   if (res.pgCode === "42703" || res.pgCode === "PGRST204") throw new Error("Review routing needs database update 20261241 — ask an Admin to apply it, then try again.");
   if (res.code === "refused") {
     throw new Error(`The routing table was not saved — only a document controller can set the routing of a ${input.level === "library" ? "library" : input.level === "collection" ? "folder" : "document"}.`);
   }
   throw new Error(res.error);
+}
+
+/** GAP-109 (DF-P7 fix pass 3): the table as a controller saves it under the
+ *  consent-window label — every consent-window slot carries the opt-in
+ *  (`consent_confirmed: true`), every other slot none. A save is the
+ *  re-confirmation DEC-44 (DF-P7-consent) item 18 asks for. Pure. */
+export function confirmConsentSlots(control: RoutingControl | null): RoutingControl | null {
+  if (control === null) return null;
+  return {
+    ...control,
+    slots: control.slots.map((s) => {
+      const rest = { ...s };
+      delete rest.consent_confirmed;
+      return s.mode === "consent_window" ? { ...rest, consent_confirmed: true as const } : rest;
+    }),
+  };
 }
 
 /** Read the routing table declared AT one level (not the effective one). */

@@ -16,10 +16,11 @@ import {
   advancedHistoryDetails, openedHistoryDetails, consentFloorHolds, consentSatisfiedSlot, consentWindowFromRow,
   consentRecipients, consentHeldAction, consentConflictKinds, consentConflictedPeople, consentIndependenceHolds, drafterOnlyOpenSlot, ledgerIndependenceSlot,
   consentWindowMarker, windowRunning, mayObject, isMissingConsentColumn, isMissingConsentSchema,
+  CONSENT_ISSUE_AS_IS_KEY, issueAsIsMarkOf, issueAsIsNamedAtOpen,
   CONSENT_REASON, CONSENT_WINDOW_DEFAULT_DAYS, CONSENT_WINDOW_DEFAULT_WARN_FRACTION, CONSENT_WARN_LEAD_MS,
   CONSENT_REFUSED_CAPABILITIES, CONSENT_WINDOW_COLUMNS, type ConsentWindowState,
 } from "@/lib/consentWindow";
-import { parseRoutingControl, validateRoutingDraft, MODE_LABEL } from "@/lib/routingControl";
+import { parseRoutingControl, validateRoutingDraft, MODE_LABEL, confirmConsentSlots } from "@/lib/routingControl";
 import { ENGINEERING_CAPABILITIES, openRoster, rosterCompletion } from "@/lib/ticketRoster";
 import { WorkflowEngine, currentRoster, slotSignPlan } from "@/lib/workflow";
 import { isActionRequired } from "@/lib/ticketAttention";
@@ -34,7 +35,7 @@ const roster = (slots: TicketReviewSlot[], over: Partial<TicketReviewRoster> = {
   v: 1, id: "11111111-1111-4111-8111-111111111111", openedAt: "2026-10-19T09:00:00.000Z", openedBy: "d-1", level: "library",
   cycle: "1A", contentHash: "h", files: [], slots, ...over,
 });
-const consent = (over: Partial<TicketReviewSlot> = {}) => slot({ kind: "ops", label: "Operations", mode: "consent_window", primaries: ["o-1", "o-2"], ...over });
+const consent = (over: Partial<TicketReviewSlot> = {}) => slot({ kind: "ops", label: "Operations", mode: "consent_window", primaries: ["o-1", "o-2"], consentConfirmed: true, ...over });
 
 describe("planConsentWindow — where a window can exist (DEC-90 rulings for DF-P7)", () => {
   const cols = { engineeringRequired: false, columns: true };
@@ -461,5 +462,95 @@ describe("the objection keeps the people the request still waits on (fix pass 2)
     expect(unread).toEqual(expect.arrayContaining(["r-1", "o-2", "w-9", "req", "d-1"]));
     expect(unread).not.toContain("o-1");
     expect(recipients).toEqual(expect.arrayContaining(["r-1", "o-2"]));
+  });
+});
+
+// ── DF-P7 fix pass 3 ────────────────────────────────────────────────────────
+describe("fix pass 3 — a consent slot stored before DF-P7 keeps waiting like a sign-off until a controller re-saves it", () => {
+  const cols = { engineeringRequired: false, columns: true };
+  it("a consent slot without the opt-in plans a sign-off, said (the editor told its controller it waits like a sign-off)", () => {
+    const p = planConsentWindow(roster([consent({ consentConfirmed: undefined })]), cols);
+    expect(p).toMatchObject({ kind: "sign_off", slot: "ops", reason: CONSENT_REASON.unconfirmed });
+    expect(CONSENT_REASON.unconfirmed).toMatch(/re-saves the routing table/);
+    expect(planConsentWindow(roster([consent({ consentConfirmed: false, primaries: [] })]), cols)).toMatchObject({ kind: "sign_off", reason: CONSENT_REASON.unconfirmed });
+    // The engineered refusals still win (their reason is the stronger one).
+    expect(planConsentWindow(roster([consent({ consentConfirmed: undefined })]), { engineeringRequired: true, columns: true })).toMatchObject({ reason: CONSENT_REASON.engineered });
+    expect(planConsentWindow(roster([consent()]), cols)).toMatchObject({ kind: "open" });
+  });
+  it("parseRoutingControl keeps consent_confirmed only on a consent-window slot; a save (confirmConsentSlots) stamps every consent slot and strips it elsewhere", () => {
+    const p = parseRoutingControl({ slots: [
+      { kind: "ops", mode: "consent_window", fill: { users: ["u"] }, consent_confirmed: true },
+      { kind: "acc", mode: "blocking", fill: { users: ["u"] }, consent_confirmed: true },
+      { kind: "qa", mode: "consent_window", fill: { users: ["u"] }, consent_confirmed: "yes" },
+    ] });
+    expect(p && p.ok && p.control.slots.map((s) => s.consent_confirmed ?? null)).toEqual([true, null, null]);
+    const saved = confirmConsentSlots({ slots: [
+      { kind: "ops", mode: "consent_window", fill: { users: ["u"] } },
+      { kind: "acc", mode: "blocking", fill: { users: ["u"] }, consent_confirmed: true } as never,
+    ] });
+    expect(saved!.slots).toEqual([
+      { kind: "ops", mode: "consent_window", fill: { users: ["u"] }, consent_confirmed: true },
+      { kind: "acc", mode: "blocking", fill: { users: ["u"] } },
+    ]);
+    expect(confirmConsentSlots(null)).toBeNull();
+  });
+  it("openRoster carries the opt-in onto the roster slot (true only when the stored slot has it)", () => {
+    const open = (extra: Record<string, unknown>) => openRoster({
+      id: "r", control: { slots: [{ kind: "accept", mode: "blocking", fill: { identity: "requester" } }, { kind: "ops", mode: "consent_window", fill: { users: ["o-1"] }, ...extra }] } as never,
+      level: "library", cycle: "1A", files: [], ctx: { members: [{ uid: "o-1", role: "Viewer" }, { uid: "req", role: "Viewer" }], policy: null, resource: null, requesterId: "req" },
+      openedBy: "d", now: "2026-10-19T09:00:00Z",
+    });
+    const a = open({ consent_confirmed: true });
+    const b = open({});
+    expect(a.ok && a.roster.slots.find((s) => s.kind === "ops")!.consentConfirmed).toBe(true);
+    expect(b.ok && b.roster.slots.find((s) => s.kind === "ops")!.consentConfirmed).toBe(false);
+    expect(b.ok && "consentConfirmed" in b.roster.slots.find((s) => s.kind === "accept")!).toBe(false);
+  });
+});
+
+describe("fix pass 3 — FRIC-5: silence issues as-is only on a mark the people asked were told of", () => {
+  const system = { uid: null, email: "system:consent-window", role: "System" };
+  const draft = [{ id: "a-d", name: "x.pdf", url: "orgs/o1/x.pdf", type: "Draft", rev: "1A", status: "submitted" }];
+  const marked = (r: TicketReviewRoster, history: unknown[] = []) => ({ ...ticketWith(r), attachments: draft, history, metadata: { review_roster: r, issue_ready: { rev: "1A", by: "d-1", at: "2026-10-19T08:00:00.000Z" } } } as unknown as Ticket);
+  it("the engine does not offer 'Issue As-Is When Approved' while a window runs (it is a sign-off in progress); it does before the window and after it closed", () => {
+    const running = roster([slot({ kind: "accept", primaries: ["req"] }), consent()], { consentWindow: window });
+    const has = (r: TicketReviewRoster | null) => WorkflowEngine.getActions(ticketWith(r), "Drafter", "d-1", undefined, ctx).some((a) => a.action === "mark_issue_ready");
+    expect(has(running)).toBe(false);
+    expect(has(roster([slot({ kind: "accept", primaries: ["req"] }), consent()]))).toBe(true);
+    expect(has(roster([slot({ kind: "accept", primaries: ["req"] }), consent()], { consentWindow: { ...window, objectedAt: "2026-10-20T00:00:00Z" } }))).toBe(true);
+  });
+  it("issueAsIsNamedAtOpen: true only for the window's own opening line (machine actor, opened_at) naming THIS mark", () => {
+    const r = roster([consent()], { consentWindow: window });
+    const line = (over: Record<string, unknown> = {}) => ({ action: "Consent window opened — Operations", user: "system:consent-window", date: "2026-10-19T09:00:00.000000+00:00", [CONSENT_ISSUE_AS_IS_KEY]: { rev: "1A", at: "2026-10-19T08:00:00.000Z" }, ...over });
+    expect(issueAsIsNamedAtOpen(marked(r, [line()]), "2026-10-19T09:00:00+00:00")).toBe(true);
+    expect(issueAsIsNamedAtOpen(marked(r, [line({ [CONSENT_ISSUE_AS_IS_KEY]: undefined })]), window.openedAt)).toBe(false);
+    expect(issueAsIsNamedAtOpen(marked(r, [line({ user: "d-1" })]), window.openedAt)).toBe(false);
+    expect(issueAsIsNamedAtOpen(marked(r, [line({ date: "2026-10-18T09:00:00Z" })]), window.openedAt)).toBe(false);
+    expect(issueAsIsNamedAtOpen(marked(r, [line({ [CONSENT_ISSUE_AS_IS_KEY]: { rev: "1A", at: "2026-10-20T00:00:00.000Z" } })]), window.openedAt)).toBe(false);
+    expect(issueAsIsNamedAtOpen({ ...ticketWith(r), history: [line()] } as never, window.openedAt)).toBe(false);
+    expect(issueAsIsNamedAtOpen(marked(r, [line()]), null)).toBe(false);
+    expect(issueAsIsMarkOf(marked(r))).toEqual({ rev: "1A", at: "2026-10-19T08:00:00.000Z" });
+    expect(issueAsIsMarkOf({ metadata: { issue_ready: { rev: "1" } }, deliverableRev: "1A" })).toBeNull();
+  });
+  it("an issuing close WITHOUT the notice naming the mark takes the PENDING_IFC hop and withdraws the mark, said", () => {
+    const r = roster([slot({ kind: "accept", primaries: ["req"], status: "satisfied", satisfiedBy: "req", satisfiedAt: "2026-10-19T10:00:00Z", signatureId: "s", via: "primary" }), consent()], { consentWindow: window });
+    const advanced = { ...r, slots: r.slots.map((s) => (s.kind === "ops" ? consentSatisfiedSlot(s, "2026-10-23T03:00:00.000Z") : s)) };
+    const { updates, newStatus } = computeTransition(marked(r), { actionType: "consent_window_advance", actionLabel: "x", consentAdvance: { roster: advanced, complete: true, label: "Operations", details: "d" }, actor: system, now: "2026-10-23T03:00:00.000Z" });
+    expect(newStatus).toBe("PENDING_IFC");
+    expect("issue_ready" in (updates.metadata as Record<string, unknown>)).toBe(false);
+    const h = (updates.history as Array<{ action: string; details?: string }>).at(-1)!;
+    expect(h.details).toMatch(/notice did not name it/);
+    expect(h.action).not.toMatch(/issued as-is/);
+  });
+  it("…and WITH it, the draft is issued as the final package (FINAL_DRAFT), as an approval with the note in front of the reviewer does", () => {
+    const r = roster([slot({ kind: "accept", primaries: ["req"], status: "satisfied", satisfiedBy: "req", satisfiedAt: "2026-10-19T10:00:00Z", signatureId: "s", via: "primary" }), consent()], { consentWindow: window });
+    const advanced = { ...r, slots: r.slots.map((s) => (s.kind === "ops" ? consentSatisfiedSlot(s, "2026-10-23T03:00:00.000Z") : s)) };
+    const { newStatus, updates } = computeTransition(marked(r), { actionType: "consent_window_advance", actionLabel: "x", consentAdvance: { roster: advanced, complete: true, label: "Operations", details: "d", issueAsIs: true }, actor: system, now: "2026-10-23T03:00:00.000Z" });
+    expect(newStatus).toBe("FINAL_DRAFT");
+    expect((updates.history as Array<{ action: string }>).at(-1)!.action).toMatch(/issued as-is/);
+  });
+  it("the hold reasons fix pass 3 adds are worded by their own headline", () => {
+    expect(consentHeldAction("Operations", "no_longer_member")).toMatch(/still an active member/);
+    expect(consentHeldAction("Operations", "engineered")).toMatch(/engineered work/);
   });
 });
