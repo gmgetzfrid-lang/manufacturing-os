@@ -146,6 +146,16 @@ describe("20261245 — the guard re-created from its NEWEST earlier body (found 
     expect(insert).toBeLessThan(actorNow);
     expect(actorNow).toBeLessThan(base);
     expect(base).toBeLessThan(promote);
+    // ...whether or not it is a revert, a first publish or an override: the
+    // INSERT stamps created_at with v_now (NOW(), the transaction's start —
+    // never clock_timestamp()) and supersedes_version_id with the pointer it
+    // replaces (NULL on a first publish), and the revert target travels in its
+    // own column — so door (a) admits an override revert and a first publish
+    const insertSql = PUBLISH.slice(insert, PUBLISH.indexOf("    RETURNING id INTO v_new_id;\n", insert));
+    expect(insertSql).not.toMatch(/clock_timestamp|statement_timestamp|v_is_revert|v_revert_target|v_lock_via|p_override_lock|p_force/);
+    expect(insertSql.match(/v_doc\.current_version_id/g)).toHaveLength(1);
+    expect(insertSql).toContain("      NULLIF(p_version->>'reverted_from_version_id','')::uuid,\n");
+    expect(PUBLISH).not.toMatch(/v_now\s*:=\s*(?!NOW\(\))/);
     // the actor IS the session for a signed-in call (OWN-5) — the guard's v_actor
     expect(PUBLISH).toContain("    ELSIF p_actor IS DISTINCT FROM auth.uid() THEN\n      RAISE EXCEPTION 'publish_revision: p_actor does not match the calling session.'");
     // the documents row is locked FOR UPDATE first, so OLD.current_version_id is the base it inserted on
@@ -264,7 +274,7 @@ describe("20261245 — the one-paste shape", () => {
     const p = join(root, "lib", "__tests__", "rls", "dcP32PublishGuardLock.test.ts");
     expect(existsSync(p)).toBe(true);
     const t = readFileSync(p, "utf8");
-    for (const s of ["THE DEFECT, closed", "the lock HOLDER's direct pointer write", "UNLOCKED document", "AUTHORIZED-PUBLISHER OVERRIDE", "Document Control's FORCE", "a hold still never passes", "finalize_reviewed_promote by a publisher", "three-step fallback", "door (b) cannot be borrowed", "door (a) cannot be borrowed", "pasted as ONE script"]) {
+    for (const s of ["THE DEFECT, closed", "the lock HOLDER's direct pointer write", "UNLOCKED document", "AUTHORIZED-PUBLISHER OVERRIDE", "Document Control's FORCE", "a hold still never passes", "finalize_reviewed_promote by a publisher", "three-step fallback", "door (b) cannot be borrowed", "door (a) cannot be borrowed", "an OVERRIDE REVERT", "NO current revision yet", "pasted as ONE script"]) {
       expect(t, s).toContain(s);
     }
   });

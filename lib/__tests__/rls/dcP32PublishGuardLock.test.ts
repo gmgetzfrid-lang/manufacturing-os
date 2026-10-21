@@ -242,6 +242,32 @@ describe.skipIf(skip !== null)("HAND-13 (20261245): the checkout lock at the dat
       }
     });
 
+    it("an OVERRIDE REVERT (revertToVersion's door: reverted_from_version_id set, a new label, a reason) publishes over the checkout on both sides and records REV_LOCK_OVERRIDDEN — the revert's row is still this transaction's, on top of the current one", () => {
+      const stmt = `SELECT 1 FROM (SELECT publish_revision(p_doc := '${w.dLocked}', p_expected_base := '${w.vA}', p_op_class := 'content',
+         p_version := jsonb_build_object('revision_label', 'C', 'file_url', 'p32/la.pdf', 'change_type', 'Minor',
+                                         'change_log', 'Reverted to A', 'reverted_from_version_id', '${w.vA}'),
+         p_actor := NULL, p_override_lock := true, p_override_reason := 'restore the issued A') AS r) x WHERE x.r->>'status' = 'published'`;
+      const after = `SELECT (SELECT revision_label || '|' || COALESCE(reverted_from_version_id::text, 'none') || '|' || COALESCE(supersedes_version_id::text, 'none')
+                               FROM document_versions WHERE id = d.current_version_id) || '|' ||
+        (SELECT count(*) FROM audit_logs a WHERE a.resource_id = d.id::text AND a.action = 'REV_LOCK_OVERRIDDEN' AND a.details->>'via' = 'override')
+        FROM documents d WHERE d.id = '${w.dLocked}';`;
+      const r = both("publisher", stmt, after);
+      expect(r.before).toBe(`ok:1 / C|${w.vA}|${w.vA}|1`);
+      expect(r.after).toBe(r.before);
+    });
+
+    it("the override onto a document with NO current revision yet (a first publish over someone else's checkout: supersedes_version_id NULL = the NULL pointer it replaces) publishes on both sides and records it", () => {
+      const stmt = `SELECT 1 FROM (SELECT publish_revision(p_doc := '${w.dFirst}', p_expected_base := NULL, p_op_class := 'content',
+         p_version := '{"revision_label":"A1","file_url":"p32/1a1.pdf","change_type":"Minor","change_log":"p32 first"}'::jsonb,
+         p_actor := NULL, p_override_lock := true, p_override_reason := 'first issue needed today') AS r) x WHERE x.r->>'status' = 'published'`;
+      const after = `SELECT (SELECT revision_label || '|' || COALESCE(supersedes_version_id::text, 'none') FROM document_versions WHERE id = d.current_version_id) || '|' ||
+        (SELECT count(*) FROM audit_logs a WHERE a.resource_id = d.id::text AND a.action = 'REV_LOCK_OVERRIDDEN' AND a.details->>'via' = 'override')
+        FROM documents d WHERE d.id = '${w.dFirst}';`;
+      const r = both("publisher", stmt, after);
+      expect(r.before).toBe("ok:1 / A1|none|1");
+      expect(r.after).toBe(r.before);
+    });
+
     it("the override with too short a reason, and an override by someone with no publish authority, are refused on both sides", () => {
       const short = both("publisher", publish(w.dLocked, w.vA, ", p_override_lock := true, p_override_reason := 'ok'"));
       expect(short.before).toMatch(/^err:23514:publish_revision: publishing over another user's checkout needs a reason/);
