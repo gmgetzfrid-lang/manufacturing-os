@@ -55,6 +55,13 @@ const SHEET_TOKEN = /(?:^|[_\-. ])(?:SHT|SHEET|SH)[._\- ]?(\d{1,3})(?=$|[_\-. ])
 const DATE_TOKEN = /\b(?:(?:19|20)\d{2}[-_.]\d{1,2}[-_.]\d{1,2}|\d{1,2}[-_.]\d{1,2}[-_.](?:19|20)\d{2})\b|(?<=_)(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])-\d{2}(?=$|[_. ])/g;
 // "NUMBER - Title": a spaced dash (or en/em dash) separating the two.
 const NUMBER_TITLE = /^(.+?)\s+[-\u2013\u2014]\s+(.+)$/;
+// A drawing-set file name from a Windows share: the drawing number first
+// ("2002-D 2001", written "2002-D_2001" where spaces weren't allowed), then
+// sheet, revision, date and/or a description, underscore-separated:
+//   2002-D 2001_SHT01_R39_06-09-26   2002-D_1001_CRUDE_UNIT_09-14-26
+// The app keeps sheet, revision and date as fields, so the number is just
+// the number.
+const DRAWING_NO = /^(\d{2,6}-[A-Z]{1,3})[ _](\d{2,6})(?=$|[_ .-])/i;
 
 const tidy = (s: string) => s.replace(/\s+/g, " ").replace(/^[_\-. ]+|[_\-. ]+$/g, "").trim();
 
@@ -75,7 +82,7 @@ export function parseFilename(filename: string): ParsedFilename {
   // ─── Unit extraction ───────────────────────────────────────────────
   // Patterns: Unit_100, U-200, prefix 100-
   let unit: string | undefined;
-  const unitMatch1 = base.match(/(?:^|[_\- ])U(?:nit)?[._\- ]?(\d{2,4})(?=$|[_\-. ])/i);
+  const unitMatch1 = base.match(/(?:^|[_\- ])U(?:nit)?[._\- ]?(\d{2,4})(?=$|[_\-. ])(?![-_.]\d)/i);
   if (unitMatch1) {
     unit = unitMatch1[1];
   } else {
@@ -96,9 +103,14 @@ export function parseFilename(filename: string): ParsedFilename {
   // Rev, sheet and date tokens come out; what is left is the identity.
   const strip = (s: string) => tidy(s.replace(REV_TOKEN, " ").replace(SHEET_TOKEN, " ").replace(DATE_TOKEN, " "));
   const split = base.match(NUMBER_TITLE);
+  const drawing = base.match(DRAWING_NO);
   let docNum: string;
   let title: string;
-  if (split && /\d/.test(split[1]) && split[1].length <= 40) {
+  if (drawing) {
+    docNum = `${drawing[1].toUpperCase()} ${drawing[2]}`;
+    // Whatever words are left after sheet, revision and date are the title.
+    title = tidy(strip(base.slice(drawing[0].length)).replace(/_+/g, " ")) || docNum;
+  } else if (split && /\d/.test(split[1]) && split[1].length <= 40) {
     // "EP 5-3-10 - Ball Valves": the number, then the title.
     docNum = strip(split[1]) || tidy(split[1]);
     title = strip(split[2].replace(/_+/g, " ")) || tidy(split[2]);

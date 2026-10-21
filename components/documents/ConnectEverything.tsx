@@ -117,7 +117,8 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
     const todo = list.pending;
     if (!todo.length) { setBulk({ done: 0, total: 0, equipment: 0, removed: 0, added: 0, created: 0, failed: 0, current: null, finished: true, lastError: null }); return; }
     if (!opts.consented) {
-      const ok = window.confirm(`Read ${todo.length} drawing${todo.length === 1 ? "" : "s"} with your AI model?\n\nEach sheet is sent to your model whole, plus four zoomed tiles, and its equipment tags are corrected. Billed to your key under your monthly cap. You can stop at any time, and undo the run afterwards.`);
+      const pagesDue = list.pagesDue ?? todo.length;
+      const ok = window.confirm(`Read ${pagesDue} sheet${pagesDue === 1 ? "" : "s"} in ${todo.length} drawing${todo.length === 1 ? "" : "s"} with your AI model?\n\nOnly sheets not yet read in full are read — sheets already read are left as they are. Each sheet is read zoomed-in, region by region, and its equipment tags are corrected. Billed to your key under your monthly cap. You can stop at any time, and undo the run afterwards.`);
       if (!ok) return;
     }
     const rid = opts.runId ?? newRunId();
@@ -132,7 +133,7 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
         const next = queue.shift(); if (!next) return;
         st.current = next.name; setBulk({ ...st });
         try {
-          const r = await readDrawing(orgId, { knowledgeDocumentId: next.knowledgeDocumentId }, undefined, { runId: rid, runLabel: `Read ${todo.length} drawing${todo.length === 1 ? "" : "s"} with AI` });
+          const r = await readDrawing(orgId, { knowledgeDocumentId: next.knowledgeDocumentId }, undefined, { runId: rid, runLabel: `Read ${todo.length} drawing${todo.length === 1 ? "" : "s"} with AI` }, next.pages);
           st.equipment += r.equipment.length;
           st.removed += r.correction?.removed.length ?? 0;
           st.added += r.correction?.added.length ?? 0;

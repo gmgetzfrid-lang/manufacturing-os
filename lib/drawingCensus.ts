@@ -38,7 +38,17 @@ export interface CensusSheet {
   /** Every legible line of the sheet — notes, callouts, title block — so
    *  the reading also feeds full-text search. */
   transcript?: string;
+  /** False when part of the sheet (a tile) could not be read this time:
+   *  the page is stored, but stays on the list to be read again. */
+  complete?: boolean;
 }
+
+/** The census marker of a page read whole by the current reader. Pages
+ *  marked partial (a tile failed), or read by nothing, are read again by
+ *  "Read all drawings"; v1 pages (the one-call reader) count as read. */
+export const CENSUS_READ = "census-v2";
+export const CENSUS_PARTIAL = "census-partial";
+export const CENSUS_DONE_TAGS = ["census-v1", CENSUS_READ, "census-person"];
 
 export interface CensusPageResult {
   page: number;
@@ -89,6 +99,25 @@ const SYSTEM =
   "- Copy every character exactly as printed. If you cannot read a character with certainty, leave that " +
   "item out. Never invent an item.";
 
+/** One zoomed region at a time. A whole sheet in one call asked the model
+ *  to list a hundred-odd items in one answer — slow enough that dense
+ *  sheets ran out of time and were kept as their title block alone, and
+ *  long enough that items late in the list were dropped. Each tile is its
+ *  own small answer, read side by side, and merged. */
+export const TILE_SYSTEM = SYSTEM.replace(
+  "You get an OVERVIEW image of the whole sheet, then zoomed TILES of it that overlap slightly. Read " +
+  "characters from the tiles; use the overview for layout and to see which tiles show the same item. " +
+  "Work tile by tile and do not stop early: a sheet often carries two or more of the same kind of " +
+  "equipment side by side (two heaters, a pump and its spare), and every one of them counts. ",
+  "You get two images: a small OVERVIEW of the whole sheet, for orientation only, then ONE zoomed TILE " +
+  "of it. Report ONLY what is printed inside the TILE — never items you can only see in the overview. " +
+  "An item cut by the tile's edge: report it only if its whole tag is legible in the tile (the tiles " +
+  "overlap, so a neighbouring tile has it whole). Go through the tile systematically, left to right and " +
+  "top to bottom, and list EVERY instrument bubble — a busy area can hold dozens, and each one counts. " +
+  "Two items of the same kind side by side (a pump and its spare) are two entries. " +
+  "The title block is in one corner tile only; elsewhere return title fields as null. ",
+);
+
 const TRANSCRIPT_SYSTEM =
   "You transcribe ONE sheet of an engineering drawing so it can be searched. You get an overview and the " +
   "four quadrants of the sheet. Write every legible line of text on the sheet in reading order — equipment " +
@@ -122,6 +151,17 @@ export function salvageJson(text: string): Record<string, unknown> | null {
 /** "P-101A/B" → P-101A, P-101B; "H-1 & H-2" → H-1, H-2; "E-5A,B,C" → E-5A, E-5B, E-5C. */
 export function splitCallout(raw: string): string[] {
   const t = raw.toUpperCase().replace(/[‐-―−–]/g, "-").trim();
+  // One bubble, several functions: "TE/TW 64" → TE-64, TW-64.
+  const shared = t.match(/^([A-Z]{1,5}(?:\s*\/\s*[A-Z]{1,5})+)\s*-?\s*(\d{1,6}[A-Z]{0,2})$/);
+  if (shared) return shared[1].split("/").map((f) => `${f.trim()}-${shared[2]}`);
+  // A range on one callout: "SOV 501-508" → SOV-501 … SOV-508 (short ranges only).
+  const range = t.match(/^([A-Z]{1,5})\s*-?\s*(\d{1,5})([A-Z]?)\s*-\s*(\d{1,5})\3$/);
+  if (range) {
+    const a = Number(range[2]), b = Number(range[4]);
+    if (b > a && b - a <= 20 && range[2].length === range[4].length) {
+      return Array.from({ length: b - a + 1 }, (_, i) => `${range[1]}-${String(a + i).padStart(range[2].length, "0")}${range[3]}`);
+    }
+  }
   const m = t.match(/^([A-Z]{1,5}-?\d{1,6})([A-Z])((?:\s*[\/,&]\s*(?:AND\s+)?[A-Z])+)$/);
   if (m) return [m[2], ...m[3].split(/[\/,&]|AND/).map((x) => x.trim()).filter(Boolean)].map((suf) => m[1] + suf);
   const parts = t.split(/\s*(?:[\/,&]|\bAND\b)\s*/).filter(Boolean);
@@ -184,11 +224,11 @@ export function tileGrid(widthPt: number, heightPt: number): { cols: number; row
 /** The sheet as the model sees it: an overview, then zoomed tiles row by
  *  row, overlapping so a callout on a seam is whole in one of them. Also the
  *  2 × 2 quadrants the transcript reads from. */
-export async function renderSheetImages(pdf: PdfProxy, page: number): Promise<{ images: AiCallImage[]; quadrants: AiCallImage[]; grid: { cols: number; rows: number }; pageCount: number }> {
+export async function renderSheetImages(pdf: PdfProxy, page: number): Promise<{ images: AiCallImage[]; quadrants: AiCallImage[]; small: AiCallImage; grid: { cols: number; rows: number }; pageCount: number }> {
   ensurePdfPolyfills();
   const { renderPageAsImage } = await import("unpdf");
   const pageCount = pdf.numPages;
-  if (page > pageCount) return { images: [], quadrants: [], grid: { cols: 0, rows: 0 }, pageCount };
+  if (page > pageCount) return { images: [], quadrants: [], small: { mediaType: "image/jpeg", base64: "" }, grid: { cols: 0, rows: 0 }, pageCount };
   const vp = (await pdf.getPage(page)).getViewport({ scale: 1 });
   const grid = tileGrid(vp.width, vp.height);
   const width = Math.round(Math.min(MAX_RENDER, Math.max(MIN_RENDER, (vp.width / 72) * DPI)));
@@ -207,7 +247,8 @@ export async function renderSheetImages(pdf: PdfProxy, page: number): Promise<{ 
   const tiles = (cols: number, rows: number, outW: number): AiCallImage[] => {
     const out: AiCallImage[] = [];
     const cw = W / cols, ch = H / rows;
-    const ox = Math.round(cw * 0.06), oy = Math.round(ch * 0.06);
+    // 10% overlap: a bubble or callout on a seam is whole in one tile.
+    const ox = Math.round(cw * 0.1), oy = Math.round(ch * 0.1);
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
       const x0 = Math.max(0, Math.round(c * cw) - ox), y0 = Math.max(0, Math.round(r * ch) - oy);
       const x1 = Math.min(W, Math.round((c + 1) * cw) + ox), y1 = Math.min(H, Math.round((r + 1) * ch) + oy);
@@ -220,6 +261,8 @@ export async function renderSheetImages(pdf: PdfProxy, page: number): Promise<{ 
   return {
     images: [overview, ...(one ? [cut(0, 0, W, H, 2400)] : tiles(grid.cols, grid.rows, 1700))],
     quadrants: [overview, ...tiles(2, 2, 1568)],
+    // Orientation only, next to each tile: small keeps every call cheap.
+    small: cut(0, 0, W, H, 900),
     grid, pageCount,
   };
 }
@@ -233,19 +276,83 @@ type ReaderCall = (args: { system: string; user: string; images: AiCallImage[]; 
  *  pays — the person's governed key, or the indexer's vision context.
  *  The equipment reading and the transcript are two calls run side by side:
  *  a long transcript can never crowd out, cut off or slow the equipment. */
-export async function readDrawingSheet(pdf: PdfProxy, page: number, name: string, call: ReaderCall, opts: { transcript?: boolean } = {}): Promise<{ sheet: CensusSheet; pageCount: number } | null> {
-  const { images, quadrants, grid, pageCount } = await renderSheetImages(pdf, page);
+export async function readDrawingSheet(pdf: PdfProxy, page: number, name: string, call: ReaderCall, opts: { transcript?: boolean; render?: typeof renderSheetImages } = {}): Promise<{ sheet: CensusSheet; pageCount: number } | null> {
+  const { images, quadrants, grid, pageCount, small } = await (opts.render ?? renderSheetImages)(pdf, page);
   if (!images.length) return null;
-  const order = grid.cols * grid.rows === 1 ? "an overview, then the sheet at full resolution" : `an overview, then ${grid.cols * grid.rows} zoomed tiles in a ${grid.cols}-across × ${grid.rows}-down grid, row by row from the top-left`;
+  const tiles = images.slice(1);
+  const where = (i: number) => grid.cols * grid.rows === 1 ? "the whole sheet"
+    : `row ${Math.floor(i / grid.cols) + 1} of ${grid.rows}, column ${(i % grid.cols) + 1} of ${grid.cols}`;
   // The transcript is a bonus: it never holds the equipment reading up by
   // more than a few seconds, and its failure is not the reading's.
   const transcript = opts.transcript === false ? Promise.resolve("")
     : call({ system: TRANSCRIPT_SYSTEM, user: `Sheet: "${name}", page ${page} of ${pageCount}. Images: an overview, then the four quadrants (top-left, top-right, bottom-left, bottom-right).`, images: quadrants, maxTokens: 8_000 }).catch(() => "");
-  const structured = await call({ system: SYSTEM, user: `Sheet: "${name}", page ${page} of ${pageCount}. Images in order: ${order}.`, images, maxTokens: 12_000 });
-  const sheet = parseCensus(structured);
+  // Every tile its own call, a few at a time; a tile that fails is a gap in
+  // this reading, never a reason to lose the rest.
+  const readings: Array<CensusSheet | null> = new Array(tiles.length).fill(null);
+  let next = 0;
+  const worker = async () => {
+    while (next < tiles.length) {
+      const i = next++;
+      try {
+        const text = await call({
+          system: TILE_SYSTEM,
+          user: `Sheet: "${name}", page ${page} of ${pageCount}. Image 1: the whole sheet, small. Image 2: the tile at ${where(i)} — report only what is printed in it.`,
+          images: [small, tiles[i]], maxTokens: 6_000,
+        });
+        readings[i] = parseCensus(text);
+      } catch { /* a gap: the page is marked partial and read again later */ }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(TILE_CONCURRENCY, tiles.length) }, worker));
+  const got = readings.filter((r): r is CensusSheet => !!r);
+  if (!got.length) throw new DrawingReadError("No part of this sheet could be read this time. Nothing was changed; read it again.");
+  const sheet = mergeReadings(got);
+  sheet.complete = got.length === tiles.length;
+  // The title block as printed in the PDF's own text, when it has one (CAD
+  // exports usually do — "2002-D 2001 · 1 of 16 · 39"): exact, so it wins.
+  const printed = await titleFromTextLayer(pdf, page).catch(() => null);
+  if (printed) sheet.title = { drawingNumber: sheet.title.drawingNumber, sheet: printed.sheet ?? sheet.title.sheet, rev: printed.rev ?? sheet.title.rev };
   const text = await Promise.race([transcript, new Promise<string>((r) => setTimeout(() => r(""), TRANSCRIPT_GRACE_MS))]);
   if (text.trim()) sheet.transcript = text.trim().slice(0, 20_000);
   return { sheet, pageCount };
+}
+
+/** Tiles read at once — enough to finish a sheet inside one request, few
+ *  enough to stay under a key's per-minute limits. */
+const TILE_CONCURRENCY = 6;
+
+/** Union of tile readings. The tiles overlap, so the same item is often
+ *  read twice: one entry per tag, keeping the fullest callout. */
+export function mergeReadings(readings: CensusSheet[]): CensusSheet {
+  const eq = new Map<string, CensusSheet["equipment"][number]>();
+  const fullness = (e: CensusSheet["equipment"][number]) => (e.code ? 1 : 0) + (e.name ? 1 : 0) + (e.details ? 1 : 0);
+  for (const r of readings) for (const e of r.equipment) {
+    const cur = eq.get(e.tag);
+    if (!cur || fullness(e) > fullness(cur)) eq.set(e.tag, e);
+  }
+  const off = new Map<string, CensusSheet["offSheet"][number]>();
+  for (const r of readings) for (const o of r.offSheet) if (!eq.has(o.tag) && !off.has(o.tag)) off.set(o.tag, o);
+  const inst = new Set<string>();
+  for (const r of readings) for (const t of r.instruments) if (!eq.has(t)) inst.add(t);
+  const title = { drawingNumber: null as string | null, sheet: null as string | null, rev: null as string | null };
+  for (const r of readings) {
+    title.drawingNumber ??= r.title.drawingNumber; title.sheet ??= r.title.sheet; title.rev ??= r.title.rev;
+  }
+  return { equipment: [...eq.values()], instruments: [...inst], offSheet: [...off.values()], title };
+}
+
+/** "1 of 16" and the revision beside it, from the page's real text. */
+export async function titleFromTextLayer(pdf: PdfProxy, page: number): Promise<{ sheet: string | null; rev: string | null } | null> {
+  const content = await (await pdf.getPage(page)).getTextContent();
+  const words = (content.items as Array<{ str?: string }>).map((i) => (i.str ?? "").trim()).filter(Boolean);
+  return parseTitleWords(words);
+}
+
+export function parseTitleWords(words: string[]): { sheet: string | null; rev: string | null } | null {
+  const line = words.join(" ");
+  const m = line.match(/\b(\d{1,3})\s+OF\s+(\d{1,3})\b(?:\s+([A-Z0-9]{1,3})\b)?/i);
+  if (!m || Number(m[1]) > Number(m[2])) return null;
+  return { sheet: m[1], rev: m[3] ?? null };
 }
 
 /** The rows a reading becomes, in the one storage format both callers use. */
@@ -255,12 +362,15 @@ export function sheetEntityRows(base: { org_id: string; library_id: string; docu
     ...sheet.equipment.map((e) => ({ ...b, kind: "equipment", tag: e.tag, raw: [e.tag, e.code ? `(${e.code})` : "", e.name ?? "", e.details ? `· ${e.details}` : ""].filter(Boolean).join(" ").slice(0, 400) })),
     ...sheet.instruments.map((t) => ({ ...b, kind: "instrument", tag: t, raw: t })),
     ...sheet.offSheet.map((o) => ({ ...b, kind: "xref", tag: o.tag, raw: [o.direction?.toUpperCase(), o.tag, o.drawing, o.sheet ? `SHT ${o.sheet}` : ""].filter(Boolean).join(" ").slice(0, 160) })),
-    { ...b, kind: "census", tag: "census-v1", raw: `${sheet.equipment.length} equipment, ${sheet.instruments.length} instruments, ${sheet.offSheet.length} off-sheet` },
+    { ...b, kind: "census", tag: sheet.complete === false ? CENSUS_PARTIAL : CENSUS_READ, raw: `${sheet.equipment.length} equipment, ${sheet.instruments.length} instruments, ${sheet.offSheet.length} off-sheet${sheet.complete === false ? " (part of the sheet not read yet)" : ""}` },
   ];
 }
 
 /** Read one page of a knowledge document's drawing and store the result. */
-export async function censusPage(input: { orgId: string; userId: string; knowledgeDocId: string; page: number; deadlineMs: number; run: RunCtx }): Promise<CensusPageResult> {
+export async function censusPage(input: { orgId: string; userId: string; knowledgeDocId: string; page: number; deadlineMs: number; run: RunCtx;
+  /** Correct the document after this page. Default: on its last page. A
+   *  catch-up read of only the missing pages finishes on whichever is last. */
+  finalize?: boolean }): Promise<CensusPageResult> {
   const { data: kdoc } = await supabaseAdmin.from("knowledge_documents").select("id, org_id, library_id, name, file_key, page_count, source_document_id").eq("id", input.knowledgeDocId).eq("org_id", input.orgId).maybeSingle();
   if (!kdoc) throw new Error("That drawing has no read copy.");
   const k = kdoc as { id: string; library_id: string; name: string; file_key: string; page_count: number | null; source_document_id: string | null };
@@ -298,7 +408,7 @@ export async function censusPage(input: { orgId: string; userId: string; knowled
   const { error } = await supabaseAdmin.from("knowledge_page_entities").insert(rows);
   if (error) throw new Error(`Could not store the reading: ${error.message}`);
 
-  const done = input.page >= pageCount;
+  const done = input.finalize ?? input.page >= pageCount;
   const res: CensusPageResult = { page: input.page, pageCount, done, sheet, journaled };
   if (done && k.source_document_id) {
     const c = await correctDocument(input.orgId, k.id, k.source_document_id, input.userId, input.run, k.name);

@@ -54,3 +54,69 @@ describe("drawing census parsing", () => {
     expect(tileGrid(11 * 72, 8.5 * 72)).toEqual({ cols: 1, rows: 1 });  // letter
   });
 });
+
+import { mergeReadings, parseTitleWords, TILE_SYSTEM, sheetEntityRows, CENSUS_READ, CENSUS_PARTIAL, readDrawingSheet } from "@/lib/drawingCensus";
+
+describe("reading a sheet tile by tile", () => {
+  it("the tile instructions really replaced the whole-sheet ones", () => {
+    expect(TILE_SYSTEM).toContain("ONE zoomed TILE");
+    expect(TILE_SYSTEM).not.toContain("Work tile by tile and do not stop early");
+    expect(TILE_SYSTEM).toContain("Return STRICT JSON");
+  });
+  it("merges overlapping tiles: one entry per tag, the fullest callout wins", () => {
+    const a = parseCensus('{"equipment":[{"tag":"X-31"}],"instruments":["PI-445","TI-355"],"offSheet":[{"tag":"X-51","direction":"from"}]}');
+    const b = parseCensus('{"equipment":[{"tag":"X-31","code":"2030.31","name":"FRACT. OVERHEAD/CRUDE EXCHANGER"}],"instruments":["TI-355","PIT-450"],"title":{"drawingNumber":"2002-D 2001","sheet":"1","rev":"39"}}');
+    const m = mergeReadings([a, b]);
+    expect(m.equipment).toEqual([{ tag: "X-31", code: "2030.31", name: "FRACT. OVERHEAD/CRUDE EXCHANGER", details: null }]);
+    expect(m.instruments.sort()).toEqual(["PI-445", "PIT-450", "TI-355"]);
+    expect(m.offSheet.map((o) => o.tag)).toEqual(["X-51"]);
+    expect(m.title).toEqual({ drawingNumber: "2002-D 2001", sheet: "1", rev: "39" });
+  });
+  it("reads shared-number bubbles and short ranges as separate instruments", () => {
+    expect(splitCallout("TE/TW 64")).toEqual(["TE-64", "TW-64"]);
+    expect(splitCallout("SOV 501-508")).toHaveLength(8);
+    expect(splitCallout("SOV 501-508")[7]).toBe("SOV-508");
+    expect(splitCallout("PIT-130")).toEqual(["PIT-130"]);
+  });
+  it("takes sheet and revision from the PDF's own title block text", () => {
+    expect(parseTitleWords(["NTS", "2002-D 2001", "1 of 16", "39"])).toEqual({ sheet: "1", rev: "39" });
+    expect(parseTitleWords(["NOTES:", "1. WARM-UP BYPASS"])).toBeNull();
+  });
+  it("a page with a tile that failed is stored, but marked to be read again", () => {
+    const sheet = { ...mergeReadings([]), complete: false };
+    const rows = sheetEntityRows({ org_id: "o", library_id: "l", document_id: "d", page: 1 }, sheet);
+    expect(rows.find((r) => r.kind === "census")?.tag).toBe(CENSUS_PARTIAL);
+    expect(sheetEntityRows({ org_id: "o", library_id: "l", document_id: "d", page: 1 }, { ...sheet, complete: true }).find((r) => r.kind === "census")?.tag).toBe(CENSUS_READ);
+  });
+});
+
+describe("readDrawingSheet", () => {
+  const img = { mediaType: "image/jpeg" as const, base64: "x" };
+  const pdf = {
+    numPages: 3,
+    getPage: async () => ({ getTextContent: async () => ({ items: [{ str: "2002-D 2001" }, { str: "1 of 16" }, { str: "39" }] }) }),
+  } as unknown as Parameters<typeof readDrawingSheet>[0];
+  const render = async () => ({ images: [img, img, img, img, img], quadrants: [img], small: img, grid: { cols: 2, rows: 2 }, pageCount: 3 });
+
+  it("reads each tile in its own call and merges them; a failed tile leaves the page partial", async () => {
+    const users: string[] = [];
+    const call = async (a: { system: string; user: string }) => {
+      if (a.system === TILE_SYSTEM) users.push(a.user);
+      if (a.system !== TILE_SYSTEM) return "";
+      if (a.user.includes("row 2 of 2, column 2 of 2")) throw new Error("timeout");
+      const n = a.user.match(/row (\d) of 2, column (\d)/)!;
+      return `{"instruments":["PI-${n[1]}${n[2]}","TI-355"]}`;
+    };
+    const out = await readDrawingSheet(pdf, 1, "2002-D 2001", call, { render, transcript: false });
+    expect(users).toHaveLength(4);
+    expect(out!.sheet.instruments.sort()).toEqual(["PI-11", "PI-12", "PI-21", "TI-355"]);
+    expect(out!.sheet.complete).toBe(false);
+    // Sheet and revision from the PDF's own title block text.
+    expect(out!.sheet.title).toMatchObject({ sheet: "1", rev: "39" });
+  });
+
+  it("every tile failing is a failed read — nothing is changed", async () => {
+    const call = async (a: { system: string }) => { if (a.system === TILE_SYSTEM) throw new Error("down"); return ""; };
+    await expect(readDrawingSheet(pdf, 1, "x", call, { render, transcript: false })).rejects.toThrow(DrawingReadError);
+  });
+});

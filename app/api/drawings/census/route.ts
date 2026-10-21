@@ -10,7 +10,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireMember } from "@/lib/estate/serverAuth";
-import { censusPage, addEquipmentByHand, DrawingReadError } from "@/lib/drawingCensus";
+import { censusPage, addEquipmentByHand, DrawingReadError, CENSUS_DONE_TAGS } from "@/lib/drawingCensus";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { GovernedCallError } from "@/lib/ai/governedCall";
 import { documentAiBlock, excludedLibraryIds } from "@/lib/aiLibraries";
 
@@ -19,7 +20,7 @@ export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   const t0 = Date.now();
-  let body: { orgId?: string; documentId?: string; knowledgeDocumentId?: string; page?: number; action?: string; runId?: string; runLabel?: string; libraryIds?: string[]; tag?: string; name?: string };
+  let body: { orgId?: string; documentId?: string; knowledgeDocumentId?: string; page?: number; action?: string; runId?: string; runLabel?: string; libraryIds?: string[]; tag?: string; name?: string; finalize?: boolean };
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Expected JSON body" }, { status: 400 }); }
   const orgId = String(body.orgId ?? "");
   const auth = await requireMember(req, orgId, ["Admin", "DocCtrl"]);
@@ -29,8 +30,11 @@ export async function POST(req: NextRequest) {
     const { data: libs } = await supabaseAdmin.from("knowledge_libraries").select("id, ai_features").eq("org_id", orgId).limit(200);
     const drawingLibs = ((libs as Array<{ id: string; ai_features: Record<string, unknown> | null }> | null) ?? []).filter((l) => (l.ai_features ?? {}).drawingIntel === true).map((l) => l.id);
     if (!drawingLibs.length) return NextResponse.json({ pending: [] });
-    const { data: docs } = await supabaseAdmin.from("knowledge_documents").select("id, name, source_document_id").in("library_id", drawingLibs).eq("status", "ready").not("source_document_id", "is", null).limit(3000);
-    let all = (docs as Array<{ id: string; name: string; source_document_id: string }> | null) ?? [];
+    // Every read copy (paged — a single read stops at 1,000 rows).
+    const { rows: docs } = await fetchAllRows<{ id: string; name: string; source_document_id: string; page_count: number | null }>((from, to) => supabaseAdmin
+      .from("knowledge_documents").select("id, name, source_document_id, page_count").in("library_id", drawingLibs)
+      .eq("status", "ready").not("source_document_id", "is", null).order("id").range(from, to));
+    let all = docs;
     // Never list a drawing whose library or file is held back from AI.
     const neverAi = await excludedLibraryIds(supabaseAdmin, orgId);
     if (all.length) {
@@ -46,12 +50,27 @@ export async function POST(req: NextRequest) {
     // two libraries is read once.
     const seen = new Set<string>();
     const uniq = all.filter((d) => { if (seen.has(d.source_document_id)) return false; seen.add(d.source_document_id); return true; });
-    const read = new Set<string>();
-    for (let i = 0; i < uniq.length; i += 200) {
-      const { data: c } = await supabaseAdmin.from("knowledge_page_entities").select("document_id").eq("kind", "census").eq("tag", "census-v1").in("document_id", uniq.slice(i, i + 200).map((d) => d.id)).limit(20000);
-      for (const r of (c as Array<{ document_id: string }> | null) ?? []) read.add(r.document_id);
+    // PAGE by page: a drawing set is sixteen sheets, and one read sheet used
+    // to mark the whole set read — the other fifteen were never read again.
+    // A page counts as read when the reader read all of it (or a person
+    // filled it in); a page cut short (census-partial) or never read is due.
+    const readPages = new Map<string, Set<number>>();
+    for (let i = 0; i < uniq.length; i += 100) {
+      const { rows: c } = await fetchAllRows<{ document_id: string; page: number }>((from, to) => supabaseAdmin
+        .from("knowledge_page_entities").select("document_id, page").eq("kind", "census").in("tag", CENSUS_DONE_TAGS)
+        .in("document_id", uniq.slice(i, i + 100).map((d) => d.id)).order("id").range(from, to));
+      for (const r of c) {
+        if (!readPages.has(r.document_id)) readPages.set(r.document_id, new Set());
+        readPages.get(r.document_id)!.add(r.page);
+      }
     }
-    return NextResponse.json({ pending: uniq.filter((d) => !read.has(d.id)).map((d) => ({ knowledgeDocumentId: d.id, name: d.name })), total: uniq.length });
+    const pending = uniq.map((d) => {
+      const done = readPages.get(d.id) ?? new Set<number>();
+      const count = Math.max(1, d.page_count ?? 1);
+      const pages = Array.from({ length: count }, (_, k) => k + 1).filter((p) => !done.has(p));
+      return { knowledgeDocumentId: d.id, name: d.name, pages, pageCount: count };
+    }).filter((d) => d.pages.length > 0);
+    return NextResponse.json({ pending, total: uniq.length, pagesDue: pending.reduce((n, d) => n + d.pages.length, 0) });
   }
 
   let kdocId = String(body.knowledgeDocumentId ?? "");
@@ -77,7 +96,8 @@ export async function POST(req: NextRequest) {
       const r = await addEquipmentByHand({ orgId, userId: auth.caller!.userId, userName: auth.caller!.email, knowledgeDocId: kdocId, page: Math.max(1, Number(body.page ?? 1) || 1), tag: String(body.tag ?? ""), name: body.name ? String(body.name).slice(0, 120) : null, run: { ...run, label: String(body.runLabel || "Equipment added by hand").slice(0, 120) } });
       return NextResponse.json({ knowledgeDocumentId: kdocId, ...r });
     }
-    const r = await censusPage({ orgId, userId: auth.caller!.userId, knowledgeDocId: kdocId, page: Math.max(1, Number(body.page ?? 1) || 1), deadlineMs: t0 + 57_000, run });
+    const r = await censusPage({ orgId, userId: auth.caller!.userId, knowledgeDocId: kdocId, page: Math.max(1, Number(body.page ?? 1) || 1), deadlineMs: t0 + 57_000, run,
+      finalize: typeof body.finalize === "boolean" ? body.finalize : undefined });
     return NextResponse.json({ knowledgeDocumentId: kdocId, ...r });
   } catch (e) {
     if (e instanceof GovernedCallError) return NextResponse.json({ error: e.message }, { status: e.status });
