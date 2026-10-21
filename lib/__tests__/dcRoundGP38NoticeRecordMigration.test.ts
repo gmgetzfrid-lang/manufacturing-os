@@ -1,9 +1,13 @@
 // document-control Round G — P38 DOCUMENT NOTICE RECORD: the shape of
 // 20261257_dc_roundG_document_notice_record.sql (DEC-30 one-paste, DIST-19).
 //
-// The file creates ONE new table and re-creates nothing that exists (no
-// function, policy or trigger of an earlier migration is named — checked
-// against the whole folder at test time, so no lineDiff is owed). It was
+// The file creates ONE new table and ONE new audit_logs policy, and
+// re-creates nothing that exists (no function, policy or trigger of an
+// earlier migration is named — checked against the whole folder at test
+// time, so no lineDiff is owed). P38 fix pass: the new policy
+// (audit_logs_notice_deferred_server_only, RESTRICTIVE FOR INSERT TO anon,
+// authenticated) refuses a member the DOCUMENT_NOTICE_RECORD_DEFERRED action
+// — exercised at runtime in lib/__tests__/rls/dcP38NoticeRecord.test.ts. It was
 // exercised on a throwaway PostgreSQL 16 (recorded in DIST-19's Resolution
 // block): first apply and re-run all probes true; service-role write;
 // ON CONFLICT (id) DO NOTHING replay; UPDATE and DELETE refused; a bad kind
@@ -42,12 +46,12 @@ describe("20261257 — DEC-30 one-paste shape", () => {
   it("the inventory is aggregate counts only — never a customer row", () => {
     const inv = sql.slice(sql.indexOf("CREATE TEMP TABLE"), sql.indexOf("BEGIN;"));
     const selects = inv.match(/SELECT[\s\S]*?FROM/g) ?? [];
-    expect(selects.length).toBe(3);
+    expect(selects.length).toBe(4);
     for (const s of selects) expect(s).toMatch(/COUNT\(\*\)::text/);
   });
 
   it("the prerequisite check refuses, changing nothing, without the four base tables", () => {
-    for (const t of ["documents", "document_review_signoffs", "document_acknowledgments", "distribution_acks"]) {
+    for (const t of ["documents", "audit_logs", "document_review_signoffs", "document_acknowledgments", "distribution_acks"]) {
       expect(sql).toContain(`to_regclass('public.${t}') IS NULL`);
     }
     expect(sql).toMatch(/RAISE EXCEPTION '20261257 needs[^']*nothing was changed\.'/);
@@ -69,10 +73,33 @@ describe("20261257 — the record", () => {
   FOR SELECT TO authenticated
   USING ((kind <> 'not_emailed' OR recipient = auth.uid())
          AND EXISTS (SELECT 1 FROM documents d WHERE d.id = document_notice_events.document_id AND d.org_id = document_notice_events.org_id));`);
-    expect(sql.match(/CREATE POLICY/g)).toHaveLength(1);
+    expect(sql.match(/CREATE POLICY/g)).toHaveLength(2);
     expect(sql).toContain("REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON document_notice_events FROM anon, authenticated;");
     expect(sql).toContain("REVOKE ALL ON document_notice_events FROM anon;");
     expect(sql).toContain("ALTER TABLE document_notice_events ENABLE ROW LEVEL SECURITY;");
+  });
+
+  it("P38 fix pass: a member may not insert a DOCUMENT_NOTICE_RECORD_DEFERRED audit row (RESTRICTIVE, the GOV-14 shape), probed", () => {
+    expect(sql).toContain(`DROP POLICY IF EXISTS audit_logs_notice_deferred_server_only ON audit_logs;
+CREATE POLICY audit_logs_notice_deferred_server_only ON audit_logs
+  AS RESTRICTIVE FOR INSERT TO anon, authenticated
+  WITH CHECK (action IS DISTINCT FROM 'DOCUMENT_NOTICE_RECORD_DEFERRED');`);
+    const ts = readFileSync(join(process.cwd(), "lib", "documentNoticeRecord.ts"), "utf8");
+    expect(ts).toContain(`export const DOCUMENT_NOTICE_RECORD_DEFERRED = "DOCUMENT_NOTICE_RECORD_DEFERRED";`);
+    expect(ts).toContain(`.is("user_id", null)`);                       // the replay's own half
+    expect(sql).toContain("with_check LIKE '%action IS DISTINCT FROM ''DOCUMENT_NOTICE_RECORD_DEFERRED''%'");
+    expect(sql).toMatch(/'audit_logs is otherwise untouched[^']*'/);
+    // inside the transaction
+    const pol = sql.indexOf("CREATE POLICY audit_logs_notice_deferred_server_only");
+    expect(pol).toBeGreaterThan(sql.indexOf("BEGIN;"));
+    expect(pol).toBeLessThan(sql.indexOf("COMMIT;"));
+  });
+
+  it("the replay's whitelist equals the CHECKs", async () => {
+    const { DOCUMENT_NOTICE_KINDS, DOCUMENT_NOTICE_SOURCES } = await import("@/lib/documentNoticeRecord");
+    const check = (col: string) => [...sql.match(new RegExp(`${col} TEXT NOT NULL CHECK \\(${col} IN \\(([^)]*)\\)\\)`))![1].matchAll(/'(\w+)'/g)].map((m) => m[1]).sort();
+    expect([...DOCUMENT_NOTICE_KINDS].sort()).toEqual(check("kind"));
+    expect([...DOCUMENT_NOTICE_SOURCES].sort()).toEqual(check("source"));
   });
 
   it("cascades from documents and orgs (every document delete and the org shed keep working)", () => {
@@ -103,12 +130,12 @@ describe("20261257 — the record", () => {
   it("re-creates nothing an earlier migration defines (a new table, function, trigger and policy only — no lineDiff owed)", () => {
     const others = readdirSync(DIR).filter((f) => /^\d{8}.*\.sql$/.test(f) && f !== FILE)
       .map((f) => readFileSync(join(DIR, f), "utf8").replace(/--[^\n]*/g, "")).join("\n");
-    for (const name of ["document_notice_events_append_only", "trg_document_notice_events_append_only", "document_notice_events_read", "document_notice_events"]) {
+    for (const name of ["document_notice_events_append_only", "trg_document_notice_events_append_only", "document_notice_events_read", "document_notice_events", "audit_logs_notice_deferred_server_only"]) {
       expect(others.includes(name), name).toBe(false);
     }
     // nothing existing is altered
     expect(sql).not.toMatch(/ALTER TABLE (?!document_notice_events)\w+/);
-    expect(sql).not.toMatch(/DROP POLICY IF EXISTS (?!document_notice_events_read)/);
+    expect(sql).not.toMatch(/DROP POLICY IF EXISTS (?!document_notice_events_read|audit_logs_notice_deferred_server_only)/);
   });
 
   it("the header carries THE ONE QUERY (DIST-19 done-when 3) over the three obligations and the record, and the paste / deploy order", () => {

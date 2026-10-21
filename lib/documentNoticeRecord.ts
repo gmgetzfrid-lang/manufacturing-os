@@ -20,6 +20,13 @@
 //     (DOCUMENT_NOTICE_RECORD_DEFERRED, the system actor) and the scan's next
 //     run writes them (replayDeferredNotices — the same row ids, so a replay
 //     never writes a second copy);
+//   · P38 fix pass: the replay trusts ONLY a system row (user_id NULL — a
+//     signed-in member's insert must name their own uid under
+//     audit_logs_insert, and 20261257 refuses them the action outright), and
+//     rebuilds each row from the DocumentNoticeRow columns alone: kind and
+//     source checked against the unions, ids checked to be UUIDs, noticed_at
+//     never later than the audit row that kept it. The cooldown read never
+//     counts a notice dated in the future;
 //   · before 20261257 is pasted (42P01 / PGRST205, or 42703 / PGRST204 for a
 //     column) nothing is written and nothing is deferred: today's behaviour,
 //     said once per run in the scan's line.
@@ -36,8 +43,10 @@ export const DOCUMENT_NOTICE_MIGRATION = "20261257_dc_roundG_document_notice_rec
 export const DOCUMENT_NOTICE_RECORD_DEFERRED = "DOCUMENT_NOTICE_RECORD_DEFERRED";
 /** How far back a run looks for deferred records to write. */
 export const DEFERRED_NOTICE_LOOKBACK_MS = 30 * 86_400_000;
-/** Deferred audit rows one replay read takes, newest first. */
+/** Deferred audit rows one page of the replay read takes, newest first. */
 export const DEFERRED_NOTICE_ROWS = 500;
+/** Pages one replay reads at most (the run's line says when it stopped short). */
+export const DEFERRED_NOTICE_PAGES = 10;
 
 /** Which obligation a notice chases (the source table). */
 export type DocumentNoticeSource = "review_signoff" | "acknowledgment" | "distribution_ack";
@@ -45,6 +54,9 @@ export type DocumentNoticeSource = "review_signoff" | "acknowledgment" | "distri
  *  escalated and alternate_activated; delivered and not_emailed are declared
  *  for the request paths (owner: the integrator — DIST-19's Partial). */
 export type DocumentNoticeKind = "delivered" | "reminded" | "escalated" | "alternate_activated" | "not_emailed";
+/** The unions as values (the replay's whitelist; equal to 20261257's CHECKs — pinned). */
+export const DOCUMENT_NOTICE_SOURCES: readonly DocumentNoticeSource[] = ["review_signoff", "acknowledgment", "distribution_ack"];
+export const DOCUMENT_NOTICE_KINDS: readonly DocumentNoticeKind[] = ["delivered", "reminded", "escalated", "alternate_activated", "not_emailed"];
 
 /** One document_notice_events row as the app writes it. */
 export interface DocumentNoticeRow {
@@ -96,7 +108,9 @@ export function isMissingNoticeSchema(err: PgError): boolean {
   if (!err) return false;
   const code = String(err.code ?? "");
   const msg = String(err.message ?? "");
-  if (code === "42P01" || code === "PGRST205") return /document_notice_events/.test(msg) || code === "42P01";
+  // only when the missing relation IS the record (DF-P7's model,
+  // lib/consentWindow.ts): another missing relation is a refusal, deferred
+  if (code === "42P01" || code === "PGRST205") return /document_notice_events/.test(msg);
   if (code === "42703" || code === "PGRST204") return /document_notice_events/.test(msg);
   return false;
 }
@@ -129,10 +143,12 @@ export interface NoticeRecorder {
 
 /**
  * A scan run's writer. record() appends notice rows — checked, retried once,
- * deferred to the audit log when both attempts fail (logAuditAction keeps a
- * refused audit row in the EVID-6 outbox, which the maintenance cron recovers
- * into the audit log, so a deferred record still reaches the next replay).
- * Never throws; never changes anything else.
+ * deferred to the audit log when both attempts fail. If the deferring audit
+ * row is refused too, the rows are LOST to the record: logAuditAction keeps
+ * the refused audit row in the EVID-6 outbox, but the drain writes it as an
+ * AUDIT_DEAD_LETTER row (lib/auditOutboxDrain.ts — never as the original
+ * action), which the replay does not read; the outbox copy is the only trace
+ * (said in the run's line). Never throws; never changes anything else.
  */
 export function noticeRecorder(): NoticeRecorder {
   let missing = false;
@@ -165,54 +181,124 @@ export function noticeRecorder(): NoticeRecorder {
         noteComplianceScan(`${rows.length} document notice record row(s) could not be written (${r.error}) — kept in the audit log; the next run writes them`);
         return "deferred";
       } catch (e) {
-        noteComplianceScan(`${rows.length} document notice record row(s) could not be written (${r.error}) and the audit row keeping them was refused too (${(e as Error)?.message ?? String(e)}; a refused audit row is kept in the audit dead-letter outbox where the server could) — the reminders themselves were sent and stamped as before`);
+        noteComplianceScan(`${rows.length} document notice record row(s) could not be written (${r.error}) and the audit row keeping them was refused too (${(e as Error)?.message ?? String(e)}; the rows are lost to the record — at most a copy stays in the audit dead-letter outbox, which is never replayed into it) — the reminders themselves were sent and stamped as before`);
         return "lost";
       }
     },
   };
 }
 
-const isNoticeRow = (v: unknown): v is DocumentNoticeRow => {
-  const r = v as Record<string, unknown> | null;
-  return !!r && typeof r.id === "string" && typeof r.org_id === "string" && typeof r.document_id === "string"
-    && typeof r.kind === "string" && typeof r.recipient === "string" && typeof r.source === "string";
-};
+const isText = (v: unknown): v is string => typeof v === "string" && v.length > 0;
+const textOrNull = (v: unknown): string | null | undefined => (v == null ? null : isText(v) ? v : undefined);
+
+/**
+ * One deferred row, rebuilt from the DocumentNoticeRow columns ONLY (every
+ * other key — created_at, anything a writer added — is dropped): this
+ * workspace and this scan's source only; kind and source from the unions;
+ * every id a string (the database refuses one that is not a UUID — that row
+ * alone, see the replay); noticed_at a real time and never later than the audit row
+ * that kept it (`keptAt`). null when the row is not one the recorder wrote.
+ */
+export function deferredNoticeRow(v: unknown, orgId: string, source: DocumentNoticeSource, keptAt: string): DocumentNoticeRow | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const r = v as Record<string, unknown>;
+  const kept = Date.parse(keptAt);
+  if (!Number.isFinite(kept)) return null;
+  if (r.org_id !== orgId || r.source !== source || !DOCUMENT_NOTICE_SOURCES.includes(source)) return null;
+  if (typeof r.kind !== "string" || !(DOCUMENT_NOTICE_KINDS as readonly string[]).includes(r.kind)) return null;
+  if (!isText(r.id) || !isText(r.document_id) || !isText(r.recipient)) return null;
+  const version_id = textOrNull(r.version_id);
+  const source_id = textOrNull(r.source_id);
+  const subject_user_id = textOrNull(r.subject_user_id);
+  const notification_id = textOrNull(r.notification_id);
+  if (version_id === undefined || source_id === undefined || subject_user_id === undefined || notification_id === undefined) return null;
+  if (r.revision_label != null && typeof r.revision_label !== "string") return null;
+  const at = typeof r.noticed_at === "string" ? Date.parse(r.noticed_at) : NaN;
+  return {
+    id: r.id, org_id: orgId, document_id: r.document_id, version_id,
+    revision_label: (r.revision_label as string | null | undefined) ?? null,
+    source, source_id, kind: r.kind as DocumentNoticeKind, recipient: r.recipient, subject_user_id, notification_id,
+    actor_name: typeof r.actor_name === "string" ? r.actor_name : "System",
+    details: r.details && typeof r.details === "object" && !Array.isArray(r.details) ? (r.details as Record<string, unknown>) : {},
+    noticed_at: new Date(Number.isFinite(at) ? Math.min(at, kept) : kept).toISOString(),
+  };
+}
+
+/** PostgREST keyset condition: rows strictly after (timestamp, id), newest first. */
+function beforeCursor(c: { at: string; id: string }): string {
+  const v = (x: string) => `"${x.replace(/["\\]/g, (ch) => `\\${ch}`)}"`;
+  return `timestamp.lt.${v(c.at)},and(timestamp.eq.${v(c.at)},id.lt.${v(c.id)})`;
+}
 
 /**
  * SERVER (a scan's first step): write the rows an earlier run of this scan
- * could not (DOCUMENT_NOTICE_RECORD_DEFERRED, the last 30 days). The same row
- * ids — a row already written is skipped (ON CONFLICT DO NOTHING). Answers the
- * rows offered. Never throws; a failure is a line in the scan's report and the
- * rows wait for the next run.
+ * could not (DOCUMENT_NOTICE_RECORD_DEFERRED, the last 30 days). Only a
+ * SYSTEM audit row is read (user_id NULL — the recorder's; a member cannot
+ * write one), keyset-paged newest first up to DEFERRED_NOTICE_PAGES pages
+ * (the run's line says when it stopped short), and each row is rebuilt by
+ * deferredNoticeRow (a row it refuses is skipped and counted). The same row
+ * ids — a row already written is skipped (ON CONFLICT DO NOTHING). A chunk
+ * the database refuses is retried row by row: a refused row is skipped and
+ * reported, the rest are written, and the next chunk is still tried. Answers
+ * the rows written. Never throws; a failure is a line in the scan's report.
  */
 export async function replayDeferredNotices(orgId: string, source: DocumentNoticeSource): Promise<number> {
   let rows: DocumentNoticeRow[] = [];
+  let malformed = 0;
+  let capped = false;
   try {
-    const { data, error } = await db().from("audit_logs").select("details, timestamp")
-      .eq("org_id", orgId).eq("action", DOCUMENT_NOTICE_RECORD_DEFERRED)
-      .gte("timestamp", new Date(Date.now() - DEFERRED_NOTICE_LOOKBACK_MS).toISOString())
-      .order("timestamp", { ascending: false }).limit(DEFERRED_NOTICE_ROWS);
-    if (error) throw new Error(error.message ?? String(error));
-    for (const a of (data ?? []) as Array<{ details?: Record<string, unknown> | null }>) {
-      const d = a.details ?? null;
-      if (!d || d.source !== source || !Array.isArray(d.rows)) continue;
-      // only this workspace's rows, whatever the audit row says
-      for (const r of d.rows) if (isNoticeRow(r) && r.org_id === orgId && r.source === source) rows.push(r);
+    const since = new Date(Date.now() - DEFERRED_NOTICE_LOOKBACK_MS).toISOString();
+    let cursor: { at: string; id: string } | null = null;
+    for (let page = 0; ; page += 1) {
+      if (page >= DEFERRED_NOTICE_PAGES) { capped = true; break; }
+      let q = db().from("audit_logs").select("id, details, timestamp")
+        .eq("org_id", orgId).eq("action", DOCUMENT_NOTICE_RECORD_DEFERRED)
+        .is("user_id", null)
+        .gte("timestamp", since);
+      if (cursor) q = q.or(beforeCursor(cursor));
+      const { data, error } = await q.order("timestamp", { ascending: false }).order("id", { ascending: false }).limit(DEFERRED_NOTICE_ROWS);
+      if (error) throw new Error(error.message ?? String(error));
+      const list = (data ?? []) as Array<{ id?: string; details?: Record<string, unknown> | null; timestamp?: string }>;
+      for (const a of list) {
+        const d = a.details ?? null;
+        if (!d || d.source !== source || !Array.isArray(d.rows)) continue;
+        for (const r of d.rows) {
+          const row = deferredNoticeRow(r, orgId, source, String(a.timestamp ?? ""));
+          if (row) rows.push(row); else malformed += 1;
+        }
+      }
+      if (list.length < DEFERRED_NOTICE_ROWS) break;
+      const last = list[list.length - 1];
+      if (!last?.timestamp || !last?.id) break;
+      cursor = { at: last.timestamp, id: last.id };
     }
   } catch (e) {
     noteComplianceScan(`the deferred document notice records could not be read (${(e as Error)?.message ?? String(e)}) — they are written on a later run`);
     return 0;
   }
+  if (malformed > 0) noteComplianceScan(`${malformed} deferred document notice record row(s) were not replayed — not a well-formed record of this workspace's ${source} notices`);
+  if (capped) noteComplianceScan(`the deferred document notice records were read up to ${DEFERRED_NOTICE_PAGES * DEFERRED_NOTICE_ROWS} audit rows — older ones are read on a later run, while they are inside ${DEFERRED_NOTICE_LOOKBACK_MS / 86_400_000} days`);
   if (rows.length === 0) return 0;
   rows = [...new Map(rows.map((r) => [r.id, r] as const)).values()];
+  let written = 0;
+  let refused = 0;
+  let firstRefusal = "";
   for (let i = 0; i < rows.length; i += 200) {
-    const r = await insertOnce(rows.slice(i, i + 200));
-    if (!r.ok) {
-      if (!r.missing) noteComplianceScan(`deferred document notice records could not be written yet (${r.error}) — retried on the next run`);
-      return 0;
+    const chunk = rows.slice(i, i + 200);
+    const r = await insertOnce(chunk);
+    if (r.ok) { written += chunk.length; continue; }
+    if (r.missing) return written;   // before the paste: nothing to write into (the scan's own write says so)
+    // one refused row must not hold back the rest: row by row
+    for (const one of chunk) {
+      const o = await insertOnce([one]);
+      if (o.ok) { written += 1; continue; }
+      if (o.missing) return written;
+      refused += 1;
+      if (!firstRefusal) firstRefusal = o.error;
     }
   }
-  return rows.length;
+  if (refused > 0) noteComplianceScan(`${refused} deferred document notice record row(s) could not be written (${firstRefusal}) — skipped this run and retried on the next while inside ${DEFERRED_NOTICE_LOOKBACK_MS / 86_400_000} days; the other ${written} were written`);
+  return written;
 }
 
 /** The record's own cooldown read for the distribution-ack nag: who was
@@ -225,7 +311,9 @@ export async function recentDistributionNotices(orgId: string, sinceIso: string)
       .select("recipient, document_id, kind")
       .eq("org_id", orgId).eq("source", "distribution_ack")
       .in("kind", ["reminded", "escalated"])
-      .gte("noticed_at", sinceIso);
+      .gte("noticed_at", sinceIso)
+      // a notice dated in the future never holds a nudge (P38 fix pass)
+      .lte("noticed_at", new Date().toISOString());
     if (error) return null;
     const reminded = new Set<string>();
     const escalated = new Set<string>();

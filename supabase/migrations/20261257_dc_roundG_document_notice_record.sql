@@ -30,8 +30,26 @@
 --   trigger function is SECURITY INVOKER, search_path pinned, EXECUTE revoked
 --   (a trigger fires without it).
 --
+--   audit_logs_notice_deferred_server_only (new, P38 fix pass) — one
+--   RESTRICTIVE FOR INSERT policy on audit_logs (TO anon, authenticated):
+--   a signed-in member may no longer insert a DOCUMENT_NOTICE_RECORD_DEFERRED
+--   row. The scans keep a record row they could not write in such a row
+--   (the system actor, user_id NULL, the service role) and replay it into
+--   this append-only table; a member-written one would plant a permanent
+--   false notice (and silence the distribution nag). The replay already reads
+--   only user_id IS NULL rows (a member's insert must name their own uid
+--   under audit_logs_insert); this is the database's half (the GOV-14
+--   precedent, 20261163). Every other row a member may insert is unaffected
+--   (restrictive: it ANDs with audit_logs_insert). NOTE: like 20261163, it is
+--   a second RESTRICTIVE policy on audit_logs, so 20261142's / 20261157's
+--   final probe ("one RESTRICTIVE") reads false if either is re-pasted after
+--   this file — expected (it already does after 20261163).
+--   ROLLBACK of this policy alone:
+--     DROP POLICY IF EXISTS audit_logs_notice_deferred_server_only ON audit_logs;
+--
 -- WHAT DOES NOT CHANGE (DEC-90 ruling (2)): no existing table, column,
--- policy, function or trigger is touched. document_review_signoffs.notified_at
+-- policy, function or trigger is touched (the one new audit_logs policy
+-- above is new, re-creates nothing, and narrows only). document_review_signoffs.notified_at
 -- and document_acknowledgments.notified_at are written exactly as before, in
 -- the same place, by the same scans; every reader of them is unchanged.
 --
@@ -66,8 +84,8 @@
 --    ORDER BY o.asked_at;
 --
 -- PASTE / DEPLOY ORDER. Independent of every other pending paste (it creates
--- one new table and touches nothing else; its prerequisites date from
--- 20260817 / 20260818 / 20260825). Either order with the P38 deploy is safe;
+-- one new table and one new restrictive audit_logs policy, and touches
+-- nothing else; its prerequisites date from 20260817 / 20260818 / 20260825). Either order with the P38 deploy is safe;
 -- RECOMMENDED: deploy the app first, then paste.
 --   * App deployed, not pasted: the scans remind, escalate and stamp exactly
 --     as today; their first write meets 42P01 / PGRST205 (or 42703 / PGRST204)
@@ -83,7 +101,8 @@
 --     first run after both are in place.
 --
 -- NOT A WIDENING (no person can do anything new; a member gains a read of
--- facts about documents they can already read). Re-runnable: CREATE TABLE IF
+-- facts about documents they can already read, and loses only the insert of
+-- one server-only audit action). Re-runnable: CREATE TABLE IF
 -- NOT EXISTS, CREATE INDEX IF NOT EXISTS, CREATE OR REPLACE, DROP … IF EXISTS.
 -- Single paste: prerequisite check → temp-table inventory (counts only) →
 -- BEGIN/DDL/COMMIT → one SELECT (check text, ok boolean, n text).
@@ -94,10 +113,11 @@
 DO $$
 BEGIN
   IF to_regclass('public.documents') IS NULL
+     OR to_regclass('public.audit_logs') IS NULL
      OR to_regclass('public.document_review_signoffs') IS NULL
      OR to_regclass('public.document_acknowledgments') IS NULL
      OR to_regclass('public.distribution_acks') IS NULL THEN
-    RAISE EXCEPTION '20261257 needs documents, document_review_signoffs (20260818), document_acknowledgments (20260817) and distribution_acks (20260825); nothing was changed.';
+    RAISE EXCEPTION '20261257 needs documents, audit_logs, document_review_signoffs (20260818), document_acknowledgments (20260817) and distribution_acks (20260825); nothing was changed.';
   END IF;
 END
 $$;
@@ -113,7 +133,10 @@ SELECT 2, 'inventory (before apply): pending acknowledgments whose reminder hist
        COUNT(*)::text FROM document_acknowledgments WHERE status = 'pending' AND notified_at IS NOT NULL
 UNION ALL
 SELECT 3, 'inventory (before apply): outstanding distribution acks (no reminder column; their nudges were only bell rows — not back-filled)',
-       COUNT(*)::text FROM distribution_acks WHERE acknowledged_at IS NULL;
+       COUNT(*)::text FROM distribution_acks WHERE acknowledged_at IS NULL
+UNION ALL
+SELECT 4, 'inventory (before apply): DOCUMENT_NOTICE_RECORD_DEFERRED audit rows a signed-in member wrote (user_id set — never replayed; expected 0)',
+       COUNT(*)::text FROM audit_logs WHERE action = 'DOCUMENT_NOTICE_RECORD_DEFERRED' AND user_id IS NOT NULL;
 
 BEGIN;
 
@@ -172,10 +195,19 @@ CREATE POLICY document_notice_events_read ON document_notice_events
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON document_notice_events FROM anon, authenticated;
 REVOKE ALL ON document_notice_events FROM anon;
 
+-- ── the deferred-record audit rows are the server's alone (GOV-14 shape) ───
+DROP POLICY IF EXISTS audit_logs_notice_deferred_server_only ON audit_logs;
+CREATE POLICY audit_logs_notice_deferred_server_only ON audit_logs
+  AS RESTRICTIVE FOR INSERT TO anon, authenticated
+  WITH CHECK (action IS DISTINCT FROM 'DOCUMENT_NOTICE_RECORD_DEFERRED');
+
+COMMENT ON POLICY audit_logs_notice_deferred_server_only ON audit_logs IS
+  'DIST-19 (20261257): only the document scans (service role, system actor) write DOCUMENT_NOTICE_RECORD_DEFERRED rows; the next scan replays them into the append-only document_notice_events, so a member-written one would plant a permanent false notice. Every other row a member may insert is unaffected (restrictive: ANDs with the permissive member insert policy).';
+
 COMMIT;
 
 -- ── Verification + inventory — ONE result set ───────────────────────────────
--- Probes: ok = true × 6 on a correct paste. Inventory rows: n = the count.
+-- Probes: ok = true × 8 on a correct paste. Inventory rows: n = the count.
 SELECT "check", ok, n FROM (
 SELECT 1 AS sec, 1 AS ord, 'DIST-19: document_notice_events exists with row security on, its kind and source CHECKs, and cascades from documents and orgs' AS check,
        (SELECT c.relrowsecurity FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
@@ -218,6 +250,21 @@ SELECT 1, 6, 'nothing else touched: the notified_at columns are still on documen
        (SELECT COUNT(*) = 2 FROM information_schema.columns
          WHERE table_schema = 'public' AND column_name = 'notified_at'
            AND table_name IN ('document_review_signoffs', 'document_acknowledgments')),
+       NULL
+UNION ALL
+SELECT 1, 7, 'audit_logs_notice_deferred_server_only is a RESTRICTIVE INSERT policy for anon and authenticated refusing DOCUMENT_NOTICE_RECORD_DEFERRED, with no USING clause',
+       COALESCE((SELECT permissive = 'RESTRICTIVE' AND cmd = 'INSERT'
+                        AND 'authenticated' = ANY (roles) AND 'anon' = ANY (roles)
+                        AND qual IS NULL
+                        AND with_check LIKE '%action IS DISTINCT FROM ''DOCUMENT_NOTICE_RECORD_DEFERRED''%'
+                   FROM pg_policies
+                  WHERE schemaname = 'public' AND tablename = 'audit_logs' AND policyname = 'audit_logs_notice_deferred_server_only'), false),
+       NULL
+UNION ALL
+SELECT 1, 8, 'audit_logs is otherwise untouched: RLS on, and still exactly one PERMISSIVE INSERT policy (the member insert, binding the caller''s own uid)',
+       COALESCE((SELECT relrowsecurity FROM pg_class WHERE oid = to_regclass('public.audit_logs')), false)
+       AND (SELECT COUNT(*) = 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'audit_logs'
+             AND permissive = 'PERMISSIVE' AND cmd = 'INSERT' AND with_check LIKE '%auth.uid()%'),
        NULL
 UNION ALL
 SELECT 2, ord, inventory, NULL, n FROM dc_round_g_257_before

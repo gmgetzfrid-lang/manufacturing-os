@@ -36,21 +36,26 @@ const db = vi.hoisted(() => ({
   failBellFor: new Set<string>(),
   /** the next document_notice_events writes answer this error (null: they land) */
   noticeError: null as null | { code?: string; message: string },
+  /** a document_notice_events write naming one of these ids is refused (an FK / CHECK refusal) */
+  refuseNoticeIds: new Set<string>(),
   noticeWrites: 0,
   seq: 0,
 }));
 
-function parseOr(expr: string): (r: Row) => boolean {
+const unq = (v: string) => (v.startsWith('"') && v.endsWith('"') ? v.slice(1, -1).replace(/\\(.)/g, "$1") : v);
+function parseOr(expr: string, all = false): (r: Row) => boolean {
   const parts = expr.split(/,(?![^(]*\))(?![^{]*\})/);
   const preds = parts.map((p) => {
     let m: RegExpExecArray | null;
+    if ((m = /^and\((.*)\)$/.exec(p))) return parseOr(m[1], true);
+    if ((m = /^(\w+)\.eq\.(.+)$/.exec(p))) { const col = m[1]; const v = unq(m[2]); return (r: Row) => r[col] != null && String(r[col]) === v; }
     if ((m = /^(\w+)\.in\.\(([^)]*)\)$/.exec(p))) { const list = m[2].split(","); const col = m[1]; return (r: Row) => list.includes(String(r[col])); }
     if ((m = /^(\w+)\.ov\.\{([^}]*)\}$/.exec(p))) { const list = m[2].split(","); const col = m[1]; return (r: Row) => Array.isArray(r[col]) && (r[col] as string[]).some((x) => list.includes(x)); }
     if ((m = /^(\w+)\.is\.null$/.exec(p))) { const col = m[1]; return (r: Row) => r[col] == null; }
-    if ((m = /^(\w+)\.lt\.(.+)$/.exec(p))) { const col = m[1]; const v = m[2]; return (r: Row) => r[col] != null && String(r[col]) < v; }
+    if ((m = /^(\w+)\.lt\.(.+)$/.exec(p))) { const col = m[1]; const v = unq(m[2]); return (r: Row) => r[col] != null && String(r[col]) < v; }
     return () => false;
   });
-  return (r) => preds.some((p) => p(r));
+  return all ? (r) => preds.every((p) => p(r)) : (r) => preds.some((p) => p(r));
 }
 
 function chain(table: string) {
@@ -58,11 +63,19 @@ function chain(table: string) {
   let update: Row | null = null;
   let insert: Row[] | null = null;
   let upsertIgnore = false;
-  let order: { col: string; asc: boolean } | null = null;
+  const orders: Array<{ col: string; asc: boolean }> = [];
   let limit = Infinity;
   const matching = () => {
     let rows = (db.tables[table] ?? []).filter((r) => preds.every((p) => p(r)));
-    if (order) { const { col, asc } = order; rows = [...rows].sort((a, b) => (String(a[col]) < String(b[col]) ? -1 : 1) * (asc ? 1 : -1)); }
+    if (orders.length) {
+      rows = [...rows].sort((a, b) => {
+        for (const { col, asc } of orders) {
+          const x = String(a[col]); const y = String(b[col]);
+          if (x !== y) return (x < y ? -1 : 1) * (asc ? 1 : -1);
+        }
+        return 0;
+      });
+    }
     return rows.slice(0, limit);
   };
   const run = (): { data: unknown; error: unknown; count?: number } => {
@@ -74,6 +87,8 @@ function chain(table: string) {
       if (table === "document_notice_events") {
         db.noticeWrites += 1;
         if (db.noticeError) return { data: null, error: db.noticeError };
+        const bad = rows.find((r) => db.refuseNoticeIds.has(String(r.id)));
+        if (bad) return { data: null, error: { code: "23503", message: `insert or update on table "document_notice_events" violates foreign key constraint (row ${String(bad.id)})` } };
       }
       const at = new Date().toISOString();
       const t = (db.tables[table] ??= []);
@@ -108,7 +123,7 @@ function chain(table: string) {
             if (a1 === "is") preds.push((r) => !(a2 === null ? r[col] == null : r[col] === a2));
             break;
           case "or": preds.push(parseOr(String(col))); break;
-          case "order": order = { col, asc: (a1 as { ascending?: boolean } | undefined)?.ascending !== false }; break;
+          case "order": orders.push({ col, asc: (a1 as { ascending?: boolean } | undefined)?.ascending !== false }); break;
           case "limit": limit = Number(col); break;
           case "update": update = args[0] as Row; break;
           case "insert": insert = (Array.isArray(args[0]) ? args[0] : [args[0]]) as Row[]; break;
@@ -139,7 +154,10 @@ import { runComplianceScan } from "@/lib/complianceNotifyScope";
 import { scanAndNotifyAcks } from "@/lib/acknowledgments";
 import { scanReviews } from "@/lib/reviewControl";
 import { scanDistributionAcks } from "@/lib/distributionAcks";
-import { DOCUMENT_NOTICE_RECORD_DEFERRED, isMissingNoticeSchema, noticeRow } from "@/lib/documentNoticeRecord";
+import {
+  DEFERRED_NOTICE_PAGES, DEFERRED_NOTICE_ROWS, DOCUMENT_NOTICE_RECORD_DEFERRED, deferredNoticeRow, isMissingNoticeSchema, noticeRow,
+  recentDistributionNotices, replayDeferredNotices,
+} from "@/lib/documentNoticeRecord";
 
 const DAY = 86_400_000;
 const T0 = Date.UTC(2026, 9, 21, 3, 0, 0);
@@ -163,6 +181,7 @@ beforeEach(() => {
   db.seq = 0;
   db.noticeWrites = 0;
   db.noticeError = null;
+  db.refuseNoticeIds = new Set();
   db.failBellFor = new Set();
   db.tables = {
     org_members: [
@@ -306,6 +325,17 @@ describe("DIST-19 — a record write that fails never fails the scan or changes 
     expect(isMissingNoticeSchema({ code: "42501", message: "permission denied for table document_notice_events" })).toBe(false);
     expect(isMissingNoticeSchema(null)).toBe(false);
   });
+
+  it("P38 fix pass: a 42P01 / PGRST205 naming ANOTHER relation is not the record missing — the rows are deferred, not dropped", async () => {
+    expect(isMissingNoticeSchema({ code: "42P01", message: 'relation "public.document_versions" does not exist' })).toBe(false);
+    expect(isMissingNoticeSchema({ code: "PGRST205", message: "Could not find the table 'public.orgs' in the schema cache" })).toBe(false);
+    seedReview();
+    db.noticeError = { code: "42P01", message: 'relation "public.some_other_table" does not exist' };
+    const errors = await cronRun("pre-publish-review", scanReviews, 0);
+    expect(errors.join(" ")).not.toMatch(/not in this database yet/);
+    expect(audits(DOCUMENT_NOTICE_RECORD_DEFERRED)).toHaveLength(1);
+    expect(db.noticeWrites).toBe(2);
+  });
 });
 
 describe("DIST-19 — the distribution-ack nag (lib/distributionAcks.ts scanDistributionAcks)", () => {
@@ -364,6 +394,105 @@ describe("DIST-19 — the distribution-ack nag (lib/distributionAcks.ts scanDist
     await cronRun("distribution-acks", scanDistributionAcks, 1);
     expect(bellsTo("rev", "ack_requested")).toHaveLength(1);
     expect(bellsTo("asg", "ack_requested")).toHaveLength(1);
+  });
+});
+
+describe("DIST-19 (P38 fix pass) — the replay trusts only the recorder's own system rows", () => {
+  const seedAcks = () => {
+    db.tables.documents = [{ id: "d1", org_id: "o1", library_id: "L", document_number: "P-1", title: null, name: null, current_version_id: "v1", status: "Issued" }];
+    db.tables.distribution_acks = [
+      { id: "k1", org_id: "o1", document_id: "d1", version_id: "v1", rev_label: "C", recipient_user_id: "asg", recipient_email: "ash@x.com", requested_by: "own", requested_by_name: "Olive", requested_at: daysBefore(12), acknowledged_at: null },
+    ];
+  };
+  const keptRow = (over: Row = {}): Row => ({
+    id: "f1", org_id: "o1", document_id: "d1", version_id: "v1", revision_label: "C", source: "distribution_ack", source_id: "k1",
+    kind: "reminded", recipient: "asg", subject_user_id: "asg", notification_id: null, actor_name: "System", details: {}, noticed_at: daysBefore(5), ...over,
+  });
+  const deferredAudit = (id: string, userId: string | null, rows: Row[], at = daysBefore(5), source = "distribution_ack"): Row => ({
+    id, org_id: "o1", action: DOCUMENT_NOTICE_RECORD_DEFERRED, resource_type: "document", resource_id: "d1", user_id: userId, timestamp: at,
+    details: { source, error: "x", rows },
+  });
+
+  it("a deferred row a MEMBER wrote (user_id set — the audit_logs_insert path) is never replayed: no planted notice, and the nag still nudges", async () => {
+    seedAcks();
+    db.tables.audit_logs.push(deferredAudit("a-forged", "asg", [
+      keptRow({ id: "forged-r", noticed_at: "2099-01-01T00:00:00.000Z" }),
+      keptRow({ id: "forged-e", kind: "escalated", recipient: "own", noticed_at: "2099-01-01T00:00:00.000Z" }),
+    ], daysBefore(1)));
+    await cronRun("distribution-acks", scanDistributionAcks, 0);
+    expect(events().some((e) => String(e.id).startsWith("forged"))).toBe(false);
+    expect(bellsTo("asg", "ack_requested")).toHaveLength(1);
+    expect(bellsTo("own", "ack_overdue")).toHaveLength(1);
+  });
+
+  it("a system row's future noticed_at is clamped to when the audit row kept it, so it never withholds a nudge", async () => {
+    seedAcks();
+    db.tables.audit_logs.push(deferredAudit("a-sys", null, [keptRow({ id: "sys-r", noticed_at: "2099-01-01T00:00:00.000Z" })], daysBefore(5)));
+    await cronRun("distribution-acks", scanDistributionAcks, 0);
+    expect(events().find((e) => e.id === "sys-r")?.noticed_at).toBe(daysBefore(5));
+    expect(bellsTo("asg", "ack_requested")).toHaveLength(1);              // 5 days ago is outside the 3-day window
+  });
+
+  it("the cooldown read never counts a record row dated in the future", async () => {
+    seedAcks();
+    db.tables.document_notice_events.push({ ...keptRow({ id: "planted", noticed_at: "2099-01-01T00:00:00.000Z" }) });
+    expect(await recentDistributionNotices("o1", daysBefore(3))).toEqual({ reminded: new Set(), escalated: new Set() });
+    await cronRun("distribution-acks", scanDistributionAcks, 0);
+    expect(bellsTo("asg", "ack_requested")).toHaveLength(1);
+  });
+
+  it("each row is rebuilt from the columns only: extra keys (a forged created_at) dropped; a bad kind, another workspace or another source skipped and said; the rest written", async () => {
+    seedAcks();
+    db.tables.audit_logs.push(deferredAudit("a-mixed", null, [
+      keptRow({ id: "ok-1", created_at: "2001-01-01T00:00:00.000Z", bogus: "x" }),
+      keptRow({ id: "bad-kind", kind: "deleted" }),
+      keptRow({ id: "other-org", org_id: "o2" }),
+      keptRow({ id: "other-src", source: "acknowledgment" }),
+      "not a row" as unknown as Row,
+    ]));
+    const errors = await cronRun("distribution-acks", scanDistributionAcks, 0);
+    const ok1 = events().find((e) => e.id === "ok-1");
+    expect(ok1).toBeDefined();
+    expect(ok1).not.toHaveProperty("bogus");
+    expect(ok1?.created_at).toBe(iso(T0));                                // the database's own clock, not the row's
+    expect(events().map((e) => e.id)).not.toEqual(expect.arrayContaining(["bad-kind"]));
+    expect(events().some((e) => ["bad-kind", "other-org", "other-src"].includes(String(e.id)))).toBe(false);
+    expect(errors.join(" ")).toMatch(/4 deferred document notice record row\(s\) were not replayed/);
+    expect(deferredNoticeRow(keptRow(), "o1", "distribution_ack", "not a time")).toBeNull();
+  });
+
+  it("a row the database refuses is skipped and said; the rest of its chunk and the next chunks are still written", async () => {
+    const rows = Array.from({ length: 250 }, (_, i) => keptRow({ id: `r-${String(i).padStart(3, "0")}` }));
+    db.tables.audit_logs.push(deferredAudit("a-big", null, rows));
+    db.refuseNoticeIds.add("r-010");
+    vi.setSystemTime(T0);
+    const errors: string[] = [];
+    let written = 0;
+    await runComplianceScan("replay@o1", async () => { written = await replayDeferredNotices("o1", "distribution_ack"); return written; }, errors, null);
+    expect(written).toBe(249);
+    expect(events()).toHaveLength(249);
+    expect(events().some((e) => e.id === "r-010")).toBe(false);
+    expect(errors.join(" ")).toMatch(/1 deferred document notice record row\(s\) could not be written \(insert or update on table "document_notice_events" violates foreign key/);
+  });
+
+  it("the audit read is keyset-paged past one page, and says so when it stops at the page cap", async () => {
+    const at = (i: number) => iso(T0 - 2 * DAY + i * 1000);
+    const n = DEFERRED_NOTICE_ROWS + 3;
+    for (let i = 0; i < n; i += 1) db.tables.audit_logs.push(deferredAudit(`a-${String(i).padStart(5, "0")}`, null, [keptRow({ id: `p-${i}` })], at(i)));
+    vi.setSystemTime(T0);
+    let errors: string[] = [];
+    await runComplianceScan("replay@o1", () => replayDeferredNotices("o1", "distribution_ack"), errors, null);
+    expect(events()).toHaveLength(n);                                     // the oldest three, on page two, too
+    expect(errors.join(" ")).not.toMatch(/read up to/);
+
+    db.tables.document_notice_events = [];
+    db.tables.audit_logs = [];
+    const many = DEFERRED_NOTICE_ROWS * DEFERRED_NOTICE_PAGES + 1;
+    for (let i = 0; i < many; i += 1) db.tables.audit_logs.push(deferredAudit(`b-${String(i).padStart(5, "0")}`, null, [keptRow({ id: `q-${i}` })], iso(T0 - 2 * DAY + i)));
+    errors = [];
+    await runComplianceScan("replay@o1", () => replayDeferredNotices("o1", "distribution_ack"), errors, null);
+    expect(events()).toHaveLength(many - 1);
+    expect(errors.join(" ")).toMatch(new RegExp(`read up to ${DEFERRED_NOTICE_ROWS * DEFERRED_NOTICE_PAGES} audit rows`));
   });
 });
 
