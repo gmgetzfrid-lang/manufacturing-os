@@ -157,9 +157,13 @@
 // apply — the same rule and sentence, recorded on its SUPERSEDE_DOC), and a
 // row checked out by someone else is superseded over their checkout only
 // with the reason (the override the Supersede dialog records — the holder is
-// told after the write). A row that fails a gate is refused and named,
-// nothing written for it; a non-drawing, unlocked row writes exactly as
-// before. After the apply, finishRetirementDuties also closes each
+// told after the write), and a row under an active hold is refused whoever
+// applies it (the Supersede dialog never forces past a hold; the database's
+// guard lets a controller through before its hold check — P34 review fix).
+// A row that fails a gate is refused and named, nothing written for it; a
+// non-drawing, unlocked, unheld row writes exactly as before. The MOC
+// recorded on a row's SUPERSEDE_DOC is the one its gate accepted — none on a
+// row already Superseded, whose supersession this apply did not make. After the apply, finishRetirementDuties also closes each
 // superseded row's pending acknowledgment requests (checked) and sends the
 // checkout holder's notice. And every bulk retirement now runs the duties for
 // a row ALREADY in the status written — a change to Superseded too, as
@@ -310,8 +314,9 @@ export default function BulkEditModal({
         // REV-33 (P34): supersedeDocument's pre-write gates, for a row this
         // change would retire into Superseded (its fresh prior not
         // Superseded, or unread — fail-safe): the drawing-class MOC
-        // reference and the foreign checkout lock (the reason is the
-        // override). A refusal is this row's, nothing written for it.
+        // reference, the foreign checkout lock (the reason is the
+        // override) and an active hold (refused, no force). A refusal is
+        // this row's, nothing written for it.
         let gate: StatusEditorRetirementGate | null = null;
         if (superseding && doc.id && (priorStatusOf.get(doc.id) ?? "").trim() !== "Superseded") {
           try {
@@ -471,9 +476,11 @@ export default function BulkEditModal({
             ...(alreadyRetired
               ? { alreadyRetired: true }
               : { retiredFrom: known ? (priorStatusOf.get(doc.id) ?? null) : null, ...(known ? {} : { priorStatusUnknown: true }) }),
-            // REV-33 / REV-34 (c) (P34): the MOC the apply recorded, and the
-            // checkout holder the gate read (told after the write).
-            ...(superseding ? { mocReference: mocReference.trim() || null, checkoutHolder: gate?.preState ?? null, libraryId: library.id ?? null } : {}),
+            // REV-33 / REV-34 (c) (P34): the MOC this row's gate accepted (P34
+            // review fix: never on a row already Superseded — no gate ran, and
+            // this apply did not supersede it), and the checkout holder the
+            // gate read (told after the write).
+            ...(superseding ? { mocReference: gate?.mocReference ?? null, checkoutHolder: gate?.preState ?? null, libraryId: library.id ?? null } : {}),
           });
         }
       } catch (e) {
@@ -621,7 +628,7 @@ export default function BulkEditModal({
                 placeholder="MOC-2026-0142 (required for drawing-class documents)"
                 disabled={busy}
               />
-              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">A drawing-class document is superseded only with its MOC reference (PSM, OSHA 1910.119(l)) — without one, each such row is refused and nothing is written for it. The reference is recorded on each superseded document&apos;s history. A row someone else has checked out is superseded over their checkout with the reason above, and they are told.</div>
+              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">A drawing-class document is superseded only with its MOC reference (PSM, OSHA 1910.119(l)) — without one, each such row is refused and nothing is written for it. The reference is recorded on each superseded document&apos;s history. A row someone else has checked out is superseded over their checkout with the reason above, and they are told. A row under an active hold is not superseded.</div>
             </div>
           )}
 

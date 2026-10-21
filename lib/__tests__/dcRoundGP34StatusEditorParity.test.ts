@@ -5,7 +5,9 @@
 //   · REV-33 — lib/revisions.ts gateStatusEditorRetirement: a status editor's
 //     Superseded asks supersedeDocument's drawing-class MOC reference (the
 //     same rule and sentence, assertSupersessionMoc) and applies the foreign
-//     checkout lock (the reason is the override; none → refused); its Void
+//     checkout lock (the reason is the override; none → refused) and refuses
+//     an active hold for every role (P34 review fix: the database's guard
+//     lets a controller through before its hold check); its Void
 //     takes authorizePublish's authority / lock / hold pre-check; Archived
 //     nothing. The library page's metadata save runs it before its write.
 //   · REV-34 — (a)/(d) the library page's bulk archive records retiredFrom /
@@ -64,7 +66,7 @@ vi.mock("@/lib/reviewControl", async (importOriginal) => {
 
 import { supabase } from "@/lib/supabase";
 import {
-  changeDocumentStatus, finishRetirementDuties, finishBulkArchive, gateStatusEditorRetirement, isSupersessionMocRequired,
+  changeDocumentStatus, finishRetirementDuties, finishBulkArchive, gateStatusEditorRetirement, isSupersessionMocRequired, RetirementOverrideReasonRequiredError,
   SUPERSEDE_MOC_REQUIRED, SupersessionMocRequiredError, supersedeDocument, notifyHolderOfRetirement, recallsCopyHolders,
 } from "@/lib/revisions";
 import { notify } from "@/lib/inAppNotifications";
@@ -154,18 +156,34 @@ describe("REV-33 — gateStatusEditorRetirement: supersedeDocument's pre-write g
   it("Superseded over another person's checkout: the reason is the override (passed, the holder returned for the notice); no reason — refused in authorizePublish's words; a lock that cannot be read refuses (fail-closed)", async () => {
     seedDoc("l1", { checked_out_by: OTHER, checked_out_by_name: "Eli" });
     expect(await gate("l1", "Superseded")).toMatchObject({ preState: { checkedOutBy: OTHER, checkedOutByName: "Eli" } });
-    await expect(gate("l1", "Superseded", { reason: null })).rejects.toThrow("A reason is required to supersede a document another user has checked out.");
+    const lockErr = await gate("l1", "Superseded", { reason: null }).catch((x: unknown) => x);
+    expect(lockErr).toBeInstanceOf(RetirementOverrideReasonRequiredError);
+    expect((lockErr as Error).message).toBe("A reason is required to supersede a document another user has checked out.");
+    expect((lockErr as RetirementOverrideReasonRequiredError).holderName).toBe("Eli");
     // my own checkout is no foreign lock
     seedDoc("l2", { checked_out_by: ME });
     expect(await gate("l2", "Superseded", { reason: null })).toMatchObject({ preState: { checkedOutBy: ME } });
     state.db.selectErrors!.documents = (cols) => (cols === "checked_out_by, checked_out_by_name" ? { message: "503" } : null);
-    await expect(gate("l2", "Superseded")).rejects.toThrow("Couldn't read whether the document is checked out (503) — nothing was superseded.");
+    await expect(gate("l2", "Superseded")).rejects.toThrow("Couldn't read whether the document is checked out or on hold (503) — nothing was superseded.");
+    state.db.selectErrors!.documents = () => null;
+    state.db.selectErrors!.document_holds = () => ({ message: "504" });
+    await expect(gate("l2", "Superseded")).rejects.toThrow("Couldn't read whether the document is checked out or on hold (504) — nothing was superseded.");
+    expect(writes()).toEqual([]);
   });
 
-  it("REGRESSION — Superseded keeps the database's authority / hold rule: a held row is not refused by the gate (the publish guard decides, as before)", async () => {
+  it("P34 review fix — Superseded over an active hold is refused for a CONTROLLER (Doc Control, Admin) as for anyone (the Supersede dialog never forces; the database's guard returns for a controller before its hold check), worded for a supersession, nothing written", async () => {
     seedDoc("h1"); seedHold("h1");
-    state.role = "Engineer";
-    expect(await gate("h1", "Superseded")).toMatchObject({ mocReference: null });
+    const held = "This document has an active hold (Safety review). A held document is not superseded — ask Document Control to resolve the hold first.";
+    for (const role of ["DocCtrl", "Admin", "Engineer"]) {
+      state.role = role;
+      await expect(gate("h1", "Superseded")).rejects.toThrow(held);
+      await expect(gate("h1", "Superseded", { mocReference: "MOC-2026-0142" })).rejects.toThrow(held);
+    }
+    // a released hold no longer refuses
+    T("document_holds")[0].released_at = "2026-10-20";
+    state.role = "DocCtrl";
+    expect(await gate("h1", "Superseded")).toMatchObject({ preState: { activeHolds: [] }, mocReference: null });
+    expect(writes()).toEqual([]);
   });
 
   it("Void: authorizePublish's pre-check — a controller passes; a non-publisher is refused (said as a void); an active hold refuses (said as a void, no force); another person's checkout needs the reason", async () => {
@@ -177,7 +195,10 @@ describe("REV-33 — gateStatusEditorRetirement: supersedeDocument's pre-write g
     seedDoc("v2"); seedHold("v2");
     await expect(gate("v2", "Void")).rejects.toThrow("This document has an active hold (Safety review). A held document is not voided — ask Document Control to resolve the hold first.");
     seedDoc("v3", { checked_out_by: OTHER, checked_out_by_name: "Eli" });
-    await expect(gate("v3", "Void", { reason: null })).rejects.toThrow("A reason is required to void a document another user has checked out.");
+    const voidLock = await gate("v3", "Void", { reason: null }).catch((x: unknown) => x);
+    expect(voidLock).toBeInstanceOf(RetirementOverrideReasonRequiredError);
+    expect((voidLock as Error).message).toBe("A reason is required to void a document another user has checked out.");
+    expect((voidLock as RetirementOverrideReasonRequiredError).holderName).toBe("Eli");
     expect(await gate("v3", "Void")).toMatchObject({ preState: { checkedOutBy: OTHER } });
     expect(writes()).toEqual([]);
   });
@@ -352,6 +373,33 @@ describe("REV-33 / REV-34 (b) / (c) — the library page's metadata save into a 
     expect(docRow("p4").status).toBe("Superseded");
     expect(notifyCalls()).toEqual([expect.objectContaining({ userId: OTHER, kind: "revision_published_over_checkout", body: "Superseded by cara@x: Obsolete unit" })]);
     expect(T("distribution_acks")[0].superseded_at).toBeTruthy();
+  });
+
+  it("P34 review fix — Document Control saving Superseded on a held document: refused before the write, nothing saved, no prompt for the MOC, no record", async () => {
+    const d = seedDoc("p5"); seedHold("p5"); seedAck("p5", "ak-p5");
+    await expect(save(d).fn(core(d, "Superseded"))).rejects.toThrow(
+      "Save refused — nothing was saved: This document has an active hold (Safety review). A held document is not superseded — ask Document Control to resolve the hold first.",
+    );
+    expect(statusWrites()).toEqual([]);
+    expect(docRow("p5").status).toBe("Issued");
+    expect(T("distribution_acks")[0].superseded_at).toBeNull();
+    expect(T("audit_logs")).toEqual([]);
+  });
+
+  it("P34 review fix — the stale page (it shows Superseded / Void; the row is back in force and someone else has it checked out): refused saying what happened — never asking for a reason this save has no field for", async () => {
+    const d = seedDoc("p6", { checked_out_by: OTHER, checked_out_by_name: "Eli" });
+    const a = save(d, { pageSees: { status: "Superseded" } });
+    await expect(a.fn(core(d, "Superseded"))).rejects.toThrow(
+      "Save refused — nothing was saved: this page shows P6 as already Superseded, but it is Issued now and checked out by Eli (changed after this page loaded). Reload it and set the status with a reason.",
+    );
+    expect(a.st.prompts).toEqual([]);
+    const v = seedDoc("p7", { checked_out_by: OTHER, checked_out_by_name: null });
+    await expect(save(v, { pageSees: { status: "Void" } }).fn(core(v, "Void"))).rejects.toThrow(
+      "Save refused — nothing was saved: this page shows P7 as already Void, but it is Issued now and checked out by another user (changed after this page loaded). Reload it and set the status with a reason.",
+    );
+    expect(statusWrites()).toEqual([]);
+    expect(docRow("p6").status).toBe("Issued");
+    expect(docRow("p7").status).toBe("Issued");
   });
 
   it("Void: a held document is refused before the write, nothing saved; a non-publisher is refused; another person's checkout — the reason overrides and the holder is told \"voided\"", async () => {

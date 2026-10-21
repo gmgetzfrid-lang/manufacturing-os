@@ -8,8 +8,12 @@
 //   would retire: a drawing-class row needs the MOC reference ("MOC
 //   reference", one for the apply) — refused and named without it, nothing
 //   written for it; a row someone else has checked out is superseded over
-//   their checkout with the reason (the holder told after the write). A
-//   non-drawing, unlocked row writes exactly as before. Each superseded row's
+//   their checkout with the reason (the holder told after the write); a row
+//   under an active hold is refused whoever applies it — the editor is shown
+//   only to controllers, and the database's guard lets a controller through
+//   before its hold check (P34 review fix). A non-drawing, unlocked, unheld
+//   row writes exactly as before. The MOC recorded is the one the row's gate
+//   accepted — none on a row already Superseded. Each superseded row's
 //   pending acks are closed; a row already Superseded gets the duties with a
 //   record that claims no retirement (alreadyRetired), and no gate.
 //
@@ -182,6 +186,42 @@ describe("REV-33 (P34) — the bulk editor's Superseded takes supersedeDocument'
     })]);
     expect(T("distribution_acks")[0].superseded_at).toBeTruthy();
     expect(host.querySelector('[data-testid="bulk-archive-follow-ups"]')).toBeNull();
+  });
+
+  it("P34 review fix — Document Control (a controller) applying Superseded: a row under an active hold is refused and named, NOTHING written for it (the Supersede dialog's refusal, worded for a supersession); the unheld row is written as before", async () => {
+    const h = seedDoc("h1"); seedShare("h1");
+    T("document_holds").push({ id: "h1-h", org_id: ORG, document_id: "h1", reason: "Safety review", released_at: null, opened_at: "2026-10-01" });
+    const ok = seedDoc("h2");
+    await apply([asRecord(h), asRecord(ok)], "Superseded", { moc: "MOC-2026-0142" });
+    expect(host.textContent).toMatch(/Applied to 1 document\./);
+    expect(host.querySelector('[data-testid="bulk-refused-rows"]')!.textContent).toContain(
+      "H1 — not superseded, nothing was written for it — This document has an active hold (Safety review). A held document is not superseded — ask Document Control to resolve the hold first.",
+    );
+    expect(docRow("h1").status).toBe("Issued");
+    expect(T("document_shares")[0].revoked_at).toBeNull();
+    expect(rec("h1")).toBeUndefined();
+    expect(statusWrites()).toHaveLength(1);
+    expect(docRow("h2").status).toBe("Superseded");
+    expect(batch.mock.calls[0][0].docs.map((x) => x.documentId)).toEqual(["h2"]);
+  });
+
+  it("P34 review fix — a hold state that cannot be read refuses the row (fail-closed), nothing written for it", async () => {
+    const h = seedDoc("h3");
+    state.db.selectErrors!.document_holds = () => ({ message: "503" });
+    await apply([asRecord(h)], "Superseded");
+    expect(host.querySelector('[data-testid="bulk-refused-rows"]')!.textContent).toContain(
+      "H3 — not superseded, nothing was written for it — Couldn't read whether the document is checked out or on hold (503) — nothing was superseded.",
+    );
+    expect(docRow("h3").status).toBe("Issued");
+    expect(statusWrites()).toEqual([]);
+  });
+
+  it("P34 review fix — the MOC typed for this apply is NOT written onto a row already Superseded (no gate ran; this apply did not supersede it); the row it did supersede carries it", async () => {
+    const old = seedDoc("o1", { status: "Superseded" });
+    const now = seedDoc("o2");
+    await apply([asRecord(old), asRecord(now)], "Superseded", { moc: "MOC-2026-0142" });
+    expect(rec("o1")).toMatchObject({ alreadyRetired: true, mocReference: null });
+    expect(rec("o2")).toMatchObject({ retiredFrom: "Issued", mocReference: "MOC-2026-0142" });
   });
 
   it("REV-34 (d): a row already Superseded takes no gate (no MOC asked of a drawing, no retirement made) but gets the duties — its live link revoked, its acks closed — its record saying alreadyRetired; its holder is not told", async () => {

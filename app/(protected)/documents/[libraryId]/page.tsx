@@ -3054,8 +3054,9 @@ export default function LibraryExplorerPage() {
       // (lib/revisions.ts gateStatusEditorRetirement): Superseded — the
       // drawing-class MOC reference (asked here when the class needs it) and
       // the foreign checkout lock (the reason is the override, the holder
-      // told after the write); Void — publish authority, the lock, the hold.
-      // A refusal saves nothing. A non-drawing, unlocked Superseded writes
+      // told after the write) and an active hold (refused, no force — P34
+      // review fix); Void — publish authority, the lock, the hold. A refusal
+      // saves nothing. A non-drawing, unlocked, unheld Superseded writes
       // exactly as before.
       let gate: StatusEditorRetirementGate | null = null;
       if (retiring && (toStatus.trim() === "Superseded" || toStatus.trim() === "Void")) {
@@ -3066,6 +3067,13 @@ export default function LibraryExplorerPage() {
         try {
           gate = await gateFor(null);
         } catch (e) {
+          // P34 review fix: the stale page (it showed the status already, so
+          // no reason was asked) on a row someone else has checked out — say
+          // what happened, never ask for a reason this save has no field for.
+          const lockRefusal = e as { name?: string; holderName?: string | null } | null;
+          if (retireReason === null && lockRefusal?.name === "RetirementOverrideReasonRequiredError") {
+            throw new Error(`Save refused — nothing was saved: this page shows ${retireLabel} as already ${toStatus.trim()}, but it is ${(rowStatus ?? "").trim() || "in another status"} now and checked out by ${lockRefusal.holderName || "another user"} (changed after this page loaded). Reload it and set the status with a reason.`);
+          }
           if (!isSupersessionMocRequired(e)) throw new Error(`Save refused — nothing was saved: ${(e as Error)?.message || String(e)}`);
           if (retireReason === null) {
             throw new Error(`Save refused — nothing was saved: this page shows ${retireLabel} as already Superseded, but it is ${(rowStatus ?? "").trim() || "in another status"} now (changed after this page loaded), so this save would supersede it again. ${SUPERSEDE_MOC_REQUIRED} Reload it and set the status with a reason and the MOC reference.`);

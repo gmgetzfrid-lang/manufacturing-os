@@ -3688,6 +3688,19 @@ export async function assertSupersessionMoc(
   }
 }
 
+/** A status editor's retirement of a document someone else has checked out,
+ *  with no reason (the override) — authorizePublish's refusal, in its words;
+ *  it names the holder so a door that asked no reason (a stale page) can say
+ *  what happened instead of asking for one (P34 review fix). */
+export class RetirementOverrideReasonRequiredError extends Error {
+  holderName: string | null;
+  constructor(op: "supersede" | "void", holderName: string | null) {
+    super(`A reason is required to ${overrideReasonVerb(op)}.`);
+    this.name = "RetirementOverrideReasonRequiredError";
+    this.holderName = holderName;
+  }
+}
+
 /** What a status editor's retirement gate found: the lock state it read (the
  *  checkout holder, for the holder's notice after the write — REV-34 (c)) and
  *  the MOC reference it accepted (for the SUPERSEDE_DOC record). */
@@ -3707,10 +3720,17 @@ export type StatusEditorRetirementGate = {
  *     has checked out is superseded only with a reason, which — as the
  *     Supersede dialog passes it — is the override recorded to the holder
  *     (their notice after the write, finishRetirementDuties); no reason, the
- *     authorizePublish refusal. Publish authority and the hold are NOT asked
- *     here: the database's publish guard already refuses a non-controller's
- *     Superseded write without the publisher tier or over an active hold, and
- *     the ruling keeps a non-drawing, unlocked row writing exactly as today.
+ *     authorizePublish refusal (RetirementOverrideReasonRequiredError, its
+ *     words unchanged). Then the hold: an active hold refuses, for EVERY role
+ *     — supersedeDocument's authorizePublish refuses a hold unless a
+ *     controller passes force, and the Supersede dialog never passes one;
+ *     the database cannot stand in for this, because the newest publish
+ *     guard (20261245) returns for a controller BEFORE its hold check, and
+ *     the bulk editor is shown only to controllers (P34 review fix). Publish
+ *     authority is NOT asked here: the database's publish guard refuses a
+ *     non-controller's Superseded write without the publisher tier, and a
+ *     controller holds it — so a non-drawing, unlocked, unheld row writes
+ *     exactly as today.
  *   - Void: authorizePublish itself (operation "void") — publish authority in
  *     the library or the document's effective ownership, the foreign checkout
  *     lock (the reason is the override), an active hold refuses — the same
@@ -3733,15 +3753,26 @@ export async function gateStatusEditorRetirement(input: {
   const moc = input.mocReference?.trim() || null;
   if (to === "Superseded") {
     await assertSupersessionMoc({ id: input.documentId, collectionId: input.collectionId ?? null, libraryId: input.libraryId }, moc);
-    const { data, error } = await supabase
-      .from("documents").select("checked_out_by, checked_out_by_name").eq("id", input.documentId).maybeSingle();
-    if (error) throw new Error(`Couldn't read whether the document is checked out (${error.message}) — nothing was superseded.`);
-    const row = (data as { checked_out_by?: string | null; checked_out_by_name?: string | null } | null) ?? null;
-    const preState: PublishGuardState = {
-      checkedOutBy: row?.checked_out_by ?? null, checkedOutByName: row?.checked_out_by_name ?? null, activeHolds: [],
-    };
+    // The lock AND the holds, read fresh in one call as authorizePublish
+    // reads them; either read failing refuses (fail-closed).
+    let preState: PublishGuardState;
+    try {
+      preState = await fetchPublishGuardState(input.documentId);
+    } catch (e) {
+      throw new Error(`Couldn't read whether the document is checked out or on hold (${(e as Error)?.message ?? String(e)}) — nothing was superseded.`);
+    }
     const lockedByOther = !!preState.checkedOutBy && String(preState.checkedOutBy) !== String(input.actorUserId);
-    if (lockedByOther && !reason) throw new Error(`A reason is required to ${overrideReasonVerb("supersede")}.`);
+    if (lockedByOther && !reason) throw new RetirementOverrideReasonRequiredError("supersede", preState.checkedOutByName ?? null);
+    if (preState.activeHolds.length > 0) {
+      // P34 review fix: supersedeDocument's hold refusal, worded for a
+      // supersession; no force at a status editor, whoever is saving.
+      const reasons = preState.activeHolds.map((h) => h.reason).join(", ");
+      const holdWord = preState.activeHolds.length > 1 ? "holds" : "hold";
+      throw new DocumentMutationBlockedError({
+        ok: false, code: "on_hold", blockingHolds: preState.activeHolds,
+        message: `This document has an active ${holdWord} (${reasons}). A held document is not superseded — ask Document Control to resolve the hold first.`,
+      });
+    }
     return { preState, mocReference: moc };
   }
   if (to === "Void") {
@@ -3754,6 +3785,12 @@ export async function gateStatusEditorRetirement(input: {
       return { preState, mocReference: null };
     } catch (e) {
       const msg = (e as Error)?.message ?? String(e);
+      if (!reason && msg === `A reason is required to ${overrideReasonVerb("void")}.`) {
+        // The holder's name for a door that asked no reason (a stale page);
+        // best-effort — a failed read names no one.
+        const { data } = await supabase.from("documents").select("checked_out_by_name").eq("id", input.documentId).maybeSingle();
+        throw new RetirementOverrideReasonRequiredError("void", (data as { checked_out_by_name?: string | null } | null)?.checked_out_by_name ?? null);
+      }
       // authorizePublish speaks of publishing; a void is said as what it is.
       if (/^You don't have authority to publish revisions in this library/.test(msg)) {
         throw new Error("Voiding a document takes publish authority in this library (Doc Control, a granted publisher or the document's owner) — ask an Admin or Doc Control to grant it, or to void it.");
