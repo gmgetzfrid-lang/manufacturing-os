@@ -1245,7 +1245,9 @@ export interface RestoreChunkResult {
 
 /** admin-and-org P1 (fix pass 5): numbering counters, by table → the counter
  *  column. A restored record keeps the number it was issued
- *  (tickets.ticket_id, documents.document_number — neither is unique), so a
+ *  (tickets.ticket_id — one request per number in a workspace, held by the
+ *  restore's own check, TICKET_NUMBER_IN_USE, and by the key where it is
+ *  live, 20261244; documents.document_number is not unique), so a
  *  counter row this workspace already holds, which an additive restore keeps
  *  as it is, would hand out numbers the restored records already carry. The
  *  restore ADVANCES such a counter to the backup's value when that is higher
@@ -1336,6 +1338,7 @@ export function restoreRefusalLabel(code: string): string {
   switch (code) {
     case DANGLING_FLOW_CODE: return "a process flow whose equipment or unit is not in this workspace — not restored (it was dangling in the backup, or its equipment was not restored here)";
     case "parent_outside_workspace": return "points at a row that is not in this workspace";
+    case TICKET_NUMBER_IN_USE: return "a request whose number this workspace already uses for another request — not restored (a restore never files two requests under one number, and never renumbers one)";
     case "23505": return "a unique key it carries is already in use";
     case "23503": return "references a row that is not there";
     case "23514": return "refused by a database check";
@@ -1433,6 +1436,84 @@ async function locateRestoreKeys(
   return { ok: true, here, elsewhere };
 }
 
+/** drafting-flow EDGE-5 (admin-and-org Round G, P16): the refusal code of a
+ *  backup request whose human number (tickets.ticket_id) this workspace
+ *  already uses for ANOTHER request, or that an earlier row of the same
+ *  restore request carries. A request number identifies one request per
+ *  workspace (supabase/schema.sql declares UNIQUE (org_id, ticket_id) inline;
+ *  20261244 adds the key where a live database lacks it), so such a row is
+ *  refused, per row, naming the number and the request that holds it — never
+ *  written beside it, and never renumbered: DEC-90's ruling took "refuse
+ *  loudly" over "re-mint", because the workspace's counter
+ *  (next_ticket_number, 20260724) admits only an active member by
+ *  auth.uid() while the restore writes as the service role, and because a
+ *  request's number is printed on labels, transmittals and archives, so a
+ *  restore that rewrote it would re-identify a regulated record. */
+export const TICKET_NUMBER_IN_USE = "ticket_number_in_use";
+
+/** EDGE-5 (P16): split `rows` (tickets, already bound to `orgId`) into the
+ *  rows to write and the rows refused TICKET_NUMBER_IN_USE. Read-only. The
+ *  live requests of this workspace carrying the rows' numbers are read page
+ *  by page (a number may be held more than once where the key is absent). A
+ *  row whose id a request already holds — here, or in another workspace — is
+ *  left to the write, which skips it on its id exactly as before (counted
+ *  existing / held elsewhere), so a re-run never refuses the requests an
+ *  earlier run restored. Of two rows of this request sharing a number, the
+ *  first one sent is written and the next refused. */
+async function refuseTakenTicketNumbers(
+  sb: RestoreDb, orgId: string, rows: ReadonlyArray<Record<string, unknown>>, label: (r: Record<string, unknown>) => string | null,
+): Promise<{ ok: true; rows: Array<Record<string, unknown>>; refused: RestoreRowRefusal[] } | { ok: false; error: string }> {
+  const numberOf = (r: Record<string, unknown>): string | null => (typeof r.ticket_id === "string" && r.ticket_id ? r.ticket_id : null);
+  const numbers = Array.from(new Set(rows.map(numberOf).filter((v): v is string => v !== null)));
+  const live = new Map<string, string[]>();
+  for (let i = 0; i < numbers.length; i += 100) {
+    const slice = numbers.slice(i, i + 100);
+    for (let from = 0; ;) {
+      const { data, error } = await sb.from("tickets").select("id,ticket_id")
+        .eq("org_id", orgId).in("ticket_id", slice).order("id").range(from, from + KEY_PAGE - 1);
+      if (error) return { ok: false, error: error.message };
+      const page = (data ?? []) as unknown as Array<Record<string, unknown>>;
+      for (const t of page) {
+        if (typeof t.ticket_id !== "string" || typeof t.id !== "string") continue;
+        if (!live.has(t.ticket_id)) live.set(t.ticket_id, []);
+        live.get(t.ticket_id)!.push(t.id);
+      }
+      if (page.length === 0) break;
+      from += page.length;
+    }
+  }
+  const carried = new Map<string, number>();
+  for (const r of rows) { const n = numberOf(r); if (n !== null) carried.set(n, (carried.get(n) ?? 0) + 1); }
+  const liveOther = (r: Record<string, unknown>, n: string): string | null => (live.get(n) ?? []).find((id) => id !== r.id) ?? null;
+  const candidates = Array.from(new Set(rows.filter((r) => {
+    const n = numberOf(r);
+    return n !== null && typeof r.id === "string" && (liveOther(r, n) !== null || (carried.get(n) ?? 0) > 1);
+  }).map((r) => r.id as string)));
+  const held = candidates.length ? await idsTaken(sb, "tickets", candidates) : { ok: true as const, ids: new Set<string>() };
+  if (!held.ok) return { ok: false, error: held.error };
+  const first = new Map<string, unknown>();
+  const kept: Array<Record<string, unknown>> = [];
+  const refused: RestoreRowRefusal[] = [];
+  const consequence = "a restore never files two requests under one number, and never renumbers a restored request (its number may be printed on labels, transmittals and archives); the request that holds it is kept as it is, and rows that point at this one are not restored either";
+  for (const r of rows) {
+    const n = numberOf(r);
+    if (n === null || (typeof r.id === "string" && held.ids.has(r.id))) { kept.push(r); continue; }
+    const other = liveOther(r, n);
+    if (other !== null) {
+      refused.push({ id: label(r), code: TICKET_NUMBER_IN_USE, message: `request number "${n}" is already held in this workspace by request ${other} — not restored: ${consequence}` });
+      continue;
+    }
+    if (first.has(n) && !(typeof r.id === "string" && first.get(n) === r.id)) {
+      const earlier = first.get(n);
+      refused.push({ id: label(r), code: TICKET_NUMBER_IN_USE, message: `request number "${n}" is carried by another request of this restore (${typeof earlier === "string" ? earlier : "a row with no id"}), restored first — not restored: ${consequence}` });
+      continue;
+    }
+    if (!first.has(n)) first.set(n, r.id);
+    kept.push(r);
+  }
+  return { ok: true, rows: kept, refused };
+}
+
 /** Write one slice of one table into `orgId` additively (existing keys are
  *  skipped). Never throws for a database refusal; the caller answers with
  *  `status` / `error` when `ok` is false. Order of rules:
@@ -1450,6 +1531,10 @@ async function locateRestoreKeys(
  *       cleared instead). A row these rules would refuse or clear whose key is
  *       already held — here or by another workspace — is never written either
  *       way, so it is counted as existing / held elsewhere, not refused;
+ *    4b. (tickets) a request number this workspace already uses for another
+ *       request, or an earlier row of this request carries, refuses the row
+ *       (drafting-flow EDGE-5, TICKET_NUMBER_IN_USE) — never a second
+ *       request under one number;
  *    5. upsert on the table's real conflict target; a statement refused for
  *       one row's sake (ROW_LEVEL_SQLSTATES) is bisected to that row, within
  *       RESTORE_BISECT_MAX_STATEMENTS per request;
@@ -1722,6 +1807,19 @@ export async function applyRestoreChunk(
       if (why) notApplied.push({ id: label(r), code: why.code, message: why.message });
       return false;
     });
+  }
+
+  // drafting-flow EDGE-5 (admin-and-org P16): a request number is held by one
+  // request per workspace. A backup request whose number a live request here
+  // holds — or an earlier row of this request carries — is refused, named,
+  // never written beside it (whether or not the database carries the
+  // tickets (org_id, ticket_id) key, 20261244). A read that fails stops the
+  // chunk before any write.
+  if (table === "tickets" && mapped.length) {
+    const taken = await refuseTakenTicketNumbers(sb, orgId, mapped, label);
+    if (!taken.ok) return fail(500, `Could not check the request numbers this workspace already holds: ${taken.error}`, 0, rowsAfterFilters);
+    refused.push(...taken.refused);
+    mapped = taken.rows;
   }
 
   // BKP-12: the upsert's own refusal is the answer. There is no plain-insert
