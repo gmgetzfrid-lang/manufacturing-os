@@ -6,23 +6,30 @@
 // optional per-widget `settings` bag (e.g. the Document Control widget stores
 // which libraries to surface).
 
-export type WidgetType =
-  | "commandDeck"
-  | "documentControl"
-  | "draftingRequests"
-  | "inbox"
-  | "dailyBrief"
-  | "quickLaunch"
-  | "attention"
-  | "suggestedActions"
-  | "outstanding"
-  | "projects"
-  | "activity"
-  | "equipment"
-  | "adminUsers"
-  | "adminAnalytics"
-  | "adminAudit"
-  | "recentDocs";
+/** Every widget type, in one place. The layout loader keeps only these, so a
+ *  type added to the catalog but not here would silently vanish on reload —
+ *  which is exactly what happened to "Recently Viewed". */
+export const WIDGET_TYPES = [
+  "commandDeck",
+  "askKnowledge",
+  "documentControl",
+  "draftingRequests",
+  "inbox",
+  "dailyBrief",
+  "quickLaunch",
+  "attention",
+  "suggestedActions",
+  "outstanding",
+  "projects",
+  "activity",
+  "equipment",
+  "adminUsers",
+  "adminAnalytics",
+  "adminAudit",
+  "recentDocs",
+] as const;
+
+export type WidgetType = typeof WIDGET_TYPES[number];
 
 export interface DashboardWidget {
   /** Stable per-instance id (so DnD + React keys are reliable). */
@@ -55,3 +62,14 @@ export interface DocControlSettings {
   /** Permits assignment to a widget's generic `settings` bag. */
   [key: string]: unknown;
 }
+
+/** One configurable field in a widget's settings window. Every widget also
+ *  gets a "title" field (rename this instance) for free. */
+export type WidgetSettingField =
+  | { key: string; type: "select"; label: string; help?: string; options: Array<{ value: string; label: string }>; default: string }
+  | { key: string; type: "toggle"; label: string; help?: string; default: boolean }
+  | { key: string; type: "number"; label: string; help?: string; min: number; max: number; default: number }
+  /** Pick document-control libraries (multi). */
+  | { key: string; type: "docLibraries"; label: string; help?: string }
+  /** Pick one AI knowledge library. */
+  | { key: string; type: "knowledgeLibrary"; label: string; help?: string };

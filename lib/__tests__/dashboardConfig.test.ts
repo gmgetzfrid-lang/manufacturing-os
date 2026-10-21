@@ -6,6 +6,7 @@
 // throwing.
 
 import { describe, it, expect } from "vitest";
+import { WIDGET_TYPES } from "@/lib/dashboard/types";
 import {
   defaultDashboard,
   sanitizeDashboardConfig,
@@ -32,16 +33,32 @@ describe("defaultDashboard", () => {
     }
   });
 
-  it("leads with the full-width Command Deck hero, then Document Control", () => {
+  it("leads with the full-width Command Deck hero, then Ask Knowledge beside Document Control", () => {
     const cfg = defaultDashboard();
     const first = cfg.widgets[0];
     expect(first.type).toBe("commandDeck");
     expect(first.w).toBe(12);
     expect(first.h).toBe(4);
-    const second = cfg.widgets[1];
-    expect(second.type).toBe("documentControl");
-    expect(second.w).toBe(12);
-    expect(second.h).toBe(3);
+    const [ask, docs] = [cfg.widgets[1], cfg.widgets[2]];
+    expect(ask.type).toBe("askKnowledge");
+    expect(docs.type).toBe("documentControl");
+    expect(ask.y).toBe(docs.y);
+    expect(ask.w + docs.w).toBe(12);
+  });
+
+  it("keeps every catalog widget type on reload (Recently Viewed used to vanish)", () => {
+    const widgets = WIDGET_TYPES.map((type, i) => ({ id: `w${i}`, type, x: 0, y: i * 2, w: 6, h: 2, settings: { title: `T${i}` } }));
+    const out = sanitizeDashboardConfig({ version: 3, widgets });
+    expect(out?.widgets.map((w) => w.type)).toEqual([...WIDGET_TYPES]);
+    expect(out?.widgets[0].settings).toEqual({ title: "T0" });
+  });
+
+  it("allows several widgets of the same type, each with its own settings", () => {
+    const out = sanitizeDashboardConfig({ version: 3, widgets: [
+      { id: "a", type: "askKnowledge", x: 0, y: 0, w: 6, h: 5, settings: { libraryId: "L1" } },
+      { id: "b", type: "askKnowledge", x: 6, y: 0, w: 6, h: 5, settings: { libraryId: "L2" } },
+    ] });
+    expect(out?.widgets.map((w) => w.settings?.libraryId)).toEqual(["L1", "L2"]);
   });
 
   it("gives every widget a stable, unique id", () => {

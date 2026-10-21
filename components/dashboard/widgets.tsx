@@ -17,19 +17,16 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   FileStack, MailPlus, Inbox as InboxIcon, Briefcase, Activity as ActivityIcon,
   Tag, Users, BarChart3, ScrollText, ChevronRight, Settings2,
   Plus, Zap, Rocket, Loader2, Bell, Layers, FileSignature, Send,
   XCircle, AlertTriangle, AlertOctagon, Lock, Flag, Calendar, LayoutDashboard,
-  Search,
-  ArrowUpRight,
-  type LucideIcon, History, FileText,
+  Sparkles,
+  type LucideIcon, History,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
-import NodeCover from "@/components/documents/NodeCover";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
@@ -42,8 +39,17 @@ import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFe
 import {
   CommandDeck, roleFocus, exportInboxCsv, formatAgo, type PillarStats,
 } from "@/components/cockpit/CommandDeck";
-import { Sparkline, MiniBars, TrendChip, SegmentBar, dayBuckets, vizCat, type Segment } from "./viz";
-import type { DashboardWidget, WidgetType, DocControlSettings } from "@/lib/dashboard/types";
+import { MiniBars, TrendChip, dayBuckets, vizCat } from "./viz";
+import AskKnowledgeBody from "./bodies/AskKnowledgeBody";
+import DocBrowserBody from "./bodies/DocBrowserBody";
+import {
+  DraftingRequestsBody, ProjectsBody, ActivityBody, EquipmentBody, RecentDocsBody, AdminUsersBody, AdminAuditBody,
+} from "./bodies/WorkBodies";
+import type { DashboardWidget, WidgetType, WidgetSettingField } from "@/lib/dashboard/types";
+import {
+  FILL, SCROLL, BodyShell, Skeleton, Quiet, sum, useWidgetData, headCount,
+  fetchRecentDates, weekSplit, useWidget,
+} from "./kit";
 
 export type Tone =
   | "blue" | "orange" | "indigo" | "violet" | "emerald"
@@ -146,374 +152,23 @@ export interface WidgetMeta {
    *  its header/footer/padding/flare and just hosts the Body (+ edit controls)
    *  edge-to-edge. Used by the Command Deck, which is its own hero band. */
   bare?: boolean;
+  /** Can be added more than once (e.g. one Ask widget per library). */
+  multi?: boolean;
+  /** Fields in this widget's settings window (a title field is always added). */
+  settings?: WidgetSettingField[];
+  /** Grouping in the Add-widget picker. */
+  category: "Knowledge" | "Documents" | "Work" | "You" | "Admin";
+  /** Shown as a "New" ribbon in the picker. */
+  isNew?: boolean;
   Body: React.ComponentType<{ widget: DashboardWidget }>;
 }
 
-// ─── small shared bits ───────────────────────────────────────────
-// A body root that fills the widget's height so content can flex/scroll.
-const FILL = "mt-3 flex-1 min-h-0 flex flex-col";
-// NOTE: no `overscroll-contain` here — it turns every widget into a wheel
-// trap: page scrolling DIES whenever the cursor happens to be over a card
-// (even a non-overflowing one, in Chromium). Let scroll chain naturally.
-const SCROLL = "flex-1 min-h-0 overflow-y-auto pr-1 -mr-1";
-
-function BodyShell({ children }: { children: React.ReactNode }) {
-  return <div className="mt-2 text-sm text-[var(--color-text-muted)]">{children}</div>;
-}
-
+// ─── small shared bits (the rest live in ./kit) ───────────────────
 function Stat({ value, label, accent }: { value: React.ReactNode; label: string; accent?: boolean }) {
   return (
     <div>
       <div className={`text-2xl font-black leading-none ${accent ? "text-[var(--color-accent)]" : "text-[var(--color-text)]"}`}>{value}</div>
       <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] mt-1">{label}</div>
-    </div>
-  );
-}
-
-function Pill({ n, label, accent }: { n: number; label: string; accent?: boolean }) {
-  return (
-    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border ${
-      accent
-        ? "bg-[var(--color-accent)] text-white border-transparent"
-        : "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]"
-    }`}>
-      {n}<span className="font-medium opacity-75">{label}</span>
-    </span>
-  );
-}
-
-function Skeleton() {
-  return (
-    <div className="mt-3 flex-1 min-h-0 space-y-2">
-      {[0, 1, 2].map((i) => (
-        <div key={i} className="h-8 rounded-lg bg-[var(--color-surface-2)] animate-pulse" />
-      ))}
-    </div>
-  );
-}
-
-/** Honest empty-state for a chart slot. A flat zero line looks broken —
- *  when there's no signal, SAY so instead of drawing it. */
-function Quiet({ label }: { label: string }) {
-  return <div className="text-[11px] text-[var(--color-text-faint)] italic py-1.5">{label}</div>;
-}
-const sum = (a: number[]) => a.reduce((s, n) => s + n, 0);
-
-/** Inline quick-jump: type, Enter, land on the target — the "minor mobility"
- *  a widget owes you so you don't have to open the whole tool to navigate. */
-function QuickJump({ placeholder, onGo, title }: { placeholder: string; onGo: (q: string) => void; title?: string }) {
-  const [q, setQ] = useState("");
-  return (
-    <form
-      onSubmit={(e) => { e.preventDefault(); const v = q.trim(); if (v) onGo(v); }}
-      className="flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/60 px-2 py-1 focus-within:border-[var(--color-accent)] focus-within:bg-[var(--color-surface)] transition-colors"
-      title={title}
-    >
-      <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
-      <input
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        placeholder={placeholder}
-        className="flex-1 min-w-0 bg-transparent text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none"
-      />
-    </form>
-  );
-}
-
-function useWidgetData<T>(run: (orgId: string, uid: string | null) => Promise<T>): { data: T | null; loading: boolean } {
-  const { activeOrgId, uid } = useRole();
-  const [data, setData] = useState<T | null>(null);
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    let alive = true;
-    if (!activeOrgId) return;
-    run(activeOrgId, uid)
-      .then((d) => { if (alive) { setData(d); setLoading(false); } })
-      .catch(() => { if (alive) { setData(null); setLoading(false); } });
-    return () => { alive = false; };
-    // run is a fresh closure each render; refetch only when the org changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeOrgId, uid]);
-  return { data, loading };
-}
-
-async function headCount(build: () => Promise<{ count: number | null }>): Promise<number> {
-  try { return (await build()).count ?? 0; } catch { return 0; }
-}
-
-/** Timestamps from `table.column` in the last `days` days — feeds day-bucket
- *  bars and week-over-week trends. Best-effort: a missing table → []. */
-async function fetchRecentDates(table: string, orgId: string, days = 14, column = "created_at"): Promise<string[]> {
-  try {
-    const since = new Date(Date.now() - days * 86_400_000).toISOString();
-    const { data } = await supabase.from(table).select(column).eq("org_id", orgId).gte(column, since).limit(4000);
-    return ((data ?? []) as unknown as Array<Record<string, string | null>>).map((r) => r[column]).filter(Boolean) as string[];
-  } catch { return []; }
-}
-
-/** Split a 14-day date set into this week vs the week before (for TrendChip). */
-function weekSplit(dates: string[]): { cur: number; prev: number } {
-  const now = Date.now();
-  let cur = 0, prev = 0;
-  for (const d of dates) {
-    const age = now - new Date(d).getTime();
-    if (age <= 7 * 86_400_000) cur++;
-    else if (age <= 14 * 86_400_000) prev++;
-  }
-  return { cur, prev };
-}
-
-function timeAgo(iso: string | null | undefined): string {
-  if (!iso) return "";
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return "";
-  const s = Math.floor((Date.now() - t) / 1000);
-  if (s < 60) return "now";
-  if (s < 3600) return `${Math.floor(s / 60)}m`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h`;
-  return `${Math.floor(s / 86400)}d`;
-}
-
-// Ticket status → short label + badge classes (mirrors the request portal).
-const TICKET_STATUS: Record<string, { label: string; cls: string }> = {
-  NEW: { label: "New", cls: "bg-blue-50 text-blue-700 border-blue-200" },
-  PENDING_ENG_INITIAL: { label: "Eng review", cls: "bg-indigo-50 text-indigo-700 border-indigo-200" },
-  PENDING_ENG_TEAM: { label: "Eng team", cls: "bg-indigo-50 text-indigo-700 border-indigo-200" },
-  PENDING_ASSIGNMENT: { label: "Unassigned", cls: "bg-purple-50 text-purple-700 border-purple-200" },
-  DRAFTING: { label: "Drafting", cls: "bg-blue-50 text-blue-700 border-blue-200" },
-  PENDING_REVIEW: { label: "In review", cls: "bg-yellow-50 text-yellow-700 border-yellow-200" },
-  REVISION_REQ: { label: "Revisions", cls: "bg-amber-50 text-amber-700 border-amber-200" },
-  PENDING_IFC: { label: "Pending IFC", cls: "bg-teal-50 text-teal-700 border-teal-200" },
-  FINAL_DRAFT: { label: "Final draft", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" },
-  PENDING_FINAL_APPROVAL: { label: "Final appr.", cls: "bg-lime-50 text-lime-700 border-lime-200" },
-  CLOSED: { label: "Closed", cls: "bg-gray-100 text-gray-500 border-gray-200" },
-  CANCELED: { label: "Canceled", cls: "bg-gray-100 text-gray-500 border-gray-200" },
-};
-function ticketStatus(s: string | null | undefined) {
-  return (s && TICKET_STATUS[s]) || { label: s ?? "—", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]" };
-}
-
-// ─── widget bodies ───────────────────────────────────────────────
-
-interface Lib { id: string; name: string; color?: string | null; icon?: string | null; type?: string | null; cover_image_url?: string | null; cover_tint?: "none" | "brand" | "mono" | null; count?: number }
-
-function DocumentControlBody({ widget }: { widget: DashboardWidget }) {
-  const settings = (widget.settings ?? {}) as DocControlSettings;
-  const { data, loading } = useWidgetData(async (orgId) => {
-    let libs: Lib[] = [];
-    const rich = await supabase.from("libraries").select("id, name, color, icon, type, cover_image_url, cover_tint").eq("org_id", orgId).order("name");
-    if (!rich.error) {
-      libs = (rich.data ?? []) as Lib[];
-    } else {
-      // Cover columns may be absent — keep color/icon for the gradient panel.
-      const mid = await supabase.from("libraries").select("id, name, color, icon").eq("org_id", orgId).order("name");
-      if (!mid.error) {
-        libs = (mid.data ?? []) as Lib[];
-      } else {
-        const min = await supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name");
-        libs = (min.data ?? []) as Lib[];
-      }
-    }
-    const head = libs.slice(0, 24);
-    const [counted, totalDocs, newDates] = await Promise.all([
-      Promise.all(head.map(async (l) => ({
-        ...l,
-        count: await headCount(() => supabase.from("documents").select("id", { count: "exact", head: true })
-          .eq("org_id", orgId).eq("library_id", l.id) as unknown as Promise<{ count: number | null }>),
-      }))),
-      headCount(() => supabase.from("documents").select("id", { count: "exact", head: true })
-        .eq("org_id", orgId) as unknown as Promise<{ count: number | null }>),
-      fetchRecentDates("documents", orgId, 14),
-    ]);
-    return { libs: [...counted, ...libs.slice(24)], totalDocs, newDates };
-  });
-
-  if (loading) return <Skeleton />;
-  const all = data?.libs ?? [];
-  if (all.length === 0) {
-    return (
-      <BodyShell>
-        <Link href="/admin/libraries" className="font-bold text-[var(--color-accent)] hover:underline">
-          No libraries yet — create your first library →
-        </Link>
-      </BodyShell>
-    );
-  }
-  // When the user has hand-picked libraries, honor that exact set; otherwise
-  // show as many as fit — the multi-column grid + internal scroll handle volume.
-  const chosen = settings.libraryIds?.length
-    ? (settings.libraryIds.map((id) => all.find((l) => l.id === id)).filter(Boolean) as Lib[])
-    : all;
-  const buckets = dayBuckets(data?.newDates ?? [], 14);
-  const wk = weekSplit(data?.newDates ?? []);
-
-  return (
-    <div className={FILL}>
-      {/* Pulse strip: how big the controlled set is + 14-day intake rhythm. */}
-      <div className="mb-3 flex items-end justify-between gap-4 shrink-0">
-        <div className="flex items-end gap-2">
-          <span className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{(data?.totalDocs ?? 0).toLocaleString()}</span>
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] pb-0.5">controlled documents</span>
-        </div>
-        <div className="flex items-center gap-3 min-w-0">
-          <TrendChip current={wk.cur} previous={wk.prev} />
-          {sum(buckets.counts) > 0 && (
-            <div className="w-28 hidden sm:block"><MiniBars values={buckets.counts} labels={buckets.labels} height={28} /></div>
-          )}
-        </div>
-      </div>
-      {/* Find a drawing without opening the tool — Enter jumps to search. */}
-      <div className="mb-3 shrink-0">
-        <DocQuickFind />
-      </div>
-      {/* Responsive multi-column grid: cards flow to fill a wide widget instead
-          of stretching a single column across empty space. */}
-      <div className={`grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2 ${SCROLL}`}>
-        {chosen.map((lib) => (
-          <Link
-            key={lib.id}
-            href={`/documents/${lib.id}`}
-            className="group rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden hover:border-[var(--color-accent)] hover:shadow-md transition-[border-color,box-shadow]"
-          >
-            <NodeCover
-              appearance={{ color: lib.color, icon: lib.icon, coverImageUrl: lib.cover_image_url, coverTint: lib.cover_tint }}
-              className="w-full h-16"
-              rounded="rounded-none"
-              iconSize="w-5 h-5"
-            />
-            <div className="p-2.5 flex items-end justify-between gap-2">
-              <div className="min-w-0">
-                <div className="text-sm font-bold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{lib.name}</div>
-                <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5 truncate">
-                  {lib.count != null ? `${lib.count.toLocaleString()} document${lib.count === 1 ? "" : "s"}` : (lib.type || "Library")}
-                </div>
-              </div>
-              <span className="shrink-0 w-5 h-5 rounded-md grid place-items-center text-[var(--color-accent)] bg-[var(--color-accent-soft)] opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200">
-                <ArrowUpRight className="w-3 h-3" />
-              </span>
-            </div>
-          </Link>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// Router-backed quick-jumps (tiny components so the widget bodies that
-// don't need a router don't pay for one).
-function DocQuickFind() {
-  const router = useRouter();
-  return (
-    <QuickJump
-      placeholder="Find a document — number, title, tag…"
-      title="Searches everything; Enter opens results"
-      onGo={(q) => router.push(`/search?q=${encodeURIComponent(q)}`)}
-    />
-  );
-}
-function AssetQuickJump() {
-  const router = useRouter();
-  return (
-    <QuickJump
-      placeholder="Jump to a tag — e.g. P-101…"
-      title="Opens that asset's registry page"
-      onGo={(q) => router.push(`/assets/${encodeURIComponent(q)}`)}
-    />
-  );
-}
-
-interface TicketRow {
-  id: string; ticket_id: string | null; title: string | null; status: string | null;
-  created_at: string | null; requester_name: string | null;
-  assigned_drafter_name: string | null; updated_at: string | null;
-}
-
-function DraftingRequestsBody() {
-  const { data, loading } = useWidgetData(async (orgId) => {
-    const [statusRes, recentRes, newDates] = await Promise.all([
-      supabase.from("tickets").select("status")
-        .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")').limit(2000),
-      supabase.from("tickets")
-        .select("id, ticket_id, title, status, created_at, requester_name, assigned_drafter_name, updated_at")
-        .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")')
-        .order("created_at", { ascending: false }).limit(30),
-      fetchRecentDates("tickets", orgId, 14),
-    ]);
-    const byStatus = new Map<string, number>();
-    for (const r of ((statusRes.data ?? []) as Array<{ status: string | null }>)) {
-      const s = r.status ?? "NEW";
-      byStatus.set(s, (byStatus.get(s) ?? 0) + 1);
-    }
-    const open = Array.from(byStatus.values()).reduce((a, b) => a + b, 0);
-    return { open, byStatus, recent: (recentRes.data ?? []) as TicketRow[], newDates };
-  });
-
-  if (loading) return <Skeleton />;
-  const open = data?.open ?? 0;
-  const recent = data?.recent ?? [];
-  const by = (keys: string[]) => keys.reduce((s, k) => s + (data?.byStatus.get(k) ?? 0), 0);
-  // Pipeline stages in FIXED order (slot ↔ color assignment never shifts).
-  const pipeline: Segment[] = [
-    { label: "New", count: by(["NEW"]) },
-    { label: "Eng review", count: by(["PENDING_ENG_INITIAL", "PENDING_ENG_TEAM"]) },
-    { label: "Unassigned", count: by(["PENDING_ASSIGNMENT"]) },
-    { label: "Drafting", count: by(["DRAFTING"]) },
-    { label: "In review", count: by(["PENDING_REVIEW", "REVISION_REQ"]) },
-    { label: "Closing out", count: by(["PENDING_IFC", "FINAL_DRAFT", "PENDING_FINAL_APPROVAL"]) },
-  ];
-  const wk = weekSplit(data?.newDates ?? []);
-
-  return (
-    <div className={FILL}>
-      {/* The pipeline at a glance: where every open request sits, plus this
-          week's intake vs last. */}
-      <div className="flex items-end justify-between gap-3 shrink-0">
-        <div className="flex items-end gap-2">
-          <span className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{open}</span>
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] pb-0.5">open requests</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <TrendChip current={wk.cur} previous={wk.prev} />
-          <Link href="/requests/new" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold text-white bg-[var(--color-accent)] hover:opacity-90 transition-opacity">
-            <Plus className="w-3 h-3" /> New
-          </Link>
-        </div>
-      </div>
-      {open > 0 && <SegmentBar segments={pipeline} className="mt-2.5 shrink-0" />}
-
-      {recent.length === 0 ? (
-        <BodyShell>
-          No open requests.{" "}
-          <Link href="/requests/new" className="font-semibold text-[var(--color-accent)] hover:underline">Raise one →</Link>
-        </BodyShell>
-      ) : (
-        <div className={`mt-3 space-y-0.5 ${SCROLL}`}>
-          {recent.map((t) => {
-            const st = ticketStatus(t.status);
-            return (
-              <Link key={t.id} href={`/requests/${t.id}`} className="group block p-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)] shrink-0">{t.ticket_id ?? "—"}</span>
-                  <span className="flex-1 min-w-0 text-[13px] font-semibold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{t.title ?? "Untitled request"}</span>
-                  <span className={`shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border ${st.cls}`}>{st.label}</span>
-                </div>
-                <div className="mt-0.5 pl-0.5 flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)] min-w-0">
-                  <span className="truncate">
-                    {t.requester_name || "Unknown requester"}
-                  </span>
-                  <span className="text-[var(--color-text-faint)] shrink-0">→</span>
-                  <span className={`truncate ${t.assigned_drafter_name ? "font-semibold text-[var(--color-text)]" : "italic text-amber-700 dark:text-amber-500"}`}>
-                    {t.assigned_drafter_name || "unassigned"}
-                  </span>
-                  <span className="ml-auto shrink-0 text-[10px] text-[var(--color-text-faint)] tabular-nums">
-                    {timeAgo(t.created_at)}{t.updated_at && t.updated_at !== t.created_at ? ` · touched ${timeAgo(t.updated_at)}` : ""}
-                  </span>
-                </div>
-              </Link>
-            );
-          })}
-        </div>
-      )}
     </div>
   );
 }
@@ -586,18 +241,7 @@ function DeckLink({ href, label, sub }: { href: string; label: string; sub: stri
 // ── Daily Brief widget — fetches the personal inbox snapshot and renders the
 // same narrated brief as the cockpit, plus its proactive nudges.
 function DailyBriefBody() {
-  const { activeOrgId, uid, userEmail } = useRole();
-  const [snap, setSnap] = useState<InboxSnapshot | null>(null);
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    let alive = true;
-    if (!activeOrgId || !uid) return;
-    loadInbox(activeOrgId, uid, userEmail ?? undefined)
-      .then((s) => { if (alive) { setSnap(s); setLoading(false); } })
-      .catch(() => { if (alive) { setSnap(null); setLoading(false); } });
-    return () => { alive = false; };
-  }, [activeOrgId, uid, userEmail]);
-
+  const { snap, loading } = useInboxSnapshot();
   if (loading) return <Skeleton />;
   if (!snap) return <BodyShell>Couldn&apos;t load your brief right now.</BodyShell>;
   const nudges = computeNudges(snap);
@@ -646,6 +290,8 @@ function QuickLaunchBody() {
 // body, to satisfy react-hooks/set-state-in-effect.
 function useInboxSnapshot(): { snap: InboxSnapshot | null; loading: boolean; refresh: () => void } {
   const { activeOrgId, uid, userEmail } = useRole();
+  // The frame's ⟳ / timer refresh this too.
+  const { refreshKey, reportLoaded } = useWidget();
   const [snap, setSnap] = useState<InboxSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
@@ -653,10 +299,10 @@ function useInboxSnapshot(): { snap: InboxSnapshot | null; loading: boolean; ref
     let alive = true;
     if (!activeOrgId || !uid) return;
     loadInbox(activeOrgId, uid, userEmail ?? undefined)
-      .then((s) => { if (alive) { setSnap(s); setLoading(false); } })
-      .catch(() => { if (alive) { setSnap(null); setLoading(false); } });
+      .then((s) => { if (alive) { setSnap(s); setLoading(false); reportLoaded(); } })
+      .catch(() => { if (alive) { setLoading(false); reportLoaded(); } });
     return () => { alive = false; };
-  }, [activeOrgId, uid, userEmail, reloadKey]);
+  }, [activeOrgId, uid, userEmail, reloadKey, refreshKey, reportLoaded]);
   const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
   return { snap, loading, refresh };
 }
@@ -940,159 +586,6 @@ function OutstandingBody() {
   );
 }
 
-interface ProjRow { id: string; name: string | null; status: string | null; last_activity_at: string | null }
-function ProjectsBody() {
-  const { data, loading } = useWidgetData(async (orgId) => {
-    const [count, recentRes, activityDates] = await Promise.all([
-      headCount(() => supabase.from("projects").select("id", { count: "exact", head: true })
-        .eq("org_id", orgId).eq("status", "active") as unknown as Promise<{ count: number | null }>),
-      supabase.from("projects")
-        .select("id, name, status, last_activity_at").eq("org_id", orgId).eq("status", "active")
-        .order("last_activity_at", { ascending: false, nullsFirst: false }).limit(16),
-      fetchRecentDates("project_activity", orgId, 14),
-    ]);
-    // Freshness derived at load time (render must stay pure — no Date.now()).
-    const now = Date.now();
-    const recent = ((recentRes.data ?? []) as ProjRow[]).map((p) => ({
-      ...p,
-      quietDays: p.last_activity_at ? Math.floor((now - new Date(p.last_activity_at).getTime()) / 86_400_000) : null,
-    }));
-    return { count, recent, activityDates };
-  });
-
-  if (loading) return <Skeleton />;
-  const recent = data?.recent ?? [];
-  const buckets = dayBuckets(data?.activityDates ?? [], 14);
-  const wk = weekSplit(data?.activityDates ?? []);
-  return (
-    <div className={FILL}>
-      <div className="flex items-center justify-between gap-3 shrink-0">
-        <Pill n={data?.count ?? 0} label="active projects" accent />
-        <div className="flex items-center gap-2 min-w-0">
-          <TrendChip current={wk.cur} previous={wk.prev} />
-          {sum(buckets.counts) > 0 && (
-            <div className="w-24 hidden sm:block"><MiniBars values={buckets.counts} labels={buckets.labels} height={24} /></div>
-          )}
-          <Link href="/projects" className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold text-white bg-[var(--color-accent)] hover:opacity-90 transition-opacity">
-            <Plus className="w-3 h-3" /> New
-          </Link>
-        </div>
-      </div>
-      {recent.length > 0 && (
-        <div className={`mt-3 space-y-0.5 ${SCROLL}`}>
-          {recent.map((p) => {
-            const quietDays = p.quietDays;
-            return (
-              <Link key={p.id} href={`/projects/${p.id}`} className="group flex items-center gap-2 p-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
-                {/* Freshness dot: green = touched this week, amber = fortnight, grey = idle */}
-                <span aria-hidden className={`w-2 h-2 rounded-full shrink-0 ${quietDays == null ? "bg-slate-300" : quietDays <= 7 ? "bg-emerald-500" : quietDays <= 14 ? "bg-amber-500" : "bg-slate-300"}`} />
-                <span className="flex-1 min-w-0 text-[13px] text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">{p.name ?? "Untitled project"}</span>
-                <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]" title={p.last_activity_at ? `Last activity ${new Date(p.last_activity_at).toLocaleString()}` : "No recorded activity"}>
-                  {p.last_activity_at ? timeAgo(p.last_activity_at) : "—"}
-                </span>
-                <ChevronRight className="w-4 h-4 text-[var(--color-text-muted)] opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
-              </Link>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-interface AuditRow { id: string; action: string | null; timestamp: string | null }
-function ActivityBody() {
-  const { data, loading } = useWidgetData(async (orgId) => {
-    const [{ data: rows }, dates] = await Promise.all([
-      supabase.from("audit_logs")
-        .select("id, action, timestamp").eq("org_id", orgId)
-        .order("timestamp", { ascending: false }).limit(30),
-      fetchRecentDates("audit_logs", orgId, 14, "timestamp"),
-    ]);
-    return { rows: (rows ?? []) as AuditRow[], dates };
-  });
-
-  if (loading) return <Skeleton />;
-  const rows = data?.rows ?? [];
-  if (rows.length === 0) return <BodyShell>No recent activity yet.</BodyShell>;
-  const buckets = dayBuckets(data?.dates ?? [], 14);
-  return (
-    <div className={FILL}>
-      {/* The workspace heartbeat — 14 days of change volume, then the feed. */}
-      {sum(buckets.counts) > 0 && (
-        <div className="shrink-0 mb-2">
-          <Sparkline values={buckets.counts} labels={buckets.labels} height={34} />
-        </div>
-      )}
-      <ul className={`space-y-0.5 ${SCROLL}`}>
-        {rows.map((r) => (
-          <li key={r.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
-            <span className="truncate text-[13px] text-[var(--color-text)] capitalize">{(r.action ?? "activity").replace(/_/g, " ").toLowerCase()}</span>
-            <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">{timeAgo(r.timestamp)}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-interface AssetRow { id: string; tag: string | null }
-function EquipmentBody() {
-  const { data, loading } = useWidgetData(async (orgId) => {
-    const count = await headCount(() => supabase.from("assets").select("id", { count: "exact", head: true })
-      .eq("org_id", orgId) as unknown as Promise<{ count: number | null }>);
-    const { data: recent } = await supabase.from("assets").select("id, tag").eq("org_id", orgId).limit(24);
-    return { count, recent: (recent ?? []) as AssetRow[] };
-  });
-  if (loading) return <Skeleton />;
-  const recent = data?.recent ?? [];
-  return (
-    <div className={FILL}>
-      <div className="flex items-center gap-2 shrink-0">
-        <Pill n={data?.count ?? 0} label="assets tracked" accent />
-        <div className="flex-1 min-w-0"><AssetQuickJump /></div>
-      </div>
-      {recent.length > 0 && (
-        <div className={`mt-3 flex flex-wrap gap-1.5 content-start ${SCROLL}`}>
-          {recent.map((a) => (
-            <Link key={a.id} href={`/assets/${encodeURIComponent(a.tag ?? a.id)}`} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] text-xs font-semibold text-[var(--color-text)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] transition-colors h-fit">
-              <Tag className="w-3 h-3" /> {a.tag ?? "—"}
-            </Link>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function AdminUsersBody() {
-  const { data, loading } = useWidgetData(async (orgId) => {
-    const { data: rows } = await supabase.from("org_members").select("role")
-      .eq("org_id", orgId).eq("status", "active").limit(2000);
-    const byRole = new Map<string, number>();
-    for (const r of ((rows ?? []) as Array<{ role: string | null }>)) {
-      const role = r.role || "Member";
-      byRole.set(role, (byRole.get(role) ?? 0) + 1);
-    }
-    return { byRole, count: Array.from(byRole.values()).reduce((a, b) => a + b, 0) };
-  });
-  if (loading) return <Skeleton />;
-  // Top 5 roles + "Other" — fixed slot order by size (never more than 6 hues).
-  const entries = Array.from((data?.byRole ?? new Map<string, number>()).entries()).sort((a, b) => b[1] - a[1]);
-  const top = entries.slice(0, 5).map(([label, count]) => ({ label, count }));
-  const other = entries.slice(5).reduce((s, [, c]) => s + c, 0);
-  const segments: Segment[] = other > 0 ? [...top, { label: "Other", count: other }] : top;
-  return (
-    <div className={FILL}>
-      <div className="flex items-end gap-2 shrink-0">
-        <span className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{data?.count ?? 0}</span>
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] pb-0.5">active members</span>
-      </div>
-      {segments.length > 0 && <SegmentBar segments={segments} className="mt-3 shrink-0" />}
-    </div>
-  );
-}
-
 // Analytics — a real insights peek: headline stats that deep-link, the
 // 30-day workspace heartbeat (audit events — the one series that's never
 // artificially flat), and the busiest libraries. When a series IS quiet,
@@ -1173,38 +666,6 @@ function AdminAnalyticsBody() {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-// Audit — the change-volume pulse + total, so the card answers "how busy was
-// the log this week" before you even open it.
-function AdminAuditBody() {
-  const { data, loading } = useWidgetData(async (orgId) => {
-    const [dates, total] = await Promise.all([
-      fetchRecentDates("audit_logs", orgId, 14, "timestamp"),
-      headCount(() => supabase.from("audit_logs").select("id", { count: "exact", head: true })
-        .eq("org_id", orgId) as unknown as Promise<{ count: number | null }>),
-    ]);
-    return { dates, total };
-  });
-  if (loading) return <Skeleton />;
-  const buckets = dayBuckets(data?.dates ?? [], 14);
-  const wk = weekSplit(data?.dates ?? []);
-  return (
-    <div className={FILL}>
-      <div className="flex items-end justify-between gap-3 shrink-0">
-        <div className="flex items-end gap-2">
-          <span className="text-2xl font-black leading-none text-[var(--color-text)] tabular-nums">{(data?.total ?? 0).toLocaleString()}</span>
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)] pb-0.5">events on record</span>
-        </div>
-        <TrendChip current={wk.cur} previous={wk.prev} />
-      </div>
-      <div className="mt-3 shrink-0">
-        {sum(buckets.counts) > 0
-          ? <MiniBars values={buckets.counts} labels={buckets.labels} height={34} />
-          : <Quiet label="No events recorded in the last 14 days." />}
-      </div>
     </div>
   );
 }
@@ -1304,117 +765,123 @@ function CommandDeckBody() {
 }
 
 // ─── catalog ─────────────────────────────────────────────────────
-function RecentDocsBody() {
-  const { uid } = useRole();
-  const [rows, setRows] = React.useState<import("@/lib/recentDocs").RecentDoc[] | null>(null);
-  React.useEffect(() => {
-    if (!uid) return;
-    let alive = true;
-    void import("@/lib/recentDocs").then((m) =>
-      m.listRecentDocs(uid, 10).then((r) => { if (alive) setRows(r); }));
-    return () => { alive = false; };
-  }, [uid]);
-  if (rows === null) return <Skeleton />;
-  if (rows.length === 0) {
-    return <BodyShell>Nothing viewed yet — open a document and it lands here.</BodyShell>;
-  }
-  return (
-    <div className={`mt-3 space-y-0.5 ${SCROLL}`}>
-      {rows.map((r) => (
-        <Link key={r.documentId} href={`/documents/${r.libraryId}?doc=${r.documentId}`}
-          className="group flex items-center gap-2 p-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
-          <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
-          <span className="flex-1 min-w-0 text-[13px] font-semibold text-[var(--color-text)] truncate group-hover:text-[var(--color-accent)] transition-colors">
-            {r.documentNumber || r.title || "Document"}
-          </span>
-          {r.rev && <span className="shrink-0 text-[10px] font-bold text-[var(--color-text-muted)]">Rev {r.rev}</span>}
-          <span className="shrink-0 text-[10px] text-[var(--color-text-faint)] tabular-nums">{timeAgo(r.viewedAt)}</span>
-        </Link>
-      ))}
-    </div>
-  );
-}
-
 export const WIDGET_CATALOG: Record<WidgetType, WidgetMeta> = {
   commandDeck: {
     type: "commandDeck", title: "Command Deck", description: "Mission-control hero — greeting, live status & the three pillars.",
-    icon: LayoutDashboard, tone: "indigo", href: "/inbox", cta: "Open command deck",
+    icon: LayoutDashboard, tone: "indigo", href: "/inbox", cta: "Open command deck", category: "You",
     defaultW: 12, defaultH: 4, minW: 6, minH: 3, maxW: 12, bare: true, Body: CommandDeckBody,
   },
+  askKnowledge: {
+    type: "askKnowledge", title: "Ask Knowledge", description: "Ask a library — answer first, proof to the page.",
+    icon: Sparkles, tone: "orange", href: "/assistant", cta: "Open the Assistant", category: "Knowledge", isNew: true,
+    defaultW: 6, defaultH: 5, minW: 4, minH: 4, multi: true,
+    settings: [
+      { key: "libraryId", type: "knowledgeLibrary", label: "Library", help: "Which knowledge library this widget asks. You can also switch it inside the widget." },
+      { key: "mode", type: "select", label: "Default answer style", default: "auto", options: [
+        { value: "auto", label: "Auto — the AI picks" }, { value: "answer", label: "Direct answer" },
+        { value: "compliance", label: "Compliance check" }, { value: "explore", label: "Explore" },
+      ] },
+    ],
+    Body: AskKnowledgeBody,
+  },
   documentControl: {
-    type: "documentControl", title: "Document Control", description: "Your controlled libraries.",
-    icon: FileStack, tone: "blue", href: "/documents", cta: "Open Document Control",
-    defaultW: 12, defaultH: 3, minW: 4, minH: 2, hasSettings: true, Body: DocumentControlBody,
+    type: "documentControl", title: "Document Control", description: "Browse libraries, folders and documents.",
+    icon: FileStack, tone: "blue", href: "/documents", cta: "Open Document Control", category: "Documents",
+    defaultW: 12, defaultH: 4, minW: 4, minH: 3, multi: true,
+    settings: [
+      { key: "libraryIds", type: "docLibraries", label: "Libraries to show", help: "Leave all unchecked to show every library." },
+    ],
+    Body: DocBrowserBody,
   },
   draftingRequests: {
-    type: "draftingRequests", title: "Drafting Requests", description: "Open drafting & design requests.",
-    icon: MailPlus, tone: "orange", href: "/requests", cta: "Open request portal",
-    defaultW: 6, defaultH: 4, minW: 4, minH: 3, Body: DraftingRequestsBody,
+    type: "draftingRequests", title: "Drafting Requests", description: "Open requests — yours, assigned, unassigned.",
+    icon: MailPlus, tone: "orange", href: "/requests", cta: "Open request portal", category: "Work",
+    defaultW: 6, defaultH: 5, minW: 4, minH: 3, multi: true,
+    settings: [
+      { key: "scope", type: "select", label: "Show", default: "all", options: [
+        { value: "all", label: "All open requests" }, { value: "assigned", label: "Assigned to me" },
+        { value: "mine", label: "Requests I raised" }, { value: "unassigned", label: "Unassigned" },
+      ] },
+    ],
+    Body: DraftingRequestsBody,
   },
   inbox: {
     type: "inbox", title: "Inbox", description: "Everything that needs you.",
-    icon: InboxIcon, tone: "indigo", href: "/inbox", cta: "Open inbox",
+    icon: InboxIcon, tone: "indigo", href: "/inbox", cta: "Open inbox", category: "You",
     defaultW: 6, defaultH: 4, minW: 3, minH: 3, Body: InboxBody,
   },
   dailyBrief: {
     type: "dailyBrief", title: "Daily Brief", description: "Your day, narrated + what to do next.",
-    icon: Zap, tone: "amber", href: "/inbox", cta: "Open command deck",
+    icon: Zap, tone: "amber", href: "/inbox", cta: "Open command deck", category: "You",
     defaultW: 6, defaultH: 5, minW: 4, minH: 3, Body: DailyBriefBody,
   },
   recentDocs: {
     type: "recentDocs", title: "Recently Viewed", description: "Pick up where you left off.",
-    icon: History, tone: "blue", href: "/documents", cta: "Open documents",
-    defaultW: 3, defaultH: 5, minW: 2, minH: 3, Body: RecentDocsBody,
+    icon: History, tone: "blue", href: "/documents", cta: "Open documents", category: "Documents",
+    defaultW: 3, defaultH: 5, minW: 2, minH: 3,
+    settings: [{ key: "count", type: "number", label: "How many to show", min: 5, max: 50, default: 12 }],
+    Body: RecentDocsBody,
   },
   quickLaunch: {
     type: "quickLaunch", title: "Quick Launch", description: "Jump straight into common actions.",
-    icon: Rocket, tone: "orange", href: "/inbox", cta: "Open command deck",
+    icon: Rocket, tone: "orange", href: "/inbox", cta: "Open command deck", category: "You",
     defaultW: 3, defaultH: 5, minW: 2, minH: 3, Body: QuickLaunchBody,
   },
   attention: {
     type: "attention", title: "Needs You", description: "Everything waiting on your attention.",
-    icon: Bell, tone: "rose", href: "/inbox", cta: "Open command deck",
+    icon: Bell, tone: "rose", href: "/inbox", cta: "Open command deck", category: "You",
     defaultW: 6, defaultH: 6, minW: 4, minH: 4, Body: AttentionBody,
   },
   suggestedActions: {
     type: "suggestedActions", title: "Suggested Actions", description: "Proactive nudges — what to do next.",
-    icon: Zap, tone: "amber", href: "/inbox", cta: "Open command deck",
+    icon: Zap, tone: "amber", href: "/inbox", cta: "Open command deck", category: "You",
     defaultW: 6, defaultH: 4, minW: 3, minH: 3, Body: SuggestedActionsBody,
   },
   outstanding: {
     type: "outstanding", title: "Outstanding", description: "Markups, checkouts, holds & milestones.",
-    icon: Layers, tone: "indigo", href: "/inbox", cta: "Open command deck",
+    icon: Layers, tone: "indigo", href: "/inbox", cta: "Open command deck", category: "Work",
     defaultW: 6, defaultH: 6, minW: 4, minH: 4, Body: OutstandingBody,
   },
   projects: {
-    type: "projects", title: "Projects", description: "Multi-document work packages.",
-    icon: Briefcase, tone: "violet", href: "/projects", cta: "Open projects",
-    defaultW: 6, defaultH: 4, minW: 3, minH: 3, Body: ProjectsBody,
+    type: "projects", title: "Projects", description: "Active, mine, due soon, going quiet.",
+    icon: Briefcase, tone: "violet", href: "/projects", cta: "Open projects", category: "Work",
+    defaultW: 6, defaultH: 4, minW: 3, minH: 3, multi: true,
+    settings: [
+      { key: "scope", type: "select", label: "Show", default: "active", options: [
+        { value: "active", label: "All active projects" }, { value: "mine", label: "My projects" },
+        { value: "due", label: "Due within 14 days" }, { value: "quiet", label: "Quiet for 14+ days" },
+      ] },
+    ],
+    Body: ProjectsBody,
   },
   activity: {
-    type: "activity", title: "Activity", description: "Recent changes across the workspace.",
-    icon: ActivityIcon, tone: "emerald", href: "/activity", cta: "Open activity",
-    defaultW: 6, defaultH: 4, minW: 3, minH: 3, Body: ActivityBody,
+    type: "activity", title: "Activity", description: "Who changed what — linked to the item.",
+    icon: ActivityIcon, tone: "emerald", href: "/activity", cta: "Open activity", category: "Work",
+    defaultW: 6, defaultH: 4, minW: 3, minH: 3, multi: true,
+    settings: [{ key: "onlyMine", type: "toggle", label: "Only my activity", default: false }],
+    Body: ActivityBody,
   },
   equipment: {
-    type: "equipment", title: "Equipment", description: "Asset registry & plot-plan map.",
-    icon: Tag, tone: "purple", href: "/admin/assets", cta: "Open equipment",
-    defaultW: 6, defaultH: 3, minW: 3, minH: 2, Body: EquipmentBody,
+    type: "equipment", title: "Equipment", description: "Search the asset registry by tag.",
+    icon: Tag, tone: "purple", href: "/admin/assets", cta: "Open equipment", category: "Documents",
+    defaultW: 6, defaultH: 4, minW: 3, minH: 3, Body: EquipmentBody,
   },
   adminUsers: {
-    type: "adminUsers", title: "Users", description: "Members & roles.",
-    icon: Users, tone: "cyan", href: "/admin/users", cta: "Manage users",
-    defaultW: 6, defaultH: 2, minW: 3, minH: 2, adminOnly: true, Body: AdminUsersBody,
+    type: "adminUsers", title: "Users", description: "Members, roles & pending invites.",
+    icon: Users, tone: "cyan", href: "/admin/users", cta: "Manage users", category: "Admin",
+    defaultW: 6, defaultH: 4, minW: 3, minH: 3, adminOnly: true, Body: AdminUsersBody,
   },
   adminAnalytics: {
     type: "adminAnalytics", title: "Analytics", description: "Workspace metrics & trends.",
-    icon: BarChart3, tone: "violet", href: "/admin/analytics", cta: "Open analytics",
-    defaultW: 6, defaultH: 2, minW: 3, minH: 2, adminOnly: true, Body: AdminAnalyticsBody,
+    icon: BarChart3, tone: "violet", href: "/admin/analytics", cta: "Open analytics", category: "Admin",
+    defaultW: 6, defaultH: 3, minW: 3, minH: 2, adminOnly: true, Body: AdminAnalyticsBody,
   },
   adminAudit: {
-    type: "adminAudit", title: "Audit Log", description: "Immutable change history.",
-    icon: ScrollText, tone: "rose", href: "/admin/audit", cta: "Open audit log",
-    defaultW: 6, defaultH: 2, minW: 3, minH: 2, adminOnly: true, Body: AdminAuditBody,
+    type: "adminAudit", title: "Audit Log", description: "Immutable change history, filterable.",
+    icon: ScrollText, tone: "rose", href: "/admin/audit", cta: "Open audit log", category: "Admin",
+    defaultW: 6, defaultH: 4, minW: 3, minH: 3, adminOnly: true,
+    settings: [{ key: "onlyMine", type: "toggle", label: "Only my activity", default: false }],
+    Body: AdminAuditBody,
   },
 };
 

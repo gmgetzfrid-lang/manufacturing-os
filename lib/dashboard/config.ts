@@ -9,7 +9,7 @@
 // then the app default.
 
 import { supabase } from "@/lib/supabase";
-import type { DashboardConfig, DashboardWidget, WidgetType } from "./types";
+import { WIDGET_TYPES, type DashboardConfig, type DashboardWidget, type WidgetType } from "./types";
 import { packLayout, firstFreeSlot } from "./layout";
 
 const LS_PREFIX = "manufacturingos.dashboard.";
@@ -20,29 +20,14 @@ export const MIN_W = 1;
 export const MIN_H = 1;
 export const MAX_H = 12;
 
-const KNOWN_TYPES: WidgetType[] = [
-  "commandDeck",
-  "documentControl",
-  "draftingRequests",
-  "inbox",
-  "dailyBrief",
-  "quickLaunch",
-  "attention",
-  "suggestedActions",
-  "outstanding",
-  "projects",
-  "activity",
-  "equipment",
-  "adminUsers",
-  "adminAnalytics",
-  "adminAudit",
-];
+const KNOWN_TYPES: readonly WidgetType[] = WIDGET_TYPES;
 
 // Fallback default heights by type, used when migrating legacy widgets that
 // only carried a `width` (no row-unit height). List-style widgets get taller
 // defaults; banners/summaries stay short.
 const DEFAULT_H_BY_TYPE: Record<WidgetType, number> = {
   commandDeck: 4,
+  askKnowledge: 5,
   documentControl: 3,
   draftingRequests: 4,
   inbox: 4,
@@ -74,7 +59,8 @@ export function defaultDashboard(): DashboardConfig {
   // can immediately drag things around.
   const ordered: Array<Omit<DashboardWidget, "x" | "y">> = [
     { id: newWidgetId(), type: "commandDeck", w: 12, h: 4, settings: {} },
-    { id: newWidgetId(), type: "documentControl", w: 12, h: 3, settings: {} },
+    { id: newWidgetId(), type: "askKnowledge", w: 6, h: 5, settings: {} },
+    { id: newWidgetId(), type: "documentControl", w: 6, h: 5, settings: {} },
     { id: newWidgetId(), type: "dailyBrief", w: 6, h: 3, settings: {} },
     { id: newWidgetId(), type: "quickLaunch", w: 6, h: 3, settings: {} },
     { id: newWidgetId(), type: "attention", w: 6, h: 6, settings: {} },

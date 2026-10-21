@@ -23,7 +23,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExtern
 import SetupChecklist from "@/components/onboarding/SetupChecklist";
 import { Pencil, Check, Plus, Loader2, Move, Sparkles, LayoutGrid } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
-import type { DashboardConfig, DashboardWidget, WidgetType, DocControlSettings } from "@/lib/dashboard/types";
+import type { DashboardConfig, DashboardWidget, WidgetType } from "@/lib/dashboard/types";
 import {
   loadDashboardConfig, saveDashboardConfig, newWidgetId, GRID_COLS,
 } from "@/lib/dashboard/config";
@@ -31,7 +31,7 @@ import { moveElement, resizeElement, firstFreeSlot, bottomRow, justifyLayout } f
 import { WIDGET_CATALOG } from "./widgets";
 import WidgetFrame from "./WidgetFrame";
 import AddWidgetModal from "./AddWidgetModal";
-import LibrarySettingsModal from "./LibrarySettingsModal";
+import WidgetSettingsModal from "./WidgetSettingsModal";
 
 // Grid geometry. ROW_UNIT is the height of one `h` unit; GAP is the grid gap.
 const ROW_UNIT = 84; // px — matches gridAutoRows
@@ -153,11 +153,21 @@ export default function DashboardGrid() {
     const remaining = config.widgets.filter((w) => w.id !== id);
     mutate({ ...config, widgets: reflow(remaining) });
   };
-  const saveSettings = (id: string, settings: DocControlSettings) => {
+  const saveSettings = (id: string, settings: Record<string, unknown>) => {
     if (!config) return;
     mutate({ ...config, widgets: config.widgets.map((w) => w.id === id ? { ...w, settings } : w) });
     setSettingsWidget(null);
   };
+  // A change made INSIDE a widget (a tab, a library switch) sticks: merged
+  // into that widget's settings and saved, from the freshest config.
+  const updateWidgetSettings = useCallback((id: string, patch: Record<string, unknown>) => {
+    setConfig((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, widgets: prev.widgets.map((w) => w.id === id ? { ...w, settings: { ...(w.settings ?? {}), ...patch } } : w) };
+      persist(next);
+      return next;
+    });
+  }, [persist]);
 
   // ── Drag (pointer-driven, with ghost + placeholder) ───────────────────────
   const dragPointer = useRef<{
@@ -372,6 +382,7 @@ export default function DashboardGrid() {
                     editing={editing}
                     onRemove={() => removeWidget(widget.id)}
                     onOpenSettings={() => setSettingsWidget(widget)}
+                    onUpdateSettings={(patch) => updateWidgetSettings(widget.id, patch)}
                   />
                 </div>
               </div>
@@ -450,6 +461,7 @@ export default function DashboardGrid() {
                   editing={editing}
                   onRemove={() => removeWidget(widget.id)}
                   onOpenSettings={() => setSettingsWidget(widget)}
+                  onUpdateSettings={(patch) => updateWidgetSettings(widget.id, patch)}
                 />
                 </div>
 
@@ -512,13 +524,14 @@ export default function DashboardGrid() {
         isAdmin={isAdmin}
         onAdd={(type) => addWidget(type)}
       />
-      <LibrarySettingsModal
-        key={settingsWidget?.id ?? "none"}
-        open={!!settingsWidget}
-        widget={settingsWidget}
-        onClose={() => setSettingsWidget(null)}
-        onSave={(settings) => { if (settingsWidget) saveSettings(settingsWidget.id, settings); }}
-      />
+      {settingsWidget && (
+        <WidgetSettingsModal
+          key={settingsWidget.id}
+          widget={config.widgets.find((w) => w.id === settingsWidget.id) ?? settingsWidget}
+          onClose={() => setSettingsWidget(null)}
+          onSave={(settings) => saveSettings(settingsWidget.id, settings)}
+        />
+      )}
       </div>
     </div>
   );
