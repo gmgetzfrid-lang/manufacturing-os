@@ -3,19 +3,25 @@
 //   * org_capability_allows_for re-created from its NEWEST earlier body (the
 //     folder is scanned now, so a parallel re-creation folded in at merge is
 //     found) with exactly two changes: the holds.release CASE row
-//     (drafting-flow HAND-2: ["*"] → the controller tier) and the grant
-//     loop's project scope (projects-and-cost QUAL-14 done-when 2);
+//     (drafting-flow HAND-2: ["*"] → the controller tier plus the hold's
+//     opener token, "$opener") and the grant loop's project scope
+//     (projects-and-cost QUAL-14 done-when 2);
+//   * hold_opener_may_update — the opener leg, honoured only while the org's
+//     holds.release list names "$opener" (fix pass 2: a stored narrower
+//     list decides as written), and the document_holds UPDATE policy that
+//     calls it;
 //   * enforce_distribution_ack_guard re-created from its newest earlier body
 //     with the EVID-2 additions only (no withdrawal / re-dating of a recorded
 //     acknowledgment; requested_at bound to the requester or a controller,
 //     never earlier; requested_by immutable);
 //   * capability_grant_scope_ready() — the route's probe;
-//   * DEC-30's one-paste shape and DRLS-16's grants.
+//   * DEC-30's one-paste shape and DRLS-16's grants (the ack guard's EXECUTE
+//     taken from PUBLIC / anon / authenticated — fix pass 2).
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { CAPABILITY_DEFS } from "@/lib/capabilityPolicy";
+import { CAPABILITY_DEFS, HOLD_OPENER_TOKEN } from "@/lib/capabilityPolicy";
 
 const dir = join(process.cwd(), "supabase", "migrations");
 const read = (f: string) => readFileSync(join(dir, f), "utf8");
@@ -66,7 +72,7 @@ describe("20261239 — org_capability_allows_for: the holds.release default and 
       `              OR (v_grant->>'expiresAt')::timestamptz > NOW()) THEN`,
     ]);
     expect(onlyInB).toEqual([
-      `      WHEN 'holds.release'            THEN '["Admin","DocCtrl"]'::jsonb`,
+      `      WHEN 'holds.release'            THEN '["Admin","DocCtrl","$opener"]'::jsonb`,
       `              OR (v_grant->>'expiresAt')::timestamptz > NOW())`,
       `         -- QUAL-14 (20261239): a grant that names a project holds on that project only.`,
       `         AND (COALESCE(v_grant->>'projectId', '') = ''`,
@@ -74,12 +80,15 @@ describe("20261239 — org_capability_allows_for: the holds.release default and 
     ]);
   });
 
-  it("the CASE mirrors CAPABILITY_DEFS exactly — holds.release defaults to Admin and DocCtrl, as checkout.force_release", () => {
+  it("the CASE mirrors CAPABILITY_DEFS exactly — holds.release defaults to Admin and DocCtrl (checkout.force_release's tier) plus the opener token", () => {
     const sql = caseMap(mine);
     for (const d of CAPABILITY_DEFS) expect(sql.get(d.id), d.id).toEqual(d.defaultRoles);
     expect(sql.size).toBe(CAPABILITY_DEFS.length);
-    expect(sql.get("holds.release")).toEqual(["Admin", "DocCtrl"]);
-    expect(sql.get("holds.release")).toEqual(sql.get("checkout.force_release"));
+    expect(HOLD_OPENER_TOKEN).toBe("$opener");
+    expect(sql.get("holds.release")).toEqual(["Admin", "DocCtrl", HOLD_OPENER_TOKEN]);
+    expect(sql.get("holds.release")!.filter((t) => t !== HOLD_OPENER_TOKEN)).toEqual(sql.get("checkout.force_release"));
+    // the token is on holds.release alone
+    for (const [cap, toks] of sql) if (cap !== "holds.release") expect(toks, cap).not.toContain(HOLD_OPENER_TOKEN);
     // holds.open is unchanged: anyone may still PLACE a hold
     expect(sql.get("holds.open")).toEqual(["*"]);
   });
@@ -127,9 +136,18 @@ describe("20261239 — enforce_distribution_ack_guard: a one-way acknowledgment,
   it("does not touch the trigger binding", () => {
     expect(stripComments(M)).not.toMatch(/CREATE TRIGGER|DROP TRIGGER|DROP FUNCTION/);
   });
+
+  it("DRLS-16 (fix pass 2): EXECUTE on the re-created guard is taken from PUBLIC and every client role, inside the transaction, and probe 110 checks it", () => {
+    const tx = M.slice(M.indexOf("\nBEGIN;"), M.indexOf("\nCOMMIT;"));
+    expect(tx).toContain("REVOKE ALL ON FUNCTION enforce_distribution_ack_guard() FROM PUBLIC, anon, authenticated;");
+    expect(tx.indexOf("REVOKE ALL ON FUNCTION enforce_distribution_ack_guard()")).toBeGreaterThan(tx.indexOf(GD));
+    expect(codeOnly(M)).not.toMatch(/GRANT[^;]*enforce_distribution_ack_guard/i);
+    expect(M).toContain("AND NOT has_function_privilege('anon', 'public.enforce_distribution_ack_guard()', 'EXECUTE')");
+    expect(M).toContain("AND NOT has_function_privilege('authenticated', 'public.enforce_distribution_ack_guard()', 'EXECUTE'), NULL");
+  });
 });
 
-describe("20261239 — document_holds_update: holds.release, or the hold's own opener (HAND-2 review fix pass)", () => {
+describe("20261239 — document_holds_update: holds.release, or the opener leg while the list names \"$opener\" (HAND-2 review fix passes)", () => {
   const POL = "CREATE POLICY document_holds_update ON document_holds";
   const polOf = (text: string) => {
     const a = text.indexOf(POL);
@@ -145,15 +163,14 @@ describe("20261239 — document_holds_update: holds.release, or the hold's own o
     expect(baseFile).toBe("20260901_db_hard_enforcement.sql");
   });
 
-  it("is that body with exactly the own-hold leg added to USING and WITH CHECK — the 3-argument capability call kept", () => {
+  it("is that body with exactly the opener leg added to USING and WITH CHECK — the 3-argument capability call kept", () => {
     const { onlyInA, onlyInB } = lineDiff(base, mine);
     expect(onlyInA).toEqual([]);
-    const leg = [
-      "  OR (opened_by = auth.uid()",
-      "      AND EXISTS (SELECT 1 FROM org_members WHERE org_id = document_holds.org_id",
-      "                  AND uid = auth.uid() AND status = 'active'))",
-    ];
+    const leg = ["  OR hold_opener_may_update(org_id, opened_by)"];
     expect(onlyInB).toEqual([...leg, ...leg]);
+    // fix pass 2: no unconditional `opened_by = auth.uid()` leg — the opener
+    // is admitted only through the function that reads the org's list
+    expect(mine).not.toMatch(/opened_by = auth\.uid\(\)/);
     expect((mine.match(/org_capability_allows\(org_id, 'holds\.release', auth\.uid\(\)\)/g) ?? []).length).toBe(2);
     // dropped and created inside the one transaction
     const tx = M.slice(M.indexOf("\nBEGIN;"), M.indexOf("\nCOMMIT;"));
@@ -164,18 +181,83 @@ describe("20261239 — document_holds_update: holds.release, or the hold's own o
   });
 
   it("probe 111 reads the deparsed policy with patterns a deparse can produce (no bare casts in LIKE)", () => {
-    expect(M).toContain("COALESCE(qual, '') LIKE '%opened_by = auth.uid()%'");
-    expect(M).toContain("COALESCE(with_check, '') LIKE '%opened_by = auth.uid()%'");
+    expect(M).toContain("COALESCE(qual, '') LIKE '%hold_opener_may_update(org_id, opened_by)%'");
+    expect(M).toContain("COALESCE(with_check, '') LIKE '%hold_opener_may_update(org_id, opened_by)%'");
     for (const l of M.split("\n").filter((x) => /COALESCE\((qual|with_check), ''\) LIKE/.test(x))) expect(l, l).not.toMatch(/::/);
   });
 
-  it("the app mirrors the leg: holdControlsFor / holdAffordances take the hold, assertHoldCapability the opener", () => {
+  it("the app mirrors the leg: holdControlsFor / holdAffordances take the hold, assertHoldCapability the opener — each gated on holdOpenerTokenOn", () => {
     const holds = readFileSync(join(process.cwd(), "lib/holds.ts"), "utf8");
-    expect(holds).toContain("canRelease: !readOnly && (policyAllows(policy, \"holds.release\", role, extra, uid) || isHoldOpener(hold, uid)),");
-    expect(holds).toContain("const ownHold = cap === \"holds.release\" && isHoldOpener({ openedBy: opts.openedBy }, uid);");
-    expect(holds).toContain(".from(\"document_holds\").select(\"org_id, opened_by\")");
+    expect(holds).toContain("canRelease: !readOnly && (policyAllows(policy, \"holds.release\", role, extra, uid) || (isHoldOpener(hold, uid) && holdOpenerTokenOn(policy))),");
+    expect(holds).toContain("const openerLeg = cap === \"holds.release\" && holdOpenerTokenOn(policy);");
+    expect(holds).toContain("const ownHold = openerLeg && isHoldOpener({ openedBy: opts.openedBy }, uid);");
+    expect(holds).toContain(".from(\"document_holds\").select(\"org_id, opened_by, document_id, reason, notes\")");
     const aff = readFileSync(join(process.cwd(), "lib/checkoutAffordances.ts"), "utf8");
+    expect(aff).toContain("const opener = !!uid && !!hold?.openedBy && hold.openedBy === uid && holdOpenerTokenOn(policy);");
     expect(aff).toContain("canRelease: opener || policyAllows(policy, \"holds.release\", role ?? null, extra, uid ?? null),");
+  });
+});
+
+const polOfFile = (text: string) => {
+  const a = text.indexOf("CREATE POLICY document_holds_update ON document_holds");
+  return text.slice(a, text.indexOf("\n);", a) + 3);
+};
+
+describe("20261239 — hold_opener_may_update: the opener leg reads the org's holds.release list (HAND-2 fix pass 2)", () => {
+  const HF = "CREATE OR REPLACE FUNCTION hold_opener_may_update(";
+  const fn = fnBody(M, HF);
+  const ev = fnBody(M, EV);
+
+  it("is NEW in this file, SECURITY DEFINER with search_path pinned, created before the policy that calls it", () => {
+    expect(numbered.filter((f) => f < FILE && read(f).includes("hold_opener_may_update"))).toEqual([]);
+    expect(fn).toMatch(/^CREATE OR REPLACE FUNCTION hold_opener_may_update\(p_org UUID, p_opened_by UUID\)\nRETURNS BOOLEAN LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS \$\$/);
+    const tx = M.slice(M.indexOf("\nBEGIN;"), M.indexOf("\nCOMMIT;"));
+    expect(tx.indexOf(HF)).toBeGreaterThan(0);
+    expect(tx.indexOf(HF)).toBeLessThan(tx.indexOf("CREATE POLICY document_holds_update ON document_holds"));
+  });
+
+  it("DRLS-16: EXECUTE taken from PUBLIC and granted by name to the roles the UPDATE policy is evaluated for (authenticated, anon, service_role); probe 112 checks no PUBLIC grant", () => {
+    const tx = M.slice(M.indexOf("\nBEGIN;"), M.indexOf("\nCOMMIT;"));
+    expect(tx).toContain("REVOKE ALL ON FUNCTION hold_opener_may_update(uuid, uuid) FROM PUBLIC;");
+    expect(tx).toContain("GRANT EXECUTE ON FUNCTION hold_opener_may_update(uuid, uuid) TO authenticated, anon, service_role;");
+    expect(codeOnly(M)).not.toMatch(/GRANT[^;]*hold_opener_may_update[^;]*TO[^;]*\bPUBLIC\b/i);
+    expect(M).toContain("WHERE p.oid = to_regprocedure('public.hold_opener_may_update(uuid,uuid)') AND a.grantee = 0)");
+    // why anon: the policy has no TO clause, and the function answers FALSE at once without auth.uid()
+    expect(polOfFile(M)).not.toMatch(/\bTO\b/);
+    expect(fn.indexOf("IF p_opened_by IS NULL OR p_opened_by IS DISTINCT FROM auth.uid() THEN")).toBeLessThan(fn.indexOf("FROM org_configurations"));
+  });
+
+  it("only the caller who IS the opener, and an active member of the hold's org, can pass", () => {
+    expect(fn).toContain("IF p_opened_by IS NULL OR p_opened_by IS DISTINCT FROM auth.uid() THEN\n    RETURN FALSE;");
+    // no NULL-uid branch that admits (DRLS-16 / dcHotfixAnonExecute): a NULL session uid is DISTINCT from any opener
+    expect(stripComments(fn)).not.toMatch(/auth\.uid\(\)\s+IS\s+(NOT\s+)?NULL/i);
+    expect(fn).toContain("WHERE org_id = p_org AND uid = auth.uid() AND status = 'active') THEN\n    RETURN FALSE;");
+  });
+
+  it("reads the list exactly as the evaluator's base list: the stored entry, a rule list's first unconditional rule, the legacy bare list — else the shipped default", () => {
+    expect(fn).toContain("SELECT COALESCE(data->'caps'->'holds.release', data->'holds.release') INTO v_entry");
+    expect(ev).toContain("v_entry := COALESCE(v_val->'caps'->p_cap, v_val->p_cap);");
+    // the unconditional-rule loop is the evaluator's, line for line
+    const loop = (body: string) => {
+      const a = body.indexOf("      -- 2. Otherwise the first unconditional rule — the base list.");
+      return a >= 0 ? body.slice(body.indexOf("FOR v_rule IN", a), body.indexOf("END LOOP;\n      END IF;", a)) : "";
+    };
+    const evLoop = loop(ev);
+    expect(evLoop.length).toBeGreaterThan(100);
+    const fnLoop = fn.slice(fn.indexOf("FOR v_rule IN"), fn.indexOf("END LOOP;\n    ELSE"));
+    const norm = (x: string) => x.split("\n").map((l) => l.trim()).filter(Boolean);
+    expect(norm(fnLoop)).toEqual(norm(evLoop));
+    expect(fn).toContain("      v_tokens := v_entry;");
+    // the fallback is the shipped default — the CASE row and CAPABILITY_DEFS
+    const def = CAPABILITY_DEFS.find((d) => d.id === "holds.release")!.defaultRoles;
+    expect(fn).toContain(`    v_tokens := '${JSON.stringify(def)}'::jsonb;`);
+    expect(caseMap(ev).get("holds.release")).toEqual(def);
+    expect(fn).toContain("  RETURN v_tokens ? '$opener';");
+  });
+
+  it("the app's holdOpenerTokenOn reads the same base list (tokensFor with no resource)", () => {
+    const cp = readFileSync(join(process.cwd(), "lib/capabilityPolicy.ts"), "utf8");
+    expect(cp).toContain("return tokensFor(policy, \"holds.release\").includes(HOLD_OPENER_TOKEN);");
   });
 });
 
@@ -216,18 +298,24 @@ describe("20261239 — the one-paste shape (DEC-30)", () => {
   it("the inventory is counts only — every INSERT into it selects COUNT(*) or a 0/1 state, never a row", () => {
     const pre = M.slice(0, M.indexOf("\nBEGIN;"));
     const inserts = pre.split("INSERT INTO df_p11_20261239_inventory").slice(1);
-    expect(inserts.length).toBe(8);
-    for (const ins of [...inserts.slice(0, 6), inserts[7]]) expect(ins, ins.slice(0, 120)).toMatch(/COUNT\(\*\)/);
+    expect(inserts.length).toBe(7);
+    for (const ins of inserts.slice(0, 6)) expect(ins, ins.slice(0, 120)).toMatch(/COUNT\(\*\)/);
     expect(inserts[6]).toMatch(/CASE WHEN has_function_privilege\('authenticated'/);
-    // row 8 counts the one widening (the opener leg in an org that stored a holds.release list)
-    expect(inserts[7]).toMatch(/^\nSELECT 8, 'inventory \(the one widening\)/);
+    // fix pass 2: no widening row — the opener leg honours a stored list, so
+    // this file widens nothing
+    expect(M).not.toMatch(/the one widening/);
   });
 
   it("the probes' LIKE patterns are the body text, quotes doubled (prosrc is verbatim)", () => {
     const ev = fnBody(M, EV);
     const gd = fnBody(M, GD);
-    expect(M).toContain(`prosrc LIKE '%WHEN ''holds.release''            THEN ''["Admin","DocCtrl"]''::jsonb%'`);
-    expect(ev).toContain(`WHEN 'holds.release'            THEN '["Admin","DocCtrl"]'::jsonb`);
+    expect(M).toContain(`prosrc LIKE '%WHEN ''holds.release''            THEN ''["Admin","DocCtrl","$opener"]''::jsonb%'`);
+    expect(ev).toContain(`WHEN 'holds.release'            THEN '["Admin","DocCtrl","$opener"]'::jsonb`);
+    const hf = fnBody(M, "CREATE OR REPLACE FUNCTION hold_opener_may_update(");
+    expect(M).toContain(`prosrc LIKE '%RETURN v_tokens ? ''$opener'';%'`);
+    expect(hf).toContain(`RETURN v_tokens ? '$opener';`);
+    expect(M).toContain(`prosrc LIKE '%v_tokens := ''["Admin","DocCtrl","$opener"]''::jsonb;%'`);
+    expect(hf).toContain(`v_tokens := '["Admin","DocCtrl","$opener"]'::jsonb;`);
     expect(M).toContain(`prosrc LIKE '%v_grant->>''projectId'' = p_resource->>''projectId''%'`);
     expect(ev).toContain(`v_grant->>'projectId' = p_resource->>'projectId'`);
     expect(M).toContain(`prosrc LIKE '%NEW.requested_by    IS DISTINCT FROM OLD.requested_by%'`);

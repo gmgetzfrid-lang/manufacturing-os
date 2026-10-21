@@ -223,7 +223,16 @@ const PAGE = 1000;
  *  required slots signed) — the size of the gap between
  *  "approved by a second person" and "released by its publisher". Reads
  *  page past PostgREST's 1,000-row answer; a failed read throws (the caller
- *  says the list is not known — never a short list printed as complete). */
+ *  says the list is not known — never a short list printed as complete).
+ *
+ *  UNWIRED BY DESIGN (DF-P11 fix pass 2, recorded in EVID-4's Partial): no
+ *  screen, export or route calls this yet — the surface it belongs on is the
+ *  document register's controller view, a document-control file outside
+ *  this package (DEC-31). It is the query that view calls; it judges a
+ *  roster through the same loadSignedRosters (evaluateSlotCompletion per
+ *  slot) whose `complete` earns deriveVersionApproval's stamp — pinned by
+ *  dfRoundG_P11_evidence.test.ts, so it cannot drift silently before it is
+ *  wired. Owner of the wiring: document-control. */
 export async function listCurrentRevisionsWithoutSignedApproval(orgId: string): Promise<UnsignedCurrentRevision[]> {
   const docs: Array<{ id: string; document_number: string | null; current_version_id: string | null; status: string | null }> = [];
   for (let from = 0; ; from += PAGE) {

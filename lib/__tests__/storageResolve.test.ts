@@ -29,6 +29,15 @@ const state = vi.hoisted(() => ({
   rpc: (_name: string, _args: unknown): Res => ({ data: false, error: null }),
   queries: [] as Q[],
   head: null as null | (() => unknown),
+  /** the restore surface's gate (lib/adminGate.ts), for `?exists=1` */
+  adminGate: { userId: "u1" } as Record<string, unknown>,
+  adminGateCalls: [] as Array<{ orgId: string; surface: string }>,
+}));
+vi.mock("@/lib/adminGate", () => ({
+  authorizeAdminSurface: vi.fn(async (_req: unknown, orgId: string, surface: string) => {
+    state.adminGateCalls.push({ orgId, surface });
+    return state.adminGate;
+  }),
 }));
 
 function chain(table: string) {
@@ -49,7 +58,7 @@ function chain(table: string) {
       return (...args: unknown[]) => {
         if (prop === "select") { if (q.op === "select") q.select = String(args[0] ?? ""); }
         else if (prop === "insert" || prop === "update" || prop === "upsert" || prop === "delete") { q.op = prop; q.payload = args[0]; }
-        else if (["eq", "neq", "is", "in", "contains", "not", "lte", "gte", "lt", "gt", "or"].includes(prop)) q.filters.push([prop, String(args[0]), args[1]]);
+        else if (["eq", "neq", "is", "in", "contains", "not", "lte", "gte", "lt", "gt", "or", "range"].includes(prop)) q.filters.push([prop, String(args[0]), args[1]]);
         if (prop === "maybeSingle" || prop === "single") {
           const r = settle();
           const d = Array.isArray(r.data) ? (r.data[0] ?? null) : r.data;
@@ -113,6 +122,8 @@ let tickets: Array<Record<string, unknown>>;
 let ticketsError: unknown = null;
 let mentions: unknown[];
 let mentionsError: unknown = null;
+/** When set, the mention lookup answers only for a page of ids holding it. */
+let mentionOn: string | null = null;
 let resolveVersion: Record<string, unknown> | null;
 let audits: unknown[];
 
@@ -134,10 +145,24 @@ function resolver(q: Q): Res {
       return { data: { id: "L1", acl: null, read_access: null } };
     case "tickets":
       if (q.select.includes("requester_id")) return ticketsError ? { error: ticketsError } : { data: tickets };
+      if (q.select === "id") {
+        // the mention leg's paged walk over every ticket naming the key
+        if (ticketsError) return { error: ticketsError };
+        const r = q.filters.find(([o]) => o === "range");
+        const from = r ? Number(r[1]) : 0;
+        const to = r ? Number(r[2]) : tickets.length - 1;
+        return { data: tickets.slice(from, to + 1).map((t) => ({ id: t.id })) };
+      }
       // resolve's attribution read (org_id, archived_at, archive_id)
       return { data: tickets.length ? { org_id: ORG, archived_at: null, archive_id: null } : null };
-    case "ticket_comments":
-      return mentionsError ? { error: mentionsError } : { data: mentions };
+    case "ticket_comments": {
+      if (mentionsError) return { error: mentionsError };
+      if (mentionOn) {
+        const ids = (q.filters.find(([o, c]) => o === "in" && c === "ticket_id")?.[2] ?? []) as string[];
+        return { data: ids.includes(mentionOn) ? [{ id: "c-hit" }] : [] };
+      }
+      return { data: mentions };
+    }
     case "archive_settings":
       return { data: null };
     case "audit_logs":
@@ -164,6 +189,8 @@ beforeEach(() => {
   state.user = { id: U1, email: "u1@example.com" };
   state.queries = [];
   state.head = null;
+  state.adminGate = { userId: U1 };
+  state.adminGateCalls = [];
   state.resolve = resolver;
   state.rpc = () => ({ data: false, error: null });
   member = { uid: U1, role: "Viewer", roles: ["Viewer"] };
@@ -174,6 +201,7 @@ beforeEach(() => {
   ticketsError = null;
   mentions = [];
   mentionsError = null;
+  mentionOn = null;
   resolveVersion = null;
   audits = [];
 });
@@ -278,6 +306,98 @@ describe("AUTHZ-4 — /api/storage/resolve applies download-url's document decis
   });
 });
 
+describe("DF-P11 fix pass 2 — a legacy key whose revision row has a NULL org_id is attributed through its document", () => {
+  it("no prefix, revision org_id NULL: the document's org_id attributes it — judged and served to a member (no 'can't be attributed')", async () => {
+    resolveVersion = { org_id: null, archived_at: null, archive_id: null, record_id: "d-legacy" };
+    doc = null;
+    state.resolve = (q) => {
+      if (q.table === "documents" && q.select === "org_id") return { data: has(q, "eq", "id", "d-legacy") ? { org_id: ORG } : null };
+      return resolver(q);
+    };
+    const r = await callResolve("legacy/uploads/rev-a.pdf");
+    expect(r.status).toBe(200);
+    expect(typeof r.body.url).toBe("string");
+    // the version read asked for record_id; the attribution read was one lookup
+    expect(state.queries.some((q) => q.table === "document_versions" && q.select.includes("record_id") && q.select.includes("archive"))).toBe(true);
+    expect(state.queries.filter((q) => q.table === "documents" && q.select === "org_id")).toHaveLength(1);
+  });
+  it("the membership gate then applies to THAT workspace: a non-member is refused 403", async () => {
+    resolveVersion = { org_id: null, archived_at: null, archive_id: null, record_id: "d-legacy" };
+    state.resolve = (q) => {
+      if (q.table === "documents" && q.select === "org_id") return { data: { org_id: ORG } };
+      if (q.table === "org_members") return { data: null };
+      return resolver(q);
+    };
+    const r = await callResolve("legacy/uploads/rev-a.pdf");
+    expect(r.status).toBe(403);
+    expect(r.body.error).toBe("Not a member of this workspace");
+  });
+  it("nothing attributes it (no document either) → still refused 403; a document lookup that fails → 503, never a refusal or a URL", async () => {
+    resolveVersion = { org_id: null, archived_at: null, archive_id: null, record_id: "d-gone" };
+    state.resolve = (q) => (q.table === "documents" && q.select === "org_id" ? { data: null } : resolver(q));
+    expect((await callResolve("legacy/uploads/rev-a.pdf")).status).toBe(403);
+    state.resolve = (q) => (q.table === "documents" && q.select === "org_id" ? { error: { message: "down" } } : resolver(q));
+    const r = await callResolve("legacy/uploads/rev-a.pdf");
+    expect(r.status).toBe(503);
+    expect(r.body.url).toBeUndefined();
+  });
+});
+
+describe("DF-P11 fix pass 2 (ORG-20 / AUTHZ-4) — the restore's existence probe (`?exists=1`)", () => {
+  const callExists = async (key: string) => {
+    const r = await resolveGET(new NextRequest(`https://app/api/storage/resolve?path=${encodeURIComponent(key)}&exists=1`, { headers: { authorization: "Bearer t" } }));
+    return { status: r.status, body: await r.json() as Record<string, unknown> };
+  };
+
+  it("an Admin (the restore surface's gate) learns only that the file exists — no document gate, no signed URL, no CONTROLLER_RESTRICTED_READ row", async () => {
+    member = { uid: U1, role: "Admin", roles: ["Admin"] };
+    namingVersions = [{ record_id: "d1" }];
+    doc = { id: "d1", org_id: ORG, visibility: "normal", acl: null, acl_index: null, owner_user_id: null, collection_id: null, library_id: "L1", is_private: true, scope: "private", created_by: U2 };
+    resolveVersion = { org_id: ORG, archived_at: null, archive_id: null };
+    const r = await callExists(DOC_KEY);
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ archived: false, exists: true, fileName: "P-101.pdf" });
+    expect(audits).toEqual([]);
+    expect(state.adminGateCalls).toEqual([{ orgId: ORG, surface: "restore" }]);
+    // the document gate never ran (its record_id read is absent)
+    expect(state.queries.some((q) => q.table === "document_versions" && q.select === "record_id")).toBe(false);
+  });
+
+  it("a key the document gate would refuse (an explicit download deny, a broken chain) still answers 'exists' — never read as absent", async () => {
+    state.resolve = (q) => (q.table === "document_versions" && q.select === "record_id" ? { error: { message: "chain broken" } } : resolver(q));
+    resolveVersion = { org_id: ORG, archived_at: null, archive_id: null };
+    const r = await callExists(DOC_KEY);
+    expect(r.status).toBe(200);
+    expect(r.body.exists).toBe(true);
+  });
+
+  it("the restore surface's gate refuses → its status; nothing about the file is said", async () => {
+    state.adminGate = { error: "Only Admins can restore a workspace.", status: 403 };
+    resolveVersion = { org_id: ORG, archived_at: "2026-01-01T00:00:00Z", archive_id: "ARC-1" };
+    const r = await callExists(DOC_KEY);
+    expect(r.status).toBe(403);
+    expect(r.body).toEqual({ error: "Only Admins can restore a workspace." });
+  });
+
+  it("shed → archived with its archive; NotFound → missing; any other HEAD failure → 503 (ORG-20)", async () => {
+    resolveVersion = { org_id: ORG, archived_at: "2026-01-01T00:00:00Z", archive_id: "ARC-1" };
+    expect((await callExists(DOC_KEY)).body).toMatchObject({ archived: true, archiveId: "ARC-1" });
+    resolveVersion = { org_id: ORG, archived_at: null, archive_id: null };
+    state.head = () => { throw Object.assign(new Error("NotFound"), { name: "NotFound", $metadata: { httpStatusCode: 404 } }); };
+    expect((await callExists(DOC_KEY)).body).toMatchObject({ archived: true, missing: true });
+    state.head = () => { throw Object.assign(new Error("boom"), { name: "InternalError", $metadata: { httpStatusCode: 500 } }); };
+    expect((await callExists(DOC_KEY)).status).toBe(503);
+  });
+
+  it("the restore page asks the probe, and a refusal other than 503 is reported and NOT uploaded", async () => {
+    const { readFileSync } = await import("node:fs");
+    const page = readFileSync(`${process.cwd()}/app/(protected)/admin/restore/page.tsx`, "utf8");
+    expect(page).toContain("fetch(`/api/storage/resolve?path=${encodeURIComponent(key)}&exists=1`");
+    expect(page).toContain("if (!check.ok && check.status !== 503) {");
+    expect(page.indexOf("if (!check.ok && check.status !== 503) {")).toBeLessThan(page.indexOf("const blob = await zips[item.zip]"));
+  });
+});
+
 describe("EVID-16 / DEC-90 ruling (2) — a ticket file is signed only for a member who may read the ticket", () => {
   const otherTicket = { id: "t1", requester_id: U2, assigned_drafter_id: null, assigned_engineer_id: null, watchers: [] };
 
@@ -358,6 +478,37 @@ describe("EVID-16 / DEC-90 ruling (2) — a ticket file is signed only for a mem
       expect(gateTicketReads()).toHaveLength(0);
     });
   }
+
+  it("fix pass 2: no cap becomes a 403 — 30 tickets name the key and the member's leg is on the 30th (requester, or mentioned): served at both doors", async () => {
+    member = { uid: U1, role: "Contractor", roles: ["Contractor"] };
+    const many = Array.from({ length: 30 }, (_, i) => ({ ...otherTicket, id: `t${i + 1}` }));
+    // the direct legs are filtered in the query (requester / drafter / engineer / watcher)
+    tickets = many.map((t, i) => (i === 29 ? { ...t, requester_id: U1 } : t));
+    state.queries = [];
+    expect((await callResolve(TICKET_KEY)).status).toBe(200);
+    const leg = gateTicketReads()[0];
+    expect(has(leg, "or", `requester_id.eq.${U1},assigned_drafter_id.eq.${U1},assigned_engineer_id.eq.${U1},watchers.cs.{${U1}}`)).toBe(true);
+    // the mention leg pages over every naming ticket's id
+    tickets = many;
+    mentionOn = "t30";
+    expect((await callDownload(TICKET_KEY)).status).toBe(200);
+    // and a ticket past the first page of ids (TICKET_PAGE = 200) is still found
+    tickets = Array.from({ length: 450 }, (_, i) => ({ ...otherTicket, id: `t${i + 1}` }));
+    mentionOn = "t433";
+    expect((await callResolve(TICKET_KEY)).status).toBe(200);
+    mentionOn = "nowhere";
+    expect((await callResolve(TICKET_KEY)).status).toBe(403);
+  });
+
+  it("fix pass 2: past the page bound the answer is 503 (retry), never 403", async () => {
+    const { MAX_TICKET_PAGES, TICKET_PAGE } = await import("@/lib/ticketKeyGate");
+    member = { uid: U1, role: "Contractor", roles: ["Contractor"] };
+    tickets = Array.from({ length: MAX_TICKET_PAGES * TICKET_PAGE + 1 }, (_, i) => ({ ...otherTicket, id: `t${i + 1}` }));
+    mentionOn = "nowhere";
+    const r = await callResolve(TICKET_KEY);
+    expect(r.status).toBe(503);
+    expect(r.body.url).toBeUndefined();
+  });
 
   it("resolve: the gate runs before the archive answer — a refused caller learns nothing of the archive", async () => {
     member = { uid: U1, role: "Contractor", roles: ["Contractor"] };

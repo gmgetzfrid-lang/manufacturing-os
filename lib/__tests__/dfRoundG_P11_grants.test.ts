@@ -1,6 +1,8 @@
 // drafting-flow Round G, DF-P11 — the capability-policy halves:
-//   * HAND-2: holds.release ships to the controller tier (Admin, DocCtrl);
-//     an org that stored a wider list keeps it; a grant still widens.
+//   * HAND-2: holds.release ships to the controller tier (Admin, DocCtrl)
+//     plus the hold's own opener (HOLD_OPENER_TOKEN); an org that stored a
+//     wider list keeps it; a grant still widens; an org that stored a list
+//     WITHOUT the opener token is honoured exactly (fix pass 2).
 //   * projects-and-cost QUAL-14 done-when 2: a personal grant of a capability
 //     decided per project (quality.sign_off) may name ONE project. Both
 //     evaluators read it (policyAllows here; org_capability_allows_for's
@@ -67,8 +69,9 @@ vi.mock("@/lib/supabase", () => ({ supabase: { from: (t: string) => table(t) } }
 
 import {
   policyAllows, validateCapabilityPolicy, grantAppliesTo, sameGrant, CAPABILITY_DEFS, PROJECT_SCOPED_CAPS,
-  __resetCapabilityPolicyCache, type CapabilityPolicy,
+  __resetCapabilityPolicyCache, HOLD_OPENER_TOKEN, holdOpenerTokenOn, type CapabilityPolicy,
 } from "@/lib/capabilityPolicy";
+import { holdAffordances } from "@/lib/checkoutAffordances";
 import { POST as policyRoute } from "@/app/api/admin/capability-policy/route";
 import { holdControlsFor, isHoldOpener } from "@/lib/holds";
 
@@ -79,8 +82,8 @@ const P2 = "22222222-2222-4222-8222-222222222222";
 // HAND-2 — the shipped default
 // ═══════════════════════════════════════════════════════════════════════════
 describe("HAND-2 — holds.release ships to Admin and DocCtrl", () => {
-  it("the definition's default is the controller tier; holds.open stays everyone", () => {
-    expect(CAPABILITY_DEFS.find((d) => d.id === "holds.release")?.defaultRoles).toEqual(["Admin", "DocCtrl"]);
+  it("the definition's default is the controller tier plus the opener token; holds.open stays everyone", () => {
+    expect(CAPABILITY_DEFS.find((d) => d.id === "holds.release")?.defaultRoles).toEqual(["Admin", "DocCtrl", HOLD_OPENER_TOKEN]);
     expect(CAPABILITY_DEFS.find((d) => d.id === "holds.open")?.defaultRoles).toEqual(["*"]);
   });
   it("under the default: Admin, DocCtrl and a Manager who also holds DocCtrl release; every other role does not", () => {
@@ -115,6 +118,34 @@ describe("HAND-2 — holds.release ships to Admin and DocCtrl", () => {
     expect(isHoldOpener({ openedBy: "u" }, "u")).toBe(true);
     // a controller releases anyone's
     expect(holdControlsFor({}, "DocCtrl", ["DocCtrl"], "dc", { openedBy: "sup" }).canRelease).toBe(true);
+  });
+  it("fix pass 2: the opener leg is the TOKEN, not an unconditional OR — a stored list without it (\"only Admins lift holds\") is honoured exactly", () => {
+    const adminsOnly: CapabilityPolicy = { caps: { "holds.release": ["Admin"] } };
+    expect(holdOpenerTokenOn(adminsOnly)).toBe(false);
+    // the Supervisor who placed the hold: refused on every surface
+    expect(holdControlsFor(adminsOnly, "Supervisor", ["Supervisor"], "sup", { openedBy: "sup" }).canRelease).toBe(false);
+    expect(holdAffordances(adminsOnly, "Supervisor", ["Supervisor"], "sup", { openedBy: "sup" }).canRelease).toBe(false);
+    // DocCtrl is not on that list either; Admin is
+    expect(holdControlsFor(adminsOnly, "DocCtrl", ["DocCtrl"], "dc", { openedBy: "sup" }).canRelease).toBe(false);
+    expect(holdControlsFor(adminsOnly, "Admin", ["Admin"], "a", { openedBy: "sup" }).canRelease).toBe(true);
+    // an Admin who ticks the opener back on: the leg returns
+    const withOpener: CapabilityPolicy = { caps: { "holds.release": ["Admin", HOLD_OPENER_TOKEN] } };
+    expect(holdControlsFor(withOpener, "Supervisor", ["Supervisor"], "sup", { openedBy: "sup" }).canRelease).toBe(true);
+    expect(holdAffordances(withOpener, "Supervisor", ["Supervisor"], "sup", { openedBy: "sup" }).canRelease).toBe(true);
+    // a rule list: the first unconditional rule decides (as the database reads it)
+    expect(holdOpenerTokenOn({ caps: { "holds.release": [{ tokens: ["Admin"], when: { libraryId: ["L1"] } }, { tokens: ["Admin", HOLD_OPENER_TOKEN] }] } })).toBe(true);
+    expect(holdOpenerTokenOn({ caps: { "holds.release": [{ tokens: ["Admin", HOLD_OPENER_TOKEN], when: { libraryId: ["L1"] } }, { tokens: ["Admin"] }] } })).toBe(false);
+    // the empty list denies, the default and an absent policy name it
+    expect(holdOpenerTokenOn({ caps: { "holds.release": [] } })).toBe(false);
+    expect(holdOpenerTokenOn({})).toBe(true);
+    expect(holdOpenerTokenOn(null)).toBe(true);
+    // no role ever matches the token
+    expect(policyAllows({ caps: { "holds.release": [HOLD_OPENER_TOKEN] } }, "holds.release", "Supervisor", ["Admin", "DocCtrl"])).toBe(false);
+  });
+  it("fix pass 2: the opener token is valid on holds.release only (the rail says so)", () => {
+    expect(validateCapabilityPolicy({ caps: { "holds.release": ["Admin", HOLD_OPENER_TOKEN] } })).toBeNull();
+    expect(validateCapabilityPolicy({ caps: { "holds.open": ["*", HOLD_OPENER_TOKEN] } })).toMatch(/applies to releasing a hold only/);
+    expect(validateCapabilityPolicy({ caps: { "transmittal.issue": [{ tokens: ["Admin"] }, { tokens: [HOLD_OPENER_TOKEN], when: { libraryId: ["L"] } }] } })).toMatch(/applies to releasing a hold only/);
   });
 });
 

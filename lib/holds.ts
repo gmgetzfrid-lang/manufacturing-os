@@ -24,7 +24,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { logHoldEvent } from "@/lib/audit";
-import { loadCapabilityPolicy, policyAllows, tokensFor, heldMatchesTokens, grantActive, type CapabilityPolicy } from "@/lib/capabilityPolicy";
+import { loadCapabilityPolicy, policyAllows, tokensFor, heldMatchesTokens, grantActive, holdOpenerTokenOn, type CapabilityPolicy } from "@/lib/capabilityPolicy";
 import { isControllerRole } from "@/lib/permissions";
 import { heldRoles, holdsReadOnlyRole } from "@/lib/roleHeld";
 import { OTHER_HOLD_REASON, holdReasonLabel } from "@/lib/holdGate";
@@ -162,10 +162,13 @@ export interface HoldControls {
  *  escape — the same way every restriction-style check in the app does, so
  *  the shipped "*" default does not hand an Auditor a live Release control.
  *  drafting-flow HAND-2 (DF-P11 fix pass): pass the `hold` a control sits on
- *  and its OPENER may release (and re-date) it whatever the policy says —
- *  the person who stopped work can lift their own stop once their condition
- *  clears. The document_holds UPDATE policy carries the same leg
- *  (20261239, `opened_by = auth.uid()`); assertHoldCapability mirrors it. */
+ *  and its OPENER may release (and re-date) it while the org's holds.release
+ *  list names HOLD_OPENER_TOKEN — the shipped default does, so the person
+ *  who stopped work can lift their own stop once their condition clears;
+ *  fix pass 2: a stored list that leaves the token out ("only Admins lift
+ *  holds") is honoured exactly. The document_holds UPDATE policy carries
+ *  the same leg (20261239, hold_opener_may_update); assertHoldCapability
+ *  mirrors it. */
 export function holdControlsFor(
   policy: CapabilityPolicy | null | undefined,
   role: string | null | undefined,
@@ -177,13 +180,15 @@ export function holdControlsFor(
   const readOnly = holdsReadOnlyRole([role ?? "", ...(extra ?? [])].filter(Boolean));
   return {
     canOpen: !readOnly && policyAllows(policy, "holds.open", role, extra, uid),
-    canRelease: !readOnly && (policyAllows(policy, "holds.release", role, extra, uid) || isHoldOpener(hold, uid)),
+    canRelease: !readOnly && (policyAllows(policy, "holds.release", role, extra, uid) || (isHoldOpener(hold, uid) && holdOpenerTokenOn(policy))),
   };
 }
 
-/** HAND-2 (DF-P11 fix pass): true when `uid` placed `hold` — the opener's
- *  own-release leg (the document_holds UPDATE policy's `opened_by =
- *  auth.uid()`, 20261239). Pure; an absent uid or opener is never a match. */
+/** HAND-2 (DF-P11 fix pass): true when `uid` placed `hold` — the identity
+ *  half of the opener's own-release leg; the policy half is
+ *  holdOpenerTokenOn (the document_holds UPDATE policy asks both in
+ *  hold_opener_may_update, 20261239). Pure; an absent uid or opener is
+ *  never a match. */
 export function isHoldOpener(hold: { openedBy?: string | null } | null | undefined, uid: string | null | undefined): boolean {
   return !!uid && !!hold?.openedBy && hold.openedBy === uid;
 }
@@ -270,8 +275,9 @@ async function assertHoldCapability(
     // the 3-argument org_capability_allows. Both halves agree by construction.
     resource?: import("@/lib/capabilityPolicy").CapabilityResource;
     /** HAND-2 (DF-P11 fix pass): who placed the hold being released or
-     *  re-dated. Its opener passes whatever the policy says — the same leg
-     *  the document_holds UPDATE policy carries (20261239). */
+     *  re-dated. Its opener passes while the policy's holds.release list
+     *  names HOLD_OPENER_TOKEN (fix pass 2) — the same leg the
+     *  document_holds UPDATE policy carries (20261239). */
     openedBy?: string | null;
   } = {},
 ): Promise<void> {
@@ -307,11 +313,14 @@ async function assertHoldCapability(
     const role = (member?.role as string | null | undefined) ?? null;
     const extra = (member?.roles as string[] | null) ?? [];
     const policy = loaded.policy;
-    const ownHold = cap === "holds.release" && isHoldOpener({ openedBy: opts.openedBy }, uid);
+    const openerLeg = cap === "holds.release" && holdOpenerTokenOn(policy);
+    const ownHold = openerLeg && isHoldOpener({ openedBy: opts.openedBy }, uid);
     if (!ownHold && !policyAllows(policy, cap, role, extra, uid, resource)) {
       throw new Error(cap === "holds.open"
         ? "Your role isn't allowed to place holds. An Admin can change this under Admin → Permissions → Action permissions."
-        : "Your role isn't allowed to release holds placed by someone else (you can release a hold you placed yourself). An Admin can change this under Admin → Permissions → Action permissions.");
+        : openerLeg
+          ? "Your role isn't allowed to release holds placed by someone else (you can release a hold you placed yourself). An Admin can change this under Admin → Permissions → Action permissions."
+          : "Your role isn't allowed to release holds — in this workspace not even a hold's own opener may lift it. An Admin can change this under Admin → Permissions → Action permissions.");
     }
   } catch (e) {
     const msg = (e as Error)?.message ?? "";
@@ -399,12 +408,107 @@ export async function openHold(input: OpenHoldInput): Promise<HoldRecord> {
  *  HAND-2 (DF-P11 fix pass): also who placed it — the opener's own-release
  *  leg. opened_by is immutable once placed (20261073), so it cannot be
  *  re-pointed between this read and the write. */
-async function readHoldOrg(holdId: string, lead: string): Promise<{ orgId: string; openedBy: string | null }> {
+async function readHoldOrg(holdId: string, lead: string): Promise<{
+  orgId: string; openedBy: string | null; documentId: string | null; reason: string; notes: string | null;
+}> {
   const { data, error } = await supabase
-    .from("document_holds").select("org_id, opened_by").eq("id", holdId).maybeSingle();
+    .from("document_holds").select("org_id, opened_by, document_id, reason, notes").eq("id", holdId).maybeSingle();
   if (error) throw new Error(`${lead}: the hold could not be read to check your permission (${error.message}). Try again in a moment.`);
   if (!data?.org_id) throw new Error("Hold already released or not found.");
-  return { orgId: String(data.org_id), openedBy: (data as { opened_by?: string | null }).opened_by ?? null };
+  const row = data as { opened_by?: string | null; document_id?: string | null; reason?: string | null; notes?: string | null };
+  return {
+    orgId: String(data.org_id),
+    openedBy: row.opened_by ?? null,
+    documentId: row.document_id ?? null,
+    reason: row.reason ?? "",
+    notes: row.notes ?? null,
+  };
+}
+
+/** drafting-flow HAND-2 done-when 2 (DF-P11 fix pass 2): "releasing a hold
+ *  opened by someone else … notifies the opener BEFORE the release commits".
+ *  releaseHold calls this, AWAITED, between the permission gate and the
+ *  UPDATE whenever the releaser is not the hold's opener:
+ *    · phase "pending" — the opener's notice ("… is releasing the hold you
+ *      placed: <reason>") on the EXISTING hold_released kind, its bell row
+ *      written through the retried path (inappRetry, DELIV-16) so the
+ *      answer says whether it LANDED. Not landed (or the send threw) →
+ *      releaseHold refuses with a sentence and writes nothing. An opener
+ *      who is no longer an active member of the org cannot be told (emit
+ *      reaches active members only, NEDGE-3): the release then goes ahead
+ *      — the stop is not frozen for ever by a departed person — and the
+ *      answer says so ("not_a_member"), read checked first.
+ *    · phase "failed" — the release did not commit after the opener was
+ *      told it was happening: the same kind says it did not go through and
+ *      the hold stands. Best-effort (the refusal is already the answer).
+ *  A re-date (updateHoldExpectedRelease) does not lift the stop and is not
+ *  covered. Returns "told" or "not_a_member"; throws on a pending notice
+ *  that was not queued. */
+export async function noticeOpenerOfRelease(input: {
+  phase: "pending" | "failed";
+  orgId: string;
+  holdId: string;
+  documentId: string | null;
+  openedBy: string;
+  holdLabel: string;
+  releasedReason: string;
+  actorUserId: string;
+  actorName?: string | null;
+  failure?: string;
+}): Promise<"told" | "not_a_member"> {
+  const notQueued = (why: string) => new Error(
+    `The hold was not released: the person who placed it could not be told first (${why}). A hold placed by someone else is released only once they have been notified — try again in a moment.`,
+  );
+  if (input.phase === "pending") {
+    const { data: member, error: memberErr } = await supabase
+      .from("org_members").select("uid").eq("org_id", input.orgId).eq("uid", input.openedBy).eq("status", "active").maybeSingle();
+    if (memberErr) throw notQueued(`their membership could not be read: ${memberErr.message}`);
+    if (!member) return "not_a_member";
+  }
+  let label = "a document";
+  let link = "/admin/holds";
+  if (input.documentId) {
+    const { data: doc } = await supabase.from("documents").select("document_number, title, name, library_id")
+      .eq("id", input.documentId).maybeSingle();
+    label = (doc?.document_number as string) || (doc?.title as string) || (doc?.name as string) || label;
+    if (doc?.library_id) link = `/documents/${doc.library_id}?doc=${input.documentId}`;
+  }
+  const who = input.actorName || "Someone";
+  const pending = input.phase === "pending";
+  let result: { recipients: number; inapp?: { sent: number; failed: number } } | undefined;
+  try {
+    const { emit } = await import("@/lib/notify/dispatch");
+    result = await emit({
+      orgId: input.orgId,
+      category: "status",
+      kind: "hold_released",
+      title: pending
+        ? `Your hold on ${label} is being released`
+        : `The release of your hold on ${label} did not go through`,
+      body: pending
+        ? `${who} is releasing the "${input.holdLabel}" hold you placed: ${input.releasedReason}`
+        : `${who}'s release of the "${input.holdLabel}" hold you placed did not go through${input.failure ? ` (${input.failure})` : ""}. The hold is still in place.`,
+      link,
+      resource: { type: "document", id: input.documentId ?? input.holdId },
+      actorUserId: input.actorUserId,
+      actorName: input.actorName ?? undefined,
+      audience: { involved: [input.openedBy] },
+      metadata: { holdId: input.holdId, releaseNotice: input.phase },
+      // the bell row is retried and its landing is reported (DELIV-16)
+      inappRetry: {},
+    });
+  } catch (e) {
+    if (pending) throw notQueued((e as Error)?.message || "the notice could not be sent");
+    console.warn("[holds] the opener's 'release did not go through' notice failed (non-blocking)", e);
+    return "told";
+  }
+  if (pending && !((result?.inapp?.sent ?? 0) >= 1)) {
+    throw notQueued(result?.recipients ? "their notice did not land" : "the notice reached nobody");
+  }
+  if (!pending && !((result?.inapp?.sent ?? 0) >= 1)) {
+    console.warn("[holds] the opener's 'release did not go through' notice did not land (non-blocking)", { holdId: input.holdId });
+  }
+  return "told";
 }
 
 export interface ReleaseHoldInput {
@@ -429,6 +533,25 @@ export async function releaseHold(input: ReleaseHoldInput): Promise<HoldRecord> 
   const holdRow = await readHoldOrg(input.holdId, "The hold was not released");
   await assertHoldCapability(holdRow.orgId, "holds.release", { action: "release", openedBy: holdRow.openedBy });
 
+  // HAND-2 done-when 2 (DF-P11 fix pass 2): a hold SOMEONE ELSE placed — its
+  // opener is told BEFORE the release commits; a notice that was not queued
+  // refuses here, before any write (noticeOpenerOfRelease).
+  const someoneElses = !!holdRow.openedBy && holdRow.openedBy !== input.releasedBy;
+  let openerTold = false;
+  if (someoneElses) {
+    openerTold = (await noticeOpenerOfRelease({
+      phase: "pending",
+      orgId: holdRow.orgId,
+      holdId: input.holdId,
+      documentId: holdRow.documentId,
+      openedBy: holdRow.openedBy as string,
+      holdLabel: holdReasonLabel({ reason: holdRow.reason, notes: holdRow.notes }),
+      releasedReason,
+      actorUserId: input.releasedBy,
+      actorName: input.releasedByName,
+    })) === "told";
+  }
+
   const now = new Date().toISOString();
   const { data, error } = await supabase
     .from("document_holds")
@@ -443,7 +566,25 @@ export async function releaseHold(input: ReleaseHoldInput): Promise<HoldRecord> 
     .select("*")
     .single();
 
-  if (error || !data) throw new Error(error?.message || "Hold already released or not found.");
+  if (error || !data) {
+    const failure = error?.message || "Hold already released or not found.";
+    // the opener was told it was happening — tell them it did not
+    if (openerTold) {
+      await noticeOpenerOfRelease({
+        phase: "failed",
+        orgId: holdRow.orgId,
+        holdId: input.holdId,
+        documentId: holdRow.documentId,
+        openedBy: holdRow.openedBy as string,
+        holdLabel: holdReasonLabel({ reason: holdRow.reason, notes: holdRow.notes }),
+        releasedReason,
+        actorUserId: input.releasedBy,
+        actorName: input.releasedByName,
+        failure,
+      }).catch((e) => console.warn("[holds] the opener's 'release did not go through' notice failed (non-blocking)", e));
+    }
+    throw new Error(failure);
+  }
   const row = data as HoldRow;
 
   // HLD-5: on a 20261073 database the guard wrote the HOLD_RELEASED row itself

@@ -3,11 +3,13 @@
 //
 //   HAND-2  holds.release ships to the controller tier (Admin, DocCtrl), and
 //           a hold's OPENER keeps release / re-date of their own hold (the
-//           document_holds UPDATE policy's own-hold leg, review fix pass):
+//           document_holds UPDATE policy's opener leg, hold_opener_may_update,
+//           while the org's list names "$opener" — the default does):
 //           a Supervisor lifts the "pending field walk" hold they placed, but
 //           not a hold a controller placed; a stored list or a personal grant
-//           still widens; a suspended opener holds nothing; opened_by cannot
-//           be re-pointed to borrow the leg.
+//           still widens; a stored list WITHOUT "$opener" ("only Admins lift
+//           holds") is honoured exactly (fix pass 2); a suspended opener holds
+//           nothing; opened_by cannot be re-pointed to borrow the leg.
 //   EVID-2  the distribution-ack guard: a recorded acknowledgment is never
 //           withdrawn or re-dated; requested_at moves only forward and only
 //           by the requester or a controller; requested_by is immutable.
@@ -118,6 +120,28 @@ describe.skipIf(skip !== null)("HAND-2 (20261239): who may release or re-date a 
     expect(asCaller(db, m.drafter.caller, `UPDATE document_holds SET released_at = now(), released_by = '${m.drafter.uid}' WHERE id = '${own}'`)).toMatchObject({ ok: false });
   });
 
+  it("fix pass 2: an org that STORED holds.release = [\"Admin\"] is honoured exactly — the opener, and DocCtrl, touch 0 rows; ticking \"$opener\" back on (a bare list or a rule list's base rule) returns the leg", () => {
+    const s = seedOrg(db, { admin: { role: "Admin" }, dc: { role: "DocCtrl" }, supervisor: { role: "Supervisor" } });
+    admin(db, `INSERT INTO org_configurations (org_id, key, data) VALUES ('${s.orgId}', 'capability_policy', '{"caps": {"holds.release": ["Admin"]}}'::jsonb)`);
+    const d = seedDocument(db, s.orgId);
+    const own = placeHold(db, s.orgId, d, s.m.supervisor.uid);
+    expect(asCaller(db, s.m.supervisor.caller, redate(own))).toEqual({ ok: true, rows: 0 });
+    expect(asCaller(db, s.m.supervisor.caller, release(own, s.m.supervisor))).toEqual({ ok: true, rows: 0 });
+    expect(asCaller(db, s.m.dc.caller, release(own, s.m.dc))).toEqual({ ok: true, rows: 0 });
+    expect(admin(db, `SELECT released_at IS NULL FROM document_holds WHERE id = '${own}'`)).toBe("t");
+    // the Admin's list names the opener again
+    admin(db, `UPDATE org_configurations SET data = '{"caps": {"holds.release": ["Admin", "$opener"]}}'::jsonb WHERE org_id = '${s.orgId}' AND key = 'capability_policy'`);
+    expect(asCaller(db, s.m.supervisor.caller, redate(own))).toEqual({ ok: true, rows: 1 });
+    // a rule list: the first unconditional rule is the base list
+    admin(db, `UPDATE org_configurations SET data = '{"caps": {"holds.release": [{"tokens": ["Admin", "$opener"], "when": {"libraryId": ["x"]}}, {"tokens": ["Admin"]}]}}'::jsonb WHERE org_id = '${s.orgId}' AND key = 'capability_policy'`);
+    expect(asCaller(db, s.m.supervisor.caller, release(own, s.m.supervisor))).toEqual({ ok: true, rows: 0 });
+    admin(db, `UPDATE org_configurations SET data = '{"caps": {"holds.release": [{"tokens": ["Admin"], "when": {"libraryId": ["x"]}}, {"tokens": ["Admin", "$opener"]}]}}'::jsonb WHERE org_id = '${s.orgId}' AND key = 'capability_policy'`);
+    expect(asCaller(db, s.m.supervisor.caller, release(own, s.m.supervisor))).toEqual({ ok: true, rows: 1 });
+    // the Admin, on the stored list, always could
+    const dcHold = placeHold(db, s.orgId, d, s.m.dc.uid);
+    expect(asCaller(db, s.m.admin.caller, release(dcHold, s.m.admin))).toEqual({ ok: true, rows: 1 });
+  });
+
   it("an org that STORED holds.release as everyone keeps it (the CASE is the fallback only)", () => {
     const s = seedOrg(db, { dc: { role: "DocCtrl" }, drafter: { role: "Drafter" } });
     admin(db, `INSERT INTO org_configurations (org_id, key, data) VALUES ('${s.orgId}', 'capability_policy', '{"caps": {"holds.release": ["*"]}}'::jsonb)`);
@@ -178,7 +202,7 @@ describe.skipIf(skip !== null)("20261239 pasted as ONE script, as the SQL editor
     });
   };
 
-  it("on a copy put back to 20260901's UPDATE policy: the opener is refused before, admitted after; every probe true; inventory rows 1–8 are counts; a re-paste is clean", () => {
+  it("on a copy put back to 20260901's UPDATE policy: the opener is refused before, admitted after; an org storing [\"Admin\"] refuses its opener before AND after (nothing widened); every probe true; inventory rows 1–7 are counts; a re-paste is clean", () => {
     const scratch = "mos_df_p11_paste";
     admin("postgres", `CREATE DATABASE ${scratch} TEMPLATE ${db}`);
     try {
@@ -192,20 +216,30 @@ describe.skipIf(skip !== null)("20261239 pasted as ONE script, as the SQL editor
       const d = seedDocument(scratch, s.orgId);
       const h1 = placeHold(scratch, s.orgId, d, s.m.supervisor.uid);
       expect(asCaller(scratch, s.m.supervisor.caller, release(h1, s.m.supervisor))).toEqual({ ok: true, rows: 0 });
+      // an org whose Admin stored "only Admins lift holds"
+      const n = seedOrg(scratch, { admin: { role: "Admin" }, supervisor: { role: "Supervisor" } });
+      admin(scratch, `INSERT INTO org_configurations (org_id, key, data) VALUES ('${n.orgId}', 'capability_policy', '{"caps": {"holds.release": ["Admin"]}}'::jsonb)`);
+      const nd = seedDocument(scratch, n.orgId);
+      const nh = placeHold(scratch, n.orgId, nd, n.m.supervisor.uid);
+      expect(asCaller(scratch, n.m.supervisor.caller, release(nh, n.m.supervisor))).toEqual({ ok: true, rows: 0 });
 
       const rows = paste(scratch);
       const probes = rows.filter((r) => r.ok !== "");
       const inventory = rows.filter((r) => r.ok === "");
-      expect(probes.length).toBe(12);
+      expect(probes.length).toBe(13);
       expect(probes.filter((p) => p.ok !== "t"), JSON.stringify(probes)).toEqual([]);
       expect(probes.every((p) => p.n === "")).toBe(true);
-      expect(inventory.length).toBe(8);
+      expect(inventory.length).toBe(7);
       expect(inventory.every((r) => /^\d+$/.test(r.n)), JSON.stringify(inventory)).toBe(true);
-      expect(rows.some((r) => r.check.startsWith("the hold UPDATE policy admits holds.release or the hold's own opener"))).toBe(true);
+      expect(rows.some((r) => r.check.startsWith("the hold UPDATE policy admits holds.release or the opener leg"))).toBe(true);
+      expect(rows.some((r) => /widening/.test(r.check))).toBe(false);
 
       expect(asCaller(scratch, s.m.supervisor.caller, release(h1, s.m.supervisor))).toEqual({ ok: true, rows: 1 });
       const h2 = placeHold(scratch, s.orgId, d, s.m.docctrl.uid);
       expect(asCaller(scratch, s.m.supervisor.caller, release(h2, s.m.supervisor))).toEqual({ ok: true, rows: 0 });
+      // the stored narrower list still decides after the paste: nothing widened
+      expect(asCaller(scratch, n.m.supervisor.caller, release(nh, n.m.supervisor))).toEqual({ ok: true, rows: 0 });
+      expect(admin(scratch, `SELECT has_function_privilege('authenticated', 'public.enforce_distribution_ack_guard()', 'EXECUTE')`)).toBe("f");
 
       const again = paste(scratch);
       expect(again.filter((r) => r.ok !== "" && r.ok !== "t")).toEqual([]);

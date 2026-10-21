@@ -23,6 +23,16 @@
 // key under orgs/<org>/tickets/. A key that cannot be attributed to a
 // workspace is refused, never signed. Both gates run before the archive
 // answer, so a refused caller learns nothing about the file.
+//
+// `?exists=1` (DF-P11 fix pass 2, ORG-20 / AUTHZ-4): the backup restore's
+// "is it already live?" probe. Admitted only through the restore surface's
+// gate (lib/adminGate.ts authorizeAdminSurface(…, "restore"): an Admin of
+// the key's workspace); it answers the archive state and the HEAD only —
+// no document gate, no ticket gate, no signed URL and so no
+// CONTROLLER_RESTRICTED_READ row for files nobody opened (a restore asks
+// once per backup file), and a gate refusal (an explicit download deny, a
+// broken folder chain) can no longer read as "absent" and re-upload a file
+// that is live.
 
 import { NextRequest, NextResponse } from "next/server";
 import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
@@ -33,6 +43,7 @@ import { PRESIGNED_MAX_SECONDS } from "@/lib/presignedLifetime";
 import { presignedGetDisposition, wantsInline } from "@/lib/presignedDisposition";
 import { documentKeyGate } from "@/lib/documentKeyGate";
 import { ticketKeyGate } from "@/lib/ticketKeyGate";
+import { authorizeAdminSurface } from "@/lib/adminGate";
 // projects-tab GAP-401 remainder (b): a door upload is signed for
 // UNTRUSTED_CONTENT_ORIGIN when set; everything else exactly as before.
 import { signStorageGet } from "@/lib/untrustedContent";
@@ -68,7 +79,7 @@ export async function GET(req: NextRequest) {
   // Which version owns this binary? Drives archive status + org membership check.
   let verQ = supabaseAdmin
     .from("document_versions")
-    .select("org_id, archived_at, archive_id, created_at")
+    .select("org_id, archived_at, archive_id, created_at, record_id")
     .eq("file_url", path);
   // document_versions.org_id is nullable (schema.sql): a legacy revision
   // with no org_id still names its key, and its archived_at must still drive
@@ -80,7 +91,7 @@ export async function GET(req: NextRequest) {
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  let v = ver as { org_id?: string; archived_at?: string | null; archive_id?: string | null } | null;
+  let v = ver as { org_id?: string | null; archived_at?: string | null; archive_id?: string | null; record_id?: string | null } | null;
   // Ticket-attachment keys have no document_versions row — attribute them via
   // the owning ticket so a shed attachment still gets a NAMED archive prompt
   // instead of "ask an admin".
@@ -97,7 +108,22 @@ export async function GET(req: NextRequest) {
   }
   // Attribute the key to an org: the `orgs/<orgId>/…` prefix, else (a legacy
   // key) the row that names it — so the membership gate below ALWAYS applies.
-  const orgId = prefixOrg ?? v?.org_id;
+  let orgId = prefixOrg ?? v?.org_id ?? null;
+  // DF-P11 fix pass 2: a legacy key (no prefix) whose revision row predates
+  // the org_id backfill (NULL) is still attributable — its DOCUMENT names the
+  // workspace (one lookup through record_id). A lookup that fails is a 503
+  // (retry), never a refusal; only a key nothing attributes is refused.
+  if (!orgId && v?.record_id) {
+    const { data: owner, error: ownerErr } = await supabaseAdmin
+      .from("documents").select("org_id").eq("id", v.record_id).maybeSingle();
+    if (ownerErr) {
+      return NextResponse.json(
+        { error: "This file's workspace couldn't be checked — try again in a moment.", retryable: true },
+        { status: 503, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+    orgId = (owner as { org_id?: string | null } | null)?.org_id ?? null;
+  }
   const fileName = path.split("/").pop() || "file";
 
   // AUTHZ-4 done-when 2: a key no workspace can be attributed to is refused,
@@ -105,6 +131,27 @@ export async function GET(req: NextRequest) {
   // orgs/<org>/…; a legacy key is attributed through its revision row).
   if (!orgId) {
     return NextResponse.json({ error: "This file can't be attributed to a workspace" }, { status: 403 });
+  }
+  const existsOnly = req.nextUrl.searchParams.get("exists") === "1";
+  if (existsOnly) {
+    // The restore's existence probe: the restore surface's own gate (an Admin
+    // of the key's workspace, by the full role collection), then the archive
+    // state and a HEAD — nothing signed, no document read recorded.
+    const actor = await authorizeAdminSurface(req, orgId, "restore");
+    if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
+    if (v?.archived_at) return NextResponse.json({ archived: true, archiveId: v.archive_id ?? null, fileName }, { headers: { "Cache-Control": "no-store" } });
+    try {
+      await r2.send(new HeadObjectCommand({ Bucket: R2_BUCKET, Key: path }));
+    } catch (e) {
+      if (!isStorageNotFound(e)) {
+        return NextResponse.json(
+          { error: "Storage couldn't be reached to check this file — try again in a moment.", retryable: true },
+          { status: 503, headers: { "Cache-Control": "no-store" } },
+        );
+      }
+      return NextResponse.json({ archived: true, missing: true, archiveId: v?.archive_id ?? null, fileName }, { headers: { "Cache-Control": "no-store" } });
+    }
+    return NextResponse.json({ archived: false, exists: true, fileName }, { headers: { "Cache-Control": "no-store" } });
   }
   // The caller must be an active member of the key's workspace.
   {

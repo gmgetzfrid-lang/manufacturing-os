@@ -162,6 +162,14 @@ describe("EVID-4 — the approval is derived, the typed box is a claim", () => {
     db.readError.document_review_signoffs = { message: "down" };
     await expect(listCurrentRevisionsWithoutSignedApproval("o1")).rejects.toThrow(/could not be read/);
   });
+  it("fix pass 2: the unwired helper judges a roster exactly as the stamp does — loadSignedRosters' `complete` — and says it is unwired, with its owner", () => {
+    const src = readFileSync(join(process.cwd(), "lib/versionApproval.ts"), "utf8");
+    const fn = src.slice(src.indexOf("export async function listCurrentRevisionsWithoutSignedApproval("));
+    expect(fn).toContain("const rosters = await loadSignedRosters(versionIds);");
+    expect(fn).toContain("!(rosters.get(id) ?? EMPTY_ROSTER).complete");
+    expect(src).toContain("UNWIRED BY DESIGN (DF-P11 fix pass 2, recorded in EVID-4's Partial)");
+    expect(src).toContain("Owner of the wiring: document-control.");
+  });
   it("source: the Version History stamp is earned by a signed roster only; the rev-up box is labelled the publisher's note", () => {
     const panel = readFileSync(join(process.cwd(), "components/documents/VersionHistoryPanel.tsx"), "utf8");
     expect(panel).not.toMatch(/label="Approved" name=\{v\.approvedByName\}/);

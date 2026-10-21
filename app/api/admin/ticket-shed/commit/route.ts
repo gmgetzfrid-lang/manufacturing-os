@@ -159,9 +159,37 @@ export async function POST(req: NextRequest) {
   }
   const errors: string[] = [];
 
+  // ALOG-8 (admin-and-org P13): CHECKED — the TICKET_ARCHIVE_RECLAIM row is
+  // written on every exit after step 1 has stamped stubs (their comments and
+  // history are gone from the live rows), so a refused or thrown insert is
+  // carried in the answer (`auditError`) and logged, never a silent success
+  // (the purge's rule). Fix pass: the 503 below wrote no row at all.
+  // DF-P11 fix pass 2: defined before the changed-since-capture refusal,
+  // which writes one too (tickets leave the archive's catalogue there).
+  const writeReclaimAudit = async (details: Record<string, unknown>): Promise<string | null> => {
+    let auditError: string | null = null;
+    try {
+      const { error: auditErr } = await sb.from("audit_logs").insert({
+        action: "TICKET_ARCHIVE_RECLAIM",
+        resource_id: orgId, resource_type: "org", org_id: orgId,
+        user_id: actor.userId, user_email: actor.email,
+        details: { archiveId, ...details },
+      });
+      if (auditErr) auditError = auditErr.message || "audit insert refused";
+    } catch (e) {
+      auditError = (e as Error).message || String(e);
+    }
+    if (auditError) console.error("[admin/ticket-shed/commit] the TICKET_ARCHIVE_RECLAIM audit row was not written", auditError);
+    return auditError;
+  };
+
   // SM-4 / SM-9 (DF-P11): a captured ticket that left its terminal status, or
   // was written, after the archive was produced is never freed on that stale
   // copy. Refuse, name them, return them to the live list, free nothing.
+  // DF-P11 fix pass 2 (ALOG-8): a ticket counts as returned only when the
+  // un-link matched its row, and the refusal writes a TICKET_ARCHIVE_RECLAIM
+  // row (partial, stoppedAt changed_since_capture, the released and the
+  // unreleased ids) — tickets leaving the archive's catalogue are recorded.
   const producedAt = (cat as { created_at?: string | null }).created_at ?? null;
   const changed = tickets
     .filter((t) => !t.archived_at)
@@ -171,12 +199,20 @@ export async function POST(req: NextRequest) {
     const released: string[] = [];
     const unreleased: string[] = [];
     for (const { t } of changed) {
-      const { error } = await sb
+      const { data: back, error } = await sb
         .from("tickets")
         .update({ archive_id: null })
-        .eq("id", t.id).eq("org_id", orgId).eq("archive_id", archiveId).is("archived_at", null);
-      (error ? unreleased : released).push(t.ticket_id || t.id);
+        .eq("id", t.id).eq("org_id", orgId).eq("archive_id", archiveId).is("archived_at", null)
+        .select("id");
+      const matched = !error && Array.isArray(back) && back.length > 0;
+      (matched ? released : unreleased).push(t.ticket_id || t.id);
     }
+    const auditError = await writeReclaimAudit({
+      partial: true, stoppedAt: "changed_since_capture",
+      reclaimedTickets: 0, keysDeleted: 0,
+      released, unreleased,
+      changed: changed.map(({ t, reason }) => ({ ticketId: t.ticket_id || t.id, reason })),
+    });
     const named = changed.map(({ t, reason }) =>
       `${t.ticket_id || t.id} (${reason === "left_terminal" ? `now ${t.status || "open"}` : "changed since the archive was made"})`);
     return NextResponse.json({
@@ -188,6 +224,7 @@ export async function POST(req: NextRequest) {
       code: "changed_since_capture",
       changed: changed.map(({ t, reason }) => ({ id: t.id, ticketId: t.ticket_id ?? null, status: t.status ?? null, reason })),
       released: released.length,
+      ...(auditError ? { auditError: `${released.length} request(s) were returned to the live list but the TICKET_ARCHIVE_RECLAIM audit row was not written: ${auditError}` } : {}),
     }, { status: 409 });
   }
 
@@ -262,28 +299,6 @@ export async function POST(req: NextRequest) {
   }
   const freeIds = idsToFree.filter((id) => stillArchived.has(id));
   const candidateKeys = freeIds.flatMap((id) => keysByTicket.get(id) ?? []);
-
-  // ALOG-8 (admin-and-org P13): CHECKED — the TICKET_ARCHIVE_RECLAIM row is
-  // written on every exit after step 1 has stamped stubs (their comments and
-  // history are gone from the live rows), so a refused or thrown insert is
-  // carried in the answer (`auditError`) and logged, never a silent success
-  // (the purge's rule). Fix pass: the 503 below wrote no row at all.
-  const writeReclaimAudit = async (details: Record<string, unknown>): Promise<string | null> => {
-    let auditError: string | null = null;
-    try {
-      const { error: auditErr } = await sb.from("audit_logs").insert({
-        action: "TICKET_ARCHIVE_RECLAIM",
-        resource_id: orgId, resource_type: "org", org_id: orgId,
-        user_id: actor.userId, user_email: actor.email,
-        details: { archiveId, ...details },
-      });
-      if (auditErr) auditError = auditErr.message || "audit insert refused";
-    } catch (e) {
-      auditError = (e as Error).message || String(e);
-    }
-    if (auditError) console.error("[admin/ticket-shed/commit] the TICKET_ARCHIVE_RECLAIM audit row was not written", auditError);
-    return auditError;
-  };
 
   // RET-8 (same class): a substituted attachment key that names a LIVE
   // controlled revision's object must never be freed here either. Fail

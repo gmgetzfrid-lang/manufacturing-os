@@ -319,13 +319,22 @@ export default function RestorePage() {
         const key = remapOrgPath(item.key, orgPairs);
 
         // Skip what's already live; never resurrect space-archived binaries —
-        // those intentionally live in their own offline zips.
-        const check = await fetch(`/api/storage/resolve?path=${encodeURIComponent(key)}`, {
+        // those intentionally live in their own offline zips. DF-P11 fix
+        // pass 2: the existence probe (`exists=1` — the restore surface's
+        // gate, a HEAD, nothing signed and no document read recorded for a
+        // file nobody opened); a refusal is "could not check", reported and
+        // NOT uploaded — never read as "absent" (a 503 is still "not
+        // confirmed" and the file is uploaded, as before).
+        const check = await fetch(`/api/storage/resolve?path=${encodeURIComponent(key)}&exists=1`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         const state = await check.json().catch(() => null) as { archived?: boolean; archiveId?: string | null; missing?: boolean } | null;
         if (check.ok && state?.archived === false) { counters.skipped++; return; }
         if (check.ok && state?.archived === true && state?.archiveId) { counters.offline++; return; }
+        if (!check.ok && check.status !== 503) {
+          const why = (state as { error?: string } | null)?.error;
+          throw new Error(`Could not check whether this file is already here (${why || `HTTP ${check.status}`}) — not uploaded`);
+        }
 
         const blob = await zips[item.zip].file(item.entry)!.async("blob");
         // ORG-5: upload-url signs a workspace logo only with its type AND its

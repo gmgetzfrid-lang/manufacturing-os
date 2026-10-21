@@ -34,8 +34,9 @@
 //     and per-person grants) through lib/holds.ts holdControlsFor, never
 //     a literal role list (HLD-8). `canEdit` is a caller-side hard OFF
 //     (read-only contexts); it can hide controls, never grant them. A
-//     hold's own opener is offered Release / Re-date on that hold
-//     (drafting-flow HAND-2, the UPDATE policy's own-hold leg).
+//     hold's own opener is offered Release / Re-date on that hold while
+//     holds.release names the opener token (drafting-flow HAND-2, the
+//     UPDATE policy's own-hold leg; the shipped default names it).
 
 import React, { useCallback, useEffect, useState } from "react";
 import {

@@ -72,8 +72,8 @@ export default function HoldsPage() {
   }, [activeOrgId, policyTry]);
   const canRelease = policy ? holdControlsFor(policy, activeRole, roles, uid).canRelease : false;
   // drafting-flow HAND-2 (DF-P11 fix pass): a hold's own opener may release /
-  // re-date it whatever holds.release names (the document_holds UPDATE
-  // policy's own-hold leg, 20261239).
+  // re-date it while holds.release names the opener token (the shipped
+  // default; the document_holds UPDATE policy's own-hold leg, 20261239).
   const mayReleaseRow = (h: HoldRecord) =>
     canRelease || (!!policy && holdControlsFor(policy, activeRole, roles, uid, h).canRelease);
 

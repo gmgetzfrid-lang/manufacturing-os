@@ -1198,6 +1198,8 @@ Tests: `aoRoundGP9ConsoleRendered.test.ts` "ORG-14 (fix pass 2 / integrator fix 
 - ✓ `missing: true` only for a NotFound; any other storage failure answers a 5xx.
 - ✓ `lib/__tests__/storageResolve.test.ts` "ORG-20 — `missing: true` only for storage's NotFound" (NotFound → 200 missing; 5xx → 503; timeout → 503; present → signed); `aoRoundGP11AppearanceRails.test.ts` re-pinned on the new catch.
 
+Review fix pass 2: the restore's per-file check is its own existence probe — `GET /api/storage/resolve?path=…&exists=1`, admitted only through the restore surface's gate (`authorizeAdminSurface(…, "restore")`, an Admin of the key's workspace), answering the archive state and a HEAD with the same NotFound-only `missing` and 503 rule, and no document gate, signed URL or `CONTROLLER_RESTRICTED_READ` row (a restore asks once per backup file). `app/(protected)/admin/restore/page.tsx` uses it and treats a refusal other than 503 as "could not check — not uploaded" (reported), never as absent. Tests: `lib/__tests__/storageResolve.test.ts` "the restore's existence probe (`?exists=1`)". See drafting-flow `AUTHZ-4`.
+
 **Scope / residual.** `lib/dataRestore.ts:2501-2505`'s comment still says the route answers `missing: true` for any HEAD failure; it is now conservative (the fence it describes stays correct) — left for the restore's owner to reword (not this package's file).
 
 ---

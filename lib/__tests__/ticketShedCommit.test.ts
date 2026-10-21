@@ -102,10 +102,14 @@ type Opts = {
   liveTicketsNaming?: Record<string, string[]>;
   liveTicketReadError?: boolean;
   stampCount?: number;
+  /** ids whose un-link (archive_id → null) matches no row (raced / already gone). */
+  unclaimMisses?: string[];
+  auditError?: boolean;
 };
 let stamps: Array<{ id: unknown; ops: Op[] }>;
 let unclaims: Array<{ id: unknown; ops: Op[] }>;
 let commentDeletes: number;
+let audits: Array<Record<string, unknown>>;
 
 function resolver(o: Opts) {
   return (table: string, ops: Op[]) => {
@@ -117,7 +121,11 @@ function resolver(o: Opts) {
     if (table === "tickets") {
       const upd = argOf(ops, "update")?.[0] as Record<string, unknown> | undefined;
       if (upd && "archived_at" in upd) { stamps.push({ id: filter(ops, "eq", "id"), ops }); return { data: null, error: null, count: o.stampCount ?? 1 }; }
-      if (upd && "archive_id" in upd && upd.archive_id === null) { unclaims.push({ id: filter(ops, "eq", "id"), ops }); return { data: null, error: null }; }
+      if (upd && "archive_id" in upd && upd.archive_id === null) {
+        const id = filter(ops, "eq", "id") as string;
+        unclaims.push({ id, ops });
+        return { data: (o.unclaimMisses ?? []).includes(id) ? [] : [{ id }], error: null };
+      }
       if (hasOp(ops, "contains", "attachments")) {
         if (o.liveTicketReadError) return { data: null, error: { message: "down" } };
         const key = (JSON.parse(String(filter(ops, "contains", "attachments"))) as Array<{ url: string }>)[0].url;
@@ -135,6 +143,11 @@ function resolver(o: Opts) {
       return { data: (o.liveRevisionKeys ?? []).filter((k) => keys.includes(k)).map((k, i) => ({ id: `v${i}`, file_url: k })), error: null };
     }
     if (table === "ticket_comments" && argOf(ops, "delete")) { commentDeletes++; return { data: null, error: null }; }
+    if (table === "audit_logs" && argOf(ops, "insert")) {
+      if (o.auditError) return { data: null, error: { message: "audit refused" } };
+      audits.push(argOf(ops, "insert")?.[0] as Record<string, unknown>);
+      return { data: null, error: null };
+    }
     return { data: [], error: null };
   };
 }
@@ -149,7 +162,7 @@ const captured = (over: Record<string, unknown>) => ({
 beforeEach(() => {
   state.resolve = () => ({ data: [], error: null });
   state.r2Deletes = []; state.r2Puts = []; state.objects = {}; state.calls = [];
-  stamps = []; unclaims = []; commentDeletes = 0;
+  stamps = []; unclaims = []; commentDeletes = 0; audits = [];
 });
 
 describe("lib/ticketShed — the pure halves (DF-P11)", () => {
@@ -204,6 +217,37 @@ describe("SM-4 — produce → reopen → commit: the live ticket survives", () 
     expect(again.res.status).toBe(200);
     expect(stamps.map((s) => s.id)).toEqual(["t1"]);
     expect(state.r2Deletes).toEqual([`orgs/${ORG}/tickets/KE-26-0117/1_ifc.pdf`]);
+  });
+});
+
+describe("DF-P11 fix pass 2 (ALOG-8) — the changed-since-capture refusal is audited and counts only rows it returned", () => {
+  it("writes one TICKET_ARCHIVE_RECLAIM row (partial, stoppedAt changed_since_capture, released / unreleased ids) before answering 409", async () => {
+    const tickets = [
+      captured({ status: "PENDING_REVIEW" }),
+      captured({ id: "t2", ticket_id: "KE-26-0118", status: "DRAFTING" }),
+    ];
+    state.resolve = resolver({ tickets, unclaimMisses: ["t2"] });
+    const { res, body } = await commit();
+    expect(res.status).toBe(409);
+    // the un-link selects what it matched: t2 matched nothing, so it is not "released"
+    for (const u of unclaims) expect(argOf(u.ops, "select")).toEqual(["id"]);
+    expect(body.released).toBe(1);
+    expect(String(body.error)).toContain("1 could not be returned (KE-26-0118)");
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({
+      action: "TICKET_ARCHIVE_RECLAIM", org_id: ORG, user_id: "admin1",
+      details: { archiveId: "arch1", partial: true, stoppedAt: "changed_since_capture", reclaimedTickets: 0, keysDeleted: 0, released: ["KE-26-0117"], unreleased: ["KE-26-0118"] },
+    });
+    expect(body.auditError).toBeUndefined();
+    expect(stamps).toEqual([]);
+    expect(state.r2Deletes).toEqual([]);
+  });
+
+  it("an audit row that is refused is carried in the answer (auditError), never a silent success", async () => {
+    state.resolve = resolver({ tickets: [captured({ status: "PENDING_REVIEW" })], auditError: true });
+    const { res, body } = await commit();
+    expect(res.status).toBe(409);
+    expect(String(body.auditError)).toMatch(/TICKET_ARCHIVE_RECLAIM audit row was not written: audit refused/);
   });
 });
 

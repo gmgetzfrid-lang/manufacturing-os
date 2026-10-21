@@ -15,6 +15,10 @@
 //   * IDENTITY-based rights are NOT configurable by design: a ticket's
 //     requester, assigned drafter, and assigned engineer always keep their
 //     own-ticket actions. Policy governs ROLE-based authority only.
+//     The one exception is a TOKEN, so an Admin decides it like any role:
+//     HOLD_OPENER_TOKEN ("$opener") on holds.release admits the hold's own
+//     opener (drafting-flow HAND-2, DF-P11 — shipped in the default; a
+//     stored list without it means exactly what it names).
 //   * Enforced where it matters: the workflow-action API route re-derives
 //     actions server-side with the org's policy, so a tampered client
 //     changes nothing.
@@ -88,6 +92,17 @@ export interface CapabilityDef {
 // WF-24 / CHAIN-3: the management tier is defined ONCE (lib/managementRoles.ts).
 const MGMT = [...MANAGEMENT_ROLES];
 
+/** drafting-flow HAND-2 (DF-P11 fix pass 2, 20261239): the identity token of
+ *  holds.release. In the list it admits the hold's own OPENER (while an
+ *  active member) to release or re-date THAT hold — no role ever matches it
+ *  (roleTokenMatches compares role names; no role is named "$opener"). It
+ *  ships in the default, so the person who stopped work lifts their own stop
+ *  once their condition clears; an org whose stored list leaves it out
+ *  ("only Admins lift holds") is honoured exactly as written, in the app
+ *  (holdOpenerTokenOn) and at the database (hold_opener_may_update, which
+ *  the document_holds UPDATE policy calls). Valid on holds.release only. */
+export const HOLD_OPENER_TOKEN = "$opener";
+
 export const CAPABILITY_DEFS: CapabilityDef[] = [
   { id: "ticket.manage", area: "Requests", label: "Management override", critical: true,
     description: "The management tier: co-approve at any review stage, override assigned reviewers, force-close.",
@@ -132,12 +147,14 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
   // "do not advance" veto (lib/documentGuards.ts refuses even a library
   // publisher's force past one), so releasing it ships to the controller
   // tier, as checkout.force_release does — the '*' default let the person a
-  // hold was placed against lift it. Widening (a role, a personal grant) is
-  // an explicit Admin decision in the grid. The ticket close gate's release
-  // of its own hold runs as the service role (DEC-25) and is unaffected.
+  // hold was placed against lift it — plus the hold's own opener
+  // (HOLD_OPENER_TOKEN, fix pass 2: a token, so a stored list that leaves it
+  // out is honoured). Widening (a role, a personal grant) is an explicit
+  // Admin decision in the grid. The ticket close gate's release of its own
+  // hold runs as the service role (DEC-25) and is unaffected.
   { id: "holds.release", area: "Holds", label: "Release a hold",
-    description: "Release (or re-date) an open hold. Ships to Admin and Document Control only: a hold is a deliberate stop on a document, so lifting it is a controller's decision unless you grant it here. Enforced at the database, which reads this policy.",
-    defaultRoles: ["Admin", "DocCtrl"] },
+    description: "Release (or re-date) an open hold. Ships to Admin, Document Control and the person who placed that hold: a hold is a deliberate stop on a document, so lifting someone else's is a controller's decision unless you grant it here. Untick \"The hold's own opener\" to make release controller-only. Enforced at the database, which reads this policy.",
+    defaultRoles: ["Admin", "DocCtrl", HOLD_OPENER_TOKEN] },
   { id: "checkout.force_release", area: "Checkouts", label: "Force-release a checkout", critical: true,
     description: "Release another user's active checkout. Enforced at the database, which reads this policy — widen or narrow freely.",
     defaultRoles: ["Admin", "DocCtrl"] },
@@ -373,6 +390,16 @@ export function tokensFor(
   resource?: CapabilityResource | null,
 ): string[] {
   return scopedTokensFor(policy, cap, resource) ?? baseTokensFor(policy, cap);
+}
+
+/** drafting-flow HAND-2 (DF-P11 fix pass 2): does the org's effective
+ *  holds.release list name HOLD_OPENER_TOKEN — may a hold's own opener
+ *  release / re-date it? The base list (no hold caller threads a resource),
+ *  read exactly as the database's hold_opener_may_update reads it: the
+ *  stored bare list, else the first unconditional rule, else the shipped
+ *  default (which names it). A stored list that leaves it out answers no. */
+export function holdOpenerTokenOn(policy: CapabilityPolicy | null | undefined): boolean {
+  return tokensFor(policy, "holds.release").includes(HOLD_OPENER_TOKEN);
 }
 
 /** Do any of the held roles satisfy this token list? */
@@ -681,6 +708,11 @@ export function validateCapabilityPolicy(policy: CapabilityPolicy): string | nul
       if (def.critical && !tokens.includes("Admin") && !tokens.includes("*")) {
         return `${def.label}${where}: Admin cannot be removed from a critical capability — that's the rail that keeps the org recoverable.`;
       }
+    }
+    // HAND-2 (DF-P11 fix pass 2): the opener token means something on
+    // holds.release only — anywhere else neither evaluator would read it.
+    if (def.id !== "holds.release" && lists.some(({ tokens }) => Array.isArray(tokens) && tokens.includes(HOLD_OPENER_TOKEN))) {
+      return `${def.label}: "The hold's own opener" applies to releasing a hold only.`;
     }
     if (isRuleArray(v)) {
       for (const r of v) {

@@ -22,16 +22,27 @@
 //     gate stands aside;
 //   * a Contractor-only member's own staged file is theirs;
 //   * otherwise the key is signed only when a ticket of the key's workspace
-//     that names it in `attachments` is inside the member's read scope;
+//     that names it in `attachments` is inside the member's read scope —
+//     asked of EVERY such ticket, never a capped sample (DF-P11 fix pass 2:
+//     a `.limit(25)` let a member entitled to the 26th ticket be refused):
+//     the direct legs (requester, drafter, engineer, watcher) are filtered
+//     in the query itself, then the mention leg pages through the naming
+//     tickets' ids; past MAX_TICKET_PAGES pages the answer is 503 — a bound
+//     is never a 403;
 //   * a read that cannot be made (the member row, the document lookup, the
 //     ticket lookup, the mention lookup) answers 503 — never a signed URL on
 //     a check not made.
 // Shared by the two routes; a Next route module is no library.
+//
+// Not covered here (recorded under EVID-16's residual, DF-P11 fix pass 2):
+// an intake redline appended to a request (append_ticket_redline) lives
+// under orgs/<org>/project-intake/<p>/redlines/…, outside the tickets/
+// prefix, and is still signed on membership alone.
 
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { documentsNamingKey, ACCESS_UNVERIFIED } from "@/lib/documentKeyGate";
-import { isContractorOnly, ticketReadScope } from "@/lib/ticketReadScope";
+import { isContractorOnly } from "@/lib/ticketReadScope";
 import { isStagedKeyOf } from "@/lib/ticketCreate";
 
 /** A key under the drafting-request prefix of some workspace. */
@@ -53,6 +64,17 @@ type TicketScopeRow = {
   assigned_engineer_id: string | null;
   watchers: string[] | null;
 };
+
+/** Ids per page of the mention leg's walk over the tickets naming a key. */
+export const TICKET_PAGE = 200;
+/** Pages walked before the gate answers 503 instead of guessing. */
+export const MAX_TICKET_PAGES = 50;
+
+/** The direct legs of lib/ticketReadScope.ts, on one row. */
+function directLeg(t: TicketScopeRow, uid: string): boolean {
+  return t.requester_id === uid || t.assigned_drafter_id === uid || t.assigned_engineer_id === uid
+    || (Array.isArray(t.watchers) && t.watchers.includes(uid));
+}
 
 /**
  * May this member be handed a URL for this ticket-file key? `null` = yes (or
@@ -90,27 +112,48 @@ export async function ticketKeyGate(
     // creation-time file whose re-key never ran).
     if (isStagedKeyOf(path, keyOrg, user.id)) return null;
 
-    const { data, error } = await supabaseAdmin
+    const uid = user.id;
+    const attachments = JSON.stringify([{ url: path }]);
+    // 1. The direct legs, filtered in the query: any ticket naming the key on
+    //    which the member is requester, drafter, engineer or a watcher. The
+    //    row is re-checked here (lib/ticketReadScope.ts's legs).
+    const { data: direct, error: directErr } = await supabaseAdmin
       .from("tickets")
       .select("id, requester_id, assigned_drafter_id, assigned_engineer_id, watchers")
       .eq("org_id", keyOrg)
-      .contains("attachments", JSON.stringify([{ url: path }]))
-      .limit(25);
-    if (error) return refuse(ACCESS_UNVERIFIED, 503);
-    const tickets = (Array.isArray(data) ? data : data ? [data] : []) as TicketScopeRow[];
-    let unknown = false;
-    for (const t of tickets) {
-      const scope = await ticketReadScope(supabaseAdmin, member, user.id, {
-        id: t.id,
-        requesterId: t.requester_id,
-        assignedDrafterId: t.assigned_drafter_id,
-        assignedEngineerId: t.assigned_engineer_id,
-        watchers: t.watchers,
-      });
-      if (scope === "in") return null;
-      if (scope === "unknown") unknown = true;
+      .contains("attachments", attachments)
+      .or(`requester_id.eq.${uid},assigned_drafter_id.eq.${uid},assigned_engineer_id.eq.${uid},watchers.cs.{${uid}}`)
+      .limit(1);
+    if (directErr) return refuse(ACCESS_UNVERIFIED, 503);
+    const directRows = (Array.isArray(direct) ? direct : direct ? [direct] : []) as TicketScopeRow[];
+    if (directRows.some((t) => directLeg(t, uid))) return null;
+
+    // 2. The mention leg, over EVERY ticket naming the key (paged): a live
+    //    comment on one of them that mentions the member — ticketReadScope's
+    //    mention lookup, asked per page instead of per ticket.
+    for (let page = 0; ; page++) {
+      if (page >= MAX_TICKET_PAGES) return refuse(ACCESS_UNVERIFIED, 503);
+      const { data: idRows, error: idErr } = await supabaseAdmin
+        .from("tickets")
+        .select("id")
+        .eq("org_id", keyOrg)
+        .contains("attachments", attachments)
+        .order("id", { ascending: true })
+        .range(page * TICKET_PAGE, page * TICKET_PAGE + TICKET_PAGE - 1);
+      if (idErr) return refuse(ACCESS_UNVERIFIED, 503);
+      const ids = ((Array.isArray(idRows) ? idRows : idRows ? [idRows] : []) as Array<{ id: string }>).map((r) => r.id).filter(Boolean);
+      if (ids.length === 0) break;
+      const { data: hit, error: hitErr } = await supabaseAdmin
+        .from("ticket_comments")
+        .select("id")
+        .in("ticket_id", ids)
+        .contains("mentioned_uids", [uid])
+        .is("deleted_at", null)
+        .limit(1);
+      if (hitErr) return refuse(ACCESS_UNVERIFIED, 503);
+      if ((hit ?? []).length > 0) return null;
+      if (ids.length < TICKET_PAGE) break;
     }
-    if (unknown) return refuse(ACCESS_UNVERIFIED, 503);
     return refuse(TICKET_FILE_REFUSED, 403);
   } catch {
     return refuse(ACCESS_UNVERIFIED, 503);

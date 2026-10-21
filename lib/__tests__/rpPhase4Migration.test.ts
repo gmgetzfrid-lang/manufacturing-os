@@ -90,7 +90,7 @@ describe("WF-23 — org_capability_allows fallback mirrors CAPABILITY_DEFS (the 
     expect(capFn).toMatch(/SECURITY DEFINER SET search_path = public/);
   });
 
-  it("20261038 is HISTORICAL: its 17-row CASE is a strict subset of the live one — the one default changed since is holds.release (drafting-flow HAND-2, 20261239: [\"*\"] → Admin and DocCtrl); Round E added ticket.engineer_gate_exempt (20261057) and admin.audit_view (20261063), document-control P7 transmittal.issue (20261132), projects J2b quality.sign_off (20261136), intelligence Round G ai.manage_caps (20261137)", () => {
+  it("20261038 is HISTORICAL: its 17-row CASE is a strict subset of the live one — the one default changed since is holds.release (drafting-flow HAND-2, 20261239: [\"*\"] → Admin, DocCtrl and the hold's opener token); Round E added ticket.engineer_gate_exempt (20261057) and admin.audit_view (20261063), document-control P7 transmittal.issue (20261132), projects J2b quality.sign_off (20261136), intelligence Round G ai.manage_caps (20261137)", () => {
     const historical = caseDefaults(historicalCapFn);
     expect(historical.size).toBe(17);
     expect(historical.has("ticket.engineer_gate_exempt")).toBe(false);
@@ -98,7 +98,7 @@ describe("WF-23 — org_capability_allows fallback mirrors CAPABILITY_DEFS (the 
     expect(historical.has("transmittal.issue")).toBe(false);
     expect(historical.get("holds.release")).toEqual(["*"]);
     for (const [cap, tokens] of historical) {
-      expect(sqlDefaults.get(cap), cap).toEqual(cap === "holds.release" ? ["Admin", "DocCtrl"] : tokens);
+      expect(sqlDefaults.get(cap), cap).toEqual(cap === "holds.release" ? ["Admin", "DocCtrl", "$opener"] : tokens);
     }
     expect([...sqlDefaults.keys()].filter((c) => !historical.has(c)).sort()).toEqual(["admin.audit_view", "ai.manage_caps", "quality.sign_off", "ticket.engineer_gate_exempt", "transmittal.issue"]);
   });

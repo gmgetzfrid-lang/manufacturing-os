@@ -51,6 +51,7 @@ import {
   CAPABILITY_DEFS, defaultCapabilityPolicy, loadCapabilityPolicyEntry, saveCapabilityPolicy,
   validateCapabilityPolicy, invalidateCapabilityPolicy, isRuleArray, ruleIsConditional, describeWhen,
   CapabilityPolicyChangeError, POLICY_CHANGED, PROJECT_SCOPED_CAPS, announceCapabilityPolicyChanged,
+  HOLD_OPENER_TOKEN,
   type CapabilityId, type CapabilityEntry, type CapabilityRule, type CapabilityPolicy,
 } from "@/lib/capabilityPolicy";
 import { loadRequestTypeOptions, type RequestTypeOption } from "@/lib/requestTypes";
@@ -63,14 +64,18 @@ const TOKENS = POLICY_TOKENS;
 
 /** ALOG-9 done-when 2: tokens a stored list holds that the grid has no column
  *  for (an "Engineer-2", a typo, a retired role). They stay live in the
- *  evaluator, so the row names them instead of hiding them. */
+ *  evaluator, so the row names them instead of hiding them. The hold-opener
+ *  token is not one of them: it has its own control on the holds.release
+ *  row (drafting-flow HAND-2, DF-P11 fix pass 2). */
 export function tokensOutsideGrid(tokens: readonly string[]): string[] {
-  return tokens.filter((t) => !TOKENS.includes(t));
+  return tokens.filter((t) => !TOKENS.includes(t) && t !== HOLD_OPENER_TOKEN);
 }
 const TOKEN_LABEL: Record<string, string> = {
   "*": "Everyone", DraftingSupervisor: "DraftingSup", Engineer: "Engineer (all tiers)",
   ...Object.fromEntries(DORMANT_ROLES.map((r) => [r, `${r} (dept)`])),
+  [HOLD_OPENER_TOKEN]: "the hold's own opener",
 };
+const tokenLabel = (t: string) => TOKEN_LABEL[t] ?? t;
 
 /** One editable override row: a rule scoped to exactly one request type. */
 interface Override { type: string; tokens: string[] }
@@ -299,7 +304,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
       const added = now.filter((t) => !was.includes(t));
       const removed = was.filter((t) => !now.includes(t));
       if (added.length || removed.length) {
-        changes.push(`${d.label}: ${added.length ? `+${added.join(", +")}` : ""}${added.length && removed.length ? " · " : ""}${removed.length ? `−${removed.join(", −")}` : ""}`);
+        changes.push(`${d.label}: ${added.length ? `+${added.map(tokenLabel).join(", +")}` : ""}${added.length && removed.length ? " · " : ""}${removed.length ? `−${removed.map(tokenLabel).join(", −")}` : ""}`);
       }
       const wasRows = baselineOverrides[d.id] ?? [];
       const nowRows = overrides[d.id] ?? [];
@@ -459,6 +464,26 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
                       {(overrides[d.id]?.length ?? 0) > 0 && <span className="ml-1.5 text-[9px] font-black text-sky-700 dark:text-sky-300 cursor-help" title="Request-type overrides below replace this row for tickets of those types">{overrides[d.id]?.length} OVERRIDE{(overrides[d.id]?.length ?? 0) > 1 ? "S" : ""}</span>}
                       {(projectOverrides[d.id]?.length ?? 0) > 0 && <span className="ml-1.5 text-[9px] font-black text-violet-700 dark:text-violet-300 cursor-help" title="Project rules below replace this row on those projects">{projectOverrides[d.id]?.length} PROJECT RULE{(projectOverrides[d.id]?.length ?? 0) > 1 ? "S" : ""}</span>}
                       <div className="text-[10px] text-[var(--color-text-faint)]">{d.description}</div>
+                      {/* drafting-flow HAND-2 (DF-P11 fix pass 2): the opener of
+                          a hold may lift their own stop while this is ticked
+                          (HOLD_OPENER_TOKEN — shipped on; untick it for
+                          "only the roles ticked here lift holds"). The
+                          database reads the same token (20261239). */}
+                      {d.id === "holds.release" && (() => {
+                        const on = (policy[d.id] ?? []).includes(HOLD_OPENER_TOKEN);
+                        return (
+                          <label className={`mt-0.5 inline-flex items-center gap-1.5 text-[10px] font-bold ${canEdit ? "cursor-pointer" : "opacity-70 cursor-not-allowed"}`}>
+                            <input
+                              type="checkbox"
+                              checked={on}
+                              disabled={!canEdit}
+                              onChange={() => toggle(d.id, HOLD_OPENER_TOKEN)}
+                              aria-label="The hold's own opener may release or re-date it"
+                            />
+                            The hold&apos;s own opener may release or re-date it
+                          </label>
+                        );
+                      })()}
                       {tokensOutsideGrid(policy[d.id] ?? []).length > 0 && (
                         <div className="text-[10px] font-bold text-amber-700 dark:text-amber-300" title="The evaluator still matches these stored tokens; the grid has no column for them. Unticking every column leaves them in place.">
                           Also stored, no column here: {tokensOutsideGrid(policy[d.id] ?? []).join(", ")} — still live

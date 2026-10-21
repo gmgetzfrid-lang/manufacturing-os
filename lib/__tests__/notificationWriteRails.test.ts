@@ -1318,6 +1318,7 @@ const ACTOR_PASS_THROUGHS = [
   "lib/distributionAcks.ts#renudgeUnacked(input.actorUserId)",
   "lib/distributionAcks.ts#requestAcks(input.actorUserId)",
   "lib/holds.ts#notifyHoldChange(input.actorUserId)",
+  "lib/holds.ts#noticeOpenerOfRelease(input.actorUserId)",       // DF-P11 fix pass 2 (HAND-2 dw2): releaseHold passes releasedBy, the signed-in releaser
   "lib/libraryCollections.ts#createLibrary(input.createdBy)",
   "lib/libraryNotify.ts#notifyLibraryDocsAdded(input.actorUserId)", // N8 (PROD-5)
   "lib/markupRequests.ts#createMarkupRequest(input.actorUserId)",   // N8 (PROD-14)
