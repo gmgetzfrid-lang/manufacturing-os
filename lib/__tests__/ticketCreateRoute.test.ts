@@ -130,6 +130,11 @@ function chain(table: string, client: "admin" | "anon" | "caller") {
     const rows = (s.tables[table] ??= []);
     if (op === "insert") {
       const list: Row[] = (Array.isArray(payload) ? payload : [payload!]).map((r) => ({ id: r.id ?? `${table}-${++s.seq}`, created_at: r.created_at ?? new Date().toISOString(), ...r }));
+      // notifications N18: this world is before 20261258 — the status CHECK
+      // refuses a not_emailed record (23514), exactly as the database does then
+      if (table === "email_notifications" && list.some((r) => r.status === "not_emailed")) {
+        return { data: null, error: { code: "23514", message: 'new row for relation "email_notifications" violates check constraint "email_notifications_status_check"' } };
+      }
       // schema.sql tickets: UNIQUE(org_id, ticket_id)
       if (table === "tickets" && list.some((r) => rows.some((x) => x.org_id === r.org_id && x.ticket_id === r.ticket_id))) {
         return { data: null, error: { code: "23505", message: 'duplicate key value violates unique constraint "tickets_org_id_ticket_id_key"' } };
