@@ -662,7 +662,7 @@ describe("N18 — 'not emailed by their choice' is recorded, never sent", () => 
     await expect(queueEmail(mail({ resourceId: DOC2 }))).resolves.toBe("suppressed");
     expect(world.emails).toHaveLength(0);
     expect(err).not.toHaveBeenCalled();
-    const said = info.mock.calls.filter((c) => /needs migration 20261258/.test(String(c[0])));
+    const said = info.mock.calls.filter((c: unknown[]) => /needs migration 20261258/.test(String(c[0])));
     expect(said.length).toBeLessThanOrEqual(1);
   });
 

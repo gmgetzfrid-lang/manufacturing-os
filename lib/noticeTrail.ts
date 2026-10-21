@@ -192,7 +192,7 @@ export async function noticeTrailFor(client: unknown, input: { orgId: string; us
   } else {
     const filters: Array<[string, unknown]> = [["org_id", orgId], ["to_user_id", userId], ["resource_id", resourceId]];
     let mail = await read("email_notifications", `${EMAIL_BASE}, ${EMAIL_DELIVERY}`, filters);
-    if (mail.error && isMissingSchemaError(mail.error)) {
+    if (mail.error && isMissingSchemaError({ message: mail.error.message ?? "", code: mail.error.code })) {
       notes.push("The provider's delivery outcome is not recorded yet (migration 20261258 is not applied): emails show as queued, sent or failed only.");
       mail = await read("email_notifications", EMAIL_BASE, filters);
     }
@@ -205,7 +205,7 @@ export async function noticeTrailFor(client: unknown, input: { orgId: string; us
     legs.requestRecord = "absent";
   } else {
     const rec = await read("ticket_notice_events", "id, kind, created_at, details", [["org_id", orgId], ["recipient", userId], ["ticket_id", resourceId]]);
-    if (rec.error && isMissingSchemaError(rec.error)) legs.requestRecord = "absent";
+    if (rec.error && isMissingSchemaError({ message: rec.error.message ?? "", code: rec.error.code })) legs.requestRecord = "absent";
     else if (rec.error) { legs.requestRecord = "unavailable"; notes.push(`The request's notice record could not be read: ${rec.error.message ?? "error"}.`); }
     else for (const r of (rec.data as Row[] | null) ?? []) entries.push(requestEntry(r));
   }
