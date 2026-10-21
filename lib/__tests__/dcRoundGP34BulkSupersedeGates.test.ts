@@ -195,8 +195,10 @@ describe("REV-33 (P34) — the bulk editor's Superseded takes supersedeDocument'
     await apply([asRecord(h), asRecord(ok)], "Superseded", { moc: "MOC-2026-0142" });
     expect(host.textContent).toMatch(/Applied to 1 document\./);
     expect(host.querySelector('[data-testid="bulk-refused-rows"]')!.textContent).toContain(
-      "H1 — not superseded, nothing was written for it — This document has an active hold (Safety review). A held document is not superseded — ask Document Control to resolve the hold first.",
+      // P34 review fix 2: Document Control is told the paths that exist, never to ask itself.
+      "H1 — not superseded, nothing was written for it — This document has an active hold (Safety review). A held document is not superseded from a status editor — once the hold is resolved, release it from the document's hold strip and set the status again; or, if the document is being replaced by a split or merge, run that instead (it proceeds over the hold and carries it to the new document).",
     );
+    expect(host.querySelector('[data-testid="bulk-refused-rows"]')!.textContent).not.toContain("ask Document Control");
     expect(docRow("h1").status).toBe("Issued");
     expect(T("document_shares")[0].revoked_at).toBeNull();
     expect(rec("h1")).toBeUndefined();

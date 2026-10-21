@@ -53,7 +53,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
-import { SCOPE_STAMP_ACTIONS, SCOPE_STAMPS_NOT_IN } from "@/lib/timeline";
+import { SCOPE_STAMP_ACTIONS, SCOPE_STAMPS_NOT_IN, alreadyRetiredStatus } from "@/lib/timeline";
 import { foldTicketFeed, auditActorNote } from "@/lib/auditActions";
 
 interface ActivityRow {
@@ -98,6 +98,10 @@ const ACTION_VERBS: Record<string, { verb: string; emoji?: string; icon: React.C
   MARKUP_REQUESTED:    { verb: "requested markups on", icon: FileSignature, tone: "violet" },
   DATA_EXPORT:         { verb: "exported data from", icon: Download, tone: "sky" },
 };
+// REV-34 (d) / DEC-90 (2)(d), document-control P34 review fix: the verb for a
+// SUPERSEDE_DOC / ARCHIVE_DOC / VOID_DOC written with `alreadyRetired: true`
+// (a bulk door re-ran the duties on a row already in that status).
+const ALREADY_RETIRED_VERB = { verb: "re-ran retirement steps on", icon: RefreshCw, tone: "slate" };
 const TONE_BG: Record<string, string> = {
   slate: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]",
   indigo: "bg-indigo-50 text-indigo-700 border-indigo-200",
@@ -237,6 +241,8 @@ export default function ActivityFeedPage() {
       if (SCOPE_STAMP_ACTIONS.has(r.action)) continue; // SEC-21: one milestone delete counts once
       if (new Date(r.timestamp).toDateString() === todayStr) today++;
       if (r.userEmail) actors.add(r.userEmail);
+      // REV-34 (d): a re-run of the duties on an already-retired row is no revision event.
+      if (alreadyRetiredStatus(r.action, r.details)) continue;
       if (["REV_UP", "REV_BACKFILL", "SUPERSEDE_DOC", "VOID_DOC", "DOC_SPLIT", "DOC_MERGED", "DOC_RENUMBERED"].includes(r.action)) cat.revisions++;
       else if (["CHECK_OUT", "CHECK_IN", "ABANDON", "FORCE_RELEASE", "DOCUMENT_CHECKOUT", "DOCUMENT_CHECKIN", "FIELD_VERIFIED", "CHECKOUT_RELEASED"].includes(r.action)) cat.locks++;
       else if (["HOLD_OPENED", "HOLD_RELEASED"].includes(r.action)) cat.holds++;
@@ -307,7 +313,8 @@ export default function ActivityFeedPage() {
                 </div>
                 <div className="space-y-1.5">
                   {group.rows.map((r) => {
-                    const meta = ACTION_VERBS[r.action];
+                    // REV-34 (d) / DEC-90 (2)(d): a row already retired re-ran the duties; it claims no retirement.
+                    const meta = alreadyRetiredStatus(r.action, r.details) ? ALREADY_RETIRED_VERB : ACTION_VERBS[r.action];
                     const Icon = meta?.icon ?? Activity;
                     const tone = TONE_BG[meta?.tone ?? "slate"];
                     const verb = (meta?.verb ?? r.action.toLowerCase().replace(/_/g, " ")) + feed.verbSuffix(r.id);

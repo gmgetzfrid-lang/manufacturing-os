@@ -3741,6 +3741,22 @@ export type StatusEditorRetirementGate = {
  *     refusals — OWN-19's publisher tier, the legal hold).
  *  The lock state is read fresh (never the page's copy); a read that fails
  *  refuses (fail-closed, as authorizePublish's own read does). */
+/** P34 review fix 2: the hold refusal at a status editor, worded by who is
+ *  refused (as heldRetirementDecision words a split / merge). The bulk
+ *  editor is shown only to controllers, so the person refused is usually
+ *  Document Control: they are told the paths that exist (release the hold
+ *  from its hold strip once it is resolved; for a supersession, a split or
+ *  merge, which proceeds over the hold and carries it). Anyone else is told
+ *  to ask Document Control. The controller tier is read from the actor's
+ *  full role collection (resolveActorPrincipal), never the headline role. */
+async function statusEditorHoldSentence(retired: "superseded" | "voided", actor: { uid: string; orgId: string; role?: string | null }): Promise<string> {
+  const principal = await resolveActorPrincipal({ uid: actor.uid, orgId: actor.orgId, headlineRole: actor.role ?? undefined });
+  if (!isControllerPrincipal(principal)) return `A held document is not ${retired} — ask Document Control to resolve the hold first.`;
+  return retired === "superseded"
+    ? "A held document is not superseded from a status editor — once the hold is resolved, release it from the document's hold strip and set the status again; or, if the document is being replaced by a split or merge, run that instead (it proceeds over the hold and carries it to the new document)."
+    : "A held document is not voided — once the hold is resolved, release it from the document's hold strip and set the status again.";
+}
+
 export async function gateStatusEditorRetirement(input: {
   documentId: string; libraryId: string; collectionId?: string | null; orgId: string;
   actorUserId: string; actorRole?: string | null; toStatus: string;
@@ -3770,7 +3786,7 @@ export async function gateStatusEditorRetirement(input: {
       const holdWord = preState.activeHolds.length > 1 ? "holds" : "hold";
       throw new DocumentMutationBlockedError({
         ok: false, code: "on_hold", blockingHolds: preState.activeHolds,
-        message: `This document has an active ${holdWord} (${reasons}). A held document is not superseded — ask Document Control to resolve the hold first.`,
+        message: `This document has an active ${holdWord} (${reasons}). ${await statusEditorHoldSentence("superseded", { uid: input.actorUserId, orgId: input.orgId, role: input.actorRole })}`,
       });
     }
     return { preState, mocReference: moc };
@@ -3796,7 +3812,8 @@ export async function gateStatusEditorRetirement(input: {
         throw new Error("Voiding a document takes publish authority in this library (Doc Control, a granted publisher or the document's owner) — ask an Admin or Doc Control to grant it, or to void it.");
       }
       if (e instanceof DocumentMutationBlockedError && e.code === "on_hold") {
-        throw new Error(msg.replace(/ Release it before publishing a new revision\.$/, " A held document is not voided — ask Document Control to resolve the hold first."));
+        const sentence = await statusEditorHoldSentence("voided", { uid: input.actorUserId, orgId: input.orgId, role: input.actorRole });
+        throw new Error(msg.replace(/ Release it before publishing a new revision\.$/, ` ${sentence}`));
       }
       throw e;
     }

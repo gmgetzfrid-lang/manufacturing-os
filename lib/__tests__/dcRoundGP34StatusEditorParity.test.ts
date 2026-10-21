@@ -126,6 +126,10 @@ beforeEach(() => {
 });
 afterEach(() => { errorSpy.mockRestore(); warnSpy.mockRestore(); infoSpy.mockRestore(); });
 
+// P34 review fix 2: the hold refusal a controller reads at a status editor.
+const CONTROLLER_SUPERSEDE_HOLD = "A held document is not superseded from a status editor — once the hold is resolved, release it from the document's hold strip and set the status again; or, if the document is being replaced by a split or merge, run that instead (it proceeds over the hold and carries it to the new document).";
+const CONTROLLER_VOID_HOLD = "A held document is not voided — once the hold is resolved, release it from the document's hold strip and set the status again.";
+
 const writes = () => state.db.calls.filter((c) => ["update", "insert", "delete", "upsert"].includes(c.method));
 const gate = (id: string, toStatus: string, extra: Partial<Parameters<typeof gateStatusEditorRetirement>[0]> = {}) =>
   gateStatusEditorRetirement({ documentId: id, libraryId: "lib1", orgId: ORG, actorUserId: ME, actorRole: state.role, toStatus, reason: "Obsolete", ...extra });
@@ -173,11 +177,19 @@ describe("REV-33 — gateStatusEditorRetirement: supersedeDocument's pre-write g
 
   it("P34 review fix — Superseded over an active hold is refused for a CONTROLLER (Doc Control, Admin) as for anyone (the Supersede dialog never forces; the database's guard returns for a controller before its hold check), worded for a supersession, nothing written", async () => {
     seedDoc("h1"); seedHold("h1");
-    const held = "This document has an active hold (Safety review). A held document is not superseded — ask Document Control to resolve the hold first.";
+    // P34 review fix 2: worded by who is refused — a controller is told the
+    // paths that exist (release from the hold strip; a split or merge), never
+    // "ask Document Control"; anyone else is told to ask Document Control.
+    const forController = "This document has an active hold (Safety review). " + CONTROLLER_SUPERSEDE_HOLD;
+    const forOthers = "This document has an active hold (Safety review). A held document is not superseded — ask Document Control to resolve the hold first.";
     for (const role of ["DocCtrl", "Admin", "Engineer"]) {
       state.role = role;
-      await expect(gate("h1", "Superseded")).rejects.toThrow(held);
-      await expect(gate("h1", "Superseded", { mocReference: "MOC-2026-0142" })).rejects.toThrow(held);
+      const held = role === "Engineer" ? forOthers : forController;
+      const e1 = await gate("h1", "Superseded").catch((x: unknown) => x);
+      expect((e1 as Error).message).toBe(held);
+      const e2 = await gate("h1", "Superseded", { mocReference: "MOC-2026-0142" }).catch((x: unknown) => x);
+      expect((e2 as Error).message).toBe(held);
+      if (role !== "Engineer") expect((e1 as Error).message).not.toContain("ask Document Control");
     }
     // a released hold no longer refuses
     T("document_holds")[0].released_at = "2026-10-20";
@@ -193,7 +205,8 @@ describe("REV-33 — gateStatusEditorRetirement: supersedeDocument's pre-write g
     await expect(gate("v1", "Void")).rejects.toThrow(/^Voiding a document takes publish authority in this library/);
     state.role = "DocCtrl";
     seedDoc("v2"); seedHold("v2");
-    await expect(gate("v2", "Void")).rejects.toThrow("This document has an active hold (Safety review). A held document is not voided — ask Document Control to resolve the hold first.");
+    const voidHeld = await gate("v2", "Void").catch((x: unknown) => x);
+    expect((voidHeld as Error).message).toBe("This document has an active hold (Safety review). " + CONTROLLER_VOID_HOLD);
     seedDoc("v3", { checked_out_by: OTHER, checked_out_by_name: "Eli" });
     const voidLock = await gate("v3", "Void", { reason: null }).catch((x: unknown) => x);
     expect(voidLock).toBeInstanceOf(RetirementOverrideReasonRequiredError);
@@ -378,7 +391,7 @@ describe("REV-33 / REV-34 (b) / (c) — the library page's metadata save into a 
   it("P34 review fix — Document Control saving Superseded on a held document: refused before the write, nothing saved, no prompt for the MOC, no record", async () => {
     const d = seedDoc("p5"); seedHold("p5"); seedAck("p5", "ak-p5");
     await expect(save(d).fn(core(d, "Superseded"))).rejects.toThrow(
-      "Save refused — nothing was saved: This document has an active hold (Safety review). A held document is not superseded — ask Document Control to resolve the hold first.",
+      "Save refused — nothing was saved: This document has an active hold (Safety review). " + CONTROLLER_SUPERSEDE_HOLD,
     );
     expect(statusWrites()).toEqual([]);
     expect(docRow("p5").status).toBe("Issued");
@@ -404,7 +417,7 @@ describe("REV-33 / REV-34 (b) / (c) — the library page's metadata save into a 
 
   it("Void: a held document is refused before the write, nothing saved; a non-publisher is refused; another person's checkout — the reason overrides and the holder is told \"voided\"", async () => {
     const h = seedDoc("q1"); seedHold("q1");
-    await expect(save(h).fn(core(h, "Void"))).rejects.toThrow("Save refused — nothing was saved: This document has an active hold (Safety review). A held document is not voided — ask Document Control to resolve the hold first.");
+    await expect(save(h).fn(core(h, "Void"))).rejects.toThrow("Save refused — nothing was saved: This document has an active hold (Safety review). " + CONTROLLER_VOID_HOLD);
     expect(docRow("q1").status).toBe("Issued");
     state.role = "Engineer";
     const n = seedDoc("q2");
@@ -427,7 +440,10 @@ describe("REV-33 / REV-34 (b) / (c) — the library page's metadata save into a 
     expect(statusWrites()).toHaveLength(1);
     expect(Object.keys(statusWrites()[0].args[0] as Row).sort()).toEqual([...BARE, "archive_reason", "archived_at", "archived_by"].sort());
     expect(docRow("r1")).toMatchObject({ status: "Archived", archive_reason: "Obsolete unit", archived_by: ME });
-    expect(docRow("r1").archived_at).toBe(docRow("r1").updated_at);
+    // the page stamps archived_at with its save's clock and changeDocumentStatus
+    // stamps updated_at with its own (P34 review fix 2: compared within a
+    // second, never to the millisecond — the two clocks are read apart)
+    expect(Math.abs(Date.parse(String(docRow("r1").archived_at)) - Date.parse(String(docRow("r1").updated_at)))).toBeLessThan(1000);
     const e = seedDoc("r2", { status: "Archived", archived_at: "2025-01-01", archived_by: "old", archive_reason: "first" });
     const { st, fn } = save(e);
     await fn({ metadata: { unit: "VDU" }, core: { title: "typo", documentNumber: "R2", status: "Archived" } });
