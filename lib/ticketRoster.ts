@@ -71,7 +71,10 @@ interface StoredObject {
 }
 
 const TOO_LARGE = "too large to hash in a request";
-const DEADLINE: FileHash = { ok: false, transient: true, reason: "not hashed (deadline)" };
+const BYTE_BUDGET = "not hashed (byte budget)";
+const DEADLINE_REASON = "not hashed (deadline)";
+const READ_DEADLINE = "not hashed (read exceeded the deadline)";
+const DEADLINE: FileHash = { ok: false, transient: true, reason: DEADLINE_REASON };
 
 /**
  * sha256 of one stored object, computed HERE from its bytes (never a store
@@ -150,15 +153,27 @@ export async function hashStoredFilesBounded(
     timer = setTimeout(() => { ac.abort(); resolve("deadline"); }, Math.max(0, limits.deadlineMs));
   });
   let remaining = Math.max(0, limits.byteBudget);
+  // Which keys storage ANSWERED (the GetObject resolved): a deadline that
+  // lands while such a file's bytes are still streaming is a slow, large
+  // read — not a storage that does not answer (DF-P5 fix pass 2).
+  const answered = new Set<string>();
+  const tracked = async (k: string, signal?: AbortSignal) => {
+    const o = await get(k, signal);
+    answered.add(k);
+    return o;
+  };
   try {
     for (const key of keys) {
       if (out.has(key)) continue;
       if (ac.signal.aborted) { out.set(key, DEADLINE); continue; }
-      if (remaining <= 0) { out.set(key, { ok: false, transient: false, reason: "not hashed (byte budget)" }); continue; }
-      const r = await Promise.race([sha256OfStoredObject(key, get, { maxBytes: remaining, signal: ac.signal }), deadline]);
-      if (r === "deadline") { out.set(key, DEADLINE); continue; }
+      if (remaining <= 0) { out.set(key, { ok: false, transient: false, reason: BYTE_BUDGET }); continue; }
+      const r = await Promise.race([sha256OfStoredObject(key, tracked, { maxBytes: remaining, signal: ac.signal }), deadline]);
+      if (r === "deadline") {
+        out.set(key, answered.has(key) ? { ok: false, transient: false, reason: READ_DEADLINE } : DEADLINE);
+        continue;
+      }
       if (!r.ok && r.reason === TOO_LARGE && remaining < HASH_MAX_BYTES) {
-        out.set(key, { ok: false, transient: false, reason: "not hashed (byte budget)" });
+        out.set(key, { ok: false, transient: false, reason: BYTE_BUDGET });
         continue;
       }
       out.set(key, r);
@@ -181,10 +196,56 @@ export function draftsToHashOnApproval(attachments: readonly TicketAttachment[],
 }
 
 /** The roster's content hash: sha256 over each file's own sha256 and name,
- *  in the order the files are listed. A file with no hash makes the whole
- *  binding impossible — the caller never opens a roster without one. */
-export function rosterContentHash(files: ReadonlyArray<{ sha256: string | null; name: string | null }>): string {
-  return createHash("sha256").update(files.map((f) => `${f.sha256 ?? ""}  ${f.name ?? ""}`).join("\n")).digest("hex");
+ *  in the order the files are listed. A file the request could not hash for
+ *  its size or the time it takes to read (rosterBinding) is bound by its
+ *  identity instead — its storage key and recorded size — and the roster
+ *  says so on every sign-off. */
+export function rosterContentHash(files: ReadonlyArray<{ sha256: string | null; name: string | null; url?: string | null; size?: number | null }>): string {
+  return createHash("sha256").update(files.map((f) => `${f.sha256 ?? `unhashed ${f.url ?? ""} ${f.size ?? ""}`}  ${f.name ?? ""}`).join("\n")).digest("hex");
+}
+
+/** Reasons a file is too big or too slow to hash inside one request — not
+ *  a fault in the file or in storage (DF-P5 fix pass 2). */
+const SIZE_OR_TIME_REASONS = new Set([TOO_LARGE, BYTE_BUDGET, READ_DEADLINE]);
+
+export type RosterBinding =
+  | { ok: true; files: TicketReviewRoster["files"] }
+  | { ok: false; transient: boolean; file: string; reason: string };
+
+/**
+ * How a roster binds the files under review (EVID-12; DF-P5 fix pass 2):
+ *   * a file hashed here — by its sha256;
+ *   * a file too large, over the request's byte budget, or still streaming
+ *     at the deadline — by its identity (storage key + recorded size),
+ *     marked `unhashed` with the reason; the sign-off statement names it.
+ *     So is a file never reached because the clock ran out, PROVIDED storage
+ *     answered for some file in this request (storage is up, the request is
+ *     simply too slow for the package);
+ *   * storage that answered for NO file before the deadline, or failed to
+ *     read — transient: refused, "try again" (fail closed: a roster never
+ *     opens on a storage outage);
+ *   * a file that is not in storage or is not a storage key — refused, with
+ *     that reason (it has to be replaced; it cannot be reviewed as it is).
+ * Pure.
+ */
+export function rosterBinding(
+  files: readonly TicketAttachment[],
+  hashes: ReadonlyMap<string, FileHash>,
+): RosterBinding {
+  const results = files.map((f) => ({ f, h: (f.url ? hashes.get(f.url) : undefined) ?? ({ ok: false, transient: false, reason: "not a storage key" } as FileHash) }));
+  const storageAnswered = results.some(({ h }) => h.ok || SIZE_OR_TIME_REASONS.has(h.reason));
+  const out: TicketReviewRoster["files"] = [];
+  for (const { f, h } of results) {
+    const name = f.name ?? "a file";
+    if (h.ok) { out.push({ id: f.id ?? null, name: f.name ?? null, url: f.url ?? null, sha256: h.sha256 }); continue; }
+    const sizeOrTime = SIZE_OR_TIME_REASONS.has(h.reason) || (h.reason === DEADLINE_REASON && storageAnswered);
+    if (sizeOrTime) {
+      out.push({ id: f.id ?? null, name: f.name ?? null, url: f.url ?? null, sha256: null, size: typeof f.size === "number" ? f.size : null, unhashed: h.reason });
+      continue;
+    }
+    return { ok: false, transient: h.transient, file: name, reason: h.reason };
+  }
+  return { ok: true, files: out };
 }
 
 /** The files a roster reviews: the Drafts carrying the revision under
@@ -234,6 +295,47 @@ export type OpenRosterResult =
   | { ok: true; roster: TicketReviewRoster }
   | { ok: false; code: "routing_unfillable"; error: string };
 
+/** The kind the org-wide engineering gate's slot is rostered under when a
+ *  routing table does not carry one (never a kind the table already uses). */
+export const ENGINEERING_GATE_KIND = "engineering";
+
+/** True when the table already carries the ticket's engineering approval:
+ *  a BLOCKING slot filled by an engineering capability (a role-named slot is
+ *  the facility's own word and is never guessed to be engineering — DEC-35). */
+export function tableCarriesEngineeringGate(control: RoutingControl): boolean {
+  return control.slots.some((s) => slotBlocks(s) && !!s.fill.capability && ENGINEERING_CAPABILITIES.includes(s.fill.capability));
+}
+
+/**
+ * DEC-13 stage 3 / DEC-16 / DEC-36 (DF-P5 fix pass 2): a routing table may
+ * ADD reviewers, never drop the org-wide engineering gate. When the gate
+ * applies to this ticket (lib/workflow.ts engineerApprovalRequired, or an
+ * engineering-first type) and the table has no blocking engineering slot,
+ * the seed's engineering slot is appended — filled by `ticket.final_approve`
+ * with the assigned engineer (when one is on the ticket) named as a primary,
+ * the management tier standing in as an override as on the serial path —
+ * independent of the drafter. Pure. `added` says whether the slot was appended (the roster and
+ * the audit row record it).
+ */
+export function withEngineeringGate(
+  control: RoutingControl,
+  gate: { required: boolean; assignedEngineerId?: string | null } | null | undefined,
+): { control: RoutingControl; added: boolean } {
+  if (!gate?.required || tableCarriesEngineeringGate(control)) return { control, added: false };
+  const kinds = new Set(control.slots.map((s) => s.kind));
+  let kind = ENGINEERING_GATE_KIND;
+  for (let i = 2; kinds.has(kind); i++) kind = `${ENGINEERING_GATE_KIND}-${i}`;
+  const slot: RoutingSlot = {
+    kind,
+    label: "Engineering sign-off",
+    mode: "blocking",
+    fill: { ...(gate.assignedEngineerId ? { users: [gate.assignedEngineerId] } : {}), capability: "ticket.final_approve" },
+    independent_of: ["drafter"],
+    waivable_by: { capability: "ticket.manage" },
+  };
+  return { control: { slots: [...control.slots, slot] }, added: true };
+}
+
 /**
  * Turn the effective routing table into the roster a submission opens.
  * Pure (the route hashes the files and reads the members first).
@@ -247,8 +349,11 @@ export function openRoster(input: {
   ctx: OccupantContext;
   openedBy: string | null;
   now: string;
+  /** The org-wide engineering gate for THIS ticket (withEngineeringGate). */
+  engineeringGate?: { required: boolean; assignedEngineerId?: string | null } | null;
 }): OpenRosterResult {
-  const { control, ctx } = input;
+  const { ctx } = input;
+  const { control, added: gateAdded } = withEngineeringGate(input.control, input.engineeringGate);
   const management = resolveFill({ capability: "ticket.manage" }, ctx);
   const slots: TicketReviewSlot[] = [];
   for (const s of control.slots) {
@@ -288,6 +393,7 @@ export function openRoster(input: {
       contentHash: rosterContentHash(input.files),
       files: input.files,
       slots,
+      ...(gateAdded ? { engineeringGateAdded: true } : {}),
     },
   };
 }

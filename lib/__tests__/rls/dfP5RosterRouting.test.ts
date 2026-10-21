@@ -4,10 +4,11 @@
 // none, which is how the workflow route writes).
 //
 //   20261241  routing_control on libraries / collections / documents: a plain
-//             member cannot declare routing on a library or a document; a
-//             controller and the library owner can (library); a folder or a
-//             document is controller-ONLY — a document's effective owner is
-//             refused (DF-P5 fix pass); a row INSERTED with a routing table
+//             member cannot declare routing on a library or a document; every
+//             level is controller-ONLY — a document's effective owner is
+//             refused (DF-P5 fix pass), and so is the library's owner (DF-P5
+//             fix pass 2: the owner limb let the drafting lead who owns a
+//             library drop the engineering gate); a row INSERTED with a routing table
 //             needs a controller and is audited; every change writes a
 //             ROUTING_CONTROL_CHANGED audit row; only an object (or NULL) is
 //             stored; an unrelated write by a member still lands (REGRESSION).
@@ -116,8 +117,16 @@ describe.skipIf(skip !== null)("DF-P5 — routing_control guard and audit, the r
     expect(admin(db, `SELECT COUNT(*) FROM audit_logs WHERE action = 'ROUTING_CONTROL_CHANGED' AND resource_id = '${d3}'`)).toBe("0");
   });
 
-  it("the library owner and a controller can; a controller can set a folder; each change writes ROUTING_CONTROL_CHANGED with before / after", () => {
-    expect(asCaller(db, m.owner.caller, `UPDATE libraries SET routing_control = ${ROUTING} WHERE id = '${lib}'`)).toEqual({ ok: true, rows: 1 });
+  it("DF-P5 fix pass 2: the library's OWNER cannot set or clear the library's routing — a controller only; nothing is stored", () => {
+    expect(admin(db, `SELECT owner_user_id::text FROM libraries WHERE id = '${lib}'`)).toBe(m.owner.uid);
+    const r = asCaller(db, m.owner.caller, `UPDATE libraries SET routing_control = ${ROUTING} WHERE id = '${lib}'`);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toMatch(/Not permitted to change this library's review routing — only a document controller can/);
+    expect(admin(db, `SELECT routing_control IS NULL FROM libraries WHERE id = '${lib}'`)).toBe("t");
+  });
+
+  it("a controller can set a library, a folder and a document; each change writes ROUTING_CONTROL_CHANGED with before / after", () => {
+    expect(asCaller(db, m.admin.caller, `UPDATE libraries SET routing_control = ${ROUTING} WHERE id = '${lib}'`)).toEqual({ ok: true, rows: 1 });
     expect(asCaller(db, m.admin.caller, `UPDATE documents SET routing_control = ${ROUTING} WHERE id = '${doc}'`)).toEqual({ ok: true, rows: 1 });
     expect(asCaller(db, m.admin.caller, `UPDATE collections SET routing_control = ${ROUTING} WHERE id = '${folder}'`)).toEqual({ ok: true, rows: 1 });
     // a member's folder write is filtered by the controllers-only policy (no row)

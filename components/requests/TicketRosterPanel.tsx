@@ -32,7 +32,7 @@ import { Users, CheckCircle2, Clock, Bell, ShieldAlert, Loader2, Library } from 
 import { supabase } from "@/lib/supabase";
 import { recordSignature, type SigningCredential, type SignatureIntent } from "@/lib/eSignatures";
 import SignatureCeremony from "@/components/signatures/SignatureCeremony";
-import { currentRoster, slotSignPlan, separationOfDutiesActive, engineerApprovalRequired, ticketResource, slotBlocks } from "@/lib/workflow";
+import { currentRoster, slotSignPlan, separationOfDutiesActive, engineerApprovalRequired, ticketResource, slotBlocks, issueReadyFor, ISSUE_AS_IS_NOTE, unhashedFilesNote } from "@/lib/workflow";
 import { seededSlotsFor, MODE_LABEL } from "@/lib/routingControl";
 import { effectiveReviewControlForDocument, expandReviewers } from "@/lib/reviewControl";
 import type { CapabilityPolicy } from "@/lib/capabilityPolicy";
@@ -55,6 +55,26 @@ export interface TicketRosterPanelProps {
 /** TIER-8: the one sentence that keeps the two reviews apart. */
 export const TWO_REVIEWS_NOTE =
   "Signing here approves the drafting deliverable — the exact files listed, bound by their content hash. Publishing it as a revision of a controlled document is that library's own review: a different question (is this revision ready to be the current one?), asked once, at publish.";
+
+/** DEC-13 / DEC-16 / DEC-36 (fix pass 2): why a slot the routing table did
+ *  not declare is on the roster. */
+export const ENGINEERING_GATE_NOTE =
+  "Engineering sign-off was added to this review: this workspace requires an engineer to approve this request, and the routing table names none. A routing table adds reviewers; it never removes the engineering gate.";
+
+/** The statement a sign-off's e-signature carries: what was reviewed, as
+ *  which slots — and, when they apply, the issue-as-is mark (FRIC-5) and the
+ *  files bound by identity rather than content (EVID-12). */
+export function rosterSignStatement(input: {
+  userName?: string | null;
+  ticketLabel: string;
+  roster: Pick<TicketReviewRoster, "cycle" | "files">;
+  labels: string[];
+  issueReady: boolean;
+}): string {
+  const { roster } = input;
+  const unhashed = unhashedFilesNote(roster);
+  return `I, ${input.userName ?? ""}, have reviewed ${input.ticketLabel}${roster.cycle ? ` Rev ${roster.cycle}` : ""} (${roster.files.map((f) => f.name).filter(Boolean).join(", ")}) and sign off as ${input.labels.join(", ")}, and affirm this as my electronic signature.${input.issueReady ? ` ${ISSUE_AS_IS_NOTE}` : ""}${unhashed ? ` ${unhashed}` : ""}`;
+}
 
 /** FRIC-2: what a slot asks, as a person reads it. */
 export function slotQuestion(slot: Pick<TicketReviewSlot, "kind" | "primaries">, ticket: Pick<Ticket, "requesterId">): string {
@@ -125,6 +145,11 @@ export default function TicketRosterPanel({
 
   const sod = separationOfDutiesActive(activeMemberCount);
   const plan = roster ? slotSignPlan(roster, ticket, uid, sod) : null;
+  // FRIC-5 (fix pass 2): the drafter's issue-as-is mark is in front of every
+  // signer — on the panel and in the statement they sign.
+  const issueReady = issueReadyFor(ticket);
+  // EVID-12 (fix pass 2): files bound by identity, not content, are named.
+  const unhashed = roster ? unhashedFilesNote(roster) : null;
 
   const sign = useCallback(async (intent: SignatureIntent, statement: string, signatureImage?: string | null, reauth?: SigningCredential) => {
     if (!roster || !orgId || !uid || !ticket.id) return;
@@ -195,6 +220,18 @@ export default function TicketRosterPanel({
         </ul>
       )}
 
+      {roster?.engineeringGateAdded && (
+        <p className="text-xs text-[var(--color-text-muted)]" data-testid="engineering-gate-added">{ENGINEERING_GATE_NOTE}</p>
+      )}
+
+      {roster && issueReady && (
+        <p role="note" className="text-xs font-bold text-amber-800" data-testid="roster-issue-as-is">{ISSUE_AS_IS_NOTE}</p>
+      )}
+
+      {roster && unhashed && (
+        <p className="text-xs text-[var(--color-text-muted)]" data-testid="roster-unhashed-files">{unhashed}</p>
+      )}
+
       {roster && plan && plan.fillable.length > 0 && (
         <button
           type="button"
@@ -238,7 +275,7 @@ export default function TicketRosterPanel({
           signerName={userName ?? ""}
           resourceLabel={`${ticket.ticketId}${roster.cycle ? ` Rev ${roster.cycle}` : ""}`}
           defaultIntent="Reviewed"
-          defaultStatement={`I, ${userName ?? ""}, have reviewed ${ticket.ticketId}${roster.cycle ? ` Rev ${roster.cycle}` : ""} (${roster.files.map((f) => f.name).filter(Boolean).join(", ")}) and sign off as ${(plan?.fillable ?? []).map((f) => f.slot.label).join(", ")}, and affirm this as my electronic signature.`}
+          defaultStatement={rosterSignStatement({ userName, ticketLabel: ticket.ticketId, roster, labels: (plan?.fillable ?? []).map((f) => f.slot.label), issueReady })}
           lockIntent
           busy={busy}
           onCancel={() => !busy && setSigning(false)}

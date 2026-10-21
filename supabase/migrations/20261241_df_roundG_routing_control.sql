@@ -21,16 +21,16 @@
 --       security. Who may WRITE it is decided by a guard, because a routing
 --       table with a weaker guard than the roles it routes is worse than no
 --       router (DEC-36, GAP-112 "a defect to fix before storing anything"):
---         * libraries — UPDATE: the same parties the library sensitive-column
---           guard admits for review_control (a document controller, the
---           library owner, or a manager of the node: 20261077's predicate,
---           spelled here, not re-created);
---         * collections (folders) and documents — a document controller ONLY
---           (is_org_controller). The nearer level wins the resolve, so a
---           folder or document table REPLACES the library's gate for every
---           ticket that cites it; the uploader / drafter who is a document's
---           effective owner must never be able to swap the engineering gate
---           on their own deliverable (DF-P5 fix pass);
+--         * libraries, collections (folders) and documents — a document
+--           controller ONLY (is_org_controller), on every level. A routing
+--           table decides who reviews every ticket that cites the container,
+--           so the drafter who is a document's effective owner, or the
+--           drafting lead who owns or manages a library, must never be able
+--           to swap the reviewers of their own deliverables (DF-P5 fix
+--           passes 1 and 2: the library owner / node manager limb is gone —
+--           the same swap stayed open one level up). The workflow route also
+--           keeps the org-wide engineering gate on every routed roster
+--           (lib/ticketRoster.ts withEngineeringGate), whoever wrote the table;
 --         * INSERT on all three — a row born with a routing table needs a
 --           document controller (a NULL column is not checked): the same
 --           authority as a change, so a table can never be planted at
@@ -118,10 +118,8 @@ BEGIN
   END IF;
   IF NEW.routing_control IS DISTINCT FROM OLD.routing_control THEN
     IF TG_TABLE_NAME = 'libraries' THEN
-      IF NOT is_org_controller(OLD.org_id)
-         AND OLD.owner_user_id::text IS DISTINCT FROM auth.uid()::text
-         AND NOT can_manage_node(OLD.acl_index, OLD.org_id) THEN
-        RAISE EXCEPTION 'Not permitted to change this library''s review routing — only a document controller, the library owner or a manager of the library can.'
+      IF NOT is_org_controller(OLD.org_id) THEN
+        RAISE EXCEPTION 'Not permitted to change this library''s review routing — only a document controller can.'
           USING ERRCODE = 'check_violation';
       END IF;
     ELSIF TG_TABLE_NAME = 'collections' THEN
@@ -219,9 +217,10 @@ SELECT 'DEC-36: no new policy on libraries, collections or documents (the column
                      AND (qual LIKE '%routing_control%' OR with_check LIKE '%routing_control%')),
        NULL
 UNION ALL
-SELECT 'the routing guard admits a controller, the library owner or a node manager (library change) / a controller only (folder and document change, any insert carrying a table)',
+SELECT 'the routing guard admits a document controller only — library, folder and document change, and any insert carrying a table (no owner / node-manager limb)',
        (SELECT prosrc LIKE '%is_org_controller(OLD.org_id)%'
-           AND prosrc LIKE '%can_manage_node(OLD.acl_index, OLD.org_id)%'
+           AND prosrc NOT LIKE '%can_manage_node%'
+           AND prosrc NOT LIKE '%owner_user_id%'
            AND prosrc LIKE '%NEW.routing_control IS NOT NULL AND NOT is_org_controller(NEW.org_id)%'
            AND prosrc LIKE '%TG_TABLE_NAME = ''collections''%'
            AND prosrc NOT LIKE '%user_is_effective_owner%'

@@ -9,7 +9,7 @@
 // lib/__tests__/ticketTransitions.test.ts freezes it.
 
 import type { Ticket, TicketAttachment, TicketComment, TicketHistoryEntry, TicketOutcome, TicketReviewRoster, TicketStatus } from "@/types/schema";
-import { currentRoster, issueReadyFor, rosterEngineerApprovedAt } from "@/lib/workflow";
+import { currentRoster, issueReadyFor, rosterEngineerApprovedAt, ISSUE_MARK_ACTIONS, slotBlocks } from "@/lib/workflow";
 import { lastIssuedFromHistory } from "@/lib/verifyTicketVerdict";
 import { defaultOutcome } from "@/lib/ticketOutcome";
 
@@ -511,12 +511,19 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       // FRIC-5 (DF-P5): the drafter's opt-in on the draft under review.
       updates.metadata = { ...((ticket.metadata ?? {}) as Record<string, unknown>), issue_ready: { rev: ticket.deliverableRev ?? null, by: actorUid ?? null, at: now } };
       historyEntry.action = `Marked issue-ready — Rev ${ticket.deliverableRev ?? "—"} is issued as the final package when approved`;
+      // UI-4 / DF-P5 fix pass 2: not a status change — only the reviewers
+      // whose approval the mark changes are told (issueMarkAudience); every
+      // existing unread marker is kept, nobody else is added.
+      activityRecipients = issueMarkAudience(ticket).filter((u) => u !== actorUid);
+      updates.unread_by = Array.from(new Set([...(ticket.unreadBy ?? []), ...activityRecipients])).filter((u) => u !== actorUid);
       break;
     case "clear_issue_ready": {
       const rest = { ...((ticket.metadata ?? {}) as Record<string, unknown>) };
       delete rest.issue_ready;
       updates.metadata = rest;
       historyEntry.action = "Issue-as-is withdrawn — the approval returns the request to the drafter";
+      activityRecipients = issueMarkAudience(ticket).filter((u) => u !== actorUid);
+      updates.unread_by = Array.from(new Set([...(ticket.unreadBy ?? []), ...activityRecipients])).filter((u) => u !== actorUid);
       break;
     }
     case "sign_slot":
@@ -657,7 +664,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       user: input.actor.email || "Unknown",
       role: input.actor.role,
       date: now,
-      details: `Sign-offs needed (any order): ${blocking.join(", ")}${told.length ? ` · Told: ${told.join(", ")}` : ""}`,
+      details: `Sign-offs needed (any order): ${blocking.join(", ")}${told.length ? ` · Told: ${told.join(", ")}` : ""}${r.engineeringGateAdded ? " · Engineering sign-off added: this workspace requires an engineer for this request, and the routing table names none" : ""}`,
     } as TicketHistoryEntry);
     const named = r.slots.flatMap((x) => x.primaries);
     updates.unread_by = Array.from(new Set([...((updates.unread_by as string[] | undefined) ?? []), ...named])).filter((u) => u && u !== actorUid);
@@ -723,7 +730,9 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
   // the transition already told someone, so a transition whose only personal
   // stakeholder was the actor (a Drafter picking up their own request) told
   // its followers nothing.
-  if (Array.isArray(updates.unread_by) && (ticket.watchers ?? []).length > 0) {
+  // (The issue-as-is mark / withdrawal is not a transition: its readers are
+  // the current reviewers only — issueMarkAudience.)
+  if (Array.isArray(updates.unread_by) && (ticket.watchers ?? []).length > 0 && !ISSUE_MARK_ACTIONS.has(input.actionType)) {
     updates.unread_by = Array.from(
       new Set([...(updates.unread_by as string[]), ...(ticket.watchers ?? [])]),
     ).filter((u) => u !== actorUid);
@@ -745,6 +754,26 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
   return { updates, historyEntry, newStatus, recipients, newComment };
 }
 
+/**
+ * UI-4 / FRIC-5 (DF-P5 fix pass 2): who hears that the drafter marked (or
+ * withdrew) issue-as-is — the people whose approval it changes, and nobody
+ * else: on a routed review, the occupants of every still-open blocking slot;
+ * on the serial path, the requester in PENDING_REVIEW and the assigned
+ * engineer in PENDING_FINAL_APPROVAL. Never the watchers, never an email
+ * (the route sends a bell row only). Pure.
+ */
+export function issueMarkAudience(ticket: Pick<Ticket, "status" | "metadata" | "requesterId" | "assignedEngineerId">): string[] {
+  const roster = currentRoster(ticket);
+  const ids = roster
+    ? roster.slots.filter((s) => slotBlocks(s) && s.status === "open").flatMap((s) => s.primaries)
+    : ticket.status === "PENDING_REVIEW"
+      ? [ticket.requesterId]
+      : ticket.status === "PENDING_FINAL_APPROVAL"
+        ? [ticket.assignedEngineerId]
+        : [];
+  return Array.from(new Set(ids.filter((u): u is string => typeof u === "string" && u.length > 0)));
+}
+
 // ─── Notification classification for a transition ───────────────────────────
 // Mirrors the page's event/kind/subject mapping so server fan-out is identical.
 
@@ -759,8 +788,12 @@ export function classifyTransitionNotification(params: {
   actionType: string;
   actionLabel: string;
   ticketLabel: string;
+  /** DF-P5 fix pass 2: the sign-off that COMPLETED a review roster (the
+   *  ticket issued) — an approval, notified as one. */
+  rosterCompleted?: boolean;
 }): TransitionNotification {
   const { actionType, actionLabel, ticketLabel } = params;
+  const rosterApproval = actionType === "sign_slot" && params.rosterCompleted === true;
   const isEngineerAction =
     actionType === "request_final_engineer_approval" ||
     actionType === "request_eng_review" ||
@@ -770,7 +803,8 @@ export function classifyTransitionNotification(params: {
   const isApproved =
     actionType === "approve_draft_ifc" ||
     actionType === "engineer_approve_final" ||
-    actionType === "approve_minor_correction";
+    actionType === "approve_minor_correction" ||
+    rosterApproval;
   const isRevision =
     actionType === "request_revision" ||
     actionType === "engineer_request_revision" ||
@@ -789,14 +823,17 @@ export function classifyTransitionNotification(params: {
             ? "ticket_revision_requested"
             : "ticket_status_changed";
 
+  // A completing sign-off is named for what it did — every sign-off is in
+  // and the request is approved — not for the last signer's slot.
+  const label = rosterApproval ? "Review complete — approved" : actionLabel;
   const emailSubject = isEngineerAction
     ? `Engineer review requested: ${ticketLabel}`
     : isAssignment
       ? `You were assigned to ${ticketLabel}`
-      : `${actionLabel} — ${ticketLabel}`;
+      : `${label} — ${ticketLabel}`;
 
   const inAppKind = isAssignment ? ("ticket_assigned" as const) : ("ticket_status" as const);
-  const inAppTitle = isAssignment ? `You were assigned · ${ticketLabel}` : `${actionLabel} · ${ticketLabel}`;
+  const inAppTitle = isAssignment ? `You were assigned · ${ticketLabel}` : `${label} · ${ticketLabel}`;
 
   return { eventType, emailSubject, inAppKind, inAppTitle };
 }

@@ -317,7 +317,45 @@ export function issueReadyFor(ticket: Pick<Ticket, "metadata" | "deliverableRev"
   return !!ticket.deliverableRev && typeof mark?.rev === "string" && mark.rev === ticket.deliverableRev;
 }
 
+/** EVID-12 (DF-P5 fix pass 2): the files a roster binds by identity only
+ *  (not by content — lib/ticketRoster.ts rosterBinding), as a person reads
+ *  them; named on the roster panel and in every sign-off statement. Here,
+ *  not in lib/ticketRoster.ts, because the panel is a client component and
+ *  that module hashes with node:crypto. */
+export function unhashedFilesNote(roster: Pick<TicketReviewRoster, "files">): string | null {
+  const un = (roster.files ?? []).filter((f) => !f.sha256);
+  if (un.length === 0) return null;
+  return `Bound by name, storage location and size only — too large or too slow to fingerprint when the review opened: ${un.map((f) => `${f.name ?? "a file"} (${f.unhashed ?? "not hashed"})`).join(", ")}.`;
+}
+
 export const ISSUE_AS_IS_NOTE = "The drafter marked this draft issue-ready: approving it issues the approved draft as the final package — no second upload.";
+
+/** FRIC-5 (DF-P5 fix pass 2): the approvals that issue a marked draft
+ *  as-is (lib/ticketTransitions.ts asIsIssue) — a minor correction still
+ *  returns the request to the drafter. */
+export const ISSUE_AS_IS_APPROVALS: ReadonlySet<string> = new Set(['approve_draft_ifc', 'engineer_approve_final']);
+
+/** FRIC-5: the question an approver answers before an approval that issues
+ *  the draft as-is — null for every other action, and whenever the drafter
+ *  has not marked the draft under review. The request page asks it in a
+ *  confirm dialog; the roster panel puts the note in the signed statement. */
+export function issueAsIsConfirmation(action: Pick<WorkflowAction, 'action'>, ticket: Pick<Ticket, 'metadata' | 'deliverableRev'>): string | null {
+  if (!ISSUE_AS_IS_APPROVALS.has(action.action) || !issueReadyFor(ticket)) return null;
+  return `${ISSUE_AS_IS_NOTE} The request goes straight to the issued package (Rev ${ticket.deliverableRev} as the Final) — there is no separate step where the drafter uploads the stamped file. Approve and issue as-is?`;
+}
+
+/** FRIC-5: the banner the request page shows while a marked draft waits on
+ *  a SERIAL approval (a routed review shows the note on its roster panel). */
+export function issueAsIsBanner(ticket: Pick<Ticket, 'metadata' | 'deliverableRev' | 'status'>): string | null {
+  if (ticket.status !== 'PENDING_REVIEW' && ticket.status !== 'PENDING_FINAL_APPROVAL') return null;
+  if (!issueReadyFor(ticket) || currentRoster(ticket)) return null;
+  return ISSUE_AS_IS_NOTE;
+}
+
+/** UI-4 (DF-P5 fix pass 2): the drafter's optional issue-as-is mark /
+ *  withdrawal — offered beside the "who this waits on" note, never in place
+ *  of it (an optional mark is not something the request waits for). */
+export const ISSUE_MARK_ACTIONS: ReadonlySet<string> = new Set(['mark_issue_ready', 'clear_issue_ready']);
 
 export const WorkflowEngine = {
   // Every new request lands in the assignment queue — routed to the

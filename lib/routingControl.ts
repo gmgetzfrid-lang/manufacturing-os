@@ -202,13 +202,18 @@ export function resolveEffectiveRoutingControl(
 }
 
 /** True when the error means the 20261241 routing_control columns are not
- *  applied (today's routing then holds). */
+ *  applied (today's routing then holds). The error must NAME routing_control
+ *  (DF-P5 fix pass 2): a 42703 / PGRST204 for any other column — a partial
+ *  restore missing collections.path_ids, schema drift — is a read failure
+ *  and fails closed (DEC-36 property 2: "we couldn't read" never reads as
+ *  "none declared"). */
 export function isMissingRoutingSchema(err: unknown): boolean {
-  const e = err as { code?: string; message?: string } | null;
+  const e = err as { code?: string; message?: string; details?: string; hint?: string } | null;
   if (!e) return false;
+  const msg = `${e.message ?? ""} ${e.details ?? ""} ${e.hint ?? ""}`.toLowerCase();
+  if (!msg.includes("routing_control")) return false;
   if (e.code === "42703" || e.code === "PGRST204") return true;
-  const msg = (e.message ?? "").toLowerCase();
-  return msg.includes("routing_control") && (msg.includes("does not exist") || msg.includes("schema cache") || msg.includes("could not find"));
+  return msg.includes("does not exist") || msg.includes("schema cache") || msg.includes("could not find");
 }
 
 /**
@@ -322,9 +327,9 @@ export function validateRoutingDraft(control: RoutingControl | null): string | n
 /**
  * Write a routing table at one level (NULL clears the level back to
  * inherit). The database decides who may (20261241's guard: a document
- * controller, the library owner or a node manager for a library; a document
- * controller only for a folder or a document — the nearer level replaces the
- * library's gate, so its owner may not swap it) and writes the
+ * controller only, on every level — a routing table decides who reviews the
+ * deliverables that cite the container, so neither a document's owner nor a
+ * library's owner / manager may swap it) and writes the
  * ROUTING_CONTROL_CHANGED audit row. A checked
  * write: every refusal is thrown with a plain message, never a silent save.
  */
@@ -340,9 +345,7 @@ export async function setRoutingControl(input: {
   if (res.ok) return;
   if (res.pgCode === "42703" || res.pgCode === "PGRST204") throw new Error("Review routing needs database update 20261241 — ask an Admin to apply it, then try again.");
   if (res.code === "refused") {
-    throw new Error(input.level === "library"
-      ? "The routing table was not saved — you may not edit this library's routing (only a document controller, the library owner or a manager of the library can)."
-      : "The routing table was not saved — only a document controller can set the routing of a folder or a document.");
+    throw new Error(`The routing table was not saved — only a document controller can set the routing of a ${input.level === "library" ? "library" : input.level === "collection" ? "folder" : "document"}.`);
   }
   throw new Error(res.error);
 }

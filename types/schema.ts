@@ -1185,8 +1185,16 @@ export interface TicketReviewRoster {
   /** sha256 over the files under review (lib/ticketRoster.ts rosterContentHash):
    *  every sign-off's e-signature is bound to it. */
   contentHash: string;
-  files: Array<{ id: string | null; name: string | null; url: string | null; sha256: string | null }>;
+  /** `sha256` is the server's fingerprint of the bytes. A file too large or
+   *  too slow to fingerprint in the request is bound by identity instead:
+   *  `sha256` null, `unhashed` the reason, `size` the recorded size (DF-P5
+   *  fix pass 2) — named on every sign-off. */
+  files: Array<{ id: string | null; name: string | null; url: string | null; sha256: string | null; size?: number | null; unhashed?: string }>;
   slots: TicketReviewSlot[];
+  /** DF-P5 fix pass 2 (DEC-13 / DEC-16 / DEC-36): true when the routing
+   *  table carried no blocking engineering slot and the org-wide engineering
+   *  gate applied, so the seed's engineering slot was appended. */
+  engineeringGateAdded?: boolean;
   closedAt?: string | null;
   closedReason?: string | null;
 }

@@ -13,7 +13,8 @@ import type { Ticket, TicketReviewRoster } from "@/types/schema";
 
 vi.mock("@/lib/supabase", () => ({ supabase: { from: () => ({}) , auth: { getSession: async () => ({ data: { session: null } }) } } }));
 vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({ uid: "u-1", activeRole: "Admin", roles: ["Admin"] }) }));
-import TicketRosterPanel, { TWO_REVIEWS_NOTE, slotQuestion, slotStateText } from "@/components/requests/TicketRosterPanel";
+import TicketRosterPanel, { TWO_REVIEWS_NOTE, ENGINEERING_GATE_NOTE, slotQuestion, slotStateText, rosterSignStatement } from "@/components/requests/TicketRosterPanel";
+import { ISSUE_AS_IS_NOTE } from "@/lib/workflow";
 import { draftToControl, controlToDraft, keptNote } from "@/components/documents/RoutingControlSection";
 import { parseRoutingControl } from "@/lib/routingControl";
 
@@ -112,5 +113,39 @@ describe("the request page — one mount; the signature-carrying action is the p
     expect(page.match(/<TicketRosterPanel /g)).toHaveLength(1);
     expect(page).toContain("a.action !== 'reassign_drafter' && !a.requiresSignature);");
     expect(page).toContain("resource={ticketResource(ticket)}");
+  });
+});
+
+describe("DF-P5 fix pass 2 — FRIC-5 in front of every approver; the engineering gate and the unfingerprinted files named", () => {
+  const page = readFileSync(join(process.cwd(), "app", "(protected)", "requests", "[id]", "page.tsx"), "utf8");
+  it("the roster panel shows the issue-as-is note above the sign-off while the draft is marked, and not otherwise", () => {
+    const marked = render(ticket({ metadata: { review_roster: roster, issue_ready: { rev: "1A" } } }));
+    expect(marked).toContain('data-testid="roster-issue-as-is"');
+    expect(marked).toContain(ISSUE_AS_IS_NOTE);
+    expect(marked.indexOf('data-testid="roster-issue-as-is"')).toBeLessThan(marked.indexOf("Sign off"));
+    expect(render(ticket({ metadata: { review_roster: roster } }))).not.toContain('data-testid="roster-issue-as-is"');
+  });
+  it("the signed statement carries the issue-as-is note and names every file bound by identity, not content", () => {
+    const base = { userName: "Rita", ticketLabel: "REQ-1", labels: ["Requester acceptance"] };
+    expect(rosterSignStatement({ ...base, roster, issueReady: false })).not.toContain(ISSUE_AS_IS_NOTE);
+    expect(rosterSignStatement({ ...base, roster, issueReady: true })).toContain(` ${ISSUE_AS_IS_NOTE}`);
+    const un = { ...roster, files: [...roster.files, { id: "b", name: "big.pdf", url: "k", sha256: null, size: 3e8, unhashed: "not hashed (byte budget)" }] };
+    expect(rosterSignStatement({ ...base, roster: un, issueReady: false })).toMatch(/Bound by name, storage location and size only — .*big\.pdf \(not hashed \(byte budget\)\)/);
+    expect(render(ticket({ metadata: { review_roster: un } }))).toContain('data-testid="roster-unhashed-files"');
+  });
+  it("an appended engineering gate is said on the panel", () => {
+    expect(render(ticket({ metadata: { review_roster: { ...roster, engineeringGateAdded: true } } }))).toContain(ENGINEERING_GATE_NOTE);
+    expect(render(ticket({ metadata: { review_roster: roster } }))).not.toContain(ENGINEERING_GATE_NOTE);
+  });
+  it("the request page: an approval that issues as-is goes through a confirm; the serial banner; the UI-4 note survives the optional mark", () => {
+    expect(page).toContain("const asIs = issueAsIsConfirmation(action, ticket);");
+    expect(page).toContain("if (asIs && !(await appConfirm({ title: 'Approve and issue as-is?', message: asIs }))) return;");
+    // the confirm runs before any branch that would send the action
+    expect(page.indexOf("const asIs = issueAsIsConfirmation(action, ticket);")).toBeLessThan(page.indexOf("else { executeWorkflowAction(action); }"));
+    expect(page).toContain('data-testid="issue-as-is-banner"');
+    expect(page).toContain("const asIsBanner = issueAsIsBanner(ticket);");
+    expect(page).toContain("const awaitedButtons = buttonActions.filter((a) => !ISSUE_MARK_ACTIONS.has(a.action));");
+    expect(page).toContain("const noActionsWhy = awaitedButtons.length === 0 && !policyFault");
+    expect(page.match(/data-testid="no-actions-why"/g)).toHaveLength(2);
   });
 });

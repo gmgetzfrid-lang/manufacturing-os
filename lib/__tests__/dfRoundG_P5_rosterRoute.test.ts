@@ -28,6 +28,7 @@ const state = vi.hoisted(() => ({
   r2: [] as Array<{ kind: string; key: string }>,
   r2Fail: false,
   r2Hang: false,
+  after: [] as Array<() => unknown>,
 }));
 function chain(table: string) {
   const filters: Array<[string, unknown, "eq" | "is" | "in"]> = [];
@@ -39,6 +40,10 @@ function chain(table: string) {
   const h: ProxyHandler<Record<string, unknown>> = {
     get(_t, prop: string) {
       if (prop === "then") return (resolve: (v: unknown) => void) => {
+        // postgrest-js on a HEAD request: PostgREST's 404 for a missing table
+        // has no body, and processResponse maps a body-less 404 to status 204
+        // with error = null — a HEAD can never see PGRST205 / 42P01.
+        if (head && state.errors[table] && /PGRST205|42P01/.test(state.errors[table].code ?? "")) return resolve({ data: null, error: null, count: null, status: 204 });
         if (state.errors[table]) return resolve({ data: null, error: state.errors[table] });
         if (head) return resolve({ data: null, error: null, count: rows().length });
         return resolve({ data: rows(), error: null, count: rows().length });
@@ -71,7 +76,7 @@ vi.mock("@/lib/supabaseAdmin", () => ({
   },
 }));
 vi.mock("@/lib/supabase", () => ({ supabase: { from: (t: string) => chain(t) }, __registerScopedServerClient: () => {} }));
-vi.mock("next/server", async (importOriginal) => ({ ...(await importOriginal<typeof import("next/server")>()), after: vi.fn() }));
+vi.mock("next/server", async (importOriginal) => ({ ...(await importOriginal<typeof import("next/server")>()), after: vi.fn((fn: () => unknown) => { state.after.push(fn); }) }));
 vi.mock("@/lib/r2", () => ({
   R2_BUCKET: "b",
   r2: {
@@ -100,7 +105,10 @@ const member = (uid: string, role: string, roles = [role]) => ({ org_id: "o1", u
 const DRAFT = { id: "a-d", name: "iso_1A.pdf", url: "orgs/o1/tickets/REQ-1/iso_1A.pdf", type: "Draft", status: "staged" } as TicketAttachment;
 const ROUTING = { slots: [
   { kind: "accept", label: "Requester acceptance", mode: "blocking", fill: { identity: "requester" } },
-  { kind: "check", label: "Engineering check", mode: "blocking", fill: { roles: ["Engineer"] }, independent_of: ["drafter"] },
+  // filled by the engineering capability: this table carries the org's
+  // engineering gate itself (DF-P5 fix pass 2 — a table that does not gets
+  // the seed's engineering slot appended)
+  { kind: "check", label: "Engineering check", mode: "blocking", fill: { capability: "ticket.final_approve" }, independent_of: ["drafter"] },
 ] };
 const ticketRow = (over: Record<string, unknown> = {}) => ({
   id: "t1", org_id: "o1", ticket_id: "REQ-1", title: "x", status: "DRAFTING", request_type: "ISO", unit: null,
@@ -117,16 +125,25 @@ const updates = () => state.calls.filter((c) => c.table === "tickets" && c.metho
 const audits = () => state.calls.filter((c) => c.table === "audit_logs" && c.method === "insert").map((c) => c.args[0] as { action: string; details: Record<string, unknown> });
 const ledger = () => state.calls.filter((c) => c.table.startsWith("ticket_review_slot") && (c.method === "insert" || c.method === "update"));
 
+/** Run what the route scheduled after its response (next/server after()). */
+async function runAfter(): Promise<void> {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("{}")));
+  const fns = state.after.splice(0);
+  await Promise.allSettled(fns.map((f) => Promise.resolve().then(f)));
+  vi.unstubAllGlobals();
+}
+const hashedRow = (action: string) => audits().find((x) => x.action === `${action}_FILES_HASHED`);
+
 beforeEach(() => {
   __resetCapabilityPolicyCache();
-  state.user = null; state.rows = {}; state.calls = []; state.errors = {}; state.r2 = []; state.r2Fail = false; state.r2Hang = false;
+  state.user = null; state.rows = {}; state.calls = []; state.errors = {}; state.r2 = []; state.r2Fail = false; state.r2Hang = false; state.after = [];
   Object.assign(HASH_LIMITS, LIMITS0);
 });
 
 /** Submit as the drafter and return the roster the route wrote. */
-async function submitRouted(): Promise<TicketReviewRoster> {
+async function submitRouted(over: Record<string, unknown> = {}): Promise<TicketReviewRoster> {
   state.user = { id: "d-1" };
-  state.rows.tickets = [ticketRow()];
+  state.rows.tickets = [ticketRow(over)];
   const res = await post({ ticketId: "t1", actionType: "submit_draft" });
   expect(res.status).toBe(200);
   return (updates()[0].metadata as { review_roster: TicketReviewRoster }).review_roster;
@@ -174,6 +191,13 @@ describe("REGRESSION — an unconfigured ticket submits, gates and notifies exac
     expect(res.status).toBe(200);
     expect("metadata" in updates()[0]).toBe(false);
     expect((await res.json()).warning).toMatch(/20261242 is not applied/);
+    // the probe is a GET (a HEAD could not see the missing table — the
+    // harness reproduces postgrest-js's HEAD behaviour), and nothing is
+    // written to the ledger that is not there
+    const probe = state.calls.filter((c) => c.table === "ticket_review_slots" && c.method === "select");
+    expect(probe.length).toBeGreaterThan(0);
+    expect(probe.every((c) => !(c.args[1] as { head?: boolean } | undefined)?.head)).toBe(true);
+    expect(ledger()).toEqual([]);
   });
 });
 
@@ -310,7 +334,7 @@ describe("EVID-12 / FRIC-5 — today's approvals carry the server's sha256; issu
     status: "PENDING_REVIEW", deliverable_rev: "1A", draft_iteration: 1, library_id: null, requester_role: "Engineer-2",
     attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }], ...over,
   });
-  it("approve_draft_ifc: the approved drafts' identity carries the sha256 the route computed from the bytes; the status is today's PENDING_IFC", async () => {
+  it("approve_draft_ifc: today's path reads NO storage before answering (fix pass 2); the approval row names the files as before and points at the follow-up row, which carries the sha256 computed from the bytes after the response", async () => {
     seed();
     state.rows.org_members[0] = member("req-1", "Engineer-2");
     state.rows.tickets = [legacy()];
@@ -318,10 +342,17 @@ describe("EVID-12 / FRIC-5 — today's approvals carry the server's sha256; issu
     const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
     expect(res.status).toBe(200);
     expect(updates()[0].status).toBe("PENDING_IFC");
-    const a = audits().find((x) => x.action === "TICKET_APPROVE_DRAFT_IFC")!;
-    expect((a.details.approvedDrafts as Array<{ sha256: string }>)[0].sha256).toBe(SHA);
+    expect(state.r2.filter((x) => x.kind === "GetObjectCommand")).toEqual([]);
+    const a = audits().find((x) => x.action === "TICKET_APPROVE_DRAFT_IFC")! as { action: string; details: Record<string, unknown>; id?: string };
+    expect((a.details.approvedDrafts as Array<Record<string, unknown>>)[0]).toEqual({ id: "a-d", name: "iso_1A.pdf", url: DRAFT.url, size: null, etag: null });
+    expect(a.details.filesHashedIn).toBe("TICKET_APPROVE_DRAFT_IFC_FILES_HASHED");
+    expect(hashedRow("TICKET_APPROVE_DRAFT_IFC")).toBeUndefined();
+    await runAfter();
+    const f = hashedRow("TICKET_APPROVE_DRAFT_IFC")! as { details: Record<string, unknown> };
+    expect(f.details.approval).toBe(a.id);
+    expect((f.details.approvedDrafts as Array<{ sha256: string }>)[0].sha256).toBe(SHA);
   });
-  it("storage that cannot answer does not block the approval (today's flow): the row says the hash was unavailable", async () => {
+  it("storage that cannot answer never touches the approval (today's flow): the follow-up row says the hash was unavailable", async () => {
     seed();
     state.r2Fail = true;
     state.rows.org_members[0] = member("req-1", "Engineer-2");
@@ -329,8 +360,9 @@ describe("EVID-12 / FRIC-5 — today's approvals carry the server's sha256; issu
     state.user = { id: "req-1" };
     const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
     expect(res.status).toBe(200);
-    const a = audits().find((x) => x.action === "TICKET_APPROVE_DRAFT_IFC")!;
-    expect((a.details.approvedDrafts as Array<Record<string, unknown>>)[0]).toMatchObject({ sha256: null, sha256Unavailable: "storage could not be read" });
+    await runAfter();
+    const f = hashedRow("TICKET_APPROVE_DRAFT_IFC")!;
+    expect((f.details.approvedDrafts as Array<Record<string, unknown>>)[0]).toMatchObject({ sha256: null, sha256Unavailable: "storage could not be read" });
   });
   it("FRIC-5: the drafter marks issue-ready; the approval then issues the draft as the Final (FINAL_DRAFT) — no second drafter step", async () => {
     seed();
@@ -349,6 +381,23 @@ describe("EVID-12 / FRIC-5 — today's approvals carry the server's sha256; issu
     expect(u.status).toBe("FINAL_DRAFT");
     expect((u.attachments as TicketAttachment[]).filter((x) => x.type === "Final")).toEqual([expect.objectContaining({ url: DRAFT.url, rev: "1", issuedFromDraftId: "a-d" })]);
   });
+  it("DF-P5 fix pass 2 (UI-4): the mark is not a status change — the reviewer gets ONE bell row (no email), the watchers are not told, nobody's outstanding review alert is superseded, every unread marker is kept", async () => {
+    seed();
+    state.rows.org_members[0] = member("req-1", "Engineer-2");
+    state.rows.org_members.push(member("w-1", "Viewer"));
+    state.rows.tickets = [legacy({ watchers: ["w-1"], unread_by: ["x-1"] })];
+    state.rows.notifications = [{ id: "n-1", resource_id: "t1", org_id: "o1", read_at: null, metadata: { action: "submit_draft" } }];
+    state.user = { id: "d-1" };
+    expect((await post({ ticketId: "t1", actionType: "mark_issue_ready" })).status).toBe(200);
+    expect((updates()[0].unread_by as string[]).sort()).toEqual(["req-1", "x-1"]);
+    const bells = state.calls.filter((c) => c.table === "notifications" && c.method === "insert").flatMap((c) => c.args[0] as Array<{ userId?: string; user_id?: string; title: string; metadata: Record<string, unknown> }>);
+    expect(bells.map((b) => b.user_id ?? b.userId)).toEqual(["req-1"]);
+    expect(bells[0].title).toMatch(/^Marked issue-ready · /);
+    expect(bells[0].metadata).toMatchObject({ activity: "mark_issue_ready" });
+    expect(bells[0].metadata.action).toBeUndefined();
+    expect(state.calls.filter((c) => c.table === "email_notifications")).toEqual([]);
+    expect(state.calls.filter((c) => c.table === "notifications" && c.method === "update")).toEqual([]);
+  });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -358,7 +407,7 @@ describe("DF-P5 fix — hashing never blocks or meaningfully slows a legacy appr
     status: "PENDING_REVIEW", deliverable_rev: "1A", draft_iteration: 1, library_id: null, requester_role: "Engineer-2",
     attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }], ...over,
   });
-  it("a GetObject that NEVER answers: the approval still lands within the deadline, the row says 'not hashed (deadline)'", async () => {
+  it("a GetObject that NEVER answers: the approval lands without waiting on it at all; the follow-up row (after the response, bounded) says 'not hashed (deadline)'", async () => {
     HASH_LIMITS.legacyDeadlineMs = 60;
     seed();
     state.r2Hang = true;
@@ -370,8 +419,10 @@ describe("DF-P5 fix — hashing never blocks or meaningfully slows a legacy appr
     expect(Date.now() - t0).toBeLessThan(2_000);
     expect(res.status).toBe(200);
     expect(updates()[0].status).toBe("PENDING_IFC");
-    const a = audits().find((x) => x.action === "TICKET_APPROVE_DRAFT_IFC")!;
-    expect((a.details.approvedDrafts as Array<Record<string, unknown>>)[0]).toMatchObject({ sha256: null, sha256Unavailable: "not hashed (deadline)" });
+    expect(state.r2.filter((x) => x.kind === "GetObjectCommand")).toEqual([]);
+    await runAfter();
+    const f = hashedRow("TICKET_APPROVE_DRAFT_IFC")!;
+    expect((f.details.approvedDrafts as Array<Record<string, unknown>>)[0]).toMatchObject({ sha256: null, sha256Unavailable: "not hashed (deadline)" });
   });
   it("only the Drafts of the revision being approved are read — earlier rounds' Drafts are named, not downloaded", async () => {
     seed();
@@ -380,8 +431,9 @@ describe("DF-P5 fix — hashing never blocks or meaningfully slows a legacy appr
     state.rows.tickets = [legacy({ deliverable_rev: "1B", draft_iteration: 2, attachments: [...old, { ...DRAFT, id: "cur", status: "submitted", rev: "1B" }] })];
     state.user = { id: "req-1" };
     expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(200);
+    await runAfter();
     expect(state.r2.filter((x) => x.kind === "GetObjectCommand").map((x) => x.key)).toEqual([DRAFT.url]);
-    const drafts = audits().find((x) => x.action === "TICKET_APPROVE_DRAFT_IFC")!.details.approvedDrafts as Array<Record<string, unknown>>;
+    const drafts = hashedRow("TICKET_APPROVE_DRAFT_IFC")!.details.approvedDrafts as Array<Record<string, unknown>>;
     expect(drafts.find((d) => d.id === "cur")).toMatchObject({ sha256: SHA });
     expect(drafts.find((d) => d.id === "old-0")).toMatchObject({ sha256: null, sha256Unavailable: "not hashed (not the revision being approved)" });
   });
@@ -426,8 +478,12 @@ describe("DF-P5 fix — reopen_ticket never opens a roster (TIER-5: routed revie
 describe("DF-P5 fix — DEC-37 acceptance 2: the drafter cannot accept their own deliverable on a roster, whatever the table declares", () => {
   it("a table with no independent_of: the drafter's sign-off is refused (403, the floor named), nothing written; an engineer's issues it", async () => {
     seed({ routing_control: { slots: [{ kind: "check", label: "Engineering check", mode: "blocking", fill: { roles: ["Drafter", "Engineer"] } }] } });
-    const roster = await submitRouted();
-    const under = ticketRow({ status: "PENDING_REVIEW", deliverable_rev: "1A", draft_iteration: 1, attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }], metadata: { review_roster: roster } });
+    // an engineer requester: the engineering gate does not apply, so the
+    // table's one slot is the whole review (fix pass 2 appends nothing)
+    state.rows.org_members[0] = member("req-1", "Engineer-2");
+    const roster = await submitRouted({ requester_role: "Engineer-2" });
+    expect(roster.slots.map((s) => s.kind)).toEqual(["check"]);
+    const under = ticketRow({ requester_role: "Engineer-2", status: "PENDING_REVIEW", deliverable_rev: "1A", draft_iteration: 1, attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }], metadata: { review_roster: roster } });
     const sig = (signer: string) => ({ id: SIG, org_id: "o1", resource_type: "ticket", resource_id: "t1", signer_user_id: signer, content_hash: roster.contentHash, intent: "Reviewed", signed_at: "2099-01-01T00:00:00Z" });
     state.calls = [];
     state.rows.tickets = [under];
@@ -441,5 +497,172 @@ describe("DF-P5 fix — DEC-37 acceptance 2: the drafter cannot accept their own
     state.user = { id: "e-1" };
     expect((await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG })).status).toBe(200);
     expect(updates()[0]).toMatchObject({ status: "PENDING_IFC" });
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// DF-P5 fix pass 2
+describe("DF-P5 fix pass 2 — a routing table adds reviewers; it never drops the org-wide engineering gate (DEC-13 / DEC-16 / DEC-36)", () => {
+  const REQUESTER_ONLY = { slots: [{ kind: "accept", label: "Requester acceptance", mode: "blocking", fill: { identity: "requester" } }] };
+  const sig = (id: string, signer: string, hash: string) => ({ id, org_id: "o1", resource_type: "ticket", resource_id: "t1", signer_user_id: signer, content_hash: hash, intent: "Reviewed", signed_at: "2099-01-01T00:00:00Z" });
+  const under = (roster: TicketReviewRoster, over: Record<string, unknown> = {}) => ticketRow({
+    status: "PENDING_REVIEW", deliverable_rev: "1A", draft_iteration: 1, attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }], metadata: { review_roster: roster }, ...over,
+  });
+
+  it("the reviewer's scenario: a Planner-tier requester, a requester-only table — the seed's engineering slot is appended, said on the roster, the history and the audit row; the requester's sign-off alone does NOT issue; the engineer's does, with engineer_approved_at", async () => {
+    seed({ routing_control: REQUESTER_ONLY });
+    const roster = await submitRouted();
+    expect(roster.engineeringGateAdded).toBe(true);
+    expect(roster.slots.map((s) => s.kind)).toEqual(["accept", "engineering"]);
+    const eng = roster.slots[1];
+    expect(eng).toMatchObject({ mode: "blocking", primaries: ["e-1", "e-2"], independentOf: ["drafter"], engineering: true, status: "open" });
+    expect(eng.overriders).toContain("a-1");
+    expect(audits().find((x) => x.action === "TICKET_SUBMIT_DRAFT")!.details.reviewRoster).toMatchObject({ engineeringGateAdded: true });
+    expect(JSON.stringify(updates()[0].history)).toMatch(/Engineering sign-off added/);
+    // the requester signs their slot: the review still waits on the engineer
+    state.calls = [];
+    state.rows.tickets = [under(roster)];
+    state.rows.e_signatures = [sig(SIG, "req-1", roster.contentHash)];
+    state.user = { id: "req-1" };
+    expect((await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG })).status).toBe(200);
+    expect(updates()[0].status).toBeUndefined();
+    const afterReq = (updates()[0].metadata as { review_roster: TicketReviewRoster }).review_roster;
+    // the engineer's sign-off is the last one: issued, and engineering approval recorded
+    state.calls = [];
+    state.rows.tickets = [under(afterReq)];
+    state.rows.e_signatures = [sig(SIG2, "e-1", roster.contentHash)];
+    state.user = { id: "e-1" };
+    expect((await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG2 })).status).toBe(200);
+    expect(updates()[0]).toMatchObject({ status: "PENDING_IFC", deliverable_rev: "1" });
+    expect(typeof updates()[0].engineer_approved_at).toBe("string");
+  });
+
+  it("an assigned engineer is named on the appended slot", async () => {
+    seed({ routing_control: REQUESTER_ONLY });
+    const roster = await submitRouted({ assigned_engineer_id: "e-2" });
+    expect(roster.slots.find((s) => s.kind === "engineering")?.primaries).toContain("e-2");
+  });
+
+  it("an exempt requester (an Engineer tier): the gate does not apply, nothing is appended (the table is the whole review)", async () => {
+    seed({ routing_control: REQUESTER_ONLY });
+    state.rows.org_members[0] = member("req-1", "Engineer-2");
+    const roster = await submitRouted({ requester_role: "Engineer-2" });
+    expect(roster.slots.map((s) => s.kind)).toEqual(["accept"]);
+    expect(roster.engineeringGateAdded).toBeUndefined();
+  });
+
+  it("an engineering-first type keeps an engineer on the roster even for an exempt requester", async () => {
+    seed({ routing_control: REQUESTER_ONLY });
+    state.rows.org_members[0] = member("req-1", "Engineer-2");
+    state.rows.org_configurations = [{ org_id: "o1", key: "drafting", data: { requestTypes: { options: [{ value: "ISO", engineeringFirst: true }] } } }];
+    const roster = await submitRouted({ requester_role: "Engineer-2", engineer_review_requested_at: LM });
+    expect(roster.slots.map((s) => s.kind)).toEqual(["accept", "engineering"]);
+  });
+
+  it("a table whose engineering slot is a ROLE-named slot (the facility's own word, never guessed): the gate slot is still appended, and one engineer's ONE sign-off fills both (DEC-37)", async () => {
+    seed({ routing_control: { slots: [{ kind: "check", label: "Discipline check", mode: "blocking", fill: { roles: ["Engineer"] } }] } });
+    const roster = await submitRouted();
+    expect(roster.slots.map((s) => s.kind)).toEqual(["check", "engineering"]);
+    state.calls = [];
+    state.rows.tickets = [under(roster)];
+    state.rows.e_signatures = [sig(SIG, "e-1", roster.contentHash)];
+    state.user = { id: "e-1" };
+    expect((await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG })).status).toBe(200);
+    expect(updates()[0].status).toBe("PENDING_IFC");
+  });
+});
+
+describe("DF-P5 fix pass 2 — the ledger probe, a package too large to fingerprint, the completing sign-off's audit row and notice, an unreadable chain", () => {
+  const sig = (id: string, signer: string, hash: string) => ({ id, org_id: "o1", resource_type: "ticket", resource_id: "t1", signer_user_id: signer, content_hash: hash, intent: "Reviewed", signed_at: "2099-01-01T00:00:00Z" });
+  const under = (roster: TicketReviewRoster, over: Record<string, unknown> = {}) => ticketRow({
+    status: "PENDING_REVIEW", deliverable_rev: "1A", draft_iteration: 1, attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }], metadata: { review_roster: roster }, ...over,
+  });
+
+  it("a routed package over the request's byte budget is NOT refused (re-uploading could never help): the roster opens, the file bound by identity with the reason, named in the audit row", async () => {
+    HASH_LIMITS.rosterByteBudget = 4;
+    seed();
+    const roster = await submitRouted({ attachments: [{ ...DRAFT, size: 240 * 1024 * 1024 }] });
+    expect(roster.files).toEqual([{ id: "a-d", name: "iso_1A.pdf", url: DRAFT.url, sha256: null, size: 240 * 1024 * 1024, unhashed: "not hashed (byte budget)" }]);
+    const opened = audits().find((x) => x.action === "TICKET_SUBMIT_DRAFT")!.details.reviewRoster as { files: unknown[] };
+    expect(opened.files).toEqual(roster.files);
+    // and a sign-off bound to that roster's hash is accepted
+    state.calls = [];
+    state.rows.tickets = [under(roster)];
+    state.rows.e_signatures = [sig(SIG, "e-1", roster.contentHash)];
+    state.user = { id: "e-1" };
+    expect((await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG })).status).toBe(200);
+  });
+
+  it("a file that is not in storage still refuses — with what to do (replace it), never 'upload it again' for a size the request cannot read", async () => {
+    seed();
+    const { r2 } = await import("@/lib/r2");
+    (r2.send as unknown as { mockImplementationOnce: (f: () => unknown) => void }).mockImplementationOnce(async () => { throw Object.assign(new Error("gone"), { name: "NoSuchKey" }); });
+    state.user = { id: "d-1" };
+    state.rows.tickets = [ticketRow()];
+    const res = await post({ ticketId: "t1", actionType: "submit_draft" });
+    expect(res.status).toBe(409);
+    const j = await res.json();
+    expect(j.code).toBe("content_unhashable");
+    expect(j.error).toMatch(/"iso_1A\.pdf" cannot be put under review \(the file is not in storage\) — remove it from the request and attach the file again/);
+    expect(updates()).toEqual([]);
+  });
+
+  it("EVID-12 done-when 3 on a roster: the COMPLETING sign-off's audit row names what was approved (ids, names, sha256) and, issued as-is, the Final it recorded", async () => {
+    seed();
+    const roster = await submitRouted();
+    const partly = { ...roster, slots: roster.slots.map((s) => (s.kind === "accept" ? { ...s, status: "satisfied" as const, satisfiedBy: "req-1", satisfiedAt: LM, signatureId: SIG2, via: "primary" as const } : s)) };
+    state.calls = [];
+    state.rows.tickets = [under(partly, { metadata: { review_roster: partly, issue_ready: { rev: "1A", by: "d-1", at: LM } } })];
+    state.rows.e_signatures = [sig(SIG, "e-1", roster.contentHash)];
+    state.user = { id: "e-1" };
+    expect((await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG })).status).toBe(200);
+    expect(updates()[0].status).toBe("FINAL_DRAFT");
+    const d = audits().find((x) => x.action === "TICKET_SIGN_SLOT")!.details;
+    expect(d.approvedDrafts).toEqual([{ id: "a-d", name: "iso_1A.pdf", url: DRAFT.url, sha256: SHA }]);
+    expect(d.issuedAsIsFinals).toEqual([expect.objectContaining({ url: DRAFT.url, rev: "1", issuedFromDraftId: "a-d", sha256: SHA })]);
+  });
+
+  it("a sign-off that does NOT complete carries no approvedDrafts (it approved nothing yet)", async () => {
+    seed();
+    const roster = await submitRouted();
+    state.calls = [];
+    state.rows.tickets = [under(roster)];
+    state.rows.e_signatures = [sig(SIG, "e-1", roster.contentHash)];
+    state.user = { id: "e-1" };
+    expect((await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG })).status).toBe(200);
+    expect(audits().find((x) => x.action === "TICKET_SIGN_SLOT")!.details.approvedDrafts).toBeUndefined();
+  });
+
+  it("the completing sign-off is notified as an APPROVAL (ticket_approved, 'Review complete — approved'); a partial one as a status change", async () => {
+    seed();
+    const roster = await submitRouted();
+    state.calls = [];
+    state.rows.tickets = [under(roster)];
+    state.rows.e_signatures = [sig(SIG, "e-1", roster.contentHash)];
+    state.user = { id: "e-1" };
+    await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG });
+    const mails1 = state.calls.filter((c) => c.table === "email_notifications" && c.method === "insert").flatMap((c) => c.args[0] as Array<{ event_type: string }>);
+    expect(mails1.length).toBeGreaterThan(0);
+    expect(mails1.every((m) => m.event_type === "ticket_status_changed")).toBe(true);
+    const after1 = (updates()[0].metadata as { review_roster: TicketReviewRoster }).review_roster;
+    state.calls = [];
+    state.rows.tickets = [under(after1)];
+    state.rows.e_signatures = [sig(SIG2, "req-1", roster.contentHash)];
+    state.user = { id: "req-1" };
+    await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG2 });
+    const mails2 = state.calls.filter((c) => c.table === "email_notifications" && c.method === "insert").flatMap((c) => c.args[0] as Array<{ event_type: string; subject: string }>);
+    expect(mails2.length).toBeGreaterThan(0);
+    expect(mails2.every((m) => m.event_type === "ticket_approved" && /^Review complete — approved — /.test(m.subject))).toBe(true);
+  });
+
+  it("DEC-36: a 42703 naming ANOTHER column on the chain read (a partial restore) refuses the submission — never read as 'no routing'", async () => {
+    seed();
+    state.errors.libraries = { code: "42703", message: "column collections.path_ids does not exist" };
+    state.user = { id: "d-1" };
+    state.rows.tickets = [ticketRow()];
+    const res = await post({ ticketId: "t1", actionType: "submit_draft" });
+    expect(res.status).toBe(503);
+    expect((await res.json()).code).toBe("routing_unreadable");
+    expect(updates()).toEqual([]);
   });
 });

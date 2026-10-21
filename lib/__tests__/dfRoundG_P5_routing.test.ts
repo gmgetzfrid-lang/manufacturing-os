@@ -10,16 +10,17 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import {
   parseRoutingControl, resolveEffectiveRoutingControl, resolveRoutingControlChain, effectiveRoutingForTicket,
-  SEEDED_ROUTING, seededSlotsFor, validateRoutingDraft,
+  SEEDED_ROUTING, seededSlotsFor, validateRoutingDraft, isMissingRoutingSchema,
 } from "@/lib/routingControl";
 import {
   openRoster, applySignPlan, rosterCompletion, signatureRefusal, sha256OfStoredObject, rosterContentHash,
   filesUnderReview, resolveFill, writeRosterLedger, isMissingRosterLedger,
-  hashStoredFilesBounded, draftsToHashOnApproval, HASH_LIMITS,
+  hashStoredFilesBounded, draftsToHashOnApproval, HASH_LIMITS, withEngineeringGate, tableCarriesEngineeringGate, rosterBinding, type FileHash,
 } from "@/lib/ticketRoster";
 import * as reviewControl from "@/lib/reviewControl";
-import { WorkflowEngine, slotSignPlan, currentRoster, issueReadyFor, engineerApprovalRequired, ticketResource, PRODUCER_FLOOR_REASON, rosterEngineerApprovedAt } from "@/lib/workflow";
-import { computeTransition, issueAsIsFinals, type TransitionInput } from "@/lib/ticketTransitions";
+import { WorkflowEngine, slotSignPlan, currentRoster, issueReadyFor, engineerApprovalRequired, ticketResource, PRODUCER_FLOOR_REASON, rosterEngineerApprovedAt, unhashedFilesNote, issueAsIsConfirmation, issueAsIsBanner, ISSUE_MARK_ACTIONS, ISSUE_AS_IS_NOTE } from "@/lib/workflow";
+import { computeTransition, issueAsIsFinals, classifyTransitionNotification, issueMarkAudience, type TransitionInput } from "@/lib/ticketTransitions";
+import { explainNoActions, holdersFor } from "@/lib/ticketAttention";
 import { engineerCandidates, engineerPickRefusal } from "@/lib/ticketPage";
 import type { Ticket, TicketAttachment, TicketReviewRoster } from "@/types/schema";
 
@@ -625,5 +626,150 @@ describe("DF-P5 fix — FRIC-5: the issue-as-is mark is offered only before the 
     expect(WorkflowEngine.getActions(withRoster(r), "Drafter" as never, "d-1").some((a) => a.action === "mark_issue_ready")).toBe(true);
     const signed = applySignPlan(r, slotSignPlan(r, withRoster(r), "e-1", true), { uid: "e-1", name: "E" }, "sig", NOW);
     expect(WorkflowEngine.getActions(withRoster(signed), "Drafter" as never, "d-1").some((a) => a.action === "mark_issue_ready")).toBe(false);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// DF-P5 fix pass 2
+describe("DF-P5 fix pass 2 — withEngineeringGate: a table adds reviewers, never drops the engineering gate", () => {
+  const REQ_ONLY = parseRoutingControl({ slots: [{ kind: "accept", mode: "blocking", fill: { identity: "requester" } }] }) as { ok: true; control: import("@/lib/routingControl").RoutingControl };
+  it("gate not required → the table unchanged; required and absent → the seed's engineering slot appended (blocking, ticket.final_approve, independent of the drafter, management as override)", () => {
+    expect(withEngineeringGate(REQ_ONLY.control, { required: false })).toEqual({ control: REQ_ONLY.control, added: false });
+    const g = withEngineeringGate(REQ_ONLY.control, { required: true, assignedEngineerId: null });
+    expect(g.added).toBe(true);
+    expect(g.control.slots[1]).toEqual({ kind: "engineering", label: "Engineering sign-off", mode: "blocking", fill: { capability: "ticket.final_approve" }, independent_of: ["drafter"], waivable_by: { capability: "ticket.manage" } });
+    expect(parseRoutingControl(g.control)).toMatchObject({ ok: true });
+  });
+  it("an assigned engineer is named as a primary", () => {
+    expect(withEngineeringGate(REQ_ONLY.control, { required: true, assignedEngineerId: "e-2" }).control.slots[1].fill).toEqual({ users: ["e-2"], capability: "ticket.final_approve" });
+  });
+  it("a table carrying a BLOCKING engineering-capability slot keeps its own; a notify-only one or a role-named one does not count (DEC-35: never guessed)", () => {
+    const cap = { slots: [{ kind: "eng", mode: "blocking" as const, fill: { capability: "ticket.eng_review" as const } }] };
+    expect(tableCarriesEngineeringGate(cap)).toBe(true);
+    expect(withEngineeringGate(cap, { required: true }).added).toBe(false);
+    expect(tableCarriesEngineeringGate({ slots: [{ kind: "eng", mode: "notify_only", fill: { capability: "ticket.final_approve" } }] })).toBe(false);
+    expect(tableCarriesEngineeringGate({ slots: [{ kind: "eng", mode: "blocking", fill: { roles: ["Engineer"] } }] })).toBe(false);
+  });
+  it("the appended kind never collides with one the table uses", () => {
+    const t = { slots: [{ kind: "engineering", mode: "blocking" as const, fill: { roles: ["Engineer"] } }] };
+    expect(withEngineeringGate(t, { required: true }).control.slots.map((x) => x.kind)).toEqual(["engineering", "engineering-2"]);
+  });
+  it("openRoster applies it: the roster says the gate was added, and the slot resolves to the engineers (engineering: true)", () => {
+    const r = openRoster({ id: "r1", control: REQ_ONLY.control, level: "library", cycle: "1A", files: FILES, ctx, openedBy: "d-1", now: NOW, engineeringGate: { required: true } });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.roster.engineeringGateAdded).toBe(true);
+    expect(r.roster.slots[1]).toMatchObject({ kind: "engineering", primaries: ["e-1", "e-2"], engineering: true });
+    const off = openRoster({ id: "r2", control: REQ_ONLY.control, level: "library", cycle: "1A", files: FILES, ctx, openedBy: "d-1", now: NOW });
+    expect(off.ok && off.roster.engineeringGateAdded).toBeFalsy();
+  });
+});
+
+describe("DF-P5 fix pass 2 — a package too large or too slow to fingerprint is bound by identity, not refused; a storage outage still is", () => {
+  const f = (id: string, size?: number) => ({ id, name: `${id}.pdf`, url: `orgs/o1/tickets/REQ-1/${id}.pdf`, type: "Draft", status: "submitted", rev: "1A", ...(size ? { size } : {}) }) as TicketAttachment;
+  const ok = (h: string) => ({ ok: true as const, sha256: h, bytes: 1 });
+  it("hashed files by sha256; over budget / too large / read past the deadline by identity with the reason", () => {
+    const files = [f("a"), f("b", 9e8), f("c", 3e8), f("d")];
+    const m = new Map<string, FileHash>([
+      [files[0].url!, ok("1".repeat(64))],
+      [files[1].url!, { ok: false as const, transient: false, reason: "too large to hash in a request" }],
+      [files[2].url!, { ok: false as const, transient: false, reason: "not hashed (byte budget)" }],
+      [files[3].url!, { ok: false as const, transient: false, reason: "not hashed (read exceeded the deadline)" }],
+    ]);
+    const b = rosterBinding(files, m);
+    expect(b.ok).toBe(true);
+    if (!b.ok) return;
+    expect(b.files.map((x) => [x.id, x.sha256 ? "sha" : x.unhashed, x.size ?? null])).toEqual([
+      ["a", "sha", null], ["b", "too large to hash in a request", 9e8], ["c", "not hashed (byte budget)", 3e8], ["d", "not hashed (read exceeded the deadline)", null],
+    ]);
+    expect(unhashedFilesNote({ files: b.files })).toMatch(/^Bound by name, storage location and size only — .*b\.pdf \(too large to hash in a request\), c\.pdf \(not hashed \(byte budget\)\), d\.pdf/);
+    // the identity is part of the bound hash: another size is another binding
+    expect(rosterContentHash(b.files)).not.toBe(rosterContentHash(b.files.map((x) => (x.id === "b" ? { ...x, size: 1 } : x))));
+  });
+  it("a file never reached because the clock ran out is bound by identity ONLY when storage answered for some file in the request; a storage that answered for none refuses (transient)", () => {
+    const files = [f("a"), f("b")];
+    const DL = { ok: false as const, transient: true, reason: "not hashed (deadline)" };
+    expect(rosterBinding(files, new Map<string, FileHash>([[files[0].url!, ok("1".repeat(64))], [files[1].url!, DL]]))).toMatchObject({ ok: true });
+    expect(rosterBinding(files, new Map([[files[0].url!, DL], [files[1].url!, DL]]))).toEqual({ ok: false, transient: true, file: "a.pdf", reason: "not hashed (deadline)" });
+  });
+  it("storage that failed to read refuses (transient); a file not in storage refuses (replace it)", () => {
+    const files = [f("a")];
+    expect(rosterBinding(files, new Map([[files[0].url!, { ok: false as const, transient: true, reason: "storage could not be read" }]]))).toMatchObject({ ok: false, transient: true });
+    expect(rosterBinding(files, new Map([[files[0].url!, { ok: false as const, transient: false, reason: "the file is not in storage" }]]))).toMatchObject({ ok: false, transient: false, reason: "the file is not in storage" });
+  });
+  it("hashStoredFilesBounded: a deadline while a file's bytes stream is a slow read (not transient); a GetObject that never answered is the transient deadline", async () => {
+    const slow = async () => ({ ContentLength: 10, Body: (async function* () { yield new Uint8Array(1); await new Promise((r) => setTimeout(r, 200)); yield new Uint8Array(1); })() });
+    const out = await hashStoredFilesBounded(["s"], slow, { deadlineMs: 40, byteBudget: 1e6 });
+    expect(out.get("s")).toEqual({ ok: false, transient: false, reason: "not hashed (read exceeded the deadline)" });
+    const hung = await hashStoredFilesBounded(["h"], () => new Promise(() => {}), { deadlineMs: 20, byteBudget: 1e6 });
+    expect(hung.get("h")).toEqual({ ok: false, transient: true, reason: "not hashed (deadline)" });
+  });
+});
+
+describe("DF-P5 fix pass 2 — routing schema detection names the column; a completing sign-off is an approval notice", () => {
+  it("a 42703 / PGRST204 is 'not pasted' only when it names routing_control", () => {
+    expect(isMissingRoutingSchema({ code: "42703", message: "column libraries.routing_control does not exist" })).toBe(true);
+    expect(isMissingRoutingSchema({ code: "PGRST204", message: "Could not find the 'routing_control' column of 'documents' in the schema cache" })).toBe(true);
+    expect(isMissingRoutingSchema({ code: "42703", message: "column collections.path_ids does not exist" })).toBe(false);
+    expect(isMissingRoutingSchema({ code: "PGRST204", message: "Could not find the 'acl_index' column" })).toBe(false);
+  });
+  it("classifyTransitionNotification: sign_slot completing → ticket_approved; not completing → ticket_status_changed (unchanged for every other action)", () => {
+    expect(classifyTransitionNotification({ actionType: "sign_slot", actionLabel: "Sign Off — Check", ticketLabel: "T", rosterCompleted: true })).toMatchObject({ eventType: "ticket_approved", emailSubject: "Review complete — approved — T" });
+    expect(classifyTransitionNotification({ actionType: "sign_slot", actionLabel: "Sign Off — Check", ticketLabel: "T" })).toMatchObject({ eventType: "ticket_status_changed", emailSubject: "Sign Off — Check — T" });
+    expect(classifyTransitionNotification({ actionType: "approve_draft_ifc", actionLabel: "Approve", ticketLabel: "T", rosterCompleted: true }).emailSubject).toBe("Approve — T");
+  });
+});
+
+describe("DF-P5 fix pass 2 — FRIC-5 is in front of the approver; the drafter's optional mark keeps the UI-4 note and tells only the reviewers", () => {
+  const draft = { id: "a-d", type: "Draft", status: "submitted", rev: "1A", name: "iso_1A.pdf", url: "orgs/o1/tickets/REQ-1/iso_1A.pdf" } as TicketAttachment;
+  const marked = (over: Partial<Ticket> = {}) => mk({ attachments: [draft], metadata: { issue_ready: { rev: "1A" } }, ...over });
+  it("issueAsIsConfirmation: the two approvals that issue as-is ask first, naming the issued Rev; nothing else asks, and an unmarked draft never asks", () => {
+    expect(issueAsIsConfirmation({ action: "approve_draft_ifc" }, marked())).toMatch(new RegExp(`^${ISSUE_AS_IS_NOTE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} .*Rev 1A as the Final.*Approve and issue as-is\\?$`));
+    expect(issueAsIsConfirmation({ action: "engineer_approve_final" }, marked({ status: "PENDING_FINAL_APPROVAL" }))).toBeTruthy();
+    expect(issueAsIsConfirmation({ action: "approve_minor_correction" }, marked())).toBeNull();
+    expect(issueAsIsConfirmation({ action: "request_revision" }, marked())).toBeNull();
+    expect(issueAsIsConfirmation({ action: "approve_draft_ifc" }, mk({ attachments: [draft] }))).toBeNull();
+    expect(issueAsIsConfirmation({ action: "approve_draft_ifc" }, marked({ deliverableRev: "1B" }))).toBeNull();
+  });
+  it("issueAsIsBanner: shown while a marked draft waits on a SERIAL approval; never on a routed review (its panel says it), never once issued, never unmarked", () => {
+    expect(issueAsIsBanner(marked())).toBe(ISSUE_AS_IS_NOTE);
+    expect(issueAsIsBanner(marked({ status: "PENDING_FINAL_APPROVAL" }))).toBe(ISSUE_AS_IS_NOTE);
+    expect(issueAsIsBanner(marked({ status: "PENDING_IFC" }))).toBeNull();
+    expect(issueAsIsBanner(mk({ attachments: [draft] }))).toBeNull();
+    expect(issueAsIsBanner(mk({ metadata: { issue_ready: { rev: "1A" }, review_roster: opened() } }))).toBeNull();
+  });
+  it("REGRESSION (UNCONFIGURED workspace): the drafter's PENDING_REVIEW view offers only the optional mark — so the page still says who the request waits on", () => {
+    const t = mk({ attachments: [draft], requesterName: "Rae" });
+    const acts = WorkflowEngine.getActions(t, "Drafter" as never, "d-1");
+    expect(acts.map((a) => a.action)).toContain("mark_issue_ready");
+    // the page's rule (app/(protected)/requests/[id]/page.tsx awaitedButtons):
+    // the mark is not something the request waits for
+    const awaited = acts.filter((a) => a.action !== "attach_file" && a.action !== "reassign_drafter" && !a.requiresSignature && !ISSUE_MARK_ACTIONS.has(a.action));
+    expect(awaited).toEqual([]);
+    const why = explainNoActions(t, { uid: "d-1", roles: ["Drafter"] as never, holders: holdersFor(t) });
+    expect(why.kind).toBe("not_your_turn");
+    expect(why.text).toMatch(/^You are the drafter — this step is/);
+  });
+  it("issueMarkAudience: the serial reviewer (requester in review, engineer in final approval); on a roster, the occupants of the still-open blocking slots — never the notify-only, never a signed slot", () => {
+    expect(issueMarkAudience(mk())).toEqual(["req-1"]);
+    expect(issueMarkAudience(mk({ status: "PENDING_FINAL_APPROVAL", assignedEngineerId: "e-9" }))).toEqual(["e-9"]);
+    expect(issueMarkAudience(mk({ status: "PENDING_IFC" }))).toEqual([]);
+    const r = opened();
+    expect(issueMarkAudience(withRoster(r)).sort()).toEqual(["e-1", "e-2", "req-1"]);
+    const signed = applySignPlan(r, slotSignPlan(r, withRoster(r), "e-1", true), { uid: "e-1", name: "E" }, "sig", NOW);
+    expect(issueMarkAudience(withRoster(signed))).toEqual(["req-1"]);
+  });
+  it("mark / clear: NOT a status change — unread_by keeps every marker and adds only the reviewers (no watchers, no drafter-default reset); the recipients are the reviewers", () => {
+    const t = mk({ attachments: [draft], watchers: ["w-1", "d-1"], unreadBy: ["x-1"], assignedEngineerId: "e-1" });
+    const m = computeTransition(t, input({ actionType: "mark_issue_ready", actionLabel: "Issue As-Is When Approved", actor: { uid: "d-1", email: "d@x", role: "Drafter" } }));
+    expect(m.newStatus).toBe("PENDING_REVIEW");
+    expect((m.updates.unread_by as string[]).sort()).toEqual(["req-1", "x-1"]);
+    expect(m.recipients).toEqual(["req-1"]);
+    const c = computeTransition(marked({ watchers: ["w-1"], unreadBy: [] }), input({ actionType: "clear_issue_ready", actionLabel: "Withdraw Issue-As-Is", actor: { uid: "d-1", email: "d@x", role: "Drafter" } }));
+    expect(c.updates.unread_by).toEqual(["req-1"]);
+    expect(c.recipients).toEqual(["req-1"]);
+    // every other transition still tells the watchers (unchanged)
+    const sub = computeTransition(mk({ watchers: ["w-1"] }), input({ actionType: "approve_draft_ifc", actionLabel: "Approve", actor: { uid: "req-1", email: "r@x", role: "Requester" } }));
+    expect(sub.updates.unread_by as string[]).toContain("w-1");
   });
 });

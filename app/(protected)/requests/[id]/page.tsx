@@ -10,7 +10,7 @@ import { useRole } from '@/components/providers/RoleContext';
 import { useToast } from '@/components/providers/ToastProvider';
 import { appAlert, appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import { Ticket, TicketStatus, TicketAttachment, TicketComment, DocumentRecord, type CustomCategoryConfig, type OrgDraftingSettings } from '@/types/schema';
-import { WorkflowEngine, WorkflowAction, ticketResource } from '@/lib/workflow';
+import { WorkflowEngine, WorkflowAction, ticketResource, issueAsIsConfirmation, issueAsIsBanner, ISSUE_MARK_ACTIONS } from '@/lib/workflow';
 import { loadCapabilityPolicyEntry, type CapabilityPolicy } from '@/lib/capabilityPolicy';
 import { affordancePolicyFault } from '@/lib/checkoutAffordances';
 import { flaggedRequestTypes } from '@/lib/requestTypes';
@@ -1827,6 +1827,11 @@ export default function TicketDetailView() {
     // all used to pass.
     const missingFile = missingRequiredFile(action, ticket.attachments);
     if (missingFile) { await appAlert({ message: `Compliance Check Failed: ${missingFile}`, tone: "danger" }); return; }
+    // FRIC-5 (DF-P5 fix pass 2): an approval that issues a marked draft
+    // as-is is never taken blind — the approver confirms what it does (the
+    // draft becomes the issued Final; no stamped upload follows).
+    const asIs = issueAsIsConfirmation(action, ticket);
+    if (asIs && !(await appConfirm({ title: 'Approve and issue as-is?', message: asIs }))) return;
     
     // Open IFC Upload Modal
     if (action.action === 'submit_final') {
@@ -2263,9 +2268,16 @@ export default function TicketDetailView() {
   const yourTurn = liveActions.some((a) => !a.optional && !a.disabledReason);
   const isTerminalStatus = ticket.status === 'CLOSED' || ticket.status === 'CANCELED';
   // UI-4: why there is nothing to do here, naming who to talk to.
-  const noActionsWhy = buttonActions.length === 0 && !policyFault
+  // DF-P5 fix pass 2: the drafter's optional issue-as-is mark / withdrawal
+  // is offered BESIDE the explanation, never in place of it — the request
+  // still waits on someone else.
+  const awaitedButtons = buttonActions.filter((a) => !ISSUE_MARK_ACTIONS.has(a.action));
+  const noActionsWhy = awaitedButtons.length === 0 && !policyFault
     ? explainNoActions(ticket, { uid, roles, policy: capPolicy, activeMemberCount, engineeringFirstTypes, closeWithoutReviewTypes, requesterRoles: requesterRolesCtx, holders })
     : null;
+  // FRIC-5 (DF-P5 fix pass 2): a marked draft waiting on a serial approval
+  // says so to everyone who opens it (a routed review says it on its panel).
+  const asIsBanner = issueAsIsBanner(ticket);
   const unitShown = ticketUnitDisplay(ticket.unit, ticket.metadata);
   const customSections = customCategorySections(ticket.metadata, customCategoryConfig);
   const sourceFiles = ticket.attachments?.filter(a => a.type === 'Source' || a.type === 'Reference') || [];
@@ -2670,7 +2682,13 @@ export default function TicketDetailView() {
                // UI-4: why there is nothing to do here, and who to talk to.
                <div data-testid="no-actions-why" className="flex items-start px-4 py-2 bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-muted)] max-w-md"><ShieldAlert className="w-4 h-4 mr-2 mt-0.5 shrink-0" /> <span>{noActionsWhy?.text ?? 'No action is open to you on this request.'}</span></div>
             ) : (
-              buttonActions.map((action, idx) => (
+              <>
+              {noActionsWhy && (
+                // UI-4: the only buttons are optional (the issue-as-is mark),
+                // so who the request waits on is still said.
+                <div data-testid="no-actions-why" className="flex items-start px-4 py-2 bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-muted)] max-w-md"><ShieldAlert className="w-4 h-4 mr-2 mt-0.5 shrink-0" /> <span>{noActionsWhy.text}</span></div>
+              )}
+              {buttonActions.map((action, idx) => (
                 action.disabledReason ? (
                   // Separation-of-duties: the action stays VISIBLE but disabled,
                   // with the reason spelled out — a vanished button reads as a bug.
@@ -2707,7 +2725,8 @@ export default function TicketDetailView() {
                   )}
                 </button>
                 )
-              ))
+              ))}
+              </>
             )}
           </div>
         </div>
@@ -2730,6 +2749,15 @@ export default function TicketDetailView() {
              >
                Submit Now
              </button>
+          </div>
+        </div>
+      )}
+
+      {asIsBanner && (
+        <div role="note" data-testid="issue-as-is-banner" className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+          <div className="flex items-start gap-2 px-4 py-3 rounded-lg border border-amber-300 bg-amber-50 text-sm text-amber-900">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
+            <p><span className="font-bold">Issue as-is.</span> {asIsBanner}</p>
           </div>
         </div>
       )}
