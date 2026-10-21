@@ -1219,7 +1219,7 @@ The chain reaction held too: the `CRON_SECRET` comment named `reminders/run`.
 ## DELIV-17 · A retirement recall whose copy-holder read fails is dropped without a trace: no recall, no audit row, no log line, and the door reports success
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** Assigned (2026-10-14, the integrator at the P26 merge): document-control P28 STATUS-DOOR REMAINDERS — a failed `download_audits` read inside `recallRetiredDocument` drops the recall with no audit row and no log. The file is `lib/staleCopies.ts` (`recallRetiredDocument`), which belongs to the notifications area. Written by document-control P26 fix pass 4 under the integrator's rulings (`DEC-90`). *(Replaces "unassigned. Owner: notifications, to be planned by the integrator (DEC-31). … Document-control P26 opened this finding and may not edit that file." P26 fix pass 4 did edit that function, for the integrator's ruling R1 only — a `recallCopyHolders: false` that skips the read for a never-issued document — and left this finding's read unchanged.)*
 - **Verification:** CONFIRMED by reading the code on `fleet/DC-P26-status-doors` (base `ce5a053` plus P26).
 - **Independently verified:** opened 2026-10-14 by document-control Round G (P26 fix pass 3) on a minor finding from the package review. The reviewer read the code. No second party has challenged it yet.
@@ -1274,5 +1274,25 @@ The publish-time stale-copy recall had the same gap and closed it under `DIST-9`
 **Related, not a done-when.** The same read stops at 1000 rows (`DOC_RECALL_ROW_CAP`, 365 days, `DIST-11`). It has no order, and the recall's audit row does not report that the cap was hit. So on a document with more than 1000 downloads in the window, which holders are told is not defined, and nothing says some were left out. `DIST-11` flagged the cap on the panel's read (`getDocumentRecall`'s `capped`) and deferred a full-history read; the retirement recall got neither the flag nor the full read. It is recorded here so the closer can weigh it alongside this finding.
 
 **Closer:** ~~notifications (the integrator routes it)~~ document-control P28 STATUS-DOOR REMAINDERS (assigned by the integrator at the P26 merge, 2026-10-14). Document-control's records cite it: `PROD-17`'s Partial (`01-producer-census.md`) and `DEC-106`'s Landed line.
+
+**Resolution (2026-10-20, document-control Round G).** Package P28 STATUS-DOOR REMAINDERS, branch `fleet/P28-status-door-remainders` (base `a21c718`). No migration.
+
+**Reproduced first** on `a21c718`: `recallRetiredDocument` read `download_audits` with `const { data } = await supabase …` (`lib/staleCopies.ts:312`), never its error; a failed read gave `holders = []`, so no `doc_recalled`, no `DISTRIBUTION_RECALL` row and no log line, while the watchers' FYI went; the outer `catch { return 0; }` (`:401`) logged nothing.
+
+**What landed** (`lib/staleCopies.ts`; the integrator's ruling (3): logged AND audited as an unrecorded recall, never silent):
+- `readRetirementHolders` (`:402`): the read is checked — its `{ error }` and a throw both count — and retried once, with a `console.warn` naming the document and the error before the retry. The retry runs off every door's path (every caller fires the recall without awaiting it).
+- `recordUncomputedRecall` (`:441`): a read that fails twice is logged (`console.error`, the document, the new status, the error) and recorded as a `DISTRIBUTION_RECALL` row `{ retirement: true, newStatus, recipientCount: 0, recipients: [], unavailable: true, readError }` — `nudgeStaleHolders`' `DIST-9` shape — so the record tells "nobody held a copy" (no row) from "the holders could not be read". A refused row is logged too. No `doc_recalled` goes; the watchers' FYI still goes, excluding no copy holder (a second notice, never none).
+- The outer catch logs (`console.error`, "failed part-way") instead of a silent 0.
+- `recordRetirementRecall` (`:464`): the recall's own `DISTRIBUTION_RECALL` row's answer is read; a refusal is logged naming the recall (`DIST-16`'s caveat).
+- The same read (and the same record) serves supersede's recall, every P26 door, P28's new doors and the bulk doors' `recallRetiredBatch` (per document). A never-issued document (`recallCopyHolders: false`) reads nothing, as before.
+
+**Tests.** `lib/__tests__/dcRoundGP28StatusDoorRemainders.test.ts` "DELIV-17": REGRESSION — a read that succeeds sends exactly today's `doc_recalled` (every field), its `DISTRIBUTION_RECALL` row and the FYI, with no log; a read that fails twice (and one that throws twice) → the unavailable row, the warning and the error, no `doc_recalled`, the FYI excluding nobody; a read that fails once → one recall to the holders, one row, one warning; a dispatch failure past the read is logged; a never-issued document reads nothing. `lib/__tests__/staleCopiesRecall.test.ts` unchanged and green.
+
+**Done-when.**
+- ✓ The read's `{ error }` is checked; a failed read is logged with the document and the error and retried at most once; if it still fails, a `DISTRIBUTION_RECALL` row records that the recall could not be evaluated; a failure past the read is logged and never a silent 0.
+- ✓ No door's timing or return value changes: every caller still fires the function and never awaits it (the retry is inside it).
+- ✓ Tests (above), the REGRESSION one included.
+
+**Scope / residual.** The "Related, not a done-when" cap (1000 unordered rows in 365 days, not reported on the row) is unchanged; not this finding's done-when, recorded as before. Whether the actor is also told that the recall could not be computed is left as it is (the record and the log say it).
 
 ---

@@ -1736,3 +1736,28 @@ Not touched here:
 **Scope / residual.** None. The page's `isActiveMember` line (admin-and-org P12) is untouched.
 
 ---
+
+<a id="rev-31"></a>
+
+## REV-31 · The bulk retirements and the metadata editor's retired save skip what the Archive dialog does around a retirement: the review draft is not voided (REV-6), live share links are not revoked (REV-10), no ARCHIVE_DOC record is written
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Assigned:** unassigned — document-control, to be planned by the integrator (DEC-31). Opened 2026-10-20 by document-control Round G, P28 STATUS-DOOR REMAINDERS, which routed these doors' recall and watchers' FYI (`PROD-17`) but not the rest of `archiveDocument`'s retirement duties.
+- **Verification:** READ (the code on `fleet/P28-status-door-remainders`, base `a21c718`)
+- **Locations:** `app/(protected)/documents/[libraryId]/page.tsx` `handleBulkArchive` (one bare `update({ status: "Archived", archived_at, archived_by, … }).in("id", targets)`) and `saveMetadata`'s retired branch (`changeDocumentStatus`, a status write); `components/documents/BulkEditModal.tsx` (a bare write per row to Superseded / Archived); for contrast `lib/revisions.ts` `archiveDocument` (`authorizeArchive`, `voidPendingDraftAfterPublish`, `revokeLiveSharesForDocument`, `ARCHIVE_DOC`) and `supersedeDocument`.
+- **Related:** `PROD-17` (notifications `01-producer-census.md` — P28 left these doors on the batched recall instead of routing them through `archiveDocument`, a departure recorded there for the integrator), `REV-6`, `REV-10`, `DIST-1`.
+- **Independently verified:** — opened by P28 from its own recon; not yet challenged.
+
+**Mechanism.** The Archive dialog's `archiveDocument` and `supersedeDocument`, after the status write lands, void the document's in-flight review draft (`REV-6`: a review of a retired document can never publish, but its roster stays live), revoke its live public share links (`REV-10` / `DIST-1`: a share link must stop serving a retired drawing) and write the retirement's record (`ARCHIVE_DOC` / `SUPERSEDE_DOC`). The three status-editor retirements — the library page's bulk archive, the bulk editor's Superseded / Archived and the metadata editor's save to Void / Superseded / Archived — do none of the three. Since P28 they recall the copy holders and tell the watchers (`PROD-17`), so the notices are right; the document's draft, links and history are not.
+
+**Failure scenario.** Document Control bulk-archives a folder of 40 sheets. A sheet with a public share link handed to a vendor keeps serving its PDF (the share routes refuse a retired status since `REV-10`, but the link is not revoked and its count is on no record); a sheet with a draft in review keeps its reviewers' requests open; the audit trail shows a status change with no `ARCHIVE_DOC` and no reason.
+
+**Done when.**
+- [ ] Each of the three doors, after its write lands, voids the retired document's pending review draft and revokes its live share links with the same checked routines `archiveDocument` uses, and writes the retirement's record (with a reason where the door asks one, or a fixed sentence naming the door).
+- [ ] The bulk doors keep ONE batched recall per apply (`lib/staleCopies.ts` `recallRetiredBatch`) — routing each row through `archiveDocument` as it stands would send one recall chain per row (`PROD-17`'s burst).
+- [ ] Tests: each door voids, revokes and records; a refused row does none of it; REGRESSION — the writes and the notices are what they are today.
+
+**Closer:** document-control (the integrator routes it).
+
+---
