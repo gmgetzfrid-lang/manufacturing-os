@@ -34,12 +34,15 @@
 // caching behavior changes (v4: RSC payloads are never cached; data GETs are
 // network-first — stale-while-revalidate was serving old app navigations.
 // v5: stop inventing 504s — see the honesty rule below. v6: prefetches
-// are never intercepted).
-const VERSION = "mfgos-v6";
+// are never intercepted. v7: nor is the manifest).
+const VERSION = "mfgos-v7";
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 
-const SHELL_ASSETS = ["/", "/offline", "/icon.svg", "/manifest.webmanifest"];
+// Not the manifest: the browser fetches it itself (with the sign-in a
+// protected preview deployment needs). Fetched from here it was redirected
+// to Vercel's sign-in page and surfaced as "503 (Offline)" in the console.
+const SHELL_ASSETS = ["/", "/offline", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -153,6 +156,9 @@ self.addEventListener("fetch", (event) => {
   ) {
     return;
   }
+  // The web-app manifest is the browser's own business — see SHELL_ASSETS.
+  if (url.pathname === "/manifest.webmanifest") return;
+
   // Prefetches of any kind (the router's, the browser's speculative loads):
   // nobody is waiting on them, the browser cancels them freely, and a
   // cancelled one must never surface as a "503 (Offline)" console line.
