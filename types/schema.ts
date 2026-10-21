@@ -1303,6 +1303,11 @@ export interface TicketHistoryEntry {
   date: Timestamp;
   details?: string;
   revisionRound?: number;
+  /** SM-7 (DF-P8): the id of the TICKET_<ACTION> audit row the workflow route
+   *  wrote before applying this transition — the maintenance drain's proof
+   *  that the transition landed (lib/ticketAuditDrain.ts). Absent on entries
+   *  written before DF-P8 and on lines no transition writes. */
+  attempt?: string;
 }
 
 export interface Ticket {
@@ -1366,6 +1371,10 @@ export interface Ticket {
    *  derived from the source document at creation, set or corrected at
    *  triage. null = not known yet (never required at intake). */
   libraryId?: string | null;
+  /** GAP-114 / DEC-40 (DF-P8, 20261256): the project this request belongs
+   *  to, BY REFERENCE (tickets.project_id). null = none; undefined = the
+   *  column is not in the database yet (today's path). */
+  projectId?: string | null;
 
   /** GAP-111 / DEC-33 (DF-P6, 20261250): engineering review is required
    *  before this request may issue. A ratchet — the database refuses

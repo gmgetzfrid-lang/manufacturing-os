@@ -142,7 +142,7 @@ describe("GAP-105 (fix pass) — the library is NOT in the capability resource y
   });
   it("the restore clears a ticket's library that is not in the target workspace (ON DELETE SET NULL's answer), never refuses the ticket", async () => {
     const { restoreParentRulesFor } = await import("@/lib/dataRestore");
-    expect(restoreParentRulesFor("tickets")).toEqual([{ column: "library_id", parent: "libraries", clearWhenMissing: true }]);
+    expect(restoreParentRulesFor("tickets").filter((r) => r.column !== "project_id")).toEqual([{ column: "library_id", parent: "libraries", clearWhenMissing: true }]);
   });
 });
 
@@ -544,8 +544,15 @@ describe("DCW-4 (DF-P4 limb) — a request with a library but no source document
     expect(deliverableStateOf(u.metadata as Record<string, unknown>)).toMatchObject({ state: "not_in_register", document_id: null, library_id: LIB });
     expect((u.history as Array<{ action: string; details?: string }>).at(-1)).toMatchObject({ action: "Closed — deliverable not in the register", details: expect.stringContaining("P&IDs") });
 
+    // DCW-4 remainder (DF-P8, DEC-90 ruling (5)): no library and no source, with
+    // an issued Final → the register visibly does not have it (no library named).
     state.calls = [];
     state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", assigned_drafter_id: "d-1", attachments: [FINAL] })];
+    expect((await post({ ticketId: "t1", actionType: "close_ticket" })).status).toBe(200);
+    expect(deliverableStateOf(ticketUpdates()[0].metadata as Record<string, unknown>)).toMatchObject({ state: "not_in_register", document_id: null, library_id: null });
+    // REGRESSION: no library, no source, no Final → closes as before (nothing written)
+    state.calls = [];
+    state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", assigned_drafter_id: "d-1", attachments: [] })];
     expect((await post({ ticketId: "t1", actionType: "close_ticket" })).status).toBe(200);
     expect("metadata" in ticketUpdates()[0]).toBe(false);
   });

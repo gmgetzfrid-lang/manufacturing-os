@@ -25,6 +25,7 @@ import { userFacingError, userFacingCaughtError } from "@/lib/userFacingError";
 import { FileStack, Search, Plus, X, Loader2, ExternalLink, EyeOff } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { writeActivity, listProjectDocuments, type ProjectDocumentRow, type ProjectDocumentRegister } from "@/lib/projects";
+import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { DECISION_TARGET } from "@/components/projects/decisionTarget";
 
@@ -50,7 +51,11 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
   // Attach picker
   const [attachOpen, setAttachOpen] = useState(false);
   const [q, setQ] = useState("");
-  const [results, setResults] = useState<Array<{ id: string; label: string }>>([]);
+  const [results, setResults] = useState<Array<{ id: string; label: string; notCurrent?: string | null }>>([]);
+  // PROJ-8 (drafting-flow DF-P8): the picker offers current documents; a
+  // superseded / void / archived one is shown only on request, labelled.
+  const [showNotCurrent, setShowNotCurrent] = useState(false);
+  const [hiddenNotCurrent, setHiddenNotCurrent] = useState(0);
   const [searching, setSearching] = useState(false);
   const seq = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -81,14 +86,18 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
       try {
         const { data } = await supabase
           .from("documents")
-          .select("id, document_number, title, name")
+          .select("id, document_number, title, name, status, archived_at")
           .eq("org_id", orgId)
           .or(`document_number.ilike.%${term}%,title.ilike.%${term}%,name.ilike.%${term}%`)
           .limit(8);
         if (mySeq !== seq.current) return;
-        setResults((((data ?? []) as Array<Record<string, unknown>>)).map((d) => ({
-          id: String(d.id), label: String(d.document_number || d.title || d.name || "Document"),
-        })));
+        const found = (((data ?? []) as Array<Record<string, unknown>>)).map((d) => {
+          const status = typeof d.status === "string" ? d.status : "";
+          const notCurrent = d.archived_at ? "Archived" : NOT_CURRENT_STATUSES.has(status) ? status : null;
+          return { id: String(d.id), label: String(d.document_number || d.title || d.name || "Document"), notCurrent };
+        });
+        setHiddenNotCurrent(found.filter((r) => r.notCurrent).length);
+        setResults(found);
       } finally {
         if (mySeq === seq.current) setSearching(false);
       }
@@ -178,9 +187,15 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
             />
           </div>
           {searching && <div className="mt-1.5 text-[10px] text-[var(--color-text-faint)]">Searching…</div>}
+          {hiddenNotCurrent > 0 && (
+            <label className="mt-1.5 flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
+              <input type="checkbox" checked={showNotCurrent} onChange={(e) => setShowNotCurrent(e.target.checked)} />
+              Show {hiddenNotCurrent} superseded / void / archived match{hiddenNotCurrent === 1 ? "" : "es"} (not current)
+            </label>
+          )}
           {results.length > 0 && (
             <ul className="mt-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
-              {results.filter((r) => !rows.some((x) => x.docId === r.id)).map((r) => (
+              {results.filter((r) => !rows.some((x) => x.docId === r.id)).filter((r) => showNotCurrent || !r.notCurrent).map((r) => (
                 <li key={r.id}>
                   <button
                     onClick={() => void attach(r)}
@@ -188,6 +203,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
                     className={`${DECISION_TARGET} w-full text-left px-2.5 py-1.5 text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors`}
                   >
                     {r.label}
+                    {r.notCurrent && <span className="ml-2 text-[9px] font-black uppercase tracking-wider text-amber-800 dark:text-amber-200 bg-amber-500/15 border border-amber-500/40 px-1.5 py-0.5 rounded">{r.notCurrent} — not current</span>}
                   </button>
                 </li>
               ))}
@@ -220,6 +236,10 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
                       </span>
                     )}
                     <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${badge.cls}`} title={badge.hint}>{badge.label}</span>
+                    {/* PROJ-5 (drafting-flow DF-P8): a linked document still in the intake folder is not adopted yet. */}
+                    {r.linkId && r.inIntakeFolder && (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30" title="Submitted through a contractor intake link — still in the project's intake folder (adopt it from the Intake tab to file it)">in intake — not adopted</span>
+                    )}
                   </div>
                   {r.lastSeenAt && <div className="text-[10px] text-[var(--color-text-faint)] mt-0.5">last activity {new Date(r.lastSeenAt).toLocaleDateString()}</div>}
                 </div>

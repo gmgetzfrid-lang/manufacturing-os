@@ -332,6 +332,10 @@ export default function CheckInPanel({
         versionId: doc.currentVersionId ?? null,
       }],
       attachments: staged.map((f) => ({ kind: "staged" as const, key: f.key, name: f.name })),
+      // PROJ-4 (DF-P8): the project this checkout was taken under — the route
+      // records the project of THIS requester's own session (its record, not
+      // this value) and stamps the session with the request it raised.
+      projectId: mySession.projectId ?? null,
       origin: {
         kind: "checkin",
         episodeId: episode?.id ?? null,

@@ -18,6 +18,7 @@
 import { supabase } from "@/lib/supabase";
 import { userFacingReadError } from "@/lib/userFacingError";
 import { csvLine } from "@/lib/csvSafe";
+import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 
 function csvRow(fields: unknown[]): string {
   return csvLine(fields);
@@ -114,7 +115,7 @@ async function loadProjectBundles(
     for (const part of chunks(docIds, EXPORT_DOC_BATCH)) {
       if (opts.signal?.aborted) throw new ExportCancelledError();
       const res = await supabase
-        .from("documents").select("id, document_number, title, name, rev, status, library_id")
+        .from("documents").select("id, document_number, title, name, rev, status, library_id, archived_at")
         .in("id", part);
       for (const d of rowsOf("documents", res)) docById.set(String(d.id), d);
     }
@@ -155,9 +156,13 @@ function bundleToCsv(b: ProjectExportRow, indent = ""): string {
   out.push(`${indent}${csvRow(["Last activity", p.last_activity_at ?? ""])}`);
   out.push("");
   out.push(`${indent}DOCUMENTS (${b.documents.length})`);
-  out.push(`${indent}${csvRow(["Doc Number", "Title", "Rev", "Status", "Library ID"])}`);
+  // PROJ-8 (drafting-flow DF-P8; DEC-40): the export marks a document that is
+  // not the current controlled revision (superseded / void / archived) —
+  // the file most likely to reach a contractor says so in its own column.
+  out.push(`${indent}${csvRow(["Doc Number", "Title", "Rev", "Status", "Library ID", "Current"])}`);
   for (const d of b.documents) {
-    out.push(`${indent}${csvRow([d.document_number, d.title || d.name, d.rev, d.status, d.library_id])}`);
+    const notCurrent = !!d.archived_at || NOT_CURRENT_STATUSES.has(String(d.status ?? ""));
+    out.push(`${indent}${csvRow([d.document_number, d.title || d.name, d.rev, d.status, d.library_id, notCurrent ? "NOT CURRENT" : "yes"])}`);
   }
   out.push("");
   out.push(`${indent}CHECKOUTS (${b.checkouts.length})`);

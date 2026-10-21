@@ -12,6 +12,7 @@ import { declarationSignatureRefusal, isMissingReviewModelColumn, type Declarati
 import { formatTicketNumber, ticketNumberConfigFromRow } from "@/lib/ticketNumber";
 import { boundedSlaDays, defaultSlaTargetDate, slaTargetDateInDays } from "@/lib/notifications";
 import { missingLibraryColumn } from "@/lib/ticketLibrary";
+import { isMissingProjectColumn, PROJECT_NOT_RECORDED_WARNING, PROJECT_LINK_CLOSED, recordProjectActivity } from "@/lib/ticketProject";
 import { resolveTicketRecipients } from "@/lib/ticketRouting";
 import { emit } from "@/lib/notify/dispatch";
 import { escapeHtml } from "@/lib/ticketTransitions";
@@ -500,6 +501,23 @@ async function create(
   const origin = checked.origin;
   warnings.push(...checked.warnings);
 
+  // GAP-114 / DEC-40 / DEC-101's seam (DF-P8): the project this request
+  // belongs to, BY REFERENCE (tickets.project_id, 20261256). Never the
+  // client's word alone — an advisory hand-off, never a refusal:
+  //   portal           the request form's projectId — kept only when it is a
+  //                    project of this workspace the caller can see (read AS
+  //                    THE CALLER) that is not closed; otherwise dropped with
+  //                    a warning;
+  //   checkin          the project of the requester's OWN checkout session
+  //                    this check-in closes (PROJ-4) — the server's record,
+  //                    whatever the body says; that session is stamped with
+  //                    the request (checkout_sessions.linked_ticket_id,
+  //                    PROJ-10) once it is filed;
+  //   intake_collision the project checkOrigin verified (PROJ-12).
+  // A request with no project is exactly today's request.
+  const link = await resolveRequestProject(input, origin, orgId, caller.id, primary, caller_client);
+  warnings.push(...link.warnings);
+
   // FRIC-3 done-when 2: no unit given → the source document's own, when it
   // names one, resolved against the list like any other: its metadata unit
   // (what the check-in and the collision always wrote), then its codebook
@@ -758,6 +776,7 @@ async function create(
   // source document it stays unset and triage sets it.
   const primaryLibrary = primary ? (byId.get(primary.id)?.library_id ?? null) : null;
   if (primaryLibrary) row.library_id = primaryLibrary;
+  if (link.projectId) row.project_id = link.projectId;
   // GAP-110 / DEC-34 (DF-P6): a declared request is filed under the id its
   // signature names, with the declaration in columns the guard makes
   // immutable (20261250) and engineering_required false — the one thing
@@ -781,6 +800,21 @@ async function create(
 
   let ticketNumber = "";
   let ticketId = "";
+  // GAP-114 (DF-P8): before 20261256 is pasted tickets.project_id is not
+  // there (42703 / PGRST204 naming it) — Postgres refused the insert, nothing
+  // was written, so the same number is retried without it (today's path). A
+  // project the requester chose is then said not recorded; an intake
+  // collision's project stays where it always was (metadata.intake_collision).
+  let projectDropped = false;
+  const insertTicketRow = async () => {
+    let r = await supabaseAdmin.from("tickets").insert(row).select("id").single();
+    if (r.error && "project_id" in row && isMissingProjectColumn(r.error)) {
+      delete row.project_id;
+      projectDropped = true;
+      r = await supabaseAdmin.from("tickets").insert(row).select("id").single();
+    }
+    return r;
+  };
   for (let attempt = 0; !ticketId; attempt++) {
     const { data: seqRaw, error: seqErr } = await caller_client.rpc("next_ticket_number", { p_org: orgId, p_year: year });
     if (seqErr || seqRaw == null) {
@@ -796,14 +830,14 @@ async function create(
     ticketNumber = formatTicketNumber(numberCfg, year, seq);
     row.ticket_id = ticketNumber;
 
-    let { data: inserted, error: insErr } = await supabaseAdmin.from("tickets").insert(row).select("id").single();
+    let { data: inserted, error: insErr } = await insertTicketRow();
     // GAP-105 (DF-P4): before 20261208 is pasted tickets.library_id is not
     // there (42703 / PGRST204) — Postgres refused the insert, nothing was
     // written, so the same number is retried without the library (today's
     // path: the ticket has no library).
     if (insErr && "library_id" in row && missingLibraryColumn(insErr)) {
       delete row.library_id;
-      ({ data: inserted, error: insErr } = await supabaseAdmin.from("tickets").insert(row).select("id").single());
+      ({ data: inserted, error: insErr } = await insertTicketRow());
     }
     // GAP-110 (DF-P6): before 20261250 is pasted the declaration's columns
     // are not there (42703 / PGRST204) — nothing was written; the same
@@ -818,10 +852,10 @@ async function create(
       delete row.engineering_required;
       row.history = (row.history as Array<Record<string, unknown>>).filter((h) => h.action !== "Declared like-in-kind (signed)");
       warnings.push("Your like-in-kind declaration is signed but could not be recorded on the request yet (database update 20261250 is not applied) — the request was filed the usual way.");
-      ({ data: inserted, error: insErr } = await supabaseAdmin.from("tickets").insert(row).select("id").single());
+      ({ data: inserted, error: insErr } = await insertTicketRow());
       if (insErr && "library_id" in row && missingLibraryColumn(insErr)) {
         delete row.library_id;
-        ({ data: inserted, error: insErr } = await supabaseAdmin.from("tickets").insert(row).select("id").single());
+        ({ data: inserted, error: insErr } = await insertTicketRow());
       }
     }
     if (!insErr && inserted) {
@@ -851,6 +885,27 @@ async function create(
     return settled.kind === "taken"
       ? { status: 500, error: "The request could not be saved — nothing was filed. Try again." }
       : settled.fail;
+  }
+
+  // GAP-114 / PROJ-4 / PROJ-10 / PROJ-12 (DF-P8): the project side of a
+  // request filed into a project — the feed row (the request is visible on
+  // the project from its birth), and the check-in's own checkout session
+  // stamped with the request it raised. Checked; a refusal is said, the
+  // request stands.
+  if (projectDropped && origin.kind !== "intake_collision") warnings.push(PROJECT_NOT_RECORDED_WARNING);
+  if (link.projectId && !projectDropped) {
+    const feedErr = await recordProjectActivity(supabaseAdmin, {
+      projectId: link.projectId, orgId, userId: caller.id, userName: email || null,
+      type: "request_linked",
+      body: `${ticketNumber} — ${input.title} filed ${origin.kind === "checkin" ? "from a check-in under this project" : origin.kind === "intake_collision" ? "from an intake collision on this project" : "into this project"}`,
+      metadata: { ticketId, ticketNumber, via: origin.kind },
+    });
+    if (feedErr) warnings.push(`The request was filed into the project, but the project's feed was not told: ${feedErr}`);
+  }
+  if (origin.kind === "checkin" && link.sessionId) {
+    const { error: stampErr } = await supabaseAdmin.from("checkout_sessions")
+      .update({ linked_ticket_id: ticketId }).eq("id", link.sessionId).is("linked_ticket_id", null).select("id");
+    if (stampErr) console.warn(`[tickets/create] checkout session ${link.sessionId} could not be stamped with ${ticketNumber}: ${stampErr.message}`);
   }
 
   // GAP-312 / WIRE-7 criterion 1 (DF-P6): the equipment the request names —
@@ -959,6 +1014,51 @@ async function recordEquipment(orgId: string, ticketId: string, uid: string, equ
   if (unresolved.length > 0) out.push(`Not found in the equipment registry, kept as typed: ${unresolved.join(", ")}.`);
   if (notLooked.length > 0) out.push(`Could not be checked against the equipment registry (the lookup failed), kept as typed: ${notLooked.join(", ")}.`);
   return out;
+}
+
+/** GAP-114 / DEC-40 (DF-P8): the project a new request belongs to, and the
+ *  check-in's own checkout session. Advisory: a project that cannot be
+ *  confirmed is dropped with a warning (never a refusal, never trusted). */
+async function resolveRequestProject(
+  input: TicketCreateInput, origin: TicketCreateOrigin, orgId: string, callerId: string,
+  primary: SourceDocumentRefRow | null, callerClient: SupabaseClient,
+): Promise<{ projectId: string | null; sessionId: string | null; warnings: string[] }> {
+  const warnings: string[] = [];
+  if (origin.kind === "intake_collision") return { projectId: origin.projectId, sessionId: null, warnings };
+  if (origin.kind === "checkin") {
+    if (!primary) return { projectId: null, sessionId: null, warnings };
+    // The session checkOrigin accepted: this requester's, on this document,
+    // in the check-in's episode (any status) or still active — newest first.
+    const { data, error } = await supabaseAdmin
+      .from("checkout_sessions").select("id, episode_id, status, project_id")
+      .eq("document_id", primary.id).eq("user_id", callerId)
+      .order("started_at", { ascending: false }).limit(20);
+    if (error) {
+      if (input.projectId) warnings.push("The project of this checkout could not be read — the request was filed without it; link it from the request page.");
+      return { projectId: null, sessionId: null, warnings };
+    }
+    const rows = (data ?? []) as Array<{ id: string; episode_id?: string | null; status?: string | null; project_id?: string | null }>;
+    const s = rows.find((r) => origin.episodeId != null && r.episode_id === origin.episodeId) ?? rows.find((r) => r.status === "active") ?? null;
+    if (!s) return { projectId: null, sessionId: null, warnings };
+    const pid = typeof s.project_id === "string" && s.project_id ? s.project_id : null;
+    if (pid) {
+      const { data: p, error: pErr } = await supabaseAdmin.from("projects").select("id").eq("id", pid).eq("org_id", orgId).maybeSingle();
+      if (pErr || !p) {
+        warnings.push("The project this checkout was under could not be confirmed — the request was filed without it.");
+        return { projectId: null, sessionId: s.id, warnings };
+      }
+    }
+    return { projectId: pid, sessionId: s.id, warnings };
+  }
+  const asked = typeof input.projectId === "string" ? input.projectId.trim() : "";
+  if (!asked) return { projectId: null, sessionId: null, warnings };
+  const dropped = "The project named is not one you can see in this workspace (or it is closed) — the request was filed without it.";
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(asked)) return { projectId: null, sessionId: null, warnings: [dropped] };
+  const { data: p, error: pErr } = await callerClient.from("projects").select("id, org_id, status").eq("id", asked).maybeSingle();
+  if (pErr) return { projectId: null, sessionId: null, warnings: ["The project named could not be read — the request was filed without it; link it from the request page."] };
+  const proj = p as { id: string; org_id: string; status: string | null } | null;
+  if (!proj || proj.org_id !== orgId || PROJECT_LINK_CLOSED.has(String(proj.status ?? ""))) return { projectId: null, sessionId: null, warnings: [dropped] };
+  return { projectId: proj.id, sessionId: null, warnings };
 }
 
 /** The origin's own facts (FRIC-8 / EDGE-13). Required custom fields and

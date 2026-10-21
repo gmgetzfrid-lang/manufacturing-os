@@ -880,8 +880,8 @@ describe("FRIC-3 / DCW-7 — the unit is optional, explicit when unknown, resolv
   });
 });
 
-describe("the contract's seams: the DEC-40 projectId travels and is ignored; the DEC-34 declaration is DF-P6's (lib/__tests__/reviewModel.test.ts)", () => {
-  it("a projectId is parsed and not written; a declaration that is present but malformed is refused with the reason, and a blank one never blocks", async () => {
+describe("the contract's seams: the DEC-40 projectId is DF-P8's (confirmed, then written — lib/__tests__/dfRoundG_P8_projects.test.ts); the DEC-34 declaration is DF-P6's (lib/__tests__/reviewModel.test.ts)", () => {
+  it("a projectId is parsed and, for a project of the workspace the caller sees, written; a declaration that is present but malformed is refused with the reason, and a blank one never blocks", async () => {
     const parsed = parseTicketCreateBody({ ...portal(), projectId: PROJECT });
     expect(parsed.ok && parsed.input.projectId).toBe(PROJECT);
     const malformed = parseTicketCreateBody({ ...portal(), declaration: { text: "like for like" } });
@@ -890,7 +890,7 @@ describe("the contract's seams: the DEC-40 projectId travels and is ignored; the
     const blank = parseTicketCreateBody({ ...portal(), declaration: null });
     expect(blank.ok && blank.input.declaration).toBeFalsy();
     await POST(req({ ...portal({ attachments: [] }), projectId: PROJECT }));
-    expect(tickets()[0].project_id).toBeUndefined();
+    expect(tickets()[0].project_id).toBe(PROJECT);
     expect(JSON.stringify(tickets()[0].metadata)).not.toContain("declaration");
     // no declaration: nothing is written for one — the database's default (engineered) is the answer
     expect(tickets()[0].engineering_required).toBeUndefined();
@@ -2023,5 +2023,76 @@ describe("DF-P6 — GAP-110 / DEC-34: the like-in-kind declaration at filing; GA
     expect(res.status).toBe(201);
     expect(JSON.stringify((await res.json()).warnings)).toMatch(/20261251 is not applied/);
     expect(tickets()).toHaveLength(1);
+  });
+});
+
+// ── drafting-flow Round G, DF-P8 PROJECTS — GAP-114 / DEC-40 / PROJ-4 / PROJ-10 / PROJ-12 ──
+describe("DF-P8 — a request filed into a project names it BY REFERENCE (tickets.project_id), confirmed by the route", () => {
+  const activity = () => (s.tables.project_activity ?? []) as Row[];
+  it("the request form: a project of the workspace the caller can see is written, with one project feed row; REGRESSION: no projectId → no project_id, no feed row", async () => {
+    const res = await POST(req({ ...portal({ attachments: [] }), projectId: PROJECT }));
+    expect(res.status).toBe(201);
+    expect(tickets()[0].project_id).toBe(PROJECT);
+    expect(activity()).toHaveLength(1);
+    expect(activity()[0]).toMatchObject({ project_id: PROJECT, org_id: ORG, type: "request_linked" });
+    s.tables.tickets = []; s.tables.project_activity = [];
+    const plain = await POST(req(portal({ attachments: [] })));
+    expect(plain.status).toBe(201);
+    expect("project_id" in tickets()[0]).toBe(false);
+    expect(activity()).toHaveLength(0);
+  });
+  it("the request form: an unknown, malformed, another workspace's or closed project is dropped with a warning — never a refusal", async () => {
+    for (const projectId of ["ffffffff-0000-4000-8000-0000000000aa", "not-a-uuid"]) {
+      s.tables.tickets = [];
+      const res = await POST(req({ ...portal({ attachments: [] }), projectId }));
+      expect(res.status).toBe(201);
+      expect(JSON.stringify((await res.json()).warnings)).toMatch(/project named is not one you can see/);
+      expect("project_id" in tickets()[0]).toBe(false);
+    }
+    s.tables.tickets = [];
+    (s.tables.projects as Row[])[1].status = "completed";
+    const closed = await POST(req({ ...portal({ attachments: [] }), projectId: PROJECT2 }));
+    expect(JSON.stringify((await closed.json()).warnings)).toMatch(/or it is closed/);
+    expect("project_id" in tickets()[0]).toBe(false);
+  });
+  it("PROJ-4 / PROJ-10: a check-in takes the project of the requester's OWN checkout session (whatever the body says) and stamps that session with the request", async () => {
+    (s.tables.checkout_sessions as Row[])[0].project_id = PROJECT;
+    const res = await POST(req({ ...checkin(), projectId: PROJECT2 }));
+    expect(res.status).toBe(201);
+    const t = tickets()[0];
+    expect(t.project_id).toBe(PROJECT);
+    expect((s.tables.checkout_sessions as Row[])[0].linked_ticket_id).toBe(t.id);
+    expect((s.tables.checkout_sessions as Row[])[1].linked_ticket_id).toBeUndefined();
+    expect(activity().map((a) => a.project_id)).toEqual([PROJECT]);
+  });
+  it("REGRESSION: an ad-hoc check-in (a session with no project) files as today — no project_id, no feed row — and its session is still stamped with the request", async () => {
+    const res = await POST(req(checkin()));
+    expect(res.status).toBe(201);
+    expect("project_id" in tickets()[0]).toBe(false);
+    expect(activity()).toHaveLength(0);
+    expect((s.tables.checkout_sessions as Row[])[0].linked_ticket_id).toBe(tickets()[0].id);
+  });
+  it("PROJ-12: an intake collision names its verified project in the column (and still in metadata.intake_collision), with a feed row", async () => {
+    const res = await POST(req(collision()));
+    expect(res.status).toBe(201);
+    const t = tickets()[0];
+    expect(t.project_id).toBe(PROJECT);
+    expect((t.metadata as Row).intake_collision).toMatchObject({ projectId: PROJECT });
+    expect(activity()[0]).toMatchObject({ project_id: PROJECT, type: "request_linked" });
+  });
+  it("before 20261256: the insert answers 42703 naming project_id — retried once without it, the request filed; the request form says the project was not recorded, a collision says nothing (its metadata carries the project, as today)", async () => {
+    s.errors["tickets.insert"] = [{ code: "42703", message: 'column "project_id" of relation "tickets" does not exist' }];
+    const res = await POST(req({ ...portal({ attachments: [] }), projectId: PROJECT }));
+    expect(res.status).toBe(201);
+    expect(JSON.stringify((await res.json()).warnings)).toMatch(/20261256 is not applied/);
+    expect(tickets()).toHaveLength(1);
+    expect("project_id" in tickets()[0]).toBe(false);
+    expect(activity()).toHaveLength(0);
+    s.tables.tickets = [];
+    s.errors["tickets.insert"] = [{ code: "PGRST204", message: "Could not find the 'project_id' column of 'tickets' in the schema cache" }];
+    const col = await POST(req(collision()));
+    expect(col.status).toBe(201);
+    expect(JSON.stringify((await col.json()).warnings ?? [])).not.toMatch(/20261256/);
+    expect((tickets()[0].metadata as Row).intake_collision).toMatchObject({ projectId: PROJECT });
   });
 });

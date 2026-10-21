@@ -223,6 +223,9 @@ describe("ALOG-1 done-when 2 — the record's census of the loaders' callers is 
     // strict (drafting-flow DF-P7): the consent-window step reads who runs
     // the assignment queue; a policy it cannot read skips that org's windows
     "lib/consentWindowScan.ts",
+    // strict (drafting-flow DF-P8): the project-link route asks whether a
+    // non-requester holds ticket.manage; an unreadable policy refuses (503)
+    "app/api/tickets/project-link/route.ts",
   ]);
 
   it("every caller of loadCapabilityPolicy / …Entry / …Strict outside the module is one the record lists", () => {

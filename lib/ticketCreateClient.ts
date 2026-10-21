@@ -28,6 +28,9 @@ export interface TicketCreateBody {
   declaration?: TicketCreateDeclaration | null;
   /** GAP-312 (DF-P6): equipment the request names. */
   equipment?: TicketCreateEquipment[];
+  /** GAP-114 / DEC-40 (DF-P8): the project the request belongs to — the
+   *  route confirms it (a check-in's is its own checkout session's). */
+  projectId?: string | null;
 }
 
 /** LIFE-7: what became of a check-in's PSM escalation, which the route sends

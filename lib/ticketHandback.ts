@@ -18,7 +18,12 @@ export type DeliverableState =
   | { state: "not_in_register"; document_id: string; register_rev: string | null; noted_at: string }
   /** DCW-4 (DF-P4): a request with no source document but a target library
    *  (GAP-105) closed without its deliverable entering that library. */
-  | { state: "not_in_register"; document_id: null; library_id: string; register_rev: null; noted_at: string };
+  | { state: "not_in_register"; document_id: null; library_id: string; register_rev: null; noted_at: string }
+  /** DCW-4 remainder (DF-P8, DEC-90 ruling (5)): a request with neither a
+   *  source document nor a library (DEC-107) closed with an issued
+   *  deliverable that was never published — the register visibly does not
+   *  have it, and no place in it was named. */
+  | { state: "not_in_register"; document_id: null; library_id: null; register_rev: null; noted_at: string };
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
@@ -79,6 +84,7 @@ export function deliverableStateOf(metadata: Record<string, unknown> | null | un
   if (d.state === "published" && typeof d.version_id === "string") return d as unknown as DeliverableState;
   if (d.state === "not_in_register" && typeof d.document_id === "string") return d as unknown as DeliverableState;
   if (d.state === "not_in_register" && d.document_id == null && typeof d.library_id === "string") return d as unknown as DeliverableState;
+  if (d.state === "not_in_register" && d.document_id == null && d.library_id === null) return d as unknown as DeliverableState;
   return null;
 }
 
@@ -106,6 +112,23 @@ export function noteDeliverableNotInLibrary(
   if (current?.state === "published") return null;
   const deliverable: DeliverableState = {
     state: "not_in_register", document_id: null, library_id: o.libraryId, register_rev: null, noted_at: o.now ?? new Date().toISOString(),
+  };
+  return { ...(metadata ?? {}), deliverable };
+}
+
+/** DCW-4 remainder (DF-P8, DEC-90 ruling (5)): closing a request that has
+ *  neither a source document nor a library, and carries an issued (Final)
+ *  deliverable that was never published, leaves the same visible, queryable
+ *  state — naming no place in the register (DEC-107: a library is never
+ *  required). null when the deliverable was already published. */
+export function noteDeliverableNotInAnyRegister(
+  metadata: Record<string, unknown> | null | undefined,
+  o: { now?: string } = {},
+): Record<string, unknown> | null {
+  const current = deliverableStateOf(metadata);
+  if (current?.state === "published") return null;
+  const deliverable: DeliverableState = {
+    state: "not_in_register", document_id: null, library_id: null, register_rev: null, noted_at: o.now ?? new Date().toISOString(),
   };
   return { ...(metadata ?? {}), deliverable };
 }

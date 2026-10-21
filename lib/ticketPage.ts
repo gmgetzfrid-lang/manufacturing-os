@@ -277,7 +277,13 @@ export function customCategorySections(
 /** The project a request is linked to: an intake collision names it
  *  (metadata.intake_collision.projectId — the only project reference a
  *  ticket carries until DF-P8 writes `tickets.project_id`). */
-export function projectRefOf(metadata: Record<string, unknown> | null | undefined): string | null {
+export function projectRefOf(metadata: Record<string, unknown> | null | undefined, projectId?: string | null): string | null {
+  // GAP-114 (DF-P8, 20261256): the column is the reference. Before the paste
+  // (undefined), or on a row the backfill did not write (null, and the link
+  // route never recorded a choice), the intake collision's project is read
+  // as before; a request somebody unlinked (metadata.project_link) has none.
+  if (typeof projectId === "string" && projectId.trim()) return projectId.trim();
+  if (projectId === null && metadata && typeof metadata === "object" && "project_link" in metadata) return null;
   const ic = metadata?.intake_collision;
   if (!ic || typeof ic !== "object" || Array.isArray(ic)) return null;
   const pid = (ic as { projectId?: unknown }).projectId;

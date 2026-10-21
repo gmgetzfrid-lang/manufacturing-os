@@ -28,6 +28,7 @@ import {
   SNAPSHOT_READS as R, PROJECT_FIELDS_NOT_MIGRATED, RFQ_GROUPS_NOT_MIGRATED, type ProjectStateSnapshot,
 } from "@/lib/projectHealth";
 import type { Milestone, MilestoneSource, MilestoneStatus } from "@/types/schema";
+import { TERMINAL_TICKET_STATUSES } from "@/lib/ticketShed";
 
 type Row = Record<string, unknown>;
 type QueryResult<T> = { data: T | null; error: { message: string; code?: string | null } | null };
@@ -276,6 +277,22 @@ export async function gatherProjectSnapshotUncached(
     }
     return row;
   };
+  // PROJ-6 (drafting-flow DF-P8): the project's open drafting requests, by
+  // reference (tickets.project_id, 20261256) — counted, never listed, as the
+  // viewer reads them. Before the paste the column is missing (42703 /
+  // PGRST204): undefined, and the closeout dialog is exactly today's.
+  const openRequestsRead: Promise<number | null | undefined> = (async () => {
+    try {
+      const r = await (sig(supabase.from("tickets").select("id", { count: "exact" })
+        .eq("project_id", projectId).is("archived_at", null)
+        .not("status", "in", `(${TERMINAL_TICKET_STATUSES.join(",")})`).limit(1)) as unknown as PromiseLike<{ count: number | null; error: { code?: string | null; message?: string } | null }>);
+      if (r.error) return r.error.code && MISSING_COLUMN.has(r.error.code) ? undefined : null;
+      return typeof r.count === "number" ? r.count : null;
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      return null;
+    }
+  })();
   const [projRow, accounts, entries, costDocRows, parties, coRows, msRows, checklists, turnover, punch, links, members] =
     await Promise.all([
       // All four columns arrive with 20261013 — there is no pre-migration
@@ -445,6 +462,7 @@ export async function gatherProjectSnapshotUncached(
 
   const reqTurnover = turnover.filter((t) => t.required !== false);
   const goals = proj.goals;
+  const openDraftingRequests = await openRequestsRead;
 
   return {
     hasPurpose: !!(proj.purpose as string | null)?.trim(),
@@ -488,5 +506,6 @@ export async function gatherProjectSnapshotUncached(
 
     readFailures,
     notMigrated,
+    ...(openDraftingRequests !== undefined ? { openDraftingRequests } : {}),
   };
 }

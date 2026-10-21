@@ -192,7 +192,7 @@ describe("pinned at the source — the publish path is reused, never reimplement
   });
   it("closing a ticket with a source document and no revision records 'not_in_register' and tells the people notified", () => {
     const r = src("app/api/tickets/workflow-action/route.ts");
-    expect(r).toContain('import { noteDeliverableNotInRegister, noteDeliverableNotInLibrary, deliverableStateOf } from "@/lib/ticketHandback";');
+    expect(r).toContain('import { noteDeliverableNotInRegister, noteDeliverableNotInLibrary, noteDeliverableNotInAnyRegister, deliverableStateOf, latestFinalAttachment } from "@/lib/ticketHandback";');
     expect(r).toMatch(/if \(newStatus === "CLOSED"\) \{/);
     // drafting-flow DCW-4 / HAND-3 (DF-P1): a recorded "published" state is believed only
     // when the register backs it — otherwise the close records not_in_register too

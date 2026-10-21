@@ -387,7 +387,7 @@ export const RESTORE_PARENT_RULES: Readonly<Record<string, ReadonlyArray<Restore
   // ACL: the library is not in the ticket's capability resource
   // (lib/workflow.ts ticketResource) — whoever adds it there (DF-P5) revisits
   // this rule. Refusing would drop the whole ticket, with its history.
-  tickets: fkRules("library_id>libraries?"),
+  tickets: fkRules("library_id>libraries? project_id>projects?"),
   transmittals: fkRules("project_id>projects"),
   turnover_items: fkRules("project_id>projects party_id>project_parties document_id>documents"),
   units: fkRules("plant_id>plants"),
@@ -964,7 +964,8 @@ export const RESTORE_TABLE_ORDER: string[] = [
   // Projects after documents: projects.sow_document_id references documents (20261013).
   "projects", "project_members",
   // Tickets before the holds and milestones that cite them (origin_ticket_id,
-  // linked_ticket_id); a ticket references nothing but its org.
+  // linked_ticket_id); a ticket references its library and (drafting-flow
+  // DF-P8, 20261256) its project — both above, both cleared when not restored.
   "ticket_number_counters", "tickets",
   "document_holds", "document_assets", "document_shares",
   "document_equipment_suggestions",

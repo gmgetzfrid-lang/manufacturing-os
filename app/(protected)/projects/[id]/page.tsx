@@ -32,6 +32,7 @@ import {
   UploadCloud,
 } from "lucide-react";
 import ProjectDocumentsCard from "@/components/projects/ProjectDocumentsCard";
+import ProjectRequestsCard from "@/components/projects/ProjectRequestsCard";
 import TabErrorBoundary from "@/components/projects/TabErrorBoundary";
 import EditProjectModal from "@/components/projects/EditProjectModal";
 import ProjectCoach from "@/components/projects/ProjectCoach";
@@ -664,6 +665,8 @@ export default function ProjectDetailPage() {
                 onLoaded={setRegister}
               />
             )}
+            {/* GAP-114 (drafting-flow DF-P8): the project's drafting requests, by reference. */}
+            {project.id && project.orgId && <ProjectRequestsCard orgId={project.orgId} projectId={project.id} />}
             <DocumentsTab checkouts={checkouts} />
             {project.id && project.orgId && uid && (
               <QuickNoteComposer

@@ -84,6 +84,12 @@ export interface ProjectStateSnapshot {
    *  raised by the zero — the coach names them instead of presenting the
    *  zeros as the truth. */
   readFailures?: string[];
+  /** PROJ-6 (drafting-flow DF-P8): drafting requests linked to the project
+   *  (tickets.project_id, 20261256) that are still open — not closed, not
+   *  canceled, not archived — as the viewer can read them. null = the read
+   *  failed (unknown, never clear); absent = the column is not in the
+   *  database yet (the gate line is not shown — today's dialog). */
+  openDraftingRequests?: number | null;
   /** What the database has not been migrated for (20261013): a SNAPSHOT_READS
    *  label for a table that does not exist yet, PROJECT_FIELDS_NOT_MIGRATED
    *  for the projects columns, or RFQ_GROUPS_NOT_MIGRATED. A known state,

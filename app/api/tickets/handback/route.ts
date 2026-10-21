@@ -46,6 +46,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { rowToTicket } from "@/lib/ticketTransitions";
 import { parseSourceDocument } from "@/lib/sourceDocRef";
 import { publishedDeliverable } from "@/lib/ticketHandback";
+import { referenceDeliverableInProject } from "@/lib/ticketProject";
 import { libraryChoiceFromRow, libraryLabelForTicket, UNNAMED_TARGET_LIBRARY } from "@/lib/ticketLibrary";
 import { LIBRARY_RUNG_COLUMNS } from "@/lib/libraryAccess";
 import type { TicketHistoryEntry } from "@/types/schema";
@@ -220,7 +221,23 @@ export async function POST(req: NextRequest) {
         : {}),
     },
   });
-  if (auditErr) return NextResponse.json({ ok: true, metadata, history, warning: `Recorded, but the audit row failed: ${auditErr.message}` });
+  // GAP-114 / PROJ-1's project half (DF-P8; DEC-40): a request that belongs
+  // to a project puts its published deliverable on the project's register
+  // as a REFERENCE to the controlled document (no bytes copied, no
+  // project-local record) and tells the project's feed. A request with no
+  // project does nothing here; a refusal is said, the hand-back stands.
+  let projectWarning: string | null = null;
+  if (!inReview && typeof ticket.projectId === "string" && ticket.projectId) {
+    const refErr = await referenceDeliverableInProject(supabaseAdmin, {
+      orgId: ticket.orgId, projectId: ticket.projectId, documentId, ticketId, ticketNumber: ticket.ticketId ?? null,
+      revisionLabel: v.revision_label ?? null, actorId: caller.id, actorName: callerEmail,
+    });
+    if (refErr) {
+      projectWarning = `Recorded, but the deliverable was not put on the request's project register: ${refErr}`;
+      console.warn(`[handback] ${ticketId}: ${projectWarning}`);
+    }
+  }
+  if (auditErr) return NextResponse.json({ ok: true, metadata, history, warning: `Recorded, but the audit row failed: ${auditErr.message}${projectWarning ? ` ${projectWarning}` : ""}` });
 
   // Tell the requester (and whoever follows the ticket): the loop closed.
   // NEDGE-15 (notifications Round G, N6): emit() is written against the
@@ -257,5 +274,5 @@ export async function POST(req: NextRequest) {
     console.warn("[handback] the notice could not be sent (the handback is recorded):", (e as Error).message);
   }
 
-  return NextResponse.json({ ok: true, metadata, history });
+  return NextResponse.json({ ok: true, metadata, history, ...(projectWarning ? { warning: projectWarning } : {}) });
 }

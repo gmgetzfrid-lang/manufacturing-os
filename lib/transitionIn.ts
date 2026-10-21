@@ -719,7 +719,7 @@ export interface FlagCollisionInput {
  *  contractor's portal can request redlines against the ticket. */
 export async function flagCollisionToDrafting(
   input: FlagCollisionInput,
-): Promise<{ ok: boolean; ticketNumber?: string; error?: string; warning?: string }> {
+): Promise<{ ok: boolean; ticketNumber?: string; ticketId?: string; error?: string; warning?: string }> {
   const { orgId, projectId, candidate, impact } = input;
 
   // Which intake link authored this sheet (if any) — lets the contractor's
@@ -800,7 +800,11 @@ export async function flagCollisionToDrafting(
       },
     }).then(() => undefined, () => undefined);
 
-    return { ok: true, ticketNumber, ...(notTold ? { warning: notTold } : {}) };
+    // PROJ-12 (DF-P8): the request's row id rides back so the flagger's
+    // notice links to /requests/<id>; the request names the project in
+    // tickets.project_id (the create route writes it from this origin) and
+    // appears on the project's Drafting requests card.
+    return { ok: true, ticketNumber, ticketId: String(row.id), ...(notTold ? { warning: notTold } : {}) };
   } catch (e) {
     return { ok: false, error: userFacingCaughtError(e, { context: "flagCollisionToDrafting" }) };
   }

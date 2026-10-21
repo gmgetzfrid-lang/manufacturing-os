@@ -177,6 +177,9 @@ export function rowToTicket(row: Record<string, unknown>): Ticket {
     // GAP-105 / DCW-1 (DF-P4): the library the request targets (null before
     // 20261208 is pasted, or when none is known yet).
     libraryId: typeof row.library_id === "string" ? row.library_id : null,
+    // GAP-114 (DF-P8, 20261256): the project, by reference — undefined while
+    // the column is not in the database (a select("*") row carries no key).
+    ...("project_id" in row ? { projectId: typeof row.project_id === "string" ? row.project_id : null } : {}),
     // GAP-110 / GAP-111 / GAP-101 (DF-P6, 20261250): undefined while the
     // columns are not in the database (the engine's seed then decides) —
     // the one mapper every Ticket builder shares (lib/reviewModel.ts).
@@ -1038,6 +1041,15 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
   const nowTerminal = TERMINAL.includes(newStatus);
   if (nowTerminal && !wasTerminal) updates.closed_at = new Date().toISOString();
   else if (!nowTerminal && wasTerminal) updates.closed_at = null;
+  // SM-4 done-whens 2-3 (DF-P8): a request that is live again belongs to no
+  // archive. The closed-ticket archive claims a terminal ticket by stamping
+  // archive_id (produce) and frees it later (commit); a reopen — or any
+  // transition that leaves a claimed row non-terminal (a stale claim left by
+  // a reopen before this change) — clears the claim in the SAME
+  // compare-and-set write, so the archive and the workflow never both own
+  // the row. A row with no claim gets exactly the updates it got before; an
+  // archived stub (archived_at set) is refused by the route before this runs.
+  if (!nowTerminal && ticket.archiveId && !ticket.archivedAt) updates.archive_id = null;
 
   const recipients = (activityRecipients ?? (updates.unread_by as string[])).filter((u) => u && u !== actorUid);
 

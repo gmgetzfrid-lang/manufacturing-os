@@ -506,7 +506,10 @@ describe("ORG-1 (fix pass 2) — a pointer is cleared instead of refusing its ro
     // ticket_equipment.asset_id (drafting-flow DF-P6, the integrator at its merge): the asset a
     // request's typed tag resolved to; it gates no read (the row is read through its ticket) and,
     // cleared, the typed tag stays and reads as not found — as the live FK leaves it.
-    expect(clearable.map(({ t, r }) => `${t}.${r.column}`).sort()).toEqual(["libraries.owner_team_id", "print_sheet_tokens.cover_print_id", "projects.sow_document_id", "ticket_equipment.asset_id", "tickets.library_id"]);
+    // tickets.project_id (drafting-flow DF-P8, 20261256): the project a request belongs to, by
+    // reference; it grants no read (the request is read as tickets are) — cleared, the request
+    // simply names no project, as the live FK leaves it when the project is deleted.
+    expect(clearable.map(({ t, r }) => `${t}.${r.column}`).sort()).toEqual(["libraries.owner_team_id", "print_sheet_tokens.cover_print_id", "projects.sow_document_id", "ticket_equipment.asset_id", "tickets.library_id", "tickets.project_id"]);
     expect(restoreParentRulesFor("documents").find((r) => r.column === "collection_id")?.clearWhenMissing).toBeUndefined();
   });
 });

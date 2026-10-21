@@ -81,8 +81,17 @@
 //     requirement is tickets.engineering_required; the minor-correction
 //     class is declared at approval (approve_minor_correction, TIER-7);
 //     undocumented_change drives only the PSM escalation notice (LIFE-7).
-//   * projectId            DEC-40 seam — tickets.project_id (DF-P8) is one
-//                          more optional field. Read and IGNORED until DF-P8.
+//   * projectId            DEC-40 / GAP-114 (DF-P8) — OPTIONAL: the project
+//                          the request belongs to, BY REFERENCE
+//                          (tickets.project_id, 20261256). The route writes
+//                          it only after confirming it: the request form's
+//                          project must be one of this workspace the caller
+//                          can see and not closed; a check-in takes the
+//                          project of the requester's own checkout session
+//                          (the server's record, whatever the body says); an
+//                          intake collision takes the project checkOrigin
+//                          verified. Anything else is dropped with a warning,
+//                          never a refusal.
 
 import type { OrgDraftingSettings } from "@/types/schema";
 import { checkDeclarationStatement, DECLARATION_SIGNATURE_INTENT, DECLARATION_STATEMENT_PREFIX } from "@/lib/reviewModel";
@@ -207,7 +216,8 @@ export interface TicketCreateInput {
   declaration?: TicketCreateDeclaration | null;
   /** GAP-312 (DF-P6): equipment the request names (never required). */
   equipment?: TicketCreateEquipment[];
-  /** DEC-40 seam (DF-P8): ignored by this package. */
+  /** DEC-40 / GAP-114 (DF-P8): the project the request belongs to — confirmed
+   *  by the route before it is written (resolveRequestProject). */
   projectId?: string | null;
   /** The requester's calendar year, from their own clock (null when the
    *  body did not carry a usable one) — see requestNumberYear. */
@@ -421,7 +431,7 @@ export function parseTicketCreateBody(raw: unknown): { ok: true; input: TicketCr
     }
     if (equipment.length > 0) input.equipment = equipment;
   }
-  // The DEC-40 seam travels with the input and is not acted on here.
+  // DEC-40 / GAP-114 (DF-P8): parsed here; the route confirms it.
   if ("projectId" in raw) input.projectId = text(raw.projectId);
   return { ok: true, input, warnings };
 }

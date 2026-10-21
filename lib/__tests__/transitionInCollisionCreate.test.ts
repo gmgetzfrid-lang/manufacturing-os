@@ -53,7 +53,8 @@ describe("flagCollisionToDrafting → /api/tickets/create", () => {
   it("posts the collision in the create contract, returns the route's number, and writes the flag's audit row", async () => {
     s.submit.mockResolvedValue({ ok: true, id: "t-9", ticketNumber: "KE-DDRT-26-0009", resumed: false });
     const res = await flagCollisionToDrafting({ orgId: ORG, projectId: PROJECT, candidate, impact, actorId: "u-1", actorEmail: "rita@plant.io", actorRole: null });
-    expect(res).toEqual({ ok: true, ticketNumber: "KE-DDRT-26-0009" });
+    // PROJ-12 (DF-P8): the row id rides back so the flagger's notice links to the request.
+    expect(res).toEqual({ ok: true, ticketNumber: "KE-DDRT-26-0009", ticketId: "t-9" });
     const body = s.submit.mock.calls[0][0];
     expect(body).toMatchObject({
       orgId: ORG, title: "Intake collision: P-101 (contractor)", requestType: "Revision", priority: 1, unit: null, requesterRole: null,
@@ -77,7 +78,7 @@ describe("flagCollisionToDrafting → /api/tickets/create", () => {
     s.submit.mockResolvedValue({ ok: true, id: "t-9", ticketNumber: "KE-DDRT-26-0009", resumed: false, notified: false, notifyReason: "the notice could not be written" });
     const res = await flagCollisionToDrafting({ orgId: ORG, projectId: PROJECT, candidate, impact, actorId: "u-1", actorEmail: null, actorRole: null });
     expect(res).toEqual({
-      ok: true, ticketNumber: "KE-DDRT-26-0009",
+      ok: true, ticketNumber: "KE-DDRT-26-0009", ticketId: "t-9",
       warning: "KE-DDRT-26-0009 is filed, but the assignment queue was not notified (the notice could not be written) — tell your supervisor it is waiting.",
     });
     expect(s.inserts.map((i) => i.table)).toEqual(["audit_logs"]);

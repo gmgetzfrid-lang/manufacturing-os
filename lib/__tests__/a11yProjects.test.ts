@@ -571,7 +571,7 @@ describe("A11Y-6 / UX-7 — results are announced, and an intake failure reads a
   });
   it("the intake notice carries a tone: setMsg is an error unless the site says otherwise, and the banner is alert / status in a live region", () => {
     const p = src("components/projects/IntakePanel.tsx");
-    expect(p).toContain('const setMsg = useCallback((text: string | null, tone: "error" | "success" | "info" = "error") => {');
+    expect(p).toContain('const setMsg = useCallback((text: string | null, tone: "error" | "success" | "info" = "error", href?: string) => {');
     expect(p).toContain('<div role={msg.tone === "error" ? "alert" : "status"} data-tone={msg.tone}');
     expect(p).toContain('<div aria-live="polite" aria-atomic="true">');
     // a failed revoke / approve / reject stays an error; a landed one is success
