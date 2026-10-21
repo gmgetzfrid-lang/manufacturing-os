@@ -10,7 +10,14 @@
 //       from tickets.comments (the thread the page renders): a comment in the
 //       JSONB, dated inside the window, with no ticket_comments row of its id,
 //       is inserted in the route's own mirror shape. A row that exists (even
-//       soft-deleted) is never touched; nothing is updated or deleted.
+//       soft-deleted) is never touched; nothing is updated or deleted. Only a
+//       comment whose id is a UUID (ticket_comments.id is uuid — one other
+//       id would make PostgREST refuse the whole read, 22P02, every run) and
+//       whose date parses is decided; the window is compared on the parsed
+//       time, never as strings. Anything else is counted
+//       (`commentsUndecidable`), never read or written (DF-P8 fix pass 2).
+//       The mirror carries the comment's mentions (mentionedUserIds, UUIDs
+//       only) as mentioned_uids, which ticketReadScope reads.
 //   (b) the TICKET_<ACTION>_NOT_APPLIED row for an attempt whose transition
 //       (or project link — /api/tickets/project-link, same discipline) did
 //       not land — reconciled from the ticket's history. Since DF-P8 the
@@ -59,6 +66,9 @@ export interface TicketAuditDrainReport {
   attemptsLanded: number;
   /** attempt rows that could not be decided (archived / missing ticket) */
   undecidable: number;
+  /** comments in the JSONB that could not be decided: an id that is not a
+   *  UUID, or a date that does not parse (never read, never written) */
+  commentsUndecidable: number;
   /** tickets (leg a) and attempt rows (leg b) read this run */
   ticketsRead: number;
   attemptsRead: number;
@@ -67,11 +77,25 @@ export interface TicketAuditDrainReport {
   errors: string[];
 }
 
-type CommentJson = { id?: unknown; user?: unknown; role?: unknown; text?: unknown; type?: unknown; category?: unknown; date?: unknown; authorUid?: unknown };
+type CommentJson = { id?: unknown; user?: unknown; role?: unknown; text?: unknown; type?: unknown; category?: unknown; date?: unknown; authorUid?: unknown; mentionedUserIds?: unknown };
 
-/** The mirror row the workflow route writes for a comment (pure). */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (v: unknown): v is string => typeof v === "string" && UUID_RE.test(v);
+
+/** The comment's time, or null when its date does not parse (pure). */
+export function commentTime(c: CommentJson): number | null {
+  if (typeof c.date !== "string") return null;
+  const t = Date.parse(c.date);
+  return Number.isFinite(t) ? t : null;
+}
+
+/** The mirror row the workflow route writes for a comment (pure). Null for
+ *  a comment that cannot be mirrored: an id that is not a UUID, or a date
+ *  that does not parse. Its mentions (UUIDs only) become mentioned_uids. */
 export function mirrorRowFor(ticket: { id: string; org_id: string }, c: CommentJson): Record<string, unknown> | null {
-  if (typeof c.id !== "string" || !c.id) return null;
+  if (!isUuid(c.id)) return null;
+  if (commentTime(c) === null) return null;
+  const mentioned = Array.isArray(c.mentionedUserIds) ? [...new Set(c.mentionedUserIds.filter(isUuid))] : [];
   return {
     id: c.id,
     org_id: ticket.org_id,
@@ -82,8 +106,8 @@ export function mirrorRowFor(ticket: { id: string; org_id: string }, c: CommentJ
     body: typeof c.text === "string" ? c.text : "",
     type: typeof c.type === "string" ? c.type : "General",
     category: typeof c.category === "string" ? c.category : null,
-    mentioned_uids: [],
-    created_at: typeof c.date === "string" ? c.date : new Date().toISOString(),
+    mentioned_uids: mentioned,
+    created_at: c.date as string,
   };
 }
 
@@ -106,7 +130,8 @@ export async function runTicketAuditDrain(opts: { client: Db; deadlineAt: number
   const now = opts.now ?? Date.now();
   const since = new Date(now - AUDIT_DRAIN_WINDOW_MS).toISOString();
   const settled = new Date(now - AUDIT_DRAIN_SETTLE_MS).toISOString();
-  const r: TicketAuditDrainReport = { mirrorsReconciled: 0, notAppliedWritten: 0, attemptsLanded: 0, undecidable: 0, ticketsRead: 0, attemptsRead: 0, truncated: false, errors: [] };
+  const r: TicketAuditDrainReport = { mirrorsReconciled: 0, notAppliedWritten: 0, attemptsLanded: 0, undecidable: 0, commentsUndecidable: 0, ticketsRead: 0, attemptsRead: 0, truncated: false, errors: [] };
+  const sinceMs = now - AUDIT_DRAIN_WINDOW_MS;
   const timeLeft = (until = opts.deadlineAt) => Date.now() < until;
   const stopped = (leg: string, read: number, cursor: { at: string } | null) => {
     r.truncated = true;
@@ -136,9 +161,13 @@ export async function runTicketAuditDrain(opts: { client: Db; deadlineAt: number
       const wanted: Array<Record<string, unknown>> = [];
       for (const t of rows) {
         for (const c of (Array.isArray(t.comments) ? t.comments : []) as CommentJson[]) {
-          if (!c || typeof c !== "object" || typeof c.date !== "string" || c.date < since) continue;
+          if (!c || typeof c !== "object") continue;
+          const at = commentTime(c);
+          if (at === null) { r.commentsUndecidable += 1; continue; }
+          if (at < sinceMs) continue;
           const m = mirrorRowFor(t, c);
           if (m) wanted.push(m);
+          else r.commentsUndecidable += 1;
         }
       }
       const have = new Set<string>();

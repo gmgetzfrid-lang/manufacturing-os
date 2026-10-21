@@ -94,7 +94,7 @@ export default function TicketProjectActions({ ticketId, orgId, linkedProjectId,
       const href = r.project.id ? `/projects/${r.project.id}` : undefined;
       if (!r.linked) {
         if (r.project.id) setCreated({ id: r.project.id, name: (r.project.name ?? "").trim() || "the new project" });
-        setMsg({ tone: "warn", text: `The project was created, but this request could not be linked to it: ${r.linkError ?? "unknown error"} — use "Link to ${(r.project.name ?? "").trim() || "the new project"}" to retry (do not create it again).`, href });
+        setMsg({ tone: "warn", text: `The project was created, but this request could not be linked to it: ${r.linkError ?? "unknown error"} — use "Link to ${(r.project.name ?? "").trim() || "the new project"}" to retry (do not create it again).${r.linkWarning ? ` ${r.linkWarning}` : ""}`, href });
       } else setMsg(r.linkWarning ? { tone: "warn", text: r.linkWarning, href } : { tone: "ok", text: "Project created and linked.", href });
     } catch (e) {
       setMsg({ tone: "error", text: (e as Error)?.message || "The project could not be created." });

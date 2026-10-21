@@ -54,22 +54,79 @@ export function projectsTouched(current: string | null | undefined, target: stri
 
 /** The ticket history line the link route writes (LEAK-4 / EVID-1 / PERS-2:
  *  the one history line of a project link, written by the server, never a
- *  browser read-modify-write of the array). */
+ *  browser read-modify-write of the array). It NAMES NO PROJECT (DF-P8 fix
+ *  pass 2): ticket history is read by every reader of the request — the
+ *  requester, watchers, a Contractor-only reader — and a private project's
+ *  name is not theirs to read (PROJ-9: the page names the linked project only
+ *  through a read under the viewer's own RLS, else "Open the linked
+ *  project"). The line carries the project as a structured `projectId` and
+ *  shows no name. */
 export function projectLinkHistoryEntry(p: {
   kind: "linked" | "unlinked" | "converted";
-  projectName: string | null;
+  projectId: string | null;
   email: string | null;
   role: string | null;
   now: string;
 }): Record<string, unknown> {
-  const name = p.projectName?.trim() || "a project";
   const action = p.kind === "converted" ? "Converted to Project" : p.kind === "linked" ? "Linked to project" : "Unlinked from project";
   const details = p.kind === "converted"
-    ? `Project "${name}" was created from this request and linked to it.`
+    ? "A project was created from this request and the request was linked to it."
     : p.kind === "linked"
-      ? `This request now belongs to project "${name}" (a reference — no file is copied).`
-      : `This request no longer belongs to project "${name}". The request and its documents are unchanged.`;
-  return { action, user: p.email, role: p.role, date: p.now, details };
+      ? "This request now belongs to a project (a reference — no file is copied)."
+      : "This request no longer belongs to the project it was linked to. The request and its documents are unchanged.";
+  return { action, user: p.email, role: p.role, date: p.now, details, projectId: p.projectId };
+}
+
+// ── The project register's authority (PM-8 / SEC-17, 20261102) ─────────────
+//
+// project_documents_insert admits is_org_controller(org) OR
+// can_manage_project(project) — in a project the writer can see. The routes
+// write the register reference as the service role (so the feed row can name
+// its actor), which goes around that policy; so they write it ONLY when the
+// policy's own answer for the person behind the change is yes (DF-P8 fix
+// pass 2). Linking a request to a project is not authority over its register:
+// a requester who can merely SEE a project links their request to it, and a
+// project manager attaches the deliverable from the project's Documents card.
+
+/** Said when the register reference was not written for want of authority. */
+export const PROJECT_REGISTER_MANAGERS_ONLY =
+  "The request's published deliverable was not put on the project's document register: only the project's managers (or Admin / Document Control) add documents to it — a project manager can attach it from the project's Documents card.";
+
+/** A PostgREST client that can call functions AS THE CALLER (their JWT). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type RpcClient = { rpc: (fn: string, args: Record<string, unknown>) => any };
+
+/** Would project_documents_insert admit this caller on this project? Asked
+ *  AS THE CALLER through the policy's own functions (is_org_controller,
+ *  can_manage_project — both read auth.uid()). true / false, or null when
+ *  neither said yes and one could not be asked (never read as a yes). */
+export async function callerHoldsRegisterAuthority(client: RpcClient, orgId: string, projectId: string): Promise<boolean | null> {
+  let unknown = false;
+  for (const [fn, args] of [["is_org_controller", { p_org: orgId }], ["can_manage_project", { p_project: projectId }]] as const) {
+    try {
+      const { data, error } = await client.rpc(fn, args);
+      if (error) { unknown = true; continue; }
+      if (data === true) return true;
+    } catch {
+      unknown = true;
+    }
+  }
+  return unknown ? null : false;
+}
+
+/** The authority recorded when the request was put on THIS project
+ *  (metadata.project_link.registerAuthority — metadata is workflow-owned,
+ *  written only by the service role, 20261250's ticket_update_guard): true
+ *  when the link was made by someone the register policy admits, or derived
+ *  by the server from the project's own record (a check-in under the
+ *  project's checkout session, an intake collision flagged on the project).
+ *  Pure. */
+export function recordedRegisterAuthority(metadata: unknown, projectId: string | null | undefined): boolean {
+  if (!projectId || !metadata || typeof metadata !== "object") return false;
+  const link = (metadata as { project_link?: unknown }).project_link;
+  if (!link || typeof link !== "object") return false;
+  const l = link as { projectId?: unknown; registerAuthority?: unknown };
+  return l.projectId === projectId && l.registerAuthority === true;
 }
 
 /** One project feed row, written as the service role (the database's author
@@ -98,10 +155,14 @@ export async function recordProjectActivity(sb: DbClient, row: {
 /** GAP-114 "deliverable → project documents" / PROJ-1's project half: a
  *  published deliverable of a request that belongs to a project is put on the
  *  project's register as a REFERENCE to the controlled document (DEC-40 — a
- *  project_documents row, the same row "attach to project" writes; no bytes
+ *  project_documents row of the shape "attach to project" writes; no bytes
  *  move), and the feed says so (doc_added). A document already on the
  *  register is left exactly as it is (its source stays). Returns null when
- *  nothing needed doing or it landed, else the refusal's text. */
+ *  nothing needed doing or it landed, else the refusal's text.
+ *  The CALLER decides authority first (callerHoldsRegisterAuthority /
+ *  recordedRegisterAuthority): this writes as whatever client it is given,
+ *  and the routes give it the service role only once the register policy's
+ *  own answer is yes (DF-P8 fix pass 2). */
 export async function referenceDeliverableInProject(sb: DbClient, p: {
   orgId: string;
   projectId: string;

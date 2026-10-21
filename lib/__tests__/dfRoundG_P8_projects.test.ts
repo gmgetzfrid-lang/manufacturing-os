@@ -41,14 +41,19 @@ vi.mock("@/lib/serverAuth", async () => {
   h.caller = mem.freshState();
   return { callerScopedClient: () => mem.makeSupabase(h.caller) };
 });
+vi.mock("@/lib/notify/dispatch", async (orig) => ({
+  ...(await orig<typeof import("@/lib/notify/dispatch")>()),
+  emit: vi.fn(async () => undefined),
+}));
 vi.mock("@/lib/capabilityPolicy", async (orig) => ({
   ...(await orig<typeof import("@/lib/capabilityPolicy")>()),
   loadCapabilityPolicyStrict: vi.fn(async () => h.policy),
 }));
 
 import { POST as projectLink } from "@/app/api/tickets/project-link/route";
+import { POST as handback } from "@/app/api/tickets/handback/route";
 import { projectRefOf } from "@/lib/ticketPage";
-import { deliverableReference, isMissingProjectColumn, projectLinkAllowed, projectLinkHistoryEntry, projectsTouched, referenceDeliverableInProject } from "@/lib/ticketProject";
+import { callerHoldsRegisterAuthority, deliverableReference, isMissingProjectColumn, projectLinkAllowed, projectLinkHistoryEntry, projectsTouched, recordedRegisterAuthority, referenceDeliverableInProject } from "@/lib/ticketProject";
 import { deliverableStateOf, noteDeliverableNotInAnyRegister } from "@/lib/ticketHandback";
 import { closeoutGateLines } from "@/lib/projects";
 import { computeTransition, rowToTicket } from "@/lib/ticketTransitions";
@@ -266,7 +271,7 @@ describe("/api/tickets/project-link — GAP-114 / PROJ-13 / LEAK-4 / EVID-1 / PE
     expect((h.admin.tables.projects as Row[])[0].linked_ticket_id).toBeNull();
     expect((h.admin.tables.projects as Row[])[1].linked_ticket_id).toBe(T);
   });
-  it("a published deliverable of a request linked later is put on the project's register as a REFERENCE (doc_added) — never a copy", async () => {
+  it("the register helper writes a REFERENCE (doc_added) — never a copy; it writes as the client it is given, so the routes decide authority first (below)", async () => {
     seed({ metadata: { deliverable: { state: "published", version_id: "v-1", revision_label: "2", document_id: "d-1" } } });
     const upserts: Row[] = [];
     const sb = h.admin as MemoryState;
@@ -280,6 +285,68 @@ describe("/api/tickets/project-link — GAP-114 / PROJ-13 / LEAK-4 / EVID-1 / PE
     expect(r).toBeNull();
     expect(upserts[0]).toMatchObject({ t: "project_documents", row: { project_id: P1, document_id: "d-1", source: "manual" }, opts: { onConflict: "project_id,document_id", ignoreDuplicates: true } });
     expect(upserts[1]).toMatchObject({ t: "project_activity", row: { type: "doc_added", metadata: expect.objectContaining({ documentId: "d-1", ticketId: T }) } });
+  });
+  const PUBLISHED = { deliverable: { state: "published", version_id: "v-1", revision_label: "2", document_id: "d-1" } };
+  // every project_documents call the service role made (the stand-in does not
+  // apply an upsert; the helper's own test above pins what it writes)
+  const registerWrites = () => h.admin.calls.filter((c) => c.table === "project_documents" && c.method === "upsert");
+  it("REGRESSION (fix pass 2, PM-8 / SEC-17): a requester who can SEE a project but does not manage it links their request with a published deliverable — the link lands, but NO project_documents row and NO doc_added row are written; the answer says a project manager can attach it", async () => {
+    seed({ metadata: PUBLISHED });
+    h.caller.rpc = { is_org_controller: () => ({ data: false, error: null }), can_manage_project: () => ({ data: false, error: null }) };
+    const res = await projectLink(req({ ticketId: T, projectId: P1 }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).warning).toMatch(/only the project's managers \(or Admin \/ Document Control\) add documents to it — a project manager can attach it from the project's Documents card/);
+    expect(ticket().project_id).toBe(P1);
+    expect(registerWrites()).toEqual([]);
+    expect(h.admin.calls.filter((c) => c.table === "project_documents")).toEqual([]);
+    expect(activity().map((a) => a.type)).toEqual(["request_linked"]);
+    expect((ticket().metadata as Row).project_link).toMatchObject({ projectId: P1, authority: "requester", registerAuthority: false });
+    expect(audits()[0].details).toMatchObject({ authority: "requester", registerAuthority: false });
+    // asked AS THE CALLER, through the policy's own functions
+    expect(h.caller.calls.filter((c) => c.method === "rpc").map((c) => c.table)).toEqual(["rpc:is_org_controller", "rpc:can_manage_project"]);
+  });
+  it("fix pass 2: the same requester who DOES manage the project (or a controller) gets the register reference and its doc_added row; an unanswerable check is never a yes", async () => {
+    seed({ metadata: PUBLISHED });
+    h.caller.rpc = { is_org_controller: () => ({ data: false, error: null }), can_manage_project: (a) => ({ data: a.p_project === P1, error: null }) };
+    expect((await projectLink(req({ ticketId: T, projectId: P1 }))).status).toBe(200);
+    expect(registerWrites()).toHaveLength(1);
+    expect(registerWrites()[0].args[0]).toMatchObject({ project_id: P1, document_id: "d-1", source: "manual" });
+    expect((ticket().metadata as Row).project_link).toMatchObject({ registerAuthority: true });
+    seed({ metadata: PUBLISHED });
+    h.caller.rpc = { is_org_controller: () => ({ data: true, error: null }) };
+    expect((await projectLink(req({ ticketId: T, projectId: P1 }))).status).toBe(200);
+    expect(registerWrites()).toHaveLength(1);
+    seed({ metadata: PUBLISHED });
+    h.caller.rpc = { is_org_controller: () => ({ data: null, error: { message: "timeout" } }), can_manage_project: () => ({ data: false, error: null }) };
+    const unsure = await projectLink(req({ ticketId: T, projectId: P1 }));
+    expect((await unsure.json()).warning).toMatch(/could not be confirmed/);
+    expect(registerWrites()).toEqual([]);
+    expect((ticket().metadata as Row).project_link).toMatchObject({ registerAuthority: false });
+  });
+  it("callerHoldsRegisterAuthority / recordedRegisterAuthority (pure-ish): yes only on a yes; a recorded authority counts only for the project it was recorded for", async () => {
+    const asked = (ans: Record<string, { data: unknown; error: unknown }>) => ({ rpc: async (fn: string) => ans[fn] ?? { data: null, error: { message: "missing" } } });
+    expect(await callerHoldsRegisterAuthority(asked({ is_org_controller: { data: false, error: null }, can_manage_project: { data: true, error: null } }), ORG, P1)).toBe(true);
+    expect(await callerHoldsRegisterAuthority(asked({ is_org_controller: { data: false, error: null }, can_manage_project: { data: false, error: null } }), ORG, P1)).toBe(false);
+    expect(await callerHoldsRegisterAuthority(asked({ is_org_controller: { data: false, error: null } }), ORG, P1)).toBeNull();
+    expect(recordedRegisterAuthority({ project_link: { projectId: P1, registerAuthority: true } }, P1)).toBe(true);
+    expect(recordedRegisterAuthority({ project_link: { projectId: P1, registerAuthority: true } }, P2)).toBe(false);
+    expect(recordedRegisterAuthority({ project_link: { projectId: P1, registerAuthority: false } }, P1)).toBe(false);
+    expect(recordedRegisterAuthority({ project_link: { projectId: P1 } }, P1)).toBe(false);
+    expect(recordedRegisterAuthority(null, P1)).toBe(false);
+  });
+  it("fix pass 2 (minor 3): the history line names NO project — not the target's name on a link, never a name on an unlink (which is no longer read at all) — and carries the project's id", async () => {
+    expect((await projectLink(req({ ticketId: T, projectId: P1 }))).status).toBe(200);
+    const linked = (ticket().history as Row[]).at(-1)!;
+    expect(JSON.stringify(linked)).not.toContain("Turnaround");
+    expect(linked).toMatchObject({ action: "Linked to project", projectId: P1, details: "This request now belongs to a project (a reference — no file is copied)." });
+    seed({ project_id: P2 });
+    h.admin.tables.projects = [{ id: P2, org_id: ORG, name: "Private capital job" }];
+    expect((await projectLink(req({ ticketId: T, projectId: null }))).status).toBe(200);
+    const unlinked = (ticket().history as Row[]).at(-1)!;
+    expect(JSON.stringify(unlinked)).not.toContain("Private capital job");
+    expect(unlinked).toMatchObject({ action: "Unlinked from project", projectId: P2 });
+    // the service role never read the old project's name
+    expect(h.admin.calls.filter((c) => c.table === "projects" && c.method === "select" && JSON.stringify(c.args).includes("name"))).toEqual([]);
   });
   it("before 20261256: the ticket read answers 42703 naming project_id — 503 not_migrated, nothing written (today's path: the request has no project)", async () => {
     h.admin.readError.tickets = { code: "42703", message: 'column tickets.project_id does not exist' };
@@ -309,6 +376,56 @@ describe("/api/tickets/project-link — GAP-114 / PROJ-13 / LEAK-4 / EVID-1 / PE
   });
 });
 
+describe("fix pass 2 (PM-8 / SEC-17) — /api/tickets/handback puts the deliverable on the project register only with the register's authority", () => {
+  const D = "dddddddd-0000-4000-8000-000000000001";
+  const V = "eeeeeeee-0000-4000-8000-000000000001";
+  const hbReq = () => new NextRequest("https://app.plant.io/api/tickets/handback", {
+    method: "POST", headers: { authorization: "Bearer tok", "content-type": "application/json" }, body: JSON.stringify({ ticketId: T, versionId: V }),
+  });
+  const seedHb = (projectLink?: Row) => {
+    seed({
+      status: "FINAL_DRAFT", project_id: P1, assigned_drafter_id: "u-other",
+      metadata: { source_document: { id: D, document_number: "P-101" }, ...(projectLink ? { project_link: projectLink } : {}) },
+    });
+    h.admin.tables.document_versions = [{ id: V, org_id: ORG, record_id: D, revision_label: "2", related_ticket_id: T, review_state: null, created_by: "u-other" }];
+    h.user = { id: "u-other", email: "other@plant.io" }; // the drafter: neither a controller nor the project's manager
+    h.caller.rpc = { is_org_controller: () => ({ data: false, error: null }), can_manage_project: () => ({ data: false, error: null }) };
+  };
+  const registerCalls = () => h.admin.calls.filter((c) => c.table === "project_documents" && c.method !== "select");
+  it("REGRESSION: a request a requester filed 'into' a project they only SEE (registerAuthority false), handed back by a drafter who does not manage it — recorded, but NO register row and NO doc_added; the answer says a project manager can attach it", async () => {
+    seedHb({ projectId: P1, registerAuthority: false, authority: "portal" });
+    const res = await handback(hbReq());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.warning).toMatch(/a project manager can attach it from the project's Documents card/);
+    expect(registerCalls()).toEqual([]);
+    expect(activity().filter((a) => a.type === "doc_added")).toEqual([]);
+    expect(((ticket().metadata as Row).deliverable as Row).state).toBe("published"); // the hand-back itself stands
+  });
+  it("the link was made with the register's authority (recorded, for THIS project) — the reference is written whoever publishes; a link recorded for another project does not count", async () => {
+    seedHb({ projectId: P1, registerAuthority: true, authority: "project_manager" });
+    expect((await handback(hbReq())).status).toBe(200);
+    expect(registerCalls().map((c) => c.method)).toEqual(["upsert"]);
+    expect(registerCalls()[0].args[0]).toMatchObject({ project_id: P1, document_id: D, source: "manual" });
+    seedHb({ projectId: P2, registerAuthority: true });
+    const other = await handback(hbReq());
+    expect((await other.json()).warning).toMatch(/only the project's managers/);
+    expect(registerCalls()).toEqual([]);
+  });
+  it("no recorded authority (a link made before this pass, the paste's backfill): the publisher's own authority decides, asked AS THE CALLER; unanswerable is never a yes", async () => {
+    seedHb();
+    h.caller.rpc = { is_org_controller: () => ({ data: false, error: null }), can_manage_project: (a) => ({ data: a.p_project === P1, error: null }) };
+    expect((await handback(hbReq())).status).toBe(200);
+    expect(registerCalls().map((c) => c.method)).toEqual(["upsert"]);
+    seedHb();
+    h.caller.rpc = { is_org_controller: () => ({ data: null, error: { message: "timeout" } }), can_manage_project: () => ({ data: null, error: { message: "timeout" } }) };
+    const unsure = await handback(hbReq());
+    expect((await unsure.json()).warning).toMatch(/could not be confirmed/);
+    expect(registerCalls()).toEqual([]);
+  });
+});
+
 describe("pure helpers", () => {
   it("projectRefOf: the column first; before the paste (undefined) the intake collision's project as today; a recorded unlink means none", () => {
     expect(projectRefOf({ intake_collision: { projectId: P2 } }, P1)).toBe(P1);
@@ -327,7 +444,7 @@ describe("pure helpers", () => {
     expect(isMissingProjectColumn({ code: "23514", message: "project_id" })).toBe(false);
     expect(projectLinkAllowed({ isRequester: false, managesTickets: false, managesProject: false })).toBe(false);
     expect(projectLinkAllowed({ isRequester: false, managesTickets: false, managesProject: true })).toBe(true);
-    expect(projectLinkHistoryEntry({ kind: "unlinked", projectName: "X", email: "a@b", role: "Viewer", now: LM })).toMatchObject({ action: "Unlinked from project", user: "a@b", date: LM });
+    expect(projectLinkHistoryEntry({ kind: "unlinked", projectId: P1, email: "a@b", role: "Viewer", now: LM })).toMatchObject({ action: "Unlinked from project", user: "a@b", date: LM, projectId: P1 });
   });
   it("GAP-114 acceptance 2 / 4: a deliverable reads as a LIVE reference — current, superseded (a later version in force), not current (status / archived); unreadable → exists, cannot be opened", () => {
     const st = { state: "published", document_id: "d-1", version_id: "v-1", revision_label: "1" };
@@ -396,28 +513,36 @@ describe("pure helpers", () => {
 
 describe("SM-7 / EVID-12 (DEC-90 ruling (6)): the drain for what the workflow route only logs", () => {
   const NOW = Date.parse("2026-10-21T12:00:00Z");
+  const C1 = "c0000000-0000-4000-8000-000000000001";
+  const C2 = "c0000000-0000-4000-8000-000000000002";
+  const MENTION = "99999999-9999-4999-8999-999999999999";
+  const cid = (n: number) => `c0000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
   const OLD = "2026-10-21T10:00:00.000Z"; // past the settle time
   const drainDb = () => {
     const s = freshState();
     return { s, client: makeSupabase(s) as unknown as Parameters<typeof runTicketAuditDrain>[0]["client"] };
   };
   it("pure: the mirror row is the route's shape; history proves an attempt landed only by its id", () => {
-    expect(mirrorRowFor({ id: T, org_id: ORG }, { id: "c-1", user: "a@b", role: "Engineer", text: "fix", type: "Revision", date: OLD, authorUid: "u-1" }))
-      .toEqual({ id: "c-1", org_id: ORG, ticket_id: T, author_uid: "u-1", author_email: "a@b", author_role: "Engineer", body: "fix", type: "Revision", category: null, mentioned_uids: [], created_at: OLD });
+    expect(mirrorRowFor({ id: T, org_id: ORG }, { id: C1, user: "a@b", role: "Engineer", text: "fix", type: "Revision", date: OLD, authorUid: "u-1" }))
+      .toEqual({ id: C1, org_id: ORG, ticket_id: T, author_uid: "u-1", author_email: "a@b", author_role: "Engineer", body: "fix", type: "Revision", category: null, mentioned_uids: [], created_at: OLD });
     expect(mirrorRowFor({ id: T, org_id: ORG }, { text: "no id" })).toBeNull();
+    // fix pass 2: a non-UUID id or an unparseable date is never mirrored; mentions (UUIDs only) carry over
+    expect(mirrorRowFor({ id: T, org_id: ORG }, { id: "c-1", text: "legacy", date: OLD })).toBeNull();
+    expect(mirrorRowFor({ id: T, org_id: ORG }, { id: C1, text: "legacy", date: "yesterday-ish" })).toBeNull();
+    expect(mirrorRowFor({ id: T, org_id: ORG }, { id: C1, text: "@c", date: OLD, mentionedUserIds: [MENTION, "not-a-uid", MENTION, 7] })?.mentioned_uids).toEqual([MENTION]);
     expect(historyNamesAttempt([{ action: "x", attempt: "a-1" }], "a-1")).toBe(true);
     expect(historyNamesAttempt([{ action: "x" }], "a-1")).toBe(false);
   });
   it("(a) a JSONB comment with no ticket_comments row is mirrored; one already there (even soft-deleted) is never touched", async () => {
     const { s, client } = drainDb();
     s.tables.tickets = [{ id: T, org_id: ORG, last_modified: OLD, archived_at: null, comments: [
-      { id: "c-1", user: "a@b", text: "lost mirror", date: OLD }, { id: "c-2", user: "a@b", text: "mirrored", date: OLD },
+      { id: C1, user: "a@b", text: "lost mirror", date: OLD }, { id: C2, user: "a@b", text: "mirrored", date: OLD },
     ] }];
-    s.tables.ticket_comments = [{ id: "c-2", ticket_id: T, deleted_at: OLD }];
+    s.tables.ticket_comments = [{ id: C2, ticket_id: T, deleted_at: OLD }];
     s.tables.audit_logs = [];
     const r = await runTicketAuditDrain({ client, deadlineAt: Date.now() + 10_000, now: NOW });
     expect(r.mirrorsReconciled).toBe(1);
-    expect(s.tables.ticket_comments.map((c) => c.id).sort()).toEqual(["c-1", "c-2"]);
+    expect(s.tables.ticket_comments.map((c) => c.id).sort()).toEqual([C1, C2]);
     expect(s.writes.filter((w) => w.table === "ticket_comments" && w.method !== "insert")).toEqual([]);
   });
   it("(b) an attempt whose ticket history names it LANDED (nothing written); one with no follow-up and no history line gets its _NOT_APPLIED row; one a follow-up names, an archived ticket's, and a pre-DF-P8 attempt are left alone", async () => {
@@ -459,6 +584,9 @@ describe("SM-7 / EVID-12 (DEC-90 ruling (6)): the drain for what the workflow ro
   // keyset or() the drain writes, order (several keys) and limit — and a
   // row cap of its own, as PostgREST's max-rows is.
   const pagingDb = (tables: Record<string, Row[]>, cap = 1000) => {
+    // ticket_comments.id is uuid: PostgREST refuses a whole in() holding one
+    // non-UUID value (22P02), as the real column does.
+    const UUIDISH = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const reads: Array<{ table: string; n: number }> = [];
     const likeRe = (pat: string) => new RegExp(`^${pat.replace(/\\_/g, "\u0000").replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*").replace(/_/g, ".").replace(/\u0000/g, "_")}$`);
     const val = (r: Row, k: string) => {
@@ -472,12 +600,16 @@ describe("SM-7 / EVID-12 (DEC-90 ruling (6)): the drain for what the workflow ro
         const orders: Array<[string, boolean]> = [];
         let limit = Infinity;
         let insert: Row | null = null;
+        let castError: { code: string; message: string } | null = null;
         const q: Record<string, unknown> = {
           select: () => q,
           insert: (row: Row) => { insert = row; return q; },
           eq: (k: string, v: unknown) => { preds.push((r) => val(r, k) === v); return q; },
           is: (k: string, v: unknown) => { preds.push((r) => (v === null ? r[k] == null : r[k] === v)); return q; },
-          in: (k: string, vs: unknown[]) => { preds.push((r) => vs.includes(r[k])); return q; },
+          in: (k: string, vs: unknown[]) => {
+            if (table === "ticket_comments" && k === "id" && vs.some((v) => !UUIDISH.test(String(v)))) castError = { code: "22P02", message: "invalid input syntax for type uuid" };
+            preds.push((r) => vs.includes(r[k])); return q;
+          },
           gte: (k: string, v: string) => { preds.push((r) => String(r[k]) >= v); return q; },
           lte: (k: string, v: string) => { preds.push((r) => String(r[k]) <= v); return q; },
           gt: (k: string, v: string) => { preds.push((r) => String(r[k]) > v); return q; },
@@ -493,6 +625,7 @@ describe("SM-7 / EVID-12 (DEC-90 ruling (6)): the drain for what the workflow ro
           limit: (n: number) => { limit = n; return q; },
           then: (resolve: (v: unknown) => void) => {
             if (insert) { (tables[table] ??= []).push(insert); return resolve({ data: null, error: null }); }
+            if (castError) return resolve({ data: null, error: castError });
             let rows = (tables[table] ?? []).filter((r) => preds.every((p) => p(r)));
             rows = [...rows].sort((a, b) => {
               for (const [k, asc] of orders) { const x = String(a[k]); const y = String(b[k]); if (x !== y) return (x < y ? -1 : 1) * (asc ? 1 : -1); }
@@ -550,17 +683,17 @@ describe("SM-7 / EVID-12 (DEC-90 ruling (6)): the drain for what the workflow ro
   });
   it("fix pass (major 2): leg (a) keyset-pages every ticket modified in the window — a lost mirror on the 650th is reconciled", async () => {
     const tickets: Row[] = [];
-    for (let i = 0; i < 650; i++) tickets.push({ id: `t-${pad(i)}`, org_id: ORG, archived_at: null, last_modified: iso(2 * HOUR + i * 1000), comments: [{ id: `c-${pad(i)}`, user: "a@b", text: "x", date: iso(3 * HOUR) }] });
-    const tables: Record<string, Row[]> = { tickets, ticket_comments: tickets.slice(1).map((t) => ({ id: `c-${String(t.id).slice(2)}` })), audit_logs: [] };
+    for (let i = 0; i < 650; i++) tickets.push({ id: `t-${pad(i)}`, org_id: ORG, archived_at: null, last_modified: iso(2 * HOUR + i * 1000), comments: [{ id: cid(i), user: "a@b", text: "x", date: iso(3 * HOUR) }] });
+    const tables: Record<string, Row[]> = { tickets, ticket_comments: tickets.slice(1).map((_t, i) => ({ id: cid(i + 1) })), audit_logs: [] };
     const r = await runTicketAuditDrain({ client: pagingDb(tables).client, deadlineAt: Date.now() + 10_000, now: NOW });
     expect(r.ticketsRead).toBe(650);
     expect(r.mirrorsReconciled).toBe(1);
-    expect(tables.ticket_comments.map((c) => c.id)).toContain("c-000000");
+    expect(tables.ticket_comments.map((c) => c.id)).toContain(cid(0));
     expect(r.errors).toEqual([]);
   });
   it("fix pass (major 2): a run whose time runs out before the end of the window says so as an ERROR line (and truncated), and writes nothing it did not decide", async () => {
     const tables = {
-      tickets: [{ id: "t-1", org_id: ORG, archived_at: null, last_modified: iso(HOUR), comments: [{ id: "c-1", text: "x", date: iso(HOUR) }], history: [] }],
+      tickets: [{ id: "t-1", org_id: ORG, archived_at: null, last_modified: iso(HOUR), comments: [{ id: C1, text: "x", date: iso(HOUR) }], history: [] }],
       audit_logs: [{ id: "a-1", action: "TICKET_REOPEN_TICKET", resource_type: "ticket", resource_id: "t-1", org_id: ORG, timestamp: iso(HOUR), details: { historyAttempt: true } }],
     } as Record<string, Row[]>;
     const r = await runTicketAuditDrain({ client: pagingDb(tables).client, deadlineAt: Date.now() - 1, now: NOW });
@@ -569,6 +702,24 @@ describe("SM-7 / EVID-12 (DEC-90 ruling (6)): the drain for what the workflow ro
     expect(r.errors.join(" ")).toMatch(/stopped before the end of the 7-day window of tickets[\s\S]*stopped before the end of the 7-day window of attempt rows/);
     expect(tables.audit_logs).toHaveLength(1);
     expect(tables.ticket_comments).toBeUndefined();
+  });
+  it("fix pass 2 (minor 5): a legacy comment whose id is not a UUID, or whose date is not ISO, is counted and skipped — it never fails the mirror read (22P02) for the rest; the window is compared on parsed times; a mirror carries the comment's mentions", async () => {
+    const tables: Record<string, Row[]> = {
+      tickets: [{ id: "t-1", org_id: ORG, archived_at: null, last_modified: iso(HOUR), history: [], comments: [
+        { id: "legacy-7", text: "old id, recent date", date: iso(2 * HOUR) },
+        { id: cid(1), text: "non-ISO date", date: "Tue Oct garbage" },
+        { id: cid(2), text: "older than the window, by parsed time", date: new Date(NOW - 9 * 24 * HOUR).toUTCString() },
+        { id: cid(3), text: "lost mirror @contractor", date: new Date(NOW - 2 * HOUR).toUTCString(), mentionedUserIds: [MENTION, "x"] },
+      ] }],
+      ticket_comments: [], audit_logs: [],
+    };
+    const r = await runTicketAuditDrain({ client: pagingDb(tables).client, deadlineAt: Date.now() + 10_000, now: NOW });
+    expect(r.errors).toEqual([]);
+    expect(r.commentsUndecidable).toBe(2);
+    expect(r.mirrorsReconciled).toBe(1);
+    expect(tables.ticket_comments).toEqual([expect.objectContaining({ id: cid(3), mentioned_uids: [MENTION] })]);
+    // the string compare it replaces would have read the RFC-1123 date of cid(2) ("Mon, …") as later than the ISO bound
+    expect(new Date(NOW - 9 * 24 * HOUR).toUTCString() > new Date(NOW - 7 * 24 * HOUR).toISOString()).toBe(true);
   });
   it("the cron runs it as one step (no new cron entry)", () => {
     const cron = src("app/api/cron/maintenance/route.ts");

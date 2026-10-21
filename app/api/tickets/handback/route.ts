@@ -46,7 +46,10 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { rowToTicket } from "@/lib/ticketTransitions";
 import { parseSourceDocument } from "@/lib/sourceDocRef";
 import { publishedDeliverable } from "@/lib/ticketHandback";
-import { referenceDeliverableInProject } from "@/lib/ticketProject";
+import {
+  callerHoldsRegisterAuthority, recordedRegisterAuthority, referenceDeliverableInProject, PROJECT_REGISTER_MANAGERS_ONLY,
+} from "@/lib/ticketProject";
+import { callerScopedClient } from "@/lib/serverAuth";
 import { libraryChoiceFromRow, libraryLabelForTicket, UNNAMED_TARGET_LIBRARY } from "@/lib/ticketLibrary";
 import { LIBRARY_RUNG_COLUMNS } from "@/lib/libraryAccess";
 import type { TicketHistoryEntry } from "@/types/schema";
@@ -226,16 +229,32 @@ export async function POST(req: NextRequest) {
   // as a REFERENCE to the controlled document (no bytes copied, no
   // project-local record) and tells the project's feed. A request with no
   // project does nothing here; a refusal is said, the hand-back stands.
+  // DF-P8 fix pass 2 (PM-8 / SEC-17, 20261102): the reference is written as
+  // the service role only when the register's own policy would admit it —
+  // the request was put on this project by someone it admits, or by the
+  // server from the project's own record (metadata.project_link.
+  // registerAuthority, workflow-owned), or the publisher is admitted
+  // (is_org_controller / can_manage_project, asked AS THE CALLER). Otherwise
+  // nothing is written and the answer says a project manager can attach it.
   let projectWarning: string | null = null;
   if (!inReview && typeof ticket.projectId === "string" && ticket.projectId) {
-    const refErr = await referenceDeliverableInProject(supabaseAdmin, {
-      orgId: ticket.orgId, projectId: ticket.projectId, documentId, ticketId, ticketNumber: ticket.ticketId ?? null,
-      revisionLabel: v.revision_label ?? null, actorId: caller.id, actorName: callerEmail,
-    });
-    if (refErr) {
-      projectWarning = `Recorded, but the deliverable was not put on the request's project register: ${refErr}`;
-      console.warn(`[handback] ${ticketId}: ${projectWarning}`);
+    let may: boolean | null = recordedRegisterAuthority(ticket.metadata, ticket.projectId);
+    if (!may) {
+      const callerClient = callerScopedClient(req);
+      may = "error" in callerClient ? null : await callerHoldsRegisterAuthority(callerClient, ticket.orgId, ticket.projectId);
     }
+    if (may === true) {
+      const refErr = await referenceDeliverableInProject(supabaseAdmin, {
+        orgId: ticket.orgId, projectId: ticket.projectId, documentId, ticketId, ticketNumber: ticket.ticketId ?? null,
+        revisionLabel: v.revision_label ?? null, actorId: caller.id, actorName: callerEmail,
+      });
+      if (refErr) projectWarning = `Recorded, but the deliverable was not put on the request's project register: ${refErr}`;
+    } else {
+      projectWarning = may === null
+        ? "Recorded, but the deliverable was not put on the request's project register: your authority over the register could not be confirmed — a project manager can attach it from the project's Documents card."
+        : `Recorded. ${PROJECT_REGISTER_MANAGERS_ONLY}`;
+    }
+    if (projectWarning) console.warn(`[handback] ${ticketId}: ${projectWarning}`);
   }
   if (auditErr) return NextResponse.json({ ok: true, metadata, history, warning: `Recorded, but the audit row failed: ${auditErr.message}${projectWarning ? ` ${projectWarning}` : ""}` });
 

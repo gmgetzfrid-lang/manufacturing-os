@@ -24,6 +24,7 @@ import type {
   ProjectStatus, ProjectVisibility, ProjectMemberRole,
   CheckoutSession, Timestamp, Role,
 } from "@/types/schema";
+import type { ProjectLinkResult } from "@/lib/ticketProjectClient";
 
 /** Structural type for either the RLS-scoped browser client or a
  *  service-role client (cron). Same shape; lets server callers pass their
@@ -1616,22 +1617,37 @@ export async function convertTicketToProject(input: {
   });
 
   // Optional: also add the original requester as a member so they show up.
+  // The project EXISTS from here on: nothing after this point throws (DF-P8
+  // fix pass 2), so the caller always learns the project and a retry links
+  // it instead of creating a second one naming this request. A refused
+  // member row is said in linkWarning, never thrown.
+  let memberWarning: string | null = null;
   if (ticket.requester_id && ticket.requester_id !== input.actorUserId) {
-    await addMember({
-      projectId: project.id!,
-      orgId: input.orgId,
-      userId: ticket.requester_id as string,
-      userName: (ticket.requester_name as string | undefined) ?? undefined,
-      actorUserId: input.actorUserId,
-      actorEmail: input.actorEmail,
-    });
+    try {
+      await addMember({
+        projectId: project.id!,
+        orgId: input.orgId,
+        userId: ticket.requester_id as string,
+        userName: (ticket.requester_name as string | undefined) ?? undefined,
+        actorUserId: input.actorUserId,
+        actorEmail: input.actorEmail,
+      });
+    } catch (e) {
+      memberWarning = `The request's requester was not added to the project's members: ${(e as Error)?.message || "the member row was refused"} — add them from the project's Team card.`;
+    }
   }
 
   // The request side of the link — server-side, one history line.
-  const { postProjectLink } = await import("@/lib/ticketProjectClient");
-  const res = await postProjectLink({ ticketId: input.ticketId, projectId: project.id!, converted: true });
-  if (!res.ok) return { project, linked: false, linkError: res.error };
-  return { project, linked: true, ...(res.warning ? { linkWarning: res.warning } : {}) };
+  let res: ProjectLinkResult;
+  try {
+    const { postProjectLink } = await import("@/lib/ticketProjectClient");
+    res = await postProjectLink({ ticketId: input.ticketId, projectId: project.id!, converted: true });
+  } catch (e) {
+    res = { ok: false, status: 0, error: (e as Error)?.message || "the link could not be sent" };
+  }
+  const warning = [memberWarning, res.ok ? res.warning ?? null : null].filter((w): w is string => !!w).join(" ");
+  if (!res.ok) return { project, linked: false, linkError: res.error, ...(warning ? { linkWarning: warning } : {}) };
+  return { project, linked: true, ...(warning ? { linkWarning: warning } : {}) };
 }
 
 // ─── BULK CHECKOUT ───────────────────────────────────────────────────────

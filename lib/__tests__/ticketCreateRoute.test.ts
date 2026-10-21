@@ -65,6 +65,9 @@ const s = vi.hoisted(() => ({
   /** next_ticket_number as the caller-scoped client sees it. */
   counter: new Map<string, number>(),
   rpcCalls: [] as Array<{ client: "admin" | "caller"; fn: string; args: Record<string, unknown> }>,
+  // DF-P8 fix pass 2: the caller's answers for the register-authority
+  // functions (is_org_controller / can_manage_project); unset → false.
+  callerRpc: {} as Record<string, (args: Record<string, unknown>) => { data: unknown; error: { code?: string; message: string } | null }>,
   callerToken: "" as string,
   emailGate: null as null | ((args: Record<string, unknown>) => { data: unknown; error: Err | null }),
   /** `${table}.${op}` → errors handed out one per call, in order. */
@@ -242,6 +245,7 @@ vi.mock("@/lib/serverAuth", () => ({
       from: (t: string) => chain(t, "caller"),
       rpc: async (fn: string, args: { p_org: string; p_year: number }) => {
         s.rpcCalls.push({ client: "caller", fn, args });
+        if (fn !== "next_ticket_number") { const answer = s.callerRpc[fn]; return answer ? answer(args) : { data: false, error: null }; }
         const errs = s.errors[`rpc.${fn}`];
         if (errs && errs.length > 0) { const e = errs.shift(); if (e) return { data: null, error: e }; }
         const uid = s.users[token]?.id;
@@ -379,6 +383,7 @@ beforeEach(() => {
   seed();
   s.counter = new Map();
   s.rpcCalls = [];
+  s.callerRpc = {};
   s.emailGate = null;
   s.errors = {};
   s.lostReply = {};
@@ -2064,6 +2069,7 @@ describe("DF-P8 — a request filed into a project names it BY REFERENCE (ticket
     expect((s.tables.checkout_sessions as Row[])[0].linked_ticket_id).toBe(t.id);
     expect((s.tables.checkout_sessions as Row[])[1].linked_ticket_id).toBeUndefined();
     expect(activity().map((a) => a.project_id)).toEqual([PROJECT]);
+    expect((t.metadata as Row).project_link).toMatchObject({ projectId: PROJECT, authority: "checkin", registerAuthority: true });
   });
   it("REGRESSION: an ad-hoc check-in (a session with no project) files as today — no project_id, no feed row — and its session is still stamped with the request", async () => {
     const res = await POST(req(checkin()));
@@ -2094,5 +2100,31 @@ describe("DF-P8 — a request filed into a project names it BY REFERENCE (ticket
     expect(col.status).toBe(201);
     expect(JSON.stringify((await col.json()).warnings ?? [])).not.toMatch(/20261256/);
     expect((tickets()[0].metadata as Row).intake_collision).toMatchObject({ projectId: PROJECT });
+    // no reference recorded → no link record either (the paste's backfill still fills it)
+    expect((tickets()[0].metadata as Row).project_link).toBeUndefined();
+  });
+  it("fix pass 2 (PM-8 / SEC-17): the link is recorded with whether the project register's policy admits who made it — a form project only for a caller who manages it (asked AS THE CALLER); a check-in's or a collision's project is the server's own record", async () => {
+    // a requester who merely sees the project
+    await POST(req({ ...portal({ attachments: [] }), projectId: PROJECT }));
+    expect((tickets()[0].metadata as Row).project_link).toMatchObject({ projectId: PROJECT, authority: "portal", registerAuthority: false });
+    expect(s.rpcCalls.filter((c) => c.client === "caller" && c.fn === "can_manage_project").map((c) => c.args)).toEqual([{ p_project: PROJECT }]);
+    // one who manages it
+    s.tables.tickets = []; s.tables.project_activity = [];
+    s.callerRpc = { can_manage_project: (a) => ({ data: a.p_project === PROJECT, error: null }) };
+    await POST(req({ ...portal({ attachments: [] }), projectId: PROJECT }));
+    expect((tickets()[0].metadata as Row).project_link).toMatchObject({ registerAuthority: true });
+    // an unanswerable check is never a yes
+    s.tables.tickets = [];
+    s.callerRpc = { is_org_controller: () => ({ data: null, error: { message: "timeout" } }), can_manage_project: () => ({ data: null, error: { message: "timeout" } }) };
+    await POST(req({ ...portal({ attachments: [] }), projectId: PROJECT }));
+    expect((tickets()[0].metadata as Row).project_link).toMatchObject({ registerAuthority: false });
+    // the server's own record
+    s.tables.tickets = []; s.callerRpc = {};
+    await POST(req(collision()));
+    expect((tickets()[0].metadata as Row).project_link).toMatchObject({ projectId: PROJECT, authority: "intake_collision", registerAuthority: true });
+    // REGRESSION: no project → no link record
+    s.tables.tickets = [];
+    await POST(req(portal({ attachments: [] })));
+    expect((tickets()[0].metadata as Row).project_link).toBeUndefined();
   });
 });

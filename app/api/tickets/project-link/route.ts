@@ -6,8 +6,8 @@ import { loadCapabilityPolicyStrict, policyAllows } from "@/lib/capabilityPolicy
 import { heldRoles } from "@/lib/roleHeld";
 import { deliverableStateOf } from "@/lib/ticketHandback";
 import {
-  isMissingProjectColumn, projectLinkAllowed, projectLinkHistoryEntry, projectsTouched, recordProjectActivity,
-  referenceDeliverableInProject, PROJECT_LINK_CLOSED,
+  callerHoldsRegisterAuthority, isMissingProjectColumn, projectLinkAllowed, projectLinkHistoryEntry, projectsTouched,
+  recordProjectActivity, referenceDeliverableInProject, PROJECT_LINK_CLOSED, PROJECT_REGISTER_MANAGERS_ONLY,
 } from "@/lib/ticketProject";
 
 // POST /api/tickets/project-link  { ticketId, projectId: uuid | null, converted?: boolean }
@@ -37,14 +37,23 @@ import {
 //      EVID-1 / PERS-2: written by the server — the old browser
 //      read-modify-write of `history` in convertTicketToProject is gone) and
 //      metadata.project_link (the choice, so the paste's backfill never
-//      re-links a request somebody unlinked). The history line names its
-//      audit row (`attempt`) and the audit row says so (`historyAttempt`),
-//      so the SM-7 drain (lib/ticketAuditDrain.ts) writes the _NOT_APPLIED
-//      row this route could only log, exactly as for a workflow transition;
+//      re-links a request somebody unlinked; who made it; and whether the
+//      project register's policy admits them — `registerAuthority`, read by
+//      the hand-back). The history line names its audit row (`attempt`) and
+//      the audit row says so (`historyAttempt`), so the SM-7 drain
+//      (lib/ticketAuditDrain.ts) writes the _NOT_APPLIED row this route
+//      could only log, exactly as for a workflow transition. The line names
+//      NO project (ticket history is read by members who may not see a
+//      private project — PROJ-9); it carries the project's id;
 //   5. writes the project feed row (request_linked / request_unlinked) and,
-//      when the request's deliverable is already published, the project's
-//      register REFERENCE to that controlled document (never a copy). Both
-//      are checked; a refusal is said in `warning`, the link stands.
+//      when the request's deliverable is already published AND the caller
+//      is someone project_documents_insert admits (is_org_controller OR
+//      can_manage_project, asked as the caller — 20261102, PM-8 / SEC-17),
+//      the project's register REFERENCE to that controlled document (never
+//      a copy). A requester who merely sees the project links the request
+//      but puts nothing on its register: the answer says a project manager
+//      can attach it (DF-P8 fix pass 2). Checked; a refusal is said in
+//      `warning`, the link stands.
 // `converted: true` is the "Create project from this request" flow: the
 // browser created the project (projects.linked_ticket_id names this request,
 // PROJ-13) and links it here; the history line reads "Converted to Project".
@@ -143,11 +152,9 @@ export async function POST(req: NextRequest) {
     }
     target = found;
   }
-  let previous: { id: string; name: string | null } | null = null;
-  if (t.project_id) {
-    const { data: p } = await supabaseAdmin.from("projects").select("id, name").eq("id", t.project_id).eq("org_id", t.org_id).maybeSingle();
-    previous = p ? (p as { id: string; name: string | null }) : { id: t.project_id, name: null };
-  }
+  // The current project, by id only — its name is never read here (the
+  // service role would read it past the caller's project visibility).
+  const previous: { id: string } | null = t.project_id ? { id: t.project_id } : null;
 
   // Authority (DEC-90 ruling (3)): the requester, ticket.manage, or the
   // manager of EVERY project this change touches — the target on a link, the
@@ -185,6 +192,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "That project was not created from this request — link it instead." }, { status: 400 });
   }
 
+  // PM-8 / SEC-17 (20261102): would the register's own policy admit this
+  // caller on the target? Recorded on the link (the hand-back reads it) and
+  // checked before the register reference below. A project manager of every
+  // touched project already answered yes for the target.
+  const registerAuthority: boolean | null = target
+    ? (managesProject ? true : await callerHoldsRegisterAuthority(callerClient, t.org_id, target.id))
+    : false;
+  const authority = isRequester ? "requester" : managesTickets ? "ticket.manage" : "project_manager";
+
   const now = new Date().toISOString();
   const kind: "linked" | "unlinked" | "converted" = projectId ? (converted ? "converted" : "linked") : "unlinked";
   const auditId = crypto.randomUUID();
@@ -192,7 +208,7 @@ export async function POST(req: NextRequest) {
   // compare-and-set as the reference — the ticket itself proves it landed.
   const entry = {
     ...projectLinkHistoryEntry({
-      kind, projectName: kind === "unlinked" ? previous?.name ?? null : target?.name ?? null,
+      kind, projectId: kind === "unlinked" ? previous?.id ?? null : target?.id ?? null,
       email: m.email ?? caller.email ?? null, role: m.role ?? null, now,
     }),
     attempt: auditId,
@@ -204,7 +220,7 @@ export async function POST(req: NextRequest) {
     user_id: caller.id, user_email: m.email ?? caller.email ?? null, user_role: m.role ?? null,
     details: {
       projectId, previousProjectId: t.project_id ?? null, converted,
-      authority: isRequester ? "requester" : managesTickets ? "ticket.manage" : "project_manager",
+      authority, registerAuthority: registerAuthority === true,
       recordedBeforeApply: true,
       historyAttempt: true,
     },
@@ -215,7 +231,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "The change was not applied: its audit record could not be written. Try again in a moment.", code: "audit_unwritable", applied: false }, { status: 500 });
   }
 
-  const meta = { ...(t.metadata ?? {}), project_link: { projectId, at: now, by: caller.id } };
+  const meta = { ...(t.metadata ?? {}), project_link: { projectId, at: now, by: caller.id, authority, registerAuthority: registerAuthority === true } };
   const history = [...(Array.isArray(t.history) ? t.history : []), entry];
   let cas = supabaseAdmin.from("tickets")
     .update({ project_id: projectId, metadata: meta, history, last_modified: now })
@@ -263,11 +279,17 @@ export async function POST(req: NextRequest) {
     if (err) warnings.push(`The project's feed was not told: ${err}`);
     const d = deliverableStateOf(t.metadata);
     if (d?.state === "published" && typeof d.document_id === "string" && d.document_id) {
-      const refErr = await referenceDeliverableInProject(supabaseAdmin, {
-        orgId: t.org_id, projectId: target.id, documentId: d.document_id, ticketId: t.id, ticketNumber: t.ticket_id,
-        revisionLabel: d.revision_label ?? null, actorId: caller.id, actorName,
-      });
-      if (refErr) warnings.push(`The request's published deliverable was not put on the project's register: ${refErr}`);
+      if (registerAuthority === true) {
+        const refErr = await referenceDeliverableInProject(supabaseAdmin, {
+          orgId: t.org_id, projectId: target.id, documentId: d.document_id, ticketId: t.id, ticketNumber: t.ticket_id,
+          revisionLabel: d.revision_label ?? null, actorId: caller.id, actorName,
+        });
+        if (refErr) warnings.push(`The request's published deliverable was not put on the project's register: ${refErr}`);
+      } else {
+        warnings.push(registerAuthority === null
+          ? "The request's published deliverable was not put on the project's document register: your authority over the register could not be confirmed — a project manager can attach it from the project's Documents card."
+          : PROJECT_REGISTER_MANAGERS_ONLY);
+      }
     }
   }
   if (warnings.length) console.warn(`[project-link] ${t.id}: ${warnings.join(" | ")}`);

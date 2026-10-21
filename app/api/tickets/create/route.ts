@@ -12,7 +12,7 @@ import { declarationSignatureRefusal, isMissingReviewModelColumn, type Declarati
 import { formatTicketNumber, ticketNumberConfigFromRow } from "@/lib/ticketNumber";
 import { boundedSlaDays, defaultSlaTargetDate, slaTargetDateInDays } from "@/lib/notifications";
 import { missingLibraryColumn } from "@/lib/ticketLibrary";
-import { isMissingProjectColumn, PROJECT_NOT_RECORDED_WARNING, PROJECT_LINK_CLOSED, recordProjectActivity } from "@/lib/ticketProject";
+import { callerHoldsRegisterAuthority, isMissingProjectColumn, PROJECT_NOT_RECORDED_WARNING, PROJECT_LINK_CLOSED, recordProjectActivity } from "@/lib/ticketProject";
 import { resolveTicketRecipients } from "@/lib/ticketRouting";
 import { emit } from "@/lib/notify/dispatch";
 import { escapeHtml } from "@/lib/ticketTransitions";
@@ -776,7 +776,18 @@ async function create(
   // source document it stays unset and triage sets it.
   const primaryLibrary = primary ? (byId.get(primary.id)?.library_id ?? null) : null;
   if (primaryLibrary) row.library_id = primaryLibrary;
-  if (link.projectId) row.project_id = link.projectId;
+  if (link.projectId) {
+    row.project_id = link.projectId;
+    // DF-P8 fix pass 2 (PM-8 / SEC-17): who put the request on the project,
+    // and whether the project register's policy admits that — the hand-back
+    // reads it before it puts the published deliverable on the register as
+    // the service role. A check-in's or an intake collision's project is the
+    // server's own record (the checkout session under the project, the
+    // collision flagged on it); a project named on the form admits only a
+    // caller who manages it (asked as the caller in resolveRequestProject).
+    metadata.project_link = { projectId: link.projectId, at: now, by: caller.id, authority: origin.kind, registerAuthority: link.registerAuthority };
+    row.metadata = metadata;
+  }
   // GAP-110 / DEC-34 (DF-P6): a declared request is filed under the id its
   // signature names, with the declaration in columns the guard makes
   // immutable (20261250) and engineering_required false — the one thing
@@ -810,6 +821,9 @@ async function create(
     let r = await supabaseAdmin.from("tickets").insert(row).select("id").single();
     if (r.error && "project_id" in row && isMissingProjectColumn(r.error)) {
       delete row.project_id;
+      // No reference was recorded, so no link record either (the paste's
+      // backfill and projectRefOf read metadata.project_link as a choice).
+      delete metadata.project_link;
       projectDropped = true;
       r = await supabaseAdmin.from("tickets").insert(row).select("id").single();
     }
@@ -1022,11 +1036,11 @@ async function recordEquipment(orgId: string, ticketId: string, uid: string, equ
 async function resolveRequestProject(
   input: TicketCreateInput, origin: TicketCreateOrigin, orgId: string, callerId: string,
   primary: SourceDocumentRefRow | null, callerClient: SupabaseClient,
-): Promise<{ projectId: string | null; sessionId: string | null; warnings: string[] }> {
+): Promise<{ projectId: string | null; sessionId: string | null; warnings: string[]; registerAuthority: boolean }> {
   const warnings: string[] = [];
-  if (origin.kind === "intake_collision") return { projectId: origin.projectId, sessionId: null, warnings };
+  if (origin.kind === "intake_collision") return { projectId: origin.projectId, sessionId: null, warnings, registerAuthority: true };
   if (origin.kind === "checkin") {
-    if (!primary) return { projectId: null, sessionId: null, warnings };
+    if (!primary) return { projectId: null, sessionId: null, warnings, registerAuthority: false };
     // The session checkOrigin accepted: this requester's, on this document,
     // in the check-in's episode (any status) or still active — newest first.
     const { data, error } = await supabaseAdmin
@@ -1035,30 +1049,33 @@ async function resolveRequestProject(
       .order("started_at", { ascending: false }).limit(20);
     if (error) {
       if (input.projectId) warnings.push("The project of this checkout could not be read — the request was filed without it; link it from the request page.");
-      return { projectId: null, sessionId: null, warnings };
+      return { projectId: null, sessionId: null, warnings, registerAuthority: false };
     }
     const rows = (data ?? []) as Array<{ id: string; episode_id?: string | null; status?: string | null; project_id?: string | null }>;
     const s = rows.find((r) => origin.episodeId != null && r.episode_id === origin.episodeId) ?? rows.find((r) => r.status === "active") ?? null;
-    if (!s) return { projectId: null, sessionId: null, warnings };
+    if (!s) return { projectId: null, sessionId: null, warnings, registerAuthority: false };
     const pid = typeof s.project_id === "string" && s.project_id ? s.project_id : null;
     if (pid) {
       const { data: p, error: pErr } = await supabaseAdmin.from("projects").select("id").eq("id", pid).eq("org_id", orgId).maybeSingle();
       if (pErr || !p) {
         warnings.push("The project this checkout was under could not be confirmed — the request was filed without it.");
-        return { projectId: null, sessionId: s.id, warnings };
+        return { projectId: null, sessionId: s.id, warnings, registerAuthority: false };
       }
     }
-    return { projectId: pid, sessionId: s.id, warnings };
+    return { projectId: pid, sessionId: s.id, warnings, registerAuthority: !!pid };
   }
   const asked = typeof input.projectId === "string" ? input.projectId.trim() : "";
-  if (!asked) return { projectId: null, sessionId: null, warnings };
+  if (!asked) return { projectId: null, sessionId: null, warnings, registerAuthority: false };
   const dropped = "The project named is not one you can see in this workspace (or it is closed) — the request was filed without it.";
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(asked)) return { projectId: null, sessionId: null, warnings: [dropped] };
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(asked)) return { projectId: null, sessionId: null, warnings: [dropped], registerAuthority: false };
   const { data: p, error: pErr } = await callerClient.from("projects").select("id, org_id, status").eq("id", asked).maybeSingle();
-  if (pErr) return { projectId: null, sessionId: null, warnings: ["The project named could not be read — the request was filed without it; link it from the request page."] };
+  if (pErr) return { projectId: null, sessionId: null, warnings: ["The project named could not be read — the request was filed without it; link it from the request page."], registerAuthority: false };
   const proj = p as { id: string; org_id: string; status: string | null } | null;
-  if (!proj || proj.org_id !== orgId || PROJECT_LINK_CLOSED.has(String(proj.status ?? ""))) return { projectId: null, sessionId: null, warnings: [dropped] };
-  return { projectId: proj.id, sessionId: null, warnings };
+  if (!proj || proj.org_id !== orgId || PROJECT_LINK_CLOSED.has(String(proj.status ?? ""))) return { projectId: null, sessionId: null, warnings: [dropped], registerAuthority: false };
+  // Seeing a project is enough to file a request into it; putting documents
+  // on its register is not (PM-8 / SEC-17) — the hand-back asks again.
+  const may = await callerHoldsRegisterAuthority(callerClient, orgId, proj.id);
+  return { projectId: proj.id, sessionId: null, warnings, registerAuthority: may === true };
 }
 
 /** The origin's own facts (FRIC-8 / EDGE-13). Required custom fields and
