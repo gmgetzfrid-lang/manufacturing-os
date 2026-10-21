@@ -8,12 +8,21 @@
 -- script, or by another tool — whose check leads back into
 -- document_versions.
 --
+-- AMENDED after its first run: it used to drop EVERY policy on
+-- document_versions, which also removed two legitimate publish-integrity
+-- rules that exist only in the live database (20261023 restores them).
+-- It now drops only policies that read document_versions inside
+-- themselves (the loop) and re-creates the canonical three; every other
+-- policy is left in place.
+--
 -- What this does, in one transaction:
 --   1. BACKS UP every policy on document_versions, plus every policy on any
 --      other table that mentions document_versions, into
 --      public._policy_backup (nothing is lost; the definitions can be
 --      re-created from there).
---   2. Drops ALL policies on document_versions.
+--   2. Drops the policies on document_versions that query document_versions
+--      inside their own rule (the cause of the recursion error), plus the
+--      canonical three so they can be re-created cleanly.
 --   3. Re-creates the canonical set (schema.sql + 20260813 + 20260815):
 --        org members: full access to their org's rows
 --        RESTRICTIVE select: only versions of documents you can see
@@ -42,7 +51,14 @@ ALTER TABLE public._policy_backup ENABLE ROW LEVEL SECURITY;  -- service role / 
 
 INSERT INTO public._policy_backup (schemaname, tablename, policyname, permissive, roles, cmd, qual, with_check, action)
 SELECT schemaname, tablename, policyname, permissive, roles::text[], cmd, qual, with_check,
-       CASE WHEN tablename = 'document_versions' THEN 'replaced' ELSE 'reported (left as is)' END
+       CASE
+         WHEN tablename <> 'document_versions' THEN 'reported (left as is)'
+         WHEN policyname IN ('document_versions_org_access', 'document_versions_acl_select',
+                             'document_versions_delete_controllers') THEN 'replaced'
+         WHEN COALESCE(qual, '') ~* '(from|join)\s+(public\.)?document_versions\M'
+           OR COALESCE(with_check, '') ~* '(from|join)\s+(public\.)?document_versions\M' THEN 'replaced'
+         ELSE 'kept'
+       END
   FROM pg_policies
  WHERE schemaname = 'public'
    AND (tablename = 'document_versions'
@@ -54,6 +70,10 @@ DECLARE p RECORD;
 BEGIN
   FOR p IN SELECT policyname FROM pg_policies
             WHERE schemaname = 'public' AND tablename = 'document_versions'
+              AND (policyname IN ('document_versions_org_access', 'document_versions_acl_select',
+                                  'document_versions_delete_controllers')
+                   OR COALESCE(qual, '') ~* '(from|join)\s+(public\.)?document_versions\M'
+                   OR COALESCE(with_check, '') ~* '(from|join)\s+(public\.)?document_versions\M')
   LOOP
     EXECUTE format('DROP POLICY %I ON public.document_versions', p.policyname);
   END LOOP;
