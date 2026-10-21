@@ -629,6 +629,8 @@ app/api/admin/purge/route.ts:41-44 —
 
 **Scope / residual.** Status stays OPEN. Owners (DEC-31; the integrator assigns): done-whens 1, 2 (every producer, and a status for "not sent by the person's choice" the drain's recovery and the purge both leave alone) and 4 → the notifications package that next holds `app/api/notifications/send-queued/route.ts` and `lib/notify/dispatch.ts`; done-when 3 → admin-and-org P7's purge (pointer, as the plan records).
 
+*Assigned (2026-10-21, the integrator at the DF-P7 merge, DEC-31):* done-whens 1–4 → notifications **N18 DELIVERY RECORD**.
+
 ---
 
 <a id="evid-10"></a>
@@ -919,6 +921,8 @@ app/api/admin/purge/route.ts:24 — const MIN_DAYS = 7;
 
 
 *Integrator note (2026-10-07, at the DF-P1 merge): the attention hook's browser-side mark (`hooks/useTicketNotifications.ts:278`) writes `metadata` on the recipient's own rows, which notifications N5's `20261161` (read_at-only trigger, merged earlier) refuses once pasted. The route's mark runs on the service role and is unaffected. Opened as notifications `NEDGE-18`, owned by N4, which moves the hook's mark server-side; the census in `lib/__tests__/notificationWriteRails.test.ts` names both writes.*
+
+*Assigned (2026-10-21, the integrator at the DF-P7 merge, DEC-31):* the remainder (the purge and per-recipient states) → notifications **N18 DELIVERY RECORD**.
 
 ---
 

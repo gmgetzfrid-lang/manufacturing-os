@@ -86,6 +86,11 @@ export const ORG_SCOPED_TABLES = [
   // 2026-10-21, DEC-90).
   "ticket_review_slots",
   "ticket_review_slot_events",
+  // drafting-flow DF-P7 (20261255): the consent-window and not-emailed notice
+  // record — append-only, service-role written; exported as evidence, never
+  // imported (lib/dataRestore.ts IMMUTABLE_TABLES; the integrator at the DF-P7
+  // merge, 2026-10-21, DEC-90).
+  "ticket_notice_events",
   // drafting-flow DF-P6 (20261251): the equipment a request names (the tag as
   // typed and the registry asset it resolved to) — part of the request,
   // exported and restored after tickets and assets (the integrator at the

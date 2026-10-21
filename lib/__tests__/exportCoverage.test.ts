@@ -103,9 +103,8 @@ const DECISION_AT_MERGE: Record<string, string> = {
   // its merge (EXPORTED after ticket_review_slot_events and restored after
   // tickets and assets — lib/exportTables.ts, lib/dataRestore.ts; DEC-90) and
   // is no longer here.
-  // drafting-flow Round G DF-P7 CONSENT (20261255): proposed for the
-  // integrator's decision at the merge.
-  ticket_notice_events: "the consent-window and not-emailed notice record (append-only, written only by the service role) — proposed: EXPORTED after ticket_review_slot_events and never imported (IMMUTABLE_TABLES, as ticket_review_slot_events): a restored row would claim a notice the restored workspace never sent, and a restored window then reads 'no delivery on record' and waits for a sign-off (fail-safe)",
+  // drafting-flow Round G DF-P7 CONSENT's ticket_notice_events was decided at its merge (EXPORTED after
+  // ticket_review_slot_events; never imported — IMMUTABLE_TABLES; DEC-90) and is no longer here.
 };
 
 // EGR-7 / XEDGE-10: a column whose NAME says "credential". `_key` alone is

@@ -202,6 +202,8 @@ export const IMMUTABLE_TABLES: Record<string, string> = {
   // claim sign-offs nobody can show; the event log is append-only. Both stay
   // in the backup for review; a restored ticket's open review is re-routed.
   ticket_review_slots: "a routed ticket's reviewer roster — each satisfied slot is bound to the signer's e-signature, which is never restored, so a restored slot would claim a sign-off nobody can show",
+  // drafting-flow DF-P7 (20261255), by the integrator at the DF-P7 merge, 2026-10-21 (DEC-90).
+  ticket_notice_events: "the consent-window and not-emailed notice record — written only by the service role when a notice is actually sent, warned, objected to or expired; a restored row would claim a notice the restored workspace never sent (a restored window with no delivery on record waits for a sign-off — fail-safe)",
   ticket_review_slot_events: "the roster's append-only event log — written only by the roster's own server path; restored history would be indistinguishable from real",
 };
 

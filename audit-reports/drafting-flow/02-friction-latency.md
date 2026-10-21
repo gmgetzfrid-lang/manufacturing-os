@@ -109,6 +109,8 @@ date nobody is watching.** That is the shoulder-tap generator.
 
 **Scope / residual.** Status stays OPEN for done-when 2 (a second escalation tier above the queue owners). **Owner: the next holder of `lib/ticketSla.ts` — proposed drafting-flow (the integrator assigns, DEC-31)**: escalate a breach that already reaches the queue's owners once more, to the workspace's Admins (or the `ticket.manage` holders), stamped once like the others.
 
+*Assigned (2026-10-21, the integrator at the DF-P7 merge, DEC-31):* done-when 2 (an escalation tier above the queue owners) → drafting-flow **DF-P22 CONSENT AND ESCALATION FOLLOW-UPS**.
+
 ---
 
 ## FRIC-2 · `PENDING_REVIEW` waits on the requester — often the person least able to judge the drawing

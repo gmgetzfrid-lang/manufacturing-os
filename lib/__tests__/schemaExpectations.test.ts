@@ -96,7 +96,7 @@ const ROW_AT_MERGE: Record<string, string> = {
   // listed in EXPECTED_TABLES since its merge and is no longer here.
   // drafting-flow Round G DF-P7 CONSENT (GAP-113 / DEC-39): the append-only
   // notice record — the integrator adds it to EXPECTED_TABLES at the merge.
-  ticket_notice_events: "20261255_df_roundG_consent_window.sql",
+  // drafting-flow Round G DF-P7 CONSENT's ticket_notice_events (20261255) is listed in EXPECTED_TABLES since its merge.
 };
 
 const BASE = "schema.sql (base schema)";

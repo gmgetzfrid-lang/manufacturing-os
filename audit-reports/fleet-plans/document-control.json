@@ -973,6 +973,26 @@
       "sequencingNotes": [
         "Added by the integrator at the P35 merge, 2026-10-21 (DEC-31). Run after P36; its guard migration pastes after P36's."
       ]
+    },
+    {
+     "name": "P38 DOCUMENT NOTICE RECORD — every review, acknowledgment and distribution reminder on a document is a durable fact on the record, not one overwritten timestamp",
+     "findings": [
+      "document-control DIST-19 (opened at drafting-flow DF-P7, assigned at its merge, 2026-10-21, DEC-31): an append-only document notice record (who was reminded, when, how often, escalated or not — the document half of drafting-flow EVID-8, the same shape as ticket_notice_events, 20261255) written by the review-reminder scan (lib/reviewControl.ts), the acknowledgment scan (lib/acknowledgments.ts) and the distribution-ack nag (lib/distributionAcks.ts) when a notice actually lands; notified_at keeps its meaning for every existing reader (pin); exported, never imported"
+     ],
+     "files": [
+      "supabase/migrations/** (one DEC-30 file)",
+      "lib/reviewControl.ts (the reminder scan only)",
+      "lib/acknowledgments.ts (the reminder scan only)",
+      "lib/distributionAcks.ts (the nag only)",
+      "tests"
+     ],
+     "migrationsLikely": 1,
+     "dependsOn": [
+      "drafting-flow DF-P7 merged (ticket_notice_events is the model)"
+     ],
+     "sequencingNotes": [
+      "Added by the integrator at the DF-P7 merge, 2026-10-21 (DEC-31). Parallel-safe with the drafting-flow ticket packages."
+     ]
     }
   ],
   "crossAreaFileOverlaps": [

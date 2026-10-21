@@ -779,6 +779,7 @@
      ],
      "files": [
       "components/requests/** (assign modal, DeclarationCard)",
+        "drafting-flow GAP-113 acceptance 1 and the DF-P7 editor residual (assigned at the DF-P7 merge, 2026-10-21, DEC-31): a failed consent-window open shows its reason on the request page and in its history (today only the answer and a blocked notice event say it); the routing editor (components/documents/RoutingControlSection.tsx) offers window_days and warn_fraction on a consent slot",
       "app/(protected)/requests/[id]/page.tsx",
       "app/api/tickets/** (the equipment route; the drift acknowledgement in workflow-action)",
       "lib/reviewModel.ts",
@@ -854,6 +855,30 @@
      ],
      "sequencingNotes": [
       "Added by the integrator at the DF-P17 merge, 2026-10-21 (DEC-31). Waits on the guard pastes; until then the audit-row binding stands (fail-safe: today's answer)."
+     ]
+    },
+    {
+     "name": "DF-P22 CONSENT AND ESCALATION FOLLOW-UPS — an escalation tier above the queue owners, the two consent mechanisms not yet built, and the consent window's loose ends",
+     "findings": [
+      "drafting-flow FRIC-1 done-when 2 and GAP-106's remainder (assigned at the DF-P7 merge, 2026-10-21, DEC-31): an escalation tier above the queue owners in lib/ticketSla.ts (a breach the owners do not clear within the configured period goes to the workspace's configured escalation contact; none configured = today's behaviour, pin)",
+      "drafting-flow GAP-109 mechanisms 2 and 3 (assigned at the DF-P7 merge, 2026-10-21, DEC-31): standing pre-authorization (a named person's recorded, revocable, scoped pre-consent) and exception-only review — each only where a workspace configures it, never on the engineered lane; the seed and every unconfigured workspace unchanged (pin)",
+      "DF-P7 residuals (assigned at the DF-P7 merge, 2026-10-21, DEC-31): holdersFor stops naming a window's recipients as 'waited on' (they are told, not awaited); the cron's retry of a planned open re-reads the declaration signature as the route and the close do; the PHYS-18 copy recall runs on a consent-completed issue (a system actor for nudgeStaleTicketHolders, recorded)"
+     ],
+     "files": [
+      "lib/ticketSla.ts",
+      "lib/consentWindow.ts",
+      "lib/consentWindowScan.ts",
+      "lib/ticketAttention.ts (holdersFor, consent only)",
+      "lib/staleCopies.ts (the system-actor path only)",
+      "app/api/cron/maintenance/route.ts (existing steps only)",
+      "tests"
+     ],
+     "migrationsLikely": 1,
+     "dependsOn": [
+      "drafting-flow DF-P20 merged (serial on the ticket files)"
+     ],
+     "sequencingNotes": [
+      "Added by the integrator at the DF-P7 merge, 2026-10-21 (DEC-31)."
      ]
     }
   ],
