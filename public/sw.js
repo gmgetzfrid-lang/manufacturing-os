@@ -33,8 +33,9 @@
 // Bumping VERSION drops every old cache on activate — the escape hatch when
 // caching behavior changes (v4: RSC payloads are never cached; data GETs are
 // network-first — stale-while-revalidate was serving old app navigations.
-// v5: stop inventing 504s — see the honesty rule below).
-const VERSION = "mfgos-v5";
+// v5: stop inventing 504s — see the honesty rule below. v6: prefetches
+// are never intercepted).
+const VERSION = "mfgos-v6";
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 
@@ -149,6 +150,17 @@ self.addEventListener("fetch", (event) => {
   if (
     url.searchParams.has("_rsc") ||
     (headers && (headers.get("RSC") === "1" || headers.get("Next-Router-State-Tree")))
+  ) {
+    return;
+  }
+  // Prefetches of any kind (the router's, the browser's speculative loads):
+  // nobody is waiting on them, the browser cancels them freely, and a
+  // cancelled one must never surface as a "503 (Offline)" console line.
+  if (
+    headers &&
+    (headers.get("Next-Router-Prefetch") ||
+      headers.get("Next-Router-Segment-Prefetch") ||
+      /prefetch/i.test(headers.get("Sec-Purpose") || headers.get("Purpose") || ""))
   ) {
     return;
   }
