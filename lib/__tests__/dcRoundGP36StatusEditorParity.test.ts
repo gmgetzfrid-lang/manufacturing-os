@@ -341,15 +341,49 @@ describe("REV-36 (3) / (4) and REV-35 (P36) — the library page's metadata save
     expect(audit("SUPERSEDE_DOC")[0].details).toMatchObject({ retiredFrom: "Issued", via: "metadata" });
   });
 
-  it("REV-36 (3), fail-safe: the read fails twice on a save this page sees as no retirement (it shows the drawing Superseded): the prior is unknown, so the GATES run too — the drawing's MOC is refused, nothing saved, saying the status could not be read (never claiming it changed)", async () => {
+  it("REV-36 (3), fail-safe, with P34's rule kept (P36 final fix pass): the read fails twice on a save this page sees as no retirement (it shows the drawing Superseded) — the prior is unknown, so the recall and the duties run (priorStatusUnknown), but no GATE runs: no MOC asked or refused, the plain edit saves as before", async () => {
     const d = seedDoc("m2", { status: "Superseded" }); state.cls.m2 = "drawing";
     state.db.selectErrors!.documents = (cols) => (cols === "status" ? { message: "503" } : null);
-    const { st, fn } = save(d);
-    await expect(fn(core(d, "Superseded"))).rejects.toThrow(
-      `Save refused — nothing was saved: this page shows M2 as already Superseded, but its status could not be read just before this save, so this save may supersede it again. ${SUPERSEDE_MOC_REQUIRED} Reload it and set the status with a reason and the MOC reference.`,
-    );
+    const { st, fn, cds } = save(d);
+    await fn({ metadata: {}, core: { title: "m2 fixed", documentNumber: "M2", status: "Superseded" } });
+    await settle();
     expect(statusReads()).toHaveLength(2);
     expect(st.prompts).toEqual([]);
+    expect(docRow("m2").title).toBe("m2 fixed");
+    expect(cds.mock.calls[0][0]).toMatchObject({ prior: { fromStatus: null, readFailed: true } });
+    expect(audit("SUPERSEDE_DOC")[0].details).toMatchObject({ priorStatusUnknown: true, via: "metadata" });
+    expect(recallRetiredDocument).toHaveBeenCalledTimes(1);
+    expect(notifyPackagesOfRetirement).not.toHaveBeenCalled();
+  });
+
+  it("P36 final fix pass (REV-36 (4)): both status reads fail and a non-publisher fixes the title of a document this page shows Archived — authorizeArchive does not run, the save lands as before (no archive columns overwritten); the fail-safe recall and duties still run", async () => {
+    state.role = "Engineer";
+    const d = seedDoc("m7", { status: "Archived", archived_at: "2026-01-01T00:00:00Z", archived_by: OTHER, archive_reason: "the first archive" });
+    state.db.selectErrors!.documents = (cols) => (cols === "status" ? { message: "503" } : null);
+    const { st, fn, cds } = save(d);
+    await fn({ metadata: {}, core: { title: "m7 fixed", documentNumber: "M7", status: "Archived" } });
+    await settle();
+    expect(st.prompts).toEqual([]);
+    expect(docRow("m7")).toMatchObject({ title: "m7 fixed", status: "Archived", archived_at: "2026-01-01T00:00:00Z", archived_by: OTHER, archive_reason: "the first archive" });
+    expect(Object.keys(statusWrites()[0].args[0] as Row).sort()).toEqual(BARE);
+    expect(cds.mock.calls[0][0]).toMatchObject({ prior: { fromStatus: null, readFailed: true } });
+    expect(audit("ARCHIVE_DOC")[0].details).toMatchObject({ priorStatusUnknown: true, via: "metadata" });
+  });
+
+  it("P36 final fix pass: both status reads fail on a REAL retirement (this page shows Issued; the save asks its reason) — the gates still run: a non-publisher's archive is refused in authorizeArchive's words, and a drawing's Superseded asks its MOC; nothing saved", async () => {
+    state.role = "Engineer";
+    const d = seedDoc("m8");
+    state.db.selectErrors!.documents = (cols) => (cols === "status" ? { message: "503" } : null);
+    await expect(save(d).fn(core(d, "Archived"))).rejects.toThrow(
+      "Save refused — nothing was saved: The document was NOT archived — archiving takes publish authority in this library (Doc Control, a granted publisher or the document's owner). Nothing was changed.",
+    );
+    expect(statusWrites()).toEqual([]);
+    expect(docRow("m8").status).toBe("Issued");
+    state.role = "DocCtrl";
+    const g = seedDoc("m9"); state.cls.m9 = "drawing";
+    const { st, fn } = save(g, { answers: ["Obsolete unit", null] });
+    await expect(fn(core(g, "Superseded"))).rejects.toThrow("Save cancelled — nothing was saved: superseding M9 takes its MOC reference.");
+    expect(st.prompts.map((p) => String(p.title))).toEqual(["Set M9 to Superseded?", "MOC reference for M9"]);
     expect(statusWrites()).toEqual([]);
   });
 

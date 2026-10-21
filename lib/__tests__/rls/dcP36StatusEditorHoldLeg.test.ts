@@ -15,6 +15,10 @@
 //           park of a held sheet — HLD-2's explicit proceed) now write it
 //           through retire_over_hold: the same write, under the flag,
 //           recorded as REV_HOLD_OVERRIDDEN.
+//   P36 final fix pass: put_back_retired_issue's reversal re-entry stands
+//           only on that reversal's own restore record (restore_reversed_source's
+//           REV_HOLD_OVERRIDDEN via reversal_restore, by the caller, uncorrected,
+//           its reversal not landed); an unproven call is refused 42501.
 //
 // Every statement runs on BOTH sides of the paste, in a transaction that is
 // rolled back: "before" is a copy of the replay with 20261245's guard (the
@@ -77,6 +81,8 @@ const ids = () => ({
   dArchHeld: randomUUID(), aA: randomUUID(), holdA: randomUUID(),
   // dSupHeld: Superseded from Issued at A, an active hold
   dSupHeld: randomUUID(), sA: randomUUID(), holdS: randomUUID(),
+  // P36 final fix pass: the recorded split whose source is dSupHeld, and a merge naming it as a sibling
+  evSplit: randomUUID(), evMerge: randomUUID(),
   uid: Object.fromEntries(Object.keys(ROLES).map((k) => [k, randomUUID()])) as Record<Member, string>,
 });
 type World = ReturnType<typeof ids>;
@@ -122,7 +128,10 @@ function seed(db: string, w: World): void {
       ('${w.holdD}', '${w.org}', '${w.dDraftHeld}', 'Other', 'p36 harness', '${u.docctrl}'),
       ('${w.holdA}', '${w.org}', '${w.dArchHeld}',  'Other', 'p36 harness', '${u.docctrl}'),
       ('${w.holdS}', '${w.org}', '${w.dSupHeld}',   'Other', 'p36 harness', '${u.docctrl}');
-    UPDATE document_holds SET released_at = now(), released_by = '${u.docctrl}', released_reason = 'cleared' WHERE id = '${w.holdR}';`);
+    UPDATE document_holds SET released_at = now(), released_by = '${u.docctrl}', released_reason = 'cleared' WHERE id = '${w.holdR}';
+    INSERT INTO audit_logs (id, action, resource_id, resource_type, org_id, user_id, details, "timestamp") VALUES
+      ('${w.evSplit}', 'DOC_SPLIT', '${w.dSupHeld}', 'document', '${w.org}', '${u.docctrl}', jsonb_build_object('priorStatus', 'Issued', 'replacementDocIds', jsonb_build_array('${w.dHeld2}')), now() - interval '1 day'),
+      ('${w.evMerge}', 'DOC_MERGED', '${w.dFree}', 'document', '${w.org}', '${u.docctrl}', jsonb_build_object('mergeSiblings', jsonb_build_array('${w.dFree}', '${w.dSupHeld}'), 'mergedIntoDocumentId', '${w.dHeld2}'), now() - interval '1 day');`);
 }
 
 /** Several statements as `who`, each its own savepointed call (a sequence of PostgREST requests),
@@ -153,6 +162,13 @@ const supersedeBare = (doc: string, uid: string) =>
 const retireOverHold = (doc: string, via = "split") =>
   `SELECT 1 FROM (SELECT retire_over_hold('${doc}', '${via}', 'split into new sheets', now(), 'MOC-36', true) AS r) x WHERE x.r = 'superseded_over_hold'`;
 const overrides = (doc: string) => `SELECT count(*) FROM audit_logs WHERE action = 'REV_HOLD_OVERRIDDEN' AND resource_id = '${doc}';`;
+/** A reversal's restore of a source (lib/documentLifecycle/reverse.ts restoreStatus): restore_reversed_source naming the reversed event. */
+const restoreSource = (doc: string, status: string, ev: string) =>
+  `SELECT 1 FROM (SELECT restore_reversed_source('${doc}', '${status}', '${ev}', 'reversed') AS r) x WHERE x.r = 'restored_over_hold'`;
+/** The reversal's rollback re-superseding that source (reverse.ts putStatusBack: the snapshot from before the restore, the force asked). */
+const reSupersede = (doc: string, uid: string, want = "restored_over_hold") =>
+  `SELECT 1 FROM (SELECT put_back_retired_issue('${doc}', 'Superseded', 'reversal_rollback', 'A reversal that parked this document did not complete; its rollback put the document back.', true, now(), '${uid}', 'seed', NULL) AS r) x WHERE x.r = '${want}'`;
+const UNPROVEN = /^err:42501:put_back_retired_issue: a reversal's rollback re-supersedes a held document only after that reversal's own recorded restore of it over the hold/;
 const LEG = /^err:23514:Document has an active hold; a held document can't be superseded or voided here/;
 
 describe.skipIf(skip !== null)("REV-36 (20261253): entry into Superseded / Void over an active hold, before and after the paste", () => {
@@ -284,9 +300,13 @@ describe.skipIf(skip !== null)("REV-36 (20261253): entry into Superseded / Void 
     // not the caller's own supersession (an Admin rolling back Document Control's), or no force: the bare write, refused after
     expect(probe(AFTER, w, "admin", toVoid("supersede_rollback"), statusOf(w.dSupHeld))).toMatch(LEG);
     expect(probe(AFTER, w, "docctrl", `SELECT put_back_retired_issue('${w.dSupHeld}', 'Void', 'supersede_rollback', 'x', false, NULL, NULL, NULL, NULL)`, statusOf(w.dSupHeld))).toMatch(LEG);
-    // the reversal's re-supersession of a source standing at Archived, over its hold, forced: recorded
-    const reSup = `SELECT 1 FROM (SELECT put_back_retired_issue('${w.dArchHeld}', 'Superseded', 'reversal_rollback', 'rolled back', true, now(), '${w.uid.docctrl}', 'split into new sheets', 'MOC-36') AS r) x WHERE x.r = 'restored_over_hold'`;
-    expect(probe(AFTER, w, "docctrl", reSup, `${statusOf(w.dArchHeld)} ${overrides(w.dArchHeld)}`)).toBe("ok:1 / Superseded / 1");
+    // the reversal's re-supersession of a source it restored to Archived (the source was Archived before the split), over
+    // its hold, forced: recorded — on that restore's own record (P36 final fix pass)
+    expect(probeSeq(AFTER, w, "docctrl", [restoreSource(w.dSupHeld, "Archived", w.evSplit), reSupersede(w.dSupHeld, w.uid.docctrl)], `${statusOf(w.dSupHeld)} ${overrides(w.dSupHeld)}`))
+      .toBe("ok:1 / ok:1 / Superseded / 2");
+    // an Archived source no reversal restored: no record to stand on — refused (42501), nothing moves
+    const reSup = `SELECT put_back_retired_issue('${w.dArchHeld}', 'Superseded', 'reversal_rollback', 'rolled back', true, now(), '${w.uid.docctrl}', 'split into new sheets', 'MOC-36')`;
+    expect(probe(AFTER, w, "docctrl", reSup, `${statusOf(w.dArchHeld)} ${overrides(w.dArchHeld)}`)).toMatch(new RegExp(UNPROVEN.source + ".* / Archived / 0$"));
   });
 
   it("REGRESSION: the service role (no session) is never judged by the guard", () => {
@@ -362,16 +382,37 @@ describe.skipIf(skip !== null)("REV-36 (20261253): entry into Superseded / Void 
     expect(after).toBe("ok:1 / ok:1 / Issued");
   });
 
-  it("REGRESSION: a failed REVERSAL's rollback re-supersedes the source it had restored, over the source's hold (put_back_retired_issue, reversal_rollback, the force asked) — admitted bare before, and after the paste a recorded pass (REV_HOLD_OVERRIDDEN, retiredOverHold), never refused", () => {
-    // the source as the reversal leaves it before a later step is refused: restored to Issued, the split's supersession fields cleared
-    const reSupersede = `SELECT 1 FROM (SELECT put_back_retired_issue('${w.dHeld}', 'Superseded', 'reversal_rollback', 'rolled back', true, now(), '${w.uid.docctrl}', 'split into new sheets', 'MOC-36') AS r) x WHERE x.r IN ('restored', 'restored_over_hold')`;
-    const r = both("docctrl", reSupersede, `SELECT status || '|' || COALESCE(supersession_reason, '') FROM documents WHERE id = '${w.dHeld}';`);
-    expect(r.before).toBe("ok:1 / Superseded|split into new sheets");
-    expect(r.after).toBe(r.before);
-    expect(probe(AFTER, w, "docctrl", reSupersede, overrides(w.dHeld))).toBe("ok:1 / 1");
-    expect(probe(AFTER, w, "docctrl", reSupersede,
-      `SELECT (details->>'via') || '|' || (details->>'retiredOverHold') || '|' || (details->>'newStatus') FROM audit_logs WHERE action = 'REV_HOLD_OVERRIDDEN' AND resource_id = '${w.dHeld}';`))
-      .toBe("ok:1 / reversal_rollback|true|Superseded");
+  it("REGRESSION: a failed REVERSAL's rollback re-supersedes the source it had restored, over the source's hold (put_back_retired_issue, reversal_rollback, the force asked) — admitted bare before, and after the paste a recorded pass (REV_HOLD_OVERRIDDEN, retiredOverHold) standing on the restore's own record, never refused", () => {
+    // the genuine saga: restore_reversed_source brings the held split source back over its hold (recorded via
+    // reversal_restore on both sides — 20261192's body, unchanged), a later step is refused, and the rollback puts it back
+    const seq = (ev: string) => [restoreSource(w.dSupHeld, "Issued", ev), reSupersede(w.dSupHeld, w.uid.docctrl, "restored")];
+    const seqAfter = (ev: string) => [restoreSource(w.dSupHeld, "Issued", ev), reSupersede(w.dSupHeld, w.uid.docctrl)];
+    const shape = `SELECT status || '|' || COALESCE(supersession_reason, '') || '|' || (superseded_by_user = '${w.uid.docctrl}') FROM documents WHERE id = '${w.dSupHeld}';`;
+    for (const ev of [w.evSplit, w.evMerge]) {
+      expect(probeSeq(BEFORE, w, "docctrl", seq(ev), shape), ev).toBe("ok:1 / ok:1 / Superseded|seed|true");
+      expect(probeSeq(AFTER, w, "docctrl", seqAfter(ev), shape), ev).toBe("ok:1 / ok:1 / Superseded|seed|true");
+    }
+    expect(probeSeq(AFTER, w, "docctrl", seqAfter(w.evSplit),
+      `SELECT string_agg((details->>'via') || '|' || COALESCE(details->>'retiredOverHold', '-') || '|' || (details->>'newStatus'), ' ; ' ORDER BY details->>'via') FROM audit_logs WHERE action = 'REV_HOLD_OVERRIDDEN' AND resource_id = '${w.dSupHeld}';`))
+      .toBe("ok:1 / ok:1 / reversal_restore|-|Issued ; reversal_rollback|true|Superseded");
+    // UNPROVEN (P36 final fix pass): the same call with no restore of this reversal behind it — admitted bare before the
+    // paste (a controller passed the guard), refused 42501 after it, nothing moves, nothing recorded
+    const bare = `SELECT put_back_retired_issue('${w.dHeld}', 'Superseded', 'reversal_rollback', 'rolled back', true, now(), '${w.uid.docctrl}', 'split into new sheets', 'MOC-36')`;
+    expect(probe(BEFORE, w, "docctrl", bare, statusOf(w.dHeld))).toBe("ok:1 / Superseded");
+    expect(probe(AFTER, w, "docctrl", bare, `${statusOf(w.dHeld)} ${overrides(w.dHeld)}`)).toMatch(new RegExp(UNPROVEN.source + ".* / Issued / 0$"));
+    // the record must be THIS caller's, standing and its reversal not landed: someone else's restore (an Admin's), a
+    // restore whose pass the reversal already corrected (REV_HOLD_OVERRIDE_UNDONE), a reversal that landed
+    // (DOC_SPLIT_REVERSED), or a status moved since the restore — each refused 42501
+    const asDocCtrl = `SELECT set_config('request.jwt.claims', ${dollarQuote(JSON.stringify({ role: "authenticated", sub: w.uid.docctrl }))}, true)`;
+    expect(probeSeq(AFTER, w, "admin", [restoreSource(w.dSupHeld, "Issued", w.evSplit), asDocCtrl, reSupersede(w.dSupHeld, w.uid.docctrl)], `${statusOf(w.dSupHeld)} ${overrides(w.dSupHeld)}`))
+      .toMatch(new RegExp("^ok:1 / ok:1 / " + UNPROVEN.source.slice(1) + ".* / Issued / 1$"));
+    const corrected = `INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, details) VALUES ('REV_HOLD_OVERRIDE_UNDONE', '${w.dSupHeld}', 'document', '${w.org}', '${w.uid.docctrl}', jsonb_build_object('via', 'reversal_restore', 'corrects', 'REV_HOLD_OVERRIDDEN', 'reversedAuditEventId', '${w.evSplit}'))`;
+    const landed = `INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, details) VALUES ('DOC_SPLIT_REVERSED', '${w.dSupHeld}', 'document', '${w.org}', '${w.uid.docctrl}', jsonb_build_object('reversedAuditEventId', upper('${w.evSplit}')))`;
+    const moved = `UPDATE documents SET status = 'In Review', updated_at = now() WHERE id = '${w.dSupHeld}'`;
+    for (const between of [corrected, landed, moved]) {
+      const r = probeSeq(AFTER, w, "docctrl", [restoreSource(w.dSupHeld, "Issued", w.evSplit), between, reSupersede(w.dSupHeld, w.uid.docctrl)], statusOf(w.dSupHeld));
+      expect(r, between).toMatch(new RegExp("^ok:1 / ok:1 / " + UNPROVEN.source.slice(1)));
+    }
     // without the force asked, or on another door, it is the bare write — refused after (the hold leg), as any entry over a hold
     const noForce = `SELECT put_back_retired_issue('${w.dHeld}', 'Superseded', 'reversal_rollback', 'x', false, now(), '${w.uid.docctrl}', 'x', NULL)`;
     expect(probe(AFTER, w, "docctrl", noForce, statusOf(w.dHeld))).toMatch(LEG);

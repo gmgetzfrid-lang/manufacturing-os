@@ -46,7 +46,12 @@
 --           into Void, the status it had before the retirement the caller
 --           made. That door now records both (re-created below with one
 --           limb: Document Control, the force asked, a hold active — the
---           flag and its own REV_HOLD_OVERRIDDEN). The Supersede dialog (supersedeDocument) never
+--           flag and its own REV_HOLD_OVERRIDDEN; the reversal's re-entry
+--           only on that reversal's own standing restore record — the
+--           REV_HOLD_OVERRIDDEN restore_reversed_source wrote via
+--           reversal_restore, by the caller, uncorrected, its reversal not
+--           landed — and an unproven call is refused, 42501: P36 final fix
+--           pass). The Supersede dialog (supersedeDocument) never
 --           passes force, so it never retires a held document; the archive
 --           is not bound (Archived is not in the ruling); the un-archive and
 --           every rollback put-back leave a retirement, never enter one.
@@ -72,7 +77,8 @@
 -- retire_over_hold admits nothing the guard refused before this paste (a
 -- controller's bare supersession over a hold passed it) and records it;
 -- put_back_retired_issue's limb records a put-back the guard admitted bare
--- before this paste.
+-- before this paste (the reversal's re-entry only on that reversal's own
+-- restore record; without it the call is refused, as the guard would).
 -- DEC-30 inventory (aggregate counts only, captured BEFORE the transaction):
 -- the documents under an active hold right now, not retired (the population
 -- the block binds most often); of those, checked out by someone; the held
@@ -84,7 +90,10 @@
 -- and the first statement refuses to run, changing nothing, without its lock
 -- leg) and after 20261247 (paste guide row 191 — independent of this file,
 -- kept in order). 20261245 (row 187) is HOLD behind 20261193 (row 150), so
--- this file waits with them.
+-- this file waits with them. Independent of 20261252 (row 192, P35: it
+-- re-creates finalize_reviewed_promote only, whose flag is set around a
+-- revision promote, never a status change into Superseded / Void) — pasted
+-- after it in number order, neither needs the other.
 -- ⚠ DEPLOY FIRST: deploy the app carrying document-control P36 (the split /
 -- merge source flip and the reversal's park over a hold call
 -- retire_over_hold with p_force_hold, and keep today's bare write while the
@@ -1143,6 +1152,59 @@ BEGIN
     v_reentry := true;
   END IF;
 
+  -- REV-36 (P36 final fix pass): the reversal's re-entry is bound to the
+  -- reversal's OWN evidence, never a bare claim of a rollback. A reversal
+  -- brings a held source back only through restore_reversed_source, which —
+  -- for Document Control, a Superseded source of the split / merge it names,
+  -- a hold active (the source's own, or one HLD-2 carried onto it BEFORE the
+  -- restore) — writes REV_HOLD_OVERRIDDEN (via reversal_restore, the
+  -- reversed event, newStatus = the status it restored) in the restore's own
+  -- transaction. So the rollback re-supersedes a held document only when
+  -- that row stands: on this document, by this caller, naming a recorded
+  -- split / merge in this org, its newStatus the status the document stands
+  -- at now (the one the restore wrote, a NULL included), not corrected since
+  -- (no REV_HOLD_OVERRIDE_UNDONE via reversal_restore naming the same event
+  -- at or after it — the reversal writes that only after this put-back) and
+  -- its reversal not landed (no DOC_SPLIT_REVERSED / DOC_MERGE_REVERSED
+  -- naming the event: a reversal that landed has no rollback). Anything else
+  -- that would have opened the limb is refused (42501), changing nothing —
+  -- before this fix pass that call was the recorded pass, and without the
+  -- limb the guard refuses it bare (check_violation). The Void re-entry is
+  -- unchanged (the caller's own retirement, as REV-23's door). REV-37 holds
+  -- what this cannot prove (an audit row a member inserts directly).
+  IF v_reentry
+     AND p_via = 'reversal_rollback'
+     AND btrim(COALESCE(p_status, '')) = 'Superseded'
+     AND NOT EXISTS (
+           SELECT 1
+             FROM audit_logs a
+             JOIN audit_logs e
+               ON e.id::text = a.details->>'reversedAuditEventId'
+              AND e.org_id = v_org
+              AND e.action IN ('DOC_SPLIT', 'DOC_MERGED')
+            WHERE a.org_id = v_org
+              AND a.resource_id = p_document_id::text
+              AND a.action = 'REV_HOLD_OVERRIDDEN'
+              AND a.user_id = v_uid
+              AND a.details->>'via' = 'reversal_restore'
+              AND (a.details->>'newStatus') IS NOT DISTINCT FROM v_status
+              AND NOT EXISTS (SELECT 1 FROM audit_logs u
+                               WHERE u.org_id = v_org
+                                 AND u.resource_id = p_document_id::text
+                                 AND u.action = 'REV_HOLD_OVERRIDE_UNDONE'
+                                 AND u.details->>'via' = 'reversal_restore'
+                                 AND translate(lower(u.details->>'reversedAuditEventId'), '{}-', '') = replace(e.id::text, '-', '')
+                                 AND u."timestamp" >= a."timestamp")
+              AND NOT EXISTS (SELECT 1 FROM audit_logs r
+                               WHERE r.org_id = v_org
+                                 AND r.resource_id = e.resource_id
+                                 AND r.action IN ('DOC_SPLIT_REVERSED', 'DOC_MERGE_REVERSED')
+                                 AND translate(lower(r.details->>'reversedAuditEventId'), '{}-', '') = replace(e.id::text, '-', ''))
+         ) THEN
+    RAISE EXCEPTION 'put_back_retired_issue: a reversal''s rollback re-supersedes a held document only after that reversal''s own recorded restore of it over the hold (REV_HOLD_OVERRIDDEN via reversal_restore, by you, standing and uncorrected), and none was found; nothing was changed.'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
   -- The put-back: the app's own write for this door, as the caller. The
   -- flag names this document for this one statement only.
   IF v_forced THEN
@@ -1418,9 +1480,10 @@ SELECT 'retire_over_hold: Document Control''s move of a document into Superseded
           FROM pg_proc WHERE proname = 'retire_over_hold'),
        NULL
 UNION ALL
-SELECT 'put_back_retired_issue: the reversal rollback putting a restored source back into Superseded, and a rollback putting back Void after the caller''s own retirement, over a hold, for Document Control asking the force, run under the flag and are recorded (REV_HOLD_OVERRIDDEN, retiredOverHold) — after REV-23''s and REV-29''s doors, which are unchanged',
+SELECT 'put_back_retired_issue: the reversal rollback putting a restored source back into Superseded (only on that reversal''s own standing restore record — REV_HOLD_OVERRIDDEN via reversal_restore, by the caller, uncorrected, its reversal not landed; else refused 42501), and a rollback putting back Void after the caller''s own retirement, over a hold, for Document Control asking the force, run under the flag and are recorded (REV_HOLD_OVERRIDDEN, retiredOverHold) — after REV-23''s and REV-29''s doors, which are unchanged',
        (SELECT prosrc LIKE '%IF NOT v_forced%AND p_via <> ''unarchive''%AND COALESCE(p_force_hold, false)%AND ((p_via = ''reversal_rollback''%AND btrim(COALESCE(p_status, '''')) = ''Superseded''%AND v_status IS DISTINCT FROM ''Superseded'')%OR (btrim(COALESCE(p_status, '''')) = ''Void''%AND v_status = ''Superseded''%AND v_retired_by = v_uid))%AND is_org_controller(v_org)%v_reentry := true;%IF v_reentry THEN%PERFORM set_config(''app.publish_hold_override'', p_document_id::text, true);%IF v_reentry THEN%PERFORM set_config(''app.publish_hold_override'', '''', true);%IF v_reentry THEN%''retiredOverHold'', true,%RETURN ''restored_over_hold'';%RETURN CASE WHEN v_forced THEN ''restored_over_hold'' ELSE ''restored'' END;%'
            AND prosrc LIKE '%AND v_status = (CASE WHEN p_via = ''unarchive'' THEN ''Archived'' ELSE ''Superseded'' END)%AND (p_via = ''unarchive'' OR v_retired_by = v_uid)%IF NOT v_forced%AND p_status IS NULL%AND p_via <> ''unarchive''%'
+           AND prosrc LIKE '%v_reentry := true;%IF v_reentry%AND p_via = ''reversal_rollback''%AND NOT EXISTS (%AND a.action = ''REV_HOLD_OVERRIDDEN''%AND a.user_id = v_uid%AND a.details->>''via'' = ''reversal_restore''%AND (a.details->>''newStatus'') IS NOT DISTINCT FROM v_status%AND u.action = ''REV_HOLD_OVERRIDE_UNDONE''%AND r.action IN (''DOC_SPLIT_REVERSED'', ''DOC_MERGE_REVERSED'')%USING ERRCODE = ''insufficient_privilege'';%IF v_reentry THEN%PERFORM set_config(''app.publish_hold_override'', p_document_id::text, true);%'
           FROM pg_proc WHERE proname = 'put_back_retired_issue'),
        NULL
 UNION ALL

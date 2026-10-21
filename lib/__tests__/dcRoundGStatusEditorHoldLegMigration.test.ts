@@ -187,6 +187,42 @@ describe("20261253 — put_back_retired_issue re-created from its NEWEST earlier
     expect(M).toContain("REVOKE ALL ON FUNCTION put_back_retired_issue(uuid, text, text, text, boolean, timestamptz, uuid, text, text) FROM PUBLIC, anon, service_role;");
     expect(M).toContain("GRANT EXECUTE ON FUNCTION put_back_retired_issue(uuid, text, text, text, boolean, timestamptz, uuid, text, text) TO authenticated;");
   });
+  it("P36 final fix pass: the reversal's re-entry is bound to that reversal's OWN standing restore record — else refused 42501 before any write; the Void re-entry is unchanged", () => {
+    const limb = stripComments(PB_ADDED[1]);
+    const ev = limb.slice(limb.indexOf("IF v_reentry\n"));
+    expect(ev.length).toBeGreaterThan(200);
+    for (const s of [
+      "IF v_reentry\n     AND p_via = 'reversal_rollback'\n     AND btrim(COALESCE(p_status, '')) = 'Superseded'\n     AND NOT EXISTS (",
+      // the record restore_reversed_source writes in the restore's own transaction (20261164 / 20261192)
+      "ON e.id::text = a.details->>'reversedAuditEventId'",
+      "AND e.org_id = v_org",
+      "AND e.action IN ('DOC_SPLIT', 'DOC_MERGED')",
+      "WHERE a.org_id = v_org",
+      "AND a.resource_id = p_document_id::text",
+      "AND a.action = 'REV_HOLD_OVERRIDDEN'",
+      "AND a.user_id = v_uid",
+      "AND a.details->>'via' = 'reversal_restore'",
+      "AND (a.details->>'newStatus') IS NOT DISTINCT FROM v_status",
+      // not corrected since (the reversal's REV_HOLD_OVERRIDE_UNDONE), its reversal not landed
+      "AND u.action = 'REV_HOLD_OVERRIDE_UNDONE'",
+      "AND u.details->>'via' = 'reversal_restore'",
+      "AND u.\"timestamp\" >= a.\"timestamp\")",
+      "AND r.resource_id = e.resource_id",
+      "AND r.action IN ('DOC_SPLIT_REVERSED', 'DOC_MERGE_REVERSED')",
+      "USING ERRCODE = 'insufficient_privilege';",
+    ]) expect(ev, s).toContain(s);
+    // the restore writes exactly that row: via, the event, newStatus — what the binding reads
+    const restore = between(mig("20261192_dc_roundF_null_prior_status_put_back.sql"), "CREATE OR REPLACE FUNCTION restore_reversed_source(", "\n$$;");
+    for (const s of ["'via', 'reversal_restore',", "'reversedAuditEventId', p_reversal_of,", "'newStatus', p_status,", "VALUES ('REV_HOLD_OVERRIDDEN', p_document_id::text, 'document', v_org, v_uid,"]) expect(restore, s).toContain(s);
+    // the correction the reversal writes after the put-back is the one the binding reads (lib/documentLifecycle/reverse.ts correctRecordedPass)
+    const rev = readFileSync(join(process.cwd(), "lib", "documentLifecycle", "reverse.ts"), "utf8");
+    expect(rev).toMatch(/action: "REV_HOLD_OVERRIDE_UNDONE",[\s\S]{0,400}via: "reversal_restore",[\s\S]{0,120}reversedAuditEventId: door\.reversalOf,/);
+    // the refusal precedes the flag and the write; the arm only narrows (no v_reentry := in it)
+    expect(P.next.indexOf("USING ERRCODE = 'insufficient_privilege';\n  END IF;\n\n  -- The put-back:")).toBeGreaterThan(0);
+    expect(ev.slice(0, ev.indexOf("USING ERRCODE"))).not.toMatch(/v_reentry\s*:=|set_config/);
+    // the Void arm keeps REV-23's binding: the caller's own retirement
+    expect(limb).toContain("OR (btrim(COALESCE(p_status, '')) = 'Void'\n              AND v_status = 'Superseded'\n              AND v_retired_by = v_uid))");
+  });
 });
 
 describe("20261253 — retire_over_hold: the single doors' recorded pass over a hold", () => {
@@ -282,7 +318,7 @@ describe("20261253 — the one-paste shape", () => {
         }
       }
     }
-    expect(n).toBe(15); // the guard: P36 2 + P32 1 + the earlier limbs 9; put_back_retired_issue 2 (the limb, the earlier doors); retire_over_hold 1
+    expect(n).toBe(16); // the guard: P36 2 + P32 1 + the earlier limbs 9; put_back_retired_issue 3 (the limb, the earlier doors, the reversal arm's evidence); retire_over_hold 1
     expect(p36.length).toBeGreaterThanOrEqual(3);
     // the leg's and the limb's own probes are false on the bodies they replace
     for (const { fn, pat } of p36.filter((x) => /superseded or voided here|v_reentry/.test(x.pat))) expect(likeRe(pat).test(prosrcOf(bases[fn])), pat).toBe(false);
@@ -318,6 +354,8 @@ describe("20261253 — the one-paste shape", () => {
     expect(head).toMatch(/HOW TO APPLY: AFTER 20261245 \(required/);
     expect(head).toMatch(/after 20261247 \(paste guide row 191/);
     expect(head).toMatch(/20261245 \(row 187\) is HOLD behind 20261193 \(row 150\)/);
+    // P36 final fix pass: after the P35 merge — 20261252 (row 192) re-creates finalize_reviewed_promote only
+    expect(head).toMatch(/Independent of 20261252 \(row 192, P35: it\s+-- re-creates finalize_reviewed_promote only/);
     expect(head).toMatch(/⚠ DEPLOY FIRST: deploy the app carrying document-control P36/);
     expect(head).toMatch(/THEN paste\. The P36 app works\s+-- BEFORE and AFTER the paste/);
     expect(head).toMatch(/An app before P36 makes those flips with the bare\s+-- write, which this guard refuses for Document Control over an active hold/);
