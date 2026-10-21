@@ -2,113 +2,79 @@
 -- 20261254_dc_roundG_door_b_guard.sql
 --
 -- document-control Round G — P37 DOOR B GUARD (DCK-18's remainders and REV-37;
--- assigned by the integrator at the P35 and P36 merges, 2026-10-21, DEC-31;
--- ruled under DEC-90: fail-safe, no regression).
+-- assigned by the integrator at the P35 and P36 merges, DEC-31; ruled under
+-- DEC-90: fail-safe, no regression).
 --
---   DCK-18  (a) The publish guard's door (b) — the reviewed promote of the
---           pending draft over another person's checkout, ratified under
---           DEC-90 so a review stays finishable — was recorded and told by
---           finalize_reviewed_promote (20261252) only. The same promote sent
---           by hand as the three-step PATCH reached the database untold and
---           unrecorded. Now the guard writes the same
---           REVIEW_PROMOTED_OVER_CHECKOUT row and the holder's notice for any
---           door-(b) pointer write over another person's checkout that
---           finalize_reviewed_promote did not make (it marks its own promote
---           with the transaction-local flag app.review_promote_records, set
---           and cleared around its UPDATE, and keeps recording it itself — no
---           double record). Never a refusal: each write is its own sub-block,
---           a WARNING when it cannot be written.
---           (b) Door (b)'s intake limb trusted the version row's columns
---           alone, and a door-shaped row a signed-in session wrote before
---           20261247 could not be told from the contractor door's genuine
---           submission. Now a promote over another person's checkout that
---           only the intake limb admits (no bound roster) needs the intake
---           route's own server-written INTAKE_SUBMISSION record naming the
---           version (user_id NULL — no signed-in session can write one), or
---           it is refused 42501 in the lock leg's words. Every genuine
---           submission carries it (the route writes it after the door's
---           insert, on both door paths).
---   REV-37  (1) retire_over_hold's recorded park (p_via 'reversal_park', the
---           force asked) is bound to the reversal being run: the document must
---           be a recorded split's replacement (DOC_SPLIT replacementDocIds) or
---           a recorded merge's target (DOC_MERGED mergedIntoDocumentId) whose
---           reversal has not landed — as restore_reversed_source binds its
---           restore; else 42501, nothing changed. The split / merge source
---           flip stays the recorded Document Control pass (its own evidence is
---           written by the saga after the flip, in other requests — a binding
---           would refuse every genuine split or merge over a hold; the
---           integrator's ruling, recorded on REV-37).
---           (2) A write rail for the REV_HOLD_OVERRIDDEN rows the recording
---           functions write and put_back_retired_issue reads as evidence:
---           audit_logs_insert let any member insert one with their own
---           user_id. Now a signed-in session's REV_HOLD_OVERRIDDEN row is
---           admitted only in the transaction that wrote the document it names
---           — its documents row, or the version the row names
---           (details.versionId, of that document) — the row's xmin is a
---           transaction of this session (pg_xact_status 'in progress'), which
---           a row another session wrote never is; so a member cannot write
---           one beside no write. Every writer reaches its INSERT only after
---           such a write in the same function: finalize_reviewed_promote,
---           put_back_retired_issue, restore_reversed_source and
---           retire_over_hold after their own UPDATE of that document (a
---           no-match returns first); publish_revision after its own INSERT of
---           the version the row names, on both arms — its branch arm (a
---           controller's forced branch over a hold) writes no documents row,
---           which is why the version proof is there (P37 fix pass). The
---           service role (a restore, the SQL console) passes.
+--   DCK-18 (a) A door-(b) pointer write over another person's checkout made
+--          outside finalize_reviewed_promote (the three-step PATCH sent by
+--          hand) is recorded by the publish guard — the same
+--          REVIEW_PROMOTED_OVER_CHECKOUT row and holder's notice 20261252
+--          writes; finalize marks its own promote (transaction-local
+--          app.review_promote_records) so nothing is doubled. Never a
+--          refusal: each write its own sub-block, a WARNING when it fails.
+--   DCK-18 (b) Door (b)'s intake limb trusted the version row's columns
+--          alone; a door-shaped row a signed-in session wrote before 20261247
+--          could not be told from a genuine submission. Over another person's
+--          checkout, an intake-only promote (no bound roster) now needs a
+--          proof naming the version, no person named (user_id NULL — no
+--          signed-in session can write one): the door's own
+--          INTAKE_DOOR_SUBMITTED record, written by intake_door_submit_version
+--          in the door's transaction on BOTH its paths (role switch, bound-
+--          identity fallback; P37 final fix pass — every door path that can
+--          file a submission here goes through it: 20261254 → 20261252 →
+--          20261247 → 20261214 → 20261184); the intake route's
+--          INTAKE_SUBMISSION record; or that record kept as a server dead
+--          letter in the EVID-6 outbox (20261219; still there, or drained as
+--          AUDIT_DEAD_LETTER). Else refused 42501 in the lock leg's words.
+--   REV-37 (1) retire_over_hold's recorded park (p_via 'reversal_park', the
+--          force asked) is bound to the reversal being run: an unreversed
+--          recorded split naming the document as a replacement, or merge as
+--          its target; else 42501. The split / merge source flip stays the
+--          recorded Document Control pass (the integrator's ruling).
+--          (2) A write rail for REV_HOLD_OVERRIDDEN (the evidence
+--          put_back_retired_issue reads): a signed-in session's row only in
+--          the transaction that wrote the document it names (its documents
+--          row, or the version details.versionId names — publish_revision's
+--          forced branch writes no documents row); else 42501. The service
+--          role passes. Rows written before this paste are not re-judged
+--          (the recorded residual; inventory row 5 is the operator's look-
+--          over).
 --
 -- RE-CREATED FROM THE NEWEST BODIES (found by scanning; lineDiff-pinned —
--- every line of each base kept, the lines added are exactly the P37 blocks):
--- enforce_document_publish_guard from 20261253 (P36; HAND-13's lock leg,
--- REV-36's hold leg and every earlier rule kept); finalize_reviewed_promote
--- from 20261252 (P35; its record, notice and report kept, the same eight-
--- argument signature); retire_over_hold from 20261253 (P36). Created:
--- enforce_hold_override_record_rail() and its trigger on audit_logs. Nothing
--- else is created or re-created; no row is moved. Grants (DRLS-16): the guard
--- and the rail are SECURITY DEFINER, search_path pinned, executable by no
--- client role (they RETURN trigger); finalize_reviewed_promote and
--- retire_over_hold stay SECURITY INVOKER with their grants restated.
+-- every base line kept, the added lines exactly the P37 blocks):
+-- enforce_document_publish_guard (20261253), finalize_reviewed_promote
+-- (20261252, same eight-argument signature), retire_over_hold (20261253),
+-- intake_door_submit_version (20261214, same signature). Created:
+-- enforce_hold_override_record_rail() and its trigger on audit_logs. No row is
+-- moved. DRLS-16: the guard and the rail are SECURITY DEFINER, search_path
+-- pinned, executable by no client role; the other three stay SECURITY
+-- INVOKER with their grants restated (intake_door_submit_version: the service
+-- role only). NOT a widening: every limb refuses, or records, a write it
+-- admitted. DEC-30 inventory: aggregate counts only, BEFORE the transaction.
 --
--- NOT a widening: the guard refuses a promote it admitted (over a foreign
--- checkout, intake-only, with no route record) and writes rows only for a
--- write it admits anyway; retire_over_hold refuses a recorded park it
--- admitted; the rail refuses member inserts it admitted. DEC-30 inventory
--- (aggregate counts only, captured BEFORE the transaction).
---
--- APP BEFORE AND AFTER THIS PASTE: no app change is needed for the database
--- limbs. finalize_reviewed_promote keeps its signature and answers (the app's
--- P35 reporting call and plain call are unchanged); the app never sends the
--- three-step PATCH on a database with finalize_reviewed_promote (it takes
--- that path only on PGRST202 / 42883, before 20261151), and if it ever did
--- the guard and the app would both record — more, never fewer. The app's
--- lifecycle sagas call retire_over_hold for a reversal's park only on a
--- recorded split's replacement / merge's target (reverse.ts), and write no
--- REV_HOLD_OVERRIDDEN row themselves. The app carrying P37 adds a controller
--- retire for a stray pending submission (lib/strayPendingSubmission.ts,
--- through lib/revisions.ts voidPendingDraft) and re-reads a recorded flip or
--- park whose answer was lost — both work on every database (no new RPC).
+-- APP BEFORE AND AFTER THIS PASTE: no app change is needed. finalize keeps its
+-- signature and answers; the intake route's call to intake_door_submit_version
+-- is unchanged (the door's record is one more audit row per submission). The
+-- app carrying P37 adds the Inspector's retire of a stray pending submission
+-- (an intent row before the void, the outcome after), re-reads a recorded flip
+-- or park whose answer was lost, and keeps a failed INTAKE_SUBMISSION write in
+-- the outbox (before 20261219: only logged, as before) — all on any database.
 -- DEPLOY ORDER: none — deploy the P37 app before or after this paste.
 --
--- What changes after the paste:
---   * a door-shaped pending submission with no INTAKE_SUBMISSION record is no
---     longer promoted over another person's checkout (the holder checks in,
---     then it is approved; or Document Control retires it — the Intake tab's
---     Reject, or the Inspector's retire for one no Intake tab lists);
---   * a door-(b) write over another person's checkout made outside
---     finalize_reviewed_promote is recorded and the holder told;
---   * a recorded park over a hold of a document no unreversed split / merge
---     names is refused (42501);
---   * a member's direct insert of a REV_HOLD_OVERRIDDEN row is refused
---     (42501).
+-- What changes after the paste: an unproven door-shaped submission is no
+-- longer promoted over another person's checkout (the holder checks in, or
+-- Document Control retires it); a door-(b) write over a checkout outside
+-- finalize is recorded and the holder told; an unbound recorded park and a
+-- member's direct REV_HOLD_OVERRIDDEN insert are refused (42501); each door
+-- submission writes INTAKE_DOOR_SUBMITTED.
 --
 -- HOW TO APPLY: AFTER 20261253 (required — the first statement refuses,
--- changing nothing, without 20261253's hold leg, 20261252's eight-argument
--- finalize_reviewed_promote or 20261253's retire_over_hold), so it waits
--- behind paste guide row 193 (HOLD behind rows 187 / 150).
--- ⚠ Never re-paste 20261253, 20261252, 20261245, 20261193, 20261185,
--- 20261182, 20261174, 20261165, 20261164, 20261159, 20261151, 20261144,
--- 20261139, 20261105 or any earlier guard / finalize migration after this one:
--- each would drop a P37 limb.
+-- changing nothing, without 20261253, 20261252 or 20261214's bodies), so it
+-- waits behind paste guide row 193 (HOLD behind rows 187 / 150).
+-- ⚠ Never re-paste 20261253, 20261252, 20261245, 20261214, 20261193,
+-- 20261185, 20261184, 20261182, 20261174, 20261165, 20261164, 20261159,
+-- 20261151, 20261144, 20261139, 20261105 or any earlier guard / finalize /
+-- intake-door migration after this one: each would drop a P37 limb.
 -- Single paste: prerequisite check → temp-table inventory (counts only) →
 -- BEGIN/DDL/COMMIT → one SELECT (check text, ok boolean, n text).
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent.
@@ -128,31 +94,68 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'retire_over_hold' AND pronargs = 6) THEN
     RAISE EXCEPTION '20261254 needs 20261253 (retire_over_hold) pasted first; nothing was changed.';
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'intake_door_submit_version' AND pronargs = 2
+                  AND prosrc LIKE '%intake_door_version_rls_ready()%') THEN
+    RAISE EXCEPTION '20261254 needs 20261214 (intake_door_submit_version''s role switch) pasted first; nothing was changed.';
+  END IF;
 END
 $$;
+
+-- The inventory's outbox reader (20261219; false where the table is not):
+-- session-local (pg_temp), read by the inventory only.
+CREATE OR REPLACE FUNCTION pg_temp.dc_round_g_254_outbox_names(p_org uuid, p_doc text, p_version text)
+RETURNS boolean LANGUAGE plpgsql AS $f$
+DECLARE
+  v boolean := false;
+BEGIN
+  IF to_regclass('public.audit_dead_letters') IS NULL THEN RETURN false; END IF;
+  EXECUTE 'SELECT EXISTS (SELECT 1 FROM public.audit_dead_letters o
+                           WHERE o.org_id = $1 AND o.action = ''INTAKE_SUBMISSION''
+                             AND o.source = ''server'' AND o.reported_by IS NULL
+                             AND o.entry->''row''->>''resource_type'' = ''document''
+                             AND o.entry->''row''->>''resource_id'' = $2
+                             AND jsonb_typeof(COALESCE(o.entry->''row''->''user_id'', ''null''::jsonb)) = ''null''
+                             AND o.entry->''row''->''details''->>''versionId'' = $3)'
+    INTO v USING p_org, p_doc, p_version;
+  RETURN COALESCE(v, false);
+END
+$f$;
 
 -- ── Pre-apply inventory (aggregate only; captured BEFORE the DDL) ───────────
 DROP TABLE IF EXISTS dc_round_g_254_before;
 CREATE TEMP TABLE dc_round_g_254_before AS
 WITH s AS (
   -- the door-shaped submissions pending now (20261252's rows 3-6) and
-  -- whether the intake route's own record names them
+  -- whether any proof door (b)'s intake limb accepts from this paste names
+  -- them: the route's own record, the door's own record (none before a
+  -- first apply), or the route's record kept as a server dead letter
+  -- (drained into the trail, or still in the outbox)
   SELECT d.checked_out_by IS NOT NULL AS checked_out,
-         EXISTS (SELECT 1 FROM audit_logs a
-                  WHERE a.org_id = d.org_id AND a.resource_type = 'document' AND a.resource_id = d.id::text
-                    AND a.action = 'INTAKE_SUBMISSION' AND a.user_id IS NULL
-                    AND a.details->>'versionId' = v.id::text) AS route_recorded
+         (EXISTS (SELECT 1 FROM audit_logs a
+                   WHERE a.org_id = d.org_id AND a.resource_type = 'document' AND a.resource_id = d.id::text
+                     AND a.action IN ('INTAKE_SUBMISSION', 'INTAKE_DOOR_SUBMITTED') AND a.user_id IS NULL
+                     AND a.details->>'versionId' = v.id::text)
+          OR EXISTS (SELECT 1 FROM audit_logs a
+                      WHERE a.org_id = d.org_id AND a.resource_type = 'org' AND a.resource_id = d.org_id::text
+                        AND a.action = 'AUDIT_DEAD_LETTER' AND a.user_id IS NULL
+                        AND a.details->>'lostAction' = 'INTAKE_SUBMISSION' AND a.details->>'source' = 'server'
+                        AND jsonb_typeof(COALESCE(a.details->'reportedBy', 'null'::jsonb)) = 'null'
+                        AND a.details->'lost'->>'resource_type' = 'document'
+                        AND a.details->'lost'->>'resource_id' = d.id::text
+                        AND jsonb_typeof(COALESCE(a.details->'lost'->'user_id', 'null'::jsonb)) = 'null'
+                        AND a.details->'lost'->'details'->>'versionId' = v.id::text)
+          OR pg_temp.dc_round_g_254_outbox_names(d.org_id, d.id::text, v.id::text)) AS proven
     FROM documents d JOIN document_versions v ON v.id = d.pending_version_id
    WHERE v.review_state = 'in_review' AND COALESCE(v.provenance, '') = 'external'
      AND (v.created_by IS NULL OR v.created_by = v.intake_link_id)
 )
-SELECT 'inventory (before apply): pending door-shaped external submissions the intake route''s own record does not name (20261252''s rows 5 + 6, recounted) — from this paste door (b) no longer promotes one over another person''s checkout; expected 0 on legitimate data' AS inventory,
+SELECT 'inventory (before apply): pending door-shaped external submissions no proof names (the route''s INTAKE_SUBMISSION record, the door''s INTAKE_DOOR_SUBMITTED record, or a server dead letter of the route''s record) — door (b) no longer promotes one over another person''s checkout; expected 0 (a genuine pre-paste one whose route record was lost counts too: indistinguishable from a hand-written row)' AS inventory,
        COUNT(*)::text AS n
-  FROM s WHERE NOT route_recorded
+  FROM s WHERE NOT proven
 UNION ALL
 SELECT 'inventory (before apply): of those, on a document checked out right now (the ones this paste refuses to promote until the holder checks in, or Document Control retires them)',
        COUNT(*)::text
-  FROM s WHERE NOT route_recorded AND checked_out
+  FROM s WHERE NOT proven AND checked_out
 UNION ALL
 SELECT 'inventory (before apply): REVIEW_PROMOTED_OVER_CHECKOUT records to date — informational: from this paste a door-(b) write over a checkout made outside finalize_reviewed_promote is recorded too',
        COUNT(*)::text
@@ -162,9 +165,23 @@ SELECT 'inventory (before apply): REV_HOLD_OVERRIDDEN records to date — inform
        COUNT(*)::text
   FROM audit_logs WHERE action = 'REV_HOLD_OVERRIDDEN'
 UNION ALL
-SELECT 'inventory (before apply): of those, via reversal_restore (the evidence put_back_retired_issue reads for a reversal''s rollback) — informational',
+SELECT 'inventory (before apply): OPERATOR LOOK-OVER (owner: the operator at the 20261254 paste, reported to the integrator) — REV_HOLD_OVERRIDDEN via reversal_restore with no matching restore_reversed_source trace (no recorded DOC_SPLIT / DOC_MERGED of the action it names naming the document, recorded no later; or not that function''s shape: priorStatus Superseded, holds listed, branch false). Pre-paste rows stay readable as evidence (REV-37''s residual) — expected 0; each counted is looked over',
        COUNT(*)::text
-  FROM audit_logs WHERE action = 'REV_HOLD_OVERRIDDEN' AND details->>'via' = 'reversal_restore'
+  FROM audit_logs r
+ WHERE r.action = 'REV_HOLD_OVERRIDDEN' AND r.details->>'via' = 'reversal_restore'
+   AND NOT (
+         COALESCE(r.details->>'priorStatus' = 'Superseded', false)
+     AND COALESCE(jsonb_typeof(r.details->'holds') = 'array', false)
+     AND COALESCE(r.details->>'branch' = 'false', false)
+     AND EXISTS (SELECT 1 FROM audit_logs e
+                  WHERE e.id::text = r.details->>'reversedAuditEventId'
+                    AND e.org_id = r.org_id
+                    AND e.action IN ('DOC_SPLIT', 'DOC_MERGED')
+                    AND e.action = r.details->>'reversedAction'
+                    AND (e.resource_id = r.resource_id
+                         OR COALESCE(jsonb_typeof(e.details->'mergeSiblings') = 'array'
+                                     AND (e.details->'mergeSiblings') ? r.resource_id, false))
+                    AND e."timestamp" <= r."timestamp"))
 UNION ALL
 SELECT 'inventory (before apply): documents under an active hold that an unreversed recorded split names as a replacement or merge as its target — informational: the documents a reversal may still park over a hold, recorded, from this paste',
        COUNT(DISTINCT d.id)::text
@@ -176,7 +193,11 @@ SELECT 'inventory (before apply): documents under an active hold that an unrever
    AND NOT EXISTS (SELECT 1 FROM audit_logs r
                     WHERE r.org_id = e.org_id AND r.resource_id = e.resource_id
                       AND r.action IN ('DOC_SPLIT_REVERSED', 'DOC_MERGE_REVERSED')
-                      AND translate(lower(r.details->>'reversedAuditEventId'), '{}-', '') = replace(e.id::text, '-', ''));
+                      AND translate(lower(r.details->>'reversedAuditEventId'), '{}-', '') = replace(e.id::text, '-', ''))
+UNION ALL
+SELECT 'inventory (before apply): INTAKE_DOOR_SUBMITTED records to date — 0 on a first apply (only this paste''s door writes them); non-zero on a first apply is for the operator to look over',
+       COUNT(*)::text
+  FROM audit_logs WHERE action = 'INTAKE_DOOR_SUBMITTED';
 
 BEGIN;
 
@@ -211,6 +232,7 @@ DECLARE
   v_door_b_who   text;
   v_door_b_told  boolean;
   v_door_b_n     integer;
+  v_door_b_proof boolean;
 BEGIN
   IF v_actor IS NULL THEN
     RETURN NEW;
@@ -996,31 +1018,25 @@ BEGIN
   END IF;
 
   -- DCK-18 (document-control Round G, P37 DOOR B GUARD — assigned by the
-  -- integrator at the P35 merge, 2026-10-21, DEC-31; ruled under DEC-90:
-  -- fail-safe, no regression): two limbs on door (b) — the reviewed promote
-  -- of the pending draft over another person's checkout that the lock leg
-  -- just above admits (ratified under DEC-90: a review stays finishable).
-  -- (b) The intake limb admits only a submission the database can vouch for.
-  --     The lock leg reads the version row alone, and a door-shaped row a
-  --     signed-in session wrote BEFORE 20261247 ('external', a link that
-  --     scopes the document, no member creator) cannot be told from the
-  --     contractor door's genuine submission by its columns. Every genuine
-  --     submission reaches the database through the intake route
-  --     (app/api/intake/upload, as the service role: intake_door_submit_version
-  --     is executable by the service role only, on both of its paths — the
-  --     role switch as intake_door and the bound-claims fallback), and the
-  --     route records it: an INTAKE_SUBMISSION audit row naming the version
-  --     (details.versionId), the document and the workspace, written with no
-  --     person named (user_id NULL — a row no signed-in session can write:
-  --     audit_logs_insert requires the caller's own user_id, and no function
-  --     writes that action for one). So a promote over another person's
-  --     checkout that only the intake limb admits (no bound roster; the
-  --     roster limb is unchanged) also needs that record, or it is refused
-  --     here in the lock leg's own words (insufficient_privilege): the holder
-  --     checks in, then it is approved — the fail-safe direction, as for a
-  --     submission whose link no longer scopes the document. A promote over
-  --     no checkout, the holder's own, a roster's and publish_revision's
-  --     (door (a)) are decided exactly as before.
+  -- integrator at the P35 merge, DEC-31; ruled under DEC-90: fail-safe, no
+  -- regression): two limbs on door (b), the reviewed promote over another
+  -- person's checkout the lock leg admits (a review stays finishable).
+  -- (b) The intake limb admits only a submission the database can vouch for:
+  --     a door-shaped row a signed-in session wrote before 20261247 cannot
+  --     be told from a genuine one by its columns. An intake-only promote
+  --     (no bound roster) over another person's checkout needs ONE proof
+  --     naming the version, written by the service role with no person
+  --     named (user_id NULL — audit_logs_insert lets no signed-in session
+  --     write one): the door's own INTAKE_DOOR_SUBMITTED record
+  --     (intake_door_submit_version, in the door's transaction, both paths —
+  --     P37 final fix pass: the route's record comes after, in another
+  --     request, and a failed write left a genuine submission unproven);
+  --     the intake route's INTAKE_SUBMISSION record; or that record kept as
+  --     a SERVER dead letter (no reporter — a browser's names its member
+  --     and vouches for nothing), still in audit_dead_letters or drained as
+  --     AUDIT_DEAD_LETTER. Else refused in the lock leg's words: the holder
+  --     checks in, then it is approved. No checkout, the holder's own, a
+  --     roster's and publish_revision's (door (a)) are decided as before.
   IF OLD.checked_out_by IS NOT NULL
      AND OLD.checked_out_by::text <> v_actor::text
      AND NEW.current_version_id IS NOT NULL
@@ -1038,39 +1054,66 @@ BEGIN
             WHERE a.org_id = NEW.org_id
               AND a.resource_type = 'document'
               AND a.resource_id = NEW.id::text
-              AND a.action = 'INTAKE_SUBMISSION'
+              AND a.action IN ('INTAKE_SUBMISSION', 'INTAKE_DOOR_SUBMITTED')
               AND a.user_id IS NULL
-              AND a.details->>'versionId' = NEW.current_version_id::text) THEN
+              AND a.details->>'versionId' = NEW.current_version_id::text)
+     AND NOT EXISTS (
+           SELECT 1 FROM audit_logs a
+            WHERE a.org_id = NEW.org_id
+              AND a.resource_type = 'org'
+              AND a.resource_id = NEW.org_id::text
+              AND a.action = 'AUDIT_DEAD_LETTER'
+              AND a.user_id IS NULL
+              AND a.details->>'lostAction' = 'INTAKE_SUBMISSION'
+              AND a.details->>'source' = 'server'
+              AND jsonb_typeof(COALESCE(a.details->'reportedBy', 'null'::jsonb)) = 'null'
+              AND a.details->'lost'->>'resource_type' = 'document'
+              AND a.details->'lost'->>'resource_id' = NEW.id::text
+              AND jsonb_typeof(COALESCE(a.details->'lost'->'user_id', 'null'::jsonb)) = 'null'
+              AND a.details->'lost'->'details'->>'versionId' = NEW.current_version_id::text) THEN
+    -- the route's record kept in the EVID-6 outbox and not drained yet (a
+    -- server row: the service role wrote it, no reporter); the outbox is
+    -- read only where 20261219 created it, and an outbox that cannot be read
+    -- vouches for nothing (the refusal below — the fail-safe direction)
+    v_door_b_proof := false;
+    IF to_regclass('public.audit_dead_letters') IS NOT NULL THEN
+      BEGIN
+        SELECT EXISTS (
+                 SELECT 1 FROM audit_dead_letters o
+                  WHERE o.org_id = NEW.org_id
+                    AND o.action = 'INTAKE_SUBMISSION'
+                    AND o.source = 'server'
+                    AND o.reported_by IS NULL
+                    AND o.entry->'row'->>'resource_type' = 'document'
+                    AND o.entry->'row'->>'resource_id' = NEW.id::text
+                    AND jsonb_typeof(COALESCE(o.entry->'row'->'user_id', 'null'::jsonb)) = 'null'
+                    AND o.entry->'row'->'details'->>'versionId' = NEW.current_version_id::text)
+          INTO v_door_b_proof;
+      EXCEPTION WHEN OTHERS THEN
+        v_door_b_proof := false;
+      END;
+    END IF;
+    IF NOT COALESCE(v_door_b_proof, false) THEN
     RAISE EXCEPTION
       'This document is checked out by %, so a new revision can''t be made current here; publish it from the revision flow with an override reason (shown to them and recorded), or ask them to check it in first.',
       COALESCE(NULLIF(btrim(OLD.checked_out_by_name), ''), 'another user')
       USING ERRCODE = 'insufficient_privilege';
+    END IF;
   END IF;
   -- (a) The pass is recorded and the holder told, whichever door wrote it.
-  --     finalize_reviewed_promote records and tells in its own transaction
-  --     since 20261252; the same promote sent by hand as the three-step PATCH
-  --     (promoteThreeStep's writes, sent through PostgREST) reached the
-  --     database untold and unrecorded. Now a door-(b) pointer write over
-  --     another person's checkout that the guard admits — anything but
-  --     publish_revision's own promote (door (a), which records its own
-  --     override) — queues the holder's notice of the EXISTING kind
-  --     revision_published_over_checkout and writes the same
-  --     REVIEW_PROMOTED_OVER_CHECKOUT row 20261252 writes (details.via
-  --     'database'; details.promote 'direct_write' says which door), unless
-  --     finalize_reviewed_promote is the writer: since 20261254 it sets the
-  --     transaction-local flag app.review_promote_records to the document's
-  --     id around its own promote and records and tells itself, so nothing
-  --     is doubled (a client cannot set the flag: set_config is not exposed
-  --     through PostgREST). Each write is its own sub-block: one that cannot
-  --     be written is a WARNING and the write stands — never a refusal, door
-  --     (b) stays finishable. This function is SECURITY DEFINER (search_path
-  --     pinned): the notice and the record pass no row-level policy but every
-  --     trigger — the notification insert rails (20261160) judge the notice
-  --     as the signed-in actor's row (a declared kind, an app-relative link,
-  --     a recipient no longer an active member skipped), and the audit
-  --     identity stamp (20261201) names the actor. Both are written inside
-  --     the guarded statement: a write refused after this point (the
-  --     publisher tier below) rolls them back with it.
+  --     The three-step PATCH sent by hand reached the database untold and
+  --     unrecorded. Now a door-(b) write over another person's checkout the
+  --     guard admits (never publish_revision's own) queues the holder's
+  --     notice (the EXISTING kind revision_published_over_checkout) and
+  --     writes 20261252's REVIEW_PROMOTED_OVER_CHECKOUT row (via 'database',
+  --     promote 'direct_write') — unless finalize_reviewed_promote is the
+  --     writer: it sets the transaction-local app.review_promote_records to
+  --     the document around its own promote and records itself (no double;
+  --     a client cannot call set_config). Each write its own sub-block: a
+  --     WARNING and the write stands, never a refusal. SECURITY DEFINER: no
+  --     row policy, but every trigger (the notification rails, 20261160; the
+  --     audit identity stamp, 20261201); a write refused below rolls both
+  --     back.
   IF OLD.checked_out_by IS NOT NULL
      AND OLD.checked_out_by::text <> v_actor::text
      AND NEW.current_version_id IS NOT NULL
@@ -1428,19 +1471,14 @@ BEGIN
   -- REV-37 (document-control Round G, P37 DOOR B GUARD, 20261254 — ruled
   -- under DEC-90): the reversal's park over a hold is bound to the reversal
   -- being run, as restore_reversed_source binds its restore — a document a
-  -- recorded split names among its replacements (DOC_SPLIT,
-  -- details.replacementDocIds) or a recorded merge names as its target
-  -- (DOC_MERGED, details.mergedIntoDocumentId), in this workspace, whose
-  -- reversal has not landed (no DOC_SPLIT_REVERSED / DOC_MERGE_REVERSED
-  -- naming the event). lib/documentLifecycle/reverse.ts parks exactly those
-  -- (reverseSplit: the event's replacementDocIds; reverseMerge: its newly
-  -- created target), before its reversal's own record is written. A recorded
-  -- park of anything else is refused (42501), nothing changed. The split /
-  -- merge source flip is not bound: its own evidence (the
-  -- document_supersessions rows, the DOC_SPLIT / DOC_MERGED event) is
+  -- recorded split names among its replacementDocIds, or a recorded merge as
+  -- its mergedIntoDocumentId, in this workspace, its reversal not landed (no
+  -- DOC_SPLIT_REVERSED / DOC_MERGE_REVERSED naming the event): what
+  -- lib/documentLifecycle/reverse.ts parks. Anything else: 42501, nothing
+  -- changed. The split / merge source flip is not bound: its evidence is
   -- written by the saga AFTER the flip, in other requests, so a binding
   -- would refuse every genuine split or merge over a hold — the integrator's
-  -- ruling under DEC-90, recorded on REV-37: the recorded Document Control
+  -- ruling, recorded on REV-37: the recorded Document Control
   -- pass is enough there.
   IF v_forced
      AND p_via = 'reversal_park'
@@ -1528,33 +1566,126 @@ COMMENT ON FUNCTION retire_over_hold(uuid, text, text, timestamptz, text, boolea
 REVOKE ALL ON FUNCTION retire_over_hold(uuid, text, text, timestamptz, text, boolean) FROM PUBLIC, anon, service_role;
 GRANT EXECUTE ON FUNCTION retire_over_hold(uuid, text, text, timestamptz, text, boolean) TO authenticated;
 
+-- ── DCK-18 (P37 final fix pass): intake_door_submit_version — 20261214 body ──
+-- + the door's own record of its submission. Same signature; grants restated.
+CREATE OR REPLACE FUNCTION public.intake_door_submit_version(p_token_hash text, p_version jsonb)
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public
+AS $$
+DECLARE
+  v_door jsonb := intake_door_resolve(p_token_hash);
+  v_link uuid  := (v_door->>'link_id')::uuid;
+  v_org  uuid  := (v_door->>'org_id')::uuid;
+  v_proj uuid  := (v_door->>'project_id')::uuid;
+  v_v    document_versions%ROWTYPE;
+  v_prev jsonb;
+  v_id   uuid  := gen_random_uuid();
+  v_rls  boolean := intake_door_version_rls_ready();
+  v_role text  := current_setting('role');
+BEGIN
+  IF v_door->>'purpose' = 'quote' THEN
+    RAISE EXCEPTION 'intake_door: a quote link files prices, never documents.' USING ERRCODE = '42501', HINT = 'scope';
+  END IF;
+  IF jsonb_typeof(p_version) IS DISTINCT FROM 'object' THEN
+    RAISE EXCEPTION 'intake_door: one version object is required.' USING ERRCODE = '22023';
+  END IF;
+  v_v := jsonb_populate_record(NULL::document_versions, p_version);
+  IF NOT EXISTS (SELECT 1 FROM documents d
+                  WHERE d.id = v_v.record_id AND d.org_id = v_org
+                    AND (d.authored_by_link_id = v_link
+                         OR d.id::text IN (SELECT jsonb_array_elements_text(v_door->'assigned')))) THEN
+    RAISE EXCEPTION 'intake_door: this link submits only to its own or assigned documents.' USING ERRCODE = '42501', HINT = 'scope';
+  END IF;
+  IF v_v.file_url IS NULL OR v_v.file_url !~ ('^orgs/' || v_org::text || '/project-intake/' || v_proj::text || '/[^/]+$') THEN
+    RAISE EXCEPTION 'intake_door: the file is not stored under this link''s project.' USING ERRCODE = '42501', HINT = 'scope';
+  END IF;
+  IF v_v.supersedes_version_id IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM document_versions b WHERE b.id = v_v.supersedes_version_id AND b.record_id = v_v.record_id) THEN
+    RAISE EXCEPTION 'intake_door: the base revision is not a revision of this document.' USING ERRCODE = '42501', HINT = 'scope';
+  END IF;
+  v_prev := intake_door_bind(v_link, v_link, v_org, v_proj);
+  -- OWN-4: an external upload is in review until a person decides; its link,
+  -- its provenance and its org are the door's, never the caller's.
+  -- SEC-22 (a) (J20): the INSERT as intake_door, under row-level security
+  -- (document_versions_intake_door_* and every policy written for all roles);
+  -- the id is chosen here, as a RETURNING would also need read policies. A
+  -- privilege the role lacks that intake_door_version_rls_ready could not
+  -- foresee ("permission denied …"), or the refusal of a NAMED policy that is
+  -- not the door's own, is undone with its role switch, leaves a WARNING and
+  -- runs the same INSERT once more with the bound identity alone — the shape
+  -- before this file. The door's own policies' refusal (none permissive
+  -- admitted the row — Postgres names none — or the scope policy, named) and
+  -- every other error are raised: they are the link's boundary.
+  LOOP
+    BEGIN
+      IF v_rls THEN PERFORM set_config('role', 'intake_door', true); END IF;
+      INSERT INTO document_versions (id, org_id, record_id, revision_label, file_url, file_type, size, change_log,
+                                     created_by_name, created_at, released_at, review_state, provenance,
+                                     intake_link_id, file_hash, supersedes_version_id)
+      VALUES (v_id, v_org, v_v.record_id, v_v.revision_label, v_v.file_url, v_v.file_type, v_v.size, v_v.change_log,
+              v_v.created_by_name, COALESCE(v_v.created_at, NOW()), NULL, 'in_review', 'external',
+              v_link, v_v.file_hash, v_v.supersedes_version_id);
+      IF v_rls THEN PERFORM set_config('role', v_role, true); END IF;
+      EXIT;
+    EXCEPTION WHEN insufficient_privilege THEN
+      IF v_rls THEN PERFORM set_config('role', v_role, true); END IF;
+      IF NOT v_rls
+         OR SQLERRM IN ('new row violates row-level security policy for table "document_versions"',
+                        'new row violates row-level security policy "document_versions_intake_door_scope" for table "document_versions"')
+         OR NOT (SQLERRM LIKE 'permission denied%' OR SQLERRM LIKE 'new row violates row-level security policy "%') THEN
+        RAISE;
+      END IF;
+      RAISE WARNING 'intake_door_submit_version: % — this submission is written with the bound identity alone, without row-level security (projects-tab SEC-22).', SQLERRM;
+      v_rls := false;
+    END;
+  END LOOP;
+  PERFORM intake_door_unbind(v_prev);
+  -- DCK-18 (b) (document-control Round G, P37 final fix pass, 20261254 — the
+  -- integrator's ruling (1), DEC-90): the door's own record of the submission
+  -- it inserted, in its own transaction — the proof door (b)'s intake limb
+  -- reads even when the route's later INTAKE_SUBMISSION write fails. After
+  -- the role switch and bound identity are undone: as the caller (the
+  -- service role only), no person named. Both paths reach it (insertedAs).
+  -- Its own sub-block: a WARNING, and the submission stands.
+  BEGIN
+    INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, user_email, details)
+    VALUES ('INTAKE_DOOR_SUBMITTED', v_v.record_id::text, 'document', v_org, NULL, NULL,
+            jsonb_build_object(
+              'versionId', v_id,
+              'linkId', v_link,
+              'projectId', v_proj,
+              'revisionLabel', v_v.revision_label,
+              'insertedAs', CASE WHEN v_rls THEN 'intake_door' ELSE 'bound_identity' END,
+              'via', 'intake_door_submit_version'
+            ));
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'intake_door_submit_version: the submission % was filed, but the door''s own record of it was not written (the submission stands): %', v_id, SQLERRM;
+  END;
+  RETURN v_id;
+END;
+$$;
+COMMENT ON FUNCTION public.intake_door_submit_version(text, jsonb) IS
+  'GAP-401 (J16): the contractor door inserts an in-review external submission on a document its link authored or was assigned, its file under the link''s project prefix, as the door''s identity. SEC-22 (a) (J20, 20261214): where the paste could grant it, as the role intake_door under the document_versions_intake_door_* policies (SECURITY INVOKER, the 20261184 role switch). DCK-18 (b) (20261254): then records the submission in its own transaction (INTAKE_DOOR_SUBMITTED, no person named, naming the version) — the proof the publish guard''s door (b) intake limb reads; a record that cannot be written leaves a WARNING and the submission stands. Service role only.';
+REVOKE ALL ON FUNCTION public.intake_door_submit_version(text, jsonb) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.intake_door_submit_version(text, jsonb) TO service_role;
+
 -- ── REV-37 (P37): the write rail for REV_HOLD_OVERRIDDEN ────────────────────
 -- put_back_retired_issue (20261253) reads a reversal's REV_HOLD_OVERRIDDEN row
--- (via reversal_restore) as the evidence that lets its rollback re-supersede a
--- held source, and audit_logs_insert admits any row a member writes with
--- their own user_id in their own workspace — so Document Control could write
--- that row first and then re-supersede any held document they can read. Every
--- legitimate REV_HOLD_OVERRIDDEN row is written by a database function after
--- its own write of the document the row names, in the same transaction —
--- finalize_reviewed_promote, put_back_retired_issue, restore_reversed_source
--- and retire_over_hold after their UPDATE of the documents row;
--- publish_revision after its INSERT of the version the row names
--- (details.versionId), on both arms (its branch arm, a controller's forced
--- branch over a hold, writes no documents row) — and the app writes none. So
--- a signed-in session's row is admitted only when the document it names, in
--- the row's workspace, was written by THIS transaction: the documents row's
--- xmin, or the xmin of the version the row names (of that document, in that
--- workspace), is a transaction of this session (pg_xact_status 'in progress' — this
--- transaction or one of its subtransactions; a row another session wrote is
--- visible only once that transaction committed, so it never reads 'in
--- progress'). A member's direct insert (a request of its own, no document
--- written) is refused (42501). The service role, a restore and the SQL
--- console (no auth.uid()) pass, as every rail here lets them. SECURITY
--- DEFINER (search_path pinned) so it reads the document whatever the writer
--- may read; no client role may call it. The xmin is widened to its 64-bit
--- transaction id from the current one's epoch (an xmin above the current
--- transaction by more than 2^31 is the previous epoch's); a status that
--- cannot be read refuses (fail-safe).
+-- (via reversal_restore) as evidence, and audit_logs_insert admitted any row a
+-- member writes with their own user_id. Every legitimate row is written by a
+-- database function after its own write of the document it names, in the same
+-- transaction (finalize_reviewed_promote, put_back_retired_issue,
+-- restore_reversed_source, retire_over_hold after their UPDATE; publish_revision
+-- after its INSERT of the version details.versionId names, on both arms). So
+-- a signed-in session's row is admitted only when that documents row's xmin,
+-- or that version's (of that document, in that workspace), is a transaction
+-- of this session (pg_xact_status 'in progress' — another session's row is
+-- visible only once committed). The xmin is widened to 64 bits from the
+-- current epoch; a status that cannot be read refuses (fail-safe). The
+-- service role, a restore and the SQL console (no auth.uid()) pass. SECURITY
+-- DEFINER, search_path pinned; no client role may call it.
 CREATE OR REPLACE FUNCTION public.enforce_hold_override_record_rail()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -1616,7 +1747,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.enforce_hold_override_record_rail() IS
-  'REV-37 (20261254): BEFORE INSERT on audit_logs for REV_HOLD_OVERRIDDEN. A signed-in session''s row is admitted only when the document it names (resource_type document, in the row''s org) was written by this transaction — its documents row, or the version the row names (details.versionId, of that document), has an xmin that is a transaction of this session (pg_xact_status in progress). The recording functions write it after their own UPDATE of that document, or (publish_revision, both arms — its branch arm writes no documents row) after their own INSERT of that version; a member''s direct insert is refused (42501). The service role passes. Nobody may call it.';
+  'REV-37 (20261254): BEFORE INSERT on audit_logs for REV_HOLD_OVERRIDDEN. A signed-in session''s row is admitted only when this transaction wrote the document it names (its documents row, or the version details.versionId names, of that document); else 42501. The service role passes. Nobody may call it.';
 
 REVOKE ALL ON FUNCTION public.enforce_hold_override_record_rail() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.enforce_hold_override_record_rail() FROM anon;
@@ -1633,15 +1764,15 @@ CREATE TRIGGER trg_audit_logs_hold_override_rail
 COMMIT;
 
 -- ── Verification + inventory (the only result set the SQL editor shows) ──
--- Probes: ok = true × 9. Inventory rows (6): n = the aggregate count.
+-- Probes: ok = true × 11. Inventory rows (7): n = the aggregate count.
 -- pg_proc.prosrc is verbatim (an apostrophe inside a body's string literal is
 -- '''' here).
-SELECT 'DCK-18 (P37) (b): over another person''s checkout, a promote only door (b)''s intake limb admits (no bound roster, not publish_revision''s own) needs the intake route''s own INTAKE_SUBMISSION record (no person named) naming the version, or it is refused 42501' AS check,
-       (SELECT prosrc LIKE '%AND COALESCE(v_primary_reqs, 0) = 0%AND v.created_at = now()%SELECT 1 FROM audit_logs a%AND a.action = ''INTAKE_SUBMISSION''%AND a.user_id IS NULL%AND a.details->>''versionId'' = NEW.current_version_id::text) THEN%USING ERRCODE = ''insufficient_privilege'';%'
+SELECT 'DCK-18 (P37) (b): over another person''s checkout an intake-only promote needs a proof naming the version, no person named (the door''s INTAKE_DOOR_SUBMITTED, the route''s INTAKE_SUBMISSION, or its server dead letter), else 42501' AS check,
+       (SELECT prosrc LIKE '%AND COALESCE(v_primary_reqs, 0) = 0%AND v.created_at = now()%SELECT 1 FROM audit_logs a%AND a.action IN (''INTAKE_SUBMISSION'', ''INTAKE_DOOR_SUBMITTED'')%AND a.user_id IS NULL%AND a.details->>''versionId'' = NEW.current_version_id::text)%AND a.action = ''AUDIT_DEAD_LETTER''%AND a.details->>''source'' = ''server''%AND a.details->''lost''->''details''->>''versionId'' = NEW.current_version_id::text) THEN%IF to_regclass(''public.audit_dead_letters'') IS NOT NULL THEN%AND o.source = ''server''%AND o.reported_by IS NULL%IF NOT COALESCE(v_door_b_proof, false) THEN%USING ERRCODE = ''insufficient_privilege'';%'
           FROM pg_proc WHERE proname = 'enforce_document_publish_guard') AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 'DCK-18 (P37) (a): a door-(b) write over another person''s checkout that finalize_reviewed_promote did not make (its flag app.review_promote_records unset) queues the holder''s notice (revision_published_over_checkout) and writes REVIEW_PROMOTED_OVER_CHECKOUT (via database), each in its own sub-block — a WARNING, never a refusal — before the controller return',
+SELECT 'DCK-18 (P37) (a): a door-(b) write over another person''s checkout outside finalize_reviewed_promote queues the holder''s notice and writes REVIEW_PROMOTED_OVER_CHECKOUT, each a WARNING never a refusal',
        (SELECT prosrc LIKE '%AND current_setting(''app.review_promote_records'', true) IS DISTINCT FROM NEW.id::text%INSERT INTO notifications%''revision_published_over_checkout''%EXCEPTION WHEN OTHERS THEN%RAISE WARNING%INSERT INTO audit_logs%''REVIEW_PROMOTED_OVER_CHECKOUT''%''via'', ''database''%''promote'', ''direct_write''%EXCEPTION WHEN OTHERS THEN%RAISE WARNING%IF is_org_controller(NEW.org_id) THEN%RETURN NEW;%'
           FROM pg_proc WHERE proname = 'enforce_document_publish_guard'),
        NULL
@@ -1663,7 +1794,7 @@ SELECT 'the guard is SECURITY DEFINER with search_path pinned, no client role ma
                       AND (t.tgtype & 2) = 2 AND (t.tgtype & 16) = 16 AND (t.tgtype & 4) = 0),
        NULL
 UNION ALL
-SELECT 'DCK-18 (P37): finalize_reviewed_promote sets app.review_promote_records to the document around its own promote and clears it after; its P35 record, notice and report survive; ONE eight-argument signature, SECURITY INVOKER, search_path pinned; authenticated and service_role may execute it, anon may not',
+SELECT 'DCK-18 (P37): finalize_reviewed_promote sets and clears app.review_promote_records around its promote; its P35 record survives; one eight-argument SECURITY INVOKER signature, authenticated and service_role only',
        (SELECT prosrc LIKE '%PERFORM set_config(''app.review_promote_records'', p_document_id::text, true);%UPDATE documents%SET current_version_id = p_pending_id,%PERFORM set_config(''app.review_promote_records'', '''', true);%IF v_n = 0 THEN%''REVIEW_PROMOTED_OVER_CHECKOUT''%IF p_report_over_checkout THEN%RETURN ''promoted'';%'
           FROM pg_proc WHERE proname = 'finalize_reviewed_promote')
        AND (SELECT COUNT(*) = 1 FROM pg_proc WHERE proname = 'finalize_reviewed_promote')
@@ -1675,7 +1806,7 @@ SELECT 'DCK-18 (P37): finalize_reviewed_promote sets app.review_promote_records 
        AND NOT has_function_privilege('anon', 'finalize_reviewed_promote(uuid, uuid, uuid, text, uuid, boolean, text, boolean)', 'EXECUTE'),
        NULL
 UNION ALL
-SELECT 'REV-37 (P37): retire_over_hold''s recorded reversal_park needs an unreversed recorded split naming the document as a replacement, or merge as its target, else 42501 before any write; the P36 recorded door survives; SECURITY INVOKER, search_path pinned, authenticated only',
+SELECT 'REV-37 (P37): retire_over_hold''s recorded reversal_park needs an unreversed recorded split / merge naming the document, else 42501 before any write; SECURITY INVOKER, authenticated only',
        (SELECT prosrc LIKE '%v_forced := true;%IF v_forced%AND p_via = ''reversal_park''%AND NOT EXISTS (%e.action = ''DOC_SPLIT''%(e.details->''replacementDocIds'') ? p_document_id::text%e.action = ''DOC_MERGED''%e.details->>''mergedIntoDocumentId'' = p_document_id::text%r.action IN (''DOC_SPLIT_REVERSED'', ''DOC_MERGE_REVERSED'')%USING ERRCODE = ''insufficient_privilege'';%PERFORM set_config(''app.publish_hold_override'', p_document_id::text, true);%VALUES (''REV_HOLD_OVERRIDDEN''%'
           FROM pg_proc WHERE proname = 'retire_over_hold')
        AND EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
@@ -1686,9 +1817,24 @@ SELECT 'REV-37 (P37): retire_over_hold''s recorded reversal_park needs an unreve
        AND NOT has_function_privilege('anon', 'retire_over_hold(uuid, text, text, timestamptz, text, boolean)', 'EXECUTE'),
        NULL
 UNION ALL
-SELECT 'REV-37 (P37): the REV_HOLD_OVERRIDDEN rail — a signed-in session''s row only in the transaction that wrote the document it names (its documents row, or the version the row names — publish_revision''s forced branch over a hold writes no documents row) (else 42501); the service role passes',
+SELECT 'REV-37 (P37): the REV_HOLD_OVERRIDDEN rail admits a signed-in session''s row only in the transaction that wrote its document or the version it names (else 42501); the service role passes',
        (SELECT prosrc LIKE '%IF auth.uid() IS NULL THEN RETURN NEW; END IF;%SELECT d.xmin::text::bigint INTO v_xmin%WHERE d.id = NEW.resource_id::uuid AND d.org_id = NEW.org_id;%SELECT v.xmin::text::bigint INTO v_xmin%WHERE v.id = (NEW.details->>''versionId'')::uuid%AND v.record_id = NEW.resource_id::uuid AND v.org_id = NEW.org_id;%FOREACH v_xmin IN ARRAY v_xmins LOOP%pg_xact_status(v_full::text::xid8)%IF v_status = ''in progress'' THEN%RETURN NEW;%USING ERRCODE = ''insufficient_privilege'';%'
           FROM pg_proc WHERE proname = 'enforce_hold_override_record_rail'),
+       NULL
+UNION ALL
+SELECT 'DCK-18 (P37) (b): intake_door_submit_version records its submission (INTAKE_DOOR_SUBMITTED, no person named) after the unbind, in its own sub-block; its 20261214 role switch and fallback survive',
+       (SELECT prosrc LIKE '%IF v_rls THEN PERFORM set_config(''role'', ''intake_door'', true); END IF;%INSERT INTO document_versions%RAISE WARNING ''intake_door_submit_version: % — this submission is written with the bound identity alone%PERFORM intake_door_unbind(v_prev);%INSERT INTO audit_logs%''INTAKE_DOOR_SUBMITTED'', v_v.record_id::text, ''document'', v_org, NULL, NULL,%''versionId'', v_id,%EXCEPTION WHEN OTHERS THEN%RAISE WARNING%RETURN v_id;%'
+          FROM pg_proc WHERE proname = 'intake_door_submit_version'),
+       NULL
+UNION ALL
+SELECT 'DRLS-16: intake_door_submit_version: one, SECURITY INVOKER, search_path pinned, the service role only',
+       (SELECT COUNT(*) = 1 FROM pg_proc WHERE proname = 'intake_door_submit_version')
+       AND EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                    WHERE n.nspname = 'public' AND p.proname = 'intake_door_submit_version' AND p.pronargs = 2
+                      AND NOT p.prosecdef AND p.proconfig @> ARRAY['search_path=public'])
+       AND has_function_privilege('service_role', 'public.intake_door_submit_version(text, jsonb)', 'EXECUTE')
+       AND NOT has_function_privilege('anon', 'public.intake_door_submit_version(text, jsonb)', 'EXECUTE')
+       AND NOT has_function_privilege('authenticated', 'public.intake_door_submit_version(text, jsonb)', 'EXECUTE'),
        NULL
 UNION ALL
 SELECT 'DRLS-16: the rail is SECURITY DEFINER with search_path pinned, no client role may execute it, and trg_audit_logs_hold_override_rail fires it BEFORE INSERT on audit_logs for REV_HOLD_OVERRIDDEN only',

@@ -4721,7 +4721,7 @@
       "id": "REV-37",
       "title": "The recorded passes over a hold prove less than they record: retire_over_hold takes any Document Control call with the force asked, the reversal re-entry's evidence is an audit row a member can also write, and two lost answers leave the record or the notice wrong",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": null,
       "verification_note": "READ (on `fleet/DC-P36-status-editor-parity-iii` at the final fix pass: `supabase/migrations/20261253_dc_roundG_status_editor_hold_leg.sql` `retire_over_hold` — its recorded door `:1371`–`:1377` reads the caller's tier, `p_force_hold`, the status and the hold, nothing of the split / merge / reversal it names; `put_back_retired_issue`'s reversal evidence `:1155`–`:1206` and its Void arm `:1146`–`:1148`; `supabase/schema.sql:1094` — `audit_logs_insert` admits any row whose `user_id` is the caller's; `lib/documentLifecycle/common.ts` `markSupersededAndLink` `:556` (the flip at `:627`, the lineage row written after it at `:663`); `lib/staleCopies.ts` `HOLDER_TOLD_WAIT_MS` `:1313`, `holderToldAnswer` `:1319`)",
       "blast_radius": null,

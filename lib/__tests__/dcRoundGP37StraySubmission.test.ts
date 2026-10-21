@@ -129,8 +129,17 @@ describe("retireStrayPendingSubmission — controller-only, re-read first, throu
     expect(r).toEqual({ ok: true, voidedVersionId: "v2", recordError: null });
     // P37 fix pass: the void is bound to the draft shown
     expect(s.voidPendingDraft).toHaveBeenCalledWith("d1", "v2");
-    expect(s.log).toHaveBeenCalledTimes(1);
+    // P37 final fix pass (ruling (3)): the intent row, then the outcome row
+    expect(s.log).toHaveBeenCalledTimes(2);
     expect(s.log.mock.calls[0][0]).toEqual({
+      action: "PENDING_SUBMISSION_RETIRE_REQUESTED", resourceId: "d1", resourceType: "document", orgId: "o1",
+      userId: "u1", userEmail: "u1@example.com", userRole: "DocCtrl",
+      details: {
+        versionId: "v2", revisionLabel: "2A", intakeLinkId: "L9", linkPurpose: "quote",
+        cause: "quote_link", reason: "quote link submission, not ours", via: "void_pending_draft",
+      },
+    });
+    expect(s.log.mock.calls[1][0]).toEqual({
       action: "PENDING_SUBMISSION_RETIRED", resourceId: "d1", resourceType: "document", orgId: "o1",
       userId: "u1", userEmail: "u1@example.com", userRole: "DocCtrl",
       details: {
@@ -163,16 +172,44 @@ describe("retireStrayPendingSubmission — controller-only, re-read first, throu
     expect(s.log).not.toHaveBeenCalled();
   });
 
-  it("a void the database refuses is said in voidPendingDraft's own words and records nothing; a pointer already gone records nothing", async () => {
+  it("a void the database refuses is said in voidPendingDraft's own words and records no outcome (only the intent written before it); a pointer already gone records no outcome", async () => {
     s.voidPendingDraft.mockRejectedValueOnce(new Error("The in-review draft's sign-offs could not be voided (denied) — the draft is still in review."));
     expect(await retireStrayPendingSubmission(input())).toEqual({ ok: false, reason: "The in-review draft's sign-offs could not be voided (denied) — the draft is still in review." });
     s.voidPendingDraft.mockResolvedValueOnce(null);
     expect((await retireStrayPendingSubmission(input())).ok).toBe(false);
-    expect(s.log).not.toHaveBeenCalled();
+    expect(s.log.mock.calls.map((c) => c[0].action)).toEqual(["PENDING_SUBMISSION_RETIRE_REQUESTED", "PENDING_SUBMISSION_RETIRE_REQUESTED"]);
+  });
+
+  it("P37 final fix pass (ruling (3)): the intent row is written BEFORE voidPendingDraft — an interrupted retire still leaves who, the version shown and why", async () => {
+    let voidCalledAfterIntent = false;
+    s.voidPendingDraft.mockImplementationOnce(async () => {
+      voidCalledAfterIntent = s.log.mock.calls.length === 1 && s.log.mock.calls[0][0].action === "PENDING_SUBMISSION_RETIRE_REQUESTED";
+      return "v2";
+    });
+    expect((await retireStrayPendingSubmission(input())).ok).toBe(true);
+    expect(voidCalledAfterIntent).toBe(true);
+    expect(s.log.mock.invocationCallOrder[0]).toBeLessThan(s.voidPendingDraft.mock.invocationCallOrder[0]);
+    expect(s.voidPendingDraft.mock.invocationCallOrder[0]).toBeLessThan(s.log.mock.invocationCallOrder[1]);
+    // the retire interrupted inside the void (the page closed): the intent stands, naming who and why
+    s.log.mockClear();
+    s.voidPendingDraft.mockImplementationOnce(() => new Promise(() => {}));
+    void retireStrayPendingSubmission(input());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(s.log.mock.calls.map((c) => c[0].action)).toEqual(["PENDING_SUBMISSION_RETIRE_REQUESTED"]);
+    expect(s.log.mock.calls[0][0]).toMatchObject({ userId: "u1", details: { versionId: "v2", reason: "quote link submission, not ours" } });
+  });
+
+  it("P37 final fix pass (ruling (3)): FAIL CLOSED — an intent row that cannot be written stops the retire before the void, changing nothing, and says so", async () => {
+    s.log.mockResolvedValueOnce({ error: "audit refused", ok: false });
+    expect(await retireStrayPendingSubmission(input())).toEqual({
+      ok: false, reason: "The retire could not be recorded before it ran (audit refused) — nothing was changed. Try again.",
+    });
+    expect(s.voidPendingDraft).not.toHaveBeenCalled();
+    expect(s.log).toHaveBeenCalledTimes(1);
   });
 
   it("a record that cannot be written is returned (never swallowed); a different draft voided in the instant between is recorded as such and said", async () => {
-    s.log.mockResolvedValueOnce({ error: "audit refused", ok: false });
+    s.log.mockResolvedValueOnce({ error: null, ok: true }).mockResolvedValueOnce({ error: "audit refused", ok: false });
     expect(await retireStrayPendingSubmission(input())).toEqual({ ok: true, voidedVersionId: "v2", recordError: "audit refused" });
     s.voidPendingDraft.mockResolvedValueOnce("v9");
     const r = await retireStrayPendingSubmission(input());
@@ -184,5 +221,8 @@ describe("retireStrayPendingSubmission — controller-only, re-read first, throu
     const { auditActionDef, isDestructiveAuditAction } = await import("@/lib/auditActions");
     expect(auditActionDef("PENDING_SUBMISSION_RETIRED")).not.toBeNull();
     expect(isDestructiveAuditAction("PENDING_SUBMISSION_RETIRED")).toBe(true);
+    // the intent is registered beside it (filterable); it destroys nothing itself
+    expect(auditActionDef("PENDING_SUBMISSION_RETIRE_REQUESTED")?.category).toBe("intake");
+    expect(isDestructiveAuditAction("PENDING_SUBMISSION_RETIRE_REQUESTED")).toBe(false);
   });
 });

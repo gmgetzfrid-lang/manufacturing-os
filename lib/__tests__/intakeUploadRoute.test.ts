@@ -1290,6 +1290,47 @@ describe("notices and attribution", () => {
     const row = db.tables.audit_logs.find((a) => a.action === "INTAKE_SUBMISSION");
     expect((row?.details as Row).appSession).toEqual({ userId: "insider1", email: "insider@org.test" });
   });
+  // document-control P37 final fix pass (DCK-18 (b), the integrator's ruling (1)): the submission's own record is
+  // one of the proofs door (b)'s intake limb reads (20261254) — a write that fails is kept in the EVID-6 outbox
+  // (lib/auditOutbox.ts's server path, as the service role), never only logged; the answer is unchanged.
+  const lostSubmissionRecord = async (fields: Record<string, string>, seedOpts: Parameters<typeof seed>[0], action: string) => {
+    seed(seedOpts);
+    await upload(fields);
+    const order = db.writes.filter((w) => w.table === "audit_logs" && w.method === "insert").map((w) => String((w.args[0] as Row).action));
+    const at = order.indexOf(action);
+    expect(at, order.join(",")).toBeGreaterThanOrEqual(0);
+    resetDb();
+    seed(seedOpts);
+    db.errors["audit_logs.insert"] = [...Array.from({ length: at }, () => null), { message: "audit write refused" }];
+    const res = await upload(fields);
+    return { res, kept: (db.tables.audit_dead_letters ?? []) as Row[] };
+  };
+  it("P37: a lost INTAKE_SUBMISSION write is kept in the audit dead-letter outbox (source server, no reporter, the row as sent) — the submission's answer unchanged", async () => {
+    const { res, kept } = await lostSubmissionRecord({ docId: D1, revLabel: "C" }, { link: { allow_auto_supersede: false } }, "INTAKE_SUBMISSION");
+    expect(res.status).toBe(200);
+    expect((await res.json()).status).toBe("in_review");
+    expect(kept).toHaveLength(1);
+    expect(kept[0]).toMatchObject({ org_id: ORG, action: "INTAKE_SUBMISSION", source: "server", reported_by: null, error: "audit write refused" });
+    const row = (kept[0].entry as { row: Row; reporter: unknown }).row;
+    expect((kept[0].entry as { reporter: unknown }).reporter).toBeNull();
+    expect(row).toMatchObject({ action: "INTAKE_SUBMISSION", resource_type: "document", resource_id: D1, org_id: ORG, user_id: null });
+    expect((row.details as Row).versionId).toEqual(expect.any(String));
+    expect((row.details as Row).versionId).toBe(db.tables.document_versions.find((v) => v.revision_label === "C")?.id);
+  });
+  it("P37: a recorded INTAKE_SUBMISSION keeps nothing in the outbox (today's path, exactly)", async () => {
+    seed({ link: { allow_auto_supersede: false } });
+    await upload({ docId: D1, revLabel: "C" });
+    expect(db.tables.audit_logs.some((a) => a.action === "INTAKE_SUBMISSION")).toBe(true);
+    expect(db.tables.audit_dead_letters ?? []).toEqual([]);
+  });
+  it("P37: an outbox that cannot keep it (before 20261219) leaves the submission's answer unchanged — only logged, as before", async () => {
+    seed({ link: { allow_auto_supersede: false } });
+    db.errors["audit_logs.insert"] = Array.from({ length: 10 }, () => ({ message: "audit write refused" }));
+    db.errors["audit_dead_letters.insert"] = [{ message: 'relation "public.audit_dead_letters" does not exist', code: "42P01" }];
+    const res = await upload({ docId: D1, revLabel: "C" });
+    expect(res.status).toBe(200);
+    expect((await res.json()).status).toBe("in_review");
+  });
   it("the usage counter is bumped with the byte count (the per-link storage budget)", async () => {
     seed({ doc: null });
     await upload({ title: "Skid GA" });

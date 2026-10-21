@@ -8,11 +8,14 @@
 //               kind revision_published_over_checkout) by the publish guard,
 //               in the write's own statement; never a refusal, and never a
 //               second record beside finalize_reviewed_promote's own.
-//   DCK-18 (b)  door (b)'s intake limb admits only a submission the intake
-//               route's own server-written INTAKE_SUBMISSION record names:
-//               a pre-paste door-shaped row with no such record is refused
-//               42501 over a checkout; every genuine submission — both door
-//               paths — still promotes.
+//   DCK-18 (b)  door (b)'s intake limb admits only a submission the database
+//               can vouch for — the door's own INTAKE_DOOR_SUBMITTED record
+//               (intake_door_submit_version, in the door's transaction, both
+//               paths; P37 final fix pass), the intake route's INTAKE_SUBMISSION
+//               record, or that record's server dead letter: a pre-paste
+//               door-shaped row with none is refused 42501 over a checkout;
+//               every genuine submission — both door paths, its route record
+//               written or lost — still promotes.
 //   REV-37 (1)  retire_over_hold's recorded reversal_park is bound to the
 //               reversal being run (an unreversed recorded split / merge
 //               naming the document).
@@ -22,7 +25,8 @@
 // Every statement runs on BOTH sides of the paste, in a transaction that is
 // rolled back: "before" is a copy of the replay with 20261254 undone (the
 // guard and retire_over_hold put back from 20261253, finalize_reviewed_promote
-// from 20261252, the rail dropped); "after" is the replay itself. REGRESSION
+// from 20261252, intake_door_submit_version from 20261214, the rail dropped);
+// "after" is the replay itself. REGRESSION
 // FIRST: everything a legitimate user does lands exactly as before.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -44,7 +48,9 @@ const between = (s: string, a: string, b: string) => {
 };
 const S253 = "20261253_dc_roundG_status_editor_hold_leg.sql";
 const S252 = "20261252_dc_roundG_door_b_record.sql";
-/** 20261254 undone: the guard and retire_over_hold from 20261253, finalize_reviewed_promote from 20261252, the rail dropped. */
+const S214 = "20261214_prj_roundG_intake_door_rls.sql";
+/** 20261254 undone: the guard and retire_over_hold from 20261253, finalize_reviewed_promote from 20261252,
+ *  intake_door_submit_version from 20261214, the rail dropped. */
 const UNDO_254 = [
   between(mig(S253), "CREATE OR REPLACE FUNCTION enforce_document_publish_guard()", "\n$$;"),
   "REVOKE ALL ON FUNCTION enforce_document_publish_guard() FROM PUBLIC, anon, authenticated, service_role;",
@@ -52,6 +58,9 @@ const UNDO_254 = [
   "REVOKE ALL ON FUNCTION finalize_reviewed_promote(uuid, uuid, uuid, text, uuid, boolean, text, boolean) FROM PUBLIC, anon;",
   "GRANT EXECUTE ON FUNCTION finalize_reviewed_promote(uuid, uuid, uuid, text, uuid, boolean, text, boolean) TO authenticated, service_role;",
   between(mig(S253), "CREATE OR REPLACE FUNCTION retire_over_hold(", "\n$$;"),
+  between(mig(S214), "CREATE OR REPLACE FUNCTION public.intake_door_submit_version(p_token_hash text, p_version jsonb)", "\n$$;"),
+  "REVOKE ALL ON FUNCTION public.intake_door_submit_version(text, jsonb) FROM PUBLIC, anon, authenticated;",
+  "GRANT EXECUTE ON FUNCTION public.intake_door_submit_version(text, jsonb) TO service_role;",
   "DROP TRIGGER IF EXISTS trg_audit_logs_hold_override_rail ON audit_logs;",
   "DROP FUNCTION IF EXISTS public.enforce_hold_override_record_rail();",
 ].join("\n");
@@ -213,9 +222,10 @@ describe.skipIf(skip !== null)("DCK-18 / REV-37 (20261254): door (b) guarded and
       (SELECT prosrc LIKE '%INTAKE_SUBMISSION%app.review_promote_records%' FROM pg_proc WHERE proname = 'enforce_document_publish_guard') || '|' ||
       (SELECT prosrc LIKE '%app.review_promote_records%' FROM pg_proc WHERE proname = 'finalize_reviewed_promote') || '|' ||
       (SELECT prosrc LIKE '%DOC_SPLIT_REVERSED%' FROM pg_proc WHERE proname = 'retire_over_hold') || '|' ||
+      (SELECT prosrc LIKE '%INTAKE_DOOR_SUBMITTED%' FROM pg_proc WHERE proname = 'intake_door_submit_version') || '|' ||
       EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_audit_logs_hold_override_rail')`);
-    expect(has(AFTER)).toBe("true|true|true|true");
-    expect(has(BEFORE)).toBe("false|false|false|false");
+    expect(has(AFTER)).toBe("true|true|true|true|true");
+    expect(has(BEFORE)).toBe("false|false|false|false|false");
   });
 
   describe("DCK-18 (a) — the hand-sent three-step promote over another person's checkout, recorded and told by the guard", () => {
@@ -368,7 +378,7 @@ describe.skipIf(skip !== null)("DCK-18 / REV-37 (20261254): door (b) guarded and
     // Both of the contractor door's paths, live: the route (the service role) submits through
     // intake_door_submit_version, points the document's pending pointer at the new row and writes its
     // INTAKE_SUBMISSION record; a publisher then approves it over the holder's checkout.
-    const doorThenApprove = (db: string, label: string, opts: { gap?: boolean; record?: boolean }) => {
+    const doorThenApprove = (db: string, label: string, opts: { gap?: boolean; record?: boolean; refuseDoorRecord?: boolean }) => {
       const { conn } = mosDb();
       const hash = admin(db, `SELECT token_hash FROM project_intake_links WHERE id = '${w.link}'`);
       const row = `(SELECT id FROM document_versions WHERE record_id = '${w.dDoor}' AND revision_label = '${label}')`;
@@ -378,6 +388,10 @@ describe.skipIf(skip !== null)("DCK-18 / REV-37 (20261254): door (b) guarded and
         "BEGIN;",
         "ALTER TABLE document_versions ALTER COLUMN created_by DROP NOT NULL;",
         ...(opts.gap ? ["CREATE POLICY p37_readiness_gap ON document_versions AS RESTRICTIVE FOR INSERT WITH CHECK (true);"] : []),
+        ...(opts.refuseDoorRecord ? [
+          "CREATE OR REPLACE FUNCTION public.p37_refuse_door() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RAISE EXCEPTION 'p37 refused'; END $f$;",
+          "CREATE TRIGGER p37_refuse_door BEFORE INSERT ON audit_logs FOR EACH ROW WHEN (NEW.action = 'INTAKE_DOOR_SUBMITTED') EXECUTE FUNCTION public.p37_refuse_door();",
+        ] : []),
         "SET LOCAL ROLE service_role;",
         `SELECT set_config('request.jwt.claims', ${dollarQuote(service)}, true);`,
         "SELECT 'ready:' || intake_door_version_rls_ready();",
@@ -393,23 +407,83 @@ describe.skipIf(skip !== null)("DCK-18 / REV-37 (20261254): door (b) guarded and
         `SELECT harness.try_sql(${dollarQuote(`SELECT 1 WHERE finalize_reviewed_promote('${w.dDoor}', ${row}, '${w.dA}', '${label}', NULL) = 'promoted'`)});`,
         "RESET ROLE;",
         `SELECT 'current:' || (current_version_id = ${row}) FROM documents WHERE id = '${w.dDoor}';`,
+        // the door's own record of the submission: how many, whether it names no person, and which path inserted it
+        `SELECT 'door:' || count(*) || '|' || COALESCE(string_agg((user_id IS NULL)::text || ',' || (details->>'insertedAs') || ',' || (details->>'via'), ';'), 'none')
+           FROM audit_logs WHERE action = 'INTAKE_DOOR_SUBMITTED' AND resource_id = '${w.dDoor}' AND org_id = '${w.org}' AND details->>'versionId' = ${row}::text;`,
         "ROLLBACK;",
       ].join("\n");
       const r = runPsql(conn!, db, conn!.superuser, { sql });
       if (!r.ok) throw new Error(`door then approve failed on ${db}: ${r.error ?? r.stderr}`);
-      return r.stdout.split("\n").filter((l) => l.length > 0).slice(1).join(" / ");
+      return { out: r.stdout.split("\n").filter((l) => l.length > 0).slice(1).join(" / "), stderr: r.stderr };
     };
+    const door = (db: string, label: string, opts: { gap?: boolean; record?: boolean; refuseDoorRecord?: boolean }) => doorThenApprove(db, label, opts).out;
 
-    it("REGRESSION, both door paths: a submission filed through the contractor door's ROLE SWITCH and through its BOUND-CLAIMS fallback, recorded by the route, is approved over the holder's checkout on both sides", () => {
+    it("REGRESSION, both door paths: a submission filed through the contractor door's ROLE SWITCH and through its BOUND-CLAIMS fallback, recorded by the route, is approved over the holder's checkout on both sides — and after, the door has recorded it itself, no person named, naming the path", () => {
+      expect(door(BEFORE, "5A", { record: true }), "before role switch").toBe("ready:true / ok:1 / ok:1 / ok:1 / as:publisher / ok:1 / current:true / door:0|none");
+      expect(door(BEFORE, "5B", { record: true, gap: true }), "before bound claims").toBe("ready:false / ok:1 / ok:1 / ok:1 / as:publisher / ok:1 / current:true / door:0|none");
+      expect(door(AFTER, "5A", { record: true }), "after role switch").toBe("ready:true / ok:1 / ok:1 / ok:1 / as:publisher / ok:1 / current:true / door:1|true,intake_door,intake_door_submit_version");
+      expect(door(AFTER, "5B", { record: true, gap: true }), "after bound claims").toBe("ready:false / ok:1 / ok:1 / ok:1 / as:publisher / ok:1 / current:true / door:1|true,bound_identity,intake_door_submit_version");
+    });
+
+    it("THE REGRESSION, closed (the integrator's ruling (1)): a genuine submission whose route-side record write FAILED is still approved over the holder's checkout — both door paths, on both sides (after, the door's own record vouches for it)", () => {
       for (const db of [BEFORE, AFTER]) {
-        expect(doorThenApprove(db, "5A", { record: true }), `${db} role switch`).toBe("ready:true / ok:1 / ok:1 / ok:1 / as:publisher / ok:1 / current:true");
-        expect(doorThenApprove(db, "5B", { record: true, gap: true }), `${db} bound claims`).toBe("ready:false / ok:1 / ok:1 / ok:1 / as:publisher / ok:1 / current:true");
+        const sw = door(db, "5C", {});
+        const bc = door(db, "5D", { gap: true });
+        expect(sw, `${db} role switch`).toMatch(/^ready:true \/ ok:1 \/ ok:1 \/ as:publisher \/ ok:1 \/ current:true \/ door:/);
+        expect(bc, `${db} bound claims`).toMatch(/^ready:false \/ ok:1 \/ ok:1 \/ as:publisher \/ ok:1 \/ current:true \/ door:/);
       }
     });
 
-    it("the route's record is what vouches: the same door submission with the record missing (the route's audit write failed — it is only logged) is approved before; after, refused over the checkout (the fail-safe direction: the holder checks in, then it is approved)", () => {
-      expect(doorThenApprove(BEFORE, "5C", {})).toBe("ready:true / ok:1 / ok:1 / as:publisher / ok:1 / current:true");
-      expect(doorThenApprove(AFTER, "5C", {})).toMatch(/^ready:true \/ ok:1 \/ ok:1 \/ as:publisher \/ err:42501:.* \/ current:false$/);
+    it("FAIL-SAFE: the door's own record that cannot be written never refuses the submission — it lands (a WARNING names what is missing); then the route's record vouches, and with neither the approve over a checkout is refused (the holder checks in first) — the fail-safe direction", () => {
+      const lost = doorThenApprove(AFTER, "5E", { refuseDoorRecord: true });
+      expect(lost.out).toMatch(/^ready:true \/ ok:1 \/ ok:1 \/ as:publisher \/ err:42501:This document is checked out by Holder Person.* \/ current:false \/ door:0\|none$/);
+      expect(lost.stderr).toContain("the door's own record of it was not written (the submission stands): p37 refused");
+      expect(door(AFTER, "5F", { refuseDoorRecord: true, record: true })).toBe("ready:true / ok:1 / ok:1 / ok:1 / as:publisher / ok:1 / current:true / door:0|none");
+      expect(door(AFTER, "5G", { refuseDoorRecord: true, gap: true })).toMatch(/^ready:false \/ ok:1 \/ ok:1 \/ as:publisher \/ err:42501:.* \/ current:false \/ door:0\|none$/);
+    });
+
+    // the route's INTAKE_SUBMISSION record kept in the EVID-6 outbox (lib/auditOutbox.ts's server path, as the
+    // service role: source 'server', no reporter), and the same row as the maintenance cron drains it
+    // (lib/auditOutboxDrain.ts drainedAuditRow: AUDIT_DEAD_LETTER, typed org, the lost row as sent)
+    const lostRow = (versionId: string, userId = "null") => `jsonb_build_object('action', 'INTAKE_SUBMISSION', 'resource_id', '${w.dForged}', 'resource_type', 'document',
+      'org_id', '${w.org}', 'user_id', ${userId}, 'user_email', 'contact@contractor.test', 'user_role', null,
+      'details', jsonb_build_object('versionId', '${versionId}', 'company', 'Contractor Co'), 'metadata', null)`;
+    const outbox = (o: { source?: string; reporter?: string | null; versionId?: string; userId?: string } = {}) => `INSERT INTO audit_dead_letters (org_id, action, entry, error, source, reported_by)
+      VALUES ('${w.org}', 'INTAKE_SUBMISSION', jsonb_build_object('row', ${lostRow(o.versionId ?? w.x2A, o.userId)}, 'reporter', null), 'fetch failed',
+              '${o.source ?? "server"}', ${o.reporter ? `'${o.reporter}'` : "NULL"});`;
+    const drained = (o: { source?: string; reporter?: string | null; versionId?: string } = {}) => `INSERT INTO audit_logs (id, action, resource_type, resource_id, org_id, user_id, user_email, user_role, details)
+      VALUES (gen_random_uuid(), 'AUDIT_DEAD_LETTER', 'org', '${w.org}', '${w.org}', NULL, 'system:audit-outbox', 'system',
+              jsonb_build_object('outboxId', gen_random_uuid(), 'lostAction', 'INTAKE_SUBMISSION', 'lost', ${lostRow(o.versionId ?? w.x2A)} || '{"asSent": true}'::jsonb,
+                                 'reportedBy', ${o.reporter ? `'${o.reporter}'` : "NULL"}, 'reporter', NULL, 'source', '${o.source ?? "server"}', 'error', 'fetch failed', 'reportedAt', now()));`;
+
+    it("the route's record lost and kept in the EVID-6 outbox (P37 final fix pass): a server dead letter vouches — still in the outbox, or drained into the trail — and the submission is approved over the checkout", () => {
+      expect(probeSeq(AFTER, w, "publisher", [finalize(w.dForged, w.x2A, w.xA)], left(w, w.dForged), outbox()).out).toBe(`ok:1 / ${w.x2A}|1|0|1`);
+      expect(probeSeq(AFTER, w, "publisher", [finalize(w.dForged, w.x2A, w.xA)], left(w, w.dForged), drained()).out).toBe(`ok:1 / ${w.x2A}|1|0|1`);
+      expect(probeSeq(AFTER, w, "publisher", [threeStep(w.dForged, w.x2A, w.xA)], left(w, w.dForged), outbox()).out).toBe(`ok:1 / ${w.x2A}|1|1|1`);
+    });
+
+    it("a dead letter vouches for nothing when a member reported it (the browser route: source 'browser', its reporter named), when it names another version or a person, or when the outbox is not there (refused in the lock leg's words, never an error of its own)", () => {
+      const refused = /^err:42501:This document is checked out by Holder Person/;
+      for (const prelude of [
+        outbox({ source: "browser", reporter: w.uid.publisher }),
+        outbox({ reporter: w.uid.publisher }),
+        outbox({ versionId: w.i2A }),
+        outbox({ userId: `'${w.uid.publisher}'` }),
+        drained({ source: "browser", reporter: w.uid.publisher }),
+        drained({ versionId: w.i2A }),
+        "DROP TABLE audit_dead_letters CASCADE;",
+      ]) {
+        expect(probeSeq(AFTER, w, "publisher", [finalize(w.dForged, w.x2A, w.xA)], left(w, w.dForged), prelude).out, prelude.slice(0, 120)).toMatch(refused);
+      }
+    });
+
+    it("a signed-in session cannot write the door's own record either: an INTAKE_DOOR_SUBMITTED row with no person named is refused by audit_logs_insert; one naming the member vouches for nothing", () => {
+      const ins = (uid: string) => `INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, details) VALUES ('INTAKE_DOOR_SUBMITTED', '${w.dForged}', 'document', '${w.org}', ${uid}, jsonb_build_object('versionId', '${w.x2A}'))`;
+      expect(probeSeq(AFTER, w, "publisher", [ins("NULL")]).out).toMatch(/^err:42501:/);
+      expect(probeSeq(AFTER, w, "publisher", [ins(`'${w.uid.publisher}'`), finalize(w.dForged, w.x2A, w.xA)], left(w, w.dForged)).out).toMatch(/^ok:1 \/ err:42501:This document is checked out by Holder Person/);
+      // the service role's (the door's) does
+      const svc = `INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, details) VALUES ('INTAKE_DOOR_SUBMITTED', '${w.dForged}', 'document', '${w.org}', NULL, jsonb_build_object('versionId', '${w.x2A}'));`;
+      expect(probeSeq(AFTER, w, "publisher", [finalize(w.dForged, w.x2A, w.xA)], left(w, w.dForged), svc).out).toBe(`ok:1 / ${w.x2A}|1|0|1`);
     });
   });
 
@@ -463,7 +537,7 @@ describe.skipIf(skip !== null)("DCK-18 / REV-37 (20261254): door (b) guarded and
       }
     });
 
-    it("the forgery chain REV-37 names, closed: Document Control writes the reversal's restore record by hand, then re-supersedes a held document through the reversal-rollback door — before, the rollback landed on the forged evidence; after, the forged row is refused and so is the rollback (42501), the document unchanged", () => {
+    it("the forgery chain REV-37 names, closed for a row written from the paste on (a row written before it is the accepted residual — inventory row 5): Document Control writes the reversal's restore record by hand, then re-supersedes a held document through the reversal-rollback door — before, the rollback landed on the forged evidence; after, the forged row is refused and so is the rollback (42501), the document unchanged", () => {
       const rollback = `SELECT put_back_retired_issue('${w.dStray}', 'Superseded', 'reversal_rollback', 'x', true, now(), '${w.uid.docctrl}', 'forged', NULL)`;
       const r = both("docctrl", [forged(w.dStray), rollback], `SELECT status FROM documents WHERE id = '${w.dStray}';`);
       expect(r.before).toBe("ok:1 / ok:1 / Superseded");
@@ -554,7 +628,7 @@ describe.skipIf(skip !== null)("20261254 pasted as ONE script, as the SQL editor
     return { check, ok, n };
   });
 
-  it("on a copy with 20261254 undone: every probe true, six inventory rows (counts), a re-paste clean; the inventory counts a pending unrecorded door-shaped submission, and of those the checked-out ones", () => {
+  it("on a copy with 20261254 undone: every probe true, seven inventory rows (counts), a re-paste clean; the inventory counts a pending unproven door-shaped submission, and of those the checked-out ones; the operator's look-over row counts a reversal_restore record with no restore_reversed_source trace", () => {
     admin("postgres", `DROP DATABASE IF EXISTS ${SCRATCH}`);
     admin("postgres", `CREATE DATABASE ${SCRATCH} TEMPLATE ${AFTER}`);
     try {
@@ -566,10 +640,10 @@ describe.skipIf(skip !== null)("20261254 pasted as ONE script, as the SQL editor
         const all = rows(r.stdout);
         const probes = all.filter((x) => x.ok !== "");
         const inventory = all.filter((x) => x.ok === "");
-        expect(probes.length, `pass ${pass}`).toBe(9);
+        expect(probes.length, `pass ${pass}`).toBe(11);
         expect(probes.filter((p) => p.ok !== "t"), JSON.stringify(probes)).toEqual([]);
         expect(probes.every((p) => p.n === "")).toBe(true);
-        expect(inventory.length).toBe(6);
+        expect(inventory.length).toBe(7);
         expect(inventory.every((x) => /^\d+$/.test(x.n)), JSON.stringify(inventory)).toBe(true);
         results.push(Object.fromEntries(inventory.map((x, i) => [String(i), Number(x.n)])));
       }
@@ -578,13 +652,34 @@ describe.skipIf(skip !== null)("20261254 pasted as ONE script, as the SQL editor
       // a world with one unrecorded door-shaped submission on a checked-out document adds one to rows 1 and 2
       const w = ids();
       seed(SCRATCH, w);
+      // REV-37's look-over (row 5): a hand-written reversal_restore record (no recorded split / merge names
+      // its document), one naming the split but not of restore_reversed_source's shape, and a genuine-shaped one
+      // on the split's own source (not counted)
+      const rr = (doc: string, details: string) => `INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, details)
+        VALUES ('REV_HOLD_OVERRIDDEN', '${doc}', 'document', '${w.org}', '${w.uid.docctrl}', ${details});`;
+      const shape = `'priorStatus', 'Superseded', 'holds', jsonb_build_array(), 'branch', false, 'newStatus', 'Issued'`;
+      admin(SCRATCH, [
+        rr(w.dStray, `jsonb_build_object('via', 'reversal_restore', 'reversedAuditEventId', '${w.evSplit}', 'reversedAction', 'DOC_SPLIT', ${shape})`),
+        rr(w.dSrc, `jsonb_build_object('via', 'reversal_restore', 'reversedAuditEventId', '${w.evSplit}', 'reversedAction', 'DOC_SPLIT', 'newStatus', 'Issued')`),
+        rr(w.dSrc, `jsonb_build_object('via', 'reversal_restore', 'reversedAuditEventId', '${w.evSplit}', 'reversedAction', 'DOC_SPLIT', ${shape})`),
+      ].join("\n"));
       const r = paste(SCRATCH);
       const inv = rows(r.stdout).filter((x) => x.ok === "").map((x) => Number(x.n));
-      // the seed adds two unrecorded door-shaped submissions (x2A on a checked-out document, y2A on a free one),
-      // two held documents named by unreversed operations (the sheet, the target)
+      // the seed adds two unproven door-shaped submissions (x2A on a checked-out document, y2A on a free one; i2A
+      // carries the route's record), two held documents named by unreversed operations (the sheet, the target)
       expect(inv[0]).toBe(results[1]["0"] + 2);
       expect(inv[1]).toBe(results[1]["1"] + 1);
+      expect(inv[3]).toBe(results[1]["3"] + 3);
+      expect(inv[4]).toBe(results[1]["4"] + 2);
       expect(inv[5]).toBe(results[1]["5"] + 2);
+      expect(inv[6]).toBe(results[1]["6"]);
+      // a server dead letter of the route's record proves x2A: row 1 counts one fewer
+      admin(SCRATCH, `INSERT INTO audit_dead_letters (org_id, action, entry, error, source, reported_by) VALUES ('${w.org}', 'INTAKE_SUBMISSION',
+        jsonb_build_object('row', jsonb_build_object('action', 'INTAKE_SUBMISSION', 'resource_id', '${w.dForged}', 'resource_type', 'document', 'org_id', '${w.org}', 'user_id', null,
+          'details', jsonb_build_object('versionId', '${w.x2A}')), 'reporter', null), 'fetch failed', 'server', NULL);`);
+      const inv2 = rows(paste(SCRATCH).stdout).filter((x) => x.ok === "").map((x) => Number(x.n));
+      expect(inv2[0]).toBe(inv[0] - 1);
+      expect(inv2[1]).toBe(inv[1] - 1);
     } finally {
       admin("postgres", `DROP DATABASE IF EXISTS ${SCRATCH}`);
     }

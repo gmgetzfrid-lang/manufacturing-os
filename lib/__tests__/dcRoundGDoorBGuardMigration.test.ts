@@ -16,6 +16,11 @@
 //   ITS newest body (20261253) with one block: a recorded reversal_park needs
 //   an unreversed recorded split / merge naming the document. Created: the
 //   REV_HOLD_OVERRIDDEN write rail on audit_logs.
+//   P37 final fix pass (the integrator's ruling (1)): intake_door_submit_version
+//   re-created from ITS newest body (20261214) with one block — the door's own
+//   INTAKE_DOOR_SUBMITTED record of the submission, in the door's transaction,
+//   its own sub-block (a WARNING, never a refusal) — and the guard's intake
+//   limb accepts that record, the route's, or the route's server dead letter.
 //
 // Byte fidelity: lineDiff (nothing removed) AND an exact cut (each body minus
 // what was added IS its base, byte for byte). The runtime proof — every door
@@ -175,16 +180,18 @@ const GUARD_HEAD = "CREATE OR REPLACE FUNCTION enforce_document_publish_guard()"
 const FIN_HEAD = "CREATE OR REPLACE FUNCTION finalize_reviewed_promote(";
 const RETIRE_HEAD = "CREATE OR REPLACE FUNCTION retire_over_hold(";
 const RAIL_HEAD = "CREATE OR REPLACE FUNCTION public.enforce_hold_override_record_rail()";
+const DOOR_HEAD = "CREATE OR REPLACE FUNCTION public.intake_door_submit_version(p_token_hash text, p_version jsonb)";
 const definingOf = (head: string) => files.filter((f) => stripComments(mig(f)).includes(head));
 const prevOf = (head: string) => { const d = definingOf(head); return d[d.indexOf(FILE) - 1]; };
 const pair = (head: string) => ({ prev: prevOf(head), live: between(mig(prevOf(head)), head, "\n$$;"), next: between(M, head, "\n$$;") });
 const G = pair(GUARD_HEAD);
 const F = pair(FIN_HEAD);
 const R = pair(RETIRE_HEAD);
+const D = pair(DOOR_HEAD);
 const RAIL = between(M, RAIL_HEAD, "\n$$;");
 
 // ── the guard's additions ───────────────────────────────────────────────────
-const DECLARED = "  v_door_b_rev   text;\n  v_door_b_label text;\n  v_door_b_who   text;\n  v_door_b_told  boolean;\n  v_door_b_n     integer;\n";
+const DECLARED = "  v_door_b_rev   text;\n  v_door_b_label text;\n  v_door_b_who   text;\n  v_door_b_told  boolean;\n  v_door_b_n     integer;\n  v_door_b_proof boolean;\n";
 const CONTROLLER_RETURN = "  -- OWN-3/DEC-2: controllers are a property of the role COLLECTION.\n";
 const BLOCK = G.next.slice(G.next.indexOf("  -- DCK-18 (document-control Round G, P37 DOOR B GUARD — assigned by the\n"), G.next.indexOf(CONTROLLER_RETURN));
 const INTAKE = BLOCK.slice(0, BLOCK.indexOf("  -- (a) The pass is recorded and the holder told, whichever door wrote it.\n"));
@@ -204,6 +211,9 @@ const FIN_SET = "  -- DCK-18 (document-control P37, 20261254): this promote reco
 const FIN_CLEAR = "  PERFORM set_config('app.review_promote_records', '', true);\n";
 
 // ── retire_over_hold's addition ─────────────────────────────────────────────
+// ── intake_door_submit_version's addition (P37 final fix pass) ──────────────
+const DOOR_REC = D.next.slice(D.next.indexOf("  -- DCK-18 (b) (document-control Round G, P37 final fix pass, 20261254 — the\n"), D.next.indexOf("  RETURN v_id;\n"));
+
 const PARK = R.next.slice(R.next.indexOf("\n  -- REV-37 (document-control Round G, P37 DOOR B GUARD, 20261254 — ruled\n"), R.next.indexOf("\n  -- The write: the door's own, as the caller."));
 
 describe("20261254 — enforce_document_publish_guard re-created from its NEWEST earlier body (found by scanning)", () => {
@@ -242,7 +252,7 @@ describe("20261254 — enforce_document_publish_guard re-created from its NEWEST
     expect(G.next).toContain("RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$");
   });
 
-  it("(b) the intake limb: over another person's checkout, no bound roster, not publish_revision's own promote, and no INTAKE_SUBMISSION record of the route (no person named) naming this version in this workspace → refused 42501 in the lock leg's own words", () => {
+  it("(b) the intake limb: over another person's checkout, no bound roster, not publish_revision's own promote, and no proof naming this version in this workspace — the door's own INTAKE_DOOR_SUBMITTED or the route's INTAKE_SUBMISSION record (no person named), or the route's record as a SERVER dead letter (drained, or still in the outbox where 20261219 made it) → refused 42501 in the lock leg's own words", () => {
     const c = code(INTAKE.split("\n"));
     expect(c.slice(0, 5)).toEqual([
       "  IF OLD.checked_out_by IS NOT NULL",
@@ -253,7 +263,20 @@ describe("20261254 — enforce_document_publish_guard re-created from its NEWEST
     ]);
     expect(c.slice(5, 5 + DOOR_A.length)).toEqual(DOOR_A);
     const sc = stripComments(INTAKE);
-    expect(sc).toContain("SELECT 1 FROM audit_logs a\n            WHERE a.org_id = NEW.org_id\n              AND a.resource_type = 'document'\n              AND a.resource_id = NEW.id::text\n              AND a.action = 'INTAKE_SUBMISSION'\n              AND a.user_id IS NULL\n              AND a.details->>'versionId' = NEW.current_version_id::text) THEN");
+    expect(sc).toContain("SELECT 1 FROM audit_logs a\n            WHERE a.org_id = NEW.org_id\n              AND a.resource_type = 'document'\n              AND a.resource_id = NEW.id::text\n              AND a.action IN ('INTAKE_SUBMISSION', 'INTAKE_DOOR_SUBMITTED')\n              AND a.user_id IS NULL\n              AND a.details->>'versionId' = NEW.current_version_id::text)\n");
+    // the drained dead letter (lib/auditOutboxDrain.ts drainedAuditRow): a machine row typed org, the lost row as sent,
+    // from the SERVER (no reporter) — a browser's dead letter names its member reporter and vouches for nothing
+    expect(sc).toContain("              AND a.action = 'AUDIT_DEAD_LETTER'\n              AND a.user_id IS NULL\n              AND a.details->>'lostAction' = 'INTAKE_SUBMISSION'\n              AND a.details->>'source' = 'server'\n              AND jsonb_typeof(COALESCE(a.details->'reportedBy', 'null'::jsonb)) = 'null'\n");
+    expect(sc).toContain("AND a.details->'lost'->'details'->>'versionId' = NEW.current_version_id::text) THEN");
+    // the outbox row not drained yet: read only where the table exists, an unreadable outbox vouches for nothing
+    expect(sc).toContain("    v_door_b_proof := false;\n    IF to_regclass('public.audit_dead_letters') IS NOT NULL THEN\n      BEGIN\n        SELECT EXISTS (\n                 SELECT 1 FROM audit_dead_letters o\n                  WHERE o.org_id = NEW.org_id\n                    AND o.action = 'INTAKE_SUBMISSION'\n                    AND o.source = 'server'\n                    AND o.reported_by IS NULL\n");
+    expect(sc).toContain("      EXCEPTION WHEN OTHERS THEN\n        v_door_b_proof := false;\n      END;\n    END IF;\n    IF NOT COALESCE(v_door_b_proof, false) THEN\n    RAISE EXCEPTION");
+    // the shapes the limb reads are the shapes the app writes
+    const drain = readFileSync(join(root, "lib", "auditOutboxDrain.ts"), "utf8");
+    for (const k of ['lostAction: o.action,', 'lost: { ...(entry.row ?? {}), asSent: true },', 'reportedBy: o.reported_by,', 'source: o.source,', 'user_id: null,', 'resource_type: "org",', 'resource_id: o.org_id,']) expect(drain).toContain(k);
+    const outbox = readFileSync(join(root, "lib", "auditOutbox.ts"), "utf8");
+    expect(outbox).toContain('entry: { row, reporter: null },');
+    expect(outbox).toContain('source: "server",\n      reported_by: null,');
     // the lock leg's own sentence and code, so the app's finalizeReasonMessage reads it as it reads the lock leg
     const lockSentence = between(G.live, "    RAISE EXCEPTION\n      'This document is checked out by %", "USING ERRCODE = 'insufficient_privilege';");
     expect(INTAKE).toContain(lockSentence);
@@ -363,6 +386,45 @@ describe("20261254 — retire_over_hold re-created from its NEWEST earlier body;
   });
 });
 
+describe("20261254 — intake_door_submit_version re-created from its NEWEST earlier body; the door records its own submission (P37 final fix pass)", () => {
+  it("the base is the newest earlier definition (today 20261214 — the scan decides), with its role switch and bound-identity fallback, and no door record", () => {
+    expect(D.prev >= "20261214_prj_roundG_intake_door_rls.sql").toBe(true);
+    expect(D.live).toContain("IF v_rls THEN PERFORM set_config('role', 'intake_door', true); END IF;");
+    expect(D.live).not.toContain("INTAKE_DOOR_SUBMITTED");
+    for (const later of definingOf(DOOR_HEAD).filter((f) => f > FILE)) expect(between(mig(later), DOOR_HEAD, "\n$$;"), later).toContain(DOOR_REC);
+  });
+
+  it("nothing removed; the one addition is the record's block between the unbind and the RETURN; the body minus it IS the base, byte for byte", () => {
+    const { onlyInA } = lineDiff(D.live, D.next);
+    expect(onlyInA).toEqual([]);
+    expect(DOOR_REC.length).toBeGreaterThan(500);
+    expect(D.next.split(DOOR_REC).length).toBe(2);
+    expect(D.next.replace(DOOR_REC, "")).toBe(D.live);
+    expect(D.next).toContain("  END LOOP;\n  PERFORM intake_door_unbind(v_prev);\n" + DOOR_REC + "  RETURN v_id;\nEND;");
+  });
+
+  it("the record: after the role switch and the bound identity are undone (as the caller — the service role), no person named, naming the version it inserted, the link, the project and which path inserted it; its own sub-block — a WARNING, the submission stands", () => {
+    const sc = stripComments(DOOR_REC);
+    expect(sc).toMatch(/^\s*BEGIN\n    INSERT INTO audit_logs \(action, resource_id, resource_type, org_id, user_id, user_email, details\)\n    VALUES \('INTAKE_DOOR_SUBMITTED', v_v\.record_id::text, 'document', v_org, NULL, NULL,/);
+    for (const k of ["'versionId', v_id,", "'linkId', v_link,", "'projectId', v_proj,", "'insertedAs', CASE WHEN v_rls THEN 'intake_door' ELSE 'bound_identity' END,", "'via', 'intake_door_submit_version'"]) expect(sc).toContain(k);
+    expect(sc).toContain("  EXCEPTION WHEN OTHERS THEN\n    RAISE WARNING 'intake_door_submit_version: the submission % was filed, but the door''s own record of it was not written (the submission stands): %', v_id, SQLERRM;\n  END;\n");
+    expect(sc).not.toMatch(/RAISE EXCEPTION|RETURN|set_config/);
+  });
+
+  it("the same signature (CREATE OR REPLACE — no DROP, no PostgREST schema change), SECURITY INVOKER, search_path pinned; the service role only (grants restated, DRLS-16)", () => {
+    expect(D.next).toContain(DOOR_HEAD + "\nRETURNS uuid\nLANGUAGE plpgsql\nSECURITY INVOKER\nSET search_path = public\nAS $$");
+    expect(stripComments(M)).not.toMatch(/DROP FUNCTION IF EXISTS (?:public\.)?intake_door_submit_version/);
+    expect(M).toContain("REVOKE ALL ON FUNCTION public.intake_door_submit_version(text, jsonb) FROM PUBLIC, anon, authenticated;\nGRANT EXECUTE ON FUNCTION public.intake_door_submit_version(text, jsonb) TO service_role;");
+  });
+
+  it("the intake route still calls it as before (same arguments) and still writes its own record after — kept in the EVID-6 outbox when the write fails (keep: true)", () => {
+    const route = readFileSync(join(root, "app", "api", "intake", "upload", "route.ts"), "utf8");
+    expect(route).toContain('supabaseAdmin.rpc("intake_door_submit_version", { p_token_hash: tokenHash, p_version: versionRow })');
+    expect(route).toContain('action: published ? "INTAKE_AUTO_SUPERSEDE" : "INTAKE_SUBMISSION",');
+    expect(route).toMatch(/appSession: session,\n    },\n[^\n]*\n  \}, \{ keep: true \}\);/);
+  });
+});
+
 describe("20261254 — the REV_HOLD_OVERRIDDEN write rail", () => {
   it("SECURITY DEFINER with search_path pinned; the service role passes first; a signed-in row needs the document it names (in its workspace) written by this transaction — pg_xact_status 'in progress' on the row's xmin; else 42501", () => {
     expect(RAIL).toContain("RETURNS trigger\nLANGUAGE plpgsql\nSECURITY DEFINER\nSET search_path = public\nAS $$");
@@ -454,7 +516,8 @@ describe("20261254 — the one-paste shape (DEC-30)", () => {
     expect(pre).toBeGreaterThan(0);
     for (const s of ["20261254 needs 20261253 (the hold leg in the publish guard) pasted first; nothing was changed.",
       "20261254 needs 20261252 (finalize_reviewed_promote''s over-checkout record) pasted first; nothing was changed.",
-      "20261254 needs 20261253 (retire_over_hold) pasted first; nothing was changed."]) expect(M).toContain(s);
+      "20261254 needs 20261253 (retire_over_hold) pasted first; nothing was changed.",
+      "20261254 needs 20261214 (intake_door_submit_version''s role switch) pasted first; nothing was changed."]) expect(M).toContain(s);
     expect(pre).toBeLessThan(M.indexOf("CREATE TEMP TABLE dc_round_g_254_before AS"));
     expect(M.indexOf("CREATE TEMP TABLE dc_round_g_254_before AS")).toBeLessThan(M.indexOf("\nBEGIN;"));
     expect(stripComments(M).match(/^BEGIN;$/gm)).toHaveLength(1);
@@ -465,7 +528,7 @@ describe("20261254 — the one-paste shape (DEC-30)", () => {
     const inv = between(M, "CREATE TEMP TABLE dc_round_g_254_before AS", "\nBEGIN;");
     const top = inv.slice(inv.indexOf("\nSELECT 'inventory"));
     const selects = top.split(/\bUNION ALL\b/);
-    expect(selects).toHaveLength(6);
+    expect(selects).toHaveLength(7);
     for (const s of selects) {
       const noStrings = s.replace(/'(?:[^']|'')*'/g, "''");
       expect(noStrings, s.slice(0, 80)).toMatch(/^\s*SELECT '',?(?: AS inventory,)?\s*COUNT\((?:\*|DISTINCT d\.id)\)::text(?: AS n)?\s/);
@@ -478,23 +541,28 @@ describe("20261254 — the one-paste shape (DEC-30)", () => {
     expect(statements).toHaveLength(1);
     expect(tail).toContain("AS check,");
     expect(tail).toContain("SELECT inventory, NULL::boolean, n FROM dc_round_g_254_before;");
-    expect((stripComments(tail).match(/\bUNION ALL\b/g) ?? []).length).toBe(9);
+    expect((stripComments(tail).match(/\bUNION ALL\b/g) ?? []).length).toBe(11);
   });
 
   it("every prosrc probe holds on the body it names (verbatim prosrc; '' in a probe is ' in the body)", () => {
     const bodies: Record<string, string> = {
       enforce_document_publish_guard: prosrcOf(G.next), finalize_reviewed_promote: prosrcOf(F.next),
       retire_over_hold: prosrcOf(R.next), enforce_hold_override_record_rail: prosrcOf(RAIL),
+      intake_door_submit_version: prosrcOf(D.next),
     };
     const probes = [...tail.matchAll(/prosrc LIKE '((?:[^']|'')*)'\s+FROM pg_proc WHERE proname = '(\w+)'/g)];
-    expect(probes.length).toBe(6);
+    expect(probes.length).toBe(7);
     for (const [, pat, name] of probes) expect(bodies[name], `${name}: ${pat.slice(0, 60)}`).toMatch(likeRe(pat.replace(/''/g, "'")));
   });
 
-  it("defines exactly the guard, finalize_reviewed_promote, retire_over_hold and the rail, one trigger, no table, no policy, no new notification kind", () => {
+  it("defines exactly the guard, finalize_reviewed_promote, retire_over_hold, intake_door_submit_version and the rail (and the inventory's session-local outbox reader), one trigger, no table, no policy, no new notification kind", () => {
     const sc = stripComments(M);
-    expect([...sc.matchAll(/CREATE\s+OR\s+REPLACE\s+FUNCTION\s+(?:public\.)?(\w+)/g)].map((m) => m[1]))
-      .toEqual(["enforce_document_publish_guard", "finalize_reviewed_promote", "retire_over_hold", "enforce_hold_override_record_rail"]);
+    expect([...sc.matchAll(/CREATE\s+OR\s+REPLACE\s+FUNCTION\s+(?:public\.|pg_temp\.)?(\w+)/g)].map((m) => m[1]))
+      .toEqual(["dc_round_g_254_outbox_names", "enforce_document_publish_guard", "finalize_reviewed_promote", "retire_over_hold", "intake_door_submit_version", "enforce_hold_override_record_rail"]);
+    // the outbox reader is session-local (pg_temp), created before the inventory and read by it only
+    expect(sc).toContain("CREATE OR REPLACE FUNCTION pg_temp.dc_round_g_254_outbox_names(p_org uuid, p_doc text, p_version text)");
+    expect(sc.indexOf("pg_temp.dc_round_g_254_outbox_names(p_org")).toBeLessThan(sc.indexOf("CREATE TEMP TABLE dc_round_g_254_before AS"));
+    expect(sc.slice(sc.indexOf("\nBEGIN;"))).not.toContain("dc_round_g_254_outbox_names");
     expect([...sc.matchAll(/CREATE TRIGGER (\w+)/g)].map((m) => m[1])).toEqual(["trg_audit_logs_hold_override_rail"]);
     expect(sc).not.toMatch(/CREATE TABLE(?! dc_round)|CREATE TEMP TABLE (?!dc_round_g_254_before)/);
     expect(sc).not.toMatch(/CREATE POLICY|ALTER TABLE/);

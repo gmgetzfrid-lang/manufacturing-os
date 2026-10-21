@@ -91,7 +91,8 @@ describe("voidPendingDraft(documentId, expectedDraftId) — P37 fix pass", () =>
     expect(signoff("sx").status).toBe("pending");
     expect(version("x2A").superseded_at).toBeNull();
     expect(h.db.calls.filter((c) => c.method === "update")).toHaveLength(0);
-    expect(h.log).not.toHaveBeenCalled();
+    // P37 final fix pass (ruling (3)): only the intent row, written before the void; no outcome recorded
+    expect(h.log.mock.calls.map((c) => c[0].action)).toEqual(["PENDING_SUBMISSION_RETIRE_REQUESTED"]);
   });
 
   it("the refusal names itself (draftChanged) — another draft pointed at, or none any more", async () => {
@@ -116,7 +117,10 @@ describe("voidPendingDraft(documentId, expectedDraftId) — P37 fix pass", () =>
     expect(signoff("sx").status).toBe("void");
     expect(version("x2A").superseded_at).not.toBeNull();
     expect(doc().pending_version_id).toBeNull();
-    expect(h.log.mock.calls[0][0].details).toMatchObject({ versionId: "x2A", shownVersionId: "x2A", sameAsShown: true });
+    // P37 final fix pass (ruling (3)): the intent first, then the outcome
+    expect(h.log.mock.calls.map((c) => c[0].action)).toEqual(["PENDING_SUBMISSION_RETIRE_REQUESTED", "PENDING_SUBMISSION_RETIRED"]);
+    expect(h.log.mock.calls[0][0].details).toMatchObject({ versionId: "x2A", reason: "quote link submission" });
+    expect(h.log.mock.calls[1][0].details).toMatchObject({ versionId: "x2A", shownVersionId: "x2A", sameAsShown: true });
   });
 
   it("REGRESSION: a caller that names no draft (every caller before P37 — the rev-up, revert, archive, supersede, split, merge, park) voids whatever is pending, as before", async () => {

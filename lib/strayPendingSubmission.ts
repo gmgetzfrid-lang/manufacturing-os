@@ -147,7 +147,17 @@ export type StrayRetireOutcome =
  *  anyone with publish authority on the document (the same rights a rev-up
  *  voids a pending draft with); no new database authority is granted. A
  *  refused void writes nothing and says what it left (voidPendingDraft's own
- *  sentence); a record that cannot be written is returned, never swallowed. */
+ *  sentence); a record that cannot be written is returned, never swallowed.
+ *
+ *  P37 final fix pass (the integrator's ruling (3)): the retire is recorded
+ *  TWICE — an intent row (PENDING_SUBMISSION_RETIRE_REQUESTED: who, the
+ *  version shown, why) BEFORE voidPendingDraft, and the outcome row
+ *  (PENDING_SUBMISSION_RETIRED) after it — so a retire interrupted between
+ *  the two (a closed tab, a lost connection) still leaves who asked and why.
+ *  An intent row that cannot be written stops the retire before the void
+ *  (fail closed): nothing is changed and that is said. A void refused after
+ *  the intent landed leaves the intent row alone (it says what was asked;
+ *  the draft, still pending, says it did not happen). */
 export async function retireStrayPendingSubmission(input: {
   orgId: string;
   documentId: string;
@@ -169,6 +179,29 @@ export async function retireStrayPendingSubmission(input: {
   }
   if (now.kind !== "stray" || now.stray.versionId !== input.expectedVersionId) {
     return { ok: false, reason: "The document's pending draft changed since it was shown (it was decided, replaced, or now appears on an Intake tab) — nothing was changed. Reload the document." };
+  }
+  // P37 final fix pass (ruling (3)): the intent first — who, the version shown and why — so an
+  // interrupted retire still leaves its record; no intent row, no void (fail closed)
+  const intent = await logAuditAction({
+    action: "PENDING_SUBMISSION_RETIRE_REQUESTED",
+    resourceId: input.documentId,
+    resourceType: "document",
+    orgId: input.orgId,
+    userId: input.actorUserId ?? "",
+    userEmail: input.actorEmail ?? undefined,
+    userRole: input.actorRole ?? undefined,
+    details: {
+      versionId: input.expectedVersionId,
+      revisionLabel: now.stray.revisionLabel,
+      intakeLinkId: now.stray.intakeLinkId,
+      linkPurpose: now.stray.linkPurpose,
+      cause: now.stray.cause,
+      reason,
+      via: "void_pending_draft",
+    },
+  });
+  if (!intent.ok) {
+    return { ok: false, reason: `The retire could not be recorded before it ran (${intent.error ?? "the record was refused"}) — nothing was changed. Try again.` };
   }
   let voided: string | null;
   try {
