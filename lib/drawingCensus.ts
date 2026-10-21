@@ -95,7 +95,12 @@ const SYSTEM =
   "- offSheet: tags that appear ONLY in off-page connector arrows or FROM / TO notes at the sheet edges — " +
   "they are drawn on other sheets. Never put them in equipment. direction = \"from\" or \"to\" as printed.\n" +
   "- Line numbers, pipe sizes and specs, valve sizes, notes, steam pressures and the sheet's own drawing " +
-  "number are none of these.\n" +
+  "number are none of these. Nor are nozzle marks on a vessel (T1, T2, S1, N3), pipe spec / line class " +
+  "codes (BA1, CA1, CU6, A-1, B-1), flange ratings (150#, 300#), reducer sizes (6x4, 4x3), or valve " +
+  "states (NC, NO, FC, FO).\n" +
+  "- The same piece of equipment is often labelled twice — its callout (\"P-04 (3524.04) CHLORIDE " +
+  "INJECTION PUMP\") and a short label on the symbol (\"P-4 3524.04\"). That is ONE item: report it once, " +
+  "with the tag as the callout prints it.\n" +
   "- Copy every character exactly as printed. If you cannot read a character with certainty, leave that " +
   "item out. Never invent an item.";
 
@@ -329,6 +334,22 @@ export function mergeReadings(readings: CensusSheet[]): CensusSheet {
   for (const r of readings) for (const e of r.equipment) {
     const cur = eq.get(e.tag);
     if (!cur || fullness(e) > fullness(cur)) eq.set(e.tag, e);
+  }
+  // One item labelled twice — callout "P-04 (3524.04)" and symbol "P-4
+  // 3524.04": the same site code, or the same tag but for leading zeros.
+  // Kept once, as the fullest (callout) reading. Tags alone are not unique
+  // across a site (X-31 in two units); the code is.
+  const sameItem = (a: string, b: string) => a.replace(/-0+(?=\d)/, "-") === b.replace(/-0+(?=\d)/, "-");
+  for (const e of [...eq.values()]) {
+    for (const f of [...eq.values()]) {
+      if (e === f || !eq.has(e.tag) || !eq.has(f.tag)) continue;
+      const twin = (e.code && f.code && e.code === f.code) || (sameItem(e.tag, f.tag) && (!e.code || !f.code || e.code === f.code));
+      if (!twin) continue;
+      const drop = fullness(e) >= fullness(f) ? f : e;
+      const keep = drop === f ? e : f;
+      eq.delete(drop.tag);
+      eq.set(keep.tag, { ...keep, code: keep.code ?? drop.code, name: keep.name ?? drop.name, details: keep.details ?? drop.details });
+    }
   }
   const off = new Map<string, CensusSheet["offSheet"][number]>();
   for (const r of readings) for (const o of r.offSheet) if (!eq.has(o.tag) && !off.has(o.tag)) off.set(o.tag, o);

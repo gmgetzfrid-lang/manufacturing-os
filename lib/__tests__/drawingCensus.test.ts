@@ -120,3 +120,17 @@ describe("readDrawingSheet", () => {
     await expect(readDrawingSheet(pdf, 1, "x", call, { render, transcript: false })).rejects.toThrow(DrawingReadError);
   });
 });
+
+describe("one item labelled twice", () => {
+  it("callout and symbol label with the same site code merge into one", () => {
+    const a = parseCensus('{"equipment":[{"tag":"P-04","code":"3524.04","name":"CHLORIDE CHEMICAL INJECTION PUMP (WEST)"},{"tag":"X-31","code":"3530.31","name":"CHARGE/EFFLUENT EXCHANGER"}]}');
+    const b = parseCensus('{"equipment":[{"tag":"P-4","code":"3524.04"},{"tag":"X-31"}]}');
+    const m = mergeReadings([a, b]);
+    expect(m.equipment.map((e) => e.tag).sort()).toEqual(["P-04", "X-31"]);
+    expect(m.equipment.find((e) => e.tag === "P-04")?.name).toBe("CHLORIDE CHEMICAL INJECTION PUMP (WEST)");
+  });
+  it("different site codes stay different items", () => {
+    const m = mergeReadings([parseCensus('{"equipment":[{"tag":"P-04","code":"3524.04"},{"tag":"P-4","code":"2026.04"}]}')]);
+    expect(m.equipment).toHaveLength(2);
+  });
+});
