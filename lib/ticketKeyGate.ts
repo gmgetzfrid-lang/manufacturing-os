@@ -16,7 +16,10 @@
 // The rule, the one /api/tickets/copy applies (lib/ticketReadScope.ts — the
 // SQL's predicate, mirrored):
 //   * a member who is NOT Contractor-only keeps exactly today's access: no
-//     further read is made and the key is signed as before;
+//     further read is made and the key is signed as before (DF-P11 fix pass
+//     3: the routes hand over the role / roles of the membership row they
+//     already read, so such a member is decided with no second org_members
+//     read that could fail — a 503 here would be a regression);
 //   * a key some document_versions row names is decided by the document gate
 //     (lib/documentKeyGate.ts, DEC-43's controller rail and record) — this
 //     gate stands aside;
@@ -29,8 +32,9 @@
 //     in the query itself, then the mention leg pages through the naming
 //     tickets' ids; past MAX_TICKET_PAGES pages the answer is 503 — a bound
 //     is never a 403;
-//   * a read that cannot be made (the member row, the document lookup, the
-//     ticket lookup, the mention lookup) answers 503 — never a signed URL on
+//   * a read that cannot be made (the member row when the route did not
+//     hand one over, the document lookup, the ticket lookup, the mention
+//     lookup) answers 503 — never a signed URL on
 //     a check not made.
 // Shared by the two routes; a Next route module is no library.
 //
@@ -81,25 +85,32 @@ function directLeg(t: TicketScopeRow, uid: string): boolean {
  * the key is not a ticket file, or a document decides it); otherwise the
  * refusal to send. `keyOrg` is the workspace the key was attributed to (its
  * orgs/<org>/ prefix); the caller has already checked an active membership
- * there.
+ * there. `memberRow` is that membership row's role / roles, when the caller
+ * read them (both routes do): the gate then makes no org_members read of
+ * its own. Without it the gate reads the row, and a failed read is a 503.
  */
 export async function ticketKeyGate(
   keyOrg: string,
   path: string,
   user: { id: string },
+  memberRow?: { role?: unknown; roles?: unknown } | null,
 ): Promise<NextResponse | null> {
   if (!isTicketFileKey(path)) return null;
   const refuse = (error: string, status: number) => NextResponse.json({ error }, { status });
   try {
-    const { data: member, error: memberErr } = await supabaseAdmin
-      .from("org_members")
-      .select("role, roles")
-      .eq("org_id", keyOrg)
-      .eq("uid", user.id)
-      .eq("status", "active")
-      .maybeSingle();
-    if (memberErr) return refuse(ACCESS_UNVERIFIED, 503);
-    if (!member) return refuse("Not a member of this workspace", 403);
+    let member: { role?: unknown; roles?: unknown } | null = memberRow ?? null;
+    if (!member) {
+      const { data, error: memberErr } = await supabaseAdmin
+        .from("org_members")
+        .select("role, roles")
+        .eq("org_id", keyOrg)
+        .eq("uid", user.id)
+        .eq("status", "active")
+        .maybeSingle();
+      if (memberErr) return refuse(ACCESS_UNVERIFIED, 503);
+      if (!data) return refuse("Not a member of this workspace", 403);
+      member = data as { role?: unknown; roles?: unknown };
+    }
     // Everyone the database lets read the workspace's tickets keeps today's
     // access, with no further lookup.
     if (!isContractorOnly(member)) return null;

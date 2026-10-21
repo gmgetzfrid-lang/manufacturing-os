@@ -55,9 +55,12 @@ export async function GET(req: NextRequest) {
   // cross-tenant read). Non-org-prefixed keys keep their prior behavior.
   const orgMatch = path.match(/^orgs\/([0-9a-fA-F-]{36})\//);
   if (orgMatch) {
+    // role / roles ride along (DF-P11 fix pass 3) so the ticket-file gate
+    // below decides a member who is not Contractor-only from THIS row, with
+    // no second read that could fail.
     const { data: member } = await supabaseAdmin
       .from("org_members")
-      .select("uid")
+      .select("uid, role, roles")
       .eq("org_id", orgMatch[1])
       .eq("uid", user.id)
       .eq("status", "active")
@@ -86,8 +89,9 @@ export async function GET(req: NextRequest) {
     // AUTHZ-4 / EVID-16: a key under orgs/<org>/tickets/ that no revision
     // names is signed only for a member who may read a ticket naming it
     // (lib/ticketKeyGate.ts — /api/tickets/copy's read scope). Members who
-    // are not Contractor-only are answered with no further lookup, as before.
-    const ticketGate = await ticketKeyGate(orgMatch[1], path, { id: user.id });
+    // are not Contractor-only are answered with no further lookup, as before
+    // (the membership row read above is handed over).
+    const ticketGate = await ticketKeyGate(orgMatch[1], path, { id: user.id }, member as { role?: unknown; roles?: unknown });
     if (ticketGate) return ticketGate;
   }
 

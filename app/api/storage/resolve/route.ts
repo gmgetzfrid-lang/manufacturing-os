@@ -153,19 +153,19 @@ export async function GET(req: NextRequest) {
     }
     return NextResponse.json({ archived: false, exists: true, fileName }, { headers: { "Cache-Control": "no-store" } });
   }
-  // The caller must be an active member of the key's workspace.
-  {
-    const { data: m } = await supabaseAdmin
-      .from("org_members").select("uid")
-      .eq("org_id", orgId).eq("uid", user.id).eq("status", "active").maybeSingle();
-    if (!m) return NextResponse.json({ error: "Not a member of this workspace" }, { status: 403 });
-  }
+  // The caller must be an active member of the key's workspace. role / roles
+  // ride along (DF-P11 fix pass 3): the ticket-file gate decides a member who
+  // is not Contractor-only from this row, with no second read that could fail.
+  const { data: memberRow } = await supabaseAdmin
+    .from("org_members").select("uid, role, roles")
+    .eq("org_id", orgId).eq("uid", user.id).eq("status", "active").maybeSingle();
+  if (!memberRow) return NextResponse.json({ error: "Not a member of this workspace" }, { status: 403 });
   // AUTHZ-4 done-when 1: the same read decision as /api/storage/download-url —
   // the document gate (KACL-5 / IEDGE-12 / DEC-43 / DEC-7) for a key a
   // revision names, then the ticket-file gate for orgs/<org>/tickets/ keys.
   const docGate = await documentKeyGate(orgId, path, { id: user.id, email: user.email ?? null });
   if (docGate) return docGate;
-  const ticketGate = await ticketKeyGate(orgId, path, { id: user.id });
+  const ticketGate = await ticketKeyGate(orgId, path, { id: user.id }, memberRow as { role?: unknown; roles?: unknown });
   if (ticketGate) return ticketGate;
 
   const settingsFor = async (): Promise<{ root: string | null; namingNote: string | null }> => {

@@ -152,6 +152,15 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
   // out is honoured). Widening (a role, a personal grant) is an explicit
   // Admin decision in the grid. The ticket close gate's release of its own
   // hold runs as the service role (DEC-25) and is unaffected.
+  // The management tier (Manager, Supervisor) is NOT in the default although
+  // it holds ticket.force_close (fix pass 3, DEC-90 ruling (3)'s reason):
+  // the close gate releases only holds whose origin_ticket_id is the ticket
+  // being closed (the as-built discrepancy hold CheckInPanel places), and
+  // only through the closer's explicit release-or-keep resolution, recorded
+  // as HOLD_RELEASED — it never reaches a hold placed on the document from
+  // its hold strip, which is the controller's veto. Release here reaches
+  // every hold, so it stays the controller tier's unless an Admin ticks
+  // Manager or Supervisor on this row.
   { id: "holds.release", area: "Holds", label: "Release a hold",
     description: "Release (or re-date) an open hold. Ships to Admin, Document Control and the person who placed that hold: a hold is a deliberate stop on a document, so lifting someone else's is a controller's decision unless you grant it here. Untick \"The hold's own opener\" to make release controller-only. Enforced at the database, which reads this policy.",
     defaultRoles: ["Admin", "DocCtrl", HOLD_OPENER_TOKEN] },

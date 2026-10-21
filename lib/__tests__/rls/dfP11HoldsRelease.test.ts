@@ -202,7 +202,7 @@ describe.skipIf(skip !== null)("20261239 pasted as ONE script, as the SQL editor
     });
   };
 
-  it("on a copy put back to 20260901's UPDATE policy: the opener is refused before, admitted after; an org storing [\"Admin\"] refuses its opener before AND after (nothing widened); every probe true; inventory rows 1–7 are counts; a re-paste is clean", () => {
+  it("on a copy put back to 20260901's UPDATE policy: the opener is refused before, admitted after; an org storing [\"Admin\"] refuses its opener before AND after (nothing widened); every probe true; inventory rows 1–8 are counts (row 1: stored [\"*\"] apart); a re-paste is clean", () => {
     const scratch = "mos_df_p11_paste";
     admin("postgres", `CREATE DATABASE ${scratch} TEMPLATE ${db}`);
     try {
@@ -222,6 +222,15 @@ describe.skipIf(skip !== null)("20261239 pasted as ONE script, as the SQL editor
       const nd = seedDocument(scratch, n.orgId);
       const nh = placeHold(scratch, n.orgId, nd, n.m.supervisor.uid);
       expect(asCaller(scratch, n.m.supervisor.caller, release(nh, n.m.supervisor))).toEqual({ ok: true, rows: 0 });
+      // fix pass 3: an org whose grid save stored the old default ["*"] — counted apart (row 1)
+      const star = seedOrg(scratch, { drafter: { role: "Drafter" }, dc: { role: "DocCtrl" } });
+      admin(scratch, `INSERT INTO org_configurations (org_id, key, data) VALUES ('${star.orgId}', 'capability_policy', '{"caps": {"holds.release": ["*"], "ticket.assign": ["Admin"]}}'::jsonb)`);
+      const starRow = () => Number(admin(scratch, `SELECT COUNT(*) FROM org_configurations c WHERE c.key = 'capability_policy' AND COALESCE(c.data->'caps'->'holds.release', c.data->'holds.release') = '["*"]'::jsonb`));
+      const otherRow = () => Number(admin(scratch, `SELECT COUNT(*) FROM org_configurations c WHERE c.key = 'capability_policy' AND COALESCE(c.data->'caps'->'holds.release', c.data->'holds.release') IS NOT NULL AND COALESCE(c.data->'caps'->'holds.release', c.data->'holds.release') <> '["*"]'::jsonb`));
+      const expectStar = starRow();
+      const expectOther = otherRow();
+      expect(expectStar).toBeGreaterThanOrEqual(1);
+      expect(expectOther).toBeGreaterThanOrEqual(1);
 
       const rows = paste(scratch);
       const probes = rows.filter((r) => r.ok !== "");
@@ -229,8 +238,13 @@ describe.skipIf(skip !== null)("20261239 pasted as ONE script, as the SQL editor
       expect(probes.length).toBe(13);
       expect(probes.filter((p) => p.ok !== "t"), JSON.stringify(probes)).toEqual([]);
       expect(probes.every((p) => p.n === "")).toBe(true);
-      expect(inventory.length).toBe(7);
+      expect(inventory.length).toBe(8);
       expect(inventory.every((r) => /^\d+$/.test(r.n)), JSON.stringify(inventory)).toBe(true);
+      // fix pass 3: row 1 is the stored old default ["*"], row 2 every other stored list
+      expect(inventory[0].check).toMatch(/^inventory: workspaces whose stored holds\.release is exactly \["\*"\]/);
+      expect(Number(inventory[0].n)).toBe(expectStar);
+      expect(inventory[1].check).toMatch(/^inventory: workspaces whose stored holds\.release is any other list/);
+      expect(Number(inventory[1].n)).toBe(expectOther);
       expect(rows.some((r) => r.check.startsWith("the hold UPDATE policy admits holds.release or the opener leg"))).toBe(true);
       expect(rows.some((r) => /widening/.test(r.check))).toBe(false);
 
@@ -239,6 +253,13 @@ describe.skipIf(skip !== null)("20261239 pasted as ONE script, as the SQL editor
       expect(asCaller(scratch, s.m.supervisor.caller, release(h2, s.m.supervisor))).toEqual({ ok: true, rows: 0 });
       // the stored narrower list still decides after the paste: nothing widened
       expect(asCaller(scratch, n.m.supervisor.caller, release(nh, n.m.supervisor))).toEqual({ ok: true, rows: 0 });
+      // the stored old default still decides too — the remainder HAND-2 records
+      const sd = seedDocument(scratch, star.orgId);
+      const sh = placeHold(scratch, star.orgId, sd, star.m.dc.uid);
+      expect(asCaller(scratch, star.m.drafter.caller, release(sh, star.m.drafter))).toEqual({ ok: true, rows: 1 });
+      // fix pass 3: the policy applies to authenticated only; anon cannot execute the opener function
+      expect(admin(scratch, `SELECT array_to_string(roles, ',') FROM pg_policies WHERE tablename = 'document_holds' AND policyname = 'document_holds_update'`)).toBe("authenticated");
+      expect(admin(scratch, `SELECT has_function_privilege('anon', 'public.hold_opener_may_update(uuid,uuid)', 'EXECUTE')`)).toBe("f");
       expect(admin(scratch, `SELECT has_function_privilege('authenticated', 'public.enforce_distribution_ack_guard()', 'EXECUTE')`)).toBe("f");
 
       const again = paste(scratch);

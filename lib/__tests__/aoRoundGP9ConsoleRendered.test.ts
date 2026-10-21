@@ -385,7 +385,10 @@ describe("CapabilityPolicyEditor", () => {
     expect([...row.querySelectorAll("button")].find((b) => b.textContent === "Operations (dept)")!.className).toContain("bg-emerald-500");
     await act(async () => { (row.querySelector('button[title^="Remove this project rule"]') as HTMLButtonElement).click(); });
     await save();
-    expect((h.fetchCalls[0].caps as Record<string, unknown>)["quality.sign_off"]).toEqual([]);
+    // drafting-flow HAND-2 (DF-P11 fix pass 3): with the project rule gone the
+    // row equals its shipped default ([]), and a row equal to its default is
+    // not written — absent IS the default, so the rule is gone either way
+    expect("quality.sign_off" in (h.fetchCalls[0].caps as Record<string, unknown>)).toBe(false);
   });
 });
 

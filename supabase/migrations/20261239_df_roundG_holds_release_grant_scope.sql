@@ -23,7 +23,16 @@
 --           with it on every run). An org whose stored policy names
 --           holds.release is UNCHANGED — its list decides exactly as written.
 --           The ticket close gate releases its own hold as the service role
---           (DEC-25), which this file does not touch.
+--           (DEC-25), which this file does not touch. The management tier
+--           (Manager, Supervisor) is deliberately NOT in the default though
+--           it holds ticket.force_close: the close gate releases only holds
+--           whose origin_ticket_id is the ticket being closed (a drafter's
+--           as-built discrepancy hold, CheckInPanel), and only with the
+--           closer's explicit release-or-keep resolution, recorded — it
+--           never reaches a hold placed on the document from its hold strip
+--           (a controller's veto). Release on the hold itself reaches every
+--           hold, so it stays the controller tier's unless an Admin ticks
+--           Manager or Supervisor on the row.
 --        b. projects-and-cost QUAL-14 done-when 2: a personal grant that
 --           names a projectId holds only when the decision is about that
 --           project (p_resource->>'projectId'). A grant naming none holds
@@ -50,14 +59,13 @@
 --           member could name themselves the requester first).
 --      The service role (auth.uid() NULL) is unchanged: it returns first.
 --   4. hold_opener_may_update(org, opened_by) (NEW, SECURITY DEFINER,
---      search_path pinned; EXECUTE taken from PUBLIC and granted by name to
---      the roles the UPDATE policy below is evaluated for — authenticated,
---      anon and service_role. The policy has no TO clause (20260901), and
---      PostgreSQL checks a policy function's EXECUTE when it plans the
---      statement, so without anon an anon UPDATE would fail 42501 instead of
---      touching 0 rows as it does today. The function answers only about
---      the caller — FALSE at once with no auth.uid() (anon) or when the
---      caller is not the hold's opener — so the grant reveals nothing): true when the
+--      search_path pinned; EXECUTE taken from PUBLIC and anon and granted to
+--      authenticated and service_role only (DRLS-16, DF-P11 fix pass 3): the
+--      UPDATE policy below is re-created TO authenticated, so anon has no
+--      applicable policy at all — an anon UPDATE touches 0 rows without the
+--      planner ever reaching this function. It answers only about the
+--      caller — FALSE at once with no auth.uid() or when the caller is not
+--      the hold's opener): true when the
 --      caller IS the hold's opener, is an active member of the hold's org,
 --      AND that org's effective holds.release list names "$opener" — read
 --      exactly as org_capability_allows_for reads it for a caller with no
@@ -66,7 +74,11 @@
 --   5. document_holds_update (the UPDATE policy — release and re-date) is
 --      re-created from its NEWEST body — 20260901 — with one added leg
 --      (drafting-flow HAND-2, DEC-90 ruling (3), review fix passes):
---      `OR hold_opener_may_update(org_id, opened_by)`. The person who stopped
+--      `OR hold_opener_may_update(org_id, opened_by)`, and scoped
+--      `TO authenticated` (fix pass 3; 20260901 wrote it for PUBLIC): the
+--      only callers it ever admitted are signed-in members (the service
+--      role bypasses row-level security), and anon now has no UPDATE policy
+--      on document_holds — 0 rows, as before. The person who stopped
 --      work lifts their own stop once their condition clears — while the org's
 --      list names the opener (the default does); a stored list that leaves
 --      "$opener" out ("only Admins lift holds") is honoured exactly, so this
@@ -82,12 +94,24 @@
 -- ELSE (Manager, Supervisor, DraftingSupervisor, every Engineer tier,
 -- Drafter, Requester, Viewer, Auditor, Contractor and any custom role).
 -- Everyone KEEPS release and re-date of a hold they placed themselves (the
--- default names "$opener"). Inventory rows 3 and 4 count the members and the
+-- default names "$opener"). Inventory rows 4 and 5 count the members and the
 -- open holds this touches. An org that STORED a holds.release list keeps
 -- exactly what it had: before this paste its list decided; after, its list
 -- still decides ("$opener" can only be in it once an Admin ticks it). Every
 -- org can widen it again in Admin → Permissions → Action permissions (a
 -- role, the opener tick, or a personal grant).
+--
+-- THE REMAINDER THIS FILE DOES NOT NARROW (fix pass 3). Until DF-P11 fix
+-- pass 3, every save of the Action-permissions grid wrote EVERY capability,
+-- so a workspace whose Admin changed any row stored holds.release as ["*"]
+-- (the old default) without anyone choosing it. Such a workspace is still
+-- "everyone releases" after this paste — its stored list decides. Inventory
+-- row 1 counts exactly these (stored holds.release equal to ["*"]); row 2
+-- counts every other stored list (a deliberate one, or a rule list). The
+-- grid now names a ["*"] row as the old default with a one-click "Use the
+-- shipped default", and no longer writes rows equal to their default. Any
+-- data step that rewrites a stored ["*"] is the integrator's ruling
+-- (HAND-2's Partial), never this file's.
 --
 -- BEFORE / AFTER THE PASTE (the app works either way).
 --   Before: the app already applies the narrower holds.release default
@@ -133,18 +157,24 @@ END $$;
 DROP TABLE IF EXISTS df_p11_20261239_inventory;
 CREATE TEMP TABLE df_p11_20261239_inventory (ord int, check_name text, n bigint);
 INSERT INTO df_p11_20261239_inventory
-SELECT 1, 'inventory: workspaces whose stored policy names holds.release (unchanged by this file)', COUNT(*)
+SELECT 1, 'inventory: workspaces whose stored holds.release is exactly ["*"] — the old default, which every grid save stored with every other row whether or not anyone chose it (unchanged by this file: still everyone; the grid names it)', COUNT(*)
   FROM org_configurations c
  WHERE c.key = 'capability_policy'
-   AND COALESCE(c.data->'caps'->'holds.release', c.data->'holds.release') IS NOT NULL;
+   AND COALESCE(c.data->'caps'->'holds.release', c.data->'holds.release') = '["*"]'::jsonb;
 INSERT INTO df_p11_20261239_inventory
-SELECT 2, 'inventory: workspaces on the shipped holds.release default (now Admin, DocCtrl and each hold''s own opener)', COUNT(*)
+SELECT 2, 'inventory: workspaces whose stored holds.release is any other list or a rule list (unchanged by this file: that list decides)', COUNT(*)
+  FROM org_configurations c
+ WHERE c.key = 'capability_policy'
+   AND COALESCE(c.data->'caps'->'holds.release', c.data->'holds.release') IS NOT NULL
+   AND COALESCE(c.data->'caps'->'holds.release', c.data->'holds.release') <> '["*"]'::jsonb;
+INSERT INTO df_p11_20261239_inventory
+SELECT 3, 'inventory: workspaces on the shipped holds.release default (now Admin, DocCtrl and each hold''s own opener)', COUNT(*)
   FROM orgs o
  WHERE NOT EXISTS (SELECT 1 FROM org_configurations c
                     WHERE c.org_id = o.id AND c.key = 'capability_policy'
                       AND COALESCE(c.data->'caps'->'holds.release', c.data->'holds.release') IS NOT NULL);
 INSERT INTO df_p11_20261239_inventory
-SELECT 3, 'inventory: active members of those workspaces who lose release of holds placed by someone else (not Admin / DocCtrl, no live personal grant of it)', COUNT(*)
+SELECT 4, 'inventory: active members of those workspaces who lose release of holds placed by someone else (not Admin / DocCtrl, no live personal grant of it)', COUNT(*)
   FROM org_members m
  WHERE m.status = 'active'
    AND NOT (m.role IN ('Admin', 'DocCtrl') OR COALESCE(m.roles, '{}'::text[]) && ARRAY['Admin', 'DocCtrl']::text[])
@@ -156,7 +186,7 @@ SELECT 3, 'inventory: active members of those workspaces who lose release of hol
                     WHERE c.org_id = m.org_id AND c.key = 'capability_policy'
                       AND g->>'cap' = 'holds.release' AND g->>'uid' = m.uid::text);
 INSERT INTO df_p11_20261239_inventory
-SELECT 4, 'inventory: open holds in those workspaces opened by someone who is not Admin / DocCtrl there (released now by their opener, a controller, or the close of their ticket)', COUNT(*)
+SELECT 5, 'inventory: open holds in those workspaces opened by someone who is not Admin / DocCtrl there (released now by their opener, a controller, or the close of their ticket)', COUNT(*)
   FROM document_holds h
  WHERE h.released_at IS NULL
    AND NOT EXISTS (SELECT 1 FROM org_configurations c
@@ -166,16 +196,16 @@ SELECT 4, 'inventory: open holds in those workspaces opened by someone who is no
                     WHERE m.org_id = h.org_id AND m.uid = h.opened_by AND m.status = 'active'
                       AND (m.role IN ('Admin', 'DocCtrl') OR COALESCE(m.roles, '{}'::text[]) && ARRAY['Admin', 'DocCtrl']::text[]));
 INSERT INTO df_p11_20261239_inventory
-SELECT 5, 'inventory (expect 0): stored personal grants that name a project (the route refuses them until this paste)', COUNT(*)
+SELECT 6, 'inventory (expect 0): stored personal grants that name a project (the route refuses them until this paste)', COUNT(*)
   FROM org_configurations c,
        jsonb_array_elements(CASE WHEN jsonb_typeof(c.data->'grants') = 'array' THEN c.data->'grants' ELSE '[]'::jsonb END) g
  WHERE c.key = 'capability_policy' AND COALESCE(g->>'projectId', '') <> '';
 INSERT INTO df_p11_20261239_inventory
-SELECT 6, 'inventory: distribution acks already acknowledged (from now on a signed-in caller cannot withdraw or re-date them)', COUNT(*)
+SELECT 7, 'inventory: distribution acks already acknowledged (from now on a signed-in caller cannot withdraw or re-date them)', COUNT(*)
   FROM distribution_acks a
  WHERE a.acknowledged_at IS NOT NULL;
 INSERT INTO df_p11_20261239_inventory
-SELECT 7, 'state before: authenticated may execute org_capability_allows_for (1 = yes: kept; 0 = no: kept narrowed)',
+SELECT 8, 'state before: authenticated may execute org_capability_allows_for (1 = yes: kept; 0 = no: kept narrowed)',
        CASE WHEN has_function_privilege('authenticated', 'public.org_capability_allows_for(uuid,text,uuid,jsonb)', 'EXECUTE') THEN 1 ELSE 0 END;
 
 BEGIN;
@@ -312,7 +342,7 @@ DO $$
 BEGIN
   -- 20261224's narrowing is kept where it ran; nothing is taken from
   -- authenticated where it still had EXECUTE before this paste.
-  IF EXISTS (SELECT 1 FROM df_p11_20261239_inventory WHERE ord = 7 AND n = 0) THEN
+  IF EXISTS (SELECT 1 FROM df_p11_20261239_inventory WHERE ord = 8 AND n = 0) THEN
     REVOKE ALL ON FUNCTION org_capability_allows_for(uuid, text, uuid, jsonb) FROM authenticated;
   END IF;
 END $$;
@@ -445,21 +475,22 @@ BEGIN
   RETURN v_tokens ? '$opener';
 END;
 $$;
--- DRLS-16: not PUBLIC; named roles only — the ones the UPDATE policy is
--- evaluated for (no TO clause: anon too, else an anon UPDATE errors 42501
--- at plan time instead of touching 0 rows; the function answers FALSE for
--- a caller with no auth.uid() before it reads anything — it has no NULL-uid
--- branch that admits, so anon's EXECUTE grants nothing, DRLS-16).
-REVOKE ALL ON FUNCTION hold_opener_may_update(uuid, uuid) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION hold_opener_may_update(uuid, uuid) TO authenticated, anon, service_role;
+-- DRLS-16 (fix pass 3): not PUBLIC, not anon — the UPDATE policy below is
+-- TO authenticated, so anon never reaches it; authenticated (the policy's
+-- role) and service_role only. The function also answers FALSE for a
+-- caller with no auth.uid() before it reads anything.
+REVOKE ALL ON FUNCTION hold_opener_may_update(uuid, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION hold_opener_may_update(uuid, uuid) TO authenticated, service_role;
 
 -- ── 5. the hold UPDATE policy: holds.release, or the opener leg ─────────────
--- Body from 20260901 + one leg (HAND-2 review fix passes). The leg reads the
--- row's opened_by, which 20261073's guard pins once a hold is placed.
+-- Body from 20260901 + one leg (HAND-2 review fix passes), scoped TO
+-- authenticated (fix pass 3: anon has no UPDATE policy here — 0 rows, as
+-- before — and never plans the opener function). The leg reads the row's
+-- opened_by, which 20261073's guard pins once a hold is placed.
 DROP POLICY IF EXISTS document_holds_update ON document_holds;
 -- Releasing = the UPDATE that sets released_at; the capability gates every
 -- update (the row has no other mutable purpose).
-CREATE POLICY document_holds_update ON document_holds FOR UPDATE USING (
+CREATE POLICY document_holds_update ON document_holds FOR UPDATE TO authenticated USING (
   org_capability_allows(org_id, 'holds.release', auth.uid())
   OR hold_opener_may_update(org_id, opened_by)
 ) WITH CHECK (
@@ -494,7 +525,7 @@ SELECT check_name AS "check", ok, n FROM (
   UNION ALL
   SELECT 105, 'authenticated keeps exactly the EXECUTE it had before this paste',
          has_function_privilege('authenticated', 'public.org_capability_allows_for(uuid,text,uuid,jsonb)', 'EXECUTE')
-           = EXISTS (SELECT 1 FROM df_p11_20261239_inventory WHERE ord = 7 AND n = 1), NULL
+           = EXISTS (SELECT 1 FROM df_p11_20261239_inventory WHERE ord = 8 AND n = 1), NULL
   UNION ALL
   SELECT 106, 'the 3-argument entry point still calls the evaluator (the document_holds policies read it)',
          EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'org_capability_allows' AND pronargs = 3
@@ -525,13 +556,13 @@ SELECT check_name AS "check", ok, n FROM (
          AND NOT has_function_privilege('anon', 'public.enforce_distribution_ack_guard()', 'EXECUTE')
          AND NOT has_function_privilege('authenticated', 'public.enforce_distribution_ack_guard()', 'EXECUTE'), NULL
   UNION ALL
-  SELECT 111, 'the hold UPDATE policy admits holds.release or the opener leg, and still calls the 3-argument entry point',
+  SELECT 111, 'the hold UPDATE policy admits holds.release or the opener leg, still calls the 3-argument entry point, and applies to authenticated only',
          EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'document_holds' AND policyname = 'document_holds_update'
-                  AND cmd = 'UPDATE'
+                  AND cmd = 'UPDATE' AND roles = ARRAY['authenticated']::name[]
                   AND COALESCE(qual, '') LIKE '%org_capability_allows(%' AND COALESCE(qual, '') LIKE '%hold_opener_may_update(org_id, opened_by)%'
                   AND COALESCE(with_check, '') LIKE '%org_capability_allows(%' AND COALESCE(with_check, '') LIKE '%hold_opener_may_update(org_id, opened_by)%'), NULL
   UNION ALL
-  SELECT 112, 'the opener leg is SECURITY DEFINER with search_path pinned, reads the opener token, answers only about the caller, and is not executable through PUBLIC',
+  SELECT 112, 'the opener leg is SECURITY DEFINER with search_path pinned, reads the opener token, answers only about the caller, and is executable by authenticated and the service role only (not PUBLIC, not anon)',
          EXISTS (SELECT 1 FROM pg_proc WHERE oid = to_regprocedure('public.hold_opener_may_update(uuid,uuid)')
                   AND prosecdef AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
                   AND prosrc LIKE '%RETURN v_tokens ? ''$opener'';%'
@@ -540,7 +571,7 @@ SELECT check_name AS "check", ok, n FROM (
          AND NOT EXISTS (SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a
                           WHERE p.oid = to_regprocedure('public.hold_opener_may_update(uuid,uuid)') AND a.grantee = 0)
          AND has_function_privilege('authenticated', 'public.hold_opener_may_update(uuid,uuid)', 'EXECUTE')
-         AND has_function_privilege('anon', 'public.hold_opener_may_update(uuid,uuid)', 'EXECUTE')
+         AND NOT has_function_privilege('anon', 'public.hold_opener_may_update(uuid,uuid)', 'EXECUTE')
          AND has_function_privilege('service_role', 'public.hold_opener_may_update(uuid,uuid)', 'EXECUTE'), NULL
   UNION ALL
   SELECT ord, check_name, NULL, n::text FROM df_p11_20261239_inventory

@@ -96,7 +96,7 @@ describe("20261239 — org_capability_allows_for: the holds.release default and 
   it("DRLS-16: EXECUTE is taken from PUBLIC and anon, from authenticated only where 20261224 already took it, and granted to service_role alone", () => {
     const tx = M.slice(M.indexOf("\nBEGIN;"), M.indexOf("\nCOMMIT;"));
     expect(tx).toContain("REVOKE ALL ON FUNCTION org_capability_allows_for(uuid, text, uuid, jsonb) FROM PUBLIC, anon;");
-    expect(tx).toContain("IF EXISTS (SELECT 1 FROM df_p11_20261239_inventory WHERE ord = 7 AND n = 0) THEN\n    REVOKE ALL ON FUNCTION org_capability_allows_for(uuid, text, uuid, jsonb) FROM authenticated;");
+    expect(tx).toContain("IF EXISTS (SELECT 1 FROM df_p11_20261239_inventory WHERE ord = 8 AND n = 0) THEN\n    REVOKE ALL ON FUNCTION org_capability_allows_for(uuid, text, uuid, jsonb) FROM authenticated;");
     expect(tx).toContain("GRANT EXECUTE ON FUNCTION org_capability_allows_for(uuid, text, uuid, jsonb) TO service_role;");
     expect(codeOnly(M)).not.toMatch(/GRANT[^;]*org_capability_allows_for[^;]*TO[^;]*\b(authenticated|anon|PUBLIC)\b/i);
   });
@@ -163,11 +163,11 @@ describe("20261239 — document_holds_update: holds.release, or the opener leg w
     expect(baseFile).toBe("20260901_db_hard_enforcement.sql");
   });
 
-  it("is that body with exactly the opener leg added to USING and WITH CHECK — the 3-argument capability call kept", () => {
+  it("is that body with exactly the opener leg added to USING and WITH CHECK, scoped TO authenticated (fix pass 3) — the 3-argument capability call kept", () => {
     const { onlyInA, onlyInB } = lineDiff(base, mine);
-    expect(onlyInA).toEqual([]);
+    expect(onlyInA).toEqual(["CREATE POLICY document_holds_update ON document_holds FOR UPDATE USING ("]);
     const leg = ["  OR hold_opener_may_update(org_id, opened_by)"];
-    expect(onlyInB).toEqual([...leg, ...leg]);
+    expect(onlyInB).toEqual(["CREATE POLICY document_holds_update ON document_holds FOR UPDATE TO authenticated USING (", ...leg, ...leg]);
     // fix pass 2: no unconditional `opened_by = auth.uid()` leg — the opener
     // is admitted only through the function that reads the org's list
     expect(mine).not.toMatch(/opened_by = auth\.uid\(\)/);
@@ -184,6 +184,8 @@ describe("20261239 — document_holds_update: holds.release, or the opener leg w
     expect(M).toContain("COALESCE(qual, '') LIKE '%hold_opener_may_update(org_id, opened_by)%'");
     expect(M).toContain("COALESCE(with_check, '') LIKE '%hold_opener_may_update(org_id, opened_by)%'");
     for (const l of M.split("\n").filter((x) => /COALESCE\((qual|with_check), ''\) LIKE/.test(x))) expect(l, l).not.toMatch(/::/);
+    // fix pass 3: the probe also checks the policy's role list
+    expect(M).toContain("AND cmd = 'UPDATE' AND roles = ARRAY['authenticated']::name[]");
   });
 
   it("the app mirrors the leg: holdControlsFor / holdAffordances take the hold, assertHoldCapability the opener — each gated on holdOpenerTokenOn", () => {
@@ -216,14 +218,15 @@ describe("20261239 — hold_opener_may_update: the opener leg reads the org's ho
     expect(tx.indexOf(HF)).toBeLessThan(tx.indexOf("CREATE POLICY document_holds_update ON document_holds"));
   });
 
-  it("DRLS-16: EXECUTE taken from PUBLIC and granted by name to the roles the UPDATE policy is evaluated for (authenticated, anon, service_role); probe 112 checks no PUBLIC grant", () => {
+  it("DRLS-16 (fix pass 3): EXECUTE taken from PUBLIC and anon, granted to authenticated and service_role only — the policy is TO authenticated; probe 112 checks no PUBLIC grant and no anon EXECUTE", () => {
     const tx = M.slice(M.indexOf("\nBEGIN;"), M.indexOf("\nCOMMIT;"));
-    expect(tx).toContain("REVOKE ALL ON FUNCTION hold_opener_may_update(uuid, uuid) FROM PUBLIC;");
-    expect(tx).toContain("GRANT EXECUTE ON FUNCTION hold_opener_may_update(uuid, uuid) TO authenticated, anon, service_role;");
-    expect(codeOnly(M)).not.toMatch(/GRANT[^;]*hold_opener_may_update[^;]*TO[^;]*\bPUBLIC\b/i);
+    expect(tx).toContain("REVOKE ALL ON FUNCTION hold_opener_may_update(uuid, uuid) FROM PUBLIC, anon;");
+    expect(tx).toContain("GRANT EXECUTE ON FUNCTION hold_opener_may_update(uuid, uuid) TO authenticated, service_role;");
+    expect(codeOnly(M)).not.toMatch(/GRANT[^;]*hold_opener_may_update[^;]*TO[^;]*\b(PUBLIC|anon)\b/i);
     expect(M).toContain("WHERE p.oid = to_regprocedure('public.hold_opener_may_update(uuid,uuid)') AND a.grantee = 0)");
-    // why anon: the policy has no TO clause, and the function answers FALSE at once without auth.uid()
-    expect(polOfFile(M)).not.toMatch(/\bTO\b/);
+    expect(M).toContain("AND NOT has_function_privilege('anon', 'public.hold_opener_may_update(uuid,uuid)', 'EXECUTE')");
+    // why anon needs nothing: the policy applies to authenticated only, so an anon UPDATE has no policy (0 rows)
+    expect(polOfFile(M)).toMatch(/^CREATE POLICY document_holds_update ON document_holds FOR UPDATE TO authenticated USING \(/);
     expect(fn.indexOf("IF p_opened_by IS NULL OR p_opened_by IS DISTINCT FROM auth.uid() THEN")).toBeLessThan(fn.indexOf("FROM org_configurations"));
   });
 
@@ -298,9 +301,21 @@ describe("20261239 — the one-paste shape (DEC-30)", () => {
   it("the inventory is counts only — every INSERT into it selects COUNT(*) or a 0/1 state, never a row", () => {
     const pre = M.slice(0, M.indexOf("\nBEGIN;"));
     const inserts = pre.split("INSERT INTO df_p11_20261239_inventory").slice(1);
-    expect(inserts.length).toBe(7);
-    for (const ins of inserts.slice(0, 6)) expect(ins, ins.slice(0, 120)).toMatch(/COUNT\(\*\)/);
-    expect(inserts[6]).toMatch(/CASE WHEN has_function_privilege\('authenticated'/);
+    expect(inserts.length).toBe(8);
+    for (const ins of inserts.slice(0, 7)) expect(ins, ins.slice(0, 120)).toMatch(/COUNT\(\*\)/);
+    expect(inserts[7]).toMatch(/CASE WHEN has_function_privilege\('authenticated'/);
+    // the 'state before' row is ord 8, and every reader of it says so
+    expect(inserts[7]).toMatch(/^\nSELECT 8, 'state before: authenticated may execute/);
+    expect((M.match(/df_p11_20261239_inventory WHERE ord = (\d+)/g) ?? []).every((x) => x.endsWith("ord = 8"))).toBe(true);
+    expect(inserts.map((ins) => Number(/^\nSELECT (\d+),/.exec(ins)?.[1]))).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    // fix pass 3: row 1 counts the stored old default ["*"] apart from every
+    // other stored list (row 2), so the operator sees how many workspaces
+    // this file leaves at "everyone" without anyone having chosen it
+    expect(inserts[0]).toMatch(/^\nSELECT 1, 'inventory: workspaces whose stored holds\.release is exactly \["\*"\]/);
+    expect(inserts[0]).toContain("COALESCE(c.data->'caps'->'holds.release', c.data->'holds.release') = '[\"*\"]'::jsonb;");
+    expect(inserts[1]).toMatch(/^\nSELECT 2, 'inventory: workspaces whose stored holds\.release is any other list or a rule list/);
+    expect(inserts[1]).toContain("COALESCE(c.data->'caps'->'holds.release', c.data->'holds.release') <> '[\"*\"]'::jsonb;");
+    expect(M).toContain("= EXISTS (SELECT 1 FROM df_p11_20261239_inventory WHERE ord = 8 AND n = 1), NULL");
     // fix pass 2: no widening row — the opener leg honours a stored list, so
     // this file widens nothing
     expect(M).not.toMatch(/the one widening/);

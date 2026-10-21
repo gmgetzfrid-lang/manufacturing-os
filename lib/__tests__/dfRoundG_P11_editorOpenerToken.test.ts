@@ -6,6 +6,12 @@
 // labelled checkbox on the "Release a hold" row (never as an unexplained
 // "also stored" token), ticked under the shipped default and unticked for a
 // stored "only Admins" list; unticking it saves a list without it.
+//
+// Fix pass 3: a row equal to its shipped default is not written on save (it
+// used to be, for every capability, which froze holds.release at the old
+// ["*"] in every workspace that ever saved the grid); a holds.release row
+// still exactly ["*"] is named on the row as the old default, with a "Use
+// the shipped default" action that is saved like any other change.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -43,7 +49,8 @@ vi.mock("@/components/providers/DialogProvider", () => ({ appConfirm: vi.fn(asyn
 vi.mock("@/lib/requestTypes", () => ({ loadRequestTypeOptions: vi.fn(async () => []) }));
 
 import { __resetCapabilityPolicyCache, HOLD_OPENER_TOKEN, type CapabilityPolicy } from "@/lib/capabilityPolicy";
-import CapabilityPolicyEditor, { tokensOutsideGrid } from "@/components/permissions/CapabilityPolicyEditor";
+import CapabilityPolicyEditor, { tokensOutsideGrid, joinPolicyFromEditor, splitPolicyForEditor, holdsReleaseOnOldDefault } from "@/components/permissions/CapabilityPolicyEditor";
+import { CAPABILITY_DEFS, policyAllows } from "@/lib/capabilityPolicy";
 
 let host: HTMLDivElement;
 let root: Root;
@@ -102,5 +109,69 @@ describe("HAND-2 fix pass 2 — the opener token in the permissions grid", () =>
     await act(async () => { [...host.querySelectorAll("button")].find((b) => /Save policy/.test(b.textContent ?? ""))!.click(); });
     await flush();
     expect((h.fetchCalls[0].caps as Record<string, unknown>)["holds.release"]).toEqual(["Admin", "DocCtrl"]);
+  });
+});
+
+const saveBtn = () => [...host.querySelectorAll("button")].find((b) => /Save policy/.test(b.textContent ?? ""))!;
+
+describe("HAND-2 fix pass 3 — a save no longer freezes shipped defaults; the old [\"*\"] is named", () => {
+  it("joinPolicyFromEditor leaves out every row that equals its shipped default (as a set), and keeps every other row", () => {
+    const s = splitPolicyForEditor({ caps: { "ticket.assign": ["Admin"], "holds.release": ["*"] } });
+    const j = joinPolicyFromEditor(s.base, s.overrides, s.opaque, s.projectOverrides);
+    expect(Object.keys(j).sort()).toEqual(["holds.release", "ticket.assign"]);
+    expect(j["holds.release"]).toEqual(["*"]);
+    // the same answers as a policy that wrote every row out
+    const full = Object.fromEntries(CAPABILITY_DEFS.map((d) => [d.id, s.base[d.id]]));
+    for (const d of CAPABILITY_DEFS) {
+      for (const role of ["Admin", "DocCtrl", "Manager", "Drafter", "Viewer"]) {
+        expect(policyAllows({ caps: j }, d.id, role, null, "u"), `${d.id}/${role}`).toBe(policyAllows({ caps: full }, d.id, role, null, "u"));
+      }
+    }
+    // a reordered default is still the default
+    const r = splitPolicyForEditor({ caps: { "holds.release": ["$opener", "DocCtrl", "Admin"] } });
+    expect(joinPolicyFromEditor(r.base, r.overrides, r.opaque, r.projectOverrides)["holds.release"]).toBeUndefined();
+    expect(holdsReleaseOnOldDefault(["*"])).toBe(true);
+    expect(holdsReleaseOnOldDefault(["*", "Admin"])).toBe(false);
+    expect(holdsReleaseOnOldDefault(undefined)).toBe(false);
+  });
+
+  it("changing one row saves only that row — holds.release is not written, so the shipped default (Admin, DocCtrl, the opener) holds", async () => {
+    h.db.tables.org_configurations = [];
+    await mount();
+    expect(host.querySelector('[data-testid="holds-release-old-default"]')).toBeNull();
+    const assignRow = [...host.querySelectorAll("tr")].find((r) => r.querySelector("td")?.textContent?.startsWith("Assign drafters"))!;
+    const cells = [...assignRow.querySelectorAll("td button")] as HTMLButtonElement[];
+    await act(async () => { cells.find((b) => !b.disabled)!.click(); });
+    await act(async () => { saveBtn().click(); });
+    await flush();
+    expect(h.fetchCalls).toHaveLength(1);
+    const caps = h.fetchCalls[0].caps as Record<string, unknown>;
+    expect(Object.keys(caps)).toEqual(["ticket.assign"]);
+    expect("holds.release" in caps).toBe(false);
+  });
+
+  it("a stored holds.release of exactly [\"*\"] is named on the row as the old default; it is kept on an unrelated save; \"Use the shipped default\" saves it away", async () => {
+    h.db.tables.org_configurations = [policyRow({ "holds.release": ["*"], "ticket.assign": ["Admin", "Manager", "Supervisor"] })];
+    await mount();
+    const note = host.querySelector('[data-testid="holds-release-old-default"]');
+    expect(note).not.toBeNull();
+    expect(releaseRow().contains(note)).toBe(true);
+    expect(note!.textContent).toContain("old default");
+    // the note decides nothing by itself: an unrelated save keeps ["*"]
+    const assignRow = [...host.querySelectorAll("tr")].find((r) => r.querySelector("td")?.textContent?.startsWith("Assign drafters"))!;
+    const cells = [...assignRow.querySelectorAll("td button")] as HTMLButtonElement[];
+    await act(async () => { cells.find((b) => !b.disabled)!.click(); });
+    await act(async () => { saveBtn().click(); });
+    await flush();
+    expect((h.fetchCalls[0].caps as Record<string, unknown>)["holds.release"]).toEqual(["*"]);
+    // the Admin adopts the shipped default: the row is no longer written
+    const adopt = [...note!.querySelectorAll("button")].find((b) => /Use the shipped default/.test(b.textContent ?? ""))!;
+    await act(async () => { adopt.click(); });
+    expect(host.querySelector('[data-testid="holds-release-old-default"]')).toBeNull();
+    expect(openerBox()!.checked).toBe(true);
+    await act(async () => { saveBtn().click(); });
+    await flush();
+    expect(h.fetchCalls).toHaveLength(2);
+    expect("holds.release" in (h.fetchCalls[1].caps as Record<string, unknown>)).toBe(false);
   });
 });

@@ -520,6 +520,55 @@ describe("EVID-16 / DEC-90 ruling (2) — a ticket file is signed only for a mem
     expect(r.status).toBe(403);
     expect(r.body.archiveId).toBeUndefined();
   });
+
+  // DF-P11 fix pass 3: the routes hand the gate the membership row they read
+  // (role / roles ride along), so a member who is not Contractor-only is
+  // decided with no second org_members read — a failure of such a read can no
+  // longer turn today's signed URL into a 503.
+  for (const door of ["resolve", "download-url"] as const) {
+    const call = door === "resolve" ? callResolve : callDownload;
+    it(`${door}: fix pass 3 — a non-Contractor member is decided from the route's own membership row; the gate makes no org_members read of its own`, async () => {
+      for (const m of [
+        { uid: U1, role: "Manager", roles: ["Manager"] },
+        { uid: U1, role: "Manager", roles: ["Contractor", "Manager"] },
+      ]) {
+        member = m;
+        tickets = [otherTicket];
+        state.queries = [];
+        // any read shaped like the gate's own member lookup fails
+        state.resolve = (q) => (q.table === "org_members" && q.select === "role, roles" ? { error: { message: "transient" } } : resolver(q));
+        const r = await call(TICKET_KEY);
+        expect(r.status, JSON.stringify(m)).toBe(200);
+        expect(typeof r.body.url).toBe("string");
+        expect(state.queries.filter((q) => q.table === "org_members" && q.select === "role, roles")).toHaveLength(0);
+        // the route's own membership read carries the roles
+        expect(state.queries.some((q) => q.table === "org_members" && q.select === "uid, role, roles")).toBe(true);
+      }
+    });
+    it(`${door}: fix pass 3 — a Contractor-only member is still judged from that same row (refused outside scope, served inside)`, async () => {
+      member = { uid: U1, role: "Contractor", roles: ["Contractor"] };
+      state.resolve = (q) => (q.table === "org_members" && q.select === "role, roles" ? { error: { message: "transient" } } : resolver(q));
+      tickets = [otherTicket];
+      expect((await call(TICKET_KEY)).status).toBe(403);
+      tickets = [{ ...otherTicket, requester_id: U1 }];
+      expect((await call(TICKET_KEY)).status).toBe(200);
+    });
+  }
+
+  it("fix pass 3: called without a membership row, the gate reads it, and a failed read is 503 (never a URL)", async () => {
+    const { ticketKeyGate } = await import("@/lib/ticketKeyGate");
+    memberError = { message: "down" };
+    const res = await ticketKeyGate(ORG, TICKET_KEY, { id: U1 });
+    expect(res?.status).toBe(503);
+    memberError = null;
+    member = { uid: U1, role: "Manager", roles: ["Manager"] };
+    expect(await ticketKeyGate(ORG, TICKET_KEY, { id: U1 })).toBeNull();
+    // handed a row, it makes no read
+    state.queries = [];
+    memberError = { message: "down" };
+    expect(await ticketKeyGate(ORG, TICKET_KEY, { id: U1 }, { role: "Manager", roles: ["Manager"] })).toBeNull();
+    expect(state.queries.filter((q) => q.table === "org_members")).toHaveLength(0);
+  });
 });
 
 describe("ORG-20 — `missing: true` only for storage's NotFound", () => {

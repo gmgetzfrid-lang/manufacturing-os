@@ -19,6 +19,18 @@
 // capability with no override is stored in the legacy bare-list shape, so an
 // org that never adds one stores byte-identical policy JSON.
 //
+// drafting-flow HAND-2 (DF-P11 fix pass 3): a row that equals its shipped
+// default (as a set, with no override) is NOT written. Every save used to
+// write every capability, so a workspace that changed one row froze the
+// defaults of all the others — holds.release was stored as ["*"] by grids
+// saved before release shipped to the controller tier, without anyone
+// choosing it. An absent entry IS the shipped default to both evaluators and
+// to the policy route's critical-change check, so leaving it out changes no
+// answer today and lets a later default reach the workspace. A holds.release
+// row still exactly ["*"] is named on the row as the old default, with a
+// one-click "Use the shipped default" (an explicit Admin decision, saved
+// through the impact preview like any change).
+//
 // admin-and-org Round G, P9:
 //   * ALOG-1 — the grid loads FRESH (this tab's cached copy is dropped first)
 //     and a policy that could not be read is said, with Retry — never drawn
@@ -121,17 +133,38 @@ export function splitPolicyForEditor(stored: CapabilityPolicy): { base: Base; ov
   return { base, overrides, opaque, projectOverrides };
 }
 
+/** True when two token lists name the same tokens (order and repeats aside). */
+function sameTokens(a: readonly string[], b: readonly string[]): boolean {
+  const x = new Set(a);
+  const y = new Set(b);
+  return x.size === y.size && [...x].every((t) => y.has(t));
+}
+
+/** HAND-2 (fix pass 3): the holds.release list every grid save before the
+ *  hold-release change stored — ["*"], the old default — whether or not
+ *  anyone chose it. Named on the row; never changed without an Admin. */
+export function holdsReleaseOnOldDefault(tokens: readonly string[] | undefined): boolean {
+  return !!tokens && sameTokens(tokens, ["*"]);
+}
+
 /** Recombine for saving: a capability with no override keeps the bare-list
  *  shape (byte-compatible with what it stored before); one with overrides
  *  becomes a rule list — base first, then one rule per request-type row,
- *  then one rule per project row (QUAL-14), then any preserved rules. */
+ *  then one rule per project row (QUAL-14), then any preserved rules.
+ *  HAND-2 (fix pass 3): a capability with no override whose row equals its
+ *  shipped default is left out — absent IS the default, and writing it out
+ *  froze that default in the workspace. */
 export function joinPolicyFromEditor(base: Base, overrides: Overrides, opaque: Opaque, projectOverrides: ProjectOverrides = {}): Partial<Record<CapabilityId, CapabilityEntry>> {
   const caps: Partial<Record<CapabilityId, CapabilityEntry>> = {};
   for (const def of CAPABILITY_DEFS) {
     const rows = overrides[def.id] ?? [];
     const projectRows = projectOverrides[def.id] ?? [];
     const keep = opaque[def.id] ?? [];
-    if (rows.length === 0 && projectRows.length === 0 && keep.length === 0) { caps[def.id] = base[def.id] ?? []; continue; }
+    if (rows.length === 0 && projectRows.length === 0 && keep.length === 0) {
+      const tokens = base[def.id] ?? [];
+      if (!sameTokens(tokens, def.defaultRoles)) caps[def.id] = tokens;
+      continue;
+    }
     caps[def.id] = [
       { tokens: base[def.id] ?? [] },
       ...rows.map((o) => ({ tokens: o.tokens, when: { requestType: [o.type] } })),
@@ -484,6 +517,29 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
                           </label>
                         );
                       })()}
+                      {/* HAND-2 (fix pass 3): a row still exactly ["*"] is
+                          most likely the old default that an earlier save
+                          stored with every other row — say so, and offer the
+                          shipped default as an explicit, saved decision. */}
+                      {d.id === "holds.release" && holdsReleaseOnOldDefault(policy[d.id]) && (
+                        <div role="note" data-testid="holds-release-old-default" className="mt-1 text-[10px] font-bold text-amber-700 dark:text-amber-300">
+                          Everyone may release any hold here. This was the old default, which saving this grid used to store with every other action whether or not anyone chose it. The shipped default is Admin, Document Control and the hold&apos;s own opener.
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const def = CAPABILITY_DEFS.find((x) => x.id === "holds.release");
+                                setPolicy((p) => (p ? { ...p, "holds.release": [...(def?.defaultRoles ?? [])] } : p));
+                                setDirty(true);
+                                setMsg(null);
+                              }}
+                              className="ml-1.5 underline"
+                            >
+                              Use the shipped default
+                            </button>
+                          )}
+                        </div>
+                      )}
                       {tokensOutsideGrid(policy[d.id] ?? []).length > 0 && (
                         <div className="text-[10px] font-bold text-amber-700 dark:text-amber-300" title="The evaluator still matches these stored tokens; the grid has no column for them. Unticking every column leaves them in place.">
                           Also stored, no column here: {tokensOutsideGrid(policy[d.id] ?? []).join(", ")} — still live

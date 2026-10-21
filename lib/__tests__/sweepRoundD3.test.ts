@@ -142,7 +142,10 @@ describe("shape: parsing and validation of rule lists", () => {
     const j1 = joinPolicyFromEditor(s1.base, s1.overrides, s1.opaque);
     expect(j1["ticket.assign"]).toEqual(["Admin", "DocCtrl"]);
     expect(j1["ticket.self_assign"]).toEqual([]);
-    expect(j1["ticket.manage"]).toEqual(["Admin", "Manager", "Supervisor"]);
+    // drafting-flow HAND-2 (DF-P11 fix pass 3): a row equal to its shipped
+    // default is not written — absent IS the default (same answer)
+    expect(j1["ticket.manage"]).toBeUndefined();
+    expect(policyAllows({ caps: j1 }, "ticket.manage", "Manager", null, "c")).toBe(true);
     const rich: CapabilityPolicy = { caps: { "ticket.direct_approve": [
       { tokens: ["Engineer"] },
       { tokens: ["DocCtrl"], when: { requestType: ["ASBUILT", "MOC"] } },

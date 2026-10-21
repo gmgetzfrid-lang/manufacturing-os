@@ -170,11 +170,21 @@ export function changedSinceCapture(
   return null;
 }
 
+/** keysOnOtherLiveTickets pages each key's live tickets this many rows at a
+ *  time, by id (keyset), and gives up — throwing, so nothing is deleted —
+ *  past KEY_TICKET_MAX_PAGES pages (DF-P11 fix pass 3). */
+export const KEY_TICKET_PAGE = 200;
+export const KEY_TICKET_MAX_PAGES = 50;
+
 /** AUTHZ-5 done-when 2: the keys among `keys` that a LIVE ticket outside
  *  `excludeIds` (the tickets being freed) still names in its attachments — a
  *  copied request, or a reference planted on purpose. Such a key is never
- *  deleted. THROWS on any read error (fail closed: the reclaim stops before
- *  it deletes anything). */
+ *  deleted. Every live ticket naming a key is looked at, never a capped
+ *  sample (DF-P11 fix pass 3: a sample made only of tickets being freed hid
+ *  the one live ticket that still named the key): the rows are paged by id
+ *  until one outside `excludeIds` is found or the list is exhausted. THROWS
+ *  on any read error, and past KEY_TICKET_MAX_PAGES pages (fail closed: the
+ *  reclaim stops before it deletes anything). */
 export async function keysOnOtherLiveTickets(
   sb: Pick<SupabaseClient, "from">,
   orgId: string,
@@ -183,20 +193,28 @@ export async function keysOnOtherLiveTickets(
 ): Promise<Set<string>> {
   const uniq = Array.from(new Set(keys.filter(Boolean)));
   const shared = new Set<string>();
-  for (let i = 0; i < uniq.length; i += 20) {
-    const batch = uniq.slice(i, i + 20);
-    const answers = await Promise.all(batch.map(async (key) => {
-      const { data, error } = await sb
+  const namedOutside = async (key: string): Promise<boolean> => {
+    let after: string | null = null;
+    for (let page = 0; page < KEY_TICKET_MAX_PAGES; page++) {
+      let q = sb
         .from("tickets")
         .select("id")
         .eq("org_id", orgId)
         .contains("attachments", JSON.stringify([{ url: key }]))
-        .is("archived_at", null)
-        .limit(50);
+        .is("archived_at", null);
+      if (after) q = q.gt("id", after);
+      const { data, error } = await q.order("id", { ascending: true }).limit(KEY_TICKET_PAGE);
       if (error) throw new Error(`Couldn't verify which live requests still name these files (${error.message}); refusing to delete.`);
       const rows = (Array.isArray(data) ? data : data ? [data] : []) as Array<{ id: string }>;
-      return rows.some((r) => !excludeIds.has(r.id)) ? key : null;
-    }));
+      if (rows.some((r) => !excludeIds.has(r.id))) return true;
+      if (rows.length < KEY_TICKET_PAGE) return false;
+      after = String(rows[rows.length - 1].id);
+    }
+    throw new Error(`More than ${KEY_TICKET_PAGE * KEY_TICKET_MAX_PAGES} live requests name one of these files, so which still need it could not be verified; refusing to delete.`);
+  };
+  for (let i = 0; i < uniq.length; i += 20) {
+    const batch = uniq.slice(i, i + 20);
+    const answers = await Promise.all(batch.map(async (key) => ((await namedOutside(key)) ? key : null)));
     for (const k of answers) if (k) shared.add(k);
   }
   return shared;

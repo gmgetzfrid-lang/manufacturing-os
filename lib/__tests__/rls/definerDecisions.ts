@@ -383,9 +383,9 @@ export const CALLABLE_DEFINERS: readonly DefinerDecision[] = [
   },
   {
     signature: "hold_opener_may_update(uuid,uuid)",
-    decision: "policy-helper",
-    execute: { anon: true, authenticated: true, service_role: true },
-    reason: "drafting-flow HAND-2 (20261239, DF-P11 fix pass 2): the opener leg of the document_holds_update policy, which is written for PUBLIC (no TO clause, 20260901), so anon and authenticated keep EXECUTE by name (PUBLIC revoked) — PostgreSQL checks a policy function's EXECUTE at plan time, and without anon an anon UPDATE would fail 42501 instead of touching 0 rows. It answers only about the caller: p_opened_by IS DISTINCT FROM auth.uid() (a NULL session uid included) is FALSE before anything is read; then the caller's own active membership, then whether the org's holds.release list names the opener token.",
+    decision: "signed-in",
+    execute: { anon: false, authenticated: true, service_role: true },
+    reason: "drafting-flow HAND-2 (20261239, DF-P11 fix pass 3): the opener leg of the document_holds_update policy, which 20261239 re-creates TO authenticated, so anon has no UPDATE policy on document_holds and never plans this function; EXECUTE is revoked from PUBLIC and anon by name and granted to authenticated and service_role only (DRLS-16). It judges the signed-in caller: p_opened_by IS DISTINCT FROM auth.uid() (a NULL session uid included) is FALSE before anything is read; then the caller's own active membership, then whether the org's holds.release list names the opener token.",
     evidence: ["IF p_opened_by IS NULL OR p_opened_by IS DISTINCT FROM auth.uid() THEN", "WHERE org_id = p_org AND uid = auth.uid() AND status = 'active') THEN", "RETURN v_tokens ? '$opener';"],
     person: { param: "p_opened_by", binding: "is-the-caller", evidence: ["IF p_opened_by IS NULL OR p_opened_by IS DISTINCT FROM auth.uid() THEN"] },
   },
