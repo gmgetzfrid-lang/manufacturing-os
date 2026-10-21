@@ -1,7 +1,8 @@
 // document-control Round G — P33: DCK-15. A reviewed promote over another
 // person's checkout (the publish guard's door (b), ratified under DEC-90 — a
 // review stays finishable) tells the holder on their checkout thread and
-// in-app, and records an audit row naming them, whichever door ran it
+// in-app, and records an audit row naming them (REVIEW_PROMOTED_OVER_CHECKOUT —
+// routine, not publish_revision's destructive REV_LOCK_OVERRIDDEN), whichever door ran it
 // (finalize_reviewed_promote, or promoteThreeStep before 20261151) — after
 // the promote, never blocking it. A finalize the lock leg (20261245) refuses
 // is answered in words that fit a review approver: ask the holder to check
@@ -91,6 +92,8 @@ vi.mock("@/lib/intents", () => ({ recordIntent: vi.fn(async () => undefined) }))
 vi.mock("@/lib/checklists", () => ({ sweepEvidenceForDocument: vi.fn(async () => ({ projects: 0 })) }));
 
 import { finalizeReviewedRevision, finalizeReasonMessage, finalizeLockRefusalHolder, isFinalizeHoldRefusal } from "@/lib/reviewControl";
+import { auditActionDef, isDestructiveAuditAction } from "@/lib/auditActions";
+import { summarizeAudit } from "@/lib/timeline";
 
 function seed(holder: string | null = "drafter1") {
   st.rows = {
@@ -106,7 +109,7 @@ function seed(holder: string | null = "drafter1") {
   };
 }
 const fin = (actorId = "ctl1") => finalizeReviewedRevision({ orgId: "o1", documentId: "d1", actorId, actorName: "ctl@example.com", actorEmail: "ctl@example.com", requireRosterComplete: false });
-const passes = () => st.audits.filter((a) => a.action === "REV_LOCK_OVERRIDDEN");
+const passes = () => st.audits.filter((a) => a.action === "REVIEW_PROMOTED_OVER_CHECKOUT");
 
 beforeEach(() => {
   seed();
@@ -117,7 +120,7 @@ beforeEach(() => {
 });
 
 describe("DCK-15 — a reviewed promote over someone else's checkout tells the holder and records the pass", () => {
-  it("through finalize_reviewed_promote: the holder gets a thread note and an in-app notice (the existing kind), and a REV_LOCK_OVERRIDDEN row (via review_promote) names them — the publish lands as before", async () => {
+  it("through finalize_reviewed_promote: the holder gets a thread note and an in-app notice (the existing kind), and a REVIEW_PROMOTED_OVER_CHECKOUT row (via review_promote, with the actor's email) names them — the publish lands as before", async () => {
     const r = await fin();
     expect(r).toEqual({ published: true });
     expect(st.threads).toHaveLength(1);
@@ -130,10 +133,23 @@ describe("DCK-15 — a reviewed promote over someone else's checkout tells the h
     });
     expect(passes()).toHaveLength(1);
     expect(passes()[0]).toMatchObject({
-      resourceType: "document", resourceId: "d1", orgId: "o1", userId: "ctl1",
+      resourceType: "document", resourceId: "d1", orgId: "o1", userId: "ctl1", userEmail: "ctl@example.com",
       details: { via: "review_promote", holderUserId: "drafter1", holderName: "Dana Drafter", versionId: "v2", previousVersionId: "v1", revisionLabel: "2" },
     });
     expect(st.audits.map((a) => a.action)).toContain("REVISION_PUBLISHED_AFTER_REVIEW");
+    // the routine door (b) is not publish_revision's override / force
+    expect(st.audits.map((a) => a.action)).not.toContain("REV_LOCK_OVERRIDDEN");
+  });
+
+  it("the record is a routine revisions event, not a 'Destructive / undo / force' one, and the history reads it in words", () => {
+    expect(auditActionDef("REVIEW_PROMOTED_OVER_CHECKOUT")).toMatchObject({ category: "revisions", destructive: false });
+    expect(isDestructiveAuditAction("REVIEW_PROMOTED_OVER_CHECKOUT")).toBe(false);
+    // REGRESSION: publish_revision's override / force keeps its destructive class
+    expect(isDestructiveAuditAction("REV_LOCK_OVERRIDDEN")).toBe(true);
+    expect(summarizeAudit({ action: "REVIEW_PROMOTED_OVER_CHECKOUT", details: { revisionLabel: "2", holderName: "Dana Drafter", via: "review_promote" } }))
+      .toBe("Reviewed Rev 2 published while Dana Drafter had it checked out (their checkout stays open)");
+    expect(summarizeAudit({ action: "REVIEW_PROMOTED_OVER_CHECKOUT", details: {} }))
+      .toBe("Reviewed revision published while another person had it checked out (their checkout stays open)");
   });
 
   it("through promoteThreeStep (a database without finalize_reviewed_promote, PGRST202): the same notice and the same record", async () => {

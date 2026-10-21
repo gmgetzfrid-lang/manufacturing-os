@@ -157,6 +157,22 @@ describe("20261247 — the one-paste shape (DEC-30)", () => {
     expect(inv).not.toMatch(/SELECT\s+\*|file_url|title|document_number|email/);
   });
 
+  it("the 'expected 0' rows count the forgery SIGNATURES only (P33 review fix): an in-review member-created submission shape, and a RELEASED revision marked in review — never a trusted auto-publish (published, not in review) or a draft retired in review (superseded_at alone)", () => {
+    const inv = between(code, "CREATE TEMP TABLE dc_round_g_247_before AS", "\nBEGIN;");
+    expect(inv).toContain(`(v.review_state = 'in_review'
+          AND (COALESCE(v.provenance, '') = 'external' OR v.intake_link_id IS NOT NULL)
+          AND v.created_by IS NOT NULL AND v.created_by IS DISTINCT FROM v.intake_link_id) AS forged_submission_look`);
+    expect(inv).toContain("(v.review_state = 'in_review' AND v.released_at IS NOT NULL) AS relabelled_look");
+    expect(inv).not.toMatch(/superseded_at IS NOT NULL/);
+    const selects = inv.split(/\nUNION ALL\n/);
+    expect(selects[0]).toMatch(/informational/);
+    expect(selects[0]).not.toMatch(/expected 0/);
+    for (const s of selects.slice(1)) expect(s).toMatch(/expected 0/);
+    expect(selects[1]).toMatch(/WHERE forged_submission_look\s*$/);
+    expect(selects[2]).toMatch(/WHERE relabelled_look\s*$/);
+    expect(selects[3]).toMatch(/WHERE v\.relabelled_look;\s*(BEGIN;)?\s*$/);
+  });
+
   it("each prosrc probe holds on the function as written (pg_proc.prosrc is verbatim; '''' is one apostrophe)", () => {
     const tail = code.slice(code.indexOf("\nCOMMIT;"));
     const pats = [...tail.matchAll(/prosrc LIKE '((?:[^']|'')*)'/g)].map((m) => m[1].replace(/''/g, "'"));

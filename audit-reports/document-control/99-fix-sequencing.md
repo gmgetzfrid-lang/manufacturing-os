@@ -1060,9 +1060,17 @@ migration, `20261247_dc_roundG_version_row_integrity.sql` (`DCK-16`,
   supersession, or rewrite the revision it superseded. Everything the app,
   the RPCs, the door and the intake route do lands exactly as before.
 - **The result set:** seven probes (all true) and four counts — external
-  rows; external / link rows with a member creator (expected 0); in-review
-  rows already released or superseded (expected 0); pending pointers naming
-  one (expected 0).
+  rows (informational: the door's submissions and trusted auto-publishes;
+  any number is normal); in-review rows that are external or name a link
+  and whose creator is a member (expected 0 — a trusted auto-publish is
+  published, not in review, and is not counted); in-review rows already
+  RELEASED (expected 0 — a draft voided, replaced or withdrawn in review
+  keeps `in_review` with `superseded_at` set and is not counted); pending
+  pointers naming such a released row (expected 0). A non-zero "expected 0"
+  is a row a signed-in session wrote before the paste: the paste still
+  applies; tell the integrator. *(Corrected at P33's review fix pass: the
+  first version's rows 2-3 also counted trusted auto-publishes and drafts
+  retired in review, so a live org read false forgery counts.)*
 - **For the integrator at merge, not edited by P33:** the `20261247` row in
   `MIGRATION-PASTE-ORDER.md` (after row 187's `20261245`); no
   `lib/schemaExpectations.ts` probe (no new column or function the app

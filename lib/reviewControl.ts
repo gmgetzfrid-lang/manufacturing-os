@@ -1110,9 +1110,11 @@ export async function finalizeReviewedRevision(input: {
  *  document someone OTHER than the actor holds checked out — whichever door
  *  ran it — tell the holder on their checkout episode's thread and in-app
  *  (noteOverrideOnHolder's pattern, lib/revisions.ts, and its notification
- *  kind) and record that the promote passed the checkout: a REV_LOCK_OVERRIDDEN
- *  row with `via: "review_promote"` naming the holder (publish_revision's
- *  override and force write the same action, via "override" / "force").
+ *  kind) and record that the promote passed the checkout: a
+ *  REVIEW_PROMOTED_OVER_CHECKOUT row with `via: "review_promote"` naming the
+ *  holder. Not REV_LOCK_OVERRIDDEN: that is publish_revision's override /
+ *  force (a destructive-class act); this is the ratified door (b), the
+ *  routine end of a review the drafter submitted while keeping the checkout.
  *  The holder is re-read after the promote, so a checkout released in the
  *  meantime is not reported (a failed re-read keeps the one read before).
  *  Best-effort: a failure here is logged and never fails the landed publish. */
@@ -1153,8 +1155,8 @@ export async function notePromoteOverCheckout(p: {
       metadata: { newVersionId: p.pendingId, newRev: p.baseRev, via: "review_promote" },
     });
     await logAuditAction({
-      action: "REV_LOCK_OVERRIDDEN", resourceType: "document", resourceId: p.documentId,
-      orgId: p.orgId, userId: p.actorId ?? "",
+      action: "REVIEW_PROMOTED_OVER_CHECKOUT", resourceType: "document", resourceId: p.documentId,
+      orgId: p.orgId, userId: p.actorId ?? "", userEmail: p.actorEmail ?? undefined,
       details: {
         via: "review_promote", holderUserId: String(holderId), holderName: holderName ?? null,
         versionId: p.pendingId, previousVersionId: p.previousVersionId, revisionLabel: p.baseRev,

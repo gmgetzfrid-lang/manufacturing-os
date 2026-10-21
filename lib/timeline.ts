@@ -601,6 +601,9 @@ export function summarizeAudit(r: Pick<AuditRow, "action" | "details">): string 
     case "ABANDON":      return "Checkout abandoned";
     case "JOIN":         return "Joined collaborative session";
     case "FORCE_RELEASE":return "Checkout force-released";
+    // DCK-15 (P33): the reviewed revision published while someone else held
+    // the checkout — their checkout stays open.
+    case "REVIEW_PROMOTED_OVER_CHECKOUT": return `Reviewed${d.revisionLabel ? ` Rev ${d.revisionLabel}` : " revision"} published while ${typeof d.holderName === "string" && d.holderName ? d.holderName : "another person"} had it checked out (their checkout stays open)`;
     case "REV_UP":              return `Rev-up${d.newRev ? ` → ${d.newRev}` : ""}`;
     case "REV_BACKFILL":        return `Backfilled${d.revisionLabel ? ` Rev ${d.revisionLabel}` : " historical revision"}`;
     case "REVERT":              return `Reverted${d.revertedFromRev ? ` from ${d.revertedFromRev}` : ""}`;

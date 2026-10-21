@@ -52,6 +52,10 @@ const BY_CATEGORY: Record<AuditCategory, readonly string[]> = {
     "REV_LABEL_CORRECTED", "DISTRIBUTION_RECALL", "DOCUMENT_ISSUED", "REV_CONFLICT_BLOCKED",
     "REV_HOLD_OVERRIDDEN", "REV_HOLD_OVERRIDE_UNDONE", "REV_LOCK_OVERRIDDEN", "BRANCH_RESOLVED",
     "TRANSITION_IN", "WORK_PACKAGE_PIN_MOVED",
+    // document-control DCK-15 (P33): a reviewed promote that landed while
+    // someone else held the checkout (the ratified door (b)) — routine, not
+    // an override, so not in DESTRUCTIVE_AUDIT_ACTIONS.
+    "REVIEW_PROMOTED_OVER_CHECKOUT",
   ],
   checkout: ["CHECK_OUT", "CHECK_IN", "ABANDON", "FORCE_RELEASE", "JOIN", "FIELD_VERIFIED", "CHECKOUT_RELEASED"],
   holds: ["HOLD_OPENED", "HOLD_RELEASED", "HOLD_KEPT_ON_CLOSE"],

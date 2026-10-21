@@ -78,11 +78,23 @@
 --   * publish_revision (its INSERT is created by the session — p_actor is
 --     auth.uid() for a signed-in caller — and its UPDATE stamps the prior's
 --     superseded_at);
---   * the contractor door (intake_door_submit_version as the role
---     intake_door under its bound identity; intake_door_housekeep /
---     _promote / _point_pending) and the intake route's service-role writes
---     (its legacy INSERT, the withdrawal and its restore, the provenance
---     stamp after a trusted publish) — neither is judged;
+--   * the contractor door — not judged: intake_door_submit_version (the
+--     role intake_door, or, where that role cannot be assumed, the door's
+--     bound claims), intake_door_promote (a trusted link's auto-publish:
+--     bound as the link's creator, publish_revision writes an 'external' row
+--     created by that member and the door stamps its intake_link_id) and
+--     intake_door_housekeep 'retire', 'restore' (superseded_at cleared and
+--     superseded → in_review, both refused to a signed-in session) and
+--     'withdraw' — each pinned on the harness on both sides. Promote and
+--     housekeep run as the function's owner with the door's identity bound
+--     in the request claims (intake_door_bind), so the guard's claims branch
+--     is what exempts them; on the harness submit_version takes the same
+--     bound-claims path. Dropping that branch fails the submit, promote and
+--     restore cases (withdraw and retire only move forward);
+--     intake_door_point_pending writes documents, not this table;
+--   * the intake route's service-role writes (its legacy INSERT, the
+--     withdrawal and its restore, the provenance stamp after a trusted
+--     publish) — not judged;
 --   * the org restore and the shed routes (service role).
 --   Newly refused, by design: a signed-in session's publish_revision whose
 --   p_version names provenance 'external' (no app path sends it), and
@@ -120,29 +132,44 @@ END
 $$;
 
 -- ── Pre-apply inventory (aggregate only; captured BEFORE the DDL) ───────────
+-- Rows 2-4 count the forgery SIGNATURES only, so legitimate data reads 0:
+--   * a trusted link's auto-publish (intake_door_promote / the route's
+--     service-role publish_revision) is 'external', names its link and is
+--     created by the link's creator (a member) — but it is PUBLISHED, never
+--     in review (publish_revision writes no review_state), so it is not
+--     counted; the door's in-review submission has no creator (or, in an
+--     older shape, the link's id), so it is not counted either;
+--   * a draft retired while in review — voided, replaced by a resubmission,
+--     a race loser, a withdrawn or displaced submission — keeps 'in_review'
+--     with superseded_at stamped; that is a legitimate retire and is not
+--     counted. A draft in review is never RELEASED, so a released revision
+--     marked in review is the relabel's signature.
+--   A relabel of a revision that was never released (a rejected draft put
+--   back into review) leaves no signature in the row and is not counted.
 DROP TABLE IF EXISTS dc_round_g_247_before;
 CREATE TEMP TABLE dc_round_g_247_before AS
 WITH v AS (
   SELECT v.id,
          COALESCE(v.provenance, '') = 'external' AS is_external,
-         v.intake_link_id IS NOT NULL AS has_link,
-         (v.created_by IS NOT NULL AND v.created_by IS DISTINCT FROM v.intake_link_id) AS member_creator,
-         (v.review_state = 'in_review' AND (v.released_at IS NOT NULL OR v.superseded_at IS NOT NULL)) AS relabelled_look
+         (v.review_state = 'in_review'
+          AND (COALESCE(v.provenance, '') = 'external' OR v.intake_link_id IS NOT NULL)
+          AND v.created_by IS NOT NULL AND v.created_by IS DISTINCT FROM v.intake_link_id) AS forged_submission_look,
+         (v.review_state = 'in_review' AND v.released_at IS NOT NULL) AS relabelled_look
     FROM document_versions v
 )
-SELECT 'inventory (before apply): revisions recorded as external submissions (the door''s and the intake route''s — unchanged; from now on only they write one)' AS inventory,
+SELECT 'inventory (before apply): revisions recorded as external submissions (informational — the door''s in-review submissions and a trusted link''s auto-publishes; unchanged, and from now on only the door and the intake route write one)' AS inventory,
        COUNT(*)::text AS n
   FROM v WHERE is_external
 UNION ALL
-SELECT 'inventory (before apply): revisions external or naming an intake link whose creator is a member (not the door''s shape — written by a signed-in session before this file; left as they are, expected 0)',
+SELECT 'inventory (before apply): revisions IN REVIEW recorded as external or naming an intake link whose creator is a member (the door files its submissions with no creator; a trusted auto-publish is published, not in review, and is not counted) — written by a signed-in session before this file; left as they are, expected 0',
        COUNT(*)::text
-  FROM v WHERE (is_external OR has_link) AND member_creator
+  FROM v WHERE forged_submission_look
 UNION ALL
-SELECT 'inventory (before apply): revisions marked in review that are already released or superseded (a relabelled look; left as they are, expected 0)',
+SELECT 'inventory (before apply): revisions marked in review that are already RELEASED (a draft in review is never released — a relabelled look; a draft voided, replaced or withdrawn in review keeps in_review with superseded_at set and is not counted) — left as they are, expected 0',
        COUNT(*)::text
   FROM v WHERE relabelled_look
 UNION ALL
-SELECT 'inventory (before apply): documents whose pending pointer names such a revision (expected 0)',
+SELECT 'inventory (before apply): documents whose pending pointer names such a released in-review revision (expected 0)',
        COUNT(*)::text
   FROM documents d JOIN v ON v.id = d.pending_version_id
  WHERE v.relabelled_look;
