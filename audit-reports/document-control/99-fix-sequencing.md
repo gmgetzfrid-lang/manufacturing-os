@@ -1240,3 +1240,33 @@ migration, `20261257_dc_roundG_document_notice_record.sql` (`DIST-19`):
   notification kind; one new audit action (`DOCUMENT_NOTICE_RECORD_DEFERRED`,
   registered in `lib/auditActions.ts`); `DIST-19` residual (a) opened as
   `DIST-20` (assigned at the P38 merge to **P39 NOTICE RECORD REQUESTS**, `DEC-31`; at most one migration, for the deferred audit row's read rule — `DEC-90`).
+
+⚠ **Paste order — P39 NOTICE RECORD REQUESTS (2026-10-21).** One one-paste
+migration, `20261259_dc_roundG_notice_deferred_read.sql` (`DIST-20`, the
+done-when the integrator added at the P38 merge):
+1. **No deploy order; recommended: deploy the P39 app first, then paste.** It
+   creates one RESTRICTIVE SELECT policy on `audit_logs`
+   (`audit_logs_notice_deferred_readers`): a `DOCUMENT_NOTICE_RECORD_DEFERRED`
+   row is read only by someone who can read the document it names; every
+   other action reads exactly as before. Re-creates nothing; no function, no
+   trigger. The app never reads these rows through a member's session (the
+   scans' replay is the service role's), so either order is safe.
+2. **Independent of every other pending paste** — it needs only
+   `audit_logs` and `documents` (`schema.sql`); before or after `20261257`
+   (before it, no such audit row exists and nothing changes for anyone).
+   Re-runnable. A later re-paste of `20261219` reads its "ONE restrictive
+   overlay" probe false and leaves this rule in force (expected).
+- **The P39 app before `20261257` is pasted:** every request and manual
+  reminder path behaves exactly as today; `POST /api/documents/notice-record`
+  answers `missing`; the distribution nag counts its cooldown from the bell
+  rows alone.
+- **The result set:** four probes (all true) and four counts — deferred rows
+  on file, of those about a document under an access list, about a gone or
+  unnamed document, and the restrictive SELECT policies before the paste (1
+  on a first paste, 2 on a re-run).
+- **For the integrator at merge, not edited by P39:** the `20261259` row in
+  `MIGRATION-PASTE-ORDER.md`; no `lib/schemaExpectations.ts` row (no new
+  table); no export decision (no new table); no notification kind; no new
+  audit action. New route `app/api/documents/notice-record/route.ts`.
+  `lib/inAppNotifications.ts` (notifications') gained the additive
+  `NotificationInput.id` / `notifyCheckedId`.
