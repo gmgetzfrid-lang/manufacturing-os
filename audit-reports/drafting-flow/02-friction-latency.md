@@ -156,6 +156,8 @@ Landed — on a routed library the two questions are two slots on one parallel r
 
 **Owner of the remainder:** the integrator — a ruling under DEC-90 that the unconfigured seed itself becomes the parallel requester + engineering roster (the code supports it: `withEngineeringGate` appends the engineering slot to any table). No package can make that change without the ruling. Stays OPEN. *Named at the DF-P6 third review fix pass (DEC-31): the decision this waits on is DEC-90's proposed DF-P6 ruling **R2** (proposed: keep the serial seed; not yet given) — if the integrator overturns it, the next holder of `lib/workflow.ts` builds the parallel seed.*
 
+*Corrected at the DF-P6 fifth review fix pass (2026-10-21, DEC-29): R2 is ruled by default, not "not yet given" — the brief's "decisionsNeeded take their proposed defaults" applies to R2 as the fourth pass applied it to R1 (DEC-90's fifth-pass line). The serial seed for an undeclared request in an unconfigured workspace stands as ruled; done-when 1 stays unmet as written there, so this stays OPEN. The integrator acts only to overturn R2; then the next holder of `lib/workflow.ts` builds the parallel seed.*
+
 ---
 
 ## FRIC-3 · The intake form demands a unit before it will accept the request
@@ -277,6 +279,8 @@ Tests: `lib/__tests__/dfRoundG_P5_routing.test.ts` ("TIER-5 done-when 3 …" —
 - ✗ in part (2) Defaulted from the library's review policy and the work class — from the library: ✓ (routing); from the class: the class is stored and a routing slot can key on it, but a blocking slot cannot (ruled notify-only for DF-P6) and the fallback picker does not default from it.
 
 **Owner of the remainder:** the integrator (the same DEC-90 ruling as `FRIC-2`: an unconfigured workspace's seed routes the engineer instead of asking the requester), or drafting-flow DF-P9 for a picker default keyed on the class once a ruling says which engineer a class implies. Stays OPEN. *Named at the DF-P6 third review fix pass (DEC-31): the decision this waits on is DEC-90's proposed DF-P6 ruling **R3** (proposed: keep the requester's pick in an unconfigured workspace; not yet given) — if overturned, DF-P9 builds the default.*
+
+*Corrected at the DF-P6 fifth review fix pass (2026-10-21, DEC-29): R3 is ruled by default, not "not yet given" — the brief's "decisionsNeeded take their proposed defaults" applies (DEC-90's fifth-pass line). The requester's pick for an undeclared request in an unconfigured workspace stands as ruled; done-when 1 and 2 stay unmet as written there, so this stays OPEN. The integrator acts only to overturn R3; then DF-P9 builds the default.*
 
 ---
 

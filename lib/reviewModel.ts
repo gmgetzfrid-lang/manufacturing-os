@@ -210,6 +210,23 @@ export function engineeringOverrideOf(ticket: Pick<Ticket, "metadata" | "history
   return mark;
 }
 
+/** DF-P6 fix pass 5 (review, minor): was this request issued at final
+ *  approval WITHOUT an engineer's sign-off because it did not require one
+ *  (lib/workflow.ts WorkflowAction.withoutEngineerSignOff) — and is that the
+ *  latest word (no engineer signed after it)? Read from
+ *  `metadata.engineering_sign_off` (written by the transition; null once a
+ *  later issue clears it). null = no such mark stands. */
+export function engineeringSignOffNotRequiredOf(ticket: Pick<Ticket, "metadata" | "engineerApprovedAt">): EngineeringOverrideMark | null {
+  const meta = (ticket.metadata as Record<string, unknown> | undefined) ?? {};
+  const raw = meta.engineering_sign_off as { notRequired?: unknown; by?: unknown; at?: unknown } | null | undefined;
+  if (!raw || typeof raw !== "object" || raw.notRequired !== true) return null;
+  const mark: EngineeringOverrideMark = { by: typeof raw.by === "string" ? raw.by : null, at: typeof raw.at === "string" ? raw.at : null };
+  const signed = ticket.engineerApprovedAt ? Date.parse(String(ticket.engineerApprovedAt)) : NaN;
+  const at = mark.at ? Date.parse(mark.at) : NaN;
+  if (Number.isFinite(signed) && (!Number.isFinite(at) || signed >= at)) return null;
+  return mark;
+}
+
 // ─── The workspace's own classes (GAP-101 / TIER-4, DEC-35) ──────────────
 
 export type ReviewClassKey = "workClasses" | "codeClasses";

@@ -771,6 +771,11 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
     // (lib/reviewModel.ts engineeringOverrideOf).
     const meta = ((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>;
     updates.metadata = { ...meta, engineering_override: { by: input.actor.email || actorUid || null, uid: actorUid ?? null, at: now, action: input.actionType } };
+    // DF-P6 fix pass 5 (review, minor): a standing "not required" mark from
+    // an earlier cycle is no longer the latest word.
+    if (meta.engineering_sign_off !== undefined && meta.engineering_sign_off !== null) {
+      (updates.metadata as Record<string, unknown>).engineering_sign_off = null;
+    }
   } else if (updates.status === "PENDING_IFC" && ticket.status !== "PENDING_IFC") {
     // DF-P6 fix pass 2 (review, minor 6): an issue that was NOT an override
     // (a later cycle approved by its requester or signed by an engineer)
@@ -783,6 +788,19 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       : (ticket.history ?? []).some((h) => typeof (h as { details?: unknown }).details === "string" && String((h as { details?: unknown }).details).includes(ENGINEERING_OVERRIDE_NOTE));
     if (standing) {
       updates.metadata = { ...meta, engineering_override: null };
+    }
+    // DF-P6 fix pass 5 (review, minor): a management issue at final approval
+    // of a request that does NOT require engineering (withoutEngineerSignOff)
+    // stamps no engineer_approved_at and is no override — so the request
+    // says why no sign-off is shown: the engineer card and the seeded roster
+    // read "not required" (lib/reviewModel.ts engineeringSignOffNotRequiredOf)
+    // instead of a sign-off still pending. Any other issue clears a mark an
+    // earlier cycle left.
+    const metaNow = ((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>;
+    if (input.withoutEngineerSignOff && ticket.status === "PENDING_FINAL_APPROVAL") {
+      updates.metadata = { ...metaNow, engineering_sign_off: { notRequired: true, by: input.actor.email || actorUid || null, uid: actorUid ?? null, at: now, action: input.actionType } };
+    } else if (metaNow.engineering_sign_off !== undefined && metaNow.engineering_sign_off !== null) {
+      updates.metadata = { ...metaNow, engineering_sign_off: null };
     }
   }
   // HAND-7 done-when 3 (DF-P6): an approval over a moved source names what

@@ -946,6 +946,8 @@ different fields. **Ship them together or the form gets edited twice.**
 
 *Corrected at the DF-P6 review fix pass (2026-10-21, drafting-flow Round G, DEC-29): (a) the form resolves each tag by the registry's normalised tag alone (`assets.tag_normalized`, no document links read), so a failed document-link read can no longer drop a real asset; a read that fails is sent as "lookup failed" and the create route says "Could not be checked against the equipment registry (the lookup failed), kept as typed" instead of "Not found" (`lib/__tests__/ticketCreateRoute.test.ts` "fix pass (review, minor 14) …"); the request page says "not linked to the equipment registry (not found there, or the lookup failed when the request was filed)". (b) The request page LISTS the equipment only — adding or correcting a tag after filing is not built (no write path but the create route) → drafting-flow **DF-P9** (the request page), with a server write; the plan's "the ticket page takes an equipment tag" is not met.*
 
+*Corrected at the DF-P6 fifth review fix pass (2026-10-21, drafting-flow Round G, DEC-29): acceptance 1 holds "through the Bridge's relation" for a RESOLVED tag only (`ticket_equipment.asset_id` → `assets`). A tag the registry did not resolve is kept as typed (`asset_id` NULL, the text in `ticket_equipment.tag`) — a relation row, never a free-text column on `tickets`, but not yet a reference to an asset; it resolves only when a later write sets `asset_id` (DF-P9's server write, above).*
+
 ---
 
 <a id="gap-313"></a>

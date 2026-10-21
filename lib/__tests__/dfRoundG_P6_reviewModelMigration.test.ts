@@ -175,6 +175,14 @@ describe("20261250 — the columns, the backfill, the INSERT guard", () => {
     expect(updPred.length).toBeGreaterThan(400);
     expect(updPred).toBe(invPred);
   });
+  it("DF-P6 fix pass 5 (review, minor): the backfill's SCOPE is the inventory's — open rows only (not closed, canceled or archived), so the paste writes exactly the rows inventory row 2 counts", () => {
+    const inv = between(s, "WITH legacy AS (", "\nSELECT 1 AS ord");
+    expect(inv).toContain("WHERE t.archived_at IS NULL AND t.status NOT IN ('CLOSED', 'CANCELED')");
+    const upd = between(s, "UPDATE tickets t SET engineering_required = true", "\n   );\n");
+    const head = upd.slice(0, upd.indexOf("AND (", upd.indexOf("like_in_kind_declared_at IS NULL")));
+    expect(head).toContain("AND t.archived_at IS NULL AND t.status NOT IN ('CLOSED', 'CANCELED')");
+    expect(M).toContain("OPEN rows only (DF-P6 fix pass 5, review minor");
+  });
   it("the backfill names the legacy gate's DEFAULT exempt roles exactly (lib/capabilityPolicy.ts) — a stored list or grant is left to the live gate", () => {
     expect(s).toContain("t.requester_role IN ('Admin', 'Manager', 'Supervisor', 'DocCtrl') OR t.requester_role LIKE '%Engineer%'");
     expect(s).toContain("c.data->'caps'->'ticket.engineer_gate_exempt'");

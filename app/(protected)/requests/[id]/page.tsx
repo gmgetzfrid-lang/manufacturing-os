@@ -21,7 +21,7 @@ import { flaggedRequestTypes } from '@/lib/requestTypes';
 import { ticketStatusLabel, ticketUnitDisplay } from '@/lib/ticketStatusLabels';
 import { attentionLabel, holdersFor, waitingSince, waitedFor, explainNoActions } from '@/lib/ticketAttention';
 import { drafterCandidates, NO_DRAFTER_CANDIDATES, missingRequiredFile, triagePayload, customCategorySections, projectRefOf, engineerCandidates, type DrafterCandidate } from '@/lib/ticketPage';
-import { reviewModelFieldsFromRow, engineerPickAvailable as pickAvailableFrom, engineeringOverrideOf, ticketAsDeclarationChecked, type DeclarationCheck } from '@/lib/reviewModel';
+import { reviewModelFieldsFromRow, engineerPickAvailable as pickAvailableFrom, engineeringOverrideOf, engineeringSignOffNotRequiredOf, ticketAsDeclarationChecked, type DeclarationCheck } from '@/lib/reviewModel';
 import { loadPickerMembers } from '@/lib/ticketPickerMembers';
 import { loadRoutingContext, queuePool } from '@/lib/ticketRouting';
 import { unitOptionsFor, type UnitOption } from '@/lib/ticketCreate';
@@ -2345,6 +2345,9 @@ export default function TicketDetailView() {
   // DF-P6 fix pass (review, issue 7): the request was issued by a management
   // override of the engineering sign-off (and no engineer signed since).
   const engineeringOverride = engineeringOverrideOf(ticket);
+  // DF-P6 fix pass 5 (review, minor): issued at final approval without an
+  // engineer's sign-off because the request did not require one.
+  const engineeringNotRequired = engineeringOverride ? null : engineeringSignOffNotRequiredOf(ticket);
   // UI-4: why there is nothing to do here, naming who to talk to.
   // DF-P5 fix pass 2: the drafter's optional issue-as-is mark / withdrawal
   // is offered BESIDE the explanation, never in place of it — the request
@@ -2492,7 +2495,9 @@ export default function TicketDetailView() {
         liveTicket={ticket ? { status: ticket.status, deliverableRev: ticket.deliverableRev ?? null, history: ticket.history, revisionCount: ticket.revisionCount ?? null } : null}
         copyContext={ticket ? { orgId: ticket.orgId, ticketNumber: ticket.ticketId, requesterId: ticket.requesterId, attachments: ticket.attachments } : null}
         onApprove={(() => {
-          const action = liveActions.find(a => a.action === 'approve_draft_ifc' && !a.disabledReason);
+          // DF-P6 fix pass 5 (review, major): the viewer's plain green "Approve" offers only a plain
+          // approval — an override of the engineering sign-off is taken from its own labelled button.
+          const action = liveActions.find(a => a.action === 'approve_draft_ifc' && !a.disabledReason && !a.engineeringOverride);
           return action ? () => { setViewerFile(null); initiateWorkflowAction(action); } : undefined;
         })()}
       />
@@ -2841,7 +2846,7 @@ export default function TicketDetailView() {
       )}
 
       <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><DeclarationCard ticket={ticket} onDeclarationCheck={setDeclarationCheck} /></div>
-      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><TicketRosterPanel ticket={ticket} orgId={activeOrgId} uid={uid} userName={(member?.displayName ?? '').trim() || (userEmail?.split('@')[0] ?? '').trim() || null} capPolicy={capPolicy} activeMemberCount={activeMemberCount} requesterRoles={requesterRoles} reviewRouted={reviewRouted} reviewRoutedReason={reviewRoutedReason} /></div>
+      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><TicketRosterPanel ticket={ticketAsDeclarationChecked(ticket, declarationCheck)} orgId={activeOrgId} uid={uid} userName={(member?.displayName ?? '').trim() || (userEmail?.split('@')[0] ?? '').trim() || null} capPolicy={capPolicy} activeMemberCount={activeMemberCount} requesterRoles={requesterRoles} reviewRouted={reviewRouted} reviewRoutedReason={reviewRoutedReason} /></div>
 
       {ticket.status === 'REVISION_REQ' && latestRevision && (
         <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">
@@ -2934,11 +2939,14 @@ export default function TicketDetailView() {
                   {ticket.assignedEngineerName ? (
                     <div className="flex items-center text-blue-700">
                       {/* DF-P6 fix pass (review, issue 7): an issue by management override is not a sign-off still pending. */}
-                      <div className={`w-2 h-2 rounded-full mr-2 shrink-0 ${ticket.engineerApprovedAt && !engineeringOverride ? "bg-emerald-500" : engineeringOverride ? "bg-amber-500" : "bg-blue-500 animate-pulse"}`} />
+                      <div className={`w-2 h-2 rounded-full mr-2 shrink-0 ${ticket.engineerApprovedAt && !engineeringOverride ? "bg-emerald-500" : engineeringOverride ? "bg-amber-500" : engineeringNotRequired ? "bg-slate-400" : "bg-blue-500 animate-pulse"}`} />
                       <span className="truncate" title={ticket.assignedEngineerEmail || ticket.assignedEngineerName}>{ticket.assignedEngineerName}</span>
                       {ticket.engineerApprovedAt && !engineeringOverride && <span className="ml-2 text-[10px] text-emerald-600 font-bold uppercase">approved</span>}
                     </div>
-                  ) : engineeringOverride ? null : <span className="text-[var(--color-text-faint)] italic">Not yet assigned</span>}
+                  ) : engineeringOverride || engineeringNotRequired ? null : <span className="text-[var(--color-text-faint)] italic">Not yet assigned</span>}
+                  {engineeringNotRequired && (
+                    <div data-testid="engineering-not-required" className="text-[11px] text-[var(--color-text-faint)] mt-0.5">Engineering sign-off not required — issued{engineeringNotRequired.by ? ` by ${engineeringNotRequired.by}` : ''}</div>
+                  )}
                   {engineeringOverride && (
                     <div data-testid="engineering-override" className="text-[11px] text-amber-700 mt-0.5">Issued by management override — no engineer sign-off{engineeringOverride.by ? ` (${engineeringOverride.by})` : ''}</div>
                   )}

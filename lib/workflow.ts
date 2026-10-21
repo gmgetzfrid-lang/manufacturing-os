@@ -173,6 +173,28 @@ export function engineeringGateRequired(
   return ticketEngineeringRequired(ticket, () => engineerApprovalRequired(ticket.requesterRole, currentRoles, policy, ticket.requesterId, ticketResource(ticket)));
 }
 
+/** DF-P6 fix pass 5 (review, minor): do the requester-binding limbs of
+ *  DEC-33 (the requester's recorded override with its comment, the
+ *  engineer-pick question) apply to this request? On a request filed under
+ *  the review model whose column says engineering is required
+ *  (lib/reviewModel.ts reviewModelBinds) — and on a pre-paste row whose
+ *  requirement was RAISED after the paste (the assigner's flag_engineering,
+ *  or an engineering class): its column says required while today's
+ *  role-based gate says not. The backfill sets true only where that gate
+ *  requires an engineer, so a row it set keeps today's paths exactly (DEC-90
+ *  ruling (2)); a raised row is the one today's engine let its requester
+ *  approve directly, and without this its manager requester could be left
+ *  with only "Send for Engineer Final Approval" and nobody to pick. */
+export function requesterBindingApplies(
+  ticket: Ticket,
+  requesterRoles: readonly string[] | null | undefined,
+  policy: CapabilityPolicy | null | undefined,
+): boolean {
+  if (reviewModelBinds(ticket)) return true;
+  return ticket.engineeringRequired === true
+    && !engineerApprovalRequired(ticket.requesterRole, requesterRoles, policy, ticket.requesterId, ticketResource(ticket));
+}
+
 /** DF-P6: the actions that issue (or, at final approval, sign off) a
  *  deliverable — the delivery gate's transitions (DEC-33), and the ones an
  *  approval over a moved source asks to acknowledge (HAND-7). */
@@ -197,7 +219,9 @@ export function engineerPickQuestionApplies(
   // Only on a request FILED under the review model whose column says
   // engineering is required (fix pass 2, review issue 1: a pre-paste row
   // the backfill set true keeps today's path exactly — no read, no flag).
-  if (!reviewModelBinds(ticket)) return false;
+  // Fix pass 5 (review, minor): and on a pre-paste row whose requirement
+  // was raised after the paste (requesterBindingApplies).
+  if (!requesterBindingApplies(ticket, requesterRoles, policy)) return false;
   if (ticket.status !== 'PENDING_REVIEW' && ticket.status !== 'PENDING_FINAL_APPROVAL') return false;
   if (currentRoster(ticket)) return false;
   if (!policyAllows(policy, 'ticket.manage', userRole, userRoles && userRoles.length > 0 ? [...userRoles] : null, uid, ticketResource(ticket))) return false;
@@ -606,7 +630,11 @@ export const WorkflowEngine = {
     // review model (review_model_filed, 20261250) whose column says
     // engineering is required: a pre-paste row keeps today's requester paths
     // exactly (DEC-90 ruling (2); fix pass 2, review issue 1).
-    const selfOverride = isRequesterIdentity && reviewModelBinds(ticket);
+    // Fix pass 5 (review, minor): and on a pre-paste row whose requirement
+    // was raised after the paste (requesterBindingApplies) — a flag must
+    // never leave its manager requester with no way to issue.
+    const requesterBinds = requesterBindingApplies(ticket, ctx?.requesterRoles, policy);
+    const selfOverride = isRequesterIdentity && requesterBinds;
     const selfOverrideComment = selfOverride ? { requiresComment: true } : {};
     // DEC-13 (DRAFT-1 / GAP-1): a rule scoped to this ticket's type on
     // `ticket.direct_approve` binds the REQUESTER'S own approval too. Identity
@@ -847,7 +875,7 @@ export const WorkflowEngine = {
             // 2, review issue 1), may issue it as a recorded override.
             // Fix pass 4 (review, major 2 — DEC-90 ruling (3)): in every
             // workspace size, with the requester's comment saying why.
-            if (isManagement && reviewModelBinds(ticket) && needsEngineerApproval && !isEng
+            if (isManagement && requesterBinds && needsEngineerApproval && !isEng
                 && !requesterScopedOut) {
               actions.push({
                 label: 'Override: Issue Without Engineer Sign-off',

@@ -212,6 +212,8 @@ assigner's flag).
 
 *Corrected at the DF-P6 review fix pass (2026-10-21, DEC-29): the classes are accepted by the route at triage, but no screen sets one yet (the assign modal's select → DF-P9, 99-fix-sequencing "Hand-offs from DF-P6"), so the class half of the lanes does not act in production; the declaration half does. Acceptance 1 now also binds the requester: in a workspace of 3+ with an engineer to pick, the requester cannot override the engineering sign-off on their own request (`TIER-1` fix pass).*
 
+*Corrected at the DF-P6 fifth review fix pass (2026-10-21, DEC-29): the last sentence above has not held since the fourth review fix pass. Acceptance 1 binds the requester's ISSUE, not their override: the requester holding `ticket.manage` may override the engineering sign-off on their own request in every workspace size, with a required comment, recorded as an override (history note, `metadata.engineering_override`, the audit row's `authority.override` naming the self-override) — DEC-90 ruling (3) as given (R1's default; DEC-33's fourth-pass line). The requester is never offered a PLAIN approval of an undeclared request. Since the fifth pass the same holds on a pre-paste request whose requirement was raised after the paste (`flag_engineering`, an engineering class): `lib/workflow.ts` `requesterBindingApplies`.*
+
 ---
 
 <a id="gap-102"></a>
@@ -321,7 +323,7 @@ requires its examination scope.
 
 **Related findings:** `TIER-3`, `TIER-4`, `TIER-5`.
 
-*Landed 2026-10-21 (drafting-flow Round G, DF-P6 REVIEW-MODEL), by the integrator's ruling for this package (no QA/QC role, status or signature slot): a routing slot may be limited to work classes when it is notify-only (`RoutingSlot.work_classes`); a blocking slot never is. Acceptance 2 ✓ in that form (a library's assurance reviewer is told of every issue of the classes they watch; the code class is on the approval); 3 ✓ (the existing document hold); 5 ✓ (no new role, no new status); 1 and 4 ✗ — examination data has no model yet; proposed for the integrator to assign. See `TIER-3`.*
+*Landed 2026-10-21 (drafting-flow Round G, DF-P6 REVIEW-MODEL), by the integrator's ruling for this package (no QA/QC role, status or signature slot): a routing slot may be limited to work classes when it is notify-only (`RoutingSlot.work_classes`); a blocking slot never is. Acceptance 2 ✓ in that form (a library's assurance reviewer is told of every issue of the classes they watch; the code class is on the approval); 3 ✓ (the existing document hold); 5 ✓ (no new role, no new status); 1 and 4 ✗ — examination data has no model yet; proposed for the integrator to assign. See `TIER-3`.* *Owner named at the DF-P6 fifth review fix pass (DEC-31): acceptance 1 and 4 → **the integrator**, who assigns the examination-data model to a package (no package in the fleet plan holds it); recorded in 99-fix-sequencing "Hand-offs from DF-P6".*
 
 *Corrected at the DF-P6 second review fix pass (2026-10-21, DEC-29): acceptance 2 does not act in production yet — no screen edits a slot's `work_classes` (`RoutingControlSection` only carries stored values) and no screen sets a request's work class (DF-P9), so `TIER-3` is re-recorded OPEN / Partial; owners in 99-fix-sequencing "Hand-offs from DF-P6".*
 

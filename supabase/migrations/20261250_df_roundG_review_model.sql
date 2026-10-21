@@ -30,11 +30,16 @@
 --                        changed (ticket_update_guard, every caller). DEC-33's
 --                        limbs that bind the REQUESTER (the requester's
 --                        recorded override with its required comment, the
---                        engineer-pick question) apply only where it is true,
---                        so a pre-paste row the backfill (2) or a later flag
---                        sets engineering_required true keeps every requester
---                        path it has today (DF-P6 fix pass 2, review issue 1;
---                        lib/reviewModel.ts reviewModelBinds).
+--                        engineer-pick question) apply where it is true, so a
+--                        pre-paste row the backfill (2) sets
+--                        engineering_required true keeps every requester path
+--                        it has today (DF-P6 fix pass 2, review issue 1;
+--                        lib/reviewModel.ts reviewModelBinds). They also apply
+--                        to a pre-paste row whose requirement a later flag or
+--                        engineering class RAISED where today's role-based
+--                        gate says not required, so its manager requester
+--                        keeps a recorded override (DF-P6 fix pass 5;
+--                        lib/workflow.ts requesterBindingApplies).
 --   (2) THE BACKFILL (DEC-90 ruling (2) for DF-P6 — fail-safe, no flag day):
 --       the column is ADDED with DEFAULT false, so every row that exists
 --       before the paste starts false, and only then is the default moved to
@@ -107,7 +112,8 @@
 -- only ever writes true onto a row the legacy gate already requires an
 -- engineer for. Re-runnable: ADD COLUMN IF NOT EXISTS, each CHECK added once,
 -- functions CREATE OR REPLACE, triggers DROP-then-CREATE; the backfill touches
--- only undeclared rows still false, and sets true only where the legacy gate
+-- only OPEN undeclared rows still false (not closed, canceled or archived —
+-- the rows inventory row 2 counts), and sets true only where the legacy gate
 -- is certain.
 -- Single paste: prerequisite check → temp-table inventory (counts only) →
 -- BEGIN/DDL/COMMIT → one SELECT (check text, ok boolean, n text).
@@ -240,15 +246,21 @@ $$;
 COMMENT ON COLUMN tickets.engineering_required IS
   'drafting-flow GAP-111 / DEC-33 (20261250): engineering review is required before the request may issue. True unless the requester declared the work like-in-kind at filing; raised (never lowered — ticket_update_guard refuses true → false for every caller) by request_eng_review, the assigner''s flag or an engineering class. A pre-20261250 row left false WITHOUT a declaration is gated by the legacy role-based gate (the app''s seed).';
 COMMENT ON COLUMN tickets.review_model_filed IS
-  'drafting-flow DEC-33 (20261250, DF-P6 fix pass 2): the request was filed under the review model — false on every row that existed before 20261250, true on every row filed after it; never changed (ticket_update_guard). The requirement''s limbs that bind the requester apply only where it is true; a pre-20261250 row keeps the requester paths it had (DEC-90 ruling (2)).';
+  'drafting-flow DEC-33 (20261250, DF-P6 fix pass 2): the request was filed under the review model — false on every row that existed before 20261250, true on every row filed after it; never changed (ticket_update_guard). The requirement''s limbs that bind the requester apply where it is true; a pre-20261250 row keeps the requester paths it had (DEC-90 ruling (2)), unless its requirement was raised after 20261250 where the role-based gate says not required (DF-P6 fix pass 5).';
 COMMENT ON COLUMN tickets.like_in_kind_statement IS
   'drafting-flow GAP-110 / DEC-34 (20261250): the requester''s like-in-kind declaration as they typed it; with _declared_by / _declared_at / _signature_id (the e-signature that is its record). Set at filing only; immutable.';
 
 -- ── 2. the backfill — the legacy gate's CERTAIN answer, never more ──────────
--- The same predicate as the inventory above (pinned by the shape test).
+-- The same predicate as the inventory above (pinned by the shape test), and
+-- the same scope: OPEN rows only (DF-P6 fix pass 5, review minor — the
+-- inventory counts open rows, so the paste writes exactly the rows it
+-- counts; a closed, canceled or archived row is never written and fires no
+-- guard). A closed row reopened later, left false, is gated by the legacy
+-- gate live, exactly as today.
 UPDATE tickets t SET engineering_required = true
  WHERE NOT t.engineering_required
    AND t.like_in_kind_declared_at IS NULL
+   AND t.archived_at IS NULL AND t.status NOT IN ('CLOSED', 'CANCELED')
    AND (
      t.requester_role IS NULL
      OR t.requester_id IS NULL

@@ -177,7 +177,16 @@ describe.skipIf(skip !== null)("DF-P6 — the review model's columns, the ratche
     cases.forEach((c, i) => {
       admin(db, `INSERT INTO tickets (id, org_id, ticket_id, title, request_type, status, requester_id, requester_role) VALUES ('${ids[i]}', '${c.org}', 'KE-P6-b${i}', 'T', 'New Drawing', 'PENDING_REVIEW', '${c.requester}', ${c.role ? `'${c.role}'` : "NULL"})`);
     });
+    // DF-P6 fix pass 5 (review, minor): closed / canceled rows the predicate
+    // would call certain are outside the backfill's scope — the inventory
+    // counts open rows, and the paste writes exactly those.
+    const closedIds = ["CLOSED", "CANCELED"].map((status, i) => {
+      const id = randomUUID();
+      admin(db, `INSERT INTO tickets (id, org_id, ticket_id, title, request_type, status, requester_id, requester_role) VALUES ('${id}', '${orgId}', 'KE-P6-c${i}', 'T', 'New Drawing', '${status}', '${m.planner.uid}', 'Maintenance')`);
+      return id;
+    });
     const { probes, inventory } = paste(F250);
+    for (const id of closedIds) expect(admin(db, `SELECT engineering_required::text FROM tickets WHERE id = '${id}'`), id).toBe("false");
     expect(probes.filter((l) => l.endsWith("|f|"))).toEqual([]);
     expect(inventory.some((l) => l.includes("legacy gate is CERTAIN"))).toBe(true);
     cases.forEach((c, i) => {
