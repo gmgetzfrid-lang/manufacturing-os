@@ -70,7 +70,11 @@ describe("20261252 — finalize_reviewed_promote re-created from its NEWEST earl
   it("the base is the newest earlier definition (today 20261151 — the scan, not this comment, decides), and this file is the newest", () => {
     expect(PREV < FILE).toBe(true);
     expect(PREV >= "20261151_dc_roundF_promote_transaction_and_hold_override.sql").toBe(true);
-    expect(defining[defining.length - 1]).toBe(FILE);
+    // DCK-18 (P37): 20261254 re-creates this body after this file (its newest body, lineDiff-pinned in
+    // dcRoundGDoorBGuardMigration.test.ts); every later re-create must keep this file's record block whole
+    const block = F.next.slice(F.next.indexOf(RECORD_FROM), F.next.indexOf(RECORD_TO));
+    expect(block.length).toBeGreaterThan(1500);
+    for (const later of defining.filter((f) => f > FILE)) expect(between(mig(later), HEAD, "\n$$;"), later).toContain(block);
   });
 
   it("lineDiff: the only base line not kept is the last parameter (it gains a comma for p_report_over_checkout); every other base line survives", () => {

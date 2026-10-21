@@ -369,9 +369,48 @@ async function appSessionOf(req: NextRequest): Promise<{ userId: string; email: 
   }
 }
 
-async function audit(ref: string, row: Record<string, unknown>): Promise<void> {
-  const { error } = await supabaseAdmin.from("audit_logs").insert(row);
-  if (error) console.error(`[intake/upload] ref=${ref} audit ${String(row.action)} failed: ${error.message}`);
+async function audit(ref: string, row: Record<string, unknown>, opts: { keep?: boolean } = {}): Promise<void> {
+  let message: string | null = null;
+  try {
+    const { error } = await supabaseAdmin.from("audit_logs").insert(row);
+    if (error) message = error.message || "audit insert refused";
+  } catch (e) {
+    message = (e as Error)?.message ?? String(e);
+  }
+  if (message === null) return;
+  console.error(`[intake/upload] ref=${ref} audit ${String(row.action)} failed: ${message}`);
+  if (opts.keep) await keepSubmissionRecord(ref, row, message);
+}
+
+/** document-control P37 final fix pass (DCK-18 (b), the integrator's ruling
+ *  (1)): the submission's own record (INTAKE_SUBMISSION / _AUTO_SUPERSEDE) is
+ *  one of the proofs door (b)'s intake limb reads before it promotes the
+ *  submission over another person's checkout (20261254). A write that fails
+ *  is DEAD-LETTERED — kept in the EVID-6 outbox (public.audit_dead_letters,
+ *  20261219) through lib/auditOutbox.ts's server path, as the service role
+ *  (source 'server', no reporter) — which the maintenance cron drains into
+ *  the trail (AUDIT_DEAD_LETTER, the lost row as sent); the limb reads that
+ *  outbox row and the drained row too. Never throws; whether it was kept is
+ *  logged. Before 20261219 the outbox is missing: not kept, today's path. */
+async function keepSubmissionRecord(ref: string, row: Record<string, unknown>, message: string): Promise<void> {
+  try {
+    const { deadLetterAuditRow } = await import("@/lib/auditOutbox");
+    const kept = await asServiceRole(() => deadLetterAuditRow({
+      action: String(row.action),
+      resource_id: String(row.resource_id ?? ""),
+      resource_type: String(row.resource_type ?? ""),
+      org_id: String(row.org_id ?? ""),
+      user_id: null,
+      user_email: (row.user_email as string | null | undefined) ?? null,
+      user_role: null,
+      details: (row.details as Record<string, unknown> | null | undefined) ?? null,
+      metadata: null,
+    }, message));
+    if (kept.kept) console.error(`[intake/upload] ref=${ref} the lost ${String(row.action)} row was kept in the audit dead-letter outbox; the maintenance cron recovers it into the audit trail`);
+    else console.error(`[intake/upload] ref=${ref} the lost ${String(row.action)} row was NOT kept in the audit dead-letter outbox (${kept.why ?? "unknown"})`);
+  } catch (e) {
+    console.error(`[intake/upload] ref=${ref} the lost ${String(row.action)} row was NOT kept in the audit dead-letter outbox (${(e as Error)?.message ?? String(e)})`);
+  }
 }
 
 /** How long the after-response unit decode may run before it is abandoned
@@ -2117,7 +2156,8 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
       company, projectId, versionId, revLabel: revLabel || "A", fileName: safeName, size: file.size, contentType,
       autoWithheld, displacedVersionId: priorPending, assigned: isAssigned, appSession: session,
     },
-  });
+    // P37 final fix pass (DCK-18 (b)): a lost submission record is dead-lettered, never only logged
+  }, { keep: true });
   await bumpUse(ref, linkId, file.size);
 
   return NextResponse.json({

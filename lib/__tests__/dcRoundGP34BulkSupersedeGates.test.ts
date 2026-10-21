@@ -121,7 +121,12 @@ afterEach(() => {
   infoSpy.mockRestore();
 });
 
-const settle = () => act(async () => { for (let i = 0; i < 30; i++) await new Promise((r) => setTimeout(r, 0)); });
+// 30 macrotask turns, then — while the modal still says "Applying…" — keep yielding (bounded at ~3 s), so a
+// slower turn under load never reads the result early (the DC-P37 merge).
+const settle = () => act(async () => {
+  for (let i = 0; i < 30; i++) await new Promise((r) => setTimeout(r, 0));
+  for (let i = 0; i < 300 && host?.textContent?.includes("Applying…"); i++) await new Promise((r) => setTimeout(r, 10));
+});
 /** P36 review fix (flake): the apply's duties import lib/postPublish dynamically for every superseded
  *  row, so under a loaded parallel run a fixed tick count can end while the modal still says
  *  "Applying…" — wait on the outcome (the busy label gone, bounded at 10 s), then settle as before. */

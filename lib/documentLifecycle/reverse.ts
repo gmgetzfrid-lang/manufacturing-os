@@ -375,14 +375,17 @@ async function assertRestorable(restoreIds: string[], parkedIds: string[]): Prom
 async function parkAsSuperseded(docId: string, supersessionReason: string, actorUserId: string, now: string, register: Register, forceHold: { actor: ActorContext; rollback: SagaRollback } | null = null): Promise<string | null> {
   const snap = await readStatusSnapshot(docId);
   const outcome: WriteOutcome = { attempted: false, landed: false };
-  const recordedPass = { recorded: false };
+  const recordedPass: { recorded: boolean | "unknown" } = { recorded: false };
   if (forceHold) {
-    register(correctRetiredOverHold({ documentId: docId, via: "reversal_park", label: docId, pass: recordedPass, actor: forceHold.actor, rollback: forceHold.rollback }));
+    register(correctRetiredOverHold({ documentId: docId, via: "reversal_park", label: docId, pass: recordedPass, actor: forceHold.actor, rollback: forceHold.rollback, thisCall: { reason: supersessionReason, at: now } }));
   }
   register({ describe: `un-park ${docId}`, run: putBackIfChanged(docId, snap, actorUserId, outcome) });
   outcome.attempted = true;
   const door = forceHold ? await retireOverHold({ documentId: docId, door: "reversal_park", reason: supersessionReason, at: now }) : null;
   if (door?.kind === "refused") {
+    // REV-37 (P37): a lost answer that could not be read back — the un-park
+    // re-reads (putBackIfChanged) and the correction reads the record.
+    if (door.unconfirmed) recordedPass.recorded = "unknown";
     throw new Error(`Reversal stopped: ${docId} could not be parked as Superseded (${door.reason}).`);
   }
   if (door?.kind === "landed") recordedPass.recorded = door.recorded;

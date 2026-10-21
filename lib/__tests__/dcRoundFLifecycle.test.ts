@@ -2259,3 +2259,143 @@ describe("REV-36 (P36 review fix) — a split / merge flip or a reversal park re
     expect(audit("REV_HOLD_OVERRIDE_UNDONE")).toHaveLength(0);
   });
 });
+
+// ─── document-control P37 (REV-37): a recorded flip or park whose answer was lost ───
+describe("REV-37 (P37) — a recorded flip or park whose answer was LOST (a transport error after the commit) is re-read: when it landed the saga goes on, and a rollback puts it back with its correction", () => {
+  const target = (n: string) => ({ documentNumber: n, title: n, assetTags: [], file: pdf(`${n}.pdf`), initialRevLabel: "0", changeLog: "" });
+  let stamp = 0;
+  /** The paste applied, recording as 20261253 does (its REV_HOLD_OVERRIDDEN row), but the answer lost:
+   *  supabase-js hands back { error: "Failed to fetch" } with no code — or throws. */
+  const landedButLost = (mode: "error" | "throw", after?: () => void) => (args: Row) => {
+    const row = docRow(String(args.p_document_id));
+    Object.assign(row, { status: "Superseded", superseded_at: args.p_at, superseded_by_user: ME, supersession_reason: args.p_reason, updated_at: args.p_at, updated_by: ME });
+    // stamped by the database at the call (≈ the instant sent), the reason recorded trimmed — as retire_over_hold writes it
+    T("audit_logs").push({ id: `rho-${row.id}-${stamp++}`, action: "REV_HOLD_OVERRIDDEN", resource_id: row.id, org_id: ORG, user_id: ME, timestamp: String(args.p_at), details: { via: args.p_via, retiredOverHold: true, reason: String(args.p_reason ?? "").trim() || null } });
+    after?.();
+    if (mode === "throw") throw new TypeError("Failed to fetch");
+    return { data: null, error: { message: "Failed to fetch", code: "" } };
+  };
+
+  it("showsSupersessionAt: Superseded at exactly the instant sent (compared as instants), nothing else", async () => {
+    const { showsSupersessionAt } = await import("@/lib/revisions");
+    expect(showsSupersessionAt({ status: "Superseded", superseded_at: "2026-10-21T10:00:00.123+00:00" }, "2026-10-21T10:00:00.123Z")).toBe(true);
+    expect(showsSupersessionAt({ status: "Superseded", superseded_at: "2026-10-21T10:00:01Z" }, "2026-10-21T10:00:00Z")).toBe(false);
+    expect(showsSupersessionAt({ status: "Issued", superseded_at: "2026-10-21T10:00:00Z" }, "2026-10-21T10:00:00Z")).toBe(false);
+    expect(showsSupersessionAt(null, "2026-10-21T10:00:00Z")).toBe(false);
+  });
+
+  it("retireOverHold: a lost answer whose write landed reads back as landed (recorded unknown); one whose write did not land is the refusal it looked like; a database refusal (a code) is not re-read", async () => {
+    const { retireOverHold } = await import("@/lib/revisions");
+    seedDoc("p37a"); seedHold("p37a");
+    const at = "2026-10-21T09:00:00.000Z";
+    state.retireOverHold = landedButLost("error");
+    expect(await retireOverHold({ documentId: "p37a", door: "split", reason: "r", at })).toEqual({ kind: "landed", recorded: "unknown" });
+    seedDoc("p37b"); seedHold("p37b");
+    state.retireOverHold = () => ({ data: null, error: { message: "Failed to fetch", code: "" } });
+    expect(await retireOverHold({ documentId: "p37b", door: "split", reason: "r", at })).toEqual({ kind: "refused", reason: "Failed to fetch" });
+    const reads = state.db.calls.filter((c) => c.table === "documents" && c.method === "select").length;
+    state.retireOverHold = () => ({ data: null, error: { code: "23514", message: "Document has an active hold" } });
+    expect(await retireOverHold({ documentId: "p37b", door: "split", reason: "r", at })).toEqual({ kind: "refused", reason: "Document has an active hold" });
+    expect(state.db.calls.filter((c) => c.table === "documents" && c.method === "select").length).toBe(reads);
+  });
+
+  it("split: the recorded flip's answer lost but landed — the saga goes on as landed; a later refusal rolls it back: the source put back to Issued, THEN its correction, read from the record (the pass stood uncorrected)", async () => {
+    state.roles = ["DocCtrl"];
+    state.retireOverHold = landedButLost("throw");
+    const s0 = seedDoc("p37c"); seedHold("p37c");
+    state.db.refuseWrites.add("document_supersessions");
+    await expect(splitDocument({ source: asRecord(s0), libraryId: LIB, targets: [target("P37CA"), target("P37CB")], reason: "declutter", orgId: ORG, actorUserId: ME, force: true }))
+      .rejects.toThrow(/replacement links could not be recorded[\s\S]*rolled back/);
+    expect(docRow("p37c").status).toBe("Issued");
+    const undone = audit("REV_HOLD_OVERRIDE_UNDONE");
+    expect(undone).toHaveLength(1);
+    expect(undone[0].details).toMatchObject({ via: "split", corrects: "REV_HOLD_OVERRIDDEN", putBackTo: "Issued" });
+  });
+
+  it("split: the answer lost AND the read-back failed — refused as unconfirmed; the rollback re-reads, finds the flip landed, puts the source back and corrects its record", async () => {
+    state.roles = ["DocCtrl"];
+    const s0 = seedDoc("p37d"); seedHold("p37d");
+    // the read-back right after the lost answer fails once; the rollback's own re-read succeeds
+    state.retireOverHold = landedButLost("error", () => failNthRead("documents", 1));
+    await expect(splitDocument({ source: asRecord(s0), libraryId: LIB, targets: [target("P37DA"), target("P37DB")], reason: "declutter", orgId: ORG, actorUserId: ME, force: true }))
+      .rejects.toThrow(/whether the supersession landed could not be read back[\s\S]*rolled back/);
+    expect(docRow("p37d").status).toBe("Issued");
+    expect(audit("REV_HOLD_OVERRIDE_UNDONE").map((r) => r.resource_id)).toEqual(["p37d"]);
+  });
+
+  it("split: the answer lost, nothing landed — refused, the source never superseded, nothing put back, no correction", async () => {
+    state.roles = ["DocCtrl"];
+    state.retireOverHold = () => ({ data: null, error: { message: "Failed to fetch", code: "" } });
+    const s0 = seedDoc("p37e"); seedHold("p37e");
+    await expect(splitDocument({ source: asRecord(s0), libraryId: LIB, targets: [target("P37EA"), target("P37EB")], reason: "x", orgId: ORG, actorUserId: ME, force: true }))
+      .rejects.toThrow(/Failed to fetch[\s\S]*rolled back/);
+    expect(docRow("p37e").status).toBe("Issued");
+    expect(audit("REV_HOLD_OVERRIDE_UNDONE")).toHaveLength(0);
+  });
+
+  it("the reversal's park: the held sheet's recorded park answer lost but landed; the source's restore refused → the sheet is un-parked, THEN its park corrected from the record", async () => {
+    state.roles = ["DocCtrl"];
+    state.retireOverHold = landedButLost("error");
+    seedDoc("p37q", { status: "Superseded", uniqueness_key: "p37q-key", superseded_at: "2026-09-01T10:00:00Z", supersession_reason: "split" });
+    for (const x of ["a", "b"]) seedDoc(`p37q${x}`, { uniqueness_key: `p37q${x}-key` });
+    T("document_supersessions").push(
+      { id: "l-p37qa", org_id: ORG, superseded_doc_id: "p37q", replacement_doc_id: "p37qa", reason: "split", created_by: ME, created_at: "2026-09-01T10:00:00Z" },
+      { id: "l-p37qb", org_id: ORG, superseded_doc_id: "p37q", replacement_doc_id: "p37qb", reason: "split", created_by: ME, created_at: "2026-09-01T10:00:00Z" },
+    );
+    T("audit_logs").push({ id: "ev-p37q", action: "DOC_SPLIT", resource_id: "p37q", timestamp: "2026-09-01T10:00:00Z", details: { replacementDocIds: ["p37qa", "p37qb"], priorStatus: "Issued", auditAt: "2026-09-01T10:00:00Z" } });
+    seedHold("p37qa");
+    state.db.beforeUpdate!.documents = (next, old) => {
+      if (old.id === "p37q" && next.status === "Issued") throw { code: "42501", message: "restore refused" };
+      return next;
+    };
+    await expect(reverseSplit({ splitAuditEventId: "ev-p37q", reason: "wrong split", orgId: ORG, actorUserId: ME, force: true }))
+      .rejects.toThrow(/p37q could not be restored to Issued \(restore refused\)[\s\S]*rolled back/);
+    expect(docRow("p37qa").status).toBe("Issued");
+    const undone = audit("REV_HOLD_OVERRIDE_UNDONE");
+    expect(undone.map((r) => r.resource_id)).toEqual(["p37qa"]);
+    expect(undone[0].details).toMatchObject({ via: "reversal_park", corrects: "REV_HOLD_OVERRIDDEN", putBackTo: "Issued" });
+  });
+
+  it("P37 fix pass: a lost answer that landed WITHOUT recording (no hold active by then) draws no correction from an earlier operation's stale, uncorrected pass through the same door — only a row this call could have written (its reason, stamped no earlier than its instant less the clock allowance) counts", async () => {
+    state.roles = ["DocCtrl"];
+    /** lands the flip, records nothing (the hold was released mid-saga), answer lost */
+    const landedUnrecordedLost = (args: Row) => {
+      Object.assign(docRow(String(args.p_document_id)), { status: "Superseded", superseded_at: args.p_at, superseded_by_user: ME, supersession_reason: args.p_reason });
+      return { data: null, error: { message: "Failed to fetch", code: "" } };
+    };
+    const { LOST_ANSWER_CLOCK_SKEW_MS } = await import("@/lib/documentLifecycle/common");
+    // (a) the earlier split's pass — same reason, same door, same actor, uncorrected — but days ago
+    state.retireOverHold = landedUnrecordedLost;
+    const s0 = seedDoc("p37s"); seedHold("p37s");
+    T("audit_logs").push({ id: "rho-old-p37s", action: "REV_HOLD_OVERRIDDEN", resource_id: "p37s", org_id: ORG, user_id: ME, timestamp: "2026-09-01T10:00:00.000Z", details: { via: "split", retiredOverHold: true, reason: "declutter" } });
+    state.db.refuseWrites.add("document_supersessions");
+    await expect(splitDocument({ source: asRecord(s0), libraryId: LIB, targets: [target("P37SA"), target("P37SB")], reason: "declutter", orgId: ORG, actorUserId: ME, force: true })).rejects.toThrow(/rolled back/);
+    expect(docRow("p37s").status).toBe("Issued");
+    expect(audit("REV_HOLD_OVERRIDE_UNDONE")).toHaveLength(0);
+    // (b) a pass through the same door inside the clock allowance but with ANOTHER reason is not this call's either
+    const s1 = seedDoc("p37t"); seedHold("p37t");
+    T("audit_logs").push({ id: "rho-near-p37t", action: "REV_HOLD_OVERRIDDEN", resource_id: "p37t", org_id: ORG, user_id: ME, timestamp: new Date(Date.now() - LOST_ANSWER_CLOCK_SKEW_MS / 2).toISOString(), details: { via: "split", retiredOverHold: true, reason: "an earlier split" } });
+    await expect(splitDocument({ source: asRecord(s1), libraryId: LIB, targets: [target("P37TA"), target("P37TB")], reason: "declutter", orgId: ORG, actorUserId: ME, force: true })).rejects.toThrow(/rolled back/);
+    expect(docRow("p37t").status).toBe("Issued");
+    expect(audit("REV_HOLD_OVERRIDE_UNDONE")).toHaveLength(0);
+    // the record was read (the unknown pass decided from it), bounded below by the call's instant less the allowance
+    const bounds = state.db.calls.filter((c) => c.table === "audit_logs" && c.method === "gte" && c.args[0] === "timestamp").map((c) => Date.parse(String(c.args[1])));
+    expect(bounds.length).toBe(2);
+    for (const t of bounds) expect(Date.now() - t).toBeGreaterThanOrEqual(LOST_ANSWER_CLOCK_SKEW_MS - 60_000);
+    for (const t of bounds) expect(Date.now() - t).toBeLessThan(LOST_ANSWER_CLOCK_SKEW_MS + 60_000);
+  });
+
+  it("REGRESSION: an answer that arrives (landed, recorded true) behaves exactly as since P36 — no read of the record for the correction", async () => {
+    state.roles = ["DocCtrl"];
+    state.retireOverHold = (args: Row) => {
+      Object.assign(docRow(String(args.p_document_id)), { status: "Superseded", superseded_at: args.p_at, superseded_by_user: ME });
+      return { data: "superseded_over_hold", error: null };
+    };
+    const s0 = seedDoc("p37f"); seedHold("p37f");
+    state.db.refuseWrites.add("document_supersessions");
+    await expect(splitDocument({ source: asRecord(s0), libraryId: LIB, targets: [target("P37FA"), target("P37FB")], reason: "x", orgId: ORG, actorUserId: ME, force: true })).rejects.toThrow(/rolled back/);
+    expect(docRow("p37f").status).toBe("Issued");
+    expect(audit("REV_HOLD_OVERRIDE_UNDONE")).toHaveLength(1);
+    expect(state.db.calls.filter((c) => c.table === "audit_logs" && c.method === "select")).toHaveLength(0);
+  });
+});

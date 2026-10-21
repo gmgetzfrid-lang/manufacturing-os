@@ -25,9 +25,10 @@
     },
     "by_status": {
       "RESOLVED": 170,
-      "OPEN": 13,
+      "OPEN": 12,
       "RESOLVED (as split under `DEC-31`; ruled by the integrator at the P27 merge, 2026-10-20 (`DEC-90`) — the access-control door, a member reading `portal_token` over REST, stays open until `DIST-18` lands)": 1,
-      "RESOLVED (2026-10-21, the integrator's fix pass at the P28 merge — ruled by the integrator at the P28 merge, 2026-10-21 (`DEC-90`): done-when 2 landed; the restore hooks beyond the brief's ruling (4) ratified)": 1
+      "RESOLVED (2026-10-21, the integrator's fix pass at the P28 merge — ruled by the integrator at the P28 merge, 2026-10-21 (`DEC-90`): done-when 2 landed; the restore hooks beyond the brief's ruling (4) ratified)": 1,
+      "RESOLVED (2026-10-21, document-control Round G P37 DOOR B GUARD final fix pass — every done-when holds as written or as ratified by the integrator at the P37 merge (`DEC-90`): the `DOC_SPLIT` / `DOC_MERGED` evidence acceptance confirmed; the `REV_HOLD_OVERRIDDEN` rows written before `20261254`'s paste accepted as a recorded residual, looked over by the operator at the paste)": 1
     }
   },
   "status_vocabulary": [
@@ -4721,7 +4722,7 @@
       "id": "REV-37",
       "title": "The recorded passes over a hold prove less than they record: retire_over_hold takes any Document Control call with the force asked, the reversal re-entry's evidence is an audit row a member can also write, and two lost answers leave the record or the notice wrong",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED (2026-10-21, document-control Round G P37 DOOR B GUARD final fix pass — every done-when holds as written or as ratified by the integrator at the P37 merge (`DEC-90`): the `DOC_SPLIT` / `DOC_MERGED` evidence acceptance confirmed; the `REV_HOLD_OVERRIDDEN` rows written before `20261254`'s paste accepted as a recorded residual, looked over by the operator at the paste)",
       "verification": null,
       "verification_note": "READ (on `fleet/DC-P36-status-editor-parity-iii` at the final fix pass: `supabase/migrations/20261253_dc_roundG_status_editor_hold_leg.sql` `retire_over_hold` — its recorded door `:1371`–`:1377` reads the caller's tier, `p_force_hold`, the status and the hold, nothing of the split / merge / reversal it names; `put_back_retired_issue`'s reversal evidence `:1155`–`:1206` and its Void arm `:1146`–`:1148`; `supabase/schema.sql:1094` — `audit_logs_insert` admits any row whose `user_id` is the caller's; `lib/documentLifecycle/common.ts` `markSupersededAndLink` `:556` (the flip at `:627`, the lineage row written after it at `:663`); `lib/staleCopies.ts` `HOLDER_TOLD_WAIT_MS` `:1313`, `holderToldAnswer` `:1319`)",
       "blast_radius": null,

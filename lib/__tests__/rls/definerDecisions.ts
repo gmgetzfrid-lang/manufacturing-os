@@ -183,6 +183,7 @@ export const TRIGGER_FUNCTIONS: readonly string[] = [
   "enforce_document_version_key_guard()",
   "enforce_document_versions_pointer_rail()",
   "enforce_email_requeue_columns()",
+  "enforce_hold_override_record_rail()", // 20261254 (REV-37, document-control P37)
   "enforce_intake_link_assignment()",
   "enforce_legal_hold_delete_guard()",
   "enforce_legal_hold_version_delete_guard()",

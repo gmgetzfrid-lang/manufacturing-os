@@ -216,6 +216,10 @@ describe("20261159 — the guard re-created from its NEWEST earlier body (found 
       // set it around their own write (its guard only reads it) — pinned in
       // dcRoundGStatusEditorHoldLegMigration.test.ts.
       if (f === "20261253_dc_roundG_status_editor_hold_leg.sql") continue;
+      // DCK-18 / REV-37 (P37): and 20261254 — finalize_reviewed_promote and retire_over_hold re-created
+      // from their newest bodies (the flag lines kept; its guard only reads it) — pinned in
+      // dcRoundGDoorBGuardMigration.test.ts.
+      if (f === "20261254_dc_roundG_door_b_guard.sql") continue;
       expect(withoutFlagReads(stripComments(mig(f))), f).not.toMatch(/publish_hold_override/);
     }
     expect(withoutFlagReads("SET LOCAL app.publish_hold_override = p_doc::text;")).toMatch(/publish_hold_override/);

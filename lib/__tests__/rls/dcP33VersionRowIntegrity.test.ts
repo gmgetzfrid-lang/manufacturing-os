@@ -35,11 +35,15 @@ const between = (s: string, a: string, b: string) => {
   const i = s.indexOf(a);
   return s.slice(i, s.indexOf(b, i + a.length) + b.length);
 };
-/** 20261247 undone: the column guard dropped, 20261214's insert-integrity body put back. */
+/** 20261247 undone: the column guard dropped, 20261214's insert-integrity body put back — and (P37) the
+ *  publish guard as it stood before 20261254 (20261253's body), so door (b)'s intake limb does not yet ask
+ *  for the intake route's record on this side: "before" stays the world before this file's paste. */
 const UNDO_247 = [
   "DROP TRIGGER IF EXISTS trg_document_version_row_integrity ON document_versions;",
   "DROP FUNCTION IF EXISTS enforce_document_version_row_integrity();",
   between(mig(POLICY_BASE), "DROP POLICY IF EXISTS document_versions_insert_integrity ON document_versions;", "\n);"),
+  between(mig("20261253_dc_roundG_status_editor_hold_leg.sql"), "CREATE OR REPLACE FUNCTION enforce_document_publish_guard()", "\n$$;"),
+  "REVOKE ALL ON FUNCTION enforce_document_publish_guard() FROM PUBLIC, anon, authenticated, service_role;",
 ].join("\n");
 
 const ROLES = { docctrl: "DocCtrl", holder: "Drafter", publisher: "Drafter", author: "Engineer-1", owner: "Viewer", reviewer: "Engineer-1" } as const;
@@ -128,6 +132,10 @@ function seed(db: string, w: World): void {
     INSERT INTO document_versions (id, org_id, record_id, revision_label, base_rev, review_state, provenance, intake_link_id, file_url, change_type, created_by, created_by_name, created_at, supersedes_version_id) VALUES
       ('${w.i2A}', '${w.org}', '${w.dIntake}', '2A', 'B', 'in_review', 'external', '${w.link}', 'p33/${tag}/i2a.pdf', 'Major', '${w.link}', 'Contractor Co', now() - interval '1 day', '${w.iA}');
     UPDATE documents SET pending_version_id = '${w.i2A}' WHERE id = '${w.dIntake}';
+    -- the intake route's own record of the genuine submission (service role, no person named) — what
+    -- door (b)'s intake limb asks for since 20261254 (DCK-18, P37)
+    INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, details)
+      VALUES ('INTAKE_SUBMISSION', '${w.dIntake}', 'document', '${w.org}', NULL, jsonb_build_object('versionId', '${w.i2A}', 'company', 'Contractor Co'));
     INSERT INTO project_intake_links (id, org_id, project_id, company_name, token_hash, expires_at, created_by, assigned_doc_ids, allow_auto_supersede)
       VALUES ('${w.tLink}', '${w.org}', '${w.project}', 'Trusted Co', md5('${w.tLink}') || md5('${w.org}'), now() + interval '30 days', '${u.publisher}', ARRAY[]::uuid[], true);
     UPDATE documents SET authored_by_link_id = '${w.tLink}' WHERE id IN ('${w.dTrust}', '${w.dTrustR}');

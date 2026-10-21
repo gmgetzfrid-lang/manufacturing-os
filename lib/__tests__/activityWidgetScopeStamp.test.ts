@@ -110,7 +110,7 @@ describe("SEC-21 (J12 review fix 7) — the dashboard's Activity widget shows an
   it("both reads leave the stamp out in the query, before their row caps", async () => {
     state.rows = [row("a2", "MILESTONE_DELETED", 19)];
     await renderActivity();
-    const stampFilter = { table: "audit_logs", method: "not", args: ["action", "in", '("MILESTONE_SCOPE_RECORDED")'] };
+    const stampFilter = { table: "audit_logs", method: "not", args: ["action", "in", '("MILESTONE_SCOPE_RECORDED","INTAKE_DOOR_SUBMITTED")'] };
     expect(state.calls.filter((c) => c.method === "not")).toEqual([stampFilter, stampFilter]);
     // each filter sits before its read's limit
     const order = state.calls.map((c) => c.method);
