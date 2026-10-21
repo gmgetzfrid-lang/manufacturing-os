@@ -922,6 +922,15 @@ export async function semanticStatus(orgId: string, libraryId: string, known?: S
  *  build — the browser tab stopped being the engine. Never awaited, never
  *  surfaces errors: the hourly cron covers whatever this misses. */
 export function nudgeEmbedDrain(): void {
+  // At most once per 10 minutes per browser: every library visit used to
+  // start another up-to-4-minute server build, overlapping the last one and
+  // piling write load onto the database (sign-in waits on that database).
+  const KEY = "embedDrainNudgedAt";
+  try {
+    const last = Number(window.localStorage.getItem(KEY) ?? 0);
+    if (Date.now() - last < 10 * 60_000) return;
+    window.localStorage.setItem(KEY, String(Date.now()));
+  } catch { /* storage blocked: nudge, the server side is single-flight too */ }
   void (async () => {
     try {
       const token = await authToken();

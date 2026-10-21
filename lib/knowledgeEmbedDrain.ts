@@ -40,6 +40,17 @@ export interface DrainedLibrary {
 /** Advance every consented, unfinished meaning-index build that fits in
  *  `budgetMs`. `scopeOrgIds` null = all orgs (platform cron); an array
  *  restricts to a user's own workspaces (page-load nudge). Never throws. */
+/** Claim (or release) a library for this drain run. Read fresh: the build
+ *  marker may have been re-stamped by a tab since the list was read. */
+async function stampDrain(libraryId: string, until: string | null): Promise<void> {
+  const { data } = await supabaseAdmin.from("knowledge_libraries").select("ai_features").eq("id", libraryId).maybeSingle();
+  const feats = { ...((data?.ai_features as Record<string, unknown> | null) ?? {}) };
+  const build = feats.embedBuild as Record<string, unknown> | undefined;
+  if (!build) return; // build finished or withdrawn meanwhile
+  feats.embedBuild = until ? { ...build, drainUntil: until } : (({ drainUntil: _d, ...rest }) => rest)(build);
+  await supabaseAdmin.from("knowledge_libraries").update({ ai_features: feats }).eq("id", libraryId).then(() => undefined, () => undefined);
+}
+
 export async function drainEmbedBacklog(opts: {
   scopeOrgIds: string[] | null;
   budgetMs: number;
@@ -59,7 +70,14 @@ export async function drainEmbedBacklog(opts: {
 
     for (const lib of (libs ?? []) as Array<{ id: string; org_id: string; ai_features: Record<string, unknown> }>) {
       if (Date.now() - startedAt > budgetMs) break;
-      const marker = (lib.ai_features?.embedBuild ?? null) as { userId?: string; at?: string } | null;
+      const marker = (lib.ai_features?.embedBuild ?? null) as { userId?: string; at?: string; drainUntil?: string } | null;
+      // Single flight: another drain is already working this library (a
+      // second page load, the nightly run). Two would write the same rows
+      // and double the load on the database for nothing.
+      if (marker?.drainUntil && new Date(marker.drainUntil).getTime() > Date.now()) {
+        drained.push({ libraryId: lib.id, embedded: 0, remaining: -1, note: "another background build is running" });
+        continue;
+      }
       const userId = marker?.userId;
       if (!userId) continue;
       // A tab is building this library right now (it re-stamps every batch).
@@ -71,6 +89,7 @@ export async function drainEmbedBacklog(opts: {
         continue;
       }
 
+      await stampDrain(lib.id, new Date(startedAt + budgetMs + 30_000).toISOString());
       const remainingBefore = await unembeddedCount(lib.org_id, lib.id);
       if (remainingBefore === 0) {
         await setEmbedBuildMarker(lib.id, null);
@@ -141,6 +160,7 @@ export async function drainEmbedBacklog(opts: {
           usage, ok: true, op: "knowledgeEmbed",
         });
       }
+      await stampDrain(lib.id, null);
       const remainingAfter = await unembeddedCount(lib.org_id, lib.id);
       if (remainingAfter === 0) await setEmbedBuildMarker(lib.id, null);
       if (!drained.some((d) => d.libraryId === lib.id)) {
