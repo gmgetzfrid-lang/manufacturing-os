@@ -9,7 +9,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   BookOpen, ArrowLeft, Sparkles, Loader2, FileText, Upload,
   Trash2, RefreshCw, CheckCircle2, AlertTriangle, History, Globe, Bot,
-  ChevronRight, ChevronDown, Wand2, Eye, MessageSquare, ArrowRight, FolderUp,
+  ChevronRight, ChevronDown, Wand2, Eye, MessageSquare, ArrowRight, FolderUp, Search,
 } from "lucide-react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -342,6 +342,39 @@ export default function KnowledgeLibraryPage() {
   };
 
   const removable = docs.filter((d) => !d.sourceDocumentId);
+  // ── Find a document in a long list: search, filter by state, sort. A
+  //    library of a thousand standards is unreadable as one unsorted list.
+  const [docQuery, setDocQuery] = useState("");
+  const [docFilter, setDocFilter] = useState<"all" | "ready" | "working" | "failed" | "uploaded">("all");
+  const [docSort, setDocSort] = useState<"name" | "pages" | "problems">("name");
+  const [docLimit, setDocLimit] = useState(200);
+  const docGroups = {
+    all: docs.length,
+    ready: docs.filter((d) => d.status === "ready").length,
+    working: docs.filter((d) => d.status === "pending" || d.status === "indexing" || d.status === "stale").length,
+    failed: docs.filter((d) => d.status === "error").length,
+    uploaded: docs.filter((d) => !d.sourceDocumentId).length,
+  };
+  const shownDocs = (() => {
+    const squash = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const words = docQuery.toLowerCase().split(/\s+/).filter(Boolean);
+    const list = docs.filter((d) => {
+      if (docFilter === "ready" && d.status !== "ready") return false;
+      if (docFilter === "working" && !(d.status === "pending" || d.status === "indexing" || d.status === "stale")) return false;
+      if (docFilter === "failed" && d.status !== "error") return false;
+      if (docFilter === "uploaded" && d.sourceDocumentId) return false;
+      if (!words.length) return true;
+      // "ep 5-2-3", "EP523" and "piping specs" all find their document.
+      const name = d.name.toLowerCase();
+      return words.every((w) => name.includes(w) || squash(name).includes(squash(w)));
+    });
+    const natural = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+    const rank = (d: typeof docs[number]) => (d.status === "error" ? 0 : d.status === "ready" ? 2 : 1);
+    return list.sort((a, b) =>
+      docSort === "pages" ? (b.pageCount ?? 0) - (a.pageCount ?? 0)
+      : docSort === "problems" ? rank(a) - rank(b) || natural.compare(a.name, b.name)
+      : natural.compare(a.name, b.name));
+  })();
   const toggleSelect = (id: string) => setSelected((prev) => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -563,8 +596,39 @@ export default function KnowledgeLibraryPage() {
                 )}
               </div>
             )}
+            <div className="mb-2 flex items-center gap-2 flex-wrap">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
+                <input id="kdoc-search" value={docQuery} onChange={(e) => { setDocQuery(e.target.value); setDocLimit(200); }}
+                  placeholder={`Search ${docs.length.toLocaleString()} documents — "EP 5-2-3", "piping specs"…`}
+                  className="w-full h-8 pl-8 pr-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-orange-400" />
+              </div>
+              <div className="flex items-center gap-1 flex-wrap">
+                {([
+                  ["all", "All"], ["ready", "Indexed"], ["working", "In progress"], ["failed", "Failed"], ["uploaded", "Uploaded here"],
+                ] as const).filter(([k]) => k === "all" || docGroups[k] > 0).map(([k, label]) => (
+                  <button key={k} onClick={() => { setDocFilter(k); setDocLimit(200); }}
+                    className={`h-7 px-2 rounded-lg text-[10px] font-black border transition-colors ${docFilter === k
+                      ? "bg-orange-600 text-white border-orange-600"
+                      : `border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] ${k === "failed" ? "text-rose-700 dark:text-rose-400" : ""}`}`}>
+                    {label} {docGroups[k].toLocaleString()}
+                  </button>
+                ))}
+              </div>
+              <select aria-label="Sort documents" value={docSort} onChange={(e) => setDocSort(e.target.value as typeof docSort)}
+                className="h-7 px-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[10px] font-black text-[var(--color-text-muted)]">
+                <option value="name">Sort: number</option>
+                <option value="pages">Sort: most pages</option>
+                <option value="problems">Sort: problems first</option>
+              </select>
+            </div>
+            {shownDocs.length === 0 && (
+              <div className="rounded-xl border border-dashed border-[var(--color-border)] p-4 text-center text-xs text-[var(--color-text-muted)]">
+                No document matches{docQuery ? ` "${docQuery}"` : ""}{docFilter !== "all" ? " in this filter" : ""}.
+              </div>
+            )}
             <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
-              {docs.map((doc) => (
+              {shownDocs.slice(0, docLimit).map((doc) => (
                 <li key={doc.id} className={`px-3.5 py-2.5 flex items-center gap-3 ${selected.has(doc.id) ? "bg-orange-50/70 dark:bg-orange-950/20" : "bg-[var(--color-surface)]"}`}>
                   {isController && (
                     <input type="checkbox" className="accent-orange-600 shrink-0" aria-label={`Select ${doc.name}`}
@@ -612,6 +676,12 @@ export default function KnowledgeLibraryPage() {
                 </li>
               ))}
             </ul>
+            {shownDocs.length > docLimit && (
+              <button onClick={() => setDocLimit((n) => n + 500)}
+                className="mt-1.5 w-full h-8 rounded-lg border border-[var(--color-border)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                Showing {docLimit.toLocaleString()} of {shownDocs.length.toLocaleString()} — show more
+              </button>
+            )}
             </>
           )}
           {activeOrgId && library.aiFeatures?.drawingIntel === true && (
