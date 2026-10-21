@@ -1,6 +1,6 @@
 # 02 · Delivery integrity
 
-**17 findings** — 3 HIGH · 12 MEDIUM · 2 LOW. `DELIV-15` opened by the integrator at the N1 merge, 2026-10-01; `DELIV-16` by notifications Round G (N6), 2026-10-07; `DELIV-17` (MEDIUM) by document-control Round G (P26 STATUS-DOOR FOLLOW-UPS, fix pass 3), 2026-10-14. *(Counts corrected at that pass from the findings' Severity lines: HIGH `DELIV-1`, `2`, `4`; LOW `DELIV-8`, `13`, both lowered by their verifiers; the header had read 5 HIGH · 11 MEDIUM.)*
+**18 findings** — 3 HIGH · 12 MEDIUM · 3 LOW. `DELIV-15` opened by the integrator at the N1 merge, 2026-10-01; `DELIV-16` by notifications Round G (N6), 2026-10-07; `DELIV-17` (MEDIUM) by document-control Round G (P26 STATUS-DOOR FOLLOW-UPS, fix pass 3), 2026-10-14; `DELIV-18` (LOW) by notifications Round G (N18 DELIVERY RECORD, the remainder of drafting-flow `EVID-9` done-when 2), 2026-10-21. *(Counts corrected at that pass from the findings' Severity lines: HIGH `DELIV-1`, `2`, `4`; LOW `DELIV-8`, `13`, both lowered by their verifiers; the header had read 5 HIGH · 11 MEDIUM.)*
 
 What gets dropped between an event happening and a person being told — and whether anything notices.
 
@@ -1306,5 +1306,31 @@ The publish-time stale-copy recall had the same gap and closed it under `DIST-9`
 - ✓ Tests (above), the REGRESSION one included.
 
 **Scope / residual.** The "Related, not a done-when" cap (1000 unordered rows in 365 days, not reported on the row) is unchanged; not this finding's done-when, recorded as before. Whether the actor is also told that the recall could not be computed is left as it is (the record and the log say it).
+
+---
+
+<a id="deliv-18"></a>
+
+## DELIV-18 · Two producers that read a person's email preference still leave no "not emailed by their choice" record: the ticket comment fan-out and the compliance digest
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** notifications **N19 NOTICE RECORD REMAINDERS** (`audit-reports/fleet-plans/notifications.json`; both limbs, after DF-P8 merges — the integrator at the N18 merge, 2026-10-21, DEC-31). *Was:* unassigned — the integrator assigns (DEC-31). Two limbs in two areas' files: the ticket comment route (`app/api/tickets/comment/route.ts` — drafting-flow; DF-P8 holds `app/api/tickets/**` this round) and the compliance digest (`app/api/cron/maintenance/route.ts` `queueComplianceDigests` — notifications).
+- **Verification:** CONFIRMED by reading the code at `db3a1f3` + N18.
+- **Independently verified:** opened 2026-10-21 by notifications Round G (N18 DELIVERY RECORD) as the remainder of drafting-flow `EVID-9` done-when 2 (every producer); not yet challenged by a second party.
+- **Locations:** `app/api/tickets/comment/route.ts:388-413` (`wantsEmail`, then `audience.filter((uid) => emailByUid.has(uid) && wantsEmail(uid))` — a person left out by their preference gets nothing written); `app/api/cron/maintenance/route.ts:1480` (`if (!unverified.has(m.uid) && !emailAllowedByPrefs(prefs.get(m.uid) ?? null, "compliance_digest")) return;`).
+- **Opened:** 2026-10-21, notifications Round G, N18 (DEC-31).
+
+**Mechanism.** Since N18 a recipient whose own preference turns an email off leaves one `email_notifications` row with status `not_emailed` (20261258) — written by `lib/notifications.ts` `queueEmail`, which every `emit()` producer, the access-request door and the transmittal receipt use; the ticket transition route records the same fact in `ticket_notice_events` (DF-P7). Two producers decide "emailed or not" with their own preference read and never call `queueEmail`: the ticket comment fan-out inserts its email rows directly, and the daily compliance digest skips an opted-out member with `return`. For a person either one leaves out, the record still cannot tell "they opted out" from "we never emailed them" — `EVID-9`'s three stories — on those two paths.
+
+**Failure scenario.** An engineer turned off emails about requests they watch. A colleague comments on the request: the bell row lands (as it should), no email is queued (as it should), and nothing says why no email went. The record for a workflow transition on the same request says "not emailed by their choice"; the record for the comment says nothing.
+
+**Done when.**
+
+- [ ] The ticket comment fan-out records, for each person its own preference rule leaves out, a "not emailed by their choice" fact (a `not_emailed` row in `email_notifications`, or DF-P7's `ticket_notice_events` row as the transition route does), and records nothing for a person left out for another reason (no address).
+- [ ] The compliance digest records its opted-out members the same way — and its last-digest read (`app/api/cron/maintenance/route.ts`, the `compliance_digest` window read) ignores `not_emailed` rows first, or a record would be read as the last digest sent.
+- [ ] Tests, REGRESSION first: who is emailed and who gets a bell row are exactly as today on both paths.
+
+**Closer:** the integrator assigns (the drafting-flow package that next holds `app/api/tickets/comment/route.ts`; the notifications package that next holds `app/api/cron/maintenance/route.ts`).
 
 ---

@@ -165,7 +165,8 @@ const DYNAMIC_DELETES: Record<string, (source: string) => string[]> = {
   // the admin purge: the tables its TARGETS list names
   "app/api/admin/purge/route.ts": (s) => {
     const at = s.indexOf("const TARGETS");
-    return [...s.slice(at, s.indexOf("];", at)).matchAll(/\btable:\s*"(\w+)"/g)].map((m) => m[1]);
+    // one entry per table (notifications N18: two read-rows lines purge notifications)
+    return [...new Set([...s.slice(at, s.indexOf("];", at)).matchAll(/\btable:\s*"(\w+)"/g)].map((m) => m[1]))];
   },
   // a superseded ingest batch withdraws the rows it inserted
   "lib/knowledgeIngest.ts": (s) => [...(s.match(/for \(const \[table, ids\] of \[([^\n]*)\] as const\)/)?.[1] ?? "").matchAll(/\["(\w+)"/g)].map((m) => m[1]),
@@ -229,6 +230,8 @@ describe("RT-4 — a filtered subscription that can see DELETEs hears them", () 
     expect(reached).toEqual(["notifications"]);
     // …and the purge's notifications floor is read rows only.
     expect(route).toMatch(/if \(key === "notifications"\) \{\s*let n = q\.not\("read_at", "is", null\)/);
+    // notifications N18 (EVID-13 dw3): the record notices' own line has the same read-rows floor
+    expect(route).toMatch(/if \(key === "notifications_record"\) \{[^}]*let n = q\.not\("read_at", "is", null\)/);
   });
 
   it("document-control P28: the library page's documents companion acts only on a document the page holds — it drops that row, never refetches", () => {

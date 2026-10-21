@@ -8,6 +8,7 @@
 // preference row on that same client (emailAllowedByPrefs).
 
 import { describe, it, expect, beforeEach } from "vitest";
+import { resetDeliveryRecordLatches } from "@/lib/deliveryRecordLatch";
 import { tellIssuerOfReceipt } from "@/lib/transmittalReceiptNotice";
 
 type Row = Record<string, unknown>;
@@ -16,6 +17,9 @@ const db = {
   gate: { data: true } as { data?: boolean | null; error?: { code: string; message: string } },
   inserts: [] as Array<{ table: string; row: Row }>,
   gateCalls: [] as Row[],
+  /** notifications N18: whether 20261258 is pasted (before it the status
+   *  CHECK refuses a not_emailed row with 23514). */
+  pasted258: false,
 };
 
 /** The service-role client: reads answer from `db`, writes are recorded. */
@@ -29,7 +33,11 @@ const admin = {
       if (table === "notification_preferences") return { data: db.prefs, error: null };
       return { data: null, error: null };
     };
-    b.insert = async (row: Row) => { db.inserts.push({ table, row }); return { error: null }; };
+    b.insert = async (row: Row) => {
+      if (row.status === "not_emailed" && !db.pasted258) return { error: { code: "23514", message: 'violates check constraint "email_notifications_status_check"' } };
+      db.inserts.push({ table, row });
+      return { error: null };
+    };
     return b;
   },
   rpc: async (fn: string, args: Row) => {
@@ -46,7 +54,7 @@ const input = {
 const bells = () => db.inserts.filter((i) => i.table === "notifications");
 const emails = () => db.inserts.filter((i) => i.table === "email_notifications");
 
-beforeEach(() => { db.prefs = null; db.gate = { data: true }; db.inserts = []; db.gateCalls = []; });
+beforeEach(() => { db.prefs = null; db.gate = { data: true }; db.inserts = []; db.gateCalls = []; db.pasted258 = false; resetDeliveryRecordLatches(); });
 
 describe("DELIV-15 dw3 — the issuer's email preference stops the receipt email, never the bell row", () => {
   it("email_gate says no (the issuer turned email off): the bell row is written, no email row", async () => {
@@ -56,8 +64,24 @@ describe("DELIV-15 dw3 — the issuer's email preference stops the receipt email
     expect(bells()).toHaveLength(1);
     expect(bells()[0].row).toMatchObject({ user_id: "issuer", kind: "ack_complete", title: "Transmittal TR-0007 acknowledged" });
     expect(emails()).toEqual([]);
-    // asked as the service role, about the receipt's own event
-    expect(db.gateCalls).toEqual([expect.objectContaining({ p_org: "o1", p_to_user: "issuer", p_event_type: "watcher_activity" })]);
+    // asked as the service role, about the receipt's own event — and, since
+    // notifications N18 (EVID-9), once more with no resource to tell the
+    // issuer's own preference from a 60-second repeat (a read; nothing sent)
+    expect(db.gateCalls).toEqual([
+      expect.objectContaining({ p_org: "o1", p_to_user: "issuer", p_event_type: "watcher_activity" }),
+      expect.objectContaining({ p_org: "o1", p_to_user: "issuer", p_event_type: "watcher_activity", p_resource_id: null, p_subject: null, p_body: null }),
+    ]);
+  });
+
+  it("N18 (EVID-9 dw2) — after 20261258: the issuer's opt-out leaves one not_emailed record (nothing sends it) beside the bell row, and still no queued email", async () => {
+    db.gate = { data: false };
+    db.pasted258 = true;
+    const out = await tellIssuerOfReceipt(admin as never, input);
+    expect(out.told).toBe(true);
+    expect(bells()).toHaveLength(1);
+    expect(emails().map((e) => e.row.status)).toEqual(["not_emailed"]);
+    expect(emails()[0].row).toMatchObject({ to_user_id: "issuer", event_type: "watcher_activity", metadata: expect.objectContaining({ not_emailed: { byTheirChoice: true, reason: "preference" } }) });
+    expect(emails().some((e) => e.row.status === "queued")).toBe(false);
   });
 
   it("before 20261148 is pasted (PGRST202) the same rule reads the issuer's row on the service-role client: email off → no email row", async () => {

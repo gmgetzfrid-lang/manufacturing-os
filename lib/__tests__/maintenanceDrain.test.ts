@@ -1695,9 +1695,13 @@ describe("NEDGE-10 dw1 / dw3 — the one-click unsubscribe route", () => {
 // ═════════════════════════════════════════════════════════════════════════════
 describe("DELIV-8 — the purge: abandoned (suppressed) mail is its own reported line; watermark rows are kept", () => {
   const old = "2026-01-01T00:00:00.000Z";
+  // notifications N18 (EVID-9 dw3, DEC-90 ruling (3)): a sent row is a notice
+  // record, kept for the notice-record retention (five years by default) as
+  // well as the window — so the delivered row here is older than both.
+  const pastRetention = "2019-01-01T00:00:00.000Z";
   const seedPurge = () => {
     db.tables.email_notifications = [
-      { id: "s1", org_id: ORG_A, status: "sent", created_at: old, event_type: "watcher_activity" },
+      { id: "s1", org_id: ORG_A, status: "sent", created_at: pastRetention, event_type: "watcher_activity" },
       { id: "x1", org_id: ORG_A, status: "suppressed", created_at: old, event_type: "watcher_activity" },
       { id: "x2", org_id: ORG_A, status: "suppressed", created_at: "2026-01-05T00:00:00.000Z", event_type: "comment_mention" },
       { id: "f1", org_id: ORG_A, status: "failed", created_at: old, event_type: "sla_warning" },

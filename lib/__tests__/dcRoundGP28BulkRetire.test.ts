@@ -115,7 +115,13 @@ afterEach(() => {
   host.remove();
 });
 
-const settle = () => act(async () => { for (let i = 0; i < 30; i++) await new Promise((r) => setTimeout(r, 0)); });
+// Under full-suite load 30 macrotask turns can end before the apply settles;
+// also wait (bounded, ~3 s) until the modal leaves "Applying…" — the same
+// helper as dcRoundGP31BulkSupersede / dcRoundGP34BulkSupersedeGates.
+const settle = () => act(async () => {
+  for (let i = 0; i < 30; i++) await new Promise((r) => setTimeout(r, 0));
+  for (let i = 0; i < 300 && host?.textContent?.includes("Applying…"); i++) await new Promise((r) => setTimeout(r, 10));
+});
 const button = (label: string) => {
   const b = Array.from(host.querySelectorAll("button")).find((x) => x.textContent?.includes(label));
   if (!b) throw new Error(`no button "${label}"`);

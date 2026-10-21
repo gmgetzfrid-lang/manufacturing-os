@@ -548,6 +548,31 @@
    "sequencingNotes": [
     "Added by the integrator at the DF-P7 merge, 2026-10-21 (DEC-31). Parallel-safe with the drafting-flow ticket packages and document-control P38."
    ]
+  },
+  {
+   "name": "N19 NOTICE RECORD REMAINDERS — the last two producers record 'not emailed by their choice', and no system path stamps another person's read_at",
+   "findings": [
+    "notifications DELIV-18 (opened at N18, assigned at the N18 merge, 2026-10-21, DEC-31): the ticket comment fan-out (app/api/tickets/comment/route.ts) and the compliance digest (app/api/cron/maintenance/route.ts queueComplianceDigests) write the not_emailed record through queueEmail's path (lib/notifications.ts recordNotEmailed) when a person's own preference turns the email off; who is emailed is unchanged (pin per producer, before and after 20261258)",
+    "notifications NEDGE-24 (opened at N18, assigned at the N18 merge, 2026-10-21, DEC-31): limb 1 — deciding an access request (lib/accessRequestOutcome.ts clearAccessRequestNotices) marks other people's notices superseded (metadata.superseded_at) instead of stamping read_at; limb 2 — clear_resolved_branch_alerts (20261181) re-created from its NEWEST body to write superseded_at instead of read_at (one DEC-30 file, lineDiff-pinned); the read_at censuses (app code and database) drop both stamps; the purge keeps both stamped kinds as N18 keeps superseded marks; every screen that hides a resolved alert today still hides it (pin)",
+    "drafting-flow EVID-9 (done-when 2 — closes when DELIV-18 lands) and drafting-flow EVID-13 (done-whens 2 and 3 — close when NEDGE-24 lands): N19 closes them by record then"
+   ],
+   "files": [
+    "app/api/tickets/comment/route.ts (the fan-out's email leg only)",
+    "app/api/cron/maintenance/route.ts (queueComplianceDigests only)",
+    "lib/notifications.ts (export the recorder if needed)",
+    "lib/accessRequestOutcome.ts",
+    "lib/branches.ts (resolveBranch caller only, if needed)",
+    "supabase/migrations/** (one DEC-30 file: clear_resolved_branch_alerts)",
+    "tests"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "notifications N18 merged (20261258, the not_emailed status and recorder)",
+    "drafting-flow DF-P8 merged (it holds app/api/tickets/** this round)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the N18 merge, 2026-10-21 (DEC-31). Not alongside document-control P39 (both touch notification writers) — run after it."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

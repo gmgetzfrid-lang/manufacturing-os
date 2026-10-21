@@ -12,18 +12,18 @@
     "audit-reports/notifications/08-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 133,
+    "findings": 135,
     "gaps": 7,
     "by_severity": {
       "CRITICAL": 2,
       "HIGH": 17,
       "MEDIUM": 79,
-      "LOW": 35
+      "LOW": 37
     },
     "by_status": {
       "REFUTED": 3,
       "RESOLVED": 108,
-      "OPEN": 15,
+      "OPEN": 17,
       "RESOLVED (2026-10-14, notifications Round G, N10 PUSH — done-when 1 met as narrowed by the integrator, `DEC-90`)": 1,
       "OPEN (Partial — the code landed; done-when 1, the `20261200` inventory comparison, remains: owner the integrator at the `20261200` paste, `DEC-30`, closing by pointer)": 1,
       "RESOLVED *(2026-10-20, by pointer: document-control `DIST-17` is RESOLVED — document-control Round G, P27. Until then the integrator at the N16 merge kept this record OPEN rather than inventing a status outside the corpus vocabulary.)* — the same leak is document-control [`DIST-17`](../document-control/05-distribution.md#dist-17), opened by N16 fix pass 2 under the integrator's ruling at the N16 merge (`DEC-31`, 2026-10-14). That record carries the owner, the severity, the reproduction and the done-whens; this one stays only so the number keeps pointing somewhere, and is not counted in this report.": 1,
@@ -2700,6 +2700,29 @@
       "report": "audit-reports/notifications/02-delivery-integrity.md"
     },
     {
+      "id": "DELIV-18",
+      "title": "Two producers that read a person's email preference still leave no \"not emailed by their choice\" record: the ticket comment fan-out and the compliance digest",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading the code at `db3a1f3` + N18.",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/tickets/comment/route.ts:388-413",
+        "app/api/cron/maintenance/route.ts:1480"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "An engineer turned off emails about requests they watch. A colleague comments on the request: the bell row lands (as it should), no email is queued (as it should), and nothing says why no email went. The record for a workflow transition on the same request says \"not emailed by their choice\"; the record for the comment says nothing.",
+      "area": "notifications",
+      "report": "audit-reports/notifications/02-delivery-integrity.md"
+    },
+    {
       "id": "NEDGE-18",
       "title": "Once 20261161 is pasted, the attention feed's browser-side mark on a stale workflow alert is refused, so an alert the workflow route missed stays in the unread window",
       "severity": "LOW",
@@ -2830,6 +2853,32 @@
         "supabase/migrations/20260910_transmittal_portal.sql:34-37",
         "lib/transmittals.ts",
         "app/(protected)/transmittals/page.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": null,
+      "area": "notifications",
+      "report": "audit-reports/notifications/08-edges-and-invariants.md"
+    },
+    {
+      "id": "NEDGE-24",
+      "title": "Two system stamps of `read_at` on other people's notices — deciding an access request (the service role) and resolving a revision branch (`clear_resolved_branch_alerts`) — the places `read_at` is not the recipient's own act",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading the code at `db3a1f3` + N18 (the censuses in `lib/__tests__/n18NoticeRetention.test.ts` name both: the app-code census names limb 1, the database census — every function's newest SQL body and every one-off migration statement, with the app's `.rpc()` callers — names limb 2).",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/accessRequestOutcome.ts:227-240",
+        "app/api/admin/access-requests/route.ts:86",
+        "app/api/admin/create-user/route.ts:67",
+        "supabase/migrations/20261181_notif_roundG_producers_free.sql:174-203",
+        "lib/branches.ts:259"
       ],
       "has_verifier_correction": false,
       "verified_by": "author",

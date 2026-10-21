@@ -29,6 +29,8 @@ function client() {
         not: () => chain,
         is: () => chain,
         in: () => chain,
+        or: () => chain,
+        limit: () => chain,
         then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => {
           db.calls.push(call);
           return Promise.resolve(call.op === "count" ? { count: 4, error: null } : { error: null }).then(res, rej);
@@ -68,9 +70,14 @@ describe("GOV-4 / GOV-10 — the purge never reaches this month's AI spend ledge
     const res = await purge(7);
     expect(res.status).toBe(200);
     const sevenDaysAgo = "2026-10-13T12:00:00.000Z";
-    expect(cutoffOf("notifications", "delete")).toEqual([sevenDaysAgo]);
-    // notifications N6 (DELIV-8): delivered and abandoned email are two lines of one table
-    expect(cutoffOf("email_notifications", "delete")).toEqual([sevenDaysAgo, sevenDaysAgo]);
+    // notifications N18 (EVID-9 dw3 / EVID-13 dw3, DEC-90 ruling (3)): the
+    // record lines — read record notices, sent mail, not_emailed records —
+    // keep the notice-record retention (five years by default) as well as
+    // the window: the earlier cutoff. Every other line keeps the window.
+    const retention = "2021-10-21T12:00:00.000Z";
+    expect(cutoffOf("notifications", "delete")).toEqual([sevenDaysAgo, retention]);
+    // notifications N6 (DELIV-8): delivered and abandoned email are two lines of one table (N18: and not_emailed)
+    expect(cutoffOf("email_notifications", "delete")).toEqual([retention, sevenDaysAgo, retention]);
     expect(cutoffOf("ai_usage_events", "count")).toEqual([MONTH_START]);
     expect(cutoffOf("ai_usage_events", "delete")).toEqual([MONTH_START]);
     // the DATA_PURGE audit row names the cutoff each table was purged to

@@ -229,6 +229,13 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   { table: "tickets", column: "code_class", migration: "20261250_df_roundG_review_model.sql", feature: "A request's code class (drafting-flow DF-P6, TIER-4)" },
   { table: "tickets", column: "consent_window_opened_at", migration: "20261255_df_roundG_consent_window.sql", feature: "A routed review's consent window — when it opened (drafting-flow DF-P7, GAP-109 / GAP-113)" },
   { table: "tickets", column: "consent_window_recipients", migration: "20261255_df_roundG_consent_window.sql", feature: "A routed review's consent window — who was asked (drafting-flow DF-P7)" },
+  { table: "email_notifications", column: "provider_message_id", migration: "20261258_notif_roundG_delivery_record.sql", feature: "Email delivery record — the provider's message id kept beside 'sent', so a delivery report can name its row (notifications N18, drafting-flow EVID-9)" },
+  { table: "email_notifications", column: "delivery_status", migration: "20261258_notif_roundG_delivery_record.sql", feature: "Email delivery record — the provider's delivery outcome (delayed / delivered / failed / bounced / complained) (notifications N18, drafting-flow EVID-9)" },
+  { table: "email_notifications", column: "delivery_detail", migration: "20261258_notif_roundG_delivery_record.sql", feature: "Email delivery record — a refusal's reason as the provider reported it (notifications N18, drafting-flow EVID-9)" },
+  { table: "email_notifications", column: "delivered_at", migration: "20261258_notif_roundG_delivery_record.sql", feature: "Email delivery record — when the provider reported the email delivered (notifications N18, drafting-flow EVID-9)" },
+  { table: "email_notifications", column: "bounced_at", migration: "20261258_notif_roundG_delivery_record.sql", feature: "Email delivery record — when the provider reported a bounce (notifications N18, drafting-flow EVID-9)" },
+  { table: "email_notifications", column: "complained_at", migration: "20261258_notif_roundG_delivery_record.sql", feature: "Email delivery record — when the provider reported a spam complaint (notifications N18, drafting-flow EVID-9)" },
+  { table: "email_notifications", column: "delivery_updated_at", migration: "20261258_notif_roundG_delivery_record.sql", feature: "Email delivery record — when the last delivery report landed (notifications N18, drafting-flow EVID-9)" },
   { table: "access_requests", column: "org_id", migration: "20261023_access_requests_scope_and_limit.sql", feature: "Org-scoped access requests (admin pending list, per-org isolation)" },
   // Found absent in the live DB on 2026-09-01 by 20261038's late-binding probe
   // (the archive migrations were never hand-applied); repaired by 20261039.

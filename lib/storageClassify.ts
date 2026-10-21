@@ -24,11 +24,11 @@ const TABLE_CLASS: Record<string, TableClass> = {
   // ── Purge worry-free — disposable, not records ───────────────────────────
   notifications: {
     category: "purge", grower: true,
-    reason: "In-app bell alerts. Disposable — once read and older than ~90 days they have no value. Safe to purge.",
+    reason: "In-app bell alerts. Read alerts older than the purge window are disposable and safe to purge; unread ones are never purged, and read record notices (acknowledgments, reviews, recalls, ticket workflow alerts) are kept for the notice-record retention (five years by default).",
   },
   email_notifications: {
     category: "purge", grower: true,
-    reason: "Outbound email queue. Each row is a send attempt; disposable once sent. Safe to purge old rows.",
+    reason: "Outbound email queue. Abandoned rows (never sent) older than the purge window are safe to purge; sent and not-emailed rows are the record of who was told and are kept for the notice-record retention (five years by default).",
   },
   ai_usage_events: {
     category: "purge",

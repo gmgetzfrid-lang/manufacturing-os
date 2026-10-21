@@ -452,10 +452,20 @@ describe("STACK-5 — no duplicate corner, and a widget mounted before the dock 
   });
 
   it("CornerPortal renders nothing on its first frame when no dock is registered yet", async () => {
+    // The fallback waits one setTimeout(0) tick after the first commit
+    // (STACK-5). An async act() finishes on a separate macrotask
+    // (React's enqueueTask — setImmediate in Node), so on a busy runner the
+    // portal's 1 ms timer could fire INSIDE the act scope and paint the
+    // fallback before the first-frame assertion ran (about 1 run in 6 alone —
+    // notifications N18). Only setTimeout is faked here: act still settles on
+    // its own task, and the portal's tick fires exactly when this test says.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     await act(async () => { root.render(React.createElement(CornerPortal, null, React.createElement("b", null, "probe"))); });
     expect(host.textContent).toBe("");
-    await flush();
+    expect(document.body.textContent).not.toContain("probe");
+    await act(async () => { vi.advanceTimersByTime(0); });
     expect(document.body.textContent).toContain("probe");
+    vi.useRealTimers();
   });
 });
 
