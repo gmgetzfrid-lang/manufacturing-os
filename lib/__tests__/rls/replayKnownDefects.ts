@@ -64,6 +64,8 @@ export const OPERATOR_SWITCHES: Readonly<Record<string, Record<string, string>>>
  * Snapshot databases taken just BEFORE a file runs, so a test can prove the
  * app works before and after that paste (DEC-30). 20261217 is I-17's own
  * grant migration (INTK-14 / DRLS-16); 20261224 is I-28's (INTK-19: every
- * policy that calls the bound helpers answers the same before and after it).
+ * policy that calls the bound helpers answers the same before and after it);
+ * 20261261 is I-34's (DACL-11: every reader who can read both documents of a
+ * supersession reads the same rows before and after its read rail).
  */
-export const CHECKPOINTS: readonly string[] = ["20261217", "20261224"];
+export const CHECKPOINTS: readonly string[] = ["20261217", "20261224", "20261261"];
