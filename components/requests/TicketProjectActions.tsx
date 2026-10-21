@@ -16,6 +16,15 @@
 // conflict, a 503), the project is remembered and the Create button gives
 // way to "Link to <project>" — the same link, retried — so a second click
 // never makes a second project naming this request.
+// Across page loads too (DEC-90 fix pass at the DF-P8 merge): before Create
+// is offered — on mount, and again inside "Create project" right before the
+// project is made — the projects the viewer can see that name this request
+// (projects.linked_ticket_id) and are not closed are read, newest first. If
+// one exists, "Link to <its name>" (converted: true) is offered in place of
+// Create. If that read fails, Create stays (today's behaviour) and the page
+// says it could not check. What this cannot see: a project naming the
+// request that the viewer cannot read, or one that is closed — Create is
+// still offered then.
 // A link, unlink or create that lands is held locally (DF-P8 fix pass 3):
 // the controls follow it at once, without waiting for the page's realtime
 // refresh — Create and Link give way to Unlink the moment the link lands, so
@@ -47,8 +56,11 @@ export default function TicketProjectActions({ ticketId, orgId, linkedProjectId,
   const [picked, setPicked] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: "ok" | "warn" | "error"; text: string; href?: string } | null>(null);
-  /** A project "Create project" made whose link has not landed yet. */
-  const [created, setCreated] = useState<{ id: string; name: string } | null>(null);
+  /** A project "Create project" made whose link has not landed yet — or,
+   *  `existing`, one an earlier page load made (it names this request). */
+  const [created, setCreated] = useState<{ id: string; name: string; existing?: true } | null>(null);
+  /** Whether the read for a project already naming this request failed. */
+  const [originUnchecked, setOriginUnchecked] = useState(false);
   /** What this component's own successful change left the request linked
    *  to, and the page's value it was made against: it wins until the page's
    *  value moves (the realtime refresh carried the change, or a newer one). */
@@ -68,6 +80,22 @@ export default function TicketProjectActions({ ticketId, orgId, linkedProjectId,
       });
     return () => { alive = false; };
   }, [choosing, projects, orgId]);
+
+  // PROJ-13 across page loads: a project an earlier load created from this
+  // request (whose link did not land) is offered as "Link to <project>",
+  // never Create again.
+  const hasProject = !!currentProjectId;
+  useEffect(() => {
+    if (!canAct || hasProject) return;
+    let alive = true;
+    void findProjectNamingRequest(ticketId, orgId).then((found) => {
+      if (!alive) return;
+      if (found === "failed") { setOriginUnchecked(true); return; }
+      setOriginUnchecked(false);
+      if (found) setCreated((c) => c ?? { ...found, existing: true });
+    });
+    return () => { alive = false; };
+  }, [canAct, hasProject, ticketId, orgId]);
 
   if (!canAct) return null;
 
@@ -100,6 +128,15 @@ export default function TicketProjectActions({ ticketId, orgId, linkedProjectId,
     if (!ok) return;
     setBusy(true); setMsg(null);
     try {
+      // Asked again right before the project is made: another tab or an
+      // earlier load may have made one since this page was opened.
+      const found = await findProjectNamingRequest(ticketId, orgId);
+      if (found && found !== "failed") {
+        setCreated({ ...found, existing: true });
+        setOriginUnchecked(false);
+        setMsg({ tone: "warn", text: `A project was already created from this request: ${found.name} — use "Link to ${found.name}" (no second project was made).`, href: `/projects/${found.id}` });
+        return;
+      }
       const { convertTicketToProject } = await import("@/lib/projects");
       const r = await convertTicketToProject({ ticketId, orgId, actorUserId, actorEmail: actorEmail ?? undefined, actorRole: actorRole ?? undefined });
       const href = r.project.id ? `/projects/${r.project.id}` : undefined;
@@ -122,8 +159,9 @@ export default function TicketProjectActions({ ticketId, orgId, linkedProjectId,
       const href = `/projects/${created.id}`;
       if (!res.ok) { setMsg({ tone: "error", text: `${res.error} — the project exists; retry the link (do not create it again).`, href }); return; }
       setLanded({ basis: linkedProjectId, value: created.id });
+      const existing = !!created.existing;
       setCreated(null);
-      setMsg(res.warning ? { tone: "warn", text: res.warning, href } : { tone: "ok", text: "Project created and linked.", href });
+      setMsg(res.warning ? { tone: "warn", text: res.warning, href } : { tone: "ok", text: existing ? "Linked to the project created from this request." : "Project created and linked.", href });
     } finally { setBusy(false); }
   };
 
@@ -134,7 +172,7 @@ export default function TicketProjectActions({ ticketId, orgId, linkedProjectId,
           className="text-[10px] font-bold text-[var(--color-text-muted)] hover:text-rose-600 border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-60">
           Unlink from project
         </button>
-      ) : created ? (
+      ) : created && !created.existing ? (
         <button type="button" onClick={() => void linkCreated()} disabled={busy}
           className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 border border-blue-200 bg-blue-50 rounded-md px-2 py-1 disabled:opacity-60">
           <FolderKanban className="w-3 h-3" /> Link to {created.name}
@@ -159,10 +197,24 @@ export default function TicketProjectActions({ ticketId, orgId, linkedProjectId,
             className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 border border-blue-200 bg-blue-50 rounded-md px-2 py-1 disabled:opacity-60">
             <FolderKanban className="w-3 h-3" /> Link to a project
           </button>
-          <button type="button" onClick={() => void createProject()} disabled={busy}
-            className="text-[10px] font-bold text-[var(--color-text-muted)] border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-60">
-            Create project from this request
-          </button>
+          {created ? (
+            // A project an earlier page load created from this request: its
+            // link, retried — never a second project (PROJ-13).
+            <button type="button" onClick={() => void linkCreated()} disabled={busy}
+              className="text-[10px] font-bold text-[var(--color-text-muted)] border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-60">
+              Link to {created.name}
+            </button>
+          ) : (
+            <button type="button" onClick={() => void createProject()} disabled={busy}
+              className="text-[10px] font-bold text-[var(--color-text-muted)] border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-60">
+              Create project from this request
+            </button>
+          )}
+          {originUnchecked && !msg && (
+            <span role="status" className="text-[10px] font-bold text-amber-700">
+              Could not check whether a project was already created from this request — check the Projects list before creating one.
+            </span>
+          )}
         </>
       )}
       {msg && (
@@ -173,4 +225,22 @@ export default function TicketProjectActions({ ticketId, orgId, linkedProjectId,
       )}
     </div>
   );
+}
+
+/** PROJ-13 (DEC-90 fix pass at the DF-P8 merge): the newest project the
+ *  viewer can see (read through their own client, so RLS decides) that names
+ *  this request as its origin and is not closed — or "failed" when the read
+ *  failed, so the caller keeps today's behaviour and says it could not check. */
+async function findProjectNamingRequest(ticketId: string, orgId: string): Promise<{ id: string; name: string } | null | "failed"> {
+  try {
+    const { data, error } = await supabase.from("projects").select("id, name, status, created_at")
+      .eq("org_id", orgId).eq("linked_ticket_id", ticketId)
+      .order("created_at", { ascending: false }).limit(20);
+    if (error) return "failed";
+    const open = ((data ?? []) as Array<{ id: string; name: string | null; status: string | null }>)
+      .find((p) => typeof p.id === "string" && p.id && !PROJECT_LINK_CLOSED.has(String(p.status ?? "")));
+    return open ? { id: open.id, name: (open.name ?? "").trim() || "the project created from this request" } : null;
+  } catch {
+    return "failed";
+  }
 }

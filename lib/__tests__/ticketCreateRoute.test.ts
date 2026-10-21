@@ -72,6 +72,11 @@ const s = vi.hoisted(() => ({
   emailGate: null as null | ((args: Record<string, unknown>) => { data: unknown; error: Err | null }),
   /** `${table}.${op}` → errors handed out one per call, in order. */
   errors: {} as Record<string, Array<Err | null>>,
+  /** Columns a table does NOT have (a database a migration has not reached):
+   *  a read naming one answers 42703, an insert carrying one 42703, as
+   *  Postgres does — every time, not once (DEC-90 fix pass at the DF-P8
+   *  merge: the world before 20261256). Unset, every column exists. */
+  missingColumns: {} as Record<string, string[]>,
   /** `${table}.${op}` → the statement RUNS (the row is written) and then this
    *  error is what the caller sees: a write that committed but whose reply
    *  was lost on the way back. */
@@ -122,8 +127,15 @@ function chain(table: string, client: "admin" | "anon" | "caller") {
   let limitN: number | null = null;
   let single: "one" | "maybe" | null = null;
   let returning = false;
+  let selected = "*";
   const run = (): { data: unknown; error: Err | null } => {
     for (const h of s.hooks) h(table, op);
+    const missing = s.missingColumns[table] ?? [];
+    if (missing.length > 0) {
+      const named = op === "select" ? selected.split(",").map((c) => c.trim()) : op === "insert" || op === "update" ? (Array.isArray(payload) ? payload : [payload ?? {}]).flatMap((r) => Object.keys(r)) : [];
+      const col = missing.find((c) => named.includes(c));
+      if (col) return { data: null, error: { code: "42703", message: op === "select" ? `column ${table}.${col} does not exist` : `column "${col}" of relation "${table}" does not exist` } };
+    }
     const errs = s.errors[`${table}.${op}`];
     if (errs && errs.length > 0) {
       const e = errs.shift();
@@ -170,7 +182,7 @@ function chain(table: string, client: "admin" | "anon" | "caller") {
     return { data: out, error: null };
   };
   const q: Record<string, unknown> = {
-    select(_cols?: string) { if (op !== "select") returning = true; return q; },
+    select(cols?: string) { if (op !== "select") returning = true; else selected = cols ?? "*"; return q; },
     insert(p: Row | Row[]) { op = "insert"; payload = p; return q; },
     upsert(p: Row | Row[]) { op = "insert"; payload = p; return q; },
     update(p: Row) { op = "update"; payload = p; return q; },
@@ -391,6 +403,7 @@ beforeEach(() => {
   s.callerRpc = {};
   s.emailGate = null;
   s.errors = {};
+  s.missingColumns = {};
   s.lostReply = {};
   s.hooks = [];
   s.r2Fail = {};
@@ -2176,5 +2189,62 @@ describe("DF-P8 — a request filed into a project names it BY REFERENCE (ticket
     expect(res.status).toBe(201);
     expect((tickets()[0].metadata as Row).project_link).toMatchObject({ projectId: PROJECT, authority: "checkin", registerAuthority: true });
     expect(recordedRegisterAuthority(tickets()[0].metadata, PROJECT)).toBe(true);
+  });
+  // DEC-90 fix pass at the DF-P8 merge: until 20261256 section (4) is pasted,
+  // checkout_sessions.linked_ticket_id is the baseline key with NO delete
+  // action — a stamped session would make the request undeletable (23503).
+  // "Deploy first, then paste" is true only if nothing is stamped before the
+  // paste: exactly as before DF-P8.
+  it("PROJ-10, before 20261256 (tickets.project_id absent): an ad-hoc check-in files as today and stamps NO checkout session", async () => {
+    s.missingColumns = { tickets: ["project_id"] };
+    const res = await POST(req(checkin()));
+    expect(res.status).toBe(201);
+    expect(tickets()).toHaveLength(1);
+    expect("project_id" in tickets()[0]).toBe(false);
+    expect(activity()).toHaveLength(0);
+    for (const sess of s.tables.checkout_sessions as Row[]) expect(sess.linked_ticket_id).toBeUndefined();
+  });
+  it("PROJ-10, before 20261256: a check-in under a project checkout files without the project (retried once, as today) and stamps NO checkout session", async () => {
+    s.missingColumns = { tickets: ["project_id"] };
+    (s.tables.checkout_sessions as Row[])[0].project_id = PROJECT;
+    const res = await POST(req(checkin()));
+    expect(res.status).toBe(201);
+    expect(tickets()).toHaveLength(1);
+    expect("project_id" in tickets()[0]).toBe(false);
+    expect((tickets()[0].metadata as Row).project_link).toBeUndefined();
+    expect(activity()).toHaveLength(0);
+    for (const sess of s.tables.checkout_sessions as Row[]) expect(sess.linked_ticket_id).toBeUndefined();
+  });
+  it("PROJ-10: a probe of tickets.project_id that fails some other way (a timeout) is never read as 'applied' — no stamp, the request filed", async () => {
+    let armed = true;
+    s.hooks.push((t, op) => {
+      if (armed && t === "tickets" && op === "select" && tickets().length > 0) {
+        armed = false;
+        s.errors["tickets.select"] = [{ code: "57014", message: "canceling statement due to statement timeout" }];
+      }
+    });
+    const res = await POST(req(checkin()));
+    expect(res.status).toBe(201);
+    expect(armed).toBe(false);
+    expect(s.errors["tickets.select"]).toEqual([]); // the probe met the timeout
+    expect(tickets()).toHaveLength(1);
+    expect((s.tables.checkout_sessions as Row[])[0].linked_ticket_id).toBeUndefined();
+  });
+  it("PROJ-10, after 20261256: the same ad-hoc check-in and the project check-in are stamped (the world the earlier tests pin), and a project check-in needs no probe — its insert carried tickets.project_id", async () => {
+    const reads: string[] = [];
+    s.hooks.push((t, op) => { if (t === "tickets" && op === "select" && tickets().length > 0) reads.push(t); });
+    (s.tables.checkout_sessions as Row[])[0].project_id = PROJECT;
+    const res = await POST(req(checkin()));
+    expect(res.status).toBe(201);
+    expect(tickets()[0].project_id).toBe(PROJECT);
+    expect((s.tables.checkout_sessions as Row[])[0].linked_ticket_id).toBe(tickets()[0].id);
+    const withProject = reads.length;
+    s.tables.tickets = []; reads.length = 0;
+    delete (s.tables.checkout_sessions as Row[])[0].project_id;
+    delete (s.tables.checkout_sessions as Row[])[0].linked_ticket_id;
+    const adhoc = await POST(req(checkin()));
+    expect(adhoc.status).toBe(201);
+    expect((s.tables.checkout_sessions as Row[])[0].linked_ticket_id).toBe(tickets()[0].id);
+    expect(reads.length).toBe(withProject + 1); // the one probe, only where the insert carried no project
   });
 });

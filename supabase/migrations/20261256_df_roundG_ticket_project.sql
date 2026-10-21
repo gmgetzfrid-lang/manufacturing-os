@@ -48,7 +48,11 @@
 --       deleting the request clears the session's pointer, the session
 --       stays. Every foreign key on that column to tickets that is not
 --       already SET NULL is dropped first (by catalog, whatever its name);
---       a re-paste finds the SET NULL key and changes nothing.
+--       a re-paste finds the SET NULL key and changes nothing. The route
+--       writes that stamp ONLY once this file is applied (it sees
+--       tickets.project_id — this file is one transaction, so (1) is there
+--       exactly when (4) is); before the paste it stamps nothing, as before
+--       DF-P8, so no request is held by the baseline key.
 --
 -- PASTE / DEPLOY ORDER. Independent of every other ticket migration (it
 -- needs only tickets and projects). Either order with the DF-P8 deploy is
@@ -56,7 +60,10 @@
 --   * App deployed, not pasted: tickets.project_id is not there. Every read
 --     of it answers 42703 / PGRST204 (or a missing column in the row) and
 --     takes today's path: the create route files the request without it (a
---     request filed from a project says the link was not recorded yet), the
+--     request filed from a project says the link was not recorded yet) and
+--     stamps no checkout session's linked_ticket_id (the baseline key there
+--     has no delete action — a stamp would make the request undeletable,
+--     23503 — so the route stamps only once it sees the column), the
 --     link route answers 503 "needs database update 20261256", the ticket
 --     page reads the intake collision's project as today, the project page
 --     shows no requests card and no "open drafting requests" gate line.

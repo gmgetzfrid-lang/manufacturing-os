@@ -304,7 +304,12 @@ export const RESTORE_PARENT_RULES: Readonly<Record<string, ReadonlyArray<Restore
   checklist_items: fkRules("checklist_id>project_checklists"),
   checkout_episodes: fkRules("document_id>documents library_id>libraries"),
   checkout_messages: fkRules("document_id>documents parent_message_id>checkout_messages episode_id>checkout_episodes"),
-  checkout_sessions: fkRules("document_id>documents library_id>libraries linked_ticket_id>tickets project_id>projects episode_id>checkout_episodes"),
+  // drafting-flow DF-P8 (DEC-90 fix pass at the merge): the request a check-in
+  // session raised (20261256 re-creates the key ON DELETE SET NULL) is an
+  // optional pointer that gates no read — a session whose request is not in
+  // this workspace lands with it CLEARED, as the live key leaves it when the
+  // request is deleted. It was strict, refusing the whole session.
+  checkout_sessions: fkRules("document_id>documents library_id>libraries linked_ticket_id>tickets? project_id>projects episode_id>checkout_episodes"),
   collections: fkRules("library_id>libraries parent_id>collections"),
   companies: fkRules("quality_manual_doc_id>documents"),
   company_events: fkRules("company_id>companies project_id>projects"),

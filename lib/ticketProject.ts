@@ -35,6 +35,23 @@ export function isMissingProjectColumn(err: Err): boolean {
   return /project_id/.test(String(err.message ?? ""));
 }
 
+/** DEC-90 fix pass (DF-P8, merge time): is 20261256 applied? Asked of
+ *  tickets.project_id itself with a zero-row read. The paste is ONE
+ *  transaction (BEGIN … COMMIT), so the column is there exactly when its
+ *  section (4) — checkout_sessions.linked_ticket_id re-created ON DELETE SET
+ *  NULL — is there too. true: applied; false: not applied (42703 / PGRST204
+ *  naming the column); null: the read failed some other way and nothing is
+ *  known — a caller treats null as "not applied" (fail-safe). */
+export async function ticketProjectColumnPresent(client: DbClient): Promise<boolean | null> {
+  try {
+    const { error } = await client.from("tickets").select("project_id").limit(0);
+    if (!error) return true;
+    return isMissingProjectColumn(error) ? false : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The sentence a request filed with a project says before the paste. */
 export const PROJECT_NOT_RECORDED_WARNING =
   "The request was filed, but its project could not be recorded yet (database update 20261256 is not applied) — link it from the request page once it is.";

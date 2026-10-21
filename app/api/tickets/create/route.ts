@@ -12,7 +12,7 @@ import { declarationSignatureRefusal, isMissingReviewModelColumn, type Declarati
 import { formatTicketNumber, ticketNumberConfigFromRow } from "@/lib/ticketNumber";
 import { boundedSlaDays, defaultSlaTargetDate, slaTargetDateInDays } from "@/lib/notifications";
 import { missingLibraryColumn } from "@/lib/ticketLibrary";
-import { callerHoldsRegisterAuthority, isMissingProjectColumn, PROJECT_NOT_RECORDED_WARNING, PROJECT_LINK_CLOSED, recordProjectActivity } from "@/lib/ticketProject";
+import { callerHoldsRegisterAuthority, isMissingProjectColumn, PROJECT_NOT_RECORDED_WARNING, PROJECT_LINK_CLOSED, recordProjectActivity, ticketProjectColumnPresent } from "@/lib/ticketProject";
 import { resolveTicketRecipients } from "@/lib/ticketRouting";
 import { emit } from "@/lib/notify/dispatch";
 import { escapeHtml } from "@/lib/ticketTransitions";
@@ -512,7 +512,9 @@ async function create(
   //                    this check-in closes (PROJ-4) — the server's record,
   //                    whatever the body says; that session is stamped with
   //                    the request (checkout_sessions.linked_ticket_id,
-  //                    PROJ-10) once it is filed;
+  //                    PROJ-10) once it is filed — only once 20261256 is
+  //                    applied (before it, nothing is stamped, as before
+  //                    DF-P8);
   //   intake_collision the project checkOrigin verified (PROJ-12).
   // A request with no project is exactly today's request.
   const link = await resolveRequestProject(input, origin, orgId, caller.id, primary, caller_client);
@@ -920,10 +922,22 @@ async function create(
     });
     if (feedErr) warnings.push(`The request was filed into the project, but the project's feed was not told: ${feedErr}`);
   }
+  // PROJ-10 (DEC-90 fix pass at the merge): the stamp is written only once
+  // 20261256 is applied. Before it, checkout_sessions.linked_ticket_id is the
+  // baseline key with NO delete action, so a stamped session would make the
+  // request undeletable (23503) — before the paste nothing is stamped,
+  // exactly as before DF-P8. Applied is known for certain when the insert
+  // that landed carried tickets.project_id (no isMissingProjectColumn
+  // fallback); otherwise the column is asked (ticketProjectColumnPresent —
+  // the paste is one transaction, so the column means section (4) is there
+  // too). An unanswerable probe stamps nothing.
   if (origin.kind === "checkin" && link.sessionId) {
-    const { error: stampErr } = await supabaseAdmin.from("checkout_sessions")
-      .update({ linked_ticket_id: ticketId }).eq("id", link.sessionId).is("linked_ticket_id", null).select("id");
-    if (stampErr) console.warn(`[tickets/create] checkout session ${link.sessionId} could not be stamped with ${ticketNumber}: ${stampErr.message}`);
+    const applied = ("project_id" in row && !projectDropped) || (await ticketProjectColumnPresent(supabaseAdmin)) === true;
+    if (applied) {
+      const { error: stampErr } = await supabaseAdmin.from("checkout_sessions")
+        .update({ linked_ticket_id: ticketId }).eq("id", link.sessionId).is("linked_ticket_id", null).select("id");
+      if (stampErr) console.warn(`[tickets/create] checkout session ${link.sessionId} could not be stamped with ${ticketNumber}: ${stampErr.message}`);
+    }
   }
 
   // GAP-312 / WIRE-7 criterion 1 (DF-P6): the equipment the request names —
