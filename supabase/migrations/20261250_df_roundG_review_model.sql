@@ -28,8 +28,8 @@
 --                        after it (added DEFAULT false, then SET DEFAULT
 --                        true — the engineering_required pattern); never
 --                        changed (ticket_update_guard, every caller). DEC-33's
---                        limbs that bind the REQUESTER (the self-override
---                        block, the requester's recorded override, the
+--                        limbs that bind the REQUESTER (the requester's
+--                        recorded override with its required comment, the
 --                        engineer-pick question) apply only where it is true,
 --                        so a pre-paste row the backfill (2) or a later flag
 --                        sets engineering_required true keeps every requester
@@ -78,20 +78,24 @@
 --       review model. The create route
 --       (service role) is the one writer of a declaration.
 --
--- PASTE / DEPLOY ORDER. Paste AFTER 20261221 (the first statement refuses
--- otherwise, changing nothing). Either order with the DF-P6 deploy; deploy
--- first is the smoother:
---   * the DF-P6 app before this paste: the columns are not there — a ticket
---     read carries no engineering_required (the engine's seed decides: the
---     role-based gate, today's), a declaration's insert answers 42703 /
---     PGRST204 and the request is filed the usual way with a warning that
---     the declaration was not recorded, and a work / code class is not
+-- PASTE / DEPLOY ORDER: DEPLOY THE DF-P6 APP FIRST, THEN PASTE THIS FILE.
+-- Paste AFTER 20261221 (the first statement refuses otherwise, changing
+-- nothing).
+--   * Between the deploy and this paste the columns are not there — a
+--     ticket read carries no engineering_required (the engine's seed
+--     decides: the role-based gate, today's), a declaration's insert answers
+--     42703 / PGRST204 and the request is filed the usual way with a warning
+--     that the declaration was not recorded, and a work / code class is not
 --     recorded (warning). Nothing that works today stops working.
---   * this paste before the DF-P6 app: the app before DF-P6 never selects or
---     writes the columns, and the guard refuses only changes nobody makes;
---     requests filed in that window are engineered (default true), which the
---     DF-P6 app then honours — a Manager's request filed in that window
---     needs an engineer, as every request filed from the paste on does.
+--   * Do NOT paste before the deploy. The app before DF-P6 offers no
+--     declaration, so every request it files after this paste lands with
+--     review_model_filed true and engineering_required true. When the DF-P6
+--     app then deploys, such a request filed in that window by a requester
+--     the legacy gate exempts (a Manager, say) changes lane in flight: it
+--     needs an engineer, or a recorded management override with the
+--     requester's comment. If the paste did go first, deploy at once; the
+--     window's requests can be listed by created_at between the paste and
+--     the deploy.
 -- Never re-paste 20261221, 20261208, 20261195, 20261166 or 20261038 after
 -- this file (each puts back a guard without the ratchet and the declaration
 -- limb). Every later re-creation of ticket_update_guard starts from THIS
@@ -172,7 +176,7 @@ SELECT 40, 'inventory (before apply): workspaces storing their own engineer_gate
         OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.data->'grants') = 'array' THEN c.data->'grants' ELSE '[]'::jsonb END) g(e)
                     WHERE g.e->>'cap' = 'ticket.engineer_gate_exempt'))
 UNION ALL
-SELECT 41, 'inventory (before apply): GAP-105 — stored rules on a ticket.* capability scoped to a library (they never match: the request does not present its library; the permissions console refuses to save a policy that keeps one — remove the rule; expected 0)',
+SELECT 41, 'inventory (before apply): GAP-105 — stored rules on a ticket.* capability scoped to a library (they never match: the request does not present its library; a stored one rides along with every later save, grant and revoke, and only a NEW one is refused; expected 0)',
        COUNT(*)::text
   FROM org_configurations c,
        jsonb_each(CASE WHEN jsonb_typeof(c.data->'caps') = 'object' THEN c.data->'caps' ELSE '{}'::jsonb END) cap(k, v),

@@ -274,9 +274,11 @@ export type ResourceKey = (typeof RESOURCE_KEYS)[number];
  *  re-created for them. On any other capability a rule naming them is
  *  refused at save: the database's evaluator would read it as
  *  unconditional. DF-P6 fix pass 2 (review, major 3): on a `ticket.*`
- *  capability it is refused too, for now — the request does not present its
- *  classes to the policy yet (lib/workflow.ts ticketResource), so the rule
- *  would never apply; the refusal lifts when the mappers carry them. */
+ *  capability a NEW one is refused too, for now — the request does not
+ *  present its classes to the policy yet (lib/workflow.ts ticketResource),
+ *  so the rule would never apply; the refusal lifts when the mappers carry
+ *  them. Fix pass 4: only a new one (newDeadTicketRuleRefusal, at the policy
+ *  route) — a stored one never blocks another write. */
 export const TICKET_RESOURCE_KEYS = ["workClass", "codeClass"] as const;
 export type TicketResourceKey = (typeof TICKET_RESOURCE_KEYS)[number];
 /** Every key a `when` clause may name (the SQL-mirrored ones first). */
@@ -758,20 +760,13 @@ export function validateCapabilityPolicy(policy: CapabilityPolicy): string | nul
         if (!isTicketResourceCap(def.id) && TICKET_RESOURCE_KEYS.some((k) => (r.when?.[k]?.length ?? 0) > 0)) {
           return `${def.label}: a rule can be scoped to a work class or a code class on a drafting-request capability only.`;
         }
-        // DF-P6 fix pass 2 (review, major 3): a request presents only its
-        // type and its unit to the policy today (lib/workflow.ts
-        // ticketResource — the requests list and the inbox build their
-        // Ticket without the library or the classes; 99-fix-sequencing
-        // "Hand-offs from DF-P6"). A rule scoped to a library, a work class
-        // or a code class on a request capability would never match — it
-        // looks like a narrowing and does nothing — so it is refused until
-        // the request carries those fields.
-        if (isTicketResourceCap(def.id)) {
-          const dead = (["libraryId", ...TICKET_RESOURCE_KEYS] as const).filter((k) => (r.when?.[k]?.length ?? 0) > 0);
-          if (dead.length > 0) {
-            return `${def.label}: a rule on a drafting-request capability can be scoped to a request type or a unit only — requests do not yet present their ${dead.map((k) => (k === "libraryId" ? "library" : k === "workClass" ? "work class" : "code class")).join(" or ")} to the permission policy, so the rule would never apply.`;
-          }
-        }
+        // DF-P6 fix pass 4 (review, major 1): a library / work-class /
+        // code-class condition on a request capability is NOT refused here.
+        // This rail runs on every write — a grant, a revoke, the editor's
+        // save that preserves stored rules it cannot edit — and a rule that
+        // was valid when stored (RESOURCE_KEYS has carried libraryId since
+        // DEC-13 stage 2) must never block an unrelated write. The policy
+        // route refuses only a NEW such rule: newDeadTicketRuleRefusal.
         // QUAL-4: only a capability evaluated per project may be scoped to
         // one (PROJECT_SCOPED_CAPS). Anywhere else the rule never matches —
         // and the database's evaluator before 20261136 would read it as
@@ -797,6 +792,49 @@ export function validateCapabilityPolicy(policy: CapabilityPolicy): string | nul
         const label = CAPABILITY_DEFS.find((d) => d.id === g.cap)?.label ?? String(g.cap);
         return `${label}: a personal grant cannot be scoped to a project — only a capability decided per project can.`;
       }
+    }
+  }
+  return null;
+}
+
+/** The `when` keys a request capability's rule can name today and still
+ *  never match: a request presents only its type and its unit to the policy
+ *  (lib/workflow.ts ticketResource — the requests list and the inbox build
+ *  their Ticket without the library or the classes; 99-fix-sequencing
+ *  "Hand-offs from DF-P6"). */
+export const DEAD_TICKET_RULE_KEYS = ["libraryId", ...TICKET_RESOURCE_KEYS] as const;
+
+/** One rule as a comparable string: token and `when` lists are sets. */
+function ruleKey(r: CapabilityRule): string {
+  const asSet = (xs: readonly unknown[] | undefined) => [...new Set((xs ?? []).map(String))].sort();
+  const when = Object.keys(r?.when ?? {}).sort()
+    .filter((k) => (r.when?.[k as RuleKey]?.length ?? 0) > 0)
+    .map((k) => [k, asSet(r.when?.[k as RuleKey])]);
+  return JSON.stringify({ tokens: asSet(r?.tokens), when });
+}
+
+/** DF-P6 (AUTHZ-6 / GAP-105; fix pass 4, review major 1): a rule on a
+ *  `ticket.*` capability scoped to a library, a work class or a code class
+ *  would never match — it looks like a narrowing and does nothing — so a NEW
+ *  one is refused until the request carries those fields. A rule already
+ *  STORED (`storedCaps`, the row the write starts from) rides along
+ *  untouched: it was valid when it was written, it never applies, and a
+ *  grant, a revoke or an unrelated save must not be refused because of it
+ *  (20261250 inventory row 41 counts them). Returns the refusal, or null. */
+export function newDeadTicketRuleRefusal(
+  caps: CapabilityPolicy["caps"] | null | undefined,
+  storedCaps: CapabilityPolicy["caps"] | null | undefined,
+): string | null {
+  for (const def of CAPABILITY_DEFS) {
+    if (!isTicketResourceCap(def.id)) continue;
+    const v = caps?.[def.id];
+    if (!isRuleArray(v)) continue;
+    const prior = storedCaps?.[def.id];
+    const stored = new Set(isRuleArray(prior) ? prior.map(ruleKey) : []);
+    for (const r of v) {
+      const dead = DEAD_TICKET_RULE_KEYS.filter((k) => (r?.when?.[k]?.length ?? 0) > 0);
+      if (dead.length === 0 || stored.has(ruleKey(r))) continue;
+      return `${def.label}: a rule on a drafting-request capability can be scoped to a request type or a unit only — requests do not yet present their ${dead.map((k) => (k === "libraryId" ? "library" : k === "workClass" ? "work class" : "code class")).join(" or ")} to the permission policy, so the rule would never apply.`;
     }
   }
   return null;

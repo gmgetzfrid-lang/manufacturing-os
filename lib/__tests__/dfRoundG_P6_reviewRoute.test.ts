@@ -100,14 +100,12 @@ beforeEach(() => {
 });
 
 describe("TIER-1 / DEC-33 — the gate reads the work, at the route", () => {
-  it("a Manager's UNDECLARED request filed after the paste (engineering_required true) cannot be approved to IFC by its requester — refused, nothing written", async () => {
+  it("a Manager's UNDECLARED request filed after the paste (engineering_required true) is never plainly approved to IFC by its requester: the minor correction is refused (403), and an approval without a comment is refused (400, the override needs the why — fix pass 4, DEC-90 ruling (3)); nothing written", async () => {
     seed("Manager");
     state.user = { id: "req-1" };
     state.rows.tickets = [ticketRow({ engineering_required: true, review_model_filed: true, like_in_kind_statement: null, like_in_kind_declared_at: null })];
-    for (const action of ["approve_draft_ifc", "approve_minor_correction"]) {
-      const res = await post({ ticketId: "t1", actionType: action, comment: "typo fixed in the title block" });
-      expect(res.status, action).toBe(403);
-    }
+    expect((await post({ ticketId: "t1", actionType: "approve_minor_correction", comment: "typo fixed in the title block" })).status).toBe(403);
+    expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(400);
     expect(updates()).toEqual([]);
   });
   it("a declared like-in-kind request filed by a Maintenance planner (not exempt under the legacy gate) is approved by its requester straight to IFC — no engineer, no added wait", async () => {
@@ -153,7 +151,9 @@ describe("fix pass (review) — the requester's own override, at the route (issu
     state.user = { id: "req-1" };
     state.rows.tickets = [ticketRow(undeclared)];
     expect((await post({ ticketId: "t1", actionType: "request_final_engineer_approval", engineer: { id: "d-1", name: "d", email: "d@x" } })).status).toBe(403);
-    const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    // fix pass 4 (review, major 2): the requester's own override needs the why
+    expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(400);
+    const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc", comment: "no engineer on staff; like-for-like gasket" });
     expect(res.status).toBe(200);
     const u = updates()[0];
     expect(u.status).toBe("PENDING_IFC");
@@ -168,21 +168,36 @@ describe("fix pass (review) — the requester's own override, at the route (issu
     state.rows.e_signatures = [];
     state.user = { id: "req-1" };
     state.rows.tickets = [ticketRow(undeclared)];
-    expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(200);
+    expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc", comment: "nobody can be picked" })).status).toBe(200);
   });
-  it("issue 2: a workspace of 3+ with an engineer to pick: the Manager requester's own override is refused (403, the second-person reason) at PENDING_REVIEW and at PENDING_FINAL_APPROVAL; another manager's is taken", async () => {
+  it("fix pass 4 (review, major 2 — DEC-90 ruling (3) as given): in a workspace of 3+ with an engineer to pick, the Manager requester's own override is TAKEN — at PENDING_REVIEW and at PENDING_FINAL_APPROVAL — with a required comment, recorded as an override (history, marker, authority.override naming the self-override); another manager's needs no comment", async () => {
     seed("Manager");
     state.user = { id: "req-1" };
     state.rows.tickets = [ticketRow(undeclared)];
-    expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(403);
-    state.rows.tickets = [ticketRow({ ...undeclared, status: "PENDING_FINAL_APPROVAL", assigned_engineer_id: "e-1" })];
-    for (const action of ["override_engineer_final", "approve_minor_correction"]) {
-      const res = await post({ ticketId: "t1", actionType: action, comment: "typo" });
-      expect(res.status, action).toBe(403);
-      expect((await res.json()).error, action).toMatch(/Needs a second person: this request requires an engineer's sign-off, and you asked for this work/);
-    }
+    expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(400);
     expect(updates()).toEqual([]);
+    const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc", comment: "the engineer is away; identical replacement" });
+    expect(res.status).toBe(200);
+    const u = updates()[0];
+    expect(u.status).toBe("PENDING_IFC");
+    expect("engineer_approved_at" in u).toBe(false);
+    expect(lastHistory(u).details).toMatch(/Management override — issued without the engineer's sign-off/);
+    expect((u.metadata as Record<string, unknown>).engineering_override).toMatchObject({ uid: "req-1", action: "approve_draft_ifc" });
+    const row = audits().find((a) => a.action === "TICKET_APPROVE_DRAFT_IFC")!;
+    expect((row.details.authority as { override?: { of: string; reason: string } }).override).toMatchObject({ of: "engineering_sign_off", reason: expect.stringMatching(/the request's requester \(a self-override/) });
+    for (const action of ["override_engineer_final", "approve_minor_correction"]) {
+      state.calls = [];
+      state.rows.tickets = [ticketRow({ ...undeclared, status: "PENDING_FINAL_APPROVAL", assigned_engineer_id: "e-1" })];
+      expect((await post({ ticketId: "t1", actionType: action })).status, action).toBe(400);
+      const ok = await post({ ticketId: "t1", actionType: action, comment: "engineer unavailable this week" });
+      expect(ok.status, action).toBe(200);
+      expect(updates()[0].status, action).toBe("PENDING_IFC");
+      expect("engineer_approved_at" in updates()[0], action).toBe(false);
+      expect((updates()[0].metadata as Record<string, unknown>).engineering_override, action).toMatchObject({ uid: "req-1", action });
+    }
+    state.calls = [];
     state.user = { id: "sup-1" };
+    state.rows.tickets = [ticketRow({ ...undeclared, status: "PENDING_FINAL_APPROVAL", assigned_engineer_id: "e-1" })];
     expect((await post({ ticketId: "t1", actionType: "override_engineer_final" })).status).toBe(200);
   });
 });
@@ -205,12 +220,39 @@ describe("fix pass (review, minor 11) — a declaration stands only on its e-sig
     expect(res.status).toBe(200);
     expect(audits().find((a) => a.action === "TICKET_REQUEST_FINAL_ENGINEER_APPROVAL")?.details).toMatchObject({ declarationUnverified: "missing" });
   });
-  it("a signature read that fails fails closed (undeclared)", async () => {
+  it("fix pass 4 (review, minor 3): a signature read that FAILS is a retryable 503 for every action the declaration decides — never a 403, and never an in-memory 'required' a write could make permanent", async () => {
     seed("Maintenance");
     state.errors.e_signatures = { code: "57014", message: "timeout" };
     state.user = { id: "req-1" };
     state.rows.tickets = [ticketRow({ requester_role: "Maintenance", ...DECLARED })];
-    expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(403);
+    const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    expect(res.status).toBe(503);
+    expect((await res.json()).code).toBe("declaration_unreadable");
+    expect(updates()).toEqual([]);
+    // an action the declaration does not decide carries on (evaluated as declared)
+    expect((await post({ ticketId: "t1", actionType: "request_revision", comment: "the north arrow is missing" })).status).toBe(200);
+  });
+  it("fix pass 4 (review, minor 3): a declared engineering-first request filed under the review model — the type's mandatory request_eng_review during a signature read error answers 503 and writes nothing (the declaration is not lost); once the read answers, the loop runs and leaves engineering_required alone; flag_engineering answers 503 too", async () => {
+    seed("Maintenance");
+    state.rows.org_configurations = [{ org_id: "o1", key: "drafting", data: { requestTypes: { options: [{ value: "ISO", label: "ISO", engineeringFirst: true }] } } }];
+    state.user = { id: "ds-1" };
+    const row = ticketRow({ status: "PENDING_ASSIGNMENT", requester_role: "Maintenance", assigned_drafter_id: null, ...DECLARED, review_model_filed: true });
+    state.rows.tickets = [row];
+    state.errors.e_signatures = { code: "57014", message: "timeout" };
+    const body = { ticketId: "t1", actionType: "request_eng_review", comment: "type routes through engineering first", engineer: { id: "e-1", name: "E", email: "e-1@x.io" } };
+    const refused = await post(body);
+    expect(refused.status).toBe(503);
+    expect((await refused.json()).code).toBe("declaration_unreadable");
+    expect(updates()).toEqual([]);
+    state.rows.tickets = [{ ...row, status: "DRAFTING", assigned_drafter_id: "d-1" }];
+    expect((await post({ ticketId: "t1", actionType: "flag_engineering", comment: "different rating" })).status).toBe(503);
+    expect(updates()).toEqual([]);
+    delete state.errors.e_signatures;
+    state.rows.tickets = [row];
+    const ok = await post(body);
+    expect(ok.status).toBe(200);
+    expect(updates()[0].status).toBe("PENDING_ENG_TEAM");
+    expect("engineering_required" in updates()[0]).toBe(false);
   });
 });
 
@@ -412,12 +454,13 @@ describe("fix pass 2 (review, issue 1) — at the route, a pre-paste row the bac
     state.calls = [];
     expect((await post({ ticketId: "t1", actionType: "approve_minor_correction", comment: "typo in the title block" })).status).toBe(200);
   });
-  it("the same request filed under the review model is the binding case (403)", async () => {
+  it("the same request filed under the review model: the requester's override is taken with a comment (fix pass 4, DEC-90 ruling (3)) — refused without one (400)", async () => {
     seed("Manager");
     state.user = { id: "req-1" };
     state.rows.tickets = [ticketRow({ requester_role: null, status: "PENDING_FINAL_APPROVAL", assigned_engineer_id: "e-1", engineering_required: true, review_model_filed: true, like_in_kind_statement: null, like_in_kind_declared_at: null })];
-    expect((await post({ ticketId: "t1", actionType: "override_engineer_final" })).status).toBe(403);
+    expect((await post({ ticketId: "t1", actionType: "override_engineer_final" })).status).toBe(400);
     expect(updates()).toEqual([]);
+    expect((await post({ ticketId: "t1", actionType: "override_engineer_final", comment: "engineer away" })).status).toBe(200);
   });
 });
 

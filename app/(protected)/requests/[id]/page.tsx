@@ -21,7 +21,7 @@ import { flaggedRequestTypes } from '@/lib/requestTypes';
 import { ticketStatusLabel, ticketUnitDisplay } from '@/lib/ticketStatusLabels';
 import { attentionLabel, holdersFor, waitingSince, waitedFor, explainNoActions } from '@/lib/ticketAttention';
 import { drafterCandidates, NO_DRAFTER_CANDIDATES, missingRequiredFile, triagePayload, customCategorySections, projectRefOf, engineerCandidates, type DrafterCandidate } from '@/lib/ticketPage';
-import { reviewModelFieldsFromRow, engineerPickAvailable as pickAvailableFrom, engineeringOverrideOf } from '@/lib/reviewModel';
+import { reviewModelFieldsFromRow, engineerPickAvailable as pickAvailableFrom, engineeringOverrideOf, ticketAsDeclarationChecked, type DeclarationCheck } from '@/lib/reviewModel';
 import { loadPickerMembers } from '@/lib/ticketPickerMembers';
 import { loadRoutingContext, queuePool } from '@/lib/ticketRouting';
 import { unitOptionsFor, type UnitOption } from '@/lib/ticketCreate';
@@ -1177,6 +1177,10 @@ export default function TicketDetailView() {
   // engineer at all? Read only where the route reads it
   // (engineerPickQuestionApplies); undefined = not asked / unknown.
   const [engineerPickAvailable, setEngineerPickAvailable] = useState<boolean | undefined>(undefined);
+  // DF-P6 fix pass 4 (review, minor 6): the DeclarationCard's e-signature
+  // check — a declaration that does not stand is evaluated as undeclared
+  // here too (ticketAsDeclarationChecked), as the route does.
+  const [declarationCheck, setDeclarationCheck] = useState<DeclarationCheck | 'pending'>('pending');
   useEffect(() => {
     if (!activeOrgId) return;
     let alive = true;
@@ -1544,7 +1548,7 @@ export default function TicketDetailView() {
   // as the workflow route, so the override and "Send for Engineer Final
   // Approval" render exactly as the route will take them.
   const pickQuestion = !!ticket && activeRole !== null && !policyFault
-    && engineerPickQuestionApplies(ticket, uid, activeRole, roles, capPolicy, requesterRoles);
+    && engineerPickQuestionApplies(ticketAsDeclarationChecked(ticket, declarationCheck), uid, activeRole, roles, capPolicy, requesterRoles);
   useEffect(() => {
     let alive = true;
     if (!pickQuestion || !ticket || !ticketOrgId) { setEngineerPickAvailable(undefined); return; }
@@ -2308,7 +2312,7 @@ export default function TicketDetailView() {
 
   // SESS-6: no role known (activeRole null) offers no action at all — the
   // engine is asked only with a real role.
-  const availableActions = activeRole === null ? [] : WorkflowEngine.getActions(ticket, activeRole, uid ?? undefined, capPolicy, {
+  const availableActions = activeRole === null ? [] : WorkflowEngine.getActions(ticketAsDeclarationChecked(ticket, declarationCheck), activeRole, uid ?? undefined, capPolicy, {
     reviewRouted, // TIER-5 (DF-P5 fix pass 3): a routed review with no roster
     reviewRoutedReason,
     userRoles: roles,
@@ -2836,7 +2840,7 @@ export default function TicketDetailView() {
         </div>
       )}
 
-      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><DeclarationCard ticket={ticket} /></div>
+      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><DeclarationCard ticket={ticket} onDeclarationCheck={setDeclarationCheck} /></div>
       <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><TicketRosterPanel ticket={ticket} orgId={activeOrgId} uid={uid} userName={(member?.displayName ?? '').trim() || (userEmail?.split('@')[0] ?? '').trim() || null} capPolicy={capPolicy} activeMemberCount={activeMemberCount} requesterRoles={requesterRoles} reviewRouted={reviewRouted} reviewRoutedReason={reviewRoutedReason} /></div>
 
       {ticket.status === 'REVISION_REQ' && latestRevision && (

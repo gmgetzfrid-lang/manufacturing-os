@@ -138,6 +138,14 @@ const INTENT_BRIDGE_CHUNK = 100;
  *  names the drafts the approval was given on. */
 const APPROVING_ACTIONS: ReadonlySet<string> = new Set(["approve_draft_ifc", "engineer_approve_final", "approve_minor_correction", "override_engineer_final"]);
 
+/** DF-P6 fix pass 4 (review, minor 3): the actions a like-in-kind
+ *  declaration decides — whether the request may issue without an
+ *  engineer (the issuing approvals, and a roster sign-off that may complete
+ *  the review), and whether a scope review or the late flag binds the
+ *  requirement. With the declaration's signature unreadable they answer 503,
+ *  never a guess. */
+const DECLARATION_DECIDES: ReadonlySet<string> = new Set([...ISSUING_APPROVALS, "sign_slot", "request_eng_review", "flag_engineering"]);
+
 /** SM-12: a member's name as the app shows it — display name, else the
  *  local part of their email; null when the membership row carries neither. */
 function memberName(m: { display_name?: unknown; email?: unknown } | null | undefined): string | null {
@@ -398,11 +406,12 @@ export async function POST(req: NextRequest) {
     : [callerRole];
 
   // GAP-2/DEC-12: the independence predicates bind at >= 3 active members.
-  // DF-P6 fix pass 2 (review, major 2): the count is CHECKED. Since DF-P6 it
-  // also decides the requester's own override of the engineering sign-off
-  // (lib/workflow.ts selfOverrideBlocked and the PENDING_REVIEW override),
-  // so a failed read never reads as "a small org": an issuing approval or
-  // an override is refused (503, nothing written); any other action is
+  // DF-P6 fix pass 2 (review, major 2): the count is CHECKED. It decides
+  // who may approve (the producer-is-checker block) and whether an engineer
+  // can be picked for the requester's override (lib/workflow.ts — fix pass
+  // 4 no longer refuses that override by size, DEC-90 ruling (3)), so a
+  // failed read never reads as "a small org": an issuing approval or an
+  // override is refused (503, nothing written); any other action is
   // evaluated with separation of duties ACTIVE (fail closed) and its audit
   // row says the count was not checked.
   const { count: memberCountRead, error: memberCountErr } = await supabaseAdmin
@@ -479,7 +488,15 @@ export async function POST(req: NextRequest) {
   // whose signature is not on record — a restored or hand-written row; the
   // insert guard exempts the service role and a backup carries no
   // e_signatures — is evaluated as UNDECLARED: engineering is required.
-  // Read only for a declared ticket; a read that fails fails closed too.
+  // Read only for a declared ticket.
+  // DF-P6 fix pass 4 (review, minor 3): a read that FAILS is not evidence
+  // the signature is missing. It never changes what the engine and
+  // computeTransition see (an in-memory "required" would let a
+  // request_eng_review write engineering_required = true for good, losing
+  // the declaration over a read error); instead every action the
+  // declaration decides — an issuing approval, request_eng_review,
+  // flag_engineering — answers 503 "try again", nothing written. Only a
+  // signature KNOWN not to stand ("missing") is evaluated as undeclared.
   let declarationUnverified: "missing" | "unchecked" | null = null;
   if (ticket.engineeringRequired === false && isDeclaredLikeInKind(ticket)) {
     const sigId = ticket.likeInKindSignatureId ?? "";
@@ -489,7 +506,14 @@ export async function POST(req: NextRequest) {
     // The request page's card asks the same question (declarationSignatureStands).
     if (dsigErr) declarationUnverified = "unchecked";
     else if (!declarationSignatureStands(dsig as DeclarationSignatureRow | null, { id: body.ticketId, orgId: ticket.orgId, likeInKindDeclaredBy: ticket.likeInKindDeclaredBy })) declarationUnverified = "missing";
-    if (declarationUnverified) ticket.engineeringRequired = true;
+    if (declarationUnverified === "missing") ticket.engineeringRequired = true;
+  }
+  if (declarationUnverified === "unchecked" && DECLARATION_DECIDES.has(body.actionType)) {
+    console.error(`[workflow-action] declaration signature unreadable for ticket ${body.ticketId}`);
+    return NextResponse.json(
+      { error: "This request's like-in-kind declaration could not be checked, so the action was not applied (the declaration decides whether an engineer must sign). Try again in a moment.", code: "declaration_unreadable" },
+      { status: 503 },
+    );
   }
   // DF-P6 fix pass (review, issues 1 and 2): can the requester pick an
   // engineer at all? Read only where it decides something
@@ -589,7 +613,10 @@ export async function POST(req: NextRequest) {
   const authority = {
     // SM-3 (DF-P6, DEC-90 ruling (3)): a management override of the
     // engineering sign-off is named as one in the attempt row.
-    ...(action.engineeringOverride ? { override: { of: "engineering_sign_off", reason: "The request requires engineering review and the actor holds no Engineer role and does not occupy the engineer's place." } } : {}),
+    // Fix pass 4 (review, major 2 — DEC-90 ruling (3)): the requester's own
+    // override is named as one (identity carries "requester"; the comment,
+    // required for it, is the why).
+    ...(action.engineeringOverride ? { override: { of: "engineering_sign_off", reason: `The request requires engineering review and the actor holds no Engineer role and does not occupy the engineer's place.${ticket.requesterId === caller.id ? " The actor is the request's requester (a self-override, with the actor's comment)." : ""}` } } : {}),
     via: usedGrants.length > 0 ? "grant" : "role",
     ...(usedGrants.length > 0 ? { grants: usedGrants.map((g) => ({ cap: g.cap, expiresAt: g.expiresAt ?? null, grantedBy: g.grantedBy ?? null, grantedAt: g.grantedAt ?? null, note: g.note ?? null })) } : {}),
     ...(identity.length > 0 ? { identity } : {}),
@@ -1139,6 +1166,9 @@ export async function POST(req: NextRequest) {
     // SM-3 (DF-P6): the engine marked this action an override of the
     // engineering sign-off for THIS caller on THIS ticket.
     engineeringOverride: action.engineeringOverride === true,
+    // Fix pass 4 (review, minor 5): a management issue of a request that
+    // does not require engineering — no stamp, no override marker.
+    withoutEngineerSignOff: action.withoutEngineerSignOff === true,
     reviewClass,
     reviewModelColumns,
     // DF-P6 fix pass 2 (minor 7): the engineering-first type's mandatory loop

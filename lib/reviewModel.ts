@@ -308,6 +308,21 @@ export function declarationSignatureRefusal(
  *  absent or not matching ("missing"), or the read failed ("unchecked"). */
 export type DeclarationCheck = "verified" | "missing" | "unchecked";
 
+/** DF-P6 fix pass 4 (review, minor 6): the ticket the engine should see once
+ *  its declaration's e-signature has been checked — as the workflow route
+ *  sees it. A declared request whose signature is KNOWN not to stand
+ *  ("missing") is evaluated as undeclared (engineering required); every
+ *  other answer (verified, unchecked — the route answers 503 there — or not
+ *  yet read) leaves the ticket as it is. The request page applies it before
+ *  getActions so its buttons match the route. */
+export function ticketAsDeclarationChecked<T extends Pick<Ticket, "engineeringRequired" | "likeInKindDeclaredAt" | "likeInKindStatement">>(
+  ticket: T,
+  check: DeclarationCheck | "pending" | null | undefined,
+): T {
+  if (check !== "missing" || ticket.engineeringRequired !== false || !isDeclaredLikeInKind(ticket)) return ticket;
+  return { ...ticket, engineeringRequired: true };
+}
+
 /** DF-P6 fix pass (minor 11) / fix pass 2 (minor 5): does a filed request's
  *  declaration stand on its e-signature? The workflow route (which treats a
  *  declaration that does not as undeclared) and the request page's card

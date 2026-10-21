@@ -62,6 +62,11 @@ export interface TransitionInput {
    *  sign-off (lib/workflow.ts WorkflowAction.engineeringOverride) — its
    *  history line says so, and it never stamps engineer_approved_at. */
   engineeringOverride?: boolean;
+  /** DF-P6 fix pass 4 (review, minor 5): a management issue at
+   *  PENDING_FINAL_APPROVAL of a request that does NOT require engineering
+   *  review (lib/workflow.ts WorkflowAction.withoutEngineerSignOff) — never
+   *  stamps engineer_approved_at, and carries no override marker. */
+  withoutEngineerSignOff?: boolean;
   /** GAP-101 / TIER-4 (DF-P6): the work class / code class triage records
    *  with `assign`, `request_eng_review` or `flag_engineering` at
    *  PENDING_ASSIGNMENT — options of the workspace's own lists, checked by
@@ -654,7 +659,9 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       // approval — stamp it, or the sign-off indicator stays "pending" forever.
       // SM-3 (DF-P6): never for a management override — an engineering
       // sign-off nobody with an Engineer role gave is not stamped.
-      if (ticket.status === "PENDING_FINAL_APPROVAL" && !input.engineeringOverride) updates.engineer_approved_at = now;
+      // Fix pass 4 (review, minor 5): nor for a management issue of a
+      // request that does not require one (withoutEngineerSignOff).
+      if (ticket.status === "PENDING_FINAL_APPROVAL" && !input.engineeringOverride && !input.withoutEngineerSignOff) updates.engineer_approved_at = now;
       if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
       break;
     case "request_final_engineer_approval":
@@ -685,7 +692,9 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
     case "override_engineer_final":
       // SM-3 (DF-P6, DEC-90 ruling (3)): management issues without the
       // engineer's sign-off — engineer_approve_final's effect WITHOUT
-      // engineer_approved_at; the history line names it an override.
+      // engineer_approved_at; the history line names it an override (only
+      // when the engine marked it one — fix pass 4, review minor 5: on a
+      // request that does not require engineering it is a neutral issue).
       updates.status = "PENDING_IFC";
       issueRev(); // SM-5: never a label the history already issued
       historyEntry.action = `${input.actionLabel} — issued Rev ${updates.deliverable_rev}`;

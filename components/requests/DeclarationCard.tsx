@@ -77,7 +77,10 @@ export function engineeringLine(
   return { required: null, text: "Filed before like-in-kind declarations existed: whether an engineer must sign off follows the workspace's earlier rule (the requester's roles)." };
 }
 
-export default function DeclarationCard({ ticket }: { ticket: Ticket }) {
+/** `onDeclarationCheck` (DF-P6 fix pass 4, review minor 6): the card's
+ *  e-signature check, shared with the request page so its buttons are
+ *  evaluated on the ticket the route evaluates (ticketAsDeclarationChecked). */
+export default function DeclarationCard({ ticket, onDeclarationCheck }: { ticket: Ticket; onDeclarationCheck?: (check: DeclarationCheck | "pending") => void }) {
   const [equipment, setEquipment] = useState<EquipmentRow[] | null>(null);
   const [sheets, setSheets] = useState<Map<string, TagLookupHit>>(new Map());
   const [equipmentError, setEquipmentError] = useState<string | null>(null);
@@ -98,6 +101,7 @@ export default function DeclarationCard({ ticket }: { ticket: Ticket }) {
     })();
     return () => { alive = false; };
   }, [declared, ticket.id, ticket.orgId, ticket.likeInKindSignatureId, ticket.likeInKindDeclaredBy]);
+  useEffect(() => { onDeclarationCheck?.(declared ? declaration : "pending"); }, [declared, declaration, onDeclarationCheck]);
 
   useEffect(() => {
     if (!ticket.id) return;
