@@ -366,7 +366,7 @@ exists; the request form does not use it.
 ## DCW-6 · The library's own review policy is invisible to the drafting flow
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance
 - **Locations:**
@@ -395,6 +395,19 @@ converge on one implementation.
 **Done when.** A ticket targeting a library with a configured review policy
 surfaces that policy's reviewers, before the deliverable is approved rather than
 after.
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P5 ROSTER. Reproduced on the base: `lib/workflow.ts:194` — `getActions(ticket, userRole, userId, policy, ctx)`, no library and no review control.
+
+Landed:
+- The request's library (DF-P4's `tickets.library_id`) now resolves BOTH policies along the one chain before approval: the routing table decides who signs the drafting deliverable (`lib/routingControl.ts` `effectiveRoutingForTicket`, the roster — `TIER-5`), and the library's own review policy is surfaced on the request: `components/requests/TicketRosterPanel.tsx` resolves it with `lib/reviewControl.ts` `effectiveReviewControlForDocument({ libraryId })` and names its reviewers with `expandReviewers` (called, not forked) — "This request's library reviews revisions before they publish (always / when the publisher routes it): <names>", shown from the moment the request has a library, before any approval. A policy that cannot be read is said, never hidden.
+- A library can route its reviewers onto the ticket itself (a routing slot filled by the same roles / people), so the people its review policy names can sign the deliverable before it is approved (`RoutingControlSection`, beside the review-policy editor).
+
+Tests: `lib/__tests__/dfRoundG_P5_rosterPanel.test.ts` ("DCW-6 (source pin …)"); `lib/__tests__/dfRoundG_P5_routing.test.ts` (the resolver block).
+
+**Done-when.**
+- ✓ A ticket targeting a library with a configured review policy surfaces that policy's reviewers, before the deliverable is approved. *Verified by a source pin plus the panel's first-paint tests — the default suite renders server-side, where the panel's read effect does not run; no DOM harness exists in this repository (DEC-29 item 2: said, not claimed as a behavioural test).*
+
+**Scope / residual.** None for this finding. `getActions`' signature is unchanged (the roster rides the ticket row); the capability resource still does not carry `libraryId` (`99-fix-sequencing.md` "Hand-offs from DF-P4" row 2 — see the DF-P5 hand-off notes there).
 
 ---
 

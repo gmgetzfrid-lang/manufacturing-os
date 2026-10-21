@@ -140,6 +140,15 @@ Splitting them costs no hop if the reviewer roster runs in parallel (`TIER-5`).
 **Done when.** The requester is asked a question they can answer, and the
 technical review is not blocked on their answering it.
 
+**Partial (2026-10-21, drafting-flow Round G).** DF-P5 ROSTER. Reproduced on the base: `lib/workflow.ts:406` — `PENDING_REVIEW` is the requester's (`canActAsRequester`), and the engineer review follows it serially.
+
+Landed — on a routed library the two questions are two slots on one parallel roster: a slot filled by the requester's identity ("Is this what you asked for?") and the technical slot(s) ("Is it correct?"), signed in any order (`lib/workflow.ts` `slotSignPlan`, `getActions` `:520`; the panel words each slot by its question — `components/requests/TicketRosterPanel.tsx` `slotQuestion`). The technical slot never waits on the requester's answer (`lib/__tests__/dfRoundG_P5_routing.test.ts` "FRIC-2: the requester's own slot is a separate question; the technical slot is not waiting on it"; the route test's either-order case). A routing table that does not roster the requester at all leaves them a Request Revision that is not waited on.
+
+**Done-when.**
+- ✗ in part "The requester is asked a question they can answer, and the technical review is not blocked on their answering it" — holds on every request in a routed library; a workspace that configured no routing keeps today's serial review (DEC-90 ruling (2): the seed is byte-for-byte today's behaviour; anything else is configuration).
+
+**Owner of the remainder:** drafting-flow **DF-P6** (the review model: `TIER-1` repoints the engineering gate, after `GAP-101`), or an integrator ruling under DEC-90 that the seed itself becomes the parallel two-slot roster. Stays OPEN.
+
 ---
 
 ## FRIC-3 · The intake form demands a unit before it will accept the request
@@ -240,12 +249,26 @@ removes both this friction **and** that hole, because nobody is choosing by hand
 2. Where a person must be chosen, the choice is defaulted from the library's
    review policy and the work class, and the picker shows why.
 
+**Partial (2026-10-21, drafting-flow Round G).** DF-P5 ROSTER. Reproduced on the base: `lib/workflow.ts:418` (`request_final_engineer_approval`, `requiresEngineerPick: true`); the picker listed every engineer by email prefix (`components/requests/EngineerPickerModal.tsx:106`) from an unpaged read with its own filter (`:88`, `:98`).
+
+Landed:
+- **Under a routed library nobody picks a reviewer.** The assigner / requester flags nothing and chooses no one: the routing table resolves the occupants of every slot (roles, named people, a capability, the requester's identity) when the draft is submitted, and the roster panel shows them read-only (`lib/ticketRoster.ts` `openRoster`, `components/requests/TicketRosterPanel.tsx`). `request_final_engineer_approval` / `requiresEngineerPick` are not offered on a roster (`lib/workflow.ts:520`).
+- **Where a person must still be chosen (no routing configured — DEC-90 ruling (2), the fallback) the picker offers exactly who the route accepts**, by name: `lib/ticketPage.ts` `engineerCandidates` / `engineerPickRefusal` — the route's own rule, now called by the route too (`app/api/tickets/workflow-action/route.ts:510`) — over a keyset-paged member read (`lib/ticketPickerMembers.ts`); the row shows the member's display name, email and engineer role (`ROUTE-8`).
+
+Tests: `lib/__tests__/dfRoundG_P5_routing.test.ts` ("TIER-5 done-when 3 …" — no pick on a roster; "ROUTE-8 remainder …").
+
+**Done-when.**
+- ✗ in part (1) A requester is never required to name a reviewer — holds on every request in a routed library; in a workspace that configured no routing the requester still picks the engineer at `PENDING_REVIEW` (today's path, kept by DEC-90 ruling (2): an unconfigured workspace routes exactly as today).
+- ✗ in part (2) Where a person must be chosen, the choice is defaulted from the library's review policy and the work class, and the picker shows why — the picker now offers only who the route accepts and shows names, and a library can derive the reviewers instead (routing); defaulting from the work class needs the class (`GAP-101`, not built).
+
+**Owner of the remainder:** drafting-flow **DF-P6** (`GAP-101` → `TIER-1`: the engineering gate keyed to the work class, which moves the fallback pick onto the class / the router), with an integrator ruling under DEC-90 if the unconfigured default itself is to change. Stays OPEN.
+
 ---
 
 ## FRIC-5 · The drafter is interrupted twice for one deliverable
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** friction
 - **Locations:**
@@ -274,6 +297,20 @@ skipped correctly.
 **Done when.** A clean approval with no corrections does not require the drafter
 to re-enter the ticket to produce a file that already exists — or, if it must,
 the ticket says plainly what is different about the final package.
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P5 ROSTER, on DEC-90 ruling (1) (opt-in per ticket by the drafter; default OFF = today's `PENDING_IFC` hop). Reproduced on the base: `lib/workflow.ts:532` — after any approval the ticket returns to the drafter at `PENDING_IFC` for `submit_final` and a fresh upload.
+
+Landed:
+- The drafter marks the draft under review **issue-ready**: `mark_issue_ready` / `clear_issue_ready`, optional actions offered to the assigned drafter while the draft is under review (`lib/workflow.ts:757`), or `submit_draft` with `issueReady: true` (the API's at-submit path, `lib/ticketTransitions.ts` `submit_draft`). The mark is bound to the revision label it was made on (`issueReadyFor`, `:280`), so any new submission clears it.
+- With the mark, the approval that issues the draft (`approve_draft_ifc`, `engineer_approve_final`, or the roster's last sign-off) records the approved Draft as the Final — same bytes, same storage key, a new id, the issued label, `issuedFromDraftId` — and moves the request to `FINAL_DRAFT` (`lib/ticketTransitions.ts` `asIsIssue` `:384`, `issueAsIsFinals` `:264`). A minor correction never issues as-is (the correction must be folded in); a draft with no per-file revision falls back to `PENDING_IFC`, saying so.
+- The approver is told plainly: the approve action's description says the approval issues the approved draft as the final package (`ISSUE_AS_IS_NOTE`).
+
+Tests: `lib/__tests__/dfRoundG_P5_routing.test.ts` ("FRIC-5 — issue-as-is …", six cases incl. "DEFAULT OFF"); `lib/__tests__/dfRoundG_P5_rosterRoute.test.ts` ("FRIC-5: the drafter marks issue-ready; the approval then issues the draft as the Final (FINAL_DRAFT)").
+
+**Done-when.**
+- ✓ A clean approval with no corrections does not require the drafter to re-enter the ticket to produce a file that already exists — whenever the drafter has marked it issue-ready (their one opt-in, before approval; DEC-90 ruling (1) keeps it off by default, and without it the request returns to them as today).
+
+**Scope / residual.** The request page's submit button does not yet carry an at-submit checkbox (the page is DF-P9's; the toggle is offered on the ticket from the moment the draft is under review, and the route takes `issueReady` at submit) — proposed for the next package holding `app/(protected)/requests/[id]/page.tsx`. No migration (the mark lives in `metadata`, which is workflow-owned since `20261166` / `20261208`).
 
 ---
 

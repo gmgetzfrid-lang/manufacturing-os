@@ -511,7 +511,7 @@ hooks/useTicketNotifications.ts:156 —
 ## ROUTE-8 · The drafter assignment picker queries the headline role only, so a member who holds Drafter additively can never be assigned drafting work
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/[id]/page.tsx:244`, `app/(protected)/requests/[id]/page.tsx:246`, `components/requests/EngineerPickerModal.tsx:77`, `app/api/tickets/workflow-action/route.ts:113`
 - **Same root cause as** `ROUTE-10`, `EDGE-6` — Also owned as `LEAK-2` in [`04-flow-leaks.md`](./04-flow-leaks.md). Settled by `DEC-1` — do that first and these collapse. Fix once; close the rest citing this one.
@@ -566,6 +566,19 @@ contrast components/requests/EngineerPickerModal.tsx:77-89 —
 **Scope / residual.** Done-when 2's engineer picker → DF-P5 (its member read, `components/requests/EngineerPickerModal.tsx:87-91`, is also unpaged — the shared helper should read through `loadPickerMembers`).
 
 *Assigned (2026-10-14, the integrator at the DF-P9 merge):* the remainder (`components/requests/EngineerPickerModal.tsx`: one shared rule and keyset-paged members) → drafting-flow **DF-P5 ROSTER**.
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P5 ROSTER — the remainder assigned at the DF-P9 merge. Reproduced on the base: `components/requests/EngineerPickerModal.tsx:88` read every active member in one unpaged request and filtered with its own rule (`:98`, `r.includes("Engineer")`), so a member past PostgREST's max-rows was hidden though the route accepts them, and the picker's rule could drift from the route's.
+
+Landed: `lib/ticketPage.ts` `engineerPickRefusal` / `engineerCandidates` — THE engineer-pick rule (an Engineer role in the member's collection, headline or additive; and, where the org scoped the reviewing capability to this ticket's resource, that rule — DEC-13), called by the route (`app/api/tickets/workflow-action/route.ts:510`, replacing its inline check) and by the picker, which now reads members through `lib/ticketPickerMembers.ts` `loadPickerMembers` (keyset-paged on `uid`, a failed page fails the read and the picker says so) and receives the page's policy and ticket resource (`app/(protected)/requests/[id]/page.tsx`, the picker's mount). Rows show the member's display name.
+
+Tests: `lib/__tests__/dfRoundG_P5_routing.test.ts` ("ROUTE-8 remainder — the engineer pick: one rule for the route and the picker", three cases incl. the source pin that the modal has no filter or member read of its own); `lib/__tests__/sweepRoundD3.test.ts` re-pinned (the scoped check's call shape now lives in `lib/ticketPage.ts`).
+
+**Done-when.**
+- ✓ (1) as recorded by DF-P9.
+- ✓ (2) the remainder as assigned: the engineer picker reads members in keyset pages, as the drafter picker does, and uses the one shared rule instead of its own filter — the drafter picker (`drafterCandidates`) and the engineer picker (`engineerCandidates`) both live in `lib/ticketPage.ts` over `pickRoles`, the route calls the same rule, and `lib/ticketRouting.ts` reads `heldRoles`; neither picker can hide someone the route accepts.
+- ✓ (3) as recorded by DF-P9.
+
+**Scope / residual.** None.
 
 ---
 

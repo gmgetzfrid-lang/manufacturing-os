@@ -257,7 +257,7 @@ this finding says the `resource` shape must carry a service/code class, not only
 ## TIER-5 · Review is serial by construction — every requirement added costs a wait state
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** friction
 - **Locations:**
@@ -296,6 +296,28 @@ state, not three.
    simultaneously, without one waiting for the other.
 2. The ticket advances automatically when the last required signature lands.
 3. Adding a reviewer to a review requirement does not add a status.
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P5 ROSTER (base `9bc7884`). Reproduced on the base: `lib/workflow.ts:406` (`case 'PENDING_REVIEW'`) is one waiting party per status, and a requester the gate covers is sent on to a second status (`request_final_engineer_approval`, `:418`, `requiresEngineerPick: true`) — every added reviewer is a hop.
+
+Landed — the review stage of a ticket whose library (folder / document) declares a routing table runs on a PARALLEL roster:
+- `supabase/migrations/20261241_df_roundG_routing_control.sql` — `routing_control` on libraries / collections / documents (`20261012`'s doc_class lines), guarded and audited (see `GAP-112`'s Landed line).
+- `lib/routingControl.ts` — `resolveRoutingControlChain` / `effectiveRoutingForTicket` (`:183`, `:224`): one resolver on `lib/containerChain.ts`, declared-never-guessed, fail closed.
+- `lib/ticketRoster.ts` — `openRoster` (`:150`) turns the table into slots (occupants resolved from the active members, keyset-paged; a blocking slot that resolves to nobody is filled by the management tier, marked `fallback`), `rosterContentHash` (`:99`) binds every sign-off to the sha256 of the files under review, `rosterCompletion` (`:229`) CALLS `lib/reviewControl.ts` `evaluateSlotCompletion` (DC P4's per-slot rule) — nothing forked.
+- `lib/workflow.ts` — `currentRoster` (`:202`), `slotSignPlan` (`:229`); `getActions` at `PENDING_REVIEW` with a roster (`:520`) offers every occupant of every open blocking slot `sign_slot` AT ONCE (one action covers every slot the person fills, DEC-37), with the independence constraint named in `disabledReason` when one blocks it.
+- `lib/ticketTransitions.ts` — `sign_slot` (`:522`): a sign-off that leaves a slot open writes the roster and a history line and keeps the status; the last blocking sign-off issues the ticket exactly as a direct approval does (`PENDING_IFC`, the issued label, Finals stamped). The roster rides `tickets.metadata.review_roster` on the same compare-and-set as the status, so the slots and the status cannot disagree.
+- `app/api/tickets/workflow-action/route.ts` — the roster opens when a draft enters review in a routed library (`:732`), sign-offs carry an e-signature minted by `/api/signatures/sign` against the ticket and bound to the roster's hash (`:793`), the ledger (`20261242`) is written after the compare-and-set (`:1446`).
+- `components/requests/TicketRosterPanel.tsx` — who must act, who did, who was told; the sign-off ceremony.
+
+Tests: `lib/__tests__/dfRoundG_P5_routing.test.ts` ("TIER-5 done-when 1…", "completion CALLS … evaluateSlotCompletion", "TIER-5 done-when 3…", "TIER-5 done-when 2…"); `lib/__tests__/dfRoundG_P5_rosterRoute.test.ts` ("TIER-5: the first sign-off keeps the status (one wait); the second — in either order — issues the ticket automatically").
+
+**Done-when.**
+- ✓ (1) Two required reviewers sign in either order, or at the same time: each is offered their slot while the other's is open, and two concurrent sign-offs are serialised by the ticket's compare-and-set (the loser's 409 is retried once by the panel on the fresh row) — neither waits for the other.
+- ✓ (2) The ticket advances automatically when the last required signature lands (`PENDING_IFC`, or `FINAL_DRAFT` when the drafter marked it issue-ready — `FRIC-5`).
+- ✓ (3) Adding a reviewer adds no status: a two- or three-slot roster is one `PENDING_REVIEW`.
+
+**Pending migration:** `20261241_df_roundG_routing_control.sql` and `20261242_df_roundG_ticket_roster.sql` (DEC-30 — the code half is what is RESOLVED; until both are pasted every ticket takes today's path: a `routing_control` read answers 42703 / PGRST204 → unconfigured, a missing ledger answers 42P01 / PGRST205 → the submission goes the usual way and says so). Either paste first; both exercised on PostgreSQL 16 (`lib/__tests__/rls/dfP5RosterRouting.test.ts`, 9 cases, and the full `npm run test:db` replay: 17 files / 222 tests green).
+
+**Scope / residual.** An org that has configured no routing table keeps today's serial machine byte-for-byte — DEC-90 ruling (2) for this package; the seed (`SEEDED_ROUTING`) only describes it and is pinned against the engine. The ticket shed (`lib/ticketShed.ts`, DF-P11's) archives a ticket's row and deletes it, and the roster ledger cascades with it (`20261242`, `ON DELETE CASCADE`, as `ticket_comments` does); the archive bundle carries `metadata.review_roster` (the row), not the ledger rows — **for the integrator**: whether the shed bundle should carry `ticket_review_slots` / `ticket_review_slot_events` too (owner: the next package holding `lib/ticketShed.ts`). The attention badge (`hooks/useTicketNotifications.ts`, N11's) badges a slot occupant when its mapper carries `metadata` (the engine derives `sign_slot` from the ticket alone).
 
 ---
 
@@ -394,7 +416,7 @@ applied.
 ## TIER-8 · Two review systems exist with no shared vocabulary, and "approve" means different things in each
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** process / compliance
 - **Locations:**
@@ -428,6 +450,19 @@ collapses this finding entirely, because then there is only one review system.
 
 **Done when.** A reviewer is asked to review a given artifact once, or is shown
 plainly why a second review is a different question.
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P5 ROSTER. Reproduced on the base: a ticket approval wrote a status and a history line only — no signature, no content binding (`app/api/tickets/workflow-action/route.ts`, the approving actions; `fileIdentity` carried the storage ETag, `:133`).
+
+Landed — the ticket's routed review speaks the document side's vocabulary: every sign-off is an e-signature (`e_signatures`, minted by `/api/signatures/sign`, `resource_type: "ticket"`) bound to a server-computed sha256 over the files under review (`lib/ticketRoster.ts` `rosterContentHash`, `signatureRefusal` `:248`: this ticket, the signer's own, the roster's hash, given after it opened, used once), and completion is the document roster's own per-slot rule (`evaluateSlotCompletion`, called). The roster panel says plainly what the ticket sign-off is and why a publish review is a different question (`components/requests/TicketRosterPanel.tsx` `TWO_REVIEWS_NOTE`, rendered with the roster and whenever the request's library has a publish review policy).
+
+Tests: `lib/__tests__/dfRoundG_P5_routing.test.ts` ("EVID-12: a sign-off's signature must be …"); `lib/__tests__/dfRoundG_P5_rosterPanel.test.ts` ("… TIER-8, said plainly").
+
+**Done-when.**
+- ✓ "A reviewer is asked to review a given artifact once, **or is shown plainly why a second review is a different question**" — the second limb: the panel states that signing the ticket approves the drafting deliverable (the exact files, by hash) and that publishing it as a revision is the library's own review (is this revision ready to be current?), asked once, at publish.
+
+**Pending migration:** `20261241_df_roundG_routing_control.sql` and `20261242_df_roundG_ticket_roster.sql` (DEC-30 — the code half is what is RESOLVED; until both are pasted every ticket takes today's path: a `routing_control` read answers 42703 / PGRST204 → unconfigured, a missing ledger answers 42P01 / PGRST205 → the submission goes the usual way and says so). Either paste first; both exercised on PostgreSQL 16 (`lib/__tests__/rls/dfP5RosterRouting.test.ts`, 9 cases, and the full `npm run test:db` replay: 17 files / 222 tests green).
+
+**Scope / residual.** The first limb — a ticket sign-off SATISFYING the document's publish roster for the same bytes (`GAP-103` acceptance 4) — is not built here: it is R&P `LIFE-12`'s (the plan's alreadyResolvedElsewhere), and `DEC-23` forbids the shortcut (no waiver; only a signature bound to the same content hash on that document's roster may count). The ticket side now records exactly the evidence that bridge needs (`ticket_review_slots.signature_id`, `content_hash`).
 
 ---
 

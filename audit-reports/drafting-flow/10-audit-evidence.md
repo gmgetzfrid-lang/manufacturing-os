@@ -736,6 +736,24 @@ Tests: `lib/__tests__/auditViewers.test.ts` "drafting-flow EVID-12 — …" (the
 
 *Page half landed (2026-10-14, drafting-flow Round G, DF-P9 TICKET-PAGE) — `99-fix-sequencing.md`, "EVID-12 / LIFE-6 (the request page)".* After an action lands, the ticket page reads the 200's `warning` / `holdsNotReleased` and shows a warning toast — "Done — but a hold is still active" when holds were not released, "Done, with a warning" otherwise (e.g. the library that could not be recorded before `20261208`) — instead of dropping it (`app/(protected)/requests/[id]/page.tsx:1702-1709`). `lib/__tests__/dfRoundG_P9_ticketDetail.test.ts` (the assign modal tests: both titles). The record stays OPEN for DF-P5's e-signature limb, as assigned.
 
+**Partial (2026-10-21, drafting-flow Round G).** DF-P5 ROSTER — the limb assigned at the DF-P1 merge (the e-signature bound to the approved attachment, with a server-computed content hash). Reproduced on the base: `app/api/tickets/workflow-action/route.ts:133` / `:965` — the approved drafts' identity carried `etag: null` and no hash; no approval captured a signature.
+
+Landed:
+- **A server-computed sha256.** `lib/ticketRoster.ts` `sha256OfStoredObject` (`:59`) hashes the bytes the route reads from storage (never a store tag). The approving actions' audit row now carries `sha256` on every approved draft, and `submit_final`'s row on the issued Final (`app/api/tickets/workflow-action/route.ts` `hashedIdentity`, `:817`); a file storage cannot answer for is recorded as `sha256Unavailable: <reason>` and the approval works exactly as before (REGRESSION rule). The ETag is kept beside it.
+- **An e-signature bound to the content, on the routed review.** On a routed library every sign-off carries an e-signature minted by `/api/signatures/sign` against the ticket (`resource_type: "ticket"`), refused unless it is the signer's own, on this ticket, bound to the roster's content hash (sha256 over the files under review), given after the roster opened and used once (`signatureRefusal`); the slot, the ledger (`20261242`) and the audit row name the signature.
+
+Tests: `lib/__tests__/dfRoundG_P5_rosterRoute.test.ts` ("approve_draft_ifc: the approved drafts' identity carries the sha256 …", "storage that cannot answer does not block the approval …", the sign-off refusals); `lib/__tests__/dfRoundG_P5_routing.test.ts` ("EVID-12: sha256 is computed from the bytes …", "EVID-12: a sign-off's signature must be …"); `lib/__tests__/dfRoundG_P1_rails.test.ts:670` re-pinned (the identity gains `sha256` / `sha256Unavailable`).
+
+**Done-when.**
+- ✗ (1) One transaction — unchanged (DF-P1's audit-first refusal stands); not this package's limb.
+- ✓ (2) unchanged (DF-P1).
+- ✓ (3) `details` carry `deliverable_rev`, the approved / issued attachments' id and filename, and a server-computed sha256 of each (or the recorded reason it could not be read).
+- ✗ in part (4) An approval requires a captured e-signature bound to the attachment — on every routed review (each sign-off); the serial approvals of an unconfigured workspace (`approve_draft_ifc`, `engineer_approve_final`, `approve_minor_correction`) still need none: requiring a ceremony there would change a flow that works today for every legitimate user (the REGRESSION rule), so it is not done by this package.
+
+**Pending migration:** `20261241_df_roundG_routing_control.sql` and `20261242_df_roundG_ticket_roster.sql` (DEC-30 — the code half is what is RESOLVED; until both are pasted every ticket takes today's path: a `routing_control` read answers 42703 / PGRST204 → unconfigured, a missing ledger answers 42P01 / PGRST205 → the submission goes the usual way and says so). Either paste first; both exercised on PostgreSQL 16 (`lib/__tests__/rls/dfP5RosterRouting.test.ts`, 9 cases, and the full `npm run test:db` replay: 17 files / 222 tests green).
+
+**Owners of the remainder:** done-when 4 on the serial approvals → drafting-flow **DF-P6** (the review model moves the engineering approval onto the roster — `TIER-1` / `GAP-109` — at which point every approval is a signed sign-off), or an integrator ruling under DEC-90 that the serial approvals require the ceremony. Done-when 1 (the transaction form) → unowned in the fleet plan since DF-P1; proposed for the integrator to assign (a transition-and-audit RPC). Stays OPEN.
+
 ---
 
 <a id="evid-13"></a>
