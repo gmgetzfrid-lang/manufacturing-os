@@ -24,7 +24,14 @@
 //     with the system actor; the manual activation's row is as before;
 //   · the distribution nag counts its own nudges from the record (a purged
 //     bell row no longer re-opens the cooldown) and still from the bell rows
-//     (a manual re-nudge still counts): one nudge per cooldown.
+//     (a manual re-nudge still counts): one nudge per cooldown;
+//   · merge-time fix pass: the deferred audit row (every member reads
+//     audit_logs) holds only ids, kind, source, noticed_at and numeric /
+//     enum details — never a not_emailed reason, never the revision label
+//     (the replay re-reads it); the cooldown read is keyset-paged past
+//     PostgREST's max-rows (1000), and a refused page falls back exactly as
+//     today; a replayed row refused for good (23503 / 22P02) is dropped and
+//     said in one line, never "retried on the next run".
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -36,11 +43,24 @@ const db = vi.hoisted(() => ({
   failBellFor: new Set<string>(),
   /** the next document_notice_events writes answer this error (null: they land) */
   noticeError: null as null | { code?: string; message: string },
-  /** a document_notice_events write naming one of these ids is refused (an FK / CHECK refusal) */
-  refuseNoticeIds: new Set<string>(),
+  /** a document_notice_events write naming one of these ids is refused with that SQLSTATE */
+  refuseNoticeIds: new Map<string, string>(),
   noticeWrites: 0,
+  /** document_notice_events reads so far; a read past `failNoticeReadAfter` is refused */
+  noticeReads: 0,
+  failNoticeReadAfter: null as null | number,
+  /** PostgREST's max-rows: no read answers more rows than this */
+  maxRows: Infinity,
+  /** a read of one of these tables is refused (42501) */
+  refuseReadOf: new Set<string>(),
   seq: 0,
 }));
+
+const REFUSAL_TEXT: Record<string, string> = {
+  "23503": 'insert or update on table "document_notice_events" violates foreign key constraint',
+  "22P02": 'invalid input syntax for type uuid',
+  "57014": "canceling statement due to statement timeout",
+};
 
 const unq = (v: string) => (v.startsWith('"') && v.endsWith('"') ? v.slice(1, -1).replace(/\\(.)/g, "$1") : v);
 function parseOr(expr: string, all = false): (r: Row) => boolean {
@@ -76,7 +96,7 @@ function chain(table: string) {
         return 0;
       });
     }
-    return rows.slice(0, limit);
+    return rows.slice(0, Math.min(limit, db.maxRows));
   };
   const run = (): { data: unknown; error: unknown; count?: number } => {
     if (insert) {
@@ -88,7 +108,10 @@ function chain(table: string) {
         db.noticeWrites += 1;
         if (db.noticeError) return { data: null, error: db.noticeError };
         const bad = rows.find((r) => db.refuseNoticeIds.has(String(r.id)));
-        if (bad) return { data: null, error: { code: "23503", message: `insert or update on table "document_notice_events" violates foreign key constraint (row ${String(bad.id)})` } };
+        if (bad) {
+          const code = db.refuseNoticeIds.get(String(bad.id))!;
+          return { data: null, error: { code, message: `${REFUSAL_TEXT[code] ?? "refused"} (row ${String(bad.id)})` } };
+        }
       }
       const at = new Date().toISOString();
       const t = (db.tables[table] ??= []);
@@ -102,6 +125,11 @@ function chain(table: string) {
       const hit = matching();
       for (const r of hit) Object.assign(r, update);
       return { data: hit, error: null };
+    }
+    if (db.refuseReadOf.has(table)) return { data: null, error: { code: "42501", message: `permission denied for table ${table}` } };
+    if (table === "document_notice_events") {
+      db.noticeReads += 1;
+      if (db.failNoticeReadAfter != null && db.noticeReads > db.failNoticeReadAfter) return { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } };
     }
     return { data: matching(), error: null };
   };
@@ -155,7 +183,8 @@ import { scanAndNotifyAcks } from "@/lib/acknowledgments";
 import { scanReviews } from "@/lib/reviewControl";
 import { scanDistributionAcks } from "@/lib/distributionAcks";
 import {
-  DEFERRED_NOTICE_PAGES, DEFERRED_NOTICE_ROWS, DOCUMENT_NOTICE_RECORD_DEFERRED, deferredNoticeRow, isMissingNoticeSchema, noticeRow,
+  COOLDOWN_NOTICE_PAGES, COOLDOWN_NOTICE_ROWS, DEFERRED_NOTICE_PAGES, DEFERRED_NOTICE_ROWS, DOCUMENT_NOTICE_RECORD_DEFERRED,
+  deferrableDetails, deferredNoticeRow, deferredPayloadRow, isMissingNoticeSchema, noticeRecorder, noticeRow,
   recentDistributionNotices, replayDeferredNotices,
 } from "@/lib/documentNoticeRecord";
 
@@ -181,7 +210,11 @@ beforeEach(() => {
   db.seq = 0;
   db.noticeWrites = 0;
   db.noticeError = null;
-  db.refuseNoticeIds = new Set();
+  db.refuseNoticeIds = new Map();
+  db.noticeReads = 0;
+  db.failNoticeReadAfter = null;
+  db.maxRows = 1000;                                                       // PostgREST's default max-rows
+  db.refuseReadOf = new Set();
   db.failBellFor = new Set();
   db.tables = {
     org_members: [
@@ -461,10 +494,10 @@ describe("DIST-19 (P38 fix pass) — the replay trusts only the recorder's own s
     expect(deferredNoticeRow(keptRow(), "o1", "distribution_ack", "not a time")).toBeNull();
   });
 
-  it("a row the database refuses is skipped and said; the rest of its chunk and the next chunks are still written", async () => {
+  it("a row the database refuses (a transient refusal) is skipped and said; the rest of its chunk and the next chunks are still written", async () => {
     const rows = Array.from({ length: 250 }, (_, i) => keptRow({ id: `r-${String(i).padStart(3, "0")}` }));
     db.tables.audit_logs.push(deferredAudit("a-big", null, rows));
-    db.refuseNoticeIds.add("r-010");
+    db.refuseNoticeIds.set("r-010", "57014");
     vi.setSystemTime(T0);
     const errors: string[] = [];
     let written = 0;
@@ -472,7 +505,38 @@ describe("DIST-19 (P38 fix pass) — the replay trusts only the recorder's own s
     expect(written).toBe(249);
     expect(events()).toHaveLength(249);
     expect(events().some((e) => e.id === "r-010")).toBe(false);
-    expect(errors.join(" ")).toMatch(/1 deferred document notice record row\(s\) could not be written \(insert or update on table "document_notice_events" violates foreign key/);
+    expect(errors.join(" ")).toMatch(/1 deferred document notice record row\(s\) could not be written \(canceling statement due to statement timeout \(row r-010\)\) — skipped this run and retried on the next/);
+    expect(errors.join(" ")).not.toMatch(/dropped/);
+  });
+
+  it("merge-time fix pass: a row refused for good (23503 — its document or workspace gone; 22P02 — not a valid id) is dropped, said in ONE line per run, never 'retried on the next run'; a transient refusal still is", async () => {
+    const rows = Array.from({ length: 250 }, (_, i) => keptRow({ id: `r-${String(i).padStart(3, "0")}` }));
+    db.tables.audit_logs.push(deferredAudit("a-gone", null, rows));
+    for (const id of ["r-010", "r-011", "r-012"]) db.refuseNoticeIds.set(id, "23503");
+    db.refuseNoticeIds.set("r-020", "22P02");
+    db.refuseNoticeIds.set("r-030", "57014");
+    const run = async () => {
+      const errors: string[] = [];
+      let written = 0;
+      await runComplianceScan("replay@o1", async () => { written = await replayDeferredNotices("o1", "distribution_ack"); return written; }, errors, null);
+      return { errors, written };
+    };
+    vi.setSystemTime(T0);
+    const first = await run();
+    expect(first.written).toBe(245);
+    const dropLines = first.errors.filter((l) => /dropped/.test(l));
+    expect(dropLines).toHaveLength(1);
+    expect(dropLines[0]).toMatch(/4 deferred document notice record row\(s\) were dropped — refused for good \(23503: /);
+    expect(dropLines[0]).not.toMatch(/retried/);
+    const transient = first.errors.filter((l) => /retried on the next/.test(l));
+    expect(transient).toHaveLength(1);
+    expect(transient[0]).toMatch(/^replay@o1: 1 deferred document notice record row\(s\) could not be written \(canceling statement/);
+    expect(first.errors).toHaveLength(2);                                  // never a line per row
+    // the next run: the written rows are skipped (ON CONFLICT), the dropped ones said once again — one line, not four
+    const second = await run();
+    expect(second.errors.filter((l) => /dropped/.test(l))).toHaveLength(1);
+    expect(second.errors.filter((l) => /retried on the next/.test(l))).toHaveLength(1);
+    expect(events()).toHaveLength(245);
   });
 
   it("the audit read is keyset-paged past one page, and says so when it stops at the page cap", async () => {
@@ -493,6 +557,139 @@ describe("DIST-19 (P38 fix pass) — the replay trusts only the recorder's own s
     await runComplianceScan("replay@o1", () => replayDeferredNotices("o1", "distribution_ack"), errors, null);
     expect(events()).toHaveLength(many - 1);
     expect(errors.join(" ")).toMatch(new RegExp(`read up to ${DEFERRED_NOTICE_ROWS * DEFERRED_NOTICE_PAGES} audit rows`));
+  });
+});
+
+describe("DIST-19 (merge-time fix pass) — the deferred audit row carries only what a replay needs (every member reads audit_logs)", () => {
+  const base = { org_id: "o1", document_id: "d1", version_id: "v1", revision_label: "C", source: "review_signoff" as const, source_id: "s1", recipient: "rev", subject_user_id: "rev" };
+
+  it("a not_emailed row's deferred payload has no reason (a string, or any other type); no free text at all; numbers, booleans and the one enum value kept", () => {
+    const ne = noticeRow({ ...base, kind: "not_emailed", details: { reason: "prefers the weekly digest", channel: "email", attempts: 2, muted: true } });
+    const p = deferredPayloadRow(ne);
+    expect(p.details).toEqual({ attempts: 2, muted: true });
+    expect(p.details).not.toHaveProperty("reason");
+    expect(JSON.stringify(p)).not.toMatch(/digest/);
+    expect(deferrableDetails("not_emailed", { reason: 3 })).toEqual({});
+    expect(deferrableDetails("not_emailed", { reason: { why: "x" } })).toEqual({});
+    // the payload: ids, kind, source, noticed_at — never the revision label or the actor
+    expect(Object.keys(p).sort()).toEqual(["details", "document_id", "id", "kind", "noticed_at", "notification_id", "org_id", "recipient", "source", "source_id", "subject_user_id", "version_id"]);
+    // what the scans write survives: their numbers, and cause only as the enum value
+    expect(deferrableDetails("alternate_activated", { cause: "review_timeout", timeoutDays: 7, ageDays: 9 })).toEqual({ cause: "review_timeout", timeoutDays: 7, ageDays: 9 });
+    expect(deferrableDetails("alternate_activated", { cause: "anything else", note: "free text", list: [1], nested: { a: 1 }, nan: Number.NaN })).toEqual({});
+  });
+
+  it("the recorder's deferred audit row holds the minimal payload (a not_emailed reason never reaches audit_logs), and a replay rebuilds the row with the obligation's revision label", async () => {
+    seedReview();
+    db.noticeError = { code: "57014", message: "canceling statement due to statement timeout" };
+    const errors: string[] = [];
+    await runComplianceScan("pre-publish-review@o1", async () => {
+      const rec = noticeRecorder();
+      await rec.record([
+        noticeRow({ ...base, kind: "reminded", details: { ageDays: 9 } }),
+        noticeRow({ ...base, kind: "not_emailed", details: { reason: "prefers the weekly digest" } }),
+      ]);
+      return 0;
+    }, errors, null);
+    const deferred = audits(DOCUMENT_NOTICE_RECORD_DEFERRED);
+    expect(deferred).toHaveLength(1);
+    const text = JSON.stringify(deferred[0]);
+    expect(text).not.toMatch(/digest/);
+    expect(text).not.toMatch(/revision_label/);
+    const kept = (deferred[0].details as { rows: Row[] }).rows;
+    expect(kept.map((r) => r.details)).toEqual([{ ageDays: 9 }, {}]);
+
+    db.noticeError = null;
+    vi.setSystemTime(T0 + 1000);
+    await runComplianceScan("replay@o1", () => replayDeferredNotices("o1", "review_signoff"), [], null);
+    expect(events().map((e) => `${e.kind}:${e.revision_label}:${e.actor_name}`).sort()).toEqual(["not_emailed:C:System", "reminded:C:System"]);
+    expect(events().find((e) => e.kind === "not_emailed")?.details).toEqual({});   // the reason is not on the record either — said in DIST-19
+  });
+
+  it("the scan's own deferred rows (refused twice) carry no revision label; the next run's replay writes the label the scan would have", async () => {
+    seedReview();
+    db.noticeError = { code: "57014", message: "canceling statement due to statement timeout" };
+    await cronRun("pre-publish-review", scanReviews, 0);
+    const kept = (audits(DOCUMENT_NOTICE_RECORD_DEFERRED)[0].details as { rows: Row[] }).rows;
+    expect(kept.every((r) => !("revision_label" in r) && !("actor_name" in r))).toBe(true);
+    db.noticeError = null;
+    await cronRun("pre-publish-review", scanReviews, 1);
+    expect(events()).toHaveLength(3);
+    expect(events().every((e) => e.revision_label === "C" && e.actor_name === "System")).toBe(true);
+  });
+
+  it("a refused label read writes nothing this run (the rows stay deferred) and says so", async () => {
+    seedReview();
+    db.tables.audit_logs.push({ id: "a-1", org_id: "o1", action: DOCUMENT_NOTICE_RECORD_DEFERRED, resource_type: "document", resource_id: "d1", user_id: null, timestamp: daysBefore(1),
+      details: { source: "review_signoff", error: "x", rows: [deferredPayloadRow(noticeRow({ ...base, kind: "reminded", noticedAt: daysBefore(1) }))] } });
+    db.refuseReadOf.add("document_review_signoffs");
+    const errors: string[] = [];
+    let written = -1;
+    await runComplianceScan("replay@o1", async () => { written = await replayDeferredNotices("o1", "review_signoff"); return written; }, errors, null);
+    expect(written).toBe(0);
+    expect(events()).toHaveLength(0);
+    expect(errors.join(" ")).toMatch(/revision labels of 1 deferred document notice record row\(s\) could not be read \(permission denied/);
+  });
+});
+
+describe("DIST-19 (merge-time fix pass) — the nag's cooldown read of the record is keyset-paged past PostgREST's max-rows", () => {
+  const seedOne = () => {
+    db.tables.documents = [{ id: "d1", org_id: "o1", library_id: "L", document_number: "P-1", title: null, name: null, current_version_id: "v1", status: "Issued" }];
+    db.tables.distribution_acks = [
+      { id: "k1", org_id: "o1", document_id: "d1", version_id: "v1", rev_label: "C", recipient_user_id: "asg", recipient_email: "ash@x.com", requested_by: "own", requested_by_name: "Olive", requested_at: daysBefore(5), acknowledged_at: null },
+    ];
+  };
+  // n reminded rows for other people inside the window, each newer than the target (so the target is the LAST row newest-first)
+  const fill = (n: number) => {
+    for (let i = 0; i < n; i += 1) {
+      db.tables.document_notice_events.push({ id: `e-${String(i).padStart(6, "0")}`, org_id: "o1", document_id: `dx-${i}`, source: "distribution_ack", kind: "reminded", recipient: `u-${i}`, noticed_at: iso(T0 - DAY + i * 10) });
+    }
+  };
+  const target = () => db.tables.document_notice_events.push({ id: "e-target", org_id: "o1", document_id: "d1", source: "distribution_ack", kind: "reminded", recipient: "asg", noticed_at: daysBefore(2) });
+
+  it("with more than 1000 rows in the window, every one is counted: the target (the oldest) still holds the nudge after its bell row is purged", async () => {
+    seedOne();
+    fill(1500);
+    target();
+    const got = await recentDistributionNotices("o1", daysBefore(3));
+    expect(got?.reminded.size).toBe(1501);
+    expect(got?.reminded.has("asg:d1")).toBe(true);
+    expect(db.noticeReads).toBe(3);                                       // 1000, 501, then the empty page
+    db.noticeReads = 0;
+    await cronRun("distribution-acks", scanDistributionAcks, 0);
+    expect(bellsTo("asg", "ack_requested")).toHaveLength(0);             // one nudge per cooldown, past 1000 rows
+  });
+
+  it("a server max-rows LOWER than the page size never ends the read early (only an empty page ends it)", async () => {
+    db.maxRows = 300;
+    fill(1200);
+    target();
+    const got = await recentDistributionNotices("o1", daysBefore(3));
+    expect(got?.reminded.size).toBe(1201);
+  });
+
+  it("REGRESSION: a read refused on a later page falls back exactly as today — null, the nag counts from the bell rows alone", async () => {
+    seedOne();
+    fill(1500);
+    target();
+    db.failNoticeReadAfter = 1;
+    expect(await recentDistributionNotices("o1", daysBefore(3))).toBeNull();
+    db.noticeReads = 0;
+    await cronRun("distribution-acks", scanDistributionAcks, 0);
+    expect(bellsTo("asg", "ack_requested")).toHaveLength(1);             // no bell row in the window: nudged, as today
+    // and with the bell row present, held, as today
+    db.tables.notifications = [{ id: "n0", org_id: "o1", user_id: "asg", kind: "ack_requested", resource_id: "d1", metadata: { ackRequest: true }, created_at: iso(T0) }];
+    db.noticeReads = 0;
+    await cronRun("distribution-acks", scanDistributionAcks, 1);
+    expect(bellsTo("asg", "ack_requested")).toHaveLength(1);
+  });
+
+  it("the page cap: it stops after COOLDOWN_NOTICE_PAGES pages, says so in the run's line, and answers what it read (the union only ever withholds more than the bell rows alone)", async () => {
+    fill(COOLDOWN_NOTICE_PAGES * COOLDOWN_NOTICE_ROWS + 5);
+    const errors: string[] = [];
+    let got: Awaited<ReturnType<typeof recentDistributionNotices>> = null;
+    await runComplianceScan("distribution-acks@o1", async () => { got = await recentDistributionNotices("o1", daysBefore(3)); return 0; }, errors, null);
+    expect(got!.reminded.size).toBe(COOLDOWN_NOTICE_PAGES * COOLDOWN_NOTICE_ROWS);
+    expect(errors.join(" ")).toMatch(new RegExp(`stopped at ${COOLDOWN_NOTICE_PAGES * COOLDOWN_NOTICE_ROWS} rows \\(${COOLDOWN_NOTICE_PAGES} pages\\) — the window's older notices were counted from the bell rows alone, as before`));
   });
 });
 

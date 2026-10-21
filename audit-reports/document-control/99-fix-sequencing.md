@@ -1218,8 +1218,14 @@ migration, `20261257_dc_roundG_document_notice_record.sql` (`DIST-19`):
   and timeout activation the scans land is one append-only row; members read
   the rows of documents they can read (a `not_emailed` row only its person);
   nobody but the service role writes; the nag no longer re-nudges inside its
-  window after a bell row is purged or dismissed. Reminders before the paste
-  are not back-filled.
+  window after a bell row is purged or dismissed (its read of the record is
+  keyset-paged, so this holds past PostgREST's 1000-row max-rows, up to 20
+  pages of 1000 a run — past that, said in the run's line, the older notices
+  count from the bell rows as today). Reminders before the paste are not
+  back-filled. A record write that fails twice is kept in one
+  `DOCUMENT_NOTICE_RECORD_DEFERRED` audit row holding ids, kind and numbers
+  only (no free text, no revision label, no `not_emailed` reason) — still
+  readable by every member, as every audit row is (`DIST-19`).
 - **The result set:** eight probes (all true) and five counts — pending review
   sign-offs and pending acknowledgments whose reminder history is one
   `notified_at`, outstanding distribution acks (all informational),

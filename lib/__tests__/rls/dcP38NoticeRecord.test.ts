@@ -17,7 +17,13 @@
 //     paste — reproduced on a copy with the policy dropped);
 //   · the record itself: the service role writes, a member cannot, a member
 //     reads the rows of a document they can read, an UPDATE is refused;
-//   · a re-paste is clean (every probe true).
+//   · a re-paste is clean (every probe true);
+//   · merge-time fix pass — the record's READ rules at runtime: a notice row
+//     on an ACL-restricted document is hidden from a member the ACL denies
+//     (and shown to one it grants, and to a controller); another workspace's
+//     member reads 0; a not_emailed row is read by its own person and by no
+//     other member; anon is refused outright (42501 — 20261257 revokes every
+//     privilege from anon).
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
@@ -95,6 +101,76 @@ describe.skipIf(skip !== null)("DIST-19 (P38): the deferred notice rows are the 
     const upd = asCaller(db, svc, `UPDATE document_notice_events SET noticed_at = '2099-01-01' WHERE id = '${id}'`);
     expect(upd.ok).toBe(false);
     if (!upd.ok) expect(upd.code).toBe("23514");
+  });
+
+  describe("merge-time fix pass: the record's read rules, at runtime", () => {
+    const aclLib = randomUUID();
+    const restricted = randomUUID();
+    const open = randomUUID();
+    const rows = { restricted: randomUUID(), open: randomUUID(), notEmailed: randomUUID() };
+    let r: Record<string, SeededMember> = {};
+    let outsider: SeededMember;
+    const count = (who: SeededMember, id: string) =>
+      selectAs(db, who.caller, `SELECT count(*) FROM document_notice_events WHERE id = '${id}'`)[0];
+
+    beforeAll(() => {
+      const s2 = seedOrg(db, { viewer: { role: "Viewer" }, engineer: { role: "Engineer" }, docctrl: { role: "Viewer", roles: ["DocCtrl"] }, recipient: { role: "Viewer" } });
+      r = s2.m;
+      outsider = seedOrg(db, { admin: { role: "Admin" } }).m.admin;
+      const o = s2.orgId;
+      const ev = (id: string, d: string, kind: string, recipient: string, details = "{}") =>
+        `INSERT INTO document_notice_events (id, org_id, document_id, source, kind, recipient, subject_user_id, actor_name, details) VALUES ('${id}', '${o}', '${d}', 'acknowledgment', '${kind}', '${recipient}', '${recipient}', 'System', '${details}'::jsonb)`;
+      admin(db, [
+        `INSERT INTO libraries (id, org_id, name, type) VALUES ('${aclLib}', '${o}', 'Restricted', 'documents')`,
+        // private, read granted to the Engineer role only (the documents ACL — node_visible)
+        `INSERT INTO documents (id, org_id, library_id, name, title, document_number, rev, status, visibility, acl_index) VALUES ('${restricted}', '${o}', '${aclLib}', 'r.pdf', 'R', 'R-${restricted.slice(0, 8)}', '0', 'Draft', 'private', '{"allow":{"roles":{"read":["Engineer"]}}}'::jsonb)`,
+        `INSERT INTO documents (id, org_id, library_id, name, title, document_number, rev, status) VALUES ('${open}', '${o}', '${aclLib}', 'o.pdf', 'O', 'O-${open.slice(0, 8)}', '0', 'Draft')`,
+        ev(rows.restricted, restricted, "reminded", r.engineer.uid),
+        ev(rows.open, open, "reminded", r.viewer.uid),
+        ev(rows.notEmailed, open, "not_emailed", r.recipient.uid, '{"reason":"prefers the weekly digest"}'),
+      ].join(";\n") + ";");
+    });
+
+    it("the documents themselves read as expected (the precondition): the restricted one by the Engineer and the controller only", () => {
+      const docCount = (who: SeededMember) => selectAs(db, who.caller, `SELECT count(*) FROM documents WHERE id = '${restricted}'`)[0];
+      expect(docCount(r.viewer)).toBe("0");
+      expect(docCount(r.engineer)).toBe("1");
+      expect(docCount(r.docctrl)).toBe("1");
+    });
+
+    it("an ACL-restricted document's notice row is hidden from a member the ACL denies; shown to one it grants and to a controller", () => {
+      expect(count(r.viewer, rows.restricted)).toBe("0");
+      expect(count(r.recipient, rows.restricted)).toBe("0");
+      expect(count(r.engineer, rows.restricted)).toBe("1");
+      expect(count(r.docctrl, rows.restricted)).toBe("1");
+      // the open document's row: every member of the workspace
+      for (const k of ["viewer", "engineer", "docctrl", "recipient"]) expect(count(r[k], rows.open), k).toBe("1");
+    });
+
+    it("another workspace's member reads 0 rows, open document or not", () => {
+      for (const id of Object.values(rows)) expect(count(outsider, id)).toBe("0");
+      expect(selectAs(db, outsider.caller, `SELECT count(*) FROM document_notice_events WHERE org_id <> (SELECT org_id FROM org_members WHERE uid = '${outsider.uid}')`)).toEqual(["0"]);
+    });
+
+    it("a not_emailed row is read by its own person (with its reason) and by no other member, a controller included", () => {
+      expect(selectAs(db, r.recipient.caller, `SELECT details->>'reason' FROM document_notice_events WHERE id = '${rows.notEmailed}'`)).toEqual(["prefers the weekly digest"]);
+      for (const k of ["viewer", "engineer", "docctrl"]) expect(count(r[k], rows.notEmailed), k).toBe("0");
+    });
+
+    it("RESIDUAL, pinned as it is: a system DOCUMENT_NOTICE_RECORD_DEFERRED row about the restricted document is read by a member the ACL denies (audit_logs_org_access) — why the recorder keeps only ids, kind and numbers in it", () => {
+      const o = admin(db, `SELECT org_id FROM documents WHERE id = '${restricted}'`);
+      const audit = randomUUID();
+      admin(db, `INSERT INTO audit_logs (id, org_id, action, resource_type, resource_id, user_id, user_role, details) VALUES ('${audit}', '${o}', 'DOCUMENT_NOTICE_RECORD_DEFERRED', 'document', '${restricted}', NULL, 'system', jsonb_build_object('source', 'acknowledgment', 'rows', jsonb_build_array(jsonb_build_object('id', '${randomUUID()}', 'document_id', '${restricted}', 'kind', 'reminded', 'recipient', '${r.engineer.uid}'))));`);
+      expect(count(r.viewer, rows.restricted)).toBe("0");                                     // the record: hidden
+      expect(selectAs(db, r.viewer.caller, `SELECT count(*) FROM audit_logs WHERE id = '${audit}'`)).toEqual(["1"]);   // the deferred row: not
+      expect(selectAs(db, outsider.caller, `SELECT count(*) FROM audit_logs WHERE id = '${audit}'`)).toEqual(["0"]);
+    });
+
+    it("anon is refused outright: 42501 (every privilege revoked from anon), not merely 0 rows", () => {
+      const anon = asCaller(db, { role: "anon" }, `SELECT 1 FROM document_notice_events`);
+      expect(anon.ok).toBe(false);
+      if (!anon.ok) expect(anon.code).toBe("42501");
+    });
   });
 
   it("a re-paste on the applied database is clean: every probe true", () => {
