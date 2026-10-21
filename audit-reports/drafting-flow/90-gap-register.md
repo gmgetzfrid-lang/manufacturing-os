@@ -208,6 +208,8 @@ wall. Do neither.
 assigner's flag).
 **Decisions:** `DEC-33`, `DEC-34`.
 
+*Landed 2026-10-21 (drafting-flow Round G, DF-P6 REVIEW-MODEL): `tickets.engineering_required` (`20261250`, pending paste — deploy the app first), the declaration (`GAP-110`), the workspace's own `workClasses` / `codeClasses` (seeded empty, set at triage, an engineering class raises the requirement). Acceptance 1 ✓ (Manager, Admin, Supervisor and DocCtrl pinned, engine and route); 2 ✓ (a declared request reaches IFC through its requester — no engineer, no added state); 3 ✓ in part — immutable for every caller (the guard, PostgreSQL 16) and rendered attributed on the request (`DeclarationCard`), in its history ("Declared like-in-kind (signed)") and in each transition's audit row (`likeInKindDeclared`); NOT on the issued deliverable's stamp (the stamp is public-surfaces' / DF-P15's file — proposed hand-off); 4 ✓ (blank never blocks; the form says blank goes to engineering); 5 ✗ — the columns make the report a query (lanes by `engineering_required` and declaration; every declaration with author and text), but no report surface is built — proposed for drafting-flow DF-P16's analytics page. See `TIER-1`, `TIER-2`, `TIER-7`.*
+
 ---
 
 <a id="gap-102"></a>
@@ -316,6 +318,8 @@ requires its examination scope.
 5. No new role and no new status exists.
 
 **Related findings:** `TIER-3`, `TIER-4`, `TIER-5`.
+
+*Landed 2026-10-21 (drafting-flow Round G, DF-P6 REVIEW-MODEL), by the integrator's ruling for this package (no QA/QC role, status or signature slot): a routing slot may be limited to work classes when it is notify-only (`RoutingSlot.work_classes`); a blocking slot never is. Acceptance 2 ✓ in that form (a library's assurance reviewer is told of every issue of the classes they watch; the code class is on the approval); 3 ✓ (the existing document hold); 5 ✓ (no new role, no new status); 1 and 4 ✗ — examination data has no model yet; proposed for the integrator to assign. See `TIER-3`.*
 
 ---
 
@@ -455,6 +459,8 @@ the model and the flow never implemented it** (`FRIC-7`, `DCW-2`).
 
 **Related findings:** `DCW-2`, `DCW-3`, `DCW-6`, `FRIC-7`.
 
+*Landed 2026-10-21 (drafting-flow Round G, DF-P6 REVIEW-MODEL — record and test on DF-P5's roster): a library's routing table can carry a blocking slot filled by document control; acceptance 1 ✓ (libraries without one are unaffected), 2 ✓ (parallel roster, no status), 3 ✓ (FRIC-7, and pinned for the slot). See `DCW-2`.*
+
 ---
 
 <a id="gap-105"></a>
@@ -504,6 +510,8 @@ supports `discover` without read; the request form does not use it.
 3. Library-scoped rules can be evaluated against any ticket past triage.
 
 **Related findings:** `DCW-1`, `DCW-5`, `DCW-6`.
+
+*Landed 2026-10-21 (drafting-flow Round G, DF-P6 REVIEW-MODEL): acceptance 3 — the capability resource carries the ticket's library (`ticketResource` `libraryId`), so a library-scoped `ticket.*` rule is evaluated against any ticket that has one; `20261250`'s inventory counts stored library-scoped ticket rules (expected 0) before the paste. See `DCW-6`.*
 
 ---
 
@@ -920,6 +928,8 @@ used honestly.
 
 **Related findings:** `TIER-1`, `TIER-2`, `LEAK-3`, `UI-5`.
 
+*Landed 2026-10-21 (drafting-flow Round G, DF-P6 REVIEW-MODEL): the declaration is one optional sentence on the request form (no checkbox, no picker, no canned text), signed through the existing e-signature ceremony (intent `Acknowledged`, statement "Like-in-kind declaration: <the sentence>", resource the ticket id it will be filed under) and checked by `/api/tickets/create` before a number is spent (the requester's, this workspace, this id, this statement, within 30 minutes, the id not already filed — else 400 / 409 `declaration_used`); stored in four columns (`20261250`), not metadata, immutable for every caller. Acceptance 1 ✓ (every ticket INSERT in the app is the create route's — the three doors post there; enumerated by `lib/__tests__/reviewModel.test.ts` "GAP-110 acceptance 1 …", so a fourth door fails it); 2 ✓ (the contract and a CHECK, 20–2000 characters); 3 ✓ (no transition writes `false`, every action × every status pinned; the guard refuses true → false for every caller); 4 ✓ in part (the request page, its history and the audit trail; not the issued deliverable — see `GAP-101`); 5 ✓ documented: `metadata.minor_correction` / `undocumented_change` are informational records of the check-in (nothing reads them for authority; counted by the inventory, row 43); `metadata.moc` is the hand-back's (LIFE-5). 'Do not' kept.*
+
 ---
 
 <a id="gap-111"></a>
@@ -1143,6 +1153,8 @@ was already there. Compare a QA/QC status, which inserts a person who was not.
    described, made explicit rather than implicit.
 
 **Related findings:** `TIER-1`, `TIER-5`, `LEAK-3`, `UI-1`.
+
+*Landed 2026-10-21 (drafting-flow Round G, DF-P6 REVIEW-MODEL): `request_eng_review` and the new `flag_engineering` (the assignment queue, at `PENDING_ASSIGNMENT`, `DRAFTING`, `REVISION_REQ`, `PENDING_REVIEW`, a reason required, no status change) write `engineering_required = true`; nothing writes false. Acceptance 1 ✓ and 2 ✓ (every issue transition by name, `approve_minor_correction` included); 3 ✓ (drafting continues); 4 ✓ (any pre-issue status the queue can assign at; no reset); 5 ✓ on routed libraries (the engineering slot is appended where the gate applies — DF-P5 `withEngineeringGate`); 6 ✓ (`approve_team` writes nothing for it); 7 ✓; "the ticket shows why" ✓ (`DeclarationCard`: declared by whom and when / required — flagged or no declaration / the earlier rule for a pre-paste request); the declared like-in-kind request closes through the assigner and requester, the requester's approval recorded as the approval of record.*
 
 ---
 

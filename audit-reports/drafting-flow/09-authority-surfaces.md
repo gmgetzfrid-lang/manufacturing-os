@@ -347,7 +347,7 @@ the guard that exists on the other side — app/api/admin/ticket-shed/restore/ro
 ## AUTHZ-6 · `ticket.requester_review` grants requester authority org-wide, not per-ticket — any member holding the Requester role can approve anyone else's drafting request
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/capabilityPolicy.ts:72-73`, `lib/capabilityPolicy.ts:141-155`, `lib/workflow.ts:74`, `lib/workflow.ts:198-234`, `lib/workflow.ts:319-323`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct as stated — the identity check `isRequesterIdentity` is ORed with, not ANDed to, the role capability, so the role grants org-wide requester authority over every ticket. Worth noting the workflow-action route re-derives the same getActions server-side (route.ts:96), so this is enforced authority, not just UI.
@@ -404,6 +404,17 @@ export function policyAllows(
 - ✗ The `CAPABILITY_DEFS` descriptions still do not state the reach (`lib/capabilityPolicy.ts:108`, `:110`, `:112`, unchanged).
 
 **Scope / residual.** The three descriptions → **DF-P6** (fleet plan: DF-P6 REVIEW-MODEL lists `AUTHZ-6`).
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P6 REVIEW-MODEL — the remaining done-when (the descriptions). `lib/capabilityPolicy.ts` `CAPABILITY_DEFS` now say the reach plainly: `ticket.draft_work` — acts only on a request with NO assigned drafter ("never acts on another drafter's request"); `ticket.requester_review` — acts only on a request with NO requester ("never acts on another person's request"); `ticket.direct_approve` — "ANY request in review" org-wide, with a non-Engineer's approval of an engineered request recorded as an override; `ticket.engineer_gate_exempt` — applies only to requests filed before the declaration existed or never declared, never to a request whose requester declared it like-in-kind (the declaration decides).
+
+Tests: `lib/__tests__/reviewModel.test.ts` "AUTHZ-6 — the capability descriptions state their reach".
+
+**Done-when.**
+- ✓ `policyAllows` takes the resource (DF-P1 / DEC-13; the resource now also carries the library and the classes).
+- ✓ The default no longer makes a plain Requester an approver on tickets they do not own (WF-8).
+- ✓ The `CAPABILITY_DEFS` descriptions state the reach, so an admin editing the policy sees the blast radius.
+
+**Scope / residual.** None.
 
 ---
 

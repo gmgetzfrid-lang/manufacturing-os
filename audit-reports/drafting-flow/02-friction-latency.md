@@ -149,6 +149,13 @@ Landed — on a routed library the two questions are two slots on one parallel r
 
 **Owner of the remainder:** drafting-flow **DF-P6** (the review model: `TIER-1` repoints the engineering gate, after `GAP-101`), or an integrator ruling under DEC-90 that the seed itself becomes the parallel two-slot roster. Stays OPEN.
 
+**Partial (2026-10-21, drafting-flow Round G).** DF-P6 REVIEW-MODEL. The technical review no longer waits on the requester where the requester's answer was never the technical one: a **declared like-in-kind** request needs no engineer, so `PENDING_REVIEW` is one question — "is this what you asked for?" — to the person who can answer it (`TIER-1`); an undeclared request filed after the paste routes to the engineer whoever asked (a Manager no longer approves the technical content as "requester"). On a routed library the two questions are two parallel slots (DF-P5).
+
+**Done-when.**
+- ✗ in part — holds on routed libraries (DF-P5) and for declared requests everywhere; in an unconfigured workspace an undeclared request still runs requester-then-engineer serially (`request_final_engineer_approval`) — today's path, kept by DEC-90 ruling (2) / the integrator's ruling for DF-P6 (the seed is today's serial path).
+
+**Owner of the remainder:** the integrator — a ruling under DEC-90 that the unconfigured seed itself becomes the parallel requester + engineering roster (the code supports it: `withEngineeringGate` appends the engineering slot to any table). No package can make that change without the ruling. Stays OPEN.
+
 ---
 
 ## FRIC-3 · The intake form demands a unit before it will accept the request
@@ -262,6 +269,14 @@ Tests: `lib/__tests__/dfRoundG_P5_routing.test.ts` ("TIER-5 done-when 3 …" —
 - ✗ in part (2) Where a person must be chosen, the choice is defaulted from the library's review policy and the work class, and the picker shows why — the picker now offers only who the route accepts and shows names, and a library can derive the reviewers instead (routing); defaulting from the work class needs the class (`GAP-101`, not built).
 
 **Owner of the remainder:** drafting-flow **DF-P6** (`GAP-101` → `TIER-1`: the engineering gate keyed to the work class, which moves the fallback pick onto the class / the router), with an integrator ruling under DEC-90 if the unconfigured default itself is to change. Stays OPEN.
+
+**Partial (2026-10-21, drafting-flow Round G).** DF-P6 REVIEW-MODEL. The class now exists (`GAP-101`) and the engineering requirement follows the work (`TIER-1`): a declared like-in-kind request never asks anyone to pick an engineer; a request whose workspace routes it resolves its engineer from the routing table (DF-P5), and a routing slot can be limited to work classes (notify-only — `TIER-3`). In an unconfigured workspace an undeclared request still asks the requester to pick an engineer at `PENDING_REVIEW` (today's path).
+
+**Done-when.**
+- ✗ in part (1) A requester is never required to name a reviewer — holds for declared requests and on routed libraries; not for an undeclared request in an unconfigured workspace (DEC-90 ruling (2)).
+- ✗ in part (2) Defaulted from the library's review policy and the work class — from the library: ✓ (routing); from the class: the class is stored and a routing slot can key on it, but a blocking slot cannot (ruled notify-only for DF-P6) and the fallback picker does not default from it.
+
+**Owner of the remainder:** the integrator (the same DEC-90 ruling as `FRIC-2`: an unconfigured workspace's seed routes the engineer instead of asking the requester), or drafting-flow DF-P9 for a picker default keyed on the class once a ruling says which engineer a class implies. Stays OPEN.
 
 ---
 

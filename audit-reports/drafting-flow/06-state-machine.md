@@ -146,7 +146,7 @@ Contrast the route's own stated contract, app/api/tickets/workflow-action/route.
 ## SM-3 · A Manager or Supervisor with no engineering role can perform the engineer sign-off and have `engineer_approved_at` stamped in their name
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/workflow.ts:263-298`, `lib/workflow.ts:65-66`, `lib/ticketTransitions.ts:247-253`, `app/api/tickets/workflow-action/route.ts:113-132`, `lib/capabilityPolicy.ts:55-60`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the misattribution is visible in the UI: app/(protected)/requests/[id]/page.tsx:1744-1748 renders `ticket.assignedEngineerName` with an 'approved' badge keyed off `ticket.engineerApprovedAt`, so a Supervisor's click displays as the assigned engineer having signed off. HIGH sustained.
@@ -189,6 +189,22 @@ if (!held.some((r) => r.includes("Engineer"))) {
 - [ ] `engineer_approve_final` requires `isEngineerRole(userRole)` (or an explicit, separately-named `ticket.engineer_override` capability) in addition to the identity/management check
 - [ ] When a non-engineer uses a management override at PENDING_FINAL_APPROVAL, the action is a distinctly-labelled one that does NOT write `engineer_approved_at`, and the audit row records the override explicitly
 - [ ] lib/__tests__/workflow.test.ts asserts a Supervisor at PENDING_FINAL_APPROVAL does not receive `engineer_approve_final`
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P6 REVIEW-MODEL, under the integrator's ruling for this package (DEC-90 ruling (3): management may still override; recorded as an override in history and in the audit row as `authority.override`; `engineer_approved_at` is stamped only for a signer who holds an Engineer role or occupies the engineering slot; the seed stays today's serial path). Reproduced on the base: `lib/workflow.ts` `PENDING_FINAL_APPROVAL` offered `engineer_approve_final` to the assigned engineer OR any `ticket.final_approve` / management holder, and `lib/ticketTransitions.ts` stamped `engineer_approved_at` for all of them.
+
+Landed:
+- `lib/workflow.ts` (`:859`): the engineer's sign-off (`engineer_approve_final`) is offered only to the assigned engineer, a holder of an Engineer role, or — with no engineer assigned — a `ticket.final_approve` holder (the occupant of the engineering slot). Any other management actor gets **`override_engineer_final`** — "Override: Issue Without Engineer Sign-off", warning variant, `engineeringOverride: true`.
+- `lib/ticketTransitions.ts` (`:672`): the override issues exactly as the sign-off does (`PENDING_IFC`, the issued Rev) but never writes `engineer_approved_at`, and its history line says "Management override — issued without the engineer's sign-off". A management minor correction at final approval is the same override (no stamp).
+- `app/api/tickets/workflow-action/route.ts`: an action marked `engineeringOverride` writes `authority: "override"` in its audit row; the override is an approving action for the routing, notification and roster rules (`classifyTransitionNotification`).
+
+Tests: `lib/__tests__/reviewModel.test.ts` "SM-3 — only an engineer signs as the engineer …" (a Supervisor and a Manager at `PENDING_FINAL_APPROVAL` are not offered `engineer_approve_final`; the assigned engineer and an Engineer-holding manager are); `lib/__tests__/dfRoundG_P6_reviewRoute.test.ts` "SM-3 — …" (refused at the route; the override's audit row names the override; the assigned engineer still stamps — REGRESSION); `capabilityPolicy.test.ts` re-pinned (Manager → `override_engineer_final`).
+
+**Done-when.**
+- ✓ `engineer_approve_final` requires an Engineer role, the assigned engineer's identity, or occupancy of the unassigned engineering slot (`ticket.final_approve`) — the separately named path for everyone else is `override_engineer_final`.
+- ✓ The non-engineer management path is distinctly labelled, does not write `engineer_approved_at`, and the audit row records the override (`authority: "override"`).
+- ✓ A test asserts a Supervisor at `PENDING_FINAL_APPROVAL` does not receive `engineer_approve_final` (`lib/__tests__/reviewModel.test.ts`; the named file `workflow.test.ts` is unchanged — the assertion lives with the review model's tests).
+
+**Scope / residual.** The only difference an unconfigured workspace sees is the renamed management button at `PENDING_FINAL_APPROVAL` (same effect, no engineer stamp). No new capability was added (a `ticket.engineer_override` token was not needed: management keeps the override through `ticket.manage`).
 
 ---
 

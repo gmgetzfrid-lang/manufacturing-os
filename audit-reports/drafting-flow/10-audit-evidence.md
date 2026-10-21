@@ -828,6 +828,15 @@ Tests: `lib/__tests__/dfRoundG_P5_rosterRoute.test.ts` ("approve_draft_ifc: the 
 
 **Owners of the remainder:** done-when 4 on the serial approvals → drafting-flow **DF-P6** (the review model moves the engineering approval onto the roster — `TIER-1` / `GAP-109` — at which point every approval is a signed sign-off), or an integrator ruling under DEC-90 that the serial approvals require the ceremony. Done-when 1 (the transaction form) → unowned in the fleet plan since DF-P1; proposed for the integrator to assign (a transition-and-audit RPC). Stays OPEN.
 
+**Partial (2026-10-21, drafting-flow Round G).** DF-P6 REVIEW-MODEL — done-when 4 on the serial approvals is **ruled, not built**. Ruled by the integrator for this package (DEC-90 ruling (6) for DF-P6): the serial approvals of a workspace that has configured no routing do NOT gain an e-signature ceremony (it would add a step to a flow that works today — the REGRESSION rule); a workspace that wants every approval signed configures routing, where every sign-off is bound to an e-signature and the content hash (DF-P5). What DF-P6 adds to the record: every transition's audit row now carries `engineeringRequired`, `likeInKindDeclared`, the declared / review class, `authority: "override"` on a management override, and the source-drift acknowledgement (`app/api/tickets/workflow-action/route.ts`); the declaration itself is an e-signature (intent `Acknowledged`, over the requester's sentence, bound to the request id — `GAP-110`).
+
+**Done-when.**
+- ✗ (1) the transaction form — unchanged; unowned (proposed for the integrator to assign: a transition-and-audit RPC).
+- ✓ (2), ✓ (3) as recorded above (DF-P1 / DF-P5).
+- ✗ (4) on the serial path of an unconfigured workspace — ruled out by the integrator for that path (above); ✓ on every routed sign-off.
+
+**Scope / residual.** Done-when 4 is closed for this fleet by the ruling unless the integrator re-opens it; done-when 1 remains. Stays OPEN on done-when 1.
+
 ---
 
 <a id="evid-13"></a>

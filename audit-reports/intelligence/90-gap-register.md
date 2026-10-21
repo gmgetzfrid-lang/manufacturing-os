@@ -942,6 +942,8 @@ different fields. **Ship them together or the form gets edited twice.**
 
 *Handoff (2026-09-30, intelligence Round G, I-01 phase A): this gap is [`WIRE-7`](./19-wiring.md#wire-7) criterion 1 and is handed to the drafting-flow fleet — **DF-P6 REVIEW-MODEL**, which edits `app/(protected)/requests/new/page.tsx` for `GAP-110` / `GAP-111`, so it ships with them. No drafting-flow package lists it yet; the integrator adds it to DF-P6 (or schedules it directly after). Intelligence prerequisites: `GAP-311` (I-10, merged) and `GAP-304` (I-11).*
 
+*Landed 2026-10-21 (drafting-flow Round G, DF-P6 REVIEW-MODEL — shipped with `GAP-110` / `GAP-111`, one edit of the form): the request form's optional **Equipment** field (`components/requests/LikeInKindField.tsx`) — tags separated by commas, each resolved at submit through the ⌘K registry lookup (`lib/search.ts` `lookupTag`, no AI call); the create route records one `ticket_equipment` row per tag (`20261251`, pending paste) with the asset only when it is an asset of this workspace, otherwise the tag as typed, flagged "not found in the equipment registry, kept as typed"; never required, never a refusal (a failed write is said). The request page lists the equipment and, for each resolved tag, the sheets it appears on (`components/requests/DeclarationCard.tsx`, `lookupTag` → its sheets). Acceptance 1 ✓, 2 ✓ (the sheets each resolved tag appears on, read through the same relation), 3 ✓ (blank never blocks — `lib/__tests__/ticketCreateRoute.test.ts` "DF-P6 — … GAP-312 …"). 'Do not' kept: not required; no request created from a tag. The table's backup decision is the integrator's at merge (`exportCoverage.test.ts` `DECISION_AT_MERGE`; proposed EXPORTED after tickets and assets).*
+
 ---
 
 <a id="gap-313"></a>

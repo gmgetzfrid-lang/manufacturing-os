@@ -626,6 +626,8 @@ model worse. See `GAP-1`.
 
 *Landed 2026-10-02 (drafting-flow Round G, DF-P1 RAILS): the resource a scoped rule reads can no longer be rewritten by a member — `request_type` and `unit` are workflow-owned in `ticket_update_guard` (`supabase/migrations/20261166_df_roundG_ticket_rails.sql`, re-created from `20261038`, lineDiff-pinned; pending paste). Until the paste a member can still re-type or re-unit a ticket out of a type- or unit-scoped rule (drafting-flow `LEAK-10`, whose paste-time inventory decides HIGH vs CRITICAL). See `LEAK-10`, `LEAK-3`, `AUTHZ-6`.*
 
+*Landed 2026-10-21 (drafting-flow Round G, DF-P6 REVIEW-MODEL): the ticket resource gains `libraryId` (GAP-105 acceptance 3) and, on `ticket.*` capabilities only, `workClass` / `codeClass` (`lib/capabilityPolicy.ts` `TICKET_RESOURCE_KEYS`); a work/code-class rule on a capability the database evaluates is refused by `validateCapabilityPolicy` (the SQL `RESOURCE_KEYS` pin is unchanged). `ticket.engineer_gate_exempt` now decides only for requests the declaration does not speak for (DEC-33).*
+
 <a id="dec-14"></a>
 ## DEC-14 · `CANCELED`, `NEW`, `PENDING_ENG_INITIAL`
 
@@ -1338,6 +1340,8 @@ that is a router slot property (`waivable_by`), added then — not a code branch
 
 **Risk:** high — this is the gate.
 
+*Landed 2026-10-21 (drafting-flow Round G, DF-P6 REVIEW-MODEL): engineering review is required by the work — `tickets.engineering_required` (`20261250`), true unless the requester declared like-in-kind, raised by `request_eng_review`, `flag_engineering` or an engineering class, never lowered (the guard, every caller, the service role included). One gate decides every issue transition (`lib/workflow.ts` `engineeringGateRequired`); the role-based test is the seed for requests the column cannot speak for (DEC-90 ruling (2): pre-paste rows keep their lane, backfilled from the legacy answer only where certain). SM-3's management override is recorded as one and never stamps the engineer. See drafting-flow `TIER-1`, `GAP-101`, `GAP-111`, `SM-3`; `DEC-44 (DF-P6-review-model)`.*
+
 <a id="dec-34"></a>
 ## DEC-34 · What form does the like-in-kind declaration take?
 
@@ -1394,6 +1398,8 @@ enforces is a record, not a control. The declaration must be a column that
 not.
 
 **Risk:** low.
+
+*Landed 2026-10-21 (drafting-flow Round G, DF-P6 REVIEW-MODEL): typed, not clicked — one sentence of at least 20 characters, signed (an e-signature, intent `Acknowledged`, over the sentence, bound to the request id before it is filed), immutable, rendered attributed on the request, in its history and its audit rows. Blank says on the form that the request goes to engineering. See drafting-flow `GAP-110`; `DEC-44 (DF-P6-review-model)` item 1.*
 
 <a id="dec-35"></a>
 ## DEC-35 · No facility vocabulary in application code
@@ -1467,6 +1473,8 @@ facility with no configuration must keep working exactly as it does today.
 *Landed 2026-10-21 (drafting-flow Round G, DF-P5 ROSTER): the drafting request's review routing is data — `routing_control` slots name their own kind and label, filled by roles, named people, a capability or the requester's identity (`lib/routingControl.ts`); no facility vocabulary is added (pinned by `dfRoundG_P5_routing.test.ts`). `isEngineerRole` / `isManagementRole` / `isDocCtrlRole` are quarantined as the seed (`SEEDED_ROUTING`; comment in `lib/workflow.ts`), not deleted: an unconfigured workspace runs the state machine unchanged. See `GAP-112`.* *At the merge (2026-10-21, the integrator under DEC-90): the roster tables are EXPORTED (after ticket_comments) and NEVER restored — lib/dataRestore.ts IMMUTABLE_TABLES, SURF-8: a satisfied slot is bound to the signer's e-signature, which is itself never imported, so a restored slot would claim a sign-off nobody can show (the package proposed restoring them; ruled fail-safe instead). `20261241` is paste row 189 (deploy first), `20261242` row 190. ROUTE-15 → drafting-flow DF-P17.* *Accepted at the merge after an independent review of the last fix pass (verdict clean; every serial transition, recipient, notification class and serial button of an unconfigured workspace is as on 9bc7884): the intended differences an unconfigured workspace sees — the drafter's optional "Issue As-Is When Approved" (DEC-90 ruling 1, default off), the read-only Review panel (DCW-6), the picker's display names and its hiding of engineers the route already refuses (ROUTE-8), a 503 `routing_unreadable` instead of applying an action when a library ticket's routing read fails (DEC-36, fail closed), and the after-response file-hash audit row (EVID-12).*
 
 *Landed 2026-10-20 (drafting-flow Round G, DF-P11 AFTER-DC): the hold audience that falls back to `holds.release`'s holders now resolves, under the shipped default, to Admin and Document Control (the capability's new default) — no facility role is named in code; an org's stored list or personal grants still decide. See drafting-flow `HAND-2`.*
+
+*Landed 2026-10-21 (drafting-flow Round G, DF-P6 REVIEW-MODEL): work and code classes are the workspace's own lists (`org_configurations` `'drafting'`, `workClasses` / `codeClasses`, seeded EMPTY; unset = the engineered reading). No class names, no QA/QC role, status or slot, and no code / examination vocabulary in the files this package wrote (pinned by `lib/__tests__/reviewModel.test.ts` and the migration shape test). The role-based engineering gate is quarantined as the seed, not deleted.*
 
 <a id="dec-36"></a>
 ## DEC-36 · Where the routing table lives, and how it resolves
@@ -6900,3 +6908,19 @@ Fix pass 4 adds: in `pushChannel.test.ts`, the watermark tests (`pushWatermarkFo
 **Reversal.** Remove the `AttentionDot` uses and the optional props: every surface renders as before. Remove step 6's placement step (`placeFor`) and the `rollup` field; step 5's TRAIL-12 read of unlinked rows stays as on `9bc7884`.
 
 **Risk:** low. One documents read (at most five chunks, in parallel) and one folders read per feed pass while document rows exist, after the counts have landed and within the 8 s deadline; TRAIL-12's read of unlinked rows, as before N11, whose answers the placements reuse. A folder the viewer cannot read contributes no chain (the document counts on its library only). A row about a checkout, a milestone or a work package marks no container until its producer names a document, library or project.
+
+<a id="dec-44-df-p6-review-model"></a>
+## DEC-44 (DF-P6-review-model) · The like-in-kind declaration's signature, the source-drift acknowledgement seam, and where the work / code classes bind
+
+*Minted by drafting-flow Round G, package DF-P6 REVIEW-MODEL (2026-10-21), under the provisional label "DEC-44 (DF-P6-review-model)", anchor `dec-44-df-p6-review-model` — the corpus's branch convention for a decision minted off the integration branch (DEC-44 to DEC-113 are taken there); distinct from the download-record DEC-44; the integrator renumbers it at merge. It records calls the package had to make inside the integrator's rulings for DF-P6 (DEC-90). References: drafting-flow `GAP-110`, `HAND-7`, `TIER-3`, `TIER-4`, `GAP-105`, `SM-3`; `supabase/migrations/20261250_df_roundG_review_model.sql`; `lib/reviewModel.ts`; `app/api/tickets/create/route.ts`; `app/api/tickets/workflow-action/route.ts`.*
+
+**Decision.**
+1. **The declaration's e-signature is minted before the request exists, bound to the id it will be filed under.** The request form generates the request's id (`ticketKey`), runs the existing signing ceremony (`/api/signatures/sign`, resource `ticket` / that id, intent `Acknowledged`, statement "Like-in-kind declaration: " + the sentence), and the create route files the request under that id only if the signature is the requester's, in this workspace, over exactly that sentence, within 30 minutes, and the id is not already a request (409 `declaration_used` — a double submit never files twice). No new signature intent or table. Before `20261250` the request is filed the usual way and the answer says the declaration was not recorded; the signature stays on record.
+2. **The source-drift acknowledgement is a seam until the request page sends it.** An issuing approval over a moved source records the acknowledgement when `sourceDriftAcknowledged: true`, is refused (409) on an explicit `false`, and — while the page does not send the field — applies and records "not acknowledged (the page did not ask)". Refusing an absent field would block approvals that work today.
+3. **Work / code-class rule keys bind only on `ticket.*` capabilities**, which the application evaluates; the database's capability resource (`RESOURCE_KEYS`, pinned to its SQL twin) is unchanged, and such a rule on any other capability is refused. A routing slot may be limited to work classes only when it is notify-only (an unclassified request keeps it); a blocking slot never drops by class, so classification can add notice but never remove a sign-off.
+4. **The management override at final approval is offered through `ticket.manage`**, never as the engineer's action: the engineer's sign-off goes to the assigned engineer, an Engineer-role holder, or (unassigned) the `ticket.final_approve` holder; everyone else with management authority sees "Override: Issue Without Engineer Sign-off". No new capability token.
+
+**Reversal.** (1) Drop the declaration columns from the insert: the request files the usual way. (2) Treat an absent acknowledgement like `false` once the page sends it. (3) Add the keys to `RESOURCE_KEYS` and its SQL twin together. (4) Map the override back to `engineer_approve_final` minus the stamp.
+
+**Risk:** medium — (1) depends on the client generating a fresh id; a reused id is refused, never overwritten.
+

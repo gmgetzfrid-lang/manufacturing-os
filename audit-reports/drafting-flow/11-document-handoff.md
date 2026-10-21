@@ -453,6 +453,20 @@ lib/revisions.ts:461 —
 
 **Scope / residual.** (3) → DF-P6.
 
+**Partial (2026-10-21, drafting-flow Round G).** DF-P6 REVIEW-MODEL — done-when 3, the server half. Every issuing approval (`approve_draft_ifc`, `approve_minor_correction`, `engineer_approve_final`, `override_engineer_final`, and a roster sign-off) of a request whose source has moved now says so in its description and carries `requiresSourceDriftAck` (`lib/workflow.ts` `:1064`, `revDrift` over the request's source documents); the workflow route reads the sources' live revisions (`documents`, this workspace, as the caller) and:
+- `sourceDriftAcknowledged: true` → applies and records "Approved over a moved source, acknowledged by the approver: …" in the history line and the audit row (`sourceDrift`);
+- `sourceDriftAcknowledged: false` → refused 409 `source_drift_unacknowledged`, nothing written;
+- absent (the request page does not send it yet) → applies, recording "…not acknowledged (the page did not ask)" — a page that has not caught up never blocks an approval that works today (REGRESSION); a failed read records `sourceDriftUnchecked` and never blocks.
+
+Tests: `lib/__tests__/dfRoundG_P6_reviewRoute.test.ts` "HAND-7 done-when 3 — an approval over a moved source" (three cases).
+
+**Done-when.**
+- ✓ (1) DF-P2.
+- ✓ (2) DF-P9.
+- ✗ (in part) (3) Approving over a superseded base requires an explicit acknowledgement — enforced for any client that knows about the move (an explicit `false` is refused) and recorded for every approval; the request page's confirmation (a checkbox on the approval dialog that sends `sourceDriftAcknowledged`) is not built — the page is DF-P9's file and outside this package's plan.
+
+**Scope / residual.** The page half (send `sourceDriftAcknowledged` from the approval dialog when the action carries `requiresSourceDriftAck`) → drafting-flow **DF-P9** follow-up; once it lands the route can refuse an absent acknowledgement too (one line: treat absent like `false` when `requiresSourceDriftAck`). Stays OPEN.
+
 ---
 
 <a id="hand-8"></a>

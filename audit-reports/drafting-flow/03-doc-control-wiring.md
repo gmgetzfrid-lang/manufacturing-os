@@ -88,7 +88,7 @@ not exist on the ticket.
 ## DCW-2 · Document Control is not a party to the drafting flow at any state
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance
 - **Locations:**
@@ -138,6 +138,19 @@ the model and the flow never implemented it.**
    released.
 2. Satisfying that requirement adds no serial status hop.
 3. A document controller's attention badge reflects work they can actually do.
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P6 REVIEW-MODEL (record and test) on DF-P5's roster and DF-P9's badge. Ruled for this package (DEC-90, 99-fix-sequencing "Do not"): no `PENDING_DOC_CTRL` status.
+
+What closes it: a library's routing table (`routing_control`, `20261241`, DF-P5) may carry a **blocking slot filled by the document-control role** (or named controllers); on that library's requests the roster opens with it beside the technical slot, DocCtrl is offered the sign-off (`sign_slot`) at the SAME status as the technical review, and the request does not issue until every blocking slot is signed. Libraries with no such slot are unaffected. The attention badge is the engine's live-action set (`FRIC-7`, RESOLVED by DF-P9), so a controller is counted exactly on the requests the roster waits on them for. DF-P6 removes the inversion this finding names — DocCtrl no longer skips the engineering gate on its own requests filed after the paste (`TIER-1`).
+
+Tests: `lib/__tests__/reviewModel.test.ts` "DCW-2 / GAP-104 — document control as a party …" (a DocCtrl slot on a routed library: sign-off offered at the review status, the badge counts it, DocCtrl's sign-off alone does not issue while the engineering slot waits; no new status).
+
+**Done-when.**
+- ✓ 1. A library can require document-control review before its drawings are released (a blocking routing slot filled by DocCtrl).
+- ✓ 2. No serial status hop (the parallel roster).
+- ✓ 3. The controller's attention badge reflects work they can actually do (FRIC-7; pinned for the roster slot here).
+
+**Scope / residual.** A workspace that configures no routing keeps today's serial path, in which document control is not a party (DEC-90 ruling (2)); making it one is that workspace's configuration. `DCW-3` / `DCW-4` (release into the register) are separate findings.
 
 ---
 
@@ -408,6 +421,8 @@ Tests: `lib/__tests__/dfRoundG_P5_rosterPanel.test.ts` ("DCW-6 (source pin …)"
 - ✓ A ticket targeting a library with a configured review policy surfaces that policy's reviewers, before the deliverable is approved. *Verified by a source pin plus the panel's first-paint tests — the default suite renders server-side, where the panel's read effect does not run; no DOM harness exists in this repository (DEC-29 item 2: said, not claimed as a behavioural test).*
 
 **Scope / residual.** None for this finding. `getActions`' signature is unchanged (the roster rides the ticket row); the capability resource still does not carry `libraryId` (`99-fix-sequencing.md` "Hand-offs from DF-P4" row 2 — see the DF-P5 hand-off notes there).
+
+*Note (2026-10-21, drafting-flow Round G, DF-P6 REVIEW-MODEL): the hand-off named above — the capability resource does not carry `libraryId` — is closed. `lib/workflow.ts` `ticketResource` now passes `libraryId` (and `workClass` / `codeClass`) when the ticket has them, so a `ticket.*` rule scoped to a library binds that library's requests (`GAP-105` acceptance 3). The counts-only inventory of `20261250` reports how many stored `ticket.*` rules are library-scoped (expected 0) and how many requests they would reach, before the paste. Tests: `lib/__tests__/reviewModel.test.ts` "the resource carries the library, the work class and the code class only when the ticket has them"; `dfRoundG_P4_library.test.ts` re-pinned.*
 
 ---
 
