@@ -93,17 +93,20 @@ describe("20261247 §2 — the column guard", () => {
     expect(M).toContain("DROP TRIGGER IF EXISTS trg_document_version_row_integrity ON document_versions;\nCREATE TRIGGER trg_document_version_row_integrity\n  BEFORE INSERT OR UPDATE ON document_versions\n  FOR EACH ROW EXECUTE FUNCTION enforce_document_version_row_integrity();");
   });
 
-  it("judges a signed-in session only — the service role / SQL editor (no auth.uid()) and the contractor door's identity (its role, or the bound claims) return first", () => {
+  it("judges a signed-in session only — the contractor door's identity (its role, or the bound claims) returns FIRST, before auth.uid() is read (the role intake_door need not hold USAGE on schema auth: a 'permission denied for schema auth' would send the door's switched INSERT to its fallback), then the service role / SQL editor (no auth.uid())", () => {
     const code = prosrc.split("\n").filter((l) => l.trim() && !l.trim().startsWith("--"));
-    expect(code.slice(0, 7)).toEqual([
+    expect(code.slice(0, 9)).toEqual([
       "DECLARE",
-      "  v_uid uuid := auth.uid();",
+      "  v_uid uuid;",
       "BEGIN",
-      "  IF v_uid IS NULL THEN RETURN NEW; END IF;",
       "  IF CURRENT_USER = 'intake_door'",
       "     OR COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role', '') = 'intake_door' THEN",
       "    RETURN NEW;",
+      "  END IF;",
+      "  v_uid := auth.uid();",
+      "  IF v_uid IS NULL THEN RETURN NEW; END IF;",
     ]);
+    expect((code.join("\n").match(/auth\.uid\(\)/g) ?? []).length).toBe(1);
   });
 
   it("DCK-16: an INSERT that is 'external', names a link, or names another creator — and an UPDATE that changes the link or the creator or moves provenance to or from 'external' — is refused 42501", () => {
@@ -152,7 +155,7 @@ describe("20261247 — the one-paste shape (DEC-30)", () => {
   it("the inventory is aggregate counts only — never a customer row", () => {
     const inv = between(code, "CREATE TEMP TABLE dc_round_g_247_before AS", "\nBEGIN;");
     const selects = inv.split(/\nUNION ALL\n/);
-    expect(selects.length).toBe(4);
+    expect(selects.length).toBe(5);
     for (const s of selects) expect(s).toMatch(/COUNT\(\*\)::text/);
     expect(inv).not.toMatch(/SELECT\s+\*|file_url|title|document_number|email/);
   });
@@ -165,12 +168,25 @@ describe("20261247 — the one-paste shape (DEC-30)", () => {
     expect(inv).toContain("(v.review_state = 'in_review' AND v.released_at IS NOT NULL) AS relabelled_look");
     expect(inv).not.toMatch(/superseded_at IS NOT NULL/);
     const selects = inv.split(/\nUNION ALL\n/);
-    expect(selects[0]).toMatch(/informational/);
-    expect(selects[0]).not.toMatch(/expected 0/);
-    for (const s of selects.slice(1)) expect(s).toMatch(/expected 0/);
-    expect(selects[1]).toMatch(/WHERE forged_submission_look\s*$/);
-    expect(selects[2]).toMatch(/WHERE relabelled_look\s*$/);
-    expect(selects[3]).toMatch(/WHERE v\.relabelled_look;\s*(BEGIN;)?\s*$/);
+    for (const s of selects.slice(0, 2)) {
+      expect(s).toMatch(/informational/);
+      expect(s).not.toMatch(/expected 0/);
+    }
+    for (const s of selects.slice(2)) expect(s).toMatch(/expected 0/);
+    expect(selects[2]).toMatch(/WHERE forged_submission_look\s*$/);
+    expect(selects[3]).toMatch(/WHERE relabelled_look\s*$/);
+    expect(selects[4]).toMatch(/WHERE v\.relabelled_look;\s*(BEGIN;)?\s*$/);
+  });
+
+  it("the DCK-16 residual is counted, not hidden (P33 final fix): an INFORMATIONAL row counts documents whose pending pointer names a door-shaped submission (in review, 'external', no creator or the link's id) — it counts the genuine pending submissions too, and says so", () => {
+    const inv = between(code, "CREATE TEMP TABLE dc_round_g_247_before AS", "\nBEGIN;");
+    expect(inv).toContain(`(v.review_state = 'in_review' AND COALESCE(v.provenance, '') = 'external'
+          AND (v.created_by IS NULL OR v.created_by = v.intake_link_id)) AS door_shaped_look`);
+    const row = inv.split(/\nUNION ALL\n/)[1];
+    expect(row).toMatch(/FROM documents d JOIN v ON v\.id = d\.pending_version_id\s+WHERE v\.door_shaped_look\s*$/);
+    expect(row).toContain("informational, it counts the genuine pending submissions too");
+    expect(row).toContain("door (b) may still promote it over a checkout");
+    expect(row).toContain("DCK-18");
   });
 
   it("each prosrc probe holds on the function as written (pg_proc.prosrc is verbatim; '''' is one apostrophe)", () => {

@@ -1059,9 +1059,14 @@ migration, `20261247_dc_roundG_version_row_integrity.sql` (`DCK-16`,
   revision back into review or onto another document, clear its release or
   supersession, or rewrite the revision it superseded. Everything the app,
   the RPCs, the door and the intake route do lands exactly as before.
-- **The result set:** seven probes (all true) and four counts — external
+- **The result set:** seven probes (all true) and five counts — external
   rows (informational: the door's submissions and trusted auto-publishes;
-  any number is normal); in-review rows that are external or name a link
+  any number is normal); documents whose pending pointer names a door-shaped
+  submission (informational: it counts the genuine pending submissions too —
+  a door-shaped row a signed-in session wrote before the paste cannot be
+  told from them, is not refused, and door (b) can still promote it until it
+  is decided, withdrawn or voided; look the pending ones over; residual on
+  `DCK-18`, added at P33's final fix pass); in-review rows that are external or name a link
   and whose creator is a member (expected 0 — a trusted auto-publish is
   published, not in review, and is not counted); in-review rows already
   RELEASED (expected 0 — a draft voided, replaced or withdrawn in review

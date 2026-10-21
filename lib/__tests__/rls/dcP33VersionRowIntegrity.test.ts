@@ -390,15 +390,54 @@ describe.skipIf(skip !== null)("DCK-16 / DCK-17 (20261247): the version row's in
       expect(r.after).toBe(r.before);
     });
 
-    it("the contractor door: intake_door_submit_version (service key; the INSERT as the role intake_door under its bound identity) files its in-review external submission on both sides", () => {
-      const hash = admin(AFTER, `SELECT token_hash FROM project_intake_links WHERE id = '${w.link}'`);
-      const stmt = `SELECT 1 WHERE intake_door_submit_version('${hash}', jsonb_build_object(
-        'record_id', '${w.dIntake}', 'revision_label', '3A', 'file_url', 'orgs/${w.org}/project-intake/${w.project}/door.pdf',
+    // THE HOSTED PATH (DEC-90, no regression): where intake_door_version_rls_ready() answers true, the door
+    // switches to the role intake_door for its one INSERT (CURRENT_USER = 'intake_door'); anything that
+    // raises insufficient_privilege there with "permission denied …" or a named policy not the door's own
+    // undoes the switch, leaves a WARNING and files the row with the bound identity alone. A probe trigger
+    // records the role the admitted attempt ran as (a refused attempt's record is rolled back with it).
+    const WHOAMI = `CREATE FUNCTION public.p33_door_whoami() RETURNS trigger LANGUAGE plpgsql AS $w$
+      BEGIN PERFORM set_config('p33.door_insert_role', CURRENT_USER::text, true); RETURN NEW; END $w$;
+      CREATE TRIGGER p33_door_whoami BEFORE INSERT ON document_versions FOR EACH ROW EXECUTE FUNCTION public.p33_door_whoami();`;
+    const doorSubmit = (db: string, label: string, prelude = "") => {
+      const { conn } = mosDb();
+      const hash = admin(db, `SELECT token_hash FROM project_intake_links WHERE id = '${w.link}'`);
+      const submit = `SELECT 1 WHERE intake_door_submit_version('${hash}', jsonb_build_object(
+        'record_id', '${w.dIntake}', 'revision_label', '${label}', 'file_url', 'orgs/${w.org}/project-intake/${w.project}/door-${label}.pdf',
         'created_by_name', 'Contractor Co', 'supersedes_version_id', '${w.iA}')) IS NOT NULL`;
-      const after = `SELECT count(*) FROM document_versions WHERE record_id = '${w.dIntake}' AND revision_label = '3A' AND provenance = 'external' AND intake_link_id = '${w.link}' AND review_state = 'in_review';`;
-      const r = both("service", [stmt], after, DROP_NOT_NULL);
-      expect(r.before).toBe("ok:1 / 1");
-      expect(r.after).toBe(r.before);
+      const sql = [
+        "BEGIN;", DROP_NOT_NULL, WHOAMI, prelude,
+        "SET LOCAL ROLE service_role;",
+        `SELECT set_config('request.jwt.claims', ${dollarQuote(JSON.stringify({ role: "service_role" }))}, true);`,
+        "SELECT 'ready:' || intake_door_version_rls_ready();",
+        `SELECT harness.try_sql(${dollarQuote(submit)});`,
+        "RESET ROLE;",
+        "SELECT 'as:' || COALESCE(NULLIF(current_setting('p33.door_insert_role', true), ''), 'unset');",
+        `SELECT 'rows:' || count(*) FROM document_versions WHERE record_id = '${w.dIntake}' AND revision_label = '${label}' AND provenance = 'external'
+           AND intake_link_id = '${w.link}' AND created_by IS NULL AND review_state = 'in_review' AND released_at IS NULL;`,
+        "ROLLBACK;",
+      ].join("\n");
+      const r = runPsql(conn!, db, conn!.superuser, { sql });
+      if (!r.ok) throw new Error(`door submit failed on ${db}: ${r.error ?? r.stderr}`);
+      return { out: r.stdout.split("\n").filter((l) => l.length > 0).slice(1).join(" / "), warnings: r.stderr.match(/WARNING:[^\n]*/g) ?? [] };
+    };
+
+    it("the contractor door's ROLE-SWITCH path (the hosted path: intake_door_version_rls_ready() true, the INSERT as CURRENT_USER = 'intake_door' under the door's policies): the row lands as the role intake_door, with no WARNING and no bound-identity fallback — on both sides, whether the role holds USAGE on schema auth (20261184 grants it where it can) or not (this replay; and revoked)", () => {
+      for (const [k, prelude] of [["as replayed", ""], ["auth usage granted", "GRANT USAGE ON SCHEMA auth TO intake_door;"], ["auth usage revoked", "REVOKE USAGE ON SCHEMA auth FROM intake_door;"]] as const) {
+        for (const db of [BEFORE, AFTER]) {
+          const r = doorSubmit(db, "4A", prelude);
+          expect(r.warnings, `${k} ${db}`).toEqual([]);
+          expect(r.out, `${k} ${db}`).toBe("ready:true / ok:1 / as:intake_door / rows:1");
+        }
+      }
+    });
+
+    it("the contractor door's BOUND-CLAIMS FALLBACK (intake_door_version_rls_ready() false — here a restrictive policy for every role the readiness check counts as a gap): intake_door_submit_version files its in-review external submission with the bound identity alone (CURRENT_USER the service role, the claims role intake_door — the guard's claims branch exempts it), no WARNING — on both sides", () => {
+      const gap = "CREATE POLICY p33_readiness_gap ON document_versions AS RESTRICTIVE FOR INSERT WITH CHECK (true);";
+      for (const db of [BEFORE, AFTER]) {
+        const r = doorSubmit(db, "4C", gap);
+        expect(r.warnings, db).toEqual([]);
+        expect(r.out, db).toBe("ready:false / ok:1 / as:service_role / rows:1");
+      }
     });
 
     // The two door writers below run as the function's owner with the door's identity BOUND in the
@@ -457,13 +496,14 @@ describe.skipIf(skip !== null)("20261247 pasted as ONE script, as the SQL editor
     return { check, ok, n };
   });
 
-  it("on a copy with 20261247 undone: every probe true, the four inventory rows are counts, and a re-paste is clean — and the inventory counts the forgery signatures only: legitimate retired drafts, the door's submission and a trusted auto-publish do not count, a forged submission and a forged relabel (and a pointer to it) do", () => {
+  it("on a copy with 20261247 undone: every probe true, the five inventory rows are counts, and a re-paste is clean — and the 'expected 0' rows count the forgery signatures only: legitimate retired drafts, the door's submission and a trusted auto-publish do not count, a forged submission and a forged relabel (and a pointer to it) do; the informational pending-submission row counts the door's genuine pending submission AND a door-shaped row written before the paste (DCK-16's residual — the two cannot be told apart)", () => {
     admin("postgres", `DROP DATABASE IF EXISTS ${SCRATCH}`);
     admin("postgres", `CREATE DATABASE ${SCRATCH} TEMPLATE ${AFTER}`);
     const o = { org: randomUUID(), user: randomUUID(), lib: randomUUID(), doc: randomUUID(), link: randomUUID(),
-      cur: randomUUID(), voided: randomUUID(), resub: randomUUID(), door: randomUUID(), trusted: randomUUID(), fSub: randomUUID(), fRel: randomUUID() };
-    const vrow = (id: string, label: string, extra: string) =>
-      `('${id}', '${o.org}', '${o.doc}', '${label}', 'p33inv/${id}.pdf', 'Minor', ${extra})`;
+      cur: randomUUID(), voided: randomUUID(), resub: randomUUID(), door: randomUUID(), trusted: randomUUID(), fSub: randomUUID(), fRel: randomUUID(),
+      doc2: randomUUID(), doc3: randomUUID(), fDoor: randomUUID() };
+    const vrow = (id: string, label: string, extra: string, doc = o.doc) =>
+      `('${id}', '${o.org}', '${doc}', '${label}', 'p33inv/${id}.pdf', 'Minor', ${extra})`;
     const COLS = "INSERT INTO document_versions (id, org_id, record_id, revision_label, file_url, change_type, created_by, review_state, provenance, intake_link_id, released_at, superseded_at) VALUES";
     // as the superuser with the triggers off: a world the inventory reads (rows only — it never judges a write)
     const legit = `SET session_replication_role = replica;
@@ -479,13 +519,22 @@ describe.skipIf(skip !== null)("20261247 pasted as ONE script, as the SQL editor
         ${vrow(o.trusted, "B", `'${o.user}', NULL, 'external', '${o.link}', now(), NULL`)};
       UPDATE documents SET current_version_id = '${o.trusted}', pending_version_id = '${o.door}' WHERE id = '${o.doc}';
       RESET session_replication_role;`;
-    const forged = `SET session_replication_role = replica;
+    // the forgeries, each on its own document: a member-created in-review submission (fSub), a released
+    // revision relabelled in review and pointed at (fRel on doc2), and DCK-16's own shape written before the
+    // paste — member-less, 'external', the link, pending on doc3 (fDoor): the door's shape exactly
+    const forged = `${DROP_NOT_NULL}
+      SET session_replication_role = replica;
+      INSERT INTO documents (id, org_id, library_id, title, document_number, status) VALUES
+        ('${o.doc2}', '${o.org}', '${o.lib}', 'Inv2', 'P33-INV2-${o.org.slice(0, 8)}', 'Issued'),
+        ('${o.doc3}', '${o.org}', '${o.lib}', 'Inv3', 'P33-INV3-${o.org.slice(0, 8)}', 'Issued');
       ${COLS}
         ${vrow(o.fSub, "AD", `'${o.user}', 'in_review', 'external', '${o.link}', NULL, NULL`)},
-        ${vrow(o.fRel, "AE", `'${o.user}', 'in_review', NULL, NULL, now(), now()`)};
-      UPDATE documents SET pending_version_id = '${o.fRel}' WHERE id = '${o.doc}';
+        ${vrow(o.fRel, "AE", `'${o.user}', 'in_review', NULL, NULL, now(), now()`, o.doc2)},
+        ${vrow(o.fDoor, "AF", `NULL, 'in_review', 'external', '${o.link}', NULL, NULL`, o.doc3)};
+      UPDATE documents SET pending_version_id = '${o.fRel}' WHERE id = '${o.doc2}';
+      UPDATE documents SET pending_version_id = '${o.fDoor}' WHERE id = '${o.doc3}';
       RESET session_replication_role;`;
-    const LABELS = { external: "external submissions (informational", submission: "IN REVIEW recorded as external", relabel: "already RELEASED", pointer: "pending pointer names" } as const;
+    const LABELS = { external: "revisions recorded as external submissions (informational", pending: "pending pointer names an in-review external submission", submission: "IN REVIEW recorded as external", relabel: "already RELEASED", pointer: "pending pointer names such a released" } as const;
     type Counts = Record<keyof typeof LABELS, number>;
     try {
       admin(SCRATCH, UNDO_247);
@@ -501,7 +550,7 @@ describe.skipIf(skip !== null)("20261247 pasted as ONE script, as the SQL editor
         expect(probes.length, `pass ${pass}`).toBe(7);
         expect(probes.filter((p) => p.ok !== "t"), JSON.stringify(probes)).toEqual([]);
         expect(probes.every((p) => p.n === "")).toBe(true);
-        expect(inventory.length).toBe(4);
+        expect(inventory.length).toBe(5);
         expect(inventory.every((x) => /^\d+$/.test(x.n)), JSON.stringify(inventory)).toBe(true);
         const c = {} as Counts;
         for (const [k, label] of Object.entries(LABELS) as Array<[keyof typeof LABELS, string]>) {
@@ -512,11 +561,13 @@ describe.skipIf(skip !== null)("20261247 pasted as ONE script, as the SQL editor
         counts.push(c);
       }
       // legitimate data: the door's submission and the trusted auto-publish are external (informational row),
-      // and nothing else moves — the two drafts retired in review and the published external row are not forgeries
-      expect(counts[1]).toEqual({ ...counts[0], external: counts[0].external + 2 });
+      // the door's submission is pending (informational row), and nothing else moves — the two drafts retired
+      // in review and the published external row are not forgeries
+      expect(counts[1]).toEqual({ ...counts[0], external: counts[0].external + 2, pending: counts[0].pending + 1 });
       // the forgeries: a member-created in-review 'external' row, a released revision relabelled in review and
-      // the pending pointer naming it — each counted once
-      expect(counts[2]).toEqual({ external: counts[1].external + 1, submission: counts[1].submission + 1, relabel: counts[1].relabel + 1, pointer: counts[1].pointer + 1 });
+      // the pending pointer naming it — each counted once in an 'expected 0' row; DCK-16's own shape written
+      // before the paste is counted only by the informational rows (it cannot be told from the door's)
+      expect(counts[2]).toEqual({ external: counts[1].external + 2, pending: counts[1].pending + 1, submission: counts[1].submission + 1, relabel: counts[1].relabel + 1, pointer: counts[1].pointer + 1 });
     } finally {
       admin("postgres", `DROP DATABASE IF EXISTS ${SCRATCH}`);
     }

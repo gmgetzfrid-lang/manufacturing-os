@@ -38,7 +38,8 @@
 --      security and is not judged by it.
 --   §2 ONE column guard on document_versions, BEFORE INSERT OR UPDATE —
 --      enforce_document_version_row_integrity() — judging a signed-in session
---      only (auth.uid() set, and not the contractor door's bound identity),
+--      only (not the contractor door — its role or its bound claims, asked
+--      first, before auth.uid() is read — and auth.uid() set),
 --      whichever door the write comes through (a PostgREST request, a
 --      SECURITY INVOKER function such as finalize_reviewed_promote, a
 --      SECURITY DEFINER one such as publish_revision):
@@ -78,20 +79,26 @@
 --   * publish_revision (its INSERT is created by the session — p_actor is
 --     auth.uid() for a signed-in caller — and its UPDATE stamps the prior's
 --     superseded_at);
---   * the contractor door — not judged: intake_door_submit_version (the
---     role intake_door, or, where that role cannot be assumed, the door's
---     bound claims), intake_door_promote (a trusted link's auto-publish:
---     bound as the link's creator, publish_revision writes an 'external' row
---     created by that member and the door stamps its intake_link_id) and
---     intake_door_housekeep 'retire', 'restore' (superseded_at cleared and
---     superseded → in_review, both refused to a signed-in session) and
---     'withdraw' — each pinned on the harness on both sides. Promote and
---     housekeep run as the function's owner with the door's identity bound
---     in the request claims (intake_door_bind), so the guard's claims branch
---     is what exempts them; on the harness submit_version takes the same
---     bound-claims path. Dropping that branch fails the submit, promote and
---     restore cases (withdraw and retire only move forward);
---     intake_door_point_pending writes documents, not this table;
+--   * the contractor door — not judged: intake_door_submit_version on BOTH
+--     of its paths — the role switch (where intake_door_version_rls_ready()
+--     is true, the hosted path: the INSERT runs as CURRENT_USER =
+--     'intake_door' and lands as that role with no WARNING and no fallback,
+--     whether or not the role holds USAGE on schema auth — the guard asks
+--     for the door BEFORE it reads auth.uid(), so a "permission denied for
+--     schema auth" cannot send the switched INSERT to its fallback) and the
+--     bound-claims fallback (readiness false: the bound identity alone, the
+--     claims branch exempts it) — intake_door_promote (a trusted link's
+--     auto-publish: bound as the link's creator, publish_revision writes an
+--     'external' row created by that member and the door stamps its
+--     intake_link_id) and intake_door_housekeep 'retire', 'restore'
+--     (superseded_at cleared and superseded → in_review, both refused to a
+--     signed-in session) and 'withdraw' — each pinned on the harness on both
+--     sides. Promote and housekeep run as the function's owner with the
+--     door's identity bound in the request claims (intake_door_bind), so the
+--     guard's claims branch is what exempts them; dropping that branch fails
+--     the submit fallback, promote and restore cases (withdraw and retire
+--     only move forward); intake_door_point_pending writes documents, not
+--     this table;
 --   * the intake route's service-role writes (its legacy INSERT, the
 --     withdrawal and its restore, the provenance stamp after a trusted
 --     publish) — not judged;
@@ -105,14 +112,25 @@
 -- change this file refuses (lib/reviewControl.ts reads no new column; the
 -- DCK-15 notice is app-side). Nothing is deployed with it.
 --
+-- RESIDUAL (DCK-16; owned by DCK-18): this file judges writes from the
+-- paste on. A door-shaped in-review row a signed-in session wrote BEFORE the
+-- paste ('external', the link, no creator or the link's id as creator) cannot
+-- be told from the door's genuine submission: it is not refused or retired
+-- here, and door (b) can still promote it over a checkout until it is
+-- decided, withdrawn or voided. Inventory row 2 (informational) counts the
+-- documents whose pending pointer names such a submission — genuine ones
+-- included — so the operator sees how many pending external submissions
+-- there are to look over.
+--
 -- PASTE ORDER: AFTER 20261245 (required — the prerequisite below refuses,
 -- changing nothing, without 20261245's lock leg or 20261214's door limb);
--- 20261245 is HOLD behind 20261193 (paste guide row 150), so this file waits
--- with them. Never re-paste 20261214 or 20261205 after this one: each would
+-- 20261245 (paste guide row 187) is HOLD behind 20261193 (row 150), so this
+-- file waits with them. Never re-paste 20261214 or 20261205 after this one: each would
 -- re-create document_versions_insert_integrity without the §1 limb (the
 -- §2 trigger would still refuse the same rows).
--- Single paste: prerequisite check → temp-table inventory (counts only) →
--- BEGIN/DDL/COMMIT → one SELECT (check text, ok boolean, n text).
+-- Single paste: prerequisite check → temp-table inventory (counts only, 5
+-- rows: 2 informational, 3 expected 0) → BEGIN/DDL/COMMIT → one SELECT
+-- (check text, ok boolean, n text): 7 probes (ok = true) + the 5 rows.
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent.
 -- ─────────────────────────────────────────────────────────────────────────────
 
@@ -132,7 +150,7 @@ END
 $$;
 
 -- ── Pre-apply inventory (aggregate only; captured BEFORE the DDL) ───────────
--- Rows 2-4 count the forgery SIGNATURES only, so legitimate data reads 0:
+-- Rows 3-5 count the forgery SIGNATURES only, so legitimate data reads 0:
 --   * a trusted link's auto-publish (intake_door_promote / the route's
 --     service-role publish_revision) is 'external', names its link and is
 --     created by the link's creator (a member) — but it is PUBLISHED, never
@@ -146,6 +164,15 @@ $$;
 --     marked in review is the relabel's signature.
 --   A relabel of a revision that was never released (a rejected draft put
 --   back into review) leaves no signature in the row and is not counted.
+-- Row 2 is INFORMATIONAL, not a forgery count: documents whose pending
+-- pointer names a door-shaped submission (in review, 'external', no creator
+-- or the link's id as creator). It counts the door's genuine pending
+-- submissions; it is there because a door-shaped row a signed-in session
+-- wrote BEFORE this paste (DCK-16's own shape) cannot be told from them.
+-- This file judges writes from the paste on; such a row is not refused or
+-- retired by it, and door (b) can still promote it over a checkout until it
+-- is decided, withdrawn or voided. The count tells the operator how many
+-- pending external submissions there are to look over (residual: DCK-18).
 DROP TABLE IF EXISTS dc_round_g_247_before;
 CREATE TEMP TABLE dc_round_g_247_before AS
 WITH v AS (
@@ -154,12 +181,19 @@ WITH v AS (
          (v.review_state = 'in_review'
           AND (COALESCE(v.provenance, '') = 'external' OR v.intake_link_id IS NOT NULL)
           AND v.created_by IS NOT NULL AND v.created_by IS DISTINCT FROM v.intake_link_id) AS forged_submission_look,
-         (v.review_state = 'in_review' AND v.released_at IS NOT NULL) AS relabelled_look
+         (v.review_state = 'in_review' AND v.released_at IS NOT NULL) AS relabelled_look,
+         (v.review_state = 'in_review' AND COALESCE(v.provenance, '') = 'external'
+          AND (v.created_by IS NULL OR v.created_by = v.intake_link_id)) AS door_shaped_look
     FROM document_versions v
 )
 SELECT 'inventory (before apply): revisions recorded as external submissions (informational — the door''s in-review submissions and a trusted link''s auto-publishes; unchanged, and from now on only the door and the intake route write one)' AS inventory,
        COUNT(*)::text AS n
   FROM v WHERE is_external
+UNION ALL
+SELECT 'inventory (before apply): documents whose pending pointer names an in-review external submission with no creator (or the link''s id as creator) — informational, it counts the genuine pending submissions too: a row of this shape written by a signed-in session BEFORE this file cannot be told from the door''s own, is left as it is, and door (b) may still promote it over a checkout until it is decided, withdrawn or voided (DCK-16 residual, owned by DCK-18)',
+       COUNT(*)::text
+  FROM documents d JOIN v ON v.id = d.pending_version_id
+ WHERE v.door_shaped_look
 UNION ALL
 SELECT 'inventory (before apply): revisions IN REVIEW recorded as external or naming an intake link whose creator is a member (the door files its submissions with no creator; a trusted auto-publish is published, not in review, and is not counted) — written by a signed-in session before this file; left as they are, expected 0',
        COUNT(*)::text
@@ -217,18 +251,24 @@ AS RESTRICTIVE FOR INSERT WITH CHECK (
 CREATE OR REPLACE FUNCTION enforce_document_version_row_integrity()
 RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
 DECLARE
-  v_uid uuid := auth.uid();
+  v_uid uuid;
 BEGIN
-  -- Not a signed-in session: the service role (the intake route, the org
-  -- restore, the shed routes), the SQL editor.
-  IF v_uid IS NULL THEN RETURN NEW; END IF;
   -- The contractor door's own identity: the role intake_door, or the bound
   -- claims the intake_door_* functions (service key only) set for one link
-  -- (20261184 / 20261214). Its rows are judged by its own policies.
+  -- (20261184 / 20261214). Its rows are judged by its own policies. Asked
+  -- FIRST, before auth.uid() is read: the role intake_door need not hold
+  -- USAGE on schema auth (20261184 grants it where it can and carries on
+  -- where it cannot), and a "permission denied for schema auth" here would
+  -- send intake_door_submit_version's switched INSERT to its bound-identity
+  -- fallback with a WARNING — a regression of the hosted path.
   IF CURRENT_USER = 'intake_door'
      OR COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role', '') = 'intake_door' THEN
     RETURN NEW;
   END IF;
+  -- Not a signed-in session: the service role (the intake route, the org
+  -- restore, the shed routes), the SQL editor.
+  v_uid := auth.uid();
+  IF v_uid IS NULL THEN RETURN NEW; END IF;
 
   -- DCK-16: who submitted a revision, and through which link, is the door's
   -- record — a signed-in session never writes it, and files as itself.
@@ -291,7 +331,7 @@ GRANT EXECUTE ON FUNCTION enforce_document_version_row_integrity() TO authentica
 COMMIT;
 
 -- ── Verification + inventory (the only result set the SQL editor shows) ──
--- Probes: ok = true × 7. Inventory rows: n = the aggregate count.
+-- Probes: ok = true × 7. Inventory rows (5): n = the aggregate count.
 -- pg_policies.with_check is DEPARSED (casts appear — no bare cast in a LIKE);
 -- pg_proc.prosrc is verbatim (an apostrophe inside a body's string literal is
 -- '''' here).
@@ -316,8 +356,8 @@ SELECT 'DCK-17 (P33): the column guard refuses a signed-in UPDATE that moves a r
           FROM pg_proc WHERE proname = 'enforce_document_version_row_integrity'),
        NULL
 UNION ALL
-SELECT 'the column guard judges a signed-in session only: the service role / SQL editor (no auth.uid()) and the contractor door''s identity are not judged',
-       (SELECT prosrc LIKE '%IF v_uid IS NULL THEN RETURN NEW; END IF;%IF CURRENT_USER = ''intake_door''%= ''intake_door'' THEN%RETURN NEW;%'
+SELECT 'the column guard judges a signed-in session only: the contractor door''s identity (asked first, before auth.uid() is read) and the service role / SQL editor (no auth.uid()) are not judged',
+       (SELECT prosrc LIKE '%IF CURRENT_USER = ''intake_door''%= ''intake_door'' THEN%RETURN NEW;%v_uid := auth.uid();%IF v_uid IS NULL THEN RETURN NEW; END IF;%'
           FROM pg_proc WHERE proname = 'enforce_document_version_row_integrity'),
        NULL
 UNION ALL
