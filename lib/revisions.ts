@@ -3074,13 +3074,21 @@ export async function changeDocumentStatus(input: {
    *  preference-exempt withdrawal per row; the metadata save omits it. */
   withdrawRecall?: boolean;
   /** PROD-17 (document-control P28 fix pass): the status the caller's own
-   *  copy of the row holds (the metadata save's selectedDoc) — consulted
-   *  only when the pre-write read fails: a save that writes the retired
-   *  status the row already held (a title fix on an Archived document) is
-   *  then no retirement, and recalls nobody. */
+   *  copy of the row holds (the metadata save's selectedDoc). Given, a
+   *  pre-write read that fails is retried ONCE (P28 second fix pass); if it
+   *  fails again and the caller's copy already held the retired status being
+   *  written (a title fix on an Archived document — or a stale page that
+   *  still shows Archived for a document since put back), the copy holders
+   *  are not recalled but the watchers are still told: an unknown prior
+   *  never retires a document silently (DEC-90's fail-safe rule). */
   heldStatus?: string | null;
 }): Promise<StatusIssueOutcome> {
-  const before = await readStatusIssueBasis(input.documentId, undefined, input.toStatus);
+  let before = await readStatusIssueBasis(input.documentId, undefined, input.toStatus);
+  // P28 second fix pass: the caller's held status is a possibly stale copy,
+  // so the database row is asked once more before it is leaned on.
+  if (before.readFailed === true && input.heldStatus !== undefined) {
+    before = await readStatusIssueBasis(input.documentId, undefined, input.toStatus);
+  }
   const now = new Date().toISOString();
   // REV-19 (a) (P23): a write to an issue status names its door to the
   // database's issue record (20261205), which decides from the row whether
@@ -3111,19 +3119,22 @@ export async function changeDocumentStatus(input: {
   // audience. (document-control P28: the library page's metadata save routes
   // its retirements here; a caller that routes one here must not also call
   // recallOnRetirement: that would be a second recall.) P28 fix pass: when
-  // the read failed and the caller's own copy already held this retired
-  // status, the save re-writes a status the row had (a metadata edit on a
-  // retired document) — no retirement, nothing sent.
+  // the read failed (twice — second fix pass) and the caller's own copy
+  // already held this retired status, the save most likely re-writes a
+  // status the row had (a metadata edit on a retired document): the copy
+  // holders are not recalled again, but the watchers are told — the copy may
+  // be stale (another session put the document back), and an unknown prior
+  // never retires a document silently.
   const heldSameRetired = before.readFailed === true && input.heldStatus !== undefined
     && (input.heldStatus ?? "").trim() === input.toStatus.trim();
   if (isRetiredStatus(input.toStatus) && input.toStatus.trim() !== (before.fromStatus ?? "").trim()
-    && !skipsRetirementRecall(before.fromStatus) && !heldSameRetired) {
+    && !skipsRetirementRecall(before.fromStatus)) {
     recallOnRetirement({
       orgId: input.orgId, documentId: input.documentId,
       newStatus: input.toStatus.trim(), replacementNote: null,
       actorUserId: input.actorUserId, actorName: input.actorEmail || input.actorUserId,
       personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
-      recallCopyHolders: recallsCopyHolders(before.fromStatus),
+      recallCopyHolders: recallsCopyHolders(before.fromStatus) && !heldSameRetired,
     });
   }
   // DIST-16 (document-control P28): an issue status written over a prior

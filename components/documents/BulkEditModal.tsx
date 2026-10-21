@@ -253,8 +253,12 @@ export default function BulkEditModal({
             // DIST-16 (P28 fix pass): the recalls are withdrawn ONCE for the apply, below
             withdrawRecall: false,
           });
-          // Written: a row whose prior was not a controlled issue (or unknown) is a put-back candidate.
-          if (issuing && !isControlledIssueStatus(priorStatusOf.get(doc.id) ?? null)) {
+          // Written: a row whose prior was not a controlled issue — or unknown
+          // (the pre-apply read did not give it: absent from priorStatusOf,
+          // never read as null, which isControlledIssueStatus counts as an
+          // issue) — is a put-back candidate; withdrawRetirementBatch's read
+          // of the row's own record decides whether a recall stands.
+          if (issuing && (!priorStatusOf.has(doc.id) || !isControlledIssueStatus(priorStatusOf.get(doc.id)))) {
             putBack.push({ documentId: doc.id, libraryId: library.id ?? null, docLabel: doc.documentNumber || doc.title || doc.name || "A document", restoredStatus: newValue });
           }
           const label = doc.documentNumber || doc.title || doc.id;

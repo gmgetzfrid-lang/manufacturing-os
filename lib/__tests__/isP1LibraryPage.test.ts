@@ -365,7 +365,7 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
     expect(T("documents").find((r) => r.id === "r3")!.status).toBe("Issued");
   });
 
-  it("P28 fix pass: a title fix on a document already Archived whose basis read fails is no retirement — the page's held status is passed, nothing is recalled; the save lands", async () => {
+  it("P28 second fix pass: a title fix on a document already Archived whose basis read fails TWICE (read, then one retry) recalls no copy holder, but the watchers are still told — an unknown prior never retires silently; the save lands", async () => {
     const d = seed("r4", { status: "Archived" });
     const cds = vi.fn(changeDocumentStatus);
     state.db.selectErrors!.documents = (cols) => (cols === "*" ? { message: "503 basis read" } : null);
@@ -373,7 +373,45 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
     await fn({ metadata: {}, core: { title: "r4 fixed", documentNumber: "R4", status: "Archived" } });
     for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
     expect(cds.mock.calls[0][0]).toMatchObject({ toStatus: "Archived", heldStatus: "Archived" });
+    expect(basisReads()).toHaveLength(2);
     expect(T("documents").find((r) => r.id === "r4")).toMatchObject({ status: "Archived", title: "r4 fixed" });
+    expect(recallRetiredDocument).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(recallRetiredDocument).mock.calls[0][0]).toMatchObject({ documentId: "r4", newStatus: "Archived", recallCopyHolders: false });
+    expect(st.error).toBeNull();
+  });
+
+  it("P28 second fix pass: the STALE page — it shows Archived, another session put the document back to Issued; a title fix whose basis read fails twice still tells the watchers it was retired again (copy holders not recalled: the recorded trade-off)", async () => {
+    const d = seed("r6", { status: "Issued" });
+    state.db.selectErrors!.documents = (cols) => (cols === "*" ? { message: "503 basis read" } : null);
+    const { fn } = save(d, { pageSees: { status: "Archived" } });
+    await fn({ metadata: {}, core: { title: "r6 typo", documentNumber: "R6", status: "Archived" } });
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(T("documents").find((r) => r.id === "r6")!.status).toBe("Archived");
+    expect(recallRetiredDocument).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(recallRetiredDocument).mock.calls[0][0]).toMatchObject({ documentId: "r6", newStatus: "Archived", recallCopyHolders: false });
+  });
+
+  it("P28 second fix pass: the stale page whose basis read fails ONCE — the retry reads the row (Issued), so the save is the retirement it is: copy holders recalled", async () => {
+    const d = seed("r7", { status: "Issued" });
+    let fails = 1;
+    state.db.selectErrors!.documents = (cols) => (cols === "*" && fails-- > 0 ? { message: "503 basis read" } : null);
+    const { fn } = save(d, { pageSees: { status: "Archived" } });
+    await fn({ metadata: {}, core: { title: "r7 typo", documentNumber: "R7", status: "Archived" } });
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(basisReads()).toHaveLength(2);
+    expect(recallRetiredDocument).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(recallRetiredDocument).mock.calls[0][0]).toMatchObject({ documentId: "r7", newStatus: "Archived", recallCopyHolders: true });
+  });
+
+  it("P28 second fix pass: REGRESSION — before the signed-in member is known, a metadata edit on a document this page holds as already Archived (no status change) is the bare checked write, as before — never refused", async () => {
+    const d = seed("r8", { status: "Archived" });
+    const cds = vi.fn(changeDocumentStatus);
+    const { st, fn } = save(d, { uid: null, cds });
+    await fn({ metadata: {}, core: { title: "r8 fixed", documentNumber: "R8", status: "Archived" } });
+    expect(cds).not.toHaveBeenCalled();
+    expect(updates()).toHaveLength(1);
+    expect(basisReads()).toEqual([]);
+    expect(T("documents").find((r) => r.id === "r8")).toMatchObject({ status: "Archived", title: "r8 fixed" });
     expect(recallRetiredDocument).not.toHaveBeenCalled();
     expect(st.error).toBeNull();
   });

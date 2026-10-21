@@ -230,6 +230,8 @@ describe("PROD-17 (P28) — the bulk editor's Superseded / Archived: one fresh r
     const b = seedDoc("q2", { status: "Archived" });
     for (const [id, at] of [["q1", "2026-10-19T09:00:00.000Z"], ["q2", "2026-10-19T09:00:01.000Z"]]) {
       T("audit_logs").push({ id: `a-${id}`, org_id: ORG, action: "DISTRIBUTION_RECALL", resource_type: "document", resource_id: id, timestamp: at, details: { retirement: true, newStatus: "Archived", recipientCount: 1, recipients: ["fitter9"] } });
+      // the recall named a copy holder the download record bears out (P28 second fix pass)
+      T("download_audits").push({ document_id: id, user_id: "fitter9", version_id: `${id}-v2`, created_at: at });
     }
     await apply([asRecord(a), asRecord(b)], "Issued");
     expect(host.textContent).toMatch(/Applied to 2 documents\./);
@@ -240,6 +242,21 @@ describe("PROD-17 (P28) — the bulk editor's Superseded / Archived: one fresh r
     expect(w[0]).toMatchObject({ category: "recall", audience: { involved: ["fitter9"] }, actorUserId: ME, metadata: { recallWithdrawn: true, documentIds: ["q1", "q2"], door: "put_back" } });
     const recorded = T("audit_logs").filter((r) => r.action === "DISTRIBUTION_RECALL" && (r.details as Record<string, unknown>).recallWithdrawn === true);
     expect(recorded.map((r) => r.resource_id).sort()).toEqual(["q1", "q2"]);
+  });
+
+  it("DIST-16 (P28 second fix pass): the pre-apply status read fails — every written row's prior is UNKNOWN, so each is a put-back candidate; a recalled Archived row set to Issued is withdrawn", async () => {
+    const rows = ["u1", "u2", "u3"].map((id) => seedDoc(id, { status: "Archived" }));
+    T("audit_logs").push({ id: "a-u2", org_id: ORG, action: "DISTRIBUTION_RECALL", resource_type: "document", resource_id: "u2", timestamp: "2026-10-19T09:00:00.000Z", details: { retirement: true, newStatus: "Archived", recipientCount: 1, recipients: ["fitter9"] } });
+    T("download_audits").push({ document_id: "u2", user_id: "fitter9", version_id: "u2-v2", created_at: "2026-10-01T09:00:00.000Z" });
+    state.db.selectErrors!.documents = (cols) => (cols === "id, status" ? { message: "503" } : null);
+    await apply(rows.map((r) => asRecord(r)), "Issued");
+    for (const id of ["u1", "u2", "u3"]) expect(docRow(id).status).toBe("Issued");
+    expect(reads()).toHaveLength(1);
+    expect(withdrawRetirementBatch).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(withdrawRetirementBatch).mock.calls[0][0].docs.map((d) => d.documentId)).toEqual(["u1", "u2", "u3"]);
+    const w = state.emits.filter((e) => e.kind === "library_doc_revised");
+    expect(w).toHaveLength(1);
+    expect(w[0]).toMatchObject({ category: "recall", audience: { involved: ["fitter9"] }, resource: { type: "document", id: "u2" }, metadata: { recallWithdrawn: true, door: "put_back" } });
   });
 
   it("DIST-16 (P28 fix pass): a row already Issued re-saved as Issued is no put-back candidate; a Draft row issued is one (the record decides — nothing stands, nothing sent)", async () => {

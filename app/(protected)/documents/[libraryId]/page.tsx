@@ -2916,11 +2916,17 @@ export default function LibraryExplorerPage() {
     // to say; a refusal reads as the bare write's did, in the database's own
     // words, and a write that matched no row keeps the bare write's sentence.
     // P28 fix pass: while who is saving (or the workspace) is not yet known,
-    // the save is refused, nothing written — as the issue route below
-    // refuses — never the bare write that retired a document and told
-    // nobody (no recall can be sent without the actor).
-    if (toStatus !== undefined && isRetiredStatus(toStatus)) {
-      const retireOrgId = selectedDoc.orgId || activeOrgId || library?.orgId || null;
+    // a save that can RETIRE the document (its status changes, as this page
+    // sees it, to a retired one) is refused, nothing written — as the issue
+    // route below refuses — never the bare write that retired a document and
+    // told nobody (no recall can be sent without the actor). P28 second fix
+    // pass: a metadata edit on a document this page holds as already in that
+    // retired status (a title fix on an Archived drawing) is no retirement
+    // from where the person stands, so it keeps the bare checked write below,
+    // as before — a plain edit that worked keeps working.
+    const retireOrgId = selectedDoc.orgId || activeOrgId || library?.orgId || null;
+    const retiredUnchanged = toStatus !== undefined && (selectedDoc.status ?? "").trim() === toStatus.trim();
+    if (toStatus !== undefined && isRetiredStatus(toStatus) && !(retiredUnchanged && (!uid || !retireOrgId))) {
       if (!uid || !retireOrgId) {
         throw new Error(`Save refused — nothing was saved: this save writes the status ${toStatus}, which can retire the document (its copy holders recalled, its watchers told), and who is saving it (your sign-in and workspace) is not known yet. Try again in a moment.`);
       }

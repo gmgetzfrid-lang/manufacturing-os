@@ -18,7 +18,7 @@ import { emit } from "@/lib/notify/dispatch";
 import { logAuditAction, logRevisionEvent } from "@/lib/audit";
 import { ticketVerdict, issueInForce, isIssuedTicketRev, type TicketVerdict } from "@/lib/verifyTicketVerdict";
 import { isTerminalTicketStatus } from "@/lib/ticketShed";
-import { isControlledIssueStatus } from "@/lib/issueStatus";
+import { isControlledIssueStatus, isRetiredStatus } from "@/lib/issueStatus";
 import { formatRecordDate, orgTimeZone } from "@/lib/recordTime";
 
 /** How far back a download is considered "a copy someone may still hold".
@@ -692,7 +692,28 @@ type StandingRecall =
 
 /** DIST-16: the retirement recall standing on a document — the people every
  *  DISTRIBUTION_RECALL row since its last withdrawal named (the actor
- *  aside), the newest recall's time and the status it recalled for. */
+ *  aside), the newest recall's time and the status it recalled for.
+ *
+ *  P28 second fix pass: audit_logs is not a trusted source. Any active member
+ *  may insert any action with any details on any document of the workspace
+ *  (audit_logs_insert checks only the author and the workspace), and the
+ *  withdrawal it drives is a preference-exempt recall-category notice and
+ *  email under the restorer's name. So a recall row is believed only as far
+ *  as the record a member cannot forge for someone else bears it out:
+ *    · its recipients must ALL be people the document's download_audits
+ *      names (a member inserts only their own pulls — 20261068's
+ *      download_audits_insert_own — and a real retirement recall names only
+ *      copy holders read from that table). A row naming anyone else is
+ *      skipped whole and logged; the people taken are therefore always a
+ *      subset of the document's pullers;
+ *    · the status it recalled for is quoted only when it is a retired status
+ *      (isRetiredStatus) — otherwise recalledAs is null and the notice names
+ *      no status, so no free text from the row reaches a notice or an email.
+ *  The holders read is checked: a failure answers ok: false (logged and
+ *  recorded by the callers, never guessed). Residual (recorded on DIST-16):
+ *  a forged `recallWithdrawn: true` row still ends the read — it can only
+ *  suppress a withdrawal (the safe direction: holders keep "do not work from
+ *  your copy" on a document that is in force again). */
 async function readStandingRecall(documentId: string, actorUserId: string): Promise<StandingRecall> {
   const { data, error } = await supabase
     .from("audit_logs")
@@ -704,16 +725,52 @@ async function readStandingRecall(documentId: string, actorUserId: string): Prom
     .limit(200);
   if (error) return { ok: false, error: error.message ?? "the recall record could not be read" };
   const rows = ((data as Array<{ details: Record<string, unknown> | null; timestamp: string | null }> | null) ?? []);
-  const standing: Array<{ at: string | null; recipients: string[]; newStatus: string | null }> = [];
+  const claimed: Array<{ at: string | null; recipients: string[]; newStatus: string | null }> = [];
   for (const r of rows) {           // newest first
     const d = r.details ?? {};
     if (d.recallWithdrawn === true) break;
     if (d.retirement !== true || d.unavailable === true) continue;
-    const recipients = Array.isArray(d.recipients) ? (d.recipients as unknown[]).filter((u): u is string => typeof u === "string" && !!u) : [];
-    if (recipients.length > 0) standing.push({ at: r.timestamp ?? null, recipients, newStatus: typeof d.newStatus === "string" && d.newStatus ? d.newStatus : null });
+    const recipients = Array.isArray(d.recipients) ? [...new Set((d.recipients as unknown[]).filter((u): u is string => typeof u === "string" && !!u))] : [];
+    const newStatus = typeof d.newStatus === "string" && isRetiredStatus(d.newStatus) ? d.newStatus.trim() : null;
+    if (recipients.length > 0) claimed.push({ at: r.timestamp ?? null, recipients, newStatus });
   }
-  const people = [...new Set(standing.flatMap((s) => s.recipients))].filter((u) => u !== actorUserId);
+  if (claimed.length === 0) return { ok: true, people: [], recallAt: null, recalledAs: null };
+  const pullers = await readDocumentPullers(documentId, [...new Set(claimed.flatMap((c) => c.recipients))]);
+  if (!pullers.ok) return { ok: false, error: pullers.error };
+  const standing = claimed.filter((c) => {
+    const borne = c.recipients.every((u) => pullers.users.has(u));
+    if (!borne) console.warn(`[staleCopies] DIST-16: a DISTRIBUTION_RECALL row on document ${documentId} (${c.at ?? "undated"}) names people with no download of it on record — not a recall this system wrote; it is not withdrawn`);
+    return borne;
+  });
+  const people = [...new Set(standing.flatMap((s) => s.recipients))].filter((u) => u !== actorUserId && pullers.users.has(u));
   return { ok: true, people, recallAt: standing[0]?.at ?? null, recalledAs: standing[0]?.newStatus ?? null };
+}
+
+/** DIST-16 (P28 second fix pass): which of `candidates` the document's
+ *  download_audits names — read in chunks (a recall can name hundreds; one
+ *  `.in()` that long is past the gateway's URL limit), each read checked. A
+ *  failed chunk answers its error, never a partial set. A person whose rows
+ *  were crowded out of a chunk's page counts as absent, which drops a row
+ *  (never adds a person). */
+const PULLER_CHUNK = 25;
+async function readDocumentPullers(documentId: string, candidates: string[]): Promise<{ ok: true; users: Set<string> } | { ok: false; error: string }> {
+  const users = new Set<string>();
+  for (let i = 0; i < candidates.length; i += PULLER_CHUNK) {
+    const chunk = candidates.slice(i, i + PULLER_CHUNK);
+    try {
+      const { data, error } = await supabase
+        .from("download_audits")
+        .select("user_id")
+        .eq("document_id", documentId)
+        .in("user_id", chunk)
+        .limit(DOC_RECALL_ROW_CAP);
+      if (error) return { ok: false, error: `the document's download record could not be read (${error.message || "refused"})` };
+      for (const r of ((data as Array<{ user_id: string | null }> | null) ?? [])) if (r.user_id) users.add(r.user_id);
+    } catch (e) {
+      return { ok: false, error: `the document's download record could not be read (${(e as Error)?.message ?? String(e)})` };
+    }
+  }
+  return { ok: true, users };
 }
 
 /** DIST-16: the one-document withdrawal notice — the single door's and a
