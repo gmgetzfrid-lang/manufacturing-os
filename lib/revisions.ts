@@ -2375,7 +2375,10 @@ export type RetirementDutyDoor = "bulk_archive" | "bulk_edit" | "metadata";
  *  / DIST-1), the record with the ONE reason for the apply (or the door's
  *  fixed sentence), `via` and — when the caller gives it — `retiredFrom`
  *  (the status the row was retired from, as the door read it; null =
- *  unknown, with `priorStatusUnknown: true` when the read failed). The
+ *  unknown, with `priorStatusUnknown: true` when the read failed) or, for a
+ *  row the door read as already in the status it wrote (`alreadyRetired`:
+ *  no retirement was made — the bulk editor's Archived over an Archived
+ *  row), `alreadyRetired: true` and no `retiredFrom`. The
  *  retirement recall is NOT sent here (the door's own: ONE batched recall
  *  per bulk apply, changeDocumentStatus's for the metadata save). Rows run a
  *  few at a time. Never throws: every duty that did not complete is returned
@@ -2383,7 +2386,7 @@ export type RetirementDutyDoor = "bulk_archive" | "bulk_edit" | "metadata";
 export async function finishRetirementDuties(input: {
   orgId: string; actorUserId: string; actorEmail?: string | null; actorRole?: string | null;
   toStatus: string; reason: string; via: RetirementDutyDoor;
-  docs: Array<{ documentId: string; label: string; versionId?: string | null; retiredFrom?: string | null; priorStatusUnknown?: boolean }>;
+  docs: Array<{ documentId: string; label: string; versionId?: string | null; retiredFrom?: string | null; priorStatusUnknown?: boolean; alreadyRetired?: boolean }>;
 }): Promise<{ problems: BulkArchiveProblem[] }> {
   const problems: BulkArchiveProblem[] = [];
   const reason = input.reason.trim();
@@ -2409,9 +2412,15 @@ export async function finishRetirementDuties(input: {
         revokedShareLinks: shares.revoked, shareRevokeError: shares.error,
         liveShareLinksLeft: shares.liveLeft, shareRevokeAuditError: shares.auditError,
       };
-      const prior = "retiredFrom" in d
-        ? { retiredFrom: d.retiredFrom ?? null, ...(d.priorStatusUnknown === true ? { priorStatusUnknown: true } : {}) }
-        : {};
+      // P31 final fix pass (DEC-90): a row the door read as ALREADY in this
+      // status (the bulk editor's Archived over an Archived row — the duties
+      // still run, fail-safe) made no retirement, so its record claims none:
+      // `alreadyRetired: true`, and no `retiredFrom`.
+      const prior = d.alreadyRetired === true
+        ? { alreadyRetired: true }
+        : "retiredFrom" in d
+          ? { retiredFrom: d.retiredFrom ?? null, ...(d.priorStatusUnknown === true ? { priorStatusUnknown: true } : {}) }
+          : {};
       const actor = {
         orgId: input.orgId,
         documentId: d.documentId,

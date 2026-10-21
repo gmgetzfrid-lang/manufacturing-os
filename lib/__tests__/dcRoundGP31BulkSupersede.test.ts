@@ -253,3 +253,68 @@ describe("REV-31 (P31) — the bulk editor's Superseded does supersedeDocument's
     expect(T("audit_logs").filter((r) => r.action === "ARCHIVE_DOC")).toHaveLength(1);
   });
 });
+
+describe("P31 final fix pass (DEC-90) — the bulk editor's Archived over an already-Archived row, and one reason per status", () => {
+  const archiveDocs = () => T("audit_logs").filter((r) => r.action === "ARCHIVE_DOC");
+
+  it("a bulk Archived on a row already Archived still runs P28's duties (its live link revoked, its draft voided) and writes the ARCHIVE_DOC with alreadyRetired: true and no retiredFrom; the Issued row beside it is recorded as before", async () => {
+    const a = seedDoc("x1", { status: "Archived" }); seedDraftAndShare("x1");
+    const b = seedDoc("x2"); seedDraftAndShare("x2");
+    await apply([asRecord(a), asRecord(b)], "Archived", undefined, "Tidy-up");
+    expect(host.textContent).toMatch(/Applied to 2 documents\./);
+    // the duties still run for the already-Archived row (fail-safe)
+    expect(docRow("x1").pending_version_id).toBeNull();
+    expect(T("document_shares").find((r) => r.id === "x1-sh")!.revoked_at).toBeTruthy();
+    const x1 = archiveDocs().find((r) => r.resource_id === "x1")!.details as Row;
+    expect(x1).toMatchObject({ reason: "Tidy-up", via: "bulk_edit", action: "archive", alreadyRetired: true, revokedShareLinks: 1, pendingDraftVoided: "x1-v3" });
+    expect(x1).not.toHaveProperty("retiredFrom");
+    expect(x1).not.toHaveProperty("priorStatusUnknown");
+    // REGRESSION: a real retirement keeps retiredFrom and claims nothing else
+    const x2 = archiveDocs().find((r) => r.resource_id === "x2")!.details as Row;
+    expect(x2).toMatchObject({ retiredFrom: "Issued", revokedShareLinks: 1 });
+    expect(x2).not.toHaveProperty("alreadyRetired");
+    // REGRESSION: the one batched recall, as P28 sends it (the record decides "already retired")
+    expect(batch).toHaveBeenCalledTimes(1);
+    expect(batch.mock.calls[0][0].docs.map((x) => [x.documentId, x.retiredFrom])).toEqual([["x1", "Archived"], ["x2", "Issued"]]);
+  });
+
+  it("a prior the fresh read cannot give is still unknown on an Archived change (never read as already Archived)", async () => {
+    const a = seedDoc("x3", { status: "Archived" });
+    state.db.selectErrors!.documents = (cols) => (cols === "id, status" ? { message: "503" } : null);
+    await apply([asRecord(a)], "Archived", undefined, "r");
+    const d = archiveDocs().map((r) => r.details as Row);
+    expect(d).toEqual([expect.objectContaining({ retiredFrom: null, priorStatusUnknown: true })]);
+    expect(d[0]).not.toHaveProperty("alreadyRetired");
+  });
+
+  it("a reason typed for Archived is cleared when the person switches to Superseded (Apply disabled until one is typed), and cleared again on switching back; the recorded reason is the one typed for the status applied", async () => {
+    const a = seedDoc("y1");
+    await act(async () => {
+      root.render(React.createElement(BulkEditModal, { isOpen: true, onClose: () => {}, docs: [asRecord(a)], library: LIB, actorUserId: ME, onApplied: () => {} }));
+    });
+    await act(async () => setValue(labelled("New value"), "Archived"));
+    await act(async () => setValue(labelled("Reason for archiving") as HTMLInputElement, "Plant closed"));
+    expect(button("Apply to 1").disabled).toBe(false);
+    await act(async () => setValue(labelled("New value"), "Superseded"));
+    expect((labelled("Reason for superseding") as HTMLInputElement).value).toBe("");
+    expect(button("Apply to 1").disabled).toBe(true);
+    await act(async () => setValue(labelled("Reason for superseding") as HTMLInputElement, "Replaced by rev C set"));
+    expect(button("Apply to 1").disabled).toBe(false);
+    await act(async () => setValue(labelled("New value"), "Archived"));
+    expect((labelled("Reason for archiving") as HTMLInputElement).value).toBe("");
+    expect(button("Apply to 1").disabled).toBe(true);
+    // leaving the status field clears it too
+    await act(async () => setValue(labelled("Reason for archiving") as HTMLInputElement, "x"));
+    await act(async () => setValue(labelled("Field to change") as HTMLSelectElement, "custom:area"));
+    await act(async () => setValue(labelled("Field to change") as HTMLSelectElement, "status"));
+    await act(async () => setValue(labelled("New value"), "Archived"));
+    expect((labelled("Reason for archiving") as HTMLInputElement).value).toBe("");
+    expect(button("Apply to 1").disabled).toBe(true);
+    await act(async () => setValue(labelled("Reason for archiving") as HTMLInputElement, "Unit decommissioned"));
+    await act(async () => { button("Apply to 1").dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await settle();
+    expect(archiveDocs().map((r) => (r.details as Row).reason)).toEqual(["Unit decommissioned"]);
+    expect(supersedeDocs()).toEqual([]);
+    expect(docRow("y1")).toMatchObject({ status: "Archived", archive_reason: "Unit decommissioned" });
+  });
+});

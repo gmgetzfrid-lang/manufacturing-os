@@ -317,6 +317,10 @@ describe("REV-31 (P28 integrator fix pass) — the bulk editor's Archived does w
     expect(button("Apply to 1").disabled).toBe(false);
     await act(async () => setValue(labelled("New value"), "Superseded"));
     expect(Array.from(host.querySelectorAll("label")).some((l) => l.textContent?.trim() === "Reason for archiving")).toBe(false);
+    // P31 final fix pass: the reason typed for Archived does not carry over —
+    // Superseded waits for its own (dcRoundGP31BulkSupersede.test.ts).
+    expect(button("Apply to 1").disabled).toBe(true);
+    await act(async () => setValue(labelled("Reason for superseding") as HTMLInputElement, "replaced"));
     await act(async () => { button("Apply to 1").dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await settle();
     expect(docRow("x1").status).toBe("Superseded");

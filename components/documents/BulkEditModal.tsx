@@ -135,6 +135,16 @@
 // (as finishBulkArchive did), their record now carrying `retiredFrom` too. A
 // duty that did not complete is said after the apply, its row named; a
 // refused row does none of it. The ONE batched recall is unchanged.
+//
+// P31 final fix pass (DEC-90): a row the change to Archived finds ALREADY
+// Archived (its fresh prior) still gets P28's duties — fail-safe: a
+// re-archive can revoke links an older door left live — but its ARCHIVE_DOC
+// claims no retirement: `alreadyRetired: true` and no `retiredFrom`. (A row
+// already Superseded still gets no duty on a change to Superseded — the
+// remaining asymmetry, REV-34 (d).) The reason belongs to the status it was
+// typed for: any change of the field or the status clears it, so a reason
+// typed for Archived never becomes a supersession's (or the reverse), and
+// Apply waits until one is typed for the status now chosen.
 
 import React, { useState } from "react";
 import {
@@ -222,6 +232,13 @@ export default function BulkEditModal({
     ? docs.filter((d) => isUnguardedEntryIntoForce({ fromStatus: d.status, toStatus: newValue, hasCurrentRevision: !!d.currentVersionId }))
     : [];
 
+  // P31 final fix pass: a reason belongs to the status it was typed for —
+  // choosing another value (or another field) clears it.
+  const chooseValue = (v: string) => {
+    if (v !== newValue) setArchiveReason("");
+    setNewValue(v);
+  };
+
   const customCols = (library.customColumns ?? []).filter((c) => !["title", "rev", "status", "documentNumber"].includes(c.key));
   const selectOptions = target.kind === "custom" && target.def.type === "select" ? (target.def.options ?? []) : null;
 
@@ -246,7 +263,7 @@ export default function BulkEditModal({
     const retired: Array<{ documentId: string; libraryId: string | null; docLabel: string; recallCopyHolders: boolean; retiredFrom: string | null }> = [];
     // REV-31: the rows this change archived — (P31) or retired into
     // Superseded — for their retirement duties.
-    const archivedRows: Array<{ documentId: string; label: string; versionId: string | null; retiredFrom: string | null; priorStatusUnknown?: boolean }> = [];
+    const archivedRows: Array<{ documentId: string; label: string; versionId: string | null; retiredFrom?: string | null; priorStatusUnknown?: boolean; alreadyRetired?: boolean }> = [];
     const putBack: Array<{ documentId: string; libraryId: string | null; docLabel: string; restoredStatus: string }> = [];
     if (retiring || issuing) {
       const ids = docs.map((d) => d.id).filter((id): id is string => !!id);
@@ -401,9 +418,14 @@ export default function BulkEditModal({
         // unknown (a row already Superseded gets no new duty).
         if ((archiving || (superseding && (priorStatusOf.get(doc.id ?? "") ?? "").trim() !== "Superseded")) && doc.id) {
           const known = priorStatusOf.has(doc.id);
+          // P31 final fix pass: an Archived row archived again — the duties
+          // run (fail-safe), the record says no retirement was made.
+          const alreadyRetired = known && (priorStatusOf.get(doc.id) ?? "").trim() === newValue.trim();
           archivedRows.push({
             documentId: doc.id, label: String(doc.documentNumber || doc.title || doc.id), versionId: doc.currentVersionId ?? null,
-            retiredFrom: known ? (priorStatusOf.get(doc.id) ?? null) : null, ...(known ? {} : { priorStatusUnknown: true }),
+            ...(alreadyRetired
+              ? { alreadyRetired: true }
+              : { retiredFrom: known ? (priorStatusOf.get(doc.id) ?? null) : null, ...(known ? {} : { priorStatusUnknown: true }) }),
           });
         }
       } catch (e) {
@@ -475,6 +497,7 @@ export default function BulkEditModal({
               value={target.kind === "custom" ? `custom:${target.def.key}` : target.kind}
               onChange={(e) => {
                 const v = e.target.value;
+                setArchiveReason("");
                 if (v === "status") {
                   setTarget({ kind: "status" }); setNewValue(STATUS_OPTIONS[0]);
                 } else {
@@ -500,7 +523,7 @@ export default function BulkEditModal({
             <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1.5 block">New value</label>
             {target.kind === "status" ? (
               <select
-                value={newValue} onChange={(e) => setNewValue(e.target.value)}
+                value={newValue} onChange={(e) => chooseValue(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
                 disabled={busy}
               >
