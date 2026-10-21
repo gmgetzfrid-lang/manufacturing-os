@@ -1887,6 +1887,38 @@ describe("DF-P6 — GAP-110 / DEC-34: the like-in-kind declaration at filing; GA
     expect(tickets()).toHaveLength(1);
   });
 
+  it("fix pass (review, minor 10): an id that already has a history — another person's signature, any other signature over it, or an audit row that is not this declaration's capture — is refused 409 declaration_key_used BEFORE a number is spent; the requester's own re-sign of the same id is not", async () => {
+    const OTHER_SIG = "5a000000-0000-4000-8000-000000000002";
+    const cases: Array<[Row[], Row[]]> = [
+      [[sigRow(), { id: OTHER_SIG, org_id: ORG, resource_type: "ticket", resource_id: KEY, signer_user_id: SUP, intent: "Approved", statement: "Approved the old request" }], []],
+      [[sigRow()], [{ id: "al-1", action: "TICKET_APPROVE_DRAFT_IFC", resource_id: KEY, org_id: ORG, details: {} }]],
+      [[sigRow()], [{ id: "al-2", action: "ESIGNATURE_CAPTURED", resource_id: KEY, org_id: ORG, details: { signatureId: OTHER_SIG } }]],
+    ];
+    for (const [sigs, logs] of cases) {
+      seed(); s.counter = new Map(); s.rpcCalls = [];
+      s.tables.e_signatures = sigs;
+      s.tables.audit_logs = logs;
+      const res = await POST(req(declared()));
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("declaration_key_used");
+      expect(tickets()).toHaveLength(0);
+      expect(nextTicketRpc()).toHaveLength(0);
+    }
+    // the requester's own earlier declaration signature over the same id, with its capture mirror, is fine
+    seed(); s.counter = new Map(); s.rpcCalls = [];
+    s.tables.e_signatures = [sigRow(), sigRow({ id: OTHER_SIG, statement: "Like-in-kind declaration: an earlier wording of the same declaration" })];
+    s.tables.audit_logs = [{ id: "al-3", action: "ESIGNATURE_CAPTURED", resource_id: KEY, org_id: ORG, details: { signatureId: SIG } }, { id: "al-4", action: "ESIGNATURE_CAPTURED", resource_id: KEY, org_id: ORG, details: { signatureId: OTHER_SIG } }];
+    expect((await POST(req(declared()))).status).toBe(201);
+  });
+
+  it("fix pass (review, minor 10): a history read that fails answers 503 and files nothing", async () => {
+    s.tables.e_signatures = [sigRow()];
+    s.errors["audit_logs.select"] = [{ code: "57014", message: "statement timeout" }];
+    const res = await POST(req(declared()));
+    expect(res.status).toBe(503);
+    expect(tickets()).toHaveLength(0);
+  });
+
   it("an unreadable signature read answers 503 and files nothing", async () => {
     s.tables.e_signatures = [sigRow()];
     s.errors["e_signatures.select"] = [{ code: "57014", message: "statement timeout" }];
@@ -1926,6 +1958,15 @@ describe("DF-P6 — GAP-110 / DEC-34: the like-in-kind declaration at filing; GA
     expect(rows.map((r) => [r.tag, r.asset_id])).toEqual([["P-101", A1], ["XV-9", null], ["ZZ-1", null]]);
     expect(rows.every((r) => r.ticket_id === tickets()[0].id && r.org_id === ORG && r.created_by === REQ)).toBe(true);
     expect(JSON.stringify(body.warnings)).toMatch(/kept as typed: XV-9, ZZ-1/);
+  });
+
+  it("fix pass (review, minor 14): a tag the form could not look up is said as such — never 'not found' when nobody could ask", async () => {
+    const res = await POST(req(portal({ attachments: [], equipment: [{ tag: "P-101", lookupFailed: true }, { tag: "ZZ-1" }] })));
+    expect(res.status).toBe(201);
+    const w = JSON.stringify((await res.json()).warnings);
+    expect(w).toMatch(/Could not be checked against the equipment registry \(the lookup failed\), kept as typed: P-101/);
+    expect(w).toMatch(/Not found in the equipment registry, kept as typed: ZZ-1\./);
+    expect((s.tables.ticket_equipment ?? []).map((r) => r.tag)).toEqual(["P-101", "ZZ-1"]);
   });
 
   it("equipment before 20261251 is pasted: the request is filed and the answer says the equipment was not recorded", async () => {

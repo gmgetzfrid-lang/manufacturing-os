@@ -22,6 +22,7 @@ import {
   parseTicketCreateBody, unitOptionsFor, unitListReadFailure, resolveUnit, resolveDerivedUnit, requestTypeAllowed, missingRequiredCustomField,
   stampedRequesterRole, stampedRequesterName, openingHistory, creationNotice, insertFailureKind,
   isStagedKeyOf, finalAttachmentKey, attachmentSizeLabel, requestNumberYear, checkinNoteOf, psmAlertNotice,
+  declarationKeyReused, KEY_HISTORY_LIMIT, type KeySignatureRow, type KeyAuditRow,
   type CreatorMember, type TicketCreateInput, type TicketCreateAttachment, type TicketCreateOrigin, type CheckinMoc,
 } from "@/lib/ticketCreate";
 import type { PsmAlertOutcome } from "@/lib/ticketCreateClient";
@@ -607,6 +608,22 @@ async function create(
     if (taken) {
       return { status: 409, field: "declaration", code: "declaration_used", error: `This declaration was already filed as ${String((taken as { ticket_id?: string }).ticket_id ?? "a request")} — check the queue before you submit it again.` };
     }
+    // DF-P6 fix pass (review, minor 10): the id is minted by the browser, so
+    // a live-row check is not enough — an id that ever named something else
+    // (a hard-deleted request, or any record with signatures or audit rows
+    // under it) would hand the new request that history. Only this
+    // requester's own declaration signatures over the id (a re-sign of the
+    // same id) and their ESIGNATURE_CAPTURED mirrors may exist.
+    const { data: sigsUnder, error: sigsUnderErr } = await supabaseAdmin
+      .from("e_signatures").select("id, signer_user_id, intent, statement")
+      .eq("resource_type", "ticket").eq("resource_id", declaration.ticketKey).limit(KEY_HISTORY_LIMIT);
+    const { data: auditUnder, error: auditUnderErr } = await supabaseAdmin
+      .from("audit_logs").select("id, action, details")
+      .eq("resource_id", declaration.ticketKey).limit(KEY_HISTORY_LIMIT);
+    if (sigsUnderErr || auditUnderErr) return { status: 503, error: "Couldn't confirm the declaration's request id is new — try again in a moment." };
+    if (declarationKeyReused(sigsUnder as KeySignatureRow[] | null, auditUnder as KeyAuditRow[] | null, caller.id)) {
+      return { status: 409, field: "declaration", code: "declaration_key_used", error: "The id this declaration was signed for already has a history of its own — sign the declaration again (a fresh id is minted)." };
+    }
   }
 
   // 4. The request number — allocated only now, as the caller (the counter
@@ -898,7 +915,7 @@ async function create(
 }
 
 /** GAP-312 (DF-P6): write the request's equipment rows. Returns warnings. */
-async function recordEquipment(orgId: string, ticketId: string, uid: string, equipment: Array<{ tag: string; assetId: string | null }>): Promise<string[]> {
+async function recordEquipment(orgId: string, ticketId: string, uid: string, equipment: Array<{ tag: string; assetId: string | null; lookupFailed?: boolean }>): Promise<string[]> {
   const ids = [...new Set(equipment.map((e) => e.assetId).filter((x): x is string => !!x))];
   let known = new Set<string>();
   const out: string[] = [];
@@ -919,8 +936,13 @@ async function recordEquipment(orgId: string, ticketId: string, uid: string, equ
       : "The equipment you named could not be recorded — the request was filed without it; add it in a comment.");
     return out;
   }
-  const unresolved = rows.filter((r) => !r.asset_id).map((r) => r.tag);
+  // DF-P6 fix pass (minor 14): a tag the form could not look up is said as
+  // such — never "not found" when nobody could ask.
+  const unchecked = new Set(equipment.filter((e) => e.lookupFailed === true && !e.assetId).map((e) => e.tag));
+  const unresolved = rows.filter((r) => !r.asset_id && !unchecked.has(r.tag)).map((r) => r.tag);
+  const notLooked = rows.filter((r) => !r.asset_id && unchecked.has(r.tag)).map((r) => r.tag);
   if (unresolved.length > 0) out.push(`Not found in the equipment registry, kept as typed: ${unresolved.join(", ")}.`);
+  if (notLooked.length > 0) out.push(`Could not be checked against the equipment registry (the lookup failed), kept as typed: ${notLooked.join(", ")}.`);
   return out;
 }
 

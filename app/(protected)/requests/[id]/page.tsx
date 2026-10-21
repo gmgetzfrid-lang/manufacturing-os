@@ -10,7 +10,7 @@ import { useRole } from '@/components/providers/RoleContext';
 import { useToast } from '@/components/providers/ToastProvider';
 import { appAlert, appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import { Ticket, TicketStatus, TicketAttachment, TicketComment, DocumentRecord, type CustomCategoryConfig, type OrgDraftingSettings } from '@/types/schema';
-import { WorkflowEngine, WorkflowAction, ticketResource, issueAsIsConfirmation, issueAsIsBanner, ISSUE_MARK_ACTIONS, currentRoster, routedNoRosterReason, workflowRefusalMessage } from '@/lib/workflow';
+import { WorkflowEngine, WorkflowAction, ticketResource, issueAsIsConfirmation, issueAsIsBanner, ISSUE_MARK_ACTIONS, currentRoster, routedNoRosterReason, workflowRefusalMessage, engineerPickQuestionApplies, separationOfDutiesActive } from '@/lib/workflow';
 import { ticketReviewRouting } from '@/lib/routingControl';
 import { loadCapabilityPolicyEntry, type CapabilityPolicy } from '@/lib/capabilityPolicy';
 import { affordancePolicyFault } from '@/lib/checkoutAffordances';
@@ -20,7 +20,8 @@ import { flaggedRequestTypes } from '@/lib/requestTypes';
 // PROJ-9, LEAK-9, HAND-7 / HAND-3, FRIC-3 / FRIC-8, DCW-5).
 import { ticketStatusLabel, ticketUnitDisplay } from '@/lib/ticketStatusLabels';
 import { attentionLabel, holdersFor, waitingSince, waitedFor, explainNoActions } from '@/lib/ticketAttention';
-import { drafterCandidates, NO_DRAFTER_CANDIDATES, missingRequiredFile, triagePayload, customCategorySections, projectRefOf, type DrafterCandidate } from '@/lib/ticketPage';
+import { drafterCandidates, NO_DRAFTER_CANDIDATES, missingRequiredFile, triagePayload, customCategorySections, projectRefOf, engineerCandidates, type DrafterCandidate } from '@/lib/ticketPage';
+import { reviewModelFieldsFromRow, engineerPickAvailable as pickAvailableFrom, engineeringOverrideOf } from '@/lib/reviewModel';
 import { loadPickerMembers } from '@/lib/ticketPickerMembers';
 import { loadRoutingContext, queuePool } from '@/lib/ticketRouting';
 import { unitOptionsFor, type UnitOption } from '@/lib/ticketCreate';
@@ -1172,6 +1173,10 @@ export default function TicketDetailView() {
   // DEC-16: the requester's CURRENT role collection, so the buttons drawn here
   // match the gate the route enforces (snapshot OR current). null = unknown.
   const [requesterRoles, setRequesterRoles] = useState<string[] | null>(null);
+  // DF-P6 fix pass (review, issues 1 and 2): can the requester pick an
+  // engineer at all? Read only where the route reads it
+  // (engineerPickQuestionApplies); undefined = not asked / unknown.
+  const [engineerPickAvailable, setEngineerPickAvailable] = useState<boolean | undefined>(undefined);
   useEffect(() => {
     if (!activeOrgId) return;
     let alive = true;
@@ -1331,14 +1336,9 @@ export default function TicketDetailView() {
       // absent before the paste — no library, as today).
       libraryId: typeof r.library_id === 'string' ? r.library_id : null,
       // DF-P6 (20261250): the engine's engineering gate reads the work, not
-      // who asked — undefined before the paste (today's gate decides).
-      engineeringRequired: typeof r.engineering_required === 'boolean' ? r.engineering_required : undefined,
-      likeInKindStatement: typeof r.like_in_kind_statement === 'string' ? r.like_in_kind_statement : null,
-      likeInKindDeclaredBy: typeof r.like_in_kind_declared_by === 'string' ? r.like_in_kind_declared_by : null,
-      likeInKindDeclaredAt: typeof r.like_in_kind_declared_at === 'string' ? r.like_in_kind_declared_at : null,
-      likeInKindSignatureId: typeof r.like_in_kind_signature_id === 'string' ? r.like_in_kind_signature_id : null,
-      workClass: typeof r.work_class === 'string' ? r.work_class : null,
-      codeClass: typeof r.code_class === 'string' ? r.code_class : null,
+      // who asked — undefined before the paste (today's gate decides). The
+      // one mapper the route's rowToTicket shares (lib/reviewModel.ts).
+      ...reviewModelFieldsFromRow(r),
       engineerReviewRequestedAt: r.engineer_review_requested_at as string | null | undefined,
       engineerApprovedAt: r.engineer_approved_at as string | null | undefined,
       engineerReviewReason: r.engineer_review_reason as string | null | undefined,
@@ -1539,6 +1539,25 @@ export default function TicketDetailView() {
       .then(undefined, () => { if (alive) setRequesterRoles(null); });
     return () => { alive = false; };
   }, [requesterId, ticketOrgId]);
+
+  // DF-P6 fix pass (review, issues 1 and 2): the same member read and rule
+  // as the workflow route, so the override and "Send for Engineer Final
+  // Approval" render exactly as the route will take them.
+  const pickQuestion = !!ticket && activeRole !== null && !policyFault
+    && engineerPickQuestionApplies(ticket, uid, activeRole, roles, capPolicy, requesterRoles);
+  useEffect(() => {
+    let alive = true;
+    if (!pickQuestion || !ticket || !ticketOrgId) { setEngineerPickAvailable(undefined); return; }
+    const t = ticket;
+    void loadPickerMembers(ticketOrgId).then((read) => {
+      if (!alive) return;
+      if (!read.ok) { setEngineerPickAvailable(undefined); return; }
+      const cands = engineerCandidates(read.rows, capPolicy, 'ticket.final_approve', ticketResource(t)).map((c) => c.uid);
+      setEngineerPickAvailable(pickAvailableFrom(cands, t, uid, separationOfDutiesActive(activeMemberCount)));
+    }, () => { if (alive) setEngineerPickAvailable(undefined); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-read when the question, the policy or the head-count changes, not on every ticket render
+  }, [pickQuestion, ticketOrgId, capPolicy, activeMemberCount, uid]);
 
   // GAP-6 / DEC-22: may THIS caller publish a revision of the source document?
   // Library publish authority (controller, publish grant, index) OR the
@@ -2294,6 +2313,7 @@ export default function TicketDetailView() {
     reviewRoutedReason,
     userRoles: roles,
     activeMemberCount,
+    ...(engineerPickAvailable === undefined ? {} : { engineerPickAvailable }), // DF-P6 fix pass (issues 1 and 2)
     engineeringFirstTypes,
     closeWithoutReviewTypes,
     requesterRoles,
@@ -2318,6 +2338,9 @@ export default function TicketDetailView() {
   const waited = waitedFor(waitingSince(ticket));
   const yourTurn = liveActions.some((a) => !a.optional && !a.disabledReason);
   const isTerminalStatus = ticket.status === 'CLOSED' || ticket.status === 'CANCELED';
+  // DF-P6 fix pass (review, issue 7): the request was issued by a management
+  // override of the engineering sign-off (and no engineer signed since).
+  const engineeringOverride = engineeringOverrideOf(ticket);
   // UI-4: why there is nothing to do here, naming who to talk to.
   // DF-P5 fix pass 2: the drafter's optional issue-as-is mark / withdrawal
   // is offered BESIDE the explanation, never in place of it — the request
@@ -2906,11 +2929,15 @@ export default function TicketDetailView() {
                 <div className="min-w-0 text-sm text-[var(--color-text)] mt-1">
                   {ticket.assignedEngineerName ? (
                     <div className="flex items-center text-blue-700">
-                      <div className={`w-2 h-2 rounded-full mr-2 shrink-0 ${ticket.engineerApprovedAt ? "bg-emerald-500" : "bg-blue-500 animate-pulse"}`} />
+                      {/* DF-P6 fix pass (review, issue 7): an issue by management override is not a sign-off still pending. */}
+                      <div className={`w-2 h-2 rounded-full mr-2 shrink-0 ${ticket.engineerApprovedAt && !engineeringOverride ? "bg-emerald-500" : engineeringOverride ? "bg-amber-500" : "bg-blue-500 animate-pulse"}`} />
                       <span className="truncate" title={ticket.assignedEngineerEmail || ticket.assignedEngineerName}>{ticket.assignedEngineerName}</span>
-                      {ticket.engineerApprovedAt && <span className="ml-2 text-[10px] text-emerald-600 font-bold uppercase">approved</span>}
+                      {ticket.engineerApprovedAt && !engineeringOverride && <span className="ml-2 text-[10px] text-emerald-600 font-bold uppercase">approved</span>}
                     </div>
-                  ) : <span className="text-[var(--color-text-faint)] italic">Not yet assigned</span>}
+                  ) : engineeringOverride ? null : <span className="text-[var(--color-text-faint)] italic">Not yet assigned</span>}
+                  {engineeringOverride && (
+                    <div data-testid="engineering-override" className="text-[11px] text-amber-700 mt-0.5">Issued by management override — no engineer sign-off{engineeringOverride.by ? ` (${engineeringOverride.by})` : ''}</div>
+                  )}
                 </div>
               </div>
               <div><label className="text-[11px] text-[var(--color-text-faint)] font-medium">Initiated</label><div className="text-sm font-semibold text-[var(--color-text)] mt-1 flex items-center"><Calendar className="w-4 h-4 mr-2 text-slate-300 shrink-0" />{toDate(ticket.createdAt).toLocaleDateString()}</div></div>

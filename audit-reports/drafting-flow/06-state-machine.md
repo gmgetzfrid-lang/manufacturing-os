@@ -206,6 +206,8 @@ Tests: `lib/__tests__/reviewModel.test.ts` "SM-3 — only an engineer signs as t
 
 **Scope / residual.** The only difference an unconfigured workspace sees is the renamed management button at `PENDING_FINAL_APPROVAL` (same effect, no engineer stamp). No new capability was added (a `ticket.engineer_override` token was not needed: management keeps the override through `ticket.manage`).
 
+**Fix pass (2026-10-21, drafting-flow Round G — DF-P6 review).** (a) The override is never the requester's own in a workspace of 3+ while an engineer can be picked, on a request the column says requires engineering: `override_engineer_final` and the management minor correction render disabled with `SELF_OVERRIDE_REASON` and the route refuses them (403) — another manager's stands (`TIER-1` fix pass). (b) An override is shown as one: the transition writes `metadata.engineering_override` (`{ by, uid, at, action }`), and `lib/reviewModel.ts` `engineeringOverrideOf` (the marker, else the override's history line for overrides recorded before it; an engineer's later sign-off wins) drives the request page's Engineer Reviewer card ("Issued by management override — no engineer sign-off" instead of a pulsing "pending") and the seeded roster (`lib/routingControl.ts` `seededSlotsFor` state `overridden` on an issued or closed request). Tests: `lib/__tests__/reviewModel.test.ts` "fix pass (review, issue 7) …" and "fix pass (review, issues 1 and 2) …"; `lib/__tests__/dfRoundG_P6_reviewRoute.test.ts` "fix pass (review) — the requester's own override, at the route".
+
 ---
 
 <a id="sm-4"></a>

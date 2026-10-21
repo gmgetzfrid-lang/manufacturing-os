@@ -21,12 +21,15 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { WorkflowEngine, engineerApprovalRequired, engineeringGateRequired, ticketResource, ISSUING_APPROVALS, type WorkflowAction, type WorkflowContext } from "@/lib/workflow";
+import { WorkflowEngine, engineerApprovalRequired, engineeringGateRequired, ticketResource, ISSUING_APPROVALS, SELF_OVERRIDE_REASON, NO_ENGINEER_TO_PICK_REASON, engineerPickQuestionApplies, type WorkflowAction, type WorkflowContext } from "@/lib/workflow";
 import { computeTransition, rowToTicket, classifyTransitionNotification, type TransitionInput } from "@/lib/ticketTransitions";
 import {
   ticketEngineeringRequired, checkDeclarationStatement, declarationSignatureRefusal, declarationSignatureStatement,
   reviewClassOptions, resolveReviewClass, isMissingReviewModelColumn, engineeringBasis, LIKE_IN_KIND_MIN_CHARS, DECLARATION_BLANK_NOTE,
+  engineerPickAvailable, engineeringOverrideOf, reviewModelFieldsFromRow, ENGINEERING_OVERRIDE_NOTE,
 } from "@/lib/reviewModel";
+import { seededSlotsFor } from "@/lib/routingControl";
+import { engineMatrix } from "./helpers/dfP6EngineMatrix";
 import { CAPABILITY_DEFS, policyAllows, validateCapabilityPolicy, TICKET_RESOURCE_KEYS, RESOURCE_KEYS, type CapabilityPolicy } from "@/lib/capabilityPolicy";
 import { parseRoutingControl, routingForWorkClass } from "@/lib/routingControl";
 import { parseTicketCreateBody } from "@/lib/ticketCreate";
@@ -60,10 +63,15 @@ function inputFor(a: WorkflowAction, actor: { uid: string; role: string }, extra
 }
 
 describe("TIER-1 / DEC-33 — engineering is required by the WORK, never by who asked", () => {
-  it("an UNDECLARED request (engineering_required true) filed by a Manager, an Admin, a Supervisor or DocCtrl: its requester cannot issue it — only Send for Engineer Final Approval, and nothing it is offered lands on PENDING_IFC", () => {
+  it("an UNDECLARED request (engineering_required true) filed by a Manager, an Admin, a Supervisor or DocCtrl: in a workspace of 3+ with an engineer to pick, its requester cannot issue it — only Send for Engineer Final Approval, and nothing it is offered lands on PENDING_IFC", () => {
     for (const r of ["Manager", "Admin", "Supervisor", "DocCtrl"] as Role[]) {
       const t = mk({ requesterRole: r, engineeringRequired: true });
-      const acts = WorkflowEngine.getActions(t, r, "req", undefined, { userRoles: [r], requesterRoles: [r] });
+      for (const pick of [undefined, true]) {
+        const acts = WorkflowEngine.getActions(t, r, "req", undefined, { userRoles: [r], requesterRoles: [r], activeMemberCount: 5, ...(pick === undefined ? {} : { engineerPickAvailable: pick }) });
+        expect(names(acts), `${r} ${pick}`).not.toContain("approve_draft_ifc");
+        expect(names(acts), `${r} ${pick}`).not.toContain("approve_minor_correction");
+      }
+      const acts = WorkflowEngine.getActions(t, r, "req", undefined, { userRoles: [r], requesterRoles: [r], activeMemberCount: 5 });
       expect(names(acts), r).not.toContain("approve_draft_ifc");
       expect(names(acts), r).not.toContain("approve_minor_correction");
       expect(names(acts), r).toContain("request_final_engineer_approval");
@@ -107,6 +115,24 @@ describe("TIER-1 / DEC-33 — engineering is required by the WORK, never by who 
 
 describe("REGRESSION (DEC-90 rulings (2) and (8)) — every issue transition is gated exactly where it is gated today for a request the column cannot speak for", () => {
   const STATUSES: TicketStatus[] = ["PENDING_ASSIGNMENT", "DRAFTING", "PENDING_REVIEW", "PENDING_FINAL_APPROVAL", "PENDING_IFC", "FINAL_DRAFT"];
+  it("fix pass (review, minor 9): against TODAY'S engine — a snapshot generated once from the base (7893129, before DF-P6) over requester role × status × engineer assigned × member count × actor role × identity: the current engine offers the same actions, disabled and optional alike, for every entry; the ONLY difference is SM-3's rename (engineer_approve_final → override_engineer_final for management without an Engineer role), and only at PENDING_FINAL_APPROVAL", () => {
+    const golden = JSON.parse(readFileSync(join(process.cwd(), "lib", "__tests__", "dfP6EngineBase7893129.golden.json"), "utf8")) as { base: string; entries: number; lists: string[]; seq: number[] };
+    expect(golden.base).toBe("7893129");
+    const now = engineMatrix();
+    const keys = Object.keys(now);
+    expect(keys.length).toBe(golden.entries);
+    let renamed = 0;
+    keys.forEach((k, i) => {
+      const cur = now[k];
+      const sm3 = cur.replace(/\boverride_engineer_final\|/g, "engineer_approve_final|");
+      if (sm3 !== cur) {
+        renamed++;
+        expect(k.split("|")[1], k).toBe("PENDING_FINAL_APPROVAL");
+      }
+      expect(sm3, k).toBe(golden.lists[golden.seq[i]]);
+    });
+    expect(renamed).toBeGreaterThan(0);
+  });
   it("per transition (approve_draft_ifc, approve_minor_correction, engineer_approve_final, submit_final) the same actors are offered it whether the column is absent (before the paste) or left false without a declaration (a pre-paste row) — the flag is the only addition, and only where the column exists", () => {
     let compared = 0;
     for (const req of ["Viewer", "Manager", "Engineer-2", "DocCtrl"] as Role[]) {
@@ -224,6 +250,95 @@ describe("SM-3 — only an engineer signs as the engineer; management overrides,
   });
 });
 
+describe("fix pass (review, issues 1 and 2) — the requester's own override of the engineering sign-off", () => {
+  const undeclared = (over: Partial<Ticket> = {}) => mk({ requesterRole: "Manager", engineeringRequired: true, ...over });
+  it("issue 1: a Manager requester in a TWO-member workspace with no engineer is offered the recorded override (approve_draft_ifc, marked engineeringOverride) — the request can issue, recorded, never stamping engineer_approved_at", () => {
+    const t = undeclared();
+    const acts = WorkflowEngine.getActions(t, "Manager", "req", undefined, { userRoles: ["Manager"], requesterRoles: ["Manager"], activeMemberCount: 2, engineerPickAvailable: false });
+    const ov = acts.find((a) => a.action === "approve_draft_ifc")!;
+    expect(ov).toMatchObject({ engineeringOverride: true, label: "Override: Issue Without Engineer Sign-off" });
+    expect(ov.disabledReason).toBeUndefined();
+    expect(ov.optional).toBeUndefined(); // the way forward when nobody can be picked
+    expect(acts.find((a) => a.action === "request_final_engineer_approval")?.disabledReason).toBe(NO_ENGINEER_TO_PICK_REASON);
+    const res = computeTransition(t, inputFor(ov, { uid: "req", role: "Manager" }));
+    expect(res.newStatus).toBe("PENDING_IFC");
+    expect(res.updates.engineer_approved_at).toBeUndefined();
+    expect(res.historyEntry.details).toContain(ENGINEERING_OVERRIDE_NOTE);
+    expect((res.updates.metadata as Record<string, unknown>).engineering_override).toMatchObject({ uid: "req", at: NOW, action: "approve_draft_ifc" });
+    // below the DEC-12 threshold the override is offered even when an engineer could be picked (optional there)
+    const two = WorkflowEngine.getActions(t, "Manager", "req", undefined, { userRoles: ["Manager"], requesterRoles: ["Manager"], activeMemberCount: 2 });
+    expect(two.find((a) => a.action === "approve_draft_ifc")).toMatchObject({ engineeringOverride: true, optional: true });
+    expect(two.find((a) => a.action === "request_final_engineer_approval")?.disabledReason).toBeUndefined();
+  });
+  it("issue 1: in a workspace of 3+ where NOBODY can be picked as the engineer, the Manager requester may override too; a requester without ticket.manage (a planner, DocCtrl) never may", () => {
+    const acts = WorkflowEngine.getActions(undeclared(), "Manager", "req", undefined, { userRoles: ["Manager"], requesterRoles: ["Manager"], activeMemberCount: 6, engineerPickAvailable: false });
+    expect(acts.find((a) => a.action === "approve_draft_ifc")).toMatchObject({ engineeringOverride: true });
+    for (const r of ["DocCtrl", "Maintenance", "Viewer"] as Role[]) {
+      const other = WorkflowEngine.getActions(undeclared({ requesterRole: r }), r, "req", undefined, { userRoles: [r], requesterRoles: [r], activeMemberCount: 2, engineerPickAvailable: false });
+      expect(names(other), r).not.toContain("approve_draft_ifc");
+    }
+  });
+  it("issue 2: in a workspace of 3+ with an engineer to pick, the requester's own override at PENDING_FINAL_APPROVAL (override_engineer_final, the management minor correction) is rendered DISABLED with the second-person reason; another manager's is not", () => {
+    const atFinal = undeclared({ status: "PENDING_FINAL_APPROVAL", assignedEngineerId: "eng" });
+    const own = WorkflowEngine.getActions(atFinal, "Manager", "req", undefined, { userRoles: ["Manager"], requesterRoles: ["Manager"], activeMemberCount: 5 });
+    expect(own.find((a) => a.action === "override_engineer_final")?.disabledReason).toBe(SELF_OVERRIDE_REASON);
+    expect(own.find((a) => a.action === "approve_minor_correction")?.disabledReason).toBe(SELF_OVERRIDE_REASON);
+    // nothing the requester can take lands on PENDING_IFC
+    for (const a of own.filter((x) => !x.disabledReason)) expect(computeTransition(atFinal, inputFor(a, { uid: "req", role: "Manager" })).newStatus, a.action).not.toBe("PENDING_IFC");
+    const boss = WorkflowEngine.getActions(atFinal, "Manager", "boss", undefined, { userRoles: ["Manager"], requesterRoles: ["Manager"], activeMemberCount: 5 });
+    expect(boss.find((a) => a.action === "override_engineer_final")?.disabledReason).toBeUndefined();
+    // below the threshold, or with nobody to pick, the requester's own override stands
+    for (const ctx of [{ activeMemberCount: 2 }, { activeMemberCount: 5, engineerPickAvailable: false }]) {
+      const ok = WorkflowEngine.getActions(atFinal, "Manager", "req", undefined, { userRoles: ["Manager"], requesterRoles: ["Manager"], ...ctx });
+      expect(ok.find((a) => a.action === "override_engineer_final")?.disabledReason, JSON.stringify(ctx)).toBeUndefined();
+    }
+    // a request the column cannot speak for, filed by an exempt Manager, is not blocked (today's path)
+    const legacy = mk({ status: "PENDING_FINAL_APPROVAL", assignedEngineerId: "eng", requesterRole: "Manager" });
+    expect(WorkflowEngine.getActions(legacy, "Manager", "req", undefined, { userRoles: ["Manager"], requesterRoles: ["Manager"], activeMemberCount: 5 }).find((a) => a.action === "override_engineer_final")?.disabledReason).toBeUndefined();
+  });
+  it("issue 1: a request the column cannot speak for keeps today's requester branch exactly — no override is added for it", () => {
+    const legacy = mk({ requesterRole: "Viewer" });
+    const acts = WorkflowEngine.getActions(legacy, "Manager", "req", undefined, { userRoles: ["Manager"], requesterRoles: ["Manager"], activeMemberCount: 2, engineerPickAvailable: false });
+    expect(acts.filter((a) => a.engineeringOverride && a.action === "approve_draft_ifc" && a.label.startsWith("Override"))).toEqual([]);
+  });
+  it("engineerPickQuestionApplies: only the requester holding ticket.manage, on a request requiring engineering, in serial review — the route and the page read the members exactly then", () => {
+    expect(engineerPickQuestionApplies(undeclared(), "req", "Manager", ["Manager"], undefined, ["Manager"])).toBe(true);
+    expect(engineerPickQuestionApplies(undeclared(), "boss", "Manager", ["Manager"], undefined, ["Manager"])).toBe(false);
+    expect(engineerPickQuestionApplies(undeclared({ requesterRole: "Viewer" }), "req", "Viewer", ["Viewer"], undefined, ["Viewer"])).toBe(false);
+    expect(engineerPickQuestionApplies(undeclared({ status: "DRAFTING" }), "req", "Manager", ["Manager"], undefined, ["Manager"])).toBe(false);
+    expect(engineerPickQuestionApplies(mk({ requesterRole: "Manager" }), "req", "Manager", ["Manager"], undefined, ["Manager"])).toBe(false);
+  });
+  it("engineerPickAvailable: in orgs of 3+ the requester, the drafter and the picker do not count", () => {
+    const t = { requesterId: "req", assignedDrafterId: "drf" };
+    expect(engineerPickAvailable([], t, "req", false)).toBe(false);
+    expect(engineerPickAvailable(["req"], t, "req", false)).toBe(true);
+    expect(engineerPickAvailable(["req", "drf"], t, "req", true)).toBe(false);
+    expect(engineerPickAvailable(["req", "eng"], t, "req", true)).toBe(true);
+  });
+});
+
+describe("fix pass (review, issue 7) — an override is shown as one, never as a sign-off still pending", () => {
+  it("engineeringOverrideOf reads the marker, else the override's history line; an engineer's sign-off stamped after it is the latest word", () => {
+    expect(engineeringOverrideOf({ metadata: { engineering_override: { by: "boss@x.io", at: NOW } } })).toEqual({ by: "boss@x.io", at: NOW });
+    expect(engineeringOverrideOf({ history: [{ action: "x", user: "boss@x.io", role: "Manager", date: NOW, details: `ok [${ENGINEERING_OVERRIDE_NOTE}]` }] as Ticket["history"] })).toEqual({ by: "boss@x.io", at: NOW });
+    expect(engineeringOverrideOf({ metadata: { engineering_override: { by: "b", at: NOW } }, engineerApprovedAt: "2026-10-22T00:00:00.000Z" })).toBeNull();
+    expect(engineeringOverrideOf({ metadata: {} })).toBeNull();
+  });
+  it("seededSlotsFor says 'overridden' for an issued or closed request issued by override; 'pending' otherwise as before", () => {
+    for (const status of ["PENDING_IFC", "FINAL_DRAFT", "CLOSED"]) {
+      expect(seededSlotsFor({ status }, true, true)[1].state, status).toBe("overridden");
+      expect(seededSlotsFor({ status }, true)[1].state, status).toBe("pending");
+    }
+    expect(seededSlotsFor({ status: "PENDING_FINAL_APPROVAL" }, true, true)[1].state).toBe("waiting");
+  });
+  it("the copy no longer claims an undeclared request cannot issue without an engineer — the override exists", () => {
+    expect(engineeringLine({ engineeringRequired: true })?.text).toMatch(/management may override that, recorded as an override/);
+    const flag = WorkflowEngine.getActions(mk({ status: "DRAFTING", ...DECLARED }), "DraftingSupervisor", "ds", undefined, { userRoles: ["DraftingSupervisor"] }).find((a) => a.action === "flag_engineering")!;
+    expect(flag.description).toMatch(/management may override it, recorded as an override/);
+    expect(flag.description).not.toMatch(/will not issue without/);
+  });
+});
+
 describe("GAP-110 / DEC-34 — the declaration", () => {
   it("a typed statement of at least ~20 characters; blank / short / non-string refused with the reason (and the blank line on the form)", () => {
     expect(checkDeclarationStatement("Replacing the gasket with an identical one").ok).toBe(true);
@@ -302,9 +417,13 @@ describe("GAP-101 / TIER-4 / GAP-105 — classes and the resource", () => {
     expect(resolveReviewClass("", opts).kind).toBe("none");
     expect(editableClasses({ codeClasses: { options: [{ value: "c", label: "C", engineering: true }] } } as never, "codeClasses").options).toEqual([{ value: "c", label: "C", engineering: true }]);
   });
-  it("the resource carries the library, the work class and the code class only when the ticket has them", () => {
+  it("fix pass (review, issue 6): the resource stays request type and unit — the library and the classes join only with the requests list's and the inbox's mappers (99-fix-sequencing hand-off), so the route, the page and the badge evaluate one resource", () => {
     expect(ticketResource({ requestType: "ISO", unit: "U" })).toStrictEqual({ requestType: "ISO", unit: "U" });
-    expect(ticketResource({ requestType: "ISO", unit: "U", libraryId: "L", workClass: "w", codeClass: "c" })).toStrictEqual({ requestType: "ISO", unit: "U", libraryId: "L", workClass: "w", codeClass: "c" });
+    const full = { requestType: "ISO", unit: "U", libraryId: "L", workClass: "w", codeClass: "c" } as Pick<Ticket, "requestType" | "unit">;
+    expect(ticketResource(full)).toStrictEqual({ requestType: "ISO", unit: "U" });
+    // the shared mapper every Ticket builder can spread carries them
+    expect(reviewModelFieldsFromRow({ library_id: "L", work_class: "w", code_class: "c", engineering_required: true })).toMatchObject({ libraryId: "L", workClass: "w", codeClass: "c", engineeringRequired: true });
+    expect(reviewModelFieldsFromRow({}).engineeringRequired).toBeUndefined();
   });
   it("a rule scoped to a code class narrows a ticket capability there (TIER-4: 'this code's approvals by these people'); a work/code-class rule is refused on a capability the database evaluates", () => {
     const policy: CapabilityPolicy = { caps: { "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { codeClass: ["c1"] } }, { tokens: ["Engineer"] }] } };

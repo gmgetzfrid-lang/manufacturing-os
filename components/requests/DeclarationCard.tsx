@@ -43,7 +43,7 @@ export function engineeringLine(ticket: Pick<Ticket, "engineeringRequired" | "li
       required: true,
       text: ticket.likeInKindDeclaredAt
         ? "Engineering review is required: it was raised after the requester's like-in-kind declaration (see the history for who flagged it, when and why). The declaration stays on record."
-        : "Engineering review is required: no like-in-kind declaration was made, so this is engineered work. It cannot issue without an engineer's sign-off.",
+        : "Engineering review is required: no like-in-kind declaration was made, so this is engineered work. It requires an engineer's sign-off before it issues; management may override that, recorded as an override.",
     };
   }
   // The seed: the column cannot speak for this request.
@@ -129,7 +129,7 @@ export default function DeclarationCard({ ticket }: { ticket: Ticket }) {
               return (
                 <li key={`${e.tag}-${e.asset_id ?? "typed"}`}>
                   <span className="font-semibold text-[var(--color-text)]">{e.tag}</span>
-                  {!e.asset_id && <span className="ml-2 text-xs text-amber-700">not found in the equipment registry — kept as typed</span>}
+                  {!e.asset_id && <span className="ml-2 text-xs text-amber-700">not linked to the equipment registry (not found there, or the lookup failed when the request was filed) — kept as typed</span>}
                   {hit && hit.documents.length > 0 && (
                     <span className="ml-2 text-xs text-[var(--color-text-muted)]">
                       appears on {hit.documents.map((d, i) => (

@@ -12,6 +12,7 @@ import type { Ticket, TicketAttachment, TicketComment, TicketHistoryEntry, Ticke
 import { currentRoster, issueReadyFor, rosterEngineerApprovedAt, ISSUE_MARK_ACTIONS, slotBlocks, slotAlternatesActive } from "@/lib/workflow";
 import { lastIssuedFromHistory } from "@/lib/verifyTicketVerdict";
 import { defaultOutcome } from "@/lib/ticketOutcome";
+import { reviewModelFieldsFromRow, ENGINEERING_OVERRIDE_NOTE } from "@/lib/reviewModel";
 
 export interface TransitionActor {
   uid?: string | null;
@@ -146,14 +147,9 @@ export function rowToTicket(row: Record<string, unknown>): Ticket {
     // 20261208 is pasted, or when none is known yet).
     libraryId: typeof row.library_id === "string" ? row.library_id : null,
     // GAP-110 / GAP-111 / GAP-101 (DF-P6, 20261250): undefined while the
-    // columns are not in the database (the engine's seed then decides).
-    engineeringRequired: typeof row.engineering_required === "boolean" ? row.engineering_required : undefined,
-    likeInKindStatement: typeof row.like_in_kind_statement === "string" ? row.like_in_kind_statement : null,
-    likeInKindDeclaredBy: typeof row.like_in_kind_declared_by === "string" ? row.like_in_kind_declared_by : null,
-    likeInKindDeclaredAt: typeof row.like_in_kind_declared_at === "string" ? row.like_in_kind_declared_at : null,
-    likeInKindSignatureId: typeof row.like_in_kind_signature_id === "string" ? row.like_in_kind_signature_id : null,
-    workClass: typeof row.work_class === "string" ? row.work_class : null,
-    codeClass: typeof row.code_class === "string" ? row.code_class : null,
+    // columns are not in the database (the engine's seed then decides) —
+    // the one mapper every Ticket builder shares (lib/reviewModel.ts).
+    ...reviewModelFieldsFromRow(row),
     searchKeywords: Array.isArray(row.search_keywords) ? (row.search_keywords as string[]) : undefined,
     closedAt: row.closed_at as string | null | undefined,
     archivedAt: row.archived_at as string | null | undefined,
@@ -741,8 +737,14 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
   // SM-3 (DF-P6): an override of the engineering sign-off says so on its own
   // history line — the line every reader of the ticket sees.
   if (input.engineeringOverride && updates.status !== undefined && updates.status !== ticket.status) {
-    const note = "Management override — issued without the engineer's sign-off";
+    const note = ENGINEERING_OVERRIDE_NOTE;
     historyEntry.details = historyEntry.details ? `${historyEntry.details} [${note}]` : note;
+    // DF-P6 fix pass (review, issue 7): the request carries the override, so
+    // the engineer card and the seeded roster say "issued by management
+    // override — no engineer sign-off" instead of a sign-off still pending
+    // (lib/reviewModel.ts engineeringOverrideOf).
+    const meta = ((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>;
+    updates.metadata = { ...meta, engineering_override: { by: input.actor.email || actorUid || null, uid: actorUid ?? null, at: now, action: input.actionType } };
   }
   // HAND-7 done-when 3 (DF-P6): an approval over a moved source names what
   // moved and whether the approver acknowledged it.

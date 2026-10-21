@@ -441,8 +441,7 @@ describe("LEAK-3 / AUTHZ-6 (records the open gap) — every DEC-13 scoped rule r
     expect(body).toContain("IF NEW.status ");
     expect(body).not.toMatch(/NEW\.request_type\b/);
     expect(body).not.toMatch(/NEW\.unit\b/);
-    // DF-P6 re-pin: the resource still leads with the request type and the unit (the library, work class and code class join only when the ticket carries them).
-    expect(src("lib/workflow.ts")).toContain("requestType: ticket.requestType || null,\n    unit: ticket.unit || null,");
+    expect(src("lib/workflow.ts")).toContain("return { requestType: ticket.requestType || null, unit: ticket.unit || null };");
     let writers = 0;
     for (const f of ["app/(protected)/requests/page.tsx", "app/(protected)/requests/[id]/page.tsx", "lib/projects.ts"]) {
       for (const m of src(f).matchAll(/from\(['"]tickets['"]\)\s*\.update\(\{([^}]*)\}/g)) {

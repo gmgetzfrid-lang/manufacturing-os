@@ -2,9 +2,9 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { notifyBatchWithReason } from "@/lib/inAppNotifications";
-import { WorkflowEngine, ticketResource, decisiveGrants, currentRoster, slotSignPlan, engineeringGateRequired, ISSUING_APPROVALS, ISSUE_MARK_ACTIONS, ROSTERLESS_APPROVALS, ROUTED_NO_ROSTER_REASON, routedNoRosterReason, ISSUE_AS_IS_APPROVALS, issueReadyFor } from "@/lib/workflow";
+import { WorkflowEngine, ticketResource, decisiveGrants, currentRoster, engineerPickQuestionApplies, slotSignPlan, engineeringGateRequired, ISSUING_APPROVALS, ISSUE_MARK_ACTIONS, ROSTERLESS_APPROVALS, ROUTED_NO_ROSTER_REASON, routedNoRosterReason, ISSUE_AS_IS_APPROVALS, issueReadyFor } from "@/lib/workflow";
 import { loadCapabilityPolicyStrict, policyAllows } from "@/lib/capabilityPolicy";
-import { engineerPickCap, engineerPickRefusal } from "@/lib/ticketPage";
+import { engineerPickCap, engineerPickRefusal, engineerCandidates } from "@/lib/ticketPage";
 import { effectiveRoutingForTicket, ticketReviewRouting, routingForWorkClass } from "@/lib/routingControl";
 import {
   hashStoredFilesBounded, draftsToHashOnApproval, HASH_LIMITS, filesUnderReview, openRoster, applySignPlan, rosterCompletion, rosterBinding,
@@ -28,7 +28,7 @@ import {
 import type { Role, TicketAttachment, TicketHistoryEntry, TicketOutcome, TicketReviewRoster } from "@/types/schema";
 import { TICKET_INTENT_TTL_MS } from "@/lib/intents";
 import { parseSourceDocument, parseSourceDocuments, revDrift } from "@/lib/sourceDocRef";
-import { reviewClassOptions, resolveReviewClass, hasReviewModelColumns } from "@/lib/reviewModel";
+import { reviewClassOptions, resolveReviewClass, hasReviewModelColumns, isDeclaredLikeInKind, engineerPickAvailable as pickAvailableFrom } from "@/lib/reviewModel";
 import { unitOptionsFor, resolveUnit, unitListReadFailure } from "@/lib/ticketCreate";
 import { heldRoles } from "@/lib/roleHeld";
 import { noteDeliverableNotInRegister, noteDeliverableNotInLibrary, deliverableStateOf } from "@/lib/ticketHandback";
@@ -458,7 +458,40 @@ export async function POST(req: NextRequest) {
       .eq("org_id", ticket.orgId).eq("uid", ticket.requesterId).eq("status", "active").maybeSingle();
     requesterRoles = heldRoles(reqMember as { role?: unknown; roles?: unknown } | null);
   }
+  // DF-P6 fix pass (review, minor 11): a declaration stands only on its
+  // e-signature. A row that says "declared" (engineering_required false) but
+  // whose signature is not on record — a restored or hand-written row; the
+  // insert guard exempts the service role and a backup carries no
+  // e_signatures — is evaluated as UNDECLARED: engineering is required.
+  // Read only for a declared ticket; a read that fails fails closed too.
+  let declarationUnverified: "missing" | "unchecked" | null = null;
+  if (ticket.engineeringRequired === false && isDeclaredLikeInKind(ticket)) {
+    const sigId = ticket.likeInKindSignatureId ?? "";
+    const { data: dsig, error: dsigErr } = UUID_RE.test(sigId)
+      ? await supabaseAdmin.from("e_signatures").select("id, org_id, resource_type, resource_id, signer_user_id").eq("id", sigId).maybeSingle()
+      : { data: null, error: null };
+    const d = dsig as { org_id?: string; resource_type?: string; resource_id?: string; signer_user_id?: string } | null;
+    if (dsigErr) declarationUnverified = "unchecked";
+    else if (!d || d.org_id !== ticket.orgId || d.resource_type !== "ticket" || String(d.resource_id ?? "").toLowerCase() !== body.ticketId.toLowerCase()
+      || (!!ticket.likeInKindDeclaredBy && d.signer_user_id !== ticket.likeInKindDeclaredBy)) declarationUnverified = "missing";
+    if (declarationUnverified) ticket.engineeringRequired = true;
+  }
+  // DF-P6 fix pass (review, issues 1 and 2): can the requester pick an
+  // engineer at all? Read only where it decides something
+  // (engineerPickQuestionApplies — the caller is the requester and holds
+  // ticket.manage, the request requires engineering review, it is in serial
+  // review; the request page asks the same question). A read that fails
+  // leaves it unknown: the strict reading (someone can be picked).
+  let engineerPickAvailable: boolean | undefined;
+  if (engineerPickQuestionApplies(ticket, caller.id, callerRole, callerRoles, capPolicy, requesterRoles)) {
+    const read = await loadPickerMembers(ticket.orgId, supabaseAdmin);
+    if (read.ok) {
+      const cands = engineerCandidates(read.rows, capPolicy, "ticket.final_approve", ticketResource(ticket)).map((c) => c.uid);
+      engineerPickAvailable = pickAvailableFrom(cands, ticket, caller.id, sodActive);
+    }
+  }
   const engineCtx = {
+    ...(engineerPickAvailable === undefined ? {} : { engineerPickAvailable }),
     userRoles: callerRoles,
     activeMemberCount: activeMemberCount ?? 0,
     engineeringFirstTypes,
@@ -899,10 +932,13 @@ export async function POST(req: NextRequest) {
         }
         if (labels.length > 0) {
           if (body.sourceDriftAcknowledged === false) {
-            return NextResponse.json({
-              error: `The source revision has moved since this request was raised (${labels.join("; ")}). Approving needs your acknowledgement.`,
-              code: "source_drift_unacknowledged",
-            }, { status: 409 });
+            const driftError = `The source revision has moved since this request was raised (${labels.join("; ")}). Approving needs your acknowledgement.`;
+            // DF-P6 fix pass (review, minor 12): a refused roster sign-off
+            // names the signature it minted (DF-P5's rule).
+            if (action.action === "sign_slot") {
+              await recordRefusedSignOff({ signatureId: body.signatureId, ticketId: body.ticketId, orgId: ticket.orgId, caller: { id: caller.id, email: callerEmail, role: callerRole }, status: 409, reason: driftError, code: "source_drift_unacknowledged", rosterId: currentRoster(ticket)?.id ?? null });
+            }
+            return NextResponse.json({ error: driftError, code: "source_drift_unacknowledged" }, { status: 409 });
           }
           sourceDrift = { labels, acknowledged: body.sourceDriftAcknowledged === true ? true : null };
         }
@@ -1388,6 +1424,9 @@ export async function POST(req: NextRequest) {
       ...(reviewClass ? { reviewClass: { workClass: reviewClass.workClass?.value ?? null, codeClass: reviewClass.codeClass?.value ?? null } } : {}),
       ...(sourceDrift ? { sourceDrift: { moved: sourceDrift.labels, acknowledged: sourceDrift.acknowledged === true } } : {}),
       ...(sourceDriftUnchecked ? { sourceDriftUnchecked: true } : {}),
+      // DF-P6 fix pass (minor 11): a declaration whose e-signature is not on
+      // record (or could not be read) was evaluated as undeclared.
+      ...(declarationUnverified ? { declarationUnverified } : {}),
       ...(action.action === "reassign_drafter" && body.assignment
         ? { from_drafter_id: ticket.assignedDrafterId ?? null, to_drafter_id: body.assignment.id, reason: body.comment ?? null }
         : {}),

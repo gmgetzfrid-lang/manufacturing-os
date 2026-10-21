@@ -79,8 +79,11 @@ const ticketRow = (over: Record<string, unknown> = {}) => ({
   attachments: [], comments: [], history: [], watchers: [], unread_by: [], revision_count: 0, draft_iteration: 1, deliverable_rev: "1A",
   last_modified: LM, library_id: null, metadata: {}, ...over,
 });
+const DECL_SIG = { id: "5a000000-0000-4000-8000-000000000001", org_id: "o1", resource_type: "ticket", resource_id: "t1", signer_user_id: "req-1" };
 const seed = (requesterRole = "Manager") => {
   state.rows.org_members = [member("req-1", requesterRole), member("d-1", "Drafter"), member("e-1", "Engineer-2"), member("sup-1", "Supervisor"), member("ds-1", "DraftingSupervisor")];
+  // DF-P6 fix pass (minor 11): a declaration stands on its e-signature.
+  state.rows.e_signatures = [{ ...DECL_SIG }];
 };
 const updates = () => state.calls.filter((c) => c.table === "tickets" && c.method === "update").map((c) => c.args[0] as Record<string, unknown>);
 const audits = () => state.calls.filter((c) => c.table === "audit_logs" && c.method === "insert").map((c) => c.args[0] as { action: string; details: Record<string, unknown> });
@@ -132,6 +135,75 @@ describe("TIER-1 / DEC-33 — the gate reads the work, at the route", () => {
     state.calls = [];
     seed("Maintenance");
     state.rows.tickets = [ticketRow({ requester_role: "Maintenance", engineering_required: false, like_in_kind_statement: null, like_in_kind_declared_at: null })];
+    expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(403);
+  });
+});
+
+describe("fix pass (review) — the requester's own override, at the route (issues 1 and 2)", () => {
+  const undeclared = { engineering_required: true, like_in_kind_statement: null, like_in_kind_declared_at: null };
+  it("issue 1: a TWO-member workspace (a Manager and a Drafter, no engineer): the Manager's undeclared request issues by the recorded override — PENDING_IFC, the override on the history line, the marker on the request, authority.override in the audit row, no engineer_approved_at", async () => {
+    state.rows.org_members = [member("req-1", "Manager"), member("d-1", "Drafter")];
+    state.rows.e_signatures = [];
+    state.user = { id: "req-1" };
+    state.rows.tickets = [ticketRow(undeclared)];
+    expect((await post({ ticketId: "t1", actionType: "request_final_engineer_approval", engineer: { id: "d-1", name: "d", email: "d@x" } })).status).toBe(403);
+    const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    expect(res.status).toBe(200);
+    const u = updates()[0];
+    expect(u.status).toBe("PENDING_IFC");
+    expect("engineer_approved_at" in u).toBe(false);
+    expect(lastHistory(u).details).toMatch(/Management override — issued without the engineer's sign-off/);
+    expect((u.metadata as Record<string, unknown>).engineering_override).toMatchObject({ uid: "req-1", action: "approve_draft_ifc" });
+    const row = audits().find((a) => a.action === "TICKET_APPROVE_DRAFT_IFC")!;
+    expect((row.details.authority as { override?: { of: string } }).override?.of).toBe("engineering_sign_off");
+  });
+  it("issue 1: a workspace of 3+ with NO member the engineer pick accepts: the Manager requester may override too", async () => {
+    state.rows.org_members = [member("req-1", "Manager"), member("d-1", "Drafter"), member("v-1", "Viewer")];
+    state.rows.e_signatures = [];
+    state.user = { id: "req-1" };
+    state.rows.tickets = [ticketRow(undeclared)];
+    expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(200);
+  });
+  it("issue 2: a workspace of 3+ with an engineer to pick: the Manager requester's own override is refused (403, the second-person reason) at PENDING_REVIEW and at PENDING_FINAL_APPROVAL; another manager's is taken", async () => {
+    seed("Manager");
+    state.user = { id: "req-1" };
+    state.rows.tickets = [ticketRow(undeclared)];
+    expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(403);
+    state.rows.tickets = [ticketRow({ ...undeclared, status: "PENDING_FINAL_APPROVAL", assigned_engineer_id: "e-1" })];
+    for (const action of ["override_engineer_final", "approve_minor_correction"]) {
+      const res = await post({ ticketId: "t1", actionType: action, comment: "typo" });
+      expect(res.status, action).toBe(403);
+      expect((await res.json()).error, action).toMatch(/Needs a second person: this request requires an engineer's sign-off, and you asked for this work/);
+    }
+    expect(updates()).toEqual([]);
+    state.user = { id: "sup-1" };
+    expect((await post({ ticketId: "t1", actionType: "override_engineer_final" })).status).toBe(200);
+  });
+});
+
+describe("fix pass (review, minor 11) — a declaration stands only on its e-signature", () => {
+  it("a declared row whose signature is not on record (a restored or hand-written row) is evaluated as UNDECLARED: a planner requester is refused the direct approval; the audit row says why when an action is taken", async () => {
+    seed("Maintenance");
+    state.rows.e_signatures = [];
+    state.user = { id: "req-1" };
+    state.rows.tickets = [ticketRow({ requester_role: "Maintenance", ...DECLARED })];
+    expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(403);
+    // another ticket's / another signer's signature is no record either
+    state.rows.e_signatures = [{ ...DECL_SIG, resource_id: "t2" }];
+    expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(403);
+    state.rows.e_signatures = [{ ...DECL_SIG, signer_user_id: "sup-1" }];
+    expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(403);
+    expect(updates()).toEqual([]);
+    // the route can still be asked to send it to an engineer, and records the reason
+    const res = await post({ ticketId: "t1", actionType: "request_final_engineer_approval", comment: "please check the rating", engineer: { id: "e-1", name: "E", email: "e-1@x.io" } });
+    expect(res.status).toBe(200);
+    expect(audits().find((a) => a.action === "TICKET_REQUEST_FINAL_ENGINEER_APPROVAL")?.details).toMatchObject({ declarationUnverified: "missing" });
+  });
+  it("a signature read that fails fails closed (undeclared)", async () => {
+    seed("Maintenance");
+    state.errors.e_signatures = { code: "57014", message: "timeout" };
+    state.user = { id: "req-1" };
+    state.rows.tickets = [ticketRow({ requester_role: "Maintenance", ...DECLARED })];
     expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(403);
   });
 });
@@ -272,5 +344,30 @@ describe("HAND-7 done-when 3 — an approval over a moved source", () => {
     state.errors.documents = { code: "57014", message: "timeout" };
     expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(200);
     expect(audits()[0].details.sourceDriftUnchecked).toBe(true);
+  });
+});
+
+describe("fix pass (review, minor 12) — a roster sign-off refused over an unacknowledged move names its signature", () => {
+  it("sign_slot with sourceDriftAcknowledged:false: 409 source_drift_unacknowledged AND a TICKET_SIGN_SLOT_NOT_APPLIED row naming the caller's signature; nothing written to the ticket", async () => {
+    const { openRoster } = await import("@/lib/ticketRoster");
+    const { parseRoutingControl } = await import("@/lib/routingControl");
+    seed("Manager");
+    state.rows.documents = [{ id: DOC, org_id: "o1", rev: "4", current_version_id: V4, document_number: "P-101" }];
+    const parsed = parseRoutingControl({ slots: [{ kind: "check", label: "Engineering check", mode: "blocking", fill: { roles: ["Engineer"] } }] });
+    if (!parsed || !parsed.ok) throw new Error("bad control");
+    const r = openRoster({ id: "r-1", control: parsed.control, level: "library", cycle: "1A",
+      files: [{ id: "a-d", name: "iso_1A.pdf", url: "orgs/o1/tickets/REQ-1/iso_1A.pdf", sha256: "f".repeat(64) }],
+      ctx: { members: state.rows.org_members as never, policy: null, resource: { requestType: "ISO", unit: null }, requesterId: "req-1" }, openedBy: "d-1", now: LM });
+    if (!r.ok) throw new Error(r.error);
+    const SIG = "5b000000-0000-4000-8000-000000000001";
+    state.rows.e_signatures = [{ ...DECL_SIG }, { id: SIG, org_id: "o1", resource_type: "ticket", resource_id: "t1", signer_user_id: "e-1" }];
+    state.user = { id: "e-1" };
+    state.rows.tickets = [ticketRow({ library_id: "1b000000-0000-4000-8000-000000000001", metadata: { review_roster: r.roster, source_document: { id: DOC, document_number: "P-101", rev: "3", version_id: V3 } } })];
+    const res = await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG, sourceDriftAcknowledged: false });
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("source_drift_unacknowledged");
+    const row = audits().find((a) => a.action === "TICKET_SIGN_SLOT_NOT_APPLIED")!;
+    expect(row.details).toMatchObject({ signatureId: SIG, status: 409, code: "source_drift_unacknowledged", refusedBeforeApply: true });
+    expect(updates()).toEqual([]);
   });
 });

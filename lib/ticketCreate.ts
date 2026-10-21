@@ -85,7 +85,7 @@
 //                          more optional field. Read and IGNORED until DF-P8.
 
 import type { OrgDraftingSettings } from "@/types/schema";
-import { checkDeclarationStatement } from "@/lib/reviewModel";
+import { checkDeclarationStatement, DECLARATION_SIGNATURE_INTENT, DECLARATION_STATEMENT_PREFIX } from "@/lib/reviewModel";
 import type { SourceDocumentRefRow } from "@/lib/sourceDocRef";
 
 /** The explicit answer for a requester who does not know the unit. */
@@ -162,6 +162,9 @@ export interface TicketCreateDeclaration {
 export interface TicketCreateEquipment {
   tag: string;
   assetId: string | null;
+  /** DF-P6 fix pass (minor 14): the form could not ask the registry (a
+   *  failed read) — distinct from "asked, not found". */
+  lookupFailed?: boolean;
 }
 
 /** The most equipment tags one request names. */
@@ -409,7 +412,8 @@ export function parseTicketCreateBody(raw: unknown): { ok: true; input: TicketCr
       if (seenTags.has(key)) continue;
       seenTags.add(key);
       const assetId = text(e.assetId);
-      equipment.push({ tag, assetId: assetId && UUID_RE.test(assetId) ? assetId : null });
+      const id = assetId && UUID_RE.test(assetId) ? assetId : null;
+      equipment.push({ tag, assetId: id, ...(!id && e.lookupFailed === true ? { lookupFailed: true } : {}) });
     }
     if (equipment.length > MAX_EQUIPMENT) {
       warnings.push(`Only the first ${MAX_EQUIPMENT} equipment tags were kept.`);
@@ -760,4 +764,28 @@ export function attachmentSizeLabel(bytes: number | null | undefined): string {
   return typeof bytes === "number" && Number.isFinite(bytes) && bytes >= 0
     ? (bytes / 1024 / 1024).toFixed(2) + " MB"
     : "—";
+}
+
+/** DF-P6 fix pass (minor 10): how many rows under a declaration's id are
+ *  read to judge it new (more than this is never a fresh id). */
+export const KEY_HISTORY_LIMIT = 25;
+export type KeySignatureRow = { id?: string | null; signer_user_id?: string | null; intent?: string | null; statement?: string | null };
+export type KeyAuditRow = { id?: string | null; action?: string | null; details?: Record<string, unknown> | null };
+
+/** Has the browser-minted id of a declared request ever named anything but
+ *  this requester's own declaration signatures (and their capture mirrors)?
+ *  The create route asks it before a number is spent. */
+export function declarationKeyReused(sigs: readonly KeySignatureRow[] | null, audits: readonly KeyAuditRow[] | null, requesterId: string): boolean {
+  const own = new Set<string>();
+  for (const sg of sigs ?? []) {
+    const mine = sg.signer_user_id === requesterId && sg.intent === DECLARATION_SIGNATURE_INTENT
+      && typeof sg.statement === "string" && sg.statement.startsWith(DECLARATION_STATEMENT_PREFIX);
+    if (!mine) return true;
+    if (sg.id) own.add(sg.id);
+  }
+  for (const a of audits ?? []) {
+    const sigId = typeof a.details?.signatureId === "string" ? a.details.signatureId : null;
+    if (a.action !== "ESIGNATURE_CAPTURED" || !sigId || !own.has(sigId)) return true;
+  }
+  return (sigs?.length ?? 0) >= KEY_HISTORY_LIMIT || (audits?.length ?? 0) >= KEY_HISTORY_LIMIT;
 }

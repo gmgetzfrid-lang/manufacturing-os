@@ -350,8 +350,10 @@ export interface SeededSlotView {
   label: string;
   /** "waiting" — the ticket waits on this slot now; "pending" — it will
    *  once the earlier step is done (today's machine is serial); "done";
-   *  "not_required" — the engineer gate does not apply. */
-  state: "waiting" | "pending" | "done" | "not_required";
+   *  "not_required" — the engineer gate does not apply; "overridden" — the
+   *  request was issued by a management override of the engineering
+   *  sign-off, which nobody gave (DF-P6 fix pass, SM-3). */
+  state: "waiting" | "pending" | "done" | "not_required" | "overridden";
   /** Who fills it, in words (an identity, or a named engineer). */
   occupant: string;
 }
@@ -368,7 +370,7 @@ export function seededSlotsFor(ticket: {
   requesterName?: string | null;
   assignedEngineerName?: string | null;
   engineerApprovedAt?: unknown;
-}, engineerRequired: boolean): SeededSlotView[] {
+}, engineerRequired: boolean, engineeringOverridden = false): SeededSlotView[] {
   const s = ticket.status;
   const reviewDone = ["PENDING_FINAL_APPROVAL", "PENDING_IFC", "FINAL_DRAFT", "CLOSED"].includes(s);
   const out: SeededSlotView[] = [{
@@ -382,7 +384,10 @@ export function seededSlotsFor(ticket: {
     label: "Engineering sign-off",
     state: !engineerRequired && s !== "PENDING_FINAL_APPROVAL"
       ? "not_required"
-      : s === "PENDING_FINAL_APPROVAL" ? "waiting" : ticket.engineerApprovedAt ? "done" : "pending",
+      : s === "PENDING_FINAL_APPROVAL" ? "waiting"
+        // DF-P6 fix pass (review, issue 7): issued by override — never "pending".
+        : engineeringOverridden && ["PENDING_IFC", "FINAL_DRAFT", "CLOSED"].includes(s) ? "overridden"
+        : ticket.engineerApprovedAt ? "done" : "pending",
     occupant: ticket.assignedEngineerName || "An engineer the requester picks",
   });
   return out;

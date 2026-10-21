@@ -33,6 +33,7 @@ import { supabase } from "@/lib/supabase";
 import { recordSignature, type SigningCredential, type SignatureIntent } from "@/lib/eSignatures";
 import SignatureCeremony from "@/components/signatures/SignatureCeremony";
 import { currentRoster, slotSignPlan, separationOfDutiesActive, engineeringGateRequired, slotBlocks, issueReadyFor, ISSUE_AS_IS_NOTE, unhashedFilesNote, ROUTED_NO_ROSTER_REASON } from "@/lib/workflow";
+import { engineeringOverrideOf } from "@/lib/reviewModel";
 import { seededSlotsFor, MODE_LABEL } from "@/lib/routingControl";
 import { effectiveReviewControlForDocument, expandReviewers } from "@/lib/reviewControl";
 import type { CapabilityPolicy } from "@/lib/capabilityPolicy";
@@ -304,10 +305,10 @@ export default function TicketRosterPanel({
 
       {showSeed && (
         <ul className="space-y-1 text-xs" data-testid="seeded-slots">
-          {seededSlotsFor(ticket, engineeringGateRequired(ticket, requesterRoles, capPolicy)).map((v) => (
+          {seededSlotsFor(ticket, engineeringGateRequired(ticket, requesterRoles, capPolicy), !!engineeringOverrideOf(ticket)).map((v) => (
             <li key={v.kind} className="text-[var(--color-text-muted)]">
               <span className="font-bold text-[var(--color-text)]">{v.label}</span> — {v.occupant} ·{" "}
-              {v.state === "waiting" ? "waiting now" : v.state === "pending" ? "after the step before it" : v.state === "done" ? "done" : "not required for this request"}
+              {v.state === "waiting" ? "waiting now" : v.state === "pending" ? "after the step before it" : v.state === "done" ? "done" : v.state === "overridden" ? "issued by management override — no engineer sign-off" : "not required for this request"}
             </li>
           ))}
         </ul>

@@ -19,7 +19,7 @@ import LikeInKindField, { parseEquipmentTags } from '@/components/requests/LikeI
 import SignatureCeremony from '@/components/signatures/SignatureCeremony';
 import { recordSignature, type SigningCredential } from '@/lib/eSignatures';
 import { checkDeclarationStatement, declarationSignatureStatement, DECLARATION_SIGNATURE_INTENT } from '@/lib/reviewModel';
-import { lookupTag } from '@/lib/search';
+import { tagKey } from '@/lib/codebook';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import { Input, Select } from '@/components/ui/Field';
 import { Spinner } from '@/components/ui/Spinner';
@@ -364,17 +364,24 @@ export default function NewTicketPage() {
     setIsSubmitting(true);
     setUploadStatus('Initializing Request...');
 
-    // DF-P6 (GAP-312): each equipment tag resolved against the registry (the
-    // ⌘K lookup, no AI call) — a tag the lookup does not find, or a lookup
-    // that fails, is sent as typed (the route keeps it, flagged).
-    const equipment: Array<{ tag: string; assetId: string | null }> = [];
+    // DF-P6 (GAP-312): each equipment tag resolved against the registry by
+    // its tag alone (the registry's normalised tag, no document links, no AI
+    // call) — a tag it does not find is sent as typed (the route keeps it,
+    // flagged). DF-P6 fix pass (minor 14): a read that FAILS is sent as
+    // "lookup failed", never as "not found".
+    const equipment: Array<{ tag: string; assetId: string | null; lookupFailed?: boolean }> = [];
     for (const tag of parseEquipmentTags(equipmentText)) {
-      let assetId: string | null = null;
+      const key = tagKey(tag);
+      if (key.length < 2) { equipment.push({ tag, assetId: null }); continue; }
       try {
-        const hits = await lookupTag(activeOrgId, tag, { documentsPerAsset: 0 });
-        assetId = hits.length === 1 ? hits[0].asset.id : null;
-      } catch { /* kept as typed */ }
-      equipment.push({ tag, assetId });
+        const { data, error } = await supabase.from('assets').select('id, archived')
+          .eq('org_id', activeOrgId).eq('tag_normalized', key).limit(5);
+        if (error) { equipment.push({ tag, assetId: null, lookupFailed: true }); continue; }
+        const live = ((data ?? []) as Array<{ id: string; archived?: boolean | null }>).filter((a) => !a.archived);
+        equipment.push({ tag, assetId: live.length === 1 ? live[0].id : null });
+      } catch {
+        equipment.push({ tag, assetId: null, lookupFailed: true });
+      }
     }
 
     // Files are staged under this requester's pending prefix; the route moves

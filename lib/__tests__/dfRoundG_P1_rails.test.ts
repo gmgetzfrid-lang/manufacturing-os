@@ -153,8 +153,7 @@ describe("20261166 — ticket_update_guard re-created from its NEWEST earlier bo
 
   it("LEAK-10 / LEAK-3 / AUTHZ-6: request_type and unit are workflow-owned (the whole DEC-13 resource)", () => {
     expect(guardedIn(G.next)).toEqual(expect.arrayContaining(["request_type", "unit"]));
-    // DF-P6 re-pin: the resource still leads with the request type and the unit.
-    expect(src("lib/workflow.ts")).toContain("requestType: ticket.requestType || null,\n    unit: ticket.unit || null,");
+    expect(src("lib/workflow.ts")).toContain("return { requestType: ticket.requestType || null, unit: ticket.unit || null };");
   });
 
   it("every column the body references is ADDed IF NOT EXISTS before the function (20261039's lesson); the trigger is restated; DRLS-16 revoke", () => {

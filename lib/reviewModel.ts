@@ -112,6 +112,77 @@ export function engineeringBasis(ticket: Pick<Ticket, "engineeringRequired" | "l
   return { kind: "seed" };
 }
 
+// ─── DF-P6 fix pass (review) ─────────────────────────────────────────────
+
+/** The review-model fields of a `tickets` row (20261250, and the library —
+ *  GAP-105), as the Ticket every mapper builds — so the route
+ *  (lib/ticketTransitions.ts rowToTicket), the request page and, once they
+ *  spread it (99-fix-sequencing "Hand-offs from DF-P6"), the requests list
+ *  and lib/inbox.ts evaluate the engine on the same fields. A column the
+ *  database does not have yet reads `undefined` for engineering_required
+ *  (the seed decides) and null elsewhere. */
+export function reviewModelFieldsFromRow(row: Record<string, unknown>): Pick<Ticket,
+  "libraryId" | "engineeringRequired" | "likeInKindStatement" | "likeInKindDeclaredBy" | "likeInKindDeclaredAt" | "likeInKindSignatureId" | "workClass" | "codeClass"> {
+  return {
+    libraryId: typeof row.library_id === "string" ? row.library_id : null,
+    engineeringRequired: typeof row.engineering_required === "boolean" ? row.engineering_required : undefined,
+    likeInKindStatement: typeof row.like_in_kind_statement === "string" ? row.like_in_kind_statement : null,
+    likeInKindDeclaredBy: typeof row.like_in_kind_declared_by === "string" ? row.like_in_kind_declared_by : null,
+    likeInKindDeclaredAt: typeof row.like_in_kind_declared_at === "string" ? row.like_in_kind_declared_at : null,
+    likeInKindSignatureId: typeof row.like_in_kind_signature_id === "string" ? row.like_in_kind_signature_id : null,
+    workClass: typeof row.work_class === "string" ? row.work_class : null,
+    codeClass: typeof row.code_class === "string" ? row.code_class : null,
+  };
+}
+
+/** Issue 1 / 2: can anyone be picked as this request's reviewing engineer?
+ *  `candidateUids` are the members the engineer pick accepts
+ *  (lib/ticketPage.ts engineerCandidates); in orgs of 3+ the pick refuses
+ *  the requester, the drafter and the picker (the workflow route), so they
+ *  do not count. */
+export function engineerPickAvailable(
+  candidateUids: readonly string[],
+  ticket: Pick<Ticket, "requesterId" | "assignedDrafterId">,
+  pickerUid: string | null | undefined,
+  sodActive: boolean,
+): boolean {
+  return candidateUids.some((u) => !sodActive || (u !== ticket.requesterId && u !== ticket.assignedDrafterId && u !== pickerUid));
+}
+
+/** The words the transition writes on an override's history line (SM-3). */
+export const ENGINEERING_OVERRIDE_NOTE = "Management override — issued without the engineer's sign-off";
+
+export interface EngineeringOverrideMark { by: string | null; at: string | null }
+
+/** Issue 7: was this request issued by a management override of the
+ *  engineering sign-off — and is that the latest word (no engineer signed
+ *  after it)? Read from `metadata.engineering_override` (written by the
+ *  transition since this fix pass), else from the override's history line
+ *  (overrides recorded before the marker). null = no override stands. */
+export function engineeringOverrideOf(ticket: Pick<Ticket, "metadata" | "history" | "engineerApprovedAt">): EngineeringOverrideMark | null {
+  const raw = (ticket.metadata as Record<string, unknown> | undefined)?.engineering_override as { by?: unknown; at?: unknown } | undefined;
+  let mark: EngineeringOverrideMark | null = null;
+  if (raw && typeof raw === "object") {
+    mark = { by: typeof raw.by === "string" ? raw.by : null, at: typeof raw.at === "string" ? raw.at : null };
+  } else {
+    const hist = Array.isArray(ticket.history) ? ticket.history : [];
+    for (let i = hist.length - 1; i >= 0; i--) {
+      const h = hist[i] as { details?: unknown; user?: unknown; date?: unknown };
+      if (typeof h?.details === "string" && h.details.includes(ENGINEERING_OVERRIDE_NOTE)) {
+        mark = { by: typeof h.user === "string" ? h.user : null, at: typeof h.date === "string" ? h.date : null };
+        break;
+      }
+    }
+  }
+  if (!mark) return null;
+  const signed = ticket.engineerApprovedAt ? Date.parse(String(ticket.engineerApprovedAt)) : NaN;
+  const at = mark.at ? Date.parse(mark.at) : NaN;
+  // An engineer's sign-off stamped after the override (a later cycle) is
+  // the latest word.
+  if (Number.isFinite(signed) && (!Number.isFinite(at) || signed >= at)) return null;
+  return mark;
+}
+
 // ─── The workspace's own classes (GAP-101 / TIER-4, DEC-35) ──────────────
 
 export type ReviewClassKey = "workClasses" | "codeClasses";

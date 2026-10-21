@@ -116,12 +116,19 @@ Tests: `lib/__tests__/reviewModel.test.ts` ("TIER-1 / DEC-33 …" — an undecla
 
 **Scope / residual.** The legacy gate is quarantined as the seed (`DEC-35` pattern), not deleted: it decides only for requests the column cannot speak for. No in-flight request changes lane. `WF-5`'s trust half was DF-P1's.
 
+**Fix pass (2026-10-21, drafting-flow Round G — DF-P6 review).** The review found done-when 2 met for whoever files the request but not binding on the requester, and a dead end for a manager with no engineer to pick. Both closed, and only where the column says engineering is required (a request the column cannot speak for keeps today's path exactly):
+- **The requirement binds the requester** (DEC-33: only the requester, by declaring, lowers the rigor). In a workspace of 3+ (DEC-12) where an engineer can be picked, the requester's own override of the engineering sign-off — `override_engineer_final` and the management minor correction at `PENDING_FINAL_APPROVAL` — renders disabled with `SELF_OVERRIDE_REASON` (`lib/workflow.ts`) and the route refuses it (403). Another manager's override stands (SM-3). The `PENDING_REVIEW` co-review override is never the requester's (the requester takes the requester branch).
+- **No dead end.** A requester who holds `ticket.manage` is offered the recorded override at `PENDING_REVIEW` — `approve_draft_ifc` marked `engineeringOverride` ("Override: Issue Without Engineer Sign-off"; the history note, `authority.override`, and the new `metadata.engineering_override` marker) — below the DEC-12 threshold, or when nobody can be picked as the engineer. "Send for Engineer Final Approval" is then rendered disabled with the reason (`NO_ENGINEER_TO_PICK_REASON`). Whether anyone can be picked is read by the route and by the request page under one rule (`lib/workflow.ts` `engineerPickQuestionApplies`; `lib/reviewModel.ts` `engineerPickAvailable` over `lib/ticketPage.ts` `engineerCandidates`, less the requester, the drafter and the picker in orgs of 3+).
+- **A declaration stands only on its e-signature.** The route evaluates a declared row whose signature is not on record (a restored or hand-written row; a backup carries no `e_signatures`) as undeclared, and the audit row says so (`declarationUnverified`).
+
+Tests: `lib/__tests__/reviewModel.test.ts` "fix pass (review, issues 1 and 2) — the requester's own override of the engineering sign-off" (a two-member workspace with no engineer; 3+ with nobody to pick; 3+ with an engineer — disabled; another manager — offered); `lib/__tests__/dfRoundG_P6_reviewRoute.test.ts` "fix pass (review) — the requester's own override, at the route (issues 1 and 2)" and "fix pass (review, minor 11) — a declaration stands only on its e-signature". The REGRESSION pin now compares with the base engine itself (a snapshot generated once from `7893129`, `lib/__tests__/dfP6EngineBase7893129.golden.json`, over requester role × status × engineer assigned × member count × actor role × identity — only SM-3's rename differs). Done-when 2 now holds for the requester too: ✓.
+
 ---
 
 ## TIER-2 · There is no work classification at all — like-in-kind and new design are indistinguishable
 
 - **Severity:** HIGH
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** safety / compliance
 - **Locations:**
@@ -176,9 +183,9 @@ frequently cannot answer it, and asking them is itself friction (`FRIC-3`).
 3. `request_type` is validated server-side against the org's configured list
    (`WF-15`), so classification is not keyed to unvalidated free text.
 
-**Resolution (2026-10-21, drafting-flow Round G).** DF-P6 REVIEW-MODEL. Reproduced on the base: `types/schema.ts` `Ticket` had no field distinguishing like-in-kind from new design.
+**Partial (2026-10-21, drafting-flow Round G).** DF-P6 REVIEW-MODEL. Reproduced on the base: `types/schema.ts` `Ticket` had no field distinguishing like-in-kind from new design. *Corrected at the DF-P6 review fix pass (DEC-29): this block first read "Resolution" with the Status RESOLVED, and said classes are set with `assign` / `self_assign`. No screen sets a class yet, and the route refuses a class sent with `self_assign` (400).*
 
-Landed: two lanes, declared at steps that already exist. (a) **Like-in-kind vs engineered** — the requester's optional declaration at intake (`components/requests/LikeInKindField.tsx`, `GAP-110`), immutable once filed (`20261250`, every caller); blank is the engineered lane and the form says so. (b) **The workspace's own work and code classes** (`GAP-101`, `TIER-4`) — `OrgDraftingSettings.workClasses` / `codeClasses` in `org_configurations` `'drafting'` (DEC-90 ruling (4) for DF-P6), seeded EMPTY, edited on Admin → Request forms (`components/requests/ReviewClassesSection.tsx`); set by the assigner at triage (`assign` / `self_assign`, `app/api/tickets/workflow-action/route.ts`, validated against the list — 400 off the list or outside triage, 503 when the list cannot be read), stored in `tickets.work_class` / `code_class` (workflow-owned in the guard). A class marked "Requires engineering" raises `engineering_required`; nothing lowers it. Unset is the safe engineered reading.
+Landed: two lanes, declared at steps that already exist. (a) **Like-in-kind vs engineered** — the requester's optional declaration at intake (`components/requests/LikeInKindField.tsx`, `GAP-110`), immutable once filed (`20261250`, every caller); blank is the engineered lane and the form says so. (b) **The workspace's own work and code classes** (`GAP-101`, `TIER-4`) — `OrgDraftingSettings.workClasses` / `codeClasses` in `org_configurations` `'drafting'` (DEC-90 ruling (4) for DF-P6), seeded EMPTY, edited on Admin → Request forms (`components/requests/ReviewClassesSection.tsx`); accepted from the assigner at triage (`assign`, `request_eng_review` or `flag_engineering` at `PENDING_ASSIGNMENT`, `app/api/tickets/workflow-action/route.ts`, validated against the list — 400 off the list, outside triage or with any other action, 503 when the list cannot be read), stored in `tickets.work_class` / `code_class` (workflow-owned in the guard). A class marked "Requires engineering" raises `engineering_required`; nothing lowers it. Unset is the safe engineered reading.
 
 Tests: `lib/__tests__/dfRoundG_P6_reviewRoute.test.ts` "GAP-101 / TIER-4 — the classes are the workspace's own lists, set at triage"; `lib/__tests__/reviewModel.test.ts` "GAP-101 / TIER-4 / GAP-105 — classes and the resource".
 
@@ -186,10 +193,10 @@ Tests: `lib/__tests__/dfRoundG_P6_reviewRoute.test.ts` "GAP-101 / TIER-4 — the
 
 **Done-when.**
 - ✓ 1. A ticket carries a declared work lane distinguishing like-in-kind from new design (the declaration) and, where the workspace defines them, its own classes.
-- ✓ 2. Set at steps that already exist — the request form (one optional sentence) and triage's assignment; no step added, no class required at intake (99-fix-sequencing "Do not").
+- ✗ (in part) 2. Set at steps that already exist — ✓ for the declaration (the request form, one optional sentence; no step added, no class required at intake — 99-fix-sequencing "Do not"); ✗ for the classes: the route accepts them at triage, but no screen sends one (the assign modal is the request page's, DF-P9's file), so in production `tickets.work_class` / `code_class` stay unset and a class never acts.
 - ✓ 3. `request_type` is validated server-side against the configured list (`WF-15`, DF-P2's create route — `lib/__tests__/ticketCreateRoute.test.ts` "…an unconfigured request type is refused…").
 
-**Scope / residual.** The class picker in the assignment dialog of the request page is not built (the route and the store accept `workClass` / `codeClass`; the page's assign modal is DF-P9's file) → proposed drafting-flow **DF-P9** follow-up (one select per configured list beside the drafter pick).
+**Scope / residual.** Owner of the class select: drafting-flow **DF-P9** (one select per configured list beside the drafter pick in the assign modal, sending `workClass` / `codeClass` with `assign` / `request_eng_review` — 99-fix-sequencing "Hand-offs from DF-P6"). Recorded limitation: a class can be set only at `PENDING_ASSIGNMENT`; a wrong class cannot be corrected later and a request already past triage when `20261250` is pasted cannot be classified (no action at `DRAFTING` / `REVISION_REQ` accepts one). The select's owner decides whether `flag_engineering` should also carry a class later (it must stay ratchet-only for `engineering_required`). Stays OPEN on done-when 2's class limb.
 
 ---
 
@@ -261,7 +268,7 @@ Tests: `lib/__tests__/reviewModel.test.ts` "GAP-102 / TIER-3 — a notify-only s
 ## TIER-4 · No code-governed review dimension — B31.3 and its equivalents are unrepresentable
 
 - **Severity:** HIGH
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance
 - **Locations:**
@@ -299,20 +306,20 @@ this finding says the `resource` shape must carry a service/code class, not only
 3. A ticket in a code-governed service surfaces which code applies, to the
    reviewer, before they sign.
 
-**Resolution (2026-10-21, drafting-flow Round G).** DF-P6 REVIEW-MODEL. Reproduced on the base: no code dimension anywhere in the request or its approvals.
+**Partial (2026-10-21, drafting-flow Round G).** DF-P6 REVIEW-MODEL. Reproduced on the base: no code dimension anywhere in the request or its approvals. *Corrected at the DF-P6 review fix pass (DEC-29): this block first read "Resolution" with the Status RESOLVED. No screen sets a code class, and the ticket resource no longer carries the classes (below), so done-when 1 and 3 are not met in practice.*
 
-Landed: the workspace declares its own **code classes** (`codeClasses`, the same `'drafting'` configuration; DEC-35 — no code names in the application) and the assigner sets one at triage (`tickets.code_class`). A class marked "Requires engineering" raises the requirement; a capability rule may be scoped to a code class (`when.codeClass` on the `ticket.*` capabilities — `lib/capabilityPolicy.ts` `TICKET_RESOURCE_KEYS`; refused on a capability the database evaluates, whose SQL resource pin is unchanged), so "approvals in this service by these people" is policy data. Every issuing approval (and a roster sign-off) states the request's code class in its description before it is taken (`lib/workflow.ts` `:1064`), and the request page shows it (`components/requests/DeclarationCard.tsx`).
+Landed: the workspace declares its own **code classes** (`codeClasses`, the same `'drafting'` configuration; DEC-35 — no code names in the application) and the assigner sets one at triage (`tickets.code_class`). A class marked "Requires engineering" raises the requirement. The capability evaluator accepts a rule scoped to a code class (`when.codeClass` on the `ticket.*` capabilities — `lib/capabilityPolicy.ts` `TICKET_RESOURCE_KEYS`; refused on a capability the database evaluates, whose SQL resource pin is unchanged), but since the review fix pass the ticket's resource (`lib/workflow.ts` `ticketResource`) does NOT carry the classes: the requests list and `lib/inbox.ts` build their Ticket without them, so such a rule would govern the route and the request page and not the attention badge (issue 6 of the review; hand-off in 99-fix-sequencing). Every issuing approval (and a roster sign-off) states the request's code class in its description before it is taken (`lib/workflow.ts`, the TIER-4 / HAND-7 note), and the request page shows it (`components/requests/DeclarationCard.tsx`) — when a class is set.
 
 Tests: `lib/__tests__/reviewModel.test.ts` "a rule scoped to a code class narrows a ticket capability there …", "TIER-4 done-when 3 / HAND-7: an approval says the code class and a moved source before it is taken …"; `dfRoundG_P6_reviewRoute.test.ts` (the class at triage).
 
 **Pending migration:** `supabase/migrations/20261250_df_roundG_review_model.sql` (DEC-30 one paste; not a widening — it narrows: the declaration is immutable and `engineering_required` never clears for any caller). **Order: deploy the DF-P6 app FIRST, then paste `20261250`.** Before the paste every request takes today's path (a 42703 / PGRST204 naming one of its columns reads as "not pasted": the engine's `engineeringRequired` is undefined and the legacy role-based gate decides; a declaration is signed but filed the usual way and the answer says so). The reverse order would leave a window in which the old app files requests that the column's new default (true) later reclassifies — the one order in which a request filed in the gap would change lane on deploy. `20261251_df_roundG_ticket_equipment.sql` is independent of both (paste it before or after; the app says the equipment was not recorded until it is there). Both exercised on PostgreSQL 16 (`lib/__tests__/rls/dfP6ReviewModel.test.ts`, 10 cases, each file applied twice) and shape-pinned (`lib/__tests__/dfRoundG_P6_reviewModelMigration.test.ts`, the guard lineDiff against its newest body `20261221`).
 
 **Done-when.**
-- ✓ 1. An org can declare governing codes (code classes) and attach a review requirement to one ("Requires engineering", or a scoped capability rule).
+- ✗ (in part) 1. An org can declare governing codes (code classes, Admin → Request forms) and mark one "Requires engineering" — ✓ in configuration; ✗ in practice: no screen sets a class on a request, and a capability rule scoped to a code class does not bind until the resource carries it.
 - ✓ 2. Org-configurable data, not a code branch (seeded empty; DEC-35 grep clean in the files this package wrote).
-- ✓ 3. A ticket in a code-governed service surfaces its code to the reviewer, before they sign (the approval's description and the request page).
+- ✗ (in practice) 3. A ticket in a code-governed service surfaces its code to the reviewer before they sign — the approval's description and the request page do, whenever a class is set; none can be set from a screen yet.
 
-**Scope / residual.** The class is set at triage by the route; the page's assign modal select is the DF-P9 follow-up named under `TIER-2`. Until it lands a class is set through the route (API) only.
+**Scope / residual.** Owners: the assign-modal select → drafting-flow **DF-P9** (as `TIER-2`); the resource carrying `workClass` / `codeClass` (and `libraryId`) → the requests list's and `lib/inbox.ts`'s mappers first (99-fix-sequencing "Hand-offs from DF-P6", spread `lib/reviewModel.ts` `reviewModelFieldsFromRow`), then `ticketResource`. The same limitation as `TIER-2`: a class is set only at triage. Stays OPEN.
 
 ---
 
@@ -483,7 +490,7 @@ its own parallel rule.
 ## TIER-7 · "Approve with Minor Correction" is the only tiering the system actually has, and it bypasses the gate
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** safety
 - **Locations:**
@@ -520,16 +527,16 @@ applied.
 
 **Scope / residual.** Handed on, binding (fleet plan): the "declared minor-correction class inside the delivery gate" → **DF-P6** (Phase 4 item 7, after `GAP-101`/`GAP-111`/`TIER-1`). Per 99-fix-sequencing "Do not do these": do not delete the fast path — convert it.
 
-**Resolution (2026-10-21, drafting-flow Round G).** DF-P6 REVIEW-MODEL. Reproduced on the base: `lib/ticketTransitions.ts` `approve_minor_correction` gave the same terminal effect as `approve_draft_ifc` and, at `PENDING_FINAL_APPROVAL`, stamped `engineer_approved_at` for whoever pressed it.
+**Partial (2026-10-21, drafting-flow Round G).** DF-P6 REVIEW-MODEL. Reproduced on the base: `lib/ticketTransitions.ts` `approve_minor_correction` gave the same terminal effect as `approve_draft_ifc` and, at `PENDING_FINAL_APPROVAL`, stamped `engineer_approved_at` for whoever pressed it. *Corrected at the DF-P6 review fix pass (DEC-29): this block first read "Resolution" with the Status RESOLVED and said the button is offered on an engineering-required request "only to whoever may sign for engineering" — that was false (below).*
 
-Landed — the fast path is converted, not deleted (99-fix-sequencing "Do not"): "minor correction" is now inside the declared review model. It is offered exactly where the request's requirement allows (`engineeringGateRequired`, the same gate as every issue transition — a request that requires engineering offers it only to whoever may sign for engineering), and where a manager uses it at final approval without being the engineer it is recorded as a management override (`engineeringOverride`, the history note, `authority.override` in the audit row) and does NOT stamp `engineer_approved_at` (SM-3). A workspace that wants a reduced reviewer set for its own "minor" changes declares it as a work class (`GAP-101`): a class that does not require engineering, on a declared like-in-kind request, issues through the assigner and requester; one marked "Requires engineering" keeps the engineer.
+Landed — the fast path is kept and governed, not deleted (99-fix-sequencing "Do not"): the requester's minor correction follows the same gate as every issue transition (`engineeringGateRequired` — a requester holding no Engineer role on a request that requires engineering is not offered it; they send for an engineer). A management or `ticket.direct_approve` co-reviewer holding no Engineer role IS offered it at `PENDING_REVIEW` on such a request — as a recorded override (`engineeringOverride`, the history note, `authority.override`), exactly like their approval to IFC; at final approval a manager who is not the engineer gets it as an override that does NOT stamp `engineer_approved_at` (SM-3), and the requester's own such override is refused in orgs of 3+ (the TIER-1 fix pass). A workspace that wants a reduced reviewer set for its own "minor" changes declares it as a work class (`GAP-101`): a class that does not require engineering, on a declared like-in-kind request, issues through the assigner and requester; one marked "Requires engineering" keeps the engineer.
 
 Tests: `lib/__tests__/reviewModel.test.ts` ("REGRESSION …" pins `approve_minor_correction` per transition; "the override issues … a management minor correction at final approval …"); `dfRoundG_P6_reviewRoute.test.ts` "a Supervisor's minor correction at final approval is an override too …".
 
 **Done-when.**
-- ✓ A minor correction no longer bypasses the requirement that applied: it is gated by the request's declared requirement (declaration / flag / class), and the class mechanism carries the reviewer set. *Read with the integrator's ruling for DF-P6 (keep the minor-correction path; convert to the declared class): the button stays, governed by the class and the requirement rather than standing apart from them.*
+- ✗ "A minor correction is a work class with its own reviewer requirement" — not met as written. The button no longer bypasses the requirement silently (the requester is gated; everyone else's use on an engineering-required request is a recorded override, never an engineer's sign-off), but no class carries a reduced reviewer set: the audit row's `declaredClass: "minor_correction"` is a label, not a class.
 
-**Scope / residual.** No minimum-length or new prompt was added to the minor correction (a regression for today's users). A built-in "minor correction" class is NOT seeded (DEC-35: the workspace names its classes).
+**Scope / residual.** Owner: drafting-flow **DF-P9** with the class select (`TIER-2`) — a class the workspace flags "minor correction" that the button requires, with that class's reviewer set — or an integrator ruling that the recorded override closes it. No minimum-length or new prompt was added to the minor correction (a regression for today's users). A built-in "minor correction" class is NOT seeded (DEC-35: the workspace names its classes). Stays OPEN.
 
 ---
 
