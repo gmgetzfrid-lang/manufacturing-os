@@ -375,6 +375,9 @@ async function mergeDocumentsInner(
       actor,
       register,
       label: `merge source ${src.documentNumber ?? src.id}`,
+      // REV-36 (P36): Document Control's explicit proceed over a source's
+      // hold (HLD-2) — the flip is then recorded at the database (20261253).
+      ...(input.force === true ? { forceHold: "merge" as const } : {}),
     }));
   }
 

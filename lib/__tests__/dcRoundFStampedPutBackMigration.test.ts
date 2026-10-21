@@ -125,7 +125,9 @@ describe("20261165 — put_back_retired_issue, the stamped put-back's recorded d
     expect((stripComments(M).match(/CREATE OR REPLACE FUNCTION put_back_retired_issue\(/g) ?? []).length).toBe(1);
     // REV-29 (P25): but 20261192, which re-creates it from this body to take a NULL status on
     // the rollback doors (lineDiff-pinned in dcRoundFNullPriorStatusMigration.test.ts)
-    for (const f of files.filter((x) => x !== FILE && x !== "20261192_dc_roundF_null_prior_status_put_back.sql")) expect(stripComments(mig(f)), f).not.toMatch(/FUNCTION\s+(?:public\.)?put_back_retired_issue\b/);
+    // REV-36 (P36): and 20261253, which re-creates it from 20261192's body with the reversal rollback's
+    // re-entry limb (lineDiff-pinned in dcRoundGStatusEditorHoldLegMigration.test.ts)
+    for (const f of files.filter((x) => x !== FILE && x !== "20261192_dc_roundF_null_prior_status_put_back.sql" && x !== "20261253_dc_roundG_status_editor_hold_leg.sql")) expect(stripComments(mig(f)), f).not.toMatch(/FUNCTION\s+(?:public\.)?put_back_retired_issue\b/);
     // P18's door is not re-created here (decided: a sibling, not an extension)
     expect(stripComments(M)).not.toMatch(/FUNCTION\s+(?:public\.)?restore_reversed_source\b/);
   });
@@ -241,7 +243,8 @@ describe("20261165 — put_back_retired_issue, the stamped put-back's recorded d
       .split("current_setting(''app.publish_hold_override'', true)").join("");
     const setters = files.filter((f) => /publish_hold_override/.test(withoutFlagReads(stripComments(mig(f)))));
     // REV-29 (P25): and 20261192, which re-creates both doors (pinned in dcRoundFNullPriorStatusMigration.test.ts).
-    expect(setters).toEqual(["20261151_dc_roundF_promote_transaction_and_hold_override.sql", "20261164_dc_roundF_reversal_restore.sql", FILE, "20261192_dc_roundF_null_prior_status_put_back.sql"]);
+    // REV-36 (P36): and 20261253 — retire_over_hold and put_back_retired_issue's re-entry limb (pinned in dcRoundGStatusEditorHoldLegMigration.test.ts).
+    expect(setters).toEqual(["20261151_dc_roundF_promote_transaction_and_hold_override.sql", "20261164_dc_roundF_reversal_restore.sql", FILE, "20261192_dc_roundF_null_prior_status_put_back.sql", "20261253_dc_roundG_status_editor_hold_leg.sql"]);
     expect(withoutFlagReads(stripComments(G.next))).not.toMatch(/publish_hold_override/);
     expect(stripComments(G.next)).not.toMatch(/set_config/);
     const outsidePutBack = withoutFlagReads(stripComments(M).replace(stripComments(P), ""));

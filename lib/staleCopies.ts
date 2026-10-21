@@ -294,8 +294,13 @@ export async function recallRetiredDocument(input: {
    *  event). Both default to true — the supersede door
    *  (lib/revisions.ts supersedeDocument) tells the checkout holder
    *  (notifyHolderOfRetirement) and the open packages' owners
-   *  (notifyPackagesOfRetirement). A door that tells neither passes false. */
-  personallyToldElsewhere?: { checkoutHolder?: boolean; packageOwners?: boolean };
+   *  (notifyPackagesOfRetirement). A door that tells neither passes false.
+   *  REV-35 (document-control P36): `checkoutHolder` may be a promise of
+   *  whether the door's retirement duties told the holder — a status editor
+   *  fires this recall BEFORE its duties (P31 ruling 4: a closed tab never
+   *  loses the recall), so the watchers' FYI (after the copy holders' recall)
+   *  waits for the answer, and leaves the holder out only on `true`. */
+  personallyToldElsewhere?: { checkoutHolder?: boolean | PromiseLike<boolean>; packageOwners?: boolean };
   /** PROD-17 (document-control P26 fix pass 4; the integrator's ruling
    *  under DEC-90, 2026-10-14): false when the retirement takes away no
    *  controlled issue — the document was never issued (its prior status is
@@ -644,9 +649,10 @@ async function readBackInForce(documentId: string): Promise<string | null> {
  *      documents of one library gets ONE FYI naming them (P28 integrator fix
  *      pass, DEC-90 — grouped as the holders' recall is: on the library,
  *      `namesDocuments` so the dispatcher checks they may discover each one
- *      it names). Each document's copy holders are left out of its FYI (the
- *      bulk doors send no personal notice to a checkout holder or a package
- *      owner, so those stay in). A document that recalled nobody gets a
+ *      it names). Each document's copy holders are left out of its FYI, and
+ *      (REV-35, document-control P36) its checkout holder when the door's
+ *      duties told them personally (`checkoutHolderTold`); the package
+ *      owners stay in. A document that recalled nobody gets a
  *      watchers-only row once its FYI went (DIST-16 done-when 2).
  *  Returns how many people were recalled. */
 export async function recallRetiredBatch(input: {
@@ -655,14 +661,19 @@ export async function recallRetiredBatch(input: {
   actorUserId: string;
   actorName?: string | null;
   replacementNote?: string | null;
-  docs: Array<{ documentId: string; libraryId?: string | null; docLabel: string; recallCopyHolders: boolean; retiredFrom?: string | null }>;
+  /** REV-35 (document-control P36): `checkoutHolderTold` — for a row whose
+   *  checkout holder the door's retirement duties tell personally, the
+   *  promise of whether they were told (the duties' `holdersTold`); its
+   *  watchers' FYI leaves the holder out only when it resolves true. Absent,
+   *  the holder stays in that FYI's audience, as before. */
+  docs: Array<{ documentId: string; libraryId?: string | null; docLabel: string; recallCopyHolders: boolean; retiredFrom?: string | null; checkoutHolderTold?: PromiseLike<boolean> }>;
 }): Promise<number> {
   try {
     const per = (d: (typeof input.docs)[number]): RetirementRecallInput => ({
       orgId: input.orgId, documentId: d.documentId, libraryId: d.libraryId ?? null, docLabel: d.docLabel || "A document",
       newStatus: input.newStatus, replacementNote: input.replacementNote ?? null,
       actorUserId: input.actorUserId, actorName: input.actorName ?? null,
-      personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
+      personallyToldElsewhere: { checkoutHolder: d.checkoutHolderTold ?? false, packageOwners: false },
       recallCopyHolders: d.recallCopyHolders,
     });
     const docs: typeof input.docs = [];
@@ -1252,11 +1263,16 @@ async function recordWithdrawal(
 async function personallyToldOfRetirement(input: {
   documentId: string;
   actorUserId: string;
-  personallyToldElsewhere?: { checkoutHolder?: boolean; packageOwners?: boolean };
+  personallyToldElsewhere?: { checkoutHolder?: boolean | PromiseLike<boolean>; packageOwners?: boolean };
 }): Promise<string[]> {
   const told = new Set<string>();
   const want = input.personallyToldElsewhere ?? {};
-  if (want.checkoutHolder !== false) {
+  // REV-35 (document-control P36): a door that fires its recall before its
+  // duties gives the holder's answer as a promise — waited for here (after
+  // the copy holders' recall went), bounded: no answer in time, a rejection
+  // or `false` leaves the holder in the audience (a second notice is better
+  // than none).
+  if (await holderToldAnswer(want.checkoutHolder) !== false) {
     try {
       const { data, error } = await supabase
         .from("documents")
@@ -1290,6 +1306,28 @@ async function personallyToldOfRetirement(input: {
   }
   told.delete(input.actorUserId);
   return [...told];
+}
+
+/** REV-35 (document-control P36): how long the watchers' FYI waits for a
+ *  door's answer whether the checkout holder was told personally. */
+export const HOLDER_TOLD_WAIT_MS = 60_000;
+
+/** REV-35 (P36): `personallyToldElsewhere.checkoutHolder` as a boolean —
+ *  absent is true (the supersede door tells the holder itself, as before);
+ *  a promise is awaited up to HOLDER_TOLD_WAIT_MS, and a rejection or no
+ *  answer in time is false. */
+async function holderToldAnswer(v: boolean | PromiseLike<boolean> | undefined): Promise<boolean> {
+  if (v === undefined) return true;
+  if (typeof v === "boolean") return v;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve(v).then((x) => x === true, () => false),
+      new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), HOLDER_TOLD_WAIT_MS); }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 /** One-click recall nudge: tell everyone holding an outdated copy. */

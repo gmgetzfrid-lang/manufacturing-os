@@ -166,7 +166,10 @@ describe("20261174 — the guard re-created from its NEWEST earlier body (found 
     expect(putBack).toContain("     AND v_stamped IS NOT NULL\n     AND v_stamped = v_version\n");
     // REV-29 (P25): 20261192 re-creates it from 20261165's body (lineDiff-pinned in
     // dcRoundFNullPriorStatusMigration.test.ts) — the stamp-names-the-revision lines kept
-    expect(files.filter((f) => f > "20261165_dc_roundF_stamped_put_back.sql" && /FUNCTION\s+(?:public\.)?put_back_retired_issue\b/.test(stripComments(mig(f))))).toEqual(["20261192_dc_roundF_null_prior_status_put_back.sql"]);
+    // REV-36 (P36): and 20261253 re-creates it from 20261192's body (lineDiff-pinned in
+    // dcRoundGStatusEditorHoldLegMigration.test.ts) — the same lines kept
+    expect(files.filter((f) => f > "20261165_dc_roundF_stamped_put_back.sql" && /FUNCTION\s+(?:public\.)?put_back_retired_issue\b/.test(stripComments(mig(f))))).toEqual(["20261192_dc_roundF_null_prior_status_put_back.sql", "20261253_dc_roundG_status_editor_hold_leg.sql"]);
+    expect(between(mig("20261253_dc_roundG_status_editor_hold_leg.sql"), "CREATE OR REPLACE FUNCTION put_back_retired_issue(", "\n$$;")).toContain("     AND v_stamped IS NOT NULL\n     AND v_stamped = v_version\n");
     expect(between(mig("20261192_dc_roundF_null_prior_status_put_back.sql"), "CREATE OR REPLACE FUNCTION put_back_retired_issue(", "\n$$;")).toContain("     AND v_stamped IS NOT NULL\n     AND v_stamped = v_version\n");
   });
 
@@ -183,6 +186,10 @@ describe("20261174 — the guard re-created from its NEWEST earlier body (found 
       // flag set on exactly the conditions each had) — pinned in
       // dcRoundFNullPriorStatusMigration.test.ts.
       "20261192_dc_roundF_null_prior_status_put_back.sql",
+      // REV-36 (P36): 20261253 — retire_over_hold and put_back_retired_issue's
+      // re-entry limb (its guard only reads the flag) — pinned in
+      // dcRoundGStatusEditorHoldLegMigration.test.ts.
+      "20261253_dc_roundG_status_editor_hold_leg.sql",
     ]);
     expect(stripComments(M)).toContain("current_setting('app.publish_hold_override', true)");
     expect(stripComments(M)).not.toMatch(/set_config|SET LOCAL/);

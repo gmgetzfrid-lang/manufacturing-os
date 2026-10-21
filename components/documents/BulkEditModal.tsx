@@ -291,7 +291,13 @@ export default function BulkEditModal({
     // DIST-16 (P28 fix pass): so does a change to an issue status (the put-back candidates).
     const issuing = target.kind === "status" && isControlledIssueStatus(newValue);
     const priorStatusOf = new Map<string, string | null>();
-    const retired: Array<{ documentId: string; libraryId: string | null; docLabel: string; recallCopyHolders: boolean; retiredFrom: string | null }> = [];
+    // REV-35 (document-control P36, DEC-90): the rows whose checkout holder
+    // the duties tell personally — the batched recall (fired before the
+    // duties, P31) leaves each such holder out of its watchers' FYI only once
+    // the duties answer that they were told (`holdersTold`).
+    let answerHoldersTold: (told: ReadonlySet<string>) => void = () => {};
+    const holdersTold = new Promise<ReadonlySet<string>>((resolve) => { answerHoldersTold = resolve; });
+    const retired: Array<{ documentId: string; libraryId: string | null; docLabel: string; recallCopyHolders: boolean; retiredFrom: string | null; checkoutHolderTold?: PromiseLike<boolean> }> = [];
     // REV-31: the rows this change archived — (P31) or retired into
     // Superseded — for their retirement duties.
     const archivedRows: Array<{
@@ -474,7 +480,13 @@ export default function BulkEditModal({
         if (!written || written.length === 0) throw new Error("refused — the database updated nothing (no edit access to this document)");
         ok += 1;
         if (retiring && doc.id) {
-          retired.push({ documentId: doc.id, libraryId: library.id ?? null, docLabel: doc.documentNumber || doc.title || doc.name || "A document", recallCopyHolders: recallsCopyHolders(priorStatusOf.get(doc.id) ?? null), retiredFrom: priorStatusOf.get(doc.id) ?? null });
+          const docId = doc.id;
+          const toldPersonally = !!gate?.preState?.checkedOutBy && String(gate.preState.checkedOutBy) !== String(actorUserId);
+          retired.push({
+            documentId: docId, libraryId: library.id ?? null, docLabel: doc.documentNumber || doc.title || doc.name || "A document", recallCopyHolders: recallsCopyHolders(priorStatusOf.get(docId) ?? null), retiredFrom: priorStatusOf.get(docId) ?? null,
+            // REV-35 (P36): a holder the gate found is told by the duties; their answer decides the FYI.
+            ...(toldPersonally ? { checkoutHolderTold: holdersTold.then((told) => told.has(docId)) } : {}),
+          });
         }
         // REV-31 (P31): every archived row (as before). REV-34 (d) (P34,
         // DEC-90 fail-safe): every superseded row too — a row already
@@ -530,17 +542,23 @@ export default function BulkEditModal({
     // or superseded) — after the recall is on its way; each duty checked, a
     // row whose duties did not complete named below (its retirement stands).
     let archiveFollowUps: Array<{ doc: string; problems: string[] }> = [];
-    if (archivedRows.length > 0) {
-      const orgId = library.orgId || docs.find((d) => d.orgId)?.orgId || null;
-      if (orgId) {
-        const { problems } = await finishRetirementDuties({
-          orgId, actorUserId, actorEmail: userEmail ?? null, actorRole: activeRole ?? null,
-          toStatus: newValue, reason: archiveReason, via: "bulk_edit", docs: archivedRows,
-        });
-        archiveFollowUps = problems.map((p) => ({ doc: p.label, problems: p.problems }));
-      } else {
-        archiveFollowUps = archivedRows.map((r) => ({ doc: r.label, problems: [`its review draft, share links and ${archiving ? "ARCHIVE_DOC" : "SUPERSEDE_DOC"} record were not handled: the workspace is not known`] }));
+    try {
+      if (archivedRows.length > 0) {
+        const orgId = library.orgId || docs.find((d) => d.orgId)?.orgId || null;
+        if (orgId) {
+          const { problems, holdersTold: told } = await finishRetirementDuties({
+            orgId, actorUserId, actorEmail: userEmail ?? null, actorRole: activeRole ?? null,
+            toStatus: newValue, reason: archiveReason, via: "bulk_edit", docs: archivedRows,
+          });
+          answerHoldersTold(new Set(told ?? []));
+          archiveFollowUps = problems.map((p) => ({ doc: p.label, problems: p.problems }));
+        } else {
+          archiveFollowUps = archivedRows.map((r) => ({ doc: r.label, problems: [`its review draft, share links and ${archiving ? "ARCHIVE_DOC" : "SUPERSEDE_DOC"} record were not handled: the workspace is not known`] }));
+        }
       }
+    } finally {
+      // REV-35 (P36): no duties ran (or they stopped) — nobody was told, so every holder stays in the FYI.
+      answerHoldersTold(new Set());
     }
     setResults({ ok, failed, followUps, notIssued, unseen, unchecked, archiveFollowUps, retiredAs: newValue });
     setBusy(false);

@@ -224,7 +224,8 @@ describe("20261164 — restore_reversed_source, the reversal's recorded put-back
     // REV-23 (P19): 20261165's put_back_retired_issue is the one later setter (the stamped put-back's
     // recorded door) — dcRoundFStampedPutBackMigration.test.ts pins it as this test pins restore_reversed_source.
     // REV-29 (P25): and 20261192, which re-creates both doors (pinned in dcRoundFNullPriorStatusMigration.test.ts).
-    expect(setters).toEqual(["20261151_dc_roundF_promote_transaction_and_hold_override.sql", FILE, "20261165_dc_roundF_stamped_put_back.sql", "20261192_dc_roundF_null_prior_status_put_back.sql"]);
+    // REV-36 (P36): and 20261253 — retire_over_hold and put_back_retired_issue's re-entry limb (pinned in dcRoundGStatusEditorHoldLegMigration.test.ts).
+    expect(setters).toEqual(["20261151_dc_roundF_promote_transaction_and_hold_override.sql", FILE, "20261165_dc_roundF_stamped_put_back.sql", "20261192_dc_roundF_null_prior_status_put_back.sql", "20261253_dc_roundG_status_editor_hold_leg.sql"]);
     // in this file: the restore's two set_config calls, the COMMENT ON FUNCTION's description,
     // and the probes that quote them — nothing in the guard but its reads
     const here = stripComments(M);

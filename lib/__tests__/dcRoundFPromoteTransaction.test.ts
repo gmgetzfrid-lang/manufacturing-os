@@ -191,7 +191,10 @@ describe("20261151 — the guard and publish_revision re-created from their NEWE
     // REV-29 (P25): and 20261192, which re-creates those two doors (the flag set on exactly the
     // conditions each had) — pinned in dcRoundFNullPriorStatusMigration.test.ts.
     const NULL_PUT_BACK_DOORS = "20261192_dc_roundF_null_prior_status_put_back.sql";
-    for (const f of files.filter((x) => x !== FILE && x !== RESTORE_DOOR && x !== PUT_BACK_DOOR && x !== NULL_PUT_BACK_DOORS)) expect(withoutFlagReads(stripComments(mig(f))), f).not.toMatch(/publish_hold_override/);
+    // REV-36 (P36): and 20261253 — retire_over_hold and put_back_retired_issue's re-entry limb — pinned in
+    // dcRoundGStatusEditorHoldLegMigration.test.ts.
+    const HOLD_LEG_DOORS = "20261253_dc_roundG_status_editor_hold_leg.sql";
+    for (const f of files.filter((x) => x !== FILE && x !== RESTORE_DOOR && x !== PUT_BACK_DOOR && x !== NULL_PUT_BACK_DOORS && x !== HOLD_LEG_DOORS)) expect(withoutFlagReads(stripComments(mig(f))), f).not.toMatch(/publish_hold_override/);
     expect(withoutFlagReads("SET LOCAL app.publish_hold_override = p_doc::text;")).toMatch(/publish_hold_override/);
   });
 

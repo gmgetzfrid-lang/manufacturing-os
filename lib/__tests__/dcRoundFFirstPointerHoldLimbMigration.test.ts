@@ -293,6 +293,10 @@ describe("20261182 — the guard re-created from its NEWEST earlier body (found 
       // flag set on exactly the conditions each had) — pinned in
       // dcRoundFNullPriorStatusMigration.test.ts.
       "20261192_dc_roundF_null_prior_status_put_back.sql",
+      // REV-36 (P36): 20261253 — retire_over_hold and put_back_retired_issue's
+      // re-entry limb (its guard only reads the flag) — pinned in
+      // dcRoundGStatusEditorHoldLegMigration.test.ts.
+      "20261253_dc_roundG_status_editor_hold_leg.sql",
     ]);
     expect(stripComments(M)).toContain("current_setting('app.publish_hold_override', true)");
     // the only set_config this file names is inside a probe's LIKE pattern (a string literal), never a call

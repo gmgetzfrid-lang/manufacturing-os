@@ -229,6 +229,8 @@ describe("20261185 — the guard re-created from its NEWEST earlier body (found 
       "20261164_dc_roundF_reversal_restore.sql",
       "20261165_dc_roundF_stamped_put_back.sql",
       "20261192_dc_roundF_null_prior_status_put_back.sql",
+      // REV-36 (P36): 20261253 — retire_over_hold and put_back_retired_issue's re-entry limb
+      "20261253_dc_roundG_status_editor_hold_leg.sql",
     ]);
     expect(stripComments(M).replace(/'(?:[^']|'')*'/g, "''")).not.toMatch(/set_config|SET LOCAL/);
   });

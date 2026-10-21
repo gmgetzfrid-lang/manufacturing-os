@@ -61,7 +61,7 @@ vi.mock("@/lib/reviewControl", async (importOriginal) => {
 });
 
 import { supabase } from "@/lib/supabase";
-import { changeDocumentStatus, finishRetirementDuties, finishBulkArchive, gateStatusEditorRetirement, isSupersessionMocRequired, SUPERSEDE_MOC_REQUIRED } from "@/lib/revisions";
+import { changeDocumentStatus, finishRetirementDuties, finishBulkArchive, gateStatusEditorRetirement, isSupersessionMocRequired, SUPERSEDE_MOC_REQUIRED, authorizeArchive } from "@/lib/revisions";
 import { recallRetiredDocument } from "@/lib/staleCopies";
 import { auditActionDef, isDestructiveAuditAction, AUDIT_ACTIONS } from "@/lib/auditActions";
 import { isIssueTransition, isControlledIssueStatus, isRetiredStatus } from "@/lib/issueStatus";
@@ -273,6 +273,8 @@ describe("ruling 1 / ruling 3 — the metadata editor's save to Void / Supersede
       library: { orgId: ORG, uniquenessKeys: ["documentNumber"] }, supabase, changeDocumentStatus, finishRetirementDuties,
       // document-control P34 (REV-33): the retirement gate the save runs first
       gateStatusEditorRetirement, isSupersessionMocRequired, SUPERSEDE_MOC_REQUIRED,
+      // document-control P36 (REV-36 (4)): the archive's pre-check a save to Archived runs first
+      authorizeArchive,
       isIssueTransition, isUnguardedEntryIntoForce, isControlledIssueStatus, isRetiredStatus, computeUniquenessKey,
       setError: (v: string | null) => { st.error = v; },
       appAlert: async (a: Record<string, unknown>) => { st.alerts.push(a); },

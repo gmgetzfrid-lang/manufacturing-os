@@ -16,6 +16,7 @@ import {
   startIssuedDocumentClocks,
   putBackRetiredIssue,
   describePutBackStatus,
+  retireOverHold,
   type CreationStatus,
 } from "@/lib/revisions";
 import type { AssetTag } from "@/types/schema";
@@ -472,13 +473,25 @@ export interface SupersededSource {
  *  (REV-10: revoked_at is frozen, 20261080) — is NOT done here: the caller
  *  runs completeSourceRetirement after its last step that can still roll
  *  back. Until then the source is retired at the database, so finalize
- *  refuses its draft (REV-5) and the share routes refuse its status (P1). */
+ *  refuses its draft (REV-5) and the share routes refuse its status (P1).
+ *
+ *  REV-36 (document-control P36, 20261253): when Document Control chose to
+ *  proceed over the source's active hold (`forceHold` — the split / merge's
+ *  HLD-2 `force`), the flip goes through lib/revisions.ts retireOverHold —
+ *  the same write, recorded as REV_HOLD_OVERRIDDEN in its transaction, which
+ *  the publish guard now requires for a controller's entry into Superseded
+ *  over a hold — and the direct write only while the function is absent
+ *  (today's path). Without `forceHold` the flip is the direct write, as
+ *  before. */
 export async function markSupersededAndLink(input: {
   sourceDocId: string;
   replacementDocIds: string[];
   reason: string;
   mocReference?: string;
   actor: ActorContext;
+  /** REV-36 (P36): the door ("split" / "merge") when Document Control chose
+   *  to proceed over the source's active hold (its HLD-2 `force`). */
+  forceHold?: "split" | "merge";
   /** The caller's compensation register (withCompensation). */
   register: (c: Compensation) => void;
   /** How the source is named in a compensation failure. */
@@ -528,22 +541,32 @@ export async function markSupersededAndLink(input: {
     },
   });
 
-  const { data: flippedRows, error: updErr } = await supabase
-    .from("documents")
-    .update({
-      status: "Superseded",
-      superseded_at: now,
-      superseded_by_user: actor.actorUserId,
-      supersession_reason: reason.trim(),
-      supersession_moc: mocReference?.trim() || null,
-      updated_at: now,
-      updated_by: actor.actorUserId,
-    })
-    .eq("id", sourceDocId)
-    .select("id");
-  if (updErr) throw new Error(updErr.message);
-  if (((flippedRows as unknown[] | null) ?? []).length === 0) {
-    throw new Error("The source document was NOT superseded — you don't have authority to retire it.");
+  // REV-36 (P36): over a hold Document Control chose to proceed over, the
+  // recorded door; absent (before 20261253), the direct write below.
+  const door = input.forceHold
+    ? await retireOverHold({ documentId: sourceDocId, door: input.forceHold, reason: reason.trim(), at: now, supersessionMoc: mocReference?.trim() || null })
+    : null;
+  if (door?.kind === "refused") {
+    throw new Error(door.noRow ? "The source document was NOT superseded — you don't have authority to retire it." : door.reason);
+  }
+  if (door?.kind !== "landed") {
+    const { data: flippedRows, error: updErr } = await supabase
+      .from("documents")
+      .update({
+        status: "Superseded",
+        superseded_at: now,
+        superseded_by_user: actor.actorUserId,
+        supersession_reason: reason.trim(),
+        supersession_moc: mocReference?.trim() || null,
+        updated_at: now,
+        updated_by: actor.actorUserId,
+      })
+      .eq("id", sourceDocId)
+      .select("id");
+    if (updErr) throw new Error(updErr.message);
+    if (((flippedRows as unknown[] | null) ?? []).length === 0) {
+      throw new Error("The source document was NOT superseded — you don't have authority to retire it.");
+    }
   }
   flipped = true;
 

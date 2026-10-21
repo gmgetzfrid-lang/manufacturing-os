@@ -232,6 +232,9 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
     actor,
     register,
     label: `source ${source.documentNumber ?? source.id}`,
+    // REV-36 (P36): Document Control's explicit proceed over the source's
+    // hold (HLD-2) — the flip is then recorded at the database (20261253).
+    ...(input.force === true ? { forceHold: "split" as const } : {}),
   });
   return { newDocumentIds, holdsCopied, retired };
   });

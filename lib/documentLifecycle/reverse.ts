@@ -103,7 +103,7 @@ import { resolveCanControlLibrary } from "@/lib/documentGuards";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
 import { assertNotOnHold, holdReasonLabel } from "@/lib/holdGate";
 import {
-  voidPendingDraftAfterPublish, revokeLiveSharesForDocument, putBackRetiredIssue, describePutBackStatus,
+  voidPendingDraftAfterPublish, revokeLiveSharesForDocument, putBackRetiredIssue, describePutBackStatus, retireOverHold,
   recallOnRetirement, recallsCopyHolders,
 } from "@/lib/revisions";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
@@ -241,7 +241,10 @@ async function readStatusSnapshot(docId: string): Promise<StatusSnapshot> {
  *  run as the caller — so un-parking a held sheet the reversal parked (the
  *  park stamped the issue it took away) back into that issue is recorded
  *  (REV_HOLD_OVERRIDDEN) for Document Control, as the guard now requires; a
- *  source put back to Superseded is the bare write through it. The direct
+ *  source put back to Superseded is the bare write through it — except over
+ *  a hold (its own, or one HLD-2 carried onto it), which since 20261253
+ *  (REV-36, P36) put_back_retired_issue records for Document Control too, as
+ *  the guard now refuses that re-entry into Superseded bare. The direct
  *  write only while the function is absent. */
 async function putStatusBack(docId: string, snap: StatusSnapshot, actorUserId: string): Promise<void> {
   // The un-park puts back the state from before the park: it asks for the
@@ -356,22 +359,36 @@ async function assertRestorable(restoreIds: string[], parkedIds: string[]): Prom
  *  irreversible half (finishParking), run only after the saga has landed.
  *  Answers the status it held just before the park (read for the put-back)
  *  — what its retirement recall decides from (PROD-17, document-control P28:
- *  recallParked). */
-async function parkAsSuperseded(docId: string, supersessionReason: string, actorUserId: string, now: string, register: Register): Promise<string | null> {
+ *  recallParked).
+ *
+ *  REV-36 (document-control P36, 20261253): a sheet parked over its active
+ *  hold on Document Control's explicit force (`forceHold` — HLD-2's, decided
+ *  in assertParkedHoldsDecided) is parked through lib/revisions.ts
+ *  retireOverHold — the same write, recorded as REV_HOLD_OVERRIDDEN, which
+ *  the publish guard now requires for a controller's entry into Superseded
+ *  over a hold — and by the direct write only while the function is absent
+ *  (today's path). Every other park is the direct write, as before. */
+async function parkAsSuperseded(docId: string, supersessionReason: string, actorUserId: string, now: string, register: Register, forceHold = false): Promise<string | null> {
   const snap = await readStatusSnapshot(docId);
   const outcome: WriteOutcome = { attempted: false, landed: false };
   register({ describe: `un-park ${docId}`, run: putBackIfChanged(docId, snap, actorUserId, outcome) });
   outcome.attempted = true;
-  const { data, error } = await supabase.from("documents").update({
-    status: "Superseded",
-    superseded_at: now,
-    superseded_by_user: actorUserId,
-    supersession_reason: supersessionReason,
-    updated_at: now,
-    updated_by: actorUserId,
-  }).eq("id", docId).select("id");
-  if (error || ((data as unknown[] | null) ?? []).length === 0) {
-    throw new Error(`Reversal stopped: ${docId} could not be parked as Superseded (${error?.message ?? "the write was refused"}).`);
+  const door = forceHold ? await retireOverHold({ documentId: docId, door: "reversal_park", reason: supersessionReason, at: now }) : null;
+  if (door?.kind === "refused") {
+    throw new Error(`Reversal stopped: ${docId} could not be parked as Superseded (${door.reason}).`);
+  }
+  if (door?.kind !== "landed") {
+    const { data, error } = await supabase.from("documents").update({
+      status: "Superseded",
+      superseded_at: now,
+      superseded_by_user: actorUserId,
+      supersession_reason: supersessionReason,
+      updated_at: now,
+      updated_by: actorUserId,
+    }).eq("id", docId).select("id");
+    if (error || ((data as unknown[] | null) ?? []).length === 0) {
+      throw new Error(`Reversal stopped: ${docId} could not be parked as Superseded (${error?.message ?? "the write was refused"}).`);
+    }
   }
   outcome.landed = true;
   return snap.status ?? null;
@@ -851,7 +868,7 @@ export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseRes
   const parkedPrior = new Map<string, string | null>();
   await withRollbackCause(async (register, rollback) => {
     for (const newId of replacementIds) {
-      parkedPrior.set(newId, await parkAsSuperseded(newId, `Reverted split — ${input.reason}`, input.actorUserId, now, register));
+      parkedPrior.set(newId, await parkAsSuperseded(newId, `Reverted split — ${input.reason}`, input.actorUserId, now, register, heldParked.some((h) => h.id === newId)));
     }
     // HLD-2: a parked sheet's holds onto the source BEFORE it comes back.
     holdsCarriedBack = await carryParkedHolds(heldParked, [sourceDocId], "split", actor, register);
@@ -996,7 +1013,7 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
   // and target live at once; nothing irreversible has run yet.
   await withRollbackCause(async (register, rollback) => {
     if (targetWasNewlyCreated) {
-      parkedPrior.set(targetDocId, await parkAsSuperseded(targetDocId, `Reverted merge — ${input.reason}`, input.actorUserId, now, register));
+      parkedPrior.set(targetDocId, await parkAsSuperseded(targetDocId, `Reverted merge — ${input.reason}`, input.actorUserId, now, register, heldParked.some((h) => h.id === targetDocId)));
     }
     // HLD-2: the parked target's holds onto every source BEFORE it returns.
     holdsCarriedBack = await carryParkedHolds(heldParked, allSourceIds, "merge", actor, register);

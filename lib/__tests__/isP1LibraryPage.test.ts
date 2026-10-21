@@ -78,7 +78,7 @@ vi.mock("@/lib/reviewControl", async (importOriginal) => {
 });
 
 import { supabase } from "@/lib/supabase";
-import { changeDocumentStatus, finishRetirementDuties, gateStatusEditorRetirement, isSupersessionMocRequired, SUPERSEDE_MOC_REQUIRED } from "@/lib/revisions";
+import { changeDocumentStatus, finishRetirementDuties, gateStatusEditorRetirement, isSupersessionMocRequired, SUPERSEDE_MOC_REQUIRED, authorizeArchive } from "@/lib/revisions";
 import { recallRetiredDocument } from "@/lib/staleCopies";
 import { isIssueTransition, isIssueRefusal, isControlledIssueStatus, isRetiredStatus } from "@/lib/issueStatus";
 import { isUnguardedEntryIntoForce } from "@/lib/documentStatusOptions";
@@ -240,7 +240,7 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
   function save(d: Row, opts: { activeRole?: string | null; uid?: string | null; pageSees?: Row; cds?: typeof changeDocumentStatus } = {}) {
     const st = { error: null as string | null, alerts: [] as Array<{ title: string; message: string }>, prompts: [] as Array<Record<string, unknown>> };
     // document-control P31 (REV-31): a save this page sees retiring the document asks one reason (answered here).
-    const fn = lift<(next: unknown) => Promise<void>>("saveMetadata", ["selectedDoc", "uid", "userEmail", "activeRole", "activeOrgId", "library", "supabase", "changeDocumentStatus", "isIssueTransition", "isUnguardedEntryIntoForce", "isControlledIssueStatus", "isRetiredStatus", "computeUniquenessKey", "setError", "appAlert", "appPrompt", "finishRetirementDuties", "gateStatusEditorRetirement", "isSupersessionMocRequired", "SUPERSEDE_MOC_REQUIRED"])({
+    const fn = lift<(next: unknown) => Promise<void>>("saveMetadata", ["selectedDoc", "uid", "userEmail", "activeRole", "activeOrgId", "library", "supabase", "changeDocumentStatus", "isIssueTransition", "isUnguardedEntryIntoForce", "isControlledIssueStatus", "isRetiredStatus", "computeUniquenessKey", "setError", "appAlert", "appPrompt", "finishRetirementDuties", "gateStatusEditorRetirement", "isSupersessionMocRequired", "SUPERSEDE_MOC_REQUIRED", "authorizeArchive"])({
       selectedDoc: asDoc({ ...d, ...(opts.pageSees ?? {}) }), uid: opts.uid === undefined ? "ctl1" : opts.uid, userEmail: "ctl@example.com",
       activeRole: opts.activeRole === undefined ? "DocCtrl" : opts.activeRole, activeOrgId: ORG,
       library: { orgId: ORG, uniquenessKeys: ["documentNumber"] }, supabase, changeDocumentStatus: opts.cds ?? changeDocumentStatus, isIssueTransition, isUnguardedEntryIntoForce, isControlledIssueStatus, isRetiredStatus, computeUniquenessKey,
@@ -250,11 +250,16 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
       finishRetirementDuties,
       // document-control P34 (REV-33): the retirement gate a save to Superseded / Void runs first
       gateStatusEditorRetirement, isSupersessionMocRequired, SUPERSEDE_MOC_REQUIRED,
+      // document-control P36 (REV-36 (4)): the archive's pre-check a save to Archived runs first
+      authorizeArchive,
     });
     return { st, fn };
   }
   const updates = () => state.db.calls.filter((c) => c.table === "documents" && c.method === "update");
   const basisReads = () => state.db.calls.filter((c) => c.table === "documents" && c.method === "select" && c.args[0] === "*");
+  // document-control P36 (REV-36 (3)): a save into a retired status reads the row's status ONCE (the page's
+  // read, retried once on failure) and hands it to changeDocumentStatus, which then makes no basis read of its own.
+  const statusReads = () => state.db.calls.filter((c) => c.table === "documents" && c.method === "select" && c.args[0] === "status");
 
   it("Draft → Issued: ONE checked UPDATE carrying every edited column, then both clocks and DOCUMENT_ISSUED (door metadata, the signed-in role)", async () => {
     const d = seed("d1");
@@ -334,7 +339,7 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
   });
 
   // ─── document-control P28 (PROD-17): a save to a RETIRED status ───────
-  it("P28: Issued → Void goes through changeDocumentStatus — still ONE checked UPDATE with exactly the columns the bare write carried, one basis read, nothing issued, nothing said", async () => {
+  it("P28: Issued → Void goes through changeDocumentStatus — still ONE checked UPDATE with exactly the columns the bare write carried, one read of the row (P36: the page's, handed through — no second basis read), nothing issued, nothing said", async () => {
     const d = seed("r1", { status: "Issued" });
     const cds = vi.fn(changeDocumentStatus);
     const { st, fn } = save(d, { cds });
@@ -344,7 +349,10 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
     expect(updates()).toHaveLength(1);
     expect(Object.keys(updates()[0].args[0] as Row).sort()).toEqual(["document_number", "metadata", "status", "title", "uniqueness_key", "updated_at", "updated_by"]);
     expect(T("documents").find((r) => r.id === "r1")).toMatchObject({ status: "Void", updated_by: "ctl1", metadata: { unit: "CDU" } });
-    expect(basisReads()).toHaveLength(1);
+    // REV-36 (3) (P36): one read decides — the page's, passed through as `prior`
+    expect(statusReads()).toHaveLength(1);
+    expect(basisReads()).toHaveLength(0);
+    expect(cds.mock.calls[0][0]).toMatchObject({ prior: { fromStatus: "Issued", readFailed: false } });
     expect(issued()).toEqual([]);
     expect(st.error).toBeNull();
     expect(st.alerts).toEqual([]);
@@ -370,24 +378,27 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
     expect(T("documents").find((r) => r.id === "r3")!.status).toBe("Issued");
   });
 
-  it("ruled by the integrator at the P28 merge (DEC-90): a title fix on a document already Archived whose basis read fails TWICE (read, then one retry) leaves the prior UNKNOWN — the copy holders ARE recalled and the watchers told (a possible second recall is the accepted cost); the save lands", async () => {
+  it("ruled by the integrator at the P28 merge (DEC-90): a title fix on a document already Archived whose read of the row fails TWICE (read, then one retry — P36: the page's one read) leaves the prior UNKNOWN — the copy holders ARE recalled and the watchers told (a possible second recall is the accepted cost); the save lands, its archive columns untouched", async () => {
     const d = seed("r4", { status: "Archived" });
     const cds = vi.fn(changeDocumentStatus);
-    state.db.selectErrors!.documents = (cols) => (cols === "*" ? { message: "503 basis read" } : null);
+    state.db.selectErrors!.documents = (cols) => (cols === "status" ? { message: "503 basis read" } : null);
     const { st, fn } = save(d, { cds });
     await fn({ metadata: {}, core: { title: "r4 fixed", documentNumber: "R4", status: "Archived" } });
     for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
-    expect(cds.mock.calls[0][0]).toMatchObject({ toStatus: "Archived", heldStatus: "Archived" });
-    expect(basisReads()).toHaveLength(2);
+    expect(cds.mock.calls[0][0]).toMatchObject({ toStatus: "Archived", heldStatus: "Archived", prior: { fromStatus: null, readFailed: true } });
+    expect(statusReads()).toHaveLength(2);
+    expect(basisReads()).toHaveLength(0);
+    // P36: the archive's date, person and reason are not overwritten for an archive no read showed
+    expect(Object.keys(updates()[0].args[0] as Row)).not.toContain("archived_at");
     expect(T("documents").find((r) => r.id === "r4")).toMatchObject({ status: "Archived", title: "r4 fixed" });
     expect(recallRetiredDocument).toHaveBeenCalledTimes(1);
     expect(vi.mocked(recallRetiredDocument).mock.calls[0][0]).toMatchObject({ documentId: "r4", newStatus: "Archived", recallCopyHolders: true, retiredFrom: null });
     expect(st.error).toBeNull();
   });
 
-  it("ruled by the integrator at the P28 merge (DEC-90): the STALE page — it shows Archived, another session put the document back to Issued; a title fix whose basis read fails twice retires it again, and its copy holders ARE recalled (P26's fail-safe — the held status never withholds a recall)", async () => {
+  it("ruled by the integrator at the P28 merge (DEC-90): the STALE page — it shows Archived, another session put the document back to Issued; a title fix whose read of the row fails twice retires it again, and its copy holders ARE recalled (P26's fail-safe — the held status never withholds a recall)", async () => {
     const d = seed("r6", { status: "Issued" });
-    state.db.selectErrors!.documents = (cols) => (cols === "*" ? { message: "503 basis read" } : null);
+    state.db.selectErrors!.documents = (cols) => (cols === "status" ? { message: "503 basis read" } : null);
     const { fn } = save(d, { pageSees: { status: "Archived" } });
     await fn({ metadata: {}, core: { title: "r6 typo", documentNumber: "R6", status: "Archived" } });
     for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
@@ -396,14 +407,15 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
     expect(vi.mocked(recallRetiredDocument).mock.calls[0][0]).toMatchObject({ documentId: "r6", newStatus: "Archived", recallCopyHolders: true, retiredFrom: null });
   });
 
-  it("P28 second fix pass: the stale page whose basis read fails ONCE — the retry reads the row (Issued), so the save is the retirement it is: copy holders recalled", async () => {
+  it("P28 second fix pass: the stale page whose read of the row fails ONCE — the retry reads the row (Issued), so the save is the retirement it is: copy holders recalled", async () => {
     const d = seed("r7", { status: "Issued" });
     let fails = 1;
-    state.db.selectErrors!.documents = (cols) => (cols === "*" && fails-- > 0 ? { message: "503 basis read" } : null);
+    state.db.selectErrors!.documents = (cols) => (cols === "status" && fails-- > 0 ? { message: "503 basis read" } : null);
     const { fn } = save(d, { pageSees: { status: "Archived" } });
     await fn({ metadata: {}, core: { title: "r7 typo", documentNumber: "R7", status: "Archived" } });
     for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
-    expect(basisReads()).toHaveLength(2);
+    expect(statusReads()).toHaveLength(2);
+    expect(basisReads()).toHaveLength(0);
     expect(recallRetiredDocument).toHaveBeenCalledTimes(1);
     expect(vi.mocked(recallRetiredDocument).mock.calls[0][0]).toMatchObject({ documentId: "r7", newStatus: "Archived", recallCopyHolders: true });
   });

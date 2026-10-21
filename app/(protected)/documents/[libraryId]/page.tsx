@@ -67,7 +67,7 @@ const MultiDocViewer = dynamic(() => import("@/components/viewers/MultiDocViewer
 import type { TagColumnDef } from "@/lib/documentTags";
 import RevUpModal from "@/components/documents/RevUpModal";
 import { loadMyMarkup, saveMyMarkup, myActiveSessionId, type DocumentMarkup } from "@/lib/markups";
-import { listVersions, changeDocumentStatus, recallsCopyHolders, finishBulkArchive, finishRetirementDuties, gateStatusEditorRetirement, isSupersessionMocRequired, SUPERSEDE_MOC_REQUIRED, type StatusEditorRetirementGate } from "@/lib/revisions";
+import { listVersions, changeDocumentStatus, recallsCopyHolders, finishBulkArchive, finishRetirementDuties, gateStatusEditorRetirement, isSupersessionMocRequired, SUPERSEDE_MOC_REQUIRED, authorizeArchive, type StatusEditorRetirementGate } from "@/lib/revisions";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 import { isIssueTransition, isControlledIssueStatus, isRetiredStatus } from "@/lib/issueStatus";
 import { isUnguardedEntryIntoForce } from "@/lib/documentStatusOptions";
@@ -3039,15 +3039,29 @@ export default function LibraryExplorerPage() {
       // drawing; someone else retired it meanwhile) is no retirement and
       // writes exactly as before; a row in another status is one (also when
       // this page showed it retired already — another session put it back);
-      // a read that fails counts as one only when this page sees one (it
-      // asked the reason), so a plain edit is never refused for a failed read.
+      // REV-36 (3) (document-control P36, DEC-90): this ONE read decides
+      // both whether the save retires (the gates below) and whether it
+      // retired (the recall and the duties — handed to changeDocumentStatus
+      // as `prior`, which then reads nothing itself), so a status changed
+      // between two reads can no longer run the duties of a retirement the
+      // gates never saw. A read that fails is retried once (P28's rule for
+      // changeDocumentStatus's own read); a read that still fails leaves the
+      // prior unknown, which is a retirement for both (fail-safe: the gates
+      // run, then the copy holders are recalled and the duties run, as an
+      // unknown prior always recalled).
       let rowStatus: string | null | undefined;
-      {
-        const { data: rowNow, error: rowNowErr } = await supabase.from("documents").select("status").eq("id", selectedDoc.id).maybeSingle();
-        if (!rowNowErr) rowStatus = (rowNow as { status?: string | null } | null)?.status ?? null;
+      for (let attempt = 0; attempt < 2 && rowStatus === undefined; attempt += 1) {
+        try {
+          const { data: rowNow, error: rowNowErr } = await supabase.from("documents").select("status").eq("id", selectedDoc.id).maybeSingle();
+          if (!rowNowErr) rowStatus = (rowNow as { status?: string | null } | null)?.status ?? null;
+        } catch { /* unread: retried once, then unknown */ }
       }
-      const retiring = !(rowStatus !== undefined && (rowStatus ?? "").trim() === toStatus.trim())
-        && (!retiredUnchanged || rowStatus !== undefined);
+      const retiring = !(rowStatus !== undefined && (rowStatus ?? "").trim() === toStatus.trim());
+      // What this page can say of the row's status now, for a refusal on a
+      // retirement it did not see (it showed the status already).
+      const rowNowSaid = rowStatus === undefined
+        ? "its status could not be read just before this save"
+        : `it is ${(rowStatus ?? "").trim() || "in another status"} now`;
       const dutyReason = retireReason ?? `No reason given: the metadata editor saved this document as ${toStatus.trim()} without asking one (this page showed it as already ${toStatus.trim()}).`;
       // REV-33 (P34): a save that retires the document into Superseded or
       // Void takes supersedeDocument's pre-write gates first
@@ -3072,11 +3086,15 @@ export default function LibraryExplorerPage() {
           // what happened, never ask for a reason this save has no field for.
           const lockRefusal = e as { name?: string; holderName?: string | null } | null;
           if (retireReason === null && lockRefusal?.name === "RetirementOverrideReasonRequiredError") {
-            throw new Error(`Save refused — nothing was saved: this page shows ${retireLabel} as already ${toStatus.trim()}, but it is ${(rowStatus ?? "").trim() || "in another status"} now and checked out by ${lockRefusal.holderName || "another user"} (changed after this page loaded). Reload it and set the status with a reason.`);
+            throw new Error(rowStatus === undefined
+              ? `Save refused — nothing was saved: this page shows ${retireLabel} as already ${toStatus.trim()}, but ${rowNowSaid} and it is checked out by ${lockRefusal.holderName || "another user"}, so this save may ${toStatus.trim() === "Void" ? "void" : "supersede"} it again. Reload it and set the status with a reason.`
+              : `Save refused — nothing was saved: this page shows ${retireLabel} as already ${toStatus.trim()}, but ${rowNowSaid} and checked out by ${lockRefusal.holderName || "another user"} (changed after this page loaded). Reload it and set the status with a reason.`);
           }
           if (!isSupersessionMocRequired(e)) throw new Error(`Save refused — nothing was saved: ${(e as Error)?.message || String(e)}`);
           if (retireReason === null) {
-            throw new Error(`Save refused — nothing was saved: this page shows ${retireLabel} as already Superseded, but it is ${(rowStatus ?? "").trim() || "in another status"} now (changed after this page loaded), so this save would supersede it again. ${SUPERSEDE_MOC_REQUIRED} Reload it and set the status with a reason and the MOC reference.`);
+            throw new Error(rowStatus === undefined
+              ? `Save refused — nothing was saved: this page shows ${retireLabel} as already Superseded, but ${rowNowSaid}, so this save may supersede it again. ${SUPERSEDE_MOC_REQUIRED} Reload it and set the status with a reason and the MOC reference.`
+              : `Save refused — nothing was saved: this page shows ${retireLabel} as already Superseded, but ${rowNowSaid} (changed after this page loaded), so this save would supersede it again. ${SUPERSEDE_MOC_REQUIRED} Reload it and set the status with a reason and the MOC reference.`);
           }
           const moc = await appPrompt({
             title: `MOC reference for ${retireLabel}`,
@@ -3094,6 +3112,30 @@ export default function LibraryExplorerPage() {
           }
         }
       }
+      // REV-36 (4) (document-control P36, DEC-90): a save that ARCHIVES the
+      // document runs archiveDocument's pre-check first (lib/revisions.ts
+      // authorizeArchive — publish authority or ownership below a
+      // controller, an active hold below a controller, the legal hold for
+      // everyone), refusing in its own words, nothing saved — the database
+      // decides the same refusals, in its words, after the write was sent.
+      if (retiring && toStatus.trim() === "Archived") {
+        try {
+          await authorizeArchive({
+            documentId: selectedDoc.id, libraryId: selectedDoc.libraryId || library?.id || "",
+            orgId: retireOrgId, actorUserId: uid, actorRole: activeRole ?? undefined,
+          });
+        } catch (e) {
+          throw new Error(`Save refused — nothing was saved: ${(e as Error)?.message || String(e)}`);
+        }
+      }
+      // REV-35 (document-control P36, DEC-90): the checkout holder the gate
+      // found (someone else) is told personally by the duties after the
+      // write; the recall changeDocumentStatus sends (before the duties, as
+      // P31 placed it) leaves them out of its watchers' FYI only once the
+      // duties answer that they were told — never on a notice that failed.
+      const holderToBeTold = !!gate?.preState?.checkedOutBy && String(gate.preState.checkedOutBy) !== String(uid);
+      let answerHolderTold: (told: boolean) => void = () => {};
+      const holderTold = holderToBeTold ? new Promise<boolean>((resolve) => { answerHolderTold = resolve; }) : undefined;
       // REV-34 (b) (P34): a save that ARCHIVES the document writes the archive
       // columns in its same write, as archiveDocument does (the reason asked,
       // or the sentence naming this door for an archive this page did not
@@ -3101,7 +3143,12 @@ export default function LibraryExplorerPage() {
       // P34 review fix 3: a save that moves a row the read gave as Archived
       // into another retired status clears them, as unarchiveDocument does —
       // the document is no longer archived (a read that failed: as before).
-      const retirePatch = retiring && toStatus.trim() === "Archived"
+      // REV-36 (3) (P36): a read that failed is a retirement for the gates and
+      // the duties (fail-safe), but the archive columns are written, as
+      // before P36, only for an archive the read showed — or this page saw (it
+      // asked the reason): a title fix on an Archived document whose reads
+      // failed never overwrites its archive's date, person and reason.
+      const retirePatch = retiring && (rowStatus !== undefined || !retiredUnchanged) && toStatus.trim() === "Archived"
         ? { ...payload, archived_at: payload.updated_at, archived_by: uid, archive_reason: dutyReason }
         : (rowStatus ?? "").trim() === "Archived" && toStatus.trim() !== "Archived"
           ? { ...payload, archived_at: null, archived_by: null, archive_reason: null }
@@ -3118,8 +3165,13 @@ export default function LibraryExplorerPage() {
           heldStatus: selectedDoc.status ?? null,
           // REV-31 (P31): say whether the write retired it (its duties follow).
           reportRetirement: true,
+          // REV-36 (3) (P36): the one read above — none of its own.
+          prior: { fromStatus: rowStatus ?? null, readFailed: rowStatus === undefined },
+          // REV-35 (P36): the duties' answer whether the holder was told.
+          ...(holderTold ? { checkoutHolderTold: holderTold } : {}),
         });
       } catch (e) {
+        answerHolderTold(false);
         const msg = (e as Error)?.message || String(e);
         throw new Error(/^The status was NOT changed — you don't have authority to change this document/.test(msg)
           ? "Save refused — nothing was saved: the database updated no document (you may no longer have edit access to it)."
@@ -3134,8 +3186,9 @@ export default function LibraryExplorerPage() {
       // showed the status already), the sentence naming this door — and the
       // prior. A save that retired nothing does nothing more. A duty that did
       // not complete is said; the status change stands.
+      if (!retiredOutcome.retired) answerHolderTold(false);
       if (retiredOutcome.retired) {
-        const { problems: dutyProblems } = await finishRetirementDuties({
+        const { problems: dutyProblems, holdersTold } = await finishRetirementDuties({
           orgId: retireOrgId, actorUserId: uid, actorEmail: userEmail ?? null, actorRole: activeRole ?? null,
           toStatus,
           reason: dutyReason,
@@ -3148,7 +3201,11 @@ export default function LibraryExplorerPage() {
             // SUPERSEDE_DOC record) and the checkout holder it read (told).
             ...(gate ? { mocReference: gate.mocReference, checkoutHolder: gate.preState, libraryId: selectedDoc.libraryId || library?.id || null } : {}),
           }],
+        }).catch((e: unknown) => {
+          answerHolderTold(false);
+          throw e;
         });
+        answerHolderTold((holdersTold ?? []).includes(selectedDoc.id));
         const lines = dutyProblems.flatMap((p) => p.problems);
         if (lines.length > 0) {
           const head = `${retireLabel} was saved as ${toStatus.trim()}, but ${lines.length} follow-up step${lines.length === 1 ? "" : "s"} did not complete. The status change stands and is not rolled back — do not save it again.`;

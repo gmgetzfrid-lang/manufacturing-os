@@ -67,6 +67,7 @@ vi.mock("@/lib/reviewControl", async (importOriginal) => {
 
 import BulkEditModal from "@/components/documents/BulkEditModal";
 import { recallRetiredBatch } from "@/lib/staleCopies";
+import { notifyPackagesOfRetirement } from "@/lib/postPublish";
 import { notify } from "@/lib/inAppNotifications";
 import { SUPERSEDE_MOC_REQUIRED } from "@/lib/revisions";
 import { shareStatusRefusal } from "@/lib/shareRules";
@@ -205,6 +206,30 @@ describe("REV-33 (P34) — the bulk editor's Superseded takes supersedeDocument'
     })]);
     expect(T("distribution_acks")[0].superseded_at).toBeTruthy();
     expect(host.querySelector('[data-testid="bulk-archive-follow-ups"]')).toBeNull();
+  });
+
+  it("REV-35 (document-control P36): the row superseded over another person's checkout carries the duties' answer into the batched recall (its holder told → left out of its FYI); the row with no foreign checkout carries none (exactly as before); each superseded row's open packages' owners are told", async () => {
+    const l = seedDoc("q1", { checked_out_by: "eng9", checked_out_by_name: "Eli" });
+    const f = seedDoc("q2");
+    await apply([asRecord(l), asRecord(f)], "Superseded", { reason: "Withdrawn" });
+    expect(batch).toHaveBeenCalledTimes(1);
+    const docs = batch.mock.calls[0][0].docs;
+    const q1 = docs.find((d) => d.documentId === "q1")!;
+    const q2 = docs.find((d) => d.documentId === "q2")!;
+    expect(await q1.checkoutHolderTold).toBe(true);
+    expect("checkoutHolderTold" in q2).toBe(false);
+    const told = vi.mocked(notifyPackagesOfRetirement).mock.calls.map((c) => (c[0] as { documentId: string; newStatus: string }));
+    expect(told).toHaveLength(2);
+    expect(told).toEqual(expect.arrayContaining([
+      expect.objectContaining({ documentId: "q1", newStatus: "Superseded" }), expect.objectContaining({ documentId: "q2", newStatus: "Superseded" }),
+    ]));
+  });
+
+  it("REV-35 (P36): the holder's notice could not be sent — the batched recall's answer for that row is false (they stay in its FYI)", async () => {
+    vi.mocked(notify).mockResolvedValueOnce(false as never);
+    const l = seedDoc("q3", { checked_out_by: "eng9", checked_out_by_name: "Eli" });
+    await apply([asRecord(l)], "Superseded", { reason: "Withdrawn" });
+    expect(await batch.mock.calls[0][0].docs[0].checkoutHolderTold).toBe(false);
   });
 
   it("P34 review fix — Document Control (a controller) applying Superseded: a row under an active hold is refused and named, NOTHING written for it (the Supersede dialog's refusal, worded for a supersession); the unheld row is written as before", async () => {

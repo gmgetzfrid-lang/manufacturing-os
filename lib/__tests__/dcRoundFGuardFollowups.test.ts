@@ -209,6 +209,10 @@ describe("20261159 — the guard re-created from its NEWEST earlier body (found 
       // REV-29 (P25): and 20261192, which re-creates those two doors (the flag set on
       // exactly the conditions each had) — pinned in dcRoundFNullPriorStatusMigration.test.ts.
       if (f === "20261192_dc_roundF_null_prior_status_put_back.sql") continue;
+      // REV-36 (P36): and 20261253 — retire_over_hold and put_back_retired_issue's re-entry limb
+      // set it around their own write (its guard only reads it) — pinned in
+      // dcRoundGStatusEditorHoldLegMigration.test.ts.
+      if (f === "20261253_dc_roundG_status_editor_hold_leg.sql") continue;
       expect(withoutFlagReads(stripComments(mig(f))), f).not.toMatch(/publish_hold_override/);
     }
     expect(withoutFlagReads("SET LOCAL app.publish_hold_override = p_doc::text;")).toMatch(/publish_hold_override/);

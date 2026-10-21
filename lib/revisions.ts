@@ -2221,7 +2221,10 @@ export type ArchiveInput = {
  *     archive for EVERYONE, controllers included, and an open hold refuses a
  *     non-controller.
  *  The checkout lock is not an archive gate (it never was, at either layer). */
-async function authorizeArchive(opts: {
+/** REV-36 (4) (document-control P36): exported so the library page's
+ *  metadata save to Archived runs this same pre-check before its write,
+ *  refusing in these words — archiveDocument's own call is unchanged. */
+export async function authorizeArchive(opts: {
   documentId: string; libraryId: string; orgId: string; actorUserId: string; actorRole?: string;
 }): Promise<{ priorStatus: string | null }> {
   const principal: Principal = await resolveActorPrincipal({
@@ -2428,9 +2431,21 @@ export type RetirementDutyDoor = "bulk_archive" | "bulk_edit" | "metadata";
  *     returned against the row.
  *  And the SUPERSEDE_DOC record carries the MOC reference the door's gate
  *  accepted (`mocReference`, as supersedeDocument records it; null when none
- *  was given, as before). The package owners' own notice
- *  (notifyPackagesOfRetirement) is not sent here: the batched recall keeps
- *  them in the watchers' audience (not ruled — REV-34's residual). */
+ *  was given, as before).
+ *
+ *  REV-35 (document-control P36, ruled by the integrator at the P34 merge,
+ *  DEC-90): a row this door actually SUPERSEDED (never an `alreadyRetired`
+ *  one) also gets the open work packages' owners' notice, as
+ *  supersedeDocument sends it — the same producer
+ *  (lib/postPublish.ts notifyPackagesOfRetirement, the existing
+ *  package_doc_retired kind); it never throws. And every row whose holder
+ *  was told personally (the notice sent — not the actor, nothing missed) is
+ *  returned in `holdersTold` (the key absent when none was), for the door to
+ *  hand its recall: that holder is left out of the retirement's watchers'
+ *  FYI (one notice per person). The package owners stay in the FYI audience
+ *  as before (the ruling: every other recipient exactly as today). */
+/** REV-35 (P36): lib/postPublish, loaded once for finishRetirementDuties' package notices. */
+let postPublishLoad: Promise<typeof import("@/lib/postPublish")> | null = null;
 export async function finishRetirementDuties(input: {
   orgId: string; actorUserId: string; actorEmail?: string | null; actorRole?: string | null;
   toStatus: string; reason: string; via: RetirementDutyDoor;
@@ -2443,9 +2458,10 @@ export async function finishRetirementDuties(input: {
     /** The library, for the holder's notice link. */
     libraryId?: string | null;
   }>;
-}): Promise<{ problems: BulkArchiveProblem[]; acksClosed?: RetirementAcksClosed[] }> {
+}): Promise<{ problems: BulkArchiveProblem[]; acksClosed?: RetirementAcksClosed[]; holdersTold?: string[] }> {
   const problems: BulkArchiveProblem[] = [];
   const acksClosed: RetirementAcksClosed[] = [];
+  const holdersTold: string[] = [];
   const reason = input.reason.trim();
   const to = input.toStatus.trim();
   const kind = to === "Archived" ? { action: "ARCHIVE_DOC", noun: "archive" }
@@ -2513,14 +2529,32 @@ export async function finishRetirementDuties(input: {
       // checkout (the gate read it before the write).
       const holder = d.checkoutHolder?.checkedOutBy ?? null;
       if (holder && d.alreadyRetired !== true && (kind.action === "SUPERSEDE_DOC" || kind.action === "VOID_DOC")) {
-        mine.push(...await notifyHolderOfRetirement({
+        const missed = await notifyHolderOfRetirement({
           preState: { checkedOutBy: holder, checkedOutByName: d.checkoutHolder?.checkedOutByName ?? null, activeHolds: [] },
           documentId: d.documentId, libraryId: d.libraryId ?? "", orgId: input.orgId,
           actorUserId: input.actorUserId, actorEmail: input.actorEmail ?? undefined,
           verb: kind.action === "SUPERSEDE_DOC" ? "superseded" : "voided",
           action: kind.action === "SUPERSEDE_DOC" ? "supersede" : "void",
           reason,
-        }));
+        });
+        mine.push(...missed);
+        // REV-35 (P36): told personally — left out of the watchers' FYI.
+        if (missed.length === 0 && String(holder) !== String(input.actorUserId)) holdersTold.push(d.documentId);
+      }
+      // REV-35 (P36): the open work packages' owners, told as
+      // supersedeDocument tells them (the same producer; it never throws).
+      if (kind.action === "SUPERSEDE_DOC" && d.alreadyRetired !== true) {
+        try {
+          // Loaded once and shared, so the rows' concurrent duties wait on one load.
+          postPublishLoad ??= import("@/lib/postPublish").catch((e) => { postPublishLoad = null; throw e; });
+          const { notifyPackagesOfRetirement } = await postPublishLoad;
+          await notifyPackagesOfRetirement({
+            orgId: input.orgId, documentId: d.documentId, docLabel: d.label || "document",
+            newStatus: "Superseded", actorUserId: input.actorUserId, actorName: input.actorEmail || input.actorUserId,
+          });
+        } catch (e) {
+          mine.push(`its open work packages' owners could not be told (${(e as Error)?.message ?? String(e)})`);
+        }
       }
       // REV-34 (c) (P34): DIST-4 — a superseded document's pending
       // confirmations no longer bind; close them through
@@ -2551,9 +2585,15 @@ export async function finishRetirementDuties(input: {
   const order = new Map(input.docs.map((d, i) => [d.documentId, i]));
   problems.sort((a, b) => (order.get(a.documentId) ?? 0) - (order.get(b.documentId) ?? 0));
   acksClosed.sort((a, b) => (order.get(a.documentId) ?? 0) - (order.get(b.documentId) ?? 0));
-  // `acksClosed` only when an ack was closed: a result that closed none is
-  // exactly what it was before (P28 / P31 callers and their pins).
-  return acksClosed.length > 0 ? { problems, acksClosed } : { problems };
+  holdersTold.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+  // `acksClosed` only when an ack was closed, `holdersTold` (REV-35, P36)
+  // only when a holder was told: a result with neither is exactly what it
+  // was before (P28 / P31 callers and their pins).
+  return {
+    problems,
+    ...(acksClosed.length > 0 ? { acksClosed } : {}),
+    ...(holdersTold.length > 0 ? { holdersTold } : {}),
+  };
 }
 
 // ─── REV-23 (P19): the stamped put-back's recorded door ─────────────────────
@@ -2695,6 +2735,82 @@ export async function putBackRetiredIssue(input: {
   if (data === "restored" || data === "restored_over_hold") return { kind: "landed", recorded: data === "restored_over_hold" };
   if (data === "no_match") return { kind: "refused", reason: "the write was refused", noRow: true };
   return { kind: "refused", reason: `the database answered ${JSON.stringify(data ?? null)}` };
+}
+
+// ─── REV-36 (document-control P36): the single doors' recorded pass ─────────
+// 20261253 refuses, at the database, a write changing a document's status
+// into Superseded or Void while a hold is active — Document
+// Control included — unless the transaction-local flag a recording function
+// sets names it. The single doors that DO take a held document into
+// Superseded for Document Control — a split's or merge's supersession of a
+// held source (lib/documentLifecycle/common.ts markSupersededAndLink) and a
+// reversal's park of a held sheet (lib/documentLifecycle/reverse.ts
+// parkAsSuperseded), each only after Document Control's explicit "Proceed
+// over the active hold" (HLD-2's `force`) — therefore write it through
+// retire_over_hold (SECURITY INVOKER: the same write, run as the caller under
+// their row-level policies and the guard), which sets the flag around its own
+// write and records REV_HOLD_OVERRIDDEN in the same transaction. Each caller
+// keeps its own direct write for a database without the function (PGRST202 /
+// 42883), byte for byte as before — the guard before 20261253 admits it for a
+// controller, as today.
+
+/** Which door is retiring the document over the hold — retire_over_hold's
+ *  p_via, and the write it makes (a split / merge source carries the MOC
+ *  column; a reversal's park does not write it). */
+export type RetireOverHoldDoor = "split" | "merge" | "reversal_park";
+
+/** What retire_over_hold answered: `landed` (`recorded` when it was Document
+ *  Control's recorded pass over a hold — superseded_over_hold), `refused`
+ *  (the guard's or the policies' refusal, an unknown answer, or — `noRow` — a
+ *  write that matched no row the caller may change), or `absent` (the
+ *  database predates 20261253: the caller makes its own direct write, as
+ *  before). */
+export type RetireOverHoldOutcome =
+  | { kind: "landed"; recorded: boolean }
+  | { kind: "refused"; reason: string; noRow?: boolean }
+  | { kind: "absent" };
+
+/** REV-36 (P36): PostgREST's answer for retire_over_hold before 20261253
+ *  (PGRST202 — its schema cache — or Postgres' undefined_function). */
+export function isMissingRetireOverHoldRpc(e: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  if (!e) return false;
+  const code = String(e.code ?? "");
+  return code === "PGRST202" || code === "42883"
+    || /could not find the function|function .*retire_over_hold.* does not exist/i.test(e.message ?? "");
+}
+
+/** REV-36 (P36): take a held document into Superseded through
+ *  retire_over_hold — the write the door would make (`at` is its updated_at /
+ *  superseded_at; `supersessionMoc` the MOC column a split / merge writes),
+ *  recorded when Document Control is retiring a document under an active
+ *  hold. Called only when Document Control chose to proceed over the hold
+ *  (the door's `force`): an override over a hold is chosen, never implied.
+ *  Never throws: the caller turns `refused` into its own refusal and makes
+ *  its direct write on `absent`. */
+export async function retireOverHold(input: {
+  documentId: string;
+  door: RetireOverHoldDoor;
+  reason: string;
+  at: string;
+  supersessionMoc?: string | null;
+}): Promise<RetireOverHoldOutcome> {
+  try {
+    const { data, error } = await supabase.rpc("retire_over_hold", {
+      p_document_id: input.documentId,
+      p_via: input.door,
+      p_reason: input.reason,
+      p_at: input.at,
+      p_supersession_moc: input.door === "reversal_park" ? null : (input.supersessionMoc ?? null),
+    });
+    if (error) {
+      return isMissingRetireOverHoldRpc(error) ? { kind: "absent" } : { kind: "refused", reason: error.message || "the supersession was refused" };
+    }
+    if (data === "superseded" || data === "superseded_over_hold") return { kind: "landed", recorded: data === "superseded_over_hold" };
+    if (data === "no_match") return { kind: "refused", reason: "the write was refused", noRow: true };
+    return { kind: "refused", reason: `the database answered ${JSON.stringify(data ?? null)}` };
+  } catch (e) {
+    return { kind: "refused", reason: (e as Error)?.message || String(e) };
+  }
 }
 
 /** OWN-15: the statuses an unarchive may restore to — never an arbitrary
@@ -3346,12 +3462,36 @@ export async function changeDocumentStatus(input: {
    *  the caller to run the retirement's duties. Omitted, the outcome is
    *  exactly what it was. */
   reportRetirement?: boolean;
+  /** REV-36 (3) (document-control P36): the row's status as the CALLER read it
+   *  just before this write — the read its pre-write gates decided from (the
+   *  metadata save's) — given for a write INTO a retired status only. Given,
+   *  this function makes no read of its own: whether the write RETIRES the
+   *  document (the recall) and whether it RETIRED it (`retired`, the duties)
+   *  are decided from that same one read, so a status changed between two
+   *  reads can no longer run the duties of a retirement the gates never saw.
+   *  `readFailed`: the caller's read failed (after its own retry) — the prior
+   *  is unknown, which recalls (P28's fail-safe), exactly as this function's
+   *  own failed read does. Omitted (every other caller), as before. */
+  prior?: { fromStatus: string | null; readFailed: boolean };
+  /** REV-35 (document-control P36): whether the checkout holder was told of
+   *  this retirement personally — the caller's retirement duties' answer
+   *  (finishRetirementDuties' `holdersTold`), which arrives after this write.
+   *  The recall's watchers' FYI (lib/staleCopies.ts) waits for it and leaves
+   *  the holder out only when it resolves true; omitted, the holder stays in
+   *  the FYI audience, as before. */
+  checkoutHolderTold?: PromiseLike<boolean>;
 }): Promise<StatusIssueOutcome> {
-  let before = await readStatusIssueBasis(input.documentId, undefined, input.toStatus);
-  // P28 second fix pass: the caller's held status is a possibly stale copy,
-  // so the database row is asked once more before it is leaned on.
-  if (before.readFailed === true && input.heldStatus !== undefined) {
+  let before: StatusIssueBasis;
+  if (input.prior !== undefined && isRetiredStatus(input.toStatus)) {
+    // REV-36 (3) (P36): the caller's one read — none of our own.
+    before = { fromStatus: input.prior.fromStatus, versionId: null, rev: null, putBack: null, entryIntoForce: false, ...(input.prior.readFailed ? { readFailed: true } : {}) };
+  } else {
     before = await readStatusIssueBasis(input.documentId, undefined, input.toStatus);
+    // P28 second fix pass: the caller's held status is a possibly stale copy,
+    // so the database row is asked once more before it is leaned on.
+    if (before.readFailed === true && input.heldStatus !== undefined) {
+      before = await readStatusIssueBasis(input.documentId, undefined, input.toStatus);
+    }
   }
   const now = new Date().toISOString();
   // REV-19 (a) (P23): a write to an issue status names its door to the
@@ -3402,7 +3542,9 @@ export async function changeDocumentStatus(input: {
       orgId: input.orgId, documentId: input.documentId,
       newStatus: input.toStatus.trim(), replacementNote: null,
       actorUserId: input.actorUserId, actorName: input.actorEmail || input.actorUserId,
-      personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
+      // REV-35 (P36): the holder told personally by the caller's duties is
+      // left out of the watchers' FYI (the answer, when the caller has one).
+      personallyToldElsewhere: { checkoutHolder: input.checkoutHolderTold ?? false, packageOwners: false },
       recallCopyHolders: recallsCopyHolders(before.fromStatus),
       retiredFrom: before.readFailed === true ? null : (before.fromStatus ?? null),
     });
@@ -3740,9 +3882,13 @@ export type StatusEditorRetirementGate = {
  *     words unchanged). Then the hold: an active hold refuses, for EVERY role
  *     — supersedeDocument's authorizePublish refuses a hold unless a
  *     controller passes force, and the Supersede dialog never passes one;
- *     the database cannot stand in for this, because the newest publish
- *     guard (20261245) returns for a controller BEFORE its hold check, and
- *     the bulk editor is shown only to controllers (P34 review fix). Publish
+ *     the database could not stand in for this, because the publish guard
+ *     up to 20261245 returns for a controller BEFORE its hold check, and
+ *     the bulk editor is shown only to controllers (P34 review fix). Since
+ *     20261253 (REV-36, P36) the guard refuses that write too, a controller
+ *     included, unless it is a recorded pass (retire_over_hold) — the
+ *     backstop for a hold opened after this read; this gate still words the
+ *     refusal. Publish
  *     authority is NOT asked here: the database's publish guard refuses a
  *     non-controller's Superseded write without the publisher tier, and a
  *     controller holds it — so a non-drawing, unlocked, unheld row writes
