@@ -36,6 +36,7 @@ import {
   AUDIT_RESOURCE_TYPES, auditActionFilterOptions, auditActorNote, isDestructiveAuditAction,
   pairTicketAttempts, prettyAuditAction, auditRowLabel, ticketAttemptNote, DESTRUCTIVE_AUDIT_ACTIONS, type TicketAttemptOutcome,
 } from "@/lib/auditActions";
+import { alreadyRetiredStatus } from "@/lib/timeline";
 import {
   applyAuditFilters, buildAuditCsv, fetchAuditRowsForExport, filterByLibrary, AUDIT_EXPORT_ROW_CEILING, AUDIT_CSV_LINES_BEFORE_HEADER,
   type AuditQuery, type AuditRange,
@@ -114,6 +115,13 @@ const ACTION_STYLE: Record<string, { icon: React.ComponentType<{ className?: str
   DATA_EXPORT:           { icon: Download,      tone: "bg-sky-50 text-sky-700 border-sky-200" },
   WORKSPACE_SELF_HEAL:   { icon: ArrowUpRight,  tone: "bg-amber-50 text-amber-700 border-amber-200" },
 };
+
+// REV-34 (d) (P34 final fix pass): a SUPERSEDE_DOC / ARCHIVE_DOC / VOID_DOC
+// with `alreadyRetired: true` made no retirement (a bulk door re-ran the
+// steps), so its chip is neutral, never the retirement's — as the activity
+// feed and the document timeline show it.
+const ALREADY_RETIRED_STYLE: { icon: React.ComponentType<{ className?: string }>; tone: string } =
+  { icon: RefreshCw, tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" };
 
 const RESOURCE_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   document: FileText,
@@ -467,7 +475,7 @@ interface AuditRowItemProps {
   namesAttempt?: string;
 }
 function AuditRowItem({ row, docMeta, attempt, namesAttempt }: AuditRowItemProps) {
-  const style = ACTION_STYLE[row.action] ?? { icon: ScrollText, tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" };
+  const style = alreadyRetiredStatus(row.action, row.details) ? ALREADY_RETIRED_STYLE : ACTION_STYLE[row.action] ?? { icon: ScrollText, tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" };
   const ResIcon = RESOURCE_ICON[row.resourceType] ?? FileText;
   const Icon = style.icon;
 

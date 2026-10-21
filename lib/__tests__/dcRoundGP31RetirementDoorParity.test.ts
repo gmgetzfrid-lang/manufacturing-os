@@ -47,7 +47,12 @@ vi.mock("@/lib/reviewCycles", () => ({ onDocumentIssued: vi.fn(async () => {}) }
 vi.mock("@/lib/acknowledgments", () => ({ onDocumentIssuedAck: vi.fn(async () => {}) }));
 vi.mock("@/lib/retention", () => ({ recomputeRetention: vi.fn(async () => {}) }));
 vi.mock("@/lib/staleCopies", () => ({ recallRetiredDocument: vi.fn(async () => 0), withdrawRetirementRecall: vi.fn(async () => 0) }));
-vi.mock("@/lib/distributionAcks", () => ({ closeStaleAcksForDocument: vi.fn(async () => {}) }));
+// P34 final fix pass: finishRetirementDuties closes a superseded row's acks through
+// closeStaleAcksForDocumentChecked — the real statement, against this file's database.
+vi.mock("@/lib/distributionAcks", async (importOriginal) => ({
+  closeStaleAcksForDocument: vi.fn(async () => {}),
+  closeStaleAcksForDocumentChecked: (await importOriginal<typeof import("@/lib/distributionAcks")>()).closeStaleAcksForDocumentChecked,
+}));
 vi.mock("@/lib/docClass", () => ({ effectiveDocClassForDocument: vi.fn(async () => null) }));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async (p: Record<string, unknown>) => { state.emits.push(p); }) }));
 vi.mock("@/lib/reviewControl", async (importOriginal) => {

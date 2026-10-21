@@ -162,8 +162,12 @@
 // guard lets a controller through before its hold check — P34 review fix).
 // A row that fails a gate is refused and named, nothing written for it; a
 // non-drawing, unlocked, unheld row writes exactly as before. The MOC
-// recorded on a row's SUPERSEDE_DOC is the one its gate accepted — none on a
-// row already Superseded, whose supersession this apply did not make. After the apply, finishRetirementDuties also closes each
+// recorded on a row's SUPERSEDE_DOC is the one its gate accepted, and only
+// on a row whose effective class is drawing (P34 final fix pass: a
+// non-drawing row records `mocReference: null`, as before P34) — none on a
+// row already Superseded, whose supersession this apply did not make. One
+// MOC per apply is a ruled simplification (DEC-90: an apply is one change;
+// sheets under a different MOC are a separate apply). After the apply, finishRetirementDuties also closes each
 // superseded row's pending acknowledgment requests (checked) and sends the
 // checkout holder's notice. And every bulk retirement now runs the duties for
 // a row ALREADY in the status written — a change to Superseded too, as
@@ -487,10 +491,11 @@ export default function BulkEditModal({
             ...(alreadyRetired
               ? { alreadyRetired: true }
               : { retiredFrom: known ? (priorStatusOf.get(doc.id) ?? null) : null, ...(known ? {} : { priorStatusUnknown: true }) }),
-            // REV-33 / REV-34 (c) (P34): the MOC this row's gate accepted (P34
-            // review fix: never on a row already Superseded — no gate ran, and
-            // this apply did not supersede it), and the checkout holder the
-            // gate read (told after the write).
+            // REV-33 / REV-34 (c) (P34): the MOC this row's gate accepted —
+            // only on a drawing-class row (P34 final fix pass: a non-drawing
+            // row's gate answers null), never on a row already Superseded (no
+            // gate ran, and this apply did not supersede it) — and the
+            // checkout holder the gate read (told after the write).
             ...(superseding ? { mocReference: gate?.mocReference ?? null, checkoutHolder: gate?.preState ?? null, libraryId: library.id ?? null } : {}),
           });
         }
@@ -639,7 +644,7 @@ export default function BulkEditModal({
                 placeholder="MOC-2026-0142 (required for drawing-class documents)"
                 disabled={busy}
               />
-              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">A drawing-class document is superseded only with its MOC reference (PSM, OSHA 1910.119(l)) — without one, each such row is refused and nothing is written for it. The reference is recorded on each superseded document&apos;s history. A row someone else has checked out is superseded over their checkout with the reason above, and they are told. A row under an active hold is not superseded.</div>
+              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">A drawing-class document is superseded only with its MOC reference (PSM, OSHA 1910.119(l)) — without one, each such row is refused and nothing is written for it. The one reference is recorded on every drawing-class document this apply supersedes — if the sheets belong to different MOCs, split the apply. A row someone else has checked out is superseded over their checkout with the reason above, and they are told. A row under an active hold is not superseded.</div>
             </div>
           )}
 

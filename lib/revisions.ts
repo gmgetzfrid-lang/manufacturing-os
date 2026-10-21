@@ -2365,6 +2365,10 @@ export async function finishBulkArchive(input: {
 
 // ─── REV-31 (document-control P31 RETIREMENT DOOR PARITY) ────────────────────
 
+/** REV-34 (c) (P34 final fix pass): a superseded row whose pending
+ *  distribution acknowledgments finishRetirementDuties closed, and how many. */
+export type RetirementAcksClosed = { documentId: string; label: string; closed: number };
+
 /** The door a retirement's duties ran for (the record's `via`). */
 export type RetirementDutyDoor = "bulk_archive" | "bulk_edit" | "metadata";
 
@@ -2407,11 +2411,14 @@ export type RetirementDutyDoor = "bulk_archive" | "bulk_edit" | "metadata";
  *  after its write —
  *   - a Superseded row's pending distribution acknowledgments are closed
  *     (DIST-4: `superseded_at` stamped on every pending ack of the document,
- *     closeStaleAcksForDocument's statement with the current version null)
- *     — checked: a refusal is returned against the row (a database before
- *     the column, 42703 / PGRST204, has nothing to close: today's path).
- *     Run for an already-Superseded row too (fail-safe, like the link
- *     revocation: acks an older door left open are closed);
+ *     through lib/distributionAcks.ts closeStaleAcksForDocumentChecked — the
+ *     one statement closeStaleAcksForDocument runs — with the current
+ *     version null): a refusal is returned against the row in `problems`
+ *     (a database before the column, 42703 / PGRST204, has nothing to
+ *     close: today's path, nothing said); a closure that stamped acks is
+ *     returned in `acksClosed` with its count (the key is absent when no
+ *     ack was closed). Run for an already-Superseded row too (fail-safe,
+ *     like the link revocation: acks an older door left open are closed);
  *   - the checkout holder's notice (notifyHolderOfRetirement, the existing
  *     revision_published_over_checkout kind, with the reason) for a row the
  *     door's gate found checked out by someone else (`checkoutHolder`, from
@@ -2436,8 +2443,9 @@ export async function finishRetirementDuties(input: {
     /** The library, for the holder's notice link. */
     libraryId?: string | null;
   }>;
-}): Promise<{ problems: BulkArchiveProblem[] }> {
+}): Promise<{ problems: BulkArchiveProblem[]; acksClosed?: RetirementAcksClosed[] }> {
   const problems: BulkArchiveProblem[] = [];
+  const acksClosed: RetirementAcksClosed[] = [];
   const reason = input.reason.trim();
   const to = input.toStatus.trim();
   const kind = to === "Archived" ? { action: "ARCHIVE_DOC", noun: "archive" }
@@ -2515,19 +2523,18 @@ export async function finishRetirementDuties(input: {
         }));
       }
       // REV-34 (c) (P34): DIST-4 — a superseded document's pending
-      // confirmations no longer bind; close them, checked.
+      // confirmations no longer bind; close them through
+      // closeStaleAcksForDocument's own statement (its checked variant, the
+      // current version null). A refusal is returned against the row; a
+      // closure that stamped acks is returned in `acksClosed` with its count.
       if (kind.action === "SUPERSEDE_DOC") {
-        const { data: closedAcks, error: ackErr } = await supabase
-          .from("distribution_acks")
-          .update({ superseded_at: new Date().toISOString() })
-          .eq("document_id", d.documentId)
-          .is("acknowledged_at", null)
-          .is("superseded_at", null)
-          .select("id");
-        if (ackErr && !isMissingSchemaError(ackErr)) {
-          mine.push(`its pending acknowledgment requests could not be closed (${ackErr.message}), so they still read as open`);
-        } else if (!ackErr && ((closedAcks as unknown[] | null) ?? []).length > 0) {
-          console.info(`[retire] DIST-4: ${((closedAcks as unknown[] | null) ?? []).length} pending acknowledgment request(s) of ${d.documentId} closed by the ${input.via} supersession`);
+        const { closeStaleAcksForDocumentChecked } = await import("@/lib/distributionAcks");
+        const acks = await closeStaleAcksForDocumentChecked(d.documentId, null);
+        if (acks.error && !isMissingSchemaError(acks.error)) {
+          mine.push(`its pending acknowledgment requests could not be closed (${acks.error.message}), so they still read as open`);
+        } else if (!acks.error && acks.closed > 0) {
+          acksClosed.push({ documentId: d.documentId, label: d.label, closed: acks.closed });
+          console.info(`[retire] DIST-4: ${acks.closed} pending acknowledgment request(s) of ${d.documentId} closed by the ${input.via} supersession`);
         }
       }
     } catch (e) {
@@ -2543,7 +2550,10 @@ export async function finishRetirementDuties(input: {
   await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
   const order = new Map(input.docs.map((d, i) => [d.documentId, i]));
   problems.sort((a, b) => (order.get(a.documentId) ?? 0) - (order.get(b.documentId) ?? 0));
-  return { problems };
+  acksClosed.sort((a, b) => (order.get(a.documentId) ?? 0) - (order.get(b.documentId) ?? 0));
+  // `acksClosed` only when an ack was closed: a result that closed none is
+  // exactly what it was before (P28 / P31 callers and their pins).
+  return acksClosed.length > 0 ? { problems, acksClosed } : { problems };
 }
 
 // ─── REV-23 (P19): the stamped put-back's recorded door ─────────────────────
@@ -3671,20 +3681,25 @@ export function isSupersessionMocRequired(e: unknown): boolean {
  *  whose effective class is drawing is superseded only with an MOC reference
  *  of at least three characters; a class that cannot be resolved (a database
  *  before the class columns, a failed read) does not block — the database
- *  rail model, as it always was. */
+ *  rail model, as it always was. Answers whether the document's effective
+ *  class was read as drawing (false for any other class and for one that
+ *  could not be resolved) — supersedeDocument ignores the answer; a status
+ *  editor's gate records its MOC only on a drawing row (P34 final fix pass). */
 export async function assertSupersessionMoc(
   doc: { id: string; collectionId?: string | null; libraryId?: string | null },
   mocReference: string | null | undefined,
-): Promise<void> {
+): Promise<boolean> {
   try {
     const { effectiveDocClassForDocument } = await import("@/lib/docClass");
     const cls = await effectiveDocClassForDocument({
       id: doc.id, collectionId: doc.collectionId ?? null, libraryId: doc.libraryId ?? null,
     });
     if (cls === "drawing" && (mocReference?.trim().length ?? 0) < 3) throw new SupersessionMocRequiredError();
+    return cls === "drawing";
   } catch (e) {
     if (isSupersessionMocRequired(e)) throw e;
     /* class unresolvable — do not block */
+    return false;
   }
 }
 
@@ -3703,7 +3718,8 @@ export class RetirementOverrideReasonRequiredError extends Error {
 
 /** What a status editor's retirement gate found: the lock state it read (the
  *  checkout holder, for the holder's notice after the write — REV-34 (c)) and
- *  the MOC reference it accepted (for the SUPERSEDE_DOC record). */
+ *  the MOC reference it accepted (for the SUPERSEDE_DOC record — null on a
+ *  row whose effective class is not drawing, P34 final fix pass). */
 export type StatusEditorRetirementGate = {
   preState: PublishGuardState | null;
   mocReference: string | null;
@@ -3768,7 +3784,7 @@ export async function gateStatusEditorRetirement(input: {
   const reason = input.reason?.trim() || null;
   const moc = input.mocReference?.trim() || null;
   if (to === "Superseded") {
-    await assertSupersessionMoc({ id: input.documentId, collectionId: input.collectionId ?? null, libraryId: input.libraryId }, moc);
+    const drawing = await assertSupersessionMoc({ id: input.documentId, collectionId: input.collectionId ?? null, libraryId: input.libraryId }, moc);
     // The lock AND the holds, read fresh in one call as authorizePublish
     // reads them; either read failing refuses (fail-closed).
     let preState: PublishGuardState;
@@ -3789,7 +3805,11 @@ export async function gateStatusEditorRetirement(input: {
         message: `This document has an active ${holdWord} (${reasons}). ${await statusEditorHoldSentence("superseded", { uid: input.actorUserId, orgId: input.orgId, role: input.actorRole })}`,
       });
     }
-    return { preState, mocReference: moc };
+    // P34 final fix pass: the MOC is recorded only on a drawing-class row —
+    // the rule asks it of no other, so a non-drawing (or unresolvable) row
+    // records `mocReference: null`, as before P34. One MOC per apply is a
+    // ruled simplification (DEC-90: an apply is one change).
+    return { preState, mocReference: drawing ? moc : null };
   }
   if (to === "Void") {
     try {

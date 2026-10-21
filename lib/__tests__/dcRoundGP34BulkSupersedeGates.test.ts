@@ -52,7 +52,12 @@ vi.mock("@/lib/staleCopies", () => ({
   withdrawRetirementRecall: vi.fn(async () => 0), withdrawRetirementBatch: vi.fn(async () => 0),
 }));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async () => {}) }));
-vi.mock("@/lib/distributionAcks", () => ({ closeStaleAcksForDocument: vi.fn(async () => 0) }));
+// P34 final fix pass: finishRetirementDuties closes a superseded row's acks through
+// closeStaleAcksForDocumentChecked — the real statement, against this file's database.
+vi.mock("@/lib/distributionAcks", async (importOriginal) => ({
+  closeStaleAcksForDocument: vi.fn(async () => 0),
+  closeStaleAcksForDocumentChecked: (await importOriginal<typeof import("@/lib/distributionAcks")>()).closeStaleAcksForDocumentChecked,
+}));
 vi.mock("@/lib/docClass", () => ({ effectiveDocClassForDocument: vi.fn(async (d: { id?: string | null }) => state.cls[String(d.id)] ?? null) }));
 vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({ uid: "ctl1", userEmail: "cara@example.com", activeRole: "DocCtrl" }) }));
 vi.mock("@/lib/reviewControl", async (importOriginal) => {
@@ -165,16 +170,29 @@ describe("REV-33 (P34) — the bulk editor's Superseded takes supersedeDocument'
     expect(batch.mock.calls[0][0].docs.map((x) => x.documentId)).toEqual(["p1"]);
   });
 
-  it("with the MOC typed: the drawing-class row is written as before and its SUPERSEDE_DOC carries the reference (as does every row the apply superseded)", async () => {
+  it("with the MOC typed: the drawing-class row is written as before and its SUPERSEDE_DOC carries the reference; the non-drawing rows (a procedure, an unresolvable class) record mocReference: null exactly as before (P34 final fix pass)", async () => {
     const dwg = seedDoc("d2"); state.cls.d2 = "drawing";
     const txt = seedDoc("p2");
-    await apply([asRecord(dwg), asRecord(txt)], "Superseded", { moc: " MOC-2026-0142 " });
-    expect(host.textContent).toMatch(/Applied to 2 documents\./);
+    const proc = seedDoc("q2"); state.cls.q2 = "procedure";
+    await apply([asRecord(dwg), asRecord(txt), asRecord(proc)], "Superseded", { moc: " MOC-2026-0142 " });
+    expect(host.textContent).toMatch(/Applied to 3 documents\./);
     expect(host.querySelector('[data-testid="bulk-refused-rows"]')).toBeNull();
     for (const w of statusWrites()) expect(Object.keys(w.args[0] as Row).sort()).toEqual(["status", "uniqueness_key", "updated_at", "updated_by"]);
     expect(rec("d2")).toMatchObject({ mocReference: "MOC-2026-0142", retiredFrom: "Issued" });
-    expect(rec("p2")).toMatchObject({ mocReference: "MOC-2026-0142" });
+    // REGRESSION (pin): a non-drawing row records no MOC, as before P34 — the typed one is the drawing rows'
+    expect(rec("p2")).toMatchObject({ mocReference: null, retiredFrom: "Issued" });
+    expect(rec("q2")).toMatchObject({ mocReference: null, retiredFrom: "Issued" });
     expect(docRow("d2")).not.toHaveProperty("supersession_moc");
+  });
+
+  it("P34 final fix pass — the MOC field's help says the one reference goes on every drawing-class row of this apply, and to split the apply for sheets under different MOCs", async () => {
+    const dwg = seedDoc("d3"); state.cls.d3 = "drawing";
+    await act(async () => {
+      root.render(React.createElement(BulkEditModal, { isOpen: true, onClose: () => {}, docs: [asRecord(dwg)], library: LIB, actorUserId: ME, onApplied: () => {} }));
+    });
+    await act(async () => setValue(labelled("New value"), "Superseded"));
+    expect(host.textContent).not.toContain("recorded on each superseded document");
+    expect(host.textContent).toContain("The one reference is recorded on every drawing-class document this apply supersedes — if the sheets belong to different MOCs, split the apply.");
   });
 
   it("a row someone else has checked out is superseded over their checkout with the reason: written, the holder told (the existing kind, with the reason), its pending acks closed", async () => {
@@ -220,8 +238,8 @@ describe("REV-33 (P34) — the bulk editor's Superseded takes supersedeDocument'
   });
 
   it("P34 review fix — the MOC typed for this apply is NOT written onto a row already Superseded (no gate ran; this apply did not supersede it); the row it did supersede carries it", async () => {
-    const old = seedDoc("o1", { status: "Superseded" });
-    const now = seedDoc("o2");
+    const old = seedDoc("o1", { status: "Superseded" }); state.cls.o1 = "drawing";
+    const now = seedDoc("o2"); state.cls.o2 = "drawing";
     await apply([asRecord(old), asRecord(now)], "Superseded", { moc: "MOC-2026-0142" });
     expect(rec("o1")).toMatchObject({ alreadyRetired: true, mocReference: null });
     expect(rec("o2")).toMatchObject({ retiredFrom: "Issued", mocReference: "MOC-2026-0142" });

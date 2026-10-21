@@ -52,7 +52,12 @@ vi.mock("@/lib/reviewCycles", () => ({ onDocumentIssued: vi.fn(async () => {}) }
 vi.mock("@/lib/acknowledgments", () => ({ onDocumentIssuedAck: vi.fn(async () => {}) }));
 vi.mock("@/lib/retention", () => ({ recomputeRetention: vi.fn(async () => {}) }));
 vi.mock("@/lib/staleCopies", () => ({ recallRetiredDocument: vi.fn(async () => 0), withdrawRetirementRecall: vi.fn(async () => 0) }));
-vi.mock("@/lib/distributionAcks", () => ({ closeStaleAcksForDocument: vi.fn(async () => 0) }));
+// P34 final fix pass: finishRetirementDuties closes a superseded row's acks through
+// closeStaleAcksForDocumentChecked — the real statement, against this file's database.
+vi.mock("@/lib/distributionAcks", async (importOriginal) => ({
+  closeStaleAcksForDocument: vi.fn(async () => 0),
+  closeStaleAcksForDocumentChecked: (await importOriginal<typeof import("@/lib/distributionAcks")>()).closeStaleAcksForDocumentChecked,
+}));
 vi.mock("@/lib/docClass", () => ({ effectiveDocClassForDocument: vi.fn(async (d: { id?: string | null }) => state.cls[String(d.id)] ?? null) }));
 vi.mock("@/lib/ownership", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/ownership")>()),
@@ -241,7 +246,8 @@ describe("REV-34 (c) / REV-33 — finishRetirementDuties: the MOC on the record,
       orgId: ORG, actorUserId: ME, actorEmail: "cara@x", toStatus: "Superseded", reason: "Replaced", via: "metadata",
       docs: [{ documentId: "c1", label: "C1", retiredFrom: "Issued", mocReference: " MOC-7 ", checkoutHolder: { checkedOutBy: OTHER, checkedOutByName: "Eli" }, libraryId: "lib1" }],
     });
-    expect(out).toEqual({ problems: [] });
+    // P34 final fix pass: the closure is in the result, with its count — not only the console
+    expect(out).toEqual({ problems: [], acksClosed: [{ documentId: "c1", label: "C1", closed: 1 }] });
     expect(audit("SUPERSEDE_DOC")[0].details).toMatchObject({ mocReference: "MOC-7", reason: "Replaced", retiredFrom: "Issued" });
     expect(T("distribution_acks").find((a) => a.id === "ak1")!.superseded_at).toBeTruthy();
     expect(T("distribution_acks").find((a) => a.id === "ak2")!.superseded_at).toBeNull();

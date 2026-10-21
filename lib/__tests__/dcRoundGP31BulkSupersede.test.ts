@@ -60,7 +60,12 @@ vi.mock("@/lib/staleCopies", async () => {
   };
 });
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async (p: Record<string, unknown>) => { state.emits.push(p); }) }));
-vi.mock("@/lib/distributionAcks", () => ({ closeStaleAcksForDocument: vi.fn(async () => {}) }));
+// P34 final fix pass: finishRetirementDuties closes a superseded row's acks through
+// closeStaleAcksForDocumentChecked — the real statement, against this file's database.
+vi.mock("@/lib/distributionAcks", async (importOriginal) => ({
+  closeStaleAcksForDocument: vi.fn(async () => {}),
+  closeStaleAcksForDocumentChecked: (await importOriginal<typeof import("@/lib/distributionAcks")>()).closeStaleAcksForDocumentChecked,
+}));
 vi.mock("@/lib/docClass", () => ({ effectiveDocClassForDocument: vi.fn(async () => null) }));
 vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({ uid: "ctl1", userEmail: "cara@example.com", activeRole: "DocCtrl" }) }));
 vi.mock("@/lib/reviewControl", async (importOriginal) => {
