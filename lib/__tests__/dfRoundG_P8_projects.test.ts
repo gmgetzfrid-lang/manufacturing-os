@@ -132,6 +132,17 @@ describe("20261256 — DEC-30 one paste; the guard; ticket_update_guard untouche
     expect(body).toMatch(/pg_trigger_depth\(\) > 1 AND NEW\.project_id IS NULL\s+AND NOT EXISTS \(SELECT 1 FROM projects p WHERE p\.id = OLD\.project_id\)/);
     expect(sql).toMatch(/CREATE TRIGGER trg_ticket_project_guard\s+BEFORE INSERT OR UPDATE ON tickets/);
   });
+  it("fix pass 4 (review, minor): checkout_sessions.linked_ticket_id is re-created ON DELETE SET NULL inside the transaction (every non-SET-NULL key on the column dropped by catalog, whatever its name; re-runnable), and a seventh probe says so", () => {
+    const body = sql.slice(sql.indexOf("\nBEGIN;"), sql.indexOf("\nCOMMIT;"));
+    expect(body).toContain("-- ── 4. checkout_sessions.linked_ticket_id → tickets(id) ON DELETE SET NULL");
+    expect(body).toMatch(/c\.conrelid = 'public\.checkout_sessions'::regclass\s+AND c\.confrelid = 'public\.tickets'::regclass AND a\.attname = 'linked_ticket_id'\s+AND c\.confdeltype <> 'n'/);
+    expect(body).toContain("EXECUTE format('ALTER TABLE checkout_sessions DROP CONSTRAINT %I', r.conname);");
+    expect(body).toContain("FOREIGN KEY (linked_ticket_id) REFERENCES tickets(id) ON DELETE SET NULL;");
+    const tail = sql.slice(sql.indexOf("\nCOMMIT;"));
+    expect(tail).toContain("SELECT 1, 7, 'a check-in session''s linked_ticket_id references tickets(id) ON DELETE SET NULL only");
+    expect(tail.match(/^SELECT 1, \d+, /gm)?.length).toBe(6); // probes 2..7 (probe 1 opens the UNION)
+    expect(sql).toContain("-- Probes: ok = true × 7 on a correct paste.");
+  });
   it("ticket_update_guard is NOT re-created here (its newest body stays 20261250's) — so no lineDiff is owed", () => {
     expect(sql).not.toMatch(/FUNCTION\s+ticket_update_guard/);
     const newest = readdirSync(join(process.cwd(), "supabase/migrations")).filter((f) => /^\d{8}_.*\.sql$/.test(f)).sort()
@@ -256,6 +267,29 @@ describe("/api/tickets/project-link — GAP-114 / PROJ-13 / LEAK-4 / EVID-1 / PE
     expect((await projectLink(req({ ticketId: T, projectId: P2 }))).status).toBe(409);
     expect((await projectLink(req({ ticketId: T, projectId: P1 }))).status).toBe(400);
     expect(h.admin.writes).toEqual([]);
+  });
+  it("fix pass 4 (review, minor): an unlink or a move off a project the CALLER cannot see writes no service-role feed row into it (project_activity_insert's project_visible_to_me would refuse the caller's own); the origin pointer naming this request is still cleared; nothing about that project is said to the caller", async () => {
+    seed({ project_id: P1 });
+    (h.admin.tables.projects as Row[])[0].linked_ticket_id = T;
+    h.caller.tables.projects = [{ id: P2, org_id: ORG, name: "Old job", status: "active", linked_ticket_id: null }]; // P1 is private to the caller
+    const res = await projectLink(req({ ticketId: T, projectId: null }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.warning).toBeUndefined();
+    expect(ticket().project_id).toBeNull();
+    expect(activity()).toEqual([]);
+    expect((h.admin.tables.projects as Row[])[0].linked_ticket_id).toBeNull();
+    expect(h.caller.calls.some((c) => c.table === "projects")).toBe(true); // visibility asked AS THE CALLER
+    // a move: the target the caller sees gets its row; the private previous project gets none
+    seed({ project_id: P1 });
+    h.caller.tables.projects = [{ id: P2, org_id: ORG, name: "Old job", status: "active", linked_ticket_id: null }];
+    expect((await projectLink(req({ ticketId: T, projectId: P2 }))).status).toBe(200);
+    expect(activity()).toEqual([expect.objectContaining({ project_id: P2, type: "request_linked" })]);
+    // a visibility read that fails is never a yes
+    seed({ project_id: P1 });
+    h.caller.readError = { projects: { code: "57014", message: "timeout" } };
+    expect((await projectLink(req({ ticketId: T, projectId: null }))).status).toBe(200);
+    expect(activity()).toEqual([]);
   });
   it("unlink: the reference is removed, the request and its documents untouched; the old project's feed is told; PROJ-13 — a project created from this request stops naming it", async () => {
     seed({ project_id: P1 });
@@ -455,7 +489,11 @@ describe("pure helpers", () => {
     const names = { drafter: "Dana", engineer: "Eli", requester: "Rita" };
     expect(requestHolderLabel("PENDING_FINAL_APPROVAL", names)).toBe("Engineer: Eli");
     expect(requestHolderLabel("PENDING_ENG_TEAM", names)).toBe("Engineer: Eli");
-    expect(requestHolderLabel("PENDING_REVIEW", names)).toBe("Engineer: Eli");
+    // fix pass 4 (review, major): PENDING_REVIEW waits on the REQUESTER's review (lib/ticketSla.ts
+    // waitingParty; lib/workflow.ts WF-24), never the engineer
+    expect(requestHolderLabel("PENDING_REVIEW", names)).toBe("Awaiting review from: Rita");
+    expect(requestHolderLabel("PENDING_REVIEW", { drafter: "Dana", engineer: "Eli" })).toBe("Awaiting the requester's review");
+    expect(requestHolderLabel("PENDING_REVIEW", names, {})).toBe("Awaiting review from: Rita");
     expect(requestHolderLabel("DRAFTING", names)).toBe("Drafter: Dana");
     expect(requestHolderLabel("REVISION_REQ", names)).toBe("Drafter: Dana");
     expect(requestHolderLabel("PENDING_IFC", names)).toBe("Drafter: Dana");
@@ -471,6 +509,27 @@ describe("pure helpers", () => {
     expect(card).toContain("assigned_engineer_name");
     expect(card).toContain("requestHolderLabel(status,");
     expect(card).not.toMatch(/>with \{r\.holder\}/);
+  });
+  it("fix pass 4 (review, major): a ROUTED review (a current metadata.review_roster) waits on its open blocking slots — never one person; a notify-only or satisfied slot never waits; a closed roster, or a roster outside PENDING_REVIEW, is not current", () => {
+    const names = { drafter: "Dana", engineer: "Eli", requester: "Rita" };
+    const slot = (over: Row) => ({ id: "s", kind: "quality", label: "QA", mode: "blocking", status: "open", primaries: ["u-qa"], alternates: [], ...over });
+    const roster = (slots: Row[], over: Row = {}) => ({ review_roster: { v: 1, openedAt: LM, slots, ...over } });
+    const meta = roster([
+      slot({ id: "a", label: "QA" }),
+      slot({ id: "b", kind: "engineering", label: "Engineering" }),
+      slot({ id: "c", label: "Ops", mode: "notify_only" }),
+      slot({ id: "d", label: "Safety", status: "satisfied" }),
+      slot({ id: "e", kind: "process", label: "" }),
+    ]);
+    expect(requestHolderLabel("PENDING_REVIEW", names, meta)).toBe("Awaiting routed review: QA, Engineering, process");
+    // every blocking slot satisfied (the issue is in flight): the roster, never the requester or the engineer
+    expect(requestHolderLabel("PENDING_REVIEW", names, roster([slot({ status: "satisfied" })]))).toBe("Reviewers (routed review)");
+    // a closed roster is not current — the requester's review again
+    expect(requestHolderLabel("PENDING_REVIEW", names, roster([slot({})], { closedAt: LM }))).toBe("Awaiting review from: Rita");
+    // a roster read outside PENDING_REVIEW is ignored (currentRoster)
+    expect(requestHolderLabel("PENDING_FINAL_APPROVAL", names, meta)).toBe("Engineer: Eli");
+    // the card hands the row's metadata over
+    expect(src("components/projects/ProjectRequestsCard.tsx")).toContain("}, (t.metadata as Record<string, unknown> | null) ?? null),");
   });
   it("projectRefOf: the column first; before the paste (undefined) the intake collision's project as today; a recorded unlink means none", () => {
     expect(projectRefOf({ intake_collision: { projectId: P2 } }, P1)).toBe(P1);

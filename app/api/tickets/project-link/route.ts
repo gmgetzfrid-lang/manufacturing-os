@@ -263,12 +263,23 @@ export async function POST(req: NextRequest) {
     const { error: chipErr } = await supabaseAdmin.from("projects")
       .update({ linked_ticket_id: null }).eq("id", previous.id).eq("linked_ticket_id", t.id).select("id");
     if (chipErr) warnings.push(`The previous project still names this request as its origin: ${chipErr.message}`);
-    const err = await recordProjectActivity(supabaseAdmin, {
-      projectId: previous.id, orgId: t.org_id, userId: caller.id, userName: actorName,
-      type: "request_unlinked", body: `${label} no longer belongs to this project`,
-      metadata: { ticketId: t.id, ticketNumber: t.ticket_id, movedTo: projectId },
-    });
-    if (err) warnings.push(`The previous project's feed was not told: ${err}`);
+    // DF-P8 fix pass 4: the feed row is written as the service role only into
+    // a project the CALLER can see (read as the caller — project_activity_insert's
+    // project_visible_to_me would refuse the caller's own row otherwise). A
+    // requester who unlinks or moves a request off a private project leaves
+    // that project's feed unwritten; the server log says so, the caller is told
+    // nothing about a project they cannot see.
+    const { data: prevVisible, error: prevErr } = await callerClient.from("projects").select("id").eq("id", previous.id).maybeSingle();
+    if (prevErr || !prevVisible) {
+      console.warn(`[project-link] ${t.id}: the previous project ${previous.id} was ${prevErr ? `not readable as the caller (${prevErr.message})` : "not visible to the caller"} — its request_unlinked feed row was not written`);
+    } else {
+      const err = await recordProjectActivity(supabaseAdmin, {
+        projectId: previous.id, orgId: t.org_id, userId: caller.id, userName: actorName,
+        type: "request_unlinked", body: `${label} no longer belongs to this project`,
+        metadata: { ticketId: t.id, ticketNumber: t.ticket_id, movedTo: projectId },
+      });
+      if (err) warnings.push(`The previous project's feed was not told: ${err}`);
+    }
   }
   if (target) {
     const err = await recordProjectActivity(supabaseAdmin, {

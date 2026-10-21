@@ -62,9 +62,9 @@ describe.skipIf(skip !== null)("DF-P8 — tickets.project_id: the reference, its
     o = s2.m;
   });
 
-  it("re-pastes cleanly (DEC-30 one paste); every probe answers true; six inventory rows and one after-row carry counts", () => {
+  it("re-pastes cleanly (DEC-30 one paste); every probe answers true (seven — fix pass 4 adds the checkout session key); six inventory rows and one after-row carry counts", () => {
     const { probes, inventory } = paste(F256);
-    expect(probes.length).toBe(6);
+    expect(probes.length).toBe(7);
     expect(probes.filter((l) => l.endsWith("|f|"))).toEqual([]);
     expect(inventory.length).toBe(7);
   });
@@ -109,6 +109,22 @@ describe.skipIf(skip !== null)("DF-P8 — tickets.project_id: the reference, its
     expect(del).toEqual({ ok: true, rows: 1 });
     expect(pidOf(t)).toBe("");
     expect(admin(db, `SELECT last_modified::text || '|' || status FROM tickets WHERE id = '${t}'`)).toBe(before);
+  });
+
+  it("fix pass 4: a request a check-in session names (linked_ticket_id, stamped by /api/tickets/create) can still be deleted — the key is ON DELETE SET NULL; the session stays with its pointer cleared", () => {
+    const libId = randomUUID();
+    const docId = randomUUID();
+    const sessionId = randomUUID();
+    admin(db, `INSERT INTO libraries (id, org_id, name, type) VALUES ('${libId}', '${orgId}', 'P8 Drawings', 'documents');
+      INSERT INTO documents (id, org_id, library_id, title, status) VALUES ('${docId}', '${orgId}', '${libId}', 'P&ID P8', 'Draft');`);
+    const t = ticket();
+    admin(db, `INSERT INTO checkout_sessions (id, org_id, document_id, library_id, user_id, status) VALUES ('${sessionId}', '${orgId}', '${docId}', '${libId}', '${m.requester.uid}', 'released')`);
+    expect(asCaller(db, SERVICE, `UPDATE checkout_sessions SET linked_ticket_id = '${t}' WHERE id = '${sessionId}' AND linked_ticket_id IS NULL`)).toEqual({ ok: true, rows: 1 });
+    expect(asCaller(db, SERVICE, `DELETE FROM tickets WHERE id = '${t}'`)).toEqual({ ok: true, rows: 1 });
+    expect(admin(db, `SELECT COUNT(*)::text || '|' || COALESCE(MAX(linked_ticket_id::text), '') FROM checkout_sessions WHERE id = '${sessionId}'`)).toBe("1|");
+    // exactly one key on the column, and it is SET NULL
+    expect(admin(db, `SELECT string_agg(c.confdeltype::text, ',') FROM pg_constraint c JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+                      WHERE c.contype = 'f' AND c.conrelid = 'public.checkout_sessions'::regclass AND a.attname = 'linked_ticket_id'`)).toBe("n");
   });
 
   it("DEC-90 ruling (2): the backfill writes only a same-workspace project, never one somebody unlinked, never a non-UUID; last_modified never moves; a re-paste writes nothing new", () => {

@@ -10,14 +10,19 @@
 // exists and cannot open it (lib/ticketProject.ts deliverableReference).
 // Read as the viewer: requests they cannot read are not listed, and the
 // card says nothing about them. Before 20261256 is pasted the column is not
-// there (42703 / PGRST204) and the card renders nothing — today's page.
+// there (42703 / PGRST204 naming project_id — isMissingProjectColumn) and the
+// card renders nothing — today's page; any other refusal is said.
+// DF-P8 fix pass 4: the list reads the newest PROJECT_REQUESTS_LIMIT
+// requests, but the header's open / closed figures are the project's
+// totals (exact counts), never a count of only the rows shown; a total that
+// cannot be read is labelled as the newest-N view it is.
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { ClipboardList, Loader2, ExternalLink, Lock } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { deliverableStateOf } from "@/lib/ticketHandback";
-import { deliverableReference, requestHolderLabel, type DeliverableReference } from "@/lib/ticketProject";
+import { deliverableReference, isMissingProjectColumn, requestHolderLabel, type DeliverableReference } from "@/lib/ticketProject";
 import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { TERMINAL_TICKET_STATUSES } from "@/lib/ticketShed";
@@ -27,7 +32,6 @@ type RequestRow = {
   holder: string | null; open: boolean; deliverable: DeliverableReference;
 };
 
-const MISSING_COLUMN = new Set(["42703", "PGRST204"]);
 /** The newest requests the card reads (the project page is not a queue). */
 export const PROJECT_REQUESTS_LIMIT = 200;
 
@@ -35,20 +39,32 @@ export default function ProjectRequestsCard({ orgId, projectId }: { orgId: strin
   const [rows, setRows] = useState<RequestRow[] | null>(null);
   const [notMigrated, setNotMigrated] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  /** The project's exact totals (null: not read — the header then says it
+   *  counts only the newest requests shown). */
+  const [totals, setTotals] = useState<{ all: number; open: number } | null>(null);
 
   useEffect(() => {
     let alive = true;
     void (async () => {
-      const { data, error } = await supabase.from("tickets")
-        .select("id, ticket_id, title, status, assigned_drafter_name, assigned_engineer_name, requester_name, metadata, created_at")
-        .eq("org_id", orgId).eq("project_id", projectId).is("archived_at", null)
-        .order("created_at", { ascending: false }).limit(PROJECT_REQUESTS_LIMIT);
+      const [listRes, openRes] = await Promise.all([
+        supabase.from("tickets")
+          .select("id, ticket_id, title, status, assigned_drafter_name, assigned_engineer_name, requester_name, metadata, created_at", { count: "exact" })
+          .eq("org_id", orgId).eq("project_id", projectId).is("archived_at", null)
+          .order("created_at", { ascending: false }).limit(PROJECT_REQUESTS_LIMIT),
+        // the project's open requests, counted (never limited to the rows shown)
+        supabase.from("tickets").select("id", { count: "exact", head: true })
+          .eq("org_id", orgId).eq("project_id", projectId).is("archived_at", null)
+          .not("status", "in", `(${TERMINAL_TICKET_STATUSES.join(",")})`),
+      ]);
       if (!alive) return;
+      const { data, error } = listRes;
       if (error) {
-        if (error.code && MISSING_COLUMN.has(error.code)) { setNotMigrated(true); return; }
+        if (isMissingProjectColumn(error)) { setNotMigrated(true); return; }
         setErr("The project's drafting requests could not be read — try again in a moment.");
         return;
       }
+      setTotals(typeof listRes.count === "number" && !openRes.error && typeof openRes.count === "number"
+        ? { all: listRes.count, open: openRes.count } : null);
       const tickets = (data ?? []) as Array<Record<string, unknown>>;
       const states = tickets.map((t) => deliverableStateOf((t.metadata as Record<string, unknown> | null) ?? null));
       const docIds = [...new Set(states.flatMap((s) => (s?.state === "published" && typeof s.document_id === "string" ? [s.document_id] : [])))];
@@ -69,11 +85,12 @@ export default function ProjectRequestsCard({ orgId, projectId }: { orgId: strin
         return {
           id: String(t.id), ticketNumber: (t.ticket_id as string | null) ?? null, title: (t.title as string | null) ?? null, status,
           // DF-P8 fix pass 3: who it waits on follows its status, named by role
+          // (fix pass 4: in review, the requester — or a routed review's open slots)
           holder: requestHolderLabel(status, {
             drafter: (t.assigned_drafter_name as string | null) ?? null,
             engineer: (t.assigned_engineer_name as string | null) ?? null,
             requester: (t.requester_name as string | null) ?? null,
-          }),
+          }, (t.metadata as Record<string, unknown> | null) ?? null),
           open: !(TERMINAL_TICKET_STATUSES as readonly string[]).includes(status),
           deliverable: deliverableReference(s as unknown as Record<string, unknown> | null, docId ? ((docs.get(docId) as Parameters<typeof deliverableReference>[1]) ?? null) : null, NOT_CURRENT_STATUSES),
         };
@@ -83,14 +100,19 @@ export default function ProjectRequestsCard({ orgId, projectId }: { orgId: strin
   }, [orgId, projectId]);
 
   if (notMigrated) return null;
-  const open = (rows ?? []).filter((r) => r.open).length;
+  const shownOpen = (rows ?? []).filter((r) => r.open).length;
+  const truncated = !!rows && rows.length >= PROJECT_REQUESTS_LIMIT;
+  const countText = !rows ? null
+    : totals ? `${totals.open} open · ${Math.max(0, totals.all - totals.open)} closed${truncated ? ` · newest ${rows.length} shown` : ""}`
+      : truncated ? `newest ${rows.length} shown — ${shownOpen} open · ${rows.length - shownOpen} closed of those shown`
+        : `${shownOpen} open · ${rows.length - shownOpen} closed`;
 
   return (
     <div data-testid="project-requests" className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
       <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
         <ClipboardList className="w-4 h-4 text-[var(--color-accent)]" />
         <span className="text-sm font-bold text-[var(--color-text)]">Drafting requests</span>
-        {rows && <span className="text-[10px] font-mono text-[var(--color-text-muted)]">{open} open · {rows.length - open} closed</span>}
+        {countText && <span data-testid="project-requests-count" className="text-[10px] font-mono text-[var(--color-text-muted)]">{countText}</span>}
       </div>
       {err && <div role="alert" className="px-4 py-2 text-[11px] font-bold text-rose-700 dark:text-rose-300 bg-rose-500/[0.07]">{err}</div>}
       {!rows && !err ? (

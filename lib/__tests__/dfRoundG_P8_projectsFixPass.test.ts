@@ -112,6 +112,14 @@ describe("PROJ-6 fix pass — the open-requests gate says when it counted only w
     state.fromCalls = [];
     expect(await gate()).toMatchObject({ ok: null, text: "Drafting requests — could not be read" });
     expect(state.fromCalls).not.toContain("org_members");
+    // fix pass 4 (review, minor): a 42703 / PGRST204 that does NOT name project_id is a read
+    // failure, never "20261256 not pasted" — the line says it could not be read, never vanishes
+    state.ticketErr = { code: "42703", message: 'column tickets.archived_at does not exist' };
+    expect(await gate()).toMatchObject({ ok: null, text: "Drafting requests — could not be read" });
+    state.ticketErr = { code: "PGRST204", message: "" };
+    expect(await gate()).toMatchObject({ ok: null, text: "Drafting requests — could not be read" });
+    state.ticketErr = { code: "PGRST204", message: "Could not find the 'project_id' column of 'tickets' in the schema cache" };
+    expect(await gate()).toBeUndefined();
   });
 });
 

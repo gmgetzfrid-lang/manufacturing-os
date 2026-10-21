@@ -30,6 +30,7 @@ import {
 import type { Milestone, MilestoneSource, MilestoneStatus } from "@/types/schema";
 import { TERMINAL_TICKET_STATUSES } from "@/lib/ticketShed";
 import { isContractorOnly } from "@/lib/ticketReadScope";
+import { isMissingProjectColumn } from "@/lib/ticketProject";
 
 type Row = Record<string, unknown>;
 type QueryResult<T> = { data: T | null; error: { message: string; code?: string | null } | null };
@@ -292,7 +293,9 @@ export async function gatherProjectSnapshotUncached(
       const r = await (sig(supabase.from("tickets").select("id", { count: "exact" })
         .eq("project_id", projectId).is("archived_at", null)
         .not("status", "in", `(${TERMINAL_TICKET_STATUSES.join(",")})`).limit(1)) as unknown as PromiseLike<{ count: number | null; error: { code?: string | null; message?: string } | null }>);
-      if (r.error) return r.error.code && MISSING_COLUMN.has(r.error.code) ? undefined : { n: null, visibleOnly: false };
+      // DF-P8 fix pass 4: only an answer NAMING project_id is "not pasted";
+      // any other refusal is a read failure (said, never a vanished line)
+      if (r.error) return isMissingProjectColumn(r.error) ? undefined : { n: null, visibleOnly: false };
       if (typeof r.count !== "number") return { n: null, visibleOnly: false };
       return { n: r.count, visibleOnly: !(await viewerReadsEveryRequest()) };
     } catch (e) {

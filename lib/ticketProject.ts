@@ -10,6 +10,9 @@
 // Every write here is checked (SAF-18): a refusal is returned as text for the
 // caller to say, never a silent success.
 
+import type { Ticket } from "@/types/schema";
+import { currentRoster, slotBlocks } from "@/lib/workflow";
+
 type Err = { code?: string | null; message?: string | null } | null | undefined;
 
 /** A minimal PostgREST client shape (the service role in the routes). */
@@ -218,16 +221,22 @@ export async function referenceDeliverableInProject(sb: DbClient, p: {
 
 // ── Who an open request is with, as the project's card says it (pure) ──────
 
-/** The person an open request waits on, by its status (DF-P8 fix pass 3):
- *  the drafter while it is being drafted or revised (and while the drafter
- *  issues it), the engineer while it is in engineering review, review or
- *  sign-off, the requester while an issued package awaits acknowledgement,
- *  and the drafting queue before anyone is assigned. Each line names the
+/** The person an open request waits on, by its status (DF-P8 fix pass 3;
+ *  corrected in fix pass 4): the drafter while it is being drafted or
+ *  revised (and while the drafter issues it), the engineer while it is in
+ *  engineering review or final sign-off, and the drafting queue before
+ *  anyone is assigned. PENDING_REVIEW and FINAL_DRAFT wait on the REQUESTER
+ *  (lib/ticketSla.ts waitingParty; lib/workflow.ts WF-24 "the ticket waits on
+ *  the REQUESTER's review") — except a routed review (a current
+ *  metadata.review_roster, lib/workflow.ts currentRoster), which waits on the
+ *  roster's open blocking slots (the lib/ticketRoster.ts waitingSlotLabels
+ *  rule: open and not notify-only), never one person. Each line names the
  *  ROLE, never a bare "with", so a missing name never reads as the wrong
  *  person. null for a terminal status or a status this build does not know. */
 export function requestHolderLabel(
   status: string | null | undefined,
   names: { drafter?: string | null; engineer?: string | null; requester?: string | null },
+  metadata?: Record<string, unknown> | null,
 ): string | null {
   const who = (role: string, name: string | null | undefined, none: string) => (name && name.trim() ? `${role}: ${name.trim()}` : none);
   switch (status) {
@@ -236,8 +245,15 @@ export function requestHolderLabel(
     case "REVISION_REQ":
     case "PENDING_IFC": return who("Drafter", names.drafter, "No drafter assigned");
     case "PENDING_ENG_TEAM":
-    case "PENDING_REVIEW":
     case "PENDING_FINAL_APPROVAL": return who("Engineer", names.engineer, "Awaiting an engineer");
+    case "PENDING_REVIEW": {
+      const roster = currentRoster({ status, metadata: metadata ?? undefined } as Pick<Ticket, "status" | "metadata">);
+      if (roster) {
+        const waiting = roster.slots.filter((s) => s && s.status === "open" && slotBlocks(s)).map((s) => s.label || s.kind).filter(Boolean);
+        return waiting.length > 0 ? `Awaiting routed review: ${waiting.join(", ")}` : "Reviewers (routed review)";
+      }
+      return who("Awaiting review from", names.requester, "Awaiting the requester's review");
+    }
     case "FINAL_DRAFT": return who("Awaiting acknowledgement from", names.requester, "Awaiting the requester's acknowledgement");
     default: return null;
   }

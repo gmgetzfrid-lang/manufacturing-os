@@ -38,6 +38,17 @@
 --       never re-linked by a re-paste). last_modified is not touched (no
 --       compare-and-set token moves; nothing in flight is refused). Every
 --       other row is left exactly as it is and counted.
+--   (4) checkout_sessions.linked_ticket_id (DF-P8 fix pass 4): the baseline
+--       declares it `UUID REFERENCES tickets(id)` with NO delete action
+--       (supabase/schema.sql), and until DF-P8 nothing wrote it (inventory
+--       row 6). /api/tickets/create now stamps a check-in's session with the
+--       request it raised, so a request whose check-in session names it
+--       could no longer be deleted (23503). The foreign key is re-created ON
+--       DELETE SET NULL — milestones.linked_ticket_id's shape (20260614):
+--       deleting the request clears the session's pointer, the session
+--       stays. Every foreign key on that column to tickets that is not
+--       already SET NULL is dropped first (by catalog, whatever its name);
+--       a re-paste finds the SET NULL key and changes nothing.
 --
 -- PASTE / DEPLOY ORDER. Independent of every other ticket migration (it
 -- needs only tickets and projects). Either order with the DF-P8 deploy is
@@ -56,7 +67,8 @@
 -- none either — it never had this column); the reference grants no access
 -- (a project member who cannot read the ticket or the library still cannot).
 -- Re-runnable: ADD COLUMN IF NOT EXISTS, CREATE INDEX IF NOT EXISTS, CREATE
--- OR REPLACE, DROP TRIGGER IF EXISTS; the backfill writes only rows whose
+-- OR REPLACE, DROP TRIGGER IF EXISTS, the (4) key re-created only when it is
+-- not already SET NULL; the backfill writes only rows whose
 -- column is still empty (a re-paste writes 0).
 -- Single paste: temp-table inventory (counts only) → BEGIN/DDL/backfill/
 -- COMMIT → one SELECT (check text, ok boolean, n text).
@@ -159,10 +171,32 @@ UPDATE tickets t
    AND NOT (t.metadata ? 'project_link')
    AND EXISTS (SELECT 1 FROM projects p WHERE p.id = (t.metadata->'intake_collision'->>'projectId')::uuid AND p.org_id = t.org_id);
 
+-- ── 4. checkout_sessions.linked_ticket_id → tickets(id) ON DELETE SET NULL ──
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT c.conname
+             FROM pg_constraint c
+             JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+            WHERE c.contype = 'f' AND c.conrelid = 'public.checkout_sessions'::regclass
+              AND c.confrelid = 'public.tickets'::regclass AND a.attname = 'linked_ticket_id'
+              AND c.confdeltype <> 'n'
+  LOOP
+    EXECUTE format('ALTER TABLE checkout_sessions DROP CONSTRAINT %I', r.conname);
+  END LOOP;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+                   JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+                  WHERE c.contype = 'f' AND c.conrelid = 'public.checkout_sessions'::regclass
+                    AND c.confrelid = 'public.tickets'::regclass AND a.attname = 'linked_ticket_id') THEN
+    ALTER TABLE checkout_sessions ADD CONSTRAINT checkout_sessions_linked_ticket_id_fkey
+      FOREIGN KEY (linked_ticket_id) REFERENCES tickets(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
 COMMIT;
 
 -- ── Verification + inventory — ONE result set ───────────────────────────────
--- Probes: ok = true × 6 on a correct paste. Inventory rows: n = the count.
+-- Probes: ok = true × 7 on a correct paste. Inventory rows: n = the count.
 SELECT "check", ok, n FROM (
 SELECT 1 AS sec, 1 AS ord, 'GAP-114 / DEC-40: tickets.project_id is a UUID referencing projects(id) ON DELETE SET NULL' AS check,
        EXISTS (SELECT 1 FROM information_schema.columns
@@ -202,6 +236,17 @@ SELECT 1, 6, 'the backfill left nothing it should have written (0 collision requ
                       AND (t.metadata->'intake_collision'->>'projectId') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
                       AND NOT (t.metadata ? 'project_link')
                       AND EXISTS (SELECT 1 FROM projects p WHERE p.id = (t.metadata->'intake_collision'->>'projectId')::uuid AND p.org_id = t.org_id)),
+       NULL
+UNION ALL
+SELECT 1, 7, 'a check-in session''s linked_ticket_id references tickets(id) ON DELETE SET NULL only (deleting the request clears the pointer; the session stays)',
+       EXISTS (SELECT 1 FROM pg_constraint c
+                 JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+                WHERE c.contype = 'f' AND c.conrelid = 'public.checkout_sessions'::regclass AND c.confrelid = 'public.tickets'::regclass
+                  AND a.attname = 'linked_ticket_id' AND c.confdeltype = 'n')
+       AND NOT EXISTS (SELECT 1 FROM pg_constraint c
+                 JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+                WHERE c.contype = 'f' AND c.conrelid = 'public.checkout_sessions'::regclass AND c.confrelid = 'public.tickets'::regclass
+                  AND a.attname = 'linked_ticket_id' AND c.confdeltype <> 'n'),
        NULL
 UNION ALL
 SELECT 2, ord, inventory, NULL, n FROM df_round_g_256_before
