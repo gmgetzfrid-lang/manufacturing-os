@@ -57,6 +57,21 @@ export interface ProvAuditRow {
 }
 export interface ProvAssetRow {
   id: string; tag: string; origin?: string | null; discovered_from?: unknown; created_at?: string | null;
+  /** The registry's accountable identity for the row (NOT NULL since
+   *  20260603): the person who entered it, or — for the equipment sweep —
+   *  the person who applied it, else the one who turned automatic apply on,
+   *  else whoever filed the drawing (BR-8, lib/equipmentBridgeServer.ts). */
+  created_by?: string | null;
+}
+
+/** The placeholder BR-8 writes when no accountable identity exists — never
+ *  a person, never named. */
+export const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+
+/** The uid the registry records as the asset's creator, when it names one. */
+export function assetCreatorUid(asset: Pick<ProvAssetRow, "created_by">): string | null {
+  const u = typeof asset.created_by === "string" ? asset.created_by.trim() : "";
+  return u && u !== NIL_UUID ? u : null;
 }
 
 /** The decisions the equipment sweep records (lib/equipmentBridgeServer.ts). */
@@ -117,13 +132,19 @@ export interface ProvDecision {
   at: string | null;
 }
 
+/** How the asset entered the registry. `recordedBy` is the name of the
+ *  person the registry records as its creator (`assets.created_by`), when it
+ *  names one and the name could be read — a registry record, said as one.
+ *  `person` rests on `assets.origin = 'manual'` alone, the column's DEFAULT
+ *  (20260928) backfilled onto every older row, so it is said as what the
+ *  registry records, never as a fact. */
 export type ProvDiscovery =
-  | { kind: "not_recorded" }
-  | { kind: "person" }
+  | { kind: "not_recorded"; recordedBy: string | null }
+  | { kind: "person"; recordedBy: string | null }
   | {
       kind: "sweep"; door: "drawing" | "knowledge"; source: ProvTarget | null; sourceHidden: boolean;
       pages: number[]; sheets: Array<{ page: number | null; label: string; aiRead: boolean }>;
-      revision: string | null; automatic: boolean; confirmedByPerson: boolean;
+      revision: string | null; automatic: boolean; confirmedByPerson: boolean; recordedBy: string | null;
     };
 
 export interface AssetProvenance {
@@ -134,6 +155,12 @@ export interface AssetProvenance {
   /** Everything that could not be read, or was read only in part — said,
    *  never "none". */
   notes: string[];
+  /** A read the links depend on failed (a relation read, or the documents /
+   *  uploads it names): an empty list is NOT "no link" (DEC-90 ruling (1)). */
+  linksIncomplete: boolean;
+  /** A read the decisions depend on failed (the audit trail, or the
+   *  documents / uploads it names): an empty list is NOT "no decision". */
+  decisionsUnread: boolean;
   /** knowledge_document_assets is installed (20261235). */
   knowledgeRelationInstalled: boolean;
 }
@@ -233,6 +260,9 @@ export interface AssembleInput {
   names: ReadonlyMap<string, string>;
   notes: string[];
   knowledgeRelationInstalled: boolean;
+  /** See AssetProvenance — false when omitted. */
+  linksIncomplete?: boolean;
+  decisionsUnread?: boolean;
 }
 
 const byTime = (a: { at: string | null; key: string }, b: { at: string | null; key: string }) =>
@@ -319,6 +349,8 @@ export function assembleAssetProvenance(input: AssembleInput): AssetProvenance {
     discovery: discoveryOf(asset, input),
     links, decisions,
     notes: input.notes,
+    linksIncomplete: input.linksIncomplete === true,
+    decisionsUnread: input.decisionsUnread === true,
     knowledgeRelationInstalled: input.knowledgeRelationInstalled,
   };
 }
@@ -326,9 +358,11 @@ export function assembleAssetProvenance(input: AssembleInput): AssetProvenance {
 function discoveryOf(asset: ProvAssetRow, input: AssembleInput): ProvDiscovery {
   const from = asset.discovered_from && typeof asset.discovered_from === "object"
     ? asset.discovered_from as Record<string, unknown> : null;
+  const creator = assetCreatorUid(asset);
+  const recordedBy = creator ? input.names.get(creator) ?? null : null;
   if (!from) {
-    if (asset.origin === "manual") return { kind: "person" };
-    return { kind: "not_recorded" };
+    if (asset.origin === "manual") return { kind: "person", recordedBy };
+    return { kind: "not_recorded", recordedBy };
   }
   const door = from.door === "knowledge" || (!from.documentId && from.knowledgeDocumentId) ? "knowledge" : "drawing";
   const sourceId = String((door === "knowledge" ? from.knowledgeDocumentId : from.documentId) ?? "");
@@ -347,5 +381,6 @@ function discoveryOf(asset: ProvAssetRow, input: AssembleInput): ProvDiscovery {
     revision: source ? str(from.revision) : null,
     automatic: from.auto === true,
     confirmedByPerson: asset.origin === "manual",
+    recordedBy,
   };
 }

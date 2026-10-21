@@ -18,11 +18,14 @@
 // discovery source on a document the reader may not read is not shown and
 // not counted. A predicate that cannot decide answers 503 (fails closed — no
 // story rather than one that may show what is not theirs to see); any other
-// read that fails is SAID in `notes`, never presented as "none".
+// read that fails is SAID in `notes`, never presented as "none" — and the
+// section it empties says so too (`linksIncomplete`, `decisionsUnread`).
 //
-// The service role reads nothing here except the caller's identity. Any
-// active member may ask (the asset hub is every member's page). No AI call,
-// no write.
+// The service role reads only the caller's identity and the access facts the
+// I-12 predicate needs (memberships, teams, libraries, folders, document ACL
+// rows — lib/knowledgeAccess loadPrincipal / readableControlledDocIds); no
+// relation, decision or name is read through it. Any active member may ask
+// (the asset hub is every member's page). No AI call, no write.
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -32,7 +35,7 @@ import {
 } from "@/lib/knowledgeAccess";
 import { tagKey } from "@/lib/codebook";
 import {
-  assembleAssetProvenance, auditNamesAsset, BRIDGE_DECISION_ACTIONS,
+  assembleAssetProvenance, assetCreatorUid, auditNamesAsset, BRIDGE_DECISION_ACTIONS,
   PROVENANCE_ACCESS_UNCHECKED, PROVENANCE_DECISION_CAP, PROVENANCE_LINK_CAP,
   type ProvAuditRow, type ProvDocumentRow, type ProvKnowledgeRow, type ProvRelationRow,
 } from "@/lib/assetProvenance";
@@ -95,14 +98,16 @@ export async function GET(req: NextRequest) {
   if ("error" in caller) return bad(caller.error, caller.status);
 
   const notes: string[] = [];
+  let linksIncomplete = false;
+  let decisionsUnread = false;
 
-  // ── The asset (origin / discovered_from: 20260928).
+  // ── The asset (origin / discovered_from: 20260928; created_by: 20260603).
   const assetRes = await tiered(
-    ["id, tag, origin, discovered_from, created_at", "id, tag, created_at"],
+    ["id, tag, origin, discovered_from, created_at, created_by", "id, tag, created_at, created_by", "id, tag, created_at"],
     (cols) => caller.from("assets").select(cols).eq("org_id", orgId).eq("id", assetId).maybeSingle() as unknown as PromiseLike<Res>,
   );
   if (assetRes.error) return bad(`The equipment could not be read: ${assetRes.error.message ?? "read failed"}`, 500);
-  const asset = assetRes.data as { id: string; tag: string; origin?: string | null; discovered_from?: unknown; created_at?: string | null } | null;
+  const asset = assetRes.data as { id: string; tag: string; origin?: string | null; discovered_from?: unknown; created_at?: string | null; created_by?: string | null } | null;
   if (!asset) return bad("No such equipment in this workspace", 404);
   const key = tagKey(asset.tag);
 
@@ -115,6 +120,7 @@ export async function GET(req: NextRequest) {
     .order("created_at", { ascending: true }).limit(PROVENANCE_LINK_CAP) as unknown as PromiseLike<Res>);
   let documentRelations: ProvRelationRow[] = [];
   if (relRes.error) {
+    linksIncomplete = true;
     notes.push(`The links to controlled documents could not be read (${relRes.error.message ?? "read failed"}) — none of them is shown, which is not the same as none.`);
   } else {
     documentRelations = (relRes.data ?? []) as ProvRelationRow[];
@@ -131,6 +137,7 @@ export async function GET(req: NextRequest) {
     // Before 20261235 a knowledge upload's links are not recorded at all.
     knowledgeRelationInstalled = false;
   } else if (kRes.error) {
+    linksIncomplete = true;
     notes.push(`The links to knowledge-library uploads could not be read (${kRes.error.message ?? "read failed"}) — none of them is shown, which is not the same as none.`);
   } else {
     knowledgeRelations = (kRes.data ?? []) as ProvRelationRow[];
@@ -143,6 +150,7 @@ export async function GET(req: NextRequest) {
     .order("created_at", { ascending: false }).limit(PROVENANCE_DECISION_CAP) as unknown as Res;
   let audits: ProvAuditRow[] = [];
   if (audRes.error) {
+    decisionsUnread = true;
     notes.push(`The equipment sweep's recorded decisions could not be read (${audRes.error.message ?? "read failed"}) — none is shown, which is not the same as none.`);
   } else {
     const all = (audRes.data ?? []) as ProvAuditRow[];
@@ -167,10 +175,18 @@ export async function GET(req: NextRequest) {
   // As the caller: what RLS lets them list.
   const docsRead = await readIn<ProvDocumentRow>(caller, "documents",
     "id, document_number, title, name, status, library_id, asset_tags", orgId, [...docIds]);
-  if (docsRead.error) notes.push(`The linked documents could not be read (${docsRead.error}) — links and decisions on them are not shown.`);
+  if (docsRead.error) {
+    linksIncomplete = true;
+    decisionsUnread = true;
+    notes.push(`The linked documents could not be read (${docsRead.error}) — links and decisions on them are not shown.`);
+  }
   const kdocsRead = await readIn<ProvKnowledgeRow & { source_document_id?: string | null }>(caller, "knowledge_documents",
     "id, name, library_id, source_document_id", orgId, [...kdocIds]);
-  if (kdocsRead.error) notes.push(`The linked knowledge-library uploads could not be read (${kdocsRead.error}) — links and decisions on them are not shown.`);
+  if (kdocsRead.error) {
+    linksIncomplete = true;
+    decisionsUnread = true;
+    notes.push(`The linked knowledge-library uploads could not be read (${kdocsRead.error}) — links and decisions on them are not shown.`);
+  }
   const docRows = docsRead.error ? [] : docsRead.rows;
   const kdocRows = kdocsRead.error ? [] : kdocsRead.rows;
 
@@ -193,9 +209,12 @@ export async function GET(req: NextRequest) {
     readableKnowledge.set(String(k.id), { id: String(k.id), name: k.name ?? null, library_id: k.library_id ?? null });
   }
 
-  // ── Who: the person who linked a manual row, and each decision's actor —
-  // only for what is shown.
+  // ── Who: the person the registry records as the asset's creator (BR-8's
+  // accountable identity), the person who linked a manual row, and each
+  // decision's actor — only for what is shown.
   const uids = new Set<string>();
+  const creator = assetCreatorUid(asset);
+  if (creator) uids.add(creator);
   for (const r of documentRelations) {
     if (r.source === "manual" && r.asserted_by_user && r.document_id && readableDocuments.has(String(r.document_id))) uids.add(String(r.asserted_by_user));
   }
@@ -209,7 +228,7 @@ export async function GET(req: NextRequest) {
     for (let i = 0; i < ids.length; i += IN_CHUNK) {
       const { data, error } = await caller.from("org_members").select("uid, display_name, email")
         .eq("org_id", orgId).in("uid", ids.slice(i, i + IN_CHUNK)) as unknown as Res;
-      if (error) { notes.push("The names of the people who linked or decided could not be read — they are shown as \"a person\"."); break; }
+      if (error) { notes.push("The names of the people who entered, linked or decided could not be read — they are shown as \"a person\"."); break; }
       for (const m of (data ?? []) as Array<{ uid: string; display_name?: string | null; email?: string | null }>) {
         const n = (m.display_name || m.email || "").trim();
         if (n) names.set(String(m.uid), n);
@@ -219,7 +238,7 @@ export async function GET(req: NextRequest) {
 
   const story = assembleAssetProvenance({
     asset, documentRelations, knowledgeRelations, readableDocuments, readableKnowledge,
-    audits, names, notes, knowledgeRelationInstalled,
+    audits, names, notes, knowledgeRelationInstalled, linksIncomplete, decisionsUnread,
   });
   return NextResponse.json(story, { headers: PRIVATE });
 }

@@ -146,7 +146,23 @@ describe("AREA-12 — the shape wizard adopts a drawing-held pair on 23505", () 
     sb.adopt = { status: 200, body: { ok: true, adopted: true, already: null, auditError: "The link is now yours, but its audit record could not be written: insert refused" } };
     await renderAndWrite();
     expect(text()).toContain("2 connections written to the graph");
-    expect(text()).toMatch(/PID-1 ↔ P-101 is now your link, but its audit record could not be written: The link is now yours, but its audit record could not be written: insert refused/);
+    const banners = [...container.querySelectorAll('[data-testid="shape-banner"]')].map((b) => (b.textContent ?? "").trim());
+    // the route's sentence as given, prefixed only with the pair — never doubled
+    expect(banners).toEqual(["PID-1 ↔ P-101: The link is now yours, but its audit record could not be written: insert refused"]);
+    expect(text().match(/audit record could not be written/g)).toHaveLength(1);
+  });
+
+  it("an audit error followed by a failed pair in the same batch: BOTH are said — the later failure never hides the missing record", async () => {
+    sb.insertErr.document_assets = DUP;
+    sb.insertErr.document_related_resources = { code: "42501", message: "new row violates row-level security policy" };
+    sb.adopt = { status: 200, body: { ok: true, adopted: true, already: null, auditError: "The link is now yours, but its audit record could not be written: insert refused" } };
+    await renderAndWrite();
+    const banners = [...container.querySelectorAll('[data-testid="shape-banner"]')].map((b) => (b.textContent ?? "").trim());
+    expect(banners).toEqual([
+      "PID-1 ↔ P-101: The link is now yours, but its audit record could not be written: insert refused",
+      "Some links failed: new row violates row-level security policy",
+    ]);
+    expect(text()).toContain("1 connection written to the graph");
   });
 
   it("a pair that is already a person's link (manual) needs no adopt: counted, the Bridge is not asked", async () => {

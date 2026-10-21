@@ -12,7 +12,8 @@
 // Served by GET /api/assets/provenance, which reads as the viewer (their own
 // row-level security, plus the app's document read predicate): a link on a
 // document they may not read is not shown and not counted. A read that fails
-// is said — never "none".
+// is said — never "none": a section whose read failed says it could not be
+// read and shows no count (DEC-90 ruling (1)).
 //
 // Closed until asked: opening the hub reads nothing more than it did.
 
@@ -132,8 +133,8 @@ export default function AssetProvenancePanel({ orgId, assetId, tag }: { orgId: s
               <section>
                 <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">How it entered the registry</div>
                 <div data-testid="prov-discovery" className="text-[var(--color-text)]">
-                  {d?.kind === "person" && <>Registered by a person.</>}
-                  {d?.kind === "not_recorded" && <>How {tag} entered the registry is not recorded.</>}
+                  {d?.kind === "person" && <>Recorded in the registry as entered by a person{d.recordedBy ? ` (${d.recordedBy})` : ""}.</>}
+                  {d?.kind === "not_recorded" && <>How {tag} entered the registry is not recorded.{d.recordedBy ? ` The registry records ${d.recordedBy} as having created it.` : ""}</>}
                   {d?.kind === "sweep" && (
                     <>
                       Created by the equipment sweep{d.automatic ? " (applied automatically)" : ""}, read off{" "}
@@ -141,6 +142,9 @@ export default function AssetProvenancePanel({ orgId, assetId, tag }: { orgId: s
                       {d.sourceHidden ? " — the source is not one you can open" : ""}
                       {d.sheets.length > 0 ? ` (${d.sheets.map((s) => `${s.label}${s.aiRead ? " (AI-read, unconfirmed)" : ""}`).join("; ")})` : pagesText(d.pages) ? ` (${pagesText(d.pages)})` : ""}
                       {d.revision ? `, Rev ${d.revision}` : ""}.
+                      {d.recordedBy ? (d.automatic
+                        ? ` The registry records ${d.recordedBy} as accountable for it (who turned automatic apply on, or filed the drawing).`
+                        : ` The registry records ${d.recordedBy} as having applied it.`) : ""}
                       {d.confirmedByPerson ? " A person has since confirmed it as real equipment." : " Not yet confirmed by a person."}
                     </>
                   )}
@@ -149,11 +153,11 @@ export default function AssetProvenancePanel({ orgId, assetId, tag }: { orgId: s
 
               <section>
                 <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
-                  Links you can read ({story.links.length})
+                  Links you can read{story.linksIncomplete ? "" : ` (${story.links.length})`}
                 </div>
                 {story.links.length === 0 ? (
                   <div className="text-[var(--color-text-faint)] italic" data-testid="prov-no-links">
-                    {story.notes.length > 0 ? "No link could be shown — see above." : "No document or upload you can read links this equipment."}
+                    {story.linksIncomplete ? "The links could not be read — see above." : "No document or upload you can read links this equipment."}
                   </div>
                 ) : (
                   <ul className="space-y-1.5" data-testid="prov-links">
@@ -180,6 +184,9 @@ export default function AssetProvenancePanel({ orgId, assetId, tag }: { orgId: s
                     ))}
                   </ul>
                 )}
+                {story.linksIncomplete && story.links.length > 0 && (
+                  <div className="mt-1 text-[var(--color-text-faint)] italic" data-testid="prov-links-incomplete">Some links could not be read — see above.</div>
+                )}
                 {!story.knowledgeRelationInstalled && (
                   <div className="mt-1 text-[10px] text-[var(--color-text-faint)]" data-testid="prov-knowledge-not-installed">
                     Links to knowledge-library uploads are not recorded on this workspace&apos;s database yet.
@@ -189,10 +196,15 @@ export default function AssetProvenancePanel({ orgId, assetId, tag }: { orgId: s
 
               <section>
                 <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
-                  Decisions recorded ({story.decisions.length})
+                  Decisions recorded{story.decisionsUnread ? "" : ` (${story.decisions.length})`}
                 </div>
+                {story.decisionsUnread && (
+                  <div className="text-[var(--color-text-faint)] italic" data-testid="prov-decisions-unread">
+                    {story.decisions.length === 0 ? "The recorded decisions could not be read — see above." : "Some recorded decisions could not be read — see above."}
+                  </div>
+                )}
                 {story.decisions.length === 0 ? (
-                  <div className="text-[var(--color-text-faint)] italic">No recorded equipment-sweep decision about {tag} on anything you can read.</div>
+                  story.decisionsUnread ? null : <div className="text-[var(--color-text-faint)] italic" data-testid="prov-no-decisions">No recorded equipment-sweep decision about {tag} on anything you can read.</div>
                 ) : (
                   <ul className="space-y-1" data-testid="prov-decisions">
                     {story.decisions.map((x) => (

@@ -10,7 +10,9 @@
 //   * opened, it shows the discovery, every link with its asserter and the
 //     decisions, from GET /api/assets/provenance;
 //   * a refused or failed answer is said, never "none"; a partial answer's
-//     notes stand above an empty list instead of "no link";
+//     notes stand above, and a section whose read failed says it could not
+//     be read, with no count — never "no link" / "no decision" (DEC-90 (1));
+//     a section that WAS read still says "none" when it is empty;
 //   * an unregistered tag has no story to tell (no panel).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -75,7 +77,7 @@ const provCalls = () => fetchMock.mock.calls.filter((c) => String(c[0]).startsWi
 
 const STORY = {
   asset: { id: "a-e22", tag: "E-22" },
-  discovery: { kind: "sweep", door: "drawing", source: { kind: "document", id: "d1", label: "2002-D-10001", href: "/documents/lib1?doc=d1", archived: false }, sourceHidden: false, pages: [4], sheets: [{ page: 4, label: "2002-D-10001 SHT 4", aiRead: true }], revision: "B", automatic: false, confirmedByPerson: true },
+  discovery: { kind: "sweep", door: "drawing", source: { kind: "document", id: "d1", label: "2002-D-10001", href: "/documents/lib1?doc=d1", archived: false }, sourceHidden: false, pages: [4], sheets: [{ page: 4, label: "2002-D-10001 SHT 4", aiRead: true }], revision: "B", automatic: false, confirmedByPerson: true, recordedBy: "Ann Operator" },
   links: [
     { key: "d:r1", target: { kind: "document", id: "d1", label: "2002-D-10001", href: "/documents/lib1?doc=d1", archived: false }, standing: "machine", assertedBy: "The equipment sweep read it off the drawing — AI-read (vision-x); not typed by a person", personName: null, model: "vision-x", revision: "B", sheet: "2002-D-10001 SHT 4", sheetMark: "AI-read, unconfirmed", pages: [4], vanished: false, superseded: false, at: "2026-09-02T00:00:00Z" },
     { key: "d:r3", target: { kind: "document", id: "d3", label: "PID-3", href: "/documents/lib1?doc=d3", archived: false }, standing: "person", assertedBy: "Linked by Ann Operator", personName: "Ann Operator", model: null, revision: null, sheet: "PID-3 SHT 1", sheetMark: "read by the equipment sweep, unconfirmed", pages: [1], vanished: false, superseded: false, at: "2026-09-04T00:00:00Z" },
@@ -85,6 +87,8 @@ const STORY = {
     { key: "a:au2", action: "EQUIPMENT_BRIDGE_RELATION_ADOPTED", words: "Made a person's link (adopted from the sweep's reading)", actor: "Ann Operator", target: { kind: "document", id: "d3", label: "PID-3", href: "/documents/lib1?doc=d3", archived: false }, detail: "PID-3 SHT 1, Rev A", at: "2026-09-04T00:00:01Z" },
   ],
   notes: [],
+  linksIncomplete: false,
+  decisionsUnread: false,
   knowledgeRelationInstalled: true,
 };
 
@@ -132,7 +136,7 @@ describe("GAP-303 acceptance 1 / GAP-316 — the hub's provenance view", () => {
     expect(String(provCalls()[0][0])).toBe("/api/assets/provenance?orgId=o1&assetId=a-e22");
     expect(provCalls()[0][1]?.headers?.Authorization).toBe("Bearer t");
     const p = panel()!;
-    expect(p.querySelector('[data-testid="prov-discovery"]')!.textContent).toMatch(/Created by the equipment sweep, read off 2002-D-10001 \(2002-D-10001 SHT 4 \(AI-read, unconfirmed\)\), Rev B\. A person has since confirmed it as real equipment\./);
+    expect(p.querySelector('[data-testid="prov-discovery"]')!.textContent).toMatch(/Created by the equipment sweep, read off 2002-D-10001 \(2002-D-10001 SHT 4 \(AI-read, unconfirmed\)\), Rev B\. The registry records Ann Operator as having applied it\. A person has since confirmed it as real equipment\./);
     const links = [...p.querySelectorAll('[data-testid="prov-link"]')].map((li) => li.textContent ?? "");
     expect(links).toHaveLength(3);
     expect(links[0]).toMatch(/AI-read.*2002-D-10001 SHT 4 \(AI-read, unconfirmed\).*AI-read \(vision-x\)/);
@@ -151,13 +155,63 @@ describe("GAP-303 acceptance 1 / GAP-316 — the hub's provenance view", () => {
     expect(panel()!.textContent).not.toMatch(/No document or upload you can read links/);
   });
 
-  it("a partial answer's notes stand above the list, and an empty list then says it could not be shown — not 'no link'", async () => {
-    s.provenance = { status: 200, body: { ...structuredClone(STORY), links: [], decisions: [], notes: ["The links to controlled documents could not be read (statement timeout) — none of them is shown, which is not the same as none."] } };
+  it("a failed links read: the notes stand above, the empty list says it could not be read and shows no count — not 'no link'; the decisions, which were read, still say 'none'", async () => {
+    s.provenance = { status: 200, body: { ...structuredClone(STORY), links: [], decisions: [], linksIncomplete: true, notes: ["The links to controlled documents could not be read (statement timeout) — none of them is shown, which is not the same as none."] } };
     await render();
     await act(async () => { opener().click(); });
     await flush();
-    expect(panel()!.querySelector('[data-testid="prov-notes"]')!.textContent).toMatch(/which is not the same as none/);
-    expect(panel()!.querySelector('[data-testid="prov-no-links"]')!.textContent).toBe("No link could be shown — see above.");
+    const p = panel()!;
+    expect(p.querySelector('[data-testid="prov-notes"]')!.textContent).toMatch(/which is not the same as none/);
+    expect(p.querySelector('[data-testid="prov-no-links"]')!.textContent).toBe("The links could not be read — see above.");
+    expect(p.textContent).not.toMatch(/Links you can read \(0\)/);
+    expect(p.textContent).not.toMatch(/No document or upload you can read links/);
+    expect(p.textContent).toContain("Decisions recorded (0)");
+    expect(p.querySelector('[data-testid="prov-no-decisions"]')!.textContent).toMatch(/No recorded equipment-sweep decision about E-22/);
+  });
+
+  it("DEC-90 ruling (1): a FAILED audit read never shows 'No recorded … decision' nor a (0) count — it says the decisions could not be read; the links, which were read, keep their 'none'", async () => {
+    s.provenance = { status: 200, body: { ...structuredClone(STORY), links: [], decisions: [], decisionsUnread: true, notes: ["The equipment sweep's recorded decisions could not be read (statement timeout) — none is shown, which is not the same as none."] } };
+    await render();
+    await act(async () => { opener().click(); });
+    await flush();
+    const p = panel()!;
+    expect(p.querySelector('[data-testid="prov-notes"]')!.textContent).toMatch(/recorded decisions could not be read/);
+    expect(p.textContent).not.toMatch(/No recorded equipment-sweep decision/);
+    expect(p.textContent).not.toMatch(/Decisions recorded \(0\)/);
+    expect(p.querySelector('[data-testid="prov-decisions-unread"]')!.textContent).toBe("The recorded decisions could not be read — see above.");
+    // the links were read: an empty list there is a real "none" (keyed on the links' own state, not on any note)
+    expect(p.querySelector('[data-testid="prov-no-links"]')!.textContent).toBe("No document or upload you can read links this equipment.");
+    expect(p.textContent).toContain("Links you can read (0)");
+  });
+
+  it("a partly failed read with some rows shown keeps the rows and says some could not be read, with no count", async () => {
+    s.provenance = { status: 200, body: { ...structuredClone(STORY), linksIncomplete: true, decisionsUnread: true, notes: ["The linked knowledge-library uploads could not be read (timeout) — links and decisions on them are not shown."] } };
+    await render();
+    await act(async () => { opener().click(); });
+    await flush();
+    const p = panel()!;
+    expect(p.querySelectorAll('[data-testid="prov-link"]')).toHaveLength(3);
+    expect(p.querySelector('[data-testid="prov-links-incomplete"]')!.textContent).toBe("Some links could not be read — see above.");
+    expect(p.querySelector('[data-testid="prov-decisions-unread"]')!.textContent).toBe("Some recorded decisions could not be read — see above.");
+    expect(p.textContent).not.toMatch(/Links you can read \(3\)/);
+    expect(p.textContent).not.toMatch(/Decisions recorded \(1\)/);
+  });
+
+  it("GAP-316 discovery 'who': origin 'manual' alone is said as the registry's record, never as fact, with the recorded creator's name; an automatic sweep names who the registry holds accountable", async () => {
+    s.provenance = { status: 200, body: { ...structuredClone(STORY), discovery: { kind: "person", recordedBy: "Bob Planner" } } };
+    await render();
+    await act(async () => { opener().click(); });
+    await flush();
+    expect(panel()!.querySelector('[data-testid="prov-discovery"]')!.textContent).toBe("Recorded in the registry as entered by a person (Bob Planner).");
+    expect(panel()!.textContent).not.toMatch(/Registered by a person/);
+    act(() => root.unmount());
+    container.remove();
+
+    s.provenance = { status: 200, body: { ...structuredClone(STORY), discovery: { ...structuredClone(STORY.discovery), automatic: true, confirmedByPerson: false, recordedBy: "Cy Admin" } } };
+    await render();
+    await act(async () => { opener().click(); });
+    await flush();
+    expect(panel()!.querySelector('[data-testid="prov-discovery"]')!.textContent).toMatch(/Created by the equipment sweep \(applied automatically\).*The registry records Cy Admin as accountable for it \(who turned automatic apply on, or filed the drawing\)\. Not yet confirmed by a person\./);
   });
 
   it("an unregistered tag has no story to tell: no panel", async () => {

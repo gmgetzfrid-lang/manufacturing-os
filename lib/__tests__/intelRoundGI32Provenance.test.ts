@@ -297,7 +297,7 @@ describe("GOV-9 criterion 4 (graph label limb) and GAP-303's graph remainder —
 
 function hubDb(): Record<string, Row[]> {
   return {
-    assets: [o({ id: "a1", tag: "P-101", origin: "drawing", created_at: "2026-09-01T00:00:00Z",
+    assets: [o({ id: "a1", tag: "P-101", origin: "drawing", created_at: "2026-09-01T00:00:00Z", created_by: "u-ann",
       discovered_from: { documentId: "dR", pages: [3], door: "drawing", sheets: [{ page: 3, label: "PID-R SHT 3", aiRead: true }], auto: false } })],
     documents: [
       o({ id: "d1", document_number: "PID-1", title: "Charge", status: "Issued", library_id: "L1", asset_tags: [] }),
@@ -381,11 +381,17 @@ describe("GAP-303 acceptance 1 / GAP-316 — GET /api/assets/provenance", () => 
     expect(by["upload.pdf"]).toMatchObject({ standing: "machine", target: { kind: "knowledge", href: "/knowledge/KL1?doc=kU" }, sheet: "UP-1 SHT 2" });
     expect(by["upload.pdf"].assertedBy).toMatch(/off the knowledge upload — read from drawing/);
     expect(s.notes).toEqual([]);
+    expect(s.linksIncomplete).toBe(false);
+    expect(s.decisionsUnread).toBe(false);
     expect(s.knowledgeRelationInstalled).toBe(true);
     // decisions: only the sweep's, only those naming this equipment
     expect(s.decisions.map((d) => d.action)).toEqual(["EQUIPMENT_BRIDGE_APPLIED", "EQUIPMENT_BRIDGE_RELATION_ADOPTED", "EQUIPMENT_BRIDGE_DISMISSED"]);
     expect(s.decisions[1]).toMatchObject({ actor: "Ann Operator", detail: "PID-3 SHT 1 — read off an AI transcription (vision-x), Rev A" });
     expect(s.discovery).toMatchObject({ kind: "sweep", door: "drawing", source: { label: "PID-SECRET" }, sourceHidden: false, confirmedByPerson: false });
+    // GAP-316 'who': the registry's accountable identity (assets.created_by, BR-8), named through the caller's own members read
+    expect(s.discovery).toMatchObject({ recordedBy: "Ann Operator" });
+    expect(ctrlDb.calls.filter((c) => c.table === "assets" && c.method === "select").map((c) => c.args[0])[0])
+      .toBe("id, tag, origin, discovered_from, created_at, created_by");
   });
 
   it("a relation on a document the reader may not read — hidden by RLS, or refused by the I-12 predicate — is not shown and not counted; nor its decisions; nor the discovery's source; nor an upload mirroring a refused document", async () => {
@@ -407,6 +413,26 @@ describe("GAP-303 acceptance 1 / GAP-316 — GET /api/assets/provenance", () => 
     expect(s.notes.join(" ")).toMatch(/links to controlled documents could not be read \(statement timeout\) — none of them is shown, which is not the same as none/);
     expect(s.notes.join(" ")).toMatch(/recorded decisions could not be read \(audit unreachable\)/);
     expect(s.links.every((l) => l.target.kind === "knowledge")).toBe(true);
+    // DEC-90 ruling (1): each emptied section carries its own read state, so the view never says "none" for it
+    expect(s.linksIncomplete).toBe(true);
+    expect(s.decisionsUnread).toBe(true);
+    expect(s.decisions).toEqual([]);
+  });
+
+  it("a failed audit read alone marks the decisions unread and leaves the links' state as read", async () => {
+    ctrlDb.readError.audit_logs = { message: "audit unreachable" };
+    const s = await story("tc");
+    expect(s.decisionsUnread).toBe(true);
+    expect(s.linksIncomplete).toBe(false);
+    expect(s.links.length).toBeGreaterThan(0);
+  });
+
+  it("a failed knowledge-relation read marks the links incomplete, not the decisions", async () => {
+    ctrlDb.readError.knowledge_document_assets = { message: "kda down" };
+    const s = await story("tc");
+    expect(s.linksIncomplete).toBe(true);
+    expect(s.decisionsUnread).toBe(false);
+    expect(s.notes.join(" ")).toMatch(/links to knowledge-library uploads could not be read \(kda down\)/);
   });
 
   it("a documents read that fails drops the links on them and says so (fail closed)", async () => {
@@ -414,6 +440,8 @@ describe("GAP-303 acceptance 1 / GAP-316 — GET /api/assets/provenance", () => 
     const s = await story("tc");
     expect(s.links.filter((l) => l.target.kind === "document")).toEqual([]);
     expect(s.notes.join(" ")).toMatch(/The linked documents could not be read \(documents down\)/);
+    expect(s.linksIncomplete).toBe(true);
+    expect(s.decisionsUnread).toBe(true);
   });
 
   it("before 20261235 (no knowledge_document_assets) the uploads' links are said to be unrecorded; before 20261171 / 20261170 the columns are dropped one step at a time", async () => {
@@ -450,10 +478,19 @@ describe("GAP-303 acceptance 1 / GAP-316 — GET /api/assets/provenance", () => 
     expect((await ask("tc", `orgId=${ORG}&assetId=nope`)).status).toBe(404);
   });
 
-  it("an asset entered by a person reads 'person'; one with nothing recorded says so", async () => {
-    ctrlDb.tables.assets = [o({ id: "a1", tag: "P-101", origin: "manual", discovered_from: null })];
-    expect((await story("tc")).discovery).toEqual({ kind: "person" });
+  it("an asset whose origin is 'manual' reads 'person' with the registry's recorded creator named; one with nothing recorded says so (still naming the recorded creator)", async () => {
+    ctrlDb.tables.assets = [o({ id: "a1", tag: "P-101", origin: "manual", discovered_from: null, created_by: "u-ann" })];
+    expect((await story("tc")).discovery).toEqual({ kind: "person", recordedBy: "Ann Operator" });
     ctrlDb.missingColumns.assets = ["origin"];
-    expect((await story("tc")).discovery).toEqual({ kind: "not_recorded" });
+    expect((await story("tc")).discovery).toEqual({ kind: "not_recorded", recordedBy: "Ann Operator" });
+  });
+
+  it("BR-8's placeholder identity (the nil uuid) is never named, nor looked up; an unreadable name is not invented", async () => {
+    ctrlDb.tables.assets = [o({ id: "a1", tag: "P-101", origin: "manual", discovered_from: null, created_by: "00000000-0000-0000-0000-000000000000" })];
+    expect((await story("tc")).discovery).toEqual({ kind: "person", recordedBy: null });
+    const inArgs = ctrlDb.calls.filter((c) => c.table === "org_members" && c.method === "in").flatMap((c) => c.args[1] as string[]);
+    expect(inArgs).not.toContain("00000000-0000-0000-0000-000000000000");
+    ctrlDb.tables.assets = [o({ id: "a1", tag: "P-101", origin: "manual", discovered_from: null, created_by: "u-unknown" })];
+    expect((await story("tc")).discovery).toEqual({ kind: "person", recordedBy: null });
   });
 });

@@ -18,11 +18,13 @@
 //   sheet_label  the sheet address read off the page's title block
 //                (20261170). No screen lets a person type it: a person's row
 //                carries one only because the equipment sweep read it — the
-//                Bridge's adopt (a person making the drawing's pair theirs)
-//                and a removal that hands a pair back to the person's tags
-//                keep the address and clear the model (HUMAN_PROVENANCE in
-//                lib/equipmentBridgeServer.ts). Whether THAT reading was an AI
-//                transcription is no longer recorded on the row, so the
+//                Bridge's adopt (adoptDrawingRelation: a person making the
+//                drawing's pair theirs) keeps the address and clears the
+//                model (HUMAN_PROVENANCE in lib/equipmentBridgeServer.ts). A
+//                removal that hands a pair back to the person's tags
+//                (source 'jsonb_sync') clears sheet_label and pages, so it
+//                carries no address. Whether an adopted address was read off
+//                an AI transcription is no longer recorded on the row, so the
 //                address is said to be the sweep's, unconfirmed — never shown
 //                as a plain fact (fail toward the warning, DEC-90), and never
 //                called AI-read (DEC-29: the row does not say so).

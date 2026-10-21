@@ -104,6 +104,7 @@ export default function GraphShapeWizard({
   const [rows, setRows] = useState<Row[]>([]);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [banners, setBanners] = useState<string[]>([]);
   const [written, setWritten] = useState(0);
   // AREA-12: how many accepted pairs were the equipment sweep's reading and
   // are now this person's links (adopted on 23505).
@@ -162,9 +163,13 @@ export default function GraphShapeWizard({
   const apply = async () => {
     const accepted = rows.filter((r) => r.accepted);
     if (accepted.length === 0) return;
-    setStage("applying"); setError(null);
+    setStage("applying"); setError(null); setBanners([]);
     let ok = 0;
     let adopted = 0;
+    // Every message of the batch is kept and shown — a later failure never
+    // hides an earlier missing audit record (AREA-12).
+    const notices: string[] = [];
+    const failures: string[] = [];
     const evidenceDetail = (r: Row) =>
       `${r.reason} — from the question: “${question.slice(0, 160)}”`;
     for (const r of accepted) {
@@ -203,15 +208,16 @@ export default function GraphShapeWizard({
             if (outcome.kind === "refused") throw new Error(`${doc.label} ↔ ${asset.label}: ${outcome.message}`);
             if (outcome.kind === "adopted") {
               adopted += 1;
-              if (outcome.auditError) setError(`${doc.label} ↔ ${asset.label} is now your link, but its audit record could not be written: ${outcome.auditError}`);
+              if (outcome.auditError) notices.push(`${doc.label} ↔ ${asset.label}: ${outcome.auditError}`);
             }
           }
         }
         ok += 1;
       } catch (e) {
-        setError(`Some links failed: ${(e as Error).message}`);
+        failures.push((e as Error).message);
       }
     }
+    setBanners([...notices, ...(failures.length > 0 ? [`Some links failed: ${failures.join("; ")}`] : [])]);
     setWritten(ok);
     setAdoptedCount(adopted);
     setStage("done");
@@ -270,6 +276,11 @@ export default function GraphShapeWizard({
                   <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
                 </div>
               )}
+              {banners.map((b, i) => (
+                <div key={i} data-testid="shape-banner" className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-[11px] text-rose-700 dark:text-rose-300">
+                  <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {b}
+                </div>
+              ))}
               {note && (
                 <div className="text-[11px] text-[var(--color-text-muted)] bg-[var(--color-surface-2)]/60 rounded-lg px-3 py-2">{note}</div>
               )}
