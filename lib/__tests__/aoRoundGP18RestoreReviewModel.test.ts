@@ -40,6 +40,7 @@ import { POST as beginRoute } from "@/app/api/admin/restore/begin/route";
 import {
   applyRestoreChunk, planRestore, runChunkedRestore, restoreRefusalLabel,
   filedBeforeReviewModel, asFiledBeforeReviewModel, carriesDeclaration, filedBeforeReviewModelNote,
+  declarationNoteRenumbered, reviewModelSchemaCacheMessage,
   RESTORE_REVIEW_MODEL_COLUMNS, LIKE_IN_KIND_COLUMNS, DECLARATION_NOT_RESTORED, TICKET_RENUMBERED,
   type RestorePost, type RestoreEnvelopeLike,
 } from "@/lib/dataRestore";
@@ -275,6 +276,40 @@ describe("P18 — a database WITH 20261250", () => {
     expect(ticketHere("t-2")).toMatchObject({ review_model_filed: true, engineering_required: true, like_in_kind_statement: null });
     const codes = (r.body.cleared as Array<Record<string, unknown>>).map((c) => `${c.id}:${c.code}`).sort();
     expect(codes).toEqual(["t-1:ticket_renumbered", "t-2:declaration_not_restored", "t-2:ticket_renumbered"].map((x) => x.replace("ticket_renumbered", TICKET_RENUMBERED)).sort());
+    // P18 fix pass: the cleared declaration's note names the number t-2 is
+    // restored under — "AC-DDRT-26-0001" names the live request t-live here.
+    const fresh = String(ticketHere("t-2")!.ticket_id);
+    expect(fresh).not.toBe("AC-DDRT-26-0001");
+    const note = (r.body.cleared as Array<Record<string, unknown>>).find((c) => c.id === "t-2" && c.code === DECLARATION_NOT_RESTORED)!;
+    expect(String(note.message)).toMatch(new RegExp(`^like_in_kind_\\* cleared on request ${fresh} \\(restored under this fresh number; "AC-DDRT-26-0001", the number it carried in the backup, names another request in this workspace\\): its requester declared the work like-in-kind`));
+    expect(String(note.message)).not.toContain("cleared on request AC-DDRT-26-0001:");
+    expect(String(note.message)).toContain(STATEMENT);
+    expect((chunkAudits()[0].details as Record<string, unknown>).cleared).toEqual(r.body.cleared);
+  });
+
+  it("declarationNoteRenumbered rewrites only a DECLARATION_NOT_RESTORED note naming the old number; every other note is returned as it is", () => {
+    const decl = { id: "t-2", code: DECLARATION_NOT_RESTORED, message: "like_in_kind_* cleared on request A-1: the rest." };
+    expect(declarationNoteRenumbered(decl, "A-1", "A-9")).toEqual({ ...decl, message: 'like_in_kind_* cleared on request A-9 (restored under this fresh number; "A-1", the number it carried in the backup, names another request in this workspace): the rest.' });
+    const other = { id: "t-2", code: "parent_outside_workspace", message: "like_in_kind_* cleared on request A-1: x" };
+    expect(declarationNoteRenumbered(other, "A-1", "A-9")).toBe(other);
+    expect(declarationNoteRenumbered(decl, "B-1", "A-9")).toBe(decl);
+  });
+
+  it("the schema-cache window: the column check finds 20261250's columns but the API refuses the write PGRST204 naming one — the chunk fails with the remedy (retry in a minute), nothing written", async () => {
+    const dbMessage = "Could not find the 'review_model_filed' column of 'tickets' in the schema cache";
+    db.writeError = (table, op) => (table === "tickets" && op === "upsert" ? { code: "PGRST204", message: dbMessage } : null);
+    const a = await applyRestoreChunk({ from } as never, { orgId: ORG, table: "tickets", rows: [prePaste("t-1", "AC-DDRT-26-0001")], idRemap: REMAP });
+    expect(a).toMatchObject({ ok: false, status: 500, inserted: 0, code: "PGRST204", error: reviewModelSchemaCacheMessage(dbMessage) });
+    expect(reviewModelSchemaCacheMessage(dbMessage)).toMatch(/has not reloaded its schema since that migration .* Wait a minute and run the restore again/);
+    expect(db.rows.tickets ?? []).toEqual([]);
+    // Through the route: the same sentence.
+    const r = await chunk("tickets", [prePaste("t-1", "AC-DDRT-26-0001")]);
+    expect(r.status).toBe(500);
+    expect(String(r.body.error)).toBe(reviewModelSchemaCacheMessage(dbMessage));
+    // A refusal naming some other column is the database's own message, as before.
+    db.writeError = (table, op) => (table === "tickets" && op === "upsert" ? { code: "PGRST204", message: "Could not find the 'title' column of 'tickets' in the schema cache" } : null);
+    const b = await applyRestoreChunk({ from } as never, { orgId: ORG, table: "tickets", rows: [prePaste("t-1", "AC-DDRT-26-0001")], idRemap: REMAP });
+    expect(b).toMatchObject({ ok: false, error: "Could not find the 'title' column of 'tickets' in the schema cache" });
   });
 
   it("fail closed: a column check or a signature read that fails stops the chunk before any write — nothing is written on a guess", async () => {
@@ -332,6 +367,12 @@ describe("P18 — a database WITHOUT 20261250 (ruling (3): nothing is sent for t
       `tickets.upsert(${JSON.stringify([rows.map((x) => ({ ...x, org_id: ORG })), { onConflict: "id", ignoreDuplicates: true, count: "exact" }])})`,
     ]);
     for (const id of ["t-1", "t-2"]) for (const c of RESTORE_REVIEW_MODEL_COLUMNS) expect(ticketHere(id)).not.toHaveProperty(c);
+  });
+
+  it("a backup taken after the paste, restored here, is refused by the database exactly as before — the database's own PGRST204 message, not the schema-cache sentence (no column check ran)", async () => {
+    const r = await applyRestoreChunk({ from } as never, { orgId: ORG, table: "tickets", rows: [postPaste("t-1", "AC-DDRT-26-0001")], idRemap: REMAP });
+    expect(r).toMatchObject({ ok: false, status: 500, code: "PGRST204" });
+    expect(String((r as { error: string }).error)).toMatch(/^Could not find the '\w+' column of 'tickets' in the schema cache$/);
   });
 
   it("through the route: the same answer and audit row as before (no notes key)", async () => {

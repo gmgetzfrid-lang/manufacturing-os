@@ -1935,6 +1935,27 @@ export function declarationNotRestoredMessage(row: Record<string, unknown>): str
   return `like_in_kind_* cleared on request ${number}: its requester declared the work like-in-kind and signed that declaration electronically, but the signature is not on record in this workspace (a backup carries no signatures), so the request was restored as undeclared — it now needs an engineer's sign-off (or a recorded management override) before it issues, as any undeclared request does.${said}`;
 }
 
+/** Ruling (2), a request renumbered on restore (EDGE-5, step 4b): its
+ *  DECLARATION_NOT_RESTORED note is built before the renumbering (step 4),
+ *  naming the number the backup carried — which, in this workspace, names
+ *  the request that holds it. The note is rewritten to name the number the
+ *  request is restored under. Any other note is returned as it is. Pure. */
+export function declarationNoteRenumbered(note: RestoreRowRefusal, from: string, to: string): RestoreRowRefusal {
+  if (note.code !== DECLARATION_NOT_RESTORED) return note;
+  const was = `like_in_kind_* cleared on request ${from}:`;
+  if (!note.message.startsWith(was)) return note;
+  return { ...note, message: `like_in_kind_* cleared on request ${to} (restored under this fresh number; "${from}", the number it carried in the backup, names another request in this workspace):${note.message.slice(was.length)}` };
+}
+
+/** Ruling (3), the schema-cache window: just after 20261250 is pasted the
+ *  column check (a SELECT the database answers from its live catalog) finds
+ *  the columns, but the API's schema cache, which the write is checked
+ *  against, may not have reloaded yet — the tickets write is then refused
+ *  PGRST204 naming one of them. Said as what it is, with the remedy. */
+export function reviewModelSchemaCacheMessage(dbMessage: string): string {
+  return `This workspace's database has the review-model columns (20261250), but its API has not reloaded its schema since that migration (it does so shortly after one is applied), so it refused these requests. Wait a minute and run the restore again — what was already restored is kept and skipped. (${dbMessage})`;
+}
+
 /** Ruling (1): the chunk's one line for the requests restored as filed
  *  before the review model. */
 export function filedBeforeReviewModelNote(n: number): string {
@@ -2043,10 +2064,12 @@ export async function applyRestoreChunk(
   // that fails stops the chunk before any write). Ruling (1) here; ruling (2)
   // rides the pre-write rules below (step 4, `sets`).
   let unsignedDeclarations = new Set<Record<string, unknown>>();
+  let reviewModelColumnsFound = false;
   if (table === "tickets" && mapped.length) {
     const facts = await restoreReviewModelFacts(sb, orgId, mapped);
     if (!facts.ok) return fail(500, facts.error, 0, params.rows.length);
     if (facts.columns) {
+      reviewModelColumnsFound = true;
       const before = mapped.filter(filedBeforeReviewModel).length;
       mapped = mapped.map((r) => {
         const out = asFiledBeforeReviewModel(r);
@@ -2386,6 +2409,9 @@ export async function applyRestoreChunk(
       return null;
     }
     const code = String(up.error.code ?? "");
+    // P18 fix pass: the column check found 20261250's columns, the API's
+    // schema cache has not caught up (reviewModelSchemaCacheMessage).
+    if (reviewModelColumnsFound && code === "PGRST204" && isMissingReviewModelColumn(up.error)) return { error: reviewModelSchemaCacheMessage(up.error.message), code };
     if (!ROW_LEVEL_SQLSTATES.has(code)) return { error: up.error.message, code };
     if (rows.length === 1) {
       refused.push({ id: label(rows[0]), code: restoreRefusalCode(table, code, up.error.message), message: up.error.message });
@@ -2528,7 +2554,9 @@ export async function applyRestoreChunk(
       const holderWhere = ofBackup ? "of this backup (restored first)" : carriers ? "of this workspace" : "already in this workspace";
       const out = renumberedTicketRow(r, n, to, holder, holderWhere, new Date().toISOString(), ofBackup);
       const folder = ticketFilesFolder(r, n);
-      clearNotes.set(out, [...(clearNotes.get(r) ?? []), {
+      // P18 fix pass: a cleared declaration's note names the number the
+      // request is restored under, not the one another request holds here.
+      clearNotes.set(out, [...(clearNotes.get(r) ?? []).map((x) => declarationNoteRenumbered(x, n, to)), {
         id: label(r), code: TICKET_RENUMBERED,
         message: `ticket_id "${n}" → "${to}": request ${holder} ${holderWhere} carries "${n}"${ofBackup ? " (the workspace the backup was taken from held the number twice)" : carriers ? " (a request this workspace holds that is not one of this backup's)" : ` (a request the workspace held before this restore, or — where the backup itself carries "${n}" twice — the backup's own request, restored by an earlier part of this restore)`}, so this request was restored under a fresh number rather than beside it or not at all; "${n}" is kept on it as metadata.restore_renumbered.from and in its history — labels, transmittals and archives printing "${n}" for this request must be read as "${to}"; in this workspace "${n}" still identifies request ${holder}${folder ? `; its files stay in the "${n}" folder (${folder})` : ""}`,
         renumbered: { from: n, to, numberHeldBy: holder },

@@ -1515,3 +1515,24 @@ Fix:
 - **Out of scope.** drafting-flow `EDGE-19` (the renumbered request's files) is not touched.
 
 ---
+
+## BKP-17 · The restore page does not show the review-model lines a tickets restore now writes: the "filed before the review model" note, and each cleared declaration, which it counts as "a pointer cleared"
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** admin-and-org (the restore page's owner) — opened by admin-and-org Round G P18 RESTORE REVIEW-MODEL ROWS's fix pass, 2026-10-21, from the package review (`DEC-31`: `RestoreResultPanel.tsx` is outside that package's plan). The integrator assigns the package.
+- **Verification:** CONFIRMED by reading the code at the P18 fix pass (`app/(protected)/admin/restore/RestoreResultPanel.tsx:172`, `:196`, `:202`, `:242-244`; no read of `RestoreTableOutcome.notes` anywhere in the file)
+- **Independently verified:** — (`author`: the P18 review found it; recorded by the P18 fix pass; not yet challenged)
+- **Locations:** `app/(protected)/admin/restore/RestoreResultPanel.tsx:172` (`pointersCleared` = every `cleared` note but the renumberings), `:196` / `:202` (the headline "N pointer(s) cleared"), `:242-244` (per table: "N row(s) restored with a pointer cleared — <column> (<label>)"); `lib/dataRestore.ts` `RestoreTableOutcome.notes` (the chunk's plain-language lines, set by the page's driver only when there is one), `DECLARATION_NOT_RESTORED` (the `cleared` code), `filedBeforeReviewModelNote`, `declarationNotRestoredMessage`
+- **Related:** drafting-flow `TIER-1` and `GAP-110` (their P18 Resolution blocks, residuals), `BKP-16` (the same pattern for renumbered requests, resolved by P17)
+
+**Mechanism.** Since P18, a `tickets` restore into a database with `20261250` writes two kinds of line. (1) Ruling (1): one plain-language line per chunk for the requests taken before the review model ("N request(s) in this part of the backup were taken before the review model … marked as filed before it, so today's role-based engineering gate decides for it …"). It rides `RestoreChunkResult.notes`, the apply-table answer, the `RESTORE_CHUNK` audit row and `RestoreTableOutcome.notes`; the result panel reads none of them. (2) Ruling (2): one `cleared` note per request whose like-in-kind declaration was restored without its e-signature (`DECLARATION_NOT_RESTORED`), in a plant admin's words and naming the request. The panel renders every non-renumbering `cleared` note through one generic line: the headline counts it as "a pointer cleared", and the table line shows the column (`like_in_kind_*`) and the code's label, not which requests lost their declaration.
+
+**Failure scenario.** An admin restores a backup taken before `20261250` into a database that has it. The page says nothing about the requests marked as filed before the review model; the line is only in the JSON answer and the audit log. A backup with three declarations whose signatures are not on record reads "Records restored — 3 pointer(s) cleared" and "tickets: 3 row(s) restored with a pointer cleared — like_in_kind_* (…label…)", and the admin cannot tell from the page which three requests now need an engineer's sign-off without opening the `RESTORE_CHUNK` audit rows.
+
+**Done when.**
+- The result panel shows each table's `RestoreTableOutcome.notes` lines (for tickets, the "filed before the review model" line) under that table.
+- A cleared declaration is listed per request (its number, from the note) in its own block, in the note's words, and the headline does not count it as a pointer cleared (it is counted apart, as `BKP-16` did for renumberings).
+- Every other outcome of the panel is unchanged (P17's nine regression digests stay byte-identical), and a rendered test pins the new lines.
+
+---
