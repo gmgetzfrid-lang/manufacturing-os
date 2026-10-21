@@ -15,6 +15,7 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { planNameFix, type NameFix } from "@/lib/documentNames";
 import { computeUniquenessKey } from "@/lib/uniqueness";
+import { inSlices } from "@/lib/inSlices";
 
 const COLS = "id, library_id, name, title, document_number, rev, original_name:metadata->>original_name";
 
@@ -24,13 +25,16 @@ const COLS = "id, library_id, name, title, document_number, rev, original_name:m
 export async function findNameFixes(docIds: string[]): Promise<{ fixes: NameFix[]; error: string | null }> {
   const fixes: NameFix[] = [];
   const libraryOf = new Map<string, string>();
-  for (let i = 0; i < docIds.length; i += 100) {
-    const { data, error } = await supabaseAdmin.from("documents").select(COLS).in("id", docIds.slice(i, i + 100));
-    if (error) return { fixes, error: error.message };
-    for (const row of (data ?? []) as unknown as Array<Parameters<typeof planNameFix>[0] & { library_id: string }>) {
-      const fix = planNameFix(row);
-      if (fix) { fixes.push(fix); libraryOf.set(fix.id, row.library_id); }
-    }
+  let readError: string | null = null;
+  const pages = await inSlices(docIds, 100, 6, async (slice) => {
+    const { data, error } = await supabaseAdmin.from("documents").select(COLS).in("id", slice);
+    if (error) readError = error.message;
+    return (data ?? []) as unknown as Array<Parameters<typeof planNameFix>[0] & { library_id: string }>;
+  });
+  if (readError) return { fixes, error: readError };
+  for (const row of pages.flat()) {
+    const fix = planNameFix(row);
+    if (fix) { fixes.push(fix); libraryOf.set(fix.id, row.library_id); }
   }
   // Two files correcting to one number: usually two revisions of one document.
   const firstByNumber = new Map<string, NameFix>();
@@ -44,14 +48,17 @@ export async function findNameFixes(docIds: string[]): Promise<{ fixes: NameFix[
   const fixing = new Set(fixes.map((f) => f.id));
   const wanted = Array.from(new Set(fixes.filter((f) => !f.clash).map((f) => f.to.documentNumber)));
   const taken = new Map<string, string>();
-  for (let i = 0; i < wanted.length; i += 100) {
-    const { data, error } = await supabaseAdmin.from("documents").select("id, library_id, document_number, name")
-      .in("library_id", Array.from(new Set(libraryOf.values()))).in("document_number", wanted.slice(i, i + 100))
+  const libs = Array.from(new Set(libraryOf.values()));
+  // A failed lookup just means fewer clashes flagged ahead of time — the
+  // update itself still refuses a real clash.
+  const takenPages = await inSlices(wanted, 100, 6, async (slice) => {
+    const { data } = await supabaseAdmin.from("documents").select("id, library_id, document_number, name")
+      .in("library_id", libs).in("document_number", slice)
       .not("status", "in", "(Archived,Superseded)");
-    if (error) break; // the update itself still refuses a real clash
-    for (const r of (data ?? []) as Array<{ id: string; library_id: string; document_number: string; name: string | null }>) {
-      if (!fixing.has(r.id)) taken.set(`${r.library_id}|${r.document_number.toLowerCase()}`, `${r.document_number}${r.name ? ` (${r.name})` : ""}`);
-    }
+    return (data ?? []) as Array<{ id: string; library_id: string; document_number: string; name: string | null }>;
+  });
+  for (const r of takenPages.flat()) {
+    if (!fixing.has(r.id)) taken.set(`${r.library_id}|${r.document_number.toLowerCase()}`, `${r.document_number}${r.name ? ` (${r.name})` : ""}`);
   }
   for (const f of fixes) {
     const t = taken.get(`${libraryOf.get(f.id)}|${f.to.documentNumber.toLowerCase()}`);
@@ -76,13 +83,18 @@ export async function repairDocumentNames(orgId: string, docIds: string[], uid: 
   const changes: Array<{ id: string; from: NameFix["from"]; to: NameFix["to"] }> = [];
   const keysByLibrary = new Map<string, string[] | null>();
 
-  const rows: Array<Record<string, unknown>> = [];
-  for (let i = 0; i < docIds.length; i += 100) {
+  let readError: string | null = null;
+  const rows = (await inSlices(docIds, 100, 6, async (slice) => {
     const { data, error } = await supabaseAdmin.from("documents")
-      .select(`${COLS}, library_id, status, metadata, current_version_id`)
-      .eq("org_id", orgId).in("id", docIds.slice(i, i + 100));
-    if (error) { out.remaining = docIds.length - i; out.failed.push({ fileName: `${docIds.length - i} documents`, reason: `couldn't be read — ${error.message}` }); break; }
-    rows.push(...((data ?? []) as Array<Record<string, unknown>>));
+      .select(`${COLS}, status, metadata, current_version_id`)
+      .eq("org_id", orgId).in("id", slice);
+    if (error) readError = error.message;
+    return (data ?? []) as Array<Record<string, unknown>>;
+  })).flat();
+  if (readError) {
+    // Whatever couldn't be read is left for the next round — never guessed at.
+    out.remaining = docIds.length - rows.length;
+    out.failed.push({ fileName: `${out.remaining} documents`, reason: "couldn't be read just now — press Correct again" });
   }
 
   const fixOne = async (row: Record<string, unknown>) => {
@@ -130,7 +142,7 @@ export async function repairDocumentNames(orgId: string, docIds: string[], uid: 
   // Stops starting new rows at the deadline, so a request is never cut off
   // mid-way by the host; the caller simply asks again for the rest.
   for (let i = 0; i < rows.length; i += 8) {
-    if (Date.now() > deadline) { out.remaining = rows.length - i; break; }
+    if (Date.now() > deadline) { out.remaining += rows.length - i; break; }
     await Promise.all(rows.slice(i, i + 8).map(fixOne));
   }
 

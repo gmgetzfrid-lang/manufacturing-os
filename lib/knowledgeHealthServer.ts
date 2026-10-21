@@ -14,6 +14,7 @@
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { fetchAllRows } from "@/lib/fetchAllRows";
+import { inSlices } from "@/lib/inSlices";
 import { planKnowledgeSources, syncKnowledgeLibrarySources, type SourceSyncSummary } from "@/lib/knowledgeSourceSync";
 import { findNameFixes, repairDocumentNames, type NameRepairResult } from "@/lib/documentNameRepair";
 import type { NameFix } from "@/lib/documentNames";
@@ -40,6 +41,8 @@ export interface KnowledgeHealthReport {
   names: { wrong: number; clashes: number; samples: NameFix[]; checked: boolean };
   /** A read failed part-way — the numbers may be short; Repair won't remove anything. */
   incomplete: boolean;
+  /** Checks left out to answer in time (the database was slow) — run again. */
+  skipped: string[];
   errors: string[];
 }
 
@@ -47,17 +50,25 @@ async function count(build: () => PromiseLike<{ count: number | null; error: unk
   try { const r = await build(); return r.error ? null : r.count ?? 0; } catch { return null; }
 }
 
-export async function knowledgeHealthReport(orgId: string, libraryId: string): Promise<KnowledgeHealthReport> {
+/** The report answers inside the host's 60-second limit, always: the core
+ *  reconciliation runs first, and the extra checks (copies set aside
+ *  elsewhere, document names, meaning-index counts) each run only while
+ *  there's time left — any left out are named in `skipped`. */
+export async function knowledgeHealthReport(orgId: string, libraryId: string, budgetMs = 40_000): Promise<KnowledgeHealthReport> {
   const now = Date.now();
+  const timeLeft = () => budgetMs - (Date.now() - now);
   const errors: string[] = [];
+  const skipped: string[] = [];
 
   // Every index entry in the library (select("*") so a database without the
   // newest columns still answers).
-  const { rows: mirrors, error: mErr } = await fetchAllRows<MirrorRow>((from, to) => supabaseAdmin
-    .from("knowledge_documents").select("*").eq("library_id", libraryId).order("id").range(from, to));
+  // The index and the sources are read side by side.
+  const [{ rows: mirrors, error: mErr }, plan] = await Promise.all([
+    fetchAllRows<MirrorRow>((from, to) => supabaseAdmin
+      .from("knowledge_documents").select("*").eq("library_id", libraryId).order("id").range(from, to)),
+    planKnowledgeSources(libraryId, false),
+  ]);
   if (mErr) errors.push(`index: ${mErr}`);
-
-  const plan = await planKnowledgeSources(libraryId, false);
   if (plan) errors.push(...plan.errors);
 
   const bySource = new Map<string, MirrorRow>();
@@ -84,11 +95,15 @@ export async function knowledgeHealthReport(orgId: string, libraryId: string): P
     // Restorable copies parked in OTHER knowledge libraries of the org.
     const retiredElsewhere = new Set<string>();
     const missingIds = docs.filter((d) => !bySource.has(d.id)).map((d) => d.id);
-    for (let i = 0; i < missingIds.length; i += 100) {
-      const { data, error } = await supabaseAdmin.from("knowledge_documents").select("source_document_id")
-        .eq("org_id", orgId).eq("status", "retired").in("source_document_id", missingIds.slice(i, i + 100));
-      if (error) break;
-      for (const r of (data ?? []) as Array<{ source_document_id: string }>) retiredElsewhere.add(r.source_document_id);
+    if (missingIds.length && timeLeft() > 15_000) {
+      const pages = await inSlices(missingIds, 100, 6, async (slice) => {
+        const { data } = await supabaseAdmin.from("knowledge_documents").select("source_document_id")
+          .eq("org_id", orgId).eq("status", "retired").in("source_document_id", slice);
+        return (data ?? []) as Array<{ source_document_id: string }>;
+      });
+      for (const r of pages.flat()) retiredElsewhere.add(r.source_document_id);
+    } else if (missingIds.length) {
+      skipped.push("copies set aside in other libraries");
     }
     const mirrorsByDoc = new Map<string, MirrorFacts>();
     for (const [k, m] of bySource) mirrorsByDoc.set(k, facts(m));
@@ -108,7 +123,8 @@ export async function knowledgeHealthReport(orgId: string, libraryId: string): P
 
   // Names: only for linked documents (uploaded PDFs are named by hand).
   const names: KnowledgeHealthReport["names"] = { wrong: 0, clashes: 0, samples: [], checked: false };
-  if (plan) {
+  if (plan && timeLeft() < 12_000) skipped.push("document names");
+  else if (plan) {
     const found = await findNameFixes(plan.all.map(({ doc }) => doc.id));
     names.wrong = found.fixes.length;
     names.clashes = found.fixes.filter((f) => f.clash).length;
@@ -120,11 +136,12 @@ export async function knowledgeHealthReport(orgId: string, libraryId: string): P
 
   // While the meaning index is being built the chunk table is busy; a count
   // that times out is reported as "not available right now", never as 0.
+  const countFor = Math.max(1_000, Math.min(8_000, timeLeft() - 2_000));
   const [chunks, embedded] = await Promise.all([
     count(() => supabaseAdmin.from("knowledge_chunks").select("id", { count: "exact", head: true }).eq("library_id", libraryId)
-      .abortSignal(AbortSignal.timeout(8_000))),
+      .abortSignal(AbortSignal.timeout(countFor))),
     count(() => supabaseAdmin.from("knowledge_chunks").select("id", { count: "exact", head: true }).eq("library_id", libraryId).not("embedding", "is", null)
-      .abortSignal(AbortSignal.timeout(8_000))),
+      .abortSignal(AbortSignal.timeout(countFor))),
   ]);
 
   return {
@@ -142,7 +159,8 @@ export async function knowledgeHealthReport(orgId: string, libraryId: string): P
     retired: mirrors.filter((m) => m.status === "retired").length,
     meaning: chunks === null || embedded === null ? null : { chunks, embedded },
     names,
-    incomplete: !!plan?.incomplete || !!mErr || !names.checked && !!plan,
+    incomplete: !!plan?.incomplete || !!mErr || (!names.checked && !!plan && !skipped.includes("document names")),
+    skipped,
     // A busy database (usually: the meaning index is being written) is said
     // once, plainly; other failures keep their reason.
     errors: Array.from(new Set(errors.map((e) => isBusyDbError(e)
@@ -154,7 +172,6 @@ export async function knowledgeHealthReport(orgId: string, libraryId: string): P
 export interface RepairResult {
   sync: SourceSyncSummary | null;
   requeued: { failed: number; stuck: number; partial: number };
-  report: KnowledgeHealthReport;
 }
 
 export async function repairKnowledgeLibrary(orgId: string, libraryId: string): Promise<RepairResult> {
@@ -173,35 +190,30 @@ export async function repairKnowledgeLibrary(orgId: string, libraryId: string): 
   const stuck = rows.filter((m) => m.status === "indexing" && m.updated_at && now - new Date(m.updated_at).getTime() > STUCK_AFTER_MS).map((m) => m.id);
   const partial = rows.filter((m) => m.status === "ready" && ((m.pages_indexed ?? 0) <= 0 || (m.page_count ?? 0) > (m.pages_indexed ?? 0))).map((m) => m.id);
   for (const ids of [failed, stuck, partial]) {
-    for (let i = 0; i < ids.length; i += 100) {
-      await supabaseAdmin.from("knowledge_documents").update({ status: "pending", error: null })
-        .in("id", ids.slice(i, i + 100));
-    }
+    await inSlices(ids, 100, 4, (slice) => supabaseAdmin.from("knowledge_documents")
+      .update({ status: "pending", error: null }).in("id", slice).then(() => undefined));
   }
 
-  const report = await knowledgeHealthReport(orgId, libraryId);
-  return { sync, requeued: { failed: failed.length, stuck: stuck.length, partial: partial.length }, report };
+  // No report here: sync + report in one request is what ran past the
+  // host's limit. The panel asks for a fresh report as its own request.
+  return { sync, requeued: { failed: failed.length, stuck: stuck.length, partial: partial.length } };
 }
 
 export interface NameRepairResponse {
   names: NameRepairResult;
-  sync: SourceSyncSummary | null;
-  /** Only on the last round. */
-  report: KnowledgeHealthReport | null;
 }
 
-/** Correct the names the old filename reader got wrong in this library's
- *  linked documents. Works in rounds that fit the host's time limit: the
+/** One round of correcting the names the old filename reader got wrong in
+ *  this library's linked documents, inside the host's time limit. The
  *  caller repeats while `names.remaining > 0`, passing back the ids it was
- *  told need a person (`exclude`) so they aren't retried. The last round
- *  syncs, so the index cites the documents by their real names. */
+ *  told need a person (`exclude`) so they aren't retried, then runs Repair
+ *  (a sync, so the index cites the documents by their real names) and asks
+ *  for a fresh report — each its own request. */
 export async function repairLinkedDocumentNames(orgId: string, libraryId: string, uid: string, exclude: string[] = []): Promise<NameRepairResponse> {
   const started = Date.now();
   const plan = await planKnowledgeSources(libraryId, false);
   const { fixes } = plan ? await findNameFixes(plan.all.map(({ doc }) => doc.id)) : { fixes: [] };
   const skip = new Set(exclude);
-  const names = await repairDocumentNames(orgId, fixes.filter((f) => !skip.has(f.id)).map((f) => f.id), uid, started + 35_000);
-  if (names.remaining > 0) return { names, sync: null, report: null };
-  const sync = await syncKnowledgeLibrarySources(libraryId);
-  return { names, sync, report: await knowledgeHealthReport(orgId, libraryId) };
+  const names = await repairDocumentNames(orgId, fixes.filter((f) => !skip.has(f.id)).map((f) => f.id), uid, started + 40_000);
+  return { names };
 }

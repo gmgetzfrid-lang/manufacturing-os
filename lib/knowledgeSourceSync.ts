@@ -19,6 +19,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadDcLandscape, folderSubtree } from "@/lib/knowledgeAccess";
 import { aiReadability } from "@/lib/aiBoundary";
 import { fetchAllRows } from "@/lib/fetchAllRows";
+import { inSlices } from "@/lib/inSlices";
 
 export interface SourceSyncSummary {
   added: number;
@@ -192,20 +193,14 @@ export async function planKnowledgeSources(libraryId: string, healNames = false)
       const folderIds = [...landscape.folders.entries()]
         .filter(([, f]) => f.library_id === source.source_id)
         .map(([id]) => id);
-      for (let i = 0; i < folderIds.length; i += 100) {
-        const chunk = folderIds.slice(i, i + 100);
-        await readAll(`${source.source_id} folders`, (from, to) => supabaseAdmin.from("documents").select(DOC_COLS)
-          .eq("org_id", orgId).is("library_id", null).in("collection_id", chunk).order("id").range(from, to));
-      }
+      await inSlices(folderIds, 100, 4, (chunk) => readAll(`${source.source_id} folders`, (from, to) => supabaseAdmin.from("documents").select(DOC_COLS)
+        .eq("org_id", orgId).is("library_id", null).in("collection_id", chunk).order("id").range(from, to)));
     } else {
       const subtree = [...folderSubtree(source.source_id, landscape)];
       if (subtree.length === 0) continue;
       // In slices: a big folder tree's ids don't fit in one request URL.
-      for (let i = 0; i < subtree.length; i += 100) {
-        const chunk = subtree.slice(i, i + 100);
-        await readAll(source.source_id, (from, to) => supabaseAdmin.from("documents").select(DOC_COLS)
-          .eq("org_id", orgId).in("collection_id", chunk).order("id").range(from, to));
-      }
+      await inSlices(subtree, 100, 4, (chunk) => readAll(source.source_id, (from, to) => supabaseAdmin.from("documents").select(DOC_COLS)
+        .eq("org_id", orgId).in("collection_id", chunk).order("id").range(from, to)));
     }
     for (const d of enumerated) {
       if (wanted.has(d.id) || seenDocs.has(d.id)) continue;
@@ -228,12 +223,18 @@ export async function planKnowledgeSources(libraryId: string, healNames = false)
   // Current version files for everything wanted.
   const versionIds = [...wanted.values()].map((w) => w.doc.current_version_id as string);
   const versionById = new Map<string, { file_url: string | null; file_type: string | null; revision_label: string | null; size: number | null; file_hash?: string | null }>();
-  for (let i = 0; i < versionIds.length; i += 100) {
-    const { data } = await supabaseAdmin
+  const versionPages = await inSlices(versionIds, 100, 6, async (slice) => {
+    const { data, error } = await supabaseAdmin
       .from("document_versions")
       .select("id, file_url, file_type, revision_label, size, file_hash")
-      .in("id", versionIds.slice(i, i + 100));
-    for (const v of data ?? []) {
+      .in("id", slice);
+    // A missing version read would make documents look fileless — and an
+    // incomplete pass never removes anything on the strength of it.
+    if (error) { errors.push(`versions: ${error.message}`); incomplete = true; }
+    return data ?? [];
+  });
+  for (const data of versionPages) {
+    for (const v of data) {
       versionById.set(v.id as string, {
         file_url: (v.file_url as string | null) ?? null,
         file_type: (v.file_type as string | null) ?? null,
@@ -251,6 +252,7 @@ export async function planKnowledgeSources(libraryId: string, healNames = false)
 /** One full reconcile pass for one knowledge library. Safe to re-run. */
 export async function syncKnowledgeLibrarySources(libraryId: string): Promise<SourceSyncSummary> {
   const out: SourceSyncSummary = { added: 0, refreshed: 0, removed: 0, retired: 0, restored: 0, renamed: 0, errors: [] };
+  const startedAt = Date.now();
 
   const plan = await planKnowledgeSources(libraryId, true);
   if (!plan) return out;
@@ -287,12 +289,16 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
       const ex = existingByDcDoc.get(dcDocId);
       if (!ex || ex.status === "retired") needs.push(dcDocId);
     }
-    for (let i = 0; i < needs.length; i += 100) {
-      const { data: parked, error: pErr } = await supabaseAdmin.from("knowledge_documents")
+    // The lookups run a few at a time; the restores below stay one by one.
+    const parkedPages = await inSlices(needs, 100, 4, async (slice) => {
+      const { data, error } = await supabaseAdmin.from("knowledge_documents")
         .select("id, library_id, source_document_id, source_version_id, pages_indexed, page_count, retired_at")
-        .eq("org_id", orgId).eq("status", "retired").in("source_document_id", needs.slice(i, i + 100))
+        .eq("org_id", orgId).eq("status", "retired").in("source_document_id", slice)
         .order("retired_at", { ascending: false });
-      if (pErr) break; // pre-migration: nothing is ever retired
+      return error ? null : data; // error: pre-migration, nothing is ever retired
+    });
+    for (const parked of parkedPages) {
+      if (!parked) break;
       type Parked = { id: string; library_id: string; source_document_id: string; source_version_id: string | null; pages_indexed: number; page_count: number | null };
       // One copy per document: the one already in THIS library if there is
       // one (a library holds at most one entry per document), else the newest.
@@ -331,6 +337,7 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
   // finish well inside serverless time limits (Vercel Hobby kills at 60s —
   // row-at-a-time inserts were the old 504).
   const toInsert: Array<Record<string, unknown>> = [];
+  const renames: Array<{ id: string; name: string; rev: string | null }> = [];
   for (const [dcDocId, { sourceId, doc }] of wanted) {
     const version = versionById.get(doc.current_version_id as string);
     if (!version?.file_url || !isPdf(version.file_url, version.file_type)) {
@@ -408,11 +415,22 @@ export async function syncKnowledgeLibrarySources(libraryId: string): Promise<So
       // Same file, new name or revision label (renamed in the document
       // library, or its name repaired): answers must cite it by its real
       // name. Only the label changes — nothing is re-read or re-embedded.
-      const { error } = await supabaseAdmin.from("knowledge_documents").update({
-        name: displayName(doc), source_rev: version.revision_label,
-      }).eq("id", existing.id as string);
-      if (error) out.errors.push(`rename ${displayName(doc)}: ${error.message}`);
-      else out.renamed++;
+      renames.push({ id: existing.id as string, name: displayName(doc), rev: version.revision_label });
+    }
+  }
+
+  // Renames: label-only updates, ten at a time. After a name correction
+  // there can be a thousand; one by one that alone outlasts a request. Any
+  // not reached in time are simply picked up by the next sync.
+  {
+    const stopAt = startedAt + 35_000;
+    for (let i = 0; i < renames.length && Date.now() < stopAt; i += 10) {
+      const results = await Promise.all(renames.slice(i, i + 10).map((r) => supabaseAdmin.from("knowledge_documents")
+        .update({ name: r.name, source_rev: r.rev }).eq("id", r.id)));
+      results.forEach((res, j) => {
+        if (res.error) out.errors.push(`rename ${renames[i + j].name}: ${res.error.message}`);
+        else out.renamed++;
+      });
     }
   }
 

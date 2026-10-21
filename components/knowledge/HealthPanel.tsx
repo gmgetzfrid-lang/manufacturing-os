@@ -38,6 +38,13 @@ const EXPLAIN: Partial<Record<HealthStatus, string>> = {
   notCurrent: "Superseded, void or archived — the AI reads only documents in force.",
 };
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** A timeout or gateway error: the platform or a busy database, not a fault. */
+const isWeather = (e: unknown) => !!(e as { transient?: boolean })?.transient || /^HTTP 50[234]$/.test((e as Error)?.message ?? "");
+const friendly = (e: unknown) => isWeather(e)
+  ? "The database is busy right now (usually: the meaning index is being written), so this took too long. Nothing was lost — try again in a few minutes."
+  : (e as Error)?.message ?? String(e);
+
 export default function HealthPanel({ orgId, libraryId, isController, onRepaired }: {
   orgId: string; libraryId: string; isController: boolean; onRepaired?: () => void;
 }) {
@@ -55,9 +62,17 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
   const check = useCallback(async () => {
     setChecking(true);
     setError(null);
-    try { setReport(await getLibraryHealth(orgId, libraryId)); }
-    catch (e) { setError((e as Error).message); }
-    finally { setChecking(false); }
+    // A timeout while the database is busy is retried quietly, twice.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        setReport(await getLibraryHealth(orgId, libraryId));
+        break;
+      } catch (e) {
+        if (!isWeather(e) || attempt >= 2) { setError(friendly(e)); break; }
+        await sleep(4_000 * (attempt + 1));
+      }
+    }
+    setChecking(false);
   }, [orgId, libraryId]);
   useEffect(() => { void Promise.resolve().then(check); }, [check]);
 
@@ -65,12 +80,17 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
     setRepairing(true);
     setError(null);
     try {
-      const r = await repairLibrary(orgId, libraryId);
-      setLast(r);
-      setReport(r.report);
+      setLast(await repairLibrary(orgId, libraryId));
       onRepaired?.();
-    } catch (e) { setError((e as Error).message); }
-    finally { setRepairing(false); }
+    } catch (e) {
+      setError(isWeather(e)
+        ? "Repair ran longer than the host allows — common while the meaning index is being written. What it did is saved; press Repair again to finish."
+        : friendly(e));
+    } finally {
+      setRepairing(false);
+    }
+    // The fresh report is its own request — together they outran the limit.
+    await check();
   };
 
   // Rounds that each fit the host's time limit; every round's corrections
@@ -79,33 +99,46 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
     setNaming({ fixed: 0 });
     setError(null);
     const total: NameRepairResult = { fixed: 0, skipped: 0, conflicts: [], failed: [], remaining: 0 };
+    let weather = 0;
     try {
-      for (let round = 0; round < 40; round++) {
+      for (let round = 0; round < 60; round++) {
         const exclude = [...total.conflicts.map((c) => c.id), ...total.failed.flatMap((f) => (f.id ? [f.id] : []))];
-        const r = await fixLinkedDocumentNames(orgId, libraryId, exclude);
+        let r: Awaited<ReturnType<typeof fixLinkedDocumentNames>>;
+        try {
+          r = await fixLinkedDocumentNames(orgId, libraryId, exclude);
+          weather = 0;
+        } catch (e) {
+          if (!isWeather(e) || ++weather > 3) throw e;
+          await sleep(5_000 * weather);
+          continue;
+        }
         total.fixed += r.names.fixed;
         total.skipped += r.names.skipped;
         total.conflicts.push(...r.names.conflicts);
-        total.failed.push(...r.names.failed);
+        total.failed.push(...r.names.failed.filter((f) => f.id));
         total.remaining = r.names.remaining;
         setNaming({ fixed: total.fixed });
-        if (r.report) { setReport(r.report); break; }
+        if (r.names.remaining === 0) break;
         if (r.names.fixed === 0 && r.names.conflicts.length === 0 && r.names.failed.length === 0) break; // no progress
       }
       setNameResult(total);
+      // Bring the index's names up to date (a sync — label changes only,
+      // nothing re-read), then a fresh report.
+      if (total.fixed > 0) await repairLibrary(orgId, libraryId).catch(() => undefined);
       onRepaired?.();
     } catch (e) {
       setNameResult(total);
-      setError(`${(e as Error).message}${total.fixed ? ` — ${total.fixed} corrected before it stopped are saved.` : ""}`);
+      setError(`${friendly(e)}${total.fixed ? ` ${total.fixed} corrected before it stopped are saved — press Correct again to finish.` : ""}`);
     } finally {
       setNaming(null);
     }
+    await check();
   };
 
   if (!report) {
     return (
       <div className="mb-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-xs text-[var(--color-text-muted)] flex items-center gap-2">
-        {error ? <><AlertTriangle className="w-4 h-4 text-amber-600" /> Health check unavailable: {error}</>
+        {error ? <><AlertTriangle className="w-4 h-4 text-amber-600" /> {error} <button onClick={() => void check()} className="ml-1 font-bold underline">Try again</button></>
           : <><Loader2 className="w-4 h-4 animate-spin" /> Checking that every linked document is accounted for…</>}
       </div>
     );
@@ -180,7 +213,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
           <CheckCircle2 className="w-4 h-4 shrink-0 mt-px" />
           <span>
             Repair done.{" "}
-            {last.sync ? <>Added {last.sync.added}, refreshed {last.sync.refreshed}, restored {last.sync.restored} from set-aside (free), set aside {last.sync.retired}.</> : null}{" "}
+            {last.sync ? <>Added {last.sync.added}, refreshed {last.sync.refreshed}{last.sync.renamed ? `, renamed ${last.sync.renamed}` : ""}, restored {last.sync.restored} from set-aside (free), set aside {last.sync.retired}.</> : null}{" "}
             Re-queued {last.requeued.failed} failed, {last.requeued.stuck} stuck, {last.requeued.partial} partly read — they resume where they stopped.
             {last.sync && last.sync.removed > 0 && <b> {last.sync.removed} were deleted instead of set aside because the database update (20261024) hasn&apos;t been run.</b>}
             {last.sync?.errors.length ? <span className="block mt-0.5 text-amber-800 dark:text-amber-300">{last.sync.errors.slice(0, 3).join(" · ")}</span> : null}
@@ -192,6 +225,12 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
         <div className="mx-4 mb-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200 flex gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0" />
           Part of the check couldn&apos;t be read, so some numbers may be short. Nothing is ever removed on an incomplete read. {report.errors.slice(0, 2).join(" · ")}
+        </div>
+      )}
+      {report.skipped?.length > 0 && (
+        <div className="mx-4 mb-2 rounded-lg bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-900 px-3 py-2 text-[11px] text-sky-900 dark:text-sky-200 flex gap-2">
+          <Info className="w-4 h-4 shrink-0" />
+          <span>The database is slow right now (usually: the meaning index is being written), so to answer quickly this check left out: {report.skipped.join(", ")}. Press Re-check in a few minutes for the full picture.</span>
         </div>
       )}
       {deadSources.length > 0 && (

@@ -788,7 +788,12 @@ async function apiGet<T>(url: string): Promise<T> {
   const token = await authToken();
   const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
   const data = (await res.json().catch(() => null)) as (T & { error?: string }) | null;
-  if (!res.ok || !data) throw new Error(data?.error || `HTTP ${res.status}`);
+  if (!res.ok || !data) {
+    // Same rule as apiPost: a gateway timeout answers with no JSON, and is
+    // the platform, not the request — flagged so callers can retry.
+    const transient = !data && [408, 500, 502, 503, 504].includes(res.status);
+    throw Object.assign(new Error(data?.error || `HTTP ${res.status}`), { transient });
+  }
   return data;
 }
 
