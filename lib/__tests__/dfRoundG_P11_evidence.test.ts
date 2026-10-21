@@ -145,7 +145,7 @@ describe("EVID-4 — the approval is derived, the typed box is a claim", () => {
   it("done-when 3: every current revision without a signed review sign-off is enumerable", async () => {
     db.tables.documents = [
       { id: "d1", org_id: "o1", document_number: "P-1", current_version_id: "v1", status: "Issued" },
-      { id: "d2", org_id: "o1", document_number: "P-2", current_version_id: "v2", status: "Issued" },
+      { id: "d2", org_id: "o1", document_number: "P-2", library_id: "L1", current_version_id: "v2", status: "Issued" },
       { id: "d3", org_id: "o1", document_number: "P-3", current_version_id: "v3", status: "Superseded" },
     ];
     db.tables.document_review_signoffs = [
@@ -158,17 +158,25 @@ describe("EVID-4 — the approval is derived, the typed box is a claim", () => {
       { id: "v2", revision_label: "B", created_by: "pub", created_by_name: "Pat", approved_by_name: "typed" },
     ];
     const gap = await listCurrentRevisionsWithoutSignedApproval("o1");
-    expect(gap).toEqual([{ documentId: "d2", documentNumber: "P-2", versionId: "v2", revisionLabel: "B", publishedBy: "pub", publishedByName: "Pat", claim: "typed", satisfied: 1, required: 2 }]);
+    expect(gap).toEqual([{ documentId: "d2", documentNumber: "P-2", libraryId: "L1", versionId: "v2", revisionLabel: "B", publishedBy: "pub", publishedByName: "Pat", claim: "typed", satisfied: 1, required: 2 }]);
     db.readError.document_review_signoffs = { message: "down" };
     await expect(listCurrentRevisionsWithoutSignedApproval("o1")).rejects.toThrow(/could not be read/);
   });
-  it("fix pass 2: the unwired helper judges a roster exactly as the stamp does — loadSignedRosters' `complete` — and says it is unwired, with its owner", () => {
+  it("the gap query judges a roster exactly as the stamp does — loadSignedRosters' `complete` — and is wired into the Control Register (DF-P11 integrator fix pass)", () => {
     const src = readFileSync(join(process.cwd(), "lib/versionApproval.ts"), "utf8");
     const fn = src.slice(src.indexOf("export async function listCurrentRevisionsWithoutSignedApproval("));
     expect(fn).toContain("const rosters = await loadSignedRosters(versionIds);");
     expect(fn).toContain("!(rosters.get(id) ?? EMPTY_ROSTER).complete");
-    expect(src).toContain("UNWIRED BY DESIGN (DF-P11 fix pass 2, recorded in EVID-4's Partial)");
-    expect(src).toContain("Owner of the wiring: document-control.");
+    expect(src).not.toContain("UNWIRED BY DESIGN");
+    const panel = readFileSync(join(process.cwd(), "components/documents/UnsignedApprovalPanel.tsx"), "utf8");
+    expect(panel).toContain("listCurrentRevisionsWithoutSignedApproval(orgId)");
+    const register = readFileSync(join(process.cwd(), "app/(protected)/register/page.tsx"), "utf8");
+    expect(register).toContain("<UnsignedApprovalPanel orgId={activeOrgId} refreshKey={refreshKey} />");
+  });
+  it("A5 (DF-P11 integrator fix pass): only approved_by_name is shown — approved_by / approved_at are written by no code path, and the comment says so", () => {
+    const src = readFileSync(join(process.cwd(), "lib/versionApproval.ts"), "utf8");
+    expect(src).not.toContain("and any stored approved_by /");
+    expect(src).toContain("Only approved_by_name is shown");
   });
   it("source: the Version History stamp is earned by a signed roster only; the rev-up box is labelled the publisher's note", () => {
     const panel = readFileSync(join(process.cwd(), "components/documents/VersionHistoryPanel.tsx"), "utf8");
@@ -266,6 +274,40 @@ describe("EVID-10 / EVID-4 — the document evidence pack", () => {
     expect(html).not.toMatch(/Distribution confirmations \(0\)/);
     expect(html).toContain("Not known — the review sign-offs were not read");
     expect(html).not.toContain("Publisher: Pat");
+  });
+  it("DF-P11 integrator fix pass: a request the revisions name that the caller's RLS does not return is 'not visible to you' on BOTH request sections — never 'None recorded'", async () => {
+    seed();
+    db.tables.tickets = []; // the tickets RLS returns nothing for t1
+    const d = await gatherEvidence("d1");
+    expect(d.ticketsNotVisible).toBe(1);
+    expect(d.unread).toEqual([]);
+    const html = renderEvidenceHtml(d);
+    const req = html.slice(html.indexOf("Originating drafting requests (0)"), html.indexOf("Originating request history"));
+    const hist = html.slice(html.indexOf("Originating request history (0)"));
+    expect(req).toContain("1 request the revisions name is not visible to you — not shown here; this does not mean there is none.");
+    expect(req).not.toContain("None recorded.");
+    expect(hist.slice(0, hist.indexOf("</div>") + 6)).toContain("The history of 1 request the revisions name is not visible to you");
+    expect(hist.slice(0, 400)).not.toContain("None recorded.");
+  });
+  it("DF-P11 integrator fix pass: one of two requests visible — the visible one is listed, the other counted", async () => {
+    seed();
+    db.tables.document_versions[1].related_ticket_id = "t2"; // t2 not returned
+    const d = await gatherEvidence("d1");
+    expect(d.ticketsNotVisible).toBe(1);
+    const html = renderEvidenceHtml(d);
+    expect(html).toContain("Originating drafting requests (1)");
+    expect(html).toContain("REQ-7");
+    expect(html).toContain("1 request the revisions name is not visible to you");
+    expect(html).toContain("The history of 1 request the revisions name is not visible to you");
+  });
+  it("REGRESSION: every named request visible → no note; a visible request with no history still says 'None recorded' on the history", async () => {
+    seed();
+    db.tables.tickets[0].history = [];
+    const d = await gatherEvidence("d1");
+    expect(d.ticketsNotVisible).toBe(0);
+    const html = renderEvidenceHtml(d);
+    expect(html).not.toContain("not visible to you");
+    expect(html.slice(html.indexOf("Originating request history (0)"))).toMatch(/^Originating request history \(0\)<\/h2><div class="empty">None recorded\.<\/div>/);
   });
   it("the audit trail pages past 1,000 rows (it was a silent .limit(1000))", async () => {
     seed();

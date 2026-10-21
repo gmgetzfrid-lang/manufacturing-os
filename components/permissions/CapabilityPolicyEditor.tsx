@@ -523,7 +523,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
                           shipped default as an explicit, saved decision. */}
                       {d.id === "holds.release" && holdsReleaseOnOldDefault(policy[d.id]) && (
                         <div role="note" data-testid="holds-release-old-default" className="mt-1 text-[10px] font-bold text-amber-700 dark:text-amber-300">
-                          Everyone may release any hold here. This was the old default, which saving this grid used to store with every other action whether or not anyone chose it. The shipped default is Admin, Document Control and the hold&apos;s own opener.
+                          Everyone may release any hold here: this workspace stores &ldquo;everyone&rdquo; for this action. It was the old default, which saving this grid used to store with every other action whether or not anyone chose it. It is this workspace&apos;s stored list, so the hold-release change did not rewrite it (ruled by the integrator at the DF-P11 merge, 2026-10-21, DEC-90). The recommended, shipped default is Admin, Document Control and the hold&apos;s own opener.
                           {canEdit && (
                             <button
                               type="button"

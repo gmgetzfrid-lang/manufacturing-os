@@ -37,6 +37,10 @@ interface EvidenceData {
   downloads?: Array<Record<string, unknown>>;
   /** The drafting requests the revisions name (related_ticket_id). */
   tickets?: Array<Record<string, unknown>>;
+  /** DF-P11 integrator fix pass: how many of the requests the revisions name
+   *  the read did not return under the caller's RLS — "not visible to you",
+   *  never "none recorded". */
+  ticketsNotVisible?: number;
   /** Labels of the sections whose read failed. */
   unread?: string[];
   /** Labels of the sections that stopped at PACK_ROW_CEILING rows. */
@@ -107,12 +111,20 @@ export async function gatherEvidence(documentId: string, orgId?: string): Promis
   // The drafting requests the revisions came from (EVID-10 done-when 2).
   const ticketIds = [...new Set(versionRows.map((v) => v.related_ticket_id).filter((x): x is string => typeof x === "string" && !!x))];
   let tickets: Array<Record<string, unknown>> = [];
+  let ticketsNotVisible = 0;
   if (ticketIds.length) {
     const { data, error } = await supabase.from("tickets")
       .select("id, ticket_id, title, status, requester_name, assigned_drafter_name, assigned_engineer_name, engineer_review_requested_at, engineer_approved_at, closed_at, history")
       .in("id", ticketIds);
     if (error) unread.push(EVIDENCE_SECTIONS.tickets, EVIDENCE_SECTIONS.ticketHistory);
-    else tickets = (data as Array<Record<string, unknown>>) ?? [];
+    else {
+      tickets = (data as Array<Record<string, unknown>>) ?? [];
+      // DF-P11 integrator fix pass: an id the revisions name that the read
+      // did not return is outside the caller's read scope (tickets RLS) or
+      // gone — counted, so the pack never prints "None recorded" for it.
+      const returned = new Set(tickets.map((t) => String(t.id ?? "")));
+      ticketsNotVisible = ticketIds.filter((id) => !returned.has(id)).length;
+    }
     // …and any signature bound to the request itself.
     if (!sigFailed) {
       const r = await readEveryRow((f, t) => supabase.from("e_signatures").select("*").eq("resource_type", "ticket").in("resource_id", ticketIds)
@@ -133,6 +145,7 @@ export async function gatherEvidence(documentId: string, orgId?: string): Promis
     distributionAcks: distributionAcks.failed ? [] : distributionAcks.rows,
     downloads: downloads.failed ? [] : downloads.rows,
     tickets,
+    ticketsNotVisible,
     unread,
     capped,
   };
@@ -205,15 +218,27 @@ export function renderEvidenceHtml(data: EvidenceData): string {
   const capped = new Set(data.capped ?? []);
   /** One section of people's acts: absent = not gathered (omitted), a failed
    *  read is said, a capped read says how far it got. */
-  const actSection = (label: string, rows: Array<Record<string, unknown>> | undefined, head: string[], cells: (r: Record<string, unknown>) => string[]): string => {
+  const actSection = (label: string, rows: Array<Record<string, unknown>> | undefined, head: string[], cells: (r: Record<string, unknown>) => string[], hiddenNote = ""): string => {
     if (rows === undefined) return "";
     const title = label.charAt(0).toUpperCase() + label.slice(1);
     if (unread.has(label)) return `<h2>${esc(title)}</h2><div class="unread">The ${esc(label)} could not be read — this pack does not show them, and it does not mean there are none.</div>`;
     const cap = capped.has(label) ? `<div class="unread">Truncated at ${rows.length} rows — more exist and are not shown.</div>` : "";
-    return `<h2>${esc(title)} (${rows.length})</h2>${cap}${rows.length === 0 ? `<div class="empty">None recorded.</div>` : `<table>
+    // A section with rows the caller cannot see never says "None recorded".
+    const hidden = hiddenNote ? `<div class="unread">${hiddenNote}</div>` : "";
+    return `<h2>${esc(title)} (${rows.length})</h2>${cap}${hidden}${rows.length === 0 ? (hiddenNote ? "" : `<div class="empty">None recorded.</div>`) : `<table>
     <thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
     <tbody>${rows.map((r) => `<tr>${cells(r).map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`}`;
   };
+  // DF-P11 integrator fix pass (review minor): requests the revisions name
+  // that the caller's read did not return are "not visible to you" on both
+  // request sections — never "None recorded" while ticketIds is non-empty.
+  const notVisible = data.ticketsNotVisible ?? 0;
+  const ticketsHiddenNote = notVisible > 0
+    ? `${notVisible} ${notVisible === 1 ? "request" : "requests"} the revisions name ${notVisible === 1 ? "is" : "are"} not visible to you — not shown here; this does not mean there ${notVisible === 1 ? "is" : "are"} none.`
+    : "";
+  const historyHiddenNote = notVisible > 0
+    ? `The history of ${notVisible} ${notVisible === 1 ? "request" : "requests"} the revisions name is not visible to you — not shown here; this does not mean there is none.`
+    : "";
   const sections = [
     actSection(EVIDENCE_SECTIONS.signatures, data.signatures, ["Signed", "Signer", "Intent", "Statement", "Bound to"], (r) => [
       date(r.signed_at), `${esc(r.signer_name || "—")}${r.signer_role ? ` <span class="muted">(${esc(r.signer_role)})</span>` : ""}`,
@@ -241,14 +266,14 @@ export function renderEvidenceHtml(data: EvidenceData): string {
       `<b>${esc(r.ticket_id || "—")}</b> ${esc(r.title || "")}`, esc(r.status || "—"), esc(r.requester_name || "—"),
       esc(r.assigned_drafter_name || "—"),
       r.engineer_approved_at ? `${date(r.engineer_approved_at)} <span class="muted">by ${esc(r.assigned_engineer_name || "—")}</span>` : "—",
-    ]),
+    ], ticketsHiddenNote),
     // EVID-10 done-when 2: the request's approval history, as its own trail.
     actSection(EVIDENCE_SECTIONS.ticketHistory, data.tickets === undefined ? undefined : data.tickets.flatMap((t) =>
       (Array.isArray(t.history) ? (t.history as Array<Record<string, unknown>>) : []).map((h) => ({ ...h, ticket_id: t.ticket_id }))),
     ["Request", "When", "Action", "By", "Details"], (h) => [
       esc(h.ticket_id || "—"), date(h.date), `<b>${esc(h.action || "—")}</b>`,
       `${esc(h.user || "—")}${h.role ? ` <span class="muted">(${esc(h.role)})</span>` : ""}`, esc(h.details || ""),
-    ]),
+    ], historyHiddenNote),
   ].join("\n");
   const gathered = data.signatures !== undefined;
 

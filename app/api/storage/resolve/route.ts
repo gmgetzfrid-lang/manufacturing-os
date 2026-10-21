@@ -20,7 +20,9 @@
 // full chain, the explicit download deny, DEC-43's controller rail and its
 // CONTROLLER_RESTRICTED_READ row) for a key a revision names, then the
 // ticket-file gate (lib/ticketKeyGate.ts, EVID-16 / DEC-90 ruling (2)) for a
-// key under orgs/<org>/tickets/. A key that cannot be attributed to a
+// key under orgs/<org>/tickets/, then the intake redline gate (same file,
+// DF-P11 integrator fix pass) for orgs/<org>/project-intake/<p>/redlines/
+// keys. A key that cannot be attributed to a
 // workspace is refused, never signed. Both gates run before the archive
 // answer, so a refused caller learns nothing about the file.
 //
@@ -38,11 +40,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { assertSafeStorageKey } from "@/lib/storageKey";
+import { assertSafeStorageKey, STORAGE_UNATTRIBUTABLE_CODE } from "@/lib/storageKey";
 import { PRESIGNED_MAX_SECONDS } from "@/lib/presignedLifetime";
 import { presignedGetDisposition, wantsInline } from "@/lib/presignedDisposition";
 import { documentKeyGate } from "@/lib/documentKeyGate";
-import { ticketKeyGate } from "@/lib/ticketKeyGate";
+import { ticketKeyGate, intakeRedlineKeyGate } from "@/lib/ticketKeyGate";
 import { authorizeAdminSurface } from "@/lib/adminGate";
 // projects-tab GAP-401 remainder (b): a door upload is signed for
 // UNTRUSTED_CONTENT_ORIGIN when set; everything else exactly as before.
@@ -129,8 +131,11 @@ export async function GET(req: NextRequest) {
   // AUTHZ-4 done-when 2: a key no workspace can be attributed to is refused,
   // never signed for any signed-in caller (every key the app mints is
   // orgs/<org>/…; a legacy key is attributed through its revision row).
+  // The code beside the sentence lets the backup restore tell this refusal
+  // (an unreferenced legacy orphan — nothing in the workspace points at it)
+  // from a failure (DF-P11 integrator fix pass, DEC-90).
   if (!orgId) {
-    return NextResponse.json({ error: "This file can't be attributed to a workspace" }, { status: 403 });
+    return NextResponse.json({ error: "This file can't be attributed to a workspace", reason: STORAGE_UNATTRIBUTABLE_CODE }, { status: 403 });
   }
   const existsOnly = req.nextUrl.searchParams.get("exists") === "1";
   if (existsOnly) {
@@ -167,6 +172,11 @@ export async function GET(req: NextRequest) {
   if (docGate) return docGate;
   const ticketGate = await ticketKeyGate(orgId, path, { id: user.id }, memberRow as { role?: unknown; roles?: unknown });
   if (ticketGate) return ticketGate;
+  // EVID-16 done-when 2 (DF-P11 integrator fix pass, DEC-90): an intake
+  // redline is signed only for a controller, a member of its project, or a
+  // reader of a request that carries it (lib/ticketKeyGate.ts).
+  const intakeGate = await intakeRedlineKeyGate(orgId, path, { id: user.id }, memberRow as { role?: unknown; roles?: unknown });
+  if (intakeGate) return intakeGate;
 
   const settingsFor = async (): Promise<{ root: string | null; namingNote: string | null }> => {
     const { data } = await supabaseAdmin.from("archive_settings").select("location_hint, naming").eq("org_id", orgId).maybeSingle();

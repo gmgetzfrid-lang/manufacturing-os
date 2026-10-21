@@ -12,7 +12,7 @@ import { presignedGetDisposition, wantsInline } from "@/lib/presignedDisposition
 import { documentKeyGate } from "@/lib/documentKeyGate";
 // drafting-flow AUTHZ-4 / EVID-16 (DF-P11, DEC-90 ruling (2)): a drafting-
 // ticket file is signed only for a member who may read that ticket.
-import { ticketKeyGate } from "@/lib/ticketKeyGate";
+import { ticketKeyGate, intakeRedlineKeyGate } from "@/lib/ticketKeyGate";
 // projects-tab GAP-401 remainder (b) (DF-P11): a contractor door upload is
 // signed for UNTRUSTED_CONTENT_ORIGIN when the operator sets it; everything
 // else, and every key while it is unset, is signed exactly as before.
@@ -93,6 +93,12 @@ export async function GET(req: NextRequest) {
     // (the membership row read above is handed over).
     const ticketGate = await ticketKeyGate(orgMatch[1], path, { id: user.id }, member as { role?: unknown; roles?: unknown });
     if (ticketGate) return ticketGate;
+    // EVID-16 done-when 2 (DF-P11 integrator fix pass, DEC-90): an intake
+    // redline (orgs/<org>/project-intake/<p>/redlines/…) is signed only for
+    // a controller, a member of that project, or a reader of a request that
+    // carries it; an undecidable read is 503.
+    const intakeGate = await intakeRedlineKeyGate(orgMatch[1], path, { id: user.id }, member as { role?: unknown; roles?: unknown });
+    if (intakeGate) return intakeGate;
   }
 
   // ARCHIVE-AWARE: if this key's binary was shed to an offline space archive,

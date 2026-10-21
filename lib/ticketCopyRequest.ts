@@ -42,11 +42,12 @@
 //     its Contractor-only read scope (lib/ticketReadScope.ts, AUTHZ-13 /
 //     DEC-89) leaves the caller out, a scope the database applies only once
 //     migration 20261166 is pasted. Until then the tickets RLS still shows
-//     such a member the whole workspace and /api/storage/download-url signs
-//     their copy, so the browser path keeps what they could do before DF-P15
-//     (READ_SCOPE_FALLBACK_NOTE says why); after the paste the page cannot
-//     load the ticket for them at all, so the fallback is never wider than
-//     the database. So is a 422 `unstampable` that carries `reason:
+//     such a member the whole workspace, but since DF-P11 (lib/ticketKeyGate.ts,
+//     DEC-90 ruling (2)) /api/storage/download-url and /api/storage/resolve
+//     refuse that member the request's files (403), as the copy route does —
+//     so the browser path says why (READ_SCOPE_FALLBACK_NOTE) and the door's
+//     refusal is shown; after the paste the page cannot load the ticket for
+//     them at all, so the fallback is never wider than the database. So is a 422 `unstampable` that carries `reason:
 //     "oversize"` (DF-P15 fix, on review): a PDF over the server's 64 MB
 //     stamping bound was stamped in the tab before DF-P15 (stampPdf /
 //     downloadStampedPdf, watermark, QR and superseded footer included), so
@@ -97,9 +98,10 @@ export const BROWSER_PATH_NOTE: Record<TicketCopyBrowserReason, string> = {
 /** What the viewer says when the copy route answers "Request not found" for a
  *  ticket this page has loaded: the route's Contractor-only read scope leaves
  *  the caller out, and the database does not apply that scope yet (20261166
- *  unpasted) — the browser path, as before DF-P15. */
+ *  unpasted). The file doors apply the same scope (DF-P11), so the request's
+ *  files are not served either (DF-P11 integrator fix pass, DEC-29 wording). */
 export const READ_SCOPE_FALLBACK_NOTE =
-  "the server's copy route applies the Contractor read scope, which does not include you on this request; until this workspace's database applies that scope too, the request stays open to you here";
+  "the server's copy route applies the Contractor read scope, which does not include you on this request, and the file doors apply it too, so this request's files are not served to you; until this workspace's database applies that scope, the request itself stays listed and open to you here";
 
 /** What the viewer says when the server answers that a PDF is over its
  *  stamping bound: the copy is stamped in the tab, as before DF-P15. */

@@ -198,6 +198,7 @@ if (!held.some((r) => r.includes("Engineer"))) {
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** drafting-flow DF-P8 PROJECTS — done-whens 2 and 3 (in `app/api/tickets/**`: clear `archive_id` in the reopen / cancel-undo transitions; refuse an action on a row with a non-null `archive_id`) — assigned by the integrator at the DF-P11 merge, 2026-10-21, DEC-31 (DF-P8 is the next drafting-flow package that holds the workflow route; the integrator adds it to DF-P8's plan). Ruled by the integrator at the DF-P11 merge, 2026-10-21 (DEC-90).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/ticket-shed/route.ts:131-146`, `app/api/admin/ticket-shed/commit/route.ts:125-172`, `lib/ticketTransitions.ts:288-290`, `app/api/tickets/workflow-action/route.ts:69-74`, `app/(protected)/admin/storage/page.tsx:520-585`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by absence search: nothing in the reopen path clears archive_id — the only writers of `archive_id: null` are /api/admin/archive-cancel and /api/admin/ticket-shed/restore. lib/ticketTransitions.ts:288-290 `case "reopen_ticket": updates.status = "PENDING_REVIEW";` leaves the claim intact, so a ticket reopened between produce and commit is live, in review, and still gets shredded.
@@ -254,7 +255,7 @@ if ((row as { archived_at?: string | null }).archived_at) {
 - ✓ `lib/__tests__/ticketShedCommit.test.ts` "SM-4 — produce → reopen → commit: the live ticket survives".
 - (review fix pass 2, ALOG-8) the 409 `changed_since_capture` refusal is itself recorded: each un-link (`archive_id → null`) selects the row it matched and counts a ticket as returned only when it matched one (a raced or already-gone row is reported as not returned); one `TICKET_ARCHIVE_RECLAIM` row (`partial: true`, `stoppedAt: "changed_since_capture"`, the released and unreleased ticket ids, each changed ticket's reason) is written before the 409, and a refused audit insert is carried in the answer (`auditError`). Tests: `ticketShedCommit.test.ts` "DF-P11 fix pass 2 (ALOG-8) — the changed-since-capture refusal is audited and counts only rows it returned".
 
-**Scope / residual.** Done-when 2 and 3 → the workflow route's owner (drafting-flow DF-P15, which holds `app/api/tickets/**` this round): clear `archive_id` in the reopen / cancel-undo transitions and refuse an action on a row with a non-null `archive_id`.
+**Scope / residual.** Done-when 2 and 3 → the workflow route's owner (drafting-flow DF-P15, which holds `app/api/tickets/**` this round): clear `archive_id` in the reopen / cancel-undo transitions and refuse an action on a row with a non-null `archive_id`. *(DF-P15 has merged without them; owner now drafting-flow DF-P8 PROJECTS — assigned by the integrator at the DF-P11 merge, 2026-10-21, DEC-31.)*
 
 ---
 
@@ -437,6 +438,7 @@ if (ticket.assignedDrafterId === uid) {
 - **Locations:** `app/api/tickets/workflow-action/route.ts:155-223`, `app/api/tickets/workflow-action/route.ts:197-211`, `app/api/tickets/workflow-action/route.ts:214-223`, `app/api/tickets/workflow-action/route.ts:279-294`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanical claim is exactly right — four unsynchronised writes, and the audit insert's error is discarded. Severity is too high: the ticket's own `history` JSONB records who acted, with what label, in what role, and when, atomically with the status change, so what a lost audit row costs is the from→to mirror in audit_logs, not the compliance record itself.
 - **Assigned:** drafting-flow DF-P11 AFTER-DC (the drain or the one-RPC form, the record's proposed owner) — by the integrator, 2026-10-07 (at the DF-P1 merge, DEC-31: the package that left this remainder has merged; fleet plans `audit-reports/fleet-plans/drafting-flow.json`, `admin-and-org.json`).
+- **Assigned:** drafting-flow DF-P8 PROJECTS (the drain or the one-RPC form for DF-P1's logged-only failures) — assigned by the integrator at the DF-P11 merge, 2026-10-21, DEC-31 (DF-P8 is the next drafting-flow package that holds the workflow route; the integrator adds it to DF-P8's plan). Ruled by the integrator at the DF-P11 merge, 2026-10-21 (DEC-90).
 
 **Mechanism.** The route does: (1) the CAS UPDATE on `tickets`; (2) the `ticket_comments` mirror insert, explicitly swallowed by `.then(() => {}, () => {})`; (3) the `audit_logs` insert, awaited but with its `{ error }` result discarded — supabase-js does not throw on a failed insert, so a rejected write (RLS, missing column, constraint) is indistinguishable from success here; (4) the notification/email fan-out, wrapped in try/catch. There is no `rpc(`, no `BEGIN`, no transaction anywhere in the file. Write 1 is the only durable one. This is the same class of bug the file's own comment at requests/new/page.tsx:322-324 warns about ("supabase-js does NOT throw on a failed insert — it returns { error }. Check it explicitly.").
 
@@ -489,7 +491,7 @@ if (newComment) {
 
 **Done-when.** ✗ (in part) done-when 1 unchanged (no retry queue); 2 and 3 ✓ as recorded above.
 
-**Scope / residual.** → the next holder of `app/api/cron/maintenance/route.ts` (admin-and-org P5) for the drain (reconcile a twice-failed `ticket_comments` mirror from `tickets.comments`; write the `_NOT_APPLIED` row for an attempt row whose transition never landed, read from the ticket's history), or DF-P15 for the one-RPC form. Re-assignment is the integrator's.
+**Scope / residual.** → the next holder of `app/api/cron/maintenance/route.ts` (admin-and-org P5) for the drain (reconcile a twice-failed `ticket_comments` mirror from `tickets.comments`; write the `_NOT_APPLIED` row for an attempt row whose transition never landed, read from the ticket's history), or DF-P15 for the one-RPC form. Re-assignment is the integrator's. *(Re-assigned: drafting-flow DF-P8 PROJECTS — assigned by the integrator at the DF-P11 merge, 2026-10-21, DEC-31.)*
 
 ---
 

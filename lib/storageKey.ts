@@ -274,3 +274,11 @@ export function restoreUploadRequest(key: string, size: number, head?: Uint8Arra
     logoProblem: problem?.error ?? null, nodeImageProblem: nodeProblem?.error ?? null,
   };
 }
+
+/** DF-P11 integrator fix pass (AUTHZ-4 / ORG-20, ruled by the integrator at
+ *  the DF-P11 merge, 2026-10-21, DEC-90): the code `/api/storage/resolve`
+ *  answers, beside its 403 sentence, for a key no workspace can be
+ *  attributed to — a key with no `orgs/<org>/` prefix that no revision or
+ *  request row names. The backup restore reports such a file under its own
+ *  reason (`RESTORE_UNATTRIBUTED_FILE_REASON`, lib/dataRestore.ts). */
+export const STORAGE_UNATTRIBUTABLE_CODE = "unattributable";

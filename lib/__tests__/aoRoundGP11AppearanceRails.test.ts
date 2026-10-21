@@ -550,13 +550,17 @@ describe("ORG-18 — a cover / background the restore skipped leaves no node poi
 describe("ORG-18 — the restore page clears and names (app/(protected)/admin/restore/page.tsx)", () => {
   const page = src("app/(protected)/admin/restore/page.tsx");
   it("each skipped cover / background key is kept with whether the storage check reported it missing (the resolve route's `missing: true`)", () => {
-    expect(page).toContain("skippedNodeImages.push({ key, reportedMissing: check.ok && state?.missing === true });");
-    expect(page).toContain("as { archived?: boolean; archiveId?: string | null; missing?: boolean } | null;");
+    // DF-P11 integrator fix pass: the probe's answer is read by
+    // classifyRestoreFileProbe (lib/dataRestore.ts) — reportedMissing is
+    // `missing: true` on a 200 only (a 503 reads as not reported missing),
+    // pinned behaviourally in storageResolve.test.ts.
+    expect(page).toContain("skippedNodeImages.push({ key, reportedMissing: probe.reportedMissing });");
+    expect(page).toContain("const probe = classifyRestoreFileProbe(key, check.status, state);");
     // the route answers that when HeadObject answers NotFound (ORG-20, DF-P11:
     // any other failure is a 503, which this flag reads as not reported missing)
     expect(src("app/api/storage/resolve/route.ts")).toMatch(/archived: true, missing: true, archiveId: v\?\.archive_id \?\? null/);
     // …and a file already present is counted present before any of this (never cleared)
-    expect(page.indexOf("if (check.ok && state?.archived === false) { counters.skipped++; return; }"))
+    expect(page.indexOf('if (probe.kind === "skip") { counters.skipped++; return; }'))
       .toBeLessThan(page.indexOf("skippedNodeImages.push("));
   });
   it("after every file is tried, the pointers are cleared through the checked helper with this workspace's id, and the result is shown", () => {

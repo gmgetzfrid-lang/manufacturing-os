@@ -393,8 +393,57 @@ describe("DF-P11 fix pass 2 (ORG-20 / AUTHZ-4) — the restore's existence probe
     const { readFileSync } = await import("node:fs");
     const page = readFileSync(`${process.cwd()}/app/(protected)/admin/restore/page.tsx`, "utf8");
     expect(page).toContain("fetch(`/api/storage/resolve?path=${encodeURIComponent(key)}&exists=1`");
-    expect(page).toContain("if (!check.ok && check.status !== 503) {");
-    expect(page.indexOf("if (!check.ok && check.status !== 503) {")).toBeLessThan(page.indexOf("const blob = await zips[item.zip]"));
+    expect(page).toContain('if (probe.kind === "refused") throw new Error(probe.reason);');
+    expect(page.indexOf('if (probe.kind === "refused") throw new Error(probe.reason);')).toBeLessThan(page.indexOf("const blob = await zips[item.zip]"));
+    expect(page.indexOf('if (probe.kind === "unattributed") { counters.unattributed++; return; }')).toBeLessThan(page.indexOf("const blob = await zips[item.zip]"));
+  });
+});
+
+describe("AUTHZ-4 / ORG-20 (DF-P11 integrator fix pass, DEC-90) — a legacy backup file no workspace can be attributed to has its own reason", () => {
+  const callExists = async (key: string) => {
+    const r = await resolveGET(new NextRequest(`https://app/api/storage/resolve?path=${encodeURIComponent(key)}&exists=1`, { headers: { authorization: "Bearer t" } }));
+    return { status: r.status, body: await r.json() as Record<string, unknown> };
+  };
+
+  it("the route's refusal carries the code; the restore classifies it as unattributed — never uploaded, never a failure", async () => {
+    const { classifyRestoreFileProbe, RESTORE_UNATTRIBUTED_FILE_REASON } = await import("@/lib/dataRestore");
+    const key = "legacy/uploads/orphan.pdf";
+    const r = await callExists(key);
+    expect(r.status).toBe(403);
+    expect(r.body).toEqual({ error: "This file can't be attributed to a workspace", reason: "unattributable" });
+    expect(state.adminGateCalls).toEqual([]); // refused before any gate: nothing about the file is said
+    expect(classifyRestoreFileProbe(key, r.status, r.body)).toEqual({ kind: "unattributed" });
+    expect(RESTORE_UNATTRIBUTED_FILE_REASON).toBe("legacy file with no workspace prefix and no record naming it — not restored");
+  });
+
+  it("a legacy key a restored row names is attributed and judged as before (the probe answers; it is uploaded or skipped)", async () => {
+    const { classifyRestoreFileProbe } = await import("@/lib/dataRestore");
+    resolveVersion = { org_id: ORG, archived_at: null, archive_id: null };
+    const key = "legacy/uploads/file.pdf";
+    const r = await callExists(key);
+    expect(r.status).toBe(200);
+    expect(classifyRestoreFileProbe(key, r.status, r.body)).toEqual({ kind: "skip" });
+  });
+
+  it("REGRESSION: every other answer is classified exactly as before", async () => {
+    const { classifyRestoreFileProbe } = await import("@/lib/dataRestore");
+    const k = `orgs/${ORG}/libraries/l1/a.pdf`;
+    expect(classifyRestoreFileProbe(k, 200, { archived: false })).toEqual({ kind: "skip" });
+    expect(classifyRestoreFileProbe(k, 200, { archived: true, archiveId: "ARC-1" })).toEqual({ kind: "offline" });
+    expect(classifyRestoreFileProbe(k, 200, { archived: true, missing: true, archiveId: null })).toEqual({ kind: "upload", reportedMissing: true });
+    expect(classifyRestoreFileProbe(k, 503, { error: "Storage couldn't be reached" })).toEqual({ kind: "upload", reportedMissing: false });
+    expect(classifyRestoreFileProbe(k, 403, { error: "Only Admins can restore a workspace." }))
+      .toEqual({ kind: "refused", reason: "Could not check whether this file is already here (Only Admins can restore a workspace.) — not uploaded" });
+    expect(classifyRestoreFileProbe(k, 500, null)).toEqual({ kind: "refused", reason: "Could not check whether this file is already here (HTTP 500) — not uploaded" });
+    // the code on a prefixed key (never sent by the route) is a plain refusal, never a silent skip
+    expect(classifyRestoreFileProbe(k, 403, { error: "x", reason: "unattributable" }).kind).toBe("refused");
+  });
+
+  it("the panel names them under their own reason, apart from failures", async () => {
+    const { readFileSync } = await import("node:fs");
+    const page = readFileSync(`${process.cwd()}/app/(protected)/admin/restore/page.tsx`, "utf8");
+    expect(page).toContain("data-restore-unattributed");
+    expect(page).toContain("{fmtNum(filesProgress.unattributed!)} file(s): {RESTORE_UNATTRIBUTED_FILE_REASON}.");
   });
 });
 
@@ -631,5 +680,135 @@ describe("GAP-401 remainder (b) — both doors sign a door upload for UNTRUSTED_
       const ctl = new URL(String((await call(DOC_KEY)).body.url));
       expect(ctl.host).toBe("test-bucket.acct.r2.cloudflarestorage.com");
     }
+  });
+});
+
+describe("EVID-16 done-when 2 (DF-P11 integrator fix pass, DEC-90) — an intake redline is signed only for a reader of that project's intake or of a request that carries it", () => {
+  const PROJECT = "99999999-9999-9999-9999-999999999999";
+  const REDLINE_KEY = `orgs/${ORG}/project-intake/${PROJECT}/redlines/0b1c-REDLINE_markup.pdf`;
+  let project: Record<string, unknown> | null;
+  let projectError: unknown;
+  let roster: unknown[];
+  let rosterError: unknown;
+  beforeEach(() => {
+    project = { id: PROJECT, owner_user_id: U2 };
+    projectError = null;
+    roster = [];
+    rosterError = null;
+    state.resolve = (q) => {
+      if (q.table === "projects") return projectError ? { error: projectError } : { data: project };
+      if (q.table === "project_members") return rosterError ? { error: rosterError } : { data: roster };
+      return resolver(q);
+    };
+  });
+  const projectReads = () => state.queries.filter((q) => q.table === "projects" || q.table === "project_members");
+
+  for (const door of ["resolve", "download-url"] as const) {
+    const call = door === "resolve" ? callResolve : callDownload;
+
+    it(`${door}: the controller tier is signed with no project or request read`, async () => {
+      for (const m of [{ uid: U1, role: "Admin", roles: [] }, { uid: U1, role: "Viewer", roles: ["Viewer", "DocCtrl"] }]) {
+        member = m;
+        state.queries = [];
+        const r = await call(REDLINE_KEY);
+        expect(r.status, JSON.stringify(m)).toBe(200);
+        expect(typeof r.body.url).toBe("string");
+        expect(projectReads()).toHaveLength(0);
+      }
+    });
+
+    it(`${door}: the project's owner and a member on its roster are signed`, async () => {
+      member = { uid: U1, role: "Engineer-2", roles: ["Engineer-2"] };
+      project = { id: PROJECT, owner_user_id: U1 };
+      expect((await call(REDLINE_KEY)).status).toBe(200);
+      project = { id: PROJECT, owner_user_id: U2 };
+      roster = [{ user_id: U1 }];
+      expect((await call(REDLINE_KEY)).status).toBe(200);
+      // a Contractor-only member on the roster too
+      member = { uid: U1, role: "Contractor", roles: ["Contractor"] };
+      expect((await call(REDLINE_KEY)).status).toBe(200);
+    });
+
+    it(`${door}: PIN — every reader of a request that carries the redline keeps access (not on the project, not a controller)`, async () => {
+      tickets = [{ id: "t1", requester_id: U2, assigned_drafter_id: null, assigned_engineer_id: null, watchers: [] }];
+      for (const m of [
+        { uid: U1, role: "Viewer", roles: ["Viewer"] },
+        { uid: U1, role: "Drafter", roles: ["Drafter"] },
+        { uid: U1, role: "Manager", roles: ["Contractor", "Manager"] },
+      ]) {
+        member = m;
+        const r = await call(REDLINE_KEY);
+        expect(r.status, JSON.stringify(m)).toBe(200);
+        expect(typeof r.body.url).toBe("string");
+      }
+      // a Contractor-only member in the request's read scope (its drafter)
+      member = { uid: U1, role: "Contractor", roles: ["Contractor"] };
+      tickets = [{ id: "t1", requester_id: U2, assigned_drafter_id: U1, assigned_engineer_id: null, watchers: [] }];
+      expect((await call(REDLINE_KEY)).status).toBe(200);
+      // …or mentioned on it
+      tickets = [{ id: "t1", requester_id: U2, assigned_drafter_id: null, assigned_engineer_id: null, watchers: [] }];
+      mentionOn = "t1";
+      expect((await call(REDLINE_KEY)).status).toBe(200);
+    });
+
+    it(`${door}: a Contractor-only member outside the project and the request's read scope gets 403, no URL`, async () => {
+      member = { uid: U1, role: "Contractor", roles: ["Contractor"] };
+      tickets = [{ id: "t1", requester_id: U2, assigned_drafter_id: null, assigned_engineer_id: null, watchers: [] }];
+      const r = await call(REDLINE_KEY);
+      expect(r.status).toBe(403);
+      expect(r.body.url).toBeUndefined();
+    });
+
+    it(`${door}: a member with no project role and no request carrying the redline gets 403 (an orphan redline is nobody's to read but a controller's)`, async () => {
+      member = { uid: U1, role: "Viewer", roles: ["Viewer"] };
+      tickets = [];
+      const r = await call(REDLINE_KEY);
+      expect(r.status).toBe(403);
+      expect(r.body.url).toBeUndefined();
+    });
+
+    it(`${door}: an undecidable read is 503 — never a URL`, async () => {
+      member = { uid: U1, role: "Viewer", roles: ["Viewer"] };
+      tickets = [{ id: "t1" }];
+      projectError = { message: "down" };
+      expect((await call(REDLINE_KEY)).status).toBe(503);
+      projectError = null;
+      rosterError = { message: "down" };
+      expect((await call(REDLINE_KEY)).status).toBe(503);
+      rosterError = null;
+      ticketsError = { message: "down" };
+      const r = await call(REDLINE_KEY);
+      expect(r.status).toBe(503);
+      expect(r.body.url).toBeUndefined();
+    });
+
+    it(`${door}: REGRESSION — another project-intake key (a submission, the document gate's when a revision names it) is not judged by this gate`, async () => {
+      member = { uid: U1, role: "Viewer", roles: ["Viewer"] };
+      const r = await call(`orgs/${ORG}/project-intake/${PROJECT}/0b1c-submission.pdf`);
+      expect(r.status).toBe(200);
+      expect(projectReads()).toHaveLength(0);
+    });
+  }
+
+  it("the gate recognises only the redline shape", async () => {
+    const { intakeRedlineProject } = await import("@/lib/ticketKeyGate");
+    expect(intakeRedlineProject(REDLINE_KEY)).toBe(PROJECT);
+    expect(intakeRedlineProject(`orgs/${ORG}/project-intake/${PROJECT}/x.pdf`)).toBeNull();
+    expect(intakeRedlineProject(TICKET_KEY)).toBeNull();
+  });
+});
+
+describe("before / after 20261166 (DF-P11 integrator fix pass) — a Contractor-only member outside a request's scope", () => {
+  it("before the paste the page still lists and opens the request, but both doors refuse its bytes (403) as the copy route does (404), and the viewer's note says so", async () => {
+    member = { uid: U1, role: "Contractor", roles: ["Contractor"] };
+    tickets = [{ id: "t1", requester_id: U2, assigned_drafter_id: null, assigned_engineer_id: null, watchers: [] }];
+    for (const call of [callResolve, callDownload]) {
+      const r = await call(TICKET_KEY);
+      expect(r.status).toBe(403);
+      expect(r.body).toEqual({ error: "Not authorized for this file" });
+    }
+    const { READ_SCOPE_FALLBACK_NOTE } = await import("@/lib/ticketCopyRequest");
+    expect(READ_SCOPE_FALLBACK_NOTE).toContain("the file doors apply it too, so this request's files are not served to you");
+    expect(READ_SCOPE_FALLBACK_NOTE).toContain("the request itself stays listed and open to you here");
   });
 });

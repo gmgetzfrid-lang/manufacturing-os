@@ -21,6 +21,9 @@ import VerificationPill from "@/components/documents/VerificationPill";
 import EffectivePill from "@/components/documents/EffectivePill";
 import RetentionPill from "@/components/documents/RetentionPill";
 import OriginBadge from "@/components/documents/OriginBadge";
+// drafting-flow EVID-4 done-when 3 (DF-P11 integrator fix pass, DEC-90): the
+// current revisions with no complete signed review sign-off, read-only.
+import UnsignedApprovalPanel from "@/components/documents/UnsignedApprovalPanel";
 import {
   loadDocControlRegister, filterRegister, registerToCsv,
   type RegisterRow, type RegisterKpis, type RegisterFilter,
@@ -36,6 +39,7 @@ export default function RegisterPage() {
   const [filter, setFilter] = useState<RegisterFilter>("all");
   const [libraryId, setLibraryId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
@@ -79,7 +83,7 @@ export default function RegisterPage() {
             <Button variant="secondary" size="sm" onClick={exportCsv} disabled={loading || filtered.length === 0}>
               <Download className="w-3.5 h-3.5" /> Export CSV
             </Button>
-            <Button variant="secondary" size="sm" onClick={() => void refresh()} disabled={loading}>
+            <Button variant="secondary" size="sm" onClick={() => { setRefreshKey((k) => k + 1); void refresh(); }} disabled={loading}>
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
             </Button>
           </>
@@ -107,6 +111,8 @@ export default function RegisterPage() {
           <Tile label="External origin" value={kpis.external} tone="slate" active={filter === "external"} onClick={() => setFilter("external")} />
         </div>
       )}
+
+      <UnsignedApprovalPanel orgId={activeOrgId} refreshKey={refreshKey} />
 
       {/* Filters row */}
       <div className="flex flex-wrap items-center gap-2 mb-3">

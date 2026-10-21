@@ -26,9 +26,13 @@
 //     RECORDED it, not who released it, so it reads "Backfilled by", at the
 //     historical release date (DF-P11 fix pass).
 //   * "unread" — the roster could not be read: said, never guessed.
-// What the publisher typed (approved_by_name, and any stored approved_by /
-// approved_at) is shown as before but labelled as the publisher's CLAIM —
-// an approval reference, never a stamp.
+// What the publisher typed (approved_by_name) is shown as before but
+// labelled as the publisher's CLAIM — an approval reference, never a stamp.
+// Only approved_by_name is shown: document_versions.approved_by and
+// approved_at exist in the schema (supabase/schema.sql; approved_at from
+// 20260526_document_version_control.sql) but no code path, trigger or
+// migration has ever written them (checked at the DF-P11 integrator fix
+// pass, 2026-10-21), so there is no stored value to render beside the claim.
 
 import { supabase } from "@/lib/supabase";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
@@ -205,6 +209,8 @@ export async function loadSignedRosters(versionIds: string[]): Promise<Map<strin
 export interface UnsignedCurrentRevision {
   documentId: string;
   documentNumber: string | null;
+  /** The document's library (for the register's link to it). */
+  libraryId: string | null;
   versionId: string;
   revisionLabel: string | null;
   publishedBy: string | null;
@@ -225,20 +231,20 @@ const PAGE = 1000;
  *  page past PostgREST's 1,000-row answer; a failed read throws (the caller
  *  says the list is not known — never a short list printed as complete).
  *
- *  UNWIRED BY DESIGN (DF-P11 fix pass 2, recorded in EVID-4's Partial): no
- *  screen, export or route calls this yet — the surface it belongs on is the
- *  document register's controller view, a document-control file outside
- *  this package (DEC-31). It is the query that view calls; it judges a
- *  roster through the same loadSignedRosters (evaluateSlotCompletion per
- *  slot) whose `complete` earns deriveVersionApproval's stamp — pinned by
- *  dfRoundG_P11_evidence.test.ts, so it cannot drift silently before it is
- *  wired. Owner of the wiring: document-control. */
+ *  Wired (DF-P11 integrator fix pass, ruled by the integrator at the DF-P11
+ *  merge, 2026-10-21, DEC-90): the Control Register (/register) shows the
+ *  count and the list read-only through components/documents/
+ *  UnsignedApprovalPanel.tsx; a failed read is said there, never "none". It
+ *  judges a roster through the same loadSignedRosters (evaluateSlotCompletion
+ *  per slot) whose `complete` earns deriveVersionApproval's stamp — pinned by
+ *  dfRoundG_P11_evidence.test.ts. Reads run under the caller's RLS: the list
+ *  covers the documents the reader can see. */
 export async function listCurrentRevisionsWithoutSignedApproval(orgId: string): Promise<UnsignedCurrentRevision[]> {
-  const docs: Array<{ id: string; document_number: string | null; current_version_id: string | null; status: string | null }> = [];
+  const docs: Array<{ id: string; document_number: string | null; library_id: string | null; current_version_id: string | null; status: string | null }> = [];
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabase
       .from("documents")
-      .select("id, document_number, current_version_id, status")
+      .select("id, document_number, library_id, current_version_id, status")
       .eq("org_id", orgId)
       .not("current_version_id", "is", null)
       .order("id", { ascending: true })
@@ -270,6 +276,7 @@ export async function listCurrentRevisionsWithoutSignedApproval(orgId: string): 
       return {
         documentId: d.id,
         documentNumber: d.document_number ?? null,
+        libraryId: d.library_id ?? null,
         versionId: d.current_version_id as string,
         revisionLabel: (v.revision_label as string | null) ?? null,
         publishedBy: (v.created_by as string | null) ?? null,

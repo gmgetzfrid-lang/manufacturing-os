@@ -157,6 +157,11 @@ describe("HAND-2 fix pass 3 — a save no longer freezes shipped defaults; the o
     expect(note).not.toBeNull();
     expect(releaseRow().contains(note)).toBe(true);
     expect(note!.textContent).toContain("old default");
+    // HAND-2 dw1 as ruled (DF-P11 merge, DEC-90): the note says "everyone" is
+    // STORED, that it was not rewritten, and names the recommended default
+    expect(note!.textContent).toContain("this workspace stores “everyone” for this action");
+    expect(note!.textContent).toContain("the hold-release change did not rewrite it");
+    expect(note!.textContent).toContain("The recommended, shipped default is Admin, Document Control and the hold's own opener.");
     // the note decides nothing by itself: an unrelated save keeps ["*"]
     const assignRow = [...host.querySelectorAll("tr")].find((r) => r.querySelector("td")?.textContent?.startsWith("Assign drafters"))!;
     const cells = [...assignRow.querySelectorAll("td button")] as HTMLButtonElement[];
@@ -173,5 +178,13 @@ describe("HAND-2 fix pass 3 — a save no longer freezes shipped defaults; the o
     await flush();
     expect(h.fetchCalls).toHaveLength(2);
     expect("holds.release" in (h.fetchCalls[1].caps as Record<string, unknown>)).toBe(false);
+  });
+
+  it("HAND-2 dw1 as ruled: loading a workspace that stores [\"*\"] writes nothing — only the Admin's own save changes it", async () => {
+    h.db.tables.org_configurations = [policyRow({ "holds.release": ["*"] })];
+    await mount();
+    await flush();
+    expect(host.querySelector('[data-testid="holds-release-old-default"]')).not.toBeNull();
+    expect(h.fetchCalls).toHaveLength(0);
   });
 });
