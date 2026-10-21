@@ -306,6 +306,8 @@ Compare 20260713_document_publish_guard.sql:60-66 which had:
 
 **Scope / residual.** Defense-in-depth for a direct `documents.current_version_id` PATCH by someone who already holds publish authority stays absent at the trigger; the RPC path (every app publish) still refuses. Left for P3/P4 to weigh with the `20261060` body in hand. No migration.
 
+*Follow-up (2026-10-21, document-control Round G, P32 PUBLISH GUARD LOCK LEG): the residual above is closed by `20261245_dc_roundG_publish_guard_lock_leg.sql` (drafting-flow [`HAND-13`](../drafting-flow/11-document-handoff.md#hand-13), RESOLVED) — the trigger refuses a direct pointer write over another person's checkout (42501), and the constraint this record set for a restored check holds: the publisher-with-reason override passes (it is `publish_revision`'s own promote), a hold never. The one write over a checkout it still admits, the reviewed promote, is [`DCK-15`](#dck-15).*
+
 ---
 
 <a id="dck-7"></a>
@@ -691,5 +693,29 @@ lib/checkoutEpisodes.ts:525-533 — closeEpisode runs even when the guarded docu
 - ✓ A close that finds live sessions reconciles (lock settled from the live rows, honest thread line) instead of sealing.
 
 **Scope / residual.** The close and the lock clear remain two statements (the "single RPC" alternative was not taken — the trigger closes the gap the RPC would have closed, without moving the transfer/rebuild logic out of the tested pure core). `checkout_episodes_org_update`'s breadth is untouched by design; the guard restricts only what the finding named.
+
+---
+
+<a id="dck-15"></a>
+
+## DCK-15 · A review's promote publishes over another person's checkout without a word — no lock read at any layer, no notice to the holder, nothing recorded
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED (found by document-control Round G P32 while closing drafting-flow `HAND-13`, 2026-10-21; reproduced on the I-17 PostgreSQL 16 harness)
+- **Locations:** `lib/reviewControl.ts:915-1072` (`finalizeReviewedRevision`), `lib/reviewControl.ts:1118-1175` (`promoteThreeStep`), `supabase/migrations/20261151_dc_roundF_promote_transaction_and_hold_override.sql:208-326` (`finalize_reviewed_promote`), `supabase/migrations/20261245_dc_roundG_publish_guard_lock_leg.sql:807-864` (the lock leg's door (b)), `lib/revisions.ts:411-451` (`noteOverrideOnHolder`)
+- **Assigned:** proposed — document-control (the integrator assigns at the P32 merge, DEC-31); files: `lib/reviewControl.ts`, `components/documents/ReviewGateSection.tsx`, and, if the database is to record it, a `finalize_reviewed_promote` re-creation from its newest body.
+
+**Mechanism.** Every other way a new revision becomes current over another person's checkout is an act: `publish_revision` refuses it (`locked_by_other`) unless the publisher gives a reason or Document Control forces it, records `REV_LOCK_OVERRIDDEN` in the same transaction (DCK-8), and the app tells the holder on their episode thread and in-app (`noteOverrideOnHolder`, called by `revUpDocument` and `revertToVersion` only). After `20261245` the publish guard refuses a direct pointer write over a checkout too (HAND-13). The reviewed promote is the one door left: `finalizeReviewedRevision` reads no checkout (no `checked_out_by` in `lib/reviewControl.ts`), `finalize_reviewed_promote` and `promoteThreeStep` write the pending draft current with no lock test, and `20261245` admits that write as its door (b) on purpose — it worked that way before, and DEC-90 ruling 2 (P32's brief) keeps every flow legitimate users use today. So when the last reviewer signs (or a publisher finalizes from the Inspector) while someone else holds the document checked out, the new revision lands, the holder is not told, and nothing records that a checkout was passed.
+
+**Failure scenario.** A field engineer checks out an isometric for a walkdown. Meanwhile the drafter's Rev 3 (2A in review) collects its last signature and a publisher finalizes it. Rev 3 is current; the engineer keeps marking up Rev 2 with no notice. Their own publish will meet `publish_revision`'s expected-base check (`stale_base`), so nothing is clobbered — but the walkdown was spent on a superseded sheet, and the audit trail does not show that the promote passed a live checkout.
+
+**Evidence.** `lib/__tests__/rls/dcP32PublishGuardLock.test.ts` — "finalize_reviewed_promote by a publisher, or Document Control, who does not hold the checkout promotes the reviewed draft on both sides" (admitted before and after `20261245`); `grep -n "checked_out\|noteOverrideOnHolder" lib/reviewControl.ts` returns nothing.
+
+**Done when.**
+
+- [ ] Finalizing a reviewed draft on a document someone else holds tells the holder (episode thread + in-app, as `noteOverrideOnHolder` does) and records that the promote passed the checkout (an audit row naming the holder), whichever door ran it (`finalize_reviewed_promote` or `promoteThreeStep`).
+- [ ] The Inspector's finalize says before the click that the document is checked out by someone else (or asks for a reason, as the rev-up override does) — the product call is the owner's, under DEC-90 (fail-safe, no regression: a review must still be finishable).
+- [ ] Pinned by a test on each side (the app's notice; the record).
 
 ---

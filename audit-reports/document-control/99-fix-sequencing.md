@@ -979,3 +979,36 @@ it**, or the verdict rule is dropped.
     `transmittals.stamp_check`;
   - restating `lib/capabilityPolicy.ts`'s `loadCapabilityPolicy` comment,
     which still names these five surfaces as its readers.
+
+⚠ **Paste order — P32 PUBLISH GUARD LOCK LEG (2026-10-21).** One one-paste
+migration, `20261245_dc_roundG_publish_guard_lock_leg.sql` (drafting-flow
+`HAND-13` done-when 2):
+1. **No app deploy is needed, before or after.** No app path writes a pointer
+   the new leg refuses: every rev-up and revert goes through
+   `publish_revision` (door (a)); a review's promote is door (b); a new
+   document's first pointer is its creator's, right after the INSERT; the
+   legacy rev-up fallback is gone since REV-8.
+2. **Paste after `20261193` (required** — its first statement refuses,
+   changing nothing, without `20261193`'s REV-28 block), so it waits behind
+   the same gates as paste guide row 150. It re-creates
+   `enforce_document_publish_guard` from `20261193`'s body with one block: a
+   new revision made current on a document checked out by someone else is
+   refused (42501), Document Control included, unless it is
+   `publish_revision`'s own promote or the reviewed promote of the pending
+   draft in review. **Never re-paste `20261193`, `20261185`, `20261182`,
+   `20261174`, `20261165`, `20261164`, `20261159`, `20261151`, `20261144`,
+   `20261139`, `20261105` or any earlier guard migration after it.**
+- **What changes after the paste:** only a direct PATCH (or any write outside
+  the two doors) that moves the pointer over another person's checkout — now
+  refused, naming the holder. The holder's publish, an unlocked document's,
+  the publisher override with its reason, Document Control's force and a
+  review's promote land exactly as before; a hold still never passes.
+- **The result set:** seven probes (all true) and five counts — documents
+  checked out right now; of those, with and without a current revision; with
+  a pending draft in review; with a pending draft not marked in review
+  (expected 0).
+- **For the integrator at merge, not edited by P32:** the `20261245` row in
+  `MIGRATION-PASTE-ORDER.md` (after row 150's `20261193`); no
+  `lib/schemaExpectations.ts` probe (the function keeps its signature; the
+  file's own result set is the paste check, as for `20261193`); the
+  owner of new finding `DCK-15`.

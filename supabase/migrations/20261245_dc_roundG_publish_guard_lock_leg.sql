@@ -13,10 +13,11 @@
 --           body restored it, so the lock was tested at the database only
 --           inside publish_revision. A write to documents.current_version_id
 --           that does not go through it — a direct PostgREST PATCH by someone
---           who holds publish authority, the legacy rev-up fallback
---           (lib/revisions.ts, taken only while the RPC is missing) — made a
---           new revision current over a colleague's checkout with nothing at
---           the database to stop it (DCK-6 recorded the constraint any
+--           who holds publish authority (the app's own legacy rev-up
+--           fallback HAND-13 named is gone since REV-8: lib/revisions.ts now
+--           throws PublishContractUnavailableError) — made a new revision
+--           current over a colleague's checkout with nothing at the
+--           database to stop it (DCK-6 recorded the constraint any
 --           restored check must honour: the publisher-with-reason override
 --           passes, a hold never).
 --           Now ONE block, after every existing refusal and before the
@@ -62,10 +63,12 @@
 -- with them. No app deploy is needed before or after: no app path writes a
 -- pointer this block refuses (every rev-up and revert goes through
 -- publish_revision; a review's promote is door (b); a new document's first
--- pointer is written before anyone can check it out; the legacy rev-up
--- fallback runs only while publish_revision is missing, which this file's
--- prerequisites rule out). Before this paste the app works as today; after
--- it, the same, and a direct PATCH over another person's checkout is refused.
+-- pointer is its creator's, right after the INSERT — a checkout by someone
+-- else inside that window now refuses it, failing closed through the
+-- creation's own checked first-pointer refusal; there is no legacy
+-- rev-up fallback any more — REV-8). Before this paste the app works as
+-- today; after it, the same, and a direct PATCH over another person's
+-- checkout is refused.
 -- ⚠ Never re-paste 20261193, 20261185, 20261182, 20261174, 20261165,
 -- 20261164, 20261159, 20261151, 20261144, 20261139, 20261105 or any earlier
 -- guard migration after this one: each would drop this lock leg (and an
