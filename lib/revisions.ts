@@ -2340,11 +2340,56 @@ export async function finishBulkArchive(input: {
   reason: string; via: "bulk_archive" | "bulk_edit";
   docs: Array<{ documentId: string; label: string; versionId?: string | null }>;
 }): Promise<{ problems: BulkArchiveProblem[] }> {
+  // document-control P31: the archive is now one case of
+  // finishRetirementDuties — the same routines, the same record, unchanged.
+  return finishRetirementDuties({ ...input, toStatus: "Archived" });
+}
+
+// ─── REV-31 (document-control P31 RETIREMENT DOOR PARITY) ────────────────────
+
+/** The door a retirement's duties ran for (the record's `via`). */
+export type RetirementDutyDoor = "bulk_archive" | "bulk_edit" | "metadata";
+
+/** REV-31 (document-control P31 RETIREMENT DOOR PARITY, 2026-10-21, DEC-90):
+ *  finishBulkArchive generalised to the three retired statuses, so every
+ *  status-editor door that RETIRES a document does, after its write landed,
+ *  what the single door does around that retirement, in the single door's
+ *  order (the status write first — the caller's — then the draft void and
+ *  the link revocation, then the record):
+ *   - Archived  (archiveDocument):  the ARCHIVE_DOC record, as before;
+ *   - Superseded (supersedeDocument): the SUPERSEDE_DOC record, with the
+ *     fields supersedeDocument writes — this door names no replacements and
+ *     no MOC, so they are empty / null;
+ *   - Void (the metadata editor's save — no single door voids a document;
+ *     changeDocumentStatus is its door): the VOID_DOC record (registered in
+ *     lib/auditActions.ts — no existing action meant "voided by a status
+ *     change").
+ *  Each: the in-flight review draft voided (voidPendingDraftAfterPublish,
+ *  REV-6), the live share links revoked (revokeLiveSharesForDocument, REV-10
+ *  / DIST-1), the record with the ONE reason for the apply (or the door's
+ *  fixed sentence), `via` and — when the caller gives it — `retiredFrom`
+ *  (the status the row was retired from, as the door read it; null =
+ *  unknown, with `priorStatusUnknown: true` when the read failed). The
+ *  retirement recall is NOT sent here (the door's own: ONE batched recall
+ *  per bulk apply, changeDocumentStatus's for the metadata save). Rows run a
+ *  few at a time. Never throws: every duty that did not complete is returned
+ *  against its row, for the door to name. */
+export async function finishRetirementDuties(input: {
+  orgId: string; actorUserId: string; actorEmail?: string | null; actorRole?: string | null;
+  toStatus: string; reason: string; via: RetirementDutyDoor;
+  docs: Array<{ documentId: string; label: string; versionId?: string | null; retiredFrom?: string | null; priorStatusUnknown?: boolean }>;
+}): Promise<{ problems: BulkArchiveProblem[] }> {
   const problems: BulkArchiveProblem[] = [];
   const reason = input.reason.trim();
+  const to = input.toStatus.trim();
+  const kind = to === "Archived" ? { action: "ARCHIVE_DOC", noun: "archive" }
+    : to === "Superseded" ? { action: "SUPERSEDE_DOC", noun: "supersession" }
+    : to === "Void" ? { action: "VOID_DOC", noun: "void" }
+    : null;
   const one = async (d: (typeof input.docs)[number]): Promise<void> => {
     const mine: string[] = [];
     try {
+      if (!kind) throw new Error(`${input.toStatus} is not a retired status`);
       const draftVoid = await voidPendingDraftAfterPublish(d.documentId, input.actorUserId);
       if (draftVoid.problem) mine.push(`its review draft was not voided (${draftVoid.problem})`);
       const shares = await revokeLiveSharesForDocument(d.documentId, input.actorUserId);
@@ -2352,28 +2397,50 @@ export async function finishBulkArchive(input: {
       if (shares.liveLeft === null) mine.push("whether share links are still live on it could not be read");
       else if (shares.liveLeft > 0) mine.push(`${shares.liveLeft} share link${shares.liveLeft === 1 ? " is" : "s are"} still live on it (another person's — Document Control must revoke ${shares.liveLeft === 1 ? "it" : "them"})`);
       if (shares.auditError) mine.push(shares.auditError);
-      const res = await logRevisionEvent({
+      const duties = {
+        pendingDraftVoided: draftVoid.voidedVersionId,
+        pendingDraftVoidProblem: draftVoid.problem,
+        revokedShareLinks: shares.revoked, shareRevokeError: shares.error,
+        liveShareLinksLeft: shares.liveLeft, shareRevokeAuditError: shares.auditError,
+      };
+      const prior = "retiredFrom" in d
+        ? { retiredFrom: d.retiredFrom ?? null, ...(d.priorStatusUnknown === true ? { priorStatusUnknown: true } : {}) }
+        : {};
+      const actor = {
         orgId: input.orgId,
         documentId: d.documentId,
         versionId: d.versionId ?? "",
         userId: input.actorUserId,
         userEmail: input.actorEmail ?? "",
         userRole: input.actorRole ?? "",
-        type: "ARCHIVE_DOC",
-        details: {
-          reason, action: "archive", via: input.via,
-          pendingDraftVoided: draftVoid.voidedVersionId,
-          pendingDraftVoidProblem: draftVoid.problem,
-          revokedShareLinks: shares.revoked, shareRevokeError: shares.error,
-          liveShareLinksLeft: shares.liveLeft, shareRevokeAuditError: shares.auditError,
-        },
-      });
-      if (res && res.ok === false) mine.push(`its ARCHIVE_DOC record could not be written (${res.error ?? "refused"}), so the archive and its reason are not on its history`);
+      };
+      const res = kind.action === "ARCHIVE_DOC"
+        ? await logRevisionEvent({ ...actor, type: "ARCHIVE_DOC", details: { reason, action: "archive", via: input.via, ...duties, ...prior } })
+        : kind.action === "SUPERSEDE_DOC"
+          ? await logRevisionEvent({
+            ...actor, type: "SUPERSEDE_DOC",
+            details: {
+              reason, mocReference: null, replacementDocNumbers: [], resolvedReplacementIds: [], unresolvedDocNumbers: [],
+              via: input.via, ...duties, ...prior,
+            },
+          })
+          // logRevisionEvent's shape, written directly: its type list is lib/audit.ts's.
+          : await logAuditAction({
+            action: "VOID_DOC",
+            resourceId: d.documentId,
+            resourceType: "document",
+            orgId: input.orgId,
+            userId: input.actorUserId,
+            userEmail: input.actorEmail ?? "",
+            userRole: input.actorRole ?? "",
+            details: { reason, action: "void", via: input.via, ...duties, ...prior, versionId: d.versionId ?? "" },
+          });
+      if (res && res.ok === false) mine.push(`its ${kind.action} record could not be written (${res.error ?? "refused"}), so the ${kind.noun} and its reason are not on its history`);
     } catch (e) {
-      mine.push(`its archive duties stopped part-way (${(e as Error)?.message ?? String(e)})`);
+      mine.push(`its ${kind?.noun ?? "retirement"} duties stopped part-way (${(e as Error)?.message ?? String(e)})`);
     }
     if (mine.length > 0) {
-      console.error(`[retire] REV-31: the bulk archive of ${d.documentId} did not complete: ${mine.join("; ")}`);
+      console.error(`[retire] REV-31: the ${input.via} ${kind?.noun ?? "retirement"} of ${d.documentId} did not complete: ${mine.join("; ")}`);
       problems.push({ documentId: d.documentId, label: d.label, problems: mine });
     }
   };
@@ -2820,6 +2887,14 @@ export interface StatusIssueOutcome {
    *  basis its pre-write read gave (StatusIssueNotRecorded). Absent on every
    *  other outcome. */
   notRecordedBecause?: StatusIssueNotRecorded;
+  /** REV-31 (document-control P31): set only by changeDocumentStatus, asked
+   *  with reportRetirement, only when its write RETIRED the document — the same rule its retirement
+   *  recall fires on (into Superseded / Void / Archived from another status,
+   *  or from a prior its read could not give). `retiredFrom` is the prior the
+   *  read gave (null when unknown or empty); `priorStatusUnknown` that the
+   *  read failed. The caller runs the retirement's duties from it
+   *  (finishRetirementDuties). Absent on every other outcome. */
+  retired?: { retiredFrom: string | null; priorStatusUnknown: boolean };
 }
 
 /** REV-19 (P17 integrator fix): why changeDocumentStatus wrote an issue
@@ -3162,6 +3237,11 @@ export async function changeDocumentStatus(input: {
    *  a document silently — the copy may be stale, another session having
    *  put the document back in force). */
   heldStatus?: string | null;
+  /** REV-31 (document-control P31): true from the metadata save — a write
+   *  that RETIRED the document then says so on the outcome (`retired`), for
+   *  the caller to run the retirement's duties. Omitted, the outcome is
+   *  exactly what it was. */
+  reportRetirement?: boolean;
 }): Promise<StatusIssueOutcome> {
   let before = await readStatusIssueBasis(input.documentId, undefined, input.toStatus);
   // P28 second fix pass: the caller's held status is a possibly stale copy,
@@ -3212,7 +3292,8 @@ export async function changeDocumentStatus(input: {
   // return to force (a Void told at the void, archived later: no second
   // FYI; a Superseded / Archived retired by a door that told nobody: its
   // watchers told now). An unknown prior (null) is in force for that rule.
-  if (isRetiredStatus(input.toStatus) && input.toStatus.trim() !== (before.fromStatus ?? "").trim()) {
+  const retires = isRetiredStatus(input.toStatus) && input.toStatus.trim() !== (before.fromStatus ?? "").trim();
+  if (retires) {
     recallOnRetirement({
       orgId: input.orgId, documentId: input.documentId,
       newStatus: input.toStatus.trim(), replacementNote: null,
@@ -3237,8 +3318,15 @@ export async function changeDocumentStatus(input: {
   }
   const change = { fromStatus: before.fromStatus, toStatus: input.toStatus, hasCurrentRevision: !!before.versionId };
   if (!isIssueTransition(change) && !isUnguardedEntryIntoForce(change)) {
-    // A write that is not to an issue status: exactly as before.
-    if (!isControlledIssueStatus(input.toStatus)) return NO_STATUS_ISSUE;
+    // A write that is not to an issue status: exactly as before. REV-31
+    // (document-control P31): a write that retired the document says so to a
+    // caller that asks (reportRetirement), for it to run the retirement's
+    // duties.
+    if (!isControlledIssueStatus(input.toStatus)) {
+      return retires && input.reportRetirement === true
+        ? { ...NO_STATUS_ISSUE, retired: { retiredFrom: before.readFailed === true ? null : (before.fromStatus ?? null), priorStatusUnknown: before.readFailed === true } }
+        : NO_STATUS_ISSUE;
+    }
     // REV-19 (P17 integrator fix): an issue status written but not recorded
     // as an issue — say which basis the read gave, so an editor tells a
     // failed read (unknown: nothing recorded, the history to be checked)

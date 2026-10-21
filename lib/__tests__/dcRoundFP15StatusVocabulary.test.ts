@@ -292,6 +292,12 @@ describe("VFY-20 — an existing IFC row is shown as what it is, never silently 
     const sel = labelled("New value") as HTMLSelectElement;
     expect(Array.from(sel.options).map((o) => o.value)).toEqual([...BULK_EDIT_STATUS_OPTIONS]);
     await act(async () => setValue(sel, "Superseded"));
+    // REV-31 (document-control P31): a change to Superseded asks one reason for the apply
+    await act(async () => {
+      const reason = labelled("Reason for superseding") as HTMLInputElement;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(reason, "tidy");
+      reason.dispatchEvent(new Event("input", { bubbles: true }));
+    });
     await act(async () => { button("Apply to 2").dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     expect(s.calls.map((c) => [c.id, c.payload.status])).toEqual([["a1", "Superseded"], ["a2", "Superseded"]]);

@@ -136,8 +136,10 @@ async function apply(docs: DocumentRecord[], value: string, field?: string, reas
   if (field) await act(async () => setValue(labelled("Field to change") as HTMLSelectElement, field));
   const v = labelled("New value");
   await act(async () => setValue(v, value));
-  // REV-31 (the P28 integrator fix pass): a change to Archived asks one reason for the apply
+  // REV-31 (the P28 integrator fix pass): a change to Archived asks one reason for the apply —
+  // (document-control P31) so does a change to Superseded
   if (value === "Archived" && !field && reason) await act(async () => setValue(labelled("Reason for archiving") as HTMLInputElement, reason));
+  if (value === "Superseded" && !field && reason) await act(async () => setValue(labelled("Reason for superseding") as HTMLInputElement, reason));
   await act(async () => { button(`Apply to ${docs.length}`).dispatchEvent(new MouseEvent("click", { bubbles: true })); });
   await settle();
 }
@@ -302,7 +304,7 @@ describe("REV-31 (P28 integrator fix pass) — the bulk editor's Archived does w
     expect(host.querySelector('[data-testid="bulk-archive-follow-ups"]')).toBeNull();
   });
 
-  it("Apply waits for the reason; the reason field is asked only for Archived — Superseded and the other statuses write exactly as before (no archive columns, no ARCHIVE_DOC)", async () => {
+  it("Apply waits for the reason; the ARCHIVE reason is asked only for Archived — Superseded and the other statuses write exactly as before (no archive columns, no ARCHIVE_DOC; Superseded asks its own reason since P31 — dcRoundGP31BulkSupersede.test.ts)", async () => {
     const a = seedDoc("x1");
     await act(async () => {
       root.render(React.createElement(BulkEditModal, { isOpen: true, onClose: () => {}, docs: [asRecord(a)], library: LIB, actorUserId: ME, onApplied: () => {} }));

@@ -67,7 +67,7 @@ const MultiDocViewer = dynamic(() => import("@/components/viewers/MultiDocViewer
 import type { TagColumnDef } from "@/lib/documentTags";
 import RevUpModal from "@/components/documents/RevUpModal";
 import { loadMyMarkup, saveMyMarkup, myActiveSessionId, type DocumentMarkup } from "@/lib/markups";
-import { listVersions, changeDocumentStatus, recallsCopyHolders, finishBulkArchive } from "@/lib/revisions";
+import { listVersions, changeDocumentStatus, recallsCopyHolders, finishBulkArchive, finishRetirementDuties } from "@/lib/revisions";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 import { isIssueTransition, isControlledIssueStatus, isRetiredStatus } from "@/lib/issueStatus";
 import { isUnguardedEntryIntoForce } from "@/lib/documentStatusOptions";
@@ -2993,8 +2993,34 @@ export default function LibraryExplorerPage() {
       if (!uid || !retireOrgId) {
         throw new Error(`Save refused — nothing was saved: this save writes the status ${toStatus}, which can retire the document (its copy holders recalled, its watchers told), and who is saving it (your sign-in and workspace) is not known yet. Try again in a moment.`);
       }
+      // REV-31 (document-control P31 RETIREMENT DOOR PARITY, DEC-90): a save
+      // this page sees RETIRING the document (its status changes into
+      // Superseded / Void / Archived) asks ONE reason, as the Archive and
+      // Supersede dialogs do — Cancel or a blank answer saves nothing. A save
+      // this page sees as no retirement (the status it already shows) asks
+      // nothing, as before.
+      const retireLabel = selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "The document";
+      let retireReason: string | null = null;
+      if (!retiredUnchanged) {
+        const verb = toStatus.trim() === "Archived" ? "archiving" : toStatus.trim() === "Void" ? "voiding" : "superseding";
+        const answer = await appPrompt({
+          title: `Set ${retireLabel} to ${toStatus.trim()}?`,
+          message: `This retires the document: its review draft is voided, its live share links are revoked, its copy holders are recalled and its watchers told. The reason is recorded on its history.`,
+          placeholder: `Reason for ${verb}`,
+          confirmLabel: "Save",
+          required: true,
+        });
+        if (answer === null) {
+          throw new Error(`Save cancelled — nothing was saved: setting the status to ${toStatus.trim()} retires the document and takes a reason.`);
+        }
+        if (!answer.trim()) {
+          throw new Error(`Save refused — nothing was saved: setting the status to ${toStatus.trim()} retires the document and takes a reason.`);
+        }
+        retireReason = answer.trim();
+      }
+      let retiredOutcome: Awaited<ReturnType<typeof changeDocumentStatus>>;
       try {
-        await changeDocumentStatus({
+        retiredOutcome = await changeDocumentStatus({
           orgId: retireOrgId, documentId: selectedDoc.id, toStatus, door: "metadata",
           actorUserId: uid, actorEmail: userEmail ?? null, actorRole: activeRole ?? null,
           patch: payload,
@@ -3002,12 +3028,42 @@ export default function LibraryExplorerPage() {
           // metadata edit on a document this page holds as already retired
           // in this status is then no retirement (nothing recalled).
           heldStatus: selectedDoc.status ?? null,
+          // REV-31 (P31): say whether the write retired it (its duties follow).
+          reportRetirement: true,
         });
       } catch (e) {
         const msg = (e as Error)?.message || String(e);
         throw new Error(/^The status was NOT changed — you don't have authority to change this document/.test(msg)
           ? "Save refused — nothing was saved: the database updated no document (you may no longer have edit access to it)."
           : `Save refused — nothing was saved: ${msg}`);
+      }
+      // REV-31 (P31): the save landed. When changeDocumentStatus says it
+      // RETIRED the document (decided from the row it read, never this page's
+      // copy — an unreadable prior counts, as for the recall), what the single
+      // door does after its write: the review draft voided, the live share
+      // links revoked, the record (ARCHIVE_DOC / SUPERSEDE_DOC / VOID_DOC)
+      // with the reason — or, for a retirement this page did not see (it
+      // showed the status already), the sentence naming this door — and the
+      // prior. A save that retired nothing does nothing more. A duty that did
+      // not complete is said; the status change stands.
+      if (retiredOutcome.retired) {
+        const { problems: dutyProblems } = await finishRetirementDuties({
+          orgId: retireOrgId, actorUserId: uid, actorEmail: userEmail ?? null, actorRole: activeRole ?? null,
+          toStatus,
+          reason: retireReason ?? `No reason given: the metadata editor saved this document as ${toStatus.trim()} without asking one (this page showed it as already ${toStatus.trim()}).`,
+          via: "metadata",
+          docs: [{
+            documentId: selectedDoc.id, label: String(retireLabel), versionId: selectedDoc.currentVersionId ?? null,
+            retiredFrom: retiredOutcome.retired.retiredFrom,
+            ...(retiredOutcome.retired.priorStatusUnknown ? { priorStatusUnknown: true } : {}),
+          }],
+        });
+        const lines = dutyProblems.flatMap((p) => p.problems);
+        if (lines.length > 0) {
+          const head = `${retireLabel} was saved as ${toStatus.trim()}, but ${lines.length} follow-up step${lines.length === 1 ? "" : "s"} did not complete. The status change stands and is not rolled back — do not save it again.`;
+          setError(`${head} ${lines.join(" ")}`);
+          void appAlert({ title: "Saved — follow-up steps did not complete", message: `${head}\n\n${lines.join("\n")}`, tone: "danger" });
+        }
       }
       return;
     }

@@ -78,7 +78,7 @@ vi.mock("@/lib/reviewControl", async (importOriginal) => {
 });
 
 import { supabase } from "@/lib/supabase";
-import { changeDocumentStatus } from "@/lib/revisions";
+import { changeDocumentStatus, finishRetirementDuties } from "@/lib/revisions";
 import { recallRetiredDocument } from "@/lib/staleCopies";
 import { isIssueTransition, isIssueRefusal, isControlledIssueStatus, isRetiredStatus } from "@/lib/issueStatus";
 import { isUnguardedEntryIntoForce } from "@/lib/documentStatusOptions";
@@ -238,13 +238,16 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
   const asDoc = (d: Row) => ({ id: d.id, orgId: ORG, libraryId: "lib1", documentNumber: d.document_number, title: d.title, rev: d.rev, status: d.status, currentVersionId: d.current_version_id ?? undefined, metadata: d.metadata });
   const issued = () => T("audit_logs").filter((a) => a.action === "DOCUMENT_ISSUED");
   function save(d: Row, opts: { activeRole?: string | null; uid?: string | null; pageSees?: Row; cds?: typeof changeDocumentStatus } = {}) {
-    const st = { error: null as string | null, alerts: [] as Array<{ title: string; message: string }> };
-    const fn = lift<(next: unknown) => Promise<void>>("saveMetadata", ["selectedDoc", "uid", "userEmail", "activeRole", "activeOrgId", "library", "supabase", "changeDocumentStatus", "isIssueTransition", "isUnguardedEntryIntoForce", "isControlledIssueStatus", "isRetiredStatus", "computeUniquenessKey", "setError", "appAlert"])({
+    const st = { error: null as string | null, alerts: [] as Array<{ title: string; message: string }>, prompts: [] as Array<Record<string, unknown>> };
+    // document-control P31 (REV-31): a save this page sees retiring the document asks one reason (answered here).
+    const fn = lift<(next: unknown) => Promise<void>>("saveMetadata", ["selectedDoc", "uid", "userEmail", "activeRole", "activeOrgId", "library", "supabase", "changeDocumentStatus", "isIssueTransition", "isUnguardedEntryIntoForce", "isControlledIssueStatus", "isRetiredStatus", "computeUniquenessKey", "setError", "appAlert", "appPrompt", "finishRetirementDuties"])({
       selectedDoc: asDoc({ ...d, ...(opts.pageSees ?? {}) }), uid: opts.uid === undefined ? "ctl1" : opts.uid, userEmail: "ctl@example.com",
       activeRole: opts.activeRole === undefined ? "DocCtrl" : opts.activeRole, activeOrgId: ORG,
       library: { orgId: ORG, uniquenessKeys: ["documentNumber"] }, supabase, changeDocumentStatus: opts.cds ?? changeDocumentStatus, isIssueTransition, isUnguardedEntryIntoForce, isControlledIssueStatus, isRetiredStatus, computeUniquenessKey,
       setError: (v: string | null) => { st.error = v; },
       appAlert: async (a: { title: string; message: string }) => { st.alerts.push(a); },
+      appPrompt: async (o: Record<string, unknown>) => { st.prompts.push(o); return "Retired by test"; },
+      finishRetirementDuties,
     });
     return { st, fn };
   }

@@ -199,6 +199,8 @@ async function applyStatus(docs: DocumentRecord[], value: string, library = LIB(
   await act(async () => setValue(labelled("New value") as HTMLSelectElement, value));
   // REV-31 (document-control P28, the integrator's fix pass at the merge): a change to Archived asks one reason
   if (value === "Archived") await act(async () => setValue(labelled("Reason for archiving") as HTMLInputElement, "tidy"));
+  // REV-31 (document-control P31): so does a change to Superseded
+  if (value === "Superseded") await act(async () => setValue(labelled("Reason for superseding") as HTMLInputElement, "tidy"));
   await act(async () => { button(`Apply to ${docs.length}`).dispatchEvent(new MouseEvent("click", { bubbles: true })); });
   await settle();
   return onApplied;
