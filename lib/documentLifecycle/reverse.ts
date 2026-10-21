@@ -102,7 +102,10 @@ import { isControllerPrincipal } from "@/lib/permissions";
 import { resolveCanControlLibrary } from "@/lib/documentGuards";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
 import { assertNotOnHold, holdReasonLabel } from "@/lib/holdGate";
-import { voidPendingDraftAfterPublish, revokeLiveSharesForDocument, putBackRetiredIssue, describePutBackStatus } from "@/lib/revisions";
+import {
+  voidPendingDraftAfterPublish, revokeLiveSharesForDocument, putBackRetiredIssue, describePutBackStatus,
+  recallOnRetirement, skipsRetirementRecall, recallsCopyHolders,
+} from "@/lib/revisions";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 import {
   withCompensation, copyActiveHoldsToDoc, releaseCarriedHolds,
@@ -350,8 +353,11 @@ async function assertRestorable(restoreIds: string[], parkedIds: string[]): Prom
  *  BEFORE the write (and runs if the park landed — or may have: an
  *  unconfirmed outcome is re-read, putBackIfChanged), so a later refusal
  *  un-parks it. Voiding its review and revoking its links are the
- *  irreversible half (finishParking), run only after the saga has landed. */
-async function parkAsSuperseded(docId: string, supersessionReason: string, actorUserId: string, now: string, register: Register): Promise<void> {
+ *  irreversible half (finishParking), run only after the saga has landed.
+ *  Answers the status it held just before the park (read for the put-back)
+ *  — what its retirement recall decides from (PROD-17, document-control P28:
+ *  recallParked). */
+async function parkAsSuperseded(docId: string, supersessionReason: string, actorUserId: string, now: string, register: Register): Promise<string | null> {
   const snap = await readStatusSnapshot(docId);
   const outcome: WriteOutcome = { attempted: false, landed: false };
   register({ describe: `un-park ${docId}`, run: putBackIfChanged(docId, snap, actorUserId, outcome) });
@@ -368,6 +374,44 @@ async function parkAsSuperseded(docId: string, supersessionReason: string, actor
     throw new Error(`Reversal stopped: ${docId} could not be parked as Superseded (${error?.message ?? "the write was refused"}).`);
   }
   outcome.landed = true;
+  return snap.status ?? null;
+}
+
+/** PROD-17 (document-control P28): a reversal's PARK is a retirement — the
+ *  parked document (a split's new sheet, a merge's new target) is Superseded
+ *  — so, once the reversal has landed, each parked document's watchers are
+ *  told and, when the park took away a controlled issue, its copy holders
+ *  are recalled: one lib/revisions.ts recallOnRetirement per parked
+ *  document, fired, never awaited, with the archive's rules — a document
+ *  already Superseded or Archived before the park gets nothing again
+ *  (skipsRetirementRecall), a Draft / In Review / Void one the watchers' FYI
+ *  only (recallsCopyHolders, DEC-90 R1). A reversal tells no checkout holder
+ *  or package owner itself, so both stay in the watchers' audience. */
+function recallParked(parked: Map<string, string | null>, op: "split" | "merge", input: { orgId: string; actorUserId: string; actorEmail?: string }): void {
+  for (const [docId, priorStatus] of parked) {
+    if (skipsRetirementRecall(priorStatus)) continue;
+    recallOnRetirement({
+      orgId: input.orgId, documentId: docId,
+      newStatus: "Superseded", replacementNote: `The ${op} that created it was reversed.`,
+      actorUserId: input.actorUserId, actorName: input.actorEmail || input.actorUserId,
+      personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
+      recallCopyHolders: recallsCopyHolders(priorStatus),
+    });
+  }
+}
+
+/** DIST-16 (document-control P28): a source a reversal restored is back in
+ *  force — the retirement recall its split / merge sent is withdrawn
+ *  (lib/staleCopies.ts withdrawRetirementRecall: nothing for a source
+ *  restored into Draft / In Review, or with no recall standing), fired,
+ *  never awaited, once the reversal's record is written. */
+function withdrawRestored(restored: Array<[string, string | null]>, door: "split_reversed" | "merge_reversed", input: { orgId: string; actorUserId: string; actorEmail?: string }): void {
+  for (const [docId, restoredStatus] of restored) {
+    void import("@/lib/staleCopies").then(({ withdrawRetirementRecall }) => withdrawRetirementRecall({
+      orgId: input.orgId, documentId: docId, restoredStatus, door,
+      actorUserId: input.actorUserId, actorName: input.actorEmail || input.actorUserId,
+    })).catch((e) => console.error(`[reverse] DIST-16: the recall withdrawal of document ${docId} did not run`, e));
+  }
 }
 
 /** The irreversible half of parking, run only once the reversal's saga has
@@ -801,9 +845,10 @@ export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseRes
   // the source, any carried hold and the lineage back; nothing irreversible
   // has run yet.
   let holdsCarriedBack = 0;
+  const parkedPrior = new Map<string, string | null>();
   await withRollbackCause(async (register, rollback) => {
     for (const newId of replacementIds) {
-      await parkAsSuperseded(newId, `Reverted split — ${input.reason}`, input.actorUserId, now, register);
+      parkedPrior.set(newId, await parkAsSuperseded(newId, `Reverted split — ${input.reason}`, input.actorUserId, now, register));
     }
     // HLD-2: a parked sheet's holds onto the source BEFORE it comes back.
     holdsCarriedBack = await carryParkedHolds(heldParked, [sourceDocId], "split", actor, register);
@@ -854,6 +899,8 @@ export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseRes
       pendingDraftVoidProblems: draftVoidProblems,
     },
   });
+  recallParked(parkedPrior, "split", input);
+  withdrawRestored([[sourceDocId, restoredAs]], "split_reversed", input);
 
   return { reversedDocIds: replacementIds, preservedAsSuperseded: parked, warnings };
 }
@@ -937,6 +984,7 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
   const now = new Date().toISOString();
   const actor: ActorContext = { orgId: input.orgId, actorUserId: input.actorUserId, actorEmail: input.actorEmail, actorRole: input.actorRole };
   let holdsCarriedBack = 0;
+  const parkedPrior = new Map<string, string | null>();
   // Phase two: the reversible saga. Park the target FIRST, if newly created
   // (reverseSplit's order), then restore every source, then delete the
   // lineage — each step's put-back registered before it writes, so a
@@ -945,7 +993,7 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
   // and target live at once; nothing irreversible has run yet.
   await withRollbackCause(async (register, rollback) => {
     if (targetWasNewlyCreated) {
-      await parkAsSuperseded(targetDocId, `Reverted merge — ${input.reason}`, input.actorUserId, now, register);
+      parkedPrior.set(targetDocId, await parkAsSuperseded(targetDocId, `Reverted merge — ${input.reason}`, input.actorUserId, now, register));
     }
     // HLD-2: the parked target's holds onto every source BEFORE it returns.
     holdsCarriedBack = await carryParkedHolds(heldParked, allSourceIds, "merge", actor, register);
@@ -1005,6 +1053,8 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
       pendingDraftVoidProblem: voidProblem,
     },
   });
+  recallParked(parkedPrior, "merge", input);
+  withdrawRestored([...restoreTo], "merge_reversed", input);
 
   return { reversedDocIds: [...allSourceIds, targetDocId], preservedAsSuperseded: parked, warnings };
 }

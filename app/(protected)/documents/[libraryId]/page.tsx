@@ -67,9 +67,9 @@ const MultiDocViewer = dynamic(() => import("@/components/viewers/MultiDocViewer
 import type { TagColumnDef } from "@/lib/documentTags";
 import RevUpModal from "@/components/documents/RevUpModal";
 import { loadMyMarkup, saveMyMarkup, myActiveSessionId, type DocumentMarkup } from "@/lib/markups";
-import { listVersions, changeDocumentStatus } from "@/lib/revisions";
+import { listVersions, changeDocumentStatus, skipsRetirementRecall, recallsCopyHolders } from "@/lib/revisions";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
-import { isIssueTransition, isControlledIssueStatus } from "@/lib/issueStatus";
+import { isIssueTransition, isControlledIssueStatus, isRetiredStatus } from "@/lib/issueStatus";
 import { isUnguardedEntryIntoForce } from "@/lib/documentStatusOptions";
 import { publicOrigin } from "@/lib/publicOrigin";
 import SupersedeModal from "@/components/documents/SupersedeModal";
@@ -1068,8 +1068,14 @@ export default function LibraryExplorerPage() {
     const now = new Date().toISOString();
     // SURF-3: a legal hold freezes the record against every destructive verb,
     // archive included (the DB guard refuses it too). Skip held ones loudly.
-    const { data: heldRows } = await supabase.from("documents").select("id").in("id", ids).eq("legal_hold", true);
-    const held = new Set(((heldRows ?? []) as Array<{ id: string }>).map((r) => r.id));
+    // PROD-17 (document-control P28): the same one read also gives each row's
+    // status just before the archive — the fresh read the retirement recall
+    // decides from (never this page's copy); a failed read leaves every
+    // row's prior unknown, which recalls.
+    const { data: heldRows, error: heldReadErr } = await supabase.from("documents").select("id, legal_hold, status").in("id", ids);
+    const readRows = (heldRows ?? []) as Array<{ id: string; legal_hold?: boolean | null; status?: string | null }>;
+    const held = new Set(readRows.filter((r) => r.legal_hold === true).map((r) => r.id));
+    const priorStatusOf = new Map<string, string | null>(heldReadErr ? [] : readRows.map((r) => [r.id, r.status ?? null]));
     const targets = ids.filter((id) => !held.has(id));
     if (targets.length === 0) {
       await appAlert({ message: `All ${ids.length} selected document${ids.length === 1 ? " is" : "s are"} under legal hold and cannot be archived.`, tone: "danger" });
@@ -1084,6 +1090,29 @@ export default function LibraryExplorerPage() {
     }).in("id", targets).select("id");
     if (archErr) { await appAlert({ message: `Archive failed: ${archErr.message}`, tone: "danger" }); return; }
     const done = new Set(((archived ?? []) as Array<{ id: string }>).map((r) => r.id));
+    // PROD-17 (document-control P28): a bulk archive is a retirement. ONE
+    // batched recall for the apply (lib/staleCopies.ts recallRetiredBatch),
+    // fired, never awaited: each copy holder gets one notice naming every
+    // archived document they hold a copy of — recalled only for a row that
+    // took away a controlled issue (recallsCopyHolders, DEC-90 R1) — and each
+    // document's watchers its FYI. A row already Superseded or Archived gets
+    // nothing again (skipsRetirementRecall).
+    const recallDocs = [...done]
+      .filter((id) => !skipsRetirementRecall(priorStatusOf.get(id) ?? null))
+      .map((id) => {
+        const row = documents.find((d) => d.id === id);
+        return { documentId: id, libraryId, docLabel: row?.documentNumber || row?.title || row?.name || "A document", recallCopyHolders: recallsCopyHolders(priorStatusOf.get(id) ?? null) };
+      });
+    if (recallDocs.length > 0) {
+      const recallOrg = activeOrgId || library?.orgId || null;
+      if (uid && recallOrg) {
+        void import("@/lib/staleCopies").then(({ recallRetiredBatch }) => recallRetiredBatch({
+          orgId: recallOrg, newStatus: "Archived", actorUserId: uid, actorName: userEmail || uid, docs: recallDocs,
+        })).catch((e) => console.error("[library] PROD-17: the bulk archive's retirement recall did not run", e));
+      } else {
+        console.error(`[library] PROD-17: ${recallDocs.length} document(s) were archived before who is archiving them was known, so no retirement recall was sent`);
+      }
+    }
     setDocuments((prev) => prev.map((d) =>
       done.has(d.id!) ? { ...d, status: "Archived" as DocumentRecord["status"] } : d
     ));
@@ -1596,6 +1625,25 @@ export default function LibraryExplorerPage() {
     const channel = supabase.channel(`docs-lib-${libraryId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "documents", filter: `library_id=eq.${libraryId}` },
         () => setDocsRefreshTick((t) => t + 1))
+      // RT-4 (document-control P28): a DELETE carries only the old row's
+      // primary key — never library_id — so the filtered listener above never
+      // hears one, and a document hard-deleted in another session stayed on
+      // this page until reload. This unfiltered companion (the attention
+      // feed's and the requests portal's pattern, DEC-105 §4) hears every
+      // tenant's documents DELETEs and acts only on a document this page
+      // holds: it drops that row (the list, the folder cache, the selection);
+      // anything else is ignored, with no refetch.
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "documents" },
+        (payload) => {
+          const gone = (payload as { old?: { id?: string } | null } | undefined)?.old?.id;
+          if (!gone) return;
+          setDocuments((prev) => (prev.some((d) => d.id === gone) ? prev.filter((d) => d.id !== gone) : prev));
+          for (const [key, rows] of folderDocsCache.current) {
+            if (rows.some((d) => d.id === gone)) folderDocsCache.current.set(key, rows.filter((d) => d.id !== gone));
+          }
+          setSelectedDocIds((prev) => (prev.has(gone) ? new Set([...prev].filter((id) => id !== gone)) : prev));
+          setSelectedDoc((prev) => (prev?.id === gone ? null : prev));
+        })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [libraryId]);
@@ -2844,13 +2892,46 @@ export default function LibraryExplorerPage() {
     // to Draft, writes Issued again: that is an issue, and it gets the
     // compliance clocks (review clock, read-&-understood roster) and the
     // DOCUMENT_ISSUED record like any other. Every save to a status that
-    // issues nothing (Draft, In Review, the retired ones) is the bare checked
-    // write below, unchanged. `pageSawIssue` is only what the editor told the
+    // issues nothing (Draft, In Review) is the bare checked write below,
+    // unchanged; a retired one goes through changeDocumentStatus as well
+    // (PROD-17, below). `pageSawIssue` is only what the editor told the
     // person (its "issuing" note) — it picks the sentence, not the route.
     const toStatus = next.core?.status;
     // REV-26 (document-control P25): a move into force out of IFC is an issue the editor says it is (its entry-into-force note), recorded by changeDocumentStatus.
     const pageSawIssue = toStatus !== undefined && (isIssueTransition({ fromStatus: selectedDoc.status, toStatus, hasCurrentRevision: !!selectedDoc.currentVersionId })
       || isUnguardedEntryIntoForce({ fromStatus: selectedDoc.status, toStatus, hasCurrentRevision: !!selectedDoc.currentVersionId }));
+    // PROD-17 (document-control P28): a save that RETIRES the document
+    // (Superseded / Void / Archived — isRetiredStatus) goes through
+    // changeDocumentStatus too: the SAME one checked UPDATE (every column
+    // below rides in it as the patch), after which its retirement rule —
+    // decided from the row it reads first, never this page's copy — tells
+    // the watchers and, when the save takes away a controlled issue (a Void
+    // out of Issued included), recalls the copy holders, once, never awaited.
+    // This save must not also call recallOnRetirement (a second recall). Its
+    // outcome for a retirement is NO_STATUS_ISSUE, so there is nothing more
+    // to say; a refusal reads as the bare write's did, in the database's own
+    // words, and a write that matched no row keeps the bare write's sentence.
+    // While who is saving is not yet known, the save is the bare write it
+    // always was (no recall can be sent without the actor — logged).
+    if (toStatus !== undefined && isRetiredStatus(toStatus)) {
+      const retireOrgId = selectedDoc.orgId || activeOrgId || library?.orgId || null;
+      if (uid && retireOrgId) {
+        try {
+          await changeDocumentStatus({
+            orgId: retireOrgId, documentId: selectedDoc.id, toStatus, door: "metadata",
+            actorUserId: uid, actorEmail: userEmail ?? null, actorRole: activeRole ?? null,
+            patch: payload,
+          });
+        } catch (e) {
+          const msg = (e as Error)?.message || String(e);
+          throw new Error(/^The status was NOT changed — you don't have authority to change this document/.test(msg)
+            ? "Save refused — nothing was saved: the database updated no document (you may no longer have edit access to it)."
+            : `Save refused — nothing was saved: ${msg}`);
+        }
+        return;
+      }
+      console.error(`[library] PROD-17: document ${selectedDoc.id} is saved as ${toStatus} before who is saving it is known, so no retirement recall is sent`);
+    }
     if (toStatus !== undefined && isControlledIssueStatus(toStatus)) {
       const orgId = selectedDoc.orgId || activeOrgId || library?.orgId || null;
       if (!uid || !orgId) {

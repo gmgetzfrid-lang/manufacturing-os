@@ -536,9 +536,8 @@ export function recallOnRetirement(
     // [publish]) — P26 fix pass 2 logged it as a warning; fix pass 4 (the
     // integrator, DEC-90) as an error. The door is unaffected and the next
     // recall retries the load. A failed download_audits read INSIDE
-    // recallRetiredDocument is still silent there: it resolves, so nothing
-    // reaches this catch (notifications DELIV-17, assigned to
-    // document-control P28 STATUS-DOOR REMAINDERS).
+    // recallRetiredDocument resolves, so it never reaches this catch: it is
+    // logged and recorded there (notifications DELIV-17, document-control P28).
     console.error(`[revisions] PROD-17: the retirement recall of document ${input.documentId} did not run`, e);
   });
 }
@@ -2628,6 +2627,14 @@ export async function unarchiveDocument(input: ArchiveInput & {
       ...(door.kind === "landed" && door.recorded ? { holdOverridden: "REV_HOLD_OVERRIDDEN" } : {}),
     },
   });
+  // DIST-16 (document-control P28): back in force — the retirement recall
+  // standing on it is withdrawn (lib/staleCopies.ts withdrawRetirementRecall;
+  // nothing for a restore into Draft / In Review), fired, never awaited.
+  void import("@/lib/staleCopies").then(({ withdrawRetirementRecall }) => withdrawRetirementRecall({
+    orgId, documentId: doc.id!, libraryId: doc.libraryId,
+    docLabel: String(doc.documentNumber || doc.title || doc.name || "") || null,
+    restoredStatus, door: "unarchive", actorUserId, actorName: actorEmail || actorUserId,
+  })).catch((e) => console.error(`[revisions] DIST-16: the recall withdrawal of document ${doc.id} did not run`, e));
 
   // REV-19: an un-archive into an issue status is an issue — its clocks and
   // its record (a put-back of the stamped issue keeps the clocks it had; a
@@ -3090,10 +3097,9 @@ export async function changeDocumentStatus(input: {
   // (skipsRetirementRecall). A pre-write read that failed (fromStatus
   // unknown) recalls: a second recall over none. This door tells no
   // checkout holder or package owner, so they stay in the watchers'
-  // audience. (Neither status editor routes a retirement here today: each
-  // writes a retired status with its own bare write, which recalls nothing
-  // — PROD-17 residual, document-control P28. A caller that routes one here
-  // must not also call recallOnRetirement: that would be a second recall.)
+  // audience. (document-control P28: the library page's metadata save routes
+  // its retirements here; a caller that routes one here must not also call
+  // recallOnRetirement: that would be a second recall.)
   if (isRetiredStatus(input.toStatus) && input.toStatus.trim() !== (before.fromStatus ?? "").trim()
     && !skipsRetirementRecall(before.fromStatus)) {
     recallOnRetirement({
@@ -3103,6 +3109,15 @@ export async function changeDocumentStatus(input: {
       personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
       recallCopyHolders: recallsCopyHolders(before.fromStatus),
     });
+  }
+  // DIST-16 (document-control P28): a put-back — a retired document written
+  // back into an issue status (or one whose prior status could not be read)
+  // — withdraws the retirement recall standing on it, fired, never awaited.
+  if (isControlledIssueStatus(input.toStatus) && (isRetiredStatus(before.fromStatus) || before.readFailed === true)) {
+    void import("@/lib/staleCopies").then(({ withdrawRetirementRecall }) => withdrawRetirementRecall({
+      orgId: input.orgId, documentId: input.documentId, restoredStatus: input.toStatus, door: "put_back",
+      actorUserId: input.actorUserId, actorName: input.actorEmail || input.actorUserId,
+    })).catch((e) => console.error(`[revisions] DIST-16: the recall withdrawal of document ${input.documentId} did not run`, e));
   }
   const change = { fromStatus: before.fromStatus, toStatus: input.toStatus, hasCurrentRevision: !!before.versionId };
   if (!isIssueTransition(change) && !isUnguardedEntryIntoForce(change)) {
@@ -3544,6 +3559,13 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
         ? `Replaced by ${replacementDocNumbers.join(", ")}.`
         : null,
       actorUserId, actorName: actorEmail || actorUserId,
+      // PROD-17 (document-control P28; DEC-90 R1 at the P26 merge): the copy
+      // holders are recalled only for a document that was issued — a
+      // controlled-issue prior (or one the read could not give), or a re-run
+      // on a document already Superseded / Archived, which recalls as it
+      // always has. A Draft, In Review or Void document superseded gets the
+      // watchers' FYI only, as at every other retirement door.
+      recallCopyHolders: recallsCopyHolders(priorState.status as string | null) || skipsRetirementRecall(priorState.status as string | null),
     }),
   ).catch(() => { /* non-blocking */ });
 

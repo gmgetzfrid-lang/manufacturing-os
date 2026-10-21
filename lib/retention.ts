@@ -253,6 +253,15 @@ export async function disposeDocument(input: {
       action = disposeActionFor(policy);
     }
   }
+  // PROD-17 (document-control P28): the status the disposal retires the
+  // record from, read fresh just before the write (its own read, so the
+  // schedule's read above is unchanged); unknown — a read that fails or
+  // throws — is null, which recalls.
+  let priorStatus: string | null = null;
+  try {
+    const { data: row } = await supabase.from("documents").select("status").eq("id", input.documentId).maybeSingle();
+    priorStatus = (row?.status as string | null | undefined) ?? null;
+  } catch { /* unknown: recalls */ }
   const nowIso = new Date().toISOString();
   // Checked write: the DB guard refuses disposition under a hold placed
   // between the read above and this write (the TOCTOU the app check alone
@@ -263,6 +272,35 @@ export async function disposeDocument(input: {
   if (dispErr) throw new Error(dispErr.message);
   if (!disposed || disposed.length === 0) return { ok: false, reason: "refused" };
   await logEvent(input.orgId, { scopeType: "document", scopeId: input.documentId, documentId: input.documentId, action: "disposed", reason: input.reason, detail: { action }, actorId: input.actorId, actorName: input.actorName });
+  // PROD-17 (document-control P28): a disposal archives the record — a
+  // retirement (a record retained from its creation can be live when it is
+  // disposed). One lib/revisions.ts recallOnRetirement, fired, never
+  // awaited, with the archive's rules: a record already Superseded or
+  // Archived gets nothing again (skipsRetirementRecall); the copy holders
+  // are recalled only when it took away a controlled issue
+  // (recallsCopyHolders, DEC-90 R1), the watchers told either way. The
+  // disposal tells no checkout holder or package owner, so both stay in the
+  // watchers' audience. lib/revisions.ts imports this file, so it is loaded
+  // here on demand.
+  // A disposal with no signed-in actor named cannot write the notices (a
+  // browser row names its writer, 20261160): logged, never silent.
+  // (assertRetentionAuthority refuses such a disposal before any write
+  // today; this keeps the recall honest if that ever changes.)
+  const actorId = input.actorId;
+  if (!actorId) {
+    console.error(`[retention] PROD-17: document ${input.documentId} was disposed with no actor named, so its retirement recall was not sent`);
+    return { ok: true, action };
+  }
+  void import("@/lib/revisions").then(({ recallOnRetirement, skipsRetirementRecall, recallsCopyHolders }) => {
+    if (skipsRetirementRecall(priorStatus)) return;
+    recallOnRetirement({
+      orgId: input.orgId, documentId: input.documentId,
+      newStatus: "Archived", replacementNote: "Disposed under its retention schedule.",
+      actorUserId: actorId, actorName: input.actorName || actorId,
+      personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
+      recallCopyHolders: recallsCopyHolders(priorStatus),
+    });
+  }).catch((e) => console.error(`[retention] PROD-17: the retirement recall of disposed document ${input.documentId} did not run`, e));
   return { ok: true, action };
 }
 

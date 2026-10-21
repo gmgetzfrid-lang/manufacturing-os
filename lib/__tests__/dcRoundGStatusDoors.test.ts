@@ -509,8 +509,9 @@ describe("REGRESSION — supersede still sends exactly its one recall, with its 
     const arg = recall.mock.calls[0][0] as RecallInput;
     expect(arg).toMatchObject({ documentId: "x1", newStatus: "Superseded", replacementNote: "Replaced by X2." });
     expect(arg.personallyToldElsewhere).toBeUndefined();
-    // fix pass 4: supersede's call is untouched — no copy-holder flag, so the default (recall) holds
-    expect(arg).not.toHaveProperty("recallCopyHolders");
+    // document-control P28 (DEC-90 R1 at the P26 merge): an ISSUED document's
+    // supersede recalls its copy holders exactly as before — the flag says so
+    expect(arg.recallCopyHolders).toBe(true);
     expect(notifyPackagesOfRetirement).toHaveBeenCalledTimes(1);
   });
 });
@@ -752,11 +753,13 @@ describe("PROD-17 (P26 fix pass) — census: who calls recallOnRetirement", () =
   };
   const callSites = () => callSitesOf("recallOnRetirement", /export function recallOnRetirement\(/g);
 
-  it("exactly the four doors: archiveDocument and changeDocumentStatus (lib/revisions.ts), the split, the merge", () => {
+  it("exactly the single-document doors: archiveDocument and changeDocumentStatus (lib/revisions.ts), the split, the merge — and (document-control P28) a reversal's park and a retention disposal", () => {
     expect(callSites()).toEqual({
       "lib/revisions.ts": 2,
       "lib/documentLifecycle/split.ts": 1,
       "lib/documentLifecycle/merge.ts": 1,
+      "lib/documentLifecycle/reverse.ts": 1,
+      "lib/retention.ts": 1,
     });
   });
 
@@ -775,10 +778,14 @@ describe("PROD-17 (P26 fix pass) — census: who calls recallOnRetirement", () =
     expect(body(/export async function supersedeDocument\(/).match(/\brecallRetiredDocument\(/g)).toHaveLength(1);
   });
 
-  it("the status editors call it nowhere (PROD-17 residual doors: the bulk editor's and the metadata editor's bare writes recall nothing)", () => {
+  it("document-control P28: the status editors never call the single-document recall — the metadata save routes its retirement through changeDocumentStatus (whose recall is the one), and the two bulk doors send ONE batched recall each (recallRetiredBatch)", () => {
     const bulk = readFileSync(join(ROOT, "components/documents/BulkEditModal.tsx"), "utf8");
-    expect(bulk).not.toMatch(/recallOnRetirement|recallRetiredDocument/);
+    expect(bulk).not.toMatch(/\brecallOnRetirement\(|\brecallRetiredDocument\(/);
     const page = readFileSync(join(ROOT, "app/(protected)/documents/[libraryId]/page.tsx"), "utf8");
-    expect(page).not.toMatch(/recallOnRetirement/);
+    expect(page).not.toMatch(/\brecallOnRetirement\(|\brecallRetiredDocument\(/);
+    expect(callSitesOf("recallRetiredBatch", /export async function recallRetiredBatch\(/g)).toEqual({
+      "app/(protected)/documents/[libraryId]/page.tsx": 1,
+      "components/documents/BulkEditModal.tsx": 1,
+    });
   });
 });

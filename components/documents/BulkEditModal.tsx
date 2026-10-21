@@ -74,6 +74,19 @@
 // unknown ("check its history") rather than given the "start its clocks"
 // advice the page owes only the rows it said it would issue. Every row
 // changed to a status that issues nothing keeps the bare write.
+//
+// PROD-17 (document-control P28): a change to a RETIRED status (Superseded /
+// Archived — isRetiredStatus) keeps each row's bare checked write, and is a
+// retirement: the rows' statuses are read ONCE, fresh, before the apply
+// (never this page's copy; a failed read leaves a row's prior unknown, which
+// recalls), and after the apply ONE batched recall goes for every row the
+// change retired (lib/staleCopies.ts recallRetiredBatch, fired, never
+// awaited): each copy holder gets one notice naming every such document they
+// hold a copy of — recalled only for a row that took away a controlled issue
+// (recallsCopyHolders, DEC-90 R1) — and each document's watchers its FYI. A
+// row already Superseded or Archived gets nothing again
+// (skipsRetirementRecall). Never one recall chain per row (the per-row burst
+// P26's fix pass reverted).
 
 import React, { useState } from "react";
 import {
@@ -81,11 +94,11 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { computeUniquenessKey } from "@/lib/uniqueness";
-import { isIssueTransition, isIssueRefusal, isControlledIssueStatus } from "@/lib/issueStatus";
+import { isIssueTransition, isIssueRefusal, isControlledIssueStatus, isRetiredStatus } from "@/lib/issueStatus";
 import { BULK_EDIT_STATUS_OPTIONS, isUnguardedEntryIntoForce, ENTRY_INTO_FORCE_ACTION } from "@/lib/documentStatusOptions";
 import { assertNotOnHold } from "@/lib/holdGate";
 import type { DocumentRecord, LibraryConfig, MetadataFieldDefinition } from "@/types/schema";
-import { changeDocumentStatus, type StatusIssueOutcome } from "@/lib/revisions";
+import { changeDocumentStatus, skipsRetirementRecall, recallsCopyHolders, type StatusIssueOutcome } from "@/lib/revisions";
 import { useRole } from "@/components/providers/RoleContext";
 
 interface BulkEditModalProps {
@@ -161,6 +174,21 @@ export default function BulkEditModal({
     const enteringForceIds = new Set(enteringForceRows.map((d) => d.id));
     let ok = 0;
     const now = new Date().toISOString();
+    // PROD-17 (P28): a retiring change reads every row's status once, before the apply.
+    const retiring = target.kind === "status" && isRetiredStatus(newValue);
+    const priorStatusOf = new Map<string, string | null>();
+    const retired: Array<{ documentId: string; libraryId: string | null; docLabel: string; recallCopyHolders: boolean }> = [];
+    if (retiring) {
+      const ids = docs.map((d) => d.id).filter((id): id is string => !!id);
+      // A read that fails (or throws) leaves the priors unknown — which
+      // recalls — and never stops the apply.
+      for (let i = 0; i < ids.length; i += 100) {
+        try {
+          const { data: rows, error: readErr } = await supabase.from("documents").select("id, status").in("id", ids.slice(i, i + 100));
+          if (!readErr) for (const r of (rows ?? []) as Array<{ id: string; status: string | null }>) priorStatusOf.set(r.id, r.status ?? null);
+        } catch { /* unknown: recalls */ }
+      }
+    }
     for (const doc of docs) {
       try {
         // P15 review fix: the hold the database does not check for this row
@@ -279,11 +307,24 @@ export default function BulkEditModal({
         if (error) throw error;
         if (!written || written.length === 0) throw new Error("refused — the database updated nothing (no edit access to this document)");
         ok += 1;
+        if (retiring && doc.id && !skipsRetirementRecall(priorStatusOf.get(doc.id) ?? null)) {
+          retired.push({ documentId: doc.id, libraryId: library.id ?? null, docLabel: doc.documentNumber || doc.title || doc.name || "A document", recallCopyHolders: recallsCopyHolders(priorStatusOf.get(doc.id) ?? null) });
+        }
       } catch (e) {
         const reason = (e as Error).message;
         // REV-19 (b) (P23): a write TO an issue status refused in the issue
         // rule's words is "not issued:" whatever this page showed.
         failed.push({ doc: doc.documentNumber || doc.title || doc.id || "?", reason, issue: (issuingIds.has(doc.id) || enteringForceIds.has(doc.id) || (target.kind === "status" && isControlledIssueStatus(newValue))) && isIssueRefusal(reason) });
+      }
+    }
+    if (retired.length > 0) {
+      const orgId = library.orgId || docs.find((d) => d.orgId)?.orgId || null;
+      if (orgId) {
+        void import("@/lib/staleCopies").then(({ recallRetiredBatch }) => recallRetiredBatch({
+          orgId, newStatus: newValue, actorUserId, actorName: userEmail || actorUserId, docs: retired,
+        })).catch((e) => console.error("[bulk-edit] PROD-17: the bulk retirement recall did not run", e));
+      } else {
+        console.error(`[bulk-edit] PROD-17: ${retired.length} document(s) were set to ${newValue} with no workspace known, so no retirement recall was sent`);
       }
     }
     setResults({ ok, failed, followUps, notIssued, unseen, unchecked });

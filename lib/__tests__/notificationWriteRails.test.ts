@@ -1345,6 +1345,8 @@ const ACTOR_PASS_THROUGHS = [
   "lib/staleCopies.ts#nudgeStaleHolders(input.actorUserId)",
   "lib/staleCopies.ts#nudgeStaleTicketHolders(input.actorUserId)",  // DF-P12 (PHYS-17): the ticket arm's recall; no caller yet
   "lib/staleCopies.ts#recallRetiredDocument(input.actorUserId)",
+  "lib/staleCopies.ts#recallRetiredBatch(input.actorUserId)",       // document-control P28 (PROD-17): the bulk doors' one recall per apply; the library page passes RoleContext's uid, the bulk editor its actorUserId prop
+  "lib/staleCopies.ts#withdrawRetirementRecall(input.actorUserId)", // document-control P28 (DIST-16): a restore's withdrawal; its callers (unarchiveDocument, changeDocumentStatus, reverseSplit, reverseMerge) forward their own actor
   "lib/turnover.ts#notifyTurnoverRejected(actor.uid)",              // N8 (MON-11)
   "lib/workPackages.ts#notifyPackagesOfRevUp(input.actorUserId)",
 ];
@@ -1557,6 +1559,7 @@ function actorAnalyzer(src: string, file: string, census?: ActorCensus) {
  *  pass-through a row's field (`{ selectedDoc }.ownerUserId`) fails until someone reads it. */
 const ACTOR_CALLER_PASS_THROUGHS = [
   "app/(protected)/projects/[id]/page.tsx#MembersTab({ actorUserId })",
+  "components/documents/BulkEditModal.tsx#BulkEditModal({ actorUserId })",            // document-control P28 (PROD-17): the bulk retirement recall; the library page passes RoleContext's uid
   "components/documents/CsvImportModal.tsx#CsvImportModal({ actorUserId })",          // N8 (PROD-5): the library page passes RoleContext's uid
   "components/documents/DocumentLinkPicker.tsx#DocumentLinkPicker({ userId })",
   "components/documents/MarkupRequestModal.tsx#MarkupRequestModal({ actorUserId })",  // N8 (PROD-14)
@@ -1570,6 +1573,7 @@ const ACTOR_CALLER_PASS_THROUGHS = [
   "lib/costDocs.ts#awardInOneTransaction(input.actor.uid)",   // J12: awardQuote forwards its own input (integrator, J12 merge)
   "lib/costDocs.ts#awardQuote(input.actor.uid)",
   "lib/documentLifecycle/merge.ts#finishMerge(input.actorUserId)",
+  "lib/documentLifecycle/reverse.ts#withdrawRestored(input.actorUserId)",  // document-control P28 (DIST-16): reverseSplit / reverseMerge forward their own input
   "lib/documentLifecycle/split.ts#splitDocument(input.actorUserId)",
   "lib/holds.ts#openHold(input.openedBy)",
   "lib/holds.ts#releaseHold(input.releasedBy)",
@@ -1584,11 +1588,13 @@ const ACTOR_CALLER_PASS_THROUGHS = [
   "lib/projects.ts#transitionProjectStatus(input.actorUserId)",
   "lib/retention.ts#placeLegalHold(input.actorId)",
   "lib/retention.ts#releaseLegalHold(input.actorId)",
+  "lib/revisions.ts#changeDocumentStatus(input.actorUserId)",     // document-control P28 (DIST-16): a put-back's withdrawal; the status editors pass the signed-in member
   "lib/revisions.ts#recallOnRetirement(input.actorUserId)",       // document-control P26 (PROD-17): the retirement doors' recall; its callers (archiveDocument, changeDocumentStatus, splitDocument, finishMerge) forward their own actor, the signed-in member
   "lib/revisions.ts#revUpDocument(input.actorUserId)",
   "lib/revisions.ts#revertToVersion(input.actorUserId)",
   "lib/revisions.ts#submitForReview(input.actorUserId)",
   "lib/revisions.ts#supersedeDocument(input.actorUserId)",
+  "lib/revisions.ts#unarchiveDocument(input.actorUserId)",       // document-control P28 (DIST-16): the un-archive's withdrawal; ArchiveConfirmModal passes the signed-in member
   "lib/transmittals.ts#issueTransmittal(actor.actorUserId)",          // N9 (PROD-12): the transmittals page's actor (RoleContext's uid)
   "lib/turnover.ts#reviewTurnoverItem(input.actor.uid)",              // N8 (MON-11)
 ];
