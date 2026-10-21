@@ -9,12 +9,20 @@
 //           with its reason, a controller's recorded force — already ran) or
 //           the reviewed promote of the pending draft (finalize_reviewed_
 //           promote and its three-step fallback, which never read the lock)
-//           whose content a review decided: a bound roster the review gate
-//           proved complete, or an external submission as the intake door
-//           writes it (no creator, 'external', a link of this org whose scope
-//           holds the document). A draft a publisher forges — labelled in
-//           review and external, with a creator or a link that does not scope
-//           the document — borrows nothing (the P32 review's reproduction).
+//           whose ROW looks reviewed: a bound roster the review gate proved
+//           complete, or an external submission as the intake door writes it
+//           (no creator, 'external', a link of this org whose scope holds the
+//           document). A draft a publisher forges — labelled in review and
+//           external, with a creator or a link that does not scope the
+//           document — borrows nothing (the P32 review's reproduction). Every
+//           column door (b) reads is publisher-writable, so two remainders are
+//           pinned as ADMITTED on both sides, with owners: DCK-16 (a forged
+//           door-shaped row on a link-scoped document, by INSERT or by UPDATE)
+//           and DCK-17 (an earlier reviewed revision relabelled back to
+//           in_review and promoted through the roster limb — the second P32
+//           review's reproduction). Also pinned: a genuine submission on a
+//           document later unassigned from its link is refused over a foreign
+//           checkout (fail-safe; the scope is read when the promote runs).
 //
 // Every statement runs on BOTH sides of the paste, in a transaction that is
 // rolled back: "before" is a copy of the replay with 20261193's guard (the
@@ -78,6 +86,11 @@ const ids = () => ({
   dIntake: randomUUID(), iA: randomUUID(), i2A: randomUUID(),
   // dAssigned: an org document ASSIGNED to the link, same shape
   dAssigned: randomUUID(), asA: randomUUID(), as2A: randomUUID(),
+  // dIntake also carries iOld, an ORDINARY revision a member made two days ago (never current)
+  iOld: randomUUID(),
+  // dRelabel: Issued at B, checked out by the holder; its earlier revision xA went through review
+  // (approved, released, signed primary roster) and was superseded by xB — normal history
+  dRelabel: randomUUID(), xA: randomUUID(), xB: randomUUID(), xSig: randomUUID(), xSo: randomUUID(),
   uid: Object.fromEntries(Object.keys(ROLES).map((k) => [k, randomUUID()])) as Record<Member, string>,
 });
 type World = ReturnType<typeof ids>;
@@ -103,7 +116,8 @@ function seed(db: string, w: World): void {
       ('${w.dForge}',  '${w.org}', '${w.lib}', 'Forge',  'P32-G-${tag}', 'Draft', '${u.owner}'),
       ('${w.dOut}',    '${w.org}', '${w.lib}', 'Out',    'P32-O-${tag}', 'Draft', '${u.owner}'),
       ('${w.dIntake}', '${w.org}', '${w.lib}', 'Intake', 'P32-I-${tag}', 'Draft', '${u.owner}'),
-      ('${w.dAssigned}', '${w.org}', '${w.lib}', 'Assigned', 'P32-A-${tag}', 'Draft', '${u.owner}');
+      ('${w.dAssigned}', '${w.org}', '${w.lib}', 'Assigned', 'P32-A-${tag}', 'Draft', '${u.owner}'),
+      ('${w.dRelabel}', '${w.org}', '${w.lib}', 'Relabel', 'P32-X-${tag}', 'Draft', '${u.owner}');
     INSERT INTO document_versions (id, org_id, record_id, revision_label, file_url, change_type, created_by, created_at) VALUES
       ('${w.vA}', '${w.org}', '${w.dLocked}', 'A', 'p32/${tag}/la.pdf', 'Minor', '${u.holder}', now() - interval '2 days'),
       ('${w.vB}', '${w.org}', '${w.dLocked}', 'B', 'p32/${tag}/lb.pdf', 'Minor', '${u.publisher}', now() - interval '1 day'),
@@ -116,7 +130,8 @@ function seed(db: string, w: World): void {
       ('${w.gA}', '${w.org}', '${w.dForge}', 'A', 'p32/${tag}/ga.pdf', 'Minor', '${u.holder}', now() - interval '2 days'),
       ('${w.oA}', '${w.org}', '${w.dOut}', 'A', 'p32/${tag}/oa.pdf', 'Minor', '${u.holder}', now() - interval '2 days'),
       ('${w.iA}', '${w.org}', '${w.dIntake}', 'A', 'p32/${tag}/ia.pdf', 'Minor', '${u.holder}', now() - interval '2 days'),
-      ('${w.asA}', '${w.org}', '${w.dAssigned}', 'A', 'p32/${tag}/asa.pdf', 'Minor', '${u.holder}', now() - interval '2 days');
+      ('${w.asA}', '${w.org}', '${w.dAssigned}', 'A', 'p32/${tag}/asa.pdf', 'Minor', '${u.holder}', now() - interval '2 days'),
+      ('${w.iOld}', '${w.org}', '${w.dIntake}', 'A1', 'p32/${tag}/iold.pdf', 'Minor', '${u.holder}', now() - interval '2 days');
     UPDATE documents SET current_version_id = '${w.vA}', status = 'Issued', rev = 'A' WHERE id = '${w.dLocked}';
     UPDATE documents SET current_version_id = '${w.fA}', status = 'Issued', rev = 'A' WHERE id = '${w.dFree}';
     UPDATE documents SET current_version_id = '${w.rA}', status = 'Issued', rev = 'A' WHERE id = '${w.dReview}';
@@ -138,6 +153,15 @@ function seed(db: string, w: World): void {
       VALUES ('${w.so}', '${w.org}', '${w.dReview}', '${w.r2A}', '${u.reviewer}', 'primary', true, 'signed', '${w.sig}', now());
     UPDATE documents SET pending_version_id = '${w.r2A}' WHERE id = '${w.dReview}';
     UPDATE documents SET pending_version_id = '${w.s2A}' WHERE id = '${w.dStale}';
+    -- dRelabel's history: A reviewed (a signed primary roster), approved, released, then superseded by B
+    INSERT INTO document_versions (id, org_id, record_id, revision_label, review_state, file_url, change_type, created_by, created_at, released_at, superseded_at, supersedes_version_id) VALUES
+      ('${w.xA}', '${w.org}', '${w.dRelabel}', 'A', 'superseded', 'p32/${tag}/xa.pdf', 'Major', '${u.holder}', now() - interval '3 days', now() - interval '3 days', now() - interval '1 day', NULL),
+      ('${w.xB}', '${w.org}', '${w.dRelabel}', 'B', 'approved', 'p32/${tag}/xb.pdf', 'Minor', '${u.holder}', now() - interval '1 day', now() - interval '1 day', NULL, '${w.xA}');
+    INSERT INTO e_signatures (id, org_id, resource_type, resource_id, document_version_id, intent, statement, signer_user_id, signer_name)
+      VALUES ('${w.xSig}', '${w.org}', 'document_version', '${w.xA}', '${w.xA}', 'Approved', 'I approve', '${u.reviewer}', 'reviewer');
+    INSERT INTO document_review_signoffs (id, org_id, document_id, document_version_id, reviewer_user_id, slot, activated, status, signature_id, signed_at)
+      VALUES ('${w.xSo}', '${w.org}', '${w.dRelabel}', '${w.xA}', '${u.reviewer}', 'primary', true, 'signed', '${w.xSig}', now() - interval '3 days');
+    UPDATE documents SET current_version_id = '${w.xB}', status = 'Issued', rev = 'B' WHERE id = '${w.dRelabel}';
     -- the intake world (as the door and the route leave it: the link, the document it authored, an
     -- assignment, its submissions with no member as creator — 20261184 / 20261214 leave the column
     -- out; schema.sql's NOT NULL, which this replay keeps and the live table does not enforce (SEC-22),
@@ -158,7 +182,7 @@ function seed(db: string, w: World): void {
     RESET session_replication_role;
     INSERT INTO document_holds (id, org_id, document_id, reason, notes, opened_by) VALUES ('${w.hold}', '${w.org}', '${w.dHeld}', 'Other', 'p32 harness', '${u.docctrl}');
     UPDATE documents SET checked_out_by = '${u.holder}', checked_out_by_name = 'Holder Person', checked_out_at = now()
-     WHERE id IN ('${w.dLocked}', '${w.dFirst}', '${w.dReview}', '${w.dStale}', '${w.dHeld}', '${w.dForge}', '${w.dOut}', '${w.dIntake}', '${w.dAssigned}');`);
+     WHERE id IN ('${w.dLocked}', '${w.dFirst}', '${w.dReview}', '${w.dStale}', '${w.dHeld}', '${w.dForge}', '${w.dOut}', '${w.dIntake}', '${w.dAssigned}', '${w.dRelabel}');`);
 }
 
 /** One statement as `who`, as PostgREST runs it, in a transaction that is rolled back.
@@ -462,6 +486,47 @@ describe.skipIf(skip !== null)("HAND-13 (20261245): the checkout lock at the dat
       const b = { before: probeSeq(BEFORE, w, "publisher", [ins("NULL")], undefined, dropNotNull), after: probeSeq(AFTER, w, "publisher", [ins("NULL")], undefined, dropNotNull) };
       expect(b.before).toBe("ok:1");
       expect(b.after).toBe("ok:1");
+    });
+
+    it("the remainder DCK-17 records: a library publisher RELABELS an earlier reviewed revision (approved, released, superseded, a complete signed roster) back to in_review, points the pending pointer at it and promotes it over another person's checkout — three PostgREST writes, all admitted on BOTH sides (document_versions_update_integrity lets a publisher rewrite review_state; the old roster satisfies door (b)'s roster limb): an unrecorded revert over a live checkout", () => {
+      const relabel = [
+        `UPDATE document_versions SET review_state = 'in_review' WHERE id = '${w.xA}'`,
+        `UPDATE documents SET pending_version_id = '${w.xA}' WHERE id = '${w.dRelabel}'`,
+        `UPDATE documents SET current_version_id = '${w.xA}', rev = 'A', revision = 'A', pending_version_id = NULL WHERE id = '${w.dRelabel}'`,
+      ];
+      const r = { before: probeSeq(BEFORE, w, "publisher", relabel, pointer(w, w.dRelabel)), after: probeSeq(AFTER, w, "publisher", relabel, pointer(w, w.dRelabel)) };
+      expect(r.before).toBe(`ok:1 / ok:1 / ok:1 / ${w.xA}`);
+      expect(r.after).toBe(r.before);
+      // without the relabel the same promote is refused after the paste (xA is not in review)
+      const plain = [relabel[1], relabel[2]];
+      const p = { before: probeSeq(BEFORE, w, "publisher", plain, pointer(w, w.dRelabel)), after: probeSeq(AFTER, w, "publisher", plain, pointer(w, w.dRelabel)) };
+      expect(p.before).toBe(`ok:1 / ok:1 / ${w.xA}`);
+      expect(p.after).toMatch(new RegExp(`^ok:1 / err:42501:This document is checked out by Holder Person, .* / ${w.xB}$`));
+    });
+
+    it("the remainder DCK-16 records, by UPDATE: a library publisher RE-SHAPES an ordinary revision on an intake-born document as the door's submission (in_review, 'external', the authoring link, the link as creator) and promotes it over another person's checkout — admitted on both sides (document_versions_update_integrity, DCK-16 done-when 2)", () => {
+      const reshape = [
+        `UPDATE document_versions SET review_state = 'in_review', provenance = 'external', intake_link_id = '${w.link}', created_by = '${w.link}' WHERE id = '${w.iOld}'`,
+        `UPDATE documents SET pending_version_id = '${w.iOld}' WHERE id = '${w.dIntake}'`,
+        `UPDATE documents SET current_version_id = '${w.iOld}', rev = 'A1', revision = 'A1', status = 'Issued', pending_version_id = NULL
+          WHERE id = '${w.dIntake}' AND pending_version_id = '${w.iOld}' AND current_version_id = '${w.iA}'`,
+      ];
+      const r = { before: probeSeq(BEFORE, w, "publisher", reshape, pointer(w, w.dIntake)), after: probeSeq(AFTER, w, "publisher", reshape, pointer(w, w.dIntake)) };
+      expect(r.before).toBe(`ok:1 / ok:1 / ok:1 / ${w.iOld}`);
+      expect(r.after).toBe(r.before);
+    });
+
+    it("fail-safe, recorded: a GENUINE submission on an ASSIGNED document whose assignment the project owner later removed (IntakePanel's assignment edit) no longer passes a foreign checkout — the intake limb reads the link's scope as it is now: promoted before, 42501 after, nothing moves; the holder's own approval lands on both sides", () => {
+      const unassign = `UPDATE project_intake_links SET assigned_doc_ids = ARRAY[]::uuid[] WHERE id = '${w.link}';`;
+      const stmt = `SELECT 1 WHERE finalize_reviewed_promote('${w.dAssigned}', '${w.as2A}', '${w.asA}', 'B', NULL) = 'promoted'`;
+      const r = { before: probeSeq(BEFORE, w, "publisher", [stmt], pointer(w, w.dAssigned), unassign),
+                  after: probeSeq(AFTER, w, "publisher", [stmt], pointer(w, w.dAssigned), unassign) };
+      expect(r.before).toBe(`ok:1 / ${w.as2A}`);
+      expect(r.after).toMatch(new RegExp(`^err:42501:This document is checked out by Holder Person, .* / ${w.asA}$`));
+      const h = { before: probeSeq(BEFORE, w, "holder", [stmt], pointer(w, w.dAssigned), unassign),
+                  after: probeSeq(AFTER, w, "holder", [stmt], pointer(w, w.dAssigned), unassign) };
+      expect(h.before).toBe(`ok:1 / ${w.as2A}`);
+      expect(h.after).toBe(h.before);
     });
 
     it("door (a) cannot be borrowed by a direct write: a revision made by the same person in an EARLIER request is not this transaction's, so the write is refused after", () => {

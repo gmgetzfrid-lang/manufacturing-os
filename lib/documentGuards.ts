@@ -27,14 +27,17 @@
 //      lock rules — the holder, a publisher's override with its reason, a
 //      controller's force — already ran) or the reviewed promote of the
 //      pending draft (finalize_reviewed_promote, which never read the lock)
-//      when a review decided it: a bound roster, or an external submission
-//      shaped as the intake door writes it (no member creator, 'external', a
-//      link of the org that scopes the document). Even with 20261245 the
-//      trigger is a PARTIAL lock backstop: a publisher who inserts such a
-//      draft themselves (the client INSERT policy on document_versions
-//      admits it) on an intake-born or link-assigned document, and promotes
-//      it, still passes another person's checkout (DCK-16). Do not describe
-//      it as a complete one.
+//      when that pending row is still in review and carries a complete bound
+//      roster, or is shaped as the intake door writes a submission (no member
+//      creator, 'external', a link of the org that scopes the document). Even
+//      with 20261245 the trigger is a PARTIAL lock backstop: every column it
+//      reads on that row is writable by a library publisher, so a publisher
+//      can make one of those from an existing or a new row and promote it
+//      over another person's checkout — a door-shaped draft on an
+//      intake-born or link-assigned document, by INSERT or UPDATE (DCK-16),
+//      or an earlier reviewed revision relabelled back to in_review, whose
+//      old signed roster still counts (DCK-17). Do not describe it as a
+//      complete one.
 //
 // The decision itself is a pure function (`evaluatePublishGuard`) so it can
 // be unit-tested exhaustively without a database.

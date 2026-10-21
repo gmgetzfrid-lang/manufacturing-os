@@ -9,12 +9,16 @@
 //   signed-in actor is refused (42501), Document Control included, unless it
 //   is (a) publish_revision's own promote — a revision this actor inserted in
 //   this transaction on top of the one replaced — or (b) the reviewed promote
-//   of the pending draft still in review whose content a review decided: a
-//   bound roster (the review gate has proven it complete), or an external
+//   of the pending draft still in review whose ROW looks reviewed: a bound
+//   roster (the review gate has proven it complete), or an external
 //   submission as the intake door writes it (no creator, provenance
 //   'external', a link of this org whose scope holds the document). A draft a
-//   publisher merely labels in_review / external borrows nothing (the
-//   reviewer's forged-intake reproduction). Nothing else is re-created.
+//   publisher merely labels in_review / external with a creator or a link
+//   that does not scope the document borrows nothing (the reviewer's
+//   forged-intake reproduction). Every column door (b) reads is
+//   publisher-writable, so it is a PARTIAL backstop: DCK-16 and DCK-17 are the
+//   recorded remainders (pinned as admitted in the runtime suite). Nothing
+//   else is re-created.
 //
 // Byte fidelity: lineDiff (nothing removed; every new line is the block) AND
 // an exact cut (the body minus the block IS the base, byte for byte). The
@@ -187,7 +191,7 @@ describe("20261245 — the guard re-created from its NEWEST earlier body (found 
     expect(readFileSync(join(root, "lib", "revisions.ts"), "utf8")).toContain('revision_label: draftLabel, base_rev: baseRev, review_state: "in_review",');
   });
 
-  it("door (b) admits only a draft whose content a review decided — a bound roster the review gate proved complete (it runs BEFORE the block and refuses an incomplete one), or the intake door's own shape: no member creator (NULL, or the link's own id where a live column default fills it under the door's bound identity), provenance 'external', a link of this org scoping the document (the door's own scope rule)", () => {
+  it("door (b) admits only a pending in-review row shaped as a reviewed draft — a bound roster the review gate proved complete (it runs BEFORE the block and refuses an incomplete one), or the intake door's own shape: no member creator (NULL, or the link's own id where a live column default fills it under the door's bound identity), provenance 'external', a link of this org scoping the document (the door's own scope rule)", () => {
     // the roster limb trusts the review gate above, which refuses an incomplete roster first
     const gate = G.next.indexOf("    IF COALESCE(v_primary_reqs, 0) > 0 AND COALESCE(v_signed, 0) < v_primary_reqs THEN\n");
     expect(gate).toBeGreaterThan(0);
@@ -312,7 +316,7 @@ describe("20261245 — the one-paste shape", () => {
     const p = join(root, "lib", "__tests__", "rls", "dcP32PublishGuardLock.test.ts");
     expect(existsSync(p)).toBe(true);
     const t = readFileSync(p, "utf8");
-    for (const s of ["THE DEFECT, closed", "the lock HOLDER's direct pointer write", "UNLOCKED document", "AUTHORIZED-PUBLISHER OVERRIDE", "Document Control's FORCE", "a hold still never passes", "finalize_reviewed_promote by a publisher", "three-step fallback", "door (b) cannot be borrowed by a draft not marked in review", "door (b) cannot be borrowed by a FORGED intake draft", "a GENUINE external submission", "the remainder DCK-16 records", "door (a) cannot be borrowed", "an OVERRIDE REVERT", "NO current revision yet", "pasted as ONE script"]) {
+    for (const s of ["THE DEFECT, closed", "the lock HOLDER's direct pointer write", "UNLOCKED document", "AUTHORIZED-PUBLISHER OVERRIDE", "Document Control's FORCE", "a hold still never passes", "finalize_reviewed_promote by a publisher", "three-step fallback", "door (b) cannot be borrowed by a draft not marked in review", "door (b) cannot be borrowed by a FORGED intake draft", "a GENUINE external submission", "the remainder DCK-16 records", "the remainder DCK-16 records, by UPDATE", "the remainder DCK-17 records", "RELABELS an earlier reviewed revision", "fail-safe, recorded", "door (a) cannot be borrowed", "an OVERRIDE REVERT", "NO current revision yet", "pasted as ONE script"]) {
       expect(t, s).toContain(s);
     }
   });

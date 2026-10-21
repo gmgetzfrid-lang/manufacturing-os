@@ -32,7 +32,7 @@
 --           publisher override with its reason or a controller's recorded
 --           force, and answers locked_by_other otherwise), or (b) the
 --           reviewed promote of the document's pending draft, still in
---           review, whose content a review decided — it carries a bound
+--           review, whose ROW looks reviewed — it carries a bound
 --           reviewer roster (the review gate has proven it complete), or it
 --           is an external submission as the intake door writes it (no
 --           member creator, provenance 'external', a link of this org whose
@@ -43,12 +43,27 @@
 --           an unrelated link id borrows nothing. The holder's publish, a
 --           publish on an unlocked document and every override path land
 --           exactly as before; a hold still never passes (the hold limbs
---           above are untouched). Remainder (recorded, DCK-16, owner
---           proposed: projects): a publisher who inserts a member-less
---           external draft naming a link that already scopes the document
---           is indistinguishable here from the door's — the client INSERT
---           policy on document_versions admits a publisher's row whatever
---           its provenance.
+--           above are untouched). Door (b) reads the version row, and
+--           every column it reads is writable by a library publisher
+--           (document_versions_insert_integrity / _update_integrity), so it
+--           is a PARTIAL lock backstop. Remainders (recorded with owners):
+--           DCK-16 (proposed: projects) — a publisher who inserts, or
+--           re-shapes by UPDATE, a member-less external draft naming a link
+--           that already scopes the document is indistinguishable here from
+--           the door's; DCK-17 (proposed: document-control) — a publisher
+--           who relabels an earlier reviewed revision (approved, released,
+--           superseded, its signed roster still bound) back to in_review
+--           can point the pending pointer at it and promote it through the
+--           roster limb, an unrecorded revert over a live checkout on any
+--           document with a reviewed history. Both are fixed in those
+--           policies (a column guard), not here: any extra test on the
+--           version row inside this block would read publisher-writable
+--           columns too, so none was added.
+--           The intake limb reads the link's scope as it is when the
+--           promote runs: a genuine submission on a document the project
+--           owner has since unassigned from the link is refused over a
+--           foreign checkout (fail-safe — the holder checks it in, then it
+--           is approved; recorded on HAND-13).
 --
 --   RE-CREATED FROM THE NEWEST BODY (found by scanning; lineDiff-pinned —
 --   every line of the base is kept, the lines added are exactly the P32
@@ -860,7 +875,7 @@ BEGIN
   --       (otherwise it answers locked_by_other and writes nothing), so
   --       every override it admits today lands exactly as before;
   --   (b) the reviewed promote of the document's pending draft, still
-  --       marked in_review, whose content a review decided: either it
+  --       marked in_review, whose ROW looks reviewed: either it
   --       carries a bound reviewer roster (v_primary_reqs > 0 — the review
   --       gate above has already refused one that is not complete), or it
   --       is an external submission as the intake door writes it (no
@@ -877,9 +892,14 @@ BEGIN
   --       in_review and as an intake submission by a signed-in publisher
   --       (any creator, or any link id) borrows nothing: it is refused here.
   --       What the database cannot tell apart is a draft a publisher
-  --       inserts with no member creator and a link that already scopes the
-  --       document (document_versions_insert_integrity admits a publisher's
-  --       row whatever its provenance — DCK-16, projects owns that policy).
+  --       inserts (or re-shapes by UPDATE) with no member creator and a
+  --       link that already scopes the document (document_versions_insert_
+  --       integrity / _update_integrity admit a publisher's row whatever its
+  --       provenance — DCK-16), nor an earlier reviewed revision a publisher
+  --       relabels back to in_review, whose old signed roster satisfies the
+  --       roster limb (_update_integrity lets a publisher rewrite
+  --       review_state, released_at, superseded_at and supersedes_version_id
+  --       — DCK-17). Both are closed in those policies, not here.
   -- The holder's own publish and a publish on an unlocked document never
   -- reach the refusal. A status-only act (supersede, archive, a status
   -- edit) moves no pointer and is not judged here; the service role

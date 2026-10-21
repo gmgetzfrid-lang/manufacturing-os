@@ -994,11 +994,13 @@ migration, `20261245_dc_roundG_publish_guard_lock_leg.sql` (drafting-flow
    `enforce_document_publish_guard` from `20261193`'s body with one block: a
    new revision made current on a document checked out by someone else is
    refused (42501), Document Control included, unless it is
-   `publish_revision`'s own promote or the reviewed promote of the pending
-   draft in review that a review decided (a bound roster the review gate
-   proved complete, or an external submission shaped as the intake door
+   `publish_revision`'s own promote or the promote of the pending row still
+   in review that is shaped as a reviewed draft (a bound roster the review
+   gate proved complete, or an external submission shaped as the intake door
    writes it — no member creator, `'external'`, a link of the org that
-   scopes the document; review fix pass 2). **Never re-paste `20261193`, `20261185`, `20261182`,
+   scopes the document; review fix pass 2). Every column it reads is
+   publisher-writable, so a publisher can make such a row from an existing
+   one — see the remainders below. **Never re-paste `20261193`, `20261185`, `20261182`,
    `20261174`, `20261165`, `20261164`, `20261159`, `20261151`, `20261144`,
    `20261139`, `20261105` or any earlier guard migration after it.**
 - **What changes after the paste:** only a direct PATCH (or any write outside
@@ -1008,8 +1010,16 @@ migration, `20261245_dc_roundG_publish_guard_lock_leg.sql` (drafting-flow
   review's promote (a roster's, or an Intake-tab approval of a genuine
   submission) land exactly as before; a hold still never passes. A pending
   draft a publisher labels in review / external with a member creator, or
-  naming a link that does not scope the document, is refused too (the
-  forgeable remainder of the intake shape is `DCK-16`).
+  naming a link that does not scope the document, is refused too. **Still
+  admitted over a foreign checkout (recorded, fix pass 3):** a door-shaped
+  draft a publisher makes on an intake-born or link-assigned document, by
+  INSERT or UPDATE (`DCK-16`), and an earlier reviewed revision a publisher
+  relabels back to in review and promotes — an unrecorded revert, on any
+  document with a reviewed history (`DCK-17`). So drafting-flow `HAND-13`
+  stays OPEN (Partial) after this paste. Newly refused, fail-safe: a
+  genuine submission on a document unassigned from its link after it was
+  submitted, approved over a foreign checkout (the holder checks in, then it
+  is approved).
 - **The result set:** seven probes (all true) and six counts — documents
   checked out right now; of those, with and without a current revision; with
   a pending draft in review; with a pending draft not marked in review
@@ -1019,7 +1029,13 @@ migration, `20261245_dc_roundG_publish_guard_lock_leg.sql` (drafting-flow
   `MIGRATION-PASTE-ORDER.md` (after row 150's `20261193`); no
   `lib/schemaExpectations.ts` probe (the function keeps its signature; the
   file's own result set is the paste check, as for `20261193`); the
-  owners of new findings `DCK-15` (proposed: document-control) and `DCK-16`
-  (proposed: projects — `document_versions_insert_integrity` admits a
-  publisher's forged intake-shaped row, which door (b) cannot tell from the
-  door's own on an intake-born or link-assigned document).
+  owners of new findings `DCK-15` (proposed: document-control; it also now
+  carries the finalize refusal copy for the lock leg's 42501), `DCK-16`
+  (proposed: projects — `document_versions_insert_integrity` /
+  `_update_integrity` admit a publisher's forged intake-shaped row, which
+  door (b) cannot tell from the door's own on an intake-born or
+  link-assigned document) and `DCK-17` (proposed: document-control —
+  `document_versions_update_integrity`, `20261037`, lets a publisher move a
+  reviewed revision back to `in_review`; a column guard on
+  `review_state` / `released_at` / `superseded_at` /
+  `supersedes_version_id`, coordinated with `DCK-16`'s UPDATE limb).
