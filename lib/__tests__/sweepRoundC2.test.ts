@@ -98,14 +98,20 @@ const ticketRow = (metadata: Record<string, unknown>) => ({
 beforeEach(() => { state.user = { id: "u1", email: "pat@x.io" }; state.tables = {}; state.calls = []; state.emitted = []; });
 
 describe("/api/tickets/handback — records an outcome it can prove, nothing else", () => {
-  it("401 without a bearer; 404 unknown ticket; 403 non-member; 400 no source document", async () => {
+  it("401 without a bearer; 404 unknown ticket; 403 non-member; a request with no source document (and no library) proves nothing without a version carrying it — 409", async () => {
     expect((await post({ ticketId: "t1", versionId: "v1" }, "")).status).toBe(401);
     expect((await post({ ticketId: "t1", versionId: "v1" })).status).toBe(404);
     state.tables.tickets = ticketRow({ source_document: { id: "d1", document_number: "P-1" } });
     expect((await post({ ticketId: "t1", versionId: "v1" })).status).toBe(403);
     state.tables.org_members = { uid: "u1", email: "pat@x.io", role: "DocCtrl" };
     state.tables.tickets = ticketRow({});
-    expect((await post({ ticketId: "t1", versionId: "v1" })).status).toBe(400);
+    // Was 400 ("not raised against a controlled document"). Ruled by the
+    // integrator at the DF-P15 merge, 2026-10-20 (DEC-90; DCW-4 remainder,
+    // DEC-107 stands): a library-less request may hand back a version that
+    // carries it, in a library the caller may publish into — checked, so no
+    // such version is a 409, nothing written.
+    expect((await post({ ticketId: "t1", versionId: "v1" })).status).toBe(409);
+    expect(state.calls.filter((c) => c.table === "tickets" && c.method === "update")).toHaveLength(0);
   });
   it("409 when the version is not THIS ticket's deliverable of THIS source document", async () => {
     state.tables.org_members = { uid: "u1", email: "pat@x.io", role: "DocCtrl" };

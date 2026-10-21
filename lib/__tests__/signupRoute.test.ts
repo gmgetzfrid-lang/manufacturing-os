@@ -75,7 +75,8 @@ const BODY = { email: "Greg@Corp.com", password: "hunter22", displayName: "Greg"
 beforeEach(() => {
   mockState.createUserResult = { data: { user: null }, error: { message: "should not be called" } };
   mockState.queues = {
-    // signupRateLimited counts signup_attempts; recordSignupAttempt inserts.
+    // publicDoorVerdict counts signup_attempts; recordPublicDoorAttempt inserts
+    // (lib/publicDoorLimiter.ts — a header-less request is counted under "unknown").
     signup_attempts: [{ count: 0 }, { data: null }],
     orgs: [{ data: null }], // no existing org
   };

@@ -8,21 +8,25 @@
     "audit-reports/admin-and-org/04-billing.md"
   ],
   "totals": {
-    "findings": 69,
+    "findings": 70,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 5,
       "HIGH": 17,
       "MEDIUM": 29,
-      "LOW": 18
+      "LOW": 19
     },
     "by_status": {
-      "RESOLVED": 58,
+      "RESOLVED": 60,
       "RESOLVED *(2026-10-14, admin-and-org Round G P13 integrator fix pass: the three remaining readers carry the actor note — the Resolution at the end of this record; every done-when met, items 1 and 3 and done-when 2's first form still waiting on `20261201`'s paste, as recorded. Before that: OPEN — 2026-10-14, admin-and-org Round G P13: the three named readers now carry the actor note — the P13 Partial below — but done-when 2's labelled form is still not met on three more readers, named there with their owner. Corrected at the P13 fix pass, DEC-29: P13 first set this RESOLVED on \"every reader\". Set back from RESOLVED by the integrator at the A&O P7 merge, 2026-10-13, DEC-29: done-when 2's labelled form was not met on three readers — the P7 Partial below)*": 1,
       "RESOLVED *(2026-10-14, admin-and-org Round G P13: the three shed sites and `/admin/storage`'s display — the last of the nine sites; see the Resolution at the end)*": 1,
       "RESOLVED *(2026-10-14, admin-and-org Round G P13 — pending the `20261219` paste; see the Resolution below)*": 1,
-      "OPEN": 7,
-      "RESOLVED *(2026-10-14, admin-and-org Round G P13; the controller / owner shortcut that precedes the gate is opened as `ORG-23`)*": 1
+      "RESOLVED (Done-when 2's contractor intake door landed by the integrator at the I-26 merge, 2026-10-20 (DEC-90); Done-when 3's RLS limb closed by decision — ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90); switching enforcement on is the operator's step, not a done-when)": 1,
+      "RESOLVED (2026-10-20, admin-and-org Round G P5; limb (c) closed by decision — ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90): `org_has_active_subscription` kept as documented, unwired scaffolding; the contractor intake door's call is tracked on `BILL-10` Done-when 2 alone)": 1,
+      "RESOLVED (code) — database half pending 20261238 (ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90): the status stays exactly this until `20261238` is pasted and its result rows come back all true)": 1,
+      "OPEN": 2,
+      "RESOLVED *(2026-10-14, admin-and-org Round G P13; the controller / owner shortcut that precedes the gate is opened as `ORG-23`)*": 1,
+      "RESOLVED (2026-10-20, ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90) — fixed in the same package at its merge rather than left open; within the stated bound below)": 1
     }
   },
   "status_vocabulary": [
@@ -1010,7 +1014,7 @@
       "id": "BILL-10",
       "title": "Nothing enforces subscription state anywhere: SubscriptionGate is disabled by a hardcoded constant, and both server-side gates have zero callers",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED (Done-when 2's contractor intake door landed by the integrator at the I-26 merge, 2026-10-20 (DEC-90); Done-when 3's RLS limb closed by decision — ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90); switching enforcement on is the operator's step, not a done-when)",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1118,7 +1122,7 @@
       "id": "BILL-14",
       "title": "signup_attempts grows without bound and its prune function is never called, while the trial itself is bounded only by a fail-open per-IP counter",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1309,7 +1313,7 @@
       "id": "ORG-8",
       "title": "Request-access has no rate limiter while signup does, and both are distinguishing-response org-name oracles",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1334,7 +1338,7 @@
       "id": "ORG-9",
       "title": "Subscription/trial enforcement is inert at all three layers, and orgs UPDATE is column-unrestricted so any Admin can self-grant 'active' or hijack another tenant's Stripe identity",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED (2026-10-20, admin-and-org Round G P5; limb (c) closed by decision — ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90): `org_has_active_subscription` kept as documented, unwired scaffolding; the contractor intake door's call is tracked on `BILL-10` Done-when 2 alone)",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1633,7 +1637,7 @@
       "id": "ORG-12",
       "title": "prune_signup_attempts() has no caller — the housekeeping the migration describes does not exist, and no cron slot is available to add one",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED (code) — database half pending 20261238 (ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90): the status stays exactly this until `20261238` is pasted and its result rows come back all true)",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1924,6 +1928,32 @@
       ],
       "refuted": false,
       "summary": "A DocCtrl is suspended while their tab is open. A mutator resolves their principal (isActiveMember: false, role DocCtrl from the stale client state); canReadViaIndex / canWithAclChain answer true from the controller shortcut, the UI proceeds, and the write is refused at RLS with a generic message instead of \"you are not an active member\".",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/01-org-lifecycle.md"
+    },
+    {
+      "id": "ORG-24",
+      "title": "`/api/auth/request-access` answers a real workspace measurably slower than an unknown name — the neutral acknowledgement still leaks existence by timing",
+      "severity": "LOW",
+      "status": "RESOLVED (2026-10-20, ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90) — fixed in the same package at its merge rather than left open; within the stated bound below)",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading, on `7f92269` + P5)",
+      "blast_radius": null,
+      "related": [
+        "ORG-8",
+        "PROD-2",
+        "PROD-15"
+      ],
+      "locations": [
+        "app/api/auth/request-access/route.ts:249"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial",
+      "challenges": [
+        "adversarial"
+      ],
+      "refuted": false,
+      "summary": "A script times the door for a list of company names; the slow answers mark the names that are workspaces here.",
       "area": "admin-and-org",
       "report": "audit-reports/admin-and-org/01-org-lifecycle.md"
     }

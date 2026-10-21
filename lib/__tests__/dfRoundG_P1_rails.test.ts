@@ -613,11 +613,13 @@ describe("AUTHZ-11 / SM-13 — a file the route appends is vetted: this ticket's
     const res = await post({ ticketId: "t1", actionType: "submit_final", finalAttachment: FINAL });
     expect(res.status).toBe(200);
     expect(state.calls.find((c) => c.table === "r2")?.args[0]).toBe(FINAL.url);
-    const att = (updatesOf("tickets")[0].attachments as TicketAttachment[]).find((a) => a.id === "a-f")!;
+    // SM-15 (drafting-flow DF-P15): the id is the server's too — found by its key, never the client's "a-f".
+    const att = (updatesOf("tickets")[0].attachments as TicketAttachment[]).find((a) => a.url === FINAL.url)!;
     expect(att).toMatchObject({ url: FINAL.url, type: "Final", status: "submitted", uploadedBy: "d-1@x.io", size: "2.00 MB" });
+    expect(att.id).not.toBe("a-f");
     expect(att.uploadedAt).not.toBe(FINAL.uploadedAt);
     const audit = insertsOf("audit_logs").find((a) => a.action === "TICKET_SUBMIT_FINAL")!;
-    expect(audit.details).toMatchObject({ finalAttachment: { id: "a-f", name: "iso_IFC.pdf", url: FINAL.url, size: "2.00 MB", etag: "abc123" } });
+    expect(audit.details).toMatchObject({ finalAttachment: { id: att.id, name: "iso_IFC.pdf", url: FINAL.url, size: "2.00 MB", etag: "abc123" } });
   });
 
   it("a redline is a Reference under this ticket's prefix; a 'redline' typed Final is refused", async () => {
@@ -629,7 +631,11 @@ describe("AUTHZ-11 / SM-13 — a file the route appends is vetted: this ticket's
     expect(ticketWrites()).toHaveLength(0);
     const ok = await post({ ticketId: "t1", actionType: "request_revision", comment: "see markup", redlineAttachment: { id: "r-2", name: "REDLINE_iso.pdf", url: KEY("REDLINE_iso.pdf"), type: "Reference", status: "submitted" } });
     expect(ok.status).toBe(200);
-    expect((updatesOf("tickets")[0].attachments as TicketAttachment[]).map((a) => a.id)).toEqual(["a-d", "r-2"]);
+    // SM-15 (drafting-flow DF-P15): the redline's id is server-minted; the Draft keeps "a-d".
+    const atts = updatesOf("tickets")[0].attachments as TicketAttachment[];
+    expect(atts.map((a) => a.url)).toEqual([DRAFT.url, KEY("REDLINE_iso.pdf")]);
+    expect(atts[0].id).toBe("a-d");
+    expect(atts[1].id).not.toBe("r-2");
   });
 
   it("a file already listed on the ticket needs no storage round-trip (and keeps its recorded uploader)", async () => {

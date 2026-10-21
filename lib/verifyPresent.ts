@@ -17,7 +17,10 @@ import { isRecognisedStatus } from "@/lib/verifyVerdict";
 export type DocVerdict =
   | "current" | "not_yet_effective" | "held"
   | "superseded" | "void" | "archived" | "retired" | "draft" | "not_issued"
-  | "superseded_version" | "unverifiable" | "no_current_revision";
+  | "superseded_version" | "unverifiable" | "no_current_revision"
+  // PS-P9: a per-print sheet token whose print was voided — that paper
+  // never left (the pack was not completed, or this sheet was not in it).
+  | "print_voided";
 
 export interface DocVerifyResult {
   docNumber: string | null;
@@ -35,6 +38,9 @@ export interface DocVerifyResult {
   verdict?: DocVerdict;
   isCurrent: boolean;
   checkedAt: string;
+  /** PS-P9: present only when the code was a per-print sheet token — when
+   *  that print was made and whether it was voided. */
+  sheetPrint?: { printedAt: string | null; voided: boolean };
 }
 
 export interface VerdictView {
@@ -117,6 +123,10 @@ export function presentDocVerdict(r: DocVerifyResult): VerdictView {
       // one on record to compare it with.
       return { bg: "bg-slate-700", icon: "q", ok: false, headline: "CAN'T CONFIRM THIS REVISION", advice: UNCONFIRMED_ADVICE,
         blurb: "This document has no current revision on record, so the system cannot confirm this print is current. Do not assume it is — check with Document Control." };
+    case "print_voided":
+      // Red, as stale: the system has no record that this paper left.
+      return { bg: "bg-red-600", icon: "x", ok: false, headline: "PRINT CANCELLED — DO NOT USE", advice: STOP_ADVICE,
+        blurb: "This sheet's print was cancelled when it was made — the system has no record that this paper was issued. Do not work from it; get a current print from Document Control." };
     case "superseded_version":
     default:
       return { bg: "bg-red-600", icon: "x", ok: false, headline: "DO NOT USE", advice: STOP_ADVICE,

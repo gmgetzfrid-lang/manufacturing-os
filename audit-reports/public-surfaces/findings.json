@@ -8,20 +8,21 @@
     "audit-reports/public-surfaces/04-offline-pwa.md"
   ],
   "totals": {
-    "findings": 67,
+    "findings": 68,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 4,
       "HIGH": 13,
       "MEDIUM": 21,
-      "LOW": 29
+      "LOW": 30
     },
     "by_status": {
-      "RESOLVED": 60,
+      "RESOLVED": 61,
       "WONTFIX": 1,
       "RESOLVED (2026-10-20, the integrator's ruling R3 at the DF-P12 merge, `DEC-90` — PASTE pending: `20261223` after `20261068`; until it is pasted a ticket copy is recorded without the ticket / file columns and the ticket arm answers \"unavailable\")": 1,
       "RESOLVED (2026-10-14, DF-P12 — PASTE pending: `20261223` after `20261068`; until it is pasted the ticket copy is recorded without the two columns and the ticket arm answers \"unavailable\")": 1,
-      "OPEN": 4
+      "OPEN — limbs 1, 2 and 4 closed at the PS-P9 merge (limb 1 built for the two \"Print all\" packs and WONTFIX for single copies; limb 2 ruled); limb 3 (the cover's print id) and the settled-print void assigned to PS-P10 (below).": 1,
+      "OPEN": 3
     }
   },
   "status_vocabulary": [
@@ -1378,7 +1379,7 @@
       "id": "PHYS-18",
       "title": "The ticket copy recall exists but nothing calls it — the holders of a superseded ticket deliverable are never told",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED on DF-P12's branch.",
       "blast_radius": null,
@@ -1395,6 +1396,36 @@
       ],
       "refuted": false,
       "summary": "Rev 2 of a drafting ticket issues; three people printed Rev 1's package (each copy now recorded by ticket and file); nobody is told their print is superseded unless they scan it.",
+      "area": "public-surfaces",
+      "report": "audit-reports/public-surfaces/03-physical-bridge.md"
+    },
+    {
+      "id": "PHYS-19",
+      "title": "The per-print sheet token covers only packs printed through `lib/docPack.ts`: a single download, a markup download, the two other \"Print all\" packs, a share copy and a transmittal copy still carry the document UUID in their verify QR, and the token table has no retention and no link to the cover's print",
+      "severity": "LOW",
+      "status": "OPEN — limbs 1, 2 and 4 closed at the PS-P9 merge (limb 1 built for the two \"Print all\" packs and WONTFIX for single copies; limb 2 ruled); limb 3 (the cover's print id) and the settled-print void assigned to PS-P10 (below).",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading the code on PS-P9's branch.",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/downloads.ts:190-197",
+        "components/viewers/FullScreenViewer.tsx:1119",
+        "components/assets/FileReferenceModal.tsx:172",
+        "components/viewers/MultiDocViewer.tsx:774",
+        "app/api/share/file/route.ts:124",
+        "app/api/transmittal/route.ts:683",
+        "lib/transmittalStampCheck.ts:210",
+        "app/api/print-sheet-tokens/route.ts:74",
+        "lib/docPack.ts:700"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A crew prints the linked drawings or a collection book with \"Print all\", or a contractor receives a single-sheet download or a transmittal copy; each sheet's QR carries the document's UUID, which DACL-8's second criterion asked to replace with a per-print key. Nothing is disclosed for a restricted document (lib/verifyDisclosure, VFY-16), and a scan of it is never green without its printed version.",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/03-physical-bridge.md"
     },

@@ -205,6 +205,12 @@ export const RESTORE_SERVICE_ROLE_WAIVERS: Readonly<Record<string, string>> = {
   archive_settings: "the archive location hint, naming and storage-alert threshold — the values an Admin / Doc Control sets through /api/admin/archive-settings; they drive only the archive prompt and storage alerts and confer no access",
   archives: "the catalog of archives this workspace produced (label, kind, counts); restored versions' archive_id labels name these rows. A row carries no bytes and grants nothing — a reclaim (shed/commit) still frees only this workspace's keys, after its legal-hold and shared-key checks",
   knowledge_page_entities: "derived drawing-page tags the indexer writes; bounded to this workspace's knowledge documents (RESTORE_PARENT_RULES) and replaced on re-index — no gate reads a row as anyone's act",
+  // intelligence I-26 (20261235): INCLUDED and restored by the integrator at
+  // the I-26 merge, 2026-10-20 (DEC-90).
+  knowledge_document_assets: "a knowledge upload's document↔equipment relation (which equipment tags the upload carries, on which sheet and pages, with its machine provenance) — signed-in users cannot write it; the service role writes it (the Bridge's knowledge door). Bounded to this workspace's knowledge documents and assets (RESTORE_PARENT_RULES, and the table's same-workspace trigger refuses any other); a row grants no access (members read it only while they can read the knowledge document) and is no one's act — every row is a machine's reading off the sheet (the drawing-is-machine CHECK), re-written the next time a writer discovers from that upload",
+  // public-surfaces PS-P9 (20261237): INCLUDED and restored by the integrator
+  // at the PS-P9 merge, 2026-10-20 (DEC-90).
+  print_sheet_tokens: "the per-print sheet tokens of printed packs — a one-way SHA-256 of each sheet's 192-bit token, the print, and the document + version that sheet printed (no scannable code). Bounded to this workspace's documents and versions (RESTORE_PARENT_RULES); a row grants no access and is no one's act: /api/verify computes the verdict from the live document, so a restored row only lets a sheet printed before the restore keep its verdict (a row naming a document of this workspace says no more than that document's own ?v= QR does); the guard keeps what a sheet printed immutable",
 };
 
 /** True when `table` is append-only / self-insert-only and must not be blind-imported. */
@@ -296,6 +302,7 @@ export const RESTORE_PARENT_RULES: Readonly<Record<string, ReadonlyArray<Restore
   document_holds: fkRules("document_id>documents origin_ticket_id>tickets"),
   document_intents: fkRules("document_id>documents library_id>libraries base_version_id>document_versions ticket_id>tickets"),
   document_markups: fkRules("document_id>documents version_id>document_versions"),
+  print_sheet_tokens: fkRules("document_id>documents version_id>document_versions"),
   document_related_resources: fkRules("document_id>documents target_document_id>documents"),
   document_sets: fkRules("library_id>libraries"),
   document_shares: fkRules("document_id>documents"),
@@ -308,6 +315,8 @@ export const RESTORE_PARENT_RULES: Readonly<Record<string, ReadonlyArray<Restore
   knowledge_documents: fkRules("library_id>knowledge_libraries source_id>knowledge_sources source_document_id>documents"),
   knowledge_library_links: fkRules("library_id>knowledge_libraries linked_library_id>knowledge_libraries"),
   knowledge_page_entities: fkRules("library_id>knowledge_libraries document_id>knowledge_documents"),
+  // intelligence I-26 (20261235): the upload and the equipment it carries.
+  knowledge_document_assets: fkRules("knowledge_document_id>knowledge_documents asset_id>assets"),
   knowledge_questions: fkRules("library_id>knowledge_libraries"),
   knowledge_sources: fkRules("library_id>knowledge_libraries"),
   // An owner team makes its supervisor the library's effective owner
@@ -716,6 +725,7 @@ export function planRestore(env: RestoreEnvelopeLike, current: CurrentOrgContext
 export function remapRow(
   row: Record<string, unknown>,
   idRemap: RestorePlan["idRemap"],
+  table?: string,
 ): Record<string, unknown> {
   const uidMap = idRemap.uid;
   // Storage keys embed the org id ("orgs/<orgId>/libraries/…"). When restoring
@@ -733,8 +743,9 @@ export function remapRow(
   // EGR-7 / XEDGE-10: a bearer column never comes back from a backup. Applied
   // here — the one place every restored row passes through (the chunked
   // apply-table; the single-shot apply was deleted, ILIFE-4) — so no caller
-  // can forget it.
-  return scrubRestoredRow(out);
+  // can forget it. (`table` only lets a column RESTORE_BEARER_NAME_KEPT
+  // names for that table through — without it every bearer name is scrubbed.)
+  return scrubRestoredRow(out, undefined, table);
 }
 
 // ── Bearer columns never return (EGR-7 / XEDGE-10) ───────────────────────
@@ -752,6 +763,18 @@ const BEARER_COLUMNS: ReadonlySet<string> = new Set(
  *  row can land, and the row is marked revoked so the placeholder can never
  *  be presented. Nullable bearer columns (portal_token, *_encrypted) are nulled. */
 const PLACEHOLDER_COLUMNS: ReadonlySet<string> = new Set(["token"]);
+/** Columns that share a bearer column's NAME but are not a credential in
+ *  this one table — restored as stored (exported as stored too: no
+ *  REDACT_COLUMNS entry). print_sheet_tokens.token_hash (public-surfaces
+ *  PS-P9, 20261237; the integrator at the PS-P9 merge, 2026-10-20, DEC-90):
+ *  a one-way SHA-256 of a sheet token that is printed and never stored —
+ *  unlike project_intake_links.token_hash, which the intake door matches a
+ *  presented token against and so is redacted with its token. Nulling it
+ *  would refuse the row (NOT NULL) and every pack sheet printed before the
+ *  restore would answer "Unknown code". exportCoverage.test.ts pins it. */
+export const RESTORE_BEARER_NAME_KEPT: Readonly<Record<string, readonly string[]>> = {
+  print_sheet_tokens: ["token_hash"],
+};
 export const RESTORED_TOKEN_PREFIX = "restored-";
 
 function restoredPlaceholder(): string {
@@ -772,8 +795,8 @@ export const RESTORED_TRANSMITTAL_NOTE = "Restored from a backup: the portal lin
  *  one state that keeps the register record and can never present a link.
  *  Nothing restored can be presented or fire until a person re-issues /
  *  re-enters it. */
-export function scrubRestoredRow(row: Record<string, unknown>, now: string = new Date().toISOString()): Record<string, unknown> {
-  const hit = Object.keys(row).filter((k) => BEARER_COLUMNS.has(k));
+export function scrubRestoredRow(row: Record<string, unknown>, now: string = new Date().toISOString(), table?: string): Record<string, unknown> {
+  const hit = Object.keys(row).filter((k) => isBearerColumn(k, table));
   if (hit.length === 0) return row;
   const out: Record<string, unknown> = { ...row };
   for (const c of hit) out[c] = PLACEHOLDER_COLUMNS.has(c) ? restoredPlaceholder() : null;
@@ -790,8 +813,10 @@ export function scrubRestoredRow(row: Record<string, unknown>, now: string = new
 }
 
 /** True when `column` is a bearer column the restore scrubs (exposed for the
- *  coverage tripwire, which proves export and restore agree). */
-export function isBearerColumn(column: string): boolean {
+ *  coverage tripwire, which proves export and restore agree) — of `table`,
+ *  when given (RESTORE_BEARER_NAME_KEPT). */
+export function isBearerColumn(column: string, table?: string): boolean {
+  if (table && has(RESTORE_BEARER_NAME_KEPT, table) && RESTORE_BEARER_NAME_KEPT[table].includes(column)) return false;
   return BEARER_COLUMNS.has(column);
 }
 
@@ -907,6 +932,11 @@ export const RESTORE_TABLE_ORDER: string[] = [
   // Sets hang off a library and documents.set_id references them.
   "document_sets",
   "documents", "document_versions", "document_supersessions",
+  // public-surfaces PS-P9: a printed pack sheet's token names a document and
+  // the version it printed — restored after both (the integrator at the
+  // PS-P9 merge, 2026-10-20, DEC-90), so a sheet printed before a restore
+  // keeps its verdict at /api/verify.
+  "print_sheet_tokens",
   // Projects after documents: projects.sow_document_id references documents (20261013).
   "projects", "project_members",
   // Tickets before the holds and milestones that cite them (origin_ticket_id,
@@ -918,6 +948,10 @@ export const RESTORE_TABLE_ORDER: string[] = [
   // document may mirror a controlled document (source_document_id), and
   // process_flows / entity_mentions below reference knowledge documents.
   "knowledge_libraries", "knowledge_library_links", "knowledge_sources", "knowledge_documents",
+  // intelligence I-26 (20261235): a knowledge upload's equipment relation
+  // names the upload and the asset — restored after both (the integrator at
+  // the I-26 merge, 2026-10-20, DEC-90).
+  "knowledge_document_assets",
   // Intelligence layer: instructions have no doc FKs (early is fine);
   // related/recents/asks reference documents so they come after. The
   // library numbering counter sits with the libraries, above.
@@ -1428,7 +1462,7 @@ export async function applyRestoreChunk(
   if (refusal) return fail(400, refusal, 0, params.rows.length);
   if (!orgId) return fail(400, "No target workspace.", 0, params.rows.length);
 
-  let mapped = params.rows.map((r) => landRestoredRow(table, bindRestoredRow(table, remapRow(r, idRemap), orgId)));
+  let mapped = params.rows.map((r) => landRestoredRow(table, bindRestoredRow(table, remapRow(r, idRemap, table), orgId)));
 
   // Never resurrect comments onto a ticket that's since been archived to a
   // stub — the JSONB stays cleared, so re-inserting rows would split-brain it.
@@ -1959,7 +1993,7 @@ export async function previewRestoreChunk(
   const { orgId, table, idRemap } = params;
   const refusal = restoreTableRefusal(table);
   if (refusal) return { ok: false, status: 400, error: refusal, rows: 0, existing: 0, heldElsewhere: 0, wouldInsert: 0 };
-  const mapped = params.rows.map((r) => bindRestoredRow(table, remapRow(r, idRemap), orgId));
+  const mapped = params.rows.map((r) => bindRestoredRow(table, remapRow(r, idRemap, table), orgId));
   const where = await locateRestoreKeys(sb, table, orgId, mapped);
   if (!where.ok) return { ok: false, status: 500, error: where.error, rows: mapped.length, existing: 0, heldElsewhere: 0, wouldInsert: 0 };
   // ILIFE-10 (P14): a row whose business key a live row here holds is kept

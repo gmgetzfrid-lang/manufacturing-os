@@ -1033,7 +1033,7 @@ lib/inAppNotifications.ts:26 —
 ## PROD-15 · A DocCtrl told of an access request cannot open the list the notice links to
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** the integrator → admin-and-org P5 (`app/(protected)/admin/users/page.tsx` + `access_requests_admin_select`) — opened 2026-10-07 by notifications Round G N8 PRODUCERS-FREE as the DEC-31 remainder of `PROD-2`; the files are admin-and-org's, and P5 edits `app/api/auth/request-access/route.ts` next (ORG-8). If the integrator instead narrows the notice's audience to Admins (a change to `DEC-92` item 1), the change is `ACCESS_REQUEST_AUDIENCE` in `lib/accessRequestOutcome.ts`.
 - **Verification:** CONFIRMED (read on `f8d5eb5` + N8)
 - **Locations:** `app/(protected)/admin/users/page.tsx:84,137,374` (`isAdmin = hasAnyRole(['Admin'])` gates the pending read and the card); `supabase/migrations/20261023_access_requests_scope_and_limit.sql` §2 (`access_requests_admin_select`: Admin only); `app/api/admin/access-requests/route.ts:44-57` and `app/api/admin/create-user/route.ts:122-137` (both admit Admin OR DocCtrl); `lib/accessRequestOutcome.ts:32` `ACCESS_REQUEST_AUDIENCE` (imported by `app/api/auth/request-access/route.ts`; N8: the Admin / DocCtrl pool is told).
@@ -1047,6 +1047,21 @@ lib/inAppNotifications.ts:26 —
 
 - [ ] The people told about a request and the people who can see the pending list are the same set — either the list (card + `access_requests_admin_select`) admits the DocCtrl the routes already admit, or the notice's audience narrows to Admins (a change to `DEC-92` item 1, for the integrator to ratify).
 - [ ] A test pins the two sets equal.
+
+
+**Resolution (2026-10-20, admin-and-org Round G).** Package P5, under the integrator's DEC-90 ruling (6): membership is the Admin's to grant, so the notice narrows to the Admins — the people the pending list already admits. Notice and list are now one set.
+
+**Reproduced on `7f92269`.** `lib/accessRequestOutcome.ts:33` `ACCESS_REQUEST_AUDIENCE = ["Admin", "DocCtrl"]` (the request door's bell, email and burst notice all resolve it); the pending card and its read gate on `isAdmin = hasAnyRole(['Admin'])` (`app/(protected)/admin/users/page.tsx:96`, `:153`, `:448`); `access_requests_admin_select` (`20261023` §2, its newest definition) admits `m.role = 'Admin' OR m.roles && ARRAY['Admin']`.
+
+**What landed.** `ACCESS_REQUEST_AUDIENCE = ["Admin"]` (`lib/accessRequestOutcome.ts:38`, with the reason), so the door's bell row, email and "more are waiting" burst notice reach every ACTIVE Admin (headline or additive) and no DocCtrl-only member. The list is unchanged (the page and the policy were already Admin-only). `clearAccessRequestNotices` still marks every recipient's row read once a request is decided, so a DocCtrl's notice from before this change clears with the decision. The decide routes are unchanged: `/api/admin/create-user` and `/api/admin/access-requests` still admit a DocCtrl (no regression; who may grant a membership is outside this finding).
+
+**Tests.** `lib/__tests__/producersRoutes.test.ts`: the audience is `["Admin"]`; the bell's recipients are the two ACTIVE Admins (one additive, `mgr-adm`) and neither the DocCtrl nor the Manager-plus-DocCtrl; the email, burst-claim and burst-row expectations follow. `lib/__tests__/aoRoundGP5PublicDoors.test.ts` "PROD-15 — …" pins the two sets equal: the audience against the page's `isAdmin` gate and against `access_requests_admin_select`'s Admin clause in 20261023.
+
+**Done-when.**
+- [x] The people told about a request and the people who can see the pending list are the same set ✓ — the Admins (the notice's audience narrowed: a change to DEC-92 item 1, ratified under DEC-90 by the integrator's ruling for this package; DEC-92 carries the Landed line).
+- [x] A test pins the two sets equal ✓.
+
+**Scope / residual.** A DocCtrl can still add a member and decline a request by id through the routes (unchanged); they are no longer told about requests, as the list never showed them. If the product later wants DocCtrl to triage requests, both the list (card + policy) and `ACCESS_REQUEST_AUDIENCE` move together, and the pin above fails until they do.
 
 ---
 

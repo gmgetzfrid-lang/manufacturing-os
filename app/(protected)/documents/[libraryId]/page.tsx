@@ -68,6 +68,7 @@ import type { TagColumnDef } from "@/lib/documentTags";
 import RevUpModal from "@/components/documents/RevUpModal";
 import { loadMyMarkup, saveMyMarkup, myActiveSessionId, type DocumentMarkup } from "@/lib/markups";
 import { listVersions, changeDocumentStatus } from "@/lib/revisions";
+import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 import { isIssueTransition, isControlledIssueStatus } from "@/lib/issueStatus";
 import { isUnguardedEntryIntoForce } from "@/lib/documentStatusOptions";
 import { publicOrigin } from "@/lib/publicOrigin";
@@ -2776,6 +2777,23 @@ export default function LibraryExplorerPage() {
         uploadFolderPlanRef.current = null;
         if (notes.length > 0) setError(`Uploaded. ${notes.join(" ")}`);
       }
+      // GAP-314 (intelligence I-26): the unit decode at create time, ONCE for
+      // every document that landed (one route call per 200, bounded), after
+      // the batch, its notice and its report — NOT awaited: the upload closes
+      // (modal, dock, AI-library nudge) whatever the route does, so the decode
+      // never fails or holds back an upload that landed. A decode that did not
+      // run, or left something undone, is said on the page once it settles,
+      // after whatever the batch already said; the route records a document it
+      // left without a code, with why (UNIT_CODE_DECODE).
+      if (landedIds.size > 0) {
+        void requestUnitCodeDecode(activeOrgId!, [...landedIds.values()], "upload").then((r) => {
+          if (r.note) {
+            const note = r.note;
+            console.warn(`[handleStagedUpload] ${note}`);
+            setError((prev) => (prev ? `${prev} ${note}` : `Uploaded. ${note}`));
+          }
+        });
+      }
     } catch (e) {
       console.error(e);
       const f = translatePostgresError(e, { entity: "document", field: "document_number" });
@@ -2942,6 +2960,15 @@ export default function LibraryExplorerPage() {
       setDocuments((prev) => prev.map((d) => d.id === docId ? { ...d, documentNumber: trimmed } : d));
       setEditingDocNumId(null);
       setEditingDocNumValue("");
+      // GAP-314 (intelligence I-26): a renumber drops the document's unit
+      // decode (20261138); ask the server to decode the stored number now —
+      // after the save landed, NOT awaited (the edit is done whatever the
+      // route does). A decode that did not run is said on the page.
+      if (activeOrgId) {
+        void requestUnitCodeDecode(activeOrgId, [docId], "renumber").then((r) => {
+          if (r.note) { console.warn(`[saveInlineDocNumber] ${r.note}`); setError(`${trimmed} was renumbered. ${r.note}`); }
+        });
+      }
     } catch (e) {
       setEditingDocNumError((e as Error).message);
     } finally {
