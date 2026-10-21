@@ -18,7 +18,9 @@ import {
   X, Upload, AlertTriangle, CheckCircle2, Loader2, Wand2,
   FileText, Copy, Trash2, Info, KeyRound, FolderTree, ChevronDown, ChevronRight,
 } from "lucide-react";
-import { parseFilename, detectBulkHints, type ParsedFilename } from "@/lib/filenameParser";
+import { parseFilename, detectBulkHints, withHints, type ParsedFilename } from "@/lib/filenameParser";
+import { readBatch, type NameRole } from "@/lib/filenameRoles";
+import NameReadingStrip from "@/components/documents/NameReadingStrip";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { hashFile, findExistingCopies, type ExistingCopy } from "@/lib/duplicateFiles";
 
@@ -48,6 +50,9 @@ export interface StagedItem {
   status: string;
   customFields: Record<string, string>;
   hints: ParsedFilename["hints"];
+  /** What the file name gave, so a re-read of the names only replaces
+   *  fields nobody has typed over. */
+  parsed?: { documentNumber: string; title: string; rev: string };
   /** SHA-256 of the bytes, worked out while the person reviews. */
   fileHash?: string;
 }
@@ -77,6 +82,9 @@ interface MetadataStagingModalProps {
   onAddSheetAndUseForUniqueness?: () => Promise<void>;
   /** When set, each file is checked against what the org already holds. */
   orgId?: string;
+  /** How this library's file names read (the person's answers) is
+   *  remembered per library. */
+  libraryId?: string;
   /** A folder upload: the batch keeps its subfolder tree. The window leads
    *  with a one-click "upload as-is" summary; per-file rows are optional. */
   folderUpload?: {
@@ -93,8 +101,20 @@ export default function MetadataStagingModal({
   isOpen, files, customColumns = [], defaultStatus = "Issued",
   statusOptions = DEFAULT_STATUS_OPTIONS,
   onCancel, onSubmit, onAddColumn,
-  uniquenessKeys, onAddSheetAndUseForUniqueness, orgId, folderUpload, progress,
+  uniquenessKeys, onAddSheetAndUseForUniqueness, orgId, libraryId, folderUpload, progress,
 }: MetadataStagingModalProps) {
+  // ── How the file names read ───────────────────────────────────────
+  // Any convention, any order (lib/filenameRoles). The person's answers —
+  // "this piece is the revision" — are kept per library on this device.
+  const rolesKey = `filenameRoles:${libraryId ?? "any"}`;
+  const loadRoles = (): Record<string, NameRole[]> => {
+    try { return JSON.parse(window.localStorage.getItem(rolesKey) ?? "{}") as Record<string, NameRole[]>; } catch { return {}; }
+  };
+  const [nameRoles, setNameRoles] = useState<Record<string, NameRole[]>>({});
+  const nameReadings = useMemo(
+    () => (isOpen ? readBatch(files.map((f) => f.name), nameRoles).map((r, i) => ({ ...r, file: files[i].name })) : []),
+    [isOpen, files, nameRoles],
+  );
   const [showDetails, setShowDetails] = useState(false);
   // The folder tree, summarised: top-level folders with file counts.
   const folderSummary = useMemo(() => {
@@ -184,8 +204,11 @@ export default function MetadataStagingModal({
   // ADD the column to existing rows, not reset them).
   useEffect(() => {
     if (!isOpen) return;
+    const roles = loadRoles();
+    setNameRoles(roles);
+    const batch = readBatch(files.map((f) => f.name), roles);
     const next: StagedItem[] = files.map((file, idx) => {
-      const parsed = parseFilename(file.name);
+      const parsed = withHints(file.name.replace(/\.[^.]+$/, ""), batch[idx].fields);
       const customFields: Record<string, string> = {};
       if (parsed.hints.type) {
         const typeCol = customColumns.find((c) =>
@@ -214,6 +237,7 @@ export default function MetadataStagingModal({
         status: defaultStatus,
         customFields,
         hints: parsed.hints,
+        parsed: { documentNumber: parsed.documentNumber, title: parsed.title, rev: parsed.rev },
       };
     });
     setItems(next);
@@ -276,7 +300,7 @@ export default function MetadataStagingModal({
           if (settled.status !== "fulfilled") return it;
           const guess = settled.value;
           if (guess.confidence < 0.4) return it;
-          const parsed = parseFilename(it.file.name);
+          const parsed = it.parsed ?? parseFilename(it.file.name);
           const patch: Partial<StagedItem> = {};
           // Only replace values still equal to the filename default —
           // the user's typing always wins.
@@ -299,6 +323,31 @@ export default function MetadataStagingModal({
     // post-add fill.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, files, defaultStatus]);
+
+  // The person says what a piece of the name is: every file with that
+  // pattern is re-read, and fields nobody has typed over follow.
+  const setNameRole = (shape: string, roles: NameRole[]) => {
+    const next = { ...nameRoles, [shape]: roles };
+    setNameRoles(next);
+    try { window.localStorage.setItem(rolesKey, JSON.stringify(next)); } catch { /* remembered for this window only */ }
+    const batch = readBatch(files.map((f) => f.name), next);
+    const byFile = new Map(files.map((f, i) => [f, batch[i]]));
+    setItems((prev) => prev.map((it) => {
+      const b = byFile.get(it.file);
+      if (!b || b.shape !== shape) return it;
+      const fresh = withHints(it.file.name.replace(/\.[^.]+$/, ""), b.fields);
+      const was = it.parsed;
+      const keep = (k: "documentNumber" | "title" | "rev") => was && it[k] !== was[k];
+      return {
+        ...it,
+        documentNumber: keep("documentNumber") ? it.documentNumber : fresh.documentNumber,
+        title: keep("title") ? it.title : fresh.title,
+        rev: keep("rev") ? it.rev : fresh.rev,
+        hints: { ...it.hints, ...fresh.hints },
+        parsed: { documentNumber: fresh.documentNumber, title: fresh.title, rev: fresh.rev },
+      };
+    }));
+  };
 
   // Secondary: when customColumns CHANGES mid-staging (e.g. user
   // clicked "Add Sheet + use for uniqueness"), back-fill the new
@@ -598,6 +647,13 @@ export default function MetadataStagingModal({
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* How the file names were read — one quiet line, or the one question. */}
+        {!submitting && nameReadings.length > 0 && (
+          <div className="px-4 sm:px-6 pt-3 shrink-0">
+            <NameReadingStrip readings={nameReadings} onChange={setNameRole} />
           </div>
         )}
 

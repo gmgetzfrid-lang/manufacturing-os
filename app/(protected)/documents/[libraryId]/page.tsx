@@ -5028,6 +5028,7 @@ export default function LibraryExplorerPage() {
       {/* Phase 1: metadata-first upload staging modal */}
       <MetadataStagingModal
         isOpen={showStagingModal}
+        libraryId={libraryId}
         files={pendingUploadFiles}
         customColumns={(library?.customColumns ?? []) as unknown as CustomColumnDef[]}
         defaultStatus="Issued"

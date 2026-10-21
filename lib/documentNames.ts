@@ -10,6 +10,7 @@
 
 import { parseFilename } from "@/lib/filenameParser";
 import { legacyParseFilename } from "@/lib/filenameParserLegacy";
+import { readNameParts } from "@/lib/filenameRoles";
 
 export interface NamedDoc {
   id: string;
@@ -32,6 +33,9 @@ export interface NameFix {
 export function planNameFix(d: NamedDoc): NameFix | null {
   const fileName = (d.original_name || d.name || "").trim();
   if (!fileName) return null;
+  // Only a confident reading corrects anything stored: a name the reader
+  // could read two ways is left as it is.
+  if (!readNameParts(fileName).sure) return null;
   const old = legacyParseFilename(fileName);
   const fresh = parseFilename(fileName);
   const number = d.document_number ?? "";

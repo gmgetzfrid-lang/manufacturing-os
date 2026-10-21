@@ -86,6 +86,41 @@ describe("drawing-set file names with an export date", () => {
     expect(fix?.to).toEqual({ documentNumber: "2002-D 1001", title: "CRUDE UNIT", rev: "0" });
   });
   it("unpadded a-b-c is still a number, not a date", () => {
-    expect(parseFilename("SOP_5-3-10.pdf").documentNumber).toBe("SOP_5-3-10");
+    expect(parseFilename("SOP_5-3-10.pdf").documentNumber).toBe("SOP 5-3-10");
+  });
+});
+
+import { readNameParts, readBatch } from "@/lib/filenameRoles";
+
+describe("any naming convention, in any order", () => {
+  it("finds each piece wherever it sits", () => {
+    expect(parseFilename("Ball Valves_Rev B_EP-5310.pdf")).toMatchObject({ documentNumber: "EP-5310", title: "Ball Valves", rev: "B" });
+    expect(parseFilename("R39_SHT01_2002-D 2001_06-09-26.pdf")).toMatchObject({ documentNumber: "2002-D 2001", rev: "39", hints: { sheet: "01", datestamp: "06-09-26" } });
+    expect(parseFilename("Crude Unit P&ID 1 of 16 2002-D 2001.pdf")).toMatchObject({ documentNumber: "2002-D 2001", title: "Crude Unit P&ID", hints: { sheet: "1" } });
+    expect(parseFilename("2024-03-15 P-101 Datasheet Revision 3.pdf")).toMatchObject({ documentNumber: "P-101", title: "Datasheet", rev: "3", hints: { datestamp: "2024-03-15" } });
+  });
+  it("marks what it can't be sure of", () => {
+    expect(readNameParts("2002-D 2001_SHT01_R39.pdf").sure).toBe(true);
+    // 05-03-10 could be a date or a number (at the very end it's the export stamp).
+    expect(readNameParts("P-101_05-03-10.pdf").sure).toBe(true);
+    const r = readNameParts("05-03-10_P-101.pdf");
+    expect(r.sure).toBe(false);
+    expect(r.parts.find((p) => p.text === "05-03-10")?.sure).toBe(false);
+    // No digits at all: the whole name stands in as the number — a guess.
+    expect(readNameParts("Pump Relief Report.pdf").sure).toBe(false);
+  });
+  it("settles an unsure piece from the files in the batch where it was clear", () => {
+    const [a, b] = readBatch(["P-101_Rev 2_05-03-10.pdf", "P-102_Rev 1_2024-03-10.pdf"]);
+    expect(b.sure).toBe(true);
+    expect(a.sure).toBe(true);
+    expect(a.fields).toMatchObject({ documentNumber: "P-101", rev: "2", datestamp: "05-03-10" });
+  });
+  it("the person's answer for a pattern applies to every file with that pattern", () => {
+    const shape = readNameParts("5310_Ball Valves.pdf").shape;
+    const [a, b] = readBatch(["5310_Ball Valves.pdf", "5311_Gate Valves.pdf"], { [shape]: ["number", "title", "title"] });
+    expect(a.fields).toMatchObject({ documentNumber: "5310", title: "Ball Valves" });
+    expect(b.fields).toMatchObject({ documentNumber: "5311", title: "Gate Valves" });
+    const [c] = readBatch(["5310_Ball Valves.pdf"], { [shape]: ["title", "number", "skip"] });
+    expect(c.fields).toMatchObject({ documentNumber: "Ball", title: "5310" });
   });
 });
