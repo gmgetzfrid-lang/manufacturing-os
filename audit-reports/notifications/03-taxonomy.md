@@ -610,7 +610,7 @@ What landed: `useAttentionFor(target)` (`hooks/useTicketNotifications.ts:1176`) 
 - ✓ The feed is fetched once per page (N4's provider, `DEC-105` §1 — verified, not changed here; the roll-up adds no query per surface or row: test "40 folder tiles … add no query").
 - Not done here — one named "Nudge" replacing the three ad-hoc implementations, available from a drafting request's approval step. Split (`DEC-31`): the drafting-request nudge is `GAP-206` (notifications N12 NUDGES — `app/api/tickets/nudge/route.ts`, offered when the ticket waits on that person, recorded on the ticket); the three document pokes keep their names and are the new finding **`TAX-18`** (below), owner the integrator to assign once `GAP-206`'s one component and kind exist.
 
-**Scope / residual.** Done-when 4 → `GAP-206` (N12) and `TAX-18`. TAX-10 is recorded RESOLVED for done-when 1–3 under that split.
+**Scope / residual.** Done-when 4 → `GAP-206` (N12) and `TAX-18`. TAX-10 is recorded RESOLVED for done-when 1–3 under that split. *Fix pass (2026-10-21, the review):* the selector's marks honour the permission trap (a document the viewer cannot read is placed in no library or folder), but the section counts beside them do not — the sidebar's Documents badge and the bell still count a row about such a document (GAP-202 acceptance 4 is met for the container markers only); that remainder is `TRAIL-14` (`04-cold-trail.md`, owner the integrator to assign).
 
 ---
 

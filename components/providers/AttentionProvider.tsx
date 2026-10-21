@@ -16,13 +16,22 @@
 //
 // The feed's machinery stays in hooks/useTicketNotifications.ts
 // (useAttentionFeedState) — this file only owns where it is mounted.
+//
+// The badge trail's marks (notifications Round G, N11 TRAIL) ride a context
+// of their own, so a page that reads only the marks (useAttentionRollup —
+// the library explorer, /documents, /projects) re-renders when a mark
+// changes, not on every feed pass.
 
 import React from "react";
-import { AttentionContext, useAttentionFeedState } from "@/hooks/useTicketNotifications";
+import { AttentionContext, AttentionRollupContext, useAttentionFeedState } from "@/hooks/useTicketNotifications";
 
 export function AttentionProvider({ children }: { children: React.ReactNode }) {
   const feed = useAttentionFeedState(true);
-  return <AttentionContext.Provider value={feed}>{children}</AttentionContext.Provider>;
+  return (
+    <AttentionContext.Provider value={feed}>
+      <AttentionRollupContext.Provider value={feed.rollup}>{children}</AttentionRollupContext.Provider>
+    </AttentionContext.Provider>
+  );
 }
 
 export default AttentionProvider;

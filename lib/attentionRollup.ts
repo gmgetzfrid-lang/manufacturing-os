@@ -31,7 +31,17 @@
 // third walk. A read that fails, or ids past the per-pass cap, leave the
 // roll-up UNKNOWN — rendered as unknown, never as zero (GAP-202 acceptance 6).
 // A missing row is not a failure: that document is simply not counted
-// (containerChain's rule — "it defines nothing we can see").
+// (containerChain's rule — "it defines nothing we can see"). Nor is an id
+// that cannot name a document (resource_id is TEXT; documents.id is uuid):
+// it is placed nowhere and never sent, so one legacy or browser-written
+// row cannot fail the whole chunk's read (22P02) and turn the roll-up
+// unknown (fix pass).
+//
+// UNKNOWN IS SAID ONCE: a list surface draws a container's count, or
+// nothing (listMarkFor); while the roll-up is incomplete the page says so
+// in one line (AttentionUnknownNote, components/documents/AttentionDot.tsx)
+// instead of a "?" on every library card and folder — GAP-202 "Do not":
+// a mark on every row is wallpaper (fix pass).
 
 import { folderChainFromMap } from "@/lib/containerChain";
 
@@ -166,6 +176,11 @@ export function buildAttentionRollup(rows: readonly RollupRow[], placements: Pla
 export const PLACE_CAP = 500;
 export const PLACE_CHUNK = 100;
 
+/** documents.id is a uuid; notifications.resource_id is TEXT. An id of any
+ *  other shape names no document (a legacy row, a browser-written row). */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const canNameDocument = (id: string): boolean => UUID_RE.test(id);
+
 type ReadResult = { data: unknown; error: { message?: string } | null };
 
 /**
@@ -173,16 +188,19 @@ type ReadResult = { data: unknown; error: { message?: string } | null };
  * `readDocs(ids)` returns `{ id, library_id, collection_id }` rows for the
  * ids the viewer can read (RLS); `readFolders(ids)` returns `{ id, path_ids }`
  * for the folders. Each chunk is one read; any failed read leaves its level
- * UNKNOWN (the others still count). Never throws.
+ * UNKNOWN (the others still count). An id that cannot name a document
+ * (not uuid-shaped) is placed nowhere and never sent — it is not a failed
+ * read. Never throws.
  */
 export async function resolvePlacements(
   ids: readonly string[],
   readDocs: (ids: string[]) => PromiseLike<ReadResult>,
   readFolders: (ids: string[]) => PromiseLike<ReadResult>,
 ): Promise<Placements> {
-  if (ids.length === 0) return { docs: new Map(), libraries: "ready", folders: "ready" };
-  const asked = ids.slice(0, PLACE_CAP);
-  let libraries: RollupState = ids.length > PLACE_CAP ? "unknown" : "ready";
+  const named = ids.filter(canNameDocument);
+  if (named.length === 0) return { docs: new Map(), libraries: "ready", folders: "ready" };
+  const asked = named.slice(0, PLACE_CAP);
+  let libraries: RollupState = named.length > PLACE_CAP ? "unknown" : "ready";
   let folders: RollupState = libraries;
   const rows: Array<{ id: string; libraryId: string; collectionId: string | null }> = [];
   for (let i = 0; i < asked.length; i += PLACE_CHUNK) {
@@ -255,4 +273,42 @@ export function attentionFor(rollup: AttentionRollup, target: AttentionTarget): 
   const m = rollup.byFolder.get(target.folderId);
   if (m) return m;
   return rollup.folders === "unknown" ? "unknown" : null;
+}
+
+/** What a LIST surface draws for a library or folder: its count, or nothing.
+ *  While the roll-up is incomplete a container without a count draws
+ *  nothing — the page says the unknown ONCE (rollupIncomplete +
+ *  AttentionUnknownNote) rather than a "?" on every card and folder; a count
+ *  it does know is a lower bound (the surface's `partial` → "3+"). A document
+ *  row and a project card answer as attentionFor does. */
+export function listMarkFor(rollup: AttentionRollup, target: AttentionTarget): AttentionMarkState {
+  const m = attentionFor(rollup, target);
+  return m === "unknown" ? null : m;
+}
+
+/** Whether the per-container counts at this level may be short — the one
+ *  thing a page with list marks must say, once. */
+export function rollupIncomplete(rollup: AttentionRollup, level: "libraries" | "folders"): boolean {
+  return rollup[level] === "unknown";
+}
+
+const sameMarks = (a: ReadonlyMap<string, AttentionMark>, b: ReadonlyMap<string, AttentionMark>): boolean => {
+  if (a === b) return true;
+  if (a.size !== b.size) return false;
+  for (const [k, m] of a) {
+    const o = b.get(k);
+    if (!o || o.total !== m.total || o.action !== m.action) return false;
+  }
+  return true;
+};
+
+/** Two roll-ups mark exactly the same things. The provider keeps the
+ *  previous roll-up object while this holds, so a feed pass that changed no
+ *  mark re-renders no page that reads the marks (fix pass). */
+export function sameRollup(a: AttentionRollup, b: AttentionRollup): boolean {
+  return a === b || (
+    a.libraries === b.libraries && a.folders === b.folders
+    && sameMarks(a.byLibrary, b.byLibrary) && sameMarks(a.byFolder, b.byFolder)
+    && sameMarks(a.byDocument, b.byDocument) && sameMarks(a.byProject, b.byProject)
+  );
 }

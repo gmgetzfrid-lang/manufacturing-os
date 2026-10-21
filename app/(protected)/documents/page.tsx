@@ -35,8 +35,8 @@ import DeleteSafetyModal from "@/app/(protected)/admin/libraries/DeleteSafetyMod
 import type { LibraryDeleteImpact } from "@/lib/libraryDeleteImpact";
 import { postLibraryDelete, libraryDeleteError } from "@/lib/libraryDeleteClient";
 import { useAttentionRollup } from "@/hooks/useTicketNotifications";
-import { attentionFor } from "@/lib/attentionRollup";
-import AttentionDot from "@/components/documents/AttentionDot";
+import { listMarkFor } from "@/lib/attentionRollup";
+import AttentionDot, { AttentionUnknownNote } from "@/components/documents/AttentionDot";
 
 type UiLibrary = LibraryConfig & {
   _id: string;
@@ -58,6 +58,7 @@ export default function DocumentsHomePage() {
   // N11 TRAIL (TRAIL-1 dw1): each library card carries the count of the
   // Documents badge's rows that live in it — read from the tab's one feed
   // (no query of its own); a card with nothing to mark renders as before.
+  // An incomplete roll-up is said once above the cards, not on each card.
   const attention = useAttentionRollup();
 
   // Start false — only flip to true once we actually have everything we need
@@ -526,6 +527,7 @@ export default function DocumentsHomePage() {
           </div>
         )}
 
+        <AttentionUnknownNote rollup={attention} level="libraries" className="mb-3" />
         {filtered.length === 0 ? (
           search.trim() ? (
             visibleDocHits.length === 0 && !docSearching ? (
@@ -603,7 +605,7 @@ export default function DocumentsHomePage() {
                         </span>
                       )}
                       <AttentionDot
-                        mark={attentionFor(attention, { libraryId: lib._id })}
+                        mark={listMarkFor(attention, { libraryId: lib._id })}
                         variant="count"
                         partial={attention.libraries === "unknown"}
                         where="in this library"

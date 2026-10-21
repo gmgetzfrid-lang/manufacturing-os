@@ -138,26 +138,32 @@ vi.mock("@/lib/notificationReconcile", async (importOriginal) => ({
 }));
 
 import {
-  buildAttentionRollup, resolvePlacements, attentionFor, documentIdsToPlace, PLACE_CAP, PLACE_CHUNK,
-  NO_PLACEMENTS, EMPTY_ROLLUP, type RollupRow, type AttentionRollup,
+  buildAttentionRollup, resolvePlacements, attentionFor, listMarkFor, rollupIncomplete, sameRollup, canNameDocument,
+  documentIdsToPlace, PLACE_CAP, PLACE_CHUNK, NO_PLACEMENTS, EMPTY_ROLLUP, type RollupRow, type AttentionRollup,
 } from "@/lib/attentionRollup";
 import { AttentionProvider } from "@/components/providers/AttentionProvider";
 import {
-  useAttentionRollup, useAttentionFor, useAttentionStatus, useTicketNotifications, FETCH_DEBOUNCE_MS, MARK_READ_REFUSED,
+  useAttentionRollup, useAttentionFor, useAttentionStatus, useTicketNotifications, FETCH_DEBOUNCE_MS, MARK_READ_REFUSED, MARK_ERROR_TTL_MS,
   type AttentionStatus, type TicketNotifications,
 } from "@/hooks/useTicketNotifications";
-import AttentionDot, { attentionDotLabel } from "@/components/documents/AttentionDot";
+import AttentionDot, { attentionDotLabel, AttentionUnknownNote, ATTENTION_UNKNOWN_LINE } from "@/components/documents/AttentionDot";
 import FolderRail from "@/components/documents/FolderRail";
 import FolderGrid from "@/components/documents/FolderGrid";
 import DocGridView from "@/components/documents/DocGridView";
-import NotificationBell, { bellLabel, BELL_STALE_LINE } from "@/components/notifications/NotificationBell";
+import NotificationBell, { bellLabel, BELL_STALE_LINE, BELL_MARK_ALL_REFUSED } from "@/components/notifications/NotificationBell";
 import Sidebar from "@/components/navigation/Sidebar";
-import { NotificationCenterProvider } from "@/components/notifications/NotificationCenter";
+import { NotificationCenterProvider, useNotificationCenter, MARK_READ_FAILED } from "@/components/notifications/NotificationCenter";
 import type { LibraryCollection, DocumentRecord } from "@/types/schema";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ROOT = process.cwd();
+
+// documents.id is a uuid: a document id the roll-up places is uuid-shaped
+// (an id of any other shape names no document and is never sent — fix pass).
+const D1 = "00000000-0000-4000-8000-0000000000d1";
+const D2 = "00000000-0000-4000-8000-0000000000d2";
+const D9 = "00000000-0000-4000-8000-0000000000d9";
 const src = (p: string) => readFileSync(join(ROOT, p), "utf8");
 
 // ─── the pure roll-up ───────────────────────────────────────────────────────
@@ -185,16 +191,16 @@ function readers(opts: { readable: string[]; docs: Record<string, { library_id: 
 }
 
 // Piping (root) / P&IDs / Unit 12 — the RG-3 nesting.
-const DOCS = { d1: { library_id: "libA", collection_id: "unit12" }, d2: { library_id: "libA", collection_id: null }, d9: { library_id: "libB", collection_id: "other" } };
+const DOCS = { [D1]: { library_id: "libA", collection_id: "unit12" }, [D2]: { library_id: "libA", collection_id: null }, [D9]: { library_id: "libB", collection_id: "other" } };
 const FOLDERS = { unit12: ["piping", "pids"], other: [] as string[] };
 
 describe("GAP-202 acceptance 2 — a document's notification rolls up to every folder on its path and to its library; both clear when read", () => {
   it("folder chain nearest first (the resolver's walk), the library, the document; nothing else is marked", async () => {
-    const r = readers({ readable: ["d1", "d2", "d9"], docs: DOCS, folders: FOLDERS });
-    const placed = await resolvePlacements(["d1"], r.readDocs, r.readFolders);
-    expect(placed.docs.get("d1")).toEqual({ libraryId: "libA", folderIds: ["unit12", "pids", "piping"] });
-    const rollup = buildAttentionRollup([docRow("d1", true), docRow("d1")], placed);
-    expect(rollup.byDocument.get("d1")).toEqual({ total: 2, action: 1 });
+    const r = readers({ readable: [D1, D2, D9], docs: DOCS, folders: FOLDERS });
+    const placed = await resolvePlacements([D1], r.readDocs, r.readFolders);
+    expect(placed.docs.get(D1)).toEqual({ libraryId: "libA", folderIds: ["unit12", "pids", "piping"] });
+    const rollup = buildAttentionRollup([docRow(D1, true), docRow(D1)], placed);
+    expect(rollup.byDocument.get(D1)).toEqual({ total: 2, action: 1 });
     expect(rollup.byLibrary.get("libA")).toEqual({ total: 2, action: 1 });
     for (const f of ["unit12", "pids", "piping"]) expect(rollup.byFolder.get(f)).toEqual({ total: 2, action: 1 });
     // mark the path to the thing, leave the rest quiet
@@ -206,17 +212,17 @@ describe("GAP-202 acceptance 2 — a document's notification rolls up to every f
   });
 
   it("once the rows are read (gone from the feed) the document, its folders and its library all clear", async () => {
-    const r = readers({ readable: ["d1"], docs: DOCS, folders: FOLDERS });
-    const placed = await resolvePlacements(["d1"], r.readDocs, r.readFolders);
+    const r = readers({ readable: [D1], docs: DOCS, folders: FOLDERS });
+    const placed = await resolvePlacements([D1], r.readDocs, r.readFolders);
     const after = buildAttentionRollup([], placed);
     expect(after.byDocument.size + after.byFolder.size + after.byLibrary.size).toBe(0);
     expect(attentionFor(after, { libraryId: "libA" })).toBeNull();
   });
 
   it("a document at the library root counts on the library only; a library row counts on its card", async () => {
-    const r = readers({ readable: ["d2"], docs: DOCS, folders: FOLDERS });
-    const placed = await resolvePlacements(["d2"], r.readDocs, r.readFolders);
-    const rollup = buildAttentionRollup([docRow("d2"), { section: "documents", actionRequired: false, resourceType: "library", resourceId: "libC" }], placed);
+    const r = readers({ readable: [D2], docs: DOCS, folders: FOLDERS });
+    const placed = await resolvePlacements([D2], r.readDocs, r.readFolders);
+    const rollup = buildAttentionRollup([docRow(D2), { section: "documents", actionRequired: false, resourceType: "library", resourceId: "libC" }], placed);
     expect(rollup.byLibrary.get("libA")).toEqual({ total: 1, action: 0 });
     expect(rollup.byLibrary.get("libC")).toEqual({ total: 1, action: 0 });
     expect(rollup.byFolder.size).toBe(0);
@@ -224,10 +230,10 @@ describe("GAP-202 acceptance 2 — a document's notification rolls up to every f
   });
 
   it("only what the sidebar badge counts is rolled up: a bell-only row and another section's row mark no container", () => {
-    const placements = { docs: new Map([["d1", { libraryId: "libA", folderIds: ["unit12"] }]]), libraries: "ready" as const, folders: "ready" as const };
-    const rollup = buildAttentionRollup([docRow("d1", false, null), docRow("d1", false, "requests")], placements);
+    const placements = { docs: new Map([[D1, { libraryId: "libA", folderIds: ["unit12"] }]]), libraries: "ready" as const, folders: "ready" as const };
+    const rollup = buildAttentionRollup([docRow(D1, false, null), docRow(D1, false, "requests")], placements);
     expect(rollup.byLibrary.size + rollup.byFolder.size + rollup.byDocument.size).toBe(0);
-    expect(documentIdsToPlace([docRow("d1", false, null)])).toEqual([]);
+    expect(documentIdsToPlace([docRow(D1, false, null)])).toEqual([]);
   });
 
   it("a project row marks its project card", () => {
@@ -239,10 +245,10 @@ describe("GAP-202 acceptance 2 — a document's notification rolls up to every f
 
 describe("GAP-202 acceptance 4 — the permission trap, both directions", () => {
   it("a document the viewer cannot read is placed nowhere: no folder, no library count includes it", async () => {
-    const r = readers({ readable: ["d2"], docs: DOCS, folders: FOLDERS }); // d1 is hidden from this viewer
-    const placed = await resolvePlacements(["d1", "d2"], r.readDocs, r.readFolders);
-    expect(placed.docs.has("d1")).toBe(false);
-    const rollup = buildAttentionRollup([docRow("d1", true), docRow("d2")], placed);
+    const r = readers({ readable: [D2], docs: DOCS, folders: FOLDERS }); // d1 is hidden from this viewer
+    const placed = await resolvePlacements([D1, D2], r.readDocs, r.readFolders);
+    expect(placed.docs.has(D1)).toBe(false);
+    const rollup = buildAttentionRollup([docRow(D1, true), docRow(D2)], placed);
     expect(rollup.byLibrary.get("libA")).toEqual({ total: 1, action: 0 }); // d2 only
     for (const f of ["unit12", "pids", "piping"]) expect(rollup.byFolder.has(f)).toBe(false);
     // a missing row is not a failure: the roll-up is complete, not unknown
@@ -250,9 +256,9 @@ describe("GAP-202 acceptance 4 — the permission trap, both directions", () => 
   });
 
   it("the same notification, for a viewer who CAN read the document, is counted", async () => {
-    const r = readers({ readable: ["d1", "d2"], docs: DOCS, folders: FOLDERS });
-    const placed = await resolvePlacements(["d1", "d2"], r.readDocs, r.readFolders);
-    const rollup = buildAttentionRollup([docRow("d1", true), docRow("d2")], placed);
+    const r = readers({ readable: [D1, D2], docs: DOCS, folders: FOLDERS });
+    const placed = await resolvePlacements([D1, D2], r.readDocs, r.readFolders);
+    const rollup = buildAttentionRollup([docRow(D1, true), docRow(D2)], placed);
     expect(rollup.byLibrary.get("libA")).toEqual({ total: 2, action: 1 });
     expect(rollup.byFolder.get("pids")).toEqual({ total: 1, action: 1 });
   });
@@ -267,29 +273,29 @@ describe("GAP-202 acceptance 4 — the permission trap, both directions", () => 
 
 describe("GAP-202 acceptance 6 — a failed roll-up read is unknown, never zero", () => {
   it("documents read refused → libraries and folders unknown; a card with no count shows '?', not nothing", async () => {
-    const r = readers({ readable: ["d1"], docs: DOCS, folders: FOLDERS, docsFail: true });
-    const placed = await resolvePlacements(["d1"], r.readDocs, r.readFolders);
-    const rollup = buildAttentionRollup([docRow("d1")], placed);
+    const r = readers({ readable: [D1], docs: DOCS, folders: FOLDERS, docsFail: true });
+    const placed = await resolvePlacements([D1], r.readDocs, r.readFolders);
+    const rollup = buildAttentionRollup([docRow(D1)], placed);
     expect(rollup.libraries).toBe("unknown");
     expect(rollup.folders).toBe("unknown");
     expect(attentionFor(rollup, { libraryId: "libA" })).toBe("unknown");
     expect(attentionFor(rollup, { folderId: "pids" })).toBe("unknown");
     // the document row needs no placement: its own dot still shows
-    expect(attentionFor(rollup, { documentId: "d1" })).toEqual({ total: 1, action: 0 });
+    expect(attentionFor(rollup, { documentId: D1 })).toEqual({ total: 1, action: 0 });
     expect(renderToStaticMarkup(React.createElement(AttentionDot, { mark: "unknown", variant: "count" }))).toContain(">?</span>");
   });
 
   it("folders read refused → folder counts unknown, library counts still known", async () => {
-    const r = readers({ readable: ["d1"], docs: DOCS, folders: FOLDERS, foldersFail: true });
-    const placed = await resolvePlacements(["d1"], r.readDocs, r.readFolders);
-    const rollup = buildAttentionRollup([docRow("d1")], placed);
+    const r = readers({ readable: [D1], docs: DOCS, folders: FOLDERS, foldersFail: true });
+    const placed = await resolvePlacements([D1], r.readDocs, r.readFolders);
+    const rollup = buildAttentionRollup([docRow(D1)], placed);
     expect(rollup.libraries).toBe("ready");
     expect(attentionFor(rollup, { libraryId: "libA" })).toEqual({ total: 1, action: 0 });
     expect(attentionFor(rollup, { folderId: "pids" })).toBe("unknown");
   });
 
   it("a read that throws is unknown too; nothing to place is ready (no false '?')", async () => {
-    const placed = await resolvePlacements(["d1"], async () => { throw new Error("offline"); }, async () => ({ data: [], error: null }));
+    const placed = await resolvePlacements([D1], async () => { throw new Error("offline"); }, async () => ({ data: [], error: null }));
     expect(placed.libraries).toBe("unknown");
     const none = buildAttentionRollup([], NO_PLACEMENTS);
     expect(none.libraries).toBe("ready");
@@ -298,7 +304,7 @@ describe("GAP-202 acceptance 6 — a failed roll-up read is unknown, never zero"
   });
 
   it("past the per-pass cap the roll-up is unknown, and the reads stay bounded (chunked, never one per row)", async () => {
-    const ids = Array.from({ length: PLACE_CAP + 40 }, (_, i) => `x${i}`);
+    const ids = Array.from({ length: PLACE_CAP + 40 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
     const r = readers({ readable: [], docs: {} });
     const placed = await resolvePlacements(ids, r.readDocs, r.readFolders);
     expect(placed.libraries).toBe("unknown");
@@ -337,7 +343,7 @@ const FOLDER_LIST = [
   { id: "unit12", name: "Unit 12", parentId: "pids" },
   { id: "other", name: "Other", parentId: null },
 ] as unknown as LibraryCollection[];
-const DOC_LIST = [{ id: "d1", title: "Doc one", documentNumber: "D-1", status: "Issued" }, { id: "d2", title: "Doc two", status: "Draft" }] as unknown as DocumentRecord[];
+const DOC_LIST = [{ id: D1, title: "Doc one", documentNumber: "D-1", status: "Issued" }, { id: D2, title: "Doc two", status: "Draft" }] as unknown as DocumentRecord[];
 const railProps = { libraryName: "Lib A", folders: FOLDER_LIST, currentFolderId: null, isController: false, onNavigate: () => {}, onCreateFolder: () => {} };
 const gridProps = { folders: FOLDER_LIST, allFolders: FOLDER_LIST, onOpen: () => {}, isController: false };
 const docProps = { docs: DOC_LIST, selectedIds: new Set<string>(), onItemClick: () => {}, onItemDoubleClick: () => {} };
@@ -362,7 +368,13 @@ describe("REGRESSION (DEC-90 ruling 4) — a surface with nothing to mark render
     expect(lib).toContain('<td className={`px-3 ${rowPad}`} onClick={(e) => toggleSelectDoc(docRecord.id!, e)}>');
     expect(lib).toMatch(/\{docRecord\.id && <AttentionDot mark=\{docAttention\(docRecord\.id\)\} variant="dot"/);
     const home = src("app/(protected)/documents/page.tsx");
-    expect(home).toMatch(/<AttentionDot\s+mark=\{attentionFor\(attention, \{ libraryId: lib\._id \}\)\}\s+variant="count"/);
+    expect(home).toMatch(/<AttentionDot\s+mark=\{listMarkFor\(attention, \{ libraryId: lib\._id \}\)\}\s+variant="count"/);
+    // the unknown is said once per page, never per card or folder (fix pass)
+    expect(home.match(/<AttentionUnknownNote /g)).toHaveLength(1);
+    expect(home).toContain('<AttentionUnknownNote rollup={attention} level="libraries"');
+    expect(lib.match(/<AttentionUnknownNote /g)).toHaveLength(1);
+    expect(lib).toContain('<AttentionUnknownNote rollup={attention} level="folders"');
+    expect(lib).toContain("const folderAttention = useCallback((folderId: string) => listMarkFor(attention, { folderId }), [attention]);");
     const projects = src("app/(protected)/projects/page.tsx");
     expect(projects).toMatch(/<AttentionDot mark=\{attention\} variant="dot" where="on this project" \/>/);
   });
@@ -372,7 +384,7 @@ describe("marker density (DEC-90 ruling 1): a count on library cards and the fol
   const rollup: AttentionRollup = {
     byLibrary: new Map([["libA", { total: 2, action: 1 }]]),
     byFolder: new Map([["piping", { total: 2, action: 1 }], ["pids", { total: 2, action: 1 }], ["unit12", { total: 1, action: 0 }]]),
-    byDocument: new Map([["d1", { total: 1, action: 1 }]]),
+    byDocument: new Map([[D1, { total: 1, action: 1 }]]),
     byProject: new Map(), libraries: "ready", folders: "ready",
   };
   const folderAt = (id: string) => attentionFor(rollup, { folderId: id });
@@ -431,9 +443,13 @@ function Probe() {
   React.useEffect(() => { Object.assign(seen, { rollup, status, value, lib }); });
   return null;
 }
+/** The library page's wiring: list marks (a count or nothing) and the one
+ *  unknown line above the folders. */
 function LibraryView() {
   const rollup = useAttentionRollup();
-  return React.createElement(FolderGrid, { ...gridProps, attentionFor: (id: string) => attentionFor(rollup, { folderId: id }) });
+  return React.createElement(React.Fragment, null,
+    React.createElement(AttentionUnknownNote, { rollup, level: "folders" }),
+    React.createElement(FolderGrid, { ...gridProps, attentionFor: (id: string) => listMarkFor(rollup, { folderId: id }) }));
 }
 const mount = async (...children: React.ReactElement[]) => {
   await act(async () => { root.render(React.createElement(AttentionProvider, null, ...children)); });
@@ -444,7 +460,7 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  fx.rows = []; fx.documents = { ...DOCS }; fx.readable = new Set(["d1", "d2", "d9"]); fx.collections = { unit12: { path_ids: ["piping", "pids"] }, other: { path_ids: [] } };
+  fx.rows = []; fx.documents = { ...DOCS }; fx.readable = new Set([D1, D2, D9]); fx.collections = { unit12: { path_ids: ["piping", "pids"] }, other: { path_ids: [] } };
   fx.docsFail = false; fx.foldersFail = false; fx.reads = []; fx.channels = []; fx.markFails = false; fx.updateError = null; fx.updateReach = null;
   for (const k of Object.keys(seen)) delete (seen as Record<string, unknown>)[k];
 });
@@ -452,13 +468,13 @@ afterEach(() => { act(() => root.unmount()); host.remove(); });
 
 describe("the provider's roll-up (TRAIL-6 dw2/dw3, TAX-10 dw1) — resolved once per pass under the viewer's client", () => {
   it("one documents read (columns, org-scoped) and one folders read for the rows; the selector answers per library", async () => {
-    fx.rows = [notif("n1", "d1", "checkout_conflict"), notif("n2", "d1"), notif("n3", "d2")];
+    fx.rows = [notif("n1", D1, "checkout_conflict"), notif("n2", D1), notif("n3", D2)];
     await mount(React.createElement(Probe));
     const docReads = fx.reads.filter((r) => r.table === "documents");
     expect(docReads.length).toBe(1);
     expect(docReads[0].cols).toBe("id, library_id, collection_id");
     expect(docReads[0].filters).toContainEqual(["org_id", "o1"]);
-    expect([...docReads[0].ids].sort()).toEqual(["d1", "d2"]);
+    expect([...docReads[0].ids].sort()).toEqual([D1, D2]);
     expect(fx.reads.filter((r) => r.table === "collections").map((r) => r.ids)).toEqual([["unit12"]]);
     expect(seen.rollup!.byLibrary.get("libA")).toEqual({ total: 3, action: 1 });
     expect(seen.rollup!.byFolder.get("piping")).toEqual({ total: 2, action: 1 });
@@ -468,25 +484,28 @@ describe("the provider's roll-up (TRAIL-6 dw2/dw3, TAX-10 dw1) — resolved once
   });
 
   it("permission trap, rendered: a row about a document the viewer cannot read badges Documents (as before) but no library or folder", async () => {
-    fx.readable = new Set(["d2"]);
-    fx.rows = [notif("n1", "d1", "checkout_conflict"), notif("n3", "d2")];
+    fx.readable = new Set([D2]);
+    fx.rows = [notif("n1", D1, "checkout_conflict"), notif("n3", D2)];
     await mount(React.createElement(Probe));
     expect(seen.value!.sectionCounts.documents.total).toBe(2);
     expect(seen.rollup!.byLibrary.get("libA")).toEqual({ total: 1, action: 0 });
     expect(seen.rollup!.byFolder.size).toBe(0);
   });
 
-  it("a refused documents read leaves the library unknown — '?' on the card's marker, never a quiet zero", async () => {
+  it("a refused documents read leaves the library unknown — said ONCE above the folders, never a quiet zero and never a '?' on every folder", async () => {
     fx.docsFail = true;
-    fx.rows = [notif("n1", "d1")];
+    fx.rows = [notif("n1", D1)];
     await mount(React.createElement(Probe), React.createElement(LibraryView));
     expect(seen.rollup!.libraries).toBe("unknown");
-    expect(seen.lib).toBe("unknown");
-    expect(host.querySelectorAll('[data-attention="unknown"]').length).toBe(FOLDER_LIST.length);
+    expect(seen.lib).toBe("unknown"); // the selector still answers unknown
+    expect(host.querySelectorAll('[data-attention="unknown"]').length).toBe(0);
+    const notes = host.querySelectorAll("[data-attention-unknown-note]");
+    expect(notes.length).toBe(1);
+    expect(notes[0].textContent).toBe(ATTENTION_UNKNOWN_LINE);
   });
 
   it("the fan-out does not grow per row: 40 folder tiles reading the roll-up add no query", async () => {
-    fx.rows = [notif("n1", "d1")];
+    fx.rows = [notif("n1", D1)];
     await mount(React.createElement(Probe));
     const before = fx.reads.length;
     const many = Array.from({ length: 40 }, (_, i) => React.createElement(LibraryView, { key: i }));
@@ -497,7 +516,7 @@ describe("the provider's roll-up (TRAIL-6 dw2/dw3, TAX-10 dw1) — resolved once
   });
 
   it("reading the document clears its folder and library markers on the next pass", async () => {
-    fx.rows = [notif("n1", "d1", "checkout_conflict")];
+    fx.rows = [notif("n1", D1, "checkout_conflict")];
     await mount(React.createElement(Probe), React.createElement(LibraryView));
     expect(host.querySelectorAll("[data-attention]").length).toBe(3); // unit12, pids, piping
     fx.rows = [];
@@ -522,7 +541,7 @@ describe("RT-1 dw4 — the bell and the sidebar badge say when the feed is stale
   const chrome = () => React.createElement(NotificationCenterProvider, null, React.createElement(Sidebar), React.createElement(NotificationBell), React.createElement(Probe));
 
   it("live: no mark; dropped (CHANNEL_ERROR): a mark on the bell and on the badge, the names say so; rejoined: gone", async () => {
-    fx.rows = [notif("n1", "d1")];
+    fx.rows = [notif("n1", D1)];
     await mount(chrome());
     const trigger = () => host.querySelector('button[aria-haspopup="dialog"]') as HTMLButtonElement;
     const badge = () => [...host.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") ?? "").startsWith("Documents:")) as HTMLButtonElement;
@@ -569,7 +588,7 @@ describe("the checked mark-read (the N3 → N4 hand-off; SAF-18)", () => {
   });
 
   it("feed: a refused row mark is said (status.markError, the bell's drawer) — never an unhandled rejection; the next mark that lands clears it", async () => {
-    fx.rows = [notif("n1", "d1")];
+    fx.rows = [notif("n1", D1)];
     await mount(React.createElement(NotificationCenterProvider, null, React.createElement(NotificationBell), React.createElement(Probe)));
     fx.markFails = true;
     await act(async () => { await seen.value!.markRead("n1"); });
@@ -577,10 +596,187 @@ describe("the checked mark-read (the N3 → N4 hand-off; SAF-18)", () => {
     act(() => (host.querySelector('button[aria-haspopup="dialog"]') as HTMLButtonElement).click());
     await flush();
     expect((host.querySelector("[data-bell-mark-error]") as HTMLElement).textContent).toBe(MARK_READ_REFUSED);
-    // "Mark all read" rethrows to its awaiting caller (and says it too)
+    // "Mark all read" rethrows to its awaiting caller, which says it in its
+    // own place — the feed's row line is left as it was (fix pass)
     await expect(seen.value!.markAllRead()).rejects.toThrow(/refused/);
+    expect(seen.status!.markError).toBe(MARK_READ_REFUSED);
     fx.markFails = false;
     await act(async () => { await seen.value!.markRead("n1"); });
     expect(seen.status!.markError).toBeNull();
+  });
+});
+
+// ─── fix pass (the review) ──────────────────────────────────────────────────
+
+describe("fix pass — an id that cannot name a document is placed nowhere, never a failed read", () => {
+  it("non-uuid ids are never sent; alone they leave the roll-up ready, mixed they do not spoil the chunk", async () => {
+    expect(canNameDocument(D1)).toBe(true);
+    expect(canNameDocument("DOC-0012")).toBe(false);
+    // a strict reader: a non-uuid id in the .in() list fails the whole chunk (PostgREST 22P02)
+    const asked: string[][] = [];
+    const strict = async (ids: string[]) => {
+      asked.push(ids);
+      if (ids.some((id) => !canNameDocument(id))) return { data: null, error: { message: "invalid input syntax for type uuid" } };
+      const docs = DOCS as Record<string, { library_id: string; collection_id: string | null }>;
+      return { data: ids.filter((id) => docs[id]).map((id) => ({ id, ...docs[id] })), error: null };
+    };
+    const folders = async (ids: string[]) => ({ data: ids.filter((id) => (FOLDERS as Record<string, string[]>)[id]).map((id) => ({ id, path_ids: (FOLDERS as Record<string, string[]>)[id] })), error: null });
+    const alone = await resolvePlacements(["DOC-0012"], strict, folders);
+    expect(asked).toEqual([]);
+    expect(alone.libraries).toBe("ready");
+    const mixed = await resolvePlacements(["DOC-0012", D1], strict, folders);
+    expect(asked).toEqual([[D1]]);
+    expect(mixed.libraries).toBe("ready");
+    expect(mixed.folders).toBe("ready");
+    expect(mixed.docs.get(D1)?.libraryId).toBe("libA");
+    const rollup = buildAttentionRollup([docRow("DOC-0012"), docRow(D1)], mixed);
+    expect(rollup.byLibrary.get("libA")).toEqual({ total: 1, action: 0 });
+    expect(rollup.libraries).toBe("ready");
+  });
+
+  it("rendered: a legacy row with a non-uuid resource id leaves the trail known — no '?', no note", async () => {
+    fx.rows = [notif("n1", D1), notif("n2", "DOC-0012")];
+    await mount(React.createElement(Probe), React.createElement(LibraryView));
+    expect(fx.reads.filter((r) => r.table === "documents").flatMap((r) => r.ids)).toEqual([D1]);
+    expect(seen.rollup!.libraries).toBe("ready");
+    expect(host.querySelector("[data-attention-unknown-note]")).toBeNull();
+    expect(host.querySelectorAll('[data-attention="unread"]').length).toBe(3); // unit12, pids, piping
+  });
+});
+
+describe("fix pass — the unknown is said once, not as wallpaper", () => {
+  const unknown: AttentionRollup = {
+    byLibrary: new Map([["libA", { total: 2, action: 0 }]]), byFolder: new Map(), byDocument: new Map([[D1, { total: 1, action: 1 }]]),
+    byProject: new Map(), libraries: "unknown", folders: "unknown",
+  };
+
+  it("listMarkFor: a known count (a lower bound), nothing for a container without one; rows unchanged", () => {
+    expect(listMarkFor(unknown, { libraryId: "libA" })).toEqual({ total: 2, action: 0 });
+    expect(listMarkFor(unknown, { libraryId: "libB" })).toBeNull();
+    expect(listMarkFor(unknown, { folderId: "pids" })).toBeNull();
+    expect(attentionFor(unknown, { folderId: "pids" })).toBe("unknown"); // the selector still tells the truth
+    expect(listMarkFor(unknown, { documentId: D1 })).toEqual({ total: 1, action: 1 });
+    expect(rollupIncomplete(unknown, "libraries")).toBe(true);
+    expect(rollupIncomplete(EMPTY_ROLLUP, "folders")).toBe(false);
+  });
+
+  it("AttentionUnknownNote renders the one line while incomplete, nothing (byte-empty) while complete", () => {
+    expect(renderToStaticMarkup(React.createElement(AttentionUnknownNote, { rollup: unknown, level: "libraries" }))).toContain(ATTENTION_UNKNOWN_LINE);
+    const ready = { ...unknown, libraries: "ready" as const, folders: "ready" as const };
+    expect(renderToStaticMarkup(React.createElement(AttentionUnknownNote, { rollup: ready, level: "libraries" }))).toBe("");
+    expect(renderToStaticMarkup(React.createElement(AttentionUnknownNote, { rollup: EMPTY_ROLLUP, level: "folders" }))).toBe("");
+  });
+
+  it("FolderRail and FolderGrid with list marks on an unknown roll-up: no '?' anywhere", () => {
+    const at = (id: string) => listMarkFor(unknown, { folderId: id });
+    expect(renderToStaticMarkup(React.createElement(FolderRail, { ...railProps, attentionFor: at }))).toBe(renderToStaticMarkup(React.createElement(FolderRail, railProps)));
+    expect(renderToStaticMarkup(React.createElement(FolderGrid, { ...gridProps, attentionFor: at }))).toBe(renderToStaticMarkup(React.createElement(FolderGrid, gridProps)));
+  });
+});
+
+describe("fix pass — a feed pass that changed no mark re-renders no page that reads the marks", () => {
+  it("sameRollup compares content, not identity", () => {
+    const a = buildAttentionRollup([docRow(D1, true)], { docs: new Map([[D1, { libraryId: "libA", folderIds: ["pids"] }]]), libraries: "ready", folders: "ready" });
+    const b = buildAttentionRollup([docRow(D1, true)], { docs: new Map([[D1, { libraryId: "libA", folderIds: ["pids"] }]]), libraries: "ready", folders: "ready" });
+    expect(a).not.toBe(b);
+    expect(sameRollup(a, b)).toBe(true);
+    expect(sameRollup(a, { ...b, folders: "unknown" })).toBe(false);
+    expect(sameRollup(a, buildAttentionRollup([docRow(D1, false)], { docs: new Map([[D1, { libraryId: "libA", folderIds: ["pids"] }]]), libraries: "ready", folders: "ready" }))).toBe(false);
+  });
+
+  it("rendered: a pass with the same marks keeps the roll-up object; the marks' reader does not re-render — a changed mark does", async () => {
+    // committed renders, counted after each commit (a bailed-out reader commits nothing)
+    const renders = { marks: 0, feed: 0 };
+    const box: { held: AttentionRollup | null } = { held: null };
+    function MarksReader() {
+      const r = useAttentionRollup();
+      React.useEffect(() => { box.held = r; renders.marks++; });
+      return null;
+    }
+    function FeedReader() {
+      useTicketNotifications();
+      React.useEffect(() => { renders.feed++; });
+      return null;
+    }
+    fx.rows = [notif("n1", D1)];
+    await mount(React.createElement(MarksReader), React.createElement(FeedReader));
+    const first = box.held!;
+    expect(first.byLibrary.get("libA")).toEqual({ total: 1, action: 0 });
+    const marksBefore = renders.marks; const feedBefore = renders.feed; const readsBefore = fx.reads.length;
+    // a ticket changed somewhere in the workspace: the feed refetches, nothing it marks changed
+    const tickets = fx.channels[0].ons.find((o) => o.cfg.table === "tickets" && o.cfg.event === "*")!;
+    act(() => tickets.cb({ eventType: "UPDATE", new: { id: "t9" } }));
+    await wait(FETCH_DEBOUNCE_MS + 150);
+    expect(fx.reads.length).toBeGreaterThan(readsBefore); // the pass ran (it re-read the placements)
+    expect(renders.feed).toBeGreaterThan(feedBefore);     // the feed's readers re-rendered
+    expect(renders.marks).toBe(marksBefore);              // the marks' reader did not
+    expect(box.held).toBe(first);
+    // a new row about the document: the mark changed, so its reader re-renders
+    fx.rows = [notif("n1", D1), notif("n2", D1, "checkout_conflict")];
+    act(() => tickets.cb({ eventType: "UPDATE", new: { id: "t9" } }));
+    await wait(FETCH_DEBOUNCE_MS + 150);
+    expect(renders.marks).toBeGreaterThan(marksBefore);
+    expect(box.held!.byLibrary.get("libA")).toEqual({ total: 2, action: 1 });
+  });
+});
+
+describe("fix pass — one mark-all refusal, one line; a row refusal's line clears itself", () => {
+  const centerOpener: { open: ReturnType<typeof useNotificationCenter>["open"] } = { open: () => {} };
+  function GrabCenter() {
+    const { open } = useNotificationCenter();
+    React.useEffect(() => { centerOpener.open = open; }, [open]);
+    return null;
+  }
+
+  it("the Center: a refused 'Mark all read' renders exactly one line (the Center's), and status.markError stays clear", async () => {
+    fx.rows = [notif("n1", D1)];
+    await mount(React.createElement(NotificationCenterProvider, null, React.createElement(GrabCenter), React.createElement(Probe)));
+    fx.markFails = true;
+    await act(async () => { centerOpener.open("all"); });
+    await flush();
+    const panel = document.querySelector("[data-center-panel]") as HTMLElement;
+    await act(async () => { (panel.querySelector('button[title="Mark all notifications read"]') as HTMLButtonElement).click(); });
+    await flush();
+    const lines = [...panel.querySelectorAll('[role="alert"]')].filter((e) => /mark|read/i.test(e.textContent ?? ""));
+    expect(lines.map((e) => e.textContent)).toEqual([MARK_READ_FAILED]);
+    expect(panel.querySelector("[data-attention-mark-error]")).toBeNull();
+    expect(seen.status!.markError).toBeNull();
+  });
+
+  it("the bell: a refused 'Mark notifications read' says the bell's own line once; reopening the drawer starts clean", async () => {
+    fx.rows = [notif("n1", D1)];
+    await mount(React.createElement(NotificationCenterProvider, null, React.createElement(NotificationBell), React.createElement(Probe)));
+    fx.markFails = true;
+    const trigger = () => host.querySelector('button[aria-haspopup="dialog"]') as HTMLButtonElement;
+    act(() => trigger().click());
+    await flush();
+    const markAll = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Mark notifications read")) as HTMLButtonElement;
+    await act(async () => { markAll.click(); });
+    await flush();
+    const lines = host.querySelectorAll("[data-bell-mark-error]");
+    expect(lines.length).toBe(1);
+    expect(lines[0].textContent).toBe(BELL_MARK_ALL_REFUSED);
+    expect(seen.status!.markError).toBeNull();
+    act(() => trigger().click()); // close
+    act(() => trigger().click()); // open again
+    await flush();
+    expect(host.querySelector("[data-bell-mark-error]")).toBeNull();
+  });
+
+  it("a refused row mark is said, then clears itself after MARK_ERROR_TTL_MS — not left on every surface for an hour", async () => {
+    fx.rows = [notif("n1", D1)];
+    await mount(React.createElement(Probe));
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      fx.markFails = true;
+      await act(async () => { await seen.value!.markRead("n1"); });
+      expect(seen.status!.markError).toBe(MARK_READ_REFUSED);
+      act(() => { vi.advanceTimersByTime(MARK_ERROR_TTL_MS - 1000); });
+      expect(seen.status!.markError).toBe(MARK_READ_REFUSED);
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(seen.status!.markError).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

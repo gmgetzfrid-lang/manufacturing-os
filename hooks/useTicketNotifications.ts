@@ -23,7 +23,7 @@ import {
   KIND_META, NOTIFICATION_SECTIONS, isNotificationKind, type NotificationSection,
 } from '@/lib/notificationKinds';
 import {
-  attentionFor, buildAttentionRollup, documentIdsToPlace, resolvePlacements, EMPTY_ROLLUP, NO_PLACEMENTS,
+  attentionFor, buildAttentionRollup, documentIdsToPlace, resolvePlacements, sameRollup, EMPTY_ROLLUP, NO_PLACEMENTS,
   type AttentionMarkState, type AttentionRollup, type AttentionTarget, type Placements, type RollupRow,
 } from '@/lib/attentionRollup';
 
@@ -272,10 +272,13 @@ export interface AttentionStatus {
   /** EDGE-3 / ROUTE-7: past the ceiling the evaluated requests are the
    *  longest-waiting (read oldest-modified first), not the most recent. */
   ticketsOldestFirst: boolean;
-  /** The last "mark read" this feed sent was refused (lib/inAppNotifications.ts
-   *  markRead / markAllRead are checked writes — notifications Round G, N11,
-   *  the N3 → N4 hand-off): the surfaces say so instead of a silent success.
-   *  Cleared by the next mark that lands, and by a workspace switch. */
+  /** The last row "mark read" this feed sent was refused (lib/inAppNotifications.ts
+   *  markRead is a checked write — notifications Round G, N11, the N3 → N4
+   *  hand-off): a row's mark is fired and forgotten by its callers, so the
+   *  feed surfaces say it instead of a silent success. "Mark all read" is not
+   *  said here — it rethrows to its awaiting caller, which says it once in
+   *  its own place (fix pass: one refusal, one line). Cleared by the next
+   *  mark that lands, by a workspace switch, and after MARK_ERROR_TTL_MS. */
   markError: string | null;
 }
 
@@ -293,6 +296,11 @@ export interface AttentionFeedState {
 /** What a refused "mark read" says on the feed surfaces (N11). */
 export const MARK_READ_REFUSED = "Marking read did not go through — the item is still unread. Try again in a moment.";
 
+/** How long a refused row mark is said before the line clears itself (fix
+ *  pass): long enough to read, never left on every feed surface for an hour
+ *  after the event. The row itself stays listed while it is unread. */
+export const MARK_ERROR_TTL_MS = 12_000;
+
 const IDLE_STATUS: AttentionStatus = Object.freeze({
   stale: false,
   error: null,
@@ -309,6 +317,13 @@ const IDLE_STATUS: AttentionStatus = Object.freeze({
 
 /** The one feed of the tab (AttentionProvider). Null outside it. */
 export const AttentionContext = createContext<AttentionFeedState | null>(null);
+
+/** The badge trail's marks alone (AttentionProvider), so a page that reads
+ *  only the marks — the library explorer, /documents, /projects — re-renders
+ *  when a mark changes, not on every feed pass (fix pass). The provider
+ *  keeps the roll-up's identity while its content is unchanged (sameRollup).
+ *  Null outside the provider. */
+export const AttentionRollupContext = createContext<AttentionRollup | null>(null);
 
 type TicketQuery = PromiseLike<{ data: unknown; error: { code?: string; message?: string } | null; count?: number | null }> & {
   limit: (n: number) => TicketQuery;
@@ -947,7 +962,7 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
     [rawNotifs, hidden],
   );
 
-  const { items, counts, sectionCounts, rollup } = useMemo(() => {
+  const { items, counts, sectionCounts, rollup: rollupNext } = useMemo(() => {
     const out: AttentionItem[] = [];
     const ticketIds = new Set<string>();
     // N11 TRAIL: the rows each section badge counts, carried one level down
@@ -1070,11 +1085,29 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
     return { items: out, counts, sectionCounts, rollup };
   }, [tickets, notifs, rawNotifs, notifTotal, remainder, remainderRead, docLibrary, placements, uid, roles, policy, policyFault, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount, requesterRoles]);
 
+  // The roll-up's identity is kept while no mark changed (fix pass): every
+  // feed pass builds fresh rows and so a fresh roll-up, and the pages that
+  // read the marks (AttentionRollupContext) would otherwise re-render in full
+  // on every ticket change, notification event, focus and poll. A changed
+  // mark is adopted during this render (React's "adjust state while
+  // rendering"), so no consumer ever sees a stale roll-up.
+  const [rollup, setRollup] = useState<AttentionRollup>(rollupNext);
+  if (rollup !== rollupNext && !sameRollup(rollup, rollupNext)) setRollup(rollupNext);
+
+  // A refused row mark is said for a while, then the line clears itself.
+  useEffect(() => {
+    if (!markError) return;
+    const t = setTimeout(() => setMarkError(null), MARK_ERROR_TTL_MS);
+    return () => clearTimeout(t);
+  }, [markError]);
+
   // N11 (the N3 → N4 hand-off): markRead / markAllRead are checked writes
   // that throw on a refusal. "Mark all read" rethrows — every caller awaits
-  // it inside a try and says so (the center's line, /inbox's toast, the
-  // bell's line); a row's "mark read" is fired and forgotten by its callers
-  // (`void markRead(id)`), so here the refusal is caught and said through
+  // it inside a try and says so in its own place (the center's line, /inbox's
+  // toast, the bell's line) — so it leaves status.markError alone: one
+  // refusal, one line (fix pass; it used to say it twice in the center). A
+  // row's "mark read" is fired and forgotten by its callers (`void
+  // markRead(id)`), so here the refusal is caught and said through
   // status.markError — never an unhandled rejection, never a silent success.
   const markOne = useCallback(async (id: string) => {
     try {
@@ -1086,13 +1119,9 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
     }
   }, []);
   const markAll = useCallback(async () => {
-    try {
-      await markAllRead(activeOrgId);
-      setMarkError(null);
-    } catch (e) {
-      setMarkError(MARK_READ_REFUSED);
-      throw e;
-    }
+    await markAllRead(activeOrgId);
+    // Every row is read now: an earlier row's refusal is moot.
+    setMarkError(null);
   }, [activeOrgId]);
   const value = useMemo<TicketNotifications>(() => ({
     /** The unified feed every surface renders. */
@@ -1164,9 +1193,11 @@ export function useAttentionStatus(): AttentionStatus {
 /** The badge trail below the sidebar (N11 TRAIL — TRAIL-1, TRAIL-6 dw2):
  *  per-library, per-folder, per-document and per-project marks from the
  *  tab's one feed — no query and no channel of its own, however many rows
- *  read it. Empty (nothing marked) outside the provider. */
+ *  read it. It re-renders its reader only when a mark changes
+ *  (AttentionRollupContext), never on a feed pass that changed none. Empty
+ *  (nothing marked) outside the provider. */
 export function useAttentionRollup(): AttentionRollup {
-  return useContext(AttentionContext)?.rollup ?? EMPTY_ROLLUP;
+  return useContext(AttentionRollupContext) ?? EMPTY_ROLLUP;
 }
 
 /** TAX-10 dw1: the mark for one library, folder, document or project — a

@@ -26,16 +26,36 @@
 // (lib/docControlRegister.ts) is the recorded future path for per-document
 // compliance pills.
 //
-// UNKNOWN: when the roll-up could not place every row (a read failed), a
-// container with no known count shows a neutral "?" — never nothing, which
-// would read as "all clear" (GAP-202 acceptance 6). A count known while the
-// roll-up is incomplete is a lower bound and says so ("3+").
+// UNKNOWN: when the roll-up could not place every row (a read failed, too
+// many documents for one pass, rows below the tally), the page says so ONCE
+// — AttentionUnknownNote, one line above the cards or folders — never
+// nothing, which would read as "all clear" (GAP-202 acceptance 6), and never
+// a "?" on every library card and folder, which is wallpaper (GAP-202 "Do
+// not"; fix pass). A list surface draws a container's count or nothing
+// (lib/attentionRollup.ts listMarkFor); a count known while the roll-up is
+// incomplete is a lower bound and says so ("3+"). The "?" form below stays
+// for a single-target reader of useAttentionFor that has no page line.
 //
 // The pulse is `motion-safe:` only — prefers-reduced-motion keeps a still dot
 // (NEDGE-5's rule for every attention animation).
 
 import React from "react";
-import type { AttentionMarkState } from "@/lib/attentionRollup";
+import { rollupIncomplete, type AttentionMarkState, type AttentionRollup } from "@/lib/attentionRollup";
+
+/** The page's one line while the roll-up is incomplete (fix pass). */
+export const ATTENTION_UNKNOWN_LINE = "Some notifications could not be placed in a library or folder, so these counts may be short — open the bell to see them all.";
+
+/** Says the roll-up's unknown once for a page of library cards
+ *  (`libraries`) or folders (`folders`); renders nothing while the counts
+ *  are complete, so the page renders exactly as before. */
+export function AttentionUnknownNote({ rollup, level, className = "" }: { rollup: AttentionRollup; level: "libraries" | "folders"; className?: string }) {
+  if (!rollupIncomplete(rollup, level)) return null;
+  return (
+    <div role="status" data-attention-unknown-note className={`text-[11px] font-semibold text-[var(--color-text-muted)] ${className}`}>
+      {ATTENTION_UNKNOWN_LINE}
+    </div>
+  );
+}
 
 export interface AttentionDotProps {
   mark: AttentionMarkState;

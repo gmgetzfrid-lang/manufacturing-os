@@ -121,9 +121,9 @@ import {
 } from "@/lib/explorerSelection";
 import DocContextMenu, { type ContextMenuEntry } from "@/components/documents/DocContextMenu";
 import DocGridView from "@/components/documents/DocGridView";
-import AttentionDot from "@/components/documents/AttentionDot";
+import AttentionDot, { AttentionUnknownNote } from "@/components/documents/AttentionDot";
 import { useAttentionRollup } from "@/hooks/useTicketNotifications";
-import { attentionFor } from "@/lib/attentionRollup";
+import { attentionFor, listMarkFor } from "@/lib/attentionRollup";
 import {
   buildFolderPlan,
   collectDroppedFiles,
@@ -325,9 +325,12 @@ export default function LibraryExplorerPage() {
   // N11 TRAIL (TRAIL-1 dw2/dw3, TAX-10 dw2): the badge trail inside the
   // library — a count on each folder on the path to a document the Documents
   // badge counts, a dot on the document's row; nothing on the rest. Read from
-  // the tab's one feed: no query and no channel per folder or row.
+  // the tab's one feed: no query and no channel per folder or row. An
+  // incomplete roll-up is said once above the folders (AttentionUnknownNote),
+  // never as a "?" on every folder; the page re-renders when a mark changes,
+  // not on every feed pass (the roll-up keeps its identity).
   const attention = useAttentionRollup();
-  const folderAttention = useCallback((folderId: string) => attentionFor(attention, { folderId }), [attention]);
+  const folderAttention = useCallback((folderId: string) => listMarkFor(attention, { folderId }), [attention]);
   const docAttention = useCallback((documentId: string) => attentionFor(attention, { documentId }), [attention]);
   const folderAttentionPartial = attention.folders === "unknown";
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
@@ -4148,6 +4151,7 @@ export default function LibraryExplorerPage() {
                 </div>
               )}
 
+              <AttentionUnknownNote rollup={attention} level="folders" className="px-5 pt-3" />
               {/* FOLDERS GRID */}
               {filteredFolders.length > 0 && (
                 <div className="p-5 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
