@@ -317,11 +317,36 @@ describe("AUTHZ-7 — lib/holds.ts assertHoldCapability fails CLOSED (DEC-89 ite
     await expect(releaseHold({ holdId: "h1", releasedBy: "u1", releasedReason: "cleared" }))
       .rejects.toThrow(/^The hold was not released: your permission to release holds could not be checked/);
     expect(reachedUpdate()).toBe(false);
-    // and a healthy read re-dates as before
+    // and a healthy read decides on the default: since drafting-flow HAND-2
+    // (20261239) holds.release is Admin and DocCtrl, so the Viewer is refused
+    // with the permission sentence and a Doc Controller re-dates
     db.readError = {};
     db.tables.org_configurations = [];
+    await expect(updateHoldExpectedRelease("h1", null)).rejects.toThrow(/isn't allowed/);
+    expect(reachedUpdate()).toBe(false);
+    db.tables.org_members = [{ org_id: "o1", uid: "u1", role: "DocCtrl", roles: ["DocCtrl"], status: "active" }];
+    __resetCapabilityPolicyCache();
     await updateHoldExpectedRelease("h1", null).catch(() => undefined);
     expect(reachedUpdate()).toBe(true);
+  });
+  it("drafting-flow HAND-2 (DF-P11 fix pass): under the controller-tier default the hold's OPENER releases and re-dates their own hold; a non-controller cannot release someone else's", async () => {
+    db.tables.org_configurations = [];
+    db.tables.org_members = [{ org_id: "o1", uid: "sup", role: "Supervisor", roles: ["Supervisor"], status: "active" }];
+    db.user = { id: "sup" };
+    // someone else's hold (opened_by u0): refused with the permission sentence, nothing written
+    db.tables.document_holds = [openRow()];
+    await expect(releaseHold({ holdId: "h1", releasedBy: "sup", releasedReason: "field walked" }))
+      .rejects.toThrow(/isn't allowed to release holds placed by someone else \(you can release a hold you placed yourself\)/);
+    await expect(updateHoldExpectedRelease("h1", null)).rejects.toThrow(/isn't allowed/);
+    expect(reachedUpdate()).toBe(false);
+    // the Supervisor's own hold: released (and re-dated) — the gate admits the opener
+    db.tables.document_holds = [{ ...openRow(), opened_by: "sup" }];
+    __resetCapabilityPolicyCache();
+    await updateHoldExpectedRelease("h1", "2026-11-01T00:00:00Z");
+    expect(db.tables.document_holds[0].expected_release_at).toBe("2026-11-01T00:00:00Z");
+    const out = await releaseHold({ holdId: "h1", releasedBy: "sup", releasedReason: "field walked" });
+    expect(out.releasedReason).toBe("field walked");
+    expect(db.tables.document_holds[0].released_at).toBeTruthy();
   });
   it("source: the fail-open swallow is gone", () => {
     const h = src("lib/holds.ts");

@@ -16,7 +16,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/components/providers/ToastProvider";
 import {
-  listAcksForVersion, getMyPendingAck, requestAcks, acknowledge,
+  readAcksForVersion, readMyPendingAck, requestAcks, acknowledge,
   renudgeUnacked, type DistributionAck,
 } from "@/lib/distributionAcks";
 
@@ -29,6 +29,11 @@ interface DistributionAcksProps {
   currentVersionId: string | null;
   currentUserId: string;
   currentUserName?: string | null;
+  /** EVID-2 (DF-P11 fix pass): the signed-in person's email and active role,
+   *  written on the ACK_DISTRIBUTION_CONFIRMED audit row (user_email /
+   *  user_role), so the confirmation is not an anonymous-looking row. */
+  currentUserEmail?: string | null;
+  currentUserRole?: string | null;
   isController: boolean;
 }
 
@@ -36,7 +41,7 @@ interface Member { uid: string; email: string | null; role: string | null }
 
 export default function DistributionAcks({
   documentId, orgId, libraryId, docLabel, currentRev, currentVersionId,
-  currentUserId, currentUserName, isController,
+  currentUserId, currentUserName, currentUserEmail, currentUserRole, isController,
 }: DistributionAcksProps) {
   const [acks, setAcks] = useState<DistributionAck[]>([]);
   const [myPending, setMyPending] = useState<DistributionAck | null>(null);
@@ -47,22 +52,32 @@ export default function DistributionAcks({
   const [busy, setBusy] = useState(false);
   const [acking, setAcking] = useState(false);
   const [reminded, setReminded] = useState(false);
+  // drafting-flow EVID-7 (DF-P11): a record that could not be read is never
+  // drawn as "none requested" — "unavailable" (not in this database) and
+  // "error" (the read failed) each say so.
+  const [readIssue, setReadIssue] = useState<{ kind: "unavailable" | "error"; message: string } | null>(null);
   const { showToast } = useToast();
 
   const load = useCallback(async () => {
     if (!currentVersionId) return;
     const [rows, mine] = await Promise.all([
-      listAcksForVersion(currentVersionId),
-      getMyPendingAck(currentVersionId, currentUserId),
+      readAcksForVersion(currentVersionId),
+      readMyPendingAck(currentVersionId, currentUserId),
     ]);
-    setAcks(rows);
-    setMyPending(mine);
+    const issue = rows.status === "unavailable" ? { kind: "unavailable" as const, message: rows.reason }
+      : rows.status === "error" ? { kind: "error" as const, message: rows.message }
+      : mine.status === "unavailable" ? { kind: "unavailable" as const, message: mine.reason }
+      : mine.status === "error" ? { kind: "error" as const, message: mine.message }
+      : null;
+    setReadIssue(issue);
+    setAcks(rows.status === "ok" ? rows.value : []);
+    setMyPending(mine.status === "ok" ? mine.value : null);
   }, [currentVersionId, currentUserId]);
 
   useEffect(() => {
     let alive = true;
     void (async () => {
-      setAcks([]); setMyPending(null); setOpen(false); setShowPicker(false); setReminded(false);
+      setAcks([]); setMyPending(null); setOpen(false); setShowPicker(false); setReminded(false); setReadIssue(null);
       if (alive) await load();
     })();
     return () => { alive = false; };
@@ -116,7 +131,11 @@ export default function DistributionAcks({
     if (!myPending) return;
     setAcking(true);
     try {
-      await acknowledge(myPending.id, currentUserId);
+      const out = await acknowledge(myPending.id, currentUserId, { email: currentUserEmail ?? null, role: currentUserRole ?? null });
+      // EVID-2 (DF-P11): the confirmation stands; a refused audit row is said.
+      if (!out.auditRecorded) {
+        showToast({ type: "warning", title: "Confirmed — audit record not written", message: `Your confirmation is recorded, but its audit-log entry could not be written (${out.auditError ?? "refused"}). Tell Document Control.` });
+      }
     } catch (e) {
       // acknowledge() throws on zero rows (already stamped in another tab, or
       // not this user's row). Say why the click didn't record — the reload in
@@ -145,6 +164,27 @@ export default function DistributionAcks({
 
   const confirmed = acks.filter((a) => a.acknowledgedAt).length;
   const shortName = (a: DistributionAck) => a.recipientEmail?.split("@")[0] ?? "member";
+
+  // EVID-7: a record that could not be read is said, to everyone — never
+  // drawn as an empty roster, and never hidden behind "nothing to show".
+  if (currentVersionId && readIssue) {
+    return (
+      <div data-ack-read={readIssue.kind} className={`rounded-xl border px-3.5 py-2.5 text-[11px] ${readIssue.kind === "error" ? "border-rose-300 bg-rose-50 text-rose-800" : "border-amber-300 bg-amber-50 text-amber-800"}`}>
+        <div className="flex items-center gap-2">
+          <ClipboardCheck className="w-4 h-4 shrink-0" />
+          <span className="font-bold">
+            {readIssue.kind === "error" ? "Couldn't load the distribution record" : "Distribution confirmations are unavailable"}
+          </span>
+          <button onClick={() => void load()} className="ml-auto text-[10px] font-bold underline">Try again</button>
+        </div>
+        <div className="mt-1">
+          {readIssue.kind === "error"
+            ? `${readIssue.message}. Who was asked to confirm Rev ${currentRev ?? "—"}, and who has, is not known right now — this is not "none requested".`
+            : readIssue.message}
+        </div>
+      </div>
+    );
+  }
 
   // Nothing to show: no acks exist and the viewer can't create any.
   if (!currentVersionId || (acks.length === 0 && !myPending && !isController)) return null;

@@ -86,9 +86,13 @@ const HOLD = {
   heldRevLabel: "B", heldVersionId: "v1",
 };
 const NARROWED = { caps: { "holds.open": ["DocCtrl"], "holds.release": ["DocCtrl"], "checkout.force_release": ["Admin"] } };
-const HEALTHY = { policy: {}, version: null };
+// An org that stored holds.release '*' (the shipped default until drafting-flow
+// HAND-2 / 20261239 narrowed it to Admin and DocCtrl) — the read-health cases
+// below need a policy under which the Drafter is offered every control.
+const WIDE = { caps: { "holds.release": ["*"] } };
+const HEALTHY = { policy: WIDE, version: null };
 const UNREADABLE = { policy: {}, version: null, unreadable: "connection refused" };
-const STALE = { policy: {}, version: "v1", stale: true, staleError: "timeout" };
+const STALE = { policy: WIDE, version: "v1", stale: true, staleError: "timeout" };
 
 let host: HTMLDivElement;
 let root: Root;
@@ -157,7 +161,7 @@ describe("AUTHZ-15 — HoldStrip (rendered)", () => {
     expect(byTestId("hold-policy-fault")).toBeNull();
     expect(button(/^\s*Release\s*$/)).toBeDefined();
   });
-  it("REGRESSION: a healthy read draws Place hold / Release / Re-date under the defaults, and a narrowed policy hides them — no notice either way", async () => {
+  it("REGRESSION: a healthy read draws Place hold / Release / Re-date under a wide policy, and a narrowed policy hides them — no notice either way", async () => {
     s.entry = HEALTHY;
     await mount(strip());
     expect(byTestId("hold-policy-fault")).toBeNull();
@@ -172,7 +176,7 @@ describe("AUTHZ-15 — HoldStrip (rendered)", () => {
     expect(button(/^\s*Release\s*$/)).toBeUndefined();
     expect(host.textContent).not.toContain("Place hold");
   });
-  it("stale (the last good policy, refresh failed) is drawn as is with no notice: the defaults' controls appear; a stale narrowed copy hides them", async () => {
+  it("stale (the last good policy, refresh failed) is drawn as is with no notice: the wide policy's controls appear; a stale narrowed copy hides them", async () => {
     s.entry = STALE;
     await mount(strip());
     expect(byTestId("hold-policy-fault")).toBeNull();
@@ -194,6 +198,20 @@ describe("AUTHZ-15 — HoldStrip (rendered)", () => {
     expect(byTestId("hold-policy-fault")).toBeNull();
     expect(button(/^\s*Release\s*$/)).toBeDefined();
     expect(host.textContent).toContain("Place hold");
+  });
+  it("HAND-2: under the shipped defaults a Drafter may place a hold but is offered no Release or Re-date; a DocCtrl is", async () => {
+    s.entry = { policy: {}, version: null };
+    await mount(strip());
+    expect(byTestId("hold-policy-fault")).toBeNull();
+    expect(host.textContent).toContain("Place hold");
+    expect(button(/^\s*Release\s*$/)).toBeUndefined();
+    expect(button(/Re-date/)).toBeUndefined();
+    act(() => root.unmount());
+    root = createRoot(host);
+    s.role = "DocCtrl"; s.roles = ["DocCtrl"];
+    await mount(strip());
+    expect(button(/^\s*Release\s*$/)).toBeDefined();
+    expect(button(/Re-date/)).toBeDefined();
   });
   it("a read-only strip (canEdit false) offers nothing, so it explains nothing", async () => {
     s.entry = UNREADABLE;

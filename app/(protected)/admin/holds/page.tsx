@@ -71,6 +71,11 @@ export default function HoldsPage() {
     return () => { alive = false; };
   }, [activeOrgId, policyTry]);
   const canRelease = policy ? holdControlsFor(policy, activeRole, roles, uid).canRelease : false;
+  // drafting-flow HAND-2 (DF-P11 fix pass): a hold's own opener may release /
+  // re-date it while holds.release names the opener token (the shipped
+  // default; the document_holds UPDATE policy's own-hold leg, 20261239).
+  const mayReleaseRow = (h: HoldRecord) =>
+    canRelease || (!!policy && holdControlsFor(policy, activeRole, roles, uid, h).canRelease);
 
   const [holds, setHolds] = useState<HoldRecord[]>([]);
   const [docs, setDocs] = useState<Map<string, DocMeta>>(new Map());
@@ -313,7 +318,7 @@ export default function HoldsPage() {
                       </div>
                     )}
                   </div>
-                  {canRelease && releasingId !== h.id && redatingId !== h.id && (
+                  {mayReleaseRow(h) && releasingId !== h.id && redatingId !== h.id && (
                     <button
                       onClick={() => { setRedatingId(h.id!); setRedateDraft(expectedReleaseDate(h.expectedReleaseAt) ?? ""); setReleasingId(null); }}
                       disabled={busy}
@@ -323,7 +328,7 @@ export default function HoldsPage() {
                       <CalendarClock className="w-3 h-3" /> Re-date
                     </button>
                   )}
-                  {canRelease && releasingId !== h.id && redatingId !== h.id && (
+                  {mayReleaseRow(h) && releasingId !== h.id && redatingId !== h.id && (
                     <button
                       onClick={() => { setReleasingId(h.id!); setReleaseDraft(""); }}
                       className="shrink-0 text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded inline-flex items-center gap-1 transition-colors"

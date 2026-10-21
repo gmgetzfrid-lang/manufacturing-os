@@ -328,9 +328,11 @@ describe("census — every presigned GET issuer under app/api and lib signs a di
       expect(src, f).toMatch(/new GetObjectCommand\(/);
     }
   });
-  it.fails("download-url and resolve sign through signStorageGet, like the export (GAP-401 owed item 2 hand-off — expected to fail until it lands)", () => {
-    // a missing file returns here: the case passes, and `.fails` turns that red
-    if (!HANDED_OVER.every((f) => existsSync(join(root, f)))) return;
+  // Landed 2026-10-20 (drafting-flow Round G, DF-P11 — projects-tab GAP-401
+  // remainder (b)): both issuers call signStorageGet, so `.fails` is dropped
+  // and this is a plain case that keeps them there.
+  it("download-url and resolve sign through signStorageGet, like the export (GAP-401 owed item 2 hand-off — landed by drafting-flow DF-P11)", () => {
+    for (const f of HANDED_OVER) expect(existsSync(join(root, f)), f).toBe(true);
     expect(read("lib/dataExport.ts")).toMatch(/signStorageGet\(/);
     for (const f of HANDED_OVER) {
       expect(read(f), f).toMatch(/signStorageGet\(/);

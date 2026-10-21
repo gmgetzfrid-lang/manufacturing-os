@@ -21,6 +21,7 @@ import { heldRoles } from "@/lib/roleHeld";
 import { primaryRole } from "@/lib/roleCapabilities";
 import { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES, REDACT_COLUMNS, redactedColumnsFor } from "@/lib/exportTables";
 import { checkedWrite } from "@/lib/checkedWrite";
+import { STORAGE_UNATTRIBUTABLE_CODE } from "@/lib/storageKey";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Role } from "@/types/schema";
 
@@ -2626,6 +2627,41 @@ export function nodeImageClearVerdict(reportedMissing: boolean, addedByRestore: 
  *  not storage, so it is no evidence. Pure. */
 export function storageAnsweredInRun(counters: { uploaded: number; skipped: number }): boolean {
   return (counters.uploaded ?? 0) + (counters.skipped ?? 0) > 0;
+}
+
+/** The restore panel's own reason for such a file: it is NOT uploaded
+ *  (writing an unprefixed key could overwrite another workspace's file of the
+ *  same name), and it is not a failure a re-run would cure — nothing in the
+ *  restored workspace points at it. */
+export const RESTORE_UNATTRIBUTED_FILE_REASON = "legacy file with no workspace prefix and no record naming it — not restored";
+
+export type RestoreFileProbe =
+  | { kind: "skip" }
+  | { kind: "offline" }
+  | { kind: "upload"; reportedMissing: boolean }
+  | { kind: "unattributed" }
+  | { kind: "refused"; reason: string };
+
+/** What the restore does with one backup file, from the existence probe's
+ *  answer (`GET /api/storage/resolve?path=…&exists=1`). Pure.
+ *   - 200 `archived:false` → already here (skip); 200 with an archive id →
+ *     left to its space archive; 200 otherwise → upload;
+ *   - 503 → "not confirmed", uploaded as before (ORG-20);
+ *   - 403 `reason: "unattributable"` for a key with no `orgs/` prefix → its
+ *     own outcome, never uploaded and never counted as a failure;
+ *   - any other refusal → reported and NOT uploaded (DF-P11 fix pass 2). */
+export function classifyRestoreFileProbe(
+  key: string,
+  status: number,
+  body: { archived?: boolean; archiveId?: string | null; missing?: boolean; error?: string; reason?: string } | null,
+): RestoreFileProbe {
+  const ok = status >= 200 && status < 300;
+  if (ok && body?.archived === false) return { kind: "skip" };
+  if (ok && body?.archived === true && body?.archiveId) return { kind: "offline" };
+  if (ok) return { kind: "upload", reportedMissing: body?.missing === true };
+  if (status === 503) return { kind: "upload", reportedMissing: false };
+  if (status === 403 && body?.reason === STORAGE_UNATTRIBUTABLE_CODE && !/^orgs\//.test(key)) return { kind: "unattributed" };
+  return { kind: "refused", reason: `Could not check whether this file is already here (${body?.error || `HTTP ${status}`}) — not uploaded` };
 }
 
 /** Fix pass 2: the library and folder (collection) ids a backup carries. A

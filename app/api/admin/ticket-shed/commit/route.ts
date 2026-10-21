@@ -10,12 +10,31 @@
 // Safe by construction: only tickets whose full content was provably bundled into
 // the produced archive (archive_id set in step 1) are freed here, so nothing is
 // removed that isn't already in the admin's saved copy.
+//
+// drafting-flow DF-P11:
+//   SM-4 / SM-9 — a captured ticket that LEFT its terminal status since produce
+//   (a reopen) or was WRITTEN since (a comment, a file, a transition — every
+//   writer stamps last_modified) is never stamped: its archive copy is stale.
+//   The commit refuses (409, naming each request), returns those tickets to
+//   the live list (archive_id cleared, so the next archive captures them as
+//   they are) and frees nothing; a re-run frees the rest. The stamp itself is a
+//   compare-and-set on the status and the last_modified the commit read.
+//   AUTHZ-5 — a key is deleted only when it is one of this workspace's request
+//   files (lib/ticketShed.ts isShedTicketKey: orgs/<org>/tickets/… or an intake
+//   redline), no live revision shares it (RET-8) and no OTHER live ticket
+//   names it. Another of this workspace's files the ticket names (a library
+//   `Source` reference) is kept and counted as a reference
+//   (referencedKeysKept); a key outside the workspace is refused and counted
+//   (rejectedKeys). Neither is ever deleted.
 
 import { NextRequest, NextResponse } from "next/server";
 import { DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { authorizeAdminSurface } from "@/lib/adminGate";
 import { r2, R2_BUCKET } from "@/lib/r2";
-import type { TicketAttachmentLite } from "@/lib/ticketShed";
+import {
+  changedSinceCapture, isShedTicketKey, keysOnOtherLiveTickets, TERMINAL_TICKET_STATUSES,
+  type TicketAttachmentLite,
+} from "@/lib/ticketShed";
 import { isOrgOwnedKey, sharedLiveKeys } from "@/lib/shedKeyGuard";
 import { persistReclaimShortfall } from "@/lib/archiveCatalog";
 
@@ -27,6 +46,9 @@ export const runtime = "nodejs";
 
 interface TombstoneSource {
   id: string;
+  ticket_id?: string | null;
+  status?: string | null;
+  last_modified?: string | null;
   attachments: TicketAttachmentLite[] | null;
   comments: unknown[] | null;
   history: unknown[] | null;
@@ -113,7 +135,7 @@ export async function POST(req: NextRequest) {
   // recovery path for a stuck produce is /api/admin/archive-cancel, not commit.
   const { data: cat } = await sb
     .from("archives")
-    .select("note")
+    .select("note, created_at")
     .eq("org_id", orgId).eq("archive_id", archiveId)
     .maybeSingle();
   if (!cat) {
@@ -128,7 +150,7 @@ export async function POST(req: NextRequest) {
   // what makes commit self-healing after a crash between stamping and freeing.
   const { data: rows } = await sb
     .from("tickets")
-    .select("id, attachments, comments, history, metadata, archived_at")
+    .select("id, ticket_id, status, last_modified, attachments, comments, history, metadata, archived_at")
     .eq("org_id", orgId)
     .eq("archive_id", archiveId);
   const tickets = (rows as Array<TombstoneSource> | null) ?? [];
@@ -137,18 +159,92 @@ export async function POST(req: NextRequest) {
   }
   const errors: string[] = [];
 
-  // RET-6: attachments[].url is member-writable, so a key is trusted for
-  // deletion only when it is a safe key under THIS org's prefix — the rule
-  // ticket-shed/restore already applies on its write path. Anything else is
-  // counted and left in storage.
+  // ALOG-8 (admin-and-org P13): CHECKED — the TICKET_ARCHIVE_RECLAIM row is
+  // written on every exit after step 1 has stamped stubs (their comments and
+  // history are gone from the live rows), so a refused or thrown insert is
+  // carried in the answer (`auditError`) and logged, never a silent success
+  // (the purge's rule). Fix pass: the 503 below wrote no row at all.
+  // DF-P11 fix pass 2: defined before the changed-since-capture refusal,
+  // which writes one too (tickets leave the archive's catalogue there).
+  const writeReclaimAudit = async (details: Record<string, unknown>): Promise<string | null> => {
+    let auditError: string | null = null;
+    try {
+      const { error: auditErr } = await sb.from("audit_logs").insert({
+        action: "TICKET_ARCHIVE_RECLAIM",
+        resource_id: orgId, resource_type: "org", org_id: orgId,
+        user_id: actor.userId, user_email: actor.email,
+        details: { archiveId, ...details },
+      });
+      if (auditErr) auditError = auditErr.message || "audit insert refused";
+    } catch (e) {
+      auditError = (e as Error).message || String(e);
+    }
+    if (auditError) console.error("[admin/ticket-shed/commit] the TICKET_ARCHIVE_RECLAIM audit row was not written", auditError);
+    return auditError;
+  };
+
+  // SM-4 / SM-9 (DF-P11): a captured ticket that left its terminal status, or
+  // was written, after the archive was produced is never freed on that stale
+  // copy. Refuse, name them, return them to the live list, free nothing.
+  // DF-P11 fix pass 2 (ALOG-8): a ticket counts as returned only when the
+  // un-link matched its row, and the refusal writes a TICKET_ARCHIVE_RECLAIM
+  // row (partial, stoppedAt changed_since_capture, the released and the
+  // unreleased ids) — tickets leaving the archive's catalogue are recorded.
+  const producedAt = (cat as { created_at?: string | null }).created_at ?? null;
+  const changed = tickets
+    .filter((t) => !t.archived_at)
+    .map((t) => ({ t, reason: changedSinceCapture(t, producedAt) }))
+    .filter((c): c is { t: TombstoneSource; reason: "left_terminal" | "changed_since_capture" } => c.reason !== null);
+  if (changed.length > 0) {
+    const released: string[] = [];
+    const unreleased: string[] = [];
+    for (const { t } of changed) {
+      const { data: back, error } = await sb
+        .from("tickets")
+        .update({ archive_id: null })
+        .eq("id", t.id).eq("org_id", orgId).eq("archive_id", archiveId).is("archived_at", null)
+        .select("id");
+      const matched = !error && Array.isArray(back) && back.length > 0;
+      (matched ? released : unreleased).push(t.ticket_id || t.id);
+    }
+    const auditError = await writeReclaimAudit({
+      partial: true, stoppedAt: "changed_since_capture",
+      reclaimedTickets: 0, keysDeleted: 0,
+      released, unreleased,
+      changed: changed.map(({ t, reason }) => ({ ticketId: t.ticket_id || t.id, reason })),
+    });
+    const named = changed.map(({ t, reason }) =>
+      `${t.ticket_id || t.id} (${reason === "left_terminal" ? `now ${t.status || "open"}` : "changed since the archive was made"})`);
+    return NextResponse.json({
+      error:
+        `${changed.length} request(s) changed after ${archiveId} was produced: ${named.join(", ")}. ` +
+        "Nothing was reclaimed. Their copy in the saved archive is out of date, so they were returned to the live list — " +
+        "the next archive run captures them as they are now. Reclaim again to free the rest." +
+        (unreleased.length ? ` ${unreleased.length} could not be returned (${unreleased.join(", ")}); they stay linked and are skipped again next time.` : ""),
+      code: "changed_since_capture",
+      changed: changed.map(({ t, reason }) => ({ id: t.id, ticketId: t.ticket_id ?? null, status: t.status ?? null, reason })),
+      released: released.length,
+      ...(auditError ? { auditError: `${released.length} request(s) were returned to the live list but the TICKET_ARCHIVE_RECLAIM audit row was not written: ${auditError}` } : {}),
+    }, { status: 409 });
+  }
+
+  // RET-6 / AUTHZ-5 (DF-P11): attachments[].url is member-writable, so a key
+  // is trusted for deletion only when it is one of THIS workspace's request
+  // files (orgs/<org>/tickets/… or an intake redline — isShedTicketKey), a
+  // narrowing of the org-prefix rule ticket-shed/restore applies on its write
+  // path. Anything else is counted and left in storage: a same-workspace
+  // non-request key (a library Source reference — legitimate) as a kept
+  // reference, a key outside the workspace as refused.
   let rejectedKeys = 0;
+  let referencedKeysKept = 0;
   const keysFor = (t: TombstoneSource): string[] =>
     (Array.isArray(t.attachments) ? t.attachments : [])
       .map((a) => (a?.url || "").toString())
       .filter((k) => {
         if (!k) return false;
-        if (isOrgOwnedKey(k, orgId)) return true;
-        rejectedKeys++;
+        if (isShedTicketKey(k, orgId)) return true;
+        if (isOrgOwnedKey(k, orgId)) referencedKeysKept++;
+        else rejectedKeys++;
         return false;
       });
 
@@ -169,7 +265,10 @@ export async function POST(req: NextRequest) {
     }
     const metadata = (t.metadata && typeof t.metadata === "object" && !Array.isArray(t.metadata)) ? t.metadata : {};
     const tombstone = buildTombstone(t);
-    const { error, count } = await sb
+    // SM-4 / SM-9 (DF-P11): compare-and-set on what this commit read — still
+    // terminal, last_modified unchanged (its own leg when null) — so a reopen
+    // or a comment landing between the read and here leaves the row untouched.
+    const stampQ = sb
       .from("tickets")
       .update(
         { comments: [], history: [], metadata: { ...metadata, archive_summary: tombstone }, archived_at: now, archive_id: archiveId },
@@ -177,7 +276,9 @@ export async function POST(req: NextRequest) {
       )
       .eq("id", t.id)
       .eq("org_id", orgId)
-      .is("archived_at", null);
+      .is("archived_at", null)
+      .in("status", [...TERMINAL_TICKET_STATUSES]);
+    const { error, count } = await (t.last_modified ? stampQ.eq("last_modified", t.last_modified) : stampQ.is("last_modified", null));
     if (error) { errors.push(`stamp ${t.id}: ${error.message}`); continue; }
     if ((count ?? 0) === 0) { errors.push(`stamp ${t.id}: raced — left untouched`); continue; }
     newlyStamped++;
@@ -199,44 +300,28 @@ export async function POST(req: NextRequest) {
   const freeIds = idsToFree.filter((id) => stillArchived.has(id));
   const candidateKeys = freeIds.flatMap((id) => keysByTicket.get(id) ?? []);
 
-  // ALOG-8 (admin-and-org P13): CHECKED — the TICKET_ARCHIVE_RECLAIM row is
-  // written on every exit after step 1 has stamped stubs (their comments and
-  // history are gone from the live rows), so a refused or thrown insert is
-  // carried in the answer (`auditError`) and logged, never a silent success
-  // (the purge's rule). Fix pass: the 503 below wrote no row at all.
-  const writeReclaimAudit = async (details: Record<string, unknown>): Promise<string | null> => {
-    let auditError: string | null = null;
-    try {
-      const { error: auditErr } = await sb.from("audit_logs").insert({
-        action: "TICKET_ARCHIVE_RECLAIM",
-        resource_id: orgId, resource_type: "org", org_id: orgId,
-        user_id: actor.userId, user_email: actor.email,
-        details: { archiveId, ...details },
-      });
-      if (auditErr) auditError = auditErr.message || "audit insert refused";
-    } catch (e) {
-      auditError = (e as Error).message || String(e);
-    }
-    if (auditError) console.error("[admin/ticket-shed/commit] the TICKET_ARCHIVE_RECLAIM audit row was not written", auditError);
-    return auditError;
-  };
-
   // RET-8 (same class): a substituted attachment key that names a LIVE
   // controlled revision's object must never be freed here either. Fail
   // CLOSED on the read — the stubs are already stamped, so a re-run finishes
   // the job once the read succeeds.
   let sharedSkipped = 0;
+  let sharedTicketSkipped = 0;
   let keysToDelete: string[];
   try {
     const shared = await sharedLiveKeys(sb, orgId, candidateKeys, new Set<string>());
-    keysToDelete = candidateKeys.filter((k) => !shared.has(k));
-    sharedSkipped = candidateKeys.length - keysToDelete.length;
+    const afterRevisions = candidateKeys.filter((k) => !shared.has(k));
+    sharedSkipped = candidateKeys.length - afterRevisions.length;
+    // AUTHZ-5 done-when 2 (DF-P11): a key another LIVE ticket still names is
+    // never deleted either. Fails closed like the revision read.
+    const onLiveTickets = await keysOnOtherLiveTickets(sb, orgId, afterRevisions, new Set(freeIds));
+    keysToDelete = afterRevisions.filter((k) => !onLiveTickets.has(k));
+    sharedTicketSkipped = afterRevisions.length - keysToDelete.length;
   } catch (e) {
     const message = (e as Error).message;
     // The stubs stamped so far stay stamped: say so in the audit trail, partially.
     const auditError = await writeReclaimAudit({
       partial: true, stoppedAt: "shared-key read (nothing deleted from storage or ticket_comments)", stopError: message.slice(0, 500),
-      reclaimedTickets: newlyStamped, reprocessed: idsToFree.length - newlyStamped, keysDeleted: 0, rejectedKeys, errors: errors.slice(0, 8),
+      reclaimedTickets: newlyStamped, reprocessed: idsToFree.length - newlyStamped, keysDeleted: 0, rejectedKeys, referencedKeysKept, errors: errors.slice(0, 8),
     });
     return NextResponse.json({
       error: `${message} Stubs are stamped; re-run Reclaim to finish freeing.`, processed: idsToFree.length, reclaimedTickets: newlyStamped,
@@ -263,10 +348,10 @@ export async function POST(req: NextRequest) {
   if (!persisted.ok) errors.push(persisted.error);
   // ALOG-8 (admin-and-org P13): the reclaim has happened either way (see
   // writeReclaimAudit above).
-  const auditError = await writeReclaimAudit({ reclaimedTickets, reprocessed: idsToFree.length - newlyStamped, keysDeleted, keysFailed, shortfallPersisted: persisted.ok, rejectedKeys, sharedSkipped, errors: errors.slice(0, 8) });
+  const auditError = await writeReclaimAudit({ reclaimedTickets, reprocessed: idsToFree.length - newlyStamped, keysDeleted, keysFailed, shortfallPersisted: persisted.ok, rejectedKeys, referencedKeysKept, sharedSkipped, sharedTicketSkipped, errors: errors.slice(0, 8) });
 
   return NextResponse.json({
-    ok: true, archiveId, reclaimedTickets, processed: idsToFree.length, keysDeleted, keysFailed, shortfallPersisted: persisted.ok, rejectedKeys, sharedSkipped, errors,
+    ok: true, archiveId, reclaimedTickets, processed: idsToFree.length, keysDeleted, keysFailed, shortfallPersisted: persisted.ok, rejectedKeys, referencedKeysKept, sharedSkipped, sharedTicketSkipped, errors,
     ...(auditError ? { auditError: `the reclaim moved ${reclaimedTickets} ticket(s) to the archive but its TICKET_ARCHIVE_RECLAIM audit row was not written: ${auditError}` } : {}),
   });
 }

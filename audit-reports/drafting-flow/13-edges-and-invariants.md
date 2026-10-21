@@ -408,6 +408,16 @@ app/(protected)/admin/restore/page.tsx:202
 - [ ] ticket_number_counters is advanced to the maximum of the live and restored sequence for every (org_id, year) touched by a restore
 - [ ] A test restores a fixture whose ticket_id already exists in the target org and asserts no number is ever issued twice
 
+**Partial (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC — verified against admin-and-org `BKP-5` / `BKP-12` (RESOLVED), which own the restore.
+
+**Done-when.**
+- ✗ (in part) A colliding `ticket_id` is refused per row, reported, and the rest of the table lands — on a database carrying `supabase/schema.sql:482`'s `UNIQUE(org_id, ticket_id)`: 23505 is a row-level state (`lib/dataRestore.ts:1277`, `:1319`). No migration in the repository creates or drops that key, and BKP-5's record states the live key is absent ("`tickets.ticket_id` is not unique"); on such a database a restored ticket lands beside a live one under the same human number — neither re-minted nor refused.
+- ✓ The chunk loop retries row by row and reports which rows failed (BKP-12).
+- ✓ `ticket_number_counters` is raised to the backup's value when higher, guarded so it never lowers, before `tickets` restore (`lib/dataRestore.ts:939`, `:1243`, `:1252`) — so no number is issued AGAIN after a restore.
+- ✓ (for the counter) `lib/__tests__/restoreApplyRoute.test.ts:1447` "five requests filed here, then 150 restored — the next number is 151, not 6".
+
+**Scope / residual.** Done-when 1's "re-mint or fail loudly" where the live key is absent → admin-and-org (the restore's owner) — package admin-and-org P16 RESTORE TICKET NUMBER KEY (assigned by the integrator at the DF-P11 merge, 2026-10-21, DEC-31): confirm the live `tickets (org_id, ticket_id)` key; if absent, add it (a DEC-30 migration with a duplicate inventory) or refuse a colliding number in `applyRestoreChunk`.
+
 ---
 
 <a id="edge-6"></a>
@@ -722,7 +732,7 @@ export function publicOrigin(): string {
 ## EDGE-10 · A cancelled backup still writes 'Every file verified by SHA-256' into backup-report.json, producing a partial archive that describes itself as complete
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/clientBackup.ts:128-142`, `lib/clientBackup.ts:150`, `lib/clientBackup.ts:184-188`, `lib/clientBackup.ts:200-205`
 - **Re-verified:** hardening pass — **SURVIVES**. The report's note is chosen on `progress.errors.length > 0` alone (`clientBackup.ts:135-137`); a **cancellation** exits via `if (opts.isCancelled?.()) break;` (`:150`) without adding an error, so a partial archive still declares *"Every file verified by SHA-256."*
@@ -764,6 +774,15 @@ lib/clientBackup.ts:184-187 (finalize runs regardless; phase is set after)
 - [ ] A cancelled or failed run writes an explicit incomplete marker into backup-report.json (filesTotal vs filesPacked, plus a status) and never emits the 'Every file verified' note
 - [ ] Files not attempted because of a cancel are enumerated or counted in the report, distinct from fetch errors
 - [ ] The part filename or manifest makes an incomplete archive identifiable without opening the report
+
+**Resolution (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC — record-only close, verified against the merged code (owner admin-and-org `BKP-10`, RESOLVED).
+
+**Done-when.**
+- ✓ A cancelled run's `backup-report.json` carries `cancelled`, `filesTotal` and the files never attempted, and "Every file verified" appears only when nothing was cancelled, nothing failed and every file was packed (`lib/clientBackup.ts:207-211`).
+- ✓ Files not attempted are listed (`notAttempted`), apart from fetch errors.
+- ✓ The last part of a cancelled run is named `…-partN-INCOMPLETE.zip` (`lib/clientBackup.ts:179`, `:209`).
+
+**Scope / residual.** BKP-10's own residual (the data-export page's and the backup indicator's completion text) stays with its owners.
 
 ---
 
@@ -1014,6 +1033,13 @@ export async function notify(input: NotificationInput): Promise<void> {
 **Done when.**
 
 - [ ] Either emit()'s in-app leg gates on inapp_enabled (read server-side) and the settings page exposes it, or both columns are dropped and the dispatcher docblock stops claiming per-channel preferences
+
+**Partial (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC — verified; stays OPEN by pointer (notifications `TAX-9` is OPEN; `OS-10` RESOLVED).
+
+**Done-when.**
+- ✗ (in part) `push_enabled` is now read by the push channel (`lib/push/sendPush.ts:389-397`, fail closed). `inapp_enabled` is marked deprecated and kept (`20261148` §2), read by nothing and not written by the settings page (`lib/notificationPrefs.ts:49-51`) — neither honoured nor dropped — and `lib/notify/dispatch.ts:6` still says "per-channel preferences".
+
+**Scope / residual.** → notifications N13 LAYERS SWEEP, with TAX-9 (assigned by the integrator at the DF-P11 merge, 2026-10-21, DEC-31): drop `inapp_enabled` (or honour it) and correct the docblock. Not built here (`DEC-31`).
 
 ---
 

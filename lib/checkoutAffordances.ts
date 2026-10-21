@@ -18,7 +18,7 @@
 // it in; a null policy means "not loaded yet", which evaluates the shipped
 // defaults — byte-identical to the old literal pairs for an unconfigured org.
 
-import { policyAllows, type CapabilityPolicy, type LoadedCapabilityPolicy } from "@/lib/capabilityPolicy";
+import { policyAllows, holdOpenerTokenOn, type CapabilityPolicy, type LoadedCapabilityPolicy } from "@/lib/capabilityPolicy";
 
 /** May this member force-release another user's checkout? The database
  *  (enforce_checkout_release_guard, trg_checkout_session_guard, the
@@ -39,20 +39,29 @@ export interface HoldAffordances {
   canRelease: boolean;
 }
 
-/** The two hold verbs, from the policy. Ownership is deliberately NOT an
- *  input: the document_holds policies and lib/holds.ts assertHoldCapability
- *  gate the write on the capability alone, so an owner outside the policy
- *  would be shown a control the write then refuses. */
+/** The two hold verbs, from the policy. DOCUMENT ownership is deliberately
+ *  NOT an input: the document_holds policies and lib/holds.ts
+ *  assertHoldCapability gate the write on the capability, so a document
+ *  owner outside the policy would be shown a control the write then refuses.
+ *  The one identity leg is the HOLD's opener (drafting-flow HAND-2, DF-P11
+ *  fix pass): pass the `hold` and the person who placed it may release it
+ *  WHILE the org's holds.release list names HOLD_OPENER_TOKEN (the shipped
+ *  default does; fix pass 2: a stored list without it is honoured) — the
+ *  document_holds UPDATE policy's hold_opener_may_update (20261239) and
+ *  assertHoldCapability's `openedBy`. Without a hold, the answer is the
+ *  policy's alone (what a surface offers on holds in general). */
 export function holdAffordances(
   policy: CapabilityPolicy | null | undefined,
   role: string | null | undefined,
   roles: readonly string[] | null | undefined,
   uid: string | null | undefined,
+  hold?: { openedBy?: string | null } | null,
 ): HoldAffordances {
   const extra = roles ? [...roles] : null;
+  const opener = !!uid && !!hold?.openedBy && hold.openedBy === uid && holdOpenerTokenOn(policy);
   return {
     canOpen: policyAllows(policy, "holds.open", role ?? null, extra, uid ?? null),
-    canRelease: policyAllows(policy, "holds.release", role ?? null, extra, uid ?? null),
+    canRelease: opener || policyAllows(policy, "holds.release", role ?? null, extra, uid ?? null),
   };
 }
 

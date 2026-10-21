@@ -229,7 +229,9 @@ describe("20261057 — the SQL default CASE gains the engineer-gate row, byte-fa
     const caseBlock = between(fn57, "v_tokens := CASE p_cap", "END;");
     const sqlDefaults = new Map<string, string[]>();
     for (const m of caseBlock.matchAll(/WHEN '([^']+)'\s+THEN '(\[[^\]]*\])'::jsonb/g)) sqlDefaults.set(m[1], JSON.parse(m[2]) as string[]);
-    for (const [id, roles] of sqlDefaults) expect(CAPABILITY_DEFS.find((d) => d.id === id)?.defaultRoles, id).toEqual(roles);
+    // holds.release shipped as ["*"] until 20261239 narrowed it (drafting-flow HAND-2).
+    const shipped = (id: string, roles: readonly string[]) => (id === "holds.release" ? ["*"] : roles);
+    for (const [id, roles] of sqlDefaults) expect(shipped(id, CAPABILITY_DEFS.find((d) => d.id === id)?.defaultRoles ?? []), id).toEqual(roles);
     expect(sqlDefaults.size).toBe(18);
     // the only capabilities this (superseded) CASE lacks are package D's,
     // document-control P7's (20261132), projects J2b's (20261136) and

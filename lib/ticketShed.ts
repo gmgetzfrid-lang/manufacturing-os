@@ -6,7 +6,11 @@
 // least `olderThanDays` is eligible to have its WHOLE self archived to cold
 // storage — comment thread, history and attachment binaries move into one
 // archive while a lightweight stub stays in the list. Open/in-flight tickets are
-// never touched. Pure + deterministic so it unit-tests without a DB.
+// never touched. Pure + deterministic so it unit-tests without a DB (except
+// keysOnOtherLiveTickets at the end, which the reclaim uses).
+
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { isSafeStorageKey } from "@/lib/storageKey";
 
 export const TERMINAL_TICKET_STATUSES = ["CLOSED", "CANCELED"] as const;
 export type TerminalTicketStatus = (typeof TERMINAL_TICKET_STATUSES)[number];
@@ -116,4 +120,102 @@ export function selectTicketShedCandidates(rows: TicketShedRow[], opts: TicketSh
   }
 
   return { selected, totalBytes, totalCount: selected.length, skipped: eligible.length - selected.length };
+}
+
+// ── drafting-flow AUTHZ-5 / SM-4 / SM-9 (DF-P11): what the ticket shed may
+// delete, and when a captured ticket may still be freed. These are the only
+// non-pure helpers in this module (the last one reads the database).
+
+
+/** True when `key` is a file a drafting request of THIS workspace stores:
+ *  under orgs/<org>/tickets/ (lib/storage.ts makeTicketAttachmentPath, and
+ *  the requester's staging folder) or an intake redline the external door
+ *  appended (orgs/<org>/project-intake/<project>/redlines/…,
+ *  app/api/intake/upload/route.ts). AUTHZ-5: `attachments[].url` is a
+ *  member-writable column on a database without 20261166, so only these two
+ *  shapes are ever deleted by the reclaim (ticket-shed/commit); any other key
+ *  is counted and left in storage — this workspace's library, knowledge or
+ *  project files as kept references (a request started from a document names
+ *  its library file as a `Source`), another workspace's as refused. Capture
+ *  (ticket-shed produce) keeps the org-prefix rule (lib/shedKeyGuard.ts
+ *  isOrgOwnedKey, DC RET-6) so such a ticket stays sheddable. */
+export function isShedTicketKey(key: string | null | undefined, orgId: string): key is string {
+  if (!key || !orgId || !isSafeStorageKey(key)) return false;
+  if (key.startsWith(`orgs/${orgId}/tickets/`) && key.length > `orgs/${orgId}/tickets/`.length) return true;
+  return new RegExp(`^orgs/${orgId.replace(/[^0-9a-fA-F-]/g, "")}/project-intake/[^/]+/redlines/[^/]+$`).test(key);
+}
+
+/** How far a writer's clock may sit behind the database's: a ticket whose
+ *  last_modified is later than (the archive's production time − this) is
+ *  treated as changed since it was captured (a false positive only returns
+ *  the ticket to the live list; it is never freed on a stale capture). */
+export const TICKET_CAPTURE_SKEW_MS = 5 * 60 * 1000;
+
+/** SM-4 / SM-9: why a ticket captured into an archive (archive_id set,
+ *  archived_at still null) must NOT be reclaimed now — it left its terminal
+ *  status since the archive was produced (a reopen), or it was written since
+ *  (a comment, a file, a transition: every writer stamps last_modified) so
+ *  the archive's copy is stale — or null when it may be. `producedAt` is the
+ *  archive catalog row's created_at (stamped before the capture began). */
+export function changedSinceCapture(
+  row: { status?: string | null; last_modified?: string | null },
+  producedAt: string | null | undefined,
+): "left_terminal" | "changed_since_capture" | null {
+  if (!isTerminalTicketStatus(row.status)) return "left_terminal";
+  const produced = Date.parse(producedAt ?? "");
+  const touched = Date.parse(row.last_modified ?? "");
+  if (Number.isFinite(produced) && Number.isFinite(touched) && touched > produced - TICKET_CAPTURE_SKEW_MS) {
+    return "changed_since_capture";
+  }
+  return null;
+}
+
+/** keysOnOtherLiveTickets pages each key's live tickets this many rows at a
+ *  time, by id (keyset), and gives up — throwing, so nothing is deleted —
+ *  past KEY_TICKET_MAX_PAGES pages (DF-P11 fix pass 3). */
+export const KEY_TICKET_PAGE = 200;
+export const KEY_TICKET_MAX_PAGES = 50;
+
+/** AUTHZ-5 done-when 2: the keys among `keys` that a LIVE ticket outside
+ *  `excludeIds` (the tickets being freed) still names in its attachments — a
+ *  copied request, or a reference planted on purpose. Such a key is never
+ *  deleted. Every live ticket naming a key is looked at, never a capped
+ *  sample (DF-P11 fix pass 3: a sample made only of tickets being freed hid
+ *  the one live ticket that still named the key): the rows are paged by id
+ *  until one outside `excludeIds` is found or the list is exhausted. THROWS
+ *  on any read error, and past KEY_TICKET_MAX_PAGES pages (fail closed: the
+ *  reclaim stops before it deletes anything). */
+export async function keysOnOtherLiveTickets(
+  sb: Pick<SupabaseClient, "from">,
+  orgId: string,
+  keys: readonly string[],
+  excludeIds: ReadonlySet<string>,
+): Promise<Set<string>> {
+  const uniq = Array.from(new Set(keys.filter(Boolean)));
+  const shared = new Set<string>();
+  const namedOutside = async (key: string): Promise<boolean> => {
+    let after: string | null = null;
+    for (let page = 0; page < KEY_TICKET_MAX_PAGES; page++) {
+      let q = sb
+        .from("tickets")
+        .select("id")
+        .eq("org_id", orgId)
+        .contains("attachments", JSON.stringify([{ url: key }]))
+        .is("archived_at", null);
+      if (after) q = q.gt("id", after);
+      const { data, error } = await q.order("id", { ascending: true }).limit(KEY_TICKET_PAGE);
+      if (error) throw new Error(`Couldn't verify which live requests still name these files (${error.message}); refusing to delete.`);
+      const rows = (Array.isArray(data) ? data : data ? [data] : []) as Array<{ id: string }>;
+      if (rows.some((r) => !excludeIds.has(r.id))) return true;
+      if (rows.length < KEY_TICKET_PAGE) return false;
+      after = String(rows[rows.length - 1].id);
+    }
+    throw new Error(`More than ${KEY_TICKET_PAGE * KEY_TICKET_MAX_PAGES} live requests name one of these files, so which still need it could not be verified; refusing to delete.`);
+  };
+  for (let i = 0; i < uniq.length; i += 20) {
+    const batch = uniq.slice(i, i + 20);
+    const answers = await Promise.all(batch.map(async (key) => ((await namedOutside(key)) ? key : null)));
+    for (const k of answers) if (k) shared.add(k);
+  }
+  return shared;
 }

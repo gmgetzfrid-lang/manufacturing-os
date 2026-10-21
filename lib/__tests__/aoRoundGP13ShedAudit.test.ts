@@ -131,7 +131,9 @@ function seedShed() {
 }
 function seedTicketShed() {
   state.rows.archives = [{ org_id: O1, archive_id: "MOS-T1", note: "1 ticket" }];
-  state.rows.tickets = [{ id: "t1", org_id: O1, archive_id: "MOS-T1", archived_at: null, attachments: [{ url: `orgs/${O1}/tickets/t1/a.pdf`, name: "a.pdf" }], comments: [], history: [], metadata: {} }];
+  // drafting-flow DF-P11 (SM-4 / SM-9): a captured ticket is terminal and
+  // unchanged since the capture — the commit's compare-and-set reads both.
+  state.rows.tickets = [{ id: "t1", org_id: O1, archive_id: "MOS-T1", archived_at: null, status: "CLOSED", last_modified: "2025-01-01T00:00:00Z", attachments: [{ url: `orgs/${O1}/tickets/t1/a.pdf`, name: "a.pdf" }], comments: [], history: [], metadata: {} }];
 }
 async function restoreZip(): Promise<NextRequest> {
   const zip = new JSZip();

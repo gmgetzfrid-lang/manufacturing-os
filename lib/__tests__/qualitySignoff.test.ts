@@ -576,7 +576,9 @@ describe("20261136 — org_capability_allows_for re-created from 20261132 (lineD
     const sql = new Map<string, string[]>();
     for (const m of caseBlock.matchAll(/WHEN '([^']+)'\s+THEN '(\[[^\]]*\])'::jsonb/g)) sql.set(m[1], JSON.parse(m[2]) as string[]);
     const later = new Set(["ai.manage_caps"]);
-    for (const d of CAPABILITY_DEFS) if (!later.has(d.id)) expect(sql.get(d.id), d.id).toEqual(d.defaultRoles);
+    // holds.release shipped as ["*"] until 20261239 narrowed it (drafting-flow HAND-2).
+    const shipped = (id: string, roles: readonly string[]) => (id === "holds.release" ? ["*"] : roles);
+    for (const d of CAPABILITY_DEFS) if (!later.has(d.id)) expect(sql.get(d.id), d.id).toEqual(shipped(d.id, d.defaultRoles));
     expect(sql.size).toBe(CAPABILITY_DEFS.length - later.size);
     for (const id of later) expect(sql.has(id), id).toBe(false);
   });

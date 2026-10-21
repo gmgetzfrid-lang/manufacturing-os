@@ -45,9 +45,9 @@
 // — lib/dataExport.ts (the workspace export's per-file URLs, which an Admin
 // opens in a browser) calls it. app/api/storage/download-url/route.ts and
 // app/api/storage/resolve/route.ts are the other issuers a person's browser
-// receives a door upload's URL from. Both are owned by another package in
-// this wave (admin-and-org P6), so J16 did not edit them: their adoption is
-// handed over on GAP-401 (until then the setting changes the export only).
+// receives a door upload's URL from; both call it since drafting-flow DF-P11
+// landed GAP-401's remainder (b) (2026-10-20), so the setting reaches the
+// Intake tab and the in-app viewer too.
 
 import { S3Client, type GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";

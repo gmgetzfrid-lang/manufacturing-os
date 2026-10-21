@@ -10,6 +10,7 @@ import { supabase } from "@/lib/supabase";
 import { normalizeEvidence, isMachineActorName } from "@/lib/checklistEngine";
 import { auditActorNote, AUDIT_TRAIL_UNSEEN_NOTE_PACK } from "@/lib/auditActions";
 import type { Transmittal } from "@/lib/transmittals";
+import { deriveVersionApproval, approvalLine, APPROVAL_CLAIM_LABEL, rosterStateFromRows, EMPTY_ROSTER, type RosterState } from "@/lib/versionApproval";
 
 /** admin-and-org ALOG-7: whose word an audit row's identity is (actor_kind,
  *  stamped by 20261201's trigger; a row without it is the writer's word). */
@@ -20,21 +21,133 @@ interface EvidenceData {
   versions: Array<Record<string, unknown>>;
   holds: Array<Record<string, unknown>>;
   audit: Array<Record<string, unknown>>;
+  // drafting-flow EVID-10 (DF-P11): the records of people's acts on this
+  // document, each its own section. Absent = not gathered (a caller that
+  // renders only the four legacy sections); a section whose read failed is
+  // named in `unread` and printed as "could not be read" — never as "none".
+  /** e_signatures on the document or any of its versions. */
+  signatures?: Array<Record<string, unknown>>;
+  /** document_review_signoffs (the review roster, every status). */
+  signoffs?: Array<Record<string, unknown>>;
+  /** document_acknowledgments (the read-and-understood roster). */
+  acknowledgments?: Array<Record<string, unknown>>;
+  /** distribution_acks (who was asked to confirm receipt, and who did). */
+  distributionAcks?: Array<Record<string, unknown>>;
+  /** download_audits (who was issued a copy). */
+  downloads?: Array<Record<string, unknown>>;
+  /** The drafting requests the revisions name (related_ticket_id). */
+  tickets?: Array<Record<string, unknown>>;
+  /** DF-P11 integrator fix pass: how many of the requests the revisions name
+   *  the read did not return under the caller's RLS — "not visible to you",
+   *  never "none recorded". */
+  ticketsNotVisible?: number;
+  /** Labels of the sections whose read failed. */
+  unread?: string[];
+  /** Labels of the sections that stopped at PACK_ROW_CEILING rows. */
+  capped?: string[];
 }
+
+/** The pack's section labels — one spelling for the read, the notice and the tests. */
+export const EVIDENCE_SECTIONS = {
+  signatures: "electronic signatures",
+  signoffs: "review sign-offs",
+  acknowledgments: "read-and-understood acknowledgments",
+  distributionAcks: "distribution confirmations",
+  downloads: "issued copies",
+  tickets: "originating drafting requests",
+  ticketHistory: "originating request history",
+  audit: "audit trail",
+} as const;
 
 export async function gatherEvidence(documentId: string, orgId?: string): Promise<EvidenceData> {
   const docQ = supabase.from("documents").select("*").eq("id", documentId).maybeSingle();
   let versionsQ = supabase.from("document_versions").select("*").eq("record_id", documentId).order("created_at", { ascending: true });
   if (orgId) versionsQ = versionsQ.eq("org_id", orgId);
   const holdsQ = supabase.from("document_holds").select("*").eq("document_id", documentId).order("opened_at", { ascending: true });
-  const auditQ = supabase.from("audit_logs").select("*").eq("resource_type", "document").eq("resource_id", documentId).order("timestamp", { ascending: true }).limit(1000);
+  const unread: string[] = [];
+  const capped: string[] = [];
+  const note = (label: string, r: { failed: boolean; capped: boolean }) => {
+    if (r.failed) unread.push(label); else if (r.capped) capped.push(label);
+  };
+  // EVID-10: the audit trail pages past PostgREST's 1,000-row answer (it was
+  // a silent .limit(1000)); a trail longer than PACK_ROW_CEILING says so.
+  const byDoc = (table: string, order: string) => readEveryRow((f, t) => supabase.from(table).select("*")
+    .eq("document_id", documentId).order(order, { ascending: true }).order("id", { ascending: true }).range(f, t));
+  const [doc, versions, holds, audit, signoffs, acknowledgments, distributionAcks, downloads, docSigs] = await Promise.all([
+    docQ, versionsQ, holdsQ,
+    readEveryRow((f, t) => supabase.from("audit_logs").select("*").eq("resource_type", "document").eq("resource_id", documentId)
+      .order("timestamp", { ascending: true }).order("id", { ascending: true }).range(f, t)),
+    byDoc("document_review_signoffs", "assigned_at"),
+    byDoc("document_acknowledgments", "assigned_at"),
+    byDoc("distribution_acks", "requested_at"),
+    byDoc("download_audits", "created_at"),
+    readEveryRow((f, t) => supabase.from("e_signatures").select("*").eq("resource_type", "document").eq("resource_id", documentId)
+      .order("signed_at", { ascending: true }).order("id", { ascending: true }).range(f, t)),
+  ]);
+  const versionRows = (versions.data as Array<Record<string, unknown>>) ?? [];
+  note(EVIDENCE_SECTIONS.audit, audit);
+  note(EVIDENCE_SECTIONS.signoffs, signoffs);
+  note(EVIDENCE_SECTIONS.acknowledgments, acknowledgments);
+  note(EVIDENCE_SECTIONS.distributionAcks, distributionAcks);
+  note(EVIDENCE_SECTIONS.downloads, downloads);
 
-  const [doc, versions, holds, audit] = await Promise.all([docQ, versionsQ, holdsQ, auditQ]);
+  // Signatures bound to a version (the review gate's sign-offs are recorded
+  // against resource_type 'document_version') as well as to the document.
+  const signatures = new Map<string, Record<string, unknown>>();
+  let sigFailed = docSigs.failed;
+  let sigCapped = docSigs.capped;
+  for (const r of docSigs.rows) signatures.set(String(r.id), r);
+  const versionIds = versionRows.map((v) => String(v.id)).filter(Boolean);
+  for (let i = 0; i < versionIds.length && !sigFailed; i += 100) {
+    const part = versionIds.slice(i, i + 100);
+    const r = await readEveryRow((f, t) => supabase.from("e_signatures").select("*").in("document_version_id", part)
+      .order("signed_at", { ascending: true }).order("id", { ascending: true }).range(f, t));
+    if (r.failed) sigFailed = true;
+    if (r.capped) sigCapped = true;
+    for (const row of r.rows) signatures.set(String(row.id), row);
+  }
+  note(EVIDENCE_SECTIONS.signatures, { failed: sigFailed, capped: sigCapped });
+
+  // The drafting requests the revisions came from (EVID-10 done-when 2).
+  const ticketIds = [...new Set(versionRows.map((v) => v.related_ticket_id).filter((x): x is string => typeof x === "string" && !!x))];
+  let tickets: Array<Record<string, unknown>> = [];
+  let ticketsNotVisible = 0;
+  if (ticketIds.length) {
+    const { data, error } = await supabase.from("tickets")
+      .select("id, ticket_id, title, status, requester_name, assigned_drafter_name, assigned_engineer_name, engineer_review_requested_at, engineer_approved_at, closed_at, history")
+      .in("id", ticketIds);
+    if (error) unread.push(EVIDENCE_SECTIONS.tickets, EVIDENCE_SECTIONS.ticketHistory);
+    else {
+      tickets = (data as Array<Record<string, unknown>>) ?? [];
+      // DF-P11 integrator fix pass: an id the revisions name that the read
+      // did not return is outside the caller's read scope (tickets RLS) or
+      // gone — counted, so the pack never prints "None recorded" for it.
+      const returned = new Set(tickets.map((t) => String(t.id ?? "")));
+      ticketsNotVisible = ticketIds.filter((id) => !returned.has(id)).length;
+    }
+    // …and any signature bound to the request itself.
+    if (!sigFailed) {
+      const r = await readEveryRow((f, t) => supabase.from("e_signatures").select("*").eq("resource_type", "ticket").in("resource_id", ticketIds)
+        .order("signed_at", { ascending: true }).order("id", { ascending: true }).range(f, t));
+      if (r.failed) { sigFailed = true; if (!unread.includes(EVIDENCE_SECTIONS.signatures)) unread.push(EVIDENCE_SECTIONS.signatures); }
+      for (const row of r.rows) signatures.set(String(row.id), row);
+    }
+  }
+
   return {
     doc: (doc.data as Record<string, unknown>) ?? null,
-    versions: (versions.data as Array<Record<string, unknown>>) ?? [],
+    versions: versionRows,
     holds: (holds.data as Array<Record<string, unknown>>) ?? [],
-    audit: (audit.data as Array<Record<string, unknown>>) ?? [],
+    audit: audit.failed ? [] : audit.rows,
+    signatures: sigFailed ? [] : [...signatures.values()].sort((a, b) => String(a.signed_at ?? "").localeCompare(String(b.signed_at ?? ""))),
+    signoffs: signoffs.failed ? [] : signoffs.rows,
+    acknowledgments: acknowledgments.failed ? [] : acknowledgments.rows,
+    distributionAcks: distributionAcks.failed ? [] : distributionAcks.rows,
+    downloads: downloads.failed ? [] : downloads.rows,
+    tickets,
+    ticketsNotVisible,
+    unread,
+    capped,
   };
 }
 
@@ -57,7 +170,27 @@ export function renderEvidenceHtml(data: EvidenceData): string {
   const number = esc(d.document_number || d.title || d.name || "Document");
   const rows = (arr: string[]) => arr.join("");
 
-  const versionRows = data.versions.map((v) => `
+  // EVID-4 (DF-P11): "Approved" is DERIVED — the version's signed review
+  // sign-offs, or (none) its publisher; a typed approval name is printed as
+  // the publisher's note, never in the Approved column. Signoffs not
+  // gathered (a legacy caller) or unreadable → "not known".
+  const signoffsKnown = data.signoffs !== undefined && !(data.unread ?? []).includes(EVIDENCE_SECTIONS.signoffs);
+  // DF-P11 fix pass: the roster is judged per slot over EVERY row of the
+  // version (any status), as the publish guard judges it — one signed row of
+  // three is "Partially signed", never the approval stamp.
+  const rosterFor = (versionId: unknown): RosterState | null => {
+    if (!signoffsKnown) return null;
+    const rows = (data.signoffs ?? []).filter((r) => String(r.document_version_id ?? "") === String(versionId ?? ""));
+    return rows.length ? rosterStateFromRows(rows) : EMPTY_ROSTER;
+  };
+  const approvals = data.versions.map((v) => deriveVersionApproval({
+    createdBy: v.created_by as string | null, createdByName: v.created_by_name as string | null,
+    createdAt: v.created_at, releasedAt: v.released_at, approvedByName: v.approved_by_name as string | null,
+    fileUrl: v.file_url as string | null,
+  }, rosterFor(v.id), signoffsKnown ? undefined : "the review sign-offs were not read"));
+  const unsignedCount = approvals.filter((a) => a.approval.basis !== "roster").length;
+
+  const versionRows = data.versions.map((v, i) => `
     <tr>
       <td><b>${esc(v.revision_label)}</b></td>
       <td>${esc(v.issue_type || "—")}</td>
@@ -65,7 +198,7 @@ export function renderEvidenceHtml(data: EvidenceData): string {
       <td>${date(v.released_at || v.created_at)}</td>
       <td>${esc(v.drawn_by_name || "—")}</td>
       <td>${esc(v.checked_by_name || "—")}</td>
-      <td>${esc(v.approved_by_name || "—")}</td>
+      <td class="${approvals[i].approval.basis === "roster" ? "signed" : "unsigned"}">${esc(approvalLine(approvals[i]))}${approvals[i].claim ? `<div class="muted">${esc(APPROVAL_CLAIM_LABEL)} (unverified): “${esc(approvals[i].claim)}”</div>` : ""}</td>
       <td>${esc(v.moc_reference || "—")}</td>
       <td class="mono">${esc(v.file_hash ? String(v.file_hash).slice(0, 16) + "…" : "—")}</td>
     </tr>
@@ -80,6 +213,69 @@ export function renderEvidenceHtml(data: EvidenceData): string {
       <td>${h.released_at ? `${date(h.released_at)} <span class="muted">by ${esc(h.released_by_name || "—")}</span>` : '<span class="open">OPEN</span>'}</td>
       <td>${dur(h.opened_at, h.released_at)}</td>
     </tr>`);
+
+  const unread = new Set(data.unread ?? []);
+  const capped = new Set(data.capped ?? []);
+  /** One section of people's acts: absent = not gathered (omitted), a failed
+   *  read is said, a capped read says how far it got. */
+  const actSection = (label: string, rows: Array<Record<string, unknown>> | undefined, head: string[], cells: (r: Record<string, unknown>) => string[], hiddenNote = ""): string => {
+    if (rows === undefined) return "";
+    const title = label.charAt(0).toUpperCase() + label.slice(1);
+    if (unread.has(label)) return `<h2>${esc(title)}</h2><div class="unread">The ${esc(label)} could not be read — this pack does not show them, and it does not mean there are none.</div>`;
+    const cap = capped.has(label) ? `<div class="unread">Truncated at ${rows.length} rows — more exist and are not shown.</div>` : "";
+    // A section with rows the caller cannot see never says "None recorded".
+    const hidden = hiddenNote ? `<div class="unread">${hiddenNote}</div>` : "";
+    return `<h2>${esc(title)} (${rows.length})</h2>${cap}${hidden}${rows.length === 0 ? (hiddenNote ? "" : `<div class="empty">None recorded.</div>`) : `<table>
+    <thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
+    <tbody>${rows.map((r) => `<tr>${cells(r).map((c) => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`}`;
+  };
+  // DF-P11 integrator fix pass (review minor): requests the revisions name
+  // that the caller's read did not return are "not visible to you" on both
+  // request sections — never "None recorded" while ticketIds is non-empty.
+  const notVisible = data.ticketsNotVisible ?? 0;
+  const ticketsHiddenNote = notVisible > 0
+    ? `${notVisible} ${notVisible === 1 ? "request" : "requests"} the revisions name ${notVisible === 1 ? "is" : "are"} not visible to you — not shown here; this does not mean there ${notVisible === 1 ? "is" : "are"} none.`
+    : "";
+  const historyHiddenNote = notVisible > 0
+    ? `The history of ${notVisible} ${notVisible === 1 ? "request" : "requests"} the revisions name is not visible to you — not shown here; this does not mean there is none.`
+    : "";
+  const sections = [
+    actSection(EVIDENCE_SECTIONS.signatures, data.signatures, ["Signed", "Signer", "Intent", "Statement", "Bound to"], (r) => [
+      date(r.signed_at), `${esc(r.signer_name || "—")}${r.signer_role ? ` <span class="muted">(${esc(r.signer_role)})</span>` : ""}`,
+      `<b>${esc(r.intent || "—")}</b>`, esc(r.statement || "—"),
+      `<span class="mono small">${esc(r.document_version_id ? `version ${String(r.document_version_id).slice(0, 8)}` : `${r.resource_type ?? ""}`)}${r.content_hash ? ` · ${esc(String(r.content_hash).slice(0, 12))}…` : ""}</span>`,
+    ]),
+    actSection(EVIDENCE_SECTIONS.signoffs, data.signoffs, ["Rev", "Reviewer", "Slot", "Status", "Signed", "Signature"], (r) => [
+      esc(r.revision_label || "—"), `${esc(r.reviewer_name || "—")}${r.reviewer_role ? ` <span class="muted">(${esc(r.reviewer_role)})</span>` : ""}`,
+      esc(r.slot || "—"), `<b>${esc(r.status || "—")}</b>`, date(r.signed_at), r.signature_id ? "✓ bound" : "—",
+    ]),
+    actSection(EVIDENCE_SECTIONS.acknowledgments, data.acknowledgments, ["Rev", "Assignee", "Status", "Acknowledged", "Waived"], (r) => [
+      esc(r.revision_label || "—"), `${esc(r.assignee_name || "—")}${r.assignee_role ? ` <span class="muted">(${esc(r.assignee_role)})</span>` : ""}`,
+      `<b>${esc(r.status || "—")}</b>`, date(r.acknowledged_at), r.waived_reason ? esc(r.waived_reason) : "—",
+    ]),
+    actSection(EVIDENCE_SECTIONS.distributionAcks, data.distributionAcks, ["Rev", "Recipient", "Requested", "Confirmed"], (r) => [
+      esc(r.rev_label || "—"), esc(r.recipient_email || r.recipient_user_id || "—"),
+      `${date(r.requested_at)}${r.requested_by_name ? ` <span class="muted">by ${esc(r.requested_by_name)}</span>` : ""}`,
+      r.acknowledged_at ? date(r.acknowledged_at) : '<span class="open">NOT CONFIRMED</span>',
+    ]),
+    actSection(EVIDENCE_SECTIONS.downloads, data.downloads, ["Issued", "To", "Version", "Source"], (r) => [
+      date(r.created_at), esc(r.user_email || r.user_id || "—"),
+      `<span class="mono small">${esc(r.version_id ? String(r.version_id).slice(0, 8) : "—")}</span>`, esc(r.source || "—"),
+    ]),
+    actSection(EVIDENCE_SECTIONS.tickets, data.tickets, ["Request", "Status", "Requested by", "Drafter", "Engineer approval"], (r) => [
+      `<b>${esc(r.ticket_id || "—")}</b> ${esc(r.title || "")}`, esc(r.status || "—"), esc(r.requester_name || "—"),
+      esc(r.assigned_drafter_name || "—"),
+      r.engineer_approved_at ? `${date(r.engineer_approved_at)} <span class="muted">by ${esc(r.assigned_engineer_name || "—")}</span>` : "—",
+    ], ticketsHiddenNote),
+    // EVID-10 done-when 2: the request's approval history, as its own trail.
+    actSection(EVIDENCE_SECTIONS.ticketHistory, data.tickets === undefined ? undefined : data.tickets.flatMap((t) =>
+      (Array.isArray(t.history) ? (t.history as Array<Record<string, unknown>>) : []).map((h) => ({ ...h, ticket_id: t.ticket_id }))),
+    ["Request", "When", "Action", "By", "Details"], (h) => [
+      esc(h.ticket_id || "—"), date(h.date), `<b>${esc(h.action || "—")}</b>`,
+      `${esc(h.user || "—")}${h.role ? ` <span class="muted">(${esc(h.role)})</span>` : ""}`, esc(h.details || ""),
+    ], historyHiddenNote),
+  ].join("\n");
+  const gathered = data.signatures !== undefined;
 
   const auditRows = data.audit.map((a) => `
     <tr>
@@ -104,6 +300,7 @@ export function renderEvidenceHtml(data: EvidenceData): string {
   .toolbar { position: sticky; top: 0; background: #fff; padding-bottom: 10px; } .btn { background: #ea580c; color: #fff; border: 0; padding: 8px 14px; border-radius: 8px; font-weight: 700; cursor: pointer; }
   .footer { margin-top: 28px; color: #94a3b8; font-size: 10px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
   .unseen { font-size: 10px; margin-bottom: 4px; }
+  .unread { color: #b45309; font-weight: 700; padding: 6px 0; } .unsigned { color: #92400e; } .signed { color: #166534; }
   @media print { .toolbar { display: none; } body { padding: 0; } }
 </style></head><body>
   <div class="toolbar"><button class="btn" onclick="window.print()">Print / Save as PDF</button></div>
@@ -126,13 +323,22 @@ export function renderEvidenceHtml(data: EvidenceData): string {
     <thead><tr><th>Reason</th><th>Notes</th><th>Opened</th><th>Released</th><th>Duration</th></tr></thead>
     <tbody>${rows(holdRows)}</tbody></table>`}
 
+  ${sections}
+
   <h2>Audit trail (${data.audit.length})</h2>
   <div class="muted unseen">${esc(AUDIT_TRAIL_UNSEEN_NOTE_PACK)}</div>
+  ${unread.has(EVIDENCE_SECTIONS.audit) ? `<div class="unread">The audit trail could not be read — the entries below are not the trail.</div>` : ""}
+  ${capped.has(EVIDENCE_SECTIONS.audit) ? `<div class="unread">Truncated at ${data.audit.length} entries — later entries exist and are not shown.</div>` : ""}
   ${data.audit.length === 0 ? '<div class="empty">No audit entries.</div>' : `<table>
     <thead><tr><th>When</th><th>Action</th><th>Actor</th><th>Details</th></tr></thead>
     <tbody>${rows(auditRows)}</tbody></table>`}
 
-  <div class="footer">Generated ${new Date().toLocaleString()} · ManufacturingOS · This pack is assembled from the immutable audit trail and revision records for ${number}.</div>
+  <div class="footer">Generated ${new Date().toLocaleString()} · ManufacturingOS · ${number}. ${gathered
+    ? "This pack shows the revision records, holds, electronic signatures, review sign-offs, read-and-understood acknowledgments, distribution confirmations, issued copies, the originating drafting requests and the document's audit trail as they read when it was generated."
+    : "This pack shows the revision records, holds and the document's audit trail as they read when it was generated."}
+    It does not include notifications, views, or audit entries recorded against other resources. ${data.versions.length
+    ? `${unsignedCount} of ${data.versions.length} revision(s) have no complete signed review sign-off: their Approved entry names the publisher, the person who backfilled it, the sign-offs that were signed ("Partially signed — n of m"), or says it is not known; a typed approval name is printed as the publisher's unverified note.`
+    : ""}</div>
 </body></html>`;
 }
 

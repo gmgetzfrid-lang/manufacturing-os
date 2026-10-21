@@ -294,7 +294,8 @@
     "FRIC-2",
     "FRIC-5",
     "EVID-12 (remainder re-owned by the integrator 2026-10-07 at the DF-P1 merge: the e-signature bound to the approved attachment, with a server-computed content hash (sha256 at upload or at vetting) — the same limb as EVID-1; DF-P1 made the audit row written first and checked, 10-audit-evidence.md EVID-12 Scope / residual)",
-    "ROUTE-8 remainder (assigned at the DF-P9 merge): components/requests/EngineerPickerModal.tsx reads members in keyset pages (as lib/ticketPickerMembers.ts does for the drafter picker) and uses the one shared rule (lib/ticketPage.ts / lib/ticketRouting.ts heldRoles) instead of its own filter, so it never hides someone the route accepts"
+    "ROUTE-8 remainder (assigned at the DF-P9 merge): components/requests/EngineerPickerModal.tsx reads members in keyset pages (as lib/ticketPickerMembers.ts does for the drafter picker) and uses the one shared rule (lib/ticketPage.ts / lib/ticketRouting.ts heldRoles) instead of its own filter, so it never hides someone the route accepts",
+    "drafting-flow EVID-11 done-whens 2-4 (restated by the integrator at the DF-P11 merge, 2026-10-21, DEC-31 — its Assigned line already names DF-P5): the e-signature bound to the approved attachment and its server-computed hash, with EVID-1; if DF-P5 does not land them, the integrator reassigns at the DF-P5 merge"
    ],
    "severityMix": "2 HIGH, 4 MEDIUM",
    "files": [
@@ -434,7 +435,9 @@
     "DEC-101's seam (assigned by the integrator 2026-10-13 at the DF-P2 merge, DEC-31): TicketCreateInput.projectId is parsed and not written (lib/ticketCreate.ts, lib/ticketCreateClient.ts) — write project_id in /api/tickets/create",
     "notifications DELIV-16 / DELIV-7 dw2 (re-owned by the integrator at the N15 merge, 2026-10-14): components/documents/CheckInPanel.tsx's review_requested adopts lib/complianceNotify.ts notifyCompliance (one import line, the alias the seven N14 producers use) — a browser notice to another member is retried only through notification_i_wrote (20261206), never blindly; regression: the check-in's notice reaches exactly whom it reaches today",
     "PERS-2 remainder (assigned at the DF-P9 merge): lib/projects.ts's browser push of a 'Converted to Project' history entry (convertTicketToProject, dormant) goes server-side with the project link or is removed",
-    "drafting-flow DCW-4 remainder (assigned by the integrator at the DF-P15 merge, 2026-10-20, DEC-31): a library-less request (DEC-107) that closes with no recorded publication leaves no register-side trace — the close records a visible 'not in the register' deliverable state (a DeliverableState shape for it), said on the ticket page and in the close's history line; every close that works today closes exactly as before"
+    "drafting-flow DCW-4 remainder (assigned by the integrator at the DF-P15 merge, 2026-10-20, DEC-31): a library-less request (DEC-107) that closes with no recorded publication leaves no register-side trace — the close records a visible 'not in the register' deliverable state (a DeliverableState shape for it), said on the ticket page and in the close's history line; every close that works today closes exactly as before",
+    "drafting-flow SM-7 (assigned by the integrator at the DF-P11 merge, 2026-10-21, DEC-31): a drain for what DF-P1 only logs — a ticket_comments mirror that failed twice (reconcile from tickets.comments) and a _NOT_APPLIED row that failed twice (reconcile from the ticket's history) — or the transition and its audit row as one RPC; 06-state-machine.md SM-7",
+    "drafting-flow SM-4 done-whens 2-3 (assigned by the integrator at the DF-P11 merge, 2026-10-21, DEC-31): the parts that live in app/api/tickets/** (06-state-machine.md SM-4)"
    ],
    "severityMix": "1 HIGH, 1 MEDIUM, 7 LOW",
    "files": [

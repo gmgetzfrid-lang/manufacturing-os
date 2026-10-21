@@ -34,15 +34,23 @@
 // DELETE that bypasses this route, and audits such a write itself.
 //
 // Body: { op: "save", orgId, caps, version? }
-//     | { op: "grant", orgId, uid, cap, expiresAt?, note? }
-//     | { op: "revoke", orgId, uid, cap }
+//     | { op: "grant", orgId, uid, cap, expiresAt?, note?, projectId? }
+//     | { op: "revoke", orgId, uid, cap, projectId? }
+//
+// projects-and-cost QUAL-14 done-when 2 (drafting-flow DF-P11): a grant of a
+// capability decided per project (PROJECT_SCOPED_CAPS — quality.sign_off)
+// may name ONE project of this workspace. It is stored only once the live
+// database's evaluator reads a grant's project (20261239 — probed through
+// capability_grant_scope_ready, fail closed): before it, the database's
+// grant loop ignores the scope and would honour the grant on EVERY project.
+// A person holds at most one grant per (capability, project-or-none).
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   CAPABILITY_DEFS, RESOURCE_KEYS, baseTokensFor, grantActive, isRuleArray, normalizeCapabilityEntry,
   parseStoredCapabilityPolicy, ruleIsConditional, validateCapabilityPolicy, invalidateCapabilityPolicy,
-  policyHasProjectScopedRule, samePolicyVersion, POLICY_CHANGED,
+  policyHasProjectScopedRule, samePolicyVersion, POLICY_CHANGED, PROJECT_SCOPED_CAPS, sameGrant,
   type CapabilityId, type CapabilityPolicy, type UserGrant,
 } from "@/lib/capabilityPolicy";
 import { memberHoldsAny } from "@/lib/roleHeld";
@@ -58,7 +66,7 @@ const OPS = new Set(["save", "grant", "revoke"]);
 
 interface Body {
   op?: unknown; orgId?: unknown; caps?: unknown; version?: unknown;
-  uid?: unknown; cap?: unknown; expiresAt?: unknown; note?: unknown;
+  uid?: unknown; cap?: unknown; expiresAt?: unknown; note?: unknown; projectId?: unknown;
 }
 
 const bad = (error: string, status: number) => NextResponse.json({ error }, { status });
@@ -116,6 +124,20 @@ async function liveEvaluatorReadsProjectId(orgId: string): Promise<string | null
   return missing
     ? "A rule scoped to a project needs migration 20261136 (the database does not read projectId yet, and would apply the rule everywhere) — nothing was saved."
     : `Couldn't confirm the database reads project-scoped rules (${error.message || "the check failed"}) — nothing was saved.`;
+}
+
+/** QUAL-14 (DF-P11): does the LIVE database read a grant's project? Only the
+ *  evaluator 20261239 re-created does; every earlier one honours a grant on
+ *  every resource. capability_grant_scope_ready exists only once 20261239
+ *  committed (same transaction as the evaluator). Anything but `true` refuses
+ *  the grant (fail closed). */
+async function liveEvaluatorReadsGrantScope(): Promise<string | null> {
+  const { data, error } = await supabaseAdmin.rpc("capability_grant_scope_ready");
+  if (!error && data === true) return null;
+  const missing = !!error && (error.code === "PGRST202" || (error.code === "42883" && /function .* does not exist/i.test(error.message ?? "")));
+  return missing || (!error && data !== true)
+    ? "A grant on one project needs migration 20261239 (the database would otherwise honour it on every project) — nothing was saved."
+    : `Couldn't confirm the database reads a grant's project (${error?.message || "the check failed"}) — nothing was saved.`;
 }
 
 export async function POST(req: NextRequest) {
@@ -195,8 +217,21 @@ export async function POST(req: NextRequest) {
     if (!uid || !cap) return bad("uid and cap are required", 400);
     if (!CAPABILITY_DEFS.some((d) => d.id === cap)) return bad(`Unknown capability: ${cap}`, 400);
     if (uid === caller.id) return bad("You cannot grant a permission to yourself — ask another Admin.", 403);
-    const others = liveGrants.filter((g) => !(g.uid === uid && g.cap === cap));
+    // QUAL-14 (DF-P11): the project a scoped grant names (none = everywhere).
+    const projectId = str(body.projectId) || null;
+    if (projectId && !PROJECT_SCOPED_CAPS.has(cap)) {
+      return bad("Only a capability decided per project can be granted on one project.", 400);
+    }
+    const others = liveGrants.filter((g) => !sameGrant(g, { uid, cap, projectId }));
     if (op === "grant") {
+      if (projectId) {
+        const { data: proj, error: projErr } = await supabaseAdmin
+          .from("projects").select("id").eq("org_id", orgId).eq("id", projectId).maybeSingle();
+        if (projErr) return bad(`Couldn't confirm the project is in this workspace (${projErr.message}) — nothing was saved.`, 503);
+        if (!proj) return bad("The project is not in this workspace", 400);
+        const notLive = await liveEvaluatorReadsGrantScope();
+        if (notLive) return bad(notLive, 409);
+      }
       const { data: target } = await supabaseAdmin
         .from("org_members").select("uid")
         .eq("org_id", orgId).eq("uid", uid).eq("status", "active").maybeSingle();
@@ -212,12 +247,13 @@ export async function POST(req: NextRequest) {
       const expiresAt = expiresMs === null ? null : new Date(expiresMs).toISOString();
       const grant: UserGrant = {
         cap, uid, expiresAt, note: str(body.note) || null,
+        ...(projectId ? { projectId } : {}),
         grantedBy: caller.id, grantedAt: nowIso,
       };
       after = { caps: before.caps ?? {}, grants: [...others, grant] };
       grantDetail = { grant };
     } else {
-      const revoked = liveGrants.find((g) => g.uid === uid && g.cap === cap) ?? null;
+      const revoked = liveGrants.find((g) => sameGrant(g, { uid, cap, projectId })) ?? null;
       after = { caps: before.caps ?? {}, grants: others };
       grantDetail = { revoked };
     }

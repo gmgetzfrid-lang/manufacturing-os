@@ -8,15 +8,57 @@
 //   { archived:false, url }                              → open it normally
 //   { archived:true, archiveId, root, fileName }         → prompt: provide
 //                                                          <root>/data/<id>.zip
+//   { archived:true, missing:true, … }                   → storage answered
+//                                                          NotFound for the key
+//   503 { error, retryable:true }                        → storage could not be
+//                                                          asked (ORG-20) — try
+//                                                          again; NOT "missing"
+//
+// Who may ask (drafting-flow AUTHZ-4, DF-P11): the same read decision as
+// /api/storage/download-url — an active member of the key's workspace, then
+// the document gate (lib/documentKeyGate.ts: the one read predicate over the
+// full chain, the explicit download deny, DEC-43's controller rail and its
+// CONTROLLER_RESTRICTED_READ row) for a key a revision names, then the
+// ticket-file gate (lib/ticketKeyGate.ts, EVID-16 / DEC-90 ruling (2)) for a
+// key under orgs/<org>/tickets/, then the intake redline gate (same file,
+// DF-P11 integrator fix pass) for orgs/<org>/project-intake/<p>/redlines/
+// keys. A key that cannot be attributed to a
+// workspace is refused, never signed. Both gates run before the archive
+// answer, so a refused caller learns nothing about the file.
+//
+// `?exists=1` (DF-P11 fix pass 2, ORG-20 / AUTHZ-4): the backup restore's
+// "is it already live?" probe. Admitted only through the restore surface's
+// gate (lib/adminGate.ts authorizeAdminSurface(…, "restore"): an Admin of
+// the key's workspace); it answers the archive state and the HEAD only —
+// no document gate, no ticket gate, no signed URL and so no
+// CONTROLLER_RESTRICTED_READ row for files nobody opened (a restore asks
+// once per backup file), and a gate refusal (an explicit download deny, a
+// broken folder chain) can no longer read as "absent" and re-upload a file
+// that is live.
 
 import { NextRequest, NextResponse } from "next/server";
 import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { assertSafeStorageKey } from "@/lib/storageKey";
+import { assertSafeStorageKey, STORAGE_UNATTRIBUTABLE_CODE } from "@/lib/storageKey";
 import { PRESIGNED_MAX_SECONDS } from "@/lib/presignedLifetime";
 import { presignedGetDisposition, wantsInline } from "@/lib/presignedDisposition";
+import { documentKeyGate } from "@/lib/documentKeyGate";
+import { ticketKeyGate, intakeRedlineKeyGate } from "@/lib/ticketKeyGate";
+import { authorizeAdminSurface } from "@/lib/adminGate";
+// projects-tab GAP-401 remainder (b): a door upload is signed for
+// UNTRUSTED_CONTENT_ORIGIN when set; everything else exactly as before.
+import { signStorageGet } from "@/lib/untrustedContent";
+
+/** ORG-20: storage's own "no such object" — the only HEAD failure that may be
+ *  answered `missing: true`. Anything else (a 5xx, throttling, a timeout,
+ *  bad credentials, a signing error) is an outage, not an absence. */
+export function isStorageNotFound(e: unknown): boolean {
+  const err = e as { name?: unknown; Code?: unknown; $metadata?: { httpStatusCode?: unknown } } | null;
+  if (!err || typeof err !== "object") return false;
+  if (err.name === "NotFound" || err.name === "NoSuchKey" || err.Code === "NoSuchKey") return true;
+  return err.$metadata?.httpStatusCode === 404;
+}
 
 export const runtime = "nodejs";
 
@@ -30,43 +72,113 @@ export async function GET(req: NextRequest) {
   if (!path) return NextResponse.json({ error: "path is required" }, { status: 400 });
   try { assertSafeStorageKey(path); } catch { return NextResponse.json({ error: "Invalid path" }, { status: 400 }); }
 
+  // AUTHZ-4: the key's own orgs/<org>/ prefix names its workspace, as at
+  // /api/storage/download-url — a row of ANOTHER workspace that names the key
+  // (a planted attachment) never moves the membership check to that
+  // workspace. Only a key with no prefix (legacy) is attributed by its row.
+  const prefixOrg = path.match(/^orgs\/([0-9a-fA-F-]{36})\//)?.[1] ?? null;
+
   // Which version owns this binary? Drives archive status + org membership check.
-  const { data: ver } = await supabaseAdmin
+  let verQ = supabaseAdmin
     .from("document_versions")
-    .select("org_id, archived_at, archive_id, created_at")
-    .eq("file_url", path)
+    .select("org_id, archived_at, archive_id, created_at, record_id")
+    .eq("file_url", path);
+  // document_versions.org_id is nullable (schema.sql): a legacy revision
+  // with no org_id still names its key, and its archived_at must still drive
+  // the named archive prompt — so the scope admits this workspace's rows and
+  // org-less ones, never another workspace's (DF-P11 fix pass). The key is
+  // attributed to prefixOrg either way.
+  if (prefixOrg) verQ = verQ.or(`org_id.eq.${prefixOrg},org_id.is.null`);
+  const { data: ver } = await verQ
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  let v = ver as { org_id?: string; archived_at?: string | null; archive_id?: string | null } | null;
+  let v = ver as { org_id?: string | null; archived_at?: string | null; archive_id?: string | null; record_id?: string | null } | null;
   // Ticket-attachment keys have no document_versions row — attribute them via
   // the owning ticket so a shed attachment still gets a NAMED archive prompt
   // instead of "ask an admin".
   if (!v) {
-    const { data: tk } = await supabaseAdmin
+    let tkQ = supabaseAdmin
       .from("tickets")
       .select("org_id, archived_at, archive_id")
-      .contains("attachments", JSON.stringify([{ url: path }]))
+      .contains("attachments", JSON.stringify([{ url: path }]));
+    if (prefixOrg) tkQ = tkQ.eq("org_id", prefixOrg);
+    const { data: tk } = await tkQ
       .limit(1)
       .maybeSingle();
     if (tk) v = tk as { org_id?: string; archived_at?: string | null; archive_id?: string | null };
   }
-  // Attribute the key to an org: prefer the document_versions row, else parse the
-  // `orgs/<orgId>/…` prefix — so the membership gate below ALWAYS applies, even
-  // for ticket-attachment keys that aren't in document_versions (no auth bypass).
-  const orgId = v?.org_id ?? path.match(/^orgs\/([0-9a-fA-F-]{36})\//)?.[1];
+  // Attribute the key to an org: the `orgs/<orgId>/…` prefix, else (a legacy
+  // key) the row that names it — so the membership gate below ALWAYS applies.
+  let orgId = prefixOrg ?? v?.org_id ?? null;
+  // DF-P11 fix pass 2: a legacy key (no prefix) whose revision row predates
+  // the org_id backfill (NULL) is still attributable — its DOCUMENT names the
+  // workspace (one lookup through record_id). A lookup that fails is a 503
+  // (retry), never a refusal; only a key nothing attributes is refused.
+  if (!orgId && v?.record_id) {
+    const { data: owner, error: ownerErr } = await supabaseAdmin
+      .from("documents").select("org_id").eq("id", v.record_id).maybeSingle();
+    if (ownerErr) {
+      return NextResponse.json(
+        { error: "This file's workspace couldn't be checked — try again in a moment.", retryable: true },
+        { status: 503, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+    orgId = (owner as { org_id?: string | null } | null)?.org_id ?? null;
+  }
   const fileName = path.split("/").pop() || "file";
 
-  // If we can attribute the file to an org, require the caller to be a member.
-  if (orgId) {
-    const { data: m } = await supabaseAdmin
-      .from("org_members").select("uid")
-      .eq("org_id", orgId).eq("uid", user.id).eq("status", "active").maybeSingle();
-    if (!m) return NextResponse.json({ error: "Not a member of this workspace" }, { status: 403 });
+  // AUTHZ-4 done-when 2: a key no workspace can be attributed to is refused,
+  // never signed for any signed-in caller (every key the app mints is
+  // orgs/<org>/…; a legacy key is attributed through its revision row).
+  // The code beside the sentence lets the backup restore tell this refusal
+  // (an unreferenced legacy orphan — nothing in the workspace points at it)
+  // from a failure (DF-P11 integrator fix pass, DEC-90).
+  if (!orgId) {
+    return NextResponse.json({ error: "This file can't be attributed to a workspace", reason: STORAGE_UNATTRIBUTABLE_CODE }, { status: 403 });
   }
+  const existsOnly = req.nextUrl.searchParams.get("exists") === "1";
+  if (existsOnly) {
+    // The restore's existence probe: the restore surface's own gate (an Admin
+    // of the key's workspace, by the full role collection), then the archive
+    // state and a HEAD — nothing signed, no document read recorded.
+    const actor = await authorizeAdminSurface(req, orgId, "restore");
+    if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
+    if (v?.archived_at) return NextResponse.json({ archived: true, archiveId: v.archive_id ?? null, fileName }, { headers: { "Cache-Control": "no-store" } });
+    try {
+      await r2.send(new HeadObjectCommand({ Bucket: R2_BUCKET, Key: path }));
+    } catch (e) {
+      if (!isStorageNotFound(e)) {
+        return NextResponse.json(
+          { error: "Storage couldn't be reached to check this file — try again in a moment.", retryable: true },
+          { status: 503, headers: { "Cache-Control": "no-store" } },
+        );
+      }
+      return NextResponse.json({ archived: true, missing: true, archiveId: v?.archive_id ?? null, fileName }, { headers: { "Cache-Control": "no-store" } });
+    }
+    return NextResponse.json({ archived: false, exists: true, fileName }, { headers: { "Cache-Control": "no-store" } });
+  }
+  // The caller must be an active member of the key's workspace. role / roles
+  // ride along (DF-P11 fix pass 3): the ticket-file gate decides a member who
+  // is not Contractor-only from this row, with no second read that could fail.
+  const { data: memberRow } = await supabaseAdmin
+    .from("org_members").select("uid, role, roles")
+    .eq("org_id", orgId).eq("uid", user.id).eq("status", "active").maybeSingle();
+  if (!memberRow) return NextResponse.json({ error: "Not a member of this workspace" }, { status: 403 });
+  // AUTHZ-4 done-when 1: the same read decision as /api/storage/download-url —
+  // the document gate (KACL-5 / IEDGE-12 / DEC-43 / DEC-7) for a key a
+  // revision names, then the ticket-file gate for orgs/<org>/tickets/ keys.
+  const docGate = await documentKeyGate(orgId, path, { id: user.id, email: user.email ?? null });
+  if (docGate) return docGate;
+  const ticketGate = await ticketKeyGate(orgId, path, { id: user.id }, memberRow as { role?: unknown; roles?: unknown });
+  if (ticketGate) return ticketGate;
+  // EVID-16 done-when 2 (DF-P11 integrator fix pass, DEC-90): an intake
+  // redline is signed only for a controller, a member of its project, or a
+  // reader of a request that carries it (lib/ticketKeyGate.ts).
+  const intakeGate = await intakeRedlineKeyGate(orgId, path, { id: user.id }, memberRow as { role?: unknown; roles?: unknown });
+  if (intakeGate) return intakeGate;
 
   const settingsFor = async (): Promise<{ root: string | null; namingNote: string | null }> => {
-    if (!orgId) return { root: null, namingNote: null };
     const { data } = await supabaseAdmin.from("archive_settings").select("location_hint, naming").eq("org_id", orgId).maybeSingle();
     const s = data as { location_hint?: string | null; naming?: string | null } | null;
     return { root: s?.location_hint ?? null, namingNote: s?.naming ?? null };
@@ -79,9 +191,23 @@ export async function GET(req: NextRequest) {
   }
 
   // Otherwise sign it — but if the object is actually gone from R2, fall back to
-  // the archived prompt so the user still has a path forward.
+  // the archived prompt so the user still has a path forward. ORG-20: only
+  // storage's NotFound is "missing"; any other failure is a 503 the caller
+  // can retry (the restore counts a non-200 as "not reported missing"; the
+  // viewers say the error instead of an archive prompt).
   try {
     await r2.send(new HeadObjectCommand({ Bucket: R2_BUCKET, Key: path }));
+  } catch (e) {
+    if (!isStorageNotFound(e)) {
+      return NextResponse.json(
+        { error: "Storage couldn't be reached to check this file — try again in a moment.", retryable: true },
+        { status: 503, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+    const s = await settingsFor();
+    return NextResponse.json({ archived: true, missing: true, archiveId: v?.archive_id ?? null, root: s.root, namingNote: s.namingNote, fileName });
+  }
+  try {
     // EGR-4 / DEC-44 §2: the same ceiling as /api/storage/download-url — no
     // issuer is looser than another — and a signed payload is never cacheable.
     // SEC-18 (DEC-49): the same disposition as download-url — an ATTACHMENT
@@ -89,8 +215,7 @@ export async function GET(req: NextRequest) {
     // the key names a PDF or a raster image, whose type is then pinned — so a
     // stored HTML / SVG upload never opens as a page.
     const disposition = presignedGetDisposition(path, wantsInline(req.nextUrl.searchParams.get("inline")));
-    const url = await getSignedUrl(
-      r2,
+    const url = await signStorageGet(
       new GetObjectCommand({ Bucket: R2_BUCKET, Key: path, ...disposition.overrides }),
       { expiresIn: PRESIGNED_MAX_SECONDS },
     );
@@ -103,7 +228,10 @@ export async function GET(req: NextRequest) {
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch {
-    const s = await settingsFor();
-    return NextResponse.json({ archived: true, missing: true, archiveId: v?.archive_id ?? null, root: s.root, namingNote: s.namingNote, fileName });
+    // ORG-20: the object is there (HEAD answered) but no URL could be signed.
+    return NextResponse.json(
+      { error: "This file couldn't be opened right now — try again in a moment.", retryable: true },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    );
   }
 }

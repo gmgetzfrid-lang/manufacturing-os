@@ -231,7 +231,7 @@ describe("AUTHZ-15 (Inspector) — a stale answer is the last good policy, drawn
 });
 
 describe("AUTHZ-15 (Inspector) — REGRESSION: a healthy read draws exactly what it drew before, for every role", () => {
-  it("defaults: a Drafter gets the place-a-first-hold section and an editable strip but no Force Release Lock; a DocCtrl and an Admin get Force Release Lock; no alert", async () => {
+  it("defaults: a Drafter gets the place-a-first-hold section and an editable strip but no Force Release Lock; a DocCtrl and an Admin get Force Release Lock and the active hold's Release (a Drafter only on a hold they placed, since HAND-2); no alert", async () => {
     s.checkedOut = true;
     s.entry = HEALTHY;
     await render("Drafter");
@@ -243,7 +243,12 @@ describe("AUTHZ-15 (Inspector) — REGRESSION: a healthy read draws exactly what
     for (const role of ["Drafter", "DocCtrl", "Admin"]) {
       await rerender(role);
       expect(fault()).toBeNull();
-      expect(stripCanEdit()).toBe("true"); // the active hold's Release (holds.release: everyone by default)
+      // the strip's hard OFF: holds.release OR holds.open (drafting-flow HAND-2
+      // review fix pass). holds.release is Admin and DocCtrl by default since
+      // 20261239, so the strip itself draws a Drafter's Release only on a hold
+      // the Drafter placed (the own-hold leg — pinned in checkoutAffordances /
+      // holds tests); a Drafter may still place a hold (holds.open '*').
+      expect(stripCanEdit()).toBe("true");
       expect(forceRelease() !== undefined).toBe(role !== "Drafter");
     }
   });

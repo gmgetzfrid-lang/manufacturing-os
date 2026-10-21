@@ -18,8 +18,7 @@
       "LOW": 16
     },
     "by_status": {
-      "RESOLVED": 76,
-      "OPEN": 1,
+      "RESOLVED": 77,
       "RESOLVED (2026-10-14, intelligence Round G I-28 DEFINER ORACLES — PASTE pending: `20261224`, after `20261199`, `20261159`, `20261137` and `20261136`, inheriting the holds of `20261159` (`INTK-18` deployed) and `20261199` (document-control P24 deployed), either order with `20261217` and `20261212`, no deploy gate of its own; never re-paste `20261159`, `20261199`, `20261133` or `20261027` after it; the same-workspace remainder of done-when 1 is split to `INTK-20` (DEC-31), and `node_visible`'s `p_owner` is decided KEPT under the integrator's ruling for this package (DEC-90))": 1,
       "WONTFIX": 1
     }
@@ -1488,7 +1487,7 @@
       "id": "QUAL-14",
       "title": "A project-scoped quality sign-off grant has no authoring surface — the permissions console edits request-type overrides only, so per-project discipline reviewers are configured by an API call, and only role-wide",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by reading)",
       "blast_radius": null,

@@ -170,6 +170,14 @@ describe("the operator step", () => {
     if (!adopted) {
       expect(check).toContain("The **Intake** tab's own download links do not change yet");
       expect(doc).toContain("owner: the integrator at the J16 / P6 merge");
+    } else {
+      // GAP-401 remainder (b)'s done-when (drafting-flow DF-P11): once both
+      // issuers sign through signStorageGet, the check step leads with an
+      // Intake-tab download, and no longer says those links do not change.
+      expect(check).toContain("Check it with a contractor file on the **Intake** tab:");
+      expect(check).toContain("Download one contractor file from there");
+      expect(check).not.toContain("do not change yet");
+      expect(doc).not.toContain("owner: the integrator at the J16 / P6 merge");
     }
   });
   it("it does not promise that nothing else changes: the browser-built Full ZIP fetches each signed URL itself, cross-origin, so the check step ends with a Full ZIP whose report lists no contractor file under errors, and says what to do if it does (review fix pass 4)", () => {
@@ -201,7 +209,9 @@ describe("the operator step", () => {
     expect(doc).toContain("its full-screen view and a marked-up download fetch the file the same way");
     expect(doc).toContain("after the switch-over, contractor drawings may fail to display in the viewer");
     expect(doc).toContain("it is **required**: do not leave the setting in place unless step 5 passes");
-    expect(doc).toContain("You can set it before then, but only together with step 5 of \"How to check it worked\"");
+    // GAP-401 remainder (b) landed (drafting-flow DF-P11): the switch-over is
+    // live, so the doc says to set it only together with step 5.
+    expect(doc).toContain("set it only together with step 5 of \"How to check it worked\"");
     const check = doc.slice(doc.indexOf("## How to check it worked"), doc.indexOf("## How to undo it"));
     expect(check).toContain("5. **Check that the Full ZIP backup still gets contractor files (required).**");
     expect(check).toContain("Only opening a link from the JSON file directly in a browser tab does not depend on this check.");

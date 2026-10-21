@@ -15,6 +15,10 @@
 //   * IDENTITY-based rights are NOT configurable by design: a ticket's
 //     requester, assigned drafter, and assigned engineer always keep their
 //     own-ticket actions. Policy governs ROLE-based authority only.
+//     The one exception is a TOKEN, so an Admin decides it like any role:
+//     HOLD_OPENER_TOKEN ("$opener") on holds.release admits the hold's own
+//     opener (drafting-flow HAND-2, DF-P11 — shipped in the default; a
+//     stored list without it means exactly what it names).
 //   * Enforced where it matters: the workflow-action API route re-derives
 //     actions server-side with the org's policy, so a tampered client
 //     changes nothing.
@@ -88,6 +92,17 @@ export interface CapabilityDef {
 // WF-24 / CHAIN-3: the management tier is defined ONCE (lib/managementRoles.ts).
 const MGMT = [...MANAGEMENT_ROLES];
 
+/** drafting-flow HAND-2 (DF-P11 fix pass 2, 20261239): the identity token of
+ *  holds.release. In the list it admits the hold's own OPENER (while an
+ *  active member) to release or re-date THAT hold — no role ever matches it
+ *  (roleTokenMatches compares role names; no role is named "$opener"). It
+ *  ships in the default, so the person who stopped work lifts their own stop
+ *  once their condition clears; an org whose stored list leaves it out
+ *  ("only Admins lift holds") is honoured exactly as written, in the app
+ *  (holdOpenerTokenOn) and at the database (hold_opener_may_update, which
+ *  the document_holds UPDATE policy calls). Valid on holds.release only. */
+export const HOLD_OPENER_TOKEN = "$opener";
+
 export const CAPABILITY_DEFS: CapabilityDef[] = [
   { id: "ticket.manage", area: "Requests", label: "Management override", critical: true,
     description: "The management tier: co-approve at any review stage, override assigned reviewers, force-close.",
@@ -128,8 +143,27 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
     defaultRoles: [...MGMT, "Engineer", "DocCtrl"] },
   { id: "holds.open", area: "Holds", label: "Place a hold",
     description: "Open a do-not-advance hold on a document.", defaultRoles: ["*"] },
+  // drafting-flow HAND-2 (DF-P11, 20261239): a hold is the controller tier's
+  // "do not advance" veto (lib/documentGuards.ts refuses even a library
+  // publisher's force past one), so releasing it ships to the controller
+  // tier, as checkout.force_release does — the '*' default let the person a
+  // hold was placed against lift it — plus the hold's own opener
+  // (HOLD_OPENER_TOKEN, fix pass 2: a token, so a stored list that leaves it
+  // out is honoured). Widening (a role, a personal grant) is an explicit
+  // Admin decision in the grid. The ticket close gate's release of its own
+  // hold runs as the service role (DEC-25) and is unaffected.
+  // The management tier (Manager, Supervisor) is NOT in the default although
+  // it holds ticket.force_close (fix pass 3, DEC-90 ruling (3)'s reason):
+  // the close gate releases only holds whose origin_ticket_id is the ticket
+  // being closed (the as-built discrepancy hold CheckInPanel places), and
+  // only through the closer's explicit release-or-keep resolution, recorded
+  // as HOLD_RELEASED — it never reaches a hold placed on the document from
+  // its hold strip, which is the controller's veto. Release here reaches
+  // every hold, so it stays the controller tier's unless an Admin ticks
+  // Manager or Supervisor on this row.
   { id: "holds.release", area: "Holds", label: "Release a hold",
-    description: "Release an open hold.", defaultRoles: ["*"] },
+    description: "Release (or re-date) an open hold. Ships to Admin, Document Control and the person who placed that hold: a hold is a deliberate stop on a document, so lifting someone else's is a controller's decision unless you grant it here. Untick \"The hold's own opener\" to make release controller-only. Enforced at the database, which reads this policy.",
+    defaultRoles: ["Admin", "DocCtrl", HOLD_OPENER_TOKEN] },
   { id: "checkout.force_release", area: "Checkouts", label: "Force-release a checkout", critical: true,
     description: "Release another user's active checkout. Enforced at the database, which reads this policy — widen or narrow freely.",
     defaultRoles: ["Admin", "DocCtrl"] },
@@ -194,6 +228,12 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
 export interface UserGrant {
   cap: CapabilityId;
   uid: string;
+  /** projects-and-cost QUAL-14 done-when 2 (DF-P11, 20261239): a grant of a
+   *  capability decided per project (PROJECT_SCOPED_CAPS) may name ONE
+   *  project — the person holds it there only. Absent / null: everywhere
+   *  (WF-13 row 6, as every grant before 20261239). Both evaluators read it:
+   *  policyAllows here, org_capability_allows_for's grant loop (20261239). */
+  projectId?: string | null;
   /** ISO datetime after which the grant is dead; null = until revoked. */
   expiresAt?: string | null;
   note?: string | null;
@@ -259,8 +299,9 @@ export type CapabilityEntry = string[] | CapabilityRule[];
 export interface CapabilityPolicy {
   /** capability -> allowed role tokens or rules (absent key = shipped default). */
   caps?: Partial<Record<CapabilityId, CapabilityEntry>>;
-  /** per-person delegations, additive on top of role authority. A grant has
-   *  no resource scope: it confers the capability everywhere (WF-13 row 6). */
+  /** per-person delegations, additive on top of role authority. A grant
+   *  confers the capability everywhere (WF-13 row 6), unless it names a
+   *  project (QUAL-14, PROJECT_SCOPED_CAPS only) — then on that project. */
   grants?: UserGrant[];
 }
 
@@ -282,6 +323,21 @@ export function roleTokenMatches(token: string, role: string): boolean {
 /** Is a user grant currently live? */
 export function grantActive(g: UserGrant, now: Date = new Date()): boolean {
   return !g.expiresAt || Date.parse(g.expiresAt) > now.getTime();
+}
+
+/** QUAL-14 (DF-P11): does this grant apply to this resource? An unscoped
+ *  grant applies everywhere; a grant naming a project applies only when the
+ *  decision is about that project (a caller with no project in hand never
+ *  matches it — exactly org_capability_allows_for's grant loop, 20261239). */
+export function grantAppliesTo(g: UserGrant, resource?: CapabilityResource | null): boolean {
+  const scoped = typeof g.projectId === "string" && g.projectId.length > 0 ? g.projectId : null;
+  if (!scoped) return true;
+  return typeof resource?.projectId === "string" && resource.projectId === scoped;
+}
+
+/** The identity of a grant: one per (person, capability, project-or-none). */
+export function sameGrant(a: Pick<UserGrant, "uid" | "cap" | "projectId">, b: Pick<UserGrant, "uid" | "cap" | "projectId">): boolean {
+  return a.uid === b.uid && a.cap === b.cap && (a.projectId || null) === (b.projectId || null);
 }
 
 // ── Rules and resources (DEC-13 stage 2) ───────────────────────────────────
@@ -345,6 +401,16 @@ export function tokensFor(
   return scopedTokensFor(policy, cap, resource) ?? baseTokensFor(policy, cap);
 }
 
+/** drafting-flow HAND-2 (DF-P11 fix pass 2): does the org's effective
+ *  holds.release list name HOLD_OPENER_TOKEN — may a hold's own opener
+ *  release / re-date it? The base list (no hold caller threads a resource),
+ *  read exactly as the database's hold_opener_may_update reads it: the
+ *  stored bare list, else the first unconditional rule, else the shipped
+ *  default (which names it). A stored list that leaves it out answers no. */
+export function holdOpenerTokenOn(policy: CapabilityPolicy | null | undefined): boolean {
+  return tokensFor(policy, "holds.release").includes(HOLD_OPENER_TOKEN);
+}
+
 /** Do any of the held roles satisfy this token list? */
 export function heldMatchesTokens(tokens: readonly string[], held: readonly string[]): boolean {
   return held.some((r) => tokens.some((t) => roleTokenMatches(t, r)));
@@ -374,7 +440,7 @@ export function policyAllows(
   const held = [role, ...(extraRoles ?? [])].filter((r): r is string => !!r);
   if (heldMatchesTokens(list, held)) return true;
   if (uid && policy?.grants) {
-    return policy.grants.some((g) => g.cap === cap && g.uid === uid && grantActive(g));
+    return policy.grants.some((g) => g.cap === cap && g.uid === uid && grantActive(g) && grantAppliesTo(g, resource));
   }
   return false;
 }
@@ -652,6 +718,11 @@ export function validateCapabilityPolicy(policy: CapabilityPolicy): string | nul
         return `${def.label}${where}: Admin cannot be removed from a critical capability — that's the rail that keeps the org recoverable.`;
       }
     }
+    // HAND-2 (DF-P11 fix pass 2): the opener token means something on
+    // holds.release only — anywhere else neither evaluator would read it.
+    if (def.id !== "holds.release" && lists.some(({ tokens }) => Array.isArray(tokens) && tokens.includes(HOLD_OPENER_TOKEN))) {
+      return `${def.label}: "The hold's own opener" applies to releasing a hold only.`;
+    }
     if (isRuleArray(v)) {
       for (const r of v) {
         for (const k of Object.keys(r.when ?? {})) {
@@ -673,6 +744,16 @@ export function validateCapabilityPolicy(policy: CapabilityPolicy): string | nul
     if (!validIds.has(g.cap as string)) return `Unknown capability in a personal grant: ${String(g.cap)}`;
     if (!g.uid) return "A personal grant is missing its person.";
     if (g.expiresAt && Number.isNaN(Date.parse(g.expiresAt))) return "A personal grant has an invalid expiry date.";
+    // QUAL-14 (DF-P11): a project-scoped grant only where the capability is
+    // decided per project; anywhere else it would never match here, and a
+    // database without 20261239 would honour it everywhere.
+    if (g.projectId !== undefined && g.projectId !== null) {
+      if (typeof g.projectId !== "string" || !g.projectId) return "A personal grant names an invalid project.";
+      if (!PROJECT_SCOPED_CAPS.has(g.cap)) {
+        const label = CAPABILITY_DEFS.find((d) => d.id === g.cap)?.label ?? String(g.cap);
+        return `${label}: a personal grant cannot be scoped to a project — only a capability decided per project can.`;
+      }
+    }
   }
   return null;
 }
@@ -700,8 +781,8 @@ export const CAPABILITY_POLICY_ROUTE = "/api/admin/capability-policy";
  *  compare-and-set only. */
 export type CapabilityPolicyChange =
   | { op: "save"; orgId: string; caps: NonNullable<CapabilityPolicy["caps"]>; version?: string | null }
-  | { op: "grant"; orgId: string; uid: string; cap: CapabilityId; expiresAt?: string | null; note?: string | null }
-  | { op: "revoke"; orgId: string; uid: string; cap: CapabilityId };
+  | { op: "grant"; orgId: string; uid: string; cap: CapabilityId; expiresAt?: string | null; note?: string | null; projectId?: string | null }
+  | { op: "revoke"; orgId: string; uid: string; cap: CapabilityId; projectId?: string | null };
 
 /** The route's 409 code when the stored policy moved on under a write. */
 export const POLICY_CHANGED = "policy_changed";
@@ -776,24 +857,32 @@ export async function addUserGrant(input: {
   cap: CapabilityId;
   expiresAt?: string | null;
   note?: string | null;
+  /** QUAL-14 (DF-P11): one project, for a capability decided per project. */
+  projectId?: string | null;
   actorUserId: string;
   actorEmail?: string | null;
 }): Promise<void> {
   await postPolicyChange({
     op: "grant", orgId: input.orgId, uid: input.uid, cap: input.cap,
     expiresAt: input.expiresAt ?? null, note: input.note ?? null,
+    ...(input.projectId ? { projectId: input.projectId } : {}),
   });
 }
 
-/** Revoke one person's grant of one capability (Admin only). */
+/** Revoke one person's grant of one capability (Admin only) — the unscoped
+ *  grant, or (QUAL-14) the grant on `projectId`. */
 export async function revokeUserGrant(input: {
   orgId: string;
   uid: string;
   cap: CapabilityId;
+  projectId?: string | null;
   actorUserId: string;
   actorEmail?: string | null;
 }): Promise<void> {
-  await postPolicyChange({ op: "revoke", orgId: input.orgId, uid: input.uid, cap: input.cap });
+  await postPolicyChange({
+    op: "revoke", orgId: input.orgId, uid: input.uid, cap: input.cap,
+    ...(input.projectId ? { projectId: input.projectId } : {}),
+  });
 }
 
 /** All of one person's grants (live and expired — the UI labels expiry). */

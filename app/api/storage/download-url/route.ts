@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { r2, R2_BUCKET } from "@/lib/r2";
+import { R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { assertSafeStorageKey } from "@/lib/storageKey";
 import { resolvePresignedLifetime } from "@/lib/presignedLifetime";
@@ -11,6 +10,13 @@ import { presignedGetDisposition, wantsInline } from "@/lib/presignedDisposition
 // in lib/documentKeyGate.ts — moved there verbatim by the integrator's DEC-90
 // ruling (4) at the intelligence I-29 merge, shared with /api/knowledge/mirror-url.
 import { documentKeyGate } from "@/lib/documentKeyGate";
+// drafting-flow AUTHZ-4 / EVID-16 (DF-P11, DEC-90 ruling (2)): a drafting-
+// ticket file is signed only for a member who may read that ticket.
+import { ticketKeyGate, intakeRedlineKeyGate } from "@/lib/ticketKeyGate";
+// projects-tab GAP-401 remainder (b) (DF-P11): a contractor door upload is
+// signed for UNTRUSTED_CONTENT_ORIGIN when the operator sets it; everything
+// else, and every key while it is unset, is signed exactly as before.
+import { signStorageGet } from "@/lib/untrustedContent";
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -49,9 +55,12 @@ export async function GET(req: NextRequest) {
   // cross-tenant read). Non-org-prefixed keys keep their prior behavior.
   const orgMatch = path.match(/^orgs\/([0-9a-fA-F-]{36})\//);
   if (orgMatch) {
+    // role / roles ride along (DF-P11 fix pass 3) so the ticket-file gate
+    // below decides a member who is not Contractor-only from THIS row, with
+    // no second read that could fail.
     const { data: member } = await supabaseAdmin
       .from("org_members")
-      .select("uid")
+      .select("uid, role, roles")
       .eq("org_id", orgMatch[1])
       .eq("uid", user.id)
       .eq("status", "active")
@@ -77,6 +86,19 @@ export async function GET(req: NextRequest) {
     // uploads, logos — they have their own doors).
     const gate = await documentKeyGate(orgMatch[1], path, { id: user.id, email: user.email ?? null });
     if (gate) return gate;
+    // AUTHZ-4 / EVID-16: a key under orgs/<org>/tickets/ that no revision
+    // names is signed only for a member who may read a ticket naming it
+    // (lib/ticketKeyGate.ts — /api/tickets/copy's read scope). Members who
+    // are not Contractor-only are answered with no further lookup, as before
+    // (the membership row read above is handed over).
+    const ticketGate = await ticketKeyGate(orgMatch[1], path, { id: user.id }, member as { role?: unknown; roles?: unknown });
+    if (ticketGate) return ticketGate;
+    // EVID-16 done-when 2 (DF-P11 integrator fix pass, DEC-90): an intake
+    // redline (orgs/<org>/project-intake/<p>/redlines/…) is signed only for
+    // a controller, a member of that project, or a reader of a request that
+    // carries it; an undecidable read is 503.
+    const intakeGate = await intakeRedlineKeyGate(orgMatch[1], path, { id: user.id }, member as { role?: unknown; roles?: unknown });
+    if (intakeGate) return intakeGate;
   }
 
   // ARCHIVE-AWARE: if this key's binary was shed to an offline space archive,
@@ -117,7 +139,7 @@ export async function GET(req: NextRequest) {
     ...disposition.overrides,
   });
 
-  const url = await getSignedUrl(r2, command, { expiresIn: lifetime.seconds });
+  const url = await signStorageGet(command, { expiresIn: lifetime.seconds });
 
   // The payload IS a bearer credential: never cacheable (XEDGE-6 — the
   // service worker refuses no-store and every /api/ response anyway; the

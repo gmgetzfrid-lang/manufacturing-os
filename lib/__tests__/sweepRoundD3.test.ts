@@ -142,7 +142,10 @@ describe("shape: parsing and validation of rule lists", () => {
     const j1 = joinPolicyFromEditor(s1.base, s1.overrides, s1.opaque);
     expect(j1["ticket.assign"]).toEqual(["Admin", "DocCtrl"]);
     expect(j1["ticket.self_assign"]).toEqual([]);
-    expect(j1["ticket.manage"]).toEqual(["Admin", "Manager", "Supervisor"]);
+    // drafting-flow HAND-2 (DF-P11 fix pass 3): a row equal to its shipped
+    // default is not written — absent IS the default (same answer)
+    expect(j1["ticket.manage"]).toBeUndefined();
+    expect(policyAllows({ caps: j1 }, "ticket.manage", "Manager", null, "c")).toBe(true);
     const rich: CapabilityPolicy = { caps: { "ticket.direct_approve": [
       { tokens: ["Engineer"] },
       { tokens: ["DocCtrl"], when: { requestType: ["ASBUILT", "MOC"] } },
@@ -213,7 +216,8 @@ describe("getActions honours the resource — DEC-13 acceptance: ASBUILT may onl
     expect(src("components/permissions/ViewAsSimulator.tsx")).toContain("const answer = composedAllows(policy, d.id, who.role, who.roles, who.uid, resource);");
     expect(src("components/permissions/PermissionsExplorer.tsx")).toContain("if (policyAllows(policy, cap, role, roles ? [...roles] : null, uid, resource)) return { ok: true, via: null, conditional: null };");
     expect(src("components/permissions/ViewAsSimulator.tsx")).toContain("scoped: scopedTokensFor(policy, d.id, resource) !== null,");
-    expect(src("lib/holds.ts")).toContain("if (!policyAllows(policy, cap, role, extra, uid, resource)) {");
+    // drafting-flow HAND-2 (DF-P11 fix pass): the same call, behind the hold opener's own-hold leg
+    expect(src("lib/holds.ts")).toContain("if (!ownHold && !policyAllows(policy, cap, role, extra, uid, resource)) {");
     const r = src("app/api/tickets/workflow-action/route.ts");
     expect(r).toContain("const resource = ticketResource(ticket);");
     expect(r).toContain("const scoped = scopedTokensFor(capPolicy, pickCap, resource);");
@@ -430,7 +434,9 @@ describe("20261052 — org_capability_allows_for + the 3-argument wrapper", () =
       return m;
     };
     // every default this migration ships is still what CAPABILITY_DEFS says
-    for (const [id, roles] of parse(caseNew)) expect(CAPABILITY_DEFS.find((d) => d.id === id)?.defaultRoles, id).toEqual(roles);
+    // holds.release shipped as ["*"] until 20261239 narrowed it (drafting-flow HAND-2).
+    const shipped = (id: string, roles: readonly string[]) => (id === "holds.release" ? ["*"] : roles);
+    for (const [id, roles] of parse(caseNew)) expect(shipped(id, CAPABILITY_DEFS.find((d) => d.id === id)?.defaultRoles ?? []), id).toEqual(roles);
     // and the LIVE evaluator — the last migration that re-creates it — carries every capability
     const dir = join(process.cwd(), "supabase", "migrations");
     const live = readdirSync(dir).filter((f) => /^\d{8}/.test(f) && f.endsWith(".sql")).sort()

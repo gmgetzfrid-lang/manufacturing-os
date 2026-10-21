@@ -22,6 +22,7 @@ import {
   ArrowUpFromLine, AlertTriangle, Info,
 } from "lucide-react";
 import { backfillVersion, listVersions } from "@/lib/revisions";
+import { APPROVAL_CLAIM_LABEL } from "@/lib/versionApproval";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 
 interface BackfillVersionModalProps {
@@ -260,7 +261,10 @@ export default function BackfillVersionModal({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="Drawn By"><input value={drawnByName} onChange={(e) => setDrawnByName(e.target.value)} className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm" /></Field>
             <Field label="Checked By"><input value={checkedByName} onChange={(e) => setCheckedByName(e.target.value)} className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm" /></Field>
-            <Field label="Approved By"><input value={approvedByName} onChange={(e) => setApprovedByName(e.target.value)} className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm" /></Field>
+            {/* drafting-flow EVID-4 (DF-P11 fix pass): the typed name is the
+                note of whoever records the backfill — Version History shows it
+                as a claim ("Backfilled by …"), never as an approval stamp. */}
+            <Field label={APPROVAL_CLAIM_LABEL}><input value={approvedByName} onChange={(e) => setApprovedByName(e.target.value)} className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm" /></Field>
           </div>
 
           {/* MOC + source filename */}

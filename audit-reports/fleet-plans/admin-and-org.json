@@ -519,6 +519,24 @@
     "A&O P11 merged (2026-10-14; 20261210)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-14 at the A&O P11 merge (DEC-31)."
+  },
+  {
+   "name": "P16 RESTORE TICKET NUMBER KEY \u2014 a restored request never collides with a live request number",
+   "findings": [
+    "drafting-flow EDGE-5 (HIGH; done-when 1's remainder assigned by the integrator at the DF-P11 merge, 2026-10-21, DEC-31): confirm the live tickets (org_id, ticket_id) unique key; if absent, add it in one DEC-30 migration with a counts-only duplicate inventory first (refuse and change nothing when duplicates exist, naming the count), and in applyRestoreChunk re-mint or refuse loudly a colliding number \u2014 never a silent duplicate; every restore that works today restores the same rows (pin it)"
+   ],
+   "files": [
+    "lib/dataRestore.ts (applyRestoreChunk ticket number handling)",
+    "one migration only if the key is absent",
+    "tests: collision re-minted or refused loudly; non-colliding restores unchanged"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "admin-and-org P1 merged (BKP-5 / BKP-12 restore conflict handling)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the DF-P11 merge, 2026-10-21 (DEC-31)."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

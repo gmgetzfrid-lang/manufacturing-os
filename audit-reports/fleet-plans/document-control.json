@@ -847,6 +847,23 @@
    "sequencingNotes": [
     "Added by the integrator at the P28 merge, 2026-10-21 (DEC-31)."
    ]
+  },
+  {
+   "name": "P32 PUBLISH GUARD LOCK LEG \u2014 a publish through a non-RPC path respects the checkout lock",
+   "findings": [
+    "drafting-flow HAND-13 done-when 2 (assigned by the integrator at the DF-P11 merge, 2026-10-21, DEC-31): a lock leg in enforce_document_publish_guard (re-created from its NEWEST body, 20261193 or later, lineDiff-pinned) compatible with the authorized-publisher override, or the removal of the non-RPC publish paths \u2014 every publish that works today for a lock holder or an authorized override still works (pin it)"
+   ],
+   "files": [
+    "one DEC-30 migration re-creating enforce_document_publish_guard from its newest body",
+    "tests: lock holder publishes; non-holder refused; override path unchanged"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "document-control wave 1-2 merged (the publish guard body)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the DF-P11 merge, 2026-10-21 (DEC-31)."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

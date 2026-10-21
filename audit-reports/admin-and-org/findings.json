@@ -17,15 +17,15 @@
       "LOW": 19
     },
     "by_status": {
-      "RESOLVED": 60,
+      "RESOLVED": 61,
       "RESOLVED *(2026-10-14, admin-and-org Round G P13 integrator fix pass: the three remaining readers carry the actor note — the Resolution at the end of this record; every done-when met, items 1 and 3 and done-when 2's first form still waiting on `20261201`'s paste, as recorded. Before that: OPEN — 2026-10-14, admin-and-org Round G P13: the three named readers now carry the actor note — the P13 Partial below — but done-when 2's labelled form is still not met on three more readers, named there with their owner. Corrected at the P13 fix pass, DEC-29: P13 first set this RESOLVED on \"every reader\". Set back from RESOLVED by the integrator at the A&O P7 merge, 2026-10-13, DEC-29: done-when 2's labelled form was not met on three readers — the P7 Partial below)*": 1,
       "RESOLVED *(2026-10-14, admin-and-org Round G P13: the three shed sites and `/admin/storage`'s display — the last of the nine sites; see the Resolution at the end)*": 1,
       "RESOLVED *(2026-10-14, admin-and-org Round G P13 — pending the `20261219` paste; see the Resolution below)*": 1,
       "RESOLVED (Done-when 2's contractor intake door landed by the integrator at the I-26 merge, 2026-10-20 (DEC-90); Done-when 3's RLS limb closed by decision — ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90); switching enforcement on is the operator's step, not a done-when)": 1,
       "RESOLVED (2026-10-20, admin-and-org Round G P5; limb (c) closed by decision — ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90): `org_has_active_subscription` kept as documented, unwired scaffolding; the contractor intake door's call is tracked on `BILL-10` Done-when 2 alone)": 1,
       "RESOLVED (code) — database half pending 20261238 (ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90): the status stays exactly this until `20261238` is pasted and its result rows come back all true)": 1,
-      "OPEN": 2,
       "RESOLVED *(2026-10-14, admin-and-org Round G P13; the controller / owner shortcut that precedes the gate is opened as `ORG-23`)*": 1,
+      "OPEN": 1,
       "RESOLVED (2026-10-20, ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90) — fixed in the same package at its merge rather than left open; within the stated bound below)": 1
     }
   },
@@ -1829,7 +1829,7 @@
       "id": "ORG-20",
       "title": "`/api/storage/resolve` answers `missing: true` for a storage failure of ANY kind, so its callers cannot tell an absent file from an outage",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by reading; pinned in `lib/__tests__/aoRoundGP11AppearanceRails.test.ts` \"DEC-29: the helper's comments do not claim more than the route gives\")",
       "blast_radius": null,

@@ -36,7 +36,7 @@ import {
   type RestorePlan, type RestoreEnvelopeLike, type RestorePost, type ChunkedRestoreResult, type ChunkedRestorePreview,
   type BackupArchiveRead, clearSkippedNodeImagePointers, nodeImagePointerLabel, overflowLines, type SkippedNodeImage,
   restoreEnvelopeNodeIds, nodeIdsPresentBeforeRestore, addRestoredNodeIds, storageAnsweredInRun, RESTORE_FILES_POINTER_NOTE,
-  meaningIndexRebuildList, MEANING_INDEX_REBUILD_NOTE,
+  meaningIndexRebuildList, MEANING_INDEX_REBUILD_NOTE, classifyRestoreFileProbe, RESTORE_UNATTRIBUTED_FILE_REASON,
 } from "@/lib/dataRestore";
 import { restoreUploadRequest, isWorkspaceLogoKey, isNodeImageKey } from "@/lib/storageKey";
 import { withRestoreMembershipCheck, restoreMembershipSentence, type RestoreMembershipCheck } from "@/lib/restoreMembership";
@@ -58,6 +58,11 @@ interface FilesProgress {
   running: boolean;
   done: number; total: number;
   uploaded: number; skipped: number; offline: number; failed: number;
+  /** AUTHZ-4 / ORG-20 (DF-P11 integrator fix pass, DEC-90): legacy files with
+   *  no orgs/<org>/ prefix that no restored row names — refused by the
+   *  resolve route as unattributable and NOT uploaded (an unprefixed key could
+   *  overwrite another workspace's file); not a failure a re-run cures. */
+  unattributed?: number;
   error?: string | null;
   /** Why files failed: each distinct refusal, with how many files it hit. */
   reasons?: Array<{ reason: string; files: number }>;
@@ -296,7 +301,7 @@ export default function RestorePage() {
     setFilesProgress({ running: true, done: 0, total: entries.length, uploaded: 0, skipped: 0, offline: 0, failed: 0 });
     const token = await authToken();
 
-    const counters = { done: 0, uploaded: 0, skipped: 0, offline: 0, failed: 0 };
+    const counters = { done: 0, uploaded: 0, skipped: 0, offline: 0, failed: 0, unattributed: 0 };
     // ORG-5 fix pass: a failure keeps the route's (or storage's) reason, so
     // the panel says why instead of a bare count.
     const reasons = new Map<string, number>();
@@ -319,13 +324,26 @@ export default function RestorePage() {
         const key = remapOrgPath(item.key, orgPairs);
 
         // Skip what's already live; never resurrect space-archived binaries —
-        // those intentionally live in their own offline zips.
-        const check = await fetch(`/api/storage/resolve?path=${encodeURIComponent(key)}`, {
+        // those intentionally live in their own offline zips. DF-P11 fix
+        // pass 2: the existence probe (`exists=1` — the restore surface's
+        // gate, a HEAD, nothing signed and no document read recorded for a
+        // file nobody opened); a refusal is "could not check", reported and
+        // NOT uploaded — never read as "absent" (a 503 is still "not
+        // confirmed" and the file is uploaded, as before).
+        const check = await fetch(`/api/storage/resolve?path=${encodeURIComponent(key)}&exists=1`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        const state = await check.json().catch(() => null) as { archived?: boolean; archiveId?: string | null; missing?: boolean } | null;
-        if (check.ok && state?.archived === false) { counters.skipped++; return; }
-        if (check.ok && state?.archived === true && state?.archiveId) { counters.offline++; return; }
+        const state = await check.json().catch(() => null) as { archived?: boolean; archiveId?: string | null; missing?: boolean; error?: string; reason?: string } | null;
+        // classifyRestoreFileProbe (lib/dataRestore.ts): skip / offline /
+        // upload, a refusal other than 503 reported and NOT uploaded, and
+        // (DF-P11 integrator fix pass, DEC-90) a legacy key with no
+        // orgs/<org>/ prefix that no restored row names — refused as
+        // unattributable — counted under its own reason, never uploaded.
+        const probe = classifyRestoreFileProbe(key, check.status, state);
+        if (probe.kind === "skip") { counters.skipped++; return; }
+        if (probe.kind === "offline") { counters.offline++; return; }
+        if (probe.kind === "unattributed") { counters.unattributed++; return; }
+        if (probe.kind === "refused") throw new Error(probe.reason);
 
         const blob = await zips[item.zip].file(item.entry)!.async("blob");
         // ORG-5: upload-url signs a workspace logo only with its type AND its
@@ -350,7 +368,7 @@ export default function RestorePage() {
         // (`missing: true` — the route's answer to a HEAD failure of any kind).
         if (req.nodeImageProblem) {
           nodeImagesNotRestored.push(key.split("/").slice(-2).join("/"));
-          skippedNodeImages.push({ key, reportedMissing: check.ok && state?.missing === true });
+          skippedNodeImages.push({ key, reportedMissing: probe.reportedMissing });
           return;
         }
         const up = await fetch(`/api/storage/upload-url`, {
@@ -659,6 +677,13 @@ export default function RestorePage() {
                     {filesProgress.offline > 0 && <> · {fmtNum(filesProgress.offline)} left to space archives</>}
                     {filesProgress.failed > 0 && <span className="text-red-600 font-bold"> · {fmtNum(filesProgress.failed)} failed — run again to retry</span>}
                   </div>
+                  {(filesProgress.unattributed ?? 0) > 0 && (
+                    <div className="text-[10.5px] text-amber-700 mt-0.5" data-restore-unattributed>
+                      {fmtNum(filesProgress.unattributed!)} file(s): {RESTORE_UNATTRIBUTED_FILE_REASON}. Nothing in the restored
+                      workspace points at them, and writing a key outside this workspace&apos;s storage could overwrite another
+                      workspace&apos;s file; running again does not change this.
+                    </div>
+                  )}
                   {(filesProgress.reasons ?? []).slice(0, 5).map((r) => (
                     <div key={r.reason} className="text-[10.5px] text-red-700 mt-0.5">
                       {fmtNum(r.files)} file(s): {r.reason}

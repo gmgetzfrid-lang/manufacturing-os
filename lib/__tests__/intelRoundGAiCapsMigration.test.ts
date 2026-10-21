@@ -88,9 +88,11 @@ describe("20261137 — org_capability_allows_for learns ai.manage_caps (GOV-10)"
     expect(fn137).toMatch(/org_capability_allows_for\(p_org UUID, p_cap TEXT, p_uid UUID, p_resource JSONB\)\s*\nRETURNS BOOLEAN LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public/);
   });
 
-  it("the CASE mirrors CAPABILITY_DEFS exactly (every id, same defaults, same count) — ai.manage_caps defaults to Admin", () => {
+  it("the CASE mirrored CAPABILITY_DEFS exactly when it shipped (every id, same defaults, same count) — ai.manage_caps defaults to Admin; 20261239 later narrowed holds.release (drafting-flow HAND-2) and is the live census", () => {
     const sql = caseMap(fn137);
-    for (const d of CAPABILITY_DEFS) expect(sql.get(d.id), d.id).toEqual(d.defaultRoles);
+    // holds.release shipped as ["*"] until 20261239 narrowed it (drafting-flow HAND-2).
+    const shipped = (id: string, roles: readonly string[]) => (id === "holds.release" ? ["*"] : roles);
+    for (const d of CAPABILITY_DEFS) expect(sql.get(d.id), d.id).toEqual(shipped(d.id, d.defaultRoles));
     expect(sql.size).toBe(CAPABILITY_DEFS.length);
     const def = CAPABILITY_DEFS.find((d) => d.id === "ai.manage_caps");
     expect(def?.defaultRoles).toEqual(["Admin"]);

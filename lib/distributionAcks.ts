@@ -10,8 +10,21 @@
 //
 // Pre-migration tolerance: helpers no-op / return empty until 20260825 is
 // applied.
+//
+// drafting-flow EVID-7 (DF-P11): there is no module-level latch any more.
+// A read answers, PER CALL, one of three things the panel renders apart:
+// "ok" (the rows — an empty list is "none requested"), "unavailable" (the
+// table or a column is not in this database — named, never shown as empty)
+// and "error" (the query failed — said, with the reason). A transient
+// schema-cache miss after a deploy no longer blinds the rest of the session:
+// the next call asks again.
+// drafting-flow EVID-2 (DF-P11): acknowledging writes an
+// ACK_DISTRIBUTION_CONFIRMED audit row beside the stamped row — two
+// independent records; 20261239 refuses un-acknowledging and bounds
+// requested_at at the database.
 
 import { supabase } from "@/lib/supabase";
+import { logAuditAction } from "@/lib/audit";
 // DELIV-16 / DELIV-7 dw1 (notifications N15): the scan's notices retry and
 // dead-letter (DEC-102) — one import line, every call site unchanged.
 import { notifyCompliance as notify } from "@/lib/complianceNotify";
@@ -30,8 +43,14 @@ export interface DistributionAck {
   acknowledgedAt: string | null;
 }
 
-let ackSchemaMissing = false;
-export function resetAckSchemaFlag(): void { ackSchemaMissing = false; }
+/** EVID-7: what one read of the distribution record found. */
+export type AckRead<T> =
+  | { status: "ok"; value: T }
+  | { status: "unavailable"; reason: string }
+  | { status: "error"; message: string };
+
+const UNAVAILABLE_REASON =
+  "The distribution record isn't in this database yet (migration 20260825, or a column it needs, is missing).";
 
 function isMissingAckSchema(err: unknown): boolean {
   const e = err as { code?: string; message?: string } | null;
@@ -56,9 +75,10 @@ function rowToAck(r: Record<string, unknown>): DistributionAck {
   };
 }
 
-/** Every ack row for the CURRENT version of a document. */
-export async function listAcksForVersion(versionId: string): Promise<DistributionAck[]> {
-  if (ackSchemaMissing) return [];
+/** EVID-7: every ack row for one version — "ok" with the rows (an empty
+ *  list means none was requested), "unavailable" when the table or a column
+ *  is not in this database, "error" when the read failed. Asked every call. */
+export async function readAcksForVersion(versionId: string): Promise<AckRead<DistributionAck[]>> {
   try {
     const { data, error } = await supabase
       .from("distribution_acks")
@@ -66,21 +86,18 @@ export async function listAcksForVersion(versionId: string): Promise<Distributio
       .eq("version_id", versionId)
       .order("acknowledged_at", { ascending: true, nullsFirst: true });
     if (error) {
-      if (isMissingAckSchema(error)) { ackSchemaMissing = true; return []; }
-      throw new Error(error.message);
+      if (isMissingAckSchema(error)) return { status: "unavailable", reason: UNAVAILABLE_REASON };
+      return { status: "error", message: error.message || "the distribution record could not be read" };
     }
-    return ((data as Record<string, unknown>[]) ?? []).map(rowToAck);
-  } catch {
-    return [];
+    return { status: "ok", value: ((data as Record<string, unknown>[]) ?? []).map(rowToAck) };
+  } catch (e) {
+    return { status: "error", message: (e as Error)?.message || "the distribution record could not be read" };
   }
 }
 
-/** My own pending ack on this version (drives the acknowledge bar). */
-export async function getMyPendingAck(
-  versionId: string,
-  userId: string,
-): Promise<DistributionAck | null> {
-  if (ackSchemaMissing) return null;
+/** EVID-7: my own pending ack on this version (drives the acknowledge bar),
+ *  with the same three answers. */
+export async function readMyPendingAck(versionId: string, userId: string): Promise<AckRead<DistributionAck | null>> {
   try {
     const { data, error } = await supabase
       .from("distribution_acks")
@@ -90,13 +107,31 @@ export async function getMyPendingAck(
       .is("acknowledged_at", null)
       .maybeSingle();
     if (error) {
-      if (isMissingAckSchema(error)) ackSchemaMissing = true;
-      return null;
+      if (isMissingAckSchema(error)) return { status: "unavailable", reason: UNAVAILABLE_REASON };
+      return { status: "error", message: error.message || "your confirmation request could not be read" };
     }
-    return data ? rowToAck(data as Record<string, unknown>) : null;
-  } catch {
-    return null;
+    return { status: "ok", value: data ? rowToAck(data as Record<string, unknown>) : null };
+  } catch (e) {
+    return { status: "error", message: (e as Error)?.message || "your confirmation request could not be read" };
   }
+}
+
+/** Every ack row for the CURRENT version of a document — the rows, or an
+ *  empty list when the record could not be read (callers that must tell
+ *  the two apart use readAcksForVersion). No latch: each call asks. */
+export async function listAcksForVersion(versionId: string): Promise<DistributionAck[]> {
+  const r = await readAcksForVersion(versionId);
+  return r.status === "ok" ? r.value : [];
+}
+
+/** My own pending ack on this version, or null when there is none OR it
+ *  could not be read (readMyPendingAck tells them apart). No latch. */
+export async function getMyPendingAck(
+  versionId: string,
+  userId: string,
+): Promise<DistributionAck | null> {
+  const r = await readMyPendingAck(versionId, userId);
+  return r.status === "ok" ? r.value : null;
 }
 
 /** Request acknowledgment of the current revision from a set of members.
@@ -168,7 +203,6 @@ export async function requestAcks(input: {
       .upsert(rows, { onConflict: "version_id,recipient_user_id", ignoreDuplicates: true });
     if (error) {
       if (isMissingAckSchema(error)) {
-        ackSchemaMissing = true;
         throw new Error("Acknowledged distribution needs the 20260825 migration applied first.");
       }
       throw new Error(error.message);
@@ -222,7 +256,6 @@ export async function closeStaleAcksForDocument(
   documentId: string,
   currentVersionId: string | null,
 ): Promise<number> {
-  if (ackSchemaMissing) return 0;
   try {
     let q = supabase
       .from("distribution_acks")
@@ -297,7 +330,11 @@ export async function listMyPendingDistributionAcks(orgId: string, uid: string):
  *  acknowledgment and forge the "N of M confirmed" register. The write is
  *  checked — zero rows means the row wasn't yours (or was already stamped)
  *  and must not read as success. */
-export async function acknowledge(ackId: string, recipientUserId: string): Promise<void> {
+export async function acknowledge(
+  ackId: string,
+  recipientUserId: string,
+  actor?: { email?: string | null; role?: string | null },
+): Promise<{ auditRecorded: boolean; auditError: string | null }> {
   const { data, error } = await supabase
     .from("distribution_acks")
     .update({ acknowledged_at: new Date().toISOString() })
@@ -309,6 +346,37 @@ export async function acknowledge(ackId: string, recipientUserId: string): Promi
   if (!data || data.length === 0) {
     throw new Error("This acknowledgment isn't yours to sign (or it was already recorded).");
   }
+  // EVID-2 done-when 4 (DF-P11): a second, independent record of the act.
+  // The confirmation already stands; a refused audit row is RETURNED (the
+  // panel says it), never a silent success and never an un-done confirmation
+  // (DEC-44's member-writer rule; lib/audit dead-letters what it cannot write).
+  const { data: stamped, error: readErr } = await supabase
+    .from("distribution_acks")
+    .select("org_id, document_id, version_id, rev_label, acknowledged_at")
+    .eq("id", ackId)
+    .maybeSingle();
+  if (readErr || !stamped) {
+    return {
+      auditRecorded: false,
+      auditError: `the confirmed acknowledgment could not be re-read to write its audit row (${readErr?.message ?? "no row"})`,
+    };
+  }
+  const row = stamped as Record<string, unknown>;
+  const audit = await logAuditAction({
+    action: "ACK_DISTRIBUTION_CONFIRMED",
+    resourceType: "document",
+    resourceId: String(row.document_id ?? ""),
+    orgId: String(row.org_id ?? ""),
+    userId: recipientUserId,
+    userEmail: actor?.email ?? undefined,
+    userRole: actor?.role ?? undefined,
+    details: {
+      ackId, versionId: (row.version_id as string | null) ?? null,
+      revLabel: (row.rev_label as string | null) ?? null,
+      acknowledgedAt: (row.acknowledged_at as string | null) ?? null,
+    },
+  });
+  return { auditRecorded: audit.ok, auditError: audit.ok ? null : audit.error };
 }
 
 /**

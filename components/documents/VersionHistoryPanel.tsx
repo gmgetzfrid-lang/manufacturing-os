@@ -23,6 +23,9 @@ import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal";
 import BackfillVersionModal from "@/components/documents/BackfillVersionModal";
 import HelpTooltip from "@/components/ui/HelpTooltip";
+import {
+  deriveVersionApproval, loadSignedRosters, APPROVAL_CLAIM_LABEL, EMPTY_ROSTER, type RosterState, type VersionApproval,
+} from "@/lib/versionApproval";
 
 interface VersionHistoryPanelProps {
   doc: DocumentRecord;
@@ -43,6 +46,10 @@ export default function VersionHistoryPanel({
   onRevertVersion, canRevert, refreshKey,
 }: VersionHistoryPanelProps) {
   const [versions, setVersions] = useState<DocumentVersion[]>([]);
+  // EVID-4 (DF-P11): each version's signed review sign-offs — the approval
+  // is derived from them (or, with none, from the publisher), never from
+  // the typed box. null = the roster could not be read (said, not guessed).
+  const [rosters, setRosters] = useState<Map<string, RosterState> | null>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
@@ -75,6 +82,7 @@ export default function VersionHistoryPanel({
     try {
       const list = await listVersions(doc.id);
       setVersions(list);
+      setRosters(await loadSignedRosters(list.map((v) => v.id).filter((id): id is string => !!id)).catch(() => null));
     } catch (e) {
       setError((e as Error).message || "Could not load history");
     } finally {
@@ -146,11 +154,15 @@ export default function VersionHistoryPanel({
           { headers: { authorization: `Bearer ${session?.access_token ?? ""}` } }
         );
         const body = await res.json().catch(() => null);
-        if (res.ok && body?.archived) {
+        // ORG-20 / AUTHZ-4 (DF-P11): a refusal or a storage outage is said —
+        // it used to fall through and fetch the bare key, which failed with
+        // no reason given.
+        if (!res.ok) throw new Error((body && typeof body.error === "string" && body.error) || `Couldn't open this revision (HTTP ${res.status})`);
+        if (body?.archived) {
           void openArchived(v.fileUrl, `Rev ${v.revisionLabel}`);
           return;
         }
-        if (res.ok && body?.url) httpUrl = body.url as string;
+        if (body?.url) httpUrl = body.url as string;
       }
       // We pass a doc clone with checkedOutBy cleared, forcing the gate to
       // resolve "uncontrolled" regardless of the real checkout state.
@@ -230,7 +242,9 @@ export default function VersionHistoryPanel({
           <Layers className="w-3 h-3" /> Version History
           <HelpTooltip>
             Every revision of this document, newest first. Each row links to its file, SHA-256 hash,
-            and the engineering signoffs (Drawn / Checked / Approved) captured at release.
+            and the engineering signoffs (Drawn / Checked) captured at release. <b>Approved</b> is the signed review
+            sign-offs; a revision released without one names its publisher, and anything typed in the approval box is
+            shown as the publisher&apos;s note.
             <b className="block mt-1">Compare</b> diffs an older rev against the current one.
             <b className="block mt-1">Pencil</b> corrects a mislabeled rev after the fact (e.g. uploaded as Rev 0 but the stamp reads 38) — the old and new label are audited.
             <b className="block mt-1">Revert</b> creates a new revision that copies the older file forward — no history is rewritten.
@@ -416,13 +430,15 @@ export default function VersionHistoryPanel({
               )}
 
               {/* Signoff chain */}
-              {(v.drawnByName || v.checkedByName || v.approvedByName) && (
-                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 pl-1">
-                  {v.drawnByName && <SignoffBit icon={<User className="w-3 h-3" />} label="Drawn" name={v.drawnByName} />}
-                  {v.checkedByName && <SignoffBit icon={<CheckSquare className="w-3 h-3" />} label="Checked" name={v.checkedByName} />}
-                  {v.approvedByName && <SignoffBit icon={<Stamp className="w-3 h-3" />} label="Approved" name={v.approvedByName} />}
-                </div>
-              )}
+              <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 pl-1">
+                {v.drawnByName && <SignoffBit icon={<User className="w-3 h-3" />} label="Drawn" name={v.drawnByName} />}
+                {v.checkedByName && <SignoffBit icon={<CheckSquare className="w-3 h-3" />} label="Checked" name={v.checkedByName} />}
+                {/* an in-review draft is not approved or released yet: its
+                    partial roster is the review panel's, not an approval */}
+                {v.reviewState !== "in_review" && (
+                  <ApprovalBit approval={deriveVersionApproval(v, rosters ? (rosters.get(v.id ?? "") ?? EMPTY_ROSTER) : null)} />
+                )}
+              </div>
 
               {/* Cross-references */}
               {(v.mocReference || v.sourceFileName) && (
@@ -542,6 +558,51 @@ export default function VersionHistoryPanel({
       )}
       {archivedModal}
     </div>
+  );
+}
+
+/** EVID-4 (DF-P11): the derived approval. Only a COMPLETE signed review
+ *  roster earns the stamp; an incomplete one says "Partially signed — n of
+ *  m"; a release with none names its publisher as the publisher, and a
+ *  backfilled historical revision the person who recorded it ("Backfilled
+ *  by"); the typed box is shown as the publisher's claim, never as an
+ *  approval. */
+function ApprovalBit({ approval }: { approval: VersionApproval }) {
+  const a = approval.approval;
+  return (
+    <>
+      {a.basis === "roster" && (
+        <span data-approval="roster">
+          <SignoffBit icon={<Stamp className="w-3 h-3" />} label="Approved (signed review)"
+            name={a.signers.map((s) => `${s.name || "a reviewer"}${s.role ? ` (${s.role})` : ""}`).join(", ")} />
+        </span>
+      )}
+      {a.basis === "partial" && (
+        <span data-approval="partial" title="Some of this revision's required review sign-offs were never signed — it is not a complete signed approval.">
+          <SignoffBit icon={<CheckSquare className="w-3 h-3" />} label={`Partially signed — ${a.satisfied} of ${a.required}`}
+            name={a.signers.map((s) => `${s.name || "a reviewer"}${s.role ? ` (${s.role})` : ""}`).join(", ")} />
+        </span>
+      )}
+      {a.basis === "backfill" && (
+        <span data-approval="backfill" title="A historical revision added after the fact. The name is who recorded it here, not who released it; no review sign-off is on record.">
+          <SignoffBit icon={<User className="w-3 h-3" />} label="Backfilled by (no review sign-off on record)" name={a.name || "unknown"} />
+        </span>
+      )}
+      {a.basis === "publisher" && (
+        <span data-approval="publisher" title="No review sign-off was recorded for this revision — the person who released it is accountable for it.">
+          <SignoffBit icon={<User className="w-3 h-3" />} label="Released by (no review sign-off)" name={a.name || "unknown"} />
+        </span>
+      )}
+      {a.basis === "unread" && (
+        <span data-approval="unread" className="text-[10px] text-amber-700">Approval not known — {a.reason}</span>
+      )}
+      {approval.claim && (
+        <span data-approval-claim className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)] italic"
+          title="Typed by the publisher at release. It is their note, not a recorded approval.">
+          {APPROVAL_CLAIM_LABEL}: &ldquo;{approval.claim}&rdquo;
+        </span>
+      )}
+    </>
   );
 }
 

@@ -42,6 +42,7 @@ import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal"
 import type { DocumentRecord, DocumentVersion, ReviewControl } from "@/types/schema";
 import IsoGuidance from "@/components/ui/IsoGuidance";
 import { appAlert } from "@/components/providers/DialogProvider";
+import { APPROVAL_CLAIM_LABEL } from "@/lib/versionApproval";
 
 interface RevUpModalProps {
   isOpen: boolean;
@@ -897,7 +898,13 @@ export default function RevUpModal({
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="Drawn By"><input value={drawnByName} onChange={(e) => setDrawnByName(e.target.value)} className={inputClass} /></Field>
             <Field label="Checked By"><input value={checkedByName} onChange={(e) => setCheckedByName(e.target.value)} className={inputClass} /></Field>
-            <Field label="Approved By"><input value={approvedByName} onChange={(e) => setApprovedByName(e.target.value)} className={inputClass} /></Field>
+            {/* EVID-4 (DF-P11): this box is the publisher's own note, not an
+                approval — the revision's approval is derived from its signed
+                review sign-offs, or (with none) names you as its publisher. */}
+            <Field label={APPROVAL_CLAIM_LABEL} hint="Your note — recorded as your claim, not as an approval.">
+              <input value={approvedByName} onChange={(e) => setApprovedByName(e.target.value)} className={inputClass}
+                placeholder="e.g. approval ref. or approver named in the MOC" />
+            </Field>
           </div>
 
           {/* Cross-references. When the class makes MOC mandatory it already

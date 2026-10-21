@@ -193,11 +193,16 @@ export async function POST(req: NextRequest) {
     const fetched: Array<{ key: string; buf: Uint8Array; contentType: string }> = [];
     let incomplete = false;
     const keys = atts.map((a) => (a?.url || "").toString()).filter(Boolean);
-    // RET-6: attachments[].url is member-writable. A key outside this org's
-    // prefix (or an unsafe one) is never read into the archive — checked for
-    // the WHOLE ticket before any GetObject, and the ticket is skipped,
-    // un-claimed and counted, exactly like an unreadable binary, so commit can
-    // never free a substituted key either.
+    // RET-6 / AUTHZ-5 done-when 3: attachments[].url is member-writable. A key
+    // outside this org's prefix (or an unsafe one) is never read into the
+    // archive — checked for the WHOLE ticket before any GetObject, and the
+    // ticket is skipped, un-claimed and counted, exactly like an unreadable
+    // binary. Capture keeps the org-prefix rule (drafting-flow DF-P11 fix
+    // pass): a request started from a document carries the workspace's
+    // library file as a `Source` reference (app/api/tickets/create), and that
+    // ticket must stay sheddable. What the reclaim may DELETE is narrower —
+    // only this workspace's request files (lib/ticketShed.ts isShedTicketKey),
+    // applied in ticket-shed/commit; a library reference is kept there.
     if (keys.some((k) => !isOrgOwnedKey(k, orgId))) { skippedForeignKey++; continue; }
     for (const key of keys) {
       try {

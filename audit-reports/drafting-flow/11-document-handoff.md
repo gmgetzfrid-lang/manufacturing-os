@@ -17,7 +17,7 @@ Where the request flow meets controlled document lifecycle, and the as-built mar
 ## HAND-1 · A configured review gate fails OPEN when the policy can't be read — the resolver swallows query errors and RevUpModal's catch degrades to "none"
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/reviewControl.ts:40`, `lib/reviewControl.ts:45`, `lib/reviewControl.ts:48`, `components/documents/RevUpModal.tsx:195`, `components/documents/RevUpModal.tsx:210`, `lib/documentLifecycle/setRevUp.ts:84`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed fail-open, and no DB backstop catches it: supabase/migrations/20260822_review_completion_guard.sql:53 only raises when `COALESCE(v_primary_reqs, 0) > 0`, i.e. only when a roster already exists — and a gate that failed open never creates one. The contrast in the very same effect hook settles intent: the doc-class/MOC resolution at RevUpModal.tsx:199-202 deliberately fails CLOSED (`setDocClassUnknown(true)`), while the review gate silently degrades to 'none'.
@@ -56,6 +56,16 @@ lib/docClass.ts:96-99 (the correct pattern, same repo) —
 - [ ] RevUpModal's catch sets an explicit `reviewControlUnknown` state that fails CLOSED (routes through review, or blocks publish) rather than coalescing to `{mode:"none"}`.
 - [ ] setRevUp.ts:84 stops treating an unresolved policy as permission to publish directly.
 
+**Resolution (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC — record-only close, verified against the merged code (owner document-control `RG-6`, RESOLVED).
+
+**Done-when.**
+- ✓ `effectiveReviewControlForDocument` throws on a failed read (`lib/reviewControl.ts:73-85`, through `lib/containerChain.ts` `loadContainerChain`, which throws on every PostgREST error, `:84-100`) — as `effectiveDocClassForDocument` does.
+- ✓ RevUpModal holds publishing until the policy resolves; a failed read is an explicit `"unknown"` state that blocks publish with the reason (`components/documents/RevUpModal.tsx:231-255`, `:348`, `:786-790`), never `{mode: "none"}`.
+- ✓ `setLevelRevUp` refuses a sheet whose policy could not be read (`lib/documentLifecycle/setRevUp.ts:82-118`).
+- Tests: `lib/__tests__/dcRoundFReviewGate.test.ts` "effectiveReviewControlForDocument throws on a PostgREST error on any read", "RevUpModal: publishing is held until the policy RESOLVES…", "setLevelRevUp (the batch path) refuses a sheet whose policy could not be read".
+
+**Scope / residual.** None.
+
 ---
 
 <a id="hand-2"></a>
@@ -63,7 +73,7 @@ lib/docClass.ts:96-99 (the correct pattern, same repo) —
 ## HAND-2 · Any active org member can release the safety hold the publish guard depends on
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED (pending `20261239`)
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260901_db_hard_enforcement.sql:53`, `supabase/migrations/20260901_db_hard_enforcement.sql:98`, `lib/capabilityPolicy.ts:87`, `lib/documentGuards.ts:117`, `lib/holds.ts:105`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed and internally inconsistent: documentGuards.ts:114-117 states holds are 'deliberate do-not-advance flags reserved for the controller tier' and refuses a library publisher's force, yet the same publisher can simply UPDATE released_at under the shipped '*' default. Note also that checkout.force_release is defaulted to ["Admin","DocCtrl"] and flagged `critical: true`, while holds.release is neither — so the weaker control guards the stronger promise. lib/holds.ts:105-109 additionally fails open on a policy-lookup error.
@@ -101,6 +111,32 @@ lib/capabilityPolicy.ts:87-88 —
 - [ ] `holds.release` ships defaulting to the controller tier (matching `checkout.force_release`), with widening left to an explicit admin decision.
 - [ ] Releasing a hold opened by someone else requires a reason recorded on the hold row and notifies the opener before the release commits.
 - [ ] The comment in documentGuards.ts either matches the shipped policy or is corrected.
+
+**Partial (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC, with its three review fix passes. Fix pass 3 found that done-when 1 holds only for workspaces that store NO `holds.release` entry (see the remainder below), so the finding stays OPEN; done-whens 2 and 3 are met. Reproduced on `29d92ac`: `holds.release` shipped `["*"]` in both evaluators (`lib/capabilityPolicy.ts`, `org_capability_allows_for` newest body `20261137`). Built under `DEC-90` ruling (3):
+- `lib/capabilityPolicy.ts` — `holds.release` defaults to `["Admin","DocCtrl","$opener"]`: the controller tier (exactly `checkout.force_release`'s) plus `HOLD_OPENER_TOKEN` (`"$opener"`), an identity token no role matches that admits a hold's own opener to release / re-date THAT hold. `holdOpenerTokenOn(policy)` reads it from the base list; `validateCapabilityPolicy` allows the token on `holds.release` only. Fix pass 2: the opener is a token IN the list, not an unconditional OR — an org whose Admin stored a narrower list (`["Admin"]`, "only Admins lift holds") is honoured exactly as written.
+- `supabase/migrations/20261239_df_roundG_holds_release_grant_scope.sql` — re-creates `org_capability_allows_for` from its newest body (`20261137`, grants as `20261224` left them) with the one CASE row changed; adds `hold_opener_may_update(org, opened_by)` (SECURITY DEFINER, `search_path` pinned; fix pass 3: PUBLIC and anon revoked, EXECUTE for `authenticated` and `service_role` only, because the policy below is re-created `TO authenticated` — anon has no UPDATE policy on `document_holds` and touches 0 rows without planning the function; recorded as a `signed-in` row in `lib/__tests__/rls/definerDecisions.ts`): true only for the caller who IS the hold's opener (`p_opened_by IS DISTINCT FROM auth.uid()` refuses a NULL session uid first), an active member of its org, while the org's effective `holds.release` list (stored bare list, a rule list's first unconditional rule, else the shipped default) names `"$opener"`; and re-creates the `document_holds_update` policy from its newest body (`20260901`) with ONE added leg, `OR hold_opener_may_update(org_id, opened_by)`, scoped `TO authenticated` (fix pass 3; probe 111 checks the role list). All lineDiff / shape-pinned in `lib/__tests__/dfRoundG_P11_migration.test.ts` (the function's unconditional-rule loop is the evaluator's, line for line). `opened_by` is pinned once a hold is placed (`20261073`), so the leg cannot be re-pointed; the release still needs a reason and is attributed to the session (`20261073`).
+- The app mirrors it: `lib/holds.ts` `holdControlsFor(…, hold)` and `assertHoldCapability`'s `openedBy` (read checked with the hold's org, `readHoldOrg`), `lib/checkoutAffordances.ts` `holdAffordances(…, hold)` — each gated on `isHoldOpener && holdOpenerTokenOn`; `components/documents/HoldStrip.tsx` and `app/(protected)/admin/holds/page.tsx` decide Release / Re-date per hold; `components/documents/InspectorPanel.tsx` hands the strip `canEdit = canReleaseHold || canOpenHold`; `components/permissions/CapabilityPolicyEditor.tsx` shows the token as its own tick on the Release-a-hold row ("The hold's own opener may release or re-date it"), never as an unexplained stored token.
+- Done-when 2 (fix pass 2): `lib/holds.ts` `releaseHold` — when the releaser is not the hold's opener — awaits `noticeOpenerOfRelease({ phase: "pending" })` BETWEEN the permission gate and the UPDATE: the existing `hold_released` kind (no new kind, nothing in `lib/notify/**`), addressed to the opener, "<releaser> is releasing the "<reason>" hold you placed: <release reason>", its bell row on the retried path (`inappRetry`, DELIV-16) so the answer says whether it landed. Not landed, or the send threw, or the opener's membership could not be read → the release is refused with a sentence and nothing is written. If the UPDATE then fails, `phase: "failed"` tells the opener it did not go through and the hold stands. An opener who is no longer an active member cannot be told (emit reaches active members only, NEDGE-3) and does not freeze the stop. The post-commit notice to the whole hold audience is unchanged.
+- Fix pass 3 (the stored `["*"]`): `components/permissions/CapabilityPolicyEditor.tsx` `joinPolicyFromEditor` no longer writes a row equal to its shipped default (as a set, with no override) — every save used to write every capability, which froze the old `holds.release: ["*"]` in every workspace whose Admin changed any row; absent IS the default to both evaluators and to the policy route's critical-change check (`canonicalEntry`), so no answer changes today. A `holds.release` row still exactly `["*"]` is named on the row as the old default (`holdsReleaseOnOldDefault`) with "Use the shipped default", which sets the row and is saved through the impact preview like any change — an explicit Admin decision. `20261239`'s inventory row 1 now counts workspaces whose stored `holds.release` is exactly `["*"]`, apart from row 2 (any other stored list or a rule list); the other rows are renumbered 3–8.
+- **Who gains or loses it.** **Nobody gains.** In an org on the shipped default every role outside Admin / DocCtrl loses release and re-date of a hold placed by SOMEONE ELSE — Manager, Supervisor, DraftingSupervisor, the Engineer tiers, Drafter, Requester, Contractor and custom roles (Viewer / Auditor already had no live control: `holdControlsFor` subtracts read-only roles); **everyone keeps release and re-date of a hold they placed** (the default names `"$opener"`). Why the management tier (Manager, Supervisor) is not kept as a legitimate operational releaser under `DEC-90` ruling (3), although it holds `ticket.force_close`: the close gate (`app/api/tickets/workflow-action/route.ts`, LIFE-6 / `DEC-25`) releases only holds whose `origin_ticket_id` is the ticket being closed — the as-built discrepancy hold `CheckInPanel` places on that request — and only through the closer's explicit release-or-keep resolution, with a reason, written as `HOLD_RELEASED` rows; it never reaches a hold placed on the document from its hold strip, which is the controller's veto. Release on the hold itself reaches every hold, so it stays the controller tier's unless an Admin ticks Manager or Supervisor on the row (said in `CAPABILITY_DEFS` and the migration header). DraftingSupervisor, the Engineer tiers, Drafter, Requester and Contractor hold no comparable path. An org that STORED a list keeps exactly what it had — before the paste its list decided, after it still decides — and that includes the incidental `["*"]` (the remainder below). The ticket close gate's release of its own hold (`DEC-25`) runs as the service role and is unaffected; the aging-hold audience already falls back to the controller tier (`DEC-35`); widening is one Admin decision in the grid (a role, the opener tick) or a personal `holds.release` grant.
+
+**Done-when.**
+- Partly met. `holds.release` ships to the controller tier (matching `checkout.force_release`) plus the hold's own opener as a configurable token, and widening is an explicit Admin decision — but only in a workspace that stores NO `holds.release` entry (counted by `20261239`'s inventory row 3) or whose Admin stored a list on purpose. NOT met for a workspace whose grid save stored the old `["*"]` incidentally (inventory row 1 counts them; the paste cannot tell an incidental `["*"]` from a chosen one, and leaves it deciding — everyone still releases there until an Admin acts). From fix pass 3 no new incidental entry is written, and the grid names the stored `["*"]` with a one-click shipped default. Pending migration `supabase/migrations/20261239_df_roundG_holds_release_grant_scope.sql` for the database half (the app half is live on deploy).
+- ✓ Releasing a hold opened by someone else requires a reason recorded on the hold row (`releaseHold`, `20261073`'s guard) and notifies the opener before the release commits (`noticeOpenerOfRelease`, awaited and checked before the UPDATE; a notice that cannot be queued refuses the release; a failed UPDATE is followed up on the same kind). The one case not told: an opener who has left the workspace (nobody to tell).
+- ✓ `lib/documentGuards.ts` ("holds are deliberate 'do not advance' flags reserved for the controller tier") matches the shipped policy — a controller's hold; an opener lifts only their own, and only while the org's list names the opener.
+- Tests: `lib/__tests__/dfRoundG_P11_grants.test.ts` (the default; every role named above refused; a stored `*` and a grant still widen; the opener keeps release of their own hold; fix pass 2: a stored `["Admin"]` refuses the opener on every surface, ticking the token back on returns it, rule lists read as the database reads them, the token valid on `holds.release` only); `lib/__tests__/dfRoundG_P11_holdReleaseNotice.test.ts` (fix pass 2: the opener's notice is sent and landed BEFORE the UPDATE — order pinned on one call log; a notice that did not land, a send that threw or reached nobody refuses with nothing written; a failed UPDATE sends "did not go through"; the opener releasing their own hold sends none; a departed opener does not freeze the hold; a membership read that fails refuses); `lib/__tests__/dfRoundG_P11_editorOpenerToken.test.ts` (rendered: the opener tick on the row, ticked under the default, unticked for a stored list, saved as the token; fix pass 3: a save writes only rows that differ from their default — changing "Assign drafters" sends that row alone, never `holds.release`; a stored `["*"]` is named on the row, kept on an unrelated save, and "Use the shipped default" saves it away; `joinPolicyFromEditor` answers exactly as a fully written policy for every capability); `lib/__tests__/sweepRoundD3.test.ts` (a default-equal row is left out, same answer); `aoRoundGP9PermissionsConsole.test.ts` (`assertHoldCapability`); `checkoutAffordances.test.ts`; `holds.test.ts`; `dcRoundFP24HoldCheckoutPolicyFault.test.ts`, `dcRoundFP24InspectorPolicyFault.test.ts`. Committed runtime proof: `lib/__tests__/rls/dfP11HoldsRelease.test.ts` (`npm run test:db`, PostgreSQL 16 replay of every migration) — a controller's hold: Supervisor, Engineer, Drafter, Requester, Viewer and a suspended member touch 0 rows; Admin, DocCtrl, a Manager also holding DocCtrl and a granted Drafter release; the opener re-dates and releases their own; fix pass 2: an org storing `["Admin"]` — the opener and DocCtrl touch 0 rows, ticking `"$opener"` back (bare list, or a rule list's base rule) returns the leg; another non-controller cannot use the leg, a suspended opener holds nothing, `opened_by` cannot be re-pointed; an org storing `*` keeps it; the paste as one script on a copy put back to `20260901`'s policy (opener refused before, admitted after; the `["Admin"]` org's opener refused before AND after; probes 100–112 true; inventory rows 1–8 counts, fix pass 3: row 1 equals the workspaces storing exactly `["*"]` and row 2 the other stored lists, and a `["*"]` workspace's drafter still releases a controller's hold after the paste — the remainder; the policy's role list is `authenticated` and anon cannot execute `hold_opener_may_update`; a re-paste clean). `lib/__tests__/rls/intelI28DefinerOracles.test.ts` stores `holds.release: ["*"]` in its world, so its 20261224 before/after comparison is not confused by this file's default change.
+
+**Scope / residual.** Pending paste of `supabase/migrations/20261239_df_roundG_holds_release_grant_scope.sql` (after `20261137` and `20261033`; deploy the app first). An opener who has left the workspace is not told before a release (nobody to tell; the release is still attributed and audited). A re-date of someone else's hold is not pre-notified (it does not lift the stop).
+
+**Remainder (closed by the integrator's ruling below; it was owned by the integrator, DEC-31).** Workspaces whose stored `holds.release` is exactly `["*"]` — the old default, written by every grid save before fix pass 3 whether or not anyone chose it — keep "everyone releases" after the paste. Their number is `20261239`'s inventory row 1 (read it from the paste's result set). Two ways to close it, for the integrator to rule on: (a) leave it to each workspace's Admin through the grid, which now names the row as the old default and offers "Use the shipped default" (built; no data is changed without an Admin); or (b) an integrator-approved data step that rewrites `holds.release` only where the stored value equals `["*"]` exactly (a separate migration with its own inventory; it would also override any Admin who chose `["*"]` on purpose, which the stored data cannot distinguish). Until one is ruled, done-when 1 stays partly met.
+
+**Ruled by the integrator at the DF-P11 merge, 2026-10-21 (DEC-90)** — the Remainder above, option (a). The shipped default is narrowed to the controller tier, `[Admin, DocCtrl]` (plus the hold's own opener as the `"$opener"` token, `DEC-112` item 1, which keeps the release ruling (3) protects); a `holds.release` list a workspace has STORED is that workspace Admin's own decision and is NOT rewritten — silently changing who may release holds in a live workspace would itself be a regression — so no data step is taken and `20261239` is unchanged. The Action-permissions grid's note (`components/permissions/CapabilityPolicyEditor.tsx:525`, `data-testid="holds-release-old-default"`) tells the Admin that "everyone" is stored for this action, that the hold-release change did not rewrite it, and names the recommended, shipped default, offered in one action ("Use the shipped default", `:538`, saved through the impact preview); loading the grid writes nothing. `20261239`'s inventory row 1 counts these workspaces. Tests: `lib/__tests__/dfRoundG_P11_editorOpenerToken.test.ts` "a stored holds.release of exactly ["*"] is named on the row as the old default …" (the note's wording, kept on an unrelated save, adopted in one action) and "HAND-2 dw1 as ruled: loading a workspace that stores ["*"] writes nothing …".
+
+**Done-when (as ruled).**
+- ✓ 1 by ruling — `holds.release` ships to the controller tier (with the opener token), widening is an explicit Admin decision, and a stored list (including an incidental `["*"]`, counted by inventory row 1 and named on the grid with the one-action recommended default) is the workspace Admin's.
+- ✓ 2 and ✓ 3 as recorded above.
+
+**Scope / residual.** Pending paste of `20261239` (after `20261137` and `20261033`; deploy the app first). The accepted residuals above are unchanged (an opener who has left the workspace is not told before a release; a re-date is not pre-notified).
 
 ---
 
@@ -198,7 +234,7 @@ app/(protected)/requests/[id]/page.tsx:649-651 —
 ## HAND-4 · The sign-off rows the DB review guard counts are writable by the publisher the guard is meant to constrain
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260830_publisher_row_management.sql:34`, `supabase/migrations/20260830_publisher_row_management.sql:47`, `supabase/migrations/20260828_integrity_hardening.sql:223`, `supabase/migrations/20260822_review_completion_guard.sql:48`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the guard's only input is a status column the constrained publisher may write. A grep of supabase/migrations for triggers on document_review_signoffs finds none — nothing validates that a 'signed' row carries a matching e_signatures row or that signature_id/signed_at were set by the reviewer, so a direct PATCH satisfies the completion gate.
@@ -236,6 +272,16 @@ CREATE POLICY doc_review_signoff_insert ON document_review_signoffs FOR INSERT W
 - [ ] The UPDATE policy's WITH CHECK pins `reviewer_user_id`, `slot`, and `document_version_id` to their OLD values, and only the reviewer themselves may move `status` to 'signed'.
 - [ ] The INSERT policy restricts roster creation to controllers/owner/library publisher and rejects rows arriving with `status <> 'pending'`.
 - [ ] Completion counts only rows with a non-null `signature_id` whose stored `content_hash` matches the version being promoted.
+
+**Resolution (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC — record-only close, verified against the merged code (owners document-control `DRLS-6` / `RG-1` / `RG-2`, roles-and-permissions `SURF-13`, all RESOLVED; newest bodies `20261070` and `20261193`).
+
+**Done-when.**
+- ✓ (by trigger, not by the policy's WITH CHECK) `enforce_review_signoff_guard` (newest body `supabase/migrations/20261070_dc_roundF_review_gate_slots.sql:182-275`) pins `reviewer_user_id`, `slot`, `document_version_id`, `document_id`, `org_id` to their OLD values (`:190`), and only the named reviewer, with their own e-signature for this draft, may move a row to `signed` (`:227`, `:254`).
+- ✓ `doc_review_signoff_insert` (`20261070:125-147`) admits only rows born `pending` with no signature, written by the publisher tier (`is_org_controller` / effective owner / `user_can_publish_on_library`).
+- ✓ (bound by version, not by content hash) the publish guard counts only signed rows with a non-null `signature_id` whose e-signature was made by that reviewer (`supabase/migrations/20261193_dc_roundF_ifc_rev_up_first_issue.sql:541`, `:583`, `:789`); the signature is bound to the draft's `document_version_id` (`20261070:254`), so it binds the reviewed revision rather than a stored hash.
+- Tests: `lib/__tests__/dcRoundFReviewGate.test.ts` "RG-4 / DRLS-6", `reviewSignoffIntegrity.test.ts` (RG-1).
+
+**Scope / residual.** Done-when 3 is met through the version binding; a check that the e-signature's `content_hash` equals the promoted version's `file_hash` is not separately enforced (DC's records accept the version binding).
 
 ---
 
@@ -296,7 +342,7 @@ supabase/migrations/20260822_review_completion_guard.sql:32-34 —
 ## HAND-6 · review_control and doc_class resolve only the document's immediate folder — every intermediate folder in the container chain is skipped
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/reviewControl.ts:31`, `lib/reviewControl.ts:40`, `lib/docClass.ts:49`, `lib/docClass.ts:85`, `components/documents/ReviewGateSection.tsx:52`, `lib/reviewControl.ts:545`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — every policy resolver consults exactly three levels (document, immediate collection, library) while the folder tree is arbitrarily deep, so a policy set on 'P&IDs' does not reach 'P&IDs / Unit 400 / Current'. An ancestor-chain helper already exists (lib/serverCollections.ts:52 walks `cur.parent_id` up to 200 hops) but no policy resolver calls it.
@@ -333,6 +379,15 @@ CREATE TABLE IF NOT EXISTS collections (
 - [ ] Both resolvers walk the full ancestor chain (`path_ids` is already materialized and maintained by serverCollections.ts) nearest-first before falling back to the library.
 - [ ] `scanReviews` and ReviewGateSection use the same walk, so the daily scan and the inspector agree with the publish path.
 - [ ] A test covers document → child folder (undefined) → parent folder (defined) → library, asserting the parent folder's policy wins.
+
+**Resolution (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC — record-only close, verified against the merged code (owner document-control `RG-3`, RESOLVED).
+
+**Done-when.**
+- ✓ Both resolvers walk the full ancestor chain nearest-first through `path_ids` before the library: `lib/containerChain.ts:75-100` (`loadContainerChain`), used by `lib/reviewControl.ts:78` and `lib/docClass.ts:79`.
+- ✓ `scanReviews` walks the same chain in memory (`folderChainFromMap`, `lib/reviewControl.ts:1219`) and `ReviewGateSection` asks `effectiveReviewControlForDocument` (`components/documents/ReviewGateSection.tsx:103`).
+- ✓ `lib/__tests__/dcRoundFReviewGate.test.ts` "library=none / mid-folder=require / leaf-folder=undefined resolves to require", "the same fixture resolves to require from the live rows (path_ids walked nearest first)", "docClass walks the same chain".
+
+**Scope / residual.** None.
 
 ---
 
@@ -473,7 +528,7 @@ app/(protected)/inbox/page.tsx:139-147 — resolveMarkupRequest({ markupRequestI
 ## HAND-9 · Externally submitted revisions are approved with the roster gate explicitly turned off, and no roster is ever opened for them
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/projects/IntakePanel.tsx:237`, `lib/reviewControl.ts:408`, `app/api/intake/upload/route.ts:330`, `supabase/migrations/20260822_review_completion_guard.sql:53`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: an externally submitted revision never gets a document_review_signoffs roster, the app gate is explicitly disabled, and the DB completion check is roster-conditional, so a library configured mode:'require' with two named reviewers is fully bypassed by the intake approve button. The remaining DB checks (publish authority, active hold) still apply to this path because it runs on the user's session client, not the service role — but they say nothing about who reviewed.
@@ -510,6 +565,15 @@ supabase/migrations/20260822_review_completion_guard.sql:53 —
 - [ ] The intake upload route resolves the effective review control and calls `openReviewRoster` for the pending version when a gate is configured.
 - [ ] IntakePanel's approve stops passing `requireRosterComplete: false` when the document's effective review control is not `none`.
 - [ ] An intake approval that bypasses a configured gate writes a distinct audit action, not REVISION_PUBLISHED_AFTER_REVIEW.
+
+**Resolution (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC — record-only close, verified against the merged code (owners document-control `RG-10` and `REV-5`, projects-and-cost `SEC-13`, RESOLVED).
+
+**Done-when.**
+- ✓ (at approval, not at upload) a gated document's intake submission opens the resolved roster before anything publishes: `components/projects/IntakePanel.tsx:404-458` resolves `effectiveReviewControlForDocument` and calls `openReviewRoster` for the pending version when the policy requires sign-off; the upload route refuses to repoint a draft with a live roster (`RG-10`).
+- ✓ IntakePanel passes `requireRosterComplete: rosterRequired` (`:466`) — `false` only for a roster-free policy.
+- ✓ (made moot) an intake approval can no longer bypass a configured gate: the publish guard refuses an external submission's promote that skipped a required roster (`SEC-13`, `supabase/migrations/20261193_dc_roundF_ifc_rev_up_first_issue.sql:674-721`), so there is no bypass to label.
+
+**Scope / residual.** None.
 
 ---
 
@@ -556,7 +620,7 @@ lib/revisions.ts:542-546 —
 ## HAND-11 · Split, merge, and file-upload paths create documents at status Issued with no review gate and no inherited class or policy
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `lib/documentLifecycle/common.ts:178`, `lib/revisions.ts:344`, `lib/revisions.ts:384`, `components/documents/DocumentLinkPicker.tsx:107`, `lib/outputTemplates.ts:226`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Core point holds for split/merge only: createNewDocWithFirstVersion lands a doc at Issued with its first version current, opens no ack/review-cycle roster, and copies neither the source's document-level review_control nor doc_class override (20261012 migration columns). But three cited specifics are wrong — the template-filing path files at Draft, the upload path seeds review-cycle + ack rosters, and class/policy inheritance is resolved dynamically doc→folder→library (reviewControl.ts:40-49), so split targets that keep collection_id do inherit the folder/library policy. Creation is also documented as deliberately outside the publish guard (revisions.ts:312-315). Severity LOW.
@@ -591,6 +655,15 @@ lib/revisions.ts:311-316 (the acknowledgement) —
 - [ ] `createNewDocWithFirstVersion` seeds the review clock, ack roster, and retention the way `createDocumentWithFile` does.
 - [ ] A first version created into a review-gated container opens a roster rather than going straight to current.
 
+**Resolution (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC — record-only close, verified against the records and code of document-control `REV-11`, `REV-15`, `REV-17`, `REV-18` (all RESOLVED).
+
+**Done-when.**
+- ✓ (in the owner's form) split / merge / upload resolve the effective review control and record why they did not route (`reviewPolicy` on every creation event); in a require-mode library a non-controller is refused (REV-11, DEC-63 §2). Class and policy reach the new documents through the shared container chain (`HAND-6`); a document-level `doc_class` / `review_control` on a source is not copied.
+- ✓ `createNewDocWithFirstVersion` paths start the review clock and the ack roster or record why not on a persisted event (`REV-15`).
+- ✓ A non-controller's unreviewed first issue in a review-gated container is refused at the database (`REV-17` / `REV-18`, `20261139` / `20261144` and successors, newest guard `20261193`), pending those pastes as recorded there.
+
+**Scope / residual.** The database halves wait on the DC pastes recorded under `REV-17` / `REV-18`.
+
 ---
 
 <a id="hand-12"></a>
@@ -598,7 +671,7 @@ lib/revisions.ts:311-316 (the acknowledgement) —
 ## HAND-12 · The Rev Up form defaults to a change type that waives both the review gate and the PSM MOC gate, and remembers that choice per library
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/RevUpModal.tsx:97`, `components/documents/RevUpModal.tsx:145`, `components/documents/RevUpModal.tsx:210`, `components/documents/RevUpModal.tsx:218`, `lib/reviewControl.ts:59`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: a governance-relevant field defaults to the value that waives both gates and is remembered per library. The only mitigation is the amber banner at :643-652, which renders solely when `reviewControl.mode !== "none"` — in a library with no review policy the Minor default silently waives the PSM MOC gate with no notice at all, and nothing anywhere warns that Minor waived MOC.
@@ -632,6 +705,15 @@ lib/reviewControl.ts:58-61 —
 - [ ] The change-type control has no pre-selected value on a drawing-class document in a review-gated library; the user must choose before Publish enables.
 - [ ] The remembered per-library value never restores a gate-waiving change type — governance-relevant defaults are not remembered.
 - [ ] A Minor/Correction publish on a drawing-class document records an explicit replacement-in-kind attestation, so the exemption is a claim someone made rather than a dropdown nobody touched.
+
+**Resolution (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC — record-only close, verified against the merged code (owner document-control `RG-11`, RESOLVED).
+
+**Done-when.**
+- ✓ The change type opens unset (`components/documents/RevUpModal.tsx:118`, `:181`) and Publish needs a choice.
+- ✓ The remembered per-library value never restores the change type (`:166-182` restores the issue type only).
+- ✓ A Minor / Correction publish past a gate writes `REVIEW_GATE_SKIPPED` with the declared reason (`:425`) — a claim someone made.
+
+**Scope / residual.** None here; the evidence pack now lists audit rows in full (`EVID-10`).
 
 ---
 
@@ -670,5 +752,13 @@ supabase/migrations/20260812_per_library_publish_authority.sql:133-136 —
 
 - [ ] The documentGuards.ts header states accurately which invariants the trigger enforces (holds, authority) and which live only in the RPC/app layer (foreign lock, base check).
 - [ ] Either the trigger regains a lock check compatible with the authorized-publisher override, or the legacy non-RPC publish path is removed so no path lacks both.
+
+**Partial (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC — verified against document-control `DCK-6` (RESOLVED).
+
+**Done-when.**
+- ✓ `lib/documentGuards.ts:14-20` states that the hold check lives in the publish-guard trigger and the lock check only in `publish_revision`.
+- ✗ Not met: neither alternative is taken. The trigger has no lock check (`DCK-6` chose not to restore it), and non-RPC pointer writes remain — `lib/documentLifecycle/common.ts:411` (a new document's first pointer) and `lib/reviewControl.ts:1134` (`promoteThreeStep`, the pre-`20261151` fallback of a reviewed promote). A direct `current_version_id` PATCH by someone with publish authority is not checked against a foreign checkout.
+
+**Scope / residual.** Done-when 2 → document-control P32 PUBLISH GUARD LOCK LEG (assigned by the integrator at the DF-P11 merge, 2026-10-21, DEC-31): a lock leg in `enforce_document_publish_guard` (newest body `20261193`) compatible with the authorized-publisher override, or the removal of the non-RPC paths. Not this package's: re-creating the publish guard is outside its plan entry (`DEC-31`).
 
 ---
