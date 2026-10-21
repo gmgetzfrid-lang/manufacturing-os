@@ -12,6 +12,7 @@ import {
 import type { ChatScope, ChatAttachment } from "@/lib/chatClient";
 import type { KnowledgeLibrary } from "@/lib/knowledge";
 import { SCOPE_META, fmtBytes } from "./shared";
+import { ANSWER_MODES, AUTO_MODE_HINT, type AnswerMode } from "@/lib/answerModes";
 
 export interface PendingAttachment {
   localId: string;
@@ -29,7 +30,7 @@ export default function Composer({
   scope, libraryId, libraries, onScopeChange, scopeLocked,
   attachments, onAddFiles, onRemoveAttachment,
   instructionsActive, instructionCount, onToggleInstructions,
-  disabledReason, autoFocus, webOn = false, onToggleWeb,
+  disabledReason, autoFocus, webOn = false, onToggleWeb, answerMode = null, onAnswerMode,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -54,7 +55,12 @@ export default function Composer({
   /** Library questions: may this one also search the internet? */
   webOn?: boolean;
   onToggleWeb?: () => void;
+  /** The answer's shape, picked before asking; null = Auto. */
+  answerMode?: AnswerMode | null;
+  onAnswerMode?: (m: AnswerMode | null) => void;
 }) {
+  const [modeMenu, setModeMenu] = useState(false);
+  const modeLabel = answerMode ? ANSWER_MODES.find((m) => m.id === answerMode)?.label ?? "Auto" : "Auto";
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -214,6 +220,33 @@ export default function Composer({
               : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
             <Globe className="w-3.5 h-3.5" /> Web {webOn ? "on" : "off"}
           </button>
+        )}
+
+        {scope === "library" && onAnswerMode && (
+          <div className="relative">
+            <button onClick={() => setModeMenu((v) => !v)} aria-haspopup="menu" aria-expanded={modeMenu}
+              title={answerMode ? `${modeLabel} — ${ANSWER_MODES.find((m) => m.id === answerMode)?.hint}. Click to change.` : `Mode: Auto — ${AUTO_MODE_HINT}. Click to pick one before asking.`}
+              className={`h-8 inline-flex items-center gap-1.5 px-2.5 rounded-lg text-[11px] font-black border transition-colors ${answerMode
+                ? "border-orange-400 dark:border-orange-700 text-orange-800 dark:text-orange-200 bg-orange-50 dark:bg-orange-950/30"
+                : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+              <SlidersHorizontal className="w-3.5 h-3.5" /> {modeLabel} <ChevronDown className="w-3 h-3" />
+            </button>
+            {modeMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setModeMenu(false)} />
+                <div role="menu" className="absolute bottom-full mb-1 left-0 z-50 w-72 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl py-1">
+                  {[{ id: null as AnswerMode | null, label: "Auto", hint: AUTO_MODE_HINT }, ...ANSWER_MODES].map((m) => (
+                    <button key={m.id ?? "auto"} role="menuitemradio" aria-checked={answerMode === m.id} type="button"
+                      onClick={() => { onAnswerMode(m.id); setModeMenu(false); }}
+                      className={`w-full text-left px-3 py-2 hover:bg-[var(--color-surface-2)] ${answerMode === m.id ? "bg-orange-50/70 dark:bg-orange-950/20" : ""}`}>
+                      <div className="text-[12.5px] font-bold text-[var(--color-text)]">{answerMode === m.id ? "✓ " : ""}{m.label}</div>
+                      <div className="text-[11px] text-[var(--color-text-muted)]">{m.hint}</div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
         )}
 
         <span className="flex-1" />

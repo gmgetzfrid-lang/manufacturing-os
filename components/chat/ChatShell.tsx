@@ -34,6 +34,7 @@ import {
 } from "@/lib/knowledge";
 import { countActiveInstructions, saveAiInstruction } from "@/lib/aiInstructions";
 import { executeAction, type PendingAction } from "@/lib/orchestratorClient";
+import { ANSWER_MODES, type AnswerMode } from "@/lib/answerModes";
 import type { DocLink } from "@/components/knowledge/answer/AnswerExperience";
 import ThreadRail from "./ThreadRail";
 import MessageStream, { type StreamingState } from "./MessageStream";
@@ -300,6 +301,25 @@ export default function ChatShell() {
     return as.filter((x) => x.localId !== localId);
   });
 
+  // ── The answer's shape, picked before asking (Auto lets the assistant
+  //    choose). Rethinking an answer as another shape moves the picker too,
+  //    so the next question keeps the shape you just chose — visibly.
+  const [pickedMode, setPickedMode] = useState<AnswerMode | null>(null);
+  // Remembered on this device; read after mount so the server render and
+  // the first client render agree.
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      try {
+        const v = window.localStorage.getItem("chat.answerMode");
+        if (ANSWER_MODES.some((m) => m.id === v)) setPickedMode(v as AnswerMode);
+      } catch { /* nothing remembered */ }
+    });
+  }, []);
+  const pickMode = useCallback((m: AnswerMode | null) => {
+    setPickedMode(m);
+    try { if (m) window.localStorage.setItem("chat.answerMode", m); else window.localStorage.removeItem("chat.answerMode"); } catch { /* this tab only */ }
+  }, []);
+
   // ── The turn ──
   const send = useCallback(async (question: string, opts: {
     focus?: string[]; inputs?: string; approved?: string[]; retry?: boolean;
@@ -343,7 +363,7 @@ export default function ChatShell() {
       await askTurn({
         orgId, scope, libraryId: scope === "tools" ? null : libraryId, threadId, question: q,
         focus: opts.focus, inputs: opts.inputs, approved: opts.approved, attachments: atts,
-        ...(opts.answerMode ? { answerMode: opts.answerMode } : {}),
+        ...((opts.answerMode ?? pickedMode) ? { answerMode: opts.answerMode ?? pickedMode ?? undefined } : {}),
         ...(scope === "library" && useWeb ? { useWeb: true } : {}),
       }, (ev) => {
         if (controller.signal.aborted) return;
@@ -443,7 +463,7 @@ export default function ChatShell() {
       return;
     }
     overloadRetried.current = false;
-  }, [orgId, uid, scope, libraryId, streaming, attachments, active, draftInstructions, userName, showToast, threadParam, libraryFilterId, router, useWeb]);
+  }, [orgId, uid, scope, libraryId, streaming, attachments, active, draftInstructions, userName, showToast, threadParam, libraryFilterId, router, useWeb, pickedMode]);
 
   // ── Asked from the library page: "?ask=" runs the question as soon as the
   //    library it was asked of is selected. Once — the URL is rewritten to
@@ -624,7 +644,10 @@ export default function ChatShell() {
               onConfirm={confirmAction}
               actions={actions[m.id] ?? { approved: [], outcomes: {} }}
               onRetry={(question) => void send(question)}
-              onRethink={(question, answerMode) => void send(question, answerMode ? { answerMode } : {})}
+              onRethink={(question, answerMode) => {
+                if (answerMode) pickMode(answerMode);
+                void send(question, answerMode ? { answerMode } : {});
+              }}
               onAttach={addFiles}
               onRated={onRated}
             />
@@ -655,6 +678,7 @@ export default function ChatShell() {
               disabledReason={disabledReason}
               autoFocus={!isMobile}
               webOn={useWeb} onToggleWeb={() => setUseWeb((v) => !v)}
+              answerMode={pickedMode} onAnswerMode={pickMode}
             />
             <p className="mt-1.5 px-1 text-[10px] text-[var(--color-text-faint)] truncate">
               {scope === "library" && useWeb

@@ -24,6 +24,7 @@ import {
 import type { KnowledgeAnswer, KnowledgeCitation } from "@/lib/knowledge";
 import GraphShapeWizard from "@/components/graph/GraphShapeWizard";
 import { buildAnswerExport, printableDocument } from "@/lib/answerExport";
+import { ANSWER_MODES } from "@/lib/answerModes";
 import FormFillModal from "@/components/knowledge/answer/FormFillModal";
 import { copyText } from "@/lib/clipboard";
 import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
@@ -1092,12 +1093,7 @@ function SettleBox({ items, inline, onAttach, onRethink }: {
   );
 }
 
-const MODES: Array<{ id: "answer" | "compliance" | "explore" | "deviation"; label: string; hint: string }> = [
-  { id: "answer", label: "Direct answer", hint: "The answer and its proof, nothing extra" },
-  { id: "compliance", label: "Compliance check", hint: "Does what was done meet the standard? Findings with quoted proof, and a note you can send" },
-  { id: "deviation", label: "Deviation case", hint: "Why the rule exists, whether that reason applies to you, and a justification ready for the form" },
-  { id: "explore", label: "Explore / design review", hint: "Broader — related rules and what to consider" },
-];
+const MODES = ANSWER_MODES;
 
 const GOAL_LABEL: Record<string, string> = {
   deviation: "a deviation from the standard",
