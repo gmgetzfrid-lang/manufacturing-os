@@ -345,12 +345,14 @@ export default function KnowledgeLibraryPage() {
   // ── Find a document in a long list: search, filter by state, sort. A
   //    library of a thousand standards is unreadable as one unsorted list.
   const [docQuery, setDocQuery] = useState("");
-  const [docFilter, setDocFilter] = useState<"all" | "ready" | "working" | "failed" | "uploaded">("all");
+  const [docFilter, setDocFilter] = useState<"all" | "ready" | "partial" | "working" | "failed" | "uploaded">("all");
+  const partlyRead = (d: typeof docs[number]) => d.status === "ready" && !((d.pageCount ?? 0) > 0 && d.pagesIndexed >= (d.pageCount ?? 0));
   const [docSort, setDocSort] = useState<"name" | "pages" | "problems">("name");
   const [docLimit, setDocLimit] = useState(200);
   const docGroups = {
     all: docs.length,
-    ready: docs.filter((d) => d.status === "ready").length,
+    ready: docs.filter((d) => d.status === "ready" && !partlyRead(d)).length,
+    partial: docs.filter(partlyRead).length,
     working: docs.filter((d) => d.status === "pending" || d.status === "indexing" || d.status === "stale").length,
     failed: docs.filter((d) => d.status === "error").length,
     uploaded: docs.filter((d) => !d.sourceDocumentId).length,
@@ -359,7 +361,8 @@ export default function KnowledgeLibraryPage() {
     const squash = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "");
     const words = docQuery.toLowerCase().split(/\s+/).filter(Boolean);
     const list = docs.filter((d) => {
-      if (docFilter === "ready" && d.status !== "ready") return false;
+      if (docFilter === "ready" && (d.status !== "ready" || partlyRead(d))) return false;
+      if (docFilter === "partial" && !partlyRead(d)) return false;
       if (docFilter === "working" && !(d.status === "pending" || d.status === "indexing" || d.status === "stale")) return false;
       if (docFilter === "failed" && d.status !== "error") return false;
       if (docFilter === "uploaded" && d.sourceDocumentId) return false;
@@ -369,7 +372,7 @@ export default function KnowledgeLibraryPage() {
       return words.every((w) => name.includes(w) || squash(name).includes(squash(w)));
     });
     const natural = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
-    const rank = (d: typeof docs[number]) => (d.status === "error" ? 0 : d.status === "ready" ? 2 : 1);
+    const rank = (d: typeof docs[number]) => (d.status === "error" ? 0 : partlyRead(d) ? 1 : d.status === "ready" ? 3 : 2);
     return list.sort((a, b) =>
       docSort === "pages" ? (b.pageCount ?? 0) - (a.pageCount ?? 0)
       : docSort === "problems" ? rank(a) - rank(b) || natural.compare(a.name, b.name)
@@ -605,12 +608,12 @@ export default function KnowledgeLibraryPage() {
               </div>
               <div className="flex items-center gap-1 flex-wrap">
                 {([
-                  ["all", "All"], ["ready", "Indexed"], ["working", "In progress"], ["failed", "Failed"], ["uploaded", "Uploaded here"],
+                  ["all", "All"], ["ready", "Fully indexed"], ["partial", "Partly read"], ["working", "In progress"], ["failed", "Failed"], ["uploaded", "Uploaded here"],
                 ] as const).filter(([k]) => k === "all" || docGroups[k] > 0).map(([k, label]) => (
                   <button key={k} onClick={() => { setDocFilter(k); setDocLimit(200); }}
                     className={`h-7 px-2 rounded-lg text-[10px] font-black border transition-colors ${docFilter === k
                       ? "bg-orange-600 text-white border-orange-600"
-                      : `border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] ${k === "failed" ? "text-rose-700 dark:text-rose-400" : ""}`}`}>
+                      : `border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] ${k === "failed" ? "text-rose-700 dark:text-rose-400" : k === "partial" ? "text-amber-700 dark:text-amber-400" : ""}`}`}>
                     {label} {docGroups[k].toLocaleString()}
                   </button>
                 ))}
@@ -648,7 +651,17 @@ export default function KnowledgeLibraryPage() {
                       )}
                     </div>
                     <div className="text-[10px] text-[var(--color-text-muted)]">
-                      {doc.status === "ready" && <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400 font-black"><CheckCircle2 className="w-3 h-3" /> {doc.pageCount} pages indexed</span>}
+                      {/* Pages actually READ, against the file's page count — "28 pages
+                          indexed" used to show the file's total even when reading
+                          had stopped part-way. */}
+                      {doc.status === "ready" && (doc.pageCount ?? 0) > 0 && doc.pagesIndexed >= (doc.pageCount ?? 0) && (
+                        <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400 font-black"><CheckCircle2 className="w-3 h-3" /> All {doc.pageCount} pages indexed</span>
+                      )}
+                      {doc.status === "ready" && !((doc.pageCount ?? 0) > 0 && doc.pagesIndexed >= (doc.pageCount ?? 0)) && (
+                        <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-400 font-black" title="Reading stopped before the last page. Repair in the Health panel resumes it — pages already read aren't paid for again.">
+                          <AlertTriangle className="w-3 h-3" /> {doc.pagesIndexed} of {doc.pageCount ?? "?"} pages indexed — partly read
+                        </span>
+                      )}
                       {doc.status === "indexing" && <span className="text-amber-700 dark:text-amber-400 font-black">Indexing {doc.pagesIndexed}{doc.pageCount ? ` / ${doc.pageCount}` : ""} pages…</span>}
                       {doc.status === "pending" && <span>Waiting to index</span>}
                       {doc.status === "stale" && <span className="text-amber-700 dark:text-amber-400 font-black">New revision published — waiting to re-index</span>}
