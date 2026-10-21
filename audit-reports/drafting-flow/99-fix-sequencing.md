@@ -536,7 +536,18 @@ DF-P13 SLA DEFAULTS RAIL AND EDITOR resolved `EDGE-16` (code half; migration `20
 - (g) `isMissingRoutingSchema` requires the error to name `routing_control`.
 - (h) Records re-anchored to the branch head; `FRIC-5` stays Partial (the at-submit checkbox is still the next page holder's).
 
-**Edits outside the plan's file list** in this pass: none new. `app/(protected)/requests/[id]/page.tsx` already carried the roster mount; it now also has the confirm, the banner and the UI-4 split.
+**Edits outside the plan's file list** in this pass: `lib/__tests__/dfRoundG_P15_routes.test.ts` (DF-P15's test). The `after()` count on `approve_draft_ifc` goes from 2 to 3, because the EVID-12 file hashes are now scheduled after the response, between the email drain and the recall. The recall is still the last `after()` call, so its `lastAfter()` is unchanged. **For the integrator to confirm at merge.** *(Corrected at the DF-P5 fix pass 3: this line read "none new", which was overstated. DEC-29.)* `app/(protected)/requests/[id]/page.tsx` already carried the roster mount; it now also has the confirm, the banner and the UI-4 split.
+
+*DF-P5 ROSTER review fix pass 3 (2026-10-21) — the third review's three majors and four minors.*
+- (a) **A close out of a review closes its roster for good.** The route's CLOSED branches build their deliverable note on the transition's metadata (`closeMeta`), so a force close no longer stores the roster open, and a reopen no longer revives the previous cycle's sign-offs.
+- (b) **A routed review never runs without a roster.** The serial approvals (`ROSTERLESS_APPROVALS`) on a routed ticket with no roster are refused with `409 routing_needs_roster` (`lib/routingControl.ts` `ticketReviewRouting`, read only for those approvals; 503 when unreadable; before `20261242` the usual review). The page renders them disabled with the reason (`WorkflowContext.reviewRouted`). Tickets already in review when a table is declared also fail closed (DEC-36), and go through a revision.
+- (c) **A partial sign-off is not a hand-off.** The still-waited-on reviewers stay in `unread_by`, and the fan-out retires only the signer's own alerts (`rosterPartial`).
+- (d) **FRIC-5's confirm is the server's too.** `issueAsIsAcknowledged`, `409 issue_as_is_unconfirmed`.
+- (e) **No orphan signature.** The panel dry-runs `sign_slot` before the ceremony, and a refusal that still arrives with a signature is recorded as `TICKET_SIGN_SLOT_NOT_APPLIED` (`attempt: null`). The signer is named by display name, not email.
+- (f) **New finding `ROUTE-15`** (LOW, OPEN, `08-routing-and-attention.md`): `holdersFor` names the requester on a routed review. Proposed owner: the next holder of `lib/ticketAttention.ts` (N11 / a DF-P14 follow-on; the integrator assigns). It is not counted in `README.md` / `findings.json` here (the integrator's files): report `08` now has 15, LOW +1.
+- (g) `isMissingRosterLedger` moved to `lib/routingControl.ts` (client-safe, for the page); `lib/ticketRoster.ts` re-exports it.
+
+**Edits outside the plan's file list** in fix pass 3: none. Every file is DF-P5's own or one it already held (`app/(protected)/requests/[id]/page.tsx`, `components/requests/TicketRosterPanel.tsx`, the workflow route, `lib/workflow.ts`, `lib/ticketTransitions.ts`, `lib/routingControl.ts`, `lib/ticketRoster.ts`, DF-P5's own tests and the records). No migration. No new notification kind, capability or cron entry. One new audit action name, `TICKET_SIGN_SLOT_NOT_APPLIED`, inside the registered `TICKET_` family (its `_NOT_APPLIED` suffix with a null attempt is left alone by `pairTicketAttempts`).
 
 ## Verification you cannot skip
 

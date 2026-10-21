@@ -773,3 +773,50 @@ describe("DF-P5 fix pass 2 — FRIC-5 is in front of the approver; the drafter's
     expect(sub.updates.unread_by as string[]).toContain("w-1");
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// DF-P5 fix pass 3
+describe("DF-P5 fix pass 3 — a partial sign-off keeps the still-waited-on reviewers unread; a routed review without a roster is never approved serially", () => {
+  it("computeTransition: a partial sign-off's unread_by keeps every open blocking slot's occupants, the existing markers and today's participants — never the signer", () => {
+    const r = opened();
+    const t = withRoster(r, { unreadBy: ["x-1", "e-1"] });
+    const signed = applySignPlan(r, slotSignPlan(r, t, "e-1", true), { uid: "e-1", name: "E" }, "sig", NOW);
+    const out = computeTransition(t, input({ rosterSign: { roster: signed, complete: false, labels: ["Engineering check"] } }));
+    const unread = out.updates.unread_by as string[];
+    expect(unread).toEqual(expect.arrayContaining(["req-1", "x-1", "d-1"])); // the requester's slot is still open
+    expect(unread).not.toContain("e-1");
+    expect(unread).not.toContain("q-1"); // notify-only slots are not waited on
+    expect(out.recipients).toContain("req-1");
+  });
+  it("computeTransition: the COMPLETING sign-off is unchanged — the default audience (the transition's readers)", () => {
+    const r = opened();
+    const full = { ...r, slots: r.slots.map((x) => (x.status === "open" ? { ...x, status: "satisfied" as const, satisfiedBy: "x", signatureId: "s" } : x)) };
+    const out = computeTransition(withRoster(r, { unreadBy: ["x-1"] }), input({ rosterSign: { roster: full, complete: true, labels: ["Requester acceptance"] } }));
+    expect((out.updates.unread_by as string[]).sort()).toEqual(["d-1", "req-1"]);
+  });
+  it("getActions: reviewRouted with no roster disables every serial approval (PENDING_REVIEW and PENDING_FINAL_APPROVAL) with the way forward; with a roster, or not routed, nothing changes", async () => {
+    const { ROUTED_NO_ROSTER_REASON, ROSTERLESS_APPROVALS } = await import("@/lib/workflow");
+    const engReq = mk({ requesterRole: "Engineer-2" as never });
+    const routed = WorkflowEngine.getActions(engReq, "Engineer-2" as never, "req-1", undefined, { reviewRouted: true, activeMemberCount: 5 });
+    for (const a of routed.filter((x) => ROSTERLESS_APPROVALS.has(x.action))) expect(a.disabledReason).toBe(ROUTED_NO_ROSTER_REASON);
+    expect(routed.some((x) => x.action === "approve_draft_ifc")).toBe(true);
+    const viewerReq = mk({ requesterRole: "Requester" as never });
+    expect(WorkflowEngine.getActions(viewerReq, "Requester" as never, "req-1", undefined, { reviewRouted: true, activeMemberCount: 5 })
+      .find((x) => x.action === "request_final_engineer_approval")?.disabledReason).toBe(ROUTED_NO_ROSTER_REASON);
+    const finalStage = mk({ status: "PENDING_FINAL_APPROVAL", assignedEngineerId: "e-1" });
+    expect(WorkflowEngine.getActions(finalStage, "Engineer-2" as never, "e-1", undefined, { reviewRouted: true, activeMemberCount: 5 })
+      .find((x) => x.action === "engineer_approve_final")?.disabledReason).toBe(ROUTED_NO_ROSTER_REASON);
+    // a roster is the review: reviewRouted changes nothing
+    const r = opened();
+    expect(WorkflowEngine.getActions(withRoster(r), "Engineer-2" as never, "e-1", undefined, { reviewRouted: true, activeMemberCount: 5 }))
+      .toEqual(WorkflowEngine.getActions(withRoster(r), "Engineer-2" as never, "e-1", undefined, { activeMemberCount: 5 }));
+    // REGRESSION: not routed — today's answer
+    expect(WorkflowEngine.getActions(engReq, "Engineer-2" as never, "req-1", undefined, { activeMemberCount: 5 })
+      .find((x) => x.action === "approve_draft_ifc")?.disabledReason).toBeUndefined();
+  });
+  it("the ledger-missing predicate lives in the client-safe module and lib/ticketRoster.ts re-exports the same function", async () => {
+    const rc = await import("@/lib/routingControl");
+    expect(isMissingRosterLedger).toBe(rc.isMissingRosterLedger);
+    expect(rc.isMissingRosterLedger({ code: "PGRST205", message: "x" })).toBe(true);
+  });
+});

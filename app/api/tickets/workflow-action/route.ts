@@ -2,10 +2,10 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { notifyBatchWithReason } from "@/lib/inAppNotifications";
-import { WorkflowEngine, ticketResource, decisiveGrants, currentRoster, slotSignPlan, engineerApprovalRequired, ISSUE_MARK_ACTIONS } from "@/lib/workflow";
+import { WorkflowEngine, ticketResource, decisiveGrants, currentRoster, slotSignPlan, engineerApprovalRequired, ISSUE_MARK_ACTIONS, ROSTERLESS_APPROVALS, ROUTED_NO_ROSTER_REASON, ISSUE_AS_IS_APPROVALS, issueReadyFor } from "@/lib/workflow";
 import { loadCapabilityPolicyStrict, policyAllows } from "@/lib/capabilityPolicy";
 import { engineerPickCap, engineerPickRefusal } from "@/lib/ticketPage";
-import { effectiveRoutingForTicket } from "@/lib/routingControl";
+import { effectiveRoutingForTicket, ticketReviewRouting } from "@/lib/routingControl";
 import {
   hashStoredFilesBounded, draftsToHashOnApproval, HASH_LIMITS, filesUnderReview, openRoster, applySignPlan, rosterCompletion, rosterBinding,
   signatureRefusal, writeRosterLedger, isMissingRosterLedger, type FileHash, type SignatureRow,
@@ -99,6 +99,15 @@ interface Body {
   /** FRIC-5 (DF-P5): `submit_draft` — issue the draft as the final package
    *  when it is approved (the drafter's opt-in; default off). */
   issueReady?: boolean | null;
+  /** FRIC-5 (DF-P5 fix pass 3): an approval of a draft the drafter marked
+   *  issue-as-is carries the approver's confirmation (the page's confirm
+   *  dialog); without it the route refuses (409), nothing written. */
+  issueAsIsAcknowledged?: boolean | null;
+  /** TIER-8 / EVID-12 (DF-P5 fix pass 3): `sign_slot` — check the sign-off is
+   *  open to the caller and answer, writing nothing and needing no
+   *  signature, so the panel asks for an e-signature only for a sign-off
+   *  the route would take. */
+  dryRun?: boolean | null;
 }
 
 /** DCW-4 / HAND-3: the shape of a register row id (document_versions.id,
@@ -176,6 +185,27 @@ async function insertAuditRowOnce(row: { id: string } & Record<string, unknown>)
     }
   };
   return (await attempt()) && (await attempt());
+}
+
+/** TIER-8 / EVID-12 (DF-P5 fix pass 3): a `sign_slot` refused AFTER the
+ *  panel minted its e-signature leaves that signature attesting a review
+ *  that satisfied nothing. The refusal is recorded beside it —
+ *  TICKET_SIGN_SLOT_NOT_APPLIED naming the signature and the reason, with no
+ *  attempt row (nothing was attempted: `details.attempt` is null, so the
+ *  trail's attempt pairing leaves it alone) — so the orphan is explained.
+ *  Best-effort: a failed write is logged, never the caller's problem. */
+async function recordRefusedSignOff(p: {
+  signatureId: unknown; ticketId: string; orgId: string; caller: { id: string; email: string; role: string };
+  status: number; reason: string; code?: string; rosterId?: string | null;
+}): Promise<void> {
+  const sigId = typeof p.signatureId === "string" ? p.signatureId.trim() : "";
+  if (!UUID_RE.test(sigId)) return;
+  const err = await insertAuditRowOnce({
+    id: crypto.randomUUID(), action: "TICKET_SIGN_SLOT_NOT_APPLIED", resource_id: p.ticketId, resource_type: "ticket",
+    org_id: p.orgId, user_id: p.caller.id, user_email: p.caller.email, user_role: p.caller.role,
+    details: { attempt: null, signatureId: sigId, refusedBeforeApply: true, status: p.status, reason: p.reason, ...(p.code ? { code: p.code } : {}), rosterId: p.rosterId ?? null },
+  });
+  if (err) console.error(`[workflow-action] could not record the refused sign-off's signature ${sigId} on ticket ${p.ticketId}: ${err}`);
 }
 
 function formatBytes(n: number | undefined): string | undefined {
@@ -400,15 +430,56 @@ export async function POST(req: NextRequest) {
   const resource = ticketResource(ticket);
   const action = allowed.find((a) => a.action === body.actionType);
   if (!action) {
-    return NextResponse.json(
-      { error: `Action "${body.actionType}" is not available to you at status “${ticketStatusLabel(ticket.status)}”` },
-      { status: 403 },
-    );
+    const notAvailable = `Action "${body.actionType}" is not available to you at status “${ticketStatusLabel(ticket.status)}”`;
+    // DF-P5 fix pass 3: a sign-off whose roster closed under it (another
+    // reviewer completed it first) still names the signature it minted.
+    if (body.actionType === "sign_slot" && body.dryRun !== true) {
+      await recordRefusedSignOff({ signatureId: body.signatureId, ticketId: body.ticketId, orgId: ticket.orgId, caller: { id: caller.id, email: callerEmail, role: callerRole }, status: 403, reason: notAvailable });
+    }
+    return NextResponse.json({ error: notAvailable }, { status: 403 });
+  }
+  // A dry run is a sign-off's question only — never an action applied by a
+  // client that believed it was asking.
+  if (body.dryRun === true && action.action !== "sign_slot") {
+    return NextResponse.json({ error: "Only a sign-off can be checked without applying it." }, { status: 400 });
   }
   // GAP-2: a separation-of-duties block is rendered disabled in the UI and
   // REFUSED here — the reason travels with it.
   if (action.disabledReason) {
     return NextResponse.json({ error: action.disabledReason }, { status: 403 });
+  }
+  // TIER-5 (DF-P5 fix pass 3): a ticket in a routed library that is in
+  // review WITHOUT a roster — reopened (reopen_ticket goes straight back to
+  // PENDING_REVIEW, and only a submission opens a roster), or already in
+  // review when the table was declared — is never approved on the serial
+  // path: that would issue without every slot the routing table names
+  // (DEC-36: fail closed). Refused before anything is written; the way
+  // forward is a revision, whose resubmission opens the roster. Read only
+  // for these approvals on such a ticket; a read that fails is a 503.
+  if (ROSTERLESS_APPROVALS.has(action.action) && ticket.libraryId && !currentRoster(ticket)) {
+    let reviewRouting: Awaited<ReturnType<typeof ticketReviewRouting>>;
+    try {
+      const { runWithServerClient } = await import("@/lib/serverClientScope");
+      reviewRouting = await runWithServerClient(supabaseAdmin, () => ticketReviewRouting({
+        id: body.ticketId, orgId: ticket.orgId, libraryId: ticket.libraryId, sourceDocumentId: parseSourceDocument(ticket.metadata)?.id ?? null,
+      }));
+    } catch (e) {
+      console.error(`[workflow-action] routing unreadable for ticket ${body.ticketId}:`, (e as Error)?.message ?? e);
+      return NextResponse.json({ error: "This request's review routing could not be read, so the approval was not applied. Try again in a moment.", code: "routing_unreadable" }, { status: 503 });
+    }
+    if (reviewRouting.routed) {
+      return NextResponse.json({ error: ROUTED_NO_ROSTER_REASON, code: "routing_needs_roster" }, { status: 409 });
+    }
+  }
+  // FRIC-5 (DF-P5 fix pass 3): an approval that would issue the draft AS-IS
+  // (the drafter's mark) is taken only from an approver who confirmed it —
+  // the mark may have been made after their page loaded, and the confirm is
+  // the page's. Without the acknowledgement: 409, nothing written.
+  if (ISSUE_AS_IS_APPROVALS.has(action.action) && issueReadyFor(ticket) && body.issueAsIsAcknowledged !== true) {
+    return NextResponse.json({
+      error: "The drafter marked this draft issue-as-is — approving it now issues the draft as the final package. Reload the request and confirm.",
+      code: "issue_as_is_unconfirmed",
+    }, { status: 409 });
   }
   // WF-16: WHY is this action permitted? When a personal grant is what admits
   // the caller (the state machine would not offer the action without it),
@@ -734,7 +805,9 @@ export async function POST(req: NextRequest) {
   // Only a SUBMISSION opens a roster. reopen_ticket takes today's path into
   // PENDING_REVIEW (DF-P5 fix pass): a reopened request may have no readable
   // Draft at all, and its previous Draft is the already-issued bytes — the
-  // next submit_draft opens the roster on the new files.
+  // next submit_draft opens the roster on the new files. Until then the
+  // serial approvals are refused on a routed ticket (TIER-5, fix pass 3,
+  // above): the way forward is a revision and a resubmission.
   const entersReview = ticket.status !== "PENDING_REVIEW" && action.action === "submit_draft";
   if (entersReview && ticket.libraryId) {
     const refuse = (status: number, code: string, error: string) => NextResponse.json({ error, code }, { status });
@@ -821,17 +894,31 @@ export async function POST(req: NextRequest) {
     // here. EVID-12: it carries an e-signature minted by
     // /api/signatures/sign against THIS ticket, by the caller, bound to the
     // roster's content hash, given after the roster opened, used once.
-    if (!openRosterNow) return NextResponse.json({ error: "This request has no review open." }, { status: 409 });
-    const plan = slotSignPlan(openRosterNow, ticket, caller.id, sodActive, Date.now());
-    if (plan.fillable.length === 0) return NextResponse.json({ error: plan.blocked[0]?.reason ?? "There is no sign-off open to you on this request." }, { status: 403 });
+    // TIER-8 / EVID-12 (DF-P5 fix pass 3): the panel asks first (dryRun,
+    // below — nothing written, no signature needed), so a signature is
+    // minted only for a sign-off the route would take; a refusal that still
+    // arrives with one (a race, a stale page) is recorded beside it
+    // (recordRefusedSignOff).
     const sigId = typeof body.signatureId === "string" ? body.signatureId.trim() : "";
+    const refuseSign = async (status: number, error: string, code?: string) => {
+      if (body.dryRun !== true) {
+        await recordRefusedSignOff({ signatureId: sigId, ticketId: body.ticketId, orgId: ticket.orgId, caller: { id: caller.id, email: callerEmail, role: callerRole }, status, reason: error, code, rosterId: openRosterNow?.id ?? null });
+      }
+      return NextResponse.json({ error, ...(code ? { code } : {}) }, { status });
+    };
+    if (!openRosterNow) return refuseSign(409, "This request has no review open.");
+    const plan = slotSignPlan(openRosterNow, ticket, caller.id, sodActive, Date.now());
+    if (plan.fillable.length === 0) return refuseSign(403, plan.blocked[0]?.reason ?? "There is no sign-off open to you on this request.");
+    if (body.dryRun === true) {
+      return NextResponse.json({ ok: true, dryRun: true, slots: plan.fillable.map((f) => f.slot.label || f.slot.kind), contentHash: openRosterNow.contentHash });
+    }
     if (!UUID_RE.test(sigId)) return NextResponse.json({ error: "A sign-off needs your e-signature.", code: "signature_required" }, { status: 400 });
     const { data: sig, error: sigErr } = await supabaseAdmin
       .from("e_signatures").select("id, org_id, resource_type, resource_id, signer_user_id, content_hash, intent, signed_at")
       .eq("id", sigId).maybeSingle();
     if (sigErr) return NextResponse.json({ error: "Your signature could not be checked — try again in a moment." }, { status: 503 });
     const refusal = signatureRefusal(sig as SignatureRow | null, { orgId: ticket.orgId, ticketId: body.ticketId, signerId: caller.id, roster: openRosterNow });
-    if (refusal) return NextResponse.json({ error: refusal, code: "signature_invalid" }, { status: 403 });
+    if (refusal) return refuseSign(403, refusal, "signature_invalid");
     const signed = applySignPlan(openRosterNow, plan, { uid: caller.id, name: memberName(member as { display_name?: unknown; email?: unknown }) }, sigId, new Date().toISOString());
     rosterSign = { roster: signed, complete: rosterCompletion(signed, { sodActive, drafterId: ticket.assignedDrafterId }).complete, labels: plan.fillable.map((f) => f.slot.label || f.slot.kind) };
   }
@@ -1220,6 +1307,12 @@ export async function POST(req: NextRequest) {
   // the close — never silence. It never publishes anything (DEC-22).
   let handbackNote: string | null = null;
   if (newStatus === "CLOSED") {
+    // TIER-5 (DF-P5 fix pass 3): every note below is built on the metadata
+    // the TRANSITION produced, never the stored row's — a close out of a
+    // review closes its roster (lib/ticketTransitions.ts: closedAt, open
+    // slots void), and rebuilding from the stored row put the open roster
+    // back, so a reopen revived the previous cycle's sign-offs.
+    const closeMeta = ((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>;
     try {
       const src = parseSourceDocument(ticket.metadata);
       // DCW-4 / HAND-3 (DF-P1): `unbackedPublish` was decided above, before
@@ -1232,7 +1325,7 @@ export async function POST(req: NextRequest) {
           .from("documents").select("rev, document_number").eq("id", src.id).eq("org_id", ticket.orgId).maybeSingle();
         const registerRev = ((docRow as { rev?: string | null } | null)?.rev ?? null);
         const docLabel = ((docRow as { document_number?: string | null } | null)?.document_number) || src.documentNumber || "the source document";
-        const base = unbackedPublish ? { ...(ticket.metadata ?? {}), deliverable: undefined } : ticket.metadata;
+        const base = unbackedPublish ? { ...closeMeta, deliverable: undefined } : closeMeta;
         const merged = noteDeliverableNotInRegister(base, { documentId: src.id, registerRev });
         if (merged) {
           updates.metadata = merged;
@@ -1265,7 +1358,7 @@ export async function POST(req: NextRequest) {
         const libLabel = libraryLabelForTicket(libRow ? libraryChoiceFromRow(libRow as unknown as Record<string, unknown>) : null);
         // DCW-4 (DF-P15): a "published" record the register does not back is
         // replaced, visibly, as for a request with a source document.
-        const libBase = unbackedPublish ? { ...(ticket.metadata ?? {}), deliverable: undefined } : ticket.metadata;
+        const libBase = unbackedPublish ? { ...closeMeta, deliverable: undefined } : closeMeta;
         const merged = noteDeliverableNotInLibrary(libBase, { libraryId: ticket.libraryId });
         if (merged) {
           updates.metadata = merged;
@@ -1283,7 +1376,7 @@ export async function POST(req: NextRequest) {
         // library-less request with nothing recorded closes exactly as before
         // (no metadata written).
         const recordedLib = (recorded as { library_id?: unknown }).library_id;
-        const base: Record<string, unknown> = { ...(ticket.metadata ?? {}) };
+        const base: Record<string, unknown> = { ...closeMeta };
         delete base.deliverable;
         let label = "the register";
         if (typeof recordedLib === "string" && recordedLib) {
@@ -1302,8 +1395,8 @@ export async function POST(req: NextRequest) {
     }
   }
   // GAP-13 / GAP-107 (DF-P14 fix pass): the accepted reason is merged into
-  // the metadata LAST — after the close's deliverable note, which rebuilds
-  // `metadata` from the stored row and would otherwise drop it.
+  // the metadata LAST — after the close's deliverable note, which replaces
+  // `metadata` (built on the transition's since DF-P5 fix pass 3).
   if (outcomeReason && "outcome" in updates) {
     updates.metadata = {
       ...(((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>),
@@ -1556,7 +1649,7 @@ export async function POST(req: NextRequest) {
   // request arrived on.
   const emailOrigin = publicOrigin() || new URL(req.url).origin;
   try {
-    await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, activity: isActivity, rosterCompleted: action.action === "sign_slot" && rosterSign?.complete === true, comment: fanOutComment, emailOrigin });
+    await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, activity: isActivity, rosterCompleted: action.action === "sign_slot" && rosterSign?.complete === true, rosterPartial: action.action === "sign_slot" && rosterSign?.complete === false, comment: fanOutComment, emailOrigin });
     // Kick the email drain AFTER the response is sent (the daily cron is the
     // fallback, not the primary path — recipients should get email in seconds).
     // WF-19 done-when 3: CRON_SECRET ships blank, and a blank bearer is a
@@ -1852,6 +1945,10 @@ async function fanOut(params: {
   /** DF-P5 fix pass 2: this sign-off completed the review roster (an
    *  approval: ticket_approved, not a generic status change). */
   rosterCompleted?: boolean;
+  /** DF-P5 fix pass 3: a sign-off that left the roster OPEN — the ticket
+   *  still waits on the other slots, so only the signer's own alerts are
+   *  retired; everyone else's "review opened" alert stays live. */
+  rosterPartial?: boolean;
 }) {
   const { ticket, ticketId, action, newStatus, recipients, actorUid, actorEmail, comment, activity, emailOrigin } = params;
   // ROUTE-6 (DF-P3): thread activity with nobody to tell has nothing to do.
@@ -1961,16 +2058,21 @@ async function fanOut(params: {
   //    request is late", which an open-to-open transition (save progress, a
   //    reassignment) does not change; only an exit (CLOSED / CANCELED) clears
   //    it, so only an exit retires them.
+  //    DF-P5 fix pass 3 (TIER-5 / FRIC-2): a PARTIAL roster sign-off moves
+  //    nothing for the reviewers still waited on — only the signer's own
+  //    alerts are retired (their part is done); the others keep theirs.
   const exits = newStatus === "CLOSED" || newStatus === "CANCELED";
   try {
     const supersededAt = new Date().toISOString();
-    const { data: stale } = await supabaseAdmin.from("notifications")
+    let staleQuery = supabaseAdmin.from("notifications")
       .select("id, metadata")
       .eq("resource_id", ticketId)
       .eq("org_id", ticket.orgId)
       .is("read_at", null)
       .not("metadata->>action", "is", null)
       .is("metadata->>superseded_at", null);
+    if (params.rosterPartial === true) staleQuery = staleQuery.eq("user_id", actorUid);
+    const { data: stale } = await staleQuery;
     for (const row of (stale ?? []) as Array<{ id: string; metadata: Record<string, unknown> | null }>) {
       if (!exits && SLA_NOTICE_ACTIONS.has(String(row.metadata?.action ?? ""))) continue;
       await supabaseAdmin.from("notifications")

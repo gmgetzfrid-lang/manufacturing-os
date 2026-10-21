@@ -375,7 +375,7 @@ describe("EVID-12 / FRIC-5 — today's approvals carry the server's sha256; issu
     state.calls = [];
     state.rows.tickets = [legacy({ metadata: meta })];
     state.user = { id: "req-1" };
-    const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc", issueAsIsAcknowledged: true });
     expect(res.status).toBe(200);
     const u = updates()[0];
     expect(u.status).toBe("FINAL_DRAFT");
@@ -664,5 +664,235 @@ describe("DF-P5 fix pass 2 — the ledger probe, a package too large to fingerpr
     expect(res.status).toBe(503);
     expect((await res.json()).code).toBe("routing_unreadable");
     expect(updates()).toEqual([]);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// DF-P5 fix pass 3
+describe("DF-P5 fix pass 3 — a close out of a review closes its roster for good; a routed review never runs without one", () => {
+  const sig = (id: string, signer: string, hash: string) => ({ id, org_id: "o1", resource_type: "ticket", resource_id: "t1", signer_user_id: signer, content_hash: hash, intent: "Reviewed", signed_at: "2099-01-01T00:00:00Z" });
+  const under = (roster: TicketReviewRoster, over: Record<string, unknown> = {}) => ticketRow({
+    status: "PENDING_REVIEW", deliverable_rev: "1A", draft_iteration: 1, attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }], metadata: { review_roster: roster }, ...over,
+  });
+
+  it("major 1: a FORCE CLOSE of a routed ticket under review stores the roster CLOSED (closedAt, open slots void) beside the deliverable note — and after reopen_ticket no roster is current", async () => {
+    const { currentRoster } = await import("@/lib/workflow");
+    seed();
+    const roster = await submitRouted();
+    // the engineer signs; the requester's slot is still open
+    state.calls = [];
+    state.rows.tickets = [under(roster)];
+    state.rows.e_signatures = [sig(SIG, "e-1", roster.contentHash)];
+    state.user = { id: "e-1" };
+    expect((await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG })).status).toBe(200);
+    const signed = (updates()[0].metadata as { review_roster: TicketReviewRoster }).review_roster;
+    // the Admin force-closes it
+    state.calls = [];
+    state.rows.tickets = [under(signed)];
+    state.user = { id: "a-1" };
+    const closeRes = await post({ ticketId: "t1", actionType: "close_ticket", comment: "abandoned" });
+    expect(closeRes.status).toBe(200);
+    const closedMeta = updates()[0].metadata as Record<string, unknown> & { review_roster: TicketReviewRoster };
+    expect(updates()[0].status).toBe("CLOSED");
+    // the deliverable note is still written (the library-less-of-document branch)…
+    expect(closedMeta.deliverable).toMatchObject({ state: "not_in_register", library_id: LIB });
+    // …ON the transition's metadata: the roster is closed, its open slot void
+    expect(closedMeta.review_roster.closedAt).toBeTruthy();
+    expect(closedMeta.review_roster.closedReason).toBe("close_ticket");
+    expect(closedMeta.review_roster.slots.find((x) => x.kind === "accept")?.status).toBe("void");
+    expect(closedMeta.review_roster.slots.find((x) => x.kind === "check")?.status).toBe("satisfied");
+    // the requester reopens it: back in PENDING_REVIEW, and the old roster
+    // (with its engineering sign-off) does not come back to life
+    state.calls = [];
+    state.rows.tickets = [ticketRow({ status: "CLOSED", deliverable_rev: "1A", draft_iteration: 1, attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }], metadata: closedMeta })];
+    state.user = { id: "req-1" };
+    expect((await post({ ticketId: "t1", actionType: "reopen_ticket", comment: "needed after all" })).status).toBe(200);
+    const reopened = updates()[0];
+    expect(reopened.status).toBe("PENDING_REVIEW");
+    const reopenedMeta = (reopened.metadata as Record<string, unknown> | undefined) ?? closedMeta;
+    expect(currentRoster({ status: "PENDING_REVIEW", metadata: reopenedMeta } as never)).toBeNull();
+  });
+
+  it("major 2: a reopened ticket in a routed library is NOT approved on the serial path — 409 with the way forward, nothing written; the page's engine renders those approvals disabled with the same reason", async () => {
+    const { WorkflowEngine, ROUTED_NO_ROSTER_REASON } = await import("@/lib/workflow");
+    seed({ routing_control: { slots: [
+      { kind: "accept", label: "Requester acceptance", mode: "blocking", fill: { identity: "requester" } },
+      { kind: "qa", label: "QA", mode: "blocking", fill: { users: ["e-2"] } },
+    ] } });
+    // an Engineer-tier requester: the serial path would offer approve_draft_ifc directly
+    state.rows.org_members[0] = member("req-1", "Engineer-2");
+    const reopened = ticketRow({ status: "PENDING_REVIEW", requester_role: "Engineer-2", revision_count: 1, deliverable_rev: null, attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }] });
+    state.rows.tickets = [reopened];
+    state.user = { id: "req-1" };
+    for (const actionType of ["approve_draft_ifc", "approve_minor_correction"]) {
+      state.calls = [];
+      const res = await post({ ticketId: "t1", actionType, comment: "ok" });
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({ error: ROUTED_NO_ROSTER_REASON, code: "routing_needs_roster" });
+      expect(updates()).toEqual([]);
+      expect(audits()).toEqual([]);
+    }
+    // the engine, asked as the page asks it (reviewRouted known), says why
+    const { rowToTicket } = await import("@/lib/ticketTransitions");
+    const t = rowToTicket(reopened as never);
+    const offered = WorkflowEngine.getActions(t, "Engineer-2" as never, "req-1", undefined, { reviewRouted: true, activeMemberCount: 5 });
+    expect(offered.find((a) => a.action === "approve_draft_ifc")?.disabledReason).toBe(ROUTED_NO_ROSTER_REASON);
+    // a revision stays open — the way forward
+    expect(offered.find((a) => a.action === "request_revision")?.disabledReason).toBeUndefined();
+    // REGRESSION: an unconfigured workspace's engine answer is unchanged
+    const plain = WorkflowEngine.getActions(t, "Engineer-2" as never, "req-1", undefined, { activeMemberCount: 5 });
+    expect(plain.find((a) => a.action === "approve_draft_ifc")?.disabledReason).toBeUndefined();
+  });
+
+  it("major 2 (route): the route resolves the routing itself for a rosterless approval and refuses with 409 routing_needs_roster", async () => {
+    seed();
+    state.rows.org_members[0] = member("req-1", "Engineer-2");
+    state.rows.tickets = [ticketRow({ status: "PENDING_REVIEW", requester_role: "Engineer-2", deliverable_rev: "1A", draft_iteration: 1, attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }] })];
+    state.user = { id: "req-1" };
+    const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("routing_needs_roster");
+    expect(updates()).toEqual([]);
+    expect(audits()).toEqual([]);
+    // the chain cannot be read: 503, never an unchecked approval
+    state.errors.libraries = { code: "XX000", message: "boom" };
+    const down = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    expect(down.status).toBe(503);
+    expect((await down.json()).code).toBe("routing_unreadable");
+    delete state.errors.libraries;
+    // before 20261242 (no ledger): the usual review is the review — approved as today
+    state.errors.ticket_review_slots = { code: "PGRST205", message: "Could not find the table 'public.ticket_review_slots' in the schema cache" };
+    state.calls = [];
+    const pre = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    expect(pre.status).toBe(200);
+    expect(updates()[0].status).toBe("PENDING_IFC");
+  });
+
+  it("REGRESSION: a library with no routing table approves on the serial path exactly as today", async () => {
+    seed({ routing_control: null });
+    state.rows.org_members[0] = member("req-1", "Engineer-2");
+    state.rows.tickets = [ticketRow({ status: "PENDING_REVIEW", requester_role: "Engineer-2", deliverable_rev: "1A", draft_iteration: 1, attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }] })];
+    state.user = { id: "req-1" };
+    const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    expect(res.status).toBe(200);
+    expect(updates()[0].status).toBe("PENDING_IFC");
+  });
+
+  it("major 3: a PARTIAL sign-off keeps every still-waited-on reviewer unread, tells them, and supersedes only the signer's own alerts", async () => {
+    seed({ routing_control: { slots: [
+      { kind: "check", label: "Engineering check", mode: "blocking", fill: { users: ["e-1", "e-2"] }, independent_of: ["drafter"] },
+      { kind: "qa", label: "QA", mode: "blocking", fill: { users: ["q-1"] } },
+    ] } });
+    state.rows.org_members.push(member("q-1", "Viewer"));
+    const roster = await submitRouted();
+    expect((updates()[0].unread_by as string[])).toContain("q-1");
+    state.calls = [];
+    state.rows.tickets = [under(roster, { unread_by: ["req-1", "e-1", "e-2", "q-1"] })];
+    state.rows.notifications = [
+      { id: "n-q", user_id: "q-1", resource_id: "t1", org_id: "o1", read_at: null, metadata: { action: "submit_draft" } },
+      { id: "n-e1", user_id: "e-1", resource_id: "t1", org_id: "o1", read_at: null, metadata: { action: "submit_draft" } },
+    ];
+    state.rows.e_signatures = [sig(SIG, "e-1", roster.contentHash)];
+    state.user = { id: "e-1" };
+    expect((await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG })).status).toBe(200);
+    const u = updates()[0];
+    expect(u.status).toBeUndefined();
+    // Q's slot is still open: Q keeps the marker; the signer is cleared
+    expect(u.unread_by as string[]).toContain("q-1");
+    expect(u.unread_by as string[]).not.toContain("e-1");
+    // only the signer's own alert is retired; Q's "review opened" alert stays live
+    const supersedes = state.calls.filter((c) => c.table === "notifications" && c.method === "update").map((c) => c.args[0] as { metadata: Record<string, unknown> });
+    expect(supersedes).toHaveLength(1);
+    const supersedeEq = state.calls.filter((c) => c.table === "notifications" && c.method === "eq" && c.args[0] === "user_id").map((c) => c.args[1]);
+    expect(supersedeEq).toEqual(["e-1"]);
+    // and Q is told of the sign-off
+    const bells = state.calls.filter((c) => c.table === "notifications" && c.method === "insert").flatMap((c) => c.args[0] as Array<{ user_id?: string; userId?: string }>);
+    expect(bells.map((b) => b.user_id ?? b.userId)).toContain("q-1");
+  });
+
+  it("major 3 (REGRESSION): the COMPLETING sign-off still retires every outstanding alert (the ticket moved on)", async () => {
+    seed();
+    const roster = await submitRouted();
+    state.calls = [];
+    const half = { ...roster, slots: roster.slots.map((x) => (x.kind === "check" ? { ...x, status: "satisfied" as const, satisfiedBy: "e-1", signatureId: SIG, via: "primary" as const } : x)) };
+    state.rows.tickets = [under(half)];
+    state.rows.notifications = [
+      { id: "n-r", user_id: "req-1", resource_id: "t1", org_id: "o1", read_at: null, metadata: { action: "submit_draft" } },
+      { id: "n-x", user_id: "x-9", resource_id: "t1", org_id: "o1", read_at: null, metadata: { action: "submit_draft" } },
+    ];
+    state.rows.e_signatures = [sig(SIG2, "req-1", roster.contentHash)];
+    state.user = { id: "req-1" };
+    expect((await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG2 })).status).toBe(200);
+    expect(updates()[0].status).toBe("PENDING_IFC");
+    expect(state.calls.filter((c) => c.table === "notifications" && c.method === "update")).toHaveLength(2);
+  });
+});
+
+describe("DF-P5 fix pass 3 — the as-is confirmation is the server's too; a sign-off is checked before its signature is minted", () => {
+  const legacy = (over: Record<string, unknown> = {}) => ticketRow({
+    status: "PENDING_REVIEW", deliverable_rev: "1A", draft_iteration: 1, library_id: null, requester_role: "Engineer-2",
+    attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }], ...over,
+  });
+  const sig = (id: string, signer: string, hash: string) => ({ id, org_id: "o1", resource_type: "ticket", resource_id: "t1", signer_user_id: signer, content_hash: hash, intent: "Reviewed", signed_at: "2099-01-01T00:00:00Z" });
+
+  it("FRIC-5: an approval of a draft marked issue-as-is WITHOUT the approver's acknowledgement is refused (409), nothing written; with it, issued as-is", async () => {
+    seed();
+    state.rows.org_members[0] = member("req-1", "Engineer-2");
+    state.rows.tickets = [legacy({ metadata: { issue_ready: { rev: "1A", by: "d-1", at: LM } } })];
+    state.user = { id: "req-1" };
+    const blind = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    expect(blind.status).toBe(409);
+    expect((await blind.json()).code).toBe("issue_as_is_unconfirmed");
+    expect(updates()).toEqual([]);
+    expect(audits()).toEqual([]);
+    const ok = await post({ ticketId: "t1", actionType: "approve_draft_ifc", issueAsIsAcknowledged: true });
+    expect(ok.status).toBe(200);
+    expect(updates()[0].status).toBe("FINAL_DRAFT");
+  });
+  it("REGRESSION: an unmarked draft needs no acknowledgement; a minor correction (never as-is) needs none either", async () => {
+    seed();
+    state.rows.org_members[0] = member("req-1", "Engineer-2");
+    state.rows.tickets = [legacy()];
+    state.user = { id: "req-1" };
+    expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(200);
+    state.calls = [];
+    state.rows.tickets = [legacy({ metadata: { issue_ready: { rev: "1A", by: "d-1", at: LM } } })];
+    expect((await post({ ticketId: "t1", actionType: "approve_minor_correction", comment: "fix the tag" })).status).toBe(200);
+  });
+
+  it("TIER-8: a dry run answers whether the sign-off is open to the caller — no signature needed, nothing written; a refused one says why", async () => {
+    seed();
+    const roster = await submitRouted();
+    state.calls = [];
+    state.rows.tickets = [ticketRow({ status: "PENDING_REVIEW", deliverable_rev: "1A", draft_iteration: 1, attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }], metadata: { review_roster: roster } })];
+    state.user = { id: "e-1" };
+    const ok = await post({ ticketId: "t1", actionType: "sign_slot", dryRun: true });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toMatchObject({ ok: true, dryRun: true, slots: ["Engineering check"] });
+    expect(updates()).toEqual([]);
+    expect(audits()).toEqual([]);
+    expect(ledger()).toEqual([]);
+    // a dry run is never an action applied
+    const notDry = await post({ ticketId: "t1", actionType: "request_revision", comment: "x", dryRun: true });
+    expect(notDry.status).toBe(400);
+    expect(updates()).toEqual([]);
+  });
+
+  it("TIER-8: a sign-off refused after its signature was minted (the roster completed under it) records the orphan — TICKET_SIGN_SLOT_NOT_APPLIED naming the signature, no attempt", async () => {
+    seed();
+    const roster = await submitRouted();
+    state.calls = [];
+    // the roster already completed: the ticket moved on to PENDING_IFC
+    state.rows.tickets = [ticketRow({ status: "PENDING_IFC", deliverable_rev: "1", attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }], metadata: { review_roster: { ...roster, closedAt: LM, closedReason: "complete" } } })];
+    state.rows.e_signatures = [sig(SIG, "e-2", roster.contentHash)];
+    state.user = { id: "e-2" };
+    const res = await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG });
+    expect(res.status).toBe(403);
+    expect(updates()).toEqual([]);
+    const orphan = audits().find((x) => x.action === "TICKET_SIGN_SLOT_NOT_APPLIED")!;
+    expect(orphan.details).toMatchObject({ attempt: null, signatureId: SIG, refusedBeforeApply: true, status: 403 });
+    // the trail's attempt pairing leaves it alone (no attempt to pair)
+    const { pairTicketAttempts } = await import("@/lib/auditActions");
+    expect(pairTicketAttempts([{ id: "o", action: orphan.action, details: orphan.details }]).followUps.size).toBe(0);
   });
 });

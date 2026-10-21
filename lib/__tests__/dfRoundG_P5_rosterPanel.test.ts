@@ -149,3 +149,28 @@ describe("DF-P5 fix pass 2 — FRIC-5 in front of every approver; the engineerin
     expect(page.match(/data-testid="no-actions-why"/g)).toHaveLength(2);
   });
 });
+
+describe("DF-P5 fix pass 3 — the signature is minted only for a sign-off the route would take; the signer's name; the as-is acknowledgement; the routed-without-roster check", () => {
+  const page = readFileSync(join(process.cwd(), "app", "(protected)", "requests", "[id]", "page.tsx"), "utf8");
+  const panel = readFileSync(join(process.cwd(), "components", "requests", "TicketRosterPanel.tsx"), "utf8");
+  it("the Sign off button asks the route first (a dry run) and opens the ceremony only on its yes; the ceremony is never opened directly", () => {
+    expect(panel).toContain('body: JSON.stringify({ ticketId: ticket.id, actionType: "sign_slot", dryRun: true }),');
+    expect(panel).toContain("onClick={() => { void openCeremony(); }}");
+    expect(panel).not.toContain("onClick={() => setSigning(true)}");
+    const dry = panel.indexOf("dryRun: true");
+    expect(dry).toBeLessThan(panel.indexOf("setSigning(true);", dry));
+  });
+  it("the panel's signer name is the member's display name (RG-9), never the email", () => {
+    expect(page).not.toContain("userName={userEmail}");
+    expect(page).toContain("userName={(member?.displayName ?? '').trim() || (userEmail?.split('@')[0] ?? '').trim() || null}");
+  });
+  it("the page sends issueAsIsAcknowledged only for the approval its confirm asked about", () => {
+    expect(page).toContain("if (asIs) asIsAckRef.current = action.action;");
+    expect(page).toContain("...(asIsAckRef.current === action.action ? { issueAsIsAcknowledged: true } : {}),");
+    expect(page.indexOf("asIsAckRef.current = null;")).toBeLessThan(page.indexOf("if (asIs) asIsAckRef.current = action.action;"));
+  });
+  it("the page tells the engine when a rosterless review is routed (ticketReviewRouting), so the serial approvals render disabled with the reason", () => {
+    expect(page).toContain("void ticketReviewRouting({ id: ticket.id, orgId: ticketOrgId, libraryId: ticket.libraryId ?? null, sourceDocumentId: sourceRefId })");
+    expect(page).toContain("getActions(ticket, activeRole, uid ?? undefined, capPolicy, {\n    reviewRouted, // TIER-5");
+  });
+});

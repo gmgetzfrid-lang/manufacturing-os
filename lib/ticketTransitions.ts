@@ -544,6 +544,14 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
           historyEntry.action = `${historyEntry.action} — every sign-off is in; issued Rev ${updates.deliverable_rev}`;
           currentAttachments = stampIssuedFinals(currentAttachments, updates.deliverable_rev as string, ticket.revisionCount ?? 0); // PHYS-2
           asIsIssue();
+        } else {
+          // TIER-5 / FRIC-2 (DF-P5 fix pass 3): a PARTIAL sign-off is not a
+          // hand-off — the ticket still waits on every open blocking slot,
+          // so their occupants keep their unread marker (and are told of the
+          // sign-off), as do the existing markers and today's participants.
+          // The route keeps their "review opened" alerts (no supersede).
+          const waiting = roster.slots.filter((x) => slotBlocks(x) && x.status === "open").flatMap((x) => x.primaries);
+          updates.unread_by = Array.from(new Set([...(ticket.unreadBy ?? []), ...newUnreadBy, ...waiting])).filter((u) => !!u && u !== actorUid);
         }
       }
       break;

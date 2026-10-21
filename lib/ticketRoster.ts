@@ -479,14 +479,9 @@ type LedgerClient = { from: (t: string) => unknown };
 type Thenable = PromiseLike<{ error: { code?: string; message?: string } | null }>;
 type RowsThenable = PromiseLike<{ data: unknown[] | null; error: { code?: string; message?: string } | null }>;
 
-/** True when the error means the 20261242 ledger is not there yet. */
-export function isMissingRosterLedger(err: unknown): boolean {
-  const e = err as { code?: string; message?: string } | null;
-  if (!e) return false;
-  if (e.code === "42P01" || e.code === "PGRST205") return true;
-  const m = (e.message ?? "").toLowerCase();
-  return m.includes("ticket_review_slot") && (m.includes("does not exist") || m.includes("could not find") || m.includes("schema cache"));
-}
+/** True when the error means the 20261242 ledger is not there yet (defined
+ *  in lib/routingControl.ts, which the request page can load). */
+export { isMissingRosterLedger } from "@/lib/routingControl";
 
 const once = async (run: () => Thenable): Promise<string | null> => {
   const attempt = async () => {

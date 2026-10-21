@@ -245,6 +245,52 @@ export async function effectiveRoutingForTicket(ticket: {
   }
 }
 
+/** True when the error means the 20261242 ledger is not there yet. (Here,
+ *  not only in lib/ticketRoster.ts, because the request page asks too and
+ *  that module hashes with node:crypto; lib/ticketRoster.ts re-exports it.) */
+export function isMissingRosterLedger(err: unknown): boolean {
+  const e = err as { code?: string; message?: string } | null;
+  if (!e) return false;
+  if (e.code === "42P01" || e.code === "PGRST205") return true;
+  const m = (e.message ?? "").toLowerCase();
+  return m.includes("ticket_review_slot") && (m.includes("does not exist") || m.includes("could not find") || m.includes("schema cache"));
+}
+
+/**
+ * TIER-5 (DF-P5 fix pass 3): does this ticket review on a roster? True when
+ * a routing table is declared on its chain (well-formed or not — a broken
+ * table is not "no routing") AND the 20261242 ledger is there to hold the
+ * roster (before it is pasted, submissions take the usual review, so the
+ * usual approvals stay open). Reads the source document's folder, the
+ * chain, and probes the ledger with a GET (never a HEAD — see the workflow
+ * route). Reads through the shared client: the route binds it to the
+ * service role (runWithServerClient), the request page reads through RLS.
+ * THROWS on any read failure — the route fails closed (503); the page
+ * treats it as unknown and leaves the decision to the route.
+ */
+export async function ticketReviewRouting(ticket: {
+  id: string;
+  orgId: string;
+  libraryId?: string | null;
+  sourceDocumentId?: string | null;
+}): Promise<{ routed: boolean; routing: EffectiveRouting }> {
+  if (!ticket.libraryId) return { routed: false, routing: { state: "unconfigured" } };
+  let sourceDocument: { id: string; collectionId: string | null; libraryId: string | null } | null = null;
+  if (ticket.sourceDocumentId && /^[0-9a-f-]{36}$/i.test(ticket.sourceDocumentId)) {
+    const { data, error } = await supabase
+      .from("documents").select("id, collection_id, library_id").eq("id", ticket.sourceDocumentId).eq("org_id", ticket.orgId).maybeSingle();
+    if (error) throw new Error(`Couldn't read this request's source document: ${error.message}`);
+    const d = data as { id?: string; collection_id?: string | null; library_id?: string | null } | null;
+    if (d?.id) sourceDocument = { id: d.id, collectionId: d.collection_id ?? null, libraryId: d.library_id ?? null };
+  }
+  const routing = await effectiveRoutingForTicket({ libraryId: ticket.libraryId, sourceDocument });
+  if (routing.state === "unconfigured") return { routed: false, routing };
+  const { error: ledgerErr } = await supabase.from("ticket_review_slots").select("id").eq("ticket_id", ticket.id).limit(1);
+  if (ledgerErr && isMissingRosterLedger(ledgerErr)) return { routed: false, routing };
+  if (ledgerErr) throw new Error(`Couldn't check the review roster: ${ledgerErr.message}`);
+  return { routed: true, routing };
+}
+
 /** The label a slot is shown under. */
 export const slotLabel = (s: Pick<RoutingSlot, "kind" | "label">): string => s.label?.trim() || s.kind;
 

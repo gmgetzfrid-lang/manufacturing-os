@@ -10,7 +10,8 @@ import { useRole } from '@/components/providers/RoleContext';
 import { useToast } from '@/components/providers/ToastProvider';
 import { appAlert, appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import { Ticket, TicketStatus, TicketAttachment, TicketComment, DocumentRecord, type CustomCategoryConfig, type OrgDraftingSettings } from '@/types/schema';
-import { WorkflowEngine, WorkflowAction, ticketResource, issueAsIsConfirmation, issueAsIsBanner, ISSUE_MARK_ACTIONS } from '@/lib/workflow';
+import { WorkflowEngine, WorkflowAction, ticketResource, issueAsIsConfirmation, issueAsIsBanner, ISSUE_MARK_ACTIONS, currentRoster } from '@/lib/workflow';
+import { ticketReviewRouting } from '@/lib/routingControl';
 import { loadCapabilityPolicyEntry, type CapabilityPolicy } from '@/lib/capabilityPolicy';
 import { affordancePolicyFault } from '@/lib/checkoutAffordances';
 import { flaggedRequestTypes } from '@/lib/requestTypes';
@@ -1132,7 +1133,7 @@ const FileViewerModal = ({
 export default function TicketDetailView() {
   const params = useParams();
   const router = useRouter();
-  const { activeRole, roles, userEmail, activeOrgId, uid, hasAnyRole } = useRole();
+  const { activeRole, roles, userEmail, activeOrgId, uid, hasAnyRole, member } = useRole();
   // The org's capability policy — so the buttons drawn here match what the
   // workflow-action route will actually allow (it re-derives with the same
   // policy). Undefined until loaded → defaults, which mirror historic rules.
@@ -1475,6 +1476,24 @@ export default function TicketDetailView() {
     return () => { alive = false; };
   }, [waitsOnQueue, ticketOrgId]);
 
+  // TIER-5 (DF-P5 fix pass 3): a routed ticket in review with NO roster
+  // (reopened, or in review before the routing was set) is not approved on
+  // the serial path — the engine renders those approvals disabled with the
+  // way forward, and the route refuses them. Read through RLS only while it
+  // can matter; a read that fails leaves the decision to the route.
+  const [reviewRouted, setReviewRouted] = useState(false);
+  const routedCheckKey = ticket && ticket.libraryId && !currentRoster(ticket)
+    && (ticket.status === 'PENDING_REVIEW' || ticket.status === 'PENDING_FINAL_APPROVAL')
+    ? `${ticket.id ?? ''}|${ticket.libraryId}|${ticket.status}` : null;
+  useEffect(() => {
+    let alive = true;
+    if (!routedCheckKey || !ticket?.id || !ticketOrgId) { setReviewRouted(false); return; }
+    void ticketReviewRouting({ id: ticket.id, orgId: ticketOrgId, libraryId: ticket.libraryId ?? null, sourceDocumentId: sourceRefId })
+      .then((r) => { if (alive) setReviewRouted(r.routed); }, () => { if (alive) setReviewRouted(false); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the facts the answer depends on
+  }, [routedCheckKey, ticketOrgId, sourceRefId]);
+
   // PROJ-9: the project a request is linked to (an intake collision names it),
   // read through RLS — a project the viewer cannot see shows as a reference only.
   const projectRef = useMemo(() => projectRefOf(ticket?.metadata), [ticket?.metadata]);
@@ -1811,8 +1830,14 @@ export default function TicketDetailView() {
     }
   };
 
+  // FRIC-5 (DF-P5 fix pass 3): the approval the approver CONFIRMED as an
+  // issue-as-is — sent with it as `issueAsIsAcknowledged`; the route refuses
+  // an as-is issue the approver was never asked about (a mark made after the
+  // page loaded).
+  const asIsAckRef = useRef<string | null>(null);
   const initiateWorkflowAction = async (action: WorkflowAction) => {
     if (!ticket) return;
+    asIsAckRef.current = null;
     if (action.disabledReason) {
       // Separation-of-duties: the server refuses this with the same message,
       // so stop it here with the explanation instead of a round-trip 403.
@@ -1832,6 +1857,7 @@ export default function TicketDetailView() {
     // draft becomes the issued Final; no stamped upload follows).
     const asIs = issueAsIsConfirmation(action, ticket);
     if (asIs && !(await appConfirm({ title: 'Approve and issue as-is?', message: asIs }))) return;
+    if (asIs) asIsAckRef.current = action.action;
     
     // Open IFC Upload Modal
     if (action.action === 'submit_final') {
@@ -1998,6 +2024,8 @@ export default function TicketDetailView() {
           ...(outcome ? { outcome } : {}),
           // GAP-13 / GAP-107 (DF-P14): the workspace's own reason, beside its category.
           ...(outcome && outcomeReason ? { outcomeReason } : {}),
+          // FRIC-5 (DF-P5 fix pass 3): the approver confirmed the as-is issue.
+          ...(asIsAckRef.current === action.action ? { issueAsIsAcknowledged: true } : {}),
         }),
       });
       let res = await send();
@@ -2241,6 +2269,7 @@ export default function TicketDetailView() {
   // SESS-6: no role known (activeRole null) offers no action at all — the
   // engine is asked only with a real role.
   const availableActions = activeRole === null ? [] : WorkflowEngine.getActions(ticket, activeRole, uid ?? undefined, capPolicy, {
+    reviewRouted, // TIER-5 (DF-P5 fix pass 3): a routed review with no roster
     userRoles: roles,
     activeMemberCount,
     engineeringFirstTypes,
@@ -2762,7 +2791,7 @@ export default function TicketDetailView() {
         </div>
       )}
 
-      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><TicketRosterPanel ticket={ticket} orgId={activeOrgId} uid={uid} userName={userEmail} capPolicy={capPolicy} activeMemberCount={activeMemberCount} requesterRoles={requesterRoles} /></div>
+      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><TicketRosterPanel ticket={ticket} orgId={activeOrgId} uid={uid} userName={(member?.displayName ?? '').trim() || (userEmail?.split('@')[0] ?? '').trim() || null} capPolicy={capPolicy} activeMemberCount={activeMemberCount} requesterRoles={requesterRoles} /></div>
 
       {ticket.status === 'REVISION_REQ' && latestRevision && (
         <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">

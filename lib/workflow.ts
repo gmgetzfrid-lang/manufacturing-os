@@ -66,6 +66,13 @@ export interface WorkflowContext {
   /** DF-P5: the clock a roster's alternates are activated against (ms since
    *  the epoch). Absent = now. */
   now?: number;
+  /** TIER-5 (DF-P5 fix pass 3): the ticket's library routes its reviews (a
+   *  routing table on its chain, and the 20261242 ledger there). A routed
+   *  ticket in review WITHOUT a roster (reopened, or in review before the
+   *  table was declared) is never approved on the serial path: those
+   *  approvals are rendered disabled with ROUTED_NO_ROSTER_REASON and the
+   *  route refuses them (409). Absent / false = today's behaviour. */
+  reviewRouted?: boolean;
 }
 
 /** DEC-13 stage 2: the RESOURCE a ticket presents to the capability policy —
@@ -351,6 +358,13 @@ export function issueAsIsBanner(ticket: Pick<Ticket, 'metadata' | 'deliverableRe
   if (!issueReadyFor(ticket) || currentRoster(ticket)) return null;
   return ISSUE_AS_IS_NOTE;
 }
+
+/** TIER-5 (DF-P5 fix pass 3): the serial approvals a routed ticket with no
+ *  roster may not take — each would issue (or route to an issue) without the
+ *  slots its library's routing table declares (DEC-36: fail closed). */
+export const ROSTERLESS_APPROVALS: ReadonlySet<string> = new Set(['approve_draft_ifc', 'approve_minor_correction', 'request_final_engineer_approval', 'engineer_approve_final']);
+
+export const ROUTED_NO_ROSTER_REASON = "This request's library routes its reviews, and this review has no sign-off roster (it was reopened, or was already in review when the routing was set). Request a revision so the drafter resubmits — the submission opens the review with every sign-off the routing names.";
 
 /** UI-4 (DF-P5 fix pass 2): the drafter's optional issue-as-is mark /
  *  withdrawal — offered beside the "who this waits on" note, never in place
@@ -892,6 +906,13 @@ export const WorkflowEngine = {
       });
     }
 
+    // TIER-5 (DF-P5 fix pass 3): a routed ticket in review with no roster is
+    // never approved on the serial path — the approvals stay visible,
+    // disabled, with the way forward (request a revision → resubmission
+    // opens the roster). The route refuses them too.
+    if (ctx?.reviewRouted && !roster && (ticket.status === 'PENDING_REVIEW' || ticket.status === 'PENDING_FINAL_APPROVAL')) {
+      return actions.map((a) => (ROSTERLESS_APPROVALS.has(a.action) && !a.disabledReason ? { ...a, disabledReason: ROUTED_NO_ROSTER_REASON } : a));
+    }
     return actions;
   }
 };

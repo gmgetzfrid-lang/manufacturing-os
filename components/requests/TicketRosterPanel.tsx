@@ -184,6 +184,31 @@ export default function TicketRosterPanel({
     }
   }, [roster, orgId, uid, ticket.id, userName, onChanged]);
 
+  // TIER-8 / EVID-12 (DF-P5 fix pass 3): the route is asked FIRST whether
+  // it would take this sign-off (a dry run: nothing written, no signature),
+  // so an e-signature is minted only for a sign-off that can land — never an
+  // orphan attesting a review that satisfied nothing.
+  const openCeremony = useCallback(async () => {
+    if (!ticket.id) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch("/api/tickets/workflow-action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
+        body: JSON.stringify({ ticketId: ticket.id, actionType: "sign_slot", dryRun: true }),
+      });
+      const out = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(out.error || `This sign-off can't be taken right now (HTTP ${res.status})`);
+      setSigning(true);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }, [ticket.id]);
+
   const showSeed = !roster && (ticket.status === "PENDING_REVIEW" || ticket.status === "PENDING_FINAL_APPROVAL");
   if (!roster && !showSeed && !libraryReview) return null;
 
@@ -235,7 +260,7 @@ export default function TicketRosterPanel({
       {roster && plan && plan.fillable.length > 0 && (
         <button
           type="button"
-          onClick={() => setSigning(true)}
+          onClick={() => { void openCeremony(); }}
           disabled={busy}
           className="px-4 py-2 rounded-lg text-sm font-bold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
         >
