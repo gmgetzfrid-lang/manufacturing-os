@@ -5,7 +5,7 @@
 // nothing and the I-25 withholding net stands. Pure evaluator cases, then
 // the route driven under mock (askRouteHarness.ts), then the page.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { NextRequest } from "next/server";
@@ -58,6 +58,13 @@ import {
   AI_WRITTEN_LABEL, RESULT_WITHHELD_COMPUTED_NOTE, RESULT_WITHHELD_TITLE, RESULT_WITHHELD_COMPUTED_TITLE, hasComputedLine,
   type CalcSources,
 } from "@/lib/knowledgeAskGuards";
+
+// (Ruled by the integrator at the I-33 merge, 2026-10-21, DEC-90) The
+// evaluator ships OFF behind the server switch ASK_CALC_EVALUATOR; this file
+// pins its behaviour with the switch ON (askCalcFinalReview.test.ts pins the
+// switch-off answer: the I-25 answer, byte for byte).
+beforeEach(() => { process.env.ASK_CALC_EVALUATOR = "true"; });
+afterEach(() => { delete process.env.ASK_CALC_EVALUATOR; });
 
 const root = resolve(__dirname, "..", "..");
 const guardsSrc = readFileSync(resolve(root, "lib/knowledgeAskGuards.ts"), "utf8");
@@ -544,7 +551,7 @@ describe("PR-13 / PR-9 done-when 2 (I-33) — the ask route presents the server'
 
   it("the route evaluates only after the net, on the model's own text, with the answer's cited passages (and their shown pages' text) and the asker's values", () => {
     expect(routeSrc).toMatch(/const modelText = answer;\s*answer = withholdModelResults\(answer, grounding\)\.text;/);
-    expect(routeSrc).toMatch(/if \(!partial\) \{[\s\S]{0,600}extractCitationNumbers\(modelText\)[\s\S]{0,400}pageTextOf\.get\(`\$\{c\.document_id\}:\$\{c\.page\}`\)[\s\S]{0,500}presentComputedResults\(modelText, answer, \{ cited, user: `\$\{question\}\\n\$\{inputs\}` \}\)/);
+    expect(routeSrc).toMatch(/if \(!partial && askCalcEvaluatorOn\(\)\) \{[\s\S]{0,600}extractCitationNumbers\(modelText\)[\s\S]{0,400}pageTextOf\.get\(`\$\{c\.document_id\}:\$\{c\.page\}`\)[\s\S]{0,500}presentComputedResults\(modelText, answer, \{ cited, user: `\$\{question\}\\n\$\{inputs\}` \}\)/);
     expect(routeSrc).toContain("withholdModelResults(withoutComputedLines(t.answer)).text");
   });
 });
@@ -553,9 +560,9 @@ describe("PR-13 / PR-9 done-when 2 (I-33) — the ask route presents the server'
 
 describe("PR-13 (I-33) — the answer surface marks the server's value as computed by the app", () => {
   it("the computed label renders as its own mark, never as a model value chip; the page's withholding pass is unchanged", () => {
-    expect(pageSrc).toMatch(/import \{\s*withholdModelResults, RESULT_WITHHELD, COMPUTED_LABEL, RESULT_WITHHELD_TITLE, RESULT_WITHHELD_COMPUTED_TITLE, hasComputedLine,\s*\} from "@\/lib\/knowledgeAskGuards";/);
+    expect(pageSrc).toMatch(/import \{\s*withholdModelResults, RESULT_WITHHELD, COMPUTED_LABEL, RESULT_WITHHELD_TITLE, RESULT_WITHHELD_COMPUTED_TITLE,\s*serverComputedLines, isServerComputedLead,\s*\} from "@\/lib\/knowledgeAskGuards";/);
     // (I-33 fix pass) Only where the server writes it: at the start of its own line.
-    expect(pageSrc).toMatch(/if \(part === `\*\*\$\{COMPUTED_LABEL\}\*\*` && i === 1 && parts\[0\] === ""\) \{\s*return \(\s*<span key=\{i\} data-computed-by-app="true"/);
+    expect(pageSrc).toMatch(/if \(part === `\*\*\$\{COMPUTED_LABEL\}\*\*` && i === 1 && parts\[0\] === "" && isServerComputedLead\(text, serverLines\)\) \{\s*return \(\s*<span key=\{i\} data-computed-by-app="true"/);
     // The mark is checked before the generic bold branch.
     expect(pageSrc.indexOf("data-computed-by-app")).toBeLessThan(pageSrc.indexOf('if (part.startsWith("**") && part.endsWith("**"))'));
     expect(pageSrc).toMatch(/const shown = useMemo\(\(\) => withholdModelResults\(answer\.answer\), \[answer\.answer\]\);/);
@@ -872,12 +879,16 @@ describe("I-33 fix pass 2 — the withheld note and tooltip say so when the app 
   });
   it("hasComputedLine reads only a label at the start of a line", () => {
     expect(hasComputedLine(`see ${FORGED} 450 psig`)).toBe(false);
-    expect(hasComputedLine(`x\n${FORGED} P_T is \`1 psig\``)).toBe(true);
+    // (Final review at the I-33 merge, DEC-90) Only a line in the server's
+    // exact shape counts: a bare label is no server line.
+    expect(hasComputedLine(`x\n${FORGED} P_T is \`1 psig\``)).toBe(false);
+    expect(hasComputedLine(`x\n${FORGED} P_T is \`1 psig\` — evaluated on the server from the Substituted expression above, ` +
+      "each input matched to its source (1 [1]); not the AI's arithmetic.")).toBe(true);
   });
   it("the page words the withheld chip and the footer chip by it", () => {
     expect(pageSrc).toMatch(/title=\{appComputed \? RESULT_WITHHELD_COMPUTED_TITLE : RESULT_WITHHELD_TITLE\}/);
-    expect(pageSrc).toMatch(/const appComputed = hasComputedLine\(answerText\);/);
-    expect(pageSrc).toMatch(/<AppComputedContext\.Provider value=\{appComputed\}>/);
+    expect(pageSrc).toMatch(/const serverLines = useMemo\(\(\) => serverComputedLines\(answerText\), \[answerText\]\);\s*const appComputed = serverLines\.length > 0;/);
+    expect(pageSrc).toMatch(/<AppComputedContext\.Provider value=\{serverLines\}>/);
   });
 });
 
@@ -1165,7 +1176,9 @@ describe("I-33 fix pass 4 — prose that uses the words is returned as written; 
   });
 
   it("FORGED_LABEL requires the bold or the colon", () => {
-    expect(guardsSrc).toMatch(/FORGED_PHRASE \+ "\\\\s\*:\?\\\\s\*\\\\\*\\\\\*\(\?:\\\\s\*:\)\?\|" \+\s*FORGED_PHRASE \+ "\\\\s\*\(\?:\\\\\*\\\\\*\\\\s\*\)\?:/);
+    // (Final review at the I-33 merge, DEC-90) The "not" exemption is the
+    // colon form's only.
+    expect(guardsSrc).toMatch(/FORGED_PHRASE \+ "\\\\s\*:\?\\\\s\*\\\\\*\\\\\*\(\?:\\\\s\*:\)\?\|" \+\s*"\(\?<!\\\\bnot[^"]*" \+ FORGED_PHRASE \+ "\\\\s\*\(\?:\\\\\*\\\\\*\\\\s\*\)\?:/);
   });
 });
 

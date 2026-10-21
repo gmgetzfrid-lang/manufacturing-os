@@ -50,7 +50,8 @@ import { keylessPagesShown, keylessTextOnlyLabel } from "@/lib/knowledgeKeyless"
 import { readKeylessTextPages } from "@/lib/knowledgeKeylessClient";
 import { ClarifyCard, NeedCard } from "@/components/knowledge/AssistantAskCards";
 import {
-  withholdModelResults, RESULT_WITHHELD, COMPUTED_LABEL, RESULT_WITHHELD_TITLE, RESULT_WITHHELD_COMPUTED_TITLE, hasComputedLine,
+  withholdModelResults, RESULT_WITHHELD, COMPUTED_LABEL, RESULT_WITHHELD_TITLE, RESULT_WITHHELD_COMPUTED_TITLE,
+  serverComputedLines, isServerComputedLead,
 } from "@/lib/knowledgeAskGuards";
 import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
 
@@ -92,7 +93,10 @@ const DocLinkContext = React.createContext<{ links: DocLink[]; open: ((d: DocLin
 /** (PR-13, I-33 fix pass 2) Whether the answer shown carries a value the
  *  app's evaluator computed — the withheld chip's tooltip then says the
  *  app's value is on the line below, never that nothing re-derived it. */
-const AppComputedContext = React.createContext(false);
+/** (Final review at the I-33 merge, DEC-90) The context carries the answer's
+ *  server-written computed lines themselves: the mark is drawn only for a
+ *  block that is one of them (or its carved lead). */
+const AppComputedContext = React.createContext<readonly string[]>([]);
 
 /** "3, 7, 12" — at most twelve page numbers, then "…" (as the engine's own
  *  messages list them). */
@@ -232,7 +236,8 @@ function InlineAnswer({ text, citations, onCite }: {
 }) {
   const { links, open } = React.useContext(DocLinkContext);
   const { show: showProof } = React.useContext(ProofContext);
-  const appComputed = React.useContext(AppComputedContext);
+  const serverLines = React.useContext(AppComputedContext);
+  const appComputed = serverLines.length > 0;
   // Longest mention first so "EP 5-5-1" never half-matches as "EP 5-5".
   const mentionAlt = links
     .map((d) => d.mention.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
@@ -287,7 +292,9 @@ function InlineAnswer({ text, citations, onCite }: {
         // takes the label out of the model's own text (I-33 fix pass), and
         // the server writes it only at the start of its own line, so the
         // mark is drawn only there: a label anywhere else is plain bold.
-        if (part === `**${COMPUTED_LABEL}**` && i === 1 && parts[0] === "") {
+        // (Final review at the I-33 merge, DEC-90) And only on a line in the
+        // exact shape the server writes (isServerComputedLine).
+        if (part === `**${COMPUTED_LABEL}**` && i === 1 && parts[0] === "" && isServerComputedLead(text, serverLines)) {
           return (
             <span key={i} data-computed-by-app="true"
               title="The app evaluated the Substituted expression above on the server, with every input matched to its cited source or your own value — not the AI's arithmetic. Check each input against its cited page."
@@ -730,7 +737,8 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, cove
   const shown = useMemo(() => withholdModelResults(answer.answer), [answer.answer]);
   const answerText = shown.text;
   const blocks = parseAnswerBlocks(answerText);
-  const appComputed = hasComputedLine(answerText);
+  const serverLines = useMemo(() => serverComputedLines(answerText), [answerText]);
+  const appComputed = serverLines.length > 0;
   // SEM-12: how the passages were found, for every reader. A replayed answer
   // carries no flag (it was not searched now) and shows none.
   const retrieval = describeRetrieval(answer.retrieval, answer.retrievalCoverage ?? coverage ?? null);
@@ -816,7 +824,7 @@ function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDoc, cove
 
   return (
     <DocLinkContext.Provider value={docLinkCtx}>
-    <AppComputedContext.Provider value={appComputed}>
+    <AppComputedContext.Provider value={serverLines}>
     <ProofContext.Provider value={proofCtx}>
     {proof && (
       <ProofCard

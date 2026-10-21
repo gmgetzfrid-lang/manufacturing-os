@@ -34,8 +34,8 @@
       "LOW": 56
     },
     "by_status": {
-      "RESOLVED": 248,
-      "OPEN": 20,
+      "RESOLVED": 246,
+      "OPEN": 22,
       "RESOLVED (2026-10-14, by the integrator's ruling at the I-17 integrator fix pass — done-when 3 met as narrowed under DEC-90; PASTE pending: `20261128`, unchanged — until it is pasted the live registry keeps 20261045's overlays and DELETE stays with the writer tier)": 1,
       "REFUTED": 2,
       "WONTFIX": 3,
@@ -5474,7 +5474,7 @@
       "id": "PR-9",
       "title": "The calculation protocol asks the model to do engineering arithmetic; nothing in the codebase ever checks it",
       "severity": "MEDIUM",
-      "status": "RESOLVED",
+      "status": "OPEN",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (reproduced on `708dde2` by intelligence Round G, I-25: a worked substitution's result reached the response and the stored row, labelled only)",
       "blast_radius": null,
@@ -5581,7 +5581,7 @@
       "id": "PR-13",
       "title": "Model arithmetic the withholding cannot place: an answer never marked arithmetic, a result that matches a grounded value, a pre-I-25 row's prose result, and the internet answer",
       "severity": "MEDIUM",
-      "status": "RESOLVED",
+      "status": "OPEN",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by the rule's own scope; each shape below is a case `withholdModelResults` does not withhold)",
       "blast_radius": null,

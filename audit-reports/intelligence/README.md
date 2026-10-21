@@ -56,7 +56,7 @@ It is not a missing brain. It is a missing memory.
 
 ## Findings
 
-**275 findings** — 9 CRITICAL, 59 HIGH, 151 MEDIUM, 56 LOW — plus **16 gap specs** (`GAP-313`, `GAP-314` opened at I-13, 2026-10-01; `GAP-315` opened at I-09, 2026-10-01; `GAP-316` opened at I-26, 2026-10-20 (owner: I-32); `GOV-15` opened at the I-05 merge, 2026-10-01; `ILIFE-14` opened at the admin-and-org P2 merge, 2026-10-01; `DACL-13` (LOW) opened at I-31 and resolved at its merge, 2026-10-20; `AREA-12` (LOW) opened at I-15, 2026-10-20; `PR-13` (MEDIUM) opened at I-25, 2026-10-20).
+**276 findings** — 9 CRITICAL, 59 HIGH, 152 MEDIUM, 56 LOW — plus **16 gap specs** (`GAP-313`, `GAP-314` opened at I-13, 2026-10-01; `GAP-315` opened at I-09, 2026-10-01; `GAP-316` opened at I-26, 2026-10-20 (owner: I-32); `GOV-15` opened at the I-05 merge, 2026-10-01; `ILIFE-14` opened at the admin-and-org P2 merge, 2026-10-01; `DACL-13` (LOW) opened at I-31 and resolved at its merge, 2026-10-20; `AREA-12` (LOW) opened at I-15, 2026-10-20; `PR-13` (MEDIUM) opened at I-25, 2026-10-20; `PR-14` (MEDIUM) opened at I-33, 2026-10-20).
 
 > **One finding here carries `Status: REFUTED`** — `IEDGE-9`. An independent pass disproved it; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue it as work.**
 
@@ -83,7 +83,7 @@ It is not a missing brain. It is a missing memory.
 | 17 | [Hub UX](./17-hub-ux.md) | 12 | What a new org sees; whether the numbers are real |
 | 18 | [Lifecycle](./18-lifecycle.md) | 15 | Export, restore, delete, orphans — `ILIFE-15` opened by admin-and-org P14 and resolved by the integrator at its merge, 2026-10-14 |
 | 19 | [Wiring](./19-wiring.md) | 10 | De-facto links, dead FKs, one-directional joins |
-| 20 | [Prompts](./20-prompts.md) | 13 | Every prompt read as a contract — `PR-13` (MEDIUM) opened by intelligence Round G I-25, 2026-10-20 (owner: I-33) |
+| 20 | [Prompts](./20-prompts.md) | 14 | Every prompt read as a contract — `PR-13` (MEDIUM) opened by intelligence Round G I-25, 2026-10-20 (owner: I-33; the remainder, shipping the evaluator on, the integrator after a verification campaign — DEC-90 at the I-33 merge); `PR-14` (MEDIUM) opened by intelligence Round G I-33, 2026-10-20 (owner: the integrator, with the I-33 verification campaign) |
 | 21 | [Edges & invariants](./21-edges-and-invariants.md) | 12 | The critic, plus what is sound. **Verified by hand** — record at the top of the file |
 | 90 | [**Gap register**](./90-gap-register.md) | 16 specs | `GAP-301`+ |
 | 99 | [**Execution order**](./99-fix-sequencing.md) | — | Binding. Three redo-pairs |

@@ -768,7 +768,9 @@ export function withholdModelResults(answer: string, grounding?: string): { text
   }
   if (withheld === 0) return { text: answer, withheld: 0 };
   const text = lines.join("\n");
-  const noted = text.includes(RESULT_WITHHELD_NOTE) || text.includes(RESULT_WITHHELD_COMPUTED_NOTE);
+  // (Final review at the I-33 merge, DEC-90) The computed note counts only as
+  // a whole line — the server's; the model's copy is marked AI-written.
+  const noted = text.includes(RESULT_WITHHELD_NOTE) || lines.includes(RESULT_WITHHELD_COMPUTED_NOTE);
   return { text: noted ? text : `${text}\n\n${RESULT_WITHHELD_NOTE}`, withheld };
 }
 
@@ -811,6 +813,21 @@ export function withholdModelResults(answer: string, grounding?: string): { text
 // from the server's value by more than COMPUTED_TOLERANCE the answer says so
 // and that number is withheld wherever else it is written. A lookup, and
 // any answer with no Substituted line, is returned as the very same string.
+
+/** The server switch for the evaluator (ruled by the integrator at the I-33
+ *  merge, 2026-10-21, DEC-90): exactly "true" in ASK_CALC_EVALUATOR turns it
+ *  on; anything else — unset by default — leaves it OFF, and the ask route
+ *  then never calls presentComputedResults: the answer is the I-25 answer
+ *  (the withholding net alone). The final independent review at the merge
+ *  found a Substituted expression the evaluator read only in part (a clause
+ *  or a line break inside it) and showed the value of that part under the
+ *  computed label, so the evaluator ships off, experimental, pending an
+ *  independent verification campaign over a corpus of real answers (DEC-31).
+ *  The label neutralization (neutralizeComputedLabels) runs in both states:
+ *  it only ever removes a forged claim. */
+export function askCalcEvaluatorOn(): boolean {
+  return process.env.ASK_CALC_EVALUATOR === "true";
+}
 
 /** The label of the line that carries a value the server computed. */
 export const COMPUTED_LABEL = "Computed by the app from the cited inputs:";
@@ -976,8 +993,10 @@ function readUnit(s: string, i: number): { def: UnitSpec; end: number } | null {
 
 /** A number at `i`: "285", "20,000" (groups of exactly three), "1.5",
  *  ".75", "1.5e3"; never a run another digit, ",digit" or ".digit" follows
- *  ("1,5", "1,0000", "1.2.3" are not numbers). */
-const EVAL_NUMBER = /(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d{1,3})?|\.\d+/y;
+ *  ("1,5", "1,0000", "1.2.3" are not numbers). (Final review at the I-33
+ *  merge, DEC-90) A group that starts with "0" is never a thousands group:
+ *  "0,850" is a decimal comma (0.85), never 850, so it is no number here. */
+const EVAL_NUMBER = /(?:[1-9]\d{0,2}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d{1,3})?|\.\d+/y;
 function readNumber(s: string, i: number): { value: number; end: number } | null {
   EVAL_NUMBER.lastIndex = i;
   const m = EVAL_NUMBER.exec(s);
@@ -1309,7 +1328,9 @@ function inConversionContext(t: string, start: number, end: number): boolean {
   const m = CONVERSION_AFTER.exec(after);
   return m !== null && isUnitWord(m[1]);
 }
-const SOURCE_NUMBER = /(?:(?<![\w.)\]])-)?(?<![\w.[§#]|\d,|[A-Za-z]-)(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\d]|[.,]\d)/g;
+/** (Final review at the I-33 merge, DEC-90) As EVAL_NUMBER, a leading "0"
+ *  group is no thousands group: a source's "0,850" holds no 850. */
+const SOURCE_NUMBER = /(?:(?<![\w.)\]])-)?(?<![\w.[§#]|\d,|[A-Za-z]-)([1-9]\d{0,2}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\d]|[.,]\d)/g;
 /** (I-33 fix pass 5) A power-of-ten tail right after a source's number —
  *  "× 10⁻⁶", "x 10^6", "* 10**6", "× 10-6", "x 10 6", "E-4", "e-3" — and,
  *  after a bare "10", an exponent ("10^6", "10**6", "10⁻⁶"). Every number
@@ -1408,6 +1429,20 @@ const EVAL_SYMBOL = new RegExp(
   "^\\s*(?:(?:so|then|thus|hence|therefore)\\s+)?(?:step\\s+\\d+\\s*)?" +
   "([A-Za-zΑ-Ωα-ω][\\w′'’]{0,15})(?![\\w′'’])(?:\\s+(?:at|per|for)\\s[^=]*)?\\s*$", "i");
 
+/** (Final review at the I-33 merge, DEC-90) An operator — a symbol, a
+ *  spaced hyphen or "x" before a value, or an operator word — in text the
+ *  evaluated expression does not cover. */
+const UNREAD_ARITHMETIC =
+  /[×*·⋅∙✕✖⨯•∗÷^+−/]|(?:^|\s)-\s*[\d.(]|\d\s*[xX]\s*[\d.(]|\b(?:times|multiplied\s+by|divided\s+by|plus|minus)\b/i;
+/** (Final review at the I-33 merge, DEC-90) A line that continues the
+ *  Substituted line above it: it opens (after any indent, list marker or
+ *  bold lead) with an operator, a bracket or a terminator ("  × 20,000 psi /
+ *  17,100 psi", "**Substituted (cont.):** × 1.17", "(20,000 psi / …)").
+ *  The line above is then only part of the expression: nothing is computed
+ *  for it. */
+const CONTINUATION_LINE =
+  /^\s*(?:[-*•>]\s+)?(?:\*\*[^*\n]*\*\*:?\s*)?(?:[×·⋅∙✕✖⨯•∗÷/^+−(=≈≅~→⇒]|\*(?!\*)|[-–]\s*[\d.(]|[xX]\s*[\d.(]|(?:times|multiplied\s+by|divided\s+by|plus|minus|over|of)\b)/i;
+
 /** Split a Substituted line's body at its terminators outside brackets. */
 function splitSegments(body: string): Array<{ start: number; text: string }> {
   const out: Array<{ start: number; text: string }> = [];
@@ -1457,7 +1492,7 @@ export function evaluateSubstitutedLine(
   // ("1.3 × 285 psig × (20,000 psi / 17,100 psi) = 1.3 × 285 psig × 1.3":
   // the model's own intermediate, a coincident "1.3" in the passage, never
   // becomes the app's value), or the line is refused.
-  const exprs: Array<{ tokens: EvalToken[]; k: number; cut: boolean }> = [];
+  const exprs: Array<{ tokens: EvalToken[]; k: number; cut: boolean; start: number; end: number }> = [];
   let result: { k: number } | null = null;
   for (let k = 0; k < segments.length; k++) {
     const seg = segments[k].text;
@@ -1467,7 +1502,8 @@ export function evaluateSubstitutedLine(
     const candidate = (clause ? seg.slice(0, clause.index) : seg).replace(/[\s.,;:]+$/, "");
     const tokens = candidate.trim() === "" ? null : tokenizeExpression(candidate);
     if (tokens && tokens.some((tk) => tk.t === "op") && tokens.some((tk) => tk.t === "num")) {
-      exprs.push({ tokens, k, cut: clause !== null });
+      const start = from + segments[k].start;
+      exprs.push({ tokens, k, cut: clause !== null, start, end: start + candidate.length });
     } else if (last) {
       break;
     }
@@ -1484,6 +1520,21 @@ export function evaluateSubstitutedLine(
     resultEnd = resultStart + (clause ? clause.index : rest.length);
   }
   if (exprs.length === 0) return fail("no worked expression on the line", resultStart);
+  // (Final review at the I-33 merge, DEC-90) Arithmetic the expressions do
+  // not account for refuses the line: after the first worked expression,
+  // every operator must sit inside an expression the evaluator reads (or
+  // the model's result). A clause or a word in the middle of the expression
+  // ("1.3 × 285 psig (from the nameplate) × 20,000 psi / 17,100 psi", "…,
+  // per UG-99, × 1.17", "… is the test pressure × 1.3") once cut the
+  // expression short and showed the value of its first part.
+  {
+    const covered = text.split("");
+    for (const e of exprs) for (let p = e.start; p < e.end; p++) covered[p] = " ";
+    if (resultStart >= 0) for (let p = resultStart; p < resultEnd; p++) covered[p] = " ";
+    if (UNREAD_ARITHMETIC.test(covered.slice(exprs[0].start).join(""))) {
+      return fail("arithmetic on the line that the evaluated expression does not account for", resultStart);
+    }
+  }
   // The symbol the line computes: (I-33 fix pass 5) the identifier the
   // first worked expression is assigned to — the segment right before it,
   // read after its last ",", ";", ":" or arrow and past a "so" / "then" /
@@ -1663,6 +1714,20 @@ function computedLine(step: ComputedStep): string {
     `above, each input matched to its source (${inputs}); not the AI's arithmetic.`;
 }
 
+/** (Final review at the I-33 merge, DEC-90) A line in exactly the shape
+ *  computedLine writes — the label, an optional "<symbol> is ", the value
+ *  chip and the server's own sentence naming each input's source. The page
+ *  draws the "computed by the app" mark only for such a line (and the route
+ *  neutralizes the label wherever the model wrote it), so the mark is never
+ *  drawn for a label the model wrote, nor for a near-copy of it. */
+const SERVER_COMPUTED_LINE = new RegExp(
+  "^\\*\\*" + COMPUTED_LABEL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\*\\* " +
+  "(?:[A-Za-zΑ-Ωα-ω][\\w′'’]{0,15} is )?`[^`\\n]+` — evaluated on the server from the Substituted expression above, " +
+  "each input matched to its source \\((?:[^()\\n]|\\([^()\\n]*\\))+\\); not the AI's arithmetic\\.$");
+export function isServerComputedLine(line: string): boolean {
+  return line.length <= 2_000 && SERVER_COMPUTED_LINE.test(line);
+}
+
 /** A line the evaluator added (the computed value, or the note that the
  *  model's own result differs). */
 const isComputedLine = (line: string): boolean =>
@@ -1683,15 +1748,26 @@ export const AI_WRITTEN_LABEL = "AI-written, not computed by the app:";
  *  total is computed by the server from the transmitter values", "computed
  *  on the server and sent to the PLC" — is no label and is never rewritten. */
 const FORGED_PHRASE = "computed\\s+(?:by|on)\\s+(?:the\\s+)?(?:app|server)\\b(?:\\s+from\\s+the\\s+cited\\s*inputs)?";
+/** (Final review at the I-33 merge, DEC-90) The "not" exemption is the plain
+ *  prose form's only ("This is not computed by the app: …", and the
+ *  AI_WRITTEN_LABEL itself): the label's bold shape is neutralized after a
+ *  "not" too — "not **Computed by the app from the cited inputs:**" kept it,
+ *  and a page pass that splits a long line between the "not" and the bold
+ *  (explodeRunOn's hard wrap) would have left the exact label opening a
+ *  block. */
 const FORGED_LABEL = new RegExp(
-  "(?<!\\bnot\\s{1,3}(?:\\*\\*\\s*)?)(?:\\*\\*\\s*" + FORGED_PHRASE + "\\s*:?\\s*\\*\\*(?:\\s*:)?|" +
-  FORGED_PHRASE + "\\s*(?:\\*\\*\\s*)?:(?:\\s*\\*\\*)?)\\s*", "gi");
+  "(?:\\*\\*\\s*" + FORGED_PHRASE + "\\s*:?\\s*\\*\\*(?:\\s*:)?|" +
+  "(?<!\\bnot\\s{1,3}(?:\\*\\*\\s*)?)" + FORGED_PHRASE + "\\s*(?:\\*\\*\\s*)?:(?:\\s*\\*\\*)?)\\s*", "gi");
 /** (I-33 fix pass 4) What a line must hold, read cheaply before it is
  *  folded, for either pattern to be possible: an ASCII line with neither
  *  "omput" nor "iffers" is passed over unfolded (its fold is itself). */
 const LABEL_HINT = /omput|iffers/i;
 const NON_ASCII = /[^\x00-\x7f]/;
-const FORGED_NOTE = /differs\s+from\s+the\s+app['’]s\s+value/i;
+/** The evaluator's notes in the model's mouth: "differs from the app's
+ *  value", and (final review at the I-33 merge, DEC-90) the computed withheld
+ *  note's "the app's value is shown on the line below", which claims a
+ *  re-derivation no server line made. */
+const FORGED_NOTE = /differs\s+from\s+the\s+app['’]s\s+value|the\s+app['’]s\s+value\s+is\s+shown/i;
 /** Latin look-alikes (Cyrillic, Greek) a forged label could be spelt with. */
 const LABEL_CONFUSABLES: Record<string, string> = {
   "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x", "і": "i", "ѕ": "s", "ԁ": "d", "һ": "h",
@@ -1791,7 +1867,25 @@ export function withoutComputedLines(text: string): string {
  *  computed (its label at the start of a line)? The page words the withheld
  *  chip's tooltip by it. */
 export function hasComputedLine(text: string): boolean {
-  return text.includes(COMPUTED_LABEL) && text.split("\n").some((l) => l.startsWith(`**${COMPUTED_LABEL}**`));
+  return serverComputedLines(text).length > 0;
+}
+
+/** (Final review at the I-33 merge, DEC-90) The answer's lines in the exact
+ *  shape the server's evaluator writes (isServerComputedLine). */
+export function serverComputedLines(text: string): string[] {
+  if (!text.includes(COMPUTED_LABEL)) return [];
+  return text.split("\n").map((l) => l.trim()).filter(isServerComputedLine);
+}
+
+/** (Final review at the I-33 merge, DEC-90) Does a block of the page that
+ *  opens with the computed label belong to one of the server's lines — the
+ *  whole line, or its lead when the page's run-on pass carved a long line
+ *  (a trailing " …" of a hard wrap aside)? The page draws the mark only
+ *  then. */
+export function isServerComputedLead(blockText: string, serverLines: readonly string[]): boolean {
+  if (!blockText.startsWith(`**${COMPUTED_LABEL}**`)) return false;
+  const lead = blockText.replace(/\s*…$/, "");
+  return serverLines.some((l) => l.startsWith(lead));
 }
 
 /** PR-13 (I-33): `shownAnswer` (the model's answer after the withholding
@@ -1820,7 +1914,16 @@ export function presentComputedResults(modelAnswer: string, shownAnswer: string,
   for (let i = 0; i < raw.length && i < shown.length; i++) {
     if (!SUBSTITUTED_LINE.test(raw[i])) continue;
     if (++evaluatedLines > EVAL_MAX_LINES) break;
-    const outcome = evaluateSubstitutedLine(raw[i], sources, earlier, cache);
+    let outcome = evaluateSubstitutedLine(raw[i], sources, earlier, cache);
+    // (Final review at the I-33 merge, DEC-90) A Substituted expression that
+    // runs on to the next written line is only partly on this one: refused.
+    const next = raw.slice(i + 1).find((l) => l.trim() !== "");
+    if (outcome.ok && next !== undefined && CONTINUATION_LINE.test(next)) {
+      outcome = {
+        ok: false, reason: "an expression that continues on the next line",
+        resultStart: outcome.step.resultStart, resultEnd: outcome.step.resultEnd,
+      };
+    }
     // The model's own result on this line stays withheld, whatever the net
     // read: every value after the expression's terminator, to the end of
     // the line or an input clause (I-33 fix pass 3: a rounded restatement

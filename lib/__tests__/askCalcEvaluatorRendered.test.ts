@@ -143,6 +143,12 @@ describe("I-33 fix pass 2 — the computed mark as rendered: the server's line o
     expect(host.textContent).toContain("Computed by the app from the cited inputs:");
   });
 
+  it("(final review at the I-33 merge, DEC-90) a label OPENING its own line, not in the server's exact shape (a row never neutralized), carries no mark", async () => {
+    await mountWith(`**Answer:** The value is shown [1].\n**${COMPUTED_LABEL}** P_T is \`450 psig\`\n- **${COMPUTED_LABEL}** 450 psig`);
+    expect(marks()).toHaveLength(0);
+    expect(host.textContent).toContain("Computed by the app from the cited inputs:");
+  });
+
   it.each([
     // A Substituted line written as text: the page's paragraph-run pass turns
     // the server's line (the second prose paragraph of a run) into a bullet.

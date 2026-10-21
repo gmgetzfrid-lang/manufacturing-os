@@ -79,7 +79,7 @@ import { screenAssistantRequest } from "@/lib/assistantScreen";
 import {
   readAll, readAllByKey, READ_PAGE, columnsMissing, asDocumentData, asName, DATA_OPEN, DATA_CLOSE, OWNER_OPEN, OWNER_CLOSE,
   DATA_BOUNDARY_RULE, answerHasComputation, withholdModelResults, CUT_OFF_LINE, refusedRequestAnswer, PROMPT_TOKEN_BUDGET,
-  presentComputedResults, withoutComputedLines, neutralizeComputedLabels,
+  presentComputedResults, withoutComputedLines, neutralizeComputedLabels, askCalcEvaluatorOn,
   PROMPT_CHARS_PER_TOKEN, PROMPT_TOKENS_PER_IMAGE, MIN_ANSWER_TOKENS, ANSWER_MAX_TOKENS, MIN_ANSWER_PROMPT_CHARS,
   DRAWING_FACTS_ROW_CEILING, provenPageCurrent, sourceColumnMissing, drawingFactsScope, drawingFactsDocuments,
   insertAnswerRow,
@@ -2786,7 +2786,11 @@ export async function POST(req: NextRequest) {
       // model's own result stays withheld; anything the evaluator cannot
       // bind, reconcile or parse adds nothing. A cut-off answer is never
       // evaluated (its expression may be cut short).
-      if (!partial) {
+      // (Ruled by the integrator at the I-33 merge, 2026-10-21, DEC-90) Only
+      // with the server switch ASK_CALC_EVALUATOR on (askCalcEvaluatorOn,
+      // default OFF): off, the evaluator is never called and the answer is
+      // the I-25 answer — the withholding net alone.
+      if (!partial && askCalcEvaluatorOn()) {
         const cited = new Map<number, string>();
         for (const n of extractCitationNumbers(modelText)) {
           const c = n >= 1 && n <= chunks.length ? chunks[n - 1] : null;
