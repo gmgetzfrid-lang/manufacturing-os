@@ -243,7 +243,7 @@ What landed: the badge chain continues past the nav item — the library card ca
 - ✓ The badge chain continues past the nav item: library, folder and document rows carry their own marks derived from `resource_type` / `resource_id` — a count on the library card and on the folders on the path, a dot (no number) on the document row (`DEC-90` ruling 1: "a number on every row in a long list is wallpaper", GAP-202).
 - ✓ `'other'` is eliminated (N2 — unchanged).
 
-**Scope / residual.** TRAIL-1's. *Fix pass (2026-10-21, the review):* the library, folder and document marks never count a document the viewer cannot read; the nav item's own count (the sidebar's Documents badge) still does, as before — GAP-202 acceptance 4 is met for the marks below the nav item only, and the nav item's half is `TRAIL-14` (`04-cold-trail.md`, owner the integrator to assign).
+**Scope / residual.** TRAIL-1's. *Fix pass (2026-10-21, the review):* the library, folder and document marks never count a document the viewer cannot read; the nav item's own count (the sidebar's Documents badge) still does, as before — GAP-202 acceptance 4 is met for the marks below the nav item only, and the nav item's half is `TRAIL-14` (`04-cold-trail.md`, owner notifications N12 NUDGES — assigned at the second fix pass).
 
 ---
 

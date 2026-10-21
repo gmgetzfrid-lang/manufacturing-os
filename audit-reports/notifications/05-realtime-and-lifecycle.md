@@ -88,7 +88,7 @@ What landed (`hooks/useTicketNotifications.ts`, `useAttentionFeedState`):
 **Resolution (2026-10-21, notifications Round G).** Package N11 TRAIL, branch `fleet/N11-trail-markers`, commit `1675bda` — done-when 4 on the persistent surfaces (the Partial above). **Reproduced first** on `9bc7884`: `components/notifications/NotificationBell.tsx` and `components/navigation/Sidebar.tsx` read neither `useAttentionStatus` nor `stale` (`grep -c` 0 each at `9bc7884`), so a dropped connection left their numbers unmarked.
 
 What landed:
-- **The bell** (`components/notifications/NotificationBell.tsx`): reads `useAttentionStatus()` (:71); while `stale` the count carries an amber mark (:150, `data-bell-stale`), the trigger's accessible name and title say "reconnecting, the count may be out of date" (`bellLabel(attention, stale)`, :43; :134, :138), and the drawer says `BELL_STALE_LINE` ("Reconnecting — the count may be out of date until the live connection is back.", `role="status"`, :208) — the feed surfaces' words.
+- **The bell** (`components/notifications/NotificationBell.tsx`): reads `useAttentionStatus()` (:78); while `stale` the count carries an amber mark (:171, `data-bell-stale`), the trigger's accessible name and title say "reconnecting, the count may be out of date" (`bellLabel(attention, stale)`, :46; :154, :158), and the drawer says `BELL_STALE_LINE` ("Reconnecting — the count may be out of date until the live connection is back.", `role="status"`, :232) — the feed surfaces' words.
 - **The sidebar badge** (`components/navigation/Sidebar.tsx` `SidebarLeaf`): reads `useAttentionStatus().stale` (:545); while stale each badge is marked (`opacity-70 ring-2 ring-amber-400`, `data-badge-stale`, :581-582) and its name and title say the count may be out of date (:579-580).
 - Test: `lib/__tests__/attentionRollup.test.ts` "RT-1 dw4 …" — the REAL provider, sidebar and bell: live, no mark; `CHANNEL_ERROR`, the bell's mark, name and drawer line and the badge's mark and name; the rejoin (`SUBSCRIBED`) clears all of them.
 
@@ -98,7 +98,7 @@ What landed:
 - ✓ The 60 s visible-only safety net (N4 — unchanged).
 - ✓ `CHANNEL_ERROR` / `TIMED_OUT` set a visible "reconnecting — counts may be stale" state — on the feed surfaces (N4) and now on the header bell and the sidebar badge, the surfaces of the finding's own failure scenario.
 
-**Scope / residual.** None. `NotificationListener`'s toast channel keeps no status callback, as N4 recorded (`DEC-74` §7).
+**Scope / residual.** None. `NotificationListener`'s toast channel keeps no status callback, as N4 recorded (`DEC-74` §7). *Second fix pass (2026-10-21):* the cites above re-derived at the final HEAD (the bell grew the refused-row handling, `TRAIL-1`'s second fix pass); the stale behaviour is unchanged.
 
 ---
 
@@ -745,7 +745,7 @@ Remaining step (either closes it): (a) the integrator ratifies `DEC-94` item 4's
 ## RT-12 · Two subscribed tables are not in the supabase_realtime publication — the milestone board and the shared table-view sync listen to a channel that can never fire
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED (code; `20261200` inventory comparison — done-when 1 — pending at the integrator's paste, DEC-30)
+- **Status:** OPEN (Partial — the code landed; done-when 1, the `20261200` inventory comparison, remains: owner the integrator at the `20261200` paste, `DEC-30`, closing by pointer)
 - **Assigned:** notifications N11 TRAIL (the `table_views` cross-client sync in `lib/tableViews.ts` — a Realtime Broadcast from the saver on its own channel, or an opaque primary key before publishing; N11 holds the library page that is `lib/tableViews.ts`'s one consumer, `app/(protected)/documents/[libraryId]/page.tsx`; the tripwire's `table_views` exception in `lib/__tests__/realtimePublication.test.ts` goes with it) — by the integrator, 2026-10-13 (N4 integrator fix pass, DEC-31; fleet plan `audit-reports/fleet-plans/notifications.json` updated at the N4 merge).
 - **Verification:** SUSPECTED
 - **Locations:** `components/projects/ScheduleTab.tsx:106-120`, `lib/tableViews.ts:259-264`, `supabase/schema.sql:1139-1147`, `supabase/migrations/20260727_checkout_activity_fix.sql:50-54`, `supabase/migrations/20260729_checkout_episodes.sql:97-98`
@@ -789,16 +789,42 @@ What landed:
 
 **Scope / residual.** Stays OPEN for `table_views`' cross-client sync. Owner: notifications N11 TRAIL (assigned 2026-10-13, above). The fix that leaks nothing: replace the `postgres_changes` listener with a Realtime Broadcast message the saver sends on its own channel, or give `table_views` an opaque primary key before publishing it.
 
-**Resolution (2026-10-21, notifications Round G).** Package N11 TRAIL, branch `fleet/N11-trail-markers`, commit `a76f821` — the `table_views` half (the Partial above). **Reproduced first** on `9bc7884`: `lib/tableViews.ts:261` subscribed `postgres_changes` on `table_views`, a table in no `ALTER PUBLICATION` (and deliberately so — `DEC-105` §5), so another tab's or person's saved view never streamed in.
+**Partial (2026-10-21, notifications Round G).** Package N11 TRAIL, branch `fleet/N11-trail-markers`, commits `a76f821`, `7efa531` (second fix pass) — the `table_views` half (N4's Partial above). Recorded RESOLVED at first; corrected to OPEN by the second fix pass, because done-when 1 is unmet (below). **Reproduced first** on `9bc7884`: `lib/tableViews.ts:261` subscribed `postgres_changes` on `table_views`, a table in no `ALTER PUBLICATION` (and deliberately so — `DEC-105` §5), so another tab's or person's saved view never streamed in.
 
-**Decided and recorded:** `table_views` stays UNPUBLISHED (a DELETE event would carry its composite id — workspace, person, library — to every subscriber, across workspaces) and its cross-client sync is a **Realtime Broadcast from the saver** (`lib/tableViews.ts`): `saveTableView` and `deleteTableView` announce AFTER the write landed (`announceTableViewChange`, :34; :197, :282) on the view's own topic (`tableViewTopic(id)`, :25) with an EMPTY payload — over the tab's joined channel when it already listens to that topic, else over REST on a short-lived channel that is removed; `listenTableView` joins the topic with a `broadcast` binding (:308-309) and re-reads the row under its own RLS. Nothing reaches anyone who did not already have it: only a viewer who knows the view's id is on its topic, and what it re-reads is what RLS lets it read; a forged message on a known topic causes one more read of a row the listener may read anyway. A refused write announces nothing (and throws, as before); a failed announcement never fails the save. The opaque-key alternative (re-keying the table) was not taken: it needs a migration and a key change on a live table for no gain over the Broadcast. The tripwire's `NOT_PUBLISHED` exception is gone with the `postgres_changes` listener (`lib/__tests__/realtimePublication.test.ts`, "RT-12 (N11) …" pins the Broadcast and that `table_views` is still unpublished).
-- Tests: `lib/__tests__/tableViewsBroadcast.test.ts` (4) — the listener's topic and binding and its re-read; the REST announcement on a short-lived channel; the joined channel kept; a refused write announces nothing and a failed announcement never fails the save.
+**Decided and recorded:** `table_views` stays UNPUBLISHED (a DELETE event would carry its composite id — workspace, person, library — to every subscriber, across workspaces) and its cross-client sync is a **Realtime Broadcast from the saver** (`lib/tableViews.ts`): `saveTableView` and `deleteTableView` announce AFTER the write landed (`announceTableViewChange`, :51; :214, :299) on the view's own topic (`tableViewTopic(id)`, :42) with an EMPTY payload — over the tab's joined channel when it already listens to that topic, else over REST on a short-lived channel that is removed; `listenTableView` joins the topic with a `broadcast` binding (:349-350) and re-reads the row under its own RLS. No row data reaches anyone who did not already have it: what a listener re-reads is what RLS lets it read, and the message carries nothing. *Corrected by the second fix pass:* the topic is a PUBLIC Broadcast channel named after the view's id, and that id is guessable (built from the workspace, person, library and folder ids — `tableViewId`), so anyone who knows it can post to it or listen on it. The message is therefore treated as a hint, never data (its payload is not read), and the listener's re-reads are coalesced — one in flight, one trailing re-read, hints inside a `TABLE_VIEW_RESYNC_MS` (250 ms, :39) window answered by one read (`hint`, :339; `fetch`, :324) — so a forged or flooded message costs at most about one read per window. What remains visible to someone who knows a topic is WHEN that view is saved or deleted: the new finding **`RT-13`** (below). A refused write announces nothing (and throws, as before); a failed announcement never fails the save. The opaque-key alternative (re-keying the table) was not taken: it needs a migration and a key change on a live table for no gain over the Broadcast. The tripwire's `NOT_PUBLISHED` exception is gone with the `postgres_changes` listener (`lib/__tests__/realtimePublication.test.ts`, "RT-12 (N11) …" pins the Broadcast and that `table_views` is still unpublished).
+- Tests: `lib/__tests__/tableViewsBroadcast.test.ts` (8) — the listener's topic and binding and its re-read; the REST announcement on a short-lived channel; the joined channel kept; a refused write announces nothing and a failed announcement never fails the save; (second fix pass) 200 messages in one window are one re-read; messages while a read is in flight ask for exactly one trailing re-read, never an overlapping read; a forged payload is never read; a hint pending at unmount reads nothing.
 
 **Done-when.**
-- Not done here (`DEC-30`) — done-when 1: `20261200`'s inventory rows report the live publication; comparing them against the subscriptions is the integrator's at the paste (unchanged from N4's Partial). With this change the code subscribes `postgres_changes` only on published tables, so the comparison has no exception left to account for.
+- **Not done** (`DEC-30`) — done-when 1: `20261200`'s inventory rows report the live publication; comparing them against every `postgres_changes` subscription is the integrator's at the paste (unchanged from N4's Partial). With this change the code subscribes `postgres_changes` only on published tables, so the comparison has no exception left to account for.
 - ✓ Done-when 2 — no subscribed table is missing from the publication: `milestones` is published (`20261106`, re-asserted by `20261200`); `table_views` is no longer subscribed through `postgres_changes` (its sync is the Broadcast), and stays unpublished by decision (`DEC-105` §5).
 - ✓ Done-when 3 — the tripwire (N4), now with no named exception.
 
-**Scope / residual.** Pending only the `20261200` paste comparison (done-when 1, integrator). No migration in this package.
+**Scope / residual.** Stays OPEN for done-when 1 only — the `20261200` inventory comparison. Owner: the integrator at the `20261200` paste (`DEC-30`): when the inventory rows show `milestones` published and every other `postgres_changes` table present, the record closes by pointer to that comparison. The Broadcast's residual (save timing visible to someone who knows the topic) is `RT-13`, not this finding's. No migration in this package.
+
+---
+
+<a id="rt-13"></a>
+
+## RT-13 · The table-view change Broadcast is a public channel on a guessable topic: anyone who knows a view's id sees when it is saved
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Locations:** `lib/tableViews.ts:42` (`tableViewTopic`), `lib/tableViews.ts:51` (`announceTableViewChange`), `lib/tableViews.ts:349-350` (`listenTableView`'s binding), `lib/tableViews.ts` `tableViewId`
+- **Opened:** 2026-10-21, notifications Round G, package N11 TRAIL second fix pass — the residual of `RT-12`'s Broadcast, found by the final review (`DEC-31`).
+- **Assigned:** notifications N13 — at the N11 second fix pass, 2026-10-21, on the integrator's direction (`DEC-31`; the integrator adds the plan entry and the migration's paste row, `DEC-30`).
+
+**Mechanism.** `RT-12`'s fix syncs a saved table view across clients with a Realtime Broadcast on `table-view-<id>`, where `<id>` is `tableViewId` — a composite of the workspace, the person (for a personal view), the library and the folder. The channel is public (no `private: true`), and Supabase authorises a public Broadcast channel for any authenticated client, so anyone who knows or can compose a view's id can subscribe to its topic and post to it. The message carries nothing and the listener treats it as a hint (its re-reads coalesced to about one per 250 ms window — `RT-12`'s second fix pass), so neither row data nor a read amplification leaks; what does is TIMING: a listener on someone's personal-view topic learns when they save or reset that view.
+
+**Failure scenario.** A member who knows a colleague's user id and a library id composes `tv_user_<org>_<uid>_<lib>_<folder>` and listens: each time the colleague saves their columns or sort, an empty message arrives. Low value, but it is presence information the product does not otherwise expose.
+
+**Evidence.** `lib/tableViews.ts:43` ``return `table-view-${id}`;`` and `supabase.channel(topic)` with no `{ config: { private: true } }` (listener and announcer alike).
+
+**Done when.**
+
+- [ ] The table-view topic is a PRIVATE channel (`supabase.channel(topic, { config: { private: true } })` on both the listener and the announcer), with a `realtime.messages` row-level-security policy (one migration, `DEC-30`) that admits a subscriber or sender only when they may read the `table_views` row the topic names (the workspace member for an org view; the owner for a personal view).
+- [ ] Regression: an unauthorised client cannot join or post to a view's topic; an authorised one still receives the change (a rendered or `realtime.messages` policy test), and `lib/__tests__/tableViewsBroadcast.test.ts` keeps its coalescing pins.
+
+**Owner.** notifications N13 (the Assigned line above). Until it lands the residual is accepted as recorded here: timing only, no content, at most about one read per window per listener.
 
 ---
