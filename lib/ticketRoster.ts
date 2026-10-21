@@ -29,7 +29,7 @@ import { createHash } from "node:crypto";
 import { evaluateSlotCompletion, type SlotRow } from "@/lib/reviewControl";
 import { policyAllows, heldMatchesTokens, type CapabilityPolicy, type CapabilityResource } from "@/lib/capabilityPolicy";
 import { heldRoles } from "@/lib/roleHeld";
-import { slotBlocks, type SlotSignPlan } from "@/lib/workflow";
+import { slotBlocks, rosterLacksIndependentSignOff, type SlotSignPlan } from "@/lib/workflow";
 import type { RoutingControl, RoutingLevel, RoutingSlot } from "@/lib/routingControl";
 import { slotLabel } from "@/lib/routingControl";
 import type { TicketAttachment, TicketReviewRoster, TicketReviewSlot } from "@/types/schema";
@@ -39,8 +39,29 @@ import type { TicketAttachment, TicketReviewRoster, TicketReviewSlot } from "@/t
 /** Bytes above this are not hashed in a request (the approval records why). */
 export const HASH_MAX_BYTES = 200 * 1024 * 1024;
 
+/**
+ * The bounds every in-request hash runs under (DF-P5 fix pass: a storage read
+ * must never hold a request open without limit). ONE overall deadline and ONE
+ * byte budget per request, shared by every file hashed in it:
+ *   * legacy — today's approvals and the Final's issue (EVID-12, best effort):
+ *     whatever is not hashed within the deadline / budget is recorded as
+ *     "not hashed (deadline)" / "not hashed (byte budget)" and the approval
+ *     lands anyway — hashing never blocks or meaningfully slows it;
+ *   * roster — the files a routed review binds its sign-offs to (fail
+ *     closed: a deadline is transient, the submission is refused with
+ *     "try again", nothing written).
+ * Mutable only so tests can shorten the clock; nothing else writes it.
+ */
+export const HASH_LIMITS = {
+  legacyDeadlineMs: 3_000,
+  legacyByteBudget: 64 * 1024 * 1024,
+  legacyMaxFiles: 10,
+  rosterDeadlineMs: 8_000,
+  rosterByteBudget: HASH_MAX_BYTES,
+};
+
 export type FileHash =
-  | { ok: true; sha256: string }
+  | { ok: true; sha256: string; bytes?: number }
   | { ok: false; transient: boolean; reason: string };
 
 /** The minimum of an S3-style GetObject answer the hasher reads. */
@@ -49,48 +70,114 @@ interface StoredObject {
   Body?: AsyncIterable<Uint8Array> | { transformToByteArray?: () => Promise<Uint8Array> } | null;
 }
 
+const TOO_LARGE = "too large to hash in a request";
+const DEADLINE: FileHash = { ok: false, transient: true, reason: "not hashed (deadline)" };
+
 /**
  * sha256 of one stored object, computed HERE from its bytes (never a store
- * tag such as an ETag). `get(key)` fetches the object. A missing object or a
- * key that is not a plain storage key is NOT transient (the record says so);
- * a fetch that failed is transient (the caller refuses rather than records a
- * guess).
+ * tag such as an ETag). `get(key, signal)` fetches the object (the signal
+ * aborts it). A missing object or a key that is not a plain storage key is
+ * NOT transient (the record says so); a fetch that failed is transient (the
+ * caller refuses rather than records a guess). `maxBytes` caps the bytes
+ * read (default HASH_MAX_BYTES).
  */
-export async function sha256OfStoredObject(key: string | null | undefined, get: (key: string) => Promise<StoredObject>): Promise<FileHash> {
+export async function sha256OfStoredObject(
+  key: string | null | undefined,
+  get: (key: string, signal?: AbortSignal) => Promise<StoredObject>,
+  opts: { maxBytes?: number; signal?: AbortSignal } = {},
+): Promise<FileHash> {
+  const max = Math.min(opts.maxBytes ?? HASH_MAX_BYTES, HASH_MAX_BYTES);
   if (!key || /^[a-z]+:\/\//i.test(key) || key.includes("..")) return { ok: false, transient: false, reason: "not a storage key" };
+  if (opts.signal?.aborted) return DEADLINE;
   let obj: StoredObject;
   try {
-    obj = await get(key);
+    obj = await get(key, opts.signal);
   } catch (e) {
+    if (opts.signal?.aborted) return DEADLINE;
     const err = e as { name?: string; $metadata?: { httpStatusCode?: number } };
     if (err?.name === "NoSuchKey" || err?.name === "NotFound" || err?.$metadata?.httpStatusCode === 404) {
       return { ok: false, transient: false, reason: "the file is not in storage" };
     }
     return { ok: false, transient: true, reason: "storage could not be read" };
   }
-  if (typeof obj.ContentLength === "number" && obj.ContentLength > HASH_MAX_BYTES) {
-    return { ok: false, transient: false, reason: "too large to hash in a request" };
+  if (typeof obj.ContentLength === "number" && obj.ContentLength > max) {
+    return { ok: false, transient: false, reason: TOO_LARGE };
   }
   const h = createHash("sha256");
+  let n = 0;
   try {
     const body = obj.Body as unknown;
     if (body && typeof (body as AsyncIterable<Uint8Array>)[Symbol.asyncIterator] === "function") {
-      let n = 0;
       for await (const chunk of body as AsyncIterable<Uint8Array>) {
+        if (opts.signal?.aborted) return DEADLINE;
         n += chunk.length;
-        if (n > HASH_MAX_BYTES) return { ok: false, transient: false, reason: "too large to hash in a request" };
+        if (n > max) return { ok: false, transient: false, reason: TOO_LARGE };
         h.update(chunk);
       }
     } else if (body && typeof (body as { transformToByteArray?: unknown }).transformToByteArray === "function") {
       const bytes = await (body as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray();
+      if (bytes.length > max) return { ok: false, transient: false, reason: TOO_LARGE };
+      n = bytes.length;
       h.update(bytes);
     } else {
       return { ok: false, transient: true, reason: "storage returned no bytes" };
     }
   } catch {
+    if (opts.signal?.aborted) return DEADLINE;
     return { ok: false, transient: true, reason: "storage could not be read" };
   }
-  return { ok: true, sha256: h.digest("hex") };
+  return { ok: true, sha256: h.digest("hex"), bytes: n };
+}
+
+/**
+ * Hash several stored objects under ONE overall deadline and ONE byte budget
+ * (HASH_LIMITS). The deadline is enforced by a race, not by trusting the
+ * store: a GetObject that never answers is abandoned (and aborted) when the
+ * clock runs out, and every key not hashed by then is answered
+ * "not hashed (deadline)". A file the remaining budget cannot cover is
+ * answered "not hashed (byte budget)". Never throws.
+ */
+export async function hashStoredFilesBounded(
+  keys: ReadonlyArray<string>,
+  get: (key: string, signal?: AbortSignal) => Promise<StoredObject>,
+  limits: { deadlineMs: number; byteBudget: number },
+): Promise<Map<string, FileHash>> {
+  const out = new Map<string, FileHash>();
+  if (keys.length === 0) return out;
+  const ac = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<"deadline">((resolve) => {
+    timer = setTimeout(() => { ac.abort(); resolve("deadline"); }, Math.max(0, limits.deadlineMs));
+  });
+  let remaining = Math.max(0, limits.byteBudget);
+  try {
+    for (const key of keys) {
+      if (out.has(key)) continue;
+      if (ac.signal.aborted) { out.set(key, DEADLINE); continue; }
+      if (remaining <= 0) { out.set(key, { ok: false, transient: false, reason: "not hashed (byte budget)" }); continue; }
+      const r = await Promise.race([sha256OfStoredObject(key, get, { maxBytes: remaining, signal: ac.signal }), deadline]);
+      if (r === "deadline") { out.set(key, DEADLINE); continue; }
+      if (!r.ok && r.reason === TOO_LARGE && remaining < HASH_MAX_BYTES) {
+        out.set(key, { ok: false, transient: false, reason: "not hashed (byte budget)" });
+        continue;
+      }
+      out.set(key, r);
+      if (r.ok) remaining -= r.bytes ?? 0;
+    }
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (!ac.signal.aborted) ac.abort();
+  }
+  return out;
+}
+
+/** EVID-12 (best effort): the Drafts an approval hashes — the revision being
+ *  approved (`rev` = the ticket's deliverable revision; when none carries a
+ *  label, the latest submitted Draft), at most HASH_LIMITS.legacyMaxFiles.
+ *  Earlier rounds' Drafts are not re-hashed on every approval. */
+export function draftsToHashOnApproval(attachments: readonly TicketAttachment[], underReview: string | null | undefined): TicketAttachment[] {
+  const submitted = attachments.filter((a) => a?.type === "Draft" && a.status === "submitted");
+  return filesUnderReview(submitted, underReview ?? null).slice(0, HASH_LIMITS.legacyMaxFiles);
 }
 
 /** The roster's content hash: sha256 over each file's own sha256 and name,
@@ -139,6 +226,10 @@ export function resolveFill(fill: { roles?: string[]; users?: string[]; capabili
   return [...out].sort();
 }
 
+/** The capabilities whose slot IS the ticket's engineering approval (the
+ *  seed's engineering slot fills by ticket.final_approve). */
+export const ENGINEERING_CAPABILITIES: readonly string[] = ["ticket.final_approve", "ticket.eng_review"];
+
 export type OpenRosterResult =
   | { ok: true; roster: TicketReviewRoster }
   | { ok: false; code: "routing_unfillable"; error: string };
@@ -181,6 +272,7 @@ export function openRoster(input: {
       independentOf: [...(s.independent_of ?? [])],
       timeoutDays: s.timeoutDays ?? null,
       fallback,
+      ...(s.fill.capability && ENGINEERING_CAPABILITIES.includes(s.fill.capability) ? { engineering: true } : {}),
       status: slotBlocks(s) ? "open" : "told",
     });
   }
@@ -226,7 +318,10 @@ export function applySignPlan(
  * ticket slot is a pool, the document slot a person; the evaluator's per-slot
  * rule is the same). Notify-only slots require nothing.
  */
-export function rosterCompletion(roster: TicketReviewRoster): { complete: boolean; unsatisfied: string[] } {
+export function rosterCompletion(
+  roster: TicketReviewRoster,
+  floor?: { sodActive: boolean; drafterId: string | null | undefined },
+): { complete: boolean; unsatisfied: string[] } {
   const rows: SlotRow[] = roster.slots.filter(slotBlocks).map((s) => ({
     slot: "primary",
     activated: false,
@@ -235,6 +330,13 @@ export function rosterCompletion(roster: TicketReviewRoster): { complete: boolea
     slotGroup: s.kind,
   }));
   const { complete, unsatisfiedGroups } = evaluateSlotCompletion(rows);
+  // DEC-12 / DEC-37: above the threshold a review every blocking slot of
+  // which the drafter alone satisfied is NOT complete, whatever the table
+  // declared — the slots stay as signed and the review waits on a second
+  // person (lib/workflow.ts slotSignPlan holds the same floor at signing).
+  if (complete && floor?.sodActive && floor.drafterId && rosterLacksIndependentSignOff(roster, floor.drafterId)) {
+    return { complete: false, unsatisfied: ["independent of the drafter"] };
+  }
   return { complete, unsatisfied: unsatisfiedGroups };
 }
 
@@ -269,6 +371,7 @@ export function signatureRefusal(row: SignatureRow | null, expect: {
 
 type LedgerClient = { from: (t: string) => unknown };
 type Thenable = PromiseLike<{ error: { code?: string; message?: string } | null }>;
+type RowsThenable = PromiseLike<{ data: unknown[] | null; error: { code?: string; message?: string } | null }>;
 
 /** True when the error means the 20261242 ledger is not there yet. */
 export function isMissingRosterLedger(err: unknown): boolean {
@@ -292,10 +395,27 @@ const once = async (run: () => Thenable): Promise<string | null> => {
   return (await attempt()) && (await attempt());
 };
 
+/** An UPDATE that must touch a row: a 0-row answer (no slot row to update —
+ *  e.g. the "opened" insert never landed) is a failure, not a success. */
+const onceRows = async (run: () => RowsThenable): Promise<string | null> => {
+  const attempt = async () => {
+    try {
+      const { data, error } = await run();
+      if (error) return error.message || "write refused";
+      return Array.isArray(data) && data.length > 0 ? null : "no slot row on record to update";
+    } catch (e) {
+      return (e as Error)?.message ?? String(e);
+    }
+  };
+  return (await attempt()) && (await attempt());
+};
+
 /** Write what a transition did to the roster into the ledger: the slots of a
  *  roster just opened, the slots just satisfied, or the slots just voided —
- *  one event row each. Every write is checked and retried once; the first
- *  failure is returned (the route reports it), never swallowed. */
+ *  one event row each. Every write is checked and retried once (an update
+ *  that matched no slot row counts as a failure); the first failure is
+ *  returned (the route reports it), never swallowed — and no event row is
+ *  written for a slot whose row could not be updated. */
 export async function writeRosterLedger(client: LedgerClient, input: {
   orgId: string;
   ticketId: string;
@@ -309,7 +429,7 @@ export async function writeRosterLedger(client: LedgerClient, input: {
   const { orgId, ticketId, roster } = input;
   const slotsTable = () => client.from("ticket_review_slots") as {
     insert: (r: unknown) => Thenable;
-    update: (r: unknown) => { eq: (k: string, v: unknown) => { eq: (k: string, v: unknown) => Thenable } };
+    update: (r: unknown) => { eq: (k: string, v: unknown) => { eq: (k: string, v: unknown) => { select: (c: string) => RowsThenable } } };
   };
   const eventsTable = () => client.from("ticket_review_slot_events") as { insert: (r: unknown) => Thenable };
   if (input.event === "opened") {
@@ -325,7 +445,7 @@ export async function writeRosterLedger(client: LedgerClient, input: {
       const patch = input.event === "satisfied"
         ? { status: "satisfied", satisfied_by: s.satisfiedBy ?? null, satisfied_at: s.satisfiedAt ?? null, satisfied_via: s.via ?? null, signature_id: s.signatureId ?? null }
         : { status: "void", closed_at: roster.closedAt ?? new Date().toISOString(), closed_reason: input.reason ?? roster.closedReason ?? null };
-      const err = await once(() => slotsTable().update(patch).eq("roster_id", roster.id).eq("slot_kind", s.kind));
+      const err = await onceRows(() => slotsTable().update(patch).eq("roster_id", roster.id).eq("slot_kind", s.kind).select("id"));
       if (err) return err;
     }
   }

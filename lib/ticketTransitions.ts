@@ -9,7 +9,7 @@
 // lib/__tests__/ticketTransitions.test.ts freezes it.
 
 import type { Ticket, TicketAttachment, TicketComment, TicketHistoryEntry, TicketOutcome, TicketReviewRoster, TicketStatus } from "@/types/schema";
-import { currentRoster, issueReadyFor } from "@/lib/workflow";
+import { currentRoster, issueReadyFor, rosterEngineerApprovedAt } from "@/lib/workflow";
 import { lastIssuedFromHistory } from "@/lib/verifyTicketVerdict";
 import { defaultOutcome } from "@/lib/ticketOutcome";
 
@@ -529,6 +529,10 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
         historyEntry.action = `Signed off — ${labels.join(", ")}${ticket.deliverableRev ? ` (Rev ${ticket.deliverableRev})` : ""}`;
         if (complete) {
           updates.status = "PENDING_IFC";
+          // The engineering slot's sign-off is the ticket's engineering
+          // approval, as engineer_approve_final records it on the serial path.
+          const engAt = rosterEngineerApprovedAt(roster);
+          if (engAt) updates.engineer_approved_at = engAt;
           issueRev();
           historyEntry.action = `${historyEntry.action} — every sign-off is in; issued Rev ${updates.deliverable_rev}`;
           currentAttachments = stampIssuedFinals(currentAttachments, updates.deliverable_rev as string, ticket.revisionCount ?? 0); // PHYS-2

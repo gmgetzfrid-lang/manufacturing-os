@@ -5,15 +5,18 @@
 //
 //   20261241  routing_control on libraries / collections / documents: a plain
 //             member cannot declare routing on a library or a document; a
-//             controller and the library owner can; a folder stays
-//             controller-only (20261011's policy); every change writes a
+//             controller and the library owner can (library); a folder or a
+//             document is controller-ONLY — a document's effective owner is
+//             refused (DF-P5 fix pass); a row INSERTED with a routing table
+//             needs a controller and is audited; every change writes a
 //             ROUTING_CONTROL_CHANGED audit row; only an object (or NULL) is
 //             stored; an unrelated write by a member still lands (REGRESSION).
 //   20261242  the roster ledger: no client role may write it; a member reads
 //             a slot exactly when they can read its ticket (the Contractor
 //             scope included); the event log is append-only (an UPDATE is
 //             refused even for the service role, a DELETE while the ticket
-//             exists) and leaves with its ticket (the shed's delete works).
+//             exists) and leaves with its ticket (the shed's delete works)
+//             or its org, whichever ON DELETE CASCADE fires first.
 //   Both re-paste cleanly (DEC-30 one paste) with every probe true.
 
 import { describe, it, expect, beforeAll } from "vitest";
@@ -75,13 +78,51 @@ describe.skipIf(skip !== null)("DF-P5 — routing_control guard and audit, the r
     }
   });
 
+  it("DF-P5 fix: a document's effective owner (its uploader / drafter) cannot set the document's routing — a controller only", () => {
+    admin(db, `UPDATE documents SET owner_user_id = '${m.owner.uid}' WHERE id = '${doc}'`);
+    expect(admin(db, `SELECT user_is_effective_owner(owner_user_id, collection_id, library_id, '${m.owner.uid}'::uuid) FROM documents WHERE id = '${doc}'`)).toBe("t");
+    const r = asCaller(db, m.owner.caller, `UPDATE documents SET routing_control = ${ROUTING} WHERE id = '${doc}'`);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toMatch(/Not permitted to change this document's review routing — only a document controller can/);
+    expect(admin(db, `SELECT routing_control IS NULL FROM documents WHERE id = '${doc}'`)).toBe("t");
+  });
+
+  it("DF-P5 fix: a row INSERTED carrying a routing table needs a controller on every level; a controller's (and the service role's) insert is audited with before = NULL", () => {
+    const d2 = randomUUID();
+    const f2 = randomUUID();
+    const l2 = randomUUID();
+    const tries = [
+      `INSERT INTO documents (id, org_id, library_id, name, title, document_number, rev, status, routing_control) VALUES ('${d2}', '${orgId}', '${lib}', 'q.pdf', 'Q', 'Q-${d2.slice(0, 8)}', '0', 'Draft', ${ROUTING})`,
+      `INSERT INTO collections (id, org_id, library_id, name, routing_control) VALUES ('${f2}', '${orgId}', '${lib}', 'Unit 13', ${ROUTING})`,
+      `INSERT INTO libraries (id, org_id, name, type, owner_user_id, routing_control) VALUES ('${l2}', '${orgId}', 'Isos', 'documents', '${m.owner.uid}', ${ROUTING})`,
+    ];
+    for (const who of [m.owner.caller, m.member.caller]) {
+      for (const stmt of tries) {
+        const r = asCaller(db, who, stmt);
+        expect(r.ok, stmt).toBe(false);
+      }
+    }
+    expect(admin(db, `SELECT (SELECT COUNT(*) FROM documents WHERE id = '${d2}') + (SELECT COUNT(*) FROM collections WHERE id = '${f2}') + (SELECT COUNT(*) FROM libraries WHERE id = '${l2}')`)).toBe("0");
+    // the guard itself refuses (not only a row policy): the owner may create a folder, never one carrying a table
+    const own = asCaller(db, m.owner.caller, tries[1]);
+    if (!own.ok && own.code === "23514") expect(own.message).toMatch(/only a document controller can declare one/);
+    expect(asCaller(db, m.admin.caller, tries[1])).toEqual({ ok: true, rows: 1 });
+    expect(asCaller(db, SERVICE, tries[0])).toEqual({ ok: true, rows: 1 });
+    const rows = admin(db, `SELECT resource_type || ':' || (details->>'op') || ':' || COALESCE(details->>'before', 'null') || ':' || (details->>'via') FROM audit_logs WHERE action = 'ROUTING_CONTROL_CHANGED' AND resource_id IN ('${f2}', '${d2}') ORDER BY resource_type`);
+    expect(rows.split("\n")).toEqual(["collection:insert:null:database", "document:insert:null:service_role"]);
+    // an insert with no routing table is untouched (REGRESSION): no audit row
+    const d3 = randomUUID();
+    expect(asCaller(db, SERVICE, `INSERT INTO documents (id, org_id, library_id, name, title, document_number, rev, status) VALUES ('${d3}', '${orgId}', '${lib}', 'r.pdf', 'R', 'R-${d3.slice(0, 8)}', '0', 'Draft')`)).toEqual({ ok: true, rows: 1 });
+    expect(admin(db, `SELECT COUNT(*) FROM audit_logs WHERE action = 'ROUTING_CONTROL_CHANGED' AND resource_id = '${d3}'`)).toBe("0");
+  });
+
   it("the library owner and a controller can; a controller can set a folder; each change writes ROUTING_CONTROL_CHANGED with before / after", () => {
     expect(asCaller(db, m.owner.caller, `UPDATE libraries SET routing_control = ${ROUTING} WHERE id = '${lib}'`)).toEqual({ ok: true, rows: 1 });
     expect(asCaller(db, m.admin.caller, `UPDATE documents SET routing_control = ${ROUTING} WHERE id = '${doc}'`)).toEqual({ ok: true, rows: 1 });
     expect(asCaller(db, m.admin.caller, `UPDATE collections SET routing_control = ${ROUTING} WHERE id = '${folder}'`)).toEqual({ ok: true, rows: 1 });
     // a member's folder write is filtered by the controllers-only policy (no row)
     expect(asCaller(db, m.member.caller, `UPDATE collections SET routing_control = NULL WHERE id = '${folder}'`)).toEqual({ ok: true, rows: 0 });
-    const audits = admin(db, `SELECT resource_type || ':' || (details->'after'->'slots'->0->>'kind') FROM audit_logs WHERE action = 'ROUTING_CONTROL_CHANGED' AND org_id = '${orgId}' ORDER BY resource_type`);
+    const audits = admin(db, `SELECT resource_type || ':' || (details->'after'->'slots'->0->>'kind') FROM audit_logs WHERE action = 'ROUTING_CONTROL_CHANGED' AND org_id = '${orgId}' AND details->>'op' = 'update' AND resource_id IN ('${lib}', '${doc}', '${folder}') ORDER BY resource_type`);
     expect(audits.split("\n").sort()).toEqual(["collection:eng", "document:eng", "library:eng"]);
   });
 
@@ -154,5 +195,31 @@ describe.skipIf(skip !== null)("DF-P5 — routing_control guard and audit, the r
     expect(asCaller(db, SERVICE, `DELETE FROM tickets WHERE id = '${t}'`)).toEqual({ ok: true, rows: 1 });
     expect(admin(db, `SELECT COUNT(*) FROM ticket_review_slot_events WHERE ticket_id = '${t}'`)).toBe("0");
     expect(admin(db, `SELECT COUNT(*) FROM ticket_review_slots WHERE ticket_id = '${t}'`)).toBe("0");
+  });
+
+  it("DF-P5 fix: deleting an org with roster events succeeds — and so does the events cascade when it fires BEFORE the tickets one (the org row already gone, the ticket still there)", () => {
+    const t = ticket(m.requester.uid);
+    const roster = randomUUID();
+    expect(asCaller(db, SERVICE, event(t, roster))).toEqual({ ok: true, rows: 1 });
+    // the order the reviewer reproduced, forced: the org row is removed with
+    // the RI cascades off, then the events delete runs while the ticket exists
+    const sim = admin(db, `SELECT harness.try_sql(${"$q$"}DO $do$ DECLARE e int; tk int; BEGIN
+      PERFORM set_config('session_replication_role', 'replica', true);
+      DELETE FROM orgs WHERE id = '${orgId}';
+      PERFORM set_config('session_replication_role', 'origin', true);
+      DELETE FROM ticket_review_slot_events WHERE ticket_id = '${t}';
+      SELECT COUNT(*) INTO e FROM ticket_review_slot_events WHERE ticket_id = '${t}';
+      SELECT COUNT(*) INTO tk FROM tickets WHERE id = '${t}';
+      RAISE EXCEPTION 'simulated: events=% ticket=%', e, tk;
+    END $do$${"$q$"})`);
+    expect(sim).toBe("err:P0001:simulated: events=0 ticket=1");
+    // and a real org deletion (a throwaway org with a ticket and its events) completes
+    const s2 = seedOrg(db, { r: { role: "Requester" } });
+    const t2 = randomUUID();
+    admin(db, `INSERT INTO tickets (id, org_id, ticket_id, title, request_type, status, requester_id) VALUES ('${t2}', '${s2.orgId}', 'KE-P5-${t2.slice(0, 6)}', 'Tie-in', 'New Drawing', 'PENDING_REVIEW', '${s2.m.r.uid}')`);
+    expect(asCaller(db, SERVICE, `INSERT INTO ticket_review_slot_events (org_id, ticket_id, roster_id, slot_kind, event) VALUES ('${s2.orgId}', '${t2}', '${randomUUID()}', 'eng', 'opened')`)).toEqual({ ok: true, rows: 1 });
+    const del = admin(db, `SELECT harness.try_sql(${"$q$"}DELETE FROM orgs WHERE id = '${s2.orgId}'${"$q$"})`);
+    expect(del).toBe("ok:1");
+    expect(admin(db, `SELECT COUNT(*) FROM ticket_review_slot_events WHERE ticket_id = '${t2}'`)).toBe("0");
   });
 });

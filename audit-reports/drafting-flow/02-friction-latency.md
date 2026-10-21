@@ -268,7 +268,7 @@ Tests: `lib/__tests__/dfRoundG_P5_routing.test.ts` ("TIER-5 done-when 3 …" —
 ## FRIC-5 · The drafter is interrupted twice for one deliverable
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** friction
 - **Locations:**
@@ -298,19 +298,19 @@ skipped correctly.
 to re-enter the ticket to produce a file that already exists — or, if it must,
 the ticket says plainly what is different about the final package.
 
-**Resolution (2026-10-21, drafting-flow Round G).** DF-P5 ROSTER, on DEC-90 ruling (1) (opt-in per ticket by the drafter; default OFF = today's `PENDING_IFC` hop). Reproduced on the base: `lib/workflow.ts:532` — after any approval the ticket returns to the drafter at `PENDING_IFC` for `submit_final` and a fresh upload.
+**Partial (2026-10-21, drafting-flow Round G).** DF-P5 ROSTER, on DEC-90 ruling (1) (opt-in per ticket by the drafter; default OFF = today's `PENDING_IFC` hop). *(Recorded RESOLVED in the first DF-P5 commit; corrected to Partial at the DF-P5 fix pass — the ✓ held only when the drafter had opted in, and the request page offers no at-submit opt-in yet, so a default approval still returns the request to the drafter. DEC-29.)* Reproduced on the base: `lib/workflow.ts:532` — after any approval the ticket returns to the drafter at `PENDING_IFC` for `submit_final` and a fresh upload.
 
 Landed:
-- The drafter marks the draft under review **issue-ready**: `mark_issue_ready` / `clear_issue_ready`, optional actions offered to the assigned drafter while the draft is under review (`lib/workflow.ts:757`), or `submit_draft` with `issueReady: true` (the API's at-submit path, `lib/ticketTransitions.ts` `submit_draft`). The mark is bound to the revision label it was made on (`issueReadyFor`, `:280`), so any new submission clears it.
+- The drafter marks the draft **issue-ready**: `submit_draft` with `issueReady: true` (the API's at-submit path, `lib/ticketTransitions.ts` `submit_draft`), or `mark_issue_ready` — offered to the assigned drafter only while NO sign-off has landed on the draft (`PENDING_REVIEW`, no roster slot satisfied: `lib/workflow.ts` `nothingSignedYet`), the nearest the page offers to "at submit" until it has the checkbox, so no reviewer signs without the issue-as-is note in front of them. Once a sign-off is in, the mark can only be withdrawn (`clear_issue_ready`). The mark is bound to the revision label it was made on (`issueReadyFor`), so any new submission clears it.
 - With the mark, the approval that issues the draft (`approve_draft_ifc`, `engineer_approve_final`, or the roster's last sign-off) records the approved Draft as the Final — same bytes, same storage key, a new id, the issued label, `issuedFromDraftId` — and moves the request to `FINAL_DRAFT` (`lib/ticketTransitions.ts` `asIsIssue` `:384`, `issueAsIsFinals` `:264`). A minor correction never issues as-is (the correction must be folded in); a draft with no per-file revision falls back to `PENDING_IFC`, saying so.
 - The approver is told plainly: the approve action's description says the approval issues the approved draft as the final package (`ISSUE_AS_IS_NOTE`).
 
-Tests: `lib/__tests__/dfRoundG_P5_routing.test.ts` ("FRIC-5 — issue-as-is …", six cases incl. "DEFAULT OFF"); `lib/__tests__/dfRoundG_P5_rosterRoute.test.ts` ("FRIC-5: the drafter marks issue-ready; the approval then issues the draft as the Final (FINAL_DRAFT)").
+Tests: `lib/__tests__/dfRoundG_P5_routing.test.ts` ("FRIC-5 — issue-as-is …", six cases incl. "DEFAULT OFF"; "DF-P5 fix — FRIC-5: the issue-as-is mark is offered only before the first sign-off lands"); `lib/__tests__/dfRoundG_P5_rosterRoute.test.ts` ("FRIC-5: the drafter marks issue-ready; the approval then issues the draft as the Final (FINAL_DRAFT)").
 
 **Done-when.**
-- ✓ A clean approval with no corrections does not require the drafter to re-enter the ticket to produce a file that already exists — whenever the drafter has marked it issue-ready (their one opt-in, before approval; DEC-90 ruling (1) keeps it off by default, and without it the request returns to them as today).
+- ✗ in part "A clean approval with no corrections does not require the drafter to re-enter the ticket to produce a file that already exists" — holds whenever the drafter opted in before the first sign-off; a DEFAULT approval (no opt-in — DEC-90 ruling (1) keeps it off) still returns the request to the drafter at `PENDING_IFC`, and the request page has no at-submit checkbox, so the opt-in is a ticket action rather than part of submitting.
 
-**Scope / residual.** The request page's submit button does not yet carry an at-submit checkbox (the page is DF-P9's; the toggle is offered on the ticket from the moment the draft is under review, and the route takes `issueReady` at submit) — proposed for the next package holding `app/(protected)/requests/[id]/page.tsx`. No migration (the mark lives in `metadata`, which is workflow-owned since `20261166` / `20261208`).
+**Owner of the remainder:** the at-submit checkbox on the request page's Submit (`issueReady` on `submit_draft`, which the route already takes) → the next package holding `app/(protected)/requests/[id]/page.tsx` (DF-P9's page); the integrator may instead rule under DEC-90 (1) that the opt-in ticket action satisfies the done-when. No migration (the mark lives in `metadata`, which is workflow-owned since `20261166` / `20261208`). Stays OPEN.
 
 ---
 

@@ -14,7 +14,7 @@ import type { Ticket, TicketReviewRoster } from "@/types/schema";
 vi.mock("@/lib/supabase", () => ({ supabase: { from: () => ({}) , auth: { getSession: async () => ({ data: { session: null } }) } } }));
 vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({ uid: "u-1", activeRole: "Admin", roles: ["Admin"] }) }));
 import TicketRosterPanel, { TWO_REVIEWS_NOTE, slotQuestion, slotStateText } from "@/components/requests/TicketRosterPanel";
-import { draftToControl } from "@/components/documents/RoutingControlSection";
+import { draftToControl, controlToDraft, keptNote } from "@/components/documents/RoutingControlSection";
 import { parseRoutingControl } from "@/lib/routingControl";
 
 const NOW = "2026-10-21T12:00:00.000Z";
@@ -85,6 +85,19 @@ describe("RoutingControlSection — the editor writes the stored shape the resol
     expect(control.slots[0]).toEqual({ kind: "insp", label: "Inspection", mode: "blocking", fill: { roles: ["Supervisor"] }, independent_of: ["drafter"], alternates: { roles: ["Manager"] }, timeoutDays: 3 });
     expect(control.slots[1].fill).toEqual({ identity: "requester" });
     expect(parseRoutingControl(control)).toMatchObject({ ok: true });
+  });
+  it("DF-P5 fix: a stored table round-trips through the editor unchanged — waivable_by, named alternates and a multi-source fill are kept, and the slot says so", () => {
+    const stored = { slots: [
+      { kind: "check", label: "Check", mode: "blocking", fill: { roles: ["Engineer"], users: ["e-9"] }, independent_of: ["drafter"],
+        alternates: { roles: ["Manager"], users: ["m-1"] }, timeoutDays: 2, waivable_by: { roles: ["Admin"], capability: "ticket.manage" } },
+      { kind: "accept", mode: "blocking", fill: { identity: "requester" } },
+    ] };
+    const parsed = parseRoutingControl(stored);
+    if (!parsed || !parsed.ok) throw new Error("bad");
+    const drafts = controlToDraft(parsed.control);
+    expect(draftToControl(drafts)).toEqual(parsed.control);
+    expect(keptNote(drafts[0])).toMatch(/also filled by roles: Engineer.*override.*1 named alternate person.*Saving keeps them as they are/);
+    expect(keptNote(drafts[1])).toBeNull();
   });
   it("mounted beside the review policy (DEC-36: per container), not on /admin/requests", () => {
     const modal = readFileSync(join(process.cwd(), "components", "documents", "ReviewControlModal.tsx"), "utf8");

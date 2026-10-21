@@ -271,7 +271,42 @@ export function slotSignPlan(
     if (reason) plan.blocked.push({ slot, reason });
     else plan.fillable.push({ slot, via });
   }
+  // DEC-12 / DEC-37 acceptance 2 — the producer-versus-checker FLOOR, held
+  // whatever the routing table declares: above the threshold the drafter
+  // may not be the one whose sign-off completes the review unless somebody
+  // else has already satisfied a blocking slot. The drafter may still sign
+  // the slots they occupy, but one stays open for a second person.
+  if (sodActive && ticket.assignedDrafterId && uid === ticket.assignedDrafterId && plan.fillable.length > 0
+    && rosterLacksIndependentSignOff(roster, uid, plan.fillable.map((f) => f.slot.kind))) {
+    const others = (s: TicketReviewSlot) => [...s.primaries, ...s.alternates, ...s.overriders].some((u) => u !== uid);
+    const idx = [...plan.fillable.keys()].reverse().find((i) => others(plan.fillable[i].slot)) ?? plan.fillable.length - 1;
+    const [held] = plan.fillable.splice(idx, 1);
+    plan.blocked.push({ slot: held.slot, reason: PRODUCER_FLOOR_REASON });
+  }
   return plan;
+}
+
+/** When a completed roster's engineering approval was given: the latest
+ *  sign-off among its satisfied engineering slots (lib/ticketRoster.ts
+ *  marks a slot `engineering` from its fill's capability), or null when the
+ *  roster has none — the roster itself is then the record of who signed. */
+export function rosterEngineerApprovedAt(roster: TicketReviewRoster): string | null {
+  const at = roster.slots.filter((s) => s.engineering && s.status === "satisfied" && s.satisfiedAt).map((s) => s.satisfiedAt as string).sort();
+  return at.length > 0 ? at[at.length - 1] : null;
+}
+
+export const PRODUCER_FLOOR_REASON = "Needs a second person: you are this deliverable's drafter, and at least one sign-off on its review must come from someone else (orgs of 3+).";
+
+/**
+ * True when the roster would be complete with `signing` satisfied by `uid`
+ * and NO blocking slot satisfied by anyone else — the case the
+ * producer-versus-checker floor refuses (DEC-12 / DEC-37). Pure.
+ */
+export function rosterLacksIndependentSignOff(roster: TicketReviewRoster, uid: string, signing: readonly string[] = []): boolean {
+  const blocking = roster.slots.filter((s) => slotBlocks(s) && s.status !== "void");
+  const completes = blocking.every((s) => s.status === "satisfied" || signing.includes(s.kind));
+  const independent = blocking.some((s) => s.status === "satisfied" && !!s.satisfiedBy && s.satisfiedBy !== uid);
+  return completes && !independent;
 }
 
 /** FRIC-5: the drafter marked the draft under review issue-ready — the last
@@ -747,14 +782,20 @@ export const WorkflowEngine = {
     }
 
     // FRIC-5 (DF-P5; DEC-90 ruling (1): opt-in per ticket by the drafter,
-    // default OFF = today's PENDING_IFC hop): while the draft is under
-    // review, its drafter may mark it issue-ready — the last approval then
-    // issues the approved draft as the final package instead of returning
-    // the ticket to them for a second upload. Optional, never waited on.
-    if ((ticket.status === 'PENDING_REVIEW' || ticket.status === 'PENDING_FINAL_APPROVAL') && isDrafterIdentity && ticket.deliverableRev) {
-      actions.push(issueReady
-        ? { label: 'Withdraw Issue-As-Is', action: 'clear_issue_ready', variant: 'ghost', optional: true, description: 'The approval returns the request to you to issue the final package, as usual.' }
-        : { label: 'Issue As-Is When Approved', action: 'mark_issue_ready', variant: 'outline', optional: true, description: `When Rev ${ticket.deliverableRev} is approved with no corrections, it is issued as the final package — you will not need to upload it again. A correction still returns it to you.` });
+    // default OFF = today's PENDING_IFC hop): the drafter may mark the draft
+    // issue-ready at submission (`issueReady` on submit_draft) or, the
+    // nearest the request page offers until it has an at-submit checkbox,
+    // before any sign-off has landed on it (PENDING_REVIEW with no roster
+    // slot satisfied) — so no reviewer has signed without the issue-as-is
+    // note in front of them. Once a sign-off is in, the mark can only be
+    // withdrawn (withdrawing asks nothing of a reviewer). The last approval
+    // then issues the approved draft as the final package instead of
+    // returning the ticket for a second upload. Optional, never waited on.
+    const nothingSignedYet = ticket.status === 'PENDING_REVIEW' && !(roster?.slots ?? []).some((s) => s.status === 'satisfied');
+    if (isDrafterIdentity && ticket.deliverableRev && issueReady && (ticket.status === 'PENDING_REVIEW' || ticket.status === 'PENDING_FINAL_APPROVAL')) {
+      actions.push({ label: 'Withdraw Issue-As-Is', action: 'clear_issue_ready', variant: 'ghost', optional: true, description: 'The approval returns the request to you to issue the final package, as usual.' });
+    } else if (isDrafterIdentity && ticket.deliverableRev && !issueReady && nothingSignedYet) {
+      actions.push({ label: 'Issue As-Is When Approved', action: 'mark_issue_ready', variant: 'outline', optional: true, description: `When Rev ${ticket.deliverableRev} is approved with no corrections, it is issued as the final package — you will not need to upload it again. A correction still returns it to you. Available until the first sign-off lands.` });
     }
 
     // GLOBAL OVERRIDES

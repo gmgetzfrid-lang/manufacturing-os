@@ -20,7 +20,8 @@
 --   (2) ticket_review_slot_events — one row per thing that happened to a
 --       slot (opened, told, satisfied, voided). APPEND-ONLY: an UPDATE is
 --       refused for every role; a DELETE only once the ticket itself is gone
---       (its ON DELETE CASCADE — the ticket shed's delete keeps working).
+--       (its ON DELETE CASCADE — the ticket shed's delete keeps working) or
+--       its org is (an org's deletion, whichever cascade fires first).
 --
 -- Row security: SELECT for whoever can read the ticket — the policy asks the
 -- tickets table, so the ticket's own read scope (20261166, the Contractor
@@ -112,8 +113,11 @@ BEGIN
       USING ERRCODE = 'check_violation';
   END IF;
   -- A DELETE passes only once its ticket is gone (the ON DELETE CASCADE of a
-  -- ticket the shed archived, or an org's deletion).
-  IF EXISTS (SELECT 1 FROM tickets WHERE id = OLD.ticket_id) THEN
+  -- ticket the shed archived) or its org is gone (an org's deletion: the
+  -- orgs -> events cascade may run BEFORE the orgs -> tickets one — the RI
+  -- triggers fire in name order — and each runs after the org row is gone).
+  IF EXISTS (SELECT 1 FROM tickets WHERE id = OLD.ticket_id)
+     AND EXISTS (SELECT 1 FROM orgs WHERE id = OLD.org_id) THEN
     RAISE EXCEPTION 'ticket_review_slot_events is append-only: a roster event is removed only with its ticket.'
       USING ERRCODE = 'check_violation';
   END IF;
@@ -175,8 +179,9 @@ SELECT 'a satisfied slot names who, when and the bound signature (CHECK)',
        EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ticket_review_slots_satisfied_shape'),
        NULL
 UNION ALL
-SELECT 'events are append-only (BEFORE UPDATE OR DELETE trigger, enabled)',
-       EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_ticket_review_slot_events_append_only' AND NOT tgisinternal AND tgenabled = 'O'),
+SELECT 'events are append-only (BEFORE UPDATE OR DELETE trigger, enabled); a delete passes once the ticket or the org is gone',
+       EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_ticket_review_slot_events_append_only' AND NOT tgisinternal AND tgenabled = 'O')
+       AND (SELECT prosrc LIKE '%EXISTS (SELECT 1 FROM orgs WHERE id = OLD.org_id)%' FROM pg_proc WHERE proname = 'ticket_review_slot_events_append_only'),
        NULL
 UNION ALL
 SELECT 'DRLS-16: the trigger function is SECURITY DEFINER with search_path pinned, EXECUTE revoked from anon and authenticated',

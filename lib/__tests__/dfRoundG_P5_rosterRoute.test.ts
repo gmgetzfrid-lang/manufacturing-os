@@ -27,6 +27,7 @@ const state = vi.hoisted(() => ({
   errors: {} as Record<string, { code?: string; message: string }>,
   r2: [] as Array<{ kind: string; key: string }>,
   r2Fail: false,
+  r2Hang: false,
 }));
 function chain(table: string) {
   const filters: Array<[string, unknown, "eq" | "is" | "in"]> = [];
@@ -44,6 +45,10 @@ function chain(table: string) {
       };
       return (...args: unknown[]) => {
         state.calls.push({ table, method: prop, args });
+        // the ledger's slot rows land, so a later sign-off's update finds them
+        if (prop === "insert" && table === "ticket_review_slots" && !state.errors[table]) {
+          state.rows[table] = [...(state.rows[table] ?? []), ...(Array.isArray(args[0]) ? args[0] : [args[0]]) as Array<Record<string, unknown>>];
+        }
         if (prop === "select" && (args[1] as { head?: boolean } | undefined)?.head) head = true;
         if (prop === "eq") filters.push([String(args[0]), args[1], "eq"]);
         if (prop === "is") filters.push([String(args[0]), args[1], "is"]);
@@ -74,6 +79,7 @@ vi.mock("@/lib/r2", () => ({
       const kind = cmd.constructor.name;
       state.r2.push({ kind, key: cmd.input.Key });
       if (kind === "GetObjectCommand") {
+        if (state.r2Hang) return new Promise(() => {});
         if (state.r2Fail) throw new Error("timeout");
         return { ContentLength: BYTES.length, Body: (async function* () { yield new TextEncoder().encode(BYTES); })() };
       }
@@ -83,6 +89,9 @@ vi.mock("@/lib/r2", () => ({
 }));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async () => ({ ok: true })) }));
 import { POST as workflowAction } from "@/app/api/tickets/workflow-action/route";
+import { HASH_LIMITS } from "@/lib/ticketRoster";
+import { PRODUCER_FLOOR_REASON } from "@/lib/workflow";
+const LIMITS0 = { ...HASH_LIMITS };
 
 const post = (body: unknown) => workflowAction(new NextRequest("http://x/api/tickets/workflow-action", {
   method: "POST", headers: { authorization: "Bearer t", "content-type": "application/json" }, body: JSON.stringify(body),
@@ -110,7 +119,8 @@ const ledger = () => state.calls.filter((c) => c.table.startsWith("ticket_review
 
 beforeEach(() => {
   __resetCapabilityPolicyCache();
-  state.user = null; state.rows = {}; state.calls = []; state.errors = {}; state.r2 = []; state.r2Fail = false;
+  state.user = null; state.rows = {}; state.calls = []; state.errors = {}; state.r2 = []; state.r2Fail = false; state.r2Hang = false;
+  Object.assign(HASH_LIMITS, LIMITS0);
 });
 
 /** Submit as the drafter and return the roster the route wrote. */
@@ -338,5 +348,98 @@ describe("EVID-12 / FRIC-5 — today's approvals carry the server's sha256; issu
     const u = updates()[0];
     expect(u.status).toBe("FINAL_DRAFT");
     expect((u.attachments as TicketAttachment[]).filter((x) => x.type === "Final")).toEqual([expect.objectContaining({ url: DRAFT.url, rev: "1", issuedFromDraftId: "a-d" })]);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// DF-P5 fix pass
+describe("DF-P5 fix — hashing never blocks or meaningfully slows a legacy approval (bounded: one deadline, one byte budget)", () => {
+  const legacy = (over: Record<string, unknown> = {}) => ticketRow({
+    status: "PENDING_REVIEW", deliverable_rev: "1A", draft_iteration: 1, library_id: null, requester_role: "Engineer-2",
+    attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }], ...over,
+  });
+  it("a GetObject that NEVER answers: the approval still lands within the deadline, the row says 'not hashed (deadline)'", async () => {
+    HASH_LIMITS.legacyDeadlineMs = 60;
+    seed();
+    state.r2Hang = true;
+    state.rows.org_members[0] = member("req-1", "Engineer-2");
+    state.rows.tickets = [legacy()];
+    state.user = { id: "req-1" };
+    const t0 = Date.now();
+    const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    expect(Date.now() - t0).toBeLessThan(2_000);
+    expect(res.status).toBe(200);
+    expect(updates()[0].status).toBe("PENDING_IFC");
+    const a = audits().find((x) => x.action === "TICKET_APPROVE_DRAFT_IFC")!;
+    expect((a.details.approvedDrafts as Array<Record<string, unknown>>)[0]).toMatchObject({ sha256: null, sha256Unavailable: "not hashed (deadline)" });
+  });
+  it("only the Drafts of the revision being approved are read — earlier rounds' Drafts are named, not downloaded", async () => {
+    seed();
+    state.rows.org_members[0] = member("req-1", "Engineer-2");
+    const old = Array.from({ length: 12 }, (_, i) => ({ ...DRAFT, id: `old-${i}`, url: `orgs/o1/tickets/REQ-1/old_${i}.pdf`, status: "submitted", rev: "1A" }));
+    state.rows.tickets = [legacy({ deliverable_rev: "1B", draft_iteration: 2, attachments: [...old, { ...DRAFT, id: "cur", status: "submitted", rev: "1B" }] })];
+    state.user = { id: "req-1" };
+    expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(200);
+    expect(state.r2.filter((x) => x.kind === "GetObjectCommand").map((x) => x.key)).toEqual([DRAFT.url]);
+    const drafts = audits().find((x) => x.action === "TICKET_APPROVE_DRAFT_IFC")!.details.approvedDrafts as Array<Record<string, unknown>>;
+    expect(drafts.find((d) => d.id === "cur")).toMatchObject({ sha256: SHA });
+    expect(drafts.find((d) => d.id === "old-0")).toMatchObject({ sha256: null, sha256Unavailable: "not hashed (not the revision being approved)" });
+  });
+  it("a routed submission whose storage never answers is refused at the roster deadline (503, nothing written) — never hung", async () => {
+    HASH_LIMITS.rosterDeadlineMs = 60;
+    seed();
+    state.r2Hang = true;
+    state.user = { id: "d-1" };
+    state.rows.tickets = [ticketRow()];
+    const t0 = Date.now();
+    const res = await post({ ticketId: "t1", actionType: "submit_draft" });
+    expect(Date.now() - t0).toBeLessThan(2_000);
+    expect(res.status).toBe(503);
+    expect((await res.json()).code).toBe("content_unhashable");
+    expect(updates()).toEqual([]);
+  });
+});
+
+describe("DF-P5 fix — reopen_ticket never opens a roster (TIER-5: routed review is a superset of today's flows)", () => {
+  it("REGRESSION: reopening a closed ticket in a routed library with NO Draft lands at PENDING_REVIEW on today's path — no refusal, no storage read, no roster", async () => {
+    seed();
+    state.user = { id: "a-1" };
+    state.rows.tickets = [ticketRow({ status: "CLOSED", attachments: [], deliverable_rev: "1" })];
+    const res = await post({ ticketId: "t1", actionType: "reopen_ticket", comment: "re-run the revision" });
+    expect(res.status).toBe(200);
+    const u = updates()[0];
+    expect(u.status).toBe("PENDING_REVIEW");
+    expect((u.metadata as Record<string, unknown> | undefined)?.review_roster).toBeUndefined();
+    expect(state.r2.filter((x) => x.kind === "GetObjectCommand")).toEqual([]);
+    expect(ledger()).toEqual([]);
+  });
+  it("with an issued Draft on file the reopen still opens nothing — the next submission binds the roster to its new files", async () => {
+    seed();
+    state.user = { id: "a-1" };
+    state.rows.tickets = [ticketRow({ status: "CLOSED", attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }], deliverable_rev: "1" })];
+    expect((await post({ ticketId: "t1", actionType: "reopen_ticket", comment: "again" })).status).toBe(200);
+    expect((updates()[0].metadata as Record<string, unknown> | undefined)?.review_roster).toBeUndefined();
+    expect(state.r2.filter((x) => x.kind === "GetObjectCommand")).toEqual([]);
+  });
+});
+
+describe("DF-P5 fix — DEC-37 acceptance 2: the drafter cannot accept their own deliverable on a roster, whatever the table declares", () => {
+  it("a table with no independent_of: the drafter's sign-off is refused (403, the floor named), nothing written; an engineer's issues it", async () => {
+    seed({ routing_control: { slots: [{ kind: "check", label: "Engineering check", mode: "blocking", fill: { roles: ["Drafter", "Engineer"] } }] } });
+    const roster = await submitRouted();
+    const under = ticketRow({ status: "PENDING_REVIEW", deliverable_rev: "1A", draft_iteration: 1, attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }], metadata: { review_roster: roster } });
+    const sig = (signer: string) => ({ id: SIG, org_id: "o1", resource_type: "ticket", resource_id: "t1", signer_user_id: signer, content_hash: roster.contentHash, intent: "Reviewed", signed_at: "2099-01-01T00:00:00Z" });
+    state.calls = [];
+    state.rows.tickets = [under];
+    state.rows.e_signatures = [sig("d-1")];
+    state.user = { id: "d-1" };
+    const res = await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe(PRODUCER_FLOOR_REASON);
+    expect(updates()).toEqual([]);
+    state.rows.e_signatures = [sig("e-1")];
+    state.user = { id: "e-1" };
+    expect((await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG })).status).toBe(200);
+    expect(updates()[0]).toMatchObject({ status: "PENDING_IFC" });
   });
 });

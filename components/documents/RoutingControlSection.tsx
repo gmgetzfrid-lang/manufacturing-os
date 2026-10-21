@@ -22,7 +22,7 @@ import { Route, Plus, Trash2, Loader2 } from "lucide-react";
 import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
 import {
   parseRoutingControl, readRoutingControlAt, setRoutingControl, validateRoutingDraft, MODE_LABEL, ROUTING_PARTIES,
-  type RoutingControl, type RoutingLevel, type RoutingSlot, type RoutingSlotMode,
+  type RoutingControl, type RoutingLevel, type RoutingSlot, type RoutingSlotFill, type RoutingSlotMode,
 } from "@/lib/routingControl";
 import { CAPABILITY_DEFS, type CapabilityId } from "@/lib/capabilityPolicy";
 import { ALL_ROLES } from "@/types/schema";
@@ -40,6 +40,11 @@ interface DraftSlot {
   independentOf: string[];
   timeoutDays: string;
   alternateRoles: string[];
+  /** DF-P5 fix pass: what a stored slot carries that this editor cannot show
+   *  — a fill's other sources (a fill naming roles AND people), the
+   *  override (`waivable_by`) and named alternate people. Carried through a
+   *  save untouched, never silently dropped; the slot says they are there. */
+  kept?: { fill?: RoutingSlotFill; waivableBy?: RoutingSlot["waivable_by"]; alternateUsers?: string[] };
 }
 
 const emptySlot = (n: number): DraftSlot => ({
@@ -51,10 +56,12 @@ const emptySlot = (n: number): DraftSlot => ({
 export function draftToControl(slots: DraftSlot[]): RoutingControl {
   return {
     slots: slots.map((d): RoutingSlot => {
-      const fill: RoutingSlot["fill"] = d.fillKind === "requester" ? { identity: "requester" }
+      const shown: RoutingSlot["fill"] = d.fillKind === "requester" ? { identity: "requester" }
         : d.fillKind === "users" ? { users: d.users.map((u) => u.uid) }
         : d.fillKind === "capability" ? (d.capability ? { capability: d.capability } : {})
         : { roles: d.roles };
+      const fill: RoutingSlot["fill"] = { ...(d.kept?.fill ?? {}), ...shown };
+      const altUsers = d.kept?.alternateUsers ?? [];
       const t = Number(d.timeoutDays);
       return {
         kind: d.kind.trim(),
@@ -62,21 +69,50 @@ export function draftToControl(slots: DraftSlot[]): RoutingControl {
         mode: d.mode,
         fill,
         ...(d.independentOf.length ? { independent_of: d.independentOf } : {}),
-        ...(d.alternateRoles.length ? { alternates: { roles: d.alternateRoles } } : {}),
+        ...(d.alternateRoles.length || altUsers.length
+          ? { alternates: { ...(d.alternateRoles.length ? { roles: d.alternateRoles } : {}), ...(altUsers.length ? { users: altUsers } : {}) } }
+          : {}),
         ...(d.timeoutDays.trim() && Number.isInteger(t) ? { timeoutDays: t } : {}),
+        ...(d.kept?.waivableBy ? { waivable_by: d.kept.waivableBy } : {}),
       };
     }),
   };
 }
 
-function controlToDraft(c: RoutingControl): DraftSlot[] {
-  return c.slots.map((s) => ({
-    kind: s.kind, label: s.label ?? "", mode: s.mode,
-    fillKind: s.fill.identity ? "requester" : s.fill.users?.length ? "users" : s.fill.capability ? "capability" : "roles",
-    roles: s.fill.roles ?? [], users: (s.fill.users ?? []).map((uid) => ({ uid, name: null, email: uid } as unknown as OrgUser)),
-    capability: s.fill.capability ?? "", independentOf: s.independent_of ?? [],
-    timeoutDays: s.timeoutDays ? String(s.timeoutDays) : "", alternateRoles: s.alternates?.roles ?? [],
-  }));
+/** The stored shape → draft slots (pure; exported for tests). Whatever the
+ *  editor cannot show is kept on the slot and written back as it was. */
+export function controlToDraft(c: RoutingControl): DraftSlot[] {
+  return c.slots.map((s) => {
+    const fillKind: FillKind = s.fill.identity ? "requester" : s.fill.users?.length ? "users" : s.fill.capability ? "capability" : "roles";
+    const shownKey = fillKind === "requester" ? "identity" : fillKind;
+    const otherFill = Object.fromEntries(Object.entries(s.fill).filter(([k]) => k !== shownKey)) as RoutingSlotFill;
+    const kept: NonNullable<DraftSlot["kept"]> = {
+      ...(Object.keys(otherFill).length ? { fill: otherFill } : {}),
+      ...(s.waivable_by ? { waivableBy: s.waivable_by } : {}),
+      ...(s.alternates?.users?.length ? { alternateUsers: s.alternates.users } : {}),
+    };
+    return {
+      kind: s.kind, label: s.label ?? "", mode: s.mode, fillKind,
+      roles: s.fill.roles ?? [], users: (s.fill.users ?? []).map((uid) => ({ uid, name: null, email: uid } as unknown as OrgUser)),
+      capability: s.fill.capability ?? "", independentOf: s.independent_of ?? [],
+      timeoutDays: s.timeoutDays ? String(s.timeoutDays) : "", alternateRoles: s.alternates?.roles ?? [],
+      ...(Object.keys(kept).length ? { kept } : {}),
+    };
+  });
+}
+
+/** What a slot carries that the editor does not show, in words (or null). */
+export function keptNote(d: Pick<DraftSlot, "kept">): string | null {
+  const k = d.kept;
+  if (!k) return null;
+  const parts: string[] = [];
+  if (k.fill?.roles?.length) parts.push(`also filled by roles: ${k.fill.roles.join(", ")}`);
+  if (k.fill?.users?.length) parts.push(`also filled by ${k.fill.users.length} named ${k.fill.users.length === 1 ? "person" : "people"}`);
+  if (k.fill?.capability) parts.push(`also filled by the permission ${k.fill.capability}`);
+  if (k.fill?.identity) parts.push("also filled by the requester");
+  if (k.waivableBy) parts.push("an override (who may sign in place of the slot's people)");
+  if (k.alternateUsers?.length) parts.push(`${k.alternateUsers.length} named alternate ${k.alternateUsers.length === 1 ? "person" : "people"}`);
+  return parts.length ? `This slot also carries settings this editor does not show — ${parts.join("; ")}. Saving keeps them as they are.` : null;
 }
 
 const chip = (on: boolean) => `px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${on ? "bg-[var(--color-accent)] text-white border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`;
@@ -214,6 +250,7 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
                       </button>
                     ))}
                   </div>
+                  {keptNote(s) && <p className="text-[11px] text-[var(--color-text-muted)]" data-testid="routing-slot-kept">{keptNote(s)}</p>}
                   <div className="flex flex-wrap gap-1 items-center text-[11px]">
                     <span className="font-bold text-[var(--color-text-muted)] mr-1">Alternates (roles) after</span>
                     <input aria-label="Alternate after days" className={`${inp} w-14`} value={s.timeoutDays} onChange={(e) => patch(i, { timeoutDays: e.target.value.replace(/[^0-9]/g, "") })} placeholder="days" />

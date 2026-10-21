@@ -7,8 +7,8 @@ import { loadCapabilityPolicyStrict, policyAllows } from "@/lib/capabilityPolicy
 import { engineerPickCap, engineerPickRefusal } from "@/lib/ticketPage";
 import { effectiveRoutingForTicket } from "@/lib/routingControl";
 import {
-  sha256OfStoredObject, filesUnderReview, openRoster, applySignPlan, rosterCompletion, signatureRefusal,
-  writeRosterLedger, isMissingRosterLedger, type FileHash, type SignatureRow,
+  hashStoredFilesBounded, draftsToHashOnApproval, HASH_LIMITS, filesUnderReview, openRoster, applySignPlan, rosterCompletion,
+  signatureRefusal, writeRosterLedger, isMissingRosterLedger, type FileHash, type SignatureRow,
 } from "@/lib/ticketRoster";
 import { loadPickerMembers } from "@/lib/ticketPickerMembers";
 import { r2, R2_BUCKET } from "@/lib/r2";
@@ -148,10 +148,12 @@ function fileIdentity(a: TicketAttachment, etag: string | null | undefined) {
   return { id: a.id ?? null, name: a.name ?? null, url: a.url ?? null, size: a.size ?? null, etag: etag ?? null };
 }
 
-/** EVID-12 (DF-P5): sha256 of a stored ticket file, computed here from its
- *  bytes (lib/ticketRoster.ts sha256OfStoredObject over R2). */
-function hashStoredFile(key: string | null | undefined): Promise<FileHash> {
-  return sha256OfStoredObject(key, async (k) => (await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: k }))) as never);
+/** EVID-12 (DF-P5): sha256 of stored ticket files, computed here from their
+ *  bytes (lib/ticketRoster.ts hashStoredFilesBounded over R2) under ONE
+ *  overall deadline and byte budget — a slow or hung storage read is
+ *  abandoned (and aborted) when the clock runs out, never waited on. */
+function hashStoredFiles(keys: string[], limits: { deadlineMs: number; byteBudget: number }): Promise<Map<string, FileHash>> {
+  return hashStoredFilesBounded(keys, async (k, signal) => (await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: k }), { abortSignal: signal })) as never, limits);
 }
 
 /** EVID-12 (DF-P5): a file's identity with the content hash computed here. */
@@ -729,7 +731,11 @@ export async function POST(req: NextRequest) {
   let rosterOpen: TicketReviewRoster | null = null;
   let rosterSign: TransitionInput["rosterSign"] = null;
   let rosterWarning: string | null = null;
-  const entersReview = ticket.status !== "PENDING_REVIEW" && (action.action === "submit_draft" || action.action === "reopen_ticket");
+  // Only a SUBMISSION opens a roster. reopen_ticket takes today's path into
+  // PENDING_REVIEW (DF-P5 fix pass): a reopened request may have no readable
+  // Draft at all, and its previous Draft is the already-issued bytes — the
+  // next submit_draft opens the roster on the new files.
+  const entersReview = ticket.status !== "PENDING_REVIEW" && action.action === "submit_draft";
   if (entersReview && ticket.libraryId) {
     const refuse = (status: number, code: string, error: string) => NextResponse.json({ error, code }, { status });
     let sourceDocument: { id: string; collectionId: string | null; libraryId: string | null } | null = null;
@@ -769,8 +775,9 @@ export async function POST(req: NextRequest) {
         const files = filesUnderReview(projected, cycle);
         if (files.length === 0) return refuse(409, "routing_no_files", "There is no draft to review on this request, so no review could open.");
         const hashed: TicketReviewRoster["files"] = [];
+        const rosterHashes = await hashStoredFiles(files.map((f) => f.url ?? "").filter(Boolean), { deadlineMs: HASH_LIMITS.rosterDeadlineMs, byteBudget: HASH_LIMITS.rosterByteBudget });
         for (const f of files) {
-          const h = await hashStoredFile(f.url);
+          const h: FileHash = (f.url ? rosterHashes.get(f.url) : undefined) ?? { ok: false, transient: false, reason: "not a storage key" };
           if (!h.ok) {
             return h.transient
               ? refuse(503, "content_unhashable", "The files under review could not be read from storage to bind the sign-offs to them, so the draft was not submitted. Try again in a moment.")
@@ -808,21 +815,26 @@ export async function POST(req: NextRequest) {
     const refusal = signatureRefusal(sig as SignatureRow | null, { orgId: ticket.orgId, ticketId: body.ticketId, signerId: caller.id, roster: openRosterNow });
     if (refusal) return NextResponse.json({ error: refusal, code: "signature_invalid" }, { status: 403 });
     const signed = applySignPlan(openRosterNow, plan, { uid: caller.id, name: memberName(member as { display_name?: unknown; email?: unknown }) }, sigId, new Date().toISOString());
-    rosterSign = { roster: signed, complete: rosterCompletion(signed).complete, labels: plan.fillable.map((f) => f.slot.label || f.slot.kind) };
+    rosterSign = { roster: signed, complete: rosterCompletion(signed, { sodActive, drafterId: ticket.assignedDrafterId }).complete, labels: plan.fillable.map((f) => f.slot.label || f.slot.kind) };
   }
   // EVID-12 (DF-P5): the approved drafts and the issued Final, hashed HERE
-  // from their bytes (sha256) for the audit row. Best-effort on the legacy
-  // approvals and the issue — a file storage cannot answer for is recorded
-  // as such, and the approval works exactly as before.
-  const fileHashes = new Map<string, FileHash>();
-  const APPROVED_HASH_CAP = 25;
+  // from their bytes (sha256) for the audit row. Best effort, and bounded
+  // (DF-P5 fix pass): only the Drafts of the revision being approved (at
+  // most HASH_LIMITS.legacyMaxFiles), under one overall deadline
+  // (HASH_LIMITS.legacyDeadlineMs) and byte budget for the whole request. A
+  // file not hashed in time, over budget, from an earlier round, or that
+  // storage cannot answer for is recorded as such — the approval's outcome
+  // never depends on storage; at worst it waits the deadline.
+  const hashKeys: string[] = [];
   if (APPROVING_ACTIONS.has(action.action)) {
-    const drafts = (ticket.attachments ?? []).filter((a) => a?.type === "Draft" && a.status === "submitted").slice(0, APPROVED_HASH_CAP);
-    for (const a of drafts) if (a.url && !fileHashes.has(a.url)) fileHashes.set(a.url, await hashStoredFile(a.url));
+    for (const a of draftsToHashOnApproval(ticket.attachments ?? [], ticket.deliverableRev)) if (a.url) hashKeys.push(a.url);
   }
-  if (vetted.finalAttachment?.url) fileHashes.set(vetted.finalAttachment.url, await hashStoredFile(vetted.finalAttachment.url));
+  if (vetted.finalAttachment?.url) hashKeys.unshift(vetted.finalAttachment.url);
+  const fileHashes = hashKeys.length > 0
+    ? await hashStoredFiles(hashKeys, { deadlineMs: HASH_LIMITS.legacyDeadlineMs, byteBudget: HASH_LIMITS.legacyByteBudget })
+    : new Map<string, FileHash>();
   const hashOf = (a: TicketAttachment): FileHash | undefined => (a.url ? fileHashes.get(a.url) : undefined)
-    ?? (APPROVING_ACTIONS.has(action.action) ? { ok: false, transient: false, reason: `not hashed (more than ${APPROVED_HASH_CAP} drafts)` } : undefined);
+    ?? (APPROVING_ACTIONS.has(action.action) ? { ok: false, transient: false, reason: "not hashed (not the revision being approved)" } : undefined);
 
   const input: TransitionInput = {
     actionType: action.action,

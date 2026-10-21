@@ -322,9 +322,10 @@ export function validateRoutingDraft(control: RoutingControl | null): string | n
 /**
  * Write a routing table at one level (NULL clears the level back to
  * inherit). The database decides who may (20261241's guard: a document
- * controller, the library owner or a node manager for a library; the
- * controllers for a folder; a controller or the effective owner for a
- * document) and writes the ROUTING_CONTROL_CHANGED audit row. A checked
+ * controller, the library owner or a node manager for a library; a document
+ * controller only for a folder or a document — the nearer level replaces the
+ * library's gate, so its owner may not swap it) and writes the
+ * ROUTING_CONTROL_CHANGED audit row. A checked
  * write: every refusal is thrown with a plain message, never a silent save.
  */
 export async function setRoutingControl(input: {
@@ -338,7 +339,11 @@ export async function setRoutingControl(input: {
   const res = await checkedWrite(supabase.from(table).update({ routing_control: input.control }).eq("id", input.id).select("id"));
   if (res.ok) return;
   if (res.pgCode === "42703" || res.pgCode === "PGRST204") throw new Error("Review routing needs database update 20261241 — ask an Admin to apply it, then try again.");
-  if (res.code === "refused") throw new Error("The routing table was not saved — you may not edit this level (only a document controller or its owner can).");
+  if (res.code === "refused") {
+    throw new Error(input.level === "library"
+      ? "The routing table was not saved — you may not edit this library's routing (only a document controller, the library owner or a manager of the library can)."
+      : "The routing table was not saved — only a document controller can set the routing of a folder or a document.");
+  }
   throw new Error(res.error);
 }
 

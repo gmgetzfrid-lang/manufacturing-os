@@ -21,22 +21,29 @@
 --       security. Who may WRITE it is decided by a guard, because a routing
 --       table with a weaker guard than the roles it routes is worse than no
 --       router (DEC-36, GAP-112 "a defect to fix before storing anything"):
---         * libraries — the same parties the library sensitive-column guard
---           admits for review_control (a document controller, the library
---           owner, or a manager of the node: 20261077's predicate, spelled
---           here, not re-created);
---         * collections — already controller-only by the RESTRICTIVE update
---           policy (20261011, owner delegation 20261044): nothing added;
---         * documents — a document controller or the document's effective
---           owner (20261072's predicate for review_control).
+--         * libraries — UPDATE: the same parties the library sensitive-column
+--           guard admits for review_control (a document controller, the
+--           library owner, or a manager of the node: 20261077's predicate,
+--           spelled here, not re-created);
+--         * collections (folders) and documents — a document controller ONLY
+--           (is_org_controller). The nearer level wins the resolve, so a
+--           folder or document table REPLACES the library's gate for every
+--           ticket that cites it; the uploader / drafter who is a document's
+--           effective owner must never be able to swap the engineering gate
+--           on their own deliverable (DF-P5 fix pass);
+--         * INSERT on all three — a row born with a routing table needs a
+--           document controller (a NULL column is not checked): the same
+--           authority as a change, so a table can never be planted at
+--           creation where it could not be written afterwards.
 --       Service-role writes (restores, the app's server paths) pass.
 --       enforce_routing_control_change() is NEW (no existing function is
 --       re-created), SECURITY DEFINER, search_path pinned, EXECUTE revoked
 --       from every client role (DRLS-16: a trigger function).
---   (3) Every routing_control change on every level writes a
---       ROUTING_CONTROL_CHANGED audit row from the database — before / after /
---       level / who — in the same transaction (audit_routing_control_change,
---       NEW; the review_control audit, 20261072, is not touched).
+--   (3) Every routing_control change on every level — and every row INSERTED
+--       carrying one — writes a ROUTING_CONTROL_CHANGED audit row from the
+--       database — before (NULL on an insert) / after / level / who — in the
+--       same transaction (audit_routing_control_change, NEW; the
+--       review_control audit, 20261072, is not touched).
 --
 -- NOT A WIDENING: a new, empty column whose writes are guarded from the first
 -- paste. Nobody gains a write they had. The counts-only inventory is
@@ -100,6 +107,15 @@ RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
   -- Service-role / restore writes carry no JWT and are trusted.
   IF auth.uid() IS NULL THEN RETURN NEW; END IF;
+  IF TG_OP = 'INSERT' THEN
+    -- A row born with a routing table: a document controller only, on every level.
+    IF NEW.routing_control IS NOT NULL AND NOT is_org_controller(NEW.org_id) THEN
+      RAISE EXCEPTION 'Not permitted to create this % with a review routing table — only a document controller can declare one.',
+        CASE TG_TABLE_NAME WHEN 'libraries' THEN 'library' WHEN 'collections' THEN 'folder' ELSE 'document' END
+        USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+  END IF;
   IF NEW.routing_control IS DISTINCT FROM OLD.routing_control THEN
     IF TG_TABLE_NAME = 'libraries' THEN
       IF NOT is_org_controller(OLD.org_id)
@@ -108,10 +124,14 @@ BEGIN
         RAISE EXCEPTION 'Not permitted to change this library''s review routing — only a document controller, the library owner or a manager of the library can.'
           USING ERRCODE = 'check_violation';
       END IF;
+    ELSIF TG_TABLE_NAME = 'collections' THEN
+      IF NOT is_org_controller(OLD.org_id) THEN
+        RAISE EXCEPTION 'Not permitted to change this folder''s review routing — only a document controller can.'
+          USING ERRCODE = 'check_violation';
+      END IF;
     ELSIF TG_TABLE_NAME = 'documents' THEN
-      IF NOT is_org_controller(OLD.org_id)
-         AND NOT user_is_effective_owner(OLD.owner_user_id, OLD.collection_id, OLD.library_id, auth.uid()) THEN
-        RAISE EXCEPTION 'Not permitted to change this document''s review routing — only a document controller or the document''s effective owner can.'
+      IF NOT is_org_controller(OLD.org_id) THEN
+        RAISE EXCEPTION 'Not permitted to change this document''s review routing — only a document controller can.'
           USING ERRCODE = 'check_violation';
       END IF;
     END IF;
@@ -123,32 +143,44 @@ REVOKE ALL ON FUNCTION enforce_routing_control_change() FROM PUBLIC, anon, authe
 
 DROP TRIGGER IF EXISTS trg_library_routing_control_guard ON libraries;
 CREATE TRIGGER trg_library_routing_control_guard
-BEFORE UPDATE ON libraries
+BEFORE INSERT OR UPDATE ON libraries
+FOR EACH ROW EXECUTE FUNCTION enforce_routing_control_change();
+
+DROP TRIGGER IF EXISTS trg_collection_routing_control_guard ON collections;
+CREATE TRIGGER trg_collection_routing_control_guard
+BEFORE INSERT OR UPDATE ON collections
 FOR EACH ROW EXECUTE FUNCTION enforce_routing_control_change();
 
 DROP TRIGGER IF EXISTS trg_document_routing_control_guard ON documents;
 CREATE TRIGGER trg_document_routing_control_guard
-BEFORE UPDATE ON documents
+BEFORE INSERT OR UPDATE ON documents
 FOR EACH ROW EXECUTE FUNCTION enforce_routing_control_change();
 
 -- ── 3. every change leaves an audit row ─────────────────────────────────────
 CREATE OR REPLACE FUNCTION audit_routing_control_change()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
-  v_email text;
-  v_role  text;
+  v_email  text;
+  v_role   text;
+  v_before jsonb;
 BEGIN
-  IF NEW.routing_control IS DISTINCT FROM OLD.routing_control THEN
-    -- The writer's ROLE COLLECTION, never the headline alone.
-    SELECT email, array_to_string(COALESCE(roles, ARRAY[role]), ',') INTO v_email, v_role FROM org_members
-     WHERE org_id = NEW.org_id AND uid = auth.uid() AND status = 'active' LIMIT 1;
-    INSERT INTO audit_logs (action, resource_type, resource_id, org_id, user_id, user_email, user_role, details)
-    VALUES ('ROUTING_CONTROL_CHANGED',
-            CASE TG_TABLE_NAME WHEN 'libraries' THEN 'library' WHEN 'collections' THEN 'collection' ELSE 'document' END,
-            NEW.id::text, NEW.org_id, auth.uid(), v_email, v_role,
-            jsonb_build_object('via', CASE WHEN auth.uid() IS NULL THEN 'service_role' ELSE 'database' END,
-                               'before', OLD.routing_control, 'after', NEW.routing_control));
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.routing_control IS NULL THEN RETURN NEW; END IF;
+    v_before := NULL;
+  ELSIF NEW.routing_control IS DISTINCT FROM OLD.routing_control THEN
+    v_before := OLD.routing_control;
+  ELSE
+    RETURN NEW;
   END IF;
+  -- The writer's ROLE COLLECTION, never the headline alone.
+  SELECT email, array_to_string(COALESCE(roles, ARRAY[role]), ',') INTO v_email, v_role FROM org_members
+   WHERE org_id = NEW.org_id AND uid = auth.uid() AND status = 'active' LIMIT 1;
+  INSERT INTO audit_logs (action, resource_type, resource_id, org_id, user_id, user_email, user_role, details)
+  VALUES ('ROUTING_CONTROL_CHANGED',
+          CASE TG_TABLE_NAME WHEN 'libraries' THEN 'library' WHEN 'collections' THEN 'collection' ELSE 'document' END,
+          NEW.id::text, NEW.org_id, auth.uid(), v_email, v_role,
+          jsonb_build_object('via', CASE WHEN auth.uid() IS NULL THEN 'service_role' ELSE 'database' END,
+                             'op', lower(TG_OP), 'before', v_before, 'after', NEW.routing_control));
   RETURN NEW;
 END;
 $$;
@@ -156,17 +188,17 @@ REVOKE ALL ON FUNCTION audit_routing_control_change() FROM PUBLIC, anon, authent
 
 DROP TRIGGER IF EXISTS trg_libraries_routing_control_audit ON libraries;
 CREATE TRIGGER trg_libraries_routing_control_audit
-AFTER UPDATE ON libraries
+AFTER INSERT OR UPDATE ON libraries
 FOR EACH ROW EXECUTE FUNCTION audit_routing_control_change();
 
 DROP TRIGGER IF EXISTS trg_collections_routing_control_audit ON collections;
 CREATE TRIGGER trg_collections_routing_control_audit
-AFTER UPDATE ON collections
+AFTER INSERT OR UPDATE ON collections
 FOR EACH ROW EXECUTE FUNCTION audit_routing_control_change();
 
 DROP TRIGGER IF EXISTS trg_documents_routing_control_audit ON documents;
 CREATE TRIGGER trg_documents_routing_control_audit
-AFTER UPDATE ON documents
+AFTER INSERT OR UPDATE ON documents
 FOR EACH ROW EXECUTE FUNCTION audit_routing_control_change();
 
 COMMIT;
@@ -187,17 +219,20 @@ SELECT 'DEC-36: no new policy on libraries, collections or documents (the column
                      AND (qual LIKE '%routing_control%' OR with_check LIKE '%routing_control%')),
        NULL
 UNION ALL
-SELECT 'the routing guard admits a controller, the library owner or a node manager (libraries) / a controller or the effective owner (documents)',
+SELECT 'the routing guard admits a controller, the library owner or a node manager (library change) / a controller only (folder and document change, any insert carrying a table)',
        (SELECT prosrc LIKE '%is_org_controller(OLD.org_id)%'
            AND prosrc LIKE '%can_manage_node(OLD.acl_index, OLD.org_id)%'
-           AND prosrc LIKE '%user_is_effective_owner(OLD.owner_user_id, OLD.collection_id, OLD.library_id, auth.uid())%'
+           AND prosrc LIKE '%NEW.routing_control IS NOT NULL AND NOT is_org_controller(NEW.org_id)%'
+           AND prosrc LIKE '%TG_TABLE_NAME = ''collections''%'
+           AND prosrc NOT LIKE '%user_is_effective_owner%'
           FROM pg_proc WHERE proname = 'enforce_routing_control_change'),
        NULL
 UNION ALL
-SELECT 'guard triggers BEFORE UPDATE on libraries and documents; audit triggers AFTER UPDATE on all three, enabled',
-       (SELECT COUNT(*) = 5 FROM pg_trigger
+SELECT 'guard triggers BEFORE INSERT OR UPDATE and audit triggers AFTER INSERT OR UPDATE on all three tables, enabled',
+       (SELECT COUNT(*) = 6 FROM pg_trigger
          WHERE NOT tgisinternal AND tgenabled = 'O'
-           AND tgname IN ('trg_library_routing_control_guard', 'trg_document_routing_control_guard',
+           AND (tgtype & 4) = 4 AND (tgtype & 16) = 16
+           AND tgname IN ('trg_library_routing_control_guard', 'trg_collection_routing_control_guard', 'trg_document_routing_control_guard',
                           'trg_libraries_routing_control_audit', 'trg_collections_routing_control_audit', 'trg_documents_routing_control_audit')),
        NULL
 UNION ALL
@@ -210,9 +245,10 @@ SELECT 'DRLS-16: both functions SECURITY DEFINER with search_path pinned, EXECUT
        AND NOT has_function_privilege('authenticated', 'public.audit_routing_control_change()', 'EXECUTE'),
        NULL
 UNION ALL
-SELECT 'the audit row carries before / after and the level',
+SELECT 'the audit row carries before / after and the level, for a change and for an insert carrying a table',
        (SELECT prosrc LIKE '%''ROUTING_CONTROL_CHANGED''%'
-           AND prosrc LIKE '%''before'', OLD.routing_control, ''after'', NEW.routing_control%'
+           AND prosrc LIKE '%''before'', v_before, ''after'', NEW.routing_control%'
+           AND prosrc LIKE '%IF TG_OP = ''INSERT'' THEN%'
           FROM pg_proc WHERE proname = 'audit_routing_control_change'),
        NULL
 UNION ALL

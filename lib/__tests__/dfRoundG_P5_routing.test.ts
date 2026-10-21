@@ -15,9 +15,10 @@ import {
 import {
   openRoster, applySignPlan, rosterCompletion, signatureRefusal, sha256OfStoredObject, rosterContentHash,
   filesUnderReview, resolveFill, writeRosterLedger, isMissingRosterLedger,
+  hashStoredFilesBounded, draftsToHashOnApproval, HASH_LIMITS,
 } from "@/lib/ticketRoster";
 import * as reviewControl from "@/lib/reviewControl";
-import { WorkflowEngine, slotSignPlan, currentRoster, issueReadyFor, engineerApprovalRequired, ticketResource } from "@/lib/workflow";
+import { WorkflowEngine, slotSignPlan, currentRoster, issueReadyFor, engineerApprovalRequired, ticketResource, PRODUCER_FLOOR_REASON, rosterEngineerApprovedAt } from "@/lib/workflow";
 import { computeTransition, issueAsIsFinals, type TransitionInput } from "@/lib/ticketTransitions";
 import { engineerCandidates, engineerPickRefusal } from "@/lib/ticketPage";
 import type { Ticket, TicketAttachment, TicketReviewRoster } from "@/types/schema";
@@ -162,7 +163,7 @@ describe("GAP-103 — opening a roster (lib/ticketRoster.ts)", () => {
   it("EVID-12: sha256 is computed from the bytes; a missing object is not transient, a failed fetch is", async () => {
     const body = (s: string) => ({ Body: (async function* () { yield new TextEncoder().encode(s); })() });
     const ok = await sha256OfStoredObject("orgs/o1/tickets/REQ-1/a.pdf", async () => body("hello"));
-    expect(ok).toEqual({ ok: true, sha256: createHash("sha256").update("hello").digest("hex") });
+    expect(ok).toEqual({ ok: true, sha256: createHash("sha256").update("hello").digest("hex"), bytes: 5 });
     expect(await sha256OfStoredObject("orgs/o1/a.pdf", async () => ({ Body: { transformToByteArray: async () => new TextEncoder().encode("hello") } })))
       .toEqual(ok);
     expect(await sha256OfStoredObject("orgs/o1/a.pdf", async () => { throw Object.assign(new Error("x"), { name: "NoSuchKey" }); }))
@@ -415,14 +416,18 @@ describe("ROUTE-8 remainder — the engineer pick: one rule for the route and th
 });
 
 describe("the ledger writer — checked, retried once, never swallowed", () => {
-  const client = (errs: Array<{ code?: string; message: string } | null>) => {
+  const client = (errs: Array<{ code?: string; message: string } | null>, updated: unknown[] = [{ id: "s1" }]) => {
     const calls: Array<{ t: string; op: string; arg: unknown }> = [];
     const next = () => Promise.resolve({ error: errs.length ? errs.shift()! : null });
     return {
       calls,
       from: (t: string) => ({
         insert: (arg: unknown) => { calls.push({ t, op: "insert", arg }); return next(); },
-        update: (arg: unknown) => ({ eq: () => ({ eq: () => { calls.push({ t, op: "update", arg }); return next(); } }) }),
+        update: (arg: unknown) => ({ eq: () => ({ eq: () => ({ select: () => {
+          calls.push({ t, op: "update", arg });
+          const error = errs.length ? errs.shift()! : null;
+          return Promise.resolve({ data: error ? null : updated, error });
+        } }) }) }),
       }),
     };
   };
@@ -440,6 +445,18 @@ describe("the ledger writer — checked, retried once, never swallowed", () => {
     const twice = client([{ message: "down" }, { message: "down" }]);
     expect(await writeRosterLedger(twice, { orgId: "o1", ticketId: "t1", roster: r, event: "opened", slots: r.slots, actor: { uid: "d", name: null } })).toBe("down");
     expect(isMissingRosterLedger({ code: "PGRST205", message: "x" })).toBe(true);
+    expect(isMissingRosterLedger({ code: "42501", message: "x" })).toBe(false);
+  });
+  it("DF-P5 fix: a satisfied / voided update that matched NO slot row is a failure (no event row written), not a silent success", async () => {
+    const r = opened();
+    const signed = { ...r, slots: r.slots.map((x, i) => (i === 0 ? { ...x, status: "satisfied" as const, satisfiedBy: "e-1", satisfiedAt: "2026-10-21T01:00:00Z", signatureId: "sig", via: "primary" as const } : x)) };
+    const empty = client([], []);
+    expect(await writeRosterLedger(empty, { orgId: "o1", ticketId: "t1", roster: signed, event: "satisfied", slots: [signed.slots[0]], actor: { uid: "e-1", name: null } }))
+      .toBe("no slot row on record to update");
+    expect(empty.calls.map((x) => `${x.t}:${x.op}`)).toEqual(["ticket_review_slots:update", "ticket_review_slots:update"]);
+    const ok = client([]);
+    expect(await writeRosterLedger(ok, { orgId: "o1", ticketId: "t1", roster: signed, event: "satisfied", slots: [signed.slots[0]], actor: { uid: "e-1", name: null } })).toBeNull();
+    expect(ok.calls.map((x) => `${x.t}:${x.op}`)).toEqual(["ticket_review_slots:update", "ticket_review_slot_events:insert"]);
     expect(isMissingRosterLedger({ code: "42501", message: "x" })).toBe(false);
   });
 });
@@ -500,9 +517,113 @@ describe("20261241 / 20261242 — DEC-30 one-paste shape, DRLS-16, nothing re-cr
     }
     expect(c).not.toMatch(/CREATE POLICY/);
   });
-  it("DEC-35: no facility vocabulary in what DF-P5 added (QAQC / B31 / NDE / radiograph)", () => {
-    for (const f of ["lib/routingControl.ts", "lib/ticketRoster.ts", "components/requests/TicketRosterPanel.tsx", "components/documents/RoutingControlSection.tsx"]) {
-      expect(readFileSync(join(process.cwd(), f), "utf8")).not.toMatch(/QAQC|B31|NDE|radiograph/);
+  it("DEC-35: no facility vocabulary in what DF-P5 added (the census words, assembled from fragments so this file adds no hit of its own)", () => {
+    const words = [["QA", "QC"], ["B", "31"], ["N", "DE"], ["radio", "graph"]].map((w) => w.join(""));
+    const census = new RegExp(words.join("|"));
+    for (const f of ["lib/routingControl.ts", "lib/ticketRoster.ts", "lib/workflow.ts", "components/requests/TicketRosterPanel.tsx", "components/documents/RoutingControlSection.tsx", "lib/__tests__/dfRoundG_P5_routing.test.ts", "lib/__tests__/dfRoundG_P5_rosterRoute.test.ts", "lib/__tests__/dfRoundG_P5_rosterPanel.test.ts"]) {
+      expect(readFileSync(join(process.cwd(), f), "utf8"), f).not.toMatch(census);
     }
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// DF-P5 fix pass
+describe("DF-P5 fix — in-request hashing is bounded: one deadline, one byte budget, never waited on past the clock", () => {
+  const bytes = (n: number) => ({ ContentLength: n, Body: (async function* () { yield new Uint8Array(n); })() });
+  it("a GetObject that never answers is abandoned at the deadline (and aborted); every key not hashed by then says so", async () => {
+    let aborted = false;
+    const hung = (_k: string, signal?: AbortSignal) => new Promise<never>(() => { signal?.addEventListener("abort", () => { aborted = true; }); });
+    const t0 = Date.now();
+    const out = await hashStoredFilesBounded(["a/1.pdf", "a/2.pdf"], hung, { deadlineMs: 40, byteBudget: 1024 });
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(aborted).toBe(true);
+    expect([...out.values()]).toEqual([
+      { ok: false, transient: true, reason: "not hashed (deadline)" },
+      { ok: false, transient: true, reason: "not hashed (deadline)" },
+    ]);
+  });
+  it("one byte budget for the whole request: files past it are 'not hashed (byte budget)', earlier ones carry their sha256", async () => {
+    const out = await hashStoredFilesBounded(["a", "b", "c"], async () => bytes(600), { deadlineMs: 5_000, byteBudget: 1_000 });
+    expect(out.get("a")).toMatchObject({ ok: true, bytes: 600 });
+    expect(out.get("b")).toEqual({ ok: false, transient: false, reason: "not hashed (byte budget)" });
+    expect(out.get("c")).toEqual({ ok: false, transient: false, reason: "not hashed (byte budget)" });
+  });
+  it("an approval hashes only the Drafts of the revision being approved, at most legacyMaxFiles — never every round's", () => {
+    const d = (id: string, rev: string | undefined, status = "submitted") => ({ id, type: "Draft", status, rev, url: `k/${id}` }) as TicketAttachment;
+    const many = Array.from({ length: 30 }, (_, i) => d(`old${i}`, "1A"));
+    expect(draftsToHashOnApproval([...many, d("n1", "1B"), d("n2", "1B")], "1B").map((a) => a.id)).toEqual(["n1", "n2"]);
+    expect(draftsToHashOnApproval(Array.from({ length: 30 }, (_, i) => d(`x${i}`, "1C")), "1C")).toHaveLength(HASH_LIMITS.legacyMaxFiles);
+    // files from before per-file revisions: the latest submitted Draft only
+    expect(draftsToHashOnApproval([d("u1", undefined), d("u2", undefined), d("s", undefined, "staged")], "1A").map((a) => a.id)).toEqual(["u2"]);
+  });
+  it("the default bounds keep a legacy approval's worst case to a few seconds", () => {
+    expect(HASH_LIMITS.legacyDeadlineMs).toBeLessThanOrEqual(3_000);
+    expect(HASH_LIMITS.legacyByteBudget).toBeLessThanOrEqual(64 * 1024 * 1024);
+    expect(HASH_LIMITS.legacyMaxFiles).toBeLessThanOrEqual(10);
+  });
+});
+
+describe("DF-P5 fix — DEC-12 / DEC-37 acceptance 2: the producer-versus-checker floor holds whatever the table declares", () => {
+  const noIndependence = { slots: [{ kind: "check", label: "Engineering check", mode: "blocking", fill: { roles: ["Drafter", "Engineer"] } }] };
+  it("a single slot with no independent_of: the drafter cannot complete the review alone (3+); below the threshold they can", () => {
+    const r = opened(noIndependence);
+    const plan = slotSignPlan(r, withRoster(r), "d-1", true);
+    expect(plan.fillable).toEqual([]);
+    expect(plan.blocked[0].reason).toBe(PRODUCER_FLOOR_REASON);
+    expect(slotSignPlan(r, withRoster(r), "d-1", false).fillable.map((f) => f.slot.kind)).toEqual(["check"]);
+    // an engineer completes it as usual
+    expect(slotSignPlan(r, withRoster(r), "e-1", true).fillable.map((f) => f.slot.kind)).toEqual(["check"]);
+  });
+  it("the drafter occupying two slots signs one; the other stays open for a second person — and once someone else has signed, the drafter may finish", () => {
+    const r = opened({ slots: [
+      { kind: "a", label: "A", mode: "blocking", fill: { users: ["d-1"] } },
+      { kind: "b", label: "B", mode: "blocking", fill: { users: ["d-1", "e-1"] } },
+      { kind: "c", label: "C", mode: "blocking", fill: { users: ["d-1", "e-2"] } },
+    ] });
+    const plan = slotSignPlan(r, withRoster(r), "d-1", true);
+    expect(plan.fillable.map((f) => f.slot.kind)).toEqual(["a", "b"]);
+    expect(plan.blocked).toEqual([{ slot: expect.objectContaining({ kind: "c" }), reason: PRODUCER_FLOOR_REASON }]);
+    const afterE = applySignPlan(r, { fillable: [{ slot: r.slots[1], via: "primary" }], blocked: [] }, { uid: "e-1", name: "E" }, "sig-e", NOW);
+    expect(slotSignPlan(afterE, withRoster(afterE), "d-1", true).fillable.map((f) => f.slot.kind)).toEqual(["a", "c"]);
+  });
+  it("completion refuses a roster every blocking slot of which the drafter alone satisfied (belt and braces at the route)", () => {
+    const r = opened(noIndependence);
+    const self = applySignPlan(r, { fillable: [{ slot: r.slots[0], via: "primary" }], blocked: [] }, { uid: "d-1", name: "D" }, "sig", NOW);
+    expect(rosterCompletion(self).complete).toBe(true);
+    expect(rosterCompletion(self, { sodActive: true, drafterId: "d-1" })).toEqual({ complete: false, unsatisfied: ["independent of the drafter"] });
+    expect(rosterCompletion(self, { sodActive: false, drafterId: "d-1" }).complete).toBe(true);
+  });
+});
+
+describe("DF-P5 fix — a completed roster records the engineering approval it carries", () => {
+  it("a slot filled by an engineering capability is marked; its sign-off sets engineer_approved_at on completion; a role-named slot is never guessed", () => {
+    const r = opened({ slots: [
+      { kind: "accept", mode: "blocking", fill: { identity: "requester" } },
+      { kind: "eng", mode: "blocking", fill: { capability: "ticket.final_approve" } },
+      { kind: "check", mode: "blocking", fill: { roles: ["Engineer"] } },
+    ] });
+    expect(r.slots.map((s) => !!s.engineering)).toEqual([false, true, false]);
+    const full = { ...r, slots: r.slots.map((s, i) => ({ ...s, status: "satisfied" as const, satisfiedBy: "e-1", signatureId: "s", satisfiedAt: `2026-10-21T0${i + 1}:00:00Z` })) };
+    expect(rosterEngineerApprovedAt(full)).toBe("2026-10-21T02:00:00Z");
+    const out = computeTransition(withRoster(r), input({ rosterSign: { roster: full, complete: true, labels: ["accept"] } }));
+    expect(out.updates.engineer_approved_at).toBe("2026-10-21T02:00:00Z");
+    const roleOnly = opened(TWO_SLOTS);
+    const doneRoleOnly = { ...roleOnly, slots: roleOnly.slots.map((s) => (s.status === "open" ? { ...s, status: "satisfied" as const, satisfiedBy: "x", signatureId: "s", satisfiedAt: NOW } : s)) };
+    expect("engineer_approved_at" in computeTransition(withRoster(roleOnly), input({ rosterSign: { roster: doneRoleOnly, complete: true, labels: ["x"] } })).updates).toBe(false);
+  });
+});
+
+describe("DF-P5 fix — FRIC-5: the issue-as-is mark is offered only before the first sign-off lands", () => {
+  it("serial path: offered at PENDING_REVIEW, not at PENDING_FINAL_APPROVAL (the requester has signed); withdrawing stays available", () => {
+    expect(WorkflowEngine.getActions(mk(), "Drafter" as never, "d-1").some((a) => a.action === "mark_issue_ready")).toBe(true);
+    expect(WorkflowEngine.getActions(mk({ status: "PENDING_FINAL_APPROVAL" }), "Drafter" as never, "d-1").some((a) => a.action === "mark_issue_ready")).toBe(false);
+    const marked = mk({ status: "PENDING_FINAL_APPROVAL", metadata: { issue_ready: { rev: "1A" } } });
+    expect(WorkflowEngine.getActions(marked, "Drafter" as never, "d-1").some((a) => a.action === "clear_issue_ready")).toBe(true);
+  });
+  it("roster path: offered while no slot is satisfied, withdrawn from offer once one is", () => {
+    const r = opened();
+    expect(WorkflowEngine.getActions(withRoster(r), "Drafter" as never, "d-1").some((a) => a.action === "mark_issue_ready")).toBe(true);
+    const signed = applySignPlan(r, slotSignPlan(r, withRoster(r), "e-1", true), { uid: "e-1", name: "E" }, "sig", NOW);
+    expect(WorkflowEngine.getActions(withRoster(signed), "Drafter" as never, "d-1").some((a) => a.action === "mark_issue_ready")).toBe(false);
   });
 });

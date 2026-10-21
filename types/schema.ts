@@ -1157,6 +1157,12 @@ export interface TicketReviewSlot {
   /** True when the slot's own fill resolved to nobody and the management
    *  tier was rostered instead (a stop never resolves to nobody). */
   fallback: boolean;
+  /** True when the slot is filled by an engineering CAPABILITY
+   *  (ticket.final_approve / ticket.eng_review) — its sign-off is the
+   *  ticket's engineering approval (engineer_approved_at). Read from the
+   *  fill's capability only; a role-named slot is the facility's own word
+   *  and is never guessed to be engineering (DEC-35). */
+  engineering?: boolean;
   status: "open" | "satisfied" | "told" | "void";
   satisfiedBy?: string | null;
   satisfiedByName?: string | null;
