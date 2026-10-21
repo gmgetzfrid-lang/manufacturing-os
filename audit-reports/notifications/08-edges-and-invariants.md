@@ -1334,3 +1334,27 @@ Paste and deploy order: either order is safe, and `20261183` and `20261197` are 
 **Scope / residual.** This record's done-whens name the register. The REST read of `transmittals` and the other browser readers still carry every item to every active member. That is document-control `DIST-18` (HIGH, opened by P27), not this record.
 
 ---
+
+<a id="nedge-24"></a>
+
+## NEDGE-24 · Deciding an access request stamps `read_at` on every pool member's notice from the service role — the one place `read_at` is not the recipient's own act
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** unassigned — the integrator assigns (DEC-31); the notifications package that next holds `lib/accessRequestOutcome.ts`.
+- **Verification:** CONFIRMED by reading the code at `db3a1f3` + N18 (the census in `lib/__tests__/n18NoticeRetention.test.ts` names it).
+- **Independently verified:** opened 2026-10-21 by notifications Round G (N18 DELIVERY RECORD) as the remainder of drafting-flow `EVID-13` done-when 2; not yet challenged by a second party.
+- **Locations:** `lib/accessRequestOutcome.ts:227-240` (`clearAccessRequestNotices` — `.update({ read_at: … })` on `kind = 'access_request_pending'`, `resource_type = 'access_request'`, every recipient, on the service role); callers `app/api/admin/access-requests/route.ts:86`, `app/api/admin/create-user/route.ts:67`.
+- **Opened:** 2026-10-21, notifications Round G, N18 (DEC-31).
+
+**Mechanism.** DEC-90 ruling (5) for N18 and `EVID-13`: `read_at` is the recipient's own act; a notice the system retires is a mark (`metadata.superseded_at`), never a read. DF-P1 moved the workflow route to the mark. Every other writer of `read_at` is the recipient's own session on their own rows (the census). `clearAccessRequestNotices` (notifications N8, `PROD-2`) still marks the whole pool's `access_request_pending` rows read when one Admin decides the request, so those rows say "read" for people who never opened them — and, being read, they become purge-eligible.
+
+**Done when.**
+
+- [ ] A decided request's pool notices are retired with a mark (`metadata.superseded_at` / `superseded_by`, conditional on `read_at IS NULL`, as the workflow route does) instead of `read_at`; the bell's unread list and count already leave superseded rows out (`lib/inAppNotifications.ts`, `lib/inbox.ts`), so what a person sees is unchanged.
+- [ ] The census in `lib/__tests__/n18NoticeRetention.test.ts` drops `lib/accessRequestOutcome.ts`.
+- [ ] REGRESSION: the decided request's notice leaves the pool's bell and badge exactly as today.
+
+**Closer:** the integrator assigns.
+
+---
