@@ -2353,9 +2353,15 @@ export type RetirementDutyDoor = "bulk_archive" | "bulk_edit" | "metadata";
 /** REV-31 (document-control P31 RETIREMENT DOOR PARITY, 2026-10-21, DEC-90):
  *  finishBulkArchive generalised to the three retired statuses, so every
  *  status-editor door that RETIRES a document does, after its write landed,
- *  what the single door does around that retirement, in the single door's
- *  order (the status write first — the caller's — then the draft void and
- *  the link revocation, then the record):
+ *  the three retirement duties DEC-90 lists — the draft void, the link
+ *  revocation and the record — in the single door's order (the status write
+ *  first — the caller's — then the draft void and the link revocation, then
+ *  the record). It is not all of what the single doors do: supersedeDocument
+ *  also gates the write (the drawing-class MOC reference, authorizePublish —
+ *  REV-33) and, after it, closes the pending distribution acks
+ *  (closeStaleAcksForDocument, DIST-4) and sends the checkout holder and the
+ *  package owners their own notices (REV-34); none of those is done here.
+ *  The record per status:
  *   - Archived  (archiveDocument):  the ARCHIVE_DOC record, as before;
  *   - Superseded (supersedeDocument): the SUPERSEDE_DOC record, with the
  *     fields supersedeDocument writes — this door names no replacements and

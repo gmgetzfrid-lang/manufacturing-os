@@ -2,7 +2,9 @@
 //
 // document-control Round G — P31 RETIREMENT DOOR PARITY (REV-31's remainder,
 // DEC-31; ruled under DEC-90): the bulk editor's Superseded does what
-// supersedeDocument does around a supersession.
+// supersedeDocument does around a supersession — its three retirement duties
+// (draft void, link revoke, record; not its pre-write gates, REV-33, or its
+// ack closure and personal notices, REV-34).
 //
 //   One reason for the apply ("Reason for superseding" — Apply waits for it);
 //   each row's write EXACTLY as before (the status, the recomputed key,
@@ -156,7 +158,7 @@ function seedDraftAndShare(id: string) {
 }
 const statusWrites = () => writes().filter((c) => "status" in (c.args[0] as Row));
 
-describe("REV-31 (P31) — the bulk editor's Superseded does what supersedeDocument does around a supersession", () => {
+describe("REV-31 (P31) — the bulk editor's Superseded does supersedeDocument's three retirement duties (draft void, link revoke, record)", () => {
   it("one reason for the apply; each row written EXACTLY as before (same columns); the Issued and Draft rows (retired by it) get the draft voided, the links revoked and a SUPERSEDE_DOC with the reason and retiredFrom; the row already Superseded and the refused row get none; one batched recall as before", async () => {
     const a = seedDoc("s1"); seedDraftAndShare("s1");
     const b = seedDoc("s2", { status: "Draft" });
@@ -203,6 +205,9 @@ describe("REV-31 (P31) — the bulk editor's Superseded does what supersedeDocum
     await act(async () => setValue(labelled("Reason for superseding") as HTMLInputElement, "Withdrawn"));
     expect(button("Apply to 1").disabled).toBe(false);
     expect(host.textContent).toMatch(/Superseding retires each row: its review draft is voided, its live share links revoked/);
+    // P31 fix pass: the copy holders are recalled only out of a controlled issue.
+    expect(host.textContent).toMatch(/its copy holders recalled if it was issued, and its watchers told/);
+    expect(host.textContent).not.toMatch(/its copy holders recalled and its watchers told/);
     await act(async () => { button("Apply to 1").dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await settle();
     expect(supersedeDocs().map((r) => (r.details as Row).reason)).toEqual(["Withdrawn"]);

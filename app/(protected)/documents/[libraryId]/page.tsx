@@ -3005,7 +3005,10 @@ export default function LibraryExplorerPage() {
         const verb = toStatus.trim() === "Archived" ? "archiving" : toStatus.trim() === "Void" ? "voiding" : "superseding";
         const answer = await appPrompt({
           title: `Set ${retireLabel} to ${toStatus.trim()}?`,
-          message: `This retires the document: its review draft is voided, its live share links are revoked, its copy holders are recalled and its watchers told. The reason is recorded on its history.`,
+          // P31 fix pass: the copy holders are recalled only out of a controlled
+          // issue (recallsCopyHolders, DEC-90 R1) — a Draft, In Review or Void
+          // document's watchers are told, nothing is recalled.
+          message: `This retires the document: its review draft is voided, its live share links are revoked, its copy holders are recalled if it was issued, and its watchers told. The reason is recorded on its history.`,
           placeholder: `Reason for ${verb}`,
           confirmLabel: "Save",
           required: true,

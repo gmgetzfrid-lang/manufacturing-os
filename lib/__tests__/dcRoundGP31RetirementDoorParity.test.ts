@@ -304,6 +304,23 @@ describe("ruling 1 / ruling 3 — the metadata editor's save to Void / Supersede
     });
   }
 
+  it("P31 fix pass — the reason prompt promises a recall only for an issued document: a Draft voided gets the same duties and record, its watchers told, its copy holders NOT recalled", async () => {
+    const d = seedDoc("dv", { status: "Draft" }); seedDraftAndShare("dv");
+    const { st, fn } = save(d);
+    await fn({ metadata: {}, core: { title: d.title, documentNumber: d.document_number, status: "Void" } });
+    await settle();
+    expect(st.prompts).toHaveLength(1);
+    const message = String(st.prompts[0].message);
+    expect(message).toMatch(/its copy holders are recalled if it was issued, and its watchers told/);
+    expect(message).not.toMatch(/its copy holders are recalled and its watchers told/);
+    expect(docRow("dv")).toMatchObject({ status: "Void", pending_version_id: null });
+    expect(audit("VOID_DOC")).toHaveLength(1);
+    expect(audit("VOID_DOC")[0].details).toMatchObject({ retiredFrom: "Draft", via: "metadata" });
+    const recalls = vi.mocked(recallRetiredDocument).mock.calls.map((x) => x[0]);
+    expect(recalls).toHaveLength(1);
+    expect(recalls[0]).toMatchObject({ documentId: "dv", newStatus: "Void", recallCopyHolders: false });
+  });
+
   it("mixed edits (title, metadata and Issued → Void): the same one UPDATE carrying every edited column, then the duties", async () => {
     const d = seedDoc("mx"); seedDraftAndShare("mx");
     const { fn } = save(d);

@@ -115,8 +115,14 @@
 // does none of it.
 //
 // REV-31 (document-control P31 RETIREMENT DOOR PARITY, 2026-10-21, DEC-90):
-// a change to Superseded does what supersedeDocument does around a
-// supersession, as Archived does archiveDocument's. It asks ONE reason for
+// a change to Superseded does the three retirement duties DEC-90 lists (the
+// review draft voided, the live share links revoked, the record), as
+// Archived does since P28 — NOT the rest of what supersedeDocument does
+// around a supersession: no MOC reference or publish-authority / lock
+// pre-check before the write (REV-33), no closure of the pending
+// distribution acks and no reason notice to the checkout holder or the
+// package owners after it (REV-34; they stay in the recall's watcher
+// audience, and a retired document's acks no longer bind). It asks ONE reason for
 // the whole apply ("Reason for superseding" — Apply waits for it); each row's
 // write is exactly what it was (the status, the recomputed key, updated_at /
 // updated_by — no supersession column: this door names no replacement, and
@@ -529,7 +535,7 @@ export default function BulkEditModal({
                 placeholder={archiving ? "Recorded on each archived document's history" : "Recorded on each superseded document's history"}
                 disabled={busy}
               />
-              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{archiving ? "Archiving" : "Superseding"} retires each row: its review draft is voided, its live share links revoked, its copy holders recalled and its watchers told.</div>
+              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{archiving ? "Archiving" : "Superseding"} retires each row: its review draft is voided, its live share links revoked, its copy holders recalled if it was issued, and its watchers told.</div>
             </div>
           )}
 
