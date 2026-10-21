@@ -1082,3 +1082,52 @@ migration, `20261247_dc_roundG_version_row_integrity.sql` (`DCK-16`,
   reads; the file's own result set is the paste check); the owner of new
   finding `DCK-18` (proposed: document-control — a reviewed promote made
   outside the app is neither told nor recorded).
+
+⚠ **Paste order — P35 DOOR B RECORD (2026-10-21).** One one-paste
+migration, `20261252_dc_roundG_door_b_record.sql` (`DCK-18`):
+1. **Deploy the app carrying P35 BEFORE or WITH the paste.** Before the
+   paste the app's reporting call (`p_report_over_checkout`) answers
+   PGRST202 / 42883 and the app calls again exactly as before — today's
+   behaviour. An app before P35 keeps working after the paste (its plain
+   `'promoted'` is unchanged) but writes its own notice and record beside the
+   database's, so a reviewed promote over another person's checkout is told
+   and recorded twice until the deploy (over, never under). The same double
+   can happen with the P35 app right after the paste, until PostgREST
+   reloads its schema cache (a stale cache answers PGRST202 to the reporting
+   call; the plain re-call reaches the new function, which records and tells
+   and answers plain `'promoted'`); the file ends its transaction with
+   `NOTIFY pgrst, 'reload schema'` to shorten that window — more, never
+   fewer.
+2. **Paste after `20261247` (required** — its first statement refuses,
+   changing nothing, without `20261247`'s column guard or `20261151`'s
+   `finalize_reviewed_promote`), so it waits behind row 191, itself HOLD
+   behind rows 187 and 150. **Never re-paste `20261151` after it** (it would
+   put the seven-argument function back beside this one — two signatures,
+   PostgREST's call by name ambiguous — and drop the record).
+- **What changes after the paste:** a reviewed promote through
+  `finalize_reviewed_promote` — the app's, a direct PostgREST call, the
+  service role's — over a checkout held by anyone but the actor queues the
+  holder's notice (`revision_published_over_checkout`) and writes
+  `REVIEW_PROMOTED_OVER_CHECKOUT` (`via: 'database'`) in the promote's own
+  transaction; a notice or record that cannot be written is a WARNING and the
+  promote stands. Every promote lands or is refused exactly as before. The
+  hand-made three-step PATCH is still untold and unrecorded (`DCK-18`
+  remainder; owner document-control, at the next publish-guard re-creation).
+- **The result set:** six probes (all true) and six counts — documents
+  checked out with a pending draft in review (informational);
+  `finalize_reviewed_promote` signatures (expect 1); documents whose pending
+  pointer names a door-shaped external submission (`20261247`'s row 2,
+  recounted); of those, named by the intake route's own record; of those not
+  named, the ones on a project's Intake tab (a DOCUMENT link — the tab reads
+  only `purpose = 'documents'`) — **look these over** with the header's
+  query 2 and confirm each from its project's Intake tab (approve) or retire
+  it there (Reject); expected 0; and the ones on NO Intake tab (a quote link,
+  a link gone, no link — no app action reaches them): the header's query 3
+  lists them, the operator does not edit them by hand and gives the
+  integrator the count and their ids; expected 0. Tell the integrator the
+  counts (`DCK-18` done-when 3).
+- **For the integrator at merge, not edited by P35:** the `20261252` row in
+  `MIGRATION-PASTE-ORDER.md` (after row 191's `20261247`; app deploy with or
+  before it); no `lib/schemaExpectations.ts` probe (the app tolerates both
+  signatures; the file's own result set is the paste check); no new table,
+  notification kind or audit action.

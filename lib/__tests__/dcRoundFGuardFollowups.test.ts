@@ -209,6 +209,9 @@ describe("20261159 — the guard re-created from its NEWEST earlier body (found 
       // REV-29 (P25): and 20261192, which re-creates those two doors (the flag set on
       // exactly the conditions each had) — pinned in dcRoundFNullPriorStatusMigration.test.ts.
       if (f === "20261192_dc_roundF_null_prior_status_put_back.sql") continue;
+      // DCK-18 (P35): and 20261252, which re-creates 20261151's finalize_reviewed_promote (the same two
+      // set / clear lines, byte for byte) — pinned in dcRoundFPromoteTransaction.test.ts.
+      if (f === "20261252_dc_roundG_door_b_record.sql") continue;
       // REV-36 (P36): and 20261253 — retire_over_hold and put_back_retired_issue's re-entry limb
       // set it around their own write (its guard only reads it) — pinned in
       // dcRoundGStatusEditorHoldLegMigration.test.ts.
