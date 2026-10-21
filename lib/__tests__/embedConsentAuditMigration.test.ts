@@ -129,6 +129,17 @@ describe("what 20261163 relies on", () => {
         expect(/CREATE POLICY audit_logs_insert ON audit_logs[\s\S]*?\);/.exec(text)![0], f).not.toMatch(/action/);
         continue;
       }
+      // document-control DIST-19 (P38 fix pass): 20261257 adds a second
+      // RESTRICTIVE FOR INSERT rule of the same shape for ITS server-only
+      // action (DOCUMENT_NOTICE_RECORD_DEFERRED) — it narrows only, and never
+      // names this file's action or policy.
+      if (f === "20261257_dc_roundG_document_notice_record.sql") {
+        const rule = /CREATE POLICY (\w+) ON audit_logs[\s\S]*?;/.exec(text)!;
+        expect(rule[1], f).toBe("audit_logs_notice_deferred_server_only");
+        expect(rule[0], f).toContain("AS RESTRICTIVE FOR INSERT TO anon, authenticated\n  WITH CHECK (action IS DISTINCT FROM 'DOCUMENT_NOTICE_RECORD_DEFERRED');");
+        expect(text, f).not.toMatch(/EMBED_BUILD_CONSENT_RECORDED|audit_logs_embed_consent_route_only/);
+        continue;
+      }
       expect(text, f).not.toMatch(/CREATE POLICY \w+ ON audit_logs[\s\S]{0,80}FOR INSERT/);
     }
   });

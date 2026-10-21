@@ -378,10 +378,13 @@ describe("SEC-20 — audit rows about a private project follow the project's vis
     const permissiveReads = set.filter(([, p]) => p.permissive && (p.cmd === "SELECT" || p.cmd === "ALL"));
     expect(permissiveReads.map(([n]) => n)).toEqual(["audit_logs_org_access"]);
     expect(set.filter(([, p]) => p.cmd === "INSERT" && p.permissive).map(([n]) => n)).toEqual(["audit_logs_insert"]);
-    // the only other restrictive rule: members may not insert the embed
-    // route's consent rows (intelligence Round G I-20, GOV-14) — it reads none
+    // the only other restrictive rules: members may not insert the embed
+    // route's consent rows (intelligence Round G I-20, GOV-14), nor the
+    // document scans' deferred notice-record rows (document-control DIST-19,
+    // P38 fix pass) — they read none
     expect(set.filter(([, p]) => !p.permissive && p.cmd !== "SELECT" && p.cmd !== "ALL").map(([n, p]) => [n, p.cmd, p.file])).toEqual([
       ["audit_logs_embed_consent_route_only", "INSERT", "supabase/migrations/20261163_intel_roundG_embed_consent_audit_rows.sql"],
+      ["audit_logs_notice_deferred_server_only", "INSERT", "supabase/migrations/20261257_dc_roundG_document_notice_record.sql"],
     ]);
   });
   it("before 20261142 the overlay narrowed only the org-level trail — a project / cost row was any member's (the finding, reproduced)", () => {

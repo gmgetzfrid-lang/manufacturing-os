@@ -99,6 +99,7 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "document_holds", migration: "20260612_phase5_holds.sql" },
   { table: "document_intents", migration: "20260824_document_intents.sql" },
   { table: "document_markups", migration: "20261051_rp_phase7_markup_store.sql" },
+  { table: "document_notice_events", migration: "20261257_dc_roundG_document_notice_record.sql" },
   { table: "document_related_resources", migration: "20260806_intelligence_layer.sql" },
   { table: "document_review_events", migration: "20260630_review_cycles.sql" },
   { table: "document_review_signoffs", migration: "20260818_review_before_publish.sql" },

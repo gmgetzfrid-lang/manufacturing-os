@@ -572,6 +572,8 @@ supabase/migrations/20260825_work_packages_acks.sql:110-113 (no nag/escalation c
 
 **Scope / residual.** Status stays OPEN. The document half is document-control's (the plan's pointer: DC P4/P5); DC left it, so per the plan it is opened as a document-control finding rather than edited here: **`DIST-19`** (`document-control/05-distribution.md`) — owner: the integrator assigns (DEC-31), proposed the next document-control package holding `lib/reviewControl.ts` / `lib/distributionAcks.ts` / `lib/acknowledgments.ts`.
 
+**Cross-reference (the integrator at the document-control P38 merge, 2026-10-21).** The document half landed in part: `document_notice_events` (`20261257`, PASTE row 198) records every reminder and escalation the three document scans send — see `DIST-19` (Partial) in `document-control/05-distribution.md`; the request and manual-reminder paths are `DIST-20` (owner document-control P39 NOTICE RECORD REQUESTS). EVID-8's done-when, which names the document tables, closes with `DIST-19` / `DIST-20`; nothing on the ticket side changed.
+
 ---
 
 <a id="evid-9"></a>

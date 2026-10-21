@@ -105,6 +105,9 @@ const DECISION_AT_MERGE: Record<string, string> = {
   // is no longer here.
   // drafting-flow Round G DF-P7 CONSENT's ticket_notice_events was decided at its merge (EXPORTED after
   // ticket_review_slot_events; never imported — IMMUTABLE_TABLES; DEC-90) and is no longer here.
+  // document-control Round G P38 DOCUMENT NOTICE RECORD's document_notice_events was decided at its merge
+  // (EXPORTED after ticket_notice_events, a not_emailed row's reason stripped; never imported — IMMUTABLE_TABLES; DEC-90)
+  // and is no longer here.
 };
 
 // EGR-7 / XEDGE-10: a column whose NAME says "credential". `_key` alone is

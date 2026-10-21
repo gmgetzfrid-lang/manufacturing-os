@@ -207,11 +207,18 @@ describe("DEC-90 ruling (6) — the export strips a not_emailed row's private re
     const noReason = { id: "e4", kind: "not_emailed", details: { event: "assignment" } };
     expect(transformExportRow("ticket_notice_events", noReason)).toBe(noReason);
   });
+  it("document_notice_events (P38 merge): a not_emailed row loses details.reason; a reminded row is the same object", () => {
+    const row = { id: "d1", kind: "not_emailed", recipient: "u-1", details: { reason: "their own preference", attempt: 2 } };
+    expect(transformExportRow("document_notice_events", row)).toEqual({ id: "d1", kind: "not_emailed", recipient: "u-1", details: { attempt: 2 } });
+    const reminded = { id: "d2", kind: "reminded", details: { reason: "kept" } };
+    expect(transformExportRow("document_notice_events", reminded)).toBe(reminded);
+  });
   it("every other exported table passes through as the very same object (its export bytes unchanged)", () => {
-    expect(Object.keys(EXPORT_ROW_TRANSFORMS)).toEqual(["ticket_notice_events"]);
+    // document-control P38's document_notice_events joined at its merge with the same transform (DEC-90).
+    expect(Object.keys(EXPORT_ROW_TRANSFORMS)).toEqual(["ticket_notice_events", "document_notice_events"]);
     const look = { id: "x", kind: "not_emailed", details: { reason: "kept" } };
     for (const t of ORG_SCOPED_TABLES) {
-      if (t === "ticket_notice_events") continue;
+      if (t === "ticket_notice_events" || t === "document_notice_events") continue;
       const r = redactRow(t, { ...look });
       expect(transformExportRow(t, r)).toBe(r);
     }

@@ -15,17 +15,17 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 186,
+    "findings": 187,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 19,
       "HIGH": 56,
-      "MEDIUM": 79,
+      "MEDIUM": 80,
       "LOW": 32
     },
     "by_status": {
       "RESOLVED": 170,
-      "OPEN": 13,
+      "OPEN": 14,
       "RESOLVED (as split under `DEC-31`; ruled by the integrator at the P27 merge, 2026-10-20 (`DEC-90`) — the access-control door, a member reading `portal_token` over REST, stays open until `DIST-18` lands)": 1,
       "RESOLVED (2026-10-21, the integrator's fix pass at the P28 merge — ruled by the integrator at the P28 merge, 2026-10-21 (`DEC-90`): done-when 2 landed; the restore hooks beyond the brief's ruling (4) ratified)": 1,
       "RESOLVED (2026-10-21, document-control Round G P37 DOOR B GUARD final fix pass — every done-when holds as written or as ratified by the integrator at the P37 merge (`DEC-90`): the `DOC_SPLIT` / `DOC_MERGED` evidence acceptance confirmed; the `REV_HOLD_OVERRIDDEN` rows written before `20261254`'s paste accepted as a recorded residual, looked over by the operator at the paste)": 1
@@ -2501,6 +2501,32 @@
       ],
       "refuted": false,
       "summary": "A reviewer on Rev C of PID-4412 is reminded on days 3, 6 and 9, and the alternate signs on day 10. Six weeks later the bell rows are purged. The record shows notifiedat = day 9 and an alternate's signature. Nothing shows the first two reminders, and nothing ties the alternate's activation to the reviewer's silence.",
+      "area": "document-control",
+      "report": "audit-reports/document-control/05-distribution.md"
+    },
+    {
+      "id": "DIST-20",
+      "title": "The document notice record misses every request and manual reminder — `requestAcks`, the roster openers, `nudgeAcknowledgment`, `renudgeUnacked` and a manual alternate activation leave no `document_notice_events` row, so the distribution nag must still read purgeable `notifications` rows",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading the code on `fleet/DC-P38-document-notice-record` (document-control Round G, P38 fix pass): only `scanReviews`, `scanAndNotifyAcks` and `scanDistributionAcks` call `noticeRecorder().record`.",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/distributionAcks.ts:151",
+        "lib/acknowledgments.ts:365",
+        "lib/reviewControl.ts:497",
+        "components/documents/ReviewGateSection.tsx:211",
+        "lib/inAppNotifications.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A controller re-nudges two silent recipients of Rev C by hand on day 4 and requests acknowledgments from a third on day 5. Six weeks later the bell rows are purged. documentnoticeevents shows the scans' reminders only; nothing shows the manual re-nudge or when the third person was asked, and the one query in 20261257's header answers \"asked\" from requestedat alone.",
       "area": "document-control",
       "report": "audit-reports/document-control/05-distribution.md"
     },

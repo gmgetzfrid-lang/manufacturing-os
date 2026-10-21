@@ -975,24 +975,48 @@
       ]
     },
     {
-     "name": "P38 DOCUMENT NOTICE RECORD — every review, acknowledgment and distribution reminder on a document is a durable fact on the record, not one overwritten timestamp",
-     "findings": [
-      "document-control DIST-19 (opened at drafting-flow DF-P7, assigned at its merge, 2026-10-21, DEC-31): an append-only document notice record (who was reminded, when, how often, escalated or not — the document half of drafting-flow EVID-8, the same shape as ticket_notice_events, 20261255) written by the review-reminder scan (lib/reviewControl.ts), the acknowledgment scan (lib/acknowledgments.ts) and the distribution-ack nag (lib/distributionAcks.ts) when a notice actually lands; notified_at keeps its meaning for every existing reader (pin); exported, never imported"
-     ],
-     "files": [
-      "supabase/migrations/** (one DEC-30 file)",
-      "lib/reviewControl.ts (the reminder scan only)",
-      "lib/acknowledgments.ts (the reminder scan only)",
-      "lib/distributionAcks.ts (the nag only)",
-      "tests"
-     ],
-     "migrationsLikely": 1,
-     "dependsOn": [
-      "drafting-flow DF-P7 merged (ticket_notice_events is the model)"
-     ],
-     "sequencingNotes": [
-      "Added by the integrator at the DF-P7 merge, 2026-10-21 (DEC-31). Parallel-safe with the drafting-flow ticket packages."
-     ]
+      "name": "P38 DOCUMENT NOTICE RECORD — every review, acknowledgment and distribution reminder on a document is a durable fact on the record, not one overwritten timestamp",
+      "findings": [
+        "document-control DIST-19 (opened at drafting-flow DF-P7, assigned at its merge, 2026-10-21, DEC-31): an append-only document notice record (who was reminded, when, how often, escalated or not — the document half of drafting-flow EVID-8, the same shape as ticket_notice_events, 20261255) written by the review-reminder scan (lib/reviewControl.ts), the acknowledgment scan (lib/acknowledgments.ts) and the distribution-ack nag (lib/distributionAcks.ts) when a notice actually lands; notified_at keeps its meaning for every existing reader (pin); exported, never imported"
+      ],
+      "files": [
+        "supabase/migrations/** (one DEC-30 file)",
+        "lib/reviewControl.ts (the reminder scan only)",
+        "lib/acknowledgments.ts (the reminder scan only)",
+        "lib/distributionAcks.ts (the nag only)",
+        "tests"
+      ],
+      "migrationsLikely": 1,
+      "dependsOn": [
+        "drafting-flow DF-P7 merged (ticket_notice_events is the model)"
+      ],
+      "sequencingNotes": [
+        "Added by the integrator at the DF-P7 merge, 2026-10-21 (DEC-31). Parallel-safe with the drafting-flow ticket packages."
+      ]
+    },
+    {
+      "name": "P39 NOTICE RECORD REQUESTS — the document notice record also holds every request, manual re-nudge and manual alternate activation, so the distribution nag stops reading purgeable bell rows",
+      "findings": [
+        "document-control DIST-20 (opened at the P38 fix pass, assigned at the P38 merge, 2026-10-21, DEC-31): requestAcks, openReviewRoster, recomputeDocumentAck, nudgeAcknowledgment, renudgeUnacked and the manual activateAlternate append document_notice_events rows once their notice landed; notifyChecked returns the bell row id so notification_id is filled (declared to the notifications owner under filesOutsidePlan); scanDistributionAcks's cooldown reads the record only once 20261257 is in place (a manual re-nudge still holds the robot's nudge; before the paste, the bell rows as today); plus the P38 merge ruling: the DOCUMENT_NOTICE_RECORD_DEFERRED audit row (ids, kind, time) must not be readable past the record's own read rules — a RESTRICTIVE SELECT on audit_logs for that action (Admins and the document's readers) or a service-role-only deferral table, whichever keeps every audit viewer that works today unchanged for every other action (pin)",
+        "document-control DIST-19 (OPEN, Partial — P38 landed the three scans; done-when 1, 2 and 4 hold as written only once DIST-20 lands) and drafting-flow EVID-8 (the document half: its done-when names the document tables and closes with DIST-19 / DIST-20) — assigned to P39 at the P38 merge, 2026-10-21 (DEC-31); P39 closes them by record once DIST-20's done-when hold"
+      ],
+      "files": [
+        "supabase/migrations/** (at most one DEC-30 file, for the deferred-row read rule only)",
+        "lib/acknowledgments.ts",
+        "lib/reviewControl.ts",
+        "lib/distributionAcks.ts",
+        "lib/documentNoticeRecord.ts",
+        "lib/inAppNotifications.ts (notifyChecked returns the row id — additive; declared to notifications)",
+        "components/documents/ReviewGateSection.tsx (manual activation passes a cause only if needed)",
+        "tests"
+      ],
+      "migrationsLikely": 1,
+      "dependsOn": [
+        "document-control P38 merged (document_notice_events, 20261257)"
+      ],
+      "sequencingNotes": [
+        "Added by the integrator at the P38 merge, 2026-10-21 (DEC-31). Parallel-safe with the drafting-flow ticket packages; not alongside a notifications package that edits lib/inAppNotifications.ts."
+      ]
     }
   ],
   "crossAreaFileOverlaps": [

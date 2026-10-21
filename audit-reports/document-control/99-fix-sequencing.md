@@ -1196,3 +1196,47 @@ fix pass).** One one-paste migration, `20261254_dc_roundG_door_b_guard.sql`
   three new audit actions (`PENDING_SUBMISSION_RETIRE_REQUESTED`,
   `PENDING_SUBMISSION_RETIRED`, `INTAKE_DOOR_SUBMITTED`, registered in
   `lib/auditActions.ts`).
+
+⚠ **Paste order — P38 DOCUMENT NOTICE RECORD (2026-10-21).** One one-paste
+migration, `20261257_dc_roundG_document_notice_record.sql` (`DIST-19`):
+1. **No deploy order; recommended: deploy the app first, then paste.** It
+   creates one new table (`document_notice_events`) and one new RESTRICTIVE
+   INSERT policy on `audit_logs` (`audit_logs_notice_deferred_server_only`,
+   P38 fix pass — a signed-in member may not write a
+   `DOCUMENT_NOTICE_RECORD_DEFERRED` row; the GOV-14 shape of `20261163`),
+   and touches nothing else. Like `20261163`, a re-paste of `20261142` /
+   `20261157` after it reads their "one RESTRICTIVE" probe false (expected).
+   App before the paste: the three scans remind, escalate and stamp exactly as
+   today; the record write meets `42P01` / `PGRST205` and the run's line says
+   once that the record is not in this database yet (nothing written, nothing
+   deferred); the distribution nag counts its cooldown from the bell rows
+   alone. Pasted before the app: the old app never reads or writes the table.
+2. **Independent of every other pending paste** (prerequisites date from
+   `20260817` / `20260818` / `20260825`; the first statement refuses, changing
+   nothing, without them). Re-runnable.
+- **What changes after the paste (with the app):** each reminder, escalation
+  and timeout activation the scans land is one append-only row; members read
+  the rows of documents they can read (a `not_emailed` row only its person);
+  nobody but the service role writes; the nag no longer re-nudges inside its
+  window after a bell row is purged or dismissed (its read of the record is
+  keyset-paged, so this holds past PostgREST's 1000-row max-rows, up to 20
+  pages of 1000 a run — past that, said in the run's line, the older notices
+  count from the bell rows as today). Reminders before the paste are not
+  back-filled. A record write that fails twice is kept in one
+  `DOCUMENT_NOTICE_RECORD_DEFERRED` audit row holding ids, kind and numbers
+  only (no free text, no revision label, no `not_emailed` reason) — still
+  readable by every member, as every audit row is (`DIST-19`).
+- **The result set:** eight probes (all true) and five counts — pending review
+  sign-offs and pending acknowledgments whose reminder history is one
+  `notified_at`, outstanding distribution acks (all informational),
+  `DOCUMENT_NOTICE_RECORD_DEFERRED` audit rows a member wrote before the
+  paste (expected 0; never replayed — the app reads only system rows), and
+  the notice records on file (0 on a first paste).
+- **For the integrator at merge, not edited by P38:** the `20261257` row in
+  `MIGRATION-PASTE-ORDER.md`; the `lib/schemaExpectations.ts` row
+  `{ table: "document_notice_events", migration: "20261257_dc_roundG_document_notice_record.sql" }`
+  (ROW_AT_MERGE); the export decision (DECISION_AT_MERGE — proposed EXPORTED
+  with a `not_emailed` row's `details.reason` stripped, never imported); no
+  notification kind; one new audit action (`DOCUMENT_NOTICE_RECORD_DEFERRED`,
+  registered in `lib/auditActions.ts`); `DIST-19` residual (a) opened as
+  `DIST-20` (assigned at the P38 merge to **P39 NOTICE RECORD REQUESTS**, `DEC-31`; at most one migration, for the deferred audit row's read rule — `DEC-90`).
