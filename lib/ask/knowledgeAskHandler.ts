@@ -27,6 +27,7 @@
 
 import { ok, fail, type AskHandlerInput, type AskHandlerResult } from "@/lib/ask/types";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { loadAnswerSkillsBlock } from "@/lib/answerSkillsServer";
@@ -182,11 +183,14 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
   let excludedDocIds = new Set<string>();
   {
     const allLibIds = [libraryId, ...linkedLibraries.map((l) => l.id)];
-    const { data: linkedDocs, error: linkErr } = await supabaseAdmin
+    const { rows: linkedRows, error: linkErrMsg } = await fetchAllRows<{ id: string; source_document_id: string }>((from, to) => supabaseAdmin
       .from("knowledge_documents")
       .select("id, source_document_id")
       .in("library_id", allLibIds)
-      .not("source_document_id", "is", null);
+      .not("source_document_id", "is", null)
+      .order("id").range(from, to));
+    const linkedDocs = linkedRows;
+    const linkErr = linkErrMsg ? { message: linkErrMsg } : null;
     // linkErr (42703 on a pre-20260917 DB) = no source columns = no mirrors.
     if (!linkErr && linkedDocs && linkedDocs.length > 0) {
       try {
@@ -674,11 +678,15 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     let reachableDocs: ReachableDoc[] = [];
     {
       const reachableLibIds = [libraryId, ...linkedLibraries.map((l) => l.id)];
-      const { data } = await supabaseAdmin
+      // Every document, not the first 1,000 — pull-by-name ("per EP 5-6-2")
+      // must find a document wherever it sits in a big library.
+      const { rows } = await fetchAllRows<ReachableDoc>((from, to) => supabaseAdmin
         .from("knowledge_documents")
         .select("id, name, library_id, file_key, status, page_count, pages_indexed")
-        .in("library_id", reachableLibIds);
-      reachableDocs = ((data ?? []) as ReachableDoc[]).filter((d) => !excludedDocIds.has(d.id));
+        .in("library_id", reachableLibIds)
+        .order("id").range(from, to));
+      // Retired = set aside when the file left the source: never cited.
+      reachableDocs = rows.filter((d) => !excludedDocIds.has(d.id) && d.status !== "retired");
     }
     // Passages that hold their seat no matter how the ranking reshuffles —
     // proven-ground pages and pages earlier turns cited. A refine round
@@ -1144,9 +1152,9 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       const ents = ((entRows ?? []) as Array<{ document_id: string; page: number; kind: string; tag: string; raw?: string | null }>)
         .filter((e) => !excludedDocIds.has(e.document_id));
       if (ents.length > 0) {
-        const { data: dRows } = await supabaseAdmin
-          .from("knowledge_documents").select("id, name, library_id").in("library_id", allLibIds);
-        const docsList = ((dRows ?? []) as Array<{ id: string; name: string; library_id: string }>)
+        const { rows: dRows } = await fetchAllRows<{ id: string; name: string; library_id: string }>((from, to) => supabaseAdmin
+          .from("knowledge_documents").select("id, name, library_id").in("library_id", allLibIds).order("id").range(from, to));
+        const docsList = dRows
           .filter((d) => !excludedDocIds.has(d.id));
         const census = buildEquipmentCensus(ents.filter((e) => e.kind === "equipment"), prefixLabels);
         const refsByDoc = new Map<string, string[]>();

@@ -145,7 +145,7 @@ export async function ingestKnowledgeDocBatch(
   }
   const twinIds: string[] = [doc.id];
   if (fileHash) {
-    const { data: twins } = await supabaseAdmin.from("knowledge_documents").select("id").eq("org_id", doc.org_id).eq("file_hash", fileHash).neq("id", doc.id).eq("status", "ready").limit(5);
+    const { data: twins } = await supabaseAdmin.from("knowledge_documents").select("id").eq("org_id", doc.org_id).eq("file_hash", fileHash).neq("id", doc.id).in("status", ["ready", "retired"]).limit(5);
     for (const t of (twins as Array<{ id: string }> | null) ?? []) twinIds.push(t.id);
   }
   const stored = new Map<number, string>();

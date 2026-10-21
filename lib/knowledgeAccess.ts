@@ -16,6 +16,7 @@
 // truth) — never a parallel re-implementation.
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { evaluateAclChain } from "@/lib/acl";
 import type { AccessControl, NodeVisibility, Role } from "@/types/schema";
 
@@ -82,13 +83,22 @@ function chainReadable(
 export async function loadDcLandscape(orgId: string): Promise<{
   libraries: Map<string, ContainerNode & { name: string }>;
   folders: Map<string, ContainerNode & { name: string; library_id: string; path_names: string[] }>;
+  /** False when a read failed part-way — callers must not treat a missing
+   *  folder as deleted. */
+  complete: boolean;
 }> {
   // collections is select("*") so the trash filter works before AND after
   // migration 20261011 (naming deleted_at explicitly would 42703 pre-migration).
-  const [libsRes, foldersRes] = await Promise.all([
-    supabaseAdmin.from("libraries").select("id, name, acl, visibility").eq("org_id", orgId),
-    supabaseAdmin.from("collections").select("*").eq("org_id", orgId),
+  // Every page: an org's folders (trash included) pass 1,000 quickly, and the
+  // ones past the cutoff used to vanish from every coverage decision.
+  const [libsAll, foldersAll] = await Promise.all([
+    fetchAllRows<Record<string, unknown>>((from, to) => supabaseAdmin.from("libraries").select("id, name, acl, visibility")
+      .eq("org_id", orgId).order("id").range(from, to)),
+    fetchAllRows<Record<string, unknown>>((from, to) => supabaseAdmin.from("collections").select("*")
+      .eq("org_id", orgId).order("id").range(from, to)),
   ]);
+  const libsRes = { data: libsAll.rows };
+  const foldersRes = { data: foldersAll.rows };
   const libraries = new Map<string, ContainerNode & { name: string }>();
   for (const l of libsRes.data ?? []) {
     libraries.set(l.id as string, {
@@ -109,7 +119,7 @@ export async function loadDcLandscape(orgId: string): Promise<{
       path_names: (c.path_names as string[]) ?? [],
     });
   }
-  return { libraries, folders };
+  return { libraries, folders, complete: !libsAll.error && !foldersAll.error };
 }
 
 /** Build the ACL chain for a folder: library ACL, then ancestors top-down,

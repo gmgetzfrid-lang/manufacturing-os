@@ -32,6 +32,7 @@ import LibraryAiModal from "@/components/knowledge/LibraryAiModal";
 import SourcesPanel from "@/components/knowledge/SourcesPanel";
 import DrawingIntelPanel from "@/components/knowledge/DrawingIntelPanel";
 import LibraryMapPanel from "@/components/knowledge/LibraryMapPanel";
+import HealthPanel from "@/components/knowledge/HealthPanel";
 import SemanticIndexPanel from "@/components/knowledge/SemanticIndexPanel";
 import { collectDroppedFiles, filesFromDirectoryInput } from "@/lib/folderUpload";
 
@@ -412,6 +413,11 @@ export default function KnowledgeLibraryPage() {
           the door: ask, or pick up a recent conversation. */}
       {activeOrgId && (
         <AskEntry orgId={activeOrgId} libraryId={libraryId} readyDocs={readyDocs} docsTotal={docs.length} />
+      )}
+
+      {/* Is the index a complete, current copy of what it's linked to? */}
+      {activeOrgId && (
+        <HealthPanel orgId={activeOrgId} libraryId={libraryId} isController={isController} onRepaired={() => void refresh()} />
       )}
 
       {/* What the assistant knows is in here — forms, checklists, specs. */}

@@ -20,6 +20,8 @@ interface FolderGridProps {
   folders: LibraryCollection[];
   /** Every folder in the library — lets each card show its subfolder count. */
   allFolders?: LibraryCollection[];
+  /** Documents in each folder INCLUDING its subfolders. */
+  docTotals?: Map<string, number>;
   onOpen: (id: string) => void;
   onRename?: (id: string) => void;
   onMove?: (id: string) => void;
@@ -53,6 +55,7 @@ export default function FolderGrid({
   folders,
   allFolders,
   onOpen,
+  docTotals,
   onRename,
   onMove,
   onMoveInto,
@@ -336,11 +339,16 @@ export default function FolderGrid({
           <h3 className="text-sm font-bold text-[var(--color-text)] truncate mb-0.5 select-none">{folder.name}</h3>
           <div className="flex items-center justify-between gap-2 min-w-0">
             <p className="text-[10px] text-[var(--color-text-faint)] font-medium truncate select-none min-w-0">
-              {folder.description?.trim()
-                ? folder.description
-                : kids !== null && kids > 0
-                  ? `${kids} subfolder${kids === 1 ? '' : 's'}`
-                  : (folder.pathNames && folder.pathNames.length > 1 ? folder.pathNames.slice(0, -1).join(' / ') : 'Folder')}
+              {(() => {
+                const n = docTotals?.get(folder.id!);
+                const parts: string[] = [];
+                if (n !== undefined) parts.push(`${n.toLocaleString()} file${n === 1 ? '' : 's'}`);
+                if (kids !== null && kids > 0) parts.push(`${kids} subfolder${kids === 1 ? '' : 's'}`);
+                if (parts.length) return parts.join(' · ');
+                return folder.description?.trim()
+                  ? folder.description
+                  : (folder.pathNames && folder.pathNames.length > 1 ? folder.pathNames.slice(0, -1).join(' / ') : 'Folder');
+              })()}
             </p>
             {/* Open affordance — appears on hover, keeps the card scannable at rest. */}
             <span className="shrink-0 w-5 h-5 rounded-md grid place-items-center text-[var(--color-accent)] bg-[var(--color-accent-soft)] opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200">

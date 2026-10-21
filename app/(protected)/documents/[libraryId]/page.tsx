@@ -51,6 +51,8 @@ import PathBar from "@/components/documents/PathBar";
 import FolderDeleteModal, { type FolderDeleteResult } from "@/components/documents/FolderDeleteModal";
 import { hashFile } from "@/lib/duplicateFiles";
 import { folderUrlAction } from "@/lib/folderUrlSync";
+import { rollupFolderCounts } from "@/lib/folderCounts";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { translatePostgresError } from "@/lib/inputValidation";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { forceReleaseDocument } from "@/lib/checkoutEpisodes";
@@ -1720,6 +1722,33 @@ export default function LibraryExplorerPage() {
       .subscribe();
     return () => { if (timer) clearTimeout(timer); supabase.removeChannel(channel); };
   }, [libraryId]);
+
+  // ── File counts on every level ─────────────────────────────────────
+  // One light read of every document's folder (ids only, all pages), rolled
+  // up the tree: each folder shows its total INCLUDING everything beneath
+  // it, and the library shows its grand total. Re-counted when documents or
+  // folders change (the realtime refresh is already debounced).
+  const [folderCounts, setFolderCounts] = useState<{ totals: Map<string, number>; direct: Map<string | null, number>; libraryTotal: number } | null>(null);
+  const folderShape = useMemo(() => folders.map((f) => `${f.id}:${f.parentId ?? ""}`).join(","), [folders]);
+  useEffect(() => {
+    if (!libraryId || !activeOrgId) return;
+    let alive = true;
+    void (async () => {
+      const { rows, error: cErr } = await fetchAllRows<{ collection_id: string | null }>((from, to) => {
+        let q = supabase.from("documents").select("collection_id").eq("org_id", activeOrgId).eq("library_id", libraryId);
+        if (!showArchivedDocs) q = q.neq("status", "Archived");
+        if (!isControllerRole(activeRole)) q = q.eq("visibility", "normal");
+        return q.order("id").range(from, to);
+      });
+      if (!alive || cErr) return;
+      const direct = new Map<string | null, number>();
+      for (const r of rows) direct.set(r.collection_id ?? null, (direct.get(r.collection_id ?? null) ?? 0) + 1);
+      const shape = folderShape ? folderShape.split(",").map((x) => { const [id, parentId] = x.split(":"); return { id, parentId: parentId || null }; }) : [];
+      const { totals, libraryTotal } = rollupFolderCounts(shape, direct);
+      setFolderCounts({ totals, direct, libraryTotal });
+    })();
+    return () => { alive = false; };
+  }, [libraryId, activeOrgId, activeRole, showArchivedDocs, docsRefreshTick, folderShape]);
 
   useEffect(() => {
     if (!libraryId || !activeOrgId) return;
@@ -3858,6 +3887,8 @@ export default function LibraryExplorerPage() {
         <FolderRail
           libraryName={library.name}
           folders={folders}
+          docTotals={folderCounts?.totals}
+          libraryTotal={folderCounts?.libraryTotal}
           currentFolderId={currentFolderId}
           isController={isController}
           onNavigate={setCurrentFolderId}
@@ -4008,6 +4039,7 @@ export default function LibraryExplorerPage() {
                   <FolderGrid
                     folders={filteredFolders}
                     allFolders={folders}
+                    docTotals={folderCounts?.totals}
                     onOpen={(id) => setCurrentFolderId(id)}
                     onRename={isController ? (id) => { setRenameFolderId(id); setRenameValue(folderMap.get(id)?.name || ""); } : undefined}
                     onMove={isController ? (id) => { setRenameFolderId(id); setShowMoveModal(true); } : undefined}
@@ -4057,7 +4089,17 @@ export default function LibraryExplorerPage() {
                   <h3 className="text-sm font-bold text-[var(--color-text)] flex items-center gap-2 shrink-0">
                     <FileText className="w-4 h-4 text-[var(--color-text-faint)]" />
                     Documents
-                    <span className="text-xs font-medium text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-2 py-0.5 rounded-full">{filteredDocs.length}</span>
+                    <span className="text-xs font-medium text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-2 py-0.5 rounded-full"
+                      title="Documents filed directly in this folder">{filteredDocs.length.toLocaleString()} here</span>
+                    {folderCounts && (() => {
+                      const below = currentFolderId ? folderCounts.totals.get(currentFolderId) ?? 0 : folderCounts.libraryTotal;
+                      return below > (folderCounts.direct.get(currentFolderId ?? null) ?? 0) ? (
+                        <span className="text-xs font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-2 py-0.5 rounded-full"
+                          title={currentFolderId ? "Everything in this folder, including all subfolders" : "Every document in this library"}>
+                          {below.toLocaleString()} {currentFolderId ? "incl. subfolders" : "in library"}
+                        </span>
+                      ) : null;
+                    })()}
                   </h3>
 
                   {/* Live filter — typing instantly narrows the table to just the

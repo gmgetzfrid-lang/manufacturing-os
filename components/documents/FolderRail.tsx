@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { createContext, useContext, useState } from "react";
 import { Home, FolderPlus, ChevronRight, Folder, PanelLeftOpen } from "lucide-react";
 import type { LibraryCollection } from "@/types/schema";
 import { NodeIcon } from "@/lib/nodeIcons";
@@ -28,8 +28,19 @@ export interface RailDropPayload {
   docIds?: string[];
 }
 
+// Documents per folder (including subfolders), shared down the tree.
+const TotalsCtx = createContext<Map<string, number> | undefined>(undefined);
+
+function CountBadge({ n }: { n: number | undefined }) {
+  if (n === undefined) return null;
+  return <span className="ml-auto shrink-0 text-[10px] tabular-nums text-[var(--color-text-faint)]" title="Files here, including subfolders">{n.toLocaleString()}</span>;
+}
+
 interface FolderRailProps {
   libraryName: string;
+  /** Files in each folder including its subfolders, and the library total. */
+  docTotals?: Map<string, number>;
+  libraryTotal?: number;
   folders: LibraryCollection[];
   currentFolderId: string | null;
   isController: boolean;
@@ -99,6 +110,7 @@ function TreeNode({
   const [expanded, setExpanded] = useState(depth < 1);
   const children = allFolders.filter((f) => f.parentId === folder.id);
   const isActive = currentFolderId === folder.id;
+  const totals = useContext(TotalsCtx);
 
   return (
     <div>
@@ -123,6 +135,7 @@ function TreeNode({
         >
           <FolderGlyph folder={folder} active={isActive} />
           <span className="text-xs font-medium truncate">{folder.name}</span>
+          <CountBadge n={totals?.get(folder.id!)} />
         </button>
       </div>
       {expanded && children.length > 0 && (
@@ -146,6 +159,8 @@ function TreeNode({
 
 export default function FolderRail({
   libraryName,
+  docTotals,
+  libraryTotal,
   folders,
   currentFolderId,
   isController,
@@ -267,8 +282,10 @@ export default function FolderRail({
               >
                 <Home className="w-3.5 h-3.5 shrink-0" />
                 <span className="text-xs font-medium truncate">{libraryName}</span>
+                <CountBadge n={libraryTotal} />
               </button>
 
+              <TotalsCtx.Provider value={docTotals}>
               {rootFolders.map((folder) => (
                 <TreeNode
                   key={folder.id}
@@ -280,6 +297,7 @@ export default function FolderRail({
                   onDropItems={onDropItems}
                 />
               ))}
+              </TotalsCtx.Provider>
 
               {folders.length === 0 && (
                 <p className="text-[11px] text-[var(--color-text-faint)] text-center py-6 px-2">No folders yet</p>

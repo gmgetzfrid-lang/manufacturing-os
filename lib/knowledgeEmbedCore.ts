@@ -67,6 +67,32 @@ export async function embedLibrarySlice(opts: {
       break;
     }
 
+    // ── Reuse before paying ─────────────────────────────────────────────
+    // An identical passage (same file bytes, same page, same text) already
+    // embedded by the same model — a re-added file, a copy filed in two
+    // places, a retired copy — lends its vector. Only the rest are sent.
+    {
+      const reused = await reuseTwinVectors(orgId, batch, connection.model);
+      if (reused.size > 0) {
+        for (let i = 0; i < batch.length && !lastError; i += 8) {
+          const group = batch.slice(i, i + 8).filter((c) => reused.has(c.id));
+          const results = await Promise.all(group.map((c) =>
+            supabaseAdmin.from("knowledge_chunks")
+              .update({ embedding: reused.get(c.id)!, embedding_model: connection.model })
+              .eq("id", c.id)));
+          for (const r of results) {
+            if (r.error) { lastError = r.error.message; break; }
+            embedded += 1;
+          }
+        }
+        if (lastError) break;
+        const rest = batch.filter((c) => !reused.has(c.id));
+        if (rest.length === 0) continue;
+        batch.length = 0;
+        batch.push(...rest);
+      }
+    }
+
     let vectors: number[][];
     try {
       // Contextual prefix: document name + section + page make the heading
@@ -122,6 +148,52 @@ export async function embedLibrarySlice(opts: {
   }
 
   return { embedded, rateLimited, fetchedNone, error: lastError, usage };
+}
+
+/** Vectors for chunks whose identical twin (same file hash, page and text)
+ *  is already embedded with `model`. Best-effort: any failure = no reuse. */
+async function reuseTwinVectors(
+  orgId: string,
+  batch: Array<{ id: string; content: string; page: number; document_id: string }>,
+  model: string,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  try {
+    const docIds = [...new Set(batch.map((c) => c.document_id))];
+    const { data: docs } = await supabaseAdmin.from("knowledge_documents")
+      .select("id, file_hash").in("id", docIds);
+    const hashOf = new Map(((docs ?? []) as Array<{ id: string; file_hash: string | null }>)
+      .filter((d) => d.file_hash).map((d) => [d.id, d.file_hash as string]));
+    const hashes = [...new Set(hashOf.values())];
+    if (hashes.length === 0) return out;
+    const { data: twins } = await supabaseAdmin.from("knowledge_documents")
+      .select("id, file_hash").eq("org_id", orgId).in("file_hash", hashes);
+    const twinsByHash = new Map<string, string[]>();
+    for (const t of (twins ?? []) as Array<{ id: string; file_hash: string }>) {
+      if (docIds.includes(t.id)) continue;
+      twinsByHash.set(t.file_hash, [...(twinsByHash.get(t.file_hash) ?? []), t.id]);
+    }
+    const twinIds = [...new Set([...twinsByHash.values()].flat())].slice(0, 50);
+    if (twinIds.length === 0) return out;
+    const pages = [...new Set(batch.map((c) => c.page))];
+    const { data: rows } = await supabaseAdmin.from("knowledge_chunks")
+      .select("document_id, page, content, embedding")
+      .in("document_id", twinIds).in("page", pages)
+      .eq("embedding_model", model).not("embedding", "is", null).limit(500);
+    const byKey = new Map<string, string>();
+    for (const r of (rows ?? []) as Array<{ document_id: string; page: number; content: string; embedding: unknown }>) {
+      const hash = [...twinsByHash.entries()].find(([, ids]) => ids.includes(r.document_id))?.[0];
+      if (!hash || r.embedding == null) continue;
+      const v = typeof r.embedding === "string" ? r.embedding : JSON.stringify(r.embedding);
+      byKey.set(`${hash}|${r.page}|${r.content}`, v);
+    }
+    for (const c of batch) {
+      const hash = hashOf.get(c.document_id);
+      const v = hash ? byKey.get(`${hash}|${c.page}|${c.content}`) : undefined;
+      if (v) out.set(c.id, v);
+    }
+  } catch { /* no reuse this batch */ }
+  return out;
 }
 
 /** How many chunks in the library still lack vectors (fast partial-index count). */

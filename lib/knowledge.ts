@@ -5,6 +5,7 @@
 // token (same contract as lib/storage.ts).
 
 import { supabase } from "@/lib/supabase";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { uploadToPath, type UploadProgress } from "@/lib/storage";
 
 export interface KnowledgeLibrary {
@@ -412,11 +413,14 @@ const mapDocument = (r: Record<string, unknown>): KnowledgeDocument => ({
 });
 
 export async function listKnowledgeDocuments(libraryId: string): Promise<KnowledgeDocument[]> {
-  const { data, error } = await supabase
+  // Every page. One request stops at 1,000 rows without saying so — a big
+  // linked library read "1k documents" and the indexer never saw the rest.
+  const { rows } = await fetchAllRows<Record<string, unknown>>((from, to) => supabase
     .from("knowledge_documents").select("*").eq("library_id", libraryId)
-    .order("created_at", { ascending: true });
-  if (error) return [];
-  return (data ?? []).map(mapDocument);
+    // Retired copies (kept for reuse, invisible to search) aren't shelf items.
+    .neq("status", "retired")
+    .order("created_at", { ascending: true }).order("id").range(from, to));
+  return rows.map(mapDocument);
 }
 
 /** Upload the PDF to R2, register the document row, and drive the ingest
@@ -1174,4 +1178,16 @@ export async function downloadLibraryForm(orgId: string, documentId: string, val
   const a = document.createElement("a");
   a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// ── Health check + repair ─────────────────────────────────────────────────
+
+export type { KnowledgeHealthReport, RepairResult } from "@/lib/knowledgeHealthServer";
+
+export async function getLibraryHealth(orgId: string, libraryId: string): Promise<import("@/lib/knowledgeHealthServer").KnowledgeHealthReport> {
+  return apiGet(`/api/knowledge/health?orgId=${encodeURIComponent(orgId)}&libraryId=${encodeURIComponent(libraryId)}`);
+}
+
+export async function repairLibrary(orgId: string, libraryId: string): Promise<import("@/lib/knowledgeHealthServer").RepairResult> {
+  return apiPost("/api/knowledge/health", { orgId, libraryId });
 }

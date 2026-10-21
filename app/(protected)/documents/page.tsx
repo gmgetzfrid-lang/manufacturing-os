@@ -66,6 +66,20 @@ export default function DocumentsHomePage() {
   const [error, setError] = useState<string | null>(null);
 
   const [libraries, setLibraries] = useState<UiLibrary[]>([]);
+  // Documents per library (current ones — archived excluded), counted on the
+  // server without fetching rows.
+  const [libCounts, setLibCounts] = useState<Map<string, number>>(new Map());
+  const libIdsKey = libraries.map((l) => l._id).join(",");
+  useEffect(() => {
+    if (!activeOrgId || !libIdsKey) return;
+    let alive = true;
+    void Promise.all(libIdsKey.split(",").map(async (id) => {
+      const { count } = await supabase.from("documents").select("id", { count: "exact", head: true })
+        .eq("org_id", activeOrgId).eq("library_id", id).neq("status", "Archived");
+      return [id, count ?? 0] as const;
+    })).then((pairs) => { if (alive) setLibCounts(new Map(pairs)); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [activeOrgId, libIdsKey]);
   // A /d/<number> short link that found no exact match lands here with ?q=
   // pre-filling the search, so the user sees the nearest hits immediately.
   const [search, setSearch] = useState(() =>
@@ -443,6 +457,11 @@ export default function DocumentsHomePage() {
                     <div className="text-sm text-[var(--color-text-muted)] mt-1 line-clamp-2">{lib.description}</div>
 
                     <div className="mt-4 flex flex-wrap gap-2">
+                      {libCounts.has(lib._id!) && (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-black bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] tabular-nums">
+                          {libCounts.get(lib._id!)!.toLocaleString()} document{libCounts.get(lib._id!) === 1 ? "" : "s"}
+                        </span>
+                      )}
                       {lib._isPublicRead ? (
                         <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                           <Eye className="w-3 h-3" /> Public Read
