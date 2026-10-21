@@ -134,11 +134,16 @@ describe("PERS-5 / PERS-6 — rowToTicket has no cast, maps what the server read
 });
 
 describe("GAP-105 (fix pass) — the library is NOT in the capability resource yet: the page and the badge build Tickets without it", () => {
-  it("ticketResource presents request type and unit only, whether or not the ticket has a library (DF-P5 adds it with the mappers)", () => {
-    const withLib = { requestType: "ISO", unit: "U", libraryId: LIB } as Pick<Ticket, "requestType" | "unit">;
-    expect(ticketResource(withLib)).toStrictEqual({ requestType: "ISO", unit: "U" });
+  // DF-P6 re-pin (the hand-off this test recorded has landed): the library
+  // joins the resource once the request page's mapper carries it (it does —
+  // DF-P9's fromRow) and 20261250's inventory counts the stored ticket.*
+  // rules scoped to a library; a ticket WITHOUT a library presents exactly
+  // the old resource.
+  it("ticketResource presents the library when the ticket carries one (DF-P6), and exactly request type and unit when it does not", () => {
+    const withLib = { requestType: "ISO", unit: "U", libraryId: LIB } as Pick<Ticket, "requestType" | "unit" | "libraryId">;
+    expect(ticketResource(withLib)).toStrictEqual({ requestType: "ISO", unit: "U", libraryId: LIB });
     expect(ticketResource({ requestType: "ISO", unit: "U" })).toStrictEqual({ requestType: "ISO", unit: "U" });
-    expect(readFileSync(join(process.cwd(), "lib", "workflow.ts"), "utf8")).toContain("return { requestType: ticket.requestType || null, unit: ticket.unit || null };");
+    expect(readFileSync(join(process.cwd(), "lib", "workflow.ts"), "utf8")).toContain("...(ticket.libraryId ? { libraryId: ticket.libraryId } : {}),");
   });
   it("the restore clears a ticket's library that is not in the target workspace (ON DELETE SET NULL's answer), never refuses the ticket", async () => {
     const { restoreParentRulesFor } = await import("@/lib/dataRestore");

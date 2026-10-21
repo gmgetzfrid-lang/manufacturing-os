@@ -41,8 +41,10 @@ const names = (acts: WorkflowAction[]) => acts.map((a) => a.action);
 
 /** Every input an offered action could need, so computeTransition sees the
  *  move the route would apply (engineer picks, assignments, files, a note). */
-function inputFor(a: Pick<WorkflowAction, "action" | "label" | "variant">, actor: { uid: string; role: string }): TransitionInput {
+function inputFor(a: Pick<WorkflowAction, "action" | "label" | "variant" | "engineeringOverride">, actor: { uid: string; role: string }): TransitionInput {
   return {
+    // DF-P6 (SM-3): the route passes the engine's override mark through.
+    engineeringOverride: a.engineeringOverride === true,
     actionType: a.action,
     actionLabel: a.label,
     variant: a.variant,
@@ -183,7 +185,14 @@ describe("AUTHZ-1 / SM-1 — the minor-correction bypass is closed by OUTCOME, n
                 const assignedEngineer = status === "PENDING_FINAL_APPROVAL" && uid === "eng";
                 expect(exempt || assignedEngineer, `${r} ticket @${status}: ${collection.join("+")} as ${uid} → ${a.action}`).toBe(true);
                 if (exempt) exemptReached++;
-                if (status === "PENDING_FINAL_APPROVAL") expect(res.updates.engineer_approved_at, `${a.action} at sign-off`).toBe(NOW);
+                // DF-P6 (SM-3, DEC-90 ruling (3)): an engineer's sign-off stamps
+                // engineer_approved_at; a management OVERRIDE (marked by the
+                // engine, offered only to an actor holding no Engineer role)
+                // never does.
+                if (status === "PENDING_FINAL_APPROVAL") {
+                  if (a.engineeringOverride) expect(res.updates.engineer_approved_at, `${a.action} (override) at sign-off`).toBeUndefined();
+                  else expect(res.updates.engineer_approved_at, `${a.action} at sign-off`).toBe(NOW);
+                }
               }
             }
           }
@@ -432,7 +441,8 @@ describe("LEAK-3 / AUTHZ-6 (records the open gap) — every DEC-13 scoped rule r
     expect(body).toContain("IF NEW.status ");
     expect(body).not.toMatch(/NEW\.request_type\b/);
     expect(body).not.toMatch(/NEW\.unit\b/);
-    expect(src("lib/workflow.ts")).toContain("return { requestType: ticket.requestType || null, unit: ticket.unit || null };");
+    // DF-P6 re-pin: the resource still leads with the request type and the unit (the library, work class and code class join only when the ticket carries them).
+    expect(src("lib/workflow.ts")).toContain("requestType: ticket.requestType || null,\n    unit: ticket.unit || null,");
     let writers = 0;
     for (const f of ["app/(protected)/requests/page.tsx", "app/(protected)/requests/[id]/page.tsx", "lib/projects.ts"]) {
       for (const m of src(f).matchAll(/from\(['"]tickets['"]\)\s*\.update\(\{([^}]*)\}/g)) {

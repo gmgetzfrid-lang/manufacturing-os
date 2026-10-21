@@ -57,6 +57,26 @@ export interface TransitionInput {
   /** GAP-103 (DF-P5): `sign_slot` — the roster with the actor's slots
    *  satisfied, whether every blocking slot now is, and the slots' labels. */
   rosterSign?: { roster: TicketReviewRoster; complete: boolean; labels: string[] } | null;
+  /** SM-3 (DF-P6): the action is a management OVERRIDE of the engineering
+   *  sign-off (lib/workflow.ts WorkflowAction.engineeringOverride) — its
+   *  history line says so, and it never stamps engineer_approved_at. */
+  engineeringOverride?: boolean;
+  /** GAP-101 / TIER-4 (DF-P6): the work class / code class triage records
+   *  with `assign`, `request_eng_review` or `flag_engineering` at
+   *  PENDING_ASSIGNMENT — options of the workspace's own lists, checked by
+   *  the route. An option marked `engineering` raises the requirement. */
+  reviewClass?: {
+    workClass?: { value: string; label: string; engineering?: boolean } | null;
+    codeClass?: { value: string; label: string; engineering?: boolean } | null;
+  } | null;
+  /** GAP-111 / DEC-33 (DF-P6): the ticket carries 20261250's columns, so the
+   *  transition may write engineering_required (only ever true). False /
+   *  absent before the paste: nothing is written for it. */
+  reviewModelColumns?: boolean;
+  /** HAND-7 done-when 3 (DF-P6): an issuing approval over a moved source —
+   *  the moved documents as a person reads them, and whether the approver
+   *  acknowledged it (null: the page did not ask — recorded as such). */
+  sourceDrift?: { labels: string[]; acknowledged: boolean | null } | null;
   actor: TransitionActor;
   now?: string;
 }
@@ -125,6 +145,15 @@ export function rowToTicket(row: Record<string, unknown>): Ticket {
     // GAP-105 / DCW-1 (DF-P4): the library the request targets (null before
     // 20261208 is pasted, or when none is known yet).
     libraryId: typeof row.library_id === "string" ? row.library_id : null,
+    // GAP-110 / GAP-111 / GAP-101 (DF-P6, 20261250): undefined while the
+    // columns are not in the database (the engine's seed then decides).
+    engineeringRequired: typeof row.engineering_required === "boolean" ? row.engineering_required : undefined,
+    likeInKindStatement: typeof row.like_in_kind_statement === "string" ? row.like_in_kind_statement : null,
+    likeInKindDeclaredBy: typeof row.like_in_kind_declared_by === "string" ? row.like_in_kind_declared_by : null,
+    likeInKindDeclaredAt: typeof row.like_in_kind_declared_at === "string" ? row.like_in_kind_declared_at : null,
+    likeInKindSignatureId: typeof row.like_in_kind_signature_id === "string" ? row.like_in_kind_signature_id : null,
+    workClass: typeof row.work_class === "string" ? row.work_class : null,
+    codeClass: typeof row.code_class === "string" ? row.code_class : null,
     searchKeywords: Array.isArray(row.search_keywords) ? (row.search_keywords as string[]) : undefined,
     closedAt: row.closed_at as string | null | undefined,
     archivedAt: row.archived_at as string | null | undefined,
@@ -466,7 +495,18 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
         updates.engineer_review_requested_at = now;
         updates.engineer_review_reason = finalComment || null;
         updates.unread_by = [input.engineer.id];
+        // GAP-111 / DEC-33 (DF-P6): flagging for engineering BINDS the issue
+        // point — the requirement is set, for good (approve_team below
+        // leaves it; the database refuses the way back).
+        if (input.reviewModelColumns) updates.engineering_required = true;
       }
+      break;
+    case "flag_engineering":
+      // GAP-111 (DF-P6): the assigner's late flag — no status change, no
+      // restart; the deliverable now issues only with an engineer's
+      // sign-off. Its reason is the history line's details (the comment).
+      if (input.reviewModelColumns) updates.engineering_required = true;
+      historyEntry.action = "Engineering sign-off required — flagged";
       break;
     case "approve_team":
       updates.status = "PENDING_ASSIGNMENT";
@@ -599,7 +639,9 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       currentAttachments = stampIssuedFinals(currentAttachments, updates.deliverable_rev as string, ticket.revisionCount ?? 0); // PHYS-2
       // WF-21 / DEC-15: at the engineer sign-off stage this IS the engineer's
       // approval — stamp it, or the sign-off indicator stays "pending" forever.
-      if (ticket.status === "PENDING_FINAL_APPROVAL") updates.engineer_approved_at = now;
+      // SM-3 (DF-P6): never for a management override — an engineering
+      // sign-off nobody with an Engineer role gave is not stamped.
+      if (ticket.status === "PENDING_FINAL_APPROVAL" && !input.engineeringOverride) updates.engineer_approved_at = now;
       if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
       break;
     case "request_final_engineer_approval":
@@ -624,6 +666,20 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       asIsIssue(); // FRIC-5: only when the drafter marked it
       if (updates.status === "FINAL_DRAFT" && ticket.requesterId && ticket.requesterId !== actorUid) {
         // The issued package now waits on the requester's acknowledgement.
+        updates.unread_by = Array.from(new Set([...(updates.unread_by as string[]), ticket.requesterId]));
+      }
+      break;
+    case "override_engineer_final":
+      // SM-3 (DF-P6, DEC-90 ruling (3)): management issues without the
+      // engineer's sign-off — engineer_approve_final's effect WITHOUT
+      // engineer_approved_at; the history line names it an override.
+      updates.status = "PENDING_IFC";
+      issueRev(); // SM-5: never a label the history already issued
+      historyEntry.action = `${input.actionLabel} — issued Rev ${updates.deliverable_rev}`;
+      currentAttachments = stampIssuedFinals(currentAttachments, updates.deliverable_rev as string, ticket.revisionCount ?? 0); // PHYS-2
+      if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
+      asIsIssue(); // FRIC-5: only when the drafter marked it
+      if (updates.status === "FINAL_DRAFT" && ticket.requesterId && ticket.requesterId !== actorUid) {
         updates.unread_by = Array.from(new Set([...(updates.unread_by as string[]), ticket.requesterId]));
       }
       break;
@@ -682,6 +738,22 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       break;
   }
 
+  // SM-3 (DF-P6): an override of the engineering sign-off says so on its own
+  // history line — the line every reader of the ticket sees.
+  if (input.engineeringOverride && updates.status !== undefined && updates.status !== ticket.status) {
+    const note = "Management override — issued without the engineer's sign-off";
+    historyEntry.details = historyEntry.details ? `${historyEntry.details} [${note}]` : note;
+  }
+  // HAND-7 done-when 3 (DF-P6): an approval over a moved source names what
+  // moved and whether the approver acknowledged it.
+  if (input.sourceDrift && input.sourceDrift.labels.length > 0) {
+    const what = input.sourceDrift.labels.join("; ");
+    const note = input.sourceDrift.acknowledged === true
+      ? `Approved over a moved source, acknowledged by the approver: ${what}`
+      : `Approved over a moved source, not acknowledged (the page did not ask): ${what}`;
+    historyEntry.details = historyEntry.details ? `${historyEntry.details} [${note}]` : note;
+  }
+
   // GAP-103 (DF-P5): a draft entering PENDING_REVIEW in a routed library
   // carries the roster the route opened (one parallel wait); everyone the
   // roster names — the occupants of every slot, notify-only slots included —
@@ -723,6 +795,34 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
   // with a history line of their own naming what changed. Setting the unit
   // retires the intake's "unknown / not on the list / not checked" marks
   // (DEC-101 item 1: "triage assigns").
+  // GAP-101 / TIER-4 (DF-P6): triage records the work class and the code
+  // class — at the assignment queue, with the assignment, the engineering
+  // review flag or the binding flag, on the same compare-and-set write. A
+  // class the workspace marked `engineering` raises the requirement (never
+  // lowers it). Each change is named on a history line of its own.
+  if (input.reviewClass && input.reviewModelColumns && ticket.status === "PENDING_ASSIGNMENT"
+      && (input.actionType === "assign" || input.actionType === "request_eng_review" || input.actionType === "flag_engineering")
+      && (input.actionType === "flag_engineering" || updates.status !== undefined)) {
+    const parts: string[] = [];
+    const wc = input.reviewClass.workClass;
+    const cc = input.reviewClass.codeClass;
+    if (wc && wc.value !== (ticket.workClass ?? null)) { updates.work_class = wc.value; parts.push(`Work class: ${wc.label}`); }
+    if (cc && cc.value !== (ticket.codeClass ?? null)) { updates.code_class = cc.value; parts.push(`Code class: ${cc.label}`); }
+    if ((wc?.engineering || cc?.engineering) && ticket.engineeringRequired !== true) {
+      updates.engineering_required = true;
+      parts.push(`Engineering sign-off required by the ${wc?.engineering ? "work" : "code"} class`);
+    }
+    if (parts.length > 0) {
+      (updates.history as TicketHistoryEntry[]).push({
+        action: "Review class set",
+        user: input.actor.email || "Unknown",
+        role: input.actor.role,
+        date: now,
+        details: parts.join(" · "),
+      } as TicketHistoryEntry);
+    }
+  }
+
   if (input.triage && ticket.status === "PENDING_ASSIGNMENT" && updates.status !== undefined
       && (input.actionType === "assign" || input.actionType === "request_eng_review")) {
     const parts: string[] = [];
@@ -837,6 +937,7 @@ export function classifyTransitionNotification(params: {
   const isApproved =
     actionType === "approve_draft_ifc" ||
     actionType === "engineer_approve_final" ||
+    actionType === "override_engineer_final" ||
     actionType === "approve_minor_correction" ||
     rosterApproval;
   const isRevision =

@@ -207,7 +207,9 @@ describe("DEC-13 stage 3 — ticket.engineer_gate_exempt", () => {
     expect(policyAllows(scoped, "ticket.engineer_gate_exempt", "Manager", ["Manager"], "req-1", { requestType: "ASBUILT" })).toBe(false);
   });
   it("getActions passes the policy, the requester and the resource to the gate (pinned by source)", () => {
-    expect(src("lib/workflow.ts")).toContain("const needsEngineerApproval = engineerApprovalRequired(ticket.requesterRole, ctx?.requesterRoles, policy, ticket.requesterId, resource);");
+    // DF-P6 re-pin: the gate is engineeringGateRequired — the column where it speaks, and THIS call (snapshot, current collection, policy, requester, resource) as the seed where it does not.
+    expect(src("lib/workflow.ts")).toContain("const needsEngineerApproval = engineeringGateRequired(ticket, ctx?.requesterRoles, policy);");
+    expect(src("lib/workflow.ts")).toContain("return ticketEngineeringRequired(ticket, () => engineerApprovalRequired(ticket.requesterRole, currentRoles, policy, ticket.requesterId, ticketResource(ticket)));");
   });
 });
 
