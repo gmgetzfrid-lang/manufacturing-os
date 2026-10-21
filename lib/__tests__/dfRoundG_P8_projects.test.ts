@@ -48,13 +48,14 @@ vi.mock("@/lib/capabilityPolicy", async (orig) => ({
 
 import { POST as projectLink } from "@/app/api/tickets/project-link/route";
 import { projectRefOf } from "@/lib/ticketPage";
-import { deliverableReference, isMissingProjectColumn, projectLinkAllowed, projectLinkHistoryEntry, referenceDeliverableInProject } from "@/lib/ticketProject";
+import { deliverableReference, isMissingProjectColumn, projectLinkAllowed, projectLinkHistoryEntry, projectsTouched, referenceDeliverableInProject } from "@/lib/ticketProject";
 import { deliverableStateOf, noteDeliverableNotInAnyRegister } from "@/lib/ticketHandback";
 import { closeoutGateLines } from "@/lib/projects";
 import { computeTransition, rowToTicket } from "@/lib/ticketTransitions";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { runTicketAuditDrain, mirrorRowFor, historyNamesAttempt } from "@/lib/ticketAuditDrain";
 import type { ProjectStateSnapshot } from "@/lib/projectHealth";
+import { noProjectMatrix, noProjectRow, MATRIX_NOW, MATRIX_STATUSES } from "./helpers/noProjectTransitionMatrix";
 
 type Row = Record<string, unknown>;
 const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
@@ -83,7 +84,7 @@ const seed = (ticket: Row = {}) => {
     { org_id: ORG, uid: "u-other", role: "Viewer", roles: [], email: "other@plant.io", status: "active" },
   ];
   h.admin.tables.projects = [{ id: P1, org_id: ORG, name: "Turnaround" }, { id: P2, org_id: ORG, name: "Old job" }];
-  h.caller.tables.projects = [{ id: P1, org_id: ORG, name: "Turnaround", status: "active" }, { id: P2, org_id: ORG, name: "Old job", status: "active" }];
+  h.caller.tables.projects = [{ id: P1, org_id: ORG, name: "Turnaround", status: "active", linked_ticket_id: null }, { id: P2, org_id: ORG, name: "Old job", status: "active", linked_ticket_id: null }];
 };
 const ticket = () => h.admin.tables.tickets[0];
 const audits = () => (h.admin.tables.audit_logs ?? []) as Row[];
@@ -161,6 +162,7 @@ describe("/api/tickets/project-link — GAP-114 / PROJ-13 / LEAK-4 / EVID-1 / PE
     expect(activity()).toEqual([expect.objectContaining({ project_id: P1, type: "request_linked", user_id: "u-req" })]);
   });
   it("PROJ-13: converted — the history line is 'Converted to Project' (written by the server, never the browser)", async () => {
+    (h.caller.tables.projects as Row[])[0].linked_ticket_id = T; // the project the browser just created names this request
     const res = await projectLink(req({ ticketId: T, projectId: P1, converted: true }));
     expect(res.status).toBe(200);
     expect((ticket().history as Row[]).at(-1)).toMatchObject({ action: "Converted to Project" });
@@ -182,6 +184,60 @@ describe("/api/tickets/project-link — GAP-114 / PROJ-13 / LEAK-4 / EVID-1 / PE
     h.caller.rpc = { can_manage_project: (a) => ({ data: a.p_project === P1, error: null }) };
     expect((await projectLink(req({ ticketId: T, projectId: P1 }))).status).toBe(200);
     expect(audits()[0].details).toMatchObject({ authority: "project_manager" });
+  });
+  it("fix pass (major 1a): a MOVE between projects needs a manager of BOTH — the target's manager alone cannot take a request off a project another team manages; nothing written", async () => {
+    seed({ project_id: P2 });
+    (h.admin.tables.projects as Row[])[1].linked_ticket_id = T;
+    h.user = { id: "u-other", email: "other@plant.io" };
+    const asked: string[] = [];
+    h.caller.rpc = { can_manage_project: (a) => { asked.push(String(a.p_project)); return { data: a.p_project === P1, error: null }; } };
+    const no = await projectLink(req({ ticketId: T, projectId: P1 }));
+    expect(no.status).toBe(403);
+    expect((await no.json()).error).toMatch(/manages both projects/);
+    expect(asked).toContain(P2); // the CURRENT project's managers were asked, not only the target's
+    expect(h.admin.writes).toEqual([]);
+    expect(ticket().project_id).toBe(P2);
+    expect((h.admin.tables.projects as Row[])[1].linked_ticket_id).toBe(T); // the old project's origin chip untouched
+    // a manager of both projects may move it
+    h.caller.rpc = { can_manage_project: () => ({ data: true, error: null }) };
+    const yes = await projectLink(req({ ticketId: T, projectId: P1 }));
+    expect(yes.status).toBe(200);
+    expect(audits()[0].details).toMatchObject({ authority: "project_manager", previousProjectId: P2, projectId: P1 });
+    // an unlink asks about the current project only; a link from none about the target only
+    expect(projectsTouched(P2, null)).toEqual([P2]);
+    expect(projectsTouched(null, P1)).toEqual([P1]);
+    expect(projectsTouched(P2, P1)).toEqual([P2, P1]);
+  });
+  it("fix pass (major 1b): 'Create project from this request' (converted) is the requester's or management's only, and only for a project that names this request as its origin — a forged converted:true writes nothing", async () => {
+    // a project manager who is neither requester nor ticket.manage
+    h.user = { id: "u-other", email: "other@plant.io" };
+    h.caller.rpc = { can_manage_project: () => ({ data: true, error: null }) };
+    (h.caller.tables.projects as Row[])[0].linked_ticket_id = T;
+    const forged = await projectLink(req({ ticketId: T, projectId: P1, converted: true }));
+    expect(forged.status).toBe(403);
+    expect(h.admin.writes).toEqual([]);
+    // the requester, but the project was not created from this request
+    seed();
+    const notOrigin = await projectLink(req({ ticketId: T, projectId: P1, converted: true }));
+    expect(notOrigin.status).toBe(400);
+    expect(h.admin.writes).toEqual([]);
+    expect(ticket().project_id).toBeNull();
+    // management, on the project that names it
+    seed();
+    h.user = { id: "u-mgr", email: "mgr@plant.io" };
+    (h.caller.tables.projects as Row[])[0].linked_ticket_id = T;
+    const ok = await projectLink(req({ ticketId: T, projectId: P1, converted: true }));
+    expect(ok.status).toBe(200);
+    expect((ticket().history as Row[]).at(-1)).toMatchObject({ action: "Converted to Project" });
+    expect(projectLinkAllowed({ isRequester: false, managesTickets: false, managesProject: true, converted: true })).toBe(false);
+    expect(projectLinkAllowed({ isRequester: true, managesTickets: false, managesProject: false, converted: true })).toBe(true);
+  });
+  it("fix pass (minor 7): the link's history line names its audit row (`attempt`) and the row says so (`historyAttempt`) — the SM-7 drain reconciles a link exactly as a transition", async () => {
+    expect((await projectLink(req({ ticketId: T, projectId: P1 }))).status).toBe(200);
+    const row = audits()[0];
+    expect(row.details).toMatchObject({ historyAttempt: true, recordedBeforeApply: true });
+    expect((ticket().history as Row[]).at(-1)).toMatchObject({ action: "Linked to project", attempt: row.id });
+    expect(historyNamesAttempt(ticket().history, String(row.id))).toBe(true);
   });
   it("an unreadable capability policy refuses a non-requester (503 — DEC-89 item 3, fail closed), nothing written", async () => {
     h.user = { id: "u-mgr", email: "mgr@plant.io" };
@@ -263,7 +319,10 @@ describe("pure helpers", () => {
   });
   it("isMissingProjectColumn / projectLinkAllowed / the history line", () => {
     expect(isMissingProjectColumn({ code: "42703", message: 'column "project_id" does not exist' })).toBe(true);
-    expect(isMissingProjectColumn({ code: "PGRST204", message: "" })).toBe(true);
+    // fix pass (minor 5): an answer naming no column is never read as project_id's
+    expect(isMissingProjectColumn({ code: "PGRST204", message: "" })).toBe(false);
+    expect(isMissingProjectColumn({ code: "42703", message: null })).toBe(false);
+    expect(isMissingProjectColumn({ code: "PGRST204", message: "Could not find the 'project_id' column of 'tickets' in the schema cache" })).toBe(true);
     expect(isMissingProjectColumn({ code: "42703", message: 'column "library_id" does not exist' })).toBe(false);
     expect(isMissingProjectColumn({ code: "23514", message: "project_id" })).toBe(false);
     expect(projectLinkAllowed({ isRequester: false, managesTickets: false, managesProject: false })).toBe(false);
@@ -293,6 +352,13 @@ describe("pure helpers", () => {
     expect(closeoutGateLines({ ...base, openDraftingRequests: 0 }).find((g) => g.key === "draftingRequests")?.ok).toBe(true);
     expect(closeoutGateLines({ ...base, openDraftingRequests: null }).find((g) => g.key === "draftingRequests")?.ok).toBeNull();
   });
+  it("PROJ-6 fix pass (minor 3): a count of only the requests the completer can read is never 'clear' — none visible is unknown (ok null), some visible is 'at least' — so the recorded gates never claim nothing was open", () => {
+    const base = { punchOpen: 0, turnoverRequired: 0, turnoverAccepted: 0, checklistOpenItems: 0, checklistNeedsEvidence: 0, openChangeOrders: 0 } as unknown as ProjectStateSnapshot;
+    expect(closeoutGateLines({ ...base, openDraftingRequests: 0, openDraftingRequestsVisibleOnly: true }).find((g) => g.key === "draftingRequests"))
+      .toEqual({ key: "draftingRequests", ok: null, text: "Drafting requests — only those visible to you counted (none of them open)", openCount: null });
+    expect(closeoutGateLines({ ...base, openDraftingRequests: 2, openDraftingRequestsVisibleOnly: true }).find((g) => g.key === "draftingRequests"))
+      .toEqual({ key: "draftingRequests", ok: false, text: "At least 2 drafting requests still open — only those visible to you counted", openCount: null });
+  });
   it("SM-4: a reopen clears the archive's claim (archive_id) in the same update; REGRESSION: no claim → the updates carry no archive_id; a terminal transition never clears one", () => {
     const actor = { uid: "u-req", email: "req@plant.io", role: "Viewer" };
     const row = { id: T, org_id: ORG, ticket_id: "KE", title: "t", request_type: "Revision", status: "CLOSED", requester_id: "u-req", history: [], attachments: [], comments: [], archive_id: "arch-1", archived_at: null, last_modified: LM, revision_count: 1 };
@@ -301,6 +367,24 @@ describe("pure helpers", () => {
     expect("archive_id" in computeTransition(rowToTicket({ ...row, archive_id: null }), input).updates).toBe(false);
     const cancel = { actionType: "cancel_request", actionLabel: "Cancel Request", actor, comment: "dup", outcome: "duplicate" } as unknown as Parameters<typeof computeTransition>[1];
     expect("archive_id" in computeTransition(rowToTicket({ ...row, status: "DRAFTING", archive_id: null }), cancel).updates).toBe(false);
+  });
+  it("DEC-90 ruling (1) pin (fix pass, minor 4): a request with NO project behaves exactly as at db3a1f3 — every status × role × identity × offered action, computeTransition's { newStatus, updates } digest equals the base commit's; no update ever writes project_id or archive_id", () => {
+    const base = JSON.parse(src("lib/__tests__/fixtures/dfP8NoProjectBaseline.json")) as { base: string; count: number; keys: string[]; digests: Record<string, string> };
+    expect(base.base).toBe("db3a1f3");
+    const now = noProjectMatrix();
+    expect(Object.keys(now.digests).length).toBe(base.count);
+    expect(base.count).toBeGreaterThan(1000); // every status is walked, not a sample
+    expect(new Set(Object.keys(now.digests).map((k) => k.split("|")[0]))).toEqual(new Set(MATRIX_STATUSES.filter((st) => st !== "CANCELED")));
+    const drift = Object.keys({ ...base.digests, ...now.digests }).filter((k) => base.digests[k] !== now.digests[k]);
+    expect(drift).toEqual([]);
+    expect(now.keys).toEqual(base.keys);
+    expect(now.keys).not.toContain("project_id");
+    expect(now.keys).not.toContain("archive_id");
+    // not vacuous: a row the archive DOES claim is written differently on its reopen (SM-4)
+    const claimed = computeTransition(rowToTicket({ ...noProjectRow("CLOSED"), archive_id: "arch-1" }), {
+      actionType: "reopen_ticket", actionLabel: "Reopen Ticket", comment: "again", actor: { uid: "req", email: "req@x.io", role: "Viewer" }, now: MATRIX_NOW,
+    } as unknown as Parameters<typeof computeTransition>[1]);
+    expect(claimed.updates.archive_id).toBeNull();
   });
   it("rowToTicket maps project_id only when the column is in the row (undefined before the paste)", () => {
     const base = { id: T, org_id: ORG, status: "DRAFTING" };
@@ -369,6 +453,122 @@ describe("SM-7 / EVID-12 (DEC-90 ruling (6)): the drain for what the workflow ro
     const r = await runTicketAuditDrain({ client, deadlineAt: Date.now() + 10_000, now: NOW });
     expect(s.writes).toEqual([]);
     expect(r.errors.join(" ")).toMatch(/could not be read/);
+  });
+  // A PostgREST stand-in that honours what the drain's paging relies on:
+  // gte / lte / gt / eq (a JSON path as a column) / like / in / is, the
+  // keyset or() the drain writes, order (several keys) and limit — and a
+  // row cap of its own, as PostgREST's max-rows is.
+  const pagingDb = (tables: Record<string, Row[]>, cap = 1000) => {
+    const reads: Array<{ table: string; n: number }> = [];
+    const likeRe = (pat: string) => new RegExp(`^${pat.replace(/\\_/g, "\u0000").replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*").replace(/_/g, ".").replace(/\u0000/g, "_")}$`);
+    const val = (r: Row, k: string) => {
+      const m = /^(\w+)->>(\w+)$/.exec(k);
+      if (m) { const v = (r[m[1]] as Row | null)?.[m[2]]; return v === undefined || v === null ? null : String(v); }
+      return r[k];
+    };
+    const client = {
+      from: (table: string) => {
+        const preds: Array<(r: Row) => boolean> = [];
+        const orders: Array<[string, boolean]> = [];
+        let limit = Infinity;
+        let insert: Row | null = null;
+        const q: Record<string, unknown> = {
+          select: () => q,
+          insert: (row: Row) => { insert = row; return q; },
+          eq: (k: string, v: unknown) => { preds.push((r) => val(r, k) === v); return q; },
+          is: (k: string, v: unknown) => { preds.push((r) => (v === null ? r[k] == null : r[k] === v)); return q; },
+          in: (k: string, vs: unknown[]) => { preds.push((r) => vs.includes(r[k])); return q; },
+          gte: (k: string, v: string) => { preds.push((r) => String(r[k]) >= v); return q; },
+          lte: (k: string, v: string) => { preds.push((r) => String(r[k]) <= v); return q; },
+          gt: (k: string, v: string) => { preds.push((r) => String(r[k]) > v); return q; },
+          like: (k: string, pat: string) => { const re = likeRe(pat); preds.push((r) => re.test(String(r[k]))); return q; },
+          or: (f: string) => {
+            const m = /^(\w+)\.gt\."([^"]*)",and\(\1\.eq\."([^"]*)",id\.gt\."([^"]*)"\)$/.exec(f);
+            if (!m) throw new Error(`unexpected or(): ${f}`);
+            const [, col, at, at2, id] = m;
+            preds.push((r) => String(r[col]) > at || (String(r[col]) === at2 && String(r.id) > id));
+            return q;
+          },
+          order: (k: string, o?: { ascending?: boolean }) => { orders.push([k, o?.ascending !== false]); return q; },
+          limit: (n: number) => { limit = n; return q; },
+          then: (resolve: (v: unknown) => void) => {
+            if (insert) { (tables[table] ??= []).push(insert); return resolve({ data: null, error: null }); }
+            let rows = (tables[table] ?? []).filter((r) => preds.every((p) => p(r)));
+            rows = [...rows].sort((a, b) => {
+              for (const [k, asc] of orders) { const x = String(a[k]); const y = String(b[k]); if (x !== y) return (x < y ? -1 : 1) * (asc ? 1 : -1); }
+              return 0;
+            }).slice(0, Math.min(limit, cap));
+            reads.push({ table, n: rows.length });
+            return resolve({ data: rows.map((r) => ({ ...r })), error: null });
+          },
+        };
+        return q;
+      },
+    };
+    return { client: client as unknown as Parameters<typeof runTicketAuditDrain>[0]["client"], reads };
+  };
+  const iso = (msAgo: number) => new Date(NOW - msAgo).toISOString();
+  const HOUR = 3_600_000;
+  const pad = (n: number) => String(n).padStart(6, "0");
+  it("fix pass (major 2): leg (b) keyset-pages the WHOLE window, oldest first — a lost attempt 6 days old behind 700 newer landed ones is reached and gets its _NOT_APPLIED; nothing is decided twice", async () => {
+    const tickets: Row[] = [];
+    const audit: Row[] = [];
+    for (let i = 0; i < 700; i++) {
+      const id = `a-${pad(i)}`;
+      tickets.push({ id: `t-${pad(i)}`, history: [{ action: "Approve", attempt: id }], archived_at: null, comments: [], last_modified: iso(8 * 24 * HOUR) });
+      audit.push({ id, action: "TICKET_APPROVE_DRAFT_IFC", resource_type: "ticket", resource_id: `t-${pad(i)}`, org_id: ORG, timestamp: iso(HOUR + i * 1000), details: { historyAttempt: true, from: "PENDING_REVIEW", to: "PENDING_IFC" } });
+    }
+    tickets.push({ id: "t-lost", history: [{ action: "Created" }], archived_at: null, comments: [], last_modified: iso(8 * 24 * HOUR) });
+    audit.push({ id: "a-lost", action: "TICKET_REOPEN_TICKET", resource_type: "ticket", resource_id: "t-lost", org_id: ORG, timestamp: iso(6 * 24 * HOUR), details: { historyAttempt: true } });
+    // outside the window / not yet settled: never read
+    audit.push({ id: "a-old", action: "TICKET_REOPEN_TICKET", resource_type: "ticket", resource_id: "t-lost", org_id: ORG, timestamp: iso(8 * 24 * HOUR), details: { historyAttempt: true } });
+    audit.push({ id: "a-new", action: "TICKET_REOPEN_TICKET", resource_type: "ticket", resource_id: "t-lost", org_id: ORG, timestamp: iso(60_000), details: { historyAttempt: true } });
+    const tables = { tickets, audit_logs: audit };
+    const { client } = pagingDb(tables);
+    const r = await runTicketAuditDrain({ client, deadlineAt: Date.now() + 10_000, now: NOW });
+    expect(r.attemptsRead).toBe(701);
+    expect(r.attemptsLanded).toBe(700);
+    expect(r.notAppliedWritten).toBe(1);
+    expect(r.truncated).toBe(false);
+    expect(r.errors).toEqual([]);
+    const written = audit.filter((a) => String(a.action).endsWith("_NOT_APPLIED"));
+    expect(written).toEqual([expect.objectContaining({ action: "TICKET_REOPEN_TICKET_NOT_APPLIED", resource_id: "t-lost", details: expect.objectContaining({ attempt: "a-lost", reason: "reconciled" }) })]);
+    // a second run: the follow-up now names it — never written twice
+    const again = await runTicketAuditDrain({ client: pagingDb(tables).client, deadlineAt: Date.now() + 10_000, now: NOW });
+    expect(again.notAppliedWritten).toBe(0);
+    expect(audit.filter((a) => String(a.action).endsWith("_NOT_APPLIED"))).toHaveLength(1);
+  });
+  it("fix pass (major 2): the follow-up read is keyset-paged — past the row cap, a follow-up that names an attempt is still seen (no duplicate _NOT_APPLIED)", async () => {
+    const audit: Row[] = [{ id: "a-1", action: "TICKET_REOPEN_TICKET", resource_type: "ticket", resource_id: "t-1", org_id: ORG, timestamp: iso(2 * HOUR), details: { historyAttempt: true } }];
+    for (let i = 0; i < 1500; i++) audit.push({ id: `f-${pad(i)}`, action: "TICKET_X_NOT_APPLIED", resource_type: "ticket", resource_id: "t-1", timestamp: iso(HOUR), details: { attempt: `other-${i}` } });
+    audit.push({ id: "f-zzzzzz", action: "TICKET_REOPEN_TICKET_NOT_APPLIED", resource_type: "ticket", resource_id: "t-1", timestamp: iso(HOUR), details: { attempt: "a-1" } });
+    const tables = { tickets: [{ id: "t-1", history: [], archived_at: null, comments: [], last_modified: iso(9 * 24 * HOUR) }], audit_logs: audit };
+    const r = await runTicketAuditDrain({ client: pagingDb(tables, 1000).client, deadlineAt: Date.now() + 10_000, now: NOW });
+    expect(r.notAppliedWritten).toBe(0);
+    expect(audit).toHaveLength(1502);
+    expect(r.errors).toEqual([]);
+  });
+  it("fix pass (major 2): leg (a) keyset-pages every ticket modified in the window — a lost mirror on the 650th is reconciled", async () => {
+    const tickets: Row[] = [];
+    for (let i = 0; i < 650; i++) tickets.push({ id: `t-${pad(i)}`, org_id: ORG, archived_at: null, last_modified: iso(2 * HOUR + i * 1000), comments: [{ id: `c-${pad(i)}`, user: "a@b", text: "x", date: iso(3 * HOUR) }] });
+    const tables: Record<string, Row[]> = { tickets, ticket_comments: tickets.slice(1).map((t) => ({ id: `c-${String(t.id).slice(2)}` })), audit_logs: [] };
+    const r = await runTicketAuditDrain({ client: pagingDb(tables).client, deadlineAt: Date.now() + 10_000, now: NOW });
+    expect(r.ticketsRead).toBe(650);
+    expect(r.mirrorsReconciled).toBe(1);
+    expect(tables.ticket_comments.map((c) => c.id)).toContain("c-000000");
+    expect(r.errors).toEqual([]);
+  });
+  it("fix pass (major 2): a run whose time runs out before the end of the window says so as an ERROR line (and truncated), and writes nothing it did not decide", async () => {
+    const tables = {
+      tickets: [{ id: "t-1", org_id: ORG, archived_at: null, last_modified: iso(HOUR), comments: [{ id: "c-1", text: "x", date: iso(HOUR) }], history: [] }],
+      audit_logs: [{ id: "a-1", action: "TICKET_REOPEN_TICKET", resource_type: "ticket", resource_id: "t-1", org_id: ORG, timestamp: iso(HOUR), details: { historyAttempt: true } }],
+    } as Record<string, Row[]>;
+    const r = await runTicketAuditDrain({ client: pagingDb(tables).client, deadlineAt: Date.now() - 1, now: NOW });
+    expect(r.truncated).toBe(true);
+    expect(r.errors).toHaveLength(2);
+    expect(r.errors.join(" ")).toMatch(/stopped before the end of the 7-day window of tickets[\s\S]*stopped before the end of the 7-day window of attempt rows/);
+    expect(tables.audit_logs).toHaveLength(1);
+    expect(tables.ticket_comments).toBeUndefined();
   });
   it("the cron runs it as one step (no new cron entry)", () => {
     const cron = src("app/api/cron/maintenance/route.ts");

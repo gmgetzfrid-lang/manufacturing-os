@@ -408,10 +408,16 @@ export function closeoutGateLines(s: ProjectStateSnapshot): CloseoutGateLine[] {
     // PROJ-6 (drafting-flow DF-P8): open drafting requests linked to the
     // project — a warning like every other line (warnings, not walls), and
     // recorded with the completion (SAF-14: the audit row's gates, the
-    // report). Absent before 20261256: the line is not shown.
+    // report). Absent before 20261256: the line is not shown. A count of
+    // only the requests the viewer can read is never "clear": none visible
+    // is unknown, some visible is "at least" (DF-P8 fix pass).
     ...(s.openDraftingRequests === undefined ? [] : [s.openDraftingRequests === null
       ? { key: "draftingRequests" as const, ok: null, text: "Drafting requests — could not be read", openCount: null }
-      : { key: "draftingRequests" as const, ok: s.openDraftingRequests === 0, text: s.openDraftingRequests === 0 ? "No open drafting requests" : `${plural(s.openDraftingRequests, "drafting request")} still open`, openCount: s.openDraftingRequests }]),
+      : s.openDraftingRequestsVisibleOnly
+        ? s.openDraftingRequests === 0
+          ? { key: "draftingRequests" as const, ok: null, text: "Drafting requests — only those visible to you counted (none of them open)", openCount: null }
+          : { key: "draftingRequests" as const, ok: false, text: `At least ${plural(s.openDraftingRequests, "drafting request")} still open — only those visible to you counted`, openCount: null }
+        : { key: "draftingRequests" as const, ok: s.openDraftingRequests === 0, text: s.openDraftingRequests === 0 ? "No open drafting requests" : `${plural(s.openDraftingRequests, "drafting request")} still open`, openCount: s.openDraftingRequests }]),
   ];
 }
 

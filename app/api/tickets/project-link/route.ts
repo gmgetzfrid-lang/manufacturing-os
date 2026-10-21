@@ -6,7 +6,7 @@ import { loadCapabilityPolicyStrict, policyAllows } from "@/lib/capabilityPolicy
 import { heldRoles } from "@/lib/roleHeld";
 import { deliverableStateOf } from "@/lib/ticketHandback";
 import {
-  isMissingProjectColumn, projectLinkAllowed, projectLinkHistoryEntry, recordProjectActivity,
+  isMissingProjectColumn, projectLinkAllowed, projectLinkHistoryEntry, projectsTouched, recordProjectActivity,
   referenceDeliverableInProject, PROJECT_LINK_CLOSED,
 } from "@/lib/ticketProject";
 
@@ -20,8 +20,13 @@ import {
 //      workspace and that they can read the ticket (AUTHZ-13's read scope);
 //   2. lets the request's requester, a member who manages requests
 //      (ticket.manage — read fail-closed, DEC-89 item 3), or someone who
-//      manages the project in question (can_manage_project, asked as the
-//      caller) make the change (DEC-90 ruling (3) for DF-P8);
+//      manages EVERY project the change touches (can_manage_project, asked
+//      as the caller: the target on a link, the current project on an
+//      unlink, BOTH on a move between projects) make the change (DEC-90
+//      ruling (3) for DF-P8). "Create project from this request"
+//      (`converted`) is the requester's or management's alone, and only for
+//      a project that names this request as its origin
+//      (projects.linked_ticket_id);
 //   3. reads the target project AS THE CALLER (project visibility applies —
 //      a project they cannot see is "not found"), in the ticket's workspace,
 //      not closed;
@@ -32,7 +37,10 @@ import {
 //      EVID-1 / PERS-2: written by the server — the old browser
 //      read-modify-write of `history` in convertTicketToProject is gone) and
 //      metadata.project_link (the choice, so the paste's backfill never
-//      re-links a request somebody unlinked);
+//      re-links a request somebody unlinked). The history line names its
+//      audit row (`attempt`) and the audit row says so (`historyAttempt`),
+//      so the SM-7 drain (lib/ticketAuditDrain.ts) writes the _NOT_APPLIED
+//      row this route could only log, exactly as for a workflow transition;
 //   5. writes the project feed row (request_linked / request_unlinked) and,
 //      when the request's deliverable is already published, the project's
 //      register REFERENCE to that controlled document (never a copy). Both
@@ -122,10 +130,10 @@ export async function POST(req: NextRequest) {
   // The project this change touches: the target (link) or the current one
   // (unlink). The target is read AS THE CALLER — one they cannot see is not
   // found, never revealed.
-  type ProjectRow = { id: string; org_id: string; name: string | null; status: string | null };
+  type ProjectRow = { id: string; org_id: string; name: string | null; status: string | null; linked_ticket_id?: string | null };
   let target: ProjectRow | null = null;
   if (projectId) {
-    const { data: p, error: pErr } = await callerClient.from("projects").select("id, org_id, name, status").eq("id", projectId).maybeSingle();
+    const { data: p, error: pErr } = await callerClient.from("projects").select("id, org_id, name, status, linked_ticket_id").eq("id", projectId).maybeSingle();
     if (pErr) return NextResponse.json({ error: "Couldn't read that project — try again in a moment." }, { status: 503 });
     if (!p) return NextResponse.json({ error: "Project not found" }, { status: 404 });
     const found = p as ProjectRow;
@@ -142,8 +150,9 @@ export async function POST(req: NextRequest) {
   }
 
   // Authority (DEC-90 ruling (3)): the requester, ticket.manage, or the
-  // manager of the project this change touches (the target; on an unlink,
-  // the current project).
+  // manager of EVERY project this change touches — the target on a link, the
+  // current project on an unlink, and BOTH on a move, so the manager of one
+  // project cannot take a request off a project another team manages.
   const isRequester = !!t.requester_id && t.requester_id === caller.id;
   let managesTickets = false;
   if (!isRequester) {
@@ -153,23 +162,43 @@ export async function POST(req: NextRequest) {
     managesTickets = policyAllows(loaded.policy, "ticket.manage", m.role, held, caller.id);
   }
   let managesProject = false;
-  const touched = projectId ?? t.project_id;
-  if (!isRequester && !managesTickets && touched) {
-    const { data: can, error: canErr } = await callerClient.rpc("can_manage_project", { p_project: touched });
-    managesProject = !canErr && can === true;
+  const touched = projectsTouched(t.project_id, projectId);
+  if (!isRequester && !managesTickets && !converted && touched.length > 0) {
+    managesProject = true;
+    for (const p of touched) {
+      const { data: can, error: canErr } = await callerClient.rpc("can_manage_project", { p_project: p });
+      if (canErr || can !== true) { managesProject = false; break; }
+    }
   }
-  if (!projectLinkAllowed({ isRequester, managesTickets, managesProject })) {
-    return NextResponse.json({ error: "Only the request's requester, someone who manages requests, or the project's managers can change which project it belongs to." }, { status: 403 });
+  if (!projectLinkAllowed({ isRequester, managesTickets, managesProject, converted })) {
+    return NextResponse.json({
+      error: converted
+        ? "Only the request's requester or someone who manages requests can create a project from it."
+        : touched.length > 1
+          ? "Only the request's requester, someone who manages requests, or someone who manages both projects can move it to another project."
+          : "Only the request's requester, someone who manages requests, or the project's managers can change which project it belongs to.",
+    }, { status: 403 });
+  }
+  // PROJ-13: "Create project from this request" records that the target was
+  // created from THIS request — the project must name it as its origin.
+  if (converted && (target?.linked_ticket_id ?? null) !== t.id) {
+    return NextResponse.json({ error: "That project was not created from this request — link it instead." }, { status: 400 });
   }
 
   const now = new Date().toISOString();
   const kind: "linked" | "unlinked" | "converted" = projectId ? (converted ? "converted" : "linked") : "unlinked";
-  const entry = projectLinkHistoryEntry({
-    kind, projectName: kind === "unlinked" ? previous?.name ?? null : target?.name ?? null,
-    email: m.email ?? caller.email ?? null, role: m.role ?? null, now,
-  });
+  const auditId = crypto.randomUUID();
+  // SM-7: the history line names its audit row, written in the same
+  // compare-and-set as the reference — the ticket itself proves it landed.
+  const entry = {
+    ...projectLinkHistoryEntry({
+      kind, projectName: kind === "unlinked" ? previous?.name ?? null : target?.name ?? null,
+      email: m.email ?? caller.email ?? null, role: m.role ?? null, now,
+    }),
+    attempt: auditId,
+  };
   const audit = {
-    id: crypto.randomUUID(),
+    id: auditId,
     action: projectId ? "TICKET_PROJECT_LINKED" : "TICKET_PROJECT_UNLINKED",
     resource_id: t.id, resource_type: "ticket", org_id: t.org_id,
     user_id: caller.id, user_email: m.email ?? caller.email ?? null, user_role: m.role ?? null,
@@ -177,6 +206,7 @@ export async function POST(req: NextRequest) {
       projectId, previousProjectId: t.project_id ?? null, converted,
       authority: isRequester ? "requester" : managesTickets ? "ticket.manage" : "project_manager",
       recordedBeforeApply: true,
+      historyAttempt: true,
     },
   };
   const auditErr = await insertAuditRowOnce(audit);

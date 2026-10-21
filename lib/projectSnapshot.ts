@@ -29,6 +29,7 @@ import {
 } from "@/lib/projectHealth";
 import type { Milestone, MilestoneSource, MilestoneStatus } from "@/types/schema";
 import { TERMINAL_TICKET_STATUSES } from "@/lib/ticketShed";
+import { isContractorOnly } from "@/lib/ticketReadScope";
 
 type Row = Record<string, unknown>;
 type QueryResult<T> = { data: T | null; error: { message: string; code?: string | null } | null };
@@ -281,18 +282,40 @@ export async function gatherProjectSnapshotUncached(
   // reference (tickets.project_id, 20261256) — counted, never listed, as the
   // viewer reads them. Before the paste the column is missing (42703 /
   // PGRST204): undefined, and the closeout dialog is exactly today's.
-  const openRequestsRead: Promise<number | null | undefined> = (async () => {
+  // DF-P8 fix pass: the count is only the WHOLE count when the viewer reads
+  // every request of the workspace. A viewer under AUTHZ-13's narrower scope
+  // (Contractor-only, 20261166) — or one whose scope could not be confirmed —
+  // counts only the requests they can see; that is said (`visibleOnly`), so
+  // the gate never records "No open drafting requests" it did not know.
+  const openRequestsRead: Promise<{ n: number | null; visibleOnly: boolean } | undefined> = (async () => {
     try {
       const r = await (sig(supabase.from("tickets").select("id", { count: "exact" })
         .eq("project_id", projectId).is("archived_at", null)
         .not("status", "in", `(${TERMINAL_TICKET_STATUSES.join(",")})`).limit(1)) as unknown as PromiseLike<{ count: number | null; error: { code?: string | null; message?: string } | null }>);
-      if (r.error) return r.error.code && MISSING_COLUMN.has(r.error.code) ? undefined : null;
-      return typeof r.count === "number" ? r.count : null;
+      if (r.error) return r.error.code && MISSING_COLUMN.has(r.error.code) ? undefined : { n: null, visibleOnly: false };
+      if (typeof r.count !== "number") return { n: null, visibleOnly: false };
+      return { n: r.count, visibleOnly: !(await viewerReadsEveryRequest()) };
     } catch (e) {
       if (signal?.aborted) throw e;
-      return null;
+      return { n: null, visibleOnly: false };
     }
   })();
+  /** Does the viewer read every request of this workspace (not AUTHZ-13's
+   *  Contractor-only scope)? A read that fails answers false — never a
+   *  whole count it could not confirm. */
+  async function viewerReadsEveryRequest(): Promise<boolean> {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const uid = session?.user?.id;
+      if (!uid) return false;
+      const m = await sig(supabase.from("org_members").select("role, roles").eq("org_id", orgId).eq("uid", uid)).maybeSingle();
+      if (m.error || !m.data) return false;
+      return !isContractorOnly(m.data as { role?: unknown; roles?: unknown });
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      return false;
+    }
+  }
   const [projRow, accounts, entries, costDocRows, parties, coRows, msRows, checklists, turnover, punch, links, members] =
     await Promise.all([
       // All four columns arrive with 20261013 — there is no pre-migration
@@ -506,6 +529,9 @@ export async function gatherProjectSnapshotUncached(
 
     readFailures,
     notMigrated,
-    ...(openDraftingRequests !== undefined ? { openDraftingRequests } : {}),
+    ...(openDraftingRequests !== undefined ? {
+      openDraftingRequests: openDraftingRequests.n,
+      ...(openDraftingRequests.n !== null && openDraftingRequests.visibleOnly ? { openDraftingRequestsVisibleOnly: true } : {}),
+    } : {}),
   };
 }

@@ -12,6 +12,10 @@
 //     it through the same route (lib/projects.ts convertTicketToProject).
 //   * Unlink — the reference is removed; the request and its documents are
 //     untouched.
+// When "Create project" made the project but the link did not land (a
+// conflict, a 503), the project is remembered and the Create button gives
+// way to "Link to <project>" — the same link, retried — so a second click
+// never makes a second project naming this request.
 // Nothing here copies a file. A request with no project and a viewer who may
 // not change it render nothing new.
 
@@ -38,6 +42,8 @@ export default function TicketProjectActions({ ticketId, orgId, linkedProjectId,
   const [picked, setPicked] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: "ok" | "warn" | "error"; text: string; href?: string } | null>(null);
+  /** A project "Create project" made whose link has not landed yet. */
+  const [created, setCreated] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
     if (!choosing || projects) return;
@@ -86,10 +92,25 @@ export default function TicketProjectActions({ ticketId, orgId, linkedProjectId,
       const { convertTicketToProject } = await import("@/lib/projects");
       const r = await convertTicketToProject({ ticketId, orgId, actorUserId, actorEmail: actorEmail ?? undefined, actorRole: actorRole ?? undefined });
       const href = r.project.id ? `/projects/${r.project.id}` : undefined;
-      if (!r.linked) setMsg({ tone: "warn", text: `The project was created, but this request could not be linked to it: ${r.linkError ?? "unknown error"} — link it from here (do not create it again).`, href });
-      else setMsg(r.linkWarning ? { tone: "warn", text: r.linkWarning, href } : { tone: "ok", text: "Project created and linked.", href });
+      if (!r.linked) {
+        if (r.project.id) setCreated({ id: r.project.id, name: (r.project.name ?? "").trim() || "the new project" });
+        setMsg({ tone: "warn", text: `The project was created, but this request could not be linked to it: ${r.linkError ?? "unknown error"} — use "Link to ${(r.project.name ?? "").trim() || "the new project"}" to retry (do not create it again).`, href });
+      } else setMsg(r.linkWarning ? { tone: "warn", text: r.linkWarning, href } : { tone: "ok", text: "Project created and linked.", href });
     } catch (e) {
       setMsg({ tone: "error", text: (e as Error)?.message || "The project could not be created." });
+    } finally { setBusy(false); }
+  };
+
+  /** Retry the link to the project "Create project" already made. */
+  const linkCreated = async () => {
+    if (!created) return;
+    setBusy(true); setMsg(null);
+    try {
+      const res = await postProjectLink({ ticketId, projectId: created.id, converted: true });
+      const href = `/projects/${created.id}`;
+      if (!res.ok) { setMsg({ tone: "error", text: `${res.error} — the project exists; retry the link (do not create it again).`, href }); return; }
+      setCreated(null);
+      setMsg(res.warning ? { tone: "warn", text: res.warning, href } : { tone: "ok", text: "Project created and linked.", href });
     } finally { setBusy(false); }
   };
 
@@ -99,6 +120,11 @@ export default function TicketProjectActions({ ticketId, orgId, linkedProjectId,
         <button type="button" onClick={() => void unlink()} disabled={busy}
           className="text-[10px] font-bold text-[var(--color-text-muted)] hover:text-rose-600 border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-60">
           Unlink from project
+        </button>
+      ) : created ? (
+        <button type="button" onClick={() => void linkCreated()} disabled={busy}
+          className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 border border-blue-200 bg-blue-50 rounded-md px-2 py-1 disabled:opacity-60">
+          <FolderKanban className="w-3 h-3" /> Link to {created.name}
         </button>
       ) : choosing ? (
         <>

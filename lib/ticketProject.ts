@@ -20,14 +20,16 @@ export type DbClient = { from: (table: string) => any };
 export const PROJECT_LINK_CLOSED: ReadonlySet<string> = new Set(["completed", "cancelled", "archived"]);
 
 /** tickets.project_id is not in the database yet (20261256 not pasted):
- *  42703 (Postgres) / PGRST204 (PostgREST's schema cache), naming the
- *  column — or naming nothing, as a body-less answer does. */
+ *  42703 (Postgres) / PGRST204 (PostgREST's schema cache) NAMING the column,
+ *  as missingLibraryColumn / isMissingReviewModelColumn do. An answer that
+ *  names no column is never read as this one: another missing column (the
+ *  library, a declaration column) must not drop a project already confirmed
+ *  or blame 20261256 (DF-P8 fix pass). */
 export function isMissingProjectColumn(err: Err): boolean {
   if (!err) return false;
   const code = String(err.code ?? "");
   if (code !== "42703" && code !== "PGRST204") return false;
-  const msg = String(err.message ?? "");
-  return msg === "" || /project_id/.test(msg);
+  return /project_id/.test(String(err.message ?? ""));
 }
 
 /** The sentence a request filed with a project says before the paste. */
@@ -36,9 +38,18 @@ export const PROJECT_NOT_RECORDED_WARNING =
 
 /** Who may link or unlink a request (DEC-90 ruling (3) for DF-P8; GAP-114's
  *  default): its requester, a member who manages requests (ticket.manage),
- *  or someone who manages the project in question. Pure. */
-export function projectLinkAllowed(p: { isRequester: boolean; managesTickets: boolean; managesProject: boolean }): boolean {
+ *  or someone who manages EVERY project the change touches (`managesProject`
+ *  — see projectsTouched: both projects on a move). "Create project from
+ *  this request" (`converted`) is management or the requester only. Pure. */
+export function projectLinkAllowed(p: { isRequester: boolean; managesTickets: boolean; managesProject: boolean; converted?: boolean }): boolean {
+  if (p.converted) return p.isRequester || p.managesTickets;
   return p.isRequester || p.managesTickets || p.managesProject;
+}
+
+/** The projects a link change touches: the current one (left) and the
+ *  target (joined) — both on a move, one on a link or an unlink. Pure. */
+export function projectsTouched(current: string | null | undefined, target: string | null | undefined): string[] {
+  return [...new Set([current, target].filter((x): x is string => typeof x === "string" && x.length > 0))];
 }
 
 /** The ticket history line the link route writes (LEAK-4 / EVID-1 / PERS-2:

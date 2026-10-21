@@ -90,6 +90,10 @@ export interface ProjectStateSnapshot {
    *  failed (unknown, never clear); absent = the column is not in the
    *  database yet (the gate line is not shown — today's dialog). */
   openDraftingRequests?: number | null;
+  /** PROJ-6 (DF-P8 fix pass): true when openDraftingRequests counts only the
+   *  requests the viewer can read (AUTHZ-13's narrower scope, or a scope that
+   *  could not be confirmed) — never presented as the whole count. */
+  openDraftingRequestsVisibleOnly?: boolean;
   /** What the database has not been migrated for (20261013): a SNAPSHOT_READS
    *  label for a table that does not exist yet, PROJECT_FIELDS_NOT_MIGRATED
    *  for the projects columns, or RFQ_GROUPS_NOT_MIGRATED. A known state,
