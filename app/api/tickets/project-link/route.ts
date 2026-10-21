@@ -211,6 +211,12 @@ export async function POST(req: NextRequest) {
   const label = `${t.ticket_id ?? "A drafting request"}${t.title ? ` — ${t.title}` : ""}`;
   const actorName = m.email ?? caller.email ?? null;
   if (previous) {
+    // PROJ-13: a project created from this request names it (linked_ticket_id);
+    // moving the request off that project clears the name, so a mislink is
+    // corrected in one place. Only that exact pairing is touched; checked.
+    const { error: chipErr } = await supabaseAdmin.from("projects")
+      .update({ linked_ticket_id: null }).eq("id", previous.id).eq("linked_ticket_id", t.id).select("id");
+    if (chipErr) warnings.push(`The previous project still names this request as its origin: ${chipErr.message}`);
     const err = await recordProjectActivity(supabaseAdmin, {
       projectId: previous.id, orgId: t.org_id, userId: caller.id, userName: actorName,
       type: "request_unlinked", body: `${label} no longer belongs to this project`,

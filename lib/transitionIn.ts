@@ -799,6 +799,15 @@ export async function flagCollisionToDrafting(
         overlaps: impact.overlapDocs.map((o) => o.label),
       },
     }).then(() => undefined, () => undefined);
+    // PROJ-12 dw2 (DF-P8): the same flag filed against the PROJECT too, so the
+    // project's audit trail retrieves it (audit_logs is read by resource).
+    const { error: projAuditErr } = await supabase.from("audit_logs").insert({
+      action: "INTAKE_COLLISION_FLAGGED",
+      resource_type: "project", resource_id: projectId,
+      org_id: orgId, user_id: input.actorId, user_email: input.actorEmail,
+      details: { documentId: candidate.docId, ticketNumber, ticketRef: String(row.id), intakeLinkId },
+    });
+    if (projAuditErr) console.warn(`[transitionIn] the collision flag could not be filed against the project: ${projAuditErr.message}`);
 
     // PROJ-12 (DF-P8): the request's row id rides back so the flagger's
     // notice links to /requests/<id>; the request names the project in

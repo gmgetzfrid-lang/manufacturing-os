@@ -196,8 +196,10 @@ describe("/api/tickets/project-link — GAP-114 / PROJ-13 / LEAK-4 / EVID-1 / PE
     expect((await projectLink(req({ ticketId: T, projectId: P1 }))).status).toBe(400);
     expect(h.admin.writes).toEqual([]);
   });
-  it("unlink: the reference is removed, the request and its documents untouched; the old project's feed is told", async () => {
+  it("unlink: the reference is removed, the request and its documents untouched; the old project's feed is told; PROJ-13 — a project created from this request stops naming it", async () => {
     seed({ project_id: P1 });
+    (h.admin.tables.projects as Row[])[0].linked_ticket_id = T;
+    (h.admin.tables.projects as Row[])[1].linked_ticket_id = T; // another project naming it is not touched
     const res = await projectLink(req({ ticketId: T, projectId: null }));
     expect(res.status).toBe(200);
     expect(ticket().project_id).toBeNull();
@@ -205,6 +207,8 @@ describe("/api/tickets/project-link — GAP-114 / PROJ-13 / LEAK-4 / EVID-1 / PE
     expect((ticket().history as Row[]).at(-1)).toMatchObject({ action: "Unlinked from project" });
     expect(activity()).toEqual([expect.objectContaining({ project_id: P1, type: "request_unlinked" })]);
     expect(h.admin.writes.filter((w) => w.table === "project_documents")).toEqual([]);
+    expect((h.admin.tables.projects as Row[])[0].linked_ticket_id).toBeNull();
+    expect((h.admin.tables.projects as Row[])[1].linked_ticket_id).toBe(T);
   });
   it("a published deliverable of a request linked later is put on the project's register as a REFERENCE (doc_added) — never a copy", async () => {
     seed({ metadata: { deliverable: { state: "published", version_id: "v-1", revision_label: "2", document_id: "d-1" } } });

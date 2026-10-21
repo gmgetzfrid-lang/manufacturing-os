@@ -66,10 +66,15 @@ describe("flagCollisionToDrafting → /api/tickets/create", () => {
     });
     expect(body.description).toContain("NUMBER COLLISION — P-101 (Rev 4) already carries this number.");
     expect(body.description).toContain("OVERLAP — P-102 (Rev 2) shares equipment V-1");
-    expect(s.inserts.map((i) => i.table)).toEqual(["audit_logs"]);   // no tickets insert, no notifications
+    // no tickets insert, no notifications — the flag's audit row, and (PROJ-12 dw2, DF-P8) the same flag filed against the project
+    expect(s.inserts.map((i) => i.table)).toEqual(["audit_logs", "audit_logs"]);
     expect(s.inserts[0].row).toMatchObject({
       action: "INTAKE_COLLISION_FLAGGED", resource_id: "doc-new", org_id: ORG, user_id: "u-1",
       details: expect.objectContaining({ ticketNumber: "KE-DDRT-26-0009", ticketRef: "t-9", intakeLinkId: "link-1", projectId: PROJECT }),
+    });
+    expect(s.inserts[1].row).toMatchObject({
+      action: "INTAKE_COLLISION_FLAGGED", resource_type: "project", resource_id: PROJECT, org_id: ORG, user_id: "u-1",
+      details: expect.objectContaining({ documentId: "doc-new", ticketRef: "t-9" }),
     });
   });
 
@@ -81,7 +86,7 @@ describe("flagCollisionToDrafting → /api/tickets/create", () => {
       ok: true, ticketNumber: "KE-DDRT-26-0009", ticketId: "t-9",
       warning: "KE-DDRT-26-0009 is filed, but the assignment queue was not notified (the notice could not be written) — tell your supervisor it is waiting.",
     });
-    expect(s.inserts.map((i) => i.table)).toEqual(["audit_logs"]);
+    expect(s.inserts.map((i) => i.table)).toEqual(["audit_logs", "audit_logs"]);
   });
 
   it("a sheet overlapping hundreds of drawings still files: the written description is clipped to the contract's limit, never refused", async () => {

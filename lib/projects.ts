@@ -1496,12 +1496,15 @@ export async function updateProjectMeta(input: {
   patch: {
     name?: string; description?: string | null; mocReference?: string | null;
     targetCompletionDate?: string | null; visibility?: ProjectVisibility;
+    /** PROJ-13 (drafting-flow DF-P8): the request this project was created
+     *  from — set or cleared, so a mislink is correctable. */
+    linkedTicketId?: string | null;
   };
   actorUserId: string; actorEmail?: string; actorRole?: string;
 }): Promise<void> {
   const proj = await assertCanManageProject(input.projectId, input.actorUserId);
   const { data: beforeRow } = await supabase.from("projects")
-    .select("name, description, moc_reference, target_completion_date, visibility")
+    .select("name, description, moc_reference, target_completion_date, visibility, linked_ticket_id")
     .eq("id", input.projectId).maybeSingle();
   const update: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
@@ -1516,6 +1519,7 @@ export async function updateProjectMeta(input: {
   if (input.patch.mocReference !== undefined) update.moc_reference = input.patch.mocReference?.trim() || null;
   if (input.patch.targetCompletionDate !== undefined) update.target_completion_date = input.patch.targetCompletionDate || null;
   if (input.patch.visibility !== undefined) update.visibility = input.patch.visibility;
+  if (input.patch.linkedTicketId !== undefined) update.linked_ticket_id = input.patch.linkedTicketId || null;
   const { error } = await supabase.from("projects").update(update).eq("id", input.projectId);
   if (error) throw new Error(userFacingError(error, { context: "projects" }));
 
