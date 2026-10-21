@@ -112,6 +112,10 @@ function chain(table: string, client: "admin" | "anon" | "caller") {
   if (client === "caller" && table === "documents") {
     filters.push((r) => !Array.isArray(r.visible_to) || (r.visible_to as string[]).includes(String(callerUid())));
   }
+  // projects_select (project_visible_to_me) the same way (DF-P8 fix pass 3).
+  if (client === "caller" && table === "projects") {
+    filters.push((r) => !Array.isArray(r.visible_to) || (r.visible_to as string[]).includes(String(callerUid())));
+  }
   let op: "select" | "insert" | "update" | "delete" = "select";
   let payload: Row | Row[] | null = null;
   let order: { col: string; asc: boolean } | null = null;
@@ -301,6 +305,7 @@ import {
   BUILTIN_REQUEST_TYPES, stampedRequesterRole, parseTicketCreateBody, insertFailureKind, requestNumberYear, checkinNoteOf,
   psmAlertNotice, capSourceDocuments, MAX_SOURCE_DOCUMENTS, MAX_COLLISION_OVERLAPS,
 } from "@/lib/ticketCreate";
+import { recordedRegisterAuthority } from "@/lib/ticketProject";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
 const OTHER_ORG = "22222222-2222-4222-8222-222222222222";
@@ -2069,7 +2074,8 @@ describe("DF-P8 — a request filed into a project names it BY REFERENCE (ticket
     expect((s.tables.checkout_sessions as Row[])[0].linked_ticket_id).toBe(t.id);
     expect((s.tables.checkout_sessions as Row[])[1].linked_ticket_id).toBeUndefined();
     expect(activity().map((a) => a.project_id)).toEqual([PROJECT]);
-    expect((t.metadata as Row).project_link).toMatchObject({ projectId: PROJECT, authority: "checkin", registerAuthority: true });
+    // fix pass 3: a requester who merely sees the project is not its register's authority
+    expect((t.metadata as Row).project_link).toMatchObject({ projectId: PROJECT, authority: "checkin", registerAuthority: false });
   });
   it("REGRESSION: an ad-hoc check-in (a session with no project) files as today — no project_id, no feed row — and its session is still stamped with the request", async () => {
     const res = await POST(req(checkin()));
@@ -2118,13 +2124,57 @@ describe("DF-P8 — a request filed into a project names it BY REFERENCE (ticket
     s.callerRpc = { is_org_controller: () => ({ data: null, error: { message: "timeout" } }), can_manage_project: () => ({ data: null, error: { message: "timeout" } }) };
     await POST(req({ ...portal({ attachments: [] }), projectId: PROJECT }));
     expect((tickets()[0].metadata as Row).project_link).toMatchObject({ registerAuthority: false });
-    // the server's own record
+    // fix pass 3: a collision is held to the same rule — the caller's own authority
     s.tables.tickets = []; s.callerRpc = {};
     await POST(req(collision()));
+    expect((tickets()[0].metadata as Row).project_link).toMatchObject({ projectId: PROJECT, authority: "intake_collision", registerAuthority: false });
+    s.tables.tickets = [];
+    s.callerRpc = { is_org_controller: (a) => ({ data: a.p_org === ORG, error: null }) };
+    await POST(req(collision()));
     expect((tickets()[0].metadata as Row).project_link).toMatchObject({ projectId: PROJECT, authority: "intake_collision", registerAuthority: true });
+    s.callerRpc = {};
     // REGRESSION: no project → no link record
     s.tables.tickets = [];
     await POST(req(portal({ attachments: [] })));
     expect((tickets()[0].metadata as Row).project_link).toBeUndefined();
+  });
+  it("fix pass 3 (review, major): REGRESSION — a member who is neither a controller nor a manager of the project, filing an intake collision by direct call, records registerAuthority false, so the hand-back writes nothing on the register", async () => {
+    const res = await POST(req(collision()));
+    expect(res.status).toBe(201);
+    const t = tickets()[0];
+    expect(t.project_id).toBe(PROJECT);
+    expect((t.metadata as Row).project_link).toMatchObject({ projectId: PROJECT, authority: "intake_collision", registerAuthority: false });
+    // asked AS THE CALLER, never as the service role
+    expect(s.rpcCalls.filter((c) => c.fn === "can_manage_project").map((c) => [c.client, c.args])).toEqual([["caller", { p_project: PROJECT }]]);
+    expect(s.rpcCalls.filter((c) => c.fn === "is_org_controller").map((c) => [c.client, c.args])).toEqual([["caller", { p_org: ORG }]]);
+    // the hand-back's own reader (app/api/tickets/handback/route.ts) answers no
+    expect(recordedRegisterAuthority(t.metadata, PROJECT)).toBe(false);
+  });
+  it("fix pass 3 (review, major): a collision or a check-in on a project the caller cannot see keeps the request's project but records no authority and writes no project feed row as the service role", async () => {
+    (s.tables.projects as Row[])[0].visible_to = [SUP];
+    s.callerRpc = { is_org_controller: () => ({ data: true, error: null }), can_manage_project: () => ({ data: true, error: null }) };
+    const col = await POST(req(collision()));
+    expect(col.status).toBe(201);
+    expect(tickets()[0].project_id).toBe(PROJECT);
+    expect((tickets()[0].metadata as Row).project_link).toMatchObject({ registerAuthority: false });
+    expect(activity()).toHaveLength(0);
+    // the policy's functions are not even asked for a project the caller cannot see
+    expect(s.rpcCalls.filter((c) => c.fn === "can_manage_project" || c.fn === "is_org_controller")).toEqual([]);
+    s.tables.tickets = [];
+    (s.tables.checkout_sessions as Row[])[0].project_id = PROJECT;
+    const ci = await POST(req(checkin()));
+    expect(ci.status).toBe(201);
+    expect(tickets()[0].project_id).toBe(PROJECT);
+    expect((tickets()[0].metadata as Row).project_link).toMatchObject({ authority: "checkin", registerAuthority: false });
+    expect(activity()).toHaveLength(0);
+    expect((s.tables.checkout_sessions as Row[])[0].linked_ticket_id).toBe(tickets()[0].id);
+  });
+  it("fix pass 3: a check-in by a caller who manages the checkout's project records registerAuthority true", async () => {
+    (s.tables.checkout_sessions as Row[])[0].project_id = PROJECT;
+    s.callerRpc = { can_manage_project: (a) => ({ data: a.p_project === PROJECT, error: null }) };
+    const res = await POST(req(checkin()));
+    expect(res.status).toBe(201);
+    expect((tickets()[0].metadata as Row).project_link).toMatchObject({ projectId: PROJECT, authority: "checkin", registerAuthority: true });
+    expect(recordedRegisterAuthority(tickets()[0].metadata, PROJECT)).toBe(true);
   });
 });

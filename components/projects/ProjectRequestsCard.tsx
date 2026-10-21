@@ -4,7 +4,7 @@
 // (drafting-flow Round G, DF-P8; GAP-114 / DEC-40). A request names its
 // project BY REFERENCE (tickets.project_id, 20261256); this list is a query
 // over that column, never a stored set. Each request shows its status, who
-// it is with, and its deliverable as a LIVE reference to the controlled
+// it waits on (by role, from its status — requestHolderLabel), and its deliverable as a LIVE reference to the controlled
 // document: current, or marked superseded / not current — never a copy. A
 // member who cannot read the deliverable's library sees that a deliverable
 // exists and cannot open it (lib/ticketProject.ts deliverableReference).
@@ -17,7 +17,7 @@ import Link from "next/link";
 import { ClipboardList, Loader2, ExternalLink, Lock } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { deliverableStateOf } from "@/lib/ticketHandback";
-import { deliverableReference, type DeliverableReference } from "@/lib/ticketProject";
+import { deliverableReference, requestHolderLabel, type DeliverableReference } from "@/lib/ticketProject";
 import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { TERMINAL_TICKET_STATUSES } from "@/lib/ticketShed";
@@ -40,7 +40,7 @@ export default function ProjectRequestsCard({ orgId, projectId }: { orgId: strin
     let alive = true;
     void (async () => {
       const { data, error } = await supabase.from("tickets")
-        .select("id, ticket_id, title, status, assigned_drafter_name, requester_name, metadata, created_at")
+        .select("id, ticket_id, title, status, assigned_drafter_name, assigned_engineer_name, requester_name, metadata, created_at")
         .eq("org_id", orgId).eq("project_id", projectId).is("archived_at", null)
         .order("created_at", { ascending: false }).limit(PROJECT_REQUESTS_LIMIT);
       if (!alive) return;
@@ -68,7 +68,12 @@ export default function ProjectRequestsCard({ orgId, projectId }: { orgId: strin
         const status = String(t.status ?? "");
         return {
           id: String(t.id), ticketNumber: (t.ticket_id as string | null) ?? null, title: (t.title as string | null) ?? null, status,
-          holder: (t.assigned_drafter_name as string | null) ?? null,
+          // DF-P8 fix pass 3: who it waits on follows its status, named by role
+          holder: requestHolderLabel(status, {
+            drafter: (t.assigned_drafter_name as string | null) ?? null,
+            engineer: (t.assigned_engineer_name as string | null) ?? null,
+            requester: (t.requester_name as string | null) ?? null,
+          }),
           open: !(TERMINAL_TICKET_STATUSES as readonly string[]).includes(status),
           deliverable: deliverableReference(s as unknown as Record<string, unknown> | null, docId ? ((docs.get(docId) as Parameters<typeof deliverableReference>[1]) ?? null) : null, NOT_CURRENT_STATUSES),
         };
@@ -103,7 +108,7 @@ export default function ProjectRequestsCard({ orgId, projectId }: { orgId: strin
                   <Link href={`/requests/${r.id}`} className="text-xs font-bold text-[var(--color-accent)] hover:underline">{r.ticketNumber ?? "Request"}</Link>
                   <span className="text-xs text-[var(--color-text)] truncate">{r.title}</span>
                   <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${r.open ? "bg-sky-500/10 text-sky-700 dark:text-sky-300" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>{ticketStatusLabel(r.status)}</span>
-                  {r.open && r.holder && <span className="text-[10px] text-[var(--color-text-muted)]">with {r.holder}</span>}
+                  {r.open && r.holder && <span data-testid="request-holder" className="text-[10px] text-[var(--color-text-muted)]">{r.holder}</span>}
                 </div>
                 {r.deliverable.kind === "published" && (
                   <div className="mt-1 flex items-center gap-2 flex-wrap text-[10px]">

@@ -53,7 +53,7 @@ vi.mock("@/lib/capabilityPolicy", async (orig) => ({
 import { POST as projectLink } from "@/app/api/tickets/project-link/route";
 import { POST as handback } from "@/app/api/tickets/handback/route";
 import { projectRefOf } from "@/lib/ticketPage";
-import { callerHoldsRegisterAuthority, deliverableReference, isMissingProjectColumn, projectLinkAllowed, projectLinkHistoryEntry, projectsTouched, recordedRegisterAuthority, referenceDeliverableInProject } from "@/lib/ticketProject";
+import { callerHoldsRegisterAuthority, callerMayStampDocAdded, REQUEST_DELIVERABLE_REFERENCED, requestHolderLabel, deliverableReference, isMissingProjectColumn, projectLinkAllowed, projectLinkHistoryEntry, projectsTouched, recordedRegisterAuthority, referenceDeliverableInProject } from "@/lib/ticketProject";
 import { deliverableStateOf, noteDeliverableNotInAnyRegister } from "@/lib/ticketHandback";
 import { closeoutGateLines } from "@/lib/projects";
 import { computeTransition, rowToTicket } from "@/lib/ticketTransitions";
@@ -281,10 +281,30 @@ describe("/api/tickets/project-link — GAP-114 / PROJ-13 / LEAK-4 / EVID-1 / PE
         upsert: (row: Row, opts: Row) => { upserts.push({ t, row, opts }); return { select: async () => ({ data: [{ id: "pd-1" }], error: null }) }; },
         insert: async (row: Row) => { upserts.push({ t, row }); return { error: null }; },
       }),
-    }, { orgId: ORG, projectId: P1, documentId: "d-1", ticketId: T, ticketNumber: "KE-26-0042", revisionLabel: "2", actorId: "u-req", actorName: "req@plant.io" });
+    }, { orgId: ORG, projectId: P1, documentId: "d-1", ticketId: T, ticketNumber: "KE-26-0042", revisionLabel: "2", actorId: "u-req", actorName: "req@plant.io", actorMayStampDocAdded: true });
     expect(r).toBeNull();
     expect(upserts[0]).toMatchObject({ t: "project_documents", row: { project_id: P1, document_id: "d-1", source: "manual" }, opts: { onConflict: "project_id,document_id", ignoreDuplicates: true } });
     expect(upserts[1]).toMatchObject({ t: "project_activity", row: { type: "doc_added", metadata: expect.objectContaining({ documentId: "d-1", ticketId: T }) } });
+  });
+  it("fix pass 3 (review, minor): the feed row is doc_added only for an actor project_activity_insert admits for doc_added (controller / owner); a manager who is not the owner gets a request_deliverable_referenced row — the register reference itself is unchanged", async () => {
+    const upserts: Row[] = [];
+    const sb = {
+      from: (t: string) => ({
+        upsert: (row: Row, opts: Row) => { upserts.push({ t, row, opts }); return { select: async () => ({ data: [{ id: "pd-1" }], error: null }) }; },
+        insert: async (row: Row) => { upserts.push({ t, row }); return { error: null }; },
+      }),
+    };
+    const r = await referenceDeliverableInProject(sb, { orgId: ORG, projectId: P1, documentId: "d-1", ticketId: T, ticketNumber: "KE-26-0042", revisionLabel: "2", actorId: "u-pm", actorName: "pm@plant.io", actorMayStampDocAdded: false });
+    expect(r).toBeNull();
+    expect(upserts[0]).toMatchObject({ t: "project_documents", row: { project_id: P1, document_id: "d-1" } });
+    expect(upserts[1]).toMatchObject({ t: "project_activity", row: { type: REQUEST_DELIVERABLE_REFERENCED, user_id: "u-pm", metadata: expect.objectContaining({ documentId: "d-1", ticketId: T }) } });
+    expect(REQUEST_DELIVERABLE_REFERENCED).toBe("request_deliverable_referenced");
+    // the feed's own doc_added rule, asked AS THE CALLER; unanswerable is a no
+    const asked = (ans: Record<string, { data: unknown; error: unknown }>) => ({ rpc: async (fn: string) => ans[fn] ?? { data: null, error: { message: "missing" } } });
+    expect(await callerMayStampDocAdded(asked({ is_org_controller: { data: true, error: null } }), ORG, P1)).toBe(true);
+    expect(await callerMayStampDocAdded(asked({ is_org_controller: { data: false, error: null }, is_project_owner: { data: true, error: null } }), ORG, P1)).toBe(true);
+    expect(await callerMayStampDocAdded(asked({ is_org_controller: { data: false, error: null }, is_project_owner: { data: false, error: null }, can_manage_project: { data: true, error: null } }), ORG, P1)).toBe(false);
+    expect(await callerMayStampDocAdded(asked({}), ORG, P1)).toBe(false);
   });
   const PUBLISHED = { deliverable: { state: "published", version_id: "v-1", revision_label: "2", document_id: "d-1" } };
   // every project_documents call the service role made (the stand-in does not
@@ -312,6 +332,8 @@ describe("/api/tickets/project-link — GAP-114 / PROJ-13 / LEAK-4 / EVID-1 / PE
     expect(registerWrites()).toHaveLength(1);
     expect(registerWrites()[0].args[0]).toMatchObject({ project_id: P1, document_id: "d-1", source: "manual" });
     expect((ticket().metadata as Row).project_link).toMatchObject({ registerAuthority: true });
+    // fix pass 3: whether the feed row may be doc_added is asked AS THE CALLER (the feed's controller / owner rule)
+    expect(h.caller.calls.filter((c) => c.method === "rpc").map((c) => c.table)).toEqual(expect.arrayContaining(["rpc:is_project_owner"]));
     seed({ metadata: PUBLISHED });
     h.caller.rpc = { is_org_controller: () => ({ data: true, error: null }) };
     expect((await projectLink(req({ ticketId: T, projectId: P1 }))).status).toBe(200);
@@ -408,6 +430,8 @@ describe("fix pass 2 (PM-8 / SEC-17) — /api/tickets/handback puts the delivera
     expect((await handback(hbReq())).status).toBe(200);
     expect(registerCalls().map((c) => c.method)).toEqual(["upsert"]);
     expect(registerCalls()[0].args[0]).toMatchObject({ project_id: P1, document_id: D, source: "manual" });
+    // fix pass 3: the publisher's doc_added standing is asked AS THE CALLER
+    expect(h.caller.calls.filter((c) => c.method === "rpc").map((c) => c.table)).toEqual(expect.arrayContaining(["rpc:is_org_controller", "rpc:is_project_owner"]));
     seedHb({ projectId: P2, registerAuthority: true });
     const other = await handback(hbReq());
     expect((await other.json()).warning).toMatch(/only the project's managers/);
@@ -427,6 +451,27 @@ describe("fix pass 2 (PM-8 / SEC-17) — /api/tickets/handback puts the delivera
 });
 
 describe("pure helpers", () => {
+  it("fix pass 3 (review, minor): requestHolderLabel — who an open request waits on follows its status and names the role (the engineer in review / sign-off, never the drafter); the card reads the engineer's name too", () => {
+    const names = { drafter: "Dana", engineer: "Eli", requester: "Rita" };
+    expect(requestHolderLabel("PENDING_FINAL_APPROVAL", names)).toBe("Engineer: Eli");
+    expect(requestHolderLabel("PENDING_ENG_TEAM", names)).toBe("Engineer: Eli");
+    expect(requestHolderLabel("PENDING_REVIEW", names)).toBe("Engineer: Eli");
+    expect(requestHolderLabel("DRAFTING", names)).toBe("Drafter: Dana");
+    expect(requestHolderLabel("REVISION_REQ", names)).toBe("Drafter: Dana");
+    expect(requestHolderLabel("PENDING_IFC", names)).toBe("Drafter: Dana");
+    expect(requestHolderLabel("FINAL_DRAFT", names)).toBe("Awaiting acknowledgement from: Rita");
+    expect(requestHolderLabel("PENDING_ASSIGNMENT", names)).toMatch(/drafting queue/);
+    expect(requestHolderLabel("PENDING_FINAL_APPROVAL", { drafter: "Dana" })).toBe("Awaiting an engineer");
+    expect(requestHolderLabel("DRAFTING", { engineer: "Eli" })).toBe("No drafter assigned");
+    expect(requestHolderLabel("CLOSED", names)).toBeNull();
+    expect(requestHolderLabel("CANCELED", names)).toBeNull();
+    // every live status this build knows has a line
+    for (const st of MATRIX_STATUSES.filter((x) => x !== "CLOSED" && x !== "CANCELED")) expect(requestHolderLabel(st, names)).not.toBeNull();
+    const card = src("components/projects/ProjectRequestsCard.tsx");
+    expect(card).toContain("assigned_engineer_name");
+    expect(card).toContain("requestHolderLabel(status,");
+    expect(card).not.toMatch(/>with \{r\.holder\}/);
+  });
   it("projectRefOf: the column first; before the paste (undefined) the intake collision's project as today; a recorded unlink means none", () => {
     expect(projectRefOf({ intake_collision: { projectId: P2 } }, P1)).toBe(P1);
     expect(projectRefOf({ intake_collision: { projectId: P2 } }, undefined)).toBe(P2);

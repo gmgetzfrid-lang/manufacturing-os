@@ -101,6 +101,51 @@ describe("PROJ-13 fix pass 2 — convertTicketToProject never throws once the pr
     expect(state.links.map((l) => l.converted)).toEqual([true, true]);
     expect(state.projectInserts).toHaveLength(1); // never created again
     expect(host.textContent).toContain("Project created and linked.");
+    // fix pass 3: the landed link is held locally — Unlink, not Create / Link, with no realtime refresh
+    expect(button("Unlink from project")).toBeDefined();
+    expect(button("Create project from this request")).toBeUndefined();
+    expect(button("Link to a project")).toBeUndefined();
+  });
+  it("fix pass 3 (review, minor): a Create that links at once replaces Create and Link with Unlink before any realtime refresh — a second click cannot make a second project", async () => {
+    state.memberUpsertError = null;
+    state.linkResult = { ok: true, projectId: "p-new-1" };
+    await render(); // the page's linkedProjectId stays null: realtime is down
+    await act(async () => { button("Create project from this request")!.click(); });
+    expect(host.textContent).toContain("Project created and linked.");
+    expect(button("Create project from this request")).toBeUndefined();
+    expect(button("Link to a project")).toBeUndefined();
+    expect(button("Unlink from project")).toBeDefined();
+    expect(state.projectInserts).toHaveLength(1);
+    // an unlink that lands is held the same way
+    await act(async () => { button("Unlink from project")!.click(); });
+    expect(state.links.at(-1)).toMatchObject({ ticketId: "t-1", projectId: null });
+    expect(button("Unlink from project")).toBeUndefined();
+    expect(button("Link to a project")).toBeDefined();
+    // the page's value takes over once it moves (the realtime refresh arrives)
+    await act(async () => {
+      root.render(React.createElement(TicketProjectActions, { ticketId: "t-1", orgId: "o1", linkedProjectId: "p-other", canAct: true, actorUserId: "u-1" }));
+    });
+    expect(button("Unlink from project")).toBeDefined();
+  });
+  it("fix pass 3: a link from the picker that lands shows Unlink at once; a refused link leaves the controls as they were", async () => {
+    state.linkResult = { ok: false, status: 403, error: "Only the request's requester…" };
+    await render();
+    await act(async () => { button("Link to a project")!.click(); });
+    // the stand-in lists no projects: add one option to the picker and choose it
+    const select = host.querySelector("select") as HTMLSelectElement;
+    expect(select).not.toBeNull();
+    const opt = document.createElement("option"); opt.value = "p-9"; opt.textContent = "P9"; select.appendChild(opt);
+    const setValue = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    await act(async () => { setValue.call(select, "p-9"); select.dispatchEvent(new Event("change", { bubbles: true })); });
+    const linkButton = () => [...host.querySelectorAll("button")].find((b) => b.textContent === "Link")!;
+    await act(async () => { linkButton().click(); });
+    expect(state.links.at(-1)).toMatchObject({ projectId: "p-9" });
+    expect(button("Unlink from project")).toBeUndefined();
+    expect(host.textContent).toContain("Only the request's requester");
+    state.linkResult = { ok: true, projectId: "p-9" };
+    await act(async () => { linkButton().click(); });
+    expect(button("Unlink from project")).toBeDefined();
+    expect(host.textContent).toContain("Linked to the project.");
   });
   it("a refused member row with a link that lands: linked, and the refusal is said as a warning (not an error)", async () => {
     state.linkResult = { ok: true, projectId: "p-new-1" };

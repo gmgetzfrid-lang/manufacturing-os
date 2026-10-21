@@ -47,7 +47,7 @@ import { rowToTicket } from "@/lib/ticketTransitions";
 import { parseSourceDocument } from "@/lib/sourceDocRef";
 import { publishedDeliverable } from "@/lib/ticketHandback";
 import {
-  callerHoldsRegisterAuthority, recordedRegisterAuthority, referenceDeliverableInProject, PROJECT_REGISTER_MANAGERS_ONLY,
+  callerHoldsRegisterAuthority, callerMayStampDocAdded, recordedRegisterAuthority, referenceDeliverableInProject, PROJECT_REGISTER_MANAGERS_ONLY,
 } from "@/lib/ticketProject";
 import { callerScopedClient } from "@/lib/serverAuth";
 import { libraryChoiceFromRow, libraryLabelForTicket, UNNAMED_TARGET_LIBRARY } from "@/lib/ticketLibrary";
@@ -239,14 +239,17 @@ export async function POST(req: NextRequest) {
   let projectWarning: string | null = null;
   if (!inReview && typeof ticket.projectId === "string" && ticket.projectId) {
     let may: boolean | null = recordedRegisterAuthority(ticket.metadata, ticket.projectId);
+    const callerClient = callerScopedClient(req);
     if (!may) {
-      const callerClient = callerScopedClient(req);
       may = "error" in callerClient ? null : await callerHoldsRegisterAuthority(callerClient, ticket.orgId, ticket.projectId);
     }
     if (may === true) {
+      // The feed row is stamped with the publisher: doc_added only when the
+      // feed's own rule admits them (controller / owner), else a request row.
+      const stamp = "error" in callerClient ? false : await callerMayStampDocAdded(callerClient, ticket.orgId, ticket.projectId);
       const refErr = await referenceDeliverableInProject(supabaseAdmin, {
         orgId: ticket.orgId, projectId: ticket.projectId, documentId, ticketId, ticketNumber: ticket.ticketId ?? null,
-        revisionLabel: v.revision_label ?? null, actorId: caller.id, actorName: callerEmail,
+        revisionLabel: v.revision_label ?? null, actorId: caller.id, actorName: callerEmail, actorMayStampDocAdded: stamp,
       });
       if (refErr) projectWarning = `Recorded, but the deliverable was not put on the request's project register: ${refErr}`;
     } else {

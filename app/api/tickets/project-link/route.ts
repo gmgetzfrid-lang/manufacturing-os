@@ -6,7 +6,7 @@ import { loadCapabilityPolicyStrict, policyAllows } from "@/lib/capabilityPolicy
 import { heldRoles } from "@/lib/roleHeld";
 import { deliverableStateOf } from "@/lib/ticketHandback";
 import {
-  callerHoldsRegisterAuthority, isMissingProjectColumn, projectLinkAllowed, projectLinkHistoryEntry, projectsTouched,
+  callerHoldsRegisterAuthority, callerMayStampDocAdded, isMissingProjectColumn, projectLinkAllowed, projectLinkHistoryEntry, projectsTouched,
   recordProjectActivity, referenceDeliverableInProject, PROJECT_LINK_CLOSED, PROJECT_REGISTER_MANAGERS_ONLY,
 } from "@/lib/ticketProject";
 
@@ -283,6 +283,8 @@ export async function POST(req: NextRequest) {
         const refErr = await referenceDeliverableInProject(supabaseAdmin, {
           orgId: t.org_id, projectId: target.id, documentId: d.document_id, ticketId: t.id, ticketNumber: t.ticket_id,
           revisionLabel: d.revision_label ?? null, actorId: caller.id, actorName,
+          // doc_added only for a linker the feed's own rule admits (controller / owner)
+          actorMayStampDocAdded: await callerMayStampDocAdded(callerClient, t.org_id, target.id),
         });
         if (refErr) warnings.push(`The request's published deliverable was not put on the project's register: ${refErr}`);
       } else {

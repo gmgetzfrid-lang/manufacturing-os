@@ -16,6 +16,11 @@
 // conflict, a 503), the project is remembered and the Create button gives
 // way to "Link to <project>" — the same link, retried — so a second click
 // never makes a second project naming this request.
+// A link, unlink or create that lands is held locally (DF-P8 fix pass 3):
+// the controls follow it at once, without waiting for the page's realtime
+// refresh — Create and Link give way to Unlink the moment the link lands, so
+// a second click cannot make a second project even while realtime is down.
+// The page's own value takes over again as soon as it changes.
 // Nothing here copies a file. A request with no project and a viewer who may
 // not change it render nothing new.
 
@@ -44,6 +49,11 @@ export default function TicketProjectActions({ ticketId, orgId, linkedProjectId,
   const [msg, setMsg] = useState<{ tone: "ok" | "warn" | "error"; text: string; href?: string } | null>(null);
   /** A project "Create project" made whose link has not landed yet. */
   const [created, setCreated] = useState<{ id: string; name: string } | null>(null);
+  /** What this component's own successful change left the request linked
+   *  to, and the page's value it was made against: it wins until the page's
+   *  value moves (the realtime refresh carried the change, or a newer one). */
+  const [landed, setLanded] = useState<{ basis: string | null; value: string | null } | null>(null);
+  const currentProjectId = landed && landed.basis === linkedProjectId ? landed.value : linkedProjectId;
 
   useEffect(() => {
     if (!choosing || projects) return;
@@ -66,6 +76,7 @@ export default function TicketProjectActions({ ticketId, orgId, linkedProjectId,
     try {
       const res = await postProjectLink({ ticketId, projectId });
       if (!res.ok) { setMsg({ tone: "error", text: res.error }); return; }
+      setLanded({ basis: linkedProjectId, value: projectId });
       setChoosing(false); setPicked("");
       setMsg(res.warning ? { tone: "warn", text: res.warning } : { tone: "ok", text: projectId ? "Linked to the project." : "Unlinked from the project." });
     } finally { setBusy(false); }
@@ -92,6 +103,7 @@ export default function TicketProjectActions({ ticketId, orgId, linkedProjectId,
       const { convertTicketToProject } = await import("@/lib/projects");
       const r = await convertTicketToProject({ ticketId, orgId, actorUserId, actorEmail: actorEmail ?? undefined, actorRole: actorRole ?? undefined });
       const href = r.project.id ? `/projects/${r.project.id}` : undefined;
+      if (r.linked && r.project.id) setLanded({ basis: linkedProjectId, value: r.project.id });
       if (!r.linked) {
         if (r.project.id) setCreated({ id: r.project.id, name: (r.project.name ?? "").trim() || "the new project" });
         setMsg({ tone: "warn", text: `The project was created, but this request could not be linked to it: ${r.linkError ?? "unknown error"} — use "Link to ${(r.project.name ?? "").trim() || "the new project"}" to retry (do not create it again).${r.linkWarning ? ` ${r.linkWarning}` : ""}`, href });
@@ -109,6 +121,7 @@ export default function TicketProjectActions({ ticketId, orgId, linkedProjectId,
       const res = await postProjectLink({ ticketId, projectId: created.id, converted: true });
       const href = `/projects/${created.id}`;
       if (!res.ok) { setMsg({ tone: "error", text: `${res.error} — the project exists; retry the link (do not create it again).`, href }); return; }
+      setLanded({ basis: linkedProjectId, value: created.id });
       setCreated(null);
       setMsg(res.warning ? { tone: "warn", text: res.warning, href } : { tone: "ok", text: "Project created and linked.", href });
     } finally { setBusy(false); }
@@ -116,7 +129,7 @@ export default function TicketProjectActions({ ticketId, orgId, linkedProjectId,
 
   return (
     <div data-testid="ticket-project-actions" className="mt-2 flex flex-wrap items-center gap-2">
-      {linkedProjectId ? (
+      {currentProjectId ? (
         <button type="button" onClick={() => void unlink()} disabled={busy}
           className="text-[10px] font-bold text-[var(--color-text-muted)] hover:text-rose-600 border border-[var(--color-border)] rounded-md px-2 py-1 disabled:opacity-60">
           Unlink from project

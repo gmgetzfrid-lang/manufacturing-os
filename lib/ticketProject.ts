@@ -114,6 +114,27 @@ export async function callerHoldsRegisterAuthority(client: RpcClient, orgId: str
   return unknown ? null : false;
 }
 
+/** The project feed's own rule for a 'doc_added' row (project_activity_insert,
+ *  20261102 §3): is_org_controller(org) OR is_project_owner(project) — a
+ *  narrower set than the register's (a project manager who is not the owner
+ *  may add the reference but not stamp doc_added). Asked AS THE CALLER;
+ *  an unanswerable check is a no (DF-P8 fix pass 3). */
+export async function callerMayStampDocAdded(client: RpcClient, orgId: string, projectId: string): Promise<boolean> {
+  for (const [fn, args] of [["is_org_controller", { p_org: orgId }], ["is_project_owner", { p_project: projectId }]] as const) {
+    try {
+      const { data, error } = await client.rpc(fn, args);
+      if (!error && data === true) return true;
+    } catch {
+      // never read as a yes
+    }
+  }
+  return false;
+}
+
+/** The feed type a register reference landed by someone the feed's doc_added
+ *  rule does not admit is recorded under (DF-P8 fix pass 3). */
+export const REQUEST_DELIVERABLE_REFERENCED = "request_deliverable_referenced";
+
 /** The authority recorded when the request was put on THIS project
  *  (metadata.project_link.registerAuthority — metadata is workflow-owned,
  *  written only by the service role, 20261250's ticket_update_guard): true
@@ -156,7 +177,9 @@ export async function recordProjectActivity(sb: DbClient, row: {
  *  published deliverable of a request that belongs to a project is put on the
  *  project's register as a REFERENCE to the controlled document (DEC-40 — a
  *  project_documents row of the shape "attach to project" writes; no bytes
- *  move), and the feed says so (doc_added). A document already on the
+ *  move), and the feed says so: doc_added only when the actor may stamp it
+ *  (`actorMayStampDocAdded` — callerMayStampDocAdded), else a
+ *  request_deliverable_referenced row (DF-P8 fix pass 3). A document already on the
  *  register is left exactly as it is (its source stays). Returns null when
  *  nothing needed doing or it landed, else the refusal's text.
  *  The CALLER decides authority first (callerHoldsRegisterAuthority /
@@ -172,6 +195,7 @@ export async function referenceDeliverableInProject(sb: DbClient, p: {
   revisionLabel: string | null;
   actorId: string | null;
   actorName: string | null;
+  actorMayStampDocAdded: boolean;
 }): Promise<string | null> {
   try {
     const now = new Date().toISOString();
@@ -183,12 +207,39 @@ export async function referenceDeliverableInProject(sb: DbClient, p: {
     if (!Array.isArray(data) || data.length === 0) return null; // already on the register
     return await recordProjectActivity(sb, {
       projectId: p.projectId, orgId: p.orgId, userId: p.actorId, userName: p.actorName,
-      type: "doc_added",
+      type: p.actorMayStampDocAdded ? "doc_added" : REQUEST_DELIVERABLE_REFERENCED,
       body: `Deliverable of ${p.ticketNumber ?? "a drafting request"}${p.revisionLabel ? ` (Rev ${p.revisionLabel})` : ""} referenced on the project — the live controlled document, never a copy`,
       metadata: { documentId: p.documentId, ticketId: p.ticketId, ticketNumber: p.ticketNumber, revision: p.revisionLabel, via: "drafting_request" },
     });
   } catch (e) {
     return (e as Error)?.message ?? String(e);
+  }
+}
+
+// ── Who an open request is with, as the project's card says it (pure) ──────
+
+/** The person an open request waits on, by its status (DF-P8 fix pass 3):
+ *  the drafter while it is being drafted or revised (and while the drafter
+ *  issues it), the engineer while it is in engineering review, review or
+ *  sign-off, the requester while an issued package awaits acknowledgement,
+ *  and the drafting queue before anyone is assigned. Each line names the
+ *  ROLE, never a bare "with", so a missing name never reads as the wrong
+ *  person. null for a terminal status or a status this build does not know. */
+export function requestHolderLabel(
+  status: string | null | undefined,
+  names: { drafter?: string | null; engineer?: string | null; requester?: string | null },
+): string | null {
+  const who = (role: string, name: string | null | undefined, none: string) => (name && name.trim() ? `${role}: ${name.trim()}` : none);
+  switch (status) {
+    case "PENDING_ASSIGNMENT": return "In the drafting queue — no drafter assigned yet";
+    case "DRAFTING":
+    case "REVISION_REQ":
+    case "PENDING_IFC": return who("Drafter", names.drafter, "No drafter assigned");
+    case "PENDING_ENG_TEAM":
+    case "PENDING_REVIEW":
+    case "PENDING_FINAL_APPROVAL": return who("Engineer", names.engineer, "Awaiting an engineer");
+    case "FINAL_DRAFT": return who("Awaiting acknowledgement from", names.requester, "Awaiting the requester's acknowledgement");
+    default: return null;
   }
 }
 
