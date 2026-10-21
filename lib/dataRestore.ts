@@ -1358,6 +1358,7 @@ export function restoreRefusalLabel(code: string): string {
     case DANGLING_FLOW_CODE: return "a process flow whose equipment or unit is not in this workspace — not restored (it was dangling in the backup, or its equipment was not restored here)";
     case "parent_outside_workspace": return "points at a row that is not in this workspace";
     case TICKET_NUMBER_IN_USE: return "a request whose number another request here already carries, and for which no fresh number could be taken now — not restored (a restore never files two requests under one number; a re-run renumbers it)";
+    case TICKET_NUMBER_UNSETTLED: return "a request whose number other rows of the same restore request carry, each of which the database refused, so it could not be judged — not restored (a restore never files two requests under one number; fix the refused rows and run the restore again)";
     case TICKET_RENUMBERED: return "a request whose number another request here already carries (a request of this workspace, or another request of the same backup restored first) — restored under a fresh number, never beside it; the number it was issued is kept in its metadata (restore_renumbered), in its history and in this chunk's RESTORE_CHUNK audit row";
     case "23505": return "a unique key it carries is already in use";
     case "23503": return "references a row that is not there";
@@ -1514,6 +1515,47 @@ export interface RestoreRenumbering {
  *  twice). */
 const RESTORE_REMINT_ATTEMPTS = 8;
 
+/** EDGE-5 (P16 final fix pass, the review: bound the whole chunk, not only
+ *  one year): how many reservations on the counter ONE apply-table request
+ *  may make in all — every year, every held-back round. A reservation is a
+ *  counter read, one compare-and-set (or the insert that creates the row)
+ *  and one check of the numbers it reserved. One per year renumbered is the
+ *  ordinary cost; the budget is reached only by a request renumbering rows
+ *  in more years than this, or one whose counter keeps moving under it.
+ *  A row left without a number when it is spent is refused
+ *  TICKET_NUMBER_IN_USE, naming why (a re-run renumbers it: what this run
+ *  renumbered is then kept on its id and takes no reservation). */
+export const RESTORE_REMINT_RESERVATIONS = 64;
+
+/** EDGE-5 (P16 final fix pass, the review): how many held-back rounds ONE
+ *  apply-table request may run (each round: one read of the numbers, the
+ *  fresh numbers it needs, one write statement). A round settles every
+ *  held-back row whose number a request holds (renumbered) and one carrier
+ *  of every other number (written as it is), so a request needs two rounds
+ *  however many of its rows collide; a third and later round happens only
+ *  when the carrier a round wrote was refused by the database (the next
+ *  carrier of its number then waits for the following round). The rows still
+ *  held back when the rounds are spent are refused TICKET_NUMBER_UNSETTLED,
+ *  each naming why, and the rest of the table lands. */
+export const RESTORE_HELD_BACK_ROUNDS = 16;
+
+/** EDGE-5 (P16 final fix pass): the refusal code of a backup request still
+ *  held back when the request's held-back rounds (RESTORE_HELD_BACK_ROUNDS)
+ *  are spent — reachable only when that many earlier carriers of its number
+ *  in the same apply-table request were each refused by the database.
+ *  Nothing of it was written. */
+export const TICKET_NUMBER_UNSETTLED = "ticket_number_unsettled";
+
+/** EDGE-5 (P16 final fix pass, the review): the most bytes of request ids the
+ *  page's driver adds to one tickets request as `backupNumberCarriers` (the
+ *  backup's OTHER requests carrying a number a row of the request carries,
+ *  so a renumbered request's holder is named from the backup — "of this
+ *  backup" — even when an earlier request wrote it). A list past this is not
+ *  sent; the holder is then named neutrally, as by a caller that sends none.
+ *  The slices are cut exactly as before (restoreSlices); this is well inside
+ *  the room RESTORE_CHUNK_BYTES leaves under the platform's cap. */
+export const RESTORE_CARRIERS_BYTES = 100_000;
+
 /** EDGE-5 (P16 fix pass): whether `v` can travel in a PostgREST `in.(…)`
  *  list as postgrest-js builds it. postgrest-js double-quotes a value that
  *  carries `,` `(` or `)` but escapes neither `"` nor `\` inside it, so a
@@ -1652,7 +1694,9 @@ export function restoreNumberYear(from: string, nowMs: number = Date.now()): num
  *  checked in ONE read (liveTicketNumbers, cut by URL budget). A number
  *  `avoid` or a live request already carries is spent (a gap); a lost race
  *  spends the attempt. What is still wanted is topped up by another, smaller
- *  reservation, up to RESTORE_REMINT_ATTEMPTS reservations — so a chunk
+ *  reservation, up to RESTORE_REMINT_ATTEMPTS reservations for the year and
+ *  while the request's `budget` (RESTORE_REMINT_RESERVATIONS, shared by every
+ *  year and round of one apply-table request; P16 final fix pass) lasts — so a chunk
  *  costs a bounded number of statements per year, never several per row
  *  (P16 fix pass 5, the review: one compare-and-set and one check PER ROW
  *  could pass the function's time limit on a plant merge where most rows
@@ -1667,12 +1711,16 @@ export function restoreNumberYear(from: string, nowMs: number = Date.now()): num
 async function mintRestoreTicketNumbers(
   sb: RestoreDb, orgId: string, year: number, want: number, avoid: ReadonlySet<string>,
   config: () => Promise<{ ok: true; cfg: ReturnType<typeof ticketNumberConfigFromRow> } | { ok: false; error: string }>,
+  budget: { left: number },
 ): Promise<{ ok: true; numbers: string[]; why: string | null } | { ok: false; error: string }> {
+  if (budget.left <= 0) return { ok: true, numbers: [], why: `this request's ${RESTORE_REMINT_RESERVATIONS} reservations on the counter were spent on other requests it renumbered` };
   const read = await config();
   if (!read.ok) return read;
   const numbers: string[] = [];
   const taken = new Set<string>();
-  for (let attempt = 0; attempt < RESTORE_REMINT_ATTEMPTS && numbers.length < want; attempt++) {
+  let attempt = 0;
+  for (; attempt < RESTORE_REMINT_ATTEMPTS && budget.left > 0 && numbers.length < want; attempt++) {
+    budget.left--;
     const need = want - numbers.length;
     const { data, error } = await sb.from("ticket_number_counters").select("next_seq").eq("org_id", orgId).eq("year", year);
     if (error) return { ok: false, error: `the request number counter could not be read: ${error.message}` };
@@ -1704,7 +1752,9 @@ async function mintRestoreTicketNumbers(
   }
   return {
     ok: true, numbers,
-    why: numbers.length < want ? `${RESTORE_REMINT_ATTEMPTS} reservations on the counter were tried and each was lost to a concurrent filer or held only numbers already carried` : null,
+    why: numbers.length >= want ? null
+      : attempt < RESTORE_REMINT_ATTEMPTS ? `this request's ${RESTORE_REMINT_RESERVATIONS} reservations on the counter were spent (${attempt} for this year), each lost to a concurrent filer or holding only numbers already carried, or taken by the other requests it renumbered`
+      : `${RESTORE_REMINT_ATTEMPTS} reservations on the counter were tried and each was lost to a concurrent filer or held only numbers already carried`,
   };
 }
 
@@ -1721,7 +1771,7 @@ async function mintRestoreTicketNumbers(
  *  attachments keep their storage keys — the files are put back where the
  *  backup has them, under the old number's folder (the entry says so;
  *  drafting-flow EDGE-19). */
-function renumberedTicketRow(row: Record<string, unknown>, from: string, number: string, holder: string, holderWhere: string, at: string): Record<string, unknown> {
+function renumberedTicketRow(row: Record<string, unknown>, from: string, number: string, holder: string, holderWhere: string, at: string, heldTwice = false): Record<string, unknown> {
   const folder = ticketFilesFolder(row, from);
   const m = row.metadata;
   const base: Record<string, unknown> = m && typeof m === "object" && !Array.isArray(m)
@@ -1731,7 +1781,7 @@ function renumberedTicketRow(row: Record<string, unknown>, from: string, number:
   if (h !== null && h !== undefined && !Array.isArray(h)) base.history_before_restore = h;
   const history = [...(Array.isArray(h) ? h : []), {
     action: RESTORE_RENUMBERED_HISTORY_ACTION, user: "restore", date: at,
-    details: `Issued as "${from}"; request ${holder} ${holderWhere} carries that number, so this request was restored as "${number}".${folder ? ` Its files stay where the backup had them, in the "${from}" folder.` : ""}`,
+    details: `Issued as "${from}"; request ${holder} ${holderWhere} carries that number${heldTwice ? " (the workspace the backup was taken from held the number twice)" : ""}, so this request was restored as "${number}".${folder ? ` Its files stay where the backup had them, in the "${from}" folder.` : ""}`,
   }];
   return {
     ...row, ticket_id: number, history,
@@ -1789,14 +1839,25 @@ function ticketFilesFolder(row: Record<string, unknown>, from: string): string |
  *       holds: written as it is when no request holds the number by then, and
  *       otherwise written under a fresh number (TICKET_RENUMBERED, P16 fix
  *       passes 2 and 3), the number it was issued recorded on it (metadata,
- *       history) and in `cleared` / `renumbered`;
+ *       history) and in `cleared` / `renumbered` — in a bounded number of
+ *       rounds and counter reservations (RESTORE_HELD_BACK_ROUNDS,
+ *       RESTORE_REMINT_RESERVATIONS; P16 final fix pass);
  *    5. upsert on the table's real conflict target; a statement refused for
  *       one row's sake (ROW_LEVEL_SQLSTATES) is bisected to that row, within
  *       RESTORE_BISECT_MAX_STATEMENTS per request;
  *    6. skipped keys are split into kept-here and held-by-another-workspace. */
 export async function applyRestoreChunk(
   sb: RestoreDb,
-  params: { orgId: string; table: string; rows: ReadonlyArray<Record<string, unknown>>; idRemap: RestorePlan["idRemap"] },
+  params: {
+    orgId: string; table: string; rows: ReadonlyArray<Record<string, unknown>>; idRemap: RestorePlan["idRemap"];
+    /** drafting-flow EDGE-5 (P16 final fix pass): for `tickets`, the ids of
+     *  the backup's OTHER requests carrying a number a row here carries, as
+     *  the page's driver computes them from the whole backup
+     *  (backupNumberCarriersFor) — absent when the caller does not know
+     *  them. Used ONLY to name a renumbered request's holder (of this
+     *  backup / of this workspace); nothing is written or skipped by it. */
+    backupNumberCarriers?: ReadonlyArray<string> | null;
+  },
 ): Promise<RestoreChunkResult> {
   const { orgId, table, idRemap } = params;
   const refused: RestoreRowRefusal[] = [];
@@ -2181,9 +2242,13 @@ export async function applyRestoreChunk(
   // none (the earlier row was refused by the database, or never landed):
   // written as it is — one row per number per round, so a later carrier waits
   // for this one's outcome. Each round settles at least one row per number,
-  // so the loop ends. A read, or a counter step, that fails stops the chunk
-  // (what was written is counted; a re-run judges the rest). A fresh number
-  // that cannot be taken now refuses that row (TICKET_NUMBER_IN_USE).
+  // so the loop ends — and it is bounded (P16 final fix pass, the review):
+  // at most RESTORE_HELD_BACK_ROUNDS rounds (a row still held back then is
+  // refused TICKET_NUMBER_UNSETTLED) and RESTORE_REMINT_RESERVATIONS
+  // reservations on the counter in all. A read, or a counter step, that
+  // fails stops the chunk (what was written is counted; a re-run judges the
+  // rest). A fresh number that cannot be taken now refuses that row
+  // (TICKET_NUMBER_IN_USE).
   let ticketConfig: { ok: true; cfg: ReturnType<typeof ticketNumberConfigFromRow> } | { ok: false; error: string } | null = null;
   const readTicketConfig = async () => {
     if (ticketConfig) return ticketConfig;
@@ -2195,7 +2260,21 @@ export async function applyRestoreChunk(
     return ticketConfig;
   };
   const minted = new Set<string>();
-  for (let pending = heldBackTickets; pending.length;) {
+  // P16 final fix pass (the review): the whole request's reservations on the
+  // counter, every year and round, are bounded (RESTORE_REMINT_RESERVATIONS),
+  // and so are its held-back rounds (RESTORE_HELD_BACK_ROUNDS).
+  const reservations = { left: RESTORE_REMINT_RESERVATIONS };
+  const carriers = Array.isArray(params.backupNumberCarriers) ? new Set(params.backupNumberCarriers) : null;
+  for (let pending = heldBackTickets, round = 0; pending.length; round++) {
+    if (round >= RESTORE_HELD_BACK_ROUNDS) {
+      for (const r of pending) {
+        refused.push({
+          id: label(r), code: TICKET_NUMBER_UNSETTLED,
+          message: `request number "${String(r.ticket_id)}" is carried by other rows of this restore request, and ${RESTORE_HELD_BACK_ROUNDS} rounds each wrote one of them that did not land (refused by the database — see their own refusals — or skipped), so this row was not judged — not restored (a restore never files two requests under one number). Fix the refused rows, or send this one in a request of its own, and run the restore again`,
+        });
+      }
+      break;
+    }
     const read = await liveTicketNumbers(sb, orgId, pending.map((r) => r.ticket_id as string));
     if (!read.ok) {
       await settleSkipped();
@@ -2226,7 +2305,7 @@ export async function applyRestoreChunk(
       slots.push({ r, renumber: null });
     }
     for (const [year, group] of byYear) {
-      const fresh = await mintRestoreTicketNumbers(sb, orgId, year, group.length, new Set([...requestTicketNumbers, ...minted]), readTicketConfig);
+      const fresh = await mintRestoreTicketNumbers(sb, orgId, year, group.length, new Set([...requestTicketNumbers, ...minted]), readTicketConfig, reservations);
       if (!fresh.ok) {
         await settleSkipped();
         return fail(500, `Could not give request ${label(group[0].r) ?? "(no id)"} a fresh number (request ${group[0].holder} already carries "${group[0].n}")${group.length > 1 ? `, nor ${group.length - 1} other request(s) renumbered in ${year}` : ""}: ${fresh.error}`, inserted, rowsAfterFilters);
@@ -2242,18 +2321,22 @@ export async function applyRestoreChunk(
       if (!renumber) { next.push(r); continue; }
       const { n, holder, to } = renumber;
       if (to === null) { refused.push(ticketRemintRefusal(label(r), n, holder, renumber.why)); continue; }
-      // P16 fix pass 5 (the review): the holder is named "of this backup" only
-      // when it is a row of THIS request — the driver sends a backup's own
-      // repeat after every other request, so a holder written by an earlier
-      // chunk may be the backup's own request, and the server cannot tell it
-      // from a request the workspace already had: it is then named neutrally.
-      const ofBackup = requestTicketIds.has(holder);
-      const holderWhere = ofBackup ? "of this backup (restored first)" : "already in this workspace";
-      const out = renumberedTicketRow(r, n, to, holder, holderWhere, new Date().toISOString());
+      // The holder is named from the backup (P16 final fix pass, the review):
+      // "of this backup" when it is a row of THIS request, or one of the
+      // backup's other requests carrying the number (backupNumberCarriers,
+      // which the page's driver computes from the whole backup — a backup's
+      // own repeat is sent after every other request, so its holder was
+      // usually written by an earlier request); "of this workspace" when the
+      // caller sent that list and the holder is not on it (P16 fix pass 5
+      // named every such holder neutrally); and, from a caller that sent no
+      // list (the single-shot /apply, or an older page), neutrally.
+      const ofBackup = requestTicketIds.has(holder) || (carriers?.has(holder) ?? false);
+      const holderWhere = ofBackup ? "of this backup (restored first)" : carriers ? "of this workspace" : "already in this workspace";
+      const out = renumberedTicketRow(r, n, to, holder, holderWhere, new Date().toISOString(), ofBackup);
       const folder = ticketFilesFolder(r, n);
       clearNotes.set(out, [...(clearNotes.get(r) ?? []), {
         id: label(r), code: TICKET_RENUMBERED,
-        message: `ticket_id "${n}" → "${to}": request ${holder} ${holderWhere} carries "${n}"${ofBackup ? " (the workspace the backup was taken from held the number twice)" : ` (a request the workspace held before this restore, or — where the backup itself carries "${n}" twice — the backup's own request, restored by an earlier part of this restore)`}, so this request was restored under a fresh number rather than beside it or not at all; "${n}" is kept on it as metadata.restore_renumbered.from and in its history — labels, transmittals and archives printing "${n}" for this request now resolve to "${to}"${folder ? `; its files stay in the "${n}" folder (${folder})` : ""}`,
+        message: `ticket_id "${n}" → "${to}": request ${holder} ${holderWhere} carries "${n}"${ofBackup ? " (the workspace the backup was taken from held the number twice)" : carriers ? " (a request this workspace holds that is not one of this backup's)" : ` (a request the workspace held before this restore, or — where the backup itself carries "${n}" twice — the backup's own request, restored by an earlier part of this restore)`}, so this request was restored under a fresh number rather than beside it or not at all; "${n}" is kept on it as metadata.restore_renumbered.from and in its history — labels, transmittals and archives printing "${n}" for this request now resolve to "${to}"${folder ? `; its files stay in the "${n}" folder (${folder})` : ""}`,
         renumbered: { from: n, to, numberHeldBy: holder },
       }]);
       next.push(out);
@@ -2653,6 +2736,46 @@ export function raiseTicketCountersToBackupNumbers(
   return [...raised, ...added];
 }
 
+/** drafting-flow EDGE-5 (P16 final fix pass, the review): the backup's
+ *  request numbers carried by more than one of its requests → the ids of
+ *  those requests, in backup order. Pure. */
+export function ticketNumberCarriers(tickets: ReadonlyArray<Record<string, unknown>>): Map<string, string[]> {
+  const all = new Map<string, Set<string>>();
+  for (const t of tickets) {
+    const n = ticketNumberOf(t);
+    if (n === null || typeof t.id !== "string") continue;
+    const ids = all.get(n);
+    if (ids) ids.add(t.id); else all.set(n, new Set([t.id]));
+  }
+  const out = new Map<string, string[]>();
+  for (const [n, ids] of all) if (ids.size > 1) out.set(n, Array.from(ids));
+  return out;
+}
+
+/** drafting-flow EDGE-5 (P16 final fix pass, the review): what the page's
+ *  driver sends with one tickets request as `backupNumberCarriers` — the ids
+ *  of the backup's requests carrying a number a row of `chunk` carries
+ *  where the backup carries it more than once (`carriers`,
+ *  ticketNumberCarriers) — so the server names a renumbered request's holder
+ *  from the backup, "of this backup", even when an earlier request wrote it
+ *  (the driver sends a backup's own repeat after every other request), and
+ *  any other holder "of this workspace". Null when the list would pass
+ *  RESTORE_CARRIERS_BYTES (not sent; the holder is then named neutrally).
+ *  Pure. */
+export function backupNumberCarriersFor(carriers: ReadonlyMap<string, ReadonlyArray<string>>, chunk: ReadonlyArray<Record<string, unknown>>): string[] | null {
+  const out = new Set<string>();
+  let bytes = 2;
+  for (const n of new Set(chunk.map(ticketNumberOf))) {
+    for (const id of (n === null ? undefined : carriers.get(n)) ?? []) {
+      if (out.has(id)) continue;
+      out.add(id);
+      bytes += jsonBytes(id) + 1;
+      if (bytes > RESTORE_CARRIERS_BYTES) return null;
+    }
+  }
+  return Array.from(out);
+}
+
 /** drafting-flow EDGE-5 (P16 fix pass 5): the rows the page's driver sends
  *  for `table` — the backup's tickets in restore order
  *  (ticketsInRestoreOrder), its ticket counters raised and completed
@@ -2891,11 +3014,21 @@ export async function runChunkedRestore(params: {
     // earlier when the body would pass RESTORE_CHUNK_BYTES (an old backup's
     // inline vectors); a slice that fits is the 500-row slice it always was.
     const body = (chunk: Array<Record<string, unknown>>) => ({ table, rows: chunk, idRemap, manifest });
+    // EDGE-5 (P16 final fix pass, the review): each tickets request carries
+    // the backup's other requests sharing a number with its rows, so a
+    // renumbered request's holder is named from the backup. Added after the
+    // slices are cut, so they are cut exactly as before (bounded by
+    // RESTORE_CARRIERS_BYTES; over it, not sent).
+    const carriers = table === "tickets" ? ticketNumberCarriers(rows) : null;
+    const withCarriers = (chunk: Array<Record<string, unknown>>) => {
+      const list = carriers ? backupNumberCarriersFor(carriers, chunk) : null;
+      return list ? { ...body(chunk), backupNumberCarriers: list } : body(chunk);
+    };
     for (const chunk of restoreSlices(rows, body)) {
       params.onProgress?.({ phase: "tables", currentTable: table, rowsDone, rowsTotal, tablesDone, tablesTotal: order.length });
       let res: Awaited<ReturnType<RestorePost>>;
       try {
-        res = await post(`/api/admin/restore/apply-table?orgId=${encodeURIComponent(orgId)}`, body(chunk));
+        res = await post(`/api/admin/restore/apply-table?orgId=${encodeURIComponent(orgId)}`, withCarriers(chunk));
       } catch (e) {
         // The request never got an answer: whether this chunk landed is
         // unknown — a re-run skips whatever did.

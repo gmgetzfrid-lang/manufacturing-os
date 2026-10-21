@@ -252,7 +252,7 @@ for (const world of ["without the number key", "with the number key"] as const) 
       }]);
       expect(ticketsHere().find((t) => t.id === "t-b-2")!.history).toEqual([expect.objectContaining({
         action: "Renumbered on restore", user: "restore",
-        details: `Issued as "KE-DDRT-26-0007"; request t-b-1 of this backup (restored first) carries that number, so this request was restored as "DDRT-${YY}-0001".`,
+        details: `Issued as "KE-DDRT-26-0007"; request t-b-1 of this backup (restored first) carries that number (the workspace the backup was taken from held the number twice), so this request was restored as "DDRT-${YY}-0001".`,
       })]);
       // the number was taken from the workspace's counter (created at 1 for the year)
       expect(counterHere()).toMatchObject({ next_seq: 1 });
@@ -642,14 +642,16 @@ describe("DEC-90 ruling (4) — every restore that works today restores the same
     expect(posted.every((rows) => rows.length <= 500)).toBe(true);
     const dup = ticketsHere().find((t) => t.id === "t-dup")!;
     expect(dup.ticket_id).toBe(`DDRT-${YY}-0621`);
-    // P16 fix pass 5 (the review): the holder (t-000) was written by an EARLIER chunk, so the server cannot tell
-    // it is the backup's own request — the history line and the note name it neutrally, never "of this workspace"
+    // P16 final fix pass (the review): the holder (t-000) was written by an EARLIER chunk; the driver sends the
+    // backup's other carriers of the number with the request (backupNumberCarriers), so the history line and the
+    // note name it from the backup — "of this backup", with why the backup carries the number twice — never "of
+    // this workspace" (fix pass 3) nor neutrally (fix pass 5)
     const line = (dup.history as Array<{ details: string }>).at(-1)!.details;
-    expect(line).toBe(`Issued as "KE-DDRT-26-0001"; request t-000 already in this workspace carries that number, so this request was restored as "DDRT-${YY}-0621".`);
-    expect(line).not.toMatch(/of this workspace/);
+    expect(line).toBe(`Issued as "KE-DDRT-26-0001"; request t-000 of this backup (restored first) carries that number (the workspace the backup was taken from held the number twice), so this request was restored as "DDRT-${YY}-0621".`);
+    expect(line).not.toMatch(/workspace carries/);
     const note = run.tables.find((x) => x.name === "tickets")!.cleared.find((x) => x.id === "t-dup")!;
-    expect(note.message).toContain(`request t-000 already in this workspace carries "KE-DDRT-26-0001" (a request the workspace held before this restore, or — where the backup itself carries "KE-DDRT-26-0001" twice — the backup's own request, restored by an earlier part of this restore)`);
-    expect(note.message).not.toMatch(/of this workspace carries/);
+    expect(note.message).toContain(`request t-000 of this backup (restored first) carries "KE-DDRT-26-0001" (the workspace the backup was taken from held the number twice)`);
+    expect(note.message).not.toMatch(/workspace carries/);
     expect(numbersIssuedTwice()).toEqual([]);
   });
 
