@@ -36,6 +36,14 @@
 // An older snapshot (no marker) keeps the split alone and never claims
 // "added since printing". Only the CODE is published — never the printer's
 // free-text reason.
+// PS-P10 (public-surfaces PHYS-20 limb 1): a print-keyed cover whose print
+// has a sheet code LINKED to it (print_sheet_tokens.cover_print_id, 20261240)
+// that Document Control recalled (void_reason 'recalled') answers `recalled`
+// — red, never green — with `recalledAt`, and each of its sheets that would
+// otherwise read fresh or not-yet-in-effect reads `recalled`. Before
+// 20261240 (no link column) or 20261237 (no table), or with no recalled
+// linked code, the cover answers exactly as before (no added key, no other
+// change); an unreadable recall state is a 503, never a guess at green.
 
 import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -47,6 +55,7 @@ import { recordVerifyScan } from "@/lib/verifyScanLog";
 import { isPackLeftOutCode } from "@/lib/packLeftOut";
 import type { NotPrintableReason, PackVerdict, SheetState } from "@/lib/verifyPresent";
 import { legacyCoverStateRows, RESTRICTED_DOCUMENT_LABEL, restrictedSheetLabel, verifyMayNameDocument } from "@/lib/verifyDisclosure";
+import { isMissingCoverLinkColumn, isMissingSheetTokenTable } from "@/lib/printSheetTokensServer";
 
 // A pack verdict is never prerendered or cached (VFY-13; OFF-1 dw3).
 export const dynamic = "force-dynamic";
@@ -79,7 +88,7 @@ interface SheetSource {
 
 const WITHDRAWN_STATES: ReadonlySet<SheetState> = new Set(["void", "archived", "superseded", "retired"]);
 const NOT_GOOD_STATES: ReadonlySet<SheetState> = new Set([
-  "stale", "void", "archived", "superseded", "retired", "draft", "not_issued", "status_unrecognised", "missing", "removed",
+  "stale", "void", "archived", "superseded", "retired", "draft", "not_issued", "status_unrecognised", "missing", "removed", "recalled",
 ]);
 /** Not an issued revision at all — says nothing about "since printing" (a
  *  legacy no-status sheet can be printed that way), so the page counts these
@@ -149,6 +158,9 @@ export async function GET(req: NextRequest) {
   const leftOutAtPrint = new Map<string, string>();
   let recordsLeftOut = false;
   const printConfirmed = !!printId;
+  // PHYS-20 limb 1: the recall of this print, when a recalled code is linked to it.
+  let recalled = false;
+  let recalledAt: string | null = null;
   if (printId) {
     const { data: printData, error: printErr } = await sb
       .from("work_package_prints")
@@ -161,6 +173,26 @@ export async function GET(req: NextRequest) {
     const print = printData as PrintRow | null;
     if (print) {
       printedAt = print.printed_at ?? null;
+      // Was a sheet code linked to THIS print recalled? Only a missing
+      // column or table (the database before 20261240 / 20261237 — no code
+      // can be linked) reads "no"; any other error is a 503.
+      const { data: recData, error: recErr } = await sb
+        .from("print_sheet_tokens")
+        .select("voided_at")
+        .eq("cover_print_id", printId)
+        .eq("org_id", pkgOrgId)
+        .eq("void_reason", "recalled")
+        .order("voided_at", { ascending: true })
+        .limit(1);
+      if (recErr) {
+        if (!isMissingSheetTokenTable(recErr) && !isMissingCoverLinkColumn(recErr)) return unavailable();
+      } else {
+        const hit = ((recData as Array<{ voided_at: string | null }> | null) ?? [])[0];
+        if (hit) {
+          recalled = true;
+          recalledAt = hit.voided_at ?? null;
+        }
+      }
       const raw = Array.isArray(print.sheets) ? (print.sheets as Array<Record<string, unknown>>) : [];
       recordsLeftOut = raw.some((s) => typeof s.printed === "boolean");
       for (const s of raw) {
@@ -279,6 +311,9 @@ export async function GET(req: NextRequest) {
     else if (!inPackage.has(s.document_id)) state = "removed";
     else if (effectiveStatusFor(d.current_version_id ? effectiveByVersion.get(d.current_version_id) : null, new Date(), effectiveZone) === "pending") state = "not_yet_effective";
     else state = "fresh";
+    // PHYS-20 limb 1: a recalled print's sheets are withdrawn — a sheet that
+    // would read good (or merely not yet in effect) reads recalled instead.
+    if (recalled && (state === "fresh" || state === "not_yet_effective")) state = "recalled";
     return {
       label: labelOf(s.document_id, s.label, s.onPaperAt && s.onPaperOf ? { position: s.onPaperAt, total: s.onPaperOf } : undefined),
       // A legacy QR records no printing: its live pin is not "what was printed".
@@ -371,6 +406,7 @@ export async function GET(req: NextRequest) {
 
   let verdict: PackVerdict;
   if (snapshotMissing) verdict = "unverifiable";
+  else if (recalled) verdict = "recalled";                     // PHYS-20 limb 1
   else if (closed) verdict = "closed";                         // VFY-8
   else if (perSheet.length === 0) verdict = "empty";           // VFY-11
   else if (heldCount > 0) verdict = "held";                    // HLD-3 / PHYS-1
@@ -387,6 +423,8 @@ export async function GET(req: NextRequest) {
     packageStatus: pkg.status ?? null,
     closed,
     printedAt,
+    // PHYS-20 limb 1: only on a recalled answer.
+    ...(recalled ? { recalledAt } : {}),
     snapshotMissing,
     // The QR named a print record AND it was found.
     printConfirmed: printConfirmed && !snapshotMissing,

@@ -302,7 +302,15 @@ export const RESTORE_PARENT_RULES: Readonly<Record<string, ReadonlyArray<Restore
   document_holds: fkRules("document_id>documents origin_ticket_id>tickets"),
   document_intents: fkRules("document_id>documents library_id>libraries base_version_id>document_versions ticket_id>tickets"),
   document_markups: fkRules("document_id>documents version_id>document_versions"),
-  print_sheet_tokens: fkRules("document_id>documents version_id>document_versions"),
+  // public-surfaces PS-P10: the link to the cover's print (20261240) is an
+  // optional pointer (nullable, ON DELETE SET NULL) — the cover is restored
+  // first (FK order); a link naming a cover that is not in this workspace is
+  // CLEARED and the token lands, keeping its sheet's verdict (the link gates
+  // no verdict and no read; cleared, it only stops a recall by the cover's
+  // print id from reaching the token — never wider). Review fix: it was
+  // strict, which refused the whole token and turned its sheet into
+  // "Unknown code" whenever its cover print was not restored.
+  print_sheet_tokens: fkRules("document_id>documents version_id>document_versions cover_print_id>work_package_prints?"),
   document_related_resources: fkRules("document_id>documents target_document_id>documents"),
   document_sets: fkRules("library_id>libraries"),
   document_shares: fkRules("document_id>documents"),
@@ -932,11 +940,6 @@ export const RESTORE_TABLE_ORDER: string[] = [
   // Sets hang off a library and documents.set_id references them.
   "document_sets",
   "documents", "document_versions", "document_supersessions",
-  // public-surfaces PS-P9: a printed pack sheet's token names a document and
-  // the version it printed — restored after both (the integrator at the
-  // PS-P9 merge, 2026-10-20, DEC-90), so a sheet printed before a restore
-  // keeps its verdict at /api/verify.
-  "print_sheet_tokens",
   // Projects after documents: projects.sow_document_id references documents (20261013).
   "projects", "project_members",
   // Tickets before the holds and milestones that cite them (origin_ticket_id,
@@ -969,7 +972,14 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "entity_mentions", "drawing_audit_logs",
   "document_favorites", "e_signatures", "transmittals",
   "document_intents", "revision_branches",
-  "work_packages", "work_package_documents", "work_package_prints", "distribution_acks",
+  "work_packages", "work_package_documents", "work_package_prints",
+  // public-surfaces PS-P9: a printed pack sheet's token names a document and
+  // the version it printed — restored after both (the integrator at the
+  // PS-P9 merge, 2026-10-20, DEC-90), so a sheet printed before a restore
+  // keeps its verdict at /api/verify. PS-P10: and after the cover print it
+  // may link to (print_sheet_tokens.cover_print_id, 20261240).
+  "print_sheet_tokens",
+  "distribution_acks",
   "document_acknowledgments", "document_review_signoffs", "document_review_events",
   "document_disposition_events", "access_recertification_events",
   "asset_files",

@@ -129,11 +129,12 @@ export default function VerifyPage() {
                 <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Document status</span>
                 <span className="font-bold text-slate-800">{result.docStatus ?? "Not recorded"}{result.onHold ? " · on hold" : ""}</span>
               </div>
-              {/* PS-P9: a token-named sheet says when THIS print was made. */}
+              {/* PS-P9: a token-named sheet says when THIS print was made (PS-P10,
+                  PHYS-20 limb 2: and when Document Control recalled it). */}
               {result.sheetPrint && (
                 <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
                   <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Printed</span>
-                  <span className="font-bold text-slate-800">{fmt(result.sheetPrint.printedAt)}{result.sheetPrint.voided ? " · print cancelled" : ""}</span>
+                  <span className="font-bold text-slate-800">{fmt(result.sheetPrint.printedAt)}{result.sheetPrint.voided ? (result.sheetPrint.recalled === true ? ` · recalled by Document Control ${fmt(result.sheetPrint.recalledAt ?? null)}` : " · print cancelled") : ""}</span>
                 </div>
               )}
               {view.advice && (

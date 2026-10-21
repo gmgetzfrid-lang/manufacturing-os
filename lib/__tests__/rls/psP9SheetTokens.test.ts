@@ -132,7 +132,9 @@ describe.skipIf(skip !== null)("PS-P9: print_sheet_tokens is the service role's 
     if (!bad.ok) expect(bad.code).toBe("23514");
     const id = randomUUID();
     expect(asCaller(db, svc, insertSql(id, printId))).toEqual({ ok: true, rows: 1 });
-    for (const set of ["voided_at = now(), void_reason = 'recalled'", "voided_at = now()", "void_reason = 'not_printed'"]) {
+    // ('recalled' became a known reason at 20261240 — PS-P10's controller
+    // recall — and the replay carries it; an unknown reason is still refused.)
+    for (const set of ["voided_at = now(), void_reason = 'expired'", "voided_at = now()", "void_reason = 'not_printed'"]) {
       const o = asCaller(db, svc, `UPDATE print_sheet_tokens SET ${set} WHERE id = '${id}'`);
       expect(o.ok, set).toBe(false);
       if (!o.ok) expect(o.code, set).toBe("23514");

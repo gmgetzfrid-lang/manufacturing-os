@@ -23,6 +23,7 @@ import { appConfirm } from "@/components/providers/DialogProvider";
 import { useToast } from "@/components/providers/ToastProvider";
 import { supabase } from "@/lib/supabase";
 import { isControllerPrincipal } from "@/lib/permissions";
+import PackPrintHistory from "@/components/documents/PackPrintHistory";
 import {
   listWorkPackages, createWorkPackage, refreshWorkPackage, recordPackagePrint,
   setWorkPackageStatus, coverEntryLabels, mergeLeftOut, readPackageMemberIds, type WorkPackage,
@@ -45,6 +46,8 @@ export default function PackagesPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [printing, setPrinting] = useState<string | null>(null);
+  // PS-P10: bumped after a print, so an open print history re-reads.
+  const [printRound, setPrintRound] = useState(0);
 
   // Create-modal state
   const [name, setName] = useState("");
@@ -201,7 +204,7 @@ export default function PackagesPage() {
         documentIds: assessment.packable.map((s) => s.id),
         userId: uid,
         userEmail,
-        buildCoverAfter: async (includedSheets, builderSkipped) => {
+        buildCoverAfter: async (includedSheets, builderSkipped, cover) => {
           // Immutable print snapshot of exactly this paper (PKG-2); the
           // recorded version is each sheet's CURRENT revision — what docPack
           // prints — so a non-owner's print (pins untouched) is described
@@ -229,6 +232,14 @@ export default function PackagesPage() {
                 ? [{ documentId: s.documentId, label: s.label, code: s.code, reason: s.reason, versionId: s.versionId ?? null }]
                 : []),
           });
+          // PS-P10 (PHYS-19 c3): this pack's sheet tokens link to this
+          // cover's print by key, here, before the download (the server
+          // checks it). A link the server REFUSES (the cover is not this
+          // print's — a 400 marked cover_mismatch) STOPS the print — nothing
+          // downloaded, no pin moved. A link that only fails (no answer or a
+          // 5xx after one retry, or any other answer, an unmarked 400
+          // included) prints the pack unlinked, as before PS-P10.
+          await cover.linkPrint(printId);
           // PKG-12: every cover entry carries its page(s) in this pack — the
           // cover's own pages come first.
           const labels = coverEntryLabels(includedSheets, coverContentsChunks(includedSheets.length).length);
@@ -261,6 +272,7 @@ export default function PackagesPage() {
         },
       });
       await load();
+      setPrintRound((n) => n + 1);
       // Refusals from the gate plus anything the builder itself had to drop
       // (missing file, fetch failure) — the crew sees the full left-out list,
       // and skipped sheets never have their pins moved.
@@ -423,6 +435,16 @@ export default function PackagesPage() {
                     </Link>
                   ))}
                 </div>
+
+                {/* PS-P10: the pack's print history — each print marked
+                    recalled, stopped before its download, or not linked
+                    (public-surfaces PHYS-20 limb 3); a controller (Admin /
+                    Document Control by the role collection) recalls a printed
+                    pack here (DACL-8 residual (c)). On since PHYS-20's limbs
+                    hold: a recalled pack's cover and sheets read recalled. */}
+                {activeOrgId && (
+                  <PackPrintHistory orgId={activeOrgId} packageId={pkg.id} canRecall={isController} refreshKey={printRound} />
+                )}
 
                 <div className="px-3 pb-3 flex items-center gap-2">
                   {/* Print pack: cover sheet + all current drawings, stamped;
