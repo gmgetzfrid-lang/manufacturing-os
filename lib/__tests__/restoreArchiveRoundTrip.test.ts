@@ -512,7 +512,8 @@ describe("BKP-15 — a dangling process flow is reported as what it is, on its o
     const sql = readFileSync(join(process.cwd(), "supabase/migrations/20261155_intel_roundG_process_flows_authority.sql"), "utf8");
     expect(sql).toMatch(/RAISE EXCEPTION 'process_flows_endpoint: equipment % is not in this workspace''s registry[^']*', v_ref\s+USING ERRCODE = '23503';/);
     expect(sql).toMatch(/RAISE EXCEPTION 'process_flows_endpoint: unit % is not a Site Codebook unit[^']*', v_ref\s+USING ERRCODE = '23503';/);
-    const page = readFileSync(join(process.cwd(), "app/(protected)/admin/restore/page.tsx"), "utf8");
+    // admin-and-org P17 (BKP-16): the result panel moved, verbatim, to its own file beside the page
+    const page = readFileSync(join(process.cwd(), "app/(protected)/admin/restore/page.tsx"), "utf8") + readFileSync(join(process.cwd(), "app/(protected)/admin/restore/RestoreResultPanel.tsx"), "utf8");
     expect(page).toMatch(/refused: t\.refused\.filter\(\(r\) => !isDanglingFlowRefusal\(r\)\)/);
     expect(page).toMatch(/flow\(s\) not restored — \{restoreRefusalLabel\(DANGLING_FLOW_CODE\)\}/);
     expect(page).toMatch(/dangling process flow\(s\) not restored/);

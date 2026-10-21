@@ -387,7 +387,8 @@ describe("BKP-5 — a restore says what it added and what it kept, before and af
   });
 
   it("the page runs the check before it asks, uses the shared driver, and never paints a stopped run green", () => {
-    const page = readFileSync(join(process.cwd(), "app/(protected)/admin/restore/page.tsx"), "utf8");
+    // admin-and-org P17 (BKP-16): the result panel moved, verbatim, to its own file beside the page
+    const page = readFileSync(join(process.cwd(), "app/(protected)/admin/restore/page.tsx"), "utf8") + readFileSync(join(process.cwd(), "app/(protected)/admin/restore/RestoreResultPanel.tsx"), "utf8");
     expect(page.indexOf("await previewChunkedRestore(")).toBeGreaterThan(0);
     expect(page.indexOf("await previewChunkedRestore(")).toBeLessThan(page.indexOf("await appConfirm("));
     expect(page.indexOf("await appConfirm(")).toBeLessThan(page.indexOf("await runChunkedRestore("));
@@ -625,7 +626,8 @@ describe("BKP-5 (fix pass) — a key another workspace holds is 'not restored', 
   });
 
   it("the page never says 'already here' for them and never paints such a run green", () => {
-    const page = readFileSync(join(process.cwd(), "app/(protected)/admin/restore/page.tsx"), "utf8");
+    // admin-and-org P17 (BKP-16): the result panel moved, verbatim, to its own file beside the page
+    const page = readFileSync(join(process.cwd(), "app/(protected)/admin/restore/page.tsx"), "utf8") + readFileSync(join(process.cwd(), "app/(protected)/admin/restore/RestoreResultPanel.tsx"), "utf8");
     expect(page).toMatch(/record\(s\) will NOT be restored: \$\{RESTORE_HELD_ELSEWHERE_NOTE\}/);
     expect(page).toMatch(/could NOT be restored — their ids are in use elsewhere/);
     expect(page).toMatch(/Nothing new was restored/);
@@ -931,7 +933,8 @@ describe("ORG-1 (fix pass 2) — a storage key under another workspace's prefix 
 
 describe("BKP-5 (fix pass 2) — the result panel never says 'nothing new' over writes the server did not count", () => {
   it("nothingNew needs zero inserted AND zero uncounted; uncounted writes get their own amber title; cleared pointers are listed", () => {
-    const page = readFileSync(join(process.cwd(), "app/(protected)/admin/restore/page.tsx"), "utf8");
+    // admin-and-org P17 (BKP-16): the result panel moved, verbatim, to its own file beside the page
+    const page = readFileSync(join(process.cwd(), "app/(protected)/admin/restore/page.tsx"), "utf8") + readFileSync(join(process.cwd(), "app/(protected)/admin/restore/RestoreResultPanel.tsx"), "utf8");
     expect(page).toMatch(/const nothingNew = result\.totalInserted === 0 && result\.totalUncounted === 0;/);
     expect(page).toMatch(/Restored — \{fmtNum\(result\.totalUncounted\)\} record\(s\) the server did not count/);
     expect(page).toMatch(/result\.totalRefused > 0 \|\| result\.totalCleared > 0 \|\| result\.totalUncounted > 0 \|\| nothingNew \? "border-amber-200/);

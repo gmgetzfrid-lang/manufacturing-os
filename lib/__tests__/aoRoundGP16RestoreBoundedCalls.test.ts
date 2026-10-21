@@ -180,7 +180,14 @@ describe("EDGE-5 (P16 final fix pass) — a tickets request costs a bounded numb
     expect(count("tickets.upsert")).toBe(2);
     // calls and per-row outcomes as at 4407b30 (the report, every note and every pair)
     expect(sha([String(log.length), ...log.map((l) => l.slice(0, 60))])).toBe("b22a61fb0790c5077d27be35338f833b41a0748c3360fb2c904c0995227c954c");
-    expect(sha([JSON.stringify(r)])).toBe("9b2fb7a81c7b26d682fa26800e0caea35694285e3934ecacf40edb4b64a7290e");
+    // admin-and-org P17 final fix pass (BKP-16 review; drafting-flow EDGE-5 residual (e)): only each note's message
+    // changed — a printed old number "must be read as" the new one for this request, and in this workspace still
+    // identifies its holder (it never "resolves to" the new one). Every note carries the corrected sentence; with it
+    // put back to 4407b30's, the per-row outcomes are 4407b30's exactly.
+    const said = (n: { from: string; to: string; numberHeldBy: string }) => `printing "${n.from}" for this request must be read as "${n.to}"; in this workspace "${n.from}" still identifies request ${n.numberHeldBy}`;
+    expect(r.cleared.every((n) => !!n.renumbered && n.message.includes(said(n.renumbered)))).toBe(true);
+    const as4407b30 = { ...r, cleared: r.cleared.map((n) => ({ ...n, message: n.message.replace(said(n.renumbered!), `printing "${n.renumbered!.from}" for this request now resolve to "${n.renumbered!.to}"`) })) };
+    expect(sha([JSON.stringify(as4407b30)])).toBe("9b2fb7a81c7b26d682fa26800e0caea35694285e3934ecacf40edb4b64a7290e");
     // what changed (item 3): the history line of a request whose holder is the backup's own says why the number is carried twice
     const q = ticketsHere().find((t) => t.id === "t-q-0000")!;
     expect((q.history as Array<{ details: string }>).at(-1)!.details).toBe(`Issued as "KE-DDRT-26-2000"; request t-p-0000 of this backup (restored first) carries that number (the workspace the backup was taken from held the number twice), so this request was restored as "${String(q.ticket_id)}".`);

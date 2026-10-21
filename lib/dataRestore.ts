@@ -1194,6 +1194,17 @@ export interface RestoreRowRefusal {
    *  number the request was issued, the number it was restored under, and the
    *  request holding the old one (the `renumbered` lists are built from it). */
   renumbered?: { from: string; to: string; numberHeldBy: string; unconfirmed?: true };
+  /** admin-and-org BKP-16 (Round G P17): on a TICKET_NUMBER_IN_USE or
+   *  TICKET_NUMBER_UNSETTLED refusal, the request number the backup row
+   *  carries — so the restore page names it from a field, not from the
+   *  message's text. Additive: every other refusal is unchanged. */
+  ticketNumber?: string;
+  /** admin-and-org BKP-16 (Round G P17 final fix pass): on a
+   *  TICKET_NUMBER_IN_USE refusal, the request of this workspace that holds
+   *  the number — so the restore page names the holder apart from the
+   *  refused backup row. Additive: set only there (a TICKET_NUMBER_UNSETTLED
+   *  number has no holder; its carriers did not land). */
+  numberHeldBy?: string;
 }
 
 export interface RestoreChunkResult {
@@ -1620,7 +1631,7 @@ const liveTicketHolder = (live: Map<string, string[]>, r: Record<string, unknown
  *  already carried. Nothing of it was written; a re-run renumbers it. */
 function ticketRemintRefusal(id: string | null, n: string, holder: string, why: string): RestoreRowRefusal {
   return {
-    id, code: TICKET_NUMBER_IN_USE,
+    id, code: TICKET_NUMBER_IN_USE, ticketNumber: n, numberHeldBy: holder,
     message: `request number "${n}" is already carried in this workspace by request ${holder} — this request was to be restored under a fresh number, but none could be taken now (${why}); not restored (a restore never files two requests under one number). Run the restore again: a re-run renumbers it`,
   };
 }
@@ -2276,7 +2287,7 @@ export async function applyRestoreChunk(
     if (round >= RESTORE_HELD_BACK_ROUNDS) {
       for (const r of pending) {
         refused.push({
-          id: label(r), code: TICKET_NUMBER_UNSETTLED,
+          id: label(r), code: TICKET_NUMBER_UNSETTLED, ticketNumber: String(r.ticket_id),
           message: `request number "${String(r.ticket_id)}" is carried by other rows of this restore request, and ${RESTORE_HELD_BACK_ROUNDS} rounds each wrote one of them that did not land (refused by the database — see their own refusals — or skipped), so this row was not judged — not restored (a restore never files two requests under one number). Fix the refused rows, or send this one in a request of its own, and run the restore again`,
         });
       }
@@ -2343,7 +2354,7 @@ export async function applyRestoreChunk(
       const folder = ticketFilesFolder(r, n);
       clearNotes.set(out, [...(clearNotes.get(r) ?? []), {
         id: label(r), code: TICKET_RENUMBERED,
-        message: `ticket_id "${n}" → "${to}": request ${holder} ${holderWhere} carries "${n}"${ofBackup ? " (the workspace the backup was taken from held the number twice)" : carriers ? " (a request this workspace holds that is not one of this backup's)" : ` (a request the workspace held before this restore, or — where the backup itself carries "${n}" twice — the backup's own request, restored by an earlier part of this restore)`}, so this request was restored under a fresh number rather than beside it or not at all; "${n}" is kept on it as metadata.restore_renumbered.from and in its history — labels, transmittals and archives printing "${n}" for this request now resolve to "${to}"${folder ? `; its files stay in the "${n}" folder (${folder})` : ""}`,
+        message: `ticket_id "${n}" → "${to}": request ${holder} ${holderWhere} carries "${n}"${ofBackup ? " (the workspace the backup was taken from held the number twice)" : carriers ? " (a request this workspace holds that is not one of this backup's)" : ` (a request the workspace held before this restore, or — where the backup itself carries "${n}" twice — the backup's own request, restored by an earlier part of this restore)`}, so this request was restored under a fresh number rather than beside it or not at all; "${n}" is kept on it as metadata.restore_renumbered.from and in its history — labels, transmittals and archives printing "${n}" for this request must be read as "${to}"; in this workspace "${n}" still identifies request ${holder}${folder ? `; its files stay in the "${n}" folder (${folder})` : ""}`,
         renumbered: { from: n, to, numberHeldBy: holder },
       }]);
       next.push(out);
