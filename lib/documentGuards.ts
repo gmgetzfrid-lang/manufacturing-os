@@ -13,15 +13,21 @@
 //      `doc` the client passed in).
 //   2. At the database, the two rules are enforced by DIFFERENT things
 //      (DCK-6): the HOLD check lives in the publish-guard trigger
-//      (enforce_document_publish_guard, newest body 20261060), while the
-//      LOCK check lives only in the publish_revision RPC (20260828 and
+//      (enforce_document_publish_guard), while — until 20261245 is pasted —
+//      the LOCK check lives only in the publish_revision RPC (20260828 and
 //      successors: `v_doc.checked_out_by <> p_actor` unless overridden). The
 //      trigger's own lock branch was removed on purpose in 20260812 ("we
-//      deliberately do NOT block on checked_out_by") and never restored, so
-//      a direct `documents.current_version_id` PATCH by someone who already
+//      deliberately do NOT block on checked_out_by"), so before that paste a
+//      direct `documents.current_version_id` PATCH by someone who already
 //      holds publish authority is NOT stopped by the lock at the database —
-//      only by this module on the app path. Do not describe the trigger as a
-//      lock backstop; it is not one.
+//      only by this module on the app path. 20261245 (HAND-13) gives the
+//      trigger a lock leg: a write that makes a new revision current on a
+//      document checked out by someone else is refused (42501), Document
+//      Control included, unless it is publish_revision's own promote (whose
+//      lock rules — the holder, a publisher's override with its reason, a
+//      controller's force — already ran) or the reviewed promote of the
+//      pending draft (finalize_reviewed_promote, which never read the lock).
+//      The trigger is a lock backstop only on a database that has 20261245.
 //
 // The decision itself is a pure function (`evaluatePublishGuard`) so it can
 // be unit-tested exhaustively without a database.
