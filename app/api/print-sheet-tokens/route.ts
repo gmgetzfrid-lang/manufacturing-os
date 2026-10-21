@@ -67,7 +67,10 @@
 //     voided without it — and a short void writes a second row saying so.
 //     A recalled sheet's scan reads print_voided: red, never green. A
 //     non-controller is refused 403 before anything is read. Before 20261240
-//     is pasted: { available: false } and nothing is written.
+//     is pasted: { available: false } and nothing is written — by a cover or
+//     by a token print id, the token read names cover_print_id, so its 42703
+//     answers before the audit row (fifth review fix); a void refused by a
+//     void-reason CHECK without 'recalled' also answers { available: false }.
 //
 // Any active member of the workspace may print a pack (the pack builder has
 // no role gate), so any active member may mint (authorizeOrgRole over every
@@ -91,6 +94,7 @@ import {
   hashSheetToken,
   isMissingCoverLinkColumn,
   isMissingSheetTokenTable,
+  isVoidReasonCheckRefusal,
   newSheetToken,
   SHEET_PRINT_RECALL_REASON_MAX,
   SHEET_PRINT_RECALL_REASON_MIN,
@@ -483,9 +487,13 @@ async function recallPrint(actor: AuthorizedActor, orgId: string, body: Record<s
   // link existed, which keep scanning by their revision's status.
   if (tokenPrintIds.length === 0) return json({ error: NO_LINKED_SHEET_CODE }, 404);
 
+  // The read names the link column on EVERY recall path (fifth review fix:
+  // by a token print id nothing else read it, so before 20261240 the read
+  // succeeded, the audit row was written and the void then failed on the
+  // 20261237 CHECK). Before the paste it is 42703 here — before the audit row.
   const { data, error } = await actor.admin
     .from("print_sheet_tokens")
-    .select("id, print_id, settled_at, voided_at")
+    .select("id, print_id, settled_at, voided_at, cover_print_id")
     .eq("org_id", orgId)
     .in("print_id", tokenPrintIds);
   if (error) {
@@ -538,7 +546,19 @@ async function recallPrint(actor: AuthorizedActor, orgId: string, body: Record<s
         .in("id", part)
         .is("voided_at", null)
         .select("id");
-      if (uErr) { voidErr = uErr.message; break; }
+      if (uErr) {
+        // Belt and braces: a void-reason CHECK without 'recalled' (the
+        // 20261237 one) means 20261240 is not pasted. Nothing is voided; the
+        // attempt is already on the audit trail, so a follow-up row says it
+        // did not apply and the answer is "not available", not "try again".
+        if (voided === 0 && isVoidReasonCheckRefusal(uErr)) {
+          const followErr = await audit({ reason, incomplete: true, sheets: live.length, voided: 0, notApplied: "needs database update 20261240" });
+          if (followErr) console.error("[print-sheet-tokens] the recall's follow-up audit row was not written:", followErr);
+          return json({ available: false, recalled: false, voided: 0, error: "Recalling a printed pack needs database update 20261240 — no sheet was voided." });
+        }
+        voidErr = uErr.message;
+        break;
+      }
       voided += (hit as unknown[] | null)?.length ?? 0;
     }
     if (voidErr) break;

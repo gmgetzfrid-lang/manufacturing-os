@@ -63,6 +63,13 @@ const state = vi.hoisted(() => ({
   /** fourth review fix: reads honour `eq cover_print_id` and `in print_id`
    *  (off by default — most fixtures carry no link column) */
   filterReads: false,
+  /** fifth review fix: the database as it is BEFORE 20261240 — a
+   *  print_sheet_tokens read that names cover_print_id (column or filter) is
+   *  42703, one that does not succeeds; a void 'recalled' is refused by the
+   *  20261237 CHECK (23514) */
+  preCoverLink: false,
+  /** the column present but the void-reason CHECK still without 'recalled' */
+  voidCheckRefuses: false,
   log: [] as string[],
   inserts: [] as Array<{ table: string; rows: Record<string, unknown> }>,
   updates: [] as Array<{ patch: Record<string, unknown>; filters: Filters }>,
@@ -87,6 +94,9 @@ function chain(table: string) {
       state.log.push("update");
       state.updates.push({ patch, filters: [...filters] });
       if (state.updateError) return { data: null, error: state.updateError };
+      if ((state.preCoverLink || state.voidCheckRefuses) && patch.void_reason === "recalled") {
+        return { data: null, error: { code: "23514", message: 'new row for relation "print_sheet_tokens" violates check constraint "print_sheet_tokens_void_reason_known"' } };
+      }
       const ids = filters.find((f) => f[0] === "in" && f[1] === "id")?.[2] as string[] | undefined;
       for (const id of ids ?? []) state.touched.add(id);
       const coverNull = filters.some((f) => f[0] === "is" && f[1] === "cover_print_id" && f[2] === null);
@@ -97,6 +107,9 @@ function chain(table: string) {
       return { data: Array.from({ length: state.updateShort ? Math.max(0, n - 1) : n }, (_, i) => ({ id: `r${i}` })), error: null };
     }
     state.reads.push({ table, cols, filters: [...filters] });
+    if (table === "print_sheet_tokens" && state.preCoverLink && (cols.includes("cover_print_id") || filters.some((f) => f[1] === "cover_print_id"))) {
+      return { data: null, error: { code: "42703", message: "column print_sheet_tokens.cover_print_id does not exist" } };
+    }
     if (table === "print_sheet_tokens" && neq) {
       state.log.push("probe");
       return state.probeError ? { data: null, error: state.probeError } : { data: state.probeRows, error: null };
@@ -180,6 +193,8 @@ beforeEach(() => {
   state.rereadError = null;
   state.updateError = null;
   state.filterReads = false;
+  state.preCoverLink = false;
+  state.voidCheckRefuses = false;
   state.log = [];
   state.inserts = [];
   state.updates = [];
@@ -581,7 +596,7 @@ describe("PS-P10 void — a controller recalls a printed pack", () => {
     expect(state.updates).toEqual([]);
   });
 
-  it("BEFORE 20261240 (no link column, or no table): { available: false } — no audit row, no void", async () => {
+  it("BEFORE 20261240 by a cover (no link column, or no table): { available: false } — no audit row, no void", async () => {
     asController();
     for (const tokenReadError of [
       { code: "42703", message: "column print_sheet_tokens.cover_print_id does not exist" },
@@ -594,6 +609,51 @@ describe("PS-P10 void — a controller recalls a printed pack", () => {
     }
     expect(state.inserts).toEqual([]);
     expect(state.updates).toEqual([]);
+  });
+
+  // Fifth review fix: by a token print id nothing read the link column, so
+  // before the paste the read succeeded, the audit row was written and the
+  // void failed on the 20261237 CHECK — a 409 "try again" adding two audit
+  // rows per attempt. The mock here is the pre-paste database itself: a read
+  // that does not name cover_print_id SUCCEEDS.
+  it("BEFORE 20261240 by a token print id: { available: false } — no audit row, no void, on every attempt", async () => {
+    asController();
+    settled();
+    state.preCoverLink = true;
+    for (let i = 0; i < 2; i++) {
+      const res = await post({ action: "void", orgId: ORG, printId: PRINT, reason: "Wrong pack" });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ available: false, recalled: false });
+    }
+    expect(state.inserts).toEqual([]);
+    expect(state.updates).toEqual([]);
+    // the token read is what probes the column, on this path too
+    const tokenReads = state.reads.filter((r) => r.table === "print_sheet_tokens");
+    expect(tokenReads.every((r) => r.cols.split(",").map((c) => c.trim()).includes("cover_print_id"))).toBe(true);
+  });
+
+  it("BEFORE 20261240 by a cover, against the pre-paste database: { available: false } — no audit row, no void", async () => {
+    asController();
+    settled();
+    state.preCoverLink = true;
+    const res = await post(voidBody());
+    expect(await res.json()).toMatchObject({ available: false, recalled: false });
+    expect(state.inserts).toEqual([]);
+    expect(state.updates).toEqual([]);
+  });
+
+  it("a void refused by a void-reason CHECK without 'recalled' answers { available: false } (not 409 'try again'); nothing voided, the attempt and its non-application recorded", async () => {
+    asController();
+    settled();
+    state.voidCheckRefuses = true;
+    const res = await post({ action: "void", orgId: ORG, printId: PRINT, reason: "Wrong pack" });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ available: false, recalled: false, voided: 0 });
+    expect(body.error).toMatch(/20261240/);
+    expect(state.updates).toHaveLength(1);
+    expect(state.inserts.map((i) => (i.rows.details as Record<string, unknown>).incomplete ?? false)).toEqual([false, true]);
+    expect((state.inserts[1].rows.details as Record<string, unknown>).notApplied).toMatch(/20261240/);
   });
 
   it("a print whose sheets carry no per-print code is 404, and one already wholly void is 409 — neither writes an audit row", async () => {

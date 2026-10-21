@@ -56,6 +56,15 @@ export function isMissingCoverLinkColumn(error: { code?: string; message?: strin
   return /cover_print_id/.test(error.message ?? "") && /does not exist|could not find|schema cache/i.test(error.message ?? "");
 }
 
+/** 20261240 not pasted, seen on the recall's void: the 20261237 void-reason
+ *  CHECK (print_sheet_tokens_void_reason_known) has no 'recalled' and refuses
+ *  the update (23514). The recall then answers "not available yet" — never
+ *  "try again" (public-surfaces PS-P10, fifth review fix). */
+export function isVoidReasonCheckRefusal(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error || error.code !== "23514") return false;
+  return /void_reason/.test(error.message ?? "");
+}
+
 /** Who may recall a printed pack (void a settled print): a controller —
  *  Admin or Document Control — by the role COLLECTION (memberHoldsAny over
  *  the headline and the additive roles, never the headline alone; the
