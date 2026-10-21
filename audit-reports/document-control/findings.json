@@ -15,17 +15,17 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 182,
+    "findings": 184,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 19,
       "HIGH": 56,
-      "MEDIUM": 77,
-      "LOW": 30
+      "MEDIUM": 78,
+      "LOW": 31
     },
     "by_status": {
-      "RESOLVED": 165,
-      "OPEN": 15,
+      "RESOLVED": 168,
+      "OPEN": 14,
       "RESOLVED (as split under `DEC-31`; ruled by the integrator at the P27 merge, 2026-10-20 (`DEC-90`) — the access-control door, a member reading `portal_token` over REST, stays open until `DIST-18` lands)": 1,
       "RESOLVED (2026-10-21, the integrator's fix pass at the P28 merge — ruled by the integrator at the P28 merge, 2026-10-21 (`DEC-90`): done-when 2 landed; the restore hooks beyond the brief's ruling (4) ratified)": 1
     }
@@ -3558,7 +3558,7 @@
       "id": "REV-33",
       "title": "A status editor's save to Superseded skips supersedeDocument's pre-write gates: no MOC reference for a drawing-class document (PSM, OSHA 1910.119(l)) and no publish-authority / checkout-lock pre-check",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": null,
       "verification_note": "READ (on `fleet/DC-P31-retirement-door-parity`: `components/documents/BulkEditModal.tsx:221` / `:409`; `app/(protected)/documents/[libraryId]/page.tsx:2992` / `:3026` / `:5002`; `lib/revisions.ts:3230`, `:3570`, `:3578`–`:3596`, `:3601`; `supabase/migrations/20261193_dc_roundF_ifc_rev_up_first_issue.sql:171`–`:180`, `:731` — the newest body of `enforce_document_publish_guard`)",
       "blast_radius": null,
@@ -3581,6 +3581,36 @@
       ],
       "refuted": false,
       "summary": "Document Control sets a drawing-class P&ID sheet to Superseded through the metadata editor, or selects twelve sheets in Bulk Edit and sets Superseded. No MOC reference is asked, no lock or authority pre-check runs, and the supersession's SUPERSEDEDOC record (P31) carries mocReference: null. A PSM audit asking for the MOC behind a superseded drawing finds none; the same act through the Supersede di",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-36",
+      "title": "A controller's retirement through a status editor is held back from an active hold and a missing MOC only by the app's pre-write read: the database's guard returns for a controller before its hold check, the page reads the row twice, and the metadata save to Archived runs no archive pre-check",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": null,
+      "verification_note": "READ (on `fleet/DC-P34-status-editor-parity-ii`: `supabase/migrations/20261245_dc_roundG_publish_guard_lock_leg.sql:945`–`:946` (`IF is_org_controller(NEW.org_id) THEN RETURN NEW;`) before its hold refusal at `:960`–`:965`; `lib/revisions.ts` `gateStatusEditorRetirement` (the lock and holds read by `fetchPublishGuardState`, before the write) and `assertSupersessionMoc`; `app/(protected)/documents/[libraryId]/page.tsx` `saveMetadata` — its read of the row (`.select(\"status\")`, `:3046`) and then `changeDocumentStatus`'s own read; `lib/revisions.ts` `authorizeArchive` (`:2224`), which `archiveDocument` runs and the metadata save to Archived does not)",
+      "blast_radius": null,
+      "related": [
+        "REV-33",
+        "DCK-1",
+        "HLD-2",
+        "OWN-19"
+      ],
+      "locations": [
+        "supabase/migrations/20261245_dc_roundG_publish_guard_lock_leg.sql:945",
+        "lib/revisions.ts",
+        "app/(protected)/documents/[libraryId]/page.tsx",
+        "components/documents/BulkEditModal.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A stop-work hold is opened on drawing P-101 at 10:00:00.2. At 10:00:00.1 Document Control's bulk Superseded read P-101's holds (none) and at 10:00:00.3 wrote the row; the database lets a controller through before its hold check, so P-101 is superseded over the hold, with no record of the hold. Or a controller's script writes status = 'Superseded' on a drawing directly: no MOC is asked and no hold ",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },
@@ -4608,7 +4638,7 @@
       "id": "REV-32",
       "title": "A VOID_DOC row reads as its raw action on the document timeline and the activity feed",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": null,
       "verification_note": "READ (`lib/timeline.ts:651`, `components/documents/TimelineFeed.tsx:140`, `app/(protected)/activity/page.tsx:81`, `app/(protected)/admin/audit/page.tsx:87` on `fleet/DC-P31-retirement-door-parity`)",
       "blast_radius": null,
@@ -4635,7 +4665,7 @@
       "id": "REV-34",
       "title": "The status-editor retirements still differ from the single doors around the write: the library bulk archive's ARCHIVE_DOC has no retiredFrom, the metadata save to Archived writes no archive columns, and no status-editor supersession closes the pending acks or sends the holder's notice; the bulk editor re-archives an Archived row but skips a Superseded one",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": null,
       "verification_note": "READ (on `fleet/DC-P31-retirement-door-parity`: `app/(protected)/documents/[libraryId]/page.tsx:1116`, `:1161`; `components/documents/BulkEditModal.tsx:419`, `:423`, `:465`; `lib/revisions.ts:2250`–`:2252`, `:2386`, `:2419`, `:3316`, `:3746`, `:3754`, `:3766`; `lib/staleCopies.ts:665`; `lib/distributionAcks.ts:280`)",
       "blast_radius": null,
@@ -4658,6 +4688,32 @@
       ],
       "refuted": false,
       "summary": "An auditor compares ARCHIVEDOC rows and finds retiredFrom on some and not others, depending on which bulk door was used; a document archived from the metadata editor shows archivereason NULL on its row while its history shows a reason; a report reading distributionacks.supersededat directly counts a bulk-superseded document's acks as open.",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-35",
+      "title": "A status editor's supersession sends no package owners' notice, and the checkout holder it now tells personally is not left out of the watchers' FYI",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": null,
+      "verification_note": "READ (on `fleet/DC-P34-status-editor-parity-ii`: `lib/revisions.ts` `finishRetirementDuties` — the holder's notice, no `notifyPackagesOfRetirement`; `changeDocumentStatus`'s `recallOnRetirement` and `lib/staleCopies.ts` `recallRetiredBatch` — `personallyToldElsewhere: { checkoutHolder: false, packageOwners: false }`)",
+      "blast_radius": null,
+      "related": [
+        "REV-34",
+        "PROD-17"
+      ],
+      "locations": [
+        "lib/revisions.ts",
+        "lib/staleCopies.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Eli has P-101 checked out and follows it; Document Control bulk-supersedes it. Eli gets \"Document superseded while you're checked out\" and the watchers' \"retired\" FYI for the same act. The owner of an open work package pinning P-101 who does not follow it hears nothing personally.",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },

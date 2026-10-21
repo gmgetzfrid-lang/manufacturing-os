@@ -928,6 +928,29 @@
    "sequencingNotes": [
     "Added by the integrator at the P33 merge, 2026-10-21 (DEC-31). Paste after 20261247 (row 191)."
    ]
+  },
+  {
+   "name": "P36 STATUS EDITOR PARITY III \u2014 the database holds a controller's status-editor retirement to an active hold, one read decides a retirement, the metadata archive is pre-checked, and the retirement notices reach owners once each",
+   "findings": [
+    "document-control REV-36 (assigned at the P34 merge, 2026-10-21, DEC-31; ruled under DEC-90): (1) enforce_document_publish_guard (re-created from its NEWEST body, lineDiff-pinned, one DEC-30 file) refuses entry into Superseded and Void over an active hold for a controller too, admitting only the single doors' recorded hold-override path; (2) the drawing-class MOC stays app-side (ruled, recorded); (3) the metadata save decides 'retires' and 'retired' from one read; (4) the metadata save to Archived runs authorizeArchive's pre-check; REGRESSION: a non-drawing, unlocked, unheld row writes as today and the single doors are unchanged",
+    "document-control REV-35 (assigned at the P34 merge; ruled): a status editor's supersession sends the package owners' notice as supersedeDocument does; a holder told personally is left out of that retirement's watchers' FYI (lib/staleCopies.ts personallyToldElsewhere) \u2014 every other recipient as today"
+   ],
+   "files": [
+    "supabase/migrations/2026NNNN_dc_roundG_status_editor_hold_leg.sql (one DEC-30 file; after 20261245 and 20261247)",
+    "lib/revisions.ts (finishRetirementDuties / changeDocumentStatus notice paths; never the approved_by region)",
+    "lib/staleCopies.ts (personallyToldElsewhere)",
+    "app/(protected)/documents/[libraryId]/page.tsx (the metadata save only; keep the markers)",
+    "components/documents/BulkEditModal.tsx",
+    "tests"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "document-control P34 merged (2026-10-21)",
+    "document-control P32/P33 merged (the guard's newest body is 20261245)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the P34 merge, 2026-10-21 (DEC-31). The guard migration pastes after 20261245 (row 187) and 20261247 (row 191)."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

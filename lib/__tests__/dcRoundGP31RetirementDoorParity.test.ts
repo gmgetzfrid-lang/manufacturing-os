@@ -47,7 +47,12 @@ vi.mock("@/lib/reviewCycles", () => ({ onDocumentIssued: vi.fn(async () => {}) }
 vi.mock("@/lib/acknowledgments", () => ({ onDocumentIssuedAck: vi.fn(async () => {}) }));
 vi.mock("@/lib/retention", () => ({ recomputeRetention: vi.fn(async () => {}) }));
 vi.mock("@/lib/staleCopies", () => ({ recallRetiredDocument: vi.fn(async () => 0), withdrawRetirementRecall: vi.fn(async () => 0) }));
-vi.mock("@/lib/distributionAcks", () => ({ closeStaleAcksForDocument: vi.fn(async () => {}) }));
+// P34 final fix pass: finishRetirementDuties closes a superseded row's acks through
+// closeStaleAcksForDocumentChecked — the real statement, against this file's database.
+vi.mock("@/lib/distributionAcks", async (importOriginal) => ({
+  closeStaleAcksForDocument: vi.fn(async () => {}),
+  closeStaleAcksForDocumentChecked: (await importOriginal<typeof import("@/lib/distributionAcks")>()).closeStaleAcksForDocumentChecked,
+}));
 vi.mock("@/lib/docClass", () => ({ effectiveDocClassForDocument: vi.fn(async () => null) }));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async (p: Record<string, unknown>) => { state.emits.push(p); }) }));
 vi.mock("@/lib/reviewControl", async (importOriginal) => {
@@ -56,7 +61,7 @@ vi.mock("@/lib/reviewControl", async (importOriginal) => {
 });
 
 import { supabase } from "@/lib/supabase";
-import { changeDocumentStatus, finishRetirementDuties, finishBulkArchive } from "@/lib/revisions";
+import { changeDocumentStatus, finishRetirementDuties, finishBulkArchive, gateStatusEditorRetirement, isSupersessionMocRequired, SUPERSEDE_MOC_REQUIRED } from "@/lib/revisions";
 import { recallRetiredDocument } from "@/lib/staleCopies";
 import { auditActionDef, isDestructiveAuditAction, AUDIT_ACTIONS } from "@/lib/auditActions";
 import { isIssueTransition, isControlledIssueStatus, isRetiredStatus } from "@/lib/issueStatus";
@@ -266,6 +271,8 @@ describe("ruling 1 / ruling 3 — the metadata editor's save to Void / Supersede
     const fn = liftSave({
       selectedDoc: asDoc({ ...d, ...(opts.pageSees ?? {}) }), uid: ME, userEmail: "cara@x", activeRole: "DocCtrl", activeOrgId: ORG,
       library: { orgId: ORG, uniquenessKeys: ["documentNumber"] }, supabase, changeDocumentStatus, finishRetirementDuties,
+      // document-control P34 (REV-33): the retirement gate the save runs first
+      gateStatusEditorRetirement, isSupersessionMocRequired, SUPERSEDE_MOC_REQUIRED,
       isIssueTransition, isUnguardedEntryIntoForce, isControlledIssueStatus, isRetiredStatus, computeUniquenessKey,
       setError: (v: string | null) => { st.error = v; },
       appAlert: async (a: Record<string, unknown>) => { st.alerts.push(a); },
@@ -284,9 +291,11 @@ describe("ruling 1 / ruling 3 — the metadata editor's save to Void / Supersede
       await settle();
       expect(st.prompts).toHaveLength(1);
       expect(st.prompts[0]).toMatchObject({ title: `Set ${String(d.document_number)} to ${to}?`, placeholder: `Reason for ${verb}`, required: true });
-      // REGRESSION: the one status write, the same columns (no archive / supersession columns added)
+      // REGRESSION: the one status write, the same columns (no supersession column added) —
+      // document-control P34 (REV-34 (b)): a save to Archived carries the archive columns in that write
       expect(statusWrites()).toHaveLength(1);
-      expect(Object.keys(statusWrites()[0].args[0] as Row).sort()).toEqual(BARE_COLUMNS);
+      expect(Object.keys(statusWrites()[0].args[0] as Row).sort()).toEqual(to === "Archived" ? [...BARE_COLUMNS, "archive_reason", "archived_at", "archived_by"].sort() : BARE_COLUMNS);
+      if (to === "Archived") expect(docRow(`m-${to}`)).toMatchObject({ archive_reason: "Obsolete unit", archived_by: ME });
       expect(docRow(`m-${to}`)).toMatchObject({ status: to, updated_by: ME });
       // the duties
       expect(docRow(`m-${to}`).pending_version_id).toBeNull();
@@ -378,6 +387,8 @@ describe("ruling 1 / ruling 3 — the metadata editor's save to Void / Supersede
       reason: "No reason given: the metadata editor saved this document as Archived without asking one (this page showed it as already Archived).",
       via: "metadata", retiredFrom: "Issued",
     });
+    // document-control P34 (REV-34 (b)): the row read first says this save archives it — the archive columns ride in the write
+    expect(docRow("st")).toMatchObject({ archived_by: ME, archive_reason: "No reason given: the metadata editor saved this document as Archived without asking one (this page showed it as already Archived)." });
   });
 
   it("a duty that did not complete is said (the status change stands; do not save it again), its steps named", async () => {

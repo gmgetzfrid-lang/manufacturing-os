@@ -1591,6 +1591,7 @@ const ACTOR_CALLER_PASS_THROUGHS = [
   "lib/retention.ts#placeLegalHold(input.actorId)",
   "lib/retention.ts#releaseLegalHold(input.actorId)",
   "lib/revisions.ts#changeDocumentStatus(input.actorUserId)",     // document-control P28 (DIST-16): a put-back's withdrawal; the status editors pass the signed-in member
+  "lib/revisions.ts#finishRetirementDuties(input.actorUserId)",   // document-control P34 (REV-34 (c)): the status editors' holder notice; finishBulkArchive forwards its own input, the bulk editor its actorUserId prop, the library page RoleContext's uid
   "lib/revisions.ts#recallOnRetirement(input.actorUserId)",       // document-control P26 (PROD-17): the retirement doors' recall; its callers (archiveDocument, changeDocumentStatus, splitDocument, finishMerge) forward their own actor, the signed-in member
   "lib/revisions.ts#revUpDocument(input.actorUserId)",
   "lib/revisions.ts#revertToVersion(input.actorUserId)",

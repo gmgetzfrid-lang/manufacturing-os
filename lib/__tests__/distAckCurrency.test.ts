@@ -42,7 +42,7 @@ vi.mock("@/lib/supabase", () => {
 vi.mock("@/lib/inAppNotifications", () => ({ notify: vi.fn() }));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn() }));
 
-import { listMyPendingDistributionAcks, closeStaleAcksForDocument } from "@/lib/distributionAcks";
+import { listMyPendingDistributionAcks, closeStaleAcksForDocument, closeStaleAcksForDocumentChecked } from "@/lib/distributionAcks";
 
 beforeEach(() => {
   state.tables = {};
@@ -98,5 +98,40 @@ describe("closeStaleAcksForDocument (DIST-4)", () => {
   it("no-ops quietly on a pre-20261035 database", async () => {
     state.updateResult = { data: null, error: { code: "42703", message: "superseded_at does not exist" } };
     expect(await closeStaleAcksForDocument("d1", "v5")).toBe(0);
+  });
+});
+
+describe("closeStaleAcksForDocumentChecked (REV-34 (c), document-control P34 final fix pass)", () => {
+  it("runs closeStaleAcksForDocument's one statement and answers its outcome: the count closed, or the refusal / throw", async () => {
+    expect(await closeStaleAcksForDocumentChecked("d1", null)).toEqual({ closed: 2, error: null });
+    expect(state.updates[0].filters.some((f) => f[0] === "neq")).toBe(false);
+    expect(await closeStaleAcksForDocumentChecked("d1", "v5")).toEqual({ closed: 2, error: null });
+    expect(state.updates[1].filters).toContainEqual(["neq", "version_id", "v5"]);
+    state.updateResult = { data: null, error: { code: "42501", message: "permission denied for table distribution_acks" } };
+    expect(await closeStaleAcksForDocumentChecked("d1", null)).toEqual({ closed: 0, error: { code: "42501", message: "permission denied for table distribution_acks" } });
+    state.updateResult = { data: null, error: { code: "42703", message: "superseded_at does not exist" } };
+    expect(await closeStaleAcksForDocumentChecked("d1", null)).toEqual({ closed: 0, error: { code: "42703", message: "superseded_at does not exist" } });
+    state.updateResult = Promise.reject(new Error("network down")) as unknown as typeof state.updateResult;
+    (state.updateResult as unknown as Promise<unknown>).catch(() => {});
+    expect(await closeStaleAcksForDocumentChecked("d1", null)).toEqual({ closed: 0, error: { code: null, message: "network down" } });
+  });
+
+  it("PIN: closeStaleAcksForDocument's answer to every caller is what it was — the count on success, 0 on a refusal, a missing column or a throw; never throws", async () => {
+    expect(await closeStaleAcksForDocument("d1", "v5")).toBe(2);
+    state.updateResult = { data: [], error: null };
+    expect(await closeStaleAcksForDocument("d1", null)).toBe(0);
+    state.updateResult = { data: null, error: { code: "42501", message: "denied" } };
+    expect(await closeStaleAcksForDocument("d1", null)).toBe(0);
+    state.updateResult = { data: null, error: { code: "42703", message: "superseded_at does not exist" } };
+    expect(await closeStaleAcksForDocument("d1", "v5")).toBe(0);
+    state.updateResult = Promise.reject(new Error("network down")) as unknown as typeof state.updateResult;
+    (state.updateResult as unknown as Promise<unknown>).catch(() => {});
+    await expect(closeStaleAcksForDocument("d1", "v5")).resolves.toBe(0);
+    // the same statement, filters and patch as before
+    for (const u of state.updates) {
+      expect(u.table).toBe("distribution_acks");
+      expect(Object.keys(u.patch)).toEqual(["superseded_at"]);
+      expect(u.filters.slice(0, 3)).toEqual([["eq", "document_id", "d1"], ["is", "acknowledged_at", null], ["is", "superseded_at", null]]);
+    }
   });
 });

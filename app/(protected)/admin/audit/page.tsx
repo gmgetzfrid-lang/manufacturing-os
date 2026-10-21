@@ -21,7 +21,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ScrollText, AlertTriangle, Filter, RefreshCw, Eye, Download, Upload, Pencil, Trash2, FileSignature, GitBranch, Lock, Unlock, ArrowUpRight, ShieldOff, AlertOctagon, Zap, FileText, Briefcase, Layers, KeyRound } from "lucide-react";
+import { ScrollText, AlertTriangle, Filter, RefreshCw, Eye, Download, Upload, Pencil, Trash2, FileSignature, GitBranch, Lock, Unlock, ArrowUpRight, ShieldOff, AlertOctagon, Zap, FileText, Briefcase, Layers, KeyRound, Ban } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import IsoGuidance from "@/components/ui/IsoGuidance";
@@ -36,6 +36,7 @@ import {
   AUDIT_RESOURCE_TYPES, auditActionFilterOptions, auditActorNote, isDestructiveAuditAction,
   pairTicketAttempts, prettyAuditAction, auditRowLabel, ticketAttemptNote, DESTRUCTIVE_AUDIT_ACTIONS, type TicketAttemptOutcome,
 } from "@/lib/auditActions";
+import { alreadyRetiredStatus } from "@/lib/timeline";
 import {
   applyAuditFilters, buildAuditCsv, fetchAuditRowsForExport, filterByLibrary, AUDIT_EXPORT_ROW_CEILING, AUDIT_CSV_LINES_BEFORE_HEADER,
   type AuditQuery, type AuditRange,
@@ -87,6 +88,8 @@ const ACTION_STYLE: Record<string, { icon: React.ComponentType<{ className?: str
   SUPERSEDE_DOC:         { icon: ArrowUpRight,  tone: "bg-violet-50 text-violet-700 border-violet-200" },
   REVERT:                { icon: ArrowUpRight,  tone: "bg-amber-50 text-amber-700 border-amber-200" },
   ARCHIVE_DOC:           { icon: ShieldOff,     tone: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border-strong)]" },
+  // REV-32 (document-control P34): the metadata editor's void, a retirement.
+  VOID_DOC:              { icon: Ban,           tone: "bg-rose-50 text-rose-700 border-rose-200" },
   DOC_SPLIT:             { icon: GitBranch,     tone: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
   CREATED_FROM_SPLIT:    { icon: Zap,      tone: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
   DOC_MERGED:            { icon: GitBranch,     tone: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200" },
@@ -112,6 +115,13 @@ const ACTION_STYLE: Record<string, { icon: React.ComponentType<{ className?: str
   DATA_EXPORT:           { icon: Download,      tone: "bg-sky-50 text-sky-700 border-sky-200" },
   WORKSPACE_SELF_HEAL:   { icon: ArrowUpRight,  tone: "bg-amber-50 text-amber-700 border-amber-200" },
 };
+
+// REV-34 (d) (P34 final fix pass): a SUPERSEDE_DOC / ARCHIVE_DOC / VOID_DOC
+// with `alreadyRetired: true` made no retirement (a bulk door re-ran the
+// steps), so its chip is neutral, never the retirement's — as the activity
+// feed and the document timeline show it.
+const ALREADY_RETIRED_STYLE: { icon: React.ComponentType<{ className?: string }>; tone: string } =
+  { icon: RefreshCw, tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" };
 
 const RESOURCE_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   document: FileText,
@@ -465,7 +475,7 @@ interface AuditRowItemProps {
   namesAttempt?: string;
 }
 function AuditRowItem({ row, docMeta, attempt, namesAttempt }: AuditRowItemProps) {
-  const style = ACTION_STYLE[row.action] ?? { icon: ScrollText, tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" };
+  const style = alreadyRetiredStatus(row.action, row.details) ? ALREADY_RETIRED_STYLE : ACTION_STYLE[row.action] ?? { icon: ScrollText, tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" };
   const ResIcon = RESOURCE_ICON[row.resourceType] ?? FileText;
   const Icon = style.icon;
 

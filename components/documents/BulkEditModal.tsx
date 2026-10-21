@@ -128,7 +128,8 @@
 // updated_by — no supersession column: this door names no replacement, and
 // superseded_by_user is what the rollback door trusts); and, for every row
 // the change RETIRED (its fresh prior was not Superseded, or could not be
-// read — a row already Superseded is no retirement and gets no new duty),
+// read — a row already Superseded is no retirement and got no new duty
+// until P34, REV-34 (d)),
 // lib/revisions.ts finishRetirementDuties voids the review draft, revokes the
 // live share links and writes the SUPERSEDE_DOC record with the reason and
 // the row's prior (`retiredFrom`). Archived rows go through the same routine
@@ -140,11 +141,38 @@
 // Archived (its fresh prior) still gets P28's duties — fail-safe: a
 // re-archive can revoke links an older door left live — but its ARCHIVE_DOC
 // claims no retirement: `alreadyRetired: true` and no `retiredFrom`. (A row
-// already Superseded still gets no duty on a change to Superseded — the
-// remaining asymmetry, REV-34 (d).) The reason belongs to the status it was
+// already Superseded got no duty on a change to Superseded — the asymmetry
+// REV-34 (d) recorded; since P34 it gets them too, below.) The reason belongs to the status it was
 // typed for: any change of the field or the status clears it, so a reason
 // typed for Archived never becomes a supersession's (or the reverse), and
 // Apply waits until one is typed for the status now chosen.
+//
+// REV-33 / REV-34 (document-control P34 STATUS EDITOR RETIREMENT PARITY II,
+// ruled by the integrator at the P31 merge, 2026-10-21, DEC-90 — fail-safe):
+// a change to Superseded is NOT exempt from supersedeDocument's pre-write
+// gates. Before each row's write, for every row the change would retire (its
+// fresh prior not Superseded, or unread), lib/revisions.ts
+// gateStatusEditorRetirement asks what supersedeDocument asks: a
+// drawing-class row needs the MOC reference ("MOC reference", one for the
+// apply — the same rule and sentence, recorded on its SUPERSEDE_DOC), and a
+// row checked out by someone else is superseded over their checkout only
+// with the reason (the override the Supersede dialog records — the holder is
+// told after the write), and a row under an active hold is refused whoever
+// applies it (the Supersede dialog never forces past a hold; the database's
+// guard lets a controller through before its hold check — P34 review fix).
+// A row that fails a gate is refused and named, nothing written for it; a
+// non-drawing, unlocked, unheld row writes exactly as before. The MOC
+// recorded on a row's SUPERSEDE_DOC is the one its gate accepted, and only
+// on a row whose effective class is drawing (P34 final fix pass: a
+// non-drawing row records `mocReference: null`, as before P34) — none on a
+// row already Superseded, whose supersession this apply did not make. One
+// MOC per apply is a ruled simplification (DEC-90: an apply is one change;
+// sheets under a different MOC are a separate apply). After the apply, finishRetirementDuties also closes each
+// superseded row's pending acknowledgment requests (checked) and sends the
+// checkout holder's notice. And every bulk retirement now runs the duties for
+// a row ALREADY in the status written — a change to Superseded too, as
+// Archived did — its record carrying `alreadyRetired: true` and claiming no
+// retirement (REV-34 (d)).
 
 import React, { useState } from "react";
 import {
@@ -156,7 +184,7 @@ import { isIssueTransition, isIssueRefusal, isControlledIssueStatus, isRetiredSt
 import { BULK_EDIT_STATUS_OPTIONS, isUnguardedEntryIntoForce, ENTRY_INTO_FORCE_ACTION } from "@/lib/documentStatusOptions";
 import { assertNotOnHold } from "@/lib/holdGate";
 import type { DocumentRecord, LibraryConfig, MetadataFieldDefinition } from "@/types/schema";
-import { changeDocumentStatus, recallsCopyHolders, finishRetirementDuties, type StatusIssueOutcome } from "@/lib/revisions";
+import { changeDocumentStatus, recallsCopyHolders, finishRetirementDuties, gateStatusEditorRetirement, type StatusIssueOutcome, type StatusEditorRetirementGate } from "@/lib/revisions";
 import { useRole } from "@/components/providers/RoleContext";
 
 interface BulkEditModalProps {
@@ -185,6 +213,9 @@ export default function BulkEditModal({
   // REV-31 (P28 integrator fix pass): one reason for a change to Archived —
   // and (P31) to Superseded.
   const [archiveReason, setArchiveReason] = useState("");
+  // REV-33 (P34): the MOC reference for a change to Superseded — one for the
+  // apply, required for each drawing-class row it retires.
+  const [mocReference, setMocReference] = useState("");
   const [busy, setBusy] = useState(false);
   // REV-19 (P17 review fix): the issue record names who issued it — email and role, not a bare uid.
   const { userEmail, activeRole } = useRole();
@@ -235,7 +266,7 @@ export default function BulkEditModal({
   // P31 final fix pass: a reason belongs to the status it was typed for —
   // choosing another value (or another field) clears it.
   const chooseValue = (v: string) => {
-    if (v !== newValue) setArchiveReason("");
+    if (v !== newValue) { setArchiveReason(""); setMocReference(""); }
     setNewValue(v);
   };
 
@@ -263,9 +294,15 @@ export default function BulkEditModal({
     const retired: Array<{ documentId: string; libraryId: string | null; docLabel: string; recallCopyHolders: boolean; retiredFrom: string | null }> = [];
     // REV-31: the rows this change archived — (P31) or retired into
     // Superseded — for their retirement duties.
-    const archivedRows: Array<{ documentId: string; label: string; versionId: string | null; retiredFrom?: string | null; priorStatusUnknown?: boolean; alreadyRetired?: boolean }> = [];
+    const archivedRows: Array<{
+      documentId: string; label: string; versionId: string | null; retiredFrom?: string | null; priorStatusUnknown?: boolean; alreadyRetired?: boolean;
+      mocReference?: string | null; checkoutHolder?: { checkedOutBy: string | null; checkedOutByName?: string | null } | null; libraryId?: string | null;
+    }> = [];
     const putBack: Array<{ documentId: string; libraryId: string | null; docLabel: string; restoredStatus: string }> = [];
-    if (retiring || issuing) {
+    // REV-34 (b) (P34 review fix 3): so does every other status change (a
+    // row it moves OUT of Archived has its archive columns cleared, below).
+    const leavingArchiveCandidate = target.kind === "status" && newValue.trim() !== "Archived";
+    if (retiring || issuing || leavingArchiveCandidate) {
       const ids = docs.map((d) => d.id).filter((id): id is string => !!id);
       // A read that fails (or throws) leaves the priors unknown — which
       // recalls — and never stops the apply.
@@ -281,9 +318,35 @@ export default function BulkEditModal({
         // P15 review fix: the hold the database does not check for this row
         // (an unreadable hold state refuses it too); the row is not written.
         if (doc.id && enteringForceIds.has(doc.id)) await assertNotOnHold(doc.id, { action: ENTRY_INTO_FORCE_ACTION });
+        // REV-33 (P34): supersedeDocument's pre-write gates, for a row this
+        // change would retire into Superseded (its fresh prior not
+        // Superseded, or unread — fail-safe): the drawing-class MOC
+        // reference, the foreign checkout lock (the reason is the
+        // override) and an active hold (refused, no force). A refusal is
+        // this row's, nothing written for it.
+        let gate: StatusEditorRetirementGate | null = null;
+        if (superseding && doc.id && (priorStatusOf.get(doc.id) ?? "").trim() !== "Superseded") {
+          try {
+            gate = await gateStatusEditorRetirement({
+              documentId: doc.id, libraryId: library.id || doc.libraryId, collectionId: doc.collectionId ?? null,
+              orgId: doc.orgId || library.orgId, actorUserId, actorRole: activeRole ?? null,
+              toStatus: newValue, reason: archiveReason, mocReference,
+            });
+          } catch (e) {
+            throw new Error(`not superseded, nothing was written for it — ${(e as Error)?.message ?? String(e)}`);
+          }
+        }
         const updates: Record<string, unknown> = { updated_at: now, updated_by: actorUserId };
+        // REV-34 (b) (P34 review fix 3): a row whose fresh prior is Archived,
+        // moved to any other status, has the archive columns cleared in its
+        // same write, as unarchiveDocument does — a document put back in force
+        // with archived_at still set cannot be shared, transmitted or read by
+        // the AI. A prior the read did not give: written exactly as before.
+        const leavesArchive = leavingArchiveCandidate && !!doc.id && (priorStatusOf.get(doc.id) ?? "").trim() === "Archived";
+        const archiveCleared = leavesArchive ? { archived_at: null, archived_by: null, archive_reason: null } : {};
         if (target.kind === "status") {
           updates.status = newValue;
+          Object.assign(updates, archiveCleared);
           // REV-31: the Archive dialog's archive columns, in the same write.
           if (archiving) {
             updates.archived_at = now;
@@ -323,7 +386,7 @@ export default function BulkEditModal({
           // review clock left as it was).
           // changeDocumentStatus writes the status, updated_at and updated_by
           // itself; the recomputed uniqueness key rides in the same UPDATE.
-          const patch: Record<string, unknown> = "uniqueness_key" in updates ? { uniqueness_key: updates.uniqueness_key } : {};
+          const patch: Record<string, unknown> = { ...("uniqueness_key" in updates ? { uniqueness_key: updates.uniqueness_key } : {}), ...archiveCleared };
           const outcome: StatusIssueOutcome = await changeDocumentStatus({
             orgId: doc.orgId || library.orgId, documentId: doc.id, toStatus: newValue, door: "bulk",
             actorUserId, actorEmail: userEmail ?? null, actorRole: activeRole ?? null, patch,
@@ -413,19 +476,27 @@ export default function BulkEditModal({
         if (retiring && doc.id) {
           retired.push({ documentId: doc.id, libraryId: library.id ?? null, docLabel: doc.documentNumber || doc.title || doc.name || "A document", recallCopyHolders: recallsCopyHolders(priorStatusOf.get(doc.id) ?? null), retiredFrom: priorStatusOf.get(doc.id) ?? null });
         }
-        // REV-31 (P31): every archived row (as before); a superseded row only
-        // when the change retired it — its fresh prior not Superseded, or
-        // unknown (a row already Superseded gets no new duty).
-        if ((archiving || (superseding && (priorStatusOf.get(doc.id ?? "") ?? "").trim() !== "Superseded")) && doc.id) {
+        // REV-31 (P31): every archived row (as before). REV-34 (d) (P34,
+        // DEC-90 fail-safe): every superseded row too — a row already
+        // Superseded now gets the duties (a link an older door left live is
+        // revoked, its open acks closed) with a record that claims no
+        // retirement, as an already-Archived row's does since P31.
+        if ((archiving || superseding) && doc.id) {
           const known = priorStatusOf.has(doc.id);
-          // P31 final fix pass: an Archived row archived again — the duties
-          // run (fail-safe), the record says no retirement was made.
+          // P31 final fix pass: a row archived (P34: or superseded) again —
+          // the duties run (fail-safe), the record says no retirement was made.
           const alreadyRetired = known && (priorStatusOf.get(doc.id) ?? "").trim() === newValue.trim();
           archivedRows.push({
             documentId: doc.id, label: String(doc.documentNumber || doc.title || doc.id), versionId: doc.currentVersionId ?? null,
             ...(alreadyRetired
               ? { alreadyRetired: true }
               : { retiredFrom: known ? (priorStatusOf.get(doc.id) ?? null) : null, ...(known ? {} : { priorStatusUnknown: true }) }),
+            // REV-33 / REV-34 (c) (P34): the MOC this row's gate accepted —
+            // only on a drawing-class row (P34 final fix pass: a non-drawing
+            // row's gate answers null), never on a row already Superseded (no
+            // gate ran, and this apply did not supersede it) — and the
+            // checkout holder the gate read (told after the write).
+            ...(superseding ? { mocReference: gate?.mocReference ?? null, checkoutHolder: gate?.preState ?? null, libraryId: library.id ?? null } : {}),
           });
         }
       } catch (e) {
@@ -498,6 +569,7 @@ export default function BulkEditModal({
               onChange={(e) => {
                 const v = e.target.value;
                 setArchiveReason("");
+                setMocReference("");
                 if (v === "status") {
                   setTarget({ kind: "status" }); setNewValue(STATUS_OPTIONS[0]);
                 } else {
@@ -559,6 +631,20 @@ export default function BulkEditModal({
                 disabled={busy}
               />
               <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{archiving ? "Archiving" : "Superseding"} retires each row: its review draft is voided, its live share links revoked, its copy holders recalled if it was issued, and its watchers told.</div>
+            </div>
+          )}
+
+          {!results && superseding && (
+            // REV-33 (P34): supersedeDocument's MOC gate, one reference for the apply.
+            <div>
+              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1.5 block">MOC reference</label>
+              <input
+                value={mocReference} onChange={(e) => setMocReference(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
+                placeholder="MOC-2026-0142 (required for drawing-class documents)"
+                disabled={busy}
+              />
+              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">A drawing-class document is superseded only with its MOC reference (PSM, OSHA 1910.119(l)) — without one, each such row is refused and nothing is written for it. The one reference is recorded on every drawing-class document this apply supersedes — if the sheets belong to different MOCs, split the apply. A row someone else has checked out is superseded over their checkout with the reason above, and they are told. A row under an active hold is not superseded.</div>
             </div>
           )}
 

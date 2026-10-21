@@ -251,11 +251,27 @@ export async function requestAcks(input: {
  *  completed history and are never touched. Stamps the 20261035
  *  `superseded_at` column; quietly no-ops on an older database — the read
  *  paths below also currency-scope in JS, so an unstamped orphan is inert
- *  either way. */
+ *  either way. Best-effort: any refusal or throw answers 0 (the checked
+ *  variant below says which). */
 export async function closeStaleAcksForDocument(
   documentId: string,
   currentVersionId: string | null,
 ): Promise<number> {
+  return (await closeStaleAcksForDocumentChecked(documentId, currentVersionId)).closed;
+}
+
+/** REV-34 (c) (document-control P34 final fix pass): closeStaleAcksForDocument's
+ *  one statement, with its outcome — `closed`, the acks it stamped (0 on a
+ *  refusal), and `error`, the database's refusal or the throw (null when the
+ *  statement landed). Never throws. A caller that must name a refusal
+ *  (lib/revisions.ts finishRetirementDuties) reads `error`, and decides
+ *  itself whether a database before the column (42703 / PGRST204 —
+ *  isMissingSchemaError) is a refusal; closeStaleAcksForDocument keeps its
+ *  quiet best-effort answer. */
+export async function closeStaleAcksForDocumentChecked(
+  documentId: string,
+  exceptVersionId: string | null,
+): Promise<{ closed: number; error: { message: string; code: string | null } | null }> {
   try {
     let q = supabase
       .from("distribution_acks")
@@ -263,12 +279,13 @@ export async function closeStaleAcksForDocument(
       .eq("document_id", documentId)
       .is("acknowledged_at", null)
       .is("superseded_at", null);
-    if (currentVersionId) q = q.neq("version_id", currentVersionId);
+    if (exceptVersionId) q = q.neq("version_id", exceptVersionId);
     const { data, error } = await q.select("id");
-    if (error) return 0; // pre-20261035 column, or RLS — best-effort
-    return data?.length ?? 0;
-  } catch {
-    return 0;
+    if (error) return { closed: 0, error: { message: String(error.message ?? error), code: (error as { code?: string | null }).code ?? null } };
+    return { closed: data?.length ?? 0, error: null };
+  } catch (e) {
+    const err = e as { message?: unknown; code?: unknown } | null;
+    return { closed: 0, error: { message: typeof err?.message === "string" ? err.message : String(e), code: typeof err?.code === "string" ? err.code : null } };
   }
 }
 

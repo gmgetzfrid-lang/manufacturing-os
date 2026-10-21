@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { milestonePctIndex, computeCostRollup, type CostAccount, type CostEntry } from "@/lib/costs";
 import { computeProjectHealth, type ProjectStateSnapshot } from "@/lib/projectHealth";
 import { intakeOutcomeEmail } from "@/lib/intakeOutcomeNotice";
-import { SCOPE_STAMP_ACTIONS, SCOPE_STAMPS_NOT_IN } from "@/lib/timeline";
+import { SCOPE_STAMP_ACTIONS, SCOPE_STAMPS_NOT_IN, alreadyRetiredStatus } from "@/lib/timeline";
 import ts from "typescript";
 
 const src = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
@@ -198,8 +198,10 @@ describe("SEC-21 — the Activity feed shows and counts one milestone delete onc
     const from = page.indexOf(head);
     expect(from, name).toBeGreaterThan(0);
     const body = page.slice(from + head.length, page.indexOf("\n  }, [rows]);", from));
-    const js = ts.transpileModule(`function memo(rows, SCOPE_STAMP_ACTIONS) {${body}\n}`, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
-    return new Function(`${js}\nreturn memo;`)() as (rows: unknown[], stamps: ReadonlySet<string>) => unknown;
+    // document-control P34 review fix 2: the pulse also reads lib/timeline.ts alreadyRetiredStatus (REV-34 (d)), passed in as the page imports it
+    const js = ts.transpileModule(`function memo(rows, SCOPE_STAMP_ACTIONS, alreadyRetiredStatus) {${body}\n}`, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
+    const fn = new Function(`${js}\nreturn memo;`)() as (rows: unknown[], stamps: ReadonlySet<string>, already: typeof alreadyRetiredStatus) => unknown;
+    return (rows: unknown[], stamps: ReadonlySet<string>) => fn(rows, stamps, alreadyRetiredStatus);
   };
   const now = new Date().toISOString();
   const row = (id: string, action: string) => ({ id, action, resourceType: "document", resourceId: "d1", userEmail: "owner@x.io", userRole: null, details: { name: "Hydrotest" }, timestamp: now });
@@ -216,7 +218,7 @@ describe("SEC-21 — the Activity feed shows and counts one milestone delete onc
     expect(grouped.flatMap((g) => g.rows.map((r) => r.action))).toEqual(["MILESTONE_DELETED", "MILESTONE_COMPLETED"]);
   });
   it("the page reads the one set lib/timeline.ts keeps, and the load-more test still reads every loaded row", () => {
-    expect(page).toContain('import { SCOPE_STAMP_ACTIONS, SCOPE_STAMPS_NOT_IN } from "@/lib/timeline";');
+    expect(page).toContain('import { SCOPE_STAMP_ACTIONS, SCOPE_STAMPS_NOT_IN, alreadyRetiredStatus } from "@/lib/timeline";');
     expect(page).toContain("{rows.length >= limit && (");
   });
   it("J12 review fix 8: the feed's query leaves the stamp out BEFORE its row limit, so a window of `limit` rows is `limit` events", () => {

@@ -581,8 +581,22 @@ const money = (v: unknown): string | null => {
 /** Best-effort human summary for an audit row. Mirrors the action vocabulary
  *  used by lib/audit.ts so renderers don't reinvent strings. Exported for
  *  the renderer-map tests (DCK-12). */
+/** REV-34 (d) / DEC-90 (2)(d), document-control P34 review fix: a bulk door
+ *  that re-runs the retirement duties on a row already in the status it
+ *  wrote records its SUPERSEDE_DOC / ARCHIVE_DOC / VOID_DOC with
+ *  `alreadyRetired: true` (lib/revisions.ts finishRetirementDuties). No
+ *  retirement was made, so the readers never say one was: the status the
+ *  row was already in, or null for every other row. */
+const ALREADY_RETIRED_STATUS: Readonly<Record<string, string>> = { SUPERSEDE_DOC: "Superseded", ARCHIVE_DOC: "Archived", VOID_DOC: "Void" };
+export function alreadyRetiredStatus(action: string, details: Record<string, unknown> | null | undefined): string | null {
+  if (!details || details.alreadyRetired !== true || details.action === "unarchive") return null;
+  return ALREADY_RETIRED_STATUS[action] ?? null;
+}
+
 export function summarizeAudit(r: Pick<AuditRow, "action" | "details">): string {
   const d = r.details || {};
+  const already = alreadyRetiredStatus(r.action, d);
+  if (already) return `Retirement steps re-run (already ${already})`;
   switch (r.action) {
     case "VIEW":         return `Viewed${d.fileName ? ` ${d.fileName}` : ""}`;
     case "DOWNLOAD":     return `Downloaded${d.fileName ? ` ${d.fileName}` : ""}`;
@@ -653,6 +667,9 @@ export function summarizeAudit(r: Pick<AuditRow, "action" | "details">): string 
     case "PROJECT_LESSONS_SAVED": return "Lessons learned saved";
     case "SUPERSEDE_DOC":return "Document superseded";
     case "ARCHIVE_DOC":  return d.action === "unarchive" ? "Restored from archive" : "Archived";
+    // REV-32 (document-control P34): the metadata editor's save to Void
+    // (P31's VOID_DOC) is a retirement, read beside its two siblings.
+    case "VOID_DOC":     return "Voided";
     default:             return r.action.replace(/_/g, " ").toLowerCase();
   }
 }
