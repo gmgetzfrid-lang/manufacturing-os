@@ -31,6 +31,7 @@ import LibraryPicker from '@/components/requests/LibraryPicker';
 import SourceDriftBanner from '@/components/requests/SourceDriftBanner';
 import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
 import TicketRosterPanel from '@/components/requests/TicketRosterPanel';
+import DeclarationCard from '@/components/requests/DeclarationCard';
 import MentionableTextarea from '@/components/requests/MentionableTextarea';
 import TicketArchiveViewer from '@/components/archive/TicketArchiveViewer';
 import CommentBody from '@/components/requests/CommentBody';
@@ -1329,6 +1330,15 @@ export default function TicketDetailView() {
       // DCW-1: the triage picker starts on the ticket's library (20261208;
       // absent before the paste — no library, as today).
       libraryId: typeof r.library_id === 'string' ? r.library_id : null,
+      // DF-P6 (20261250): the engine's engineering gate reads the work, not
+      // who asked — undefined before the paste (today's gate decides).
+      engineeringRequired: typeof r.engineering_required === 'boolean' ? r.engineering_required : undefined,
+      likeInKindStatement: typeof r.like_in_kind_statement === 'string' ? r.like_in_kind_statement : null,
+      likeInKindDeclaredBy: typeof r.like_in_kind_declared_by === 'string' ? r.like_in_kind_declared_by : null,
+      likeInKindDeclaredAt: typeof r.like_in_kind_declared_at === 'string' ? r.like_in_kind_declared_at : null,
+      likeInKindSignatureId: typeof r.like_in_kind_signature_id === 'string' ? r.like_in_kind_signature_id : null,
+      workClass: typeof r.work_class === 'string' ? r.work_class : null,
+      codeClass: typeof r.code_class === 'string' ? r.code_class : null,
       engineerReviewRequestedAt: r.engineer_review_requested_at as string | null | undefined,
       engineerApprovedAt: r.engineer_approved_at as string | null | undefined,
       engineerReviewReason: r.engineer_review_reason as string | null | undefined,
@@ -2803,6 +2813,7 @@ export default function TicketDetailView() {
         </div>
       )}
 
+      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><DeclarationCard ticket={ticket} /></div>
       <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><TicketRosterPanel ticket={ticket} orgId={activeOrgId} uid={uid} userName={(member?.displayName ?? '').trim() || (userEmail?.split('@')[0] ?? '').trim() || null} capPolicy={capPolicy} activeMemberCount={activeMemberCount} requesterRoles={requesterRoles} reviewRouted={reviewRouted} reviewRoutedReason={reviewRoutedReason} /></div>
 
       {ticket.status === 'REVISION_REQ' && latestRevision && (

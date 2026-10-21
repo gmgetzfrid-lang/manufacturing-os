@@ -7,7 +7,8 @@ import { callerScopedClient } from "@/lib/serverAuth";
 import { runWithServerClient } from "@/lib/serverClientScope";
 import { isSafeStorageKey } from "@/lib/storageKey";
 import { publicOrigin } from "@/lib/publicOrigin";
-import { checkedWrite } from "@/lib/checkedWrite";
+import { checkedWrite, isMissingSchemaError } from "@/lib/checkedWrite";
+import { declarationSignatureRefusal, isMissingReviewModelColumn, type DeclarationSignatureRow } from "@/lib/reviewModel";
 import { formatTicketNumber, ticketNumberConfigFromRow } from "@/lib/ticketNumber";
 import { boundedSlaDays, defaultSlaTargetDate, slaTargetDateInDays } from "@/lib/notifications";
 import { missingLibraryColumn } from "@/lib/ticketLibrary";
@@ -584,6 +585,30 @@ async function create(
     }
   }
 
+  // GAP-110 / DEC-33 / DEC-34 (DF-P6): the like-in-kind declaration. Checked
+  // BEFORE a request number is spent (EDGE-13): its e-signature was minted by
+  // /api/signatures/sign, by this requester, in this workspace, for the id
+  // this request is filed under (`ticketKey`), over the statement they
+  // typed, recently — and that id is not already a request. Absent: no
+  // declaration — the request is engineered work (engineering_required
+  // defaults true at the database), whoever files it.
+  const declaration = input.declaration ?? null;
+  if (declaration) {
+    const { data: sig, error: sigErr } = await supabaseAdmin
+      .from("e_signatures").select("id, org_id, resource_type, resource_id, signer_user_id, statement, intent, signed_at")
+      .eq("id", declaration.signatureId).maybeSingle();
+    if (sigErr) return { status: 503, field: "declaration", error: "Couldn't check the like-in-kind declaration's signature — try again in a moment." };
+    const refusal = declarationSignatureRefusal(sig as DeclarationSignatureRow | null, {
+      orgId, ticketKey: declaration.ticketKey, requesterId: caller.id, statement: declaration.statement, now: Date.now(),
+    });
+    if (refusal) return { status: 400, field: "declaration", error: refusal };
+    const { data: taken, error: takenErr } = await supabaseAdmin.from("tickets").select("id, ticket_id").eq("id", declaration.ticketKey).maybeSingle();
+    if (takenErr) return { status: 503, error: "Couldn't confirm the request was not already filed — try again in a moment." };
+    if (taken) {
+      return { status: 409, field: "declaration", code: "declaration_used", error: `This declaration was already filed as ${String((taken as { ticket_id?: string }).ticket_id ?? "a request")} — check the queue before you submit it again.` };
+    }
+  }
+
   // 4. The request number — allocated only now, as the caller (the counter
   //    function admits active members only, and reads auth.uid()). Its
   //    format is read first, and CHECKED: a failed read never files a number
@@ -713,6 +738,20 @@ async function create(
   // source document it stays unset and triage sets it.
   const primaryLibrary = primary ? (byId.get(primary.id)?.library_id ?? null) : null;
   if (primaryLibrary) row.library_id = primaryLibrary;
+  // GAP-110 / DEC-34 (DF-P6): a declared request is filed under the id its
+  // signature names, with the declaration in columns the guard makes
+  // immutable (20261250) and engineering_required false — the one thing
+  // that lowers it, at creation, by the requester. With no declaration
+  // nothing is written for it: the column's default (true) is the safe
+  // answer.
+  if (declaration) {
+    row.id = declaration.ticketKey;
+    row.like_in_kind_statement = declaration.statement;
+    row.like_in_kind_declared_by = caller.id;
+    row.like_in_kind_declared_at = now;
+    row.like_in_kind_signature_id = declaration.signatureId;
+    row.engineering_required = false;
+  }
 
   let ticketNumber = "";
   let ticketId = "";
@@ -740,6 +779,24 @@ async function create(
       delete row.library_id;
       ({ data: inserted, error: insErr } = await supabaseAdmin.from("tickets").insert(row).select("id").single());
     }
+    // GAP-110 (DF-P6): before 20261250 is pasted the declaration's columns
+    // are not there (42703 / PGRST204) — nothing was written; the same
+    // number is retried without them: the request goes the usual way (the
+    // role-based gate decides, as today) and the answer says the declaration
+    // was not recorded. The signature stays on record against the id.
+    if (insErr && declaration && "engineering_required" in row && isMissingReviewModelColumn(insErr)) {
+      delete row.like_in_kind_statement;
+      delete row.like_in_kind_declared_by;
+      delete row.like_in_kind_declared_at;
+      delete row.like_in_kind_signature_id;
+      delete row.engineering_required;
+      warnings.push("Your like-in-kind declaration is signed but could not be recorded on the request yet (database update 20261250 is not applied) — the request was filed the usual way.");
+      ({ data: inserted, error: insErr } = await supabaseAdmin.from("tickets").insert(row).select("id").single());
+      if (insErr && "library_id" in row && missingLibraryColumn(insErr)) {
+        delete row.library_id;
+        ({ data: inserted, error: insErr } = await supabaseAdmin.from("tickets").insert(row).select("id").single());
+      }
+    }
     if (!insErr && inserted) {
       ticketId = String((inserted as { id: string }).id);
       break;
@@ -755,6 +812,15 @@ async function create(
     return settled.kind === "taken"
       ? { status: 500, error: "The request could not be saved — nothing was filed. Try again." }
       : settled.fail;
+  }
+
+  // GAP-312 / WIRE-7 criterion 1 (DF-P6): the equipment the request names —
+  // ticket_equipment rows (20261251), each with its asset when the request
+  // form resolved one AND it is an asset of this workspace; otherwise the
+  // tag as typed, flagged unresolved (asset_id null). Advisory: a failure is
+  // said, never a refusal (the request is filed).
+  if ((input.equipment?.length ?? 0) > 0) {
+    warnings.push(...(await recordEquipment(orgId, ticketId, caller.id, input.equipment ?? [])));
   }
 
   // 6. The new-request notice, from here (EDGE-8), awaited — before any file
@@ -822,6 +888,33 @@ async function create(
     ...(psmAlert ? { psmAlert } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
   };
+}
+
+/** GAP-312 (DF-P6): write the request's equipment rows. Returns warnings. */
+async function recordEquipment(orgId: string, ticketId: string, uid: string, equipment: Array<{ tag: string; assetId: string | null }>): Promise<string[]> {
+  const ids = [...new Set(equipment.map((e) => e.assetId).filter((x): x is string => !!x))];
+  let known = new Set<string>();
+  const out: string[] = [];
+  if (ids.length > 0) {
+    const { data: assets, error: assetErr } = await supabaseAdmin.from("assets").select("id").eq("org_id", orgId).in("id", ids);
+    if (assetErr) out.push("The equipment could not be matched to this workspace's assets — the tags were kept as typed.");
+    else known = new Set(((assets ?? []) as Array<{ id: string }>).map((a) => a.id));
+  }
+  const rows = equipment.map((e) => ({
+    org_id: orgId, ticket_id: ticketId, tag: e.tag,
+    asset_id: e.assetId && known.has(e.assetId) ? e.assetId : null,
+    created_by: uid,
+  }));
+  const { error } = await supabaseAdmin.from("ticket_equipment").insert(rows);
+  if (error) {
+    out.push(isMissingSchemaError(error)
+      ? "The equipment you named could not be recorded yet (database update 20261251 is not applied) — the request was filed without it."
+      : "The equipment you named could not be recorded — the request was filed without it; add it in a comment.");
+    return out;
+  }
+  const unresolved = rows.filter((r) => !r.asset_id).map((r) => r.tag);
+  if (unresolved.length > 0) out.push(`Not found in the equipment registry, kept as typed: ${unresolved.join(", ")}.`);
+  return out;
 }
 
 /** The origin's own facts (FRIC-8 / EDGE-13). Required custom fields and

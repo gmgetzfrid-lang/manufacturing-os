@@ -15,6 +15,11 @@ import { linkableDocumentQuery, linkableDocumentFilter } from '@/lib/ticketLibra
 import IsoGuidance from '@/components/ui/IsoGuidance';
 // UI-2 (drafting-flow DF-P9): the workflow map, before someone commits to the process.
 import WorkflowDiagramModal from '@/components/requests/WorkflowDiagramModal';
+import LikeInKindField, { parseEquipmentTags } from '@/components/requests/LikeInKindField';
+import SignatureCeremony from '@/components/signatures/SignatureCeremony';
+import { recordSignature, type SigningCredential } from '@/lib/eSignatures';
+import { checkDeclarationStatement, declarationSignatureStatement, DECLARATION_SIGNATURE_INTENT } from '@/lib/reviewModel';
+import { lookupTag } from '@/lib/search';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import { Input, Select } from '@/components/ui/Field';
 import { Spinner } from '@/components/ui/Spinner';
@@ -67,7 +72,7 @@ const DEFAULT_SETTINGS: OrgDraftingSettings = {
 export default function NewTicketPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { activeRole, roles, activeOrgId, uid } = useRole();
+  const { activeRole, roles, activeOrgId, uid, member, userEmail } = useRole();
 
   // Pre-fill from URL params when arriving via "Send to Drafting" from the
   // document viewer. Parameters that aren't present just fall through to
@@ -110,6 +115,15 @@ export default function NewTicketPage() {
   // File State
   const [files, setFiles] = useState<File[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // DF-P6 (GAP-110 / DEC-34): the optional like-in-kind declaration, and the
+  // signing ceremony it runs at submit (resolved with the signature id, or
+  // null when the requester backs out).
+  const [declaration, setDeclaration] = useState('');
+  const [signing, setSigning] = useState<{ statement: string; ticketKey: string; resolve: (id: string | null) => void } | null>(null);
+  const [signBusy, setSignBusy] = useState(false);
+  const [signError, setSignError] = useState<string | null>(null);
+  // DF-P6 (GAP-312): the equipment the request names (optional).
+  const [equipmentText, setEquipmentText] = useState('');
   const [showWorkflowMap, setShowWorkflowMap] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string>('');
   // LIFE-4: the book-viewer hand-off stashes the marked-up sheet's document id
@@ -323,8 +337,45 @@ export default function NewTicketPage() {
       return;
     }
 
+    // DF-P6 (GAP-110 / DEC-33 / DEC-34): a declaration, when written, is
+    // checked and SIGNED before anything is uploaded or numbered — blank is
+    // the safe answer and asks nothing. The signature is minted against the
+    // id the request will be filed under.
+    let declarationBody: { statement: string; signatureId: string; ticketKey: string } | null = null;
+    if (declaration.trim()) {
+      const checked = checkDeclarationStatement(declaration);
+      if (!checked.ok) {
+        await appAlert(checked.error);
+        focusField('declaration');
+        return;
+      }
+      const ticketKey = crypto.randomUUID();
+      setSignError(null);
+      const signatureId = await new Promise<string | null>((resolve) => setSigning({ statement: checked.statement, ticketKey, resolve }));
+      setSigning(null);
+      if (!signatureId) {
+        await appAlert('The request was not filed: the like-in-kind declaration was not signed. Sign it, or clear it to file the request for engineering.');
+        focusField('declaration');
+        return;
+      }
+      declarationBody = { statement: checked.statement, signatureId, ticketKey };
+    }
+
     setIsSubmitting(true);
     setUploadStatus('Initializing Request...');
+
+    // DF-P6 (GAP-312): each equipment tag resolved against the registry (the
+    // ⌘K lookup, no AI call) — a tag the lookup does not find, or a lookup
+    // that fails, is sent as typed (the route keeps it, flagged).
+    const equipment: Array<{ tag: string; assetId: string | null }> = [];
+    for (const tag of parseEquipmentTags(equipmentText)) {
+      let assetId: string | null = null;
+      try {
+        const hits = await lookupTag(activeOrgId, tag, { documentsPerAsset: 0 });
+        assetId = hits.length === 1 ? hits[0].asset.id : null;
+      } catch { /* kept as typed */ }
+      equipment.push({ tag, assetId });
+    }
 
     // Files are staged under this requester's pending prefix; the route moves
     // them under the request's own number once the row exists.
@@ -389,6 +440,8 @@ export default function NewTicketPage() {
       sourceDocuments: cappedDocs.kept,
       attachments,
       origin: { kind: 'portal' },
+      ...(declarationBody ? { declaration: declarationBody } : {}),
+      ...(equipment.length > 0 ? { equipment } : {}),
     });
     if (!res.ok) {
       console.error("Creation failed:", res.error);
@@ -678,6 +731,44 @@ export default function NewTicketPage() {
               />
             </div>
           </div>
+
+          {/* DF-P6: the like-in-kind declaration and the equipment (both optional) */}
+          <LikeInKindField
+            declaration={declaration}
+            onDeclarationChange={setDeclaration}
+            equipment={equipmentText}
+            onEquipmentChange={setEquipmentText}
+            disabled={isSubmitting}
+          />
+          {signing && (
+            <SignatureCeremony
+              signerName={(member?.displayName ?? '').trim() || (userEmail?.split('@')[0] ?? '').trim() || 'user'}
+              resourceLabel="this request's like-in-kind declaration"
+              defaultIntent={DECLARATION_SIGNATURE_INTENT}
+              defaultStatement={declarationSignatureStatement(signing.statement)}
+              lockIntent
+              busy={signBusy}
+              error={signError}
+              onCancel={() => { if (!signBusy) signing.resolve(null); }}
+              onSign={async (_intent, statement, signatureImage, reauth?: SigningCredential) => {
+                if (!activeOrgId || !uid) { signing.resolve(null); return; }
+                setSignBusy(true);
+                try {
+                  const sig = await recordSignature({
+                    orgId: activeOrgId, resourceType: 'ticket', resourceId: signing.ticketKey,
+                    intent: DECLARATION_SIGNATURE_INTENT, statement,
+                    signerUserId: uid, signerName: (member?.displayName ?? '').trim() || (userEmail?.split('@')[0] ?? ''),
+                    signatureImage: signatureImage ?? null, reauth: reauth ?? null,
+                  });
+                  signing.resolve(sig.id);
+                } catch (err) {
+                  setSignError((err as Error)?.message || 'The signature could not be recorded.');
+                } finally {
+                  setSignBusy(false);
+                }
+              }}
+            />
+          )}
 
           {/* Admin-defined custom category sections */}
           {(config.customCategories ?? []).filter((c) => c.enabled).map((cat) => (

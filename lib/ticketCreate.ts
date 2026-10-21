@@ -59,13 +59,33 @@
 //                          year the request number carries, when it is the
 //                          year somewhere on Earth right now; else the
 //                          server's UTC year (requestNumberYear).
-//   * declaration          DEC-34 seam — the like-in-kind declaration
-//                          (DF-P6) is one more field on this contract. Read
-//                          and IGNORED until DF-P6 lands.
+//   * declaration          GAP-110 / DEC-33 / DEC-34 (DF-P6) — OPTIONAL: the
+//                          requester's like-in-kind declaration, a sentence
+//                          they composed (at least LIKE_IN_KIND_MIN_CHARS),
+//                          signed through /api/signatures/sign against the
+//                          request's own id (`ticketKey`, minted by the
+//                          browser before filing). Absent / null = no
+//                          declaration: the request is engineered work
+//                          (engineering_required defaults true). Blank never
+//                          blocks submission; a declaration that is present
+//                          but malformed is refused with the reason.
+//   * equipment            GAP-312 / WIRE-7 criterion 1 (DF-P6) — OPTIONAL:
+//                          the equipment tags the request names, each with
+//                          the asset the request form resolved it to (or
+//                          none). The route keeps an asset only when it is
+//                          one of this workspace's; a tag that resolves to
+//                          nothing is kept as typed and flagged.
+//   * The check-in's metadata.moc / minor_correction / undocumented_change
+//     stay INFORMATIONAL records of what the check-in said (GAP-110
+//     acceptance 5): no authority decision reads them. The engineering
+//     requirement is tickets.engineering_required; the minor-correction
+//     class is declared at approval (approve_minor_correction, TIER-7);
+//     undocumented_change drives only the PSM escalation notice (LIFE-7).
 //   * projectId            DEC-40 seam — tickets.project_id (DF-P8) is one
 //                          more optional field. Read and IGNORED until DF-P8.
 
 import type { OrgDraftingSettings } from "@/types/schema";
+import { checkDeclarationStatement } from "@/lib/reviewModel";
 import type { SourceDocumentRefRow } from "@/lib/sourceDocRef";
 
 /** The explicit answer for a requester who does not know the unit. */
@@ -129,6 +149,25 @@ export type TicketCreateOrigin =
       sheetLabel: string;
     };
 
+/** GAP-110 / DEC-34 (DF-P6): the declaration as the request form sends it —
+ *  the statement as typed, the e-signature minted over it, and the id the
+ *  request is filed under (the signature's resource). */
+export interface TicketCreateDeclaration {
+  statement: string;
+  signatureId: string;
+  ticketKey: string;
+}
+
+/** GAP-312 (DF-P6): one equipment tag the request names. */
+export interface TicketCreateEquipment {
+  tag: string;
+  assetId: string | null;
+}
+
+/** The most equipment tags one request names. */
+export const MAX_EQUIPMENT = 25;
+export const MAX_EQUIPMENT_TAG = 80;
+
 export interface TicketCreateSourceDoc {
   id: string;
   documentNumber: string | null;
@@ -161,8 +200,10 @@ export interface TicketCreateInput {
   sourceDocuments: TicketCreateSourceDoc[];
   attachments: TicketCreateAttachment[];
   origin: TicketCreateOrigin;
-  /** DEC-34 seam (DF-P6): ignored by this package. */
-  declaration?: unknown;
+  /** GAP-110 / DEC-34 (DF-P6): the like-in-kind declaration, when made. */
+  declaration?: TicketCreateDeclaration | null;
+  /** GAP-312 (DF-P6): equipment the request names (never required). */
+  equipment?: TicketCreateEquipment[];
   /** DEC-40 seam (DF-P8): ignored by this package. */
   projectId?: string | null;
   /** The requester's calendar year, from their own clock (null when the
@@ -338,8 +379,45 @@ export function parseTicketCreateBody(raw: unknown): { ok: true; input: TicketCr
     orgId, title, description, requestType, priority, unit, targetCompletionAt, requesterRole,
     customCategories, sourceDocuments, attachments, origin, localYear,
   };
-  // The DEC-34 / DEC-40 seams travel with the input and are not acted on here.
-  if ("declaration" in raw) input.declaration = raw.declaration;
+  // GAP-110 / DEC-34 (DF-P6): the declaration — absent / null is no
+  // declaration (the engineered lane); present, it must be the statement,
+  // its signature and the id the request is filed under. The statement's
+  // own rule (length, no canned text) is lib/reviewModel.ts's.
+  if (raw.declaration !== undefined && raw.declaration !== null) {
+    const d = raw.declaration;
+    if (!isObj(d)) return refuse("declaration", "The like-in-kind declaration is not valid — write it again, or leave it blank.");
+    const checked = checkDeclarationStatement(d.statement);
+    if (!checked.ok) return refuse("declaration", checked.error);
+    const signatureId = text(d.signatureId);
+    const ticketKey = text(d.ticketKey);
+    if (!signatureId || !UUID_RE.test(signatureId) || !ticketKey || !UUID_RE.test(ticketKey)) {
+      return refuse("declaration", "The like-in-kind declaration needs your signature — sign it, or leave it blank.");
+    }
+    input.declaration = { statement: checked.statement, signatureId, ticketKey };
+  }
+  // GAP-312 (DF-P6): the equipment the request names — advisory, never a
+  // refusal past its shape: an unusable entry is dropped with a warning.
+  if (raw.equipment !== undefined && raw.equipment !== null) {
+    if (!Array.isArray(raw.equipment)) return refuse("equipment", "The equipment list is not valid.");
+    const equipment: TicketCreateEquipment[] = [];
+    const seenTags = new Set<string>();
+    for (const e of raw.equipment) {
+      if (!isObj(e)) continue;
+      const tag = text(e.tag);
+      if (!tag || tag.length > MAX_EQUIPMENT_TAG) continue;
+      const key = tag.toUpperCase();
+      if (seenTags.has(key)) continue;
+      seenTags.add(key);
+      const assetId = text(e.assetId);
+      equipment.push({ tag, assetId: assetId && UUID_RE.test(assetId) ? assetId : null });
+    }
+    if (equipment.length > MAX_EQUIPMENT) {
+      warnings.push(`Only the first ${MAX_EQUIPMENT} equipment tags were kept.`);
+      equipment.length = MAX_EQUIPMENT;
+    }
+    if (equipment.length > 0) input.equipment = equipment;
+  }
+  // The DEC-40 seam travels with the input and is not acted on here.
   if ("projectId" in raw) input.projectId = text(raw.projectId);
   return { ok: true, input, warnings };
 }
