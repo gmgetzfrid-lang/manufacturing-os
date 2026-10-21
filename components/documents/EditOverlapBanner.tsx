@@ -258,6 +258,10 @@ export default function EditOverlapBanner({
         link: row.libraryId ? `/documents/${row.libraryId}?doc=${row.documentId}` : undefined,
         resourceType: "document",
         resourceId: row.documentId,
+        // TRAIL-6 dw1 (notifications Round G, N11): the library this banner
+        // already holds rides on the row — a hint only; the badge trail
+        // resolves each document through the viewer's own read.
+        ...(row.libraryId ? { metadata: { libraryId: row.libraryId } } : {}),
       });
       markNow(sent, row);
     } catch { /* best-effort */ }

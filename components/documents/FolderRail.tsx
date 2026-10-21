@@ -5,6 +5,13 @@ import { Home, FolderPlus, ChevronRight, Folder, PanelLeftOpen } from "lucide-re
 import type { LibraryCollection } from "@/types/schema";
 import { NodeIcon } from "@/lib/nodeIcons";
 import { safeNodeColor } from "@/lib/nodeColor";
+import AttentionDot from "@/components/documents/AttentionDot";
+import type { AttentionMarkState } from "@/lib/attentionRollup";
+
+/** N11 TRAIL (TRAIL-1 dw2, TRAIL-6 dw3): the folder's mark — the count of the
+ *  Documents badge's rows in its subtree (fanned up the folder chain), or
+ *  'unknown', or null. Omitted = no marks (the rail renders as before). */
+type FolderAttention = (folderId: string) => AttentionMarkState;
 
 /** A folder's icon, honoring its customization everywhere — a customized
  *  folder shows its own colored tile; a plain one keeps the classic folder
@@ -42,6 +49,11 @@ interface FolderRailProps {
    *  rail is a natural move target ("drag onto Piping"), same contract as
    *  the breadcrumb drops. Omitted = rail is navigation-only. */
   onDropItems?: (targetId: string | null, payload: RailDropPayload) => void;
+  /** The badge trail (N11): a count on each folder on the path to a badged
+   *  document; nothing on the others. */
+  attentionFor?: FolderAttention;
+  /** The counts are lower bounds (the roll-up is incomplete). */
+  attentionPartial?: boolean;
 }
 
 /** Shared drag-drop handlers for any rail/tree element that represents a
@@ -91,6 +103,8 @@ function TreeNode({
   currentFolderId,
   onNavigate,
   onDropItems,
+  attentionFor,
+  attentionPartial,
 }: {
   folder: LibraryCollection;
   allFolders: LibraryCollection[];
@@ -98,6 +112,8 @@ function TreeNode({
   currentFolderId: string | null;
   onNavigate: (id: string) => void;
   onDropItems?: (targetId: string | null, payload: RailDropPayload) => void;
+  attentionFor?: FolderAttention;
+  attentionPartial?: boolean;
 }) {
   const [expanded, setExpanded] = useState(depth < 1);
   const children = allFolders.filter((f) => f.parentId === folder.id);
@@ -126,6 +142,9 @@ function TreeNode({
         >
           <FolderGlyph folder={folder} active={isActive} />
           <span className="text-xs font-medium truncate">{folder.name}</span>
+          {attentionFor && folder.id && (
+            <AttentionDot mark={attentionFor(folder.id)} variant="count" partial={attentionPartial} where="in this folder" className="ml-auto" />
+          )}
         </button>
       </div>
       {expanded && children.length > 0 && (
@@ -139,6 +158,8 @@ function TreeNode({
               currentFolderId={currentFolderId}
               onNavigate={onNavigate}
               onDropItems={onDropItems}
+              attentionFor={attentionFor}
+              attentionPartial={attentionPartial}
             />
           ))}
         </div>
@@ -155,6 +176,8 @@ export default function FolderRail({
   onNavigate,
   onCreateFolder,
   onDropItems,
+  attentionFor,
+  attentionPartial,
 }: FolderRailProps) {
   const [hovered, setHovered] = useState(false);
   const rootFolders = folders.filter((f) => !f.parentId);
@@ -211,6 +234,9 @@ export default function FolderRail({
               {safeNodeColor(folder.color) || folder.icon ? <FolderGlyph folder={folder} active={isActive} /> : <Folder className="w-3.5 h-3.5" />}
               {isActive && (
                 <span className="absolute -left-0.5 top-1/2 -translate-y-1/2 w-0.5 h-4 bg-[var(--color-accent)] rounded-r-full" />
+              )}
+              {attentionFor && folder.id && (
+                <AttentionDot mark={attentionFor(folder.id)} variant="dot" where={`in ${folder.name}`} className="absolute -top-0.5 -right-0.5" />
               )}
             </button>
           );
@@ -281,6 +307,8 @@ export default function FolderRail({
                   currentFolderId={currentFolderId}
                   onNavigate={onNavigate}
                   onDropItems={onDropItems}
+                  attentionFor={attentionFor}
+                  attentionPartial={attentionPartial}
                 />
               ))}
 

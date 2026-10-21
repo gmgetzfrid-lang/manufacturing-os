@@ -147,7 +147,11 @@ export async function announceBranchOpened(input: {
       // Deliberately NOT excluding the actor: the brancher owns this debt and
       // needs the trail in their own feed too.
       audience: { involved, roles: ["DocCtrl"] },
-      metadata: { branchId: input.branchId },
+      // TRAIL-6 dw1 (notifications Round G, N11): the library the producer
+      // already holds rides on the row. A hint for readers of the row — the
+      // badge trail never counts from it (it resolves each document through
+      // the viewer's own read, lib/attentionRollup.ts).
+      metadata: { branchId: input.branchId, ...(input.libraryId ? { libraryId: input.libraryId } : {}) },
     });
   } catch (e) {
     console.warn("[branches] announce failed (non-blocking)", e);

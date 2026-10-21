@@ -15,6 +15,8 @@ import DocThumb from "@/components/documents/DocThumb";
 import { stateStyle, documentState } from "@/lib/stateColors";
 import { Lock } from "lucide-react";
 import type { DocumentRecord } from "@/types/schema";
+import AttentionDot from "@/components/documents/AttentionDot";
+import type { AttentionMarkState } from "@/lib/attentionRollup";
 
 export type DocViewLayout = "list" | "grid" | "thumbs";
 
@@ -32,6 +34,10 @@ interface DocGridViewProps {
   onItemDragStart?: (doc: DocumentRecord, e: React.DragEvent) => void;
   /** Click on the empty background clears the selection (Explorer behavior). */
   onBackgroundClick?: () => void;
+  /** The badge trail (notifications Round G, N11 — TRAIL-1 dw3): a document's
+   *  mark — a red (action) or blue (new) dot, no number; null draws nothing.
+   *  Omitted = no marks, as before. */
+  attentionFor?: (documentId: string) => AttentionMarkState;
 }
 
 function StatusPill({ status }: { status?: string }) {
@@ -55,6 +61,7 @@ export default function DocGridView({
   onItemContextMenu,
   onItemDragStart,
   onBackgroundClick,
+  attentionFor,
 }: DocGridViewProps) {
   const thumbWidth = layout === "thumbs" ? 190 : layout === "grid" ? 116 : 30;
 
@@ -93,6 +100,7 @@ export default function DocGridView({
               className={`${itemShell(doc, selected, focused)} rounded-lg px-2 py-1 flex items-center gap-2.5 ${dimmedIds?.has(doc.id!) ? "opacity-50" : ""}`}
             >
               <DocThumb documentId={doc.id} width={thumbWidth} rounded="rounded" />
+              {attentionFor && doc.id && <AttentionDot mark={attentionFor(doc.id)} variant="dot" where="on this document" />}
               <span className="font-mono text-xs font-bold text-[var(--color-text)] truncate max-w-[16ch] shrink-0">
                 {doc.documentNumber || "—"}
               </span>
@@ -133,6 +141,7 @@ export default function DocGridView({
             className={`${itemShell(doc, selected, focused)} rounded-xl p-2.5 flex flex-col items-center gap-2 relative ${dimmedIds?.has(doc.id!) ? "opacity-50" : ""}`}
             title={doc.title || doc.name || undefined}
           >
+            {attentionFor && doc.id && <AttentionDot mark={attentionFor(doc.id)} variant="dot" where="on this document" className="absolute top-2 left-2" />}
             {doc.checkedOutBy && (
               <span className="absolute top-1.5 right-1.5 p-1 rounded-md bg-blue-50 border border-blue-200" title={`Checked out${doc.checkedOutByName ? ` · ${doc.checkedOutByName}` : ""}`}>
                 <Lock className="w-3 h-3 text-blue-600" />

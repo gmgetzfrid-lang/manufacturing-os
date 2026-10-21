@@ -173,7 +173,12 @@ describe("20261181 — clear_resolved_branch_alerts(uuid): the branch_open queue
 
   it("the key matches what announceBranchOpened writes (metadata: { branchId }) and what resolveBranch passes (p_branch)", () => {
     const branches = readFileSync(join(ROOT, "lib/branches.ts"), "utf8");
-    expect(branches).toContain("metadata: { branchId: input.branchId },");
+    // (notifications N11 TRAIL — TRAIL-6 dw1: the row also carries the
+    // library it already held, `...(input.libraryId ? { libraryId } : {})`;
+    // the clear is a jsonb containment match on branchId, so an extra key
+    // changes nothing it matches.)
+    expect(branches).toMatch(/metadata: \{ branchId: input\.branchId(, \.\.\.\(input\.libraryId \? \{ libraryId: input\.libraryId \} : \{\}\))? \},/);
+    expect(CODE).toContain("n.metadata @> jsonb_build_object('branchId'");
     expect(branches).toContain('supabase.rpc("clear_resolved_branch_alerts", { p_branch: branchId })');
   });
 

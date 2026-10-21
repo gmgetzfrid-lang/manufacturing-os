@@ -48,7 +48,7 @@ import {
   Plus, Pencil, X, Bot, CreditCard, DatabaseBackup, ArchiveRestore, Compass,
   HardHat,
 } from 'lucide-react';
-import { useTicketNotifications, type AttentionSection } from '@/hooks/useTicketNotifications';
+import { useTicketNotifications, useAttentionStatus, type AttentionSection } from '@/hooks/useTicketNotifications';
 import { useNotificationCenter } from '@/components/notifications/NotificationCenter';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import LogoUploadModal from '@/components/branding/LogoUploadModal';
@@ -539,6 +539,10 @@ function SidebarLeaf({
 }) {
   const Icon = leaf.icon;
   const { open: openCenter } = useNotificationCenter();
+  // RT-1 dw4 (notifications Round G, N11): while the feed's live connection
+  // is down the badge's number may be out of date — the badge carries a mark
+  // and its name says so (the header bell says it in words).
+  const { stale } = useAttentionStatus();
   const badgeTone =
     leaf.badgeTone === 'red'  ? 'bg-red-600 animate-pulse shadow-red-900/50' :
     leaf.badgeTone === 'blue' ? 'bg-blue-500 shadow-blue-900/50' :
@@ -572,9 +576,10 @@ function SidebarLeaf({
         <button
           type="button"
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); openCenter('all', BADGE_SECTION_BY_HREF[leaf.href] ?? null); }}
-          title="See these notifications"
-          aria-label={`${leaf.label}: ${leaf.badge} item${leaf.badge === 1 ? '' : 's'} need${leaf.badge === 1 ? 's' : ''} attention${leaf.badgeTone === 'red' ? ', some need action' : ''} — show them`}
-          className={`${collapsed ? 'absolute top-1 right-1' : ''} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-white text-[10px] font-black shadow cursor-pointer hover:scale-110 hover:ring-2 hover:ring-white/40 transition-transform ${badgeTone}`}
+          title={stale ? 'Reconnecting — this count may be out of date. See these notifications' : 'See these notifications'}
+          aria-label={`${leaf.label}: ${leaf.badge} item${leaf.badge === 1 ? '' : 's'} need${leaf.badge === 1 ? 's' : ''} attention${leaf.badgeTone === 'red' ? ', some need action' : ''}${stale ? ' (reconnecting — the count may be out of date)' : ''} — show them`}
+          data-badge-stale={stale ? '' : undefined}
+          className={`${collapsed ? 'absolute top-1 right-1' : ''} inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-white text-[10px] font-black shadow cursor-pointer hover:scale-110 hover:ring-2 hover:ring-white/40 transition-transform ${badgeTone}${stale ? ' opacity-70 ring-2 ring-amber-400' : ''}`}
         >
           {leaf.badge > 99 ? '99+' : leaf.badge}
         </button>

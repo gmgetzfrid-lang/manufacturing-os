@@ -23,6 +23,9 @@ import ProjectWizard from "@/components/projects/ProjectWizard";
 import { exportAllProjectsToCsv, ExportCancelledError, type ExportProgress } from "@/lib/projectExport";
 import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
 import type { Project, ProjectStatus, Timestamp } from "@/types/schema";
+import { useAttentionRollup } from "@/hooks/useTicketNotifications";
+import { attentionFor, type AttentionMarkState } from "@/lib/attentionRollup";
+import AttentionDot from "@/components/documents/AttentionDot";
 
 const STATUS_TABS: { value: ProjectStatus | "all"; label: string; color: string }[] = [
   { value: "active",    label: "Active",    color: "emerald" },
@@ -36,6 +39,11 @@ const STATUS_TABS: { value: ProjectStatus | "all"; label: string; color: string 
 export default function ProjectsPage() {
   const { activeOrgId, uid, userEmail, activeRole, hasAnyRole } = useRole();
   const isAdmin = hasAnyRole(["Admin", "DocCtrl"]);
+  // N11 TRAIL (TRAIL-11 dw2): a project card carries the Projects badge's
+  // dot for rows about that project — the requests queue's red / blue
+  // vocabulary; nothing on a card with nothing to mark. From the tab's one
+  // feed: no query per card.
+  const attention = useAttentionRollup();
 
   const [projects, setProjects] = useState<Project[]>([]);
   // `loading` starts true so the pre-org-resolve frame shows a spinner
@@ -208,7 +216,7 @@ export default function ProjectsPage() {
           )
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {projects.map((p) => <ProjectCard key={p.id} project={p} />)}
+            {projects.map((p) => <ProjectCard key={p.id} project={p} attention={p.id ? attentionFor(attention, { projectId: p.id }) : null} />)}
           </div>
         )}
 
@@ -226,7 +234,7 @@ export default function ProjectsPage() {
   );
 }
 
-function ProjectCard({ project }: { project: Project }) {
+function ProjectCard({ project, attention = null }: { project: Project; attention?: AttentionMarkState }) {
   const statusColors: Record<ProjectStatus, string> = {
     active:    "bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 border-emerald-500/40",
     paused:    "bg-amber-500/10 text-amber-800 dark:text-amber-300 border-amber-500/40",
@@ -243,6 +251,7 @@ function ProjectCard({ project }: { project: Project }) {
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 mb-1">
+            <AttentionDot mark={attention} variant="dot" where="on this project" />
             <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded border ${statusColors[project.status]}`}>
               {project.status.toUpperCase()}
             </span>

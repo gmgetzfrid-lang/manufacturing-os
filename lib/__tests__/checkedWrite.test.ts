@@ -173,7 +173,7 @@ const LIB_RATCHET: Record<string, number> = {
     "lib/companies.ts": 3, "lib/docClass.ts": 1, "lib/documentLifecycle/common.ts": 2, "lib/documentLifecycle/renumber.ts": 1,
     "lib/documentLifecycle/reverse.ts": 1, "lib/documentLifecycle/split.ts": 1, "lib/documentOrigin.ts": 1,
     "lib/documentShares.ts": 1, "lib/effectiveDate.ts": 4, "lib/favorites.ts": 1, "lib/holds.ts": 2,
-    "lib/inAppNotifications.ts": 3, "lib/intents.ts": 1, "lib/knowledge.ts": 4, "lib/knowledgeEmbedCore.ts": 2,
+    "lib/inAppNotifications.ts": 1, "lib/intents.ts": 1, "lib/knowledge.ts": 4, "lib/knowledgeEmbedCore.ts": 2,
     "lib/knowledgeIngest.ts": 17, "lib/knowledgeSourceSync.ts": 4, "lib/libraryCollections.ts": 6, "lib/libraryViews.ts": 4,
     "lib/markupRequests.ts": 1, "lib/markups.ts": 1, "lib/mentionIndexer.ts": 1, "lib/milestones.ts": 12, "lib/notes.ts": 4,
     "lib/operationalGraph.ts": 6, "lib/plotPlans.ts": 2, "lib/processFlows.ts": 2, "lib/projectReport.ts": 1,

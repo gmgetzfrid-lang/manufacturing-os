@@ -22,6 +22,10 @@ import { flaggedRequestTypes } from '@/lib/requestTypes';
 import {
   KIND_META, NOTIFICATION_SECTIONS, isNotificationKind, type NotificationSection,
 } from '@/lib/notificationKinds';
+import {
+  attentionFor, buildAttentionRollup, documentIdsToPlace, resolvePlacements, EMPTY_ROLLUP, NO_PLACEMENTS,
+  type AttentionMarkState, type AttentionRollup, type AttentionTarget, type Placements, type RollupRow,
+} from '@/lib/attentionRollup';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Single source of truth for "what needs my attention right now".
@@ -268,13 +272,26 @@ export interface AttentionStatus {
   /** EDGE-3 / ROUTE-7: past the ceiling the evaluated requests are the
    *  longest-waiting (read oldest-modified first), not the most recent. */
   ticketsOldestFirst: boolean;
+  /** The last "mark read" this feed sent was refused (lib/inAppNotifications.ts
+   *  markRead / markAllRead are checked writes — notifications Round G, N11,
+   *  the N3 → N4 hand-off): the surfaces say so instead of a silent success.
+   *  Cleared by the next mark that lands, and by a workspace switch. */
+  markError: string | null;
 }
 
-/** The provider's value: the hook's shape plus the status. */
+/** The provider's value: the hook's shape plus the status — and the badge
+ *  trail below the sidebar (notifications Round G, N11 TRAIL — TRAIL-1 /
+ *  TRAIL-6 / TAX-10): per-library, per-folder, per-document and per-project
+ *  marks computed from the same rows as sectionCounts (lib/attentionRollup.ts).
+ *  Read with useAttentionRollup() / useAttentionFor(). */
 export interface AttentionFeedState {
   value: TicketNotifications;
   status: AttentionStatus;
+  rollup: AttentionRollup;
 }
+
+/** What a refused "mark read" says on the feed surfaces (N11). */
+export const MARK_READ_REFUSED = "Marking read did not go through — the item is still unread. Try again in a moment.";
 
 const IDLE_STATUS: AttentionStatus = Object.freeze({
   stale: false,
@@ -287,6 +304,7 @@ const IDLE_STATUS: AttentionStatus = Object.freeze({
   ticketsLoaded: 0,
   ticketsTotal: null,
   ticketsOldestFirst: false,
+  markError: null,
 });
 
 /** The one feed of the tab (AttentionProvider). Null outside it. */
@@ -385,6 +403,11 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
   const feedKeyRef = useRef<string | null>(null);
   const [remainderRead, setRemainderRead] = useState(true);
   const [docLibrary, setDocLibrary] = useState<Record<string, string>>({});
+  // N11 TRAIL: where each document a row names lives, as the viewer's own
+  // read answered (lib/attentionRollup.ts resolvePlacements) — resolved once
+  // per pass with the rows it belongs to; kept with the last good window.
+  const [placements, setPlacements] = useState<Placements>(NO_PLACEMENTS);
+  const [markError, setMarkError] = useState<string | null>(null);
   const [ticketTotal, setTicketTotal] = useState<number | null>(null);
   // EDGE-3 / ROUTE-7: the scope was past the ceiling and read oldest first.
   const [ticketsOldestFirst, setTicketsOldestFirst] = useState(false);
@@ -484,6 +507,7 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
           rawRef.current = []; remainderRef.current = []; ticketIdsRef.current = new Set();
           setTickets([]); setRawNotifs([]); setHidden(new Set()); setNotifTotal(null); setRemainder([]);
           setTicketTotal(null); setTicketsOldestFirst(false); setRequesterRoles(null); setLoadError(null); setLoading(false);
+          setPlacements(NO_PLACEMENTS); setMarkError(null);
         }
       })();
       return () => { alive = false; };
@@ -505,6 +529,7 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
         keptAtRef.current.clear(); echoRef.current.clear(); inFlightRef.current = null;
         setTickets([]); setRawNotifs([]); setHidden(new Set()); setNotifTotal(null);
         setRemainder([]); setRemainderRead(true); setTicketTotal(null); setTicketsOldestFirst(false); setRequesterRoles(null); setDocLibrary({});
+        setPlacements(NO_PLACEMENTS); setMarkError(null);
         setLoadError(null); setLoading(true);
       })();
     }
@@ -746,17 +771,35 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
           }
         }
 
-        // 5) TRAIL-12: a document row written without a link (its producer
-        //    did not know the library) links to the document in its library —
-        //    resolved in ONE batched read — never to a search for its id.
+        // 5) Where each document a row names lives — resolved ONCE per pass,
+        //    in batched reads under the VIEWER's own client (documents' ACL is
+        //    the one the library list reads under; a document the viewer
+        //    cannot read is placed nowhere), with its folder chain from the
+        //    container-chain resolver (lib/attentionRollup.ts
+        //    resolvePlacements; DEC-36 — never a third walk). Two uses:
+        //    TRAIL-12 — a document row written without a link (its producer
+        //    did not know the library) links to the document in its library,
+        //    never to a search for its id (those ids are asked first); and
+        //    the badge trail below the sidebar (N11 TRAIL — TRAIL-1 /
+        //    TRAIL-6): the library, folder and document markers. A failed
+        //    read leaves the roll-up unknown, never zero.
         const unlinked = (n ?? []).filter((r) => !r.link && r.resourceType === 'document' && r.resourceId).map((r) => r.resourceId as string);
+        const rollRows: RollupRow[] = [
+          ...(n ?? []).map((r) => ({ section: sectionForKind(r.kind), actionRequired: false, resourceType: r.resourceType, resourceId: r.resourceId })),
+          ...beyond.map((r) => ({ section: sectionForKind(r.kind as NotificationRow['kind']), actionRequired: false, resourceType: r.resourceType, resourceId: r.resourceId })),
+        ];
+        const toPlace = Array.from(new Set([...unlinked, ...documentIdsToPlace(rollRows)]));
         let libs: Record<string, string> | null = null;
-        if (unlinked.length > 0) {
-          const { data: docRows } = await supabase
-            .from('documents').select('id, library_id').eq('org_id', activeOrgId).in('id', Array.from(new Set(unlinked)));
-          libs = {};
-          for (const d of (docRows || []) as Array<{ id: string; library_id: string | null }>) {
-            if (d.library_id) libs[d.id] = d.library_id;
+        let placed: Placements | null = null;
+        if (rawWindow !== null) {
+          placed = await resolvePlacements(
+            toPlace,
+            (ids) => supabase.from('documents').select('id, library_id, collection_id').eq('org_id', activeOrgId).in('id', ids),
+            (ids) => supabase.from('collections').select('id, path_ids').eq('org_id', activeOrgId).in('id', ids),
+          );
+          if (unlinked.length > 0) {
+            libs = {};
+            for (const [id, at] of placed.docs) libs[id] = at.libraryId;
           }
         }
 
@@ -778,6 +821,7 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
             setNotifTotal(unreadTotal);
           }
           if (libs) { const add = libs; setDocLibrary((prev) => ({ ...prev, ...add })); }
+          if (placed) setPlacements(placed);
           setLoadError(failure);
           setLoading(false);
         }
@@ -903,9 +947,12 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
     [rawNotifs, hidden],
   );
 
-  const { items, counts, sectionCounts } = useMemo(() => {
+  const { items, counts, sectionCounts, rollup } = useMemo(() => {
     const out: AttentionItem[] = [];
     const ticketIds = new Set<string>();
+    // N11 TRAIL: the rows each section badge counts, carried one level down
+    // (lib/attentionRollup.ts) — the same section and action rule as the tally.
+    const rollRows: RollupRow[] = [];
 
     // Index the most recent notification per ticket so a ticket row can carry
     // the latest activity's description + deep-link (e.g. straight to a comment)
@@ -981,6 +1028,7 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
       // TRAIL-5: the computed flag reaches the tally, so a notification can
       // turn its row's badge red. A bell-only kind tallies into no row.
       if (section) tally(section, actionRequired);
+      if (section) rollRows.push({ section, actionRequired, resourceType: n.resourceType, resourceId: n.resourceId });
     }
 
     out.sort((a, b) => (b.when || '').localeCompare(a.when || ''));
@@ -994,6 +1042,7 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
     // could not reach count in the total as activity. The list pages them in
     // on request; the number never waits for that.
     const rawLoaded = rawNotifs.length;
+    let belowUnknown = false;
     if (notifTotal !== null && notifTotal > rawLoaded) {
       let tallied = 0;
       for (const r of remainder) {
@@ -1004,15 +1053,47 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
         all++; notifications++;
         if (actionReq) action++;
         if (section) tally(section, actionReq);
+        if (section) rollRows.push({ section, actionRequired: actionReq, resourceType: r.resourceType, resourceId: r.resourceId });
       }
       const untallied = Math.max(0, notifTotal - rawLoaded - (remainderRead ? tallied : 0));
       all += untallied; notifications += untallied;
+      // Rows below the window the tally could not reach (a failed read, or
+      // past REMAINDER_TALLY_CAP) are rows no container count includes: the
+      // per-container roll-up is then unknown, never short and quiet.
+      if (untallied > 0 || !remainderRead) belowUnknown = true;
     }
     const counts: AttentionCounts = { all, action, activity: all - action, notifications };
-    return { items: out, counts, sectionCounts };
-  }, [tickets, notifs, rawNotifs, notifTotal, remainder, remainderRead, docLibrary, uid, roles, policy, policyFault, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount, requesterRoles]);
+    const built = buildAttentionRollup(rollRows, placements);
+    const rollup: AttentionRollup = belowUnknown
+      ? { ...built, libraries: 'unknown', folders: 'unknown' }
+      : built;
+    return { items: out, counts, sectionCounts, rollup };
+  }, [tickets, notifs, rawNotifs, notifTotal, remainder, remainderRead, docLibrary, placements, uid, roles, policy, policyFault, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount, requesterRoles]);
 
-  const markAll = useCallback(() => markAllRead(activeOrgId), [activeOrgId]);
+  // N11 (the N3 → N4 hand-off): markRead / markAllRead are checked writes
+  // that throw on a refusal. "Mark all read" rethrows — every caller awaits
+  // it inside a try and says so (the center's line, /inbox's toast, the
+  // bell's line); a row's "mark read" is fired and forgotten by its callers
+  // (`void markRead(id)`), so here the refusal is caught and said through
+  // status.markError — never an unhandled rejection, never a silent success.
+  const markOne = useCallback(async (id: string) => {
+    try {
+      await markRead(id);
+      setMarkError(null);
+    } catch (e) {
+      console.warn('[attention] mark read refused', (e as Error)?.message ?? e);
+      setMarkError(MARK_READ_REFUSED);
+    }
+  }, []);
+  const markAll = useCallback(async () => {
+    try {
+      await markAllRead(activeOrgId);
+      setMarkError(null);
+    } catch (e) {
+      setMarkError(MARK_READ_REFUSED);
+      throw e;
+    }
+  }, [activeOrgId]);
   const value = useMemo<TicketNotifications>(() => ({
     /** The unified feed every surface renders. */
     items,
@@ -1032,12 +1113,13 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
     /** Per-sidebar-section counts so each nav item badges only ITS own items. */
     sectionCounts,
     loading,
-    // Re-exported so the bell can mark notification rows read without another import.
-    markRead,
+    // Re-exported so the bell can mark notification rows read without another
+    // import — a checked write whose refusal status.markError says (N11).
+    markRead: markOne,
     // Scoped to the active workspace so "mark all read" clears only this
     // workspace's bell, not every workspace the user belongs to.
     markAllRead: markAll,
-  }), [items, counts, sectionCounts, loading, markAll]);
+  }), [items, counts, sectionCounts, loading, markOne, markAll]);
 
   const loadMoreNotifications = useCallback(() => {
     pagesRef.current += 1;
@@ -1058,9 +1140,10 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
     ticketsLoaded: openTicketsLoaded,
     ticketsTotal: ticketTotal,
     ticketsOldestFirst,
-  }), [stale, loadError, policyFault, notifs.length, notifTotal, hidden.size, rawNotifs.length, loadMoreNotifications, loadingMore, openTicketsLoaded, ticketTotal, ticketsOldestFirst]);
+    markError,
+  }), [stale, loadError, policyFault, notifs.length, notifTotal, hidden.size, rawNotifs.length, loadMoreNotifications, loadingMore, openTicketsLoaded, ticketTotal, ticketsOldestFirst, markError]);
 
-  return useMemo(() => ({ value, status }), [value, status]);
+  return useMemo(() => ({ value, status, rollup }), [value, status, rollup]);
 }
 
 /** The attention feed. Inside AttentionProvider (the protected layout) every
@@ -1076,4 +1159,20 @@ export function useTicketNotifications(): TicketNotifications {
  *  rows below the window and how to page them). Idle outside the provider. */
 export function useAttentionStatus(): AttentionStatus {
   return useContext(AttentionContext)?.status ?? IDLE_STATUS;
+}
+
+/** The badge trail below the sidebar (N11 TRAIL — TRAIL-1, TRAIL-6 dw2):
+ *  per-library, per-folder, per-document and per-project marks from the
+ *  tab's one feed — no query and no channel of its own, however many rows
+ *  read it. Empty (nothing marked) outside the provider. */
+export function useAttentionRollup(): AttentionRollup {
+  return useContext(AttentionContext)?.rollup ?? EMPTY_ROLLUP;
+}
+
+/** TAX-10 dw1: the mark for one library, folder, document or project — a
+ *  count to show, 'unknown' (render "?", never nothing), or null (render
+ *  nothing, as before). A list reads useAttentionRollup() once and calls
+ *  attentionFor per row instead. */
+export function useAttentionFor(target: AttentionTarget): AttentionMarkState {
+  return attentionFor(useAttentionRollup(), target);
 }
