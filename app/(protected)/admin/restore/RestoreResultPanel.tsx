@@ -6,12 +6,17 @@
 // (BKP-16) then gave a request restored under a fresh number, and the two
 // request-number refusals, lines of their own. Everything else renders as it
 // did (pinned by digest in lib/__tests__/aoRoundGP17RestoreRenumberReport.test.ts).
+// admin-and-org Round G P18 (BKP-17) gave the review-model lines a tickets
+// restore writes their own lines: each table's plain-language notes
+// (RestoreTableOutcome.notes), and each request restored without its
+// like-in-kind declaration (DECLARATION_NOT_RESTORED), counted apart from the
+// pointers cleared (pinned in lib/__tests__/aoRoundGP18RestoreResultPanel.test.ts).
 
 import React from "react";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import {
   RESTORE_ADDITIVE_NOTE, RESTORE_HELD_ELSEWHERE_NOTE, restoreRefusalLabel, isDanglingFlowRefusal, DANGLING_FLOW_CODE,
-  TICKET_RENUMBERED, TICKET_NUMBER_IN_USE, TICKET_NUMBER_UNSETTLED,
+  TICKET_RENUMBERED, TICKET_NUMBER_IN_USE, TICKET_NUMBER_UNSETTLED, DECLARATION_NOT_RESTORED,
   type ChunkedRestoreResult, type RestoreRenumbering, type RestoreRowRefusal,
 } from "@/lib/dataRestore";
 
@@ -24,6 +29,11 @@ const RENUMBER_LINES_SHOWN = 10;
 /** BKP-16: a `cleared` note that is a renumbering (TICKET_RENUMBERED) — a
  *  request restored under a fresh number, never "a pointer cleared". */
 const isRenumberNote = (r: Pick<RestoreRowRefusal, "code">) => r.code === TICKET_RENUMBERED;
+
+/** BKP-17: a `cleared` note that is a like-in-kind declaration restored
+ *  without its e-signature (DECLARATION_NOT_RESTORED) — the request now needs
+ *  an engineer's sign-off; never "a pointer cleared". */
+const isDeclarationNote = (r: Pick<RestoreRowRefusal, "code">) => r.code === DECLARATION_NOT_RESTORED;
 
 /** BKP-16: the two request-number refusals, said on lines of their own. */
 const isTicketNumberRefusal = (r: Pick<RestoreRowRefusal, "code">) => r.code === TICKET_NUMBER_IN_USE || r.code === TICKET_NUMBER_UNSETTLED;
@@ -142,6 +152,48 @@ function TicketNumberLines({ result }: { result: ChunkedRestoreResult }) {
   );
 }
 
+/** BKP-17: each request restored without its like-in-kind declaration, per
+ *  table, in the note's own words — its number read from the note's
+ *  `ticketNumber` (never parsed from the message), else its backup id. */
+function DeclarationLines({ result }: { result: ChunkedRestoreResult }) {
+  return (
+    <>
+      {result.tables.map((t) => {
+        const notes = t.cleared.filter(isDeclarationNote);
+        if (notes.length === 0) return null;
+        return (
+          <div key={`declarations-${t.name}`} data-testid="restore-declarations-cleared">
+            <span className="font-mono">{t.name}</span>: {fmtNum(notes.length)} request(s) restored without their like-in-kind
+            declaration — each requester signed the declaration electronically, but a backup carries no signatures and that
+            signature is not on record in this workspace, so each request was restored as undeclared and now needs an
+            engineer&apos;s sign-off (or a recorded management override) before it issues, as any undeclared request does.
+            <ShownList testId="restore-declarations-cleared-all" lines={notes.map((r, i) => (
+              <li key={`${r.id ?? "none"}:${i}`} data-testid="restore-declaration-line" data-ticket-number={r.ticketNumber ?? undefined}>
+                <b>{r.ticketNumber ?? (r.id ? <>backup request <span className="font-mono">{r.id}</span></> : "a request")}</b> — {r.message}
+              </li>
+            ))} />
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/** BKP-17: each table's plain-language lines about the restore as a whole
+ *  (RestoreTableOutcome.notes — for tickets, the requests marked as filed
+ *  before the review model), under that table's name. */
+function TableNoteLines({ result }: { result: ChunkedRestoreResult }) {
+  return (
+    <>
+      {result.tables.map((t) => (t.notes ?? []).map((line, i) => (
+        <div key={`notes-${t.name}-${i}`} data-testid="restore-table-note">
+          <span className="font-mono">{t.name}</span>: {line}
+        </div>
+      )))}
+    </>
+  );
+}
+
 /** BKP-5: what the restore did, said plainly — never a green panel over a
  *  run that stopped, refused rows, cleared pointers, wrote nothing, wrote
  *  rows the server did not count, or met ids another workspace holds. */
@@ -165,11 +217,14 @@ export function RestoreResultPanel({ result }: { result: ChunkedRestoreResult })
   // BKP-16: a request restored under a fresh number rides `cleared`
   // (TICKET_RENUMBERED) but is never "a pointer cleared": it has its own
   // lines, and the headline counts it apart.
+  // BKP-17: a declaration restored without its e-signature rides `cleared`
+  // (DECLARATION_NOT_RESTORED) too, and has its own lines and headline part.
   const clearedByTable = result.tables
-    .map((t) => ({ ...t, cleared: t.cleared.filter((r) => !isRenumberNote(r)) }))
+    .map((t) => ({ ...t, cleared: t.cleared.filter((r) => !isRenumberNote(r) && !isDeclarationNote(r)) }))
     .filter((t) => t.cleared.length > 0);
   const renumberNotes = result.tables.reduce((s, t) => s + t.cleared.filter(isRenumberNote).length, 0);
-  const pointersCleared = Math.max(0, result.totalCleared - renumberNotes);
+  const declarationNotes = result.tables.reduce((s, t) => s + t.cleared.filter(isDeclarationNote).length, 0);
+  const pointersCleared = Math.max(0, result.totalCleared - renumberNotes - declarationNotes);
   const renumberedConfirmed = result.tables.reduce((s, t) => s + (t.renumbered ?? []).filter((r) => !r.unconfirmed).length, 0);
   // not confirmed as written — never said as restored
   const renumberedNotConfirmed = result.tables.reduce((s, t) => s + (t.renumbered ?? []).filter((r) => r.unconfirmed).length, 0);
@@ -191,9 +246,10 @@ export function RestoreResultPanel({ result }: { result: ChunkedRestoreResult })
                   ? <><AlertTriangle className="w-4 h-4" /> Records restored — {fmtNum(result.totalDanglingFlows)} dangling process flow(s) not restored</>
                   : result.totalUncounted > 0
                     ? <><AlertTriangle className="w-4 h-4" /> Restored — {fmtNum(result.totalUncounted)} record(s) the server did not count</>
-                    : renumberNotes > 0
+                    : renumberNotes > 0 || declarationNotes > 0
                       ? <><AlertTriangle className="w-4 h-4" /> Records restored — {[
                           pointersCleared > 0 ? `${fmtNum(pointersCleared)} pointer(s) cleared` : null,
+                          declarationNotes > 0 ? `${fmtNum(declarationNotes)} declaration(s) not restored (those requests now need an engineer's sign-off)` : null,
                           renumberedConfirmed > 0 ? `${fmtNum(renumberedConfirmed)} request(s) restored under a new number` : null,
                           renumberedNotConfirmed > 0 ? `${fmtNum(renumberedNotConfirmed)} request(s) sent under a new number, not confirmed as restored` : null,
                           renumberedUnread > 0 ? `${fmtNum(renumberedUnread)} request(s) given a new number that this page could not read` : null,
@@ -237,6 +293,8 @@ export function RestoreResultPanel({ result }: { result: ChunkedRestoreResult })
           </div>
         ))}
         <TicketNumberLines result={result} />
+        <DeclarationLines result={result} />
+        <TableNoteLines result={result} />
         {clearedByTable.map((t) => (
           <div key={t.name}>
             <span className="font-mono">{t.name}</span>: {t.cleared.length} row(s) restored with a pointer cleared —{" "}

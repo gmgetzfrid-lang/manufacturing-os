@@ -1207,7 +1207,11 @@ export interface RestoreRowRefusal {
   /** admin-and-org BKP-16 (Round G P17): on a TICKET_NUMBER_IN_USE or
    *  TICKET_NUMBER_UNSETTLED refusal, the request number the backup row
    *  carries — so the restore page names it from a field, not from the
-   *  message's text. Additive: every other refusal is unchanged. */
+   *  message's text. Additive: every other refusal is unchanged.
+   *  admin-and-org BKP-17 (Round G P18 final pass): also on a
+   *  DECLARATION_NOT_RESTORED `cleared` note, the number the request is
+   *  restored under (rewritten with the note when EDGE-5 renumbers it), so
+   *  the page lists each request from a field. */
   ticketNumber?: string;
   /** admin-and-org BKP-16 (Round G P17 final fix pass): on a
    *  TICKET_NUMBER_IN_USE refusal, the request of this workspace that holds
@@ -1293,7 +1297,10 @@ export interface RestoreChunkResult {
    *  when requests from a backup taken before the review model were WRITTEN
    *  as filed before it (filedBeforeReviewModelNote), counting only the rows
    *  a statement wrote (P18 fix pass 2: never a request already here, held
-   *  elsewhere, refused or in a statement that failed). Absent when empty. */
+   *  elsewhere, refused or in a statement that failed), and only a row
+   *  WRITTEN with engineering_required false (integrator ruling, DEC-90: a
+   *  declaration cleared here is written REQUIRED and never counted).
+   *  Absent when empty. */
   notes?: string[];
 }
 
@@ -1946,7 +1953,7 @@ export function declarationNoteRenumbered(note: RestoreRowRefusal, from: string,
   if (note.code !== DECLARATION_NOT_RESTORED) return note;
   const was = `like_in_kind_* cleared on request ${from}:`;
   if (!note.message.startsWith(was)) return note;
-  return { ...note, message: `like_in_kind_* cleared on request ${to} (restored under this fresh number; "${from}", the number it carried in the backup, names another request in this workspace):${note.message.slice(was.length)}` };
+  return { ...note, ...(note.ticketNumber !== undefined ? { ticketNumber: to } : {}), message: `like_in_kind_* cleared on request ${to} (restored under this fresh number; "${from}", the number it carried in the backup, names another request in this workspace):${note.message.slice(was.length)}` };
 }
 
 /** Ruling (3), the schema-cache window: just after 20261250 is pasted the
@@ -1961,7 +1968,8 @@ export function reviewModelSchemaCacheMessage(dbMessage: string): string {
 /** Ruling (1): the chunk's one line for the `n` requests WRITTEN as filed
  *  before the review model (P18 fix pass 2: `n` counts the rows a statement
  *  wrote — a request already in this workspace is kept as it is and never
- *  counted). */
+ *  counted — and, by the integrator's ruling under DEC-90, only rows written
+ *  with engineering_required false, the legacy gate deciding). */
 export function filedBeforeReviewModelNote(n: number): string {
   return `${n} request(s) restored from this part of the backup were taken before the review model (they carry no review_model_filed) and are marked as filed before it, so today's role-based engineering gate decides for each exactly as it did before the review model — none is held to the new engineering requirement retroactively.`;
 }
@@ -2087,7 +2095,10 @@ export async function applyRestoreChunk(
       mapped = mapped.map((r) => {
         const out = asFiledBeforeReviewModel(r);
         if (out !== r) {
-          filedBefore.add(out);
+          // the line speaks only for a request left to the legacy gate
+          // (engineering_required false; ruling (2) may still set it true —
+          // checked again where it is counted).
+          if (out.engineering_required === false) filedBefore.add(out);
           if (facts.unsigned.has(r)) facts.unsigned.add(out);
         }
         return out;
@@ -2298,7 +2309,10 @@ export async function applyRestoreChunk(
   const sets = new Map<Record<string, unknown>, { values: Readonly<Record<string, unknown>>; note: RestoreRowRefusal }>();
   for (const r of mapped) {
     if (!unsignedDeclarations.has(r)) continue;
-    sets.set(r, { values: DECLARATION_NOT_RESTORED_VALUES, note: { id: label(r), code: DECLARATION_NOT_RESTORED, message: declarationNotRestoredMessage(r) } });
+    sets.set(r, { values: DECLARATION_NOT_RESTORED_VALUES, note: {
+      id: label(r), code: DECLARATION_NOT_RESTORED, message: declarationNotRestoredMessage(r),
+      ...(typeof r.ticket_id === "string" && r.ticket_id ? { ticketNumber: r.ticket_id } : {}),
+    } });
   }
 
   // A row refused or cleared above whose key is already held is never
@@ -2335,6 +2349,13 @@ export async function applyRestoreChunk(
     }
   }
   for (const { row, why } of refusedRows) if (!settled.has(row)) refused.push(why);
+  // Integrator ruling (5) (DEC-90, P18 final pass): a row settled here ONLY
+  // because ruling (2) flagged it (no refusal, no cleared pointer) reached
+  // EDGE-5's request sets before P18 — its id and number are kept in them
+  // (requestTicketIds / requestTicketNumbers below), so a renumbered
+  // request's holder wording and the fresh-number exclusions are exactly as
+  // they were.
+  const settledOnlyBySets = mapped.filter((r) => settled.has(r) && sets.has(r) && !clears.has(r));
   // Fix pass 3: a clear is reported only for a row the database took — the
   // note rides with the row and is emitted when the statement carrying it is
   // accepted, never for a row the write then refuses or a statement that
@@ -2384,7 +2405,7 @@ export async function applyRestoreChunk(
   const requestTicketIds = new Set<string>();
   const requestTicketNumbers = new Set<string>();
   if (table === "tickets" && mapped.length) {
-    for (const r of mapped) {
+    for (const r of [...settledOnlyBySets, ...mapped]) {
       if (typeof r.id === "string") requestTicketIds.add(r.id);
       const n = ticketNumberOf(r);
       if (n !== null) requestTicketNumbers.add(n);
@@ -2431,7 +2452,10 @@ export async function applyRestoreChunk(
         const notes = clearNotes.get(r);
         // P18 fix pass 2: a row marked filed before the review model counts
         // toward the chunk's line only when this statement wrote it.
-        if (filedBefore.has(r) && counted && (all || (filedBeforeLocated && k !== null && !heldBeforeWrite.has(k) && !acceptedKeys.has(k)))) filedBeforeWritten++;
+        // Integrator ruling (DEC-90, P18 final pass): only a request whose
+        // FINAL engineering_required is false is one the line speaks for —
+        // never a declaration cleared here (written REQUIRED).
+        if (filedBefore.has(r) && r.engineering_required === false && counted && (all || (filedBeforeLocated && k !== null && !heldBeforeWrite.has(k) && !acceptedKeys.has(k)))) filedBeforeWritten++;
         if (notes && counted && (all || (clearsLocated && (k === null || !acceptedKeys.has(k))))) cleared.push(...notes);
         else if (notes && (!counted || !clearsLocated)) cleared.push(...unconfirmedRenumberings(notes));
         if (k !== null) acceptedKeys.add(k);

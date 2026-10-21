@@ -245,12 +245,43 @@ describe("P18 — a database WITH 20261250", () => {
     expect((r.body.cleared as Array<Record<string, unknown>>).map((c) => c.id).sort()).toEqual(["t-else", "t-not-a-uuid", "t-other-signer", "t-wrong-request"]);
   });
 
-  it("rulings (1) and (2) together: a hand-made row carrying a declaration but no review_model_filed lands filed before the review model, undeclared and REQUIRED (fail-safe: the cleared declaration wins over the seed)", async () => {
+  it("rulings (1) and (2) together: a hand-made row carrying a declaration but no review_model_filed lands filed before the review model, undeclared and REQUIRED (fail-safe: the cleared declaration wins over the seed) — and the filed-before line does NOT count it (integrator ruling, DEC-90: its final engineering_required is true); the DECLARATION_NOT_RESTORED note stays", async () => {
     const row = prePaste("t-1", "AC-DDRT-26-0001", { like_in_kind_statement: STATEMENT, like_in_kind_declared_by: "u-req", like_in_kind_declared_at: "2026-10-01T10:00:00Z", like_in_kind_signature_id: SIG });
     const r = await chunk("tickets", [row]);
-    expect(r.body).toMatchObject({ ok: true, inserted: 1, notes: [filedBeforeReviewModelNote(1)] });
+    expect(r.body).toMatchObject({ ok: true, inserted: 1 });
+    expect(r.body).not.toHaveProperty("notes");
     expect(ticketHere("t-1")).toMatchObject({ review_model_filed: false, engineering_required: true, like_in_kind_statement: null, like_in_kind_signature_id: null });
-    expect((r.body.cleared as unknown[]).length).toBe(1);
+    expect((r.body.cleared as Array<Record<string, unknown>>).map((c) => `${c.id}:${c.code}`)).toEqual([`t-1:${DECLARATION_NOT_RESTORED}`]);
+    expect((chunkAudits()[0].details as Record<string, unknown>)).not.toHaveProperty("notes");
+    // beside a plain pre-paste row in the same chunk, the line counts only the plain row
+    const r2 = await chunk("tickets", [prePaste("t-2", "AC-DDRT-26-0002"), { ...row, id: "t-3", ticket_id: "AC-DDRT-26-0003" }]);
+    expect(r2.body).toMatchObject({ ok: true, inserted: 2, notes: [filedBeforeReviewModelNote(1)] });
+  });
+
+  it("integrator ruling (DEC-90): the line counts only a request written with engineering_required false — a hand-made pre-paste row carrying engineering_required true is written as it carries it and never counted", async () => {
+    const r = await chunk("tickets", [prePaste("t-1", "AC-DDRT-26-0001", { engineering_required: true }), prePaste("t-2", "AC-DDRT-26-0002", { engineering_required: false })]);
+    expect(r.body).toEqual({ ok: true, inserted: 2, notes: [filedBeforeReviewModelNote(1)] });
+    expect(ticketHere("t-1")).toMatchObject({ review_model_filed: false, engineering_required: true });
+    expect(ticketHere("t-2")).toMatchObject({ review_model_filed: false, engineering_required: false });
+  });
+
+  it("integrator ruling (5) (DEC-90): a declared, unsigned request already here holding N and a second backup request carrying N in the same chunk, no backupNumberCarriers — the TICKET_RENUMBERED holder wording is exactly its form before P18 (b96299d)", async () => {
+    const N = "AC-DDRT-26-0001";
+    db.rows.tickets = [{ ...declared("t-1", N), org_id: ORG }];
+    db.rows.ticket_number_counters = [{ org_id: ORG, year: 2026, next_seq: 5 }];
+    const r = await applyRestoreChunk({ from } as never, { orgId: ORG, table: "tickets", rows: [declared("t-1", N), declared("t-2", N)], idRemap: REMAP });
+    expect(r).toMatchObject({ ok: true, inserted: 1, existing: 1, refused: [] });
+    const to = "AC-DDRT-26-0006";
+    expect(ticketHere("t-2")!.ticket_id).toBe(to);
+    // the base form: the same chunk against b96299d's lib/dataRestore.ts (run in a scratch copy) answered exactly this
+    const base = `ticket_id "${N}" → "${to}": request t-1 of this backup (restored first) carries "${N}" (the workspace the backup was taken from held the number twice), so this request was restored under a fresh number rather than beside it or not at all; "${N}" is kept on it as metadata.restore_renumbered.from and in its history — labels, transmittals and archives printing "${N}" for this request must be read as "${to}"; in this workspace "${N}" still identifies request t-1`;
+    const renumbered = r.cleared.filter((c) => c.code === TICKET_RENUMBERED);
+    expect(renumbered).toEqual([{ id: "t-2", code: TICKET_RENUMBERED, message: base, renumbered: { from: N, to, numberHeldBy: "t-1" } }]);
+    expect(r.renumbered).toEqual([{ id: "t-2", from: N, to, numberHeldBy: "t-1" }]);
+    // t-1 (already here) is kept as it is and reported nowhere; t-2's cleared declaration names its fresh number
+    expect(ticketHere("t-1")).toEqual({ ...declared("t-1", N), org_id: ORG });
+    expect(r.cleared.filter((c) => c.code === DECLARATION_NOT_RESTORED).map((c) => c.id)).toEqual(["t-2"]);
+    expect(r.cleared.find((c) => c.code === DECLARATION_NOT_RESTORED)!.message).toMatch(new RegExp(`^like_in_kind_\\* cleared on request ${to} \\(restored under this fresh number`));
   });
 
   it("ruling (4): ON CONFLICT DO NOTHING — a request already here (same id) is never touched: no UPDATE, its declaration and columns kept, counted existing, no note about it", async () => {

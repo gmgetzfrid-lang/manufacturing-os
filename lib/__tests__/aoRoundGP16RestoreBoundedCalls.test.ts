@@ -375,7 +375,8 @@ describe("admin-and-org Round G P18 (fix pass 2) — the world WITH 20261250: a 
     expect(r).toMatchObject({ ok: true, inserted: 500, refused: [] });
     expect(r.renumbered).toHaveLength(375);
     expect(r.cleared.filter((n) => n.code === DECLARATION_NOT_RESTORED)).toHaveLength(250);
-    expect(r.notes).toEqual([filedBeforeReviewModelNote(500)]);
+    // integrator ruling (DEC-90, P18 final pass): the 250 cleared declarations are written REQUIRED — the line counts the other 250
+    expect(r.notes).toEqual([filedBeforeReviewModelNote(250)]);
     expect(numbersIssuedTwice()).toEqual([]);
     expect(probes).toEqual([REVIEW_MODEL_PROBE]);
     const count = (h: string) => heads(log).filter((x) => x === h).length;
