@@ -37,6 +37,15 @@
 // row cannot fail the whole chunk's read (22P02) and turn the roll-up
 // unknown (fix pass).
 //
+// NEVER IN THE COUNTS' WAY (second fix pass): the placement reads run
+// AFTER the feed pass has applied its rows, counts and loading state — the
+// sidebar badge and the bell never wait for them — in parallel chunks under
+// one deadline (PLACE_TIMEOUT_MS). A read that times out or fails leaves its
+// level UNKNOWN, never zero; a document whose placement is still on its way
+// leaves the level `idle` (not read yet — no "all clear" claimed, no flash
+// of the unknown line on every new row), and the provider drops a placement
+// result older than the one it already holds.
+//
 // UNKNOWN IS SAID ONCE: a list surface draws a container's count, or
 // nothing (listMarkFor); while the roll-up is incomplete the page says so
 // in one line (AttentionUnknownNote, components/documents/AttentionDot.tsx)
@@ -104,6 +113,11 @@ export interface Placements {
   /** Document id → where it lives. An id the read did not return (not
    *  visible, deleted) is absent: counted in no container. */
   docs: ReadonlyMap<string, DocPlacement>;
+  /** The ids these placements answer for (asked, whether or not a row came
+   *  back). A document row whose id is not here was not asked yet — its
+   *  placement is on its way (second fix pass). Absent: every id was asked
+   *  (a placements value built by hand). */
+  asked?: ReadonlySet<string>;
   /** Every id in `docs` was asked and answered (no failed read, no cap). */
   libraries: RollupState;
   /** Every placed document's folder chain was read. */
@@ -112,6 +126,7 @@ export interface Placements {
 
 export const NO_PLACEMENTS: Placements = Object.freeze({
   docs: new Map(),
+  asked: new Set<string>(),
   libraries: "idle",
   folders: "idle",
 }) as Placements;
@@ -144,6 +159,12 @@ export function buildAttentionRollup(rows: readonly RollupRow[], placements: Pla
   const byDocument = new Map<string, AttentionMark>();
   const byProject = new Map<string, AttentionMark>();
   let anyDocument = false;
+  // A document row whose placement was not asked yet (the provider applies a
+  // pass's rows first and its placements after — second fix pass): the
+  // containers may be short of it for that moment, so the level is `idle`
+  // (not read yet), never `ready`. An id that cannot name a document is
+  // never asked and never pending.
+  let pending = false;
   for (const r of rows) {
     if (!r.resourceId) continue;
     if (r.section === "documents") {
@@ -151,7 +172,10 @@ export function buildAttentionRollup(rows: readonly RollupRow[], placements: Pla
         anyDocument = true;
         bump(byDocument, r.resourceId, r.actionRequired);
         const at = placements.docs.get(r.resourceId);
-        if (!at) continue;
+        if (!at) {
+          if (placements.asked && !placements.asked.has(r.resourceId) && canNameDocument(r.resourceId)) pending = true;
+          continue;
+        }
         bump(byLibrary, at.libraryId, r.actionRequired);
         for (const f of at.folderIds) bump(byFolder, f, r.actionRequired);
       } else if (r.resourceType === "library") {
@@ -163,9 +187,10 @@ export function buildAttentionRollup(rows: readonly RollupRow[], placements: Pla
   }
   // Nothing to place is not "unknown": with no document row there is
   // nothing a container could be missing.
-  const libraries: RollupState = anyDocument ? placements.libraries : "ready";
-  const folders: RollupState = anyDocument ? placements.folders : "ready";
-  return { byLibrary, byFolder, byDocument, byProject, libraries, folders };
+  // A placement still on its way is `idle` unless the level is already
+  // known to be incomplete (`unknown` wins).
+  const level = (st: RollupState): RollupState => (!anyDocument ? "ready" : st === "unknown" ? "unknown" : pending ? "idle" : st);
+  return { byLibrary, byFolder, byDocument, byProject, libraries: level(placements.libraries), folders: level(placements.folders) };
 }
 
 /** Per-pass bound on the documents resolved, and the chunk size of each
@@ -176,6 +201,22 @@ export function buildAttentionRollup(rows: readonly RollupRow[], placements: Pla
 export const PLACE_CAP = 500;
 export const PLACE_CHUNK = 100;
 
+/** The one deadline for a pass's placement reads (second fix pass): the
+ *  chunks run in parallel, and whatever has not answered by then is
+ *  aborted and leaves its level UNKNOWN — a hung read never holds the
+ *  roll-up, and never anything else (the provider applies the feed's rows
+ *  and counts before it starts these reads). */
+export const PLACE_TIMEOUT_MS = 8_000;
+
+/** Ask a Supabase query builder to abort with `signal` when it can
+ *  (`.abortSignal`); a builder without it (a test double) is returned as is
+ *  — the deadline still holds, because resolvePlacements races every read
+ *  against it. */
+export function withAbortSignal<Q>(query: Q, signal: AbortSignal): Q {
+  const f = (query as { abortSignal?: (s: AbortSignal) => Q } | null)?.abortSignal;
+  return typeof f === "function" ? f.call(query, signal) : query;
+}
+
 /** documents.id is a uuid; notifications.resource_id is TEXT. An id of any
  *  other shape names no document (a legacy row, a browser-written row). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -183,67 +224,105 @@ export const canNameDocument = (id: string): boolean => UUID_RE.test(id);
 
 type ReadResult = { data: unknown; error: { message?: string } | null };
 
+/** Documents the caller already read under the same client and filters
+ *  (`{ id, library_id, collection_id }` rows for `ids`) — used as answered
+ *  and never read again. */
+export interface KnownDocuments { ids: readonly string[]; rows: unknown }
+
+const TIMED_OUT: unique symbol = Symbol("placement read timed out");
+
 /**
  * Resolve where each document lives, through the viewer's own reads:
- * `readDocs(ids)` returns `{ id, library_id, collection_id }` rows for the
- * ids the viewer can read (RLS); `readFolders(ids)` returns `{ id, path_ids }`
- * for the folders. Each chunk is one read; any failed read leaves its level
- * UNKNOWN (the others still count). An id that cannot name a document
- * (not uuid-shaped) is placed nowhere and never sent — it is not a failed
- * read. Never throws.
+ * `readDocs(ids, signal)` returns `{ id, library_id, collection_id }` rows
+ * for the ids the viewer can read (RLS); `readFolders(ids, signal)` returns
+ * `{ id, path_ids }` for the folders. Each chunk is one read, the chunks of a
+ * level run in parallel, and every read races ONE deadline (`timeoutMs`,
+ * PLACE_TIMEOUT_MS) whose signal aborts what is still running; a read that
+ * fails, throws or misses the deadline leaves its level UNKNOWN (the others
+ * still count). An id that cannot name a document (not uuid-shaped) is
+ * placed nowhere and never sent — it is not a failed read. `known` documents
+ * are used as answered and not read again. Never throws.
  */
 export async function resolvePlacements(
   ids: readonly string[],
-  readDocs: (ids: string[]) => PromiseLike<ReadResult>,
-  readFolders: (ids: string[]) => PromiseLike<ReadResult>,
+  readDocs: (ids: string[], signal: AbortSignal) => PromiseLike<ReadResult>,
+  readFolders: (ids: string[], signal: AbortSignal) => PromiseLike<ReadResult>,
+  opts: { timeoutMs?: number; known?: KnownDocuments | null } = {},
 ): Promise<Placements> {
-  const named = ids.filter(canNameDocument);
-  if (named.length === 0) return { docs: new Map(), libraries: "ready", folders: "ready" };
+  const named = [...new Set(ids.filter(canNameDocument))];
+  if (named.length === 0) return { docs: new Map(), asked: new Set(), libraries: "ready", folders: "ready" };
   const asked = named.slice(0, PLACE_CAP);
   let libraries: RollupState = named.length > PLACE_CAP ? "unknown" : "ready";
   let folders: RollupState = libraries;
   const rows: Array<{ id: string; libraryId: string; collectionId: string | null }> = [];
-  for (let i = 0; i < asked.length; i += PLACE_CHUNK) {
+  const take = (data: unknown) => {
+    for (const d of (Array.isArray(data) ? data : []) as Array<Record<string, unknown>>) {
+      if (!d || typeof d.id !== "string" || typeof d.library_id !== "string" || !d.library_id) continue;
+      rows.push({ id: d.id, libraryId: d.library_id, collectionId: typeof d.collection_id === "string" && d.collection_id ? d.collection_id : null });
+    }
+  };
+  const knownIds = new Set(opts.known?.ids ?? []);
+  if (opts.known) take((opts.known.rows as unknown[] | null) ?? []);
+  const toRead = asked.filter((id) => !knownIds.has(id));
+
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<typeof TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => { controller.abort(); resolve(TIMED_OUT); }, opts.timeoutMs ?? PLACE_TIMEOUT_MS);
+  });
+  /** One read, raced against the deadline: its result, or null when it
+   *  failed, threw or did not answer in time. */
+  const within = async (read: (ids: string[], signal: AbortSignal) => PromiseLike<ReadResult>, chunk: string[]): Promise<ReadResult | null> => {
     try {
-      const { data, error } = await readDocs(asked.slice(i, i + PLACE_CHUNK));
-      if (error) { libraries = "unknown"; folders = "unknown"; continue; }
-      for (const d of (data as Array<Record<string, unknown>> | null) ?? []) {
-        if (typeof d.id !== "string" || typeof d.library_id !== "string" || !d.library_id) continue;
-        rows.push({ id: d.id, libraryId: d.library_id, collectionId: typeof d.collection_id === "string" && d.collection_id ? d.collection_id : null });
-      }
-    } catch { libraries = "unknown"; folders = "unknown"; }
-  }
+      const got = await Promise.race([Promise.resolve(read(chunk, controller.signal)), deadline]);
+      if (got === TIMED_OUT || !got || got.error) return null;
+      return got;
+    } catch {
+      return null;
+    }
+  };
+  const chunks = (list: string[]): string[][] => {
+    const out: string[][] = [];
+    for (let i = 0; i < list.length; i += PLACE_CHUNK) out.push(list.slice(i, i + PLACE_CHUNK));
+    return out;
+  };
+
+  try {
+    for (const got of await Promise.all(chunks(toRead).map((c) => within(readDocs, c)))) {
+      if (!got) { libraries = "unknown"; folders = "unknown"; continue; }
+      take(got.data);
+    }
 
   // The folder chains: one read of the documents' own folders (their
   // path_ids), then the resolver's walk over that map — the folder, then its
   // ancestors nearest first. An ancestor needs no read of its own: the rail
   // renders only the folders the viewer can see, so a count kept under a
   // folder id it does not show is never displayed.
-  const leafIds = [...new Set(rows.map((r) => r.collectionId).filter((x): x is string => !!x))];
-  const folderMap = new Map<string, { path_ids?: unknown; value: null }>();
-  for (let i = 0; i < leafIds.length; i += PLACE_CHUNK) {
-    try {
-      const { data, error } = await readFolders(leafIds.slice(i, i + PLACE_CHUNK));
-      if (error) { folders = "unknown"; continue; }
-      for (const f of (data as Array<Record<string, unknown>> | null) ?? []) {
-        if (typeof f.id === "string") folderMap.set(f.id, { path_ids: f.path_ids, value: null });
+    const leafIds = [...new Set(rows.map((r) => r.collectionId).filter((x): x is string => !!x))];
+    const folderMap = new Map<string, { path_ids?: unknown; value: null }>();
+    for (const got of await Promise.all(chunks(leafIds).map((c) => within(readFolders, c)))) {
+      if (!got) { folders = "unknown"; continue; }
+      for (const f of (Array.isArray(got.data) ? got.data : []) as Array<Record<string, unknown>>) {
+        if (f && typeof f.id === "string") folderMap.set(f.id, { path_ids: f.path_ids, value: null });
       }
-    } catch { folders = "unknown"; }
-  }
-  for (const node of [...folderMap.values()]) {
-    for (const a of Array.isArray(node.path_ids) ? (node.path_ids as unknown[]) : []) {
-      if (typeof a === "string" && a && !folderMap.has(a)) folderMap.set(a, { value: null });
     }
-  }
+    for (const node of [...folderMap.values()]) {
+      for (const a of Array.isArray(node.path_ids) ? (node.path_ids as unknown[]) : []) {
+        if (typeof a === "string" && a && !folderMap.has(a)) folderMap.set(a, { value: null });
+      }
+    }
 
-  const docs = new Map<string, DocPlacement>();
-  for (const r of rows) {
-    docs.set(r.id, {
-      libraryId: r.libraryId,
-      folderIds: folderChainFromMap(r.collectionId, folderMap).map((f) => f.id),
-    });
+    const docs = new Map<string, DocPlacement>();
+    for (const r of rows) {
+      docs.set(r.id, {
+        libraryId: r.libraryId,
+        folderIds: folderChainFromMap(r.collectionId, folderMap).map((f) => f.id),
+      });
+    }
+    return { docs, asked: new Set(asked), libraries, folders };
+  } finally {
+    clearTimeout(timer);
   }
-  return { docs, libraries, folders };
 }
 
 /** What one container or row shows: its mark, `unknown` (no count is known

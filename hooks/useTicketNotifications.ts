@@ -23,8 +23,9 @@ import {
   KIND_META, NOTIFICATION_SECTIONS, isNotificationKind, type NotificationSection,
 } from '@/lib/notificationKinds';
 import {
-  attentionFor, buildAttentionRollup, documentIdsToPlace, resolvePlacements, sameRollup, EMPTY_ROLLUP, NO_PLACEMENTS,
-  type AttentionMarkState, type AttentionRollup, type AttentionTarget, type Placements, type RollupRow,
+  attentionFor, buildAttentionRollup, canNameDocument, documentIdsToPlace, resolvePlacements, sameRollup, withAbortSignal,
+  EMPTY_ROLLUP, NO_PLACEMENTS, PLACE_TIMEOUT_MS,
+  type AttentionMarkState, type AttentionRollup, type AttentionTarget, type KnownDocuments, type Placements, type RollupRow,
 } from '@/lib/attentionRollup';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -241,7 +242,12 @@ export interface TicketNotifications {
   /** Per-sidebar-section counts so each nav item badges only ITS own items. */
   sectionCounts: SectionCounts;
   loading: boolean;
-  markRead: (id: string) => Promise<void>;
+  /** Mark one notification row read. Never rejects: resolves true when the
+   *  mark landed, false when it was refused — the refusal is also said
+   *  through status.markError, so a fire-and-forget caller (`void
+   *  markRead(id)`) needs nothing more; a caller that awaits it can keep its
+   *  own surface open to show that line (the bell — second fix pass). */
+  markRead: (id: string) => Promise<boolean>;
   markAllRead: () => Promise<void>;
 }
 
@@ -420,8 +426,13 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
   const [docLibrary, setDocLibrary] = useState<Record<string, string>>({});
   // N11 TRAIL: where each document a row names lives, as the viewer's own
   // read answered (lib/attentionRollup.ts resolvePlacements) — resolved once
-  // per pass with the rows it belongs to; kept with the last good window.
+  // per pass, AFTER that pass's rows and counts are applied (second fix
+  // pass: the counts never wait for it); kept with the last good window.
   const [placements, setPlacements] = useState<Placements>(NO_PLACEMENTS);
+  // Which pass's placements were asked last and applied last: a result older
+  // than the applied one is dropped (second fix pass).
+  const placeSeqRef = useRef(0);
+  const placeAppliedRef = useRef(0);
   const [markError, setMarkError] = useState<string | null>(null);
   const [ticketTotal, setTicketTotal] = useState<number | null>(null);
   // EDGE-3 / ROUTE-7: the scope was past the ceiling and read oldest first.
@@ -648,6 +659,20 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
       }
     };
 
+    /** Step 6's reads, apart from the pass (second fix pass). */
+    const placeFor = async (toPlace: string[], known: KnownDocuments | null) => {
+      const seq = ++placeSeqRef.current;
+      const placed = await resolvePlacements(
+        toPlace,
+        (ids, signal) => withAbortSignal(supabase.from('documents').select('id, library_id, collection_id').eq('org_id', activeOrgId).in('id', ids), signal),
+        (ids, signal) => withAbortSignal(supabase.from('collections').select('id, path_ids').eq('org_id', activeOrgId).in('id', ids), signal),
+        { known },
+      );
+      if (!alive || seq <= placeAppliedRef.current) return;
+      placeAppliedRef.current = seq;
+      setPlacements(placed);
+    };
+
     const fetchAll = async () => {
       let failure: string | null = null;
       try {
@@ -786,37 +811,56 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
           }
         }
 
-        // 5) Where each document a row names lives — resolved ONCE per pass,
-        //    in batched reads under the VIEWER's own client (documents' ACL is
-        //    the one the library list reads under; a document the viewer
-        //    cannot read is placed nowhere), with its folder chain from the
-        //    container-chain resolver (lib/attentionRollup.ts
-        //    resolvePlacements; DEC-36 — never a third walk). Two uses:
-        //    TRAIL-12 — a document row written without a link (its producer
-        //    did not know the library) links to the document in its library,
-        //    never to a search for its id (those ids are asked first); and
-        //    the badge trail below the sidebar (N11 TRAIL — TRAIL-1 /
-        //    TRAIL-6): the library, folder and document markers. A failed
-        //    read leaves the roll-up unknown, never zero.
-        const unlinked = (n ?? []).filter((r) => !r.link && r.resourceType === 'document' && r.resourceId).map((r) => r.resourceId as string);
-        const rollRows: RollupRow[] = [
+        // 5) TRAIL-12: a document row written without a link (its producer
+        //    did not know the library) links to the document in its library —
+        //    resolved in ONE batched read — never to a search for its id. As
+        //    on 9bc7884 this read lands with the rows it links (second fix
+        //    pass: only it — the badge trail's placements below never hold
+        //    the rows or the counts). Only a uuid-shaped id can name a
+        //    document (documents.id is uuid; resource_id is TEXT), so another
+        //    shape is never sent and cannot fail the read for the rest (N11
+        //    fix pass); it opens Documents, as an unresolved id always did.
+        //    The read is bounded by the placement deadline, so a hung read
+        //    holds the pass for at most PLACE_TIMEOUT_MS, never for good.
+        const unlinked = Array.from(new Set((n ?? [])
+          .filter((r) => !r.link && r.resourceType === 'document' && r.resourceId && canNameDocument(r.resourceId))
+          .map((r) => r.resourceId as string)));
+        let libs: Record<string, string> | null = null;
+        let knownDocs: KnownDocuments | null = null;
+        if (unlinked.length > 0) {
+          const controller = new AbortController();
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            const { data: docRows, error: docErr } = await Promise.race([
+              Promise.resolve(withAbortSignal(
+                supabase.from('documents').select('id, library_id, collection_id').eq('org_id', activeOrgId).in('id', unlinked),
+                controller.signal,
+              )),
+              new Promise<{ data: null; error: { message: string } }>((resolve) => {
+                timer = setTimeout(() => { controller.abort(); resolve({ data: null, error: { message: 'timed out' } }); }, PLACE_TIMEOUT_MS);
+              }),
+            ]);
+            libs = {};
+            for (const d of (docRows || []) as Array<{ id: string; library_id: string | null }>) {
+              if (d.library_id) libs[d.id] = d.library_id;
+            }
+            // Answered under the same client and filters: the placements
+            // below use these rows as read and do not ask for them again.
+            if (!docErr) knownDocs = { ids: unlinked, rows: docRows ?? [] };
+          } finally {
+            clearTimeout(timer);
+          }
+        }
+
+        // 6) The badge trail below the sidebar (N11 TRAIL — TRAIL-1 /
+        //    TRAIL-6): which documents the rows name, for the library, folder
+        //    and document markers. Resolved AFTER this pass's rows and counts
+        //    are applied (below), never before them (second fix pass).
+        const rollRows: RollupRow[] = rawWindow === null ? [] : [
           ...(n ?? []).map((r) => ({ section: sectionForKind(r.kind), actionRequired: false, resourceType: r.resourceType, resourceId: r.resourceId })),
           ...beyond.map((r) => ({ section: sectionForKind(r.kind as NotificationRow['kind']), actionRequired: false, resourceType: r.resourceType, resourceId: r.resourceId })),
         ];
-        const toPlace = Array.from(new Set([...unlinked, ...documentIdsToPlace(rollRows)]));
-        let libs: Record<string, string> | null = null;
-        let placed: Placements | null = null;
-        if (rawWindow !== null) {
-          placed = await resolvePlacements(
-            toPlace,
-            (ids) => supabase.from('documents').select('id, library_id, collection_id').eq('org_id', activeOrgId).in('id', ids),
-            (ids) => supabase.from('collections').select('id, path_ids').eq('org_id', activeOrgId).in('id', ids),
-          );
-          if (unlinked.length > 0) {
-            libs = {};
-            for (const [id, at] of placed.docs) libs[id] = at.libraryId;
-          }
-        }
+        const toPlace = documentIdsToPlace(rollRows);
 
         if (alive) {
           if (list !== null) {
@@ -836,11 +880,21 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
             setNotifTotal(unreadTotal);
           }
           if (libs) { const add = libs; setDocLibrary((prev) => ({ ...prev, ...add })); }
-          if (placed) setPlacements(placed);
           setLoadError(failure);
           setLoading(false);
         }
         if (alive && rawWindow) void reconcile(rawWindow, staleSet, beyond);
+        // The placements, in their own step: the rows and counts above have
+        // landed already. Each document a row names is placed ONCE per pass,
+        // in batched reads under the VIEWER's own client (documents' ACL is
+        // the one the library list reads under; a document the viewer cannot
+        // read is placed nowhere), with its folder chain from the
+        // container-chain resolver (lib/attentionRollup.ts
+        // resolvePlacements; DEC-36 — never a third walk): parallel chunks
+        // under one deadline, a timeout or a failed read leaving the level
+        // unknown, never zero. A result older than the one already applied
+        // is dropped, so a slow pass never overwrites a newer one.
+        if (alive && rawWindow !== null) void placeFor(toPlace, knownDocs);
       } catch (e) {
         console.error('Attention feed fetch failed', e);
         if (alive) { setLoadError('The attention feed could not be loaded.'); setLoading(false); }
@@ -1108,14 +1162,18 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
   // refusal, one line (fix pass; it used to say it twice in the center). A
   // row's "mark read" is fired and forgotten by its callers (`void
   // markRead(id)`), so here the refusal is caught and said through
-  // status.markError — never an unhandled rejection, never a silent success.
-  const markOne = useCallback(async (id: string) => {
+  // status.markError — never an unhandled rejection, never a silent success;
+  // it resolves to whether the mark landed, so a caller that awaits it can
+  // keep its own surface open on a refusal (the bell — second fix pass).
+  const markOne = useCallback(async (id: string): Promise<boolean> => {
     try {
       await markRead(id);
       setMarkError(null);
+      return true;
     } catch (e) {
       console.warn('[attention] mark read refused', (e as Error)?.message ?? e);
       setMarkError(MARK_READ_REFUSED);
+      return false;
     }
   }, []);
   const markAll = useCallback(async () => {

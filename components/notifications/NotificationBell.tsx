@@ -24,7 +24,8 @@
 // surfaces already show. A refused "mark read" is said in the drawer too,
 // in one line — a row's (status.markError) or "Mark notifications read"'s
 // own (BELL_MARK_ALL_REFUSED, held here and cleared when the drawer opens again)
-// — never a silent success.
+// — never a silent success. A row clicked whose mark is refused keeps the
+// drawer open on that line instead of closing it (second fix pass).
 
 import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -128,9 +129,18 @@ export default function NotificationBell(_props: NotificationBellProps) {
   // feed, which clear when the work is done or the request is opened.
   const remaining = counts.all - counts.notifications;
 
+  // A row's mark that was refused keeps the drawer open (second fix pass):
+  // the drawer's line (status.markError) says it, where closing the drawer
+  // would make the refusal silent. The link still opens its target, as
+  // before; a mark that landed closes the drawer, as before.
   const onItemClick = async (item: AttentionItem) => {
     if (item.notificationId) {
-      try { await markRead(item.notificationId); } catch { /* swallow */ }
+      let landed: boolean | void = false;
+      try { landed = await markRead(item.notificationId); } catch { landed = false; }
+      if (landed === false) {
+        setMarkAllError(null);
+        return;
+      }
     }
     setOpen(false);
   };

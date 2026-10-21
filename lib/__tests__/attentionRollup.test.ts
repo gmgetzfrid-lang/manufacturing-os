@@ -47,6 +47,9 @@ const fx = vi.hoisted(() => ({
   collections: {} as Record<string, { path_ids: string[] }>,
   docsFail: false,
   foldersFail: false,
+  /** Second fix pass: a documents read waits until released (or forever). */
+  docsHold: false,
+  heldDocs: [] as Array<() => void>,
   reads: [] as Array<{ table: string; ids: string[]; filters: Array<[string, unknown]>; cols: string }>,
   channels: [] as Array<{ ons: Array<{ cfg: Record<string, unknown>; cb: (p: unknown) => void }>; status?: (s: string) => void }>,
   role: {
@@ -79,6 +82,12 @@ vi.mock("@/lib/supabase", () => {
       }
       if (table === "documents" || table === "collections") fx.reads.push(read);
       let result: unknown = { data: [], error: null, count: 0 };
+      if (table === "documents" && fx.docsHold) {
+        // answered from the database as it stands when released
+        return new Promise((res) => {
+          fx.heldDocs.push(() => res({ data: read.ids.filter((id) => fx.documents[id] && fx.readable.has(id)).map((id) => ({ id, ...fx.documents[id] })), error: null }));
+        }).then(ok, ko);
+      }
       if (table === "documents") {
         result = fx.docsFail ? { data: null, error: { message: "documents read refused" } }
           // Row-level security: only the documents the viewer may read come back.
@@ -139,7 +148,7 @@ vi.mock("@/lib/notificationReconcile", async (importOriginal) => ({
 
 import {
   buildAttentionRollup, resolvePlacements, attentionFor, listMarkFor, rollupIncomplete, sameRollup, canNameDocument,
-  documentIdsToPlace, PLACE_CAP, PLACE_CHUNK, NO_PLACEMENTS, EMPTY_ROLLUP, type RollupRow, type AttentionRollup,
+  documentIdsToPlace, withAbortSignal, PLACE_CAP, PLACE_CHUNK, PLACE_TIMEOUT_MS, NO_PLACEMENTS, EMPTY_ROLLUP, type RollupRow, type AttentionRollup,
 } from "@/lib/attentionRollup";
 import { AttentionProvider } from "@/components/providers/AttentionProvider";
 import {
@@ -461,7 +470,7 @@ beforeEach(() => {
   document.body.appendChild(host);
   root = createRoot(host);
   fx.rows = []; fx.documents = { ...DOCS }; fx.readable = new Set([D1, D2, D9]); fx.collections = { unit12: { path_ids: ["piping", "pids"] }, other: { path_ids: [] } };
-  fx.docsFail = false; fx.foldersFail = false; fx.reads = []; fx.channels = []; fx.markFails = false; fx.updateError = null; fx.updateReach = null;
+  fx.docsFail = false; fx.foldersFail = false; fx.docsHold = false; fx.heldDocs = []; fx.reads = []; fx.channels = []; fx.markFails = false; fx.updateError = null; fx.updateReach = null;
   for (const k of Object.keys(seen)) delete (seen as Record<string, unknown>)[k];
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); });
@@ -778,5 +787,167 @@ describe("fix pass — one mark-all refusal, one line; a row refusal's line clea
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ─── second fix pass (the final review) ─────────────────────────────────────
+
+describe("second fix pass — the placements never stand in the counts' way", () => {
+  it("resolvePlacements: a read that never answers times out to UNKNOWN (never zero, never a hang), and its signal is aborted", async () => {
+    const signals: AbortSignal[] = [];
+    const never = (ids: string[], signal: AbortSignal) => { signals.push(signal); void ids; return new Promise<{ data: unknown; error: null }>(() => {}); };
+    const t0 = Date.now();
+    const placed = await resolvePlacements([D1], never, async () => ({ data: [], error: null }), { timeoutMs: 40 });
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(placed.libraries).toBe("unknown");
+    expect(placed.folders).toBe("unknown");
+    expect(placed.docs.size).toBe(0);
+    expect(signals[0].aborted).toBe(true);
+    // a folders read that never answers: libraries known, folders unknown
+    const r = readers({ readable: [D1], docs: DOCS, folders: FOLDERS });
+    const half = await resolvePlacements([D1], r.readDocs, () => new Promise(() => {}), { timeoutMs: 40 });
+    expect(half.libraries).toBe("ready");
+    expect(half.folders).toBe("unknown");
+    expect(half.docs.get(D1)?.libraryId).toBe("libA");
+    expect(PLACE_TIMEOUT_MS).toBe(8000);
+  });
+
+  it("resolvePlacements: the chunks run in parallel (every chunk asked before any answers); one failed chunk spoils only its level", async () => {
+    const ids = Array.from({ length: PLACE_CHUNK * 2 + 5 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
+    let started = 0; let maxStartedBeforeFirstAnswer = 0; let answered = false;
+    const release: Array<() => void> = [];
+    const readDocs = (chunk: string[]) => {
+      started++;
+      if (!answered) maxStartedBeforeFirstAnswer = started;
+      return new Promise<{ data: unknown; error: { message: string } | null }>((res) => {
+        release.push(() => { answered = true; res(chunk.includes(ids[0]) ? { data: null, error: { message: "refused" } } : { data: [], error: null }); });
+      });
+    };
+    const pending = resolvePlacements(ids, readDocs, async () => ({ data: [], error: null }), { timeoutMs: 5000 });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(maxStartedBeforeFirstAnswer).toBe(3);
+    for (const f of release) f();
+    const placed = await pending;
+    expect(placed.libraries).toBe("unknown");
+  });
+
+  it("resolvePlacements: documents the caller already read are used as answered and not asked again", async () => {
+    const r = readers({ readable: [D1, D2], docs: DOCS, folders: FOLDERS });
+    const placed = await resolvePlacements([D1, D2], r.readDocs, r.readFolders, { known: { ids: [D1], rows: [{ id: D1, ...DOCS[D1] }] } });
+    expect(r.docReads).toEqual([[D2]]);
+    expect(placed.docs.get(D1)?.folderIds).toEqual(["unit12", "pids", "piping"]);
+    expect(placed.docs.get(D2)?.libraryId).toBe("libA");
+    expect([...(placed.asked ?? [])].sort()).toEqual([D1, D2].sort());
+  });
+
+  it("withAbortSignal: a builder that can abort gets the signal; one that cannot is returned as is", () => {
+    const ctl = new AbortController();
+    const seenSignal: AbortSignal[] = [];
+    const builder = { abortSignal(sig: AbortSignal) { seenSignal.push(sig); return this; } };
+    expect(withAbortSignal(builder, ctl.signal)).toBe(builder);
+    expect(seenSignal).toEqual([ctl.signal]);
+    const plain = { then: () => {} };
+    expect(withAbortSignal(plain, ctl.signal)).toBe(plain);
+  });
+
+  it("buildAttentionRollup: a document whose placement is still on its way leaves the level idle (no 'all clear', no unknown line); unknown wins; a non-uuid id is never pending", () => {
+    const placed = { docs: new Map([[D1, { libraryId: "libA", folderIds: ["pids"] }]]), asked: new Set([D1]), libraries: "ready" as const, folders: "ready" as const };
+    const ready = buildAttentionRollup([docRow(D1)], placed);
+    expect(ready.libraries).toBe("ready");
+    const pending = buildAttentionRollup([docRow(D1), docRow(D2)], placed);
+    expect(pending.libraries).toBe("idle");
+    expect(pending.folders).toBe("idle");
+    expect(rollupIncomplete(pending, "libraries")).toBe(false);
+    expect(pending.byLibrary.get("libA")).toEqual({ total: 1, action: 0 }); // what is placed still counts
+    expect(pending.byDocument.get(D2)).toEqual({ total: 1, action: 0 });    // the row's own dot needs no placement
+    expect(buildAttentionRollup([docRow(D1), docRow(D2)], { ...placed, libraries: "unknown" }).libraries).toBe("unknown");
+    expect(buildAttentionRollup([docRow(D1), docRow("DOC-0012")], placed).libraries).toBe("ready");
+    // placements built by hand (no `asked`) behave as before
+    expect(buildAttentionRollup([docRow(D1), docRow(D2)], { docs: placed.docs, libraries: "ready", folders: "ready" }).libraries).toBe("ready");
+  });
+
+  it("rendered: a documents read that NEVER answers still lets the counts land — the sidebar badge, the bell, the feed — and the trail waits quietly", async () => {
+    fx.docsHold = true;
+    fx.rows = [notif("n1", D1, "checkout_conflict"), notif("n2", D2)];
+    await mount(React.createElement(NotificationCenterProvider, null, React.createElement(Sidebar), React.createElement(NotificationBell), React.createElement(Probe), React.createElement(LibraryView)));
+    expect(fx.heldDocs.length).toBe(1); // the placement read is still in flight
+    expect(seen.value!.loading).toBe(false);
+    expect(seen.value!.sectionCounts.documents).toEqual({ total: 2, actionRequired: 1 });
+    expect(seen.value!.count).toBe(2);
+    expect((host.querySelector('button[aria-haspopup="dialog"]') as HTMLButtonElement).getAttribute("aria-label")).toBe(bellLabel(2));
+    const badge = [...host.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") ?? "").startsWith("Documents:"));
+    expect(badge).toBeTruthy();
+    // the trail: the rows' own dots are known; the containers wait, without an unknown line
+    expect(seen.rollup!.byDocument.get(D1)).toEqual({ total: 1, action: 1 });
+    expect(seen.rollup!.libraries).toBe("idle");
+    expect(host.querySelector("[data-attention-unknown-note]")).toBeNull();
+    // once the read answers, the containers count
+    fx.heldDocs.shift()!();
+    await flush();
+    expect(seen.rollup!.libraries).toBe("ready");
+    expect(seen.rollup!.byLibrary.get("libA")).toEqual({ total: 2, action: 1 });
+  });
+
+  it("rendered: a slow pass's placements never overwrite a newer pass's", async () => {
+    fx.docsHold = true;
+    fx.rows = [notif("n1", D1)];
+    await mount(React.createElement(Probe));
+    expect(fx.heldDocs.length).toBe(1); // pass 1's read, in flight
+    const tickets = fx.channels[0].ons.find((o) => o.cfg.table === "tickets" && o.cfg.event === "*")!;
+    act(() => tickets.cb({ eventType: "UPDATE", new: { id: "t9" } }));
+    await wait(FETCH_DEBOUNCE_MS + 150);
+    expect(fx.heldDocs.length).toBe(2); // pass 2's read too: pass 1 did not hold pass 2 back
+    // pass 2 answers first: D1 lives in libA
+    fx.heldDocs[1]();
+    await flush();
+    expect(seen.rollup!.byLibrary.get("libA")).toEqual({ total: 1, action: 0 });
+    // pass 1 answers late, after D1 moved to libB in the meantime: dropped
+    fx.documents = { ...fx.documents, [D1]: { library_id: "libB", collection_id: null } };
+    fx.heldDocs[0]();
+    await flush();
+    expect(seen.rollup!.byLibrary.get("libB")).toBeUndefined();
+    expect(seen.rollup!.byLibrary.get("libA")).toEqual({ total: 1, action: 0 });
+  });
+});
+
+describe("second fix pass — a refused row mark from the bell is never silent", () => {
+  it("markRead resolves to whether the mark landed (never rejects); fire-and-forget callers are unchanged", async () => {
+    fx.rows = [notif("n1", D1)];
+    await mount(React.createElement(Probe));
+    fx.markFails = true;
+    let refused: boolean | undefined;
+    await act(async () => { refused = await seen.value!.markRead("n1"); });
+    expect(refused).toBe(false);
+    expect(seen.status!.markError).toBe(MARK_READ_REFUSED);
+    fx.markFails = false;
+    let landed: boolean | undefined;
+    await act(async () => { landed = await seen.value!.markRead("n1"); });
+    expect(landed).toBe(true);
+    expect(seen.status!.markError).toBeNull();
+  });
+
+  it("the bell: a row clicked whose mark is refused keeps the drawer open on its line; a mark that lands closes it, as before", async () => {
+    fx.rows = [notif("n1", D1), notif("n2", D2)];
+    await mount(React.createElement(NotificationCenterProvider, null, React.createElement(NotificationBell), React.createElement(Probe)));
+    // jsdom does not navigate: keep the link click from trying
+    host.addEventListener("click", (e) => { if ((e.target as Element).closest("a")) e.preventDefault(); });
+    const trigger = () => host.querySelector('button[aria-haspopup="dialog"]') as HTMLButtonElement;
+    const rowLink = (title: string) => [...host.querySelectorAll('[role="dialog"] a')].find((a) => a.textContent?.includes(title)) as HTMLAnchorElement;
+    act(() => trigger().click());
+    await flush();
+    fx.markFails = true;
+    await act(async () => { rowLink("t n1").click(); });
+    await flush();
+    expect(host.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(trigger().getAttribute("aria-expanded")).toBe("true");
+    const lines = host.querySelectorAll("[data-bell-mark-error]");
+    expect(lines.length).toBe(1);
+    expect(lines[0].textContent).toBe(MARK_READ_REFUSED);
+    expect(lines[0].getAttribute("role")).toBe("alert");
+    fx.markFails = false;
+    await act(async () => { rowLink("t n2").click(); });
+    await flush();
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+    expect(trigger().getAttribute("aria-expanded")).toBe("false");
   });
 });
