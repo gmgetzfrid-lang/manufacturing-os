@@ -1039,3 +1039,33 @@ migration, `20261245_dc_roundG_publish_guard_lock_leg.sql` (drafting-flow
   reviewed revision back to `in_review`; a column guard on
   `review_state` / `released_at` / `superseded_at` /
   `supersedes_version_id`, coordinated with `DCK-16`'s UPDATE limb).
+
+⚠ **Paste order — P33 VERSION ROW INTEGRITY (2026-10-21).** One one-paste
+migration, `20261247_dc_roundG_version_row_integrity.sql` (`DCK-16`,
+`DCK-17`; drafting-flow `HAND-13` done-when 2's remainder):
+1. **No app deploy is needed, before or after.** No app path writes a version
+   row or a change the file refuses (the census in
+   `lib/__tests__/dcRoundGVersionRowIntegrityMigration.test.ts`); the `DCK-15`
+   notice and record are app-side and run on every database.
+2. **Paste after `20261245` (required** — its first statement refuses,
+   changing nothing, without `20261245`'s lock leg or `20261214`'s door limb),
+   so it waits behind `20261245` (row 187), itself HOLD behind `20261193`
+   (row 150). **Never re-paste `20261214` or `20261205` after it** (each would
+   re-create `document_versions_insert_integrity` without the provenance
+   limb; the column guard would still refuse the same rows).
+- **What changes after the paste:** a signed-in session (not the service role,
+  not the contractor door) can no longer write a version row as `'external'`,
+  through an intake link or as someone else, change those columns, move a
+  revision back into review or onto another document, clear its release or
+  supersession, or rewrite the revision it superseded. Everything the app,
+  the RPCs, the door and the intake route do lands exactly as before.
+- **The result set:** seven probes (all true) and four counts — external
+  rows; external / link rows with a member creator (expected 0); in-review
+  rows already released or superseded (expected 0); pending pointers naming
+  one (expected 0).
+- **For the integrator at merge, not edited by P33:** the `20261247` row in
+  `MIGRATION-PASTE-ORDER.md` (after row 187's `20261245`); no
+  `lib/schemaExpectations.ts` probe (no new column or function the app
+  reads; the file's own result set is the paste check); the owner of new
+  finding `DCK-18` (proposed: document-control — a reviewed promote made
+  outside the app is neither told nor recorded).
