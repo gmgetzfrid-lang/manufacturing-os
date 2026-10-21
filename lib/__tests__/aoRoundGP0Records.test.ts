@@ -226,6 +226,10 @@ describe("ALOG-1 done-when 2 — the record's census of the loaders' callers is 
     // strict (drafting-flow DF-P8): the project-link route asks whether a
     // non-requester holds ticket.manage; an unreadable policy refuses (503)
     "app/api/tickets/project-link/route.ts",
+    // strict (drafting-flow DF-P18, intelligence GAP-312): the equipment route
+    // asks whether a non-participant runs the assignment queue (ticket.assign);
+    // an unreadable policy refuses (503)
+    "app/api/tickets/equipment/route.ts",
   ]);
 
   it("every caller of loadCapabilityPolicy / …Entry / …Strict outside the module is one the record lists", () => {

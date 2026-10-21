@@ -154,7 +154,8 @@ describe("DF-P5 fix pass 3 — the signature is minted only for a sign-off the r
   const page = readFileSync(join(process.cwd(), "app", "(protected)", "requests", "[id]", "page.tsx"), "utf8");
   const panel = readFileSync(join(process.cwd(), "components", "requests", "TicketRosterPanel.tsx"), "utf8");
   it("the Sign off button asks the route first (a dry run) and opens the ceremony only on its yes; the ceremony is never opened directly", () => {
-    expect(panel).toContain('body: JSON.stringify({ ticketId: ticket.id, actionType: "sign_slot", dryRun: true }),');
+    // DF-P18 (HAND-7 dw3): the dry run carries the drift acknowledgement only when the panel asked for it.
+    expect(panel).toContain('body: JSON.stringify({ ticketId: ticket.id, actionType: "sign_slot", dryRun: true, ...(driftNote && driftAck ? { sourceDriftAcknowledged: true } : {}) }),');
     expect(panel).toContain("onClick={() => { void openCeremony(); }}");
     expect(panel).not.toContain("onClick={() => setSigning(true)}");
     const dry = panel.indexOf("dryRun: true");

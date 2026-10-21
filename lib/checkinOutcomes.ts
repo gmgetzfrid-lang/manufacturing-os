@@ -79,17 +79,40 @@ export interface CheckInContext {
   canPublishEff: boolean;
   /** Other active sessions remain on this episode. */
   othersRemain: boolean;
+  /** DF-P18 (drafting-flow TIER-6): the request this check-in works for is of
+   *  a work class the workspace flags "needs MOC" (lib/reviewModel.ts
+   *  workClassNeedingMoc). Absent / false = no class known — today's rule
+   *  alone (DEC-90 ruling (3) for DF-P18: no change). */
+  classNeedsMoc?: boolean;
 }
 
 /** A real change to a declared drawing needs an MOC position. Corrections are
  *  replacement-in-kind; unclassified documents can't be held to a rule nobody
- *  declared for them. */
+ *  declared for them. DF-P18 (TIER-6): a real change for a request whose work
+ *  class the workspace flags "needs MOC" needs one too, whatever the
+ *  document's class — the class only ever adds (no class: today's rule). */
 export function mocRequirementFor(
   docClass: DocClass | null,
   outcome: CheckInOutcome,
+  classNeedsMoc = false,
 ): MocRequirement {
   const realChange = outcome === "discrepancy" || outcome === "revision_requested";
-  return docClass === "drawing" && realChange ? "required" : "none";
+  return (docClass === "drawing" || classNeedsMoc === true) && realChange ? "required" : "none";
+}
+
+/** DF-P18 (TIER-6): does the hand-back's publish need an MOC number? The one
+ *  rule RevUpModal reads — today's (a drawing, or a document whose class is
+ *  unknown, on a change that is not Minor / Correction), OR the request's
+ *  work class needs MOC (then whatever the change type: the workspace said
+ *  this kind of work goes through MOC). The class only ever adds. Pure. */
+export function publishMocRequired(input: {
+  docClass: DocClass | null;
+  docClassUnknown: boolean;
+  changeType: string | null | undefined;
+  classNeedsMoc?: boolean;
+}): boolean {
+  const isMinorLike = input.changeType === "Minor" || input.changeType === "Correction";
+  return input.classNeedsMoc === true || ((input.docClass === "drawing" || input.docClassUnknown) && !isMinorLike);
 }
 
 type PurposeGroup = "asbuilt" | "field" | "review" | "change" | "generic";
@@ -119,7 +142,7 @@ const attestCard = (recommended: boolean): CheckInCard => ({
   recommended,
 });
 
-const discrepancyCard = (docClass: DocClass | null): CheckInCard => ({
+const discrepancyCard = (docClass: DocClass | null, classNeedsMoc = false): CheckInCard => ({
   id: "discrepancy",
   outcome: "discrepancy",
   action: "draft_ticket",
@@ -127,7 +150,7 @@ const discrepancyCard = (docClass: DocClass | null): CheckInCard => ({
   hint: "Opens a drafting request so the document gets brought up to reality. Attach redline photos or a marked-up copy below.",
   requiresNote: true,
   notePrompt: "What's different in the field?",
-  moc: mocRequirementFor(docClass, "discrepancy"),
+  moc: mocRequirementFor(docClass, "discrepancy", classNeedsMoc),
   allowUploads: true,
   allowHoldOffer: true,
   ticketKind: "asbuilt",
@@ -161,7 +184,7 @@ const correctionCard = (canPublishEff: boolean): CheckInCard => ({
   tone: "action",
 });
 
-const draftRevisionCard = (docClass: DocClass | null, recommended: boolean, redline: boolean): CheckInCard => ({
+const draftRevisionCard = (docClass: DocClass | null, recommended: boolean, redline: boolean, classNeedsMoc = false): CheckInCard => ({
   id: "revision",
   outcome: "revision_requested",
   action: "draft_ticket",
@@ -171,7 +194,7 @@ const draftRevisionCard = (docClass: DocClass | null, recommended: boolean, redl
     : "Opens a drafting request for the real change, with your notes and any files attached.",
   requiresNote: true,
   notePrompt: "What needs to change, and why?",
-  moc: mocRequirementFor(docClass, "revision_requested"),
+  moc: mocRequirementFor(docClass, "revision_requested", classNeedsMoc),
   allowUploads: true,
   ticketKind: "revision",
   tone: "action",
@@ -221,12 +244,13 @@ const handoffCard = (): CheckInCard => ({
 
 export function checkInCardsFor(ctx: CheckInContext): CheckInCard[] {
   const group = purposeGroup(ctx.purpose);
+  const mocClass = ctx.classNeedsMoc === true;
   const cards: CheckInCard[] = [];
 
   switch (group) {
     case "asbuilt":
       // The walkdown question IS the check-in.
-      cards.push(attestCard(true), discrepancyCard(ctx.docClass));
+      cards.push(attestCard(true), discrepancyCard(ctx.docClass, mocClass));
       break;
 
     case "field":
@@ -235,7 +259,7 @@ export function checkInCardsFor(ctx: CheckInContext): CheckInCard[] {
       cards.push(
         allClearCard("Done — no issues found", "Releases your checkout. Nothing else happens.", true),
         attestCard(false),
-        discrepancyCard(ctx.docClass),
+        discrepancyCard(ctx.docClass, mocClass),
       );
       break;
 
@@ -243,7 +267,7 @@ export function checkInCardsFor(ctx: CheckInContext): CheckInCard[] {
       cards.push(
         allClearCard("Reviewed — good as is", "The document passed your review unchanged.", true),
         correctionCard(ctx.canPublishEff),
-        draftRevisionCard(ctx.docClass, false, false),
+        draftRevisionCard(ctx.docClass, false, false, mocClass),
       );
       break;
 
@@ -258,7 +282,7 @@ export function checkInCardsFor(ctx: CheckInContext): CheckInCard[] {
       } else {
         if (ctx.canPublishEff) cards.push(publishCard(ctx.docClass, true));
         cards.push(
-          draftRevisionCard(ctx.docClass, !ctx.canPublishEff, redline),
+          draftRevisionCard(ctx.docClass, !ctx.canPublishEff, redline, mocClass),
           correctionCard(ctx.canPublishEff),
           allClearCard("No change needed after all", "Releases your checkout with nothing filed.", false),
         );
@@ -269,7 +293,7 @@ export function checkInCardsFor(ctx: CheckInContext): CheckInCard[] {
     case "generic":
       cards.push(
         allClearCard("Done — release", "Releases your checkout. Nothing else happens.", true),
-        draftRevisionCard(ctx.docClass, false, false),
+        draftRevisionCard(ctx.docClass, false, false, mocClass),
       );
       if (ctx.canPublishEff) cards.push(publishCard(ctx.docClass, false));
       break;

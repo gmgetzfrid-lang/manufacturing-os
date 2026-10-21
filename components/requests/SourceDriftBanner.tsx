@@ -20,6 +20,11 @@
 //
 // Mounted by the ticket page (drafting-flow DF-P9, one line); it reads
 // nothing but the source documents' rows.
+//
+// DF-P18 (HAND-7 dw3): `onDrift` hands the page the moved sheets it found
+// (an empty list while it reads, on a failed read, or when nothing moved),
+// so the page passes them to getActions (`sourceDrift`) and its approvals ask
+// for the acknowledgement the workflow route requires.
 
 import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle } from "lucide-react";
@@ -53,10 +58,11 @@ export function driftedSources(
 }
 
 export default function SourceDriftBanner({
-  metadata, orgId,
+  metadata, orgId, onDrift,
 }: {
   metadata: Record<string, unknown> | null | undefined;
   orgId: string | null | undefined;
+  onDrift?: (drifts: SourceDrift[]) => void;
 }) {
   const refs = useMemo(() => parseSourceDocuments(metadata), [metadata]);
   const key = refs.map((r) => `${r.id}:${r.versionId ?? ""}:${r.rev ?? ""}`).join("|");
@@ -86,6 +92,8 @@ export default function SourceDriftBanner({
     // `key` carries everything `refs` holds that the read depends on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, key]);
+
+  useEffect(() => { onDrift?.(drifts); }, [drifts, onDrift]);
 
   if (drifts.length === 0) return null;
   return (

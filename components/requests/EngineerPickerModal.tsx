@@ -68,6 +68,10 @@ interface EngineerPickerModalProps {
   resource?: CapabilityResource | null;
   /** The action the pick is for (decides the scoped capability). */
   pickActionType?: string;
+  /** DF-P18 (GAP-101): optional fields the caller adds above the comment —
+   *  the triage class selects on a scope review at PENDING_ASSIGNMENT.
+   *  Absent = the modal exactly as before. */
+  extra?: React.ReactNode;
   onSubmit: (params: {
     engineerId: string;
     engineerName: string;
@@ -85,6 +89,7 @@ export default function EngineerPickerModal({
   policy,
   resource,
   pickActionType,
+  extra,
   onSubmit,
 }: EngineerPickerModalProps) {
   const [engineers, setEngineers] = useState<EngineerOption[]>([]);
@@ -260,6 +265,8 @@ export default function EngineerPickerModal({
             </div>
             <div className="text-[10px] text-[var(--color-text-muted)] mt-1.5">Sorted by lightest workload first.</div>
           </div>
+
+          {extra}
 
           {requireComment && (
             <div>

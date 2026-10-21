@@ -237,12 +237,37 @@ export function engineeringSignOffNotRequiredOf(ticket: Pick<Ticket, "metadata" 
 
 export type ReviewClassKey = "workClasses" | "codeClasses";
 
+/** DF-P18 (drafting-flow TIER-7, TIER-6): what a configured WORK class may
+ *  carry beside "Requires engineering" — the workspace's own flags, stored
+ *  on the option in org_configurations 'drafting' (no migration; seeded
+ *  absent). Each flag only ever adds to what a request of that class needs
+ *  (DEC-33: nothing lowers rigor but the requester's declaration); a request
+ *  with no class, or of an unflagged class, behaves exactly as before
+ *  (DEC-90 ruling (3) for DF-P18).
+ *    - `minorCorrection`: the class is the workspace's declared minor
+ *      correction — "Approve with Minor Correction" on such a request names
+ *      the class it is taken under (the description before the click, the
+ *      audit row after it); the class's own reviewer requirement is its
+ *      "Requires engineering" flag and the notify-only routing slots limited
+ *      to it (TIER-3).
+ *    - `moc`: a request of the class needs an MOC position — the hand-back's
+ *      publish asks for the MOC number whatever the change type
+ *      (components/documents/RevUpModal.tsx), and a check-in that knows the
+ *      class asks for an MOC position on a real change
+ *      (lib/checkinOutcomes.ts). */
+export interface ReviewClassFlags {
+  minorCorrection?: true;
+  moc?: true;
+}
+export type ReviewClassEntry = ReviewClassOption & ReviewClassFlags;
+
 /** The configured options of one class list — seeded EMPTY: an absent or
- *  malformed list is no list (unclassified, the safe reading). */
-export function reviewClassOptions(cfg: Partial<OrgDraftingSettings> | null | undefined, key: ReviewClassKey): ReviewClassOption[] {
+ *  malformed list is no list (unclassified, the safe reading). The DF-P18
+ *  flags ride only a WORK class (a code class carries none). */
+export function reviewClassOptions(cfg: Partial<OrgDraftingSettings> | null | undefined, key: ReviewClassKey): ReviewClassEntry[] {
   const list = (cfg as Record<string, unknown> | null | undefined)?.[key] as ReviewClassConfig | undefined;
   const raw = Array.isArray(list?.options) ? list!.options : [];
-  const out: ReviewClassOption[] = [];
+  const out: ReviewClassEntry[] = [];
   const seen = new Set<string>();
   for (const o of raw) {
     if (!o || typeof o !== "object") continue;
@@ -250,9 +275,58 @@ export function reviewClassOptions(cfg: Partial<OrgDraftingSettings> | null | un
     if (!value || seen.has(value)) continue;
     seen.add(value);
     const label = typeof o.label === "string" && o.label.trim() ? o.label.trim() : value;
-    out.push({ value, label, ...(o.engineering === true ? { engineering: true } : {}) });
+    const flags = o as ReviewClassFlags;
+    out.push({
+      value, label,
+      ...(o.engineering === true ? { engineering: true } : {}),
+      ...(key === "workClasses" && flags.minorCorrection === true ? { minorCorrection: true as const } : {}),
+      ...(key === "workClasses" && flags.moc === true ? { moc: true as const } : {}),
+    });
   }
   return out;
+}
+
+/** DF-P18 (TIER-6): the request's work class when the workspace flags it
+ *  "needs MOC" — null for a request with no class, a class the list no
+ *  longer names, or an unflagged class (DEC-90 ruling (3): no change). */
+export function workClassNeedingMoc(cfg: Partial<OrgDraftingSettings> | null | undefined, workClass: string | null | undefined): ReviewClassEntry | null {
+  if (!workClass) return null;
+  const o = reviewClassOptions(cfg, "workClasses").find((x) => x.value === workClass);
+  return o && o.moc === true ? o : null;
+}
+
+/** DF-P18 (TIER-7): the request's work class when the workspace flags it a
+ *  "minor correction" class — null otherwise (no class, unknown, unflagged:
+ *  no change, DEC-90 ruling (3)). */
+export function minorCorrectionClassOf(cfg: Partial<OrgDraftingSettings> | null | undefined, workClass: string | null | undefined): ReviewClassEntry | null {
+  if (!workClass) return null;
+  const o = reviewClassOptions(cfg, "workClasses").find((x) => x.value === workClass);
+  return o && o.minorCorrection === true ? o : null;
+}
+
+/** DF-P18 (TIER-7): the words "Approve with Minor Correction" carries on a
+ *  request of a minor-correction class — said before the click (the page
+ *  beside its buttons, the route in the action's description). */
+export function minorCorrectionClassNote(cls: Pick<ReviewClassEntry, "label" | "engineering">): string {
+  return `This request's work class (${cls.label}) is this workspace's minor correction; its reviewer requirement is the class's own${cls.engineering ? " (it requires engineering)" : ""}.`;
+}
+
+/** DF-P18 (TIER-7): the action list with the minor-correction class named on
+ *  "Approve with Minor Correction" — ONLY on a request whose work class is
+ *  flagged; every other request's actions come back as the same array
+ *  (DEC-90 ruling (3): no change). Never enables, disables or removes an
+ *  action. Pure: the workflow route applies it to getActions' answer (the
+ *  request page, whose buttons show no description, says the same note
+ *  beside them — minorCorrectionClassNote). */
+export function withMinorCorrectionClass<A extends { action: string; description?: string }>(
+  actions: A[],
+  cfg: Partial<OrgDraftingSettings> | null | undefined,
+  workClass: string | null | undefined,
+): A[] {
+  const cls = minorCorrectionClassOf(cfg, workClass);
+  if (!cls || !actions.some((a) => a.action === "approve_minor_correction")) return actions;
+  const note = minorCorrectionClassNote(cls);
+  return actions.map((a) => (a.action === "approve_minor_correction" ? { ...a, description: [a.description, note].filter(Boolean).join(" ") } : a));
 }
 
 /** A class value sent by triage, checked against the workspace's list. */

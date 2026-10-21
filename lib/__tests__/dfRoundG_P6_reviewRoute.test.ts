@@ -400,20 +400,43 @@ describe("HAND-7 done-when 3 — an approval over a moved source", () => {
     expect((await res.json()).code).toBe("source_drift_unacknowledged");
     expect(updates()).toEqual([]);
   });
-  it("REGRESSION: a page that does not ask yet still approves — the move is recorded as NOT acknowledged; an unmoved source records nothing; a failed read never blocks", async () => {
+  it("DF-P18 (DEC-90 ruling (2) for DF-P18; DEC-44 (DF-P6) reversal (2)): an approval the move flags is refused without the acknowledgement (409, nothing written); an unmoved source applies as before and records nothing; a failed read refuses (503) only an issuing approval of a request with source documents", async () => {
     seed("Manager");
     state.user = { id: "req-1" };
     state.rows.tickets = [ticketRow(moved)];
-    expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(200);
-    expect(lastHistory(updates()[0]).details).toMatch(/not acknowledged \(the page did not ask\)/);
+    const absent = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    expect(absent.status).toBe(409);
+    expect((await absent.json()).code).toBe("source_drift_unacknowledged");
+    expect(updates()).toEqual([]);
     state.calls = [];
     state.rows.documents = [{ id: DOC, org_id: "o1", rev: "3", current_version_id: V3, document_number: "P-101" }];
     expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(200);
     expect(audits()[0].details.sourceDrift).toBeUndefined();
+    expect(audits()[0].details.sourceDriftUnchecked).toBeUndefined();
     state.calls = [];
     state.errors.documents = { code: "57014", message: "timeout" };
+    const unchecked = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    expect(unchecked.status).toBe(503);
+    expect((await unchecked.json()).code).toBe("source_drift_unchecked");
+    expect(updates()).toEqual([]);
+  });
+  it("REGRESSION (DF-P18): a request with NO source documents reads no document and approves exactly as before, with or without the field", async () => {
+    seed("Manager");
+    state.user = { id: "req-1" };
+    state.errors.documents = { code: "57014", message: "timeout" };
+    state.rows.tickets = [ticketRow({})];
     expect((await post({ ticketId: "t1", actionType: "approve_draft_ifc" })).status).toBe(200);
-    expect(audits()[0].details.sourceDriftUnchecked).toBe(true);
+    expect(audits()[0].details.sourceDrift).toBeUndefined();
+    expect(state.calls.some((c) => c.table === "documents")).toBe(false);
+  });
+  it("REGRESSION (DF-P18): a non-issuing action on a request whose source moved is never asked for the acknowledgement, and a failed documents read never blocks it", async () => {
+    seed("Manager");
+    state.user = { id: "req-1" };
+    state.errors.documents = { code: "57014", message: "timeout" };
+    state.rows.tickets = [ticketRow(moved)];
+    const res = await post({ ticketId: "t1", actionType: "request_revision", comment: "please fix the title block" });
+    expect(res.status).toBe(200);
+    expect(audits()[0].details.sourceDrift).toBeUndefined();
   });
 });
 
