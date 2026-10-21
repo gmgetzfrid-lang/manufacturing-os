@@ -27,6 +27,9 @@ import { recordSignature, type SigningCredential } from "@/lib/eSignatures";
 import { resolveEffectiveOwner, effectiveOwnerForDocument, getOrgControllers, teamSupervisorMap } from "@/lib/ownership";
 import type { AckPolicy } from "@/types/schema";
 import { heldRoles, roleFilter } from "@/lib/roleHeld";
+// DIST-19 (document-control P38): each reminder and escalation the daily
+// scan lands is a row on the append-only notice record.
+import { noticeRecorder, noticeRow, replayDeferredNotices } from "@/lib/documentNoticeRecord";
 
 /** The push leg never touches the roster's own outcome (DEC-90: a push
  *  failure never fails the action or its bell rows). `serverPush`: the
@@ -701,9 +704,13 @@ export async function setAckPolicy(input: {
 export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: number; graceDays?: number }): Promise<number> {
   const cooldownDays = opts?.cooldownDays ?? 7;
   const graceDays = opts?.graceDays ?? GRACE_DAYS;
+  // DIST-19 (P38): rows an earlier run could not write are written first;
+  // this run's writer says a missing record once (never fails the scan).
+  await replayDeferredNotices(orgId, "acknowledgment");
+  const notices = noticeRecorder();
   const { data } = await supabase
     .from("document_acknowledgments")
-    .select("id, document_id, assignee_user_id, assignee_name, revision_label, notified_at, assigned_at")
+    .select("id, document_id, document_version_id, assignee_user_id, assignee_name, revision_label, notified_at, assigned_at")
     .eq("org_id", orgId).eq("status", "pending");
   const rows = (data ?? []) as Array<Record<string, unknown>>;
   if (!rows.length) return 0;
@@ -739,13 +746,19 @@ export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: n
     const retryKey = `read-understood:${r.id as string}`;
     const wants = plan.only(retryKey, r.notified_at as string | null);
     const landed: boolean[] = [];
+    // DIST-19: each notice and whether it landed — only a landed one is recorded
+    const sent: Array<{ kind: "reminded" | "escalated"; to: string; ok: boolean }> = [];
 
-    if (wants("ack_requested", r.assignee_user_id as string)) landed.push(await notify({
-      orgId, userId: r.assignee_user_id as string, kind: "ack_requested",
-      title: `Reminder — acknowledge ${label}${rev ? ` Rev ${rev}` : ""}`,
-      body: "You still need to confirm you've read and understood this revision.",
-      link, resourceType: "document", resourceId: r.document_id as string,
-    }, { retryKey }));
+    if (wants("ack_requested", r.assignee_user_id as string)) {
+      const ok = await notify({
+        orgId, userId: r.assignee_user_id as string, kind: "ack_requested",
+        title: `Reminder — acknowledge ${label}${rev ? ` Rev ${rev}` : ""}`,
+        body: "You still need to confirm you've read and understood this revision.",
+        link, resourceType: "document", resourceId: r.document_id as string,
+      }, { retryKey });
+      landed.push(ok);
+      sent.push({ kind: "reminded", to: r.assignee_user_id as string, ok });
+    }
 
     const overdueDays = Math.floor((now - new Date(r.assigned_at as string).getTime()) / 86_400_000);
     if (overdueDays > graceDays) {
@@ -757,14 +770,17 @@ export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: n
         teamSupervisors,
       );
       const escalateTo = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]).filter((u) => u !== (r.assignee_user_id as string));
-      landed.push(...await Promise.all(escalateTo.filter((uid) => wants("ack_overdue", uid)).map((uid) =>
+      const targets = escalateTo.filter((uid) => wants("ack_overdue", uid));
+      const oks = await Promise.all(targets.map((uid) =>
         notify({
           orgId, userId: uid, kind: "ack_overdue",
           title: `Acknowledgment overdue: ${label}`,
           body: `${(r.assignee_name as string) || "Someone assigned"} hasn't acknowledged ${label}${rev ? ` Rev ${rev}` : ""} — ${overdueDays} days outstanding.`,
           link, resourceType: "document", resourceId: r.document_id as string,
         }, { retryKey })
-      )));
+      ));
+      landed.push(...oks);
+      targets.forEach((uid, i) => sent.push({ kind: "escalated", to: uid, ok: oks[i] }));
     }
 
     // DELIV-7 dw1: the cooldown is stamped only when every notice landed —
@@ -772,6 +788,15 @@ export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: n
     if (landed.every(Boolean)) {
       await supabase.from("document_acknowledgments").update({ notified_at: new Date().toISOString() }).eq("id", r.id as string);
     }
+    // DIST-19 (P38): every notice that landed is a row on the record — after
+    // the stamp, which is written exactly as before; a failed write never
+    // fails the scan (deferred to the next run).
+    await notices.record(sent.filter((x) => x.ok).map((x) => noticeRow({
+      org_id: orgId, document_id: r.document_id as string, version_id: (r.document_version_id as string | null) ?? null,
+      revision_label: (r.revision_label as string | null) ?? null, source: "acknowledgment", source_id: r.id as string,
+      kind: x.kind, recipient: x.to, subject_user_id: r.assignee_user_id as string,
+      details: x.kind === "escalated" ? { overdueDays, graceDays } : { overdueDays },
+    })));
     n++;
   }
   return n;

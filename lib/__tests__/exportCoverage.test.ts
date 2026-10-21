@@ -105,6 +105,12 @@ const DECISION_AT_MERGE: Record<string, string> = {
   // is no longer here.
   // drafting-flow Round G DF-P7 CONSENT's ticket_notice_events was decided at its merge (EXPORTED after
   // ticket_review_slot_events; never imported — IMMUTABLE_TABLES; DEC-90) and is no longer here.
+  // document-control Round G P38 DOCUMENT NOTICE RECORD (DIST-19, 20261257):
+  // proposed EXPORTED with a not_emailed row's details.reason stripped (the
+  // ticket_notice_events transform) and never imported (IMMUTABLE_TABLES) —
+  // the integrator decides it in lib/exportTables.ts / lib/dataRestore.ts at
+  // the merge and removes it from here.
+  document_notice_events: "the append-only document notice record (who was reminded / escalated about a review sign-off, an acknowledgment or a distribution ack, and when) — written only by the service role; proposed EXPORTED (not_emailed reason stripped) and never imported, decided at the P38 merge",
 };
 
 // EGR-7 / XEDGE-10: a column whose NAME says "credential". `_key` alone is

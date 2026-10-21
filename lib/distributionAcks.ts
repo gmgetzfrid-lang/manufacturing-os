@@ -30,6 +30,10 @@ import { logAuditAction } from "@/lib/audit";
 import { notifyCompliance as notify } from "@/lib/complianceNotify";
 import { emit } from "@/lib/notify/dispatch";
 import { assertNotOnHold } from "@/lib/holdGate";
+// DIST-19 (document-control P38): each nudge and escalation the daily nag
+// lands is a row on the append-only notice record, and the nag's cooldown
+// counts from that record (the notifications rows still count too).
+import { noticeRecorder, noticeRow, recentDistributionNotices, replayDeferredNotices } from "@/lib/documentNoticeRecord";
 
 export interface DistributionAck {
   id: string;
@@ -412,6 +416,10 @@ export async function scanDistributionAcks(orgId: string, opts?: {
   // outstanding row would bell its recipient every single day forever.
   const nagEveryDays = opts?.nagEveryDays ?? 3;
   const nagCutoff = new Date(Date.now() - nagAfterDays * 86_400_000).toISOString();
+  // DIST-19 (P38): rows an earlier run could not write are written first;
+  // this run's writer says a missing record once (never fails the scan).
+  await replayDeferredNotices(orgId, "distribution_ack");
+  const notices = noticeRecorder();
   const { data } = await supabase
     .from("distribution_acks")
     .select("id, document_id, version_id, rev_label, recipient_user_id, recipient_email, requested_by, requested_by_name, requested_at")
@@ -448,6 +456,17 @@ export async function scanDistributionAcks(orgId: string, opts?: {
       if (meta.ackEscalation) recentlyEscalated.add(key);
     }
   } catch { /* dedupe is best-effort; worst case is one extra nudge */ }
+  // DIST-19 (P38): the nag's own nudges and escalations are counted from the
+  // notice record — durable, never purged — as well as from the rows above
+  // (which still carry the manual request / re-nudge, not on the record).
+  // Unreadable (20261257 not pasted, or refused): the rows above alone, as
+  // before. The union only ever withholds a nudge the record says landed
+  // inside the window: one nudge per cooldown, as today.
+  const recorded = await recentDistributionNotices(orgId, cooldownIso);
+  if (recorded) {
+    for (const k of recorded.reminded) recentlyNagged.add(k);
+    for (const k of recorded.escalated) recentlyEscalated.add(k);
+  }
 
   // Escalate stale ones to the requester grouped per document so they get
   // one summary, not N pings.
@@ -470,7 +489,7 @@ export async function scanDistributionAcks(orgId: string, opts?: {
   // in the run's line). The cron's scope counts delivered apart from
   // attempted (result.complianceBellNotices); `n` stays the rows attempted.
   const sends: Array<() => Promise<unknown>> = [];
-  const escalations = new Map<string, { requesterId: string; docId: string; names: string[] }>();
+  const escalations = new Map<string, { requesterId: string; docId: string; names: string[]; acks: Array<Record<string, unknown>> }>();
   for (const r of binding) {
     const docId = r.document_id as string;
     const doc = docs.get(docId);
@@ -488,15 +507,24 @@ export async function scanDistributionAcks(orgId: string, opts?: {
         resourceId: docId,
         actorName: "System",
         metadata: { ackRequest: true, autoNag: true, versionId: r.version_id as string },
-      }, { retryKey: `distribution-acks:${r.id as string}` }));
+      }, { retryKey: `distribution-acks:${r.id as string}` }).then((ok) => ok
+        // DIST-19: a nudge that landed is a row on the record
+        ? notices.record([noticeRow({
+          org_id: orgId, document_id: docId, version_id: (r.version_id as string | null) ?? null,
+          revision_label: (r.rev_label as string | null) ?? null, source: "distribution_ack", source_id: r.id as string,
+          kind: "reminded", recipient: r.recipient_user_id as string, subject_user_id: r.recipient_user_id as string,
+          details: { ageDays: Math.floor((Date.now() - Date.parse(r.requested_at as string)) / 86_400_000) },
+        })]).then(() => ok)
+        : ok));
       n += 1;
     }
 
     const ageDays = (Date.now() - Date.parse(r.requested_at as string)) / 86_400_000;
     if (ageDays >= escalateAfterDays && r.requested_by) {
       const key = `${r.requested_by as string}:${docId}`;
-      const e = escalations.get(key) ?? { requesterId: r.requested_by as string, docId, names: [] };
+      const e = escalations.get(key) ?? { requesterId: r.requested_by as string, docId, names: [], acks: [] };
       e.names.push((r.recipient_email as string) || "a recipient");
+      e.acks.push(r);
       escalations.set(key, e);
     }
   }
@@ -515,7 +543,15 @@ export async function scanDistributionAcks(orgId: string, opts?: {
       resourceId: e.docId,
       actorName: "System",
       metadata: { ackEscalation: true },
-    }, { retryKey: `distribution-acks:escalation:${e.requesterId}:${e.docId}` }));
+    }, { retryKey: `distribution-acks:escalation:${e.requesterId}:${e.docId}` }).then((ok) => ok
+      // DIST-19: an escalation that landed is one row per silent recipient it names
+      ? notices.record(e.acks.map((a) => noticeRow({
+        org_id: orgId, document_id: e.docId, version_id: (a.version_id as string | null) ?? null,
+        revision_label: (a.rev_label as string | null) ?? null, source: "distribution_ack", source_id: a.id as string,
+        kind: "escalated", recipient: e.requesterId, subject_user_id: a.recipient_user_id as string,
+        details: { escalateAfterDays, silentRecipients: e.acks.length },
+      }))).then(() => ok)
+      : ok));
     n += 1;
   }
   // Chunked parallel sends — per-row awaits were the cron's dominant cost.

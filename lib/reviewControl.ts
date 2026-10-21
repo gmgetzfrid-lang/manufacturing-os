@@ -33,6 +33,9 @@ import { heldRoles, roleFilter } from "@/lib/roleHeld";
 import { loadContainerChain, firstDefinedInChain, folderChainFromMap, type ContainerChain } from "@/lib/containerChain";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { ISSUE_REFUSAL } from "@/lib/issueStatus";
+// DIST-19 (document-control P38): each reminder, escalation and timeout
+// activation the daily scan lands is a row on the append-only notice record.
+import { noticeRecorder, noticeRow, replayDeferredNotices } from "@/lib/documentNoticeRecord";
 
 /** The push leg never touches the roster's own outcome (DEC-90: a push
  *  failure never fails the action or its bell rows). */
@@ -853,20 +856,28 @@ async function libraryRequiresIndependentReviewer(documentId: string): Promise<b
 
 // ── Alternates ───────────────────────────────────────────────────────────────
 
-/** Manually activate an alternate (Admin/DocCtrl action when a primary is out). */
-export async function activateAlternate(input: { orgId: string; documentId: string; libraryId: string; signoffId: string; actorId?: string | null }): Promise<void> {
+/** Manually activate an alternate (Admin/DocCtrl action when a primary is out).
+ *  DIST-19 (P38): the daily scan's timeout activation passes `cause` — its
+ *  audit row names the silence that caused it; the manual action passes none
+ *  and its audit row is exactly as before. Answers the activated reviewer and
+ *  whether their notice landed (null when no row was activated). */
+export async function activateAlternate(input: {
+  orgId: string; documentId: string; libraryId: string; signoffId: string; actorId?: string | null;
+  cause?: { reason: "review_timeout"; timeoutDays: number; ageDays: number; documentVersionId: string | null };
+}): Promise<{ reviewerUserId: string; revisionLabel: string | null; noticeLanded: boolean } | null> {
   const { data } = await supabase.from("document_review_signoffs")
     .update({ activated: true, notified_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq("id", input.signoffId).select("reviewer_user_id, revision_label").maybeSingle();
-  if (!data) return;
-  await notify({
+  if (!data) return null;
+  const noticeLanded = await notify({
     orgId: input.orgId, userId: data.reviewer_user_id as string, kind: "review_alternate_activated",
     title: `You're now an active reviewer: ${(data.revision_label as string) || "a draft"}`,
     body: "You've been activated as an alternate reviewer — a draft is waiting for your sign-off.",
     link: `/documents/${input.libraryId}?doc=${input.documentId}`, resourceType: "document", resourceId: input.documentId,
     actorUserId: input.actorId ?? undefined,
   });
-  await logAuditAction({ action: "REVIEW_ALTERNATE_ACTIVATED", resourceType: "document", resourceId: input.documentId, orgId: input.orgId, userId: input.actorId ?? "", details: { signoffId: input.signoffId } }).catch(() => {});
+  await logAuditAction({ action: "REVIEW_ALTERNATE_ACTIVATED", resourceType: "document", resourceId: input.documentId, orgId: input.orgId, userId: input.actorId ?? "", details: input.cause ? { signoffId: input.signoffId, cause: input.cause } : { signoffId: input.signoffId } }).catch(() => {});
+  return { reviewerUserId: data.reviewer_user_id as string, revisionLabel: (data.revision_label as string | null) ?? null, noticeLanded: noticeLanded === true };
 }
 
 // ── Finalize (promote the approved draft to the controlled rev) ───────────────
@@ -1333,6 +1344,10 @@ async function promoteThreeStep(p: {
 
 export async function scanReviews(orgId: string, opts?: { cooldownDays?: number }): Promise<number> {
   const cooldownDays = opts?.cooldownDays ?? 5;
+  // DIST-19 (P38): rows an earlier run could not write are written first;
+  // this run's writer says a missing record once (never fails the scan).
+  await replayDeferredNotices(orgId, "review_signoff");
+  const notices = noticeRecorder();
   const { data } = await supabase.from("document_review_signoffs")
     .select("id, document_id, document_version_id, reviewer_user_id, reviewer_name, revision_label, slot, activated, notified_at, assigned_at")
     .eq("org_id", orgId).eq("status", "pending");
@@ -1383,7 +1398,17 @@ export async function scanReviews(orgId: string, opts?: { cooldownDays?: number 
     // Auto-activate a still-inactive alternate once the review is past timeout.
     if (r.slot === "alternate" && r.activated === false && ageDays >= timeoutDays) {
       work.push(async () => {
-        await activateAlternate({ orgId, documentId: r.document_id as string, libraryId: doc.library_id as string, signoffId: r.id as string, actorId: null });
+        const act = await activateAlternate({
+          orgId, documentId: r.document_id as string, libraryId: doc.library_id as string, signoffId: r.id as string, actorId: null,
+          cause: { reason: "review_timeout", timeoutDays, ageDays, documentVersionId: (r.document_version_id as string | null) ?? null },
+        });
+        // DIST-19: the activation's notice, once it landed, is on the record
+        if (act?.noticeLanded) await notices.record([noticeRow({
+          org_id: orgId, document_id: r.document_id as string, version_id: (r.document_version_id as string | null) ?? null,
+          revision_label: (r.revision_label as string | null) ?? null, source: "review_signoff", source_id: r.id as string,
+          kind: "alternate_activated", recipient: act.reviewerUserId, subject_user_id: act.reviewerUserId,
+          details: { cause: "review_timeout", timeoutDays, ageDays },
+        })]);
         return 1;
       });
       continue;
@@ -1397,12 +1422,18 @@ export async function scanReviews(orgId: string, opts?: { cooldownDays?: number 
     const wants = plan.only(retryKey, r.notified_at as string | null);
     work.push(async () => {
       const landed: boolean[] = [];
-      if (wants("review_requested", r.reviewer_user_id as string)) landed.push(await notify({
-        orgId, userId: r.reviewer_user_id as string, kind: "review_requested",
-        title: `Reminder — review ${label}`,
-        body: "A draft revision is still waiting on your sign-off.",
-        link, resourceType: "document", resourceId: r.document_id as string,
-      }, { retryKey }));
+      // DIST-19: each notice and whether it landed — only a landed one is recorded
+      const sent: Array<{ kind: "reminded" | "escalated"; to: string; ok: boolean }> = [];
+      if (wants("review_requested", r.reviewer_user_id as string)) {
+        const ok = await notify({
+          orgId, userId: r.reviewer_user_id as string, kind: "review_requested",
+          title: `Reminder — review ${label}`,
+          body: "A draft revision is still waiting on your sign-off.",
+          link, resourceType: "document", resourceId: r.document_id as string,
+        }, { retryKey });
+        landed.push(ok);
+        sent.push({ kind: "reminded", to: r.reviewer_user_id as string, ok });
+      }
       if (ageDays >= timeoutDays) {
         const owner = resolveEffectiveOwner(
           { owner_user_id: doc.owner_user_id as string | null, owner_name: doc.owner_name as string | null },
@@ -1412,15 +1443,27 @@ export async function scanReviews(orgId: string, opts?: { cooldownDays?: number 
           teamSupervisors,
         );
         const escalateTo = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]).filter((u) => u !== (r.reviewer_user_id as string));
-        landed.push(...await Promise.all(escalateTo.filter((uid) => wants("review_overdue", uid)).map((uid) =>
+        const targets = escalateTo.filter((uid) => wants("review_overdue", uid));
+        const oks = await Promise.all(targets.map((uid) =>
           notify({ orgId, userId: uid, kind: "review_overdue", title: `Review overdue: ${label}`, body: `${(r.reviewer_name as string) || "A reviewer"} hasn't signed off — ${ageDays} days outstanding.`, link, resourceType: "document", resourceId: r.document_id as string }, { retryKey })
-        )));
+        ));
+        landed.push(...oks);
+        targets.forEach((uid, i) => sent.push({ kind: "escalated", to: uid, ok: oks[i] }));
       }
       // DELIV-7 dw1: stamped only when every notice landed (a lost one is
       // sent again on the next run, to its recipient only).
       if (landed.every(Boolean)) {
         await supabase.from("document_review_signoffs").update({ notified_at: new Date().toISOString() }).eq("id", r.id as string);
       }
+      // DIST-19 (P38): every notice that landed is a row on the record — after
+      // the stamp, which is written exactly as before; a failed write never
+      // fails the scan (deferred to the next run).
+      await notices.record(sent.filter((x) => x.ok).map((x) => noticeRow({
+        org_id: orgId, document_id: r.document_id as string, version_id: (r.document_version_id as string | null) ?? null,
+        revision_label: (r.revision_label as string | null) ?? null, source: "review_signoff", source_id: r.id as string,
+        kind: x.kind, recipient: x.to, subject_user_id: r.reviewer_user_id as string,
+        details: x.kind === "escalated" ? { ageDays, timeoutDays } : { ageDays },
+      })));
       return 1;
     });
   }

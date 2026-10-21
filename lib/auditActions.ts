@@ -70,6 +70,9 @@ const BY_CATEGORY: Record<AuditCategory, readonly string[]> = {
     "ACK_REQUESTED", "ACK_WAIVED", "COMPLIANCE_CLOCKS_NOT_STARTED", "PSM_ALERT_UNROUTED",
     // drafting-flow EVID-2 (DF-P11): a recipient confirmed a distributed revision.
     "ACK_DISTRIBUTION_CONFIRMED",
+    // document-control DIST-19 (P38): notice-record rows a scan could not
+    // write, kept for its next run (lib/documentNoticeRecord.ts).
+    "DOCUMENT_NOTICE_RECORD_DEFERRED",
   ],
   distribution: [
     "TRANSMITTAL_CREATED", "TRANSMITTAL_ISSUED", "TRANSMITTAL_EMAILED", "TRANSMITTAL_ACKNOWLEDGED",
