@@ -22,7 +22,10 @@
 //   AUTHZ-5 — a key is deleted only when it is one of this workspace's request
 //   files (lib/ticketShed.ts isShedTicketKey: orgs/<org>/tickets/… or an intake
 //   redline), no live revision shares it (RET-8) and no OTHER live ticket
-//   names it; anything else is counted and left in storage.
+//   names it. Another of this workspace's files the ticket names (a library
+//   `Source` reference) is kept and counted as a reference
+//   (referencedKeysKept); a key outside the workspace is refused and counted
+//   (rejectedKeys). Neither is ever deleted.
 
 import { NextRequest, NextResponse } from "next/server";
 import { DeleteObjectsCommand } from "@aws-sdk/client-s3";
@@ -32,7 +35,7 @@ import {
   changedSinceCapture, isShedTicketKey, keysOnOtherLiveTickets, TERMINAL_TICKET_STATUSES,
   type TicketAttachmentLite,
 } from "@/lib/ticketShed";
-import { sharedLiveKeys } from "@/lib/shedKeyGuard";
+import { isOrgOwnedKey, sharedLiveKeys } from "@/lib/shedKeyGuard";
 import { persistReclaimShortfall } from "@/lib/archiveCatalog";
 
 export const runtime = "nodejs";
@@ -192,15 +195,19 @@ export async function POST(req: NextRequest) {
   // is trusted for deletion only when it is one of THIS workspace's request
   // files (orgs/<org>/tickets/… or an intake redline — isShedTicketKey), a
   // narrowing of the org-prefix rule ticket-shed/restore applies on its write
-  // path. Anything else is counted and left in storage.
+  // path. Anything else is counted and left in storage: a same-workspace
+  // non-request key (a library Source reference — legitimate) as a kept
+  // reference, a key outside the workspace as refused.
   let rejectedKeys = 0;
+  let referencedKeysKept = 0;
   const keysFor = (t: TombstoneSource): string[] =>
     (Array.isArray(t.attachments) ? t.attachments : [])
       .map((a) => (a?.url || "").toString())
       .filter((k) => {
         if (!k) return false;
         if (isShedTicketKey(k, orgId)) return true;
-        rejectedKeys++;
+        if (isOrgOwnedKey(k, orgId)) referencedKeysKept++;
+        else rejectedKeys++;
         return false;
       });
 
@@ -299,7 +306,7 @@ export async function POST(req: NextRequest) {
     // The stubs stamped so far stay stamped: say so in the audit trail, partially.
     const auditError = await writeReclaimAudit({
       partial: true, stoppedAt: "shared-key read (nothing deleted from storage or ticket_comments)", stopError: message.slice(0, 500),
-      reclaimedTickets: newlyStamped, reprocessed: idsToFree.length - newlyStamped, keysDeleted: 0, rejectedKeys, errors: errors.slice(0, 8),
+      reclaimedTickets: newlyStamped, reprocessed: idsToFree.length - newlyStamped, keysDeleted: 0, rejectedKeys, referencedKeysKept, errors: errors.slice(0, 8),
     });
     return NextResponse.json({
       error: `${message} Stubs are stamped; re-run Reclaim to finish freeing.`, processed: idsToFree.length, reclaimedTickets: newlyStamped,
@@ -326,10 +333,10 @@ export async function POST(req: NextRequest) {
   if (!persisted.ok) errors.push(persisted.error);
   // ALOG-8 (admin-and-org P13): the reclaim has happened either way (see
   // writeReclaimAudit above).
-  const auditError = await writeReclaimAudit({ reclaimedTickets, reprocessed: idsToFree.length - newlyStamped, keysDeleted, keysFailed, shortfallPersisted: persisted.ok, rejectedKeys, sharedSkipped, sharedTicketSkipped, errors: errors.slice(0, 8) });
+  const auditError = await writeReclaimAudit({ reclaimedTickets, reprocessed: idsToFree.length - newlyStamped, keysDeleted, keysFailed, shortfallPersisted: persisted.ok, rejectedKeys, referencedKeysKept, sharedSkipped, sharedTicketSkipped, errors: errors.slice(0, 8) });
 
   return NextResponse.json({
-    ok: true, archiveId, reclaimedTickets, processed: idsToFree.length, keysDeleted, keysFailed, shortfallPersisted: persisted.ok, rejectedKeys, sharedSkipped, sharedTicketSkipped, errors,
+    ok: true, archiveId, reclaimedTickets, processed: idsToFree.length, keysDeleted, keysFailed, shortfallPersisted: persisted.ok, rejectedKeys, referencedKeysKept, sharedSkipped, sharedTicketSkipped, errors,
     ...(auditError ? { auditError: `the reclaim moved ${reclaimedTickets} ticket(s) to the archive but its TICKET_ARCHIVE_RECLAIM audit row was not written: ${auditError}` } : {}),
   });
 }

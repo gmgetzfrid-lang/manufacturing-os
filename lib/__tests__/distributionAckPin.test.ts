@@ -115,4 +115,15 @@ describe("acknowledge writes its own audit row (drafting-flow EVID-2 done-when 4
     await expect(acknowledge("ack1", "user-imposter")).rejects.toThrow(/isn't yours to sign/);
     expect(state.audits).toHaveLength(0);
   });
+  it("fix pass: the panel passes the signed-in person's email and role, and the Inspector hands both in — the row is never identity-less", async () => {
+    await acknowledge("ack1", "user-rec", { email: "rec@x", role: "Drafter" });
+    expect(state.audits[0]).toMatchObject({ userEmail: "rec@x", userRole: "Drafter" });
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const panel = readFileSync(join(process.cwd(), "components/documents/DistributionAcks.tsx"), "utf8");
+    expect(panel).toContain("await acknowledge(myPending.id, currentUserId, { email: currentUserEmail ?? null, role: currentUserRole ?? null });");
+    expect(panel).not.toMatch(/await acknowledge\(myPending\.id, currentUserId\);/);
+    const inspector = readFileSync(join(process.cwd(), "components/documents/InspectorPanel.tsx"), "utf8");
+    expect(inspector).toMatch(/currentUserEmail=\{userEmail \?\? null\}\s*\n\s*currentUserRole=\{activeRole \?\? null\}/);
+  });
 });

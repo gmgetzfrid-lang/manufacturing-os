@@ -266,6 +266,8 @@ and :87-89 — `          if (!allowed) {`  `            return NextResponse.jso
 - ✓ A key that cannot be attributed to an org is refused, never signed (`:102`).
 - ✓ `lib/__tests__/storageResolve.test.ts` "a member the document's ACL does not admit gets 403 from BOTH doors, and no URL" (real `documentKeyGate`, real presigner), with the creator, a `DEC-43` controller (row written), a lookup failure (503), an unattributable key and a cross-workspace prefix pinned beside it.
 
+Review fix pass: the revision attribution read is scoped `org_id = <prefix org> OR org_id IS NULL` (`document_versions.org_id` is nullable, `supabase/schema.sql`), so a legacy shed revision with no org_id keeps its NAMED archive prompt; a row of another workspace still never answers (`storageResolve.test.ts` "a legacy shed revision with a NULL org_id still gets its NAMED archive prompt").
+
 **Scope / residual.** None for this finding. The ticket-file rule and the archive answer's order are `EVID-16` / `ORG-20`'s.
 
 ---
@@ -316,15 +318,15 @@ the guard that exists on the other side — app/api/admin/ticket-shed/restore/ro
 - [ ] The produce step applies the same prefix filter before fetching bytes into the ZIP
 
 **Resolution (2026-10-20, drafting-flow Round G).** DF-P11 AFTER-DC. Reproduced on `29d92ac`: the commit's `keysFor` took every `attachments[].url` that passed `isOrgOwnedKey` (any `orgs/<org>/…` key, a library revision included). Now:
-- `lib/ticketShed.ts` `isShedTicketKey` (`:140`): a safe key AND either under `orgs/<org>/tickets/<…>` or an intake redline `orgs/<org>/project-intake/<link>/redlines/<file>` — nothing else a ticket names is the shed's to capture or delete.
-- Commit (`app/api/admin/ticket-shed/commit/route.ts`): `keysFor` keeps only `isShedTicketKey` keys (`:193-202`); every other key is refused, counted in `rejectedKeys` and the `TICKET_SHED_RECLAIMED` audit row. After the existing revision check (`sharedLiveKeys`, a `document_versions.file_url` still live), `keysOnOtherLiveTickets` (`lib/ticketShed.ts:176`; per key, `archived_at IS NULL`, batches of 20, a failed read throws → 503 before any delete) skips a key another live ticket still names (`sharedTicketSkipped`, `:286-296`, in the audit row and the answer).
-- Produce (`app/api/admin/ticket-shed/route.ts:203`): a ticket naming any non-request key is skipped whole and counted before any byte is fetched.
+- `lib/ticketShed.ts` `isShedTicketKey`: a safe key AND either under `orgs/<org>/tickets/<…>` or an intake redline `orgs/<org>/project-intake/<link>/redlines/<file>` — nothing else a ticket names is the shed's to DELETE.
+- Commit (`app/api/admin/ticket-shed/commit/route.ts`): `keysFor` keeps only `isShedTicketKey` keys for deletion. Another of this workspace's files the ticket names (`isOrgOwnedKey` — a library file a request started from a document carries as a `Source` reference, `app/api/tickets/create`) is kept and counted as `referencedKeysKept`; a key outside the workspace is refused and counted as `rejectedKeys`; both counts are in the `TICKET_ARCHIVE_RECLAIM` audit row and the answer (review fix pass: a legitimate reference is no longer reported as refused or planted). After the existing revision check (`sharedLiveKeys`, a `document_versions.file_url` still live), `keysOnOtherLiveTickets` (`lib/ticketShed.ts`; per key, `archived_at IS NULL`, batches of 20, a failed read throws → 503 before any delete) skips a key another live ticket still names (`sharedTicketSkipped`, in the audit row and the answer).
+- Produce (`app/api/admin/ticket-shed/route.ts`): the org-prefix rule (`isOrgOwnedKey`, done-when 3 as written) decides capture — a ticket naming any key outside the workspace (or an unsafe one) is skipped whole and counted before any byte is fetched. Review fix pass: the first cut applied `isShedTicketKey` here too, which left every ticket carrying a library `Source` reference permanently un-sheddable; capture is back on the prefix rule and the narrowing lives only in what commit deletes.
 
 **Done-when.**
-- ✓ `keysFor` drops every key outside this workspace's request prefix, counted and audited (`rejectedKeys`). Stricter than "starts with `orgs/${orgId}/`": a library revision under the workspace's prefix is refused too.
+- ✓ `keysFor` drops every key outside `orgs/${orgId}/` from deletion with a counted, audited reason (`rejectedKeys`), and deletes only this workspace's request files — a same-workspace non-request key (a library `Source` reference) is kept and counted (`referencedKeysKept`), never deleted.
 - ✓ A key a live revision or another live ticket still references is never deleted (`sharedSkipped`, `sharedTicketSkipped`).
-- ✓ Produce applies the same filter before fetching bytes.
-- Tests: `lib/__tests__/ticketShedCommit.test.ts` "AUTHZ-5 — the reclaim deletes only this workspace's request files nobody else still uses" (planted keys refused, shared keys skipped, a failed live-ticket read stops the reclaim, produce skips a planted ticket); `dcRoundFShed.test.ts` re-pinned on the narrower rule.
+- ✓ Produce applies the org-prefix filter before fetching bytes into the ZIP (as written; a library reference's bytes go into the archive, and commit keeps the key).
+- Tests: `lib/__tests__/ticketShedCommit.test.ts` "AUTHZ-5 — the reclaim deletes only this workspace's request files nobody else still uses" (another workspace's key refused, this workspace's library / knowledge keys kept as references, shared keys skipped, a failed live-ticket read stops the reclaim, produce skips a ticket carrying another workspace's key) and the regression "a closed ticket with a library Source attachment is captured, freed, and its library key is never deleted"; `dcRoundFShed.test.ts` re-pinned (`rejectedKeys` 1, `referencedKeysKept` 1).
 
 **Scope / residual.** None. DC `RET-6` is the same class on the document shed (closed there).
 

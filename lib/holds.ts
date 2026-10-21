@@ -160,19 +160,32 @@ export interface HoldControls {
  *  ROLE-5: a read-only role (Viewer / Auditor) anywhere in the held
  *  collection SUBTRACTS — deny-if-any, no headline shortcut, no controller
  *  escape — the same way every restriction-style check in the app does, so
- *  the shipped "*" default does not hand an Auditor a live Release control. */
+ *  the shipped "*" default does not hand an Auditor a live Release control.
+ *  drafting-flow HAND-2 (DF-P11 fix pass): pass the `hold` a control sits on
+ *  and its OPENER may release (and re-date) it whatever the policy says —
+ *  the person who stopped work can lift their own stop once their condition
+ *  clears. The document_holds UPDATE policy carries the same leg
+ *  (20261239, `opened_by = auth.uid()`); assertHoldCapability mirrors it. */
 export function holdControlsFor(
   policy: CapabilityPolicy | null | undefined,
   role: string | null | undefined,
   extraRoles: readonly string[] | null | undefined,
   uid: string | null | undefined,
+  hold?: { openedBy?: string | null } | null,
 ): HoldControls {
   const extra = extraRoles ? [...extraRoles] : null;
   const readOnly = holdsReadOnlyRole([role ?? "", ...(extra ?? [])].filter(Boolean));
   return {
     canOpen: !readOnly && policyAllows(policy, "holds.open", role, extra, uid),
-    canRelease: !readOnly && policyAllows(policy, "holds.release", role, extra, uid),
+    canRelease: !readOnly && (policyAllows(policy, "holds.release", role, extra, uid) || isHoldOpener(hold, uid)),
   };
+}
+
+/** HAND-2 (DF-P11 fix pass): true when `uid` placed `hold` — the opener's
+ *  own-release leg (the document_holds UPDATE policy's `opened_by =
+ *  auth.uid()`, 20261239). Pure; an absent uid or opener is never a match. */
+export function isHoldOpener(hold: { openedBy?: string | null } | null | undefined, uid: string | null | undefined): boolean {
+  return !!uid && !!hold?.openedBy && hold.openedBy === uid;
 }
 
 // ─── Mutations ──────────────────────────────────────────────────
@@ -256,6 +269,10 @@ async function assertHoldCapability(
     // governs — which is also what the document_holds policies see through
     // the 3-argument org_capability_allows. Both halves agree by construction.
     resource?: import("@/lib/capabilityPolicy").CapabilityResource;
+    /** HAND-2 (DF-P11 fix pass): who placed the hold being released or
+     *  re-dated. Its opener passes whatever the policy says — the same leg
+     *  the document_holds UPDATE policy carries (20261239). */
+    openedBy?: string | null;
   } = {},
 ): Promise<void> {
   const resource = opts.resource;
@@ -290,10 +307,11 @@ async function assertHoldCapability(
     const role = (member?.role as string | null | undefined) ?? null;
     const extra = (member?.roles as string[] | null) ?? [];
     const policy = loaded.policy;
-    if (!policyAllows(policy, cap, role, extra, uid, resource)) {
+    const ownHold = cap === "holds.release" && isHoldOpener({ openedBy: opts.openedBy }, uid);
+    if (!ownHold && !policyAllows(policy, cap, role, extra, uid, resource)) {
       throw new Error(cap === "holds.open"
         ? "Your role isn't allowed to place holds. An Admin can change this under Admin → Permissions → Action permissions."
-        : "Your role isn't allowed to release holds. An Admin can change this under Admin → Permissions → Action permissions.");
+        : "Your role isn't allowed to release holds placed by someone else (you can release a hold you placed yourself). An Admin can change this under Admin → Permissions → Action permissions.");
     }
   } catch (e) {
     const msg = (e as Error)?.message ?? "";
@@ -377,13 +395,16 @@ export async function openHold(input: OpenHoldInput): Promise<HoldRecord> {
 
 /** AUTHZ-7 (review fix): the hold's org, read CHECKED — the capability gate
  *  needs it, so a failed read refuses (the gate would otherwise not run). A
- *  row that is absent or not visible refuses with the update's own answer. */
-async function readHoldOrg(holdId: string, lead: string): Promise<{ orgId: string }> {
+ *  row that is absent or not visible refuses with the update's own answer.
+ *  HAND-2 (DF-P11 fix pass): also who placed it — the opener's own-release
+ *  leg. opened_by is immutable once placed (20261073), so it cannot be
+ *  re-pointed between this read and the write. */
+async function readHoldOrg(holdId: string, lead: string): Promise<{ orgId: string; openedBy: string | null }> {
   const { data, error } = await supabase
-    .from("document_holds").select("org_id").eq("id", holdId).maybeSingle();
+    .from("document_holds").select("org_id, opened_by").eq("id", holdId).maybeSingle();
   if (error) throw new Error(`${lead}: the hold could not be read to check your permission (${error.message}). Try again in a moment.`);
   if (!data?.org_id) throw new Error("Hold already released or not found.");
-  return { orgId: String(data.org_id) };
+  return { orgId: String(data.org_id), openedBy: (data as { opened_by?: string | null }).opened_by ?? null };
 }
 
 export interface ReleaseHoldInput {
@@ -406,7 +427,7 @@ export async function releaseHold(input: ReleaseHoldInput): Promise<HoldRecord> 
   // fix): a read that fails is a gate that did not run — refuse; a row that
   // is not there (or not visible) is the same answer the update would give.
   const holdRow = await readHoldOrg(input.holdId, "The hold was not released");
-  await assertHoldCapability(holdRow.orgId, "holds.release", { action: "release" });
+  await assertHoldCapability(holdRow.orgId, "holds.release", { action: "release", openedBy: holdRow.openedBy });
 
   const now = new Date().toISOString();
   const { data, error } = await supabase
@@ -463,13 +484,14 @@ export async function releaseHold(input: ReleaseHoldInput): Promise<HoldRecord> 
  *  and the hold falls back to the age-based nudge); the CAS predicate keeps a
  *  released hold untouched, and the 20261073 guard admits exactly this column
  *  on an open row. Authority is holds.release — the same capability the
- *  document_holds UPDATE policy (20260901) gates every update on — so the
+ *  document_holds UPDATE policy (20260901) gates every update on — or being
+ *  the hold's opener (the policy's own-hold leg, 20261239), so the
  *  control sits beside Release on both surfaces. A re-date is not a hold
  *  event: it writes no HOLD_* audit row and sends no notification; the next
  *  aging sweep keys on the new date. */
 export async function updateHoldExpectedRelease(holdId: string, expectedReleaseAt: string | null): Promise<HoldRecord> {
   const holdRow = await readHoldOrg(holdId, "The hold's expected date was not changed");
-  await assertHoldCapability(holdRow.orgId, "holds.release", { action: "redate" });
+  await assertHoldCapability(holdRow.orgId, "holds.release", { action: "redate", openedBy: holdRow.openedBy });
 
   const { data, error } = await supabase
     .from("document_holds")

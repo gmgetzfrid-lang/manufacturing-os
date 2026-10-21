@@ -33,7 +33,9 @@
 //     (holds.open / holds.release — role tokens, the additive collection
 //     and per-person grants) through lib/holds.ts holdControlsFor, never
 //     a literal role list (HLD-8). `canEdit` is a caller-side hard OFF
-//     (read-only contexts); it can hide controls, never grant them.
+//     (read-only contexts); it can hide controls, never grant them. A
+//     hold's own opener is offered Release / Re-date on that hold
+//     (drafting-flow HAND-2, the UPDATE policy's own-hold leg).
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
@@ -130,6 +132,11 @@ export default function HoldStrip({
     : { canOpen: false, canRelease: false };
   const showOpen = canEdit && canOpen;
   const showRelease = canEdit && canRelease;
+  // drafting-flow HAND-2 (DF-P11 fix pass): the person who placed a hold may
+  // release / re-date it even when holds.release does not name them — the
+  // same own-hold leg the document_holds UPDATE policy carries (20261239).
+  const mayReleaseRow = (h: HoldRecord) =>
+    showRelease || (canEdit && !!policy && holdControlsFor(policy, userRole, heldRoleCollection, userId, h).canRelease);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -247,8 +254,8 @@ export default function HoldStrip({
           {holds.map((h) => <ActiveHoldRow
             key={h.id}
             hold={h}
-            canRelease={showRelease}
-            canRedate={showRelease}
+            canRelease={mayReleaseRow(h)}
+            canRedate={mayReleaseRow(h)}
             onRedate={(date) => onRedate(h.id!, date)}
             isReleasing={releasingId === h.id}
             onStartRelease={() => { setReleasingId(h.id!); setReleaseReasonDraft(""); }}

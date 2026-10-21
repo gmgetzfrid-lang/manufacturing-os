@@ -8,8 +8,10 @@
 //         archive the stub was reclaimed into, compare-and-set on the stub;
 //   AUTHZ-5 a key is deleted only when it is one of this workspace's request
 //         files (orgs/<org>/tickets/… or an intake redline), no live revision
-//         shares it and no OTHER live ticket names it; the produce applies the
-//         same rule before reading bytes into the archive.
+//         shares it and no OTHER live ticket names it; another of this
+//         workspace's files (a library Source reference) is kept, never
+//         refused. The produce captures by the org-prefix rule, so a ticket
+//         carrying a library reference stays sheddable.
 // The vi.hoisted state + recorded-ops Proxy chain of dcRoundFShed.test.ts.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -254,18 +256,19 @@ describe("AUTHZ-5 — the reclaim deletes only this workspace's request files no
     attachments: [
       { url: T("1_draft.pdf") }, { url: T("2_ifc.pdf") }, { url: T("3_shared.pdf") }, { url: T("4_copied.pdf") },
       { url: REDLINE },
-      { url: `orgs/${ORG}/libraries/l/P-101-RevD.pdf` }, // a controlled drawing's key, planted
-      { url: `orgs/${ORG}/knowledge/k1/manual.pdf` },   // another of this workspace's files, planted
+      { url: `orgs/${ORG}/libraries/l/P-101-RevD.pdf` }, // a controlled drawing's key (a Source reference, or planted)
+      { url: `orgs/${ORG}/knowledge/k1/manual.pdf` },   // another of this workspace's files
       { url: `orgs/${OTHER}/tickets/KE-9/1_x.pdf` },     // another workspace's, planted
     ],
   })];
 
-  it("deletes the request's own files and its redline; refuses the planted keys; skips a key a live revision or another live ticket still uses", async () => {
+  it("deletes the request's own files and its redline; keeps this workspace's other files as references; refuses another workspace's; skips a key a live revision or another live ticket still uses", async () => {
     state.resolve = resolver({ tickets, liveRevisionKeys: [T("3_shared.pdf")], liveTicketsNaming: { [T("4_copied.pdf")]: ["t-live"], [T("1_draft.pdf")]: ["t1"] } });
     const { res, body } = await commit();
     expect(res.status).toBe(200);
     expect(state.r2Deletes.sort()).toEqual([T("1_draft.pdf"), T("2_ifc.pdf"), REDLINE].sort());
-    expect(body.rejectedKeys).toBe(3);
+    expect(body.rejectedKeys).toBe(1);
+    expect(body.referencedKeysKept).toBe(2);
     expect(body.sharedSkipped).toBe(1);
     expect(body.sharedTicketSkipped).toBe(1);
   });
@@ -279,13 +282,13 @@ describe("AUTHZ-5 — the reclaim deletes only this workspace's request files no
     expect(commentDeletes).toBe(0);
   });
 
-  it("produce: a ticket carrying a planted non-request key is skipped whole and counted; a redline is captured", async () => {
+  it("produce: a ticket carrying another workspace's key is skipped whole and counted; a redline is captured", async () => {
     const t1 = { id: "t1", org_id: ORG, ticket_id: "KE-1", title: "ok", status: "CLOSED", closed_at: OLD, last_modified: OLD, created_at: OLD, archived_at: null,
       attachments: [{ url: `orgs/${ORG}/tickets/KE-1/1_a.pdf`, size: 1 }, { url: REDLINE, size: 1 }], comments: [], history: [], metadata: {} };
-    const t2 = { ...t1, id: "t2", ticket_id: "KE-2", attachments: [{ url: `orgs/${ORG}/libraries/l/P-101-RevD.pdf`, size: 1 }] };
+    const t2 = { ...t1, id: "t2", ticket_id: "KE-2", attachments: [{ url: `orgs/${OTHER}/tickets/KE-9/1_x.pdf`, size: 1 }] };
     state.objects[`orgs/${ORG}/tickets/KE-1/1_a.pdf`] = bytes("a");
     state.objects[REDLINE] = bytes("r");
-    state.objects[`orgs/${ORG}/libraries/l/P-101-RevD.pdf`] = bytes("controlled");
+    state.objects[`orgs/${OTHER}/tickets/KE-9/1_x.pdf`] = bytes("theirs");
     const claimed: string[] = [];
     const unclaimed: string[] = [];
     state.resolve = (table, ops) => {
@@ -305,7 +308,46 @@ describe("AUTHZ-5 — the reclaim deletes only this workspace's request files no
     expect(unclaimed).toEqual(["t2"]);
     const zip = await JSZip.loadAsync(await res.arrayBuffer());
     expect(zip.files[`files/${REDLINE}`]).toBeDefined();
-    expect(zip.files[`files/orgs/${ORG}/libraries/l/P-101-RevD.pdf`]).toBeUndefined();
+    expect(zip.files[`files/orgs/${OTHER}/tickets/KE-9/1_x.pdf`]).toBeUndefined();
+  });
+
+  // Fix pass (review major 1): a request started from a document carries the
+  // workspace's library file as a `Source` reference (app/api/tickets/create).
+  // Such a ticket stays sheddable — captured, freed — and its library key is
+  // never deleted (kept as a reference, not reported as refused).
+  it("regression: a closed ticket with a library Source attachment is captured, freed, and its library key is never deleted", async () => {
+    const LIB = `orgs/${ORG}/libraries/lib1/P&ID.pdf`;
+    const OWN = `orgs/${ORG}/tickets/KE-3/1_markup.pdf`;
+    const t3 = { id: "t3", org_id: ORG, ticket_id: "KE-3", title: "from viewer", status: "CLOSED", closed_at: OLD, last_modified: OLD, created_at: OLD, archived_at: null,
+      attachments: [{ url: LIB, name: "P&ID.pdf", type: "Source", size: 1 }, { url: OWN, name: "markup.pdf", size: 1 }], comments: [{ id: "c" }], history: [], metadata: {} };
+    state.objects[LIB] = bytes("library");
+    state.objects[OWN] = bytes("own");
+    const unclaimed: string[] = [];
+    state.resolve = (table, ops) => {
+      if (table === "tickets") {
+        const upd = argOf(ops, "update")?.[0] as Record<string, unknown> | undefined;
+        const ids = (filter(ops, "in", "id") as string[] | undefined) ?? [];
+        if (upd && upd.archive_id) return { data: ids.map((id) => ({ id })), error: null };
+        if (upd && upd.archive_id === null) { unclaimed.push(...ids); return { data: [], error: null }; }
+        return { data: [t3], error: null };
+      }
+      return { data: [], error: null };
+    };
+    const res = await TICKET_PRODUCE(post("https://app/api/admin/ticket-shed", { orgId: ORG, days: 30, confirm: true }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("X-Archive-Tickets")).toBe("1");
+    expect(res.headers.get("X-Archive-Rejected-Keys")).toBe("0");
+    expect(unclaimed).toEqual([]);
+
+    // The commit frees the ticket: its own file is deleted, the library file is kept.
+    state.resolve = resolver({ tickets: [captured({ id: "t3", ticket_id: "KE-3", attachments: t3.attachments })] });
+    const { res: cres, body } = await commit();
+    expect(cres.status).toBe(200);
+    expect(stamps.map((s) => s.id)).toEqual(["t3"]);
+    expect(state.r2Deletes).toEqual([OWN]);
+    expect(state.r2Deletes).not.toContain(LIB);
+    expect(body.referencedKeysKept).toBe(1);
+    expect(body.rejectedKeys).toBe(0);
   });
 });
 

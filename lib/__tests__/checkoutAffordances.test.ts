@@ -65,6 +65,16 @@ describe("holdAffordances — holds.open / holds.release from the policy (HLD-8 
     expect(holdAffordances(policy, "Requester", ["Requester"], "someone-else")).toEqual({ canOpen: true, canRelease: false });
   });
 
+  it("drafting-flow HAND-2 (DF-P11 fix pass): a hold's opener may release THAT hold under the controller-tier default; nobody else outside the policy may", () => {
+    const policy: CapabilityPolicy = {};
+    // the shipped default: holds.release is Admin / DocCtrl
+    expect(holdAffordances(policy, "Supervisor", ["Supervisor"], "sup").canRelease).toBe(false);
+    expect(holdAffordances(policy, "Supervisor", ["Supervisor"], "sup", { openedBy: "sup" }).canRelease).toBe(true);
+    expect(holdAffordances(policy, "Supervisor", ["Supervisor"], "sup", { openedBy: "someone-else" }).canRelease).toBe(false);
+    expect(holdAffordances(policy, "Supervisor", ["Supervisor"], null, { openedBy: null }).canRelease).toBe(false);
+    expect(holdAffordances(policy, "DocCtrl", ["DocCtrl"], "dc", { openedBy: "someone-else" }).canRelease).toBe(true);
+  });
+
   it("a role outside the literal lists but inside the policy is admitted (the old UI blocked people the policy allowed)", () => {
     const policy: CapabilityPolicy = { caps: { "holds.open": ["Auditor"] } };
     expect(holdAffordances(policy, "Auditor", ["Auditor"], "au").canOpen).toBe(true);
@@ -108,10 +118,15 @@ describe("the controller vocabulary is spelled once (DCK-13 done-when 3)", () =>
     expect(inspector).toMatch(/const canForceRelease = capFault\s*\n\s*\? false\s*\n\s*: canForceReleaseCheckout\(capPolicy, activeRole \?\? null, activeRoles \?\? null, uid \?\? null\);/);
     expect(inspector).not.toMatch(/useForceReleaseAllowed\(/);
     expect(inspector).not.toMatch(/\{isController && isCheckedOut && onForceUnlock && \(/);
-    // the strip that lists ACTIVE holds (Release buttons) follows holds.release
-    // alone — a holds.open-only member is not drawn a Release the DB refuses
-    expect(inspector).toMatch(/canEdit=\{canReleaseHold\}/);
-    expect(inspector).not.toMatch(/canEdit=\{canOpenHold \|\| canReleaseHold\}/);
+    // drafting-flow HAND-2 (DF-P11 fix pass): the strip's canEdit is only its
+    // hard OFF; it decides Release per hold (holds.release, or the hold's own
+    // opener — the UPDATE policy's own-hold leg), so a holds.open-only member
+    // is drawn Release only on a hold they placed, never one the DB refuses.
+    expect(inspector).toMatch(/canEdit=\{canReleaseHold \|\| canOpenHold\}/);
+    const strip = src("components/documents/HoldStrip.tsx");
+    expect(strip).toMatch(/holdControlsFor\(policy, userRole, heldRoleCollection, userId, h\)\.canRelease/);
+    expect(strip).toMatch(/canRelease=\{mayReleaseRow\(h\)\}/);
+    expect(strip).toMatch(/canRedate=\{mayReleaseRow\(h\)\}/);
     expect(inspector).toMatch(/activeHoldCount === 0 && canOpenHold && \(/);
     expect(inspector).not.toMatch(/activeHoldCount === 0 && \(canManageAssets \|\| isOwner\)/);
 

@@ -24,7 +24,7 @@ import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal"
 import BackfillVersionModal from "@/components/documents/BackfillVersionModal";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import {
-  deriveVersionApproval, loadSignedRosters, APPROVAL_CLAIM_LABEL, type RosterSigner, type VersionApproval,
+  deriveVersionApproval, loadSignedRosters, APPROVAL_CLAIM_LABEL, EMPTY_ROSTER, type RosterState, type VersionApproval,
 } from "@/lib/versionApproval";
 
 interface VersionHistoryPanelProps {
@@ -49,7 +49,7 @@ export default function VersionHistoryPanel({
   // EVID-4 (DF-P11): each version's signed review sign-offs — the approval
   // is derived from them (or, with none, from the publisher), never from
   // the typed box. null = the roster could not be read (said, not guessed).
-  const [rosters, setRosters] = useState<Map<string, RosterSigner[]> | null>(new Map());
+  const [rosters, setRosters] = useState<Map<string, RosterState> | null>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
@@ -436,7 +436,7 @@ export default function VersionHistoryPanel({
                 {/* an in-review draft is not approved or released yet: its
                     partial roster is the review panel's, not an approval */}
                 {v.reviewState !== "in_review" && (
-                  <ApprovalBit approval={deriveVersionApproval(v, rosters ? (rosters.get(v.id ?? "") ?? []) : null)} />
+                  <ApprovalBit approval={deriveVersionApproval(v, rosters ? (rosters.get(v.id ?? "") ?? EMPTY_ROSTER) : null)} />
                 )}
               </div>
 
@@ -561,9 +561,12 @@ export default function VersionHistoryPanel({
   );
 }
 
-/** EVID-4 (DF-P11): the derived approval. Only a signed review roster earns
- *  the stamp; a release with none names its publisher as the publisher; the
- *  typed box is shown as the publisher's claim, never as an approval. */
+/** EVID-4 (DF-P11): the derived approval. Only a COMPLETE signed review
+ *  roster earns the stamp; an incomplete one says "Partially signed — n of
+ *  m"; a release with none names its publisher as the publisher, and a
+ *  backfilled historical revision the person who recorded it ("Backfilled
+ *  by"); the typed box is shown as the publisher's claim, never as an
+ *  approval. */
 function ApprovalBit({ approval }: { approval: VersionApproval }) {
   const a = approval.approval;
   return (
@@ -572,6 +575,17 @@ function ApprovalBit({ approval }: { approval: VersionApproval }) {
         <span data-approval="roster">
           <SignoffBit icon={<Stamp className="w-3 h-3" />} label="Approved (signed review)"
             name={a.signers.map((s) => `${s.name || "a reviewer"}${s.role ? ` (${s.role})` : ""}`).join(", ")} />
+        </span>
+      )}
+      {a.basis === "partial" && (
+        <span data-approval="partial" title="Some of this revision's required review sign-offs were never signed — it is not a complete signed approval.">
+          <SignoffBit icon={<CheckSquare className="w-3 h-3" />} label={`Partially signed — ${a.satisfied} of ${a.required}`}
+            name={a.signers.map((s) => `${s.name || "a reviewer"}${s.role ? ` (${s.role})` : ""}`).join(", ")} />
+        </span>
+      )}
+      {a.basis === "backfill" && (
+        <span data-approval="backfill" title="A historical revision added after the fact. The name is who recorded it here, not who released it; no review sign-off is on record.">
+          <SignoffBit icon={<User className="w-3 h-3" />} label="Backfilled by (no review sign-off on record)" name={a.name || "unknown"} />
         </span>
       )}
       {a.basis === "publisher" && (

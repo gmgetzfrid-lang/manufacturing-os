@@ -63,6 +63,7 @@ vi.mock("@/lib/ownership", () => ({
 
 import {
   deriveVersionApproval, approvalLine, loadSignedRosters, listCurrentRevisionsWithoutSignedApproval, APPROVAL_CLAIM_LABEL,
+  EMPTY_ROSTER, rosterStateFromRows, isBackfilledVersion, type RosterSigner, type RosterState,
 } from "@/lib/versionApproval";
 import { gatherEvidence, renderEvidenceHtml, EVIDENCE_SECTIONS } from "@/lib/evidencePack";
 import { recordAcknowledgment } from "@/lib/acknowledgments";
@@ -70,19 +71,21 @@ import { recordAcknowledgment } from "@/lib/acknowledgments";
 beforeEach(() => { db.tables = {}; db.readError = {}; db.updates = []; db.updateResult = null; });
 
 const SIGNER = { userId: "r1", name: "J. Okafor", role: "Engineer-3", signedAt: "2026-10-02T10:00:00Z", signatureId: "s1" };
+/** A complete roster of the given signers (one signature-backed primary each). */
+const complete = (signers: RosterSigner[]): RosterState => ({ signers, required: signers.length, satisfied: signers.length, complete: true });
 
 // ═══════════════════════════════════════════════════════════════════════════
 describe("EVID-4 — the approval is derived, the typed box is a claim", () => {
   const v = { createdBy: "pub", createdByName: "Pat Publisher", createdAt: "2026-10-01T00:00:00Z", releasedAt: "2026-10-01T01:00:00Z" };
   it("a signed review roster is the approval, at the last signature", () => {
-    const a = deriveVersionApproval({ ...v, approvedByName: "J. Okafor, PE" }, [SIGNER, { ...SIGNER, userId: "r2", name: "B", signedAt: "2026-10-03T00:00:00Z" }]);
+    const a = deriveVersionApproval({ ...v, approvedByName: "J. Okafor, PE" }, complete([SIGNER, { ...SIGNER, userId: "r2", name: "B", signedAt: "2026-10-03T00:00:00Z" }]));
     expect(a.approval.basis).toBe("roster");
     expect(a.approval.basis === "roster" && a.approval.at).toBe("2026-10-03T00:00:00Z");
     expect(approvalLine(a)).toBe("Signed: J. Okafor (Engineer-3), B (Engineer-3)");
     expect(a.claim).toBe("J. Okafor, PE");
   });
   it("no signed roster row: the publisher's identity at release — and the typed name is only a claim", () => {
-    const a = deriveVersionApproval({ ...v, approvedByName: "J. Okafor, PE" }, []);
+    const a = deriveVersionApproval({ ...v, approvedByName: "J. Okafor, PE" }, EMPTY_ROSTER);
     expect(a.approval).toEqual({ basis: "publisher", userId: "pub", name: "Pat Publisher", at: "2026-10-01T01:00:00Z" });
     expect(approvalLine(a)).toBe("Publisher: Pat Publisher (no review sign-off)");
     expect(approvalLine(a)).not.toContain("Okafor");
@@ -93,14 +96,49 @@ describe("EVID-4 — the approval is derived, the typed box is a claim", () => {
     expect(a.approval.basis).toBe("unread");
     expect(approvalLine(a)).toMatch(/^Not known/);
   });
-  it("loadSignedRosters keys signed rows by version; a failed read is null", async () => {
+  it("fix pass: ONE signed slot of three is 'Partially signed — 1 of 3', never the approval stamp", () => {
+    const rows = [
+      { status: "signed", slot: "primary", activated: true, slot_group: "person:r1", signature_id: "s1", reviewer_user_id: "r1", reviewer_name: "A. Reviewer", reviewer_role: "Engineer-2", signed_at: "2026-10-02T00:00:00Z" },
+      { status: "pending", slot: "primary", activated: true, slot_group: "person:r2", signature_id: null, reviewer_user_id: "r2" },
+      { status: "pending", slot: "primary", activated: true, slot_group: "person:r3", signature_id: null, reviewer_user_id: "r3" },
+    ];
+    const st = rosterStateFromRows(rows);
+    expect(st).toMatchObject({ required: 3, satisfied: 1, complete: false });
+    const a = deriveVersionApproval(v, st);
+    expect(a.approval.basis).toBe("partial");
+    expect(approvalLine(a)).toBe("Partially signed — 1 of 3: A. Reviewer (Engineer-2)");
+    // every slot signed (an activated alternate fills its slot): the stamp
+    const all = rosterStateFromRows([
+      rows[0],
+      { ...rows[1], status: "signed", signature_id: "s2", reviewer_name: "B" },
+      { ...rows[2], status: "void" },
+      { status: "signed", slot: "alternate", activated: true, slot_group: "person:r3", signature_id: "s4", reviewer_user_id: "alt", reviewer_name: "C" },
+    ]);
+    expect(all).toMatchObject({ required: 3, satisfied: 3, complete: true });
+    expect(deriveVersionApproval(v, all).approval.basis).toBe("roster");
+    // a row born 'signed' with no bound signature fills nothing (RG-1)
+    expect(rosterStateFromRows([{ ...rows[0], signature_id: null }])).toMatchObject({ required: 1, satisfied: 0, complete: false });
+  });
+  it("fix pass: a backfilled historical revision reads 'Backfilled by', at the historical release date — not 'Released by'", () => {
+    const back = { createdBy: "dc", createdByName: "Dee Controller", createdAt: "2026-10-20T00:00:00Z", releasedAt: "2019-03-01T00:00:00Z",
+      approvedByName: "J. Smith", fileUrl: "orgs/o1/libraries/l1/P-101__revB__backfill__1760918400000.pdf" };
+    expect(isBackfilledVersion(back)).toBe(true);
+    expect(isBackfilledVersion({ fileUrl: "orgs/o1/libraries/l1/P-101.pdf" })).toBe(false);
+    const a = deriveVersionApproval(back, EMPTY_ROSTER);
+    expect(a.approval).toEqual({ basis: "backfill", userId: "dc", name: "Dee Controller", at: "2019-03-01T00:00:00Z" });
+    expect(approvalLine(a)).toBe("Backfilled by Dee Controller (historical revision; no review sign-off on record)");
+    expect(approvalLine(a)).not.toMatch(/Publisher|Released/);
+    expect(a.claim).toBe("J. Smith");
+  });
+  it("loadSignedRosters keys each version's roster (signed rows + per-slot completion over every row); a failed read is null", async () => {
     db.tables.document_review_signoffs = [
-      { document_version_id: "v1", reviewer_user_id: "r1", reviewer_name: "J", status: "signed", signed_at: "t", signature_id: "s" },
-      { document_version_id: "v1", reviewer_user_id: "r2", reviewer_name: "K", status: "pending" },
+      { document_version_id: "v1", reviewer_user_id: "r1", reviewer_name: "J", status: "signed", signed_at: "t", signature_id: "s", slot: "primary", activated: true, slot_group: "person:r1" },
+      { document_version_id: "v1", reviewer_user_id: "r2", reviewer_name: "K", status: "pending", slot: "primary", activated: true, slot_group: "person:r2" },
     ];
     const m = await loadSignedRosters(["v1", "v2"]);
-    expect(m?.get("v1")?.map((s) => s.userId)).toEqual(["r1"]);
-    expect(m?.get("v2")).toEqual([]);
+    expect(m?.get("v1")?.signers.map((s) => s.userId)).toEqual(["r1"]);
+    expect(m?.get("v1")).toMatchObject({ required: 2, satisfied: 1, complete: false });
+    expect(m?.get("v2")).toEqual(EMPTY_ROSTER);
     db.readError.document_review_signoffs = { message: "down" };
     expect(await loadSignedRosters(["v1"])).toBeNull();
   });
@@ -110,12 +148,17 @@ describe("EVID-4 — the approval is derived, the typed box is a claim", () => {
       { id: "d2", org_id: "o1", document_number: "P-2", current_version_id: "v2", status: "Issued" },
       { id: "d3", org_id: "o1", document_number: "P-3", current_version_id: "v3", status: "Superseded" },
     ];
-    db.tables.document_review_signoffs = [{ document_version_id: "v1", reviewer_user_id: "r1", status: "signed" }];
+    db.tables.document_review_signoffs = [
+      { document_version_id: "v1", reviewer_user_id: "r1", status: "signed", signature_id: "s1", slot: "primary", activated: true, slot_group: "person:r1" },
+      // v2: one of two required slots signed — still in the gap
+      { document_version_id: "v2", reviewer_user_id: "r2", status: "signed", signature_id: "s2", slot: "primary", activated: true, slot_group: "person:r2" },
+      { document_version_id: "v2", reviewer_user_id: "r3", status: "pending", slot: "primary", activated: true, slot_group: "person:r3" },
+    ];
     db.tables.document_versions = [
       { id: "v2", revision_label: "B", created_by: "pub", created_by_name: "Pat", approved_by_name: "typed" },
     ];
     const gap = await listCurrentRevisionsWithoutSignedApproval("o1");
-    expect(gap).toEqual([{ documentId: "d2", documentNumber: "P-2", versionId: "v2", revisionLabel: "B", publishedBy: "pub", publishedByName: "Pat", claim: "typed" }]);
+    expect(gap).toEqual([{ documentId: "d2", documentNumber: "P-2", versionId: "v2", revisionLabel: "B", publishedBy: "pub", publishedByName: "Pat", claim: "typed", satisfied: 1, required: 2 }]);
     db.readError.document_review_signoffs = { message: "down" };
     await expect(listCurrentRevisionsWithoutSignedApproval("o1")).rejects.toThrow(/could not be read/);
   });
@@ -127,6 +170,13 @@ describe("EVID-4 — the approval is derived, the typed box is a claim", () => {
     expect(modal).not.toMatch(/<Field label="Approved By">/);
     expect(modal).toContain("label={APPROVAL_CLAIM_LABEL}");
     expect(APPROVAL_CLAIM_LABEL).toBe("Approval reference (publisher's note)");
+    // fix pass: the second door (backfill) labels its box the same way, and the panel renders partial / backfill
+    const backfill = readFileSync(join(process.cwd(), "components/documents/BackfillVersionModal.tsx"), "utf8");
+    expect(backfill).not.toMatch(/<Field label="Approved By">/);
+    expect(backfill).toContain("<Field label={APPROVAL_CLAIM_LABEL}>");
+    expect(panel).toContain('data-approval="partial"');
+    expect(panel).toContain('data-approval="backfill"');
+    expect(panel).toContain("rosters.get(v.id ?? \"\") ?? EMPTY_ROSTER");
   });
 });
 
@@ -181,8 +231,21 @@ describe("EVID-10 / EVID-4 — the document evidence pack", () => {
     expect(html).toContain("Signed: J. Okafor (Engineer-3)");
     expect(html).toContain("Publisher: Pat (no review sign-off)");
     expect(html).toContain("Approval reference (publisher&#39;s note) (unverified): “Typed Name”".replace("&#39;", "'"));
-    expect(html).toMatch(/1 of 2 revision\(s\) have no signed review sign-off/);
+    expect(html).toMatch(/1 of 2 revision\(s\) have no complete signed review sign-off/);
     expect(html).not.toMatch(/assembled from the immutable audit trail/);
+  });
+  it("fix pass: a revision whose roster is only partly signed prints 'Partially signed — 1 of 2' and counts as unsigned in the footer", async () => {
+    seed();
+    const d = await gatherEvidence("d1");
+    const signed = (d.signoffs ?? [])[0] as Record<string, unknown>;
+    d.signoffs = [
+      { ...signed, slot: "primary", activated: true, slot_group: "person:r1" },
+      { ...signed, id: "so-2", reviewer_user_id: "r9", reviewer_name: "Second Reviewer", status: "pending", signature_id: null, signed_at: null, slot: "primary", activated: true, slot_group: "person:r9" },
+    ];
+    const html = renderEvidenceHtml(d);
+    expect(html).toContain("Partially signed — 1 of 2: J. Okafor (Engineer-3)");
+    expect(html).not.toContain("Signed: J. Okafor (Engineer-3)");
+    expect(html).toMatch(/2 of 2 revision\(s\) have no complete signed review sign-off/);
   });
   it("a section whose read failed says so — never 'none recorded'; the Approved column says 'not known' when the roster failed", async () => {
     seed();

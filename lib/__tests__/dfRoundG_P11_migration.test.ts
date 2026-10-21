@@ -129,6 +129,56 @@ describe("20261239 — enforce_distribution_ack_guard: a one-way acknowledgment,
   });
 });
 
+describe("20261239 — document_holds_update: holds.release, or the hold's own opener (HAND-2 review fix pass)", () => {
+  const POL = "CREATE POLICY document_holds_update ON document_holds";
+  const polOf = (text: string) => {
+    const a = text.indexOf(POL);
+    expect(a, `${POL} not found`).toBeGreaterThanOrEqual(0);
+    return text.slice(a, text.indexOf("\n);", a) + 3);
+  };
+  const files = numbered.filter((f) => f < FILE && read(f).includes(POL));
+  const baseFile = files[files.length - 1];
+  const base = polOf(read(baseFile));
+  const mine = polOf(M);
+
+  it("starts from the newest earlier definition (20260901 on this base)", () => {
+    expect(baseFile).toBe("20260901_db_hard_enforcement.sql");
+  });
+
+  it("is that body with exactly the own-hold leg added to USING and WITH CHECK — the 3-argument capability call kept", () => {
+    const { onlyInA, onlyInB } = lineDiff(base, mine);
+    expect(onlyInA).toEqual([]);
+    const leg = [
+      "  OR (opened_by = auth.uid()",
+      "      AND EXISTS (SELECT 1 FROM org_members WHERE org_id = document_holds.org_id",
+      "                  AND uid = auth.uid() AND status = 'active'))",
+    ];
+    expect(onlyInB).toEqual([...leg, ...leg]);
+    expect((mine.match(/org_capability_allows\(org_id, 'holds\.release', auth\.uid\(\)\)/g) ?? []).length).toBe(2);
+    // dropped and created inside the one transaction
+    const tx = M.slice(M.indexOf("\nBEGIN;"), M.indexOf("\nCOMMIT;"));
+    expect(tx).toContain("DROP POLICY IF EXISTS document_holds_update ON document_holds;");
+    expect(tx).toContain(POL);
+    // the apply-order check refuses a database without the policy
+    expect(M).toContain("OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'document_holds' AND policyname = 'document_holds_update')");
+  });
+
+  it("probe 111 reads the deparsed policy with patterns a deparse can produce (no bare casts in LIKE)", () => {
+    expect(M).toContain("COALESCE(qual, '') LIKE '%opened_by = auth.uid()%'");
+    expect(M).toContain("COALESCE(with_check, '') LIKE '%opened_by = auth.uid()%'");
+    for (const l of M.split("\n").filter((x) => /COALESCE\((qual|with_check), ''\) LIKE/.test(x))) expect(l, l).not.toMatch(/::/);
+  });
+
+  it("the app mirrors the leg: holdControlsFor / holdAffordances take the hold, assertHoldCapability the opener", () => {
+    const holds = readFileSync(join(process.cwd(), "lib/holds.ts"), "utf8");
+    expect(holds).toContain("canRelease: !readOnly && (policyAllows(policy, \"holds.release\", role, extra, uid) || isHoldOpener(hold, uid)),");
+    expect(holds).toContain("const ownHold = cap === \"holds.release\" && isHoldOpener({ openedBy: opts.openedBy }, uid);");
+    expect(holds).toContain(".from(\"document_holds\").select(\"org_id, opened_by\")");
+    const aff = readFileSync(join(process.cwd(), "lib/checkoutAffordances.ts"), "utf8");
+    expect(aff).toContain("canRelease: opener || policyAllows(policy, \"holds.release\", role ?? null, extra, uid ?? null),");
+  });
+});
+
 describe("20261239 — capability_grant_scope_ready(): the probe the policy route asks", () => {
   it("is SECURITY INVOKER, answers true, service role only", () => {
     expect(M).toContain("CREATE OR REPLACE FUNCTION capability_grant_scope_ready()\nRETURNS boolean LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public AS $$\n  SELECT true;\n$$;");
@@ -166,9 +216,11 @@ describe("20261239 — the one-paste shape (DEC-30)", () => {
   it("the inventory is counts only — every INSERT into it selects COUNT(*) or a 0/1 state, never a row", () => {
     const pre = M.slice(0, M.indexOf("\nBEGIN;"));
     const inserts = pre.split("INSERT INTO df_p11_20261239_inventory").slice(1);
-    expect(inserts.length).toBe(7);
-    for (const ins of inserts.slice(0, 6)) expect(ins, ins.slice(0, 120)).toMatch(/COUNT\(\*\)/);
+    expect(inserts.length).toBe(8);
+    for (const ins of [...inserts.slice(0, 6), inserts[7]]) expect(ins, ins.slice(0, 120)).toMatch(/COUNT\(\*\)/);
     expect(inserts[6]).toMatch(/CASE WHEN has_function_privilege\('authenticated'/);
+    // row 8 counts the one widening (the opener leg in an org that stored a holds.release list)
+    expect(inserts[7]).toMatch(/^\nSELECT 8, 'inventory \(the one widening\)/);
   });
 
   it("the probes' LIKE patterns are the body text, quotes doubled (prosrc is verbatim)", () => {
@@ -185,6 +237,7 @@ describe("20261239 — the one-paste shape (DEC-30)", () => {
 
   it("names its paste order and its rollback", () => {
     expect(M).toContain("PASTE ORDER: deploy the app first");
-    expect(M).toContain("ROLLBACK: re-paste 20261137's org_capability_allows_for and 20261033's");
+    expect(M).toContain("ROLLBACK: re-paste 20261137's org_capability_allows_for, 20261033's");
+    expect(M).toContain("enforce_distribution_ack_guard and 20260901's document_holds_update policy;");
   });
 });

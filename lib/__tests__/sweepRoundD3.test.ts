@@ -213,7 +213,8 @@ describe("getActions honours the resource — DEC-13 acceptance: ASBUILT may onl
     expect(src("components/permissions/ViewAsSimulator.tsx")).toContain("const answer = composedAllows(policy, d.id, who.role, who.roles, who.uid, resource);");
     expect(src("components/permissions/PermissionsExplorer.tsx")).toContain("if (policyAllows(policy, cap, role, roles ? [...roles] : null, uid, resource)) return { ok: true, via: null, conditional: null };");
     expect(src("components/permissions/ViewAsSimulator.tsx")).toContain("scoped: scopedTokensFor(policy, d.id, resource) !== null,");
-    expect(src("lib/holds.ts")).toContain("if (!policyAllows(policy, cap, role, extra, uid, resource)) {");
+    // drafting-flow HAND-2 (DF-P11 fix pass): the same call, behind the hold opener's own-hold leg
+    expect(src("lib/holds.ts")).toContain("if (!ownHold && !policyAllows(policy, cap, role, extra, uid, resource)) {");
     const r = src("app/api/tickets/workflow-action/route.ts");
     expect(r).toContain("const resource = ticketResource(ticket);");
     expect(r).toContain("const scoped = scopedTokensFor(capPolicy, pickCap, resource);");

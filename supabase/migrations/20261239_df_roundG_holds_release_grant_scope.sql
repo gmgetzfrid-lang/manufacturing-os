@@ -44,25 +44,43 @@
 --        c. requested_by joins the immutable identity columns (otherwise a
 --           member could name themselves the requester first).
 --      The service role (auth.uid() NULL) is unchanged: it returns first.
+--   4. document_holds_update (the UPDATE policy — release and re-date) is
+--      re-created from its NEWEST body — 20260901 — with one added leg
+--      (drafting-flow HAND-2, DEC-90 ruling (3), review fix pass): the
+--      hold's OPENER, while an active member of the hold's org, may update
+--      their own hold (`opened_by = auth.uid()`), whatever holds.release
+--      names. The person who stopped work lifts their own stop once their
+--      condition clears; a hold placed by someone else still needs
+--      holds.release. opened_by is pinned once placed (20261073's guard), so
+--      the leg cannot be re-pointed; the release still needs a reason and is
+--      attributed to the session (20261073). Pinned by the same lineDiff test.
+--      The 3-argument org_capability_allows call is kept (20261052's probe).
 --
 -- WHO GAINS OR LOSES WHAT (HAND-2, DEC-90 ruling (3)). In an org that stores
 -- no holds.release entry, every role other than Admin and DocCtrl LOSES the
--- right to release or re-date a hold (Manager, Supervisor,
--- DraftingSupervisor, every Engineer tier, Drafter, Requester, Viewer,
--- Auditor, Contractor and any custom role) — including a hold they opened
--- themselves. Nobody gains. Inventory rows 3 and 4 count the members and the
--- open holds this touches. Every org can widen it again in Admin →
--- Permissions → Action permissions (a role, or a personal grant).
+-- right to release or re-date a hold placed by SOMEONE ELSE (Manager,
+-- Supervisor, DraftingSupervisor, every Engineer tier, Drafter, Requester,
+-- Viewer, Auditor, Contractor and any custom role). Everyone KEEPS release
+-- and re-date of a hold they placed themselves (step 4). Inventory rows 3
+-- and 4 count the members and the open holds this touches. Every org can
+-- widen it again in Admin → Permissions → Action permissions (a role, or a
+-- personal grant).
+--   The one WIDENING: in an org whose stored policy names holds.release
+-- narrower than "everyone", a hold's opener outside that list GAINS release
+-- and re-date of their own hold (step 4). Inventory row 8 counts the open
+-- holds this reaches (counts only, captured before BEGIN — DEC-30).
 --
 -- BEFORE / AFTER THE PASTE (the app works either way).
 --   Before: the app already applies the narrower holds.release default
---   (lib/capabilityPolicy.ts) and refuses a project-scoped grant (the route's
+--   (lib/capabilityPolicy.ts) — offering a hold's opener Release on their own
+--   hold, which the '*' database admits — and refuses a project-scoped grant (the route's
 --   probe answers PGRST202 → 409, nothing stored); the database still admits
 --   '*' and ignores grant scopes (no scoped grant can exist). A distribution
 --   ack can still be un-stamped by its recipient and requested_at moved by a
 --   member, as today.
---   After: the database agrees with the app on holds.release and reads a
---   grant's project; the ack record is one-way.
+--   After: the database agrees with the app on holds.release (the controller
+--   tier, or the hold's own opener) and reads a grant's project; the ack
+--   record is one-way.
 -- PASTE ORDER: deploy the app first (an old app still shows Release to every
 -- member; the database would then refuse the click). Any time after
 -- 20261137 and 20261033 (applied). Independent of 20261136 and 20261224 —
@@ -70,8 +88,9 @@
 -- '*' default and the unscoped grant loop back (re-paste this file after it).
 -- Idempotent: safe to paste again.
 --
--- ROLLBACK: re-paste 20261137's org_capability_allows_for and 20261033's
--- enforce_distribution_ack_guard; DROP FUNCTION capability_grant_scope_ready().
+-- ROLLBACK: re-paste 20261137's org_capability_allows_for, 20261033's
+-- enforce_distribution_ack_guard and 20260901's document_holds_update policy;
+-- DROP FUNCTION capability_grant_scope_ready().
 -- Remove any project-scoped grant first (it would read as org-wide).
 -- ─────────────────────────────────────────────────────────────────────────────
 
@@ -81,7 +100,8 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid = to_regprocedure('public.org_capability_allows_for(uuid,text,uuid,jsonb)') AND prosrc LIKE '%WHEN ''ai.manage_caps''%')
      OR NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'enforce_distribution_ack_guard' AND prosrc LIKE '%NEW.acknowledged_by := OLD.acknowledged_by;%')
      OR to_regclass('public.distribution_acks') IS NULL
-     OR to_regclass('public.document_holds') IS NULL THEN
+     OR to_regclass('public.document_holds') IS NULL
+     OR NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'document_holds' AND policyname = 'document_holds_update') THEN
     RAISE EXCEPTION '20261239 needs 20261137 and 20261033 pasted first; nothing was changed.';
   END IF;
 END $$;
@@ -113,7 +133,7 @@ SELECT 3, 'inventory: active members of those workspaces who lose holds.release 
                     WHERE c.org_id = m.org_id AND c.key = 'capability_policy'
                       AND g->>'cap' = 'holds.release' AND g->>'uid' = m.uid::text);
 INSERT INTO df_p11_20261239_inventory
-SELECT 4, 'inventory: open holds in those workspaces opened by someone who is not Admin / DocCtrl there (released now by a controller, or by the close of their ticket)', COUNT(*)
+SELECT 4, 'inventory: open holds in those workspaces opened by someone who is not Admin / DocCtrl there (released now by their opener, a controller, or the close of their ticket)', COUNT(*)
   FROM document_holds h
  WHERE h.released_at IS NULL
    AND NOT EXISTS (SELECT 1 FROM org_configurations c
@@ -134,6 +154,15 @@ SELECT 6, 'inventory: distribution acks already acknowledged (from now on a sign
 INSERT INTO df_p11_20261239_inventory
 SELECT 7, 'state before: authenticated may execute org_capability_allows_for (1 = yes: kept; 0 = no: kept narrowed)',
        CASE WHEN has_function_privilege('authenticated', 'public.org_capability_allows_for(uuid,text,uuid,jsonb)', 'EXECUTE') THEN 1 ELSE 0 END;
+INSERT INTO df_p11_20261239_inventory
+SELECT 8, 'inventory (the one widening): open holds in workspaces whose stored policy names holds.release, opened by an active member — their opener may now release / re-date them even where the stored list does not name them', COUNT(*)
+  FROM document_holds h
+ WHERE h.released_at IS NULL
+   AND EXISTS (SELECT 1 FROM org_configurations c
+                WHERE c.org_id = h.org_id AND c.key = 'capability_policy'
+                  AND COALESCE(c.data->'caps'->'holds.release', c.data->'holds.release') IS NOT NULL)
+   AND EXISTS (SELECT 1 FROM org_members m
+                WHERE m.org_id = h.org_id AND m.uid = h.opened_by AND m.status = 'active');
 
 BEGIN;
 
@@ -338,6 +367,24 @@ $$;
 
 -- (trg_distribution_ack_guard keeps its BEFORE UPDATE binding — unchanged.)
 
+-- ── 4. the hold UPDATE policy: holds.release, or the hold's own opener ───────
+-- Body from 20260901 + one leg (HAND-2 review fix pass). The opener leg reads
+-- the row's opened_by, which 20261073's guard pins once a hold is placed.
+DROP POLICY IF EXISTS document_holds_update ON document_holds;
+-- Releasing = the UPDATE that sets released_at; the capability gates every
+-- update (the row has no other mutable purpose).
+CREATE POLICY document_holds_update ON document_holds FOR UPDATE USING (
+  org_capability_allows(org_id, 'holds.release', auth.uid())
+  OR (opened_by = auth.uid()
+      AND EXISTS (SELECT 1 FROM org_members WHERE org_id = document_holds.org_id
+                  AND uid = auth.uid() AND status = 'active'))
+) WITH CHECK (
+  org_capability_allows(org_id, 'holds.release', auth.uid())
+  OR (opened_by = auth.uid()
+      AND EXISTS (SELECT 1 FROM org_members WHERE org_id = document_holds.org_id
+                  AND uid = auth.uid() AND status = 'active'))
+);
+
 COMMIT;
 
 -- ── One result set: probes (ok, n NULL) and the inventory (ok NULL, n) ───────
@@ -393,6 +440,13 @@ SELECT check_name AS "check", ok, n FROM (
                   AND p.prosrc LIKE '%Only the named recipient can acknowledge their own distribution.%')
          AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgname = 'trg_distribution_ack_guard'
                       AND t.tgrelid = 'public.distribution_acks'::regclass AND NOT t.tgisinternal), NULL
+  UNION ALL
+  SELECT 111, 'the hold UPDATE policy admits holds.release or the hold''s own opener (an active member), and still calls the 3-argument entry point',
+         EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'document_holds' AND policyname = 'document_holds_update'
+                  AND cmd = 'UPDATE'
+                  AND COALESCE(qual, '') LIKE '%org_capability_allows(%' AND COALESCE(qual, '') LIKE '%opened_by = auth.uid()%'
+                  AND COALESCE(with_check, '') LIKE '%org_capability_allows(%' AND COALESCE(with_check, '') LIKE '%opened_by = auth.uid()%'
+                  AND COALESCE(qual, '') LIKE '%org_members%' AND COALESCE(with_check, '') LIKE '%org_members%'), NULL
   UNION ALL
   SELECT ord, check_name, NULL, n::text FROM df_p11_20261239_inventory
 ) r

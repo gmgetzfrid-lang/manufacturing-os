@@ -629,14 +629,17 @@ describe("HLD-14 — expectedReleaseIso and scanStaleHolds", () => {
     // the nudge bodies still ask for a new date — and the ask is now answerable
     expect(lib).toMatch(/Release it with a reason, or set a new expected date\./);
     expect(lib).toMatch(/Release it with a reason, or record when it is expected to clear\./);
-    // the strip: the row's control follows showRelease (canEdit AND the policy), never a literal
-    expect(strip).toMatch(/canRedate=\{showRelease\}/);
+    // the strip: the row's control follows the row's release authority
+    // (canEdit AND the policy, or the hold's own opener — drafting-flow
+    // HAND-2, DF-P11 fix pass), never a literal
+    expect(strip).toMatch(/canRedate=\{mayReleaseRow\(h\)\}/);
+    expect(strip).toMatch(/const mayReleaseRow = \(h: HoldRecord\) =>\s*\n\s*showRelease \|\| \(canEdit && !!policy && holdControlsFor\(policy, userRole, heldRoleCollection, userId, h\)\.canRelease\);/);
     expect(strip).toMatch(/onRedate=\{\(date\) => onRedate\(h\.id!, date\)\}/);
     expect(strip).toMatch(/await updateHoldExpectedRelease\(holdId, expectedReleaseIso\(date\) \?\? null\);/);
     expect(strip).toMatch(/\{canRedate && !isReleasing && !redating && \(/);
     expect(strip).toMatch(/<CalendarClock className="w-3 h-3" \/> Re-date/);
-    // the queue: the same canRelease that lights Release
-    expect(page).toMatch(/\{canRelease && releasingId !== h\.id && redatingId !== h\.id && \(/);
+    // the queue: the same per-row authority that lights Release
+    expect((page.match(/\{mayReleaseRow\(h\) && releasingId !== h\.id && redatingId !== h\.id && \(/g) ?? []).length).toBe(2);
     expect(page).toMatch(/await updateHoldExpectedRelease\(holdId, expectedReleaseIso\(redateDraft\) \?\? null\);/);
     expect(page).toMatch(/<CalendarClock className="w-3 h-3" \/> Re-date/);
     // both seed the input from the stored date and let a blank clear it
@@ -647,7 +650,7 @@ describe("HLD-14 — expectedReleaseIso and scanStaleHolds", () => {
     const m73 = mig("20261073_dc_roundF_document_holds_integrity.sql");
     expect(m73).toMatch(/-- Still open and staying open: notes, expected_release_at and/);
     // (admin-and-org P9 review fix: the hold row is read CHECKED and the gate's sentence says "re-date")
-    expect(lib).toMatch(/await assertHoldCapability\(holdRow\.orgId, "holds\.release", \{ action: "redate" \}\);\s*\n\s*\n\s*const \{ data, error \} = await supabase\s*\n\s*\.from\("document_holds"\)\s*\n\s*\.update\(\{ expected_release_at: expectedReleaseAt \}\)/);
+    expect(lib).toMatch(/await assertHoldCapability\(holdRow\.orgId, "holds\.release", \{ action: "redate", openedBy: holdRow\.openedBy \}\);\s*\n\s*\n\s*const \{ data, error \} = await supabase\s*\n\s*\.from\("document_holds"\)\s*\n\s*\.update\(\{ expected_release_at: expectedReleaseAt \}\)/);
   });
   it("rides the EXISTING maintenance route as a compliance scan — no third vercel.json cron", () => {
     const route = src("app/api/cron/maintenance/route.ts");

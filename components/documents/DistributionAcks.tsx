@@ -29,6 +29,11 @@ interface DistributionAcksProps {
   currentVersionId: string | null;
   currentUserId: string;
   currentUserName?: string | null;
+  /** EVID-2 (DF-P11 fix pass): the signed-in person's email and active role,
+   *  written on the ACK_DISTRIBUTION_CONFIRMED audit row (user_email /
+   *  user_role), so the confirmation is not an anonymous-looking row. */
+  currentUserEmail?: string | null;
+  currentUserRole?: string | null;
   isController: boolean;
 }
 
@@ -36,7 +41,7 @@ interface Member { uid: string; email: string | null; role: string | null }
 
 export default function DistributionAcks({
   documentId, orgId, libraryId, docLabel, currentRev, currentVersionId,
-  currentUserId, currentUserName, isController,
+  currentUserId, currentUserName, currentUserEmail, currentUserRole, isController,
 }: DistributionAcksProps) {
   const [acks, setAcks] = useState<DistributionAck[]>([]);
   const [myPending, setMyPending] = useState<DistributionAck | null>(null);
@@ -126,7 +131,7 @@ export default function DistributionAcks({
     if (!myPending) return;
     setAcking(true);
     try {
-      const out = await acknowledge(myPending.id, currentUserId);
+      const out = await acknowledge(myPending.id, currentUserId, { email: currentUserEmail ?? null, role: currentUserRole ?? null });
       // EVID-2 (DF-P11): the confirmation stands; a refused audit row is said.
       if (!out.auditRecorded) {
         showToast({ type: "warning", title: "Confirmed — audit record not written", message: `Your confirmation is recorded, but its audit-log entry could not be written (${out.auditError ?? "refused"}). Tell Document Control.` });

@@ -70,6 +70,7 @@ import {
   __resetCapabilityPolicyCache, type CapabilityPolicy,
 } from "@/lib/capabilityPolicy";
 import { POST as policyRoute } from "@/app/api/admin/capability-policy/route";
+import { holdControlsFor, isHoldOpener } from "@/lib/holds";
 
 const P1 = "11111111-1111-4111-8111-111111111111";
 const P2 = "22222222-2222-4222-8222-222222222222";
@@ -97,6 +98,23 @@ describe("HAND-2 — holds.release ships to Admin and DocCtrl", () => {
     const granted: CapabilityPolicy = { grants: [{ cap: "holds.release", uid: "coord", expiresAt: null }] };
     expect(policyAllows(granted, "holds.release", "Requester", [], "coord")).toBe(true);
     expect(policyAllows(granted, "holds.release", "Requester", [], "other")).toBe(false);
+  });
+  it("fix pass: the hold's OPENER keeps release of their own hold (the UPDATE policy's own-hold leg); nobody else outside the policy gains it", () => {
+    // a Supervisor's own "pending field walk" hold
+    expect(holdControlsFor({}, "Supervisor", ["Supervisor"], "sup", { openedBy: "sup" }).canRelease).toBe(true);
+    // someone else's hold: refused under the default
+    expect(holdControlsFor({}, "Supervisor", ["Supervisor"], "sup", { openedBy: "dc1" }).canRelease).toBe(false);
+    // no hold in hand: the policy's answer alone
+    expect(holdControlsFor({}, "Supervisor", ["Supervisor"], "sup").canRelease).toBe(false);
+    // a read-only role still subtracts (ROLE-5), opener or not
+    expect(holdControlsFor({}, "Viewer", ["Viewer"], "v", { openedBy: "v" }).canRelease).toBe(false);
+    // an absent identity never matches
+    expect(isHoldOpener({ openedBy: null }, null)).toBe(false);
+    expect(isHoldOpener({ openedBy: "u" }, null)).toBe(false);
+    expect(isHoldOpener(null, "u")).toBe(false);
+    expect(isHoldOpener({ openedBy: "u" }, "u")).toBe(true);
+    // a controller releases anyone's
+    expect(holdControlsFor({}, "DocCtrl", ["DocCtrl"], "dc", { openedBy: "sup" }).canRelease).toBe(true);
   });
 });
 

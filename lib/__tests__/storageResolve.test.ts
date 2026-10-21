@@ -49,7 +49,7 @@ function chain(table: string) {
       return (...args: unknown[]) => {
         if (prop === "select") { if (q.op === "select") q.select = String(args[0] ?? ""); }
         else if (prop === "insert" || prop === "update" || prop === "upsert" || prop === "delete") { q.op = prop; q.payload = args[0]; }
-        else if (["eq", "neq", "is", "in", "contains", "not", "lte", "gte", "lt", "gt"].includes(prop)) q.filters.push([prop, String(args[0]), args[1]]);
+        else if (["eq", "neq", "is", "in", "contains", "not", "lte", "gte", "lt", "gt", "or"].includes(prop)) q.filters.push([prop, String(args[0]), args[1]]);
         if (prop === "maybeSingle" || prop === "single") {
           const r = settle();
           const d = Array.isArray(r.data) ? (r.data[0] ?? null) : r.data;
@@ -256,7 +256,25 @@ describe("AUTHZ-4 — /api/storage/resolve applies download-url's document decis
     // the attribution reads were scoped to the key's workspace
     const scoped = state.queries.filter((q) => (q.table === "document_versions" || q.table === "tickets") && q.select.includes("archive"));
     expect(scoped.length).toBeGreaterThan(0);
-    for (const q of scoped) expect(has(q, "eq", "org_id", ORG)).toBe(true);
+    for (const q of scoped) {
+      // the revision read admits this workspace's rows and org-less legacy ones (never another's)
+      if (q.table === "document_versions") expect(has(q, "or", `org_id.eq.${ORG},org_id.is.null`)).toBe(true);
+      else expect(has(q, "eq", "org_id", ORG)).toBe(true);
+    }
+  });
+
+  it("fix pass: a legacy shed revision with a NULL org_id still gets its NAMED archive prompt", async () => {
+    // the revision row carries no org_id (nullable column); its key carries the prefix
+    state.resolve = (q) => {
+      if (q.table === "document_versions" && q.select.includes("archive")) {
+        return { data: has(q, "or", `org_id.eq.${ORG},org_id.is.null`) ? { org_id: null, archived_at: "2026-01-01T00:00:00Z", archive_id: "ARC-LEGACY" } : null };
+      }
+      return resolver(q);
+    };
+    state.head = () => { throw Object.assign(new Error("NotFound"), { name: "NotFound", $metadata: { httpStatusCode: 404 } }); };
+    const r = await callResolve(DOC_KEY);
+    expect(r.body.archived).toBe(true);
+    expect(r.body.archiveId).toBe("ARC-LEGACY");
   });
 });
 

@@ -67,6 +67,9 @@ export const QUALITY_SIGNOFF_PRE_PASTE =
 export interface ExplorerContext {
   /** probeQualitySignOffDecided()'s answer; undefined / null = not known. */
   qualitySignOffDecided?: boolean | null;
+  /** QUAL-14 (DF-P11 fix pass): project id → name, for the projects a
+   *  personal grant is scoped to (an unknown id is shown as the id). */
+  projectNames?: ReadonlyMap<string, string>;
 }
 
 /** The matrix's columns: every role in ALL_ROLES exactly once (pinned by test). */
@@ -205,11 +208,19 @@ export function capabilityRow(def: CapabilityDef, policy: CapabilityPolicy, ctx:
   });
   const entry = policy.caps?.[def.id];
   const scoped = isRuleArray(entry) ? entry.filter(ruleIsConditional) : [];
-  const grants = (policy.grants ?? []).filter((g) => g.cap === def.id && grantActive(g)).length;
+  // QUAL-14 (DF-P11 fix pass): a grant that names a project holds on that
+  // project only — never counted as an org-wide personal grant.
+  const live = (policy.grants ?? []).filter((g) => g.cap === def.id && grantActive(g));
+  const grants = live.filter((g) => !g.projectId).length;
+  const scopedGrants = live.filter((g) => !!g.projectId);
+  const scopedProjects = [...new Set(scopedGrants.map((g) => ctx.projectNames?.get(g.projectId as string) ?? (g.projectId as string)))];
   const notes: string[] = [];
   if (prePaste) notes.push(`Not decided by the database yet: ${QUALITY_SIGNOFF_PRE_PASTE}`);
   if (scoped.length) notes.push(`${scoped.length} scoped rule${scoped.length > 1 ? "s" : ""} replace this row where they match (${scoped.map((r) => describeWhen(r.when)).join("; ")})`);
   if (grants) notes.push(`${grants} live personal grant${grants > 1 ? "s" : ""}`);
+  if (scopedGrants.length) {
+    notes.push(`${scopedGrants.length} personal grant${scopedGrants.length > 1 ? "s" : ""} on ${scopedProjects.length > 1 ? "projects" : "project"} ${scopedProjects.join(", ")} only`);
+  }
   return {
     key: `cap:${def.id}`, source: "policy", area: def.area, cap: def.label, cells,
     note: notes.length ? notes.join(" · ") : undefined,
@@ -484,7 +495,25 @@ export default function PermissionsExplorer() {
     return () => { alive = false; };
   }, [activeOrgId, reread]);
 
-  const all = useMemo(() => explorerRows(policy, { qualitySignOffDecided: signoffDecided }), [policy, signoffDecided]);
+  // QUAL-14 (DF-P11 fix pass): name the projects a scoped grant holds on.
+  const [projectNames, setProjectNames] = useState<ReadonlyMap<string, string>>(new Map());
+  const scopedIds = useMemo(
+    () => [...new Set((policy.grants ?? []).map((g) => g.projectId).filter((id): id is string => !!id))].sort().join(","),
+    [policy],
+  );
+  useEffect(() => {
+    if (!activeOrgId || !scopedIds) return;
+    let alive = true;
+    void (async () => {
+      const { data, error } = await supabase.from("projects").select("id, name").eq("org_id", activeOrgId).in("id", scopedIds.split(","));
+      // unreadable: the note shows the project id instead of a name
+      if (!alive || error) return;
+      setProjectNames(new Map(((data ?? []) as Array<{ id: string; name: string | null }>).map((p) => [p.id, p.name || p.id])));
+    })();
+    return () => { alive = false; };
+  }, [activeOrgId, scopedIds]);
+
+  const all = useMemo(() => explorerRows(policy, { qualitySignOffDecided: signoffDecided, projectNames }), [policy, signoffDecided, projectNames]);
   const areas = useMemo(() => [...new Set(all.map((r) => r.area))], [all]);
 
   const rows = useMemo(() => {

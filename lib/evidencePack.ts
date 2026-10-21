@@ -10,7 +10,7 @@ import { supabase } from "@/lib/supabase";
 import { normalizeEvidence, isMachineActorName } from "@/lib/checklistEngine";
 import { auditActorNote, AUDIT_TRAIL_UNSEEN_NOTE_PACK } from "@/lib/auditActions";
 import type { Transmittal } from "@/lib/transmittals";
-import { deriveVersionApproval, approvalLine, APPROVAL_CLAIM_LABEL, type RosterSigner } from "@/lib/versionApproval";
+import { deriveVersionApproval, approvalLine, APPROVAL_CLAIM_LABEL, rosterStateFromRows, EMPTY_ROSTER, type RosterState } from "@/lib/versionApproval";
 
 /** admin-and-org ALOG-7: whose word an audit row's identity is (actor_kind,
  *  stamped by 20261201's trigger; a row without it is the writer's word). */
@@ -162,20 +162,19 @@ export function renderEvidenceHtml(data: EvidenceData): string {
   // the publisher's note, never in the Approved column. Signoffs not
   // gathered (a legacy caller) or unreadable → "not known".
   const signoffsKnown = data.signoffs !== undefined && !(data.unread ?? []).includes(EVIDENCE_SECTIONS.signoffs);
-  const signedFor = (versionId: unknown): RosterSigner[] | null => {
+  // DF-P11 fix pass: the roster is judged per slot over EVERY row of the
+  // version (any status), as the publish guard judges it — one signed row of
+  // three is "Partially signed", never the approval stamp.
+  const rosterFor = (versionId: unknown): RosterState | null => {
     if (!signoffsKnown) return null;
-    return (data.signoffs ?? [])
-      .filter((r) => r.status === "signed" && String(r.document_version_id ?? "") === String(versionId ?? ""))
-      .map((r) => ({
-        userId: String(r.reviewer_user_id ?? ""), name: (r.reviewer_name as string | null) ?? null,
-        role: (r.reviewer_role as string | null) ?? null, signedAt: (r.signed_at as string | null) ?? null,
-        signatureId: (r.signature_id as string | null) ?? null,
-      }));
+    const rows = (data.signoffs ?? []).filter((r) => String(r.document_version_id ?? "") === String(versionId ?? ""));
+    return rows.length ? rosterStateFromRows(rows) : EMPTY_ROSTER;
   };
   const approvals = data.versions.map((v) => deriveVersionApproval({
     createdBy: v.created_by as string | null, createdByName: v.created_by_name as string | null,
     createdAt: v.created_at, releasedAt: v.released_at, approvedByName: v.approved_by_name as string | null,
-  }, signedFor(v.id), signoffsKnown ? undefined : "the review sign-offs were not read"));
+    fileUrl: v.file_url as string | null,
+  }, rosterFor(v.id), signoffsKnown ? undefined : "the review sign-offs were not read"));
   const unsignedCount = approvals.filter((a) => a.approval.basis !== "roster").length;
 
   const versionRows = data.versions.map((v, i) => `
@@ -313,7 +312,7 @@ export function renderEvidenceHtml(data: EvidenceData): string {
     ? "This pack shows the revision records, holds, electronic signatures, review sign-offs, read-and-understood acknowledgments, distribution confirmations, issued copies, the originating drafting requests and the document's audit trail as they read when it was generated."
     : "This pack shows the revision records, holds and the document's audit trail as they read when it was generated."}
     It does not include notifications, views, or audit entries recorded against other resources. ${data.versions.length
-    ? `${unsignedCount} of ${data.versions.length} revision(s) have no signed review sign-off: their Approved entry names the publisher (or says it is not known), and a typed approval name is printed as the publisher's unverified note.`
+    ? `${unsignedCount} of ${data.versions.length} revision(s) have no complete signed review sign-off: their Approved entry names the publisher, the person who backfilled it, the sign-offs that were signed ("Partially signed — n of m"), or says it is not known; a typed approval name is printed as the publisher's unverified note.`
     : ""}</div>
 </body></html>`;
 }

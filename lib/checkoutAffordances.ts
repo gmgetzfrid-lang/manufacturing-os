@@ -39,20 +39,27 @@ export interface HoldAffordances {
   canRelease: boolean;
 }
 
-/** The two hold verbs, from the policy. Ownership is deliberately NOT an
- *  input: the document_holds policies and lib/holds.ts assertHoldCapability
- *  gate the write on the capability alone, so an owner outside the policy
- *  would be shown a control the write then refuses. */
+/** The two hold verbs, from the policy. DOCUMENT ownership is deliberately
+ *  NOT an input: the document_holds policies and lib/holds.ts
+ *  assertHoldCapability gate the write on the capability, so a document
+ *  owner outside the policy would be shown a control the write then refuses.
+ *  The one identity leg is the HOLD's opener (drafting-flow HAND-2, DF-P11
+ *  fix pass): pass the `hold` and the person who placed it may release it —
+ *  the document_holds UPDATE policy's `opened_by = auth.uid()` (20261239)
+ *  and assertHoldCapability's `openedBy`. Without a hold, the answer is the
+ *  policy's alone (what a surface offers on holds in general). */
 export function holdAffordances(
   policy: CapabilityPolicy | null | undefined,
   role: string | null | undefined,
   roles: readonly string[] | null | undefined,
   uid: string | null | undefined,
+  hold?: { openedBy?: string | null } | null,
 ): HoldAffordances {
   const extra = roles ? [...roles] : null;
+  const opener = !!uid && !!hold?.openedBy && hold.openedBy === uid;
   return {
     canOpen: policyAllows(policy, "holds.open", role ?? null, extra, uid ?? null),
-    canRelease: policyAllows(policy, "holds.release", role ?? null, extra, uid ?? null),
+    canRelease: opener || policyAllows(policy, "holds.release", role ?? null, extra, uid ?? null),
   };
 }
 

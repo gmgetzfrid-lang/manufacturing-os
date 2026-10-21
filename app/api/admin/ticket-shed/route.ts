@@ -27,11 +27,11 @@ import {
   selectTicketShedCandidates,
   ticketAttachmentBytes,
   TERMINAL_TICKET_STATUSES,
-  isShedTicketKey,
   type TicketShedRow,
   type TicketAttachmentLite,
 } from "@/lib/ticketShed";
 import { makeArchiveId, archiveLocation } from "@/lib/archive";
+import { isOrgOwnedKey } from "@/lib/shedKeyGuard";
 
 export const runtime = "nodejs";
 
@@ -193,14 +193,17 @@ export async function POST(req: NextRequest) {
     const fetched: Array<{ key: string; buf: Uint8Array; contentType: string }> = [];
     let incomplete = false;
     const keys = atts.map((a) => (a?.url || "").toString()).filter(Boolean);
-    // RET-6 / AUTHZ-5 done-when 3 (drafting-flow DF-P11): attachments[].url is
-    // member-writable. A key that is not one of this workspace's request files
-    // (orgs/<org>/tickets/… or an intake redline — isShedTicketKey, the rule
-    // the commit deletes by), or an unsafe one, is never read into the
+    // RET-6 / AUTHZ-5 done-when 3: attachments[].url is member-writable. A key
+    // outside this org's prefix (or an unsafe one) is never read into the
     // archive — checked for the WHOLE ticket before any GetObject, and the
     // ticket is skipped, un-claimed and counted, exactly like an unreadable
-    // binary, so commit can never free a substituted key either.
-    if (keys.some((k) => !isShedTicketKey(k, orgId))) { skippedForeignKey++; continue; }
+    // binary. Capture keeps the org-prefix rule (drafting-flow DF-P11 fix
+    // pass): a request started from a document carries the workspace's
+    // library file as a `Source` reference (app/api/tickets/create), and that
+    // ticket must stay sheddable. What the reclaim may DELETE is narrower —
+    // only this workspace's request files (lib/ticketShed.ts isShedTicketKey),
+    // applied in ticket-shed/commit; a library reference is kept there.
+    if (keys.some((k) => !isOrgOwnedKey(k, orgId))) { skippedForeignKey++; continue; }
     for (const key of keys) {
       try {
         const obj = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: key }));
@@ -248,7 +251,7 @@ export async function POST(req: NextRequest) {
     `Ticket archive ${archiveId}\nProduced ${new Date().toISOString()}\nOrg ${orgId}\n` +
     `${capturedTickets} ticket(s), ${bundledFiles} attachment file(s), ${fileBytes} bytes` +
     `${skippedIncomplete ? `, ${skippedIncomplete} ticket(s) skipped (unreadable attachments, left untouched)` : ""}` +
-    `${skippedForeignKey ? `, ${skippedForeignKey} ticket(s) skipped (an attachment key that is not one of this workspace's request files — refused, left untouched)` : ""}.\n` +
+    `${skippedForeignKey ? `, ${skippedForeignKey} ticket(s) skipped (an attachment key outside this workspace — refused, left untouched)` : ""}.\n` +
     `Save this as ${savePath} and keep it — it's the only copy of these ` +
     `closed tickets' full content (comments, history, attachments) once space is reclaimed.\n`);
   const zipBytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
@@ -256,7 +259,7 @@ export async function POST(req: NextRequest) {
   // Finalize the catalog row with real counts (reserved + rows already claimed above).
   await sb.from("archives").update({
     file_count: bundledFiles, total_bytes: fileBytes,
-    note: `${capturedTickets} closed ticket(s)${skippedIncomplete ? `, ${skippedIncomplete} skipped (unreadable attachments)` : ""}${skippedForeignKey ? `, ${skippedForeignKey} skipped (attachment key that is not one of this workspace's request files)` : ""}`,
+    note: `${capturedTickets} closed ticket(s)${skippedIncomplete ? `, ${skippedIncomplete} skipped (unreadable attachments)` : ""}${skippedForeignKey ? `, ${skippedForeignKey} skipped (attachment key outside this workspace)` : ""}`,
   }).eq("org_id", orgId).eq("archive_id", archiveId);
 
   return new NextResponse(zipBytes as unknown as BodyInit, {

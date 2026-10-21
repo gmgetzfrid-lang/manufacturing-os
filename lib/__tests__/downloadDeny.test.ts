@@ -51,7 +51,9 @@ vi.mock("@/lib/supabaseAdmin", () => ({
   },
 }));
 vi.mock("@/lib/r2", () => ({ r2: { send: vi.fn(async () => ({})) }, R2_BUCKET: "test-bucket" }));
-vi.mock("@aws-sdk/client-s3", () => ({ GetObjectCommand: class {} }));
+// drafting-flow DF-P11 (GAP-401 b): the door signs through
+// lib/untrustedContent.ts signStorageGet, which reads the command's input.Key.
+vi.mock("@aws-sdk/client-s3", () => ({ GetObjectCommand: class { input: Record<string, unknown>; constructor(input: Record<string, unknown>) { this.input = input; } } }));
 vi.mock("@aws-sdk/s3-request-presigner", () => ({
   getSignedUrl: vi.fn(async () => { state.signed++; return "https://signed.example/get"; }),
 }));

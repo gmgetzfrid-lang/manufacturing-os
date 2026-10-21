@@ -133,10 +133,12 @@ export function selectTicketShedCandidates(rows: TicketShedRow[], opts: TicketSh
  *  appended (orgs/<org>/project-intake/<project>/redlines/…,
  *  app/api/intake/upload/route.ts). AUTHZ-5: `attachments[].url` is a
  *  member-writable column on a database without 20261166, so only these two
- *  shapes are ever read into a ticket archive or deleted by its reclaim; any
- *  other key — another workspace's, or this workspace's library, knowledge or
- *  project files — is counted and left in storage (DC RET-6 is the same rule
- *  on the document shed, at the org prefix). */
+ *  shapes are ever deleted by the reclaim (ticket-shed/commit); any other key
+ *  is counted and left in storage — this workspace's library, knowledge or
+ *  project files as kept references (a request started from a document names
+ *  its library file as a `Source`), another workspace's as refused. Capture
+ *  (ticket-shed produce) keeps the org-prefix rule (lib/shedKeyGuard.ts
+ *  isOrgOwnedKey, DC RET-6) so such a ticket stays sheddable. */
 export function isShedTicketKey(key: string | null | undefined, orgId: string): key is string {
   if (!key || !orgId || !isSafeStorageKey(key)) return false;
   if (key.startsWith(`orgs/${orgId}/tickets/`) && key.length > `orgs/${orgId}/tickets/`.length) return true;

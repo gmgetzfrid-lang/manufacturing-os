@@ -80,8 +80,12 @@ function seed(db: string, w: World): void {
     INSERT INTO auth.users (id, email, aud, role) VALUES ('${p.uid}', '${p.k}-${tag}@i28.test', 'authenticated', 'authenticated');
     INSERT INTO users (id, email, display_name, default_org_id) VALUES ('${p.uid}', '${p.k}-${tag}@i28.test', '${p.k}', '${p.org}');
     INSERT INTO org_members (org_id, uid, email, role, roles, status) VALUES ('${p.org}', '${p.uid}', '${p.k}-${tag}@i28.test', '${p.role}', ARRAY[]::text[], '${p.status}');`).join("")}
+    -- holds.release is STORED as "*" (the pre-20261239 default): drafting-flow
+    -- HAND-2's 20261239 later moves the shipped default to Admin / DocCtrl
+    -- (plus a hold's own opener), which the after-replay would otherwise
+    -- read as a 20261224 change; dfP11HoldsRelease.test.ts pins that default.
     INSERT INTO org_configurations (org_id, key, data) VALUES ('${w.org}', 'capability_policy',
-      '{"caps": {"transmittal.issue": ["Admin", "DocCtrl"], "quality.sign_off": ["Engineer-1"]}}'::jsonb);
+      '{"caps": {"transmittal.issue": ["Admin", "DocCtrl"], "quality.sign_off": ["Engineer-1"], "holds.release": ["*"]}}'::jsonb);
     INSERT INTO teams (id, org_id, name, supervisor_user_id) VALUES ('${w.team}', '${w.org}', 'Team ${tag}', '${u.supervisor}');
     INSERT INTO libraries (id, org_id, name, type, owner_user_id, acl_index) VALUES ('${w.lib1}', '${w.org}', 'L1', 'documents', '${u.libowner}',
       '{"allow":{"users":{"publish":["${u.publisher}"]}},"deny":{"users":{"upload":["${u.denied}"],"write":["${u.denied}"]}}}'::jsonb);

@@ -70,7 +70,12 @@ export async function GET(req: NextRequest) {
     .from("document_versions")
     .select("org_id, archived_at, archive_id, created_at")
     .eq("file_url", path);
-  if (prefixOrg) verQ = verQ.eq("org_id", prefixOrg);
+  // document_versions.org_id is nullable (schema.sql): a legacy revision
+  // with no org_id still names its key, and its archived_at must still drive
+  // the named archive prompt — so the scope admits this workspace's rows and
+  // org-less ones, never another workspace's (DF-P11 fix pass). The key is
+  // attributed to prefixOrg either way.
+  if (prefixOrg) verQ = verQ.or(`org_id.eq.${prefixOrg},org_id.is.null`);
   const { data: ver } = await verQ
     .order("created_at", { ascending: false })
     .limit(1)
