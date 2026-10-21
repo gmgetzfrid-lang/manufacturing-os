@@ -15,21 +15,26 @@
 //           document). A draft a publisher forges — labelled in review and
 //           external, with a creator or a link that does not scope the
 //           document — borrows nothing (the P32 review's reproduction). Every
-//           column door (b) reads is publisher-writable, so two remainders are
-//           pinned as ADMITTED on both sides, with owners: DCK-16 (a forged
-//           door-shaped row on a link-scoped document, by INSERT or by UPDATE)
-//           and DCK-17 (an earlier reviewed revision relabelled back to
-//           in_review and promoted through the roster limb — the second P32
-//           review's reproduction). Also pinned: a genuine submission on a
-//           document later unassigned from its link is refused over a foreign
-//           checkout (fail-safe; the scope is read when the promote runs).
+//           column door (b) reads was publisher-writable, so two remainders
+//           were pinned as ADMITTED on both sides, with owners: DCK-16 (a
+//           forged door-shaped row on a link-scoped document, by INSERT or by
+//           UPDATE) and DCK-17 (an earlier reviewed revision relabelled back
+//           to in_review and promoted through the roster limb — the second
+//           P32 review's reproduction). document-control P33 (20261247, the
+//           version row's column guard and the insert policy's provenance
+//           limb) closes both: those cases now answer admitted before and
+//           refused after. Also pinned: a genuine submission on a document
+//           later unassigned from its link is refused over a foreign checkout
+//           (fail-safe; the scope is read when the promote runs).
 //
 // Every statement runs on BOTH sides of the paste, in a transaction that is
 // rolled back: "before" is a copy of the replay with 20261193's guard (the
-// newest body this file re-creates) put back; "after" is the replay itself,
-// which ran 20261245. What works today for a legitimate user answers the
-// same on both sides (REGRESSION FIRST); only a pointer write over another
-// person's checkout outside the two doors changes, from admitted to 42501.
+// newest body this file re-creates) put back and 20261247 undone (P33: the
+// column guard dropped, 20261214's insert policy put back); "after" is the
+// replay itself, which ran 20261245 and 20261247. What works today for a
+// legitimate user answers the same on both sides (REGRESSION FIRST); only a
+// pointer write over another person's checkout outside the two doors, and
+// (P33) a forged version row, change from admitted to 42501.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
@@ -44,6 +49,15 @@ const AFTER = REPLAY_DB;
 const BEFORE = "mos_dc_p32_before";
 const FILE = "20261245_dc_roundG_publish_guard_lock_leg.sql";
 const BASE = "20261193_dc_roundF_ifc_rev_up_first_issue.sql";
+/** P33 (20261247) undone: the version row's column guard dropped, 20261214's insert policy put back —
+ *  so "before" is the world before both pastes (the DCK-16 / DCK-17 remainders admitted). */
+const UNDO_247 = (() => {
+  const s = readFileSync(join(process.cwd(), "supabase", "migrations", "20261214_prj_roundG_intake_door_rls.sql"), "utf8");
+  const a = s.indexOf("DROP POLICY IF EXISTS document_versions_insert_integrity ON document_versions;");
+  return ["DROP TRIGGER IF EXISTS trg_document_version_row_integrity ON document_versions;",
+    "DROP FUNCTION IF EXISTS enforce_document_version_row_integrity();",
+    s.slice(a, s.indexOf("\n);", a) + 3)].join("\n");
+})();
 const mig = (f: string) => readFileSync(join(process.cwd(), "supabase", "migrations", f), "utf8");
 const GUARD_HEAD = "CREATE OR REPLACE FUNCTION enforce_document_publish_guard()";
 const guardOf = (f: string) => {
@@ -246,6 +260,7 @@ describe.skipIf(skip !== null)("HAND-13 (20261245): the checkout lock at the dat
     admin("postgres", `DROP DATABASE IF EXISTS ${BEFORE}`);
     admin("postgres", `CREATE DATABASE ${BEFORE} TEMPLATE ${AFTER}`);
     admin(BEFORE, `${guardOf(BASE)}\nREVOKE ALL ON FUNCTION enforce_document_publish_guard() FROM PUBLIC, anon, authenticated, service_role;`);
+    admin(BEFORE, UNDO_247);
     w = ids();
     seed(BEFORE, w);
     seed(AFTER, w);
@@ -429,12 +444,13 @@ describe.skipIf(skip !== null)("HAND-13 (20261245): the checkout lock at the dat
       `UPDATE documents SET current_version_id = '${pending}', rev = 'B', revision = 'B', status = 'Issued', pending_version_id = NULL
         WHERE id = '${doc}' AND pending_version_id = '${pending}' AND current_version_id = '${current}'`;
 
-    it("door (b) cannot be borrowed by a FORGED intake draft (the P32 review's reproduction): a library publisher's own writes — INSERT an in-review 'external' draft naming any intake link id, point the pending pointer at it, promote it — were all admitted before; after, the INSERT and the pointer still land (neither is the guard's), and the promote is refused 42501, nothing moves", () => {
-      // (1) the INSERT a publisher may make through PostgREST (document_versions_insert_integrity's publisher limb)
+    it("door (b) cannot be borrowed by a FORGED intake draft (the P32 review's reproduction): a library publisher's own writes — INSERT an in-review 'external' draft naming any intake link id, point the pending pointer at it, promote it — were all admitted before; after, the INSERT is refused (P33, 20261247), the pointer still lands (not the guard's), and the promote of a forged row already on file is refused 42501, nothing moves", () => {
+      // (1) the INSERT a publisher could make through PostgREST (document_versions_insert_integrity's publisher
+      //     limb) — refused after since P33 (the provenance limb and the version row's column guard, 20261247)
       const ins = both("publisher", `INSERT INTO document_versions (org_id, record_id, revision_label, base_rev, review_state, provenance, intake_link_id, file_url, change_type, created_by)
         VALUES ('${w.org}', '${w.dLocked}', '2A', 'B', 'in_review', 'external', gen_random_uuid(), 'p32/forged.pdf', 'Major', '${w.uid.publisher}')`);
       expect(ins.before).toBe("ok:1");
-      expect(ins.after).toBe("ok:1");
+      expect(ins.after).toMatch(/^err:42501:/);
       // (2) + (3) on dForge, whose forged 2A was inserted a day ago (a separate request): the pending pointer, then the promote
       const promote = [`UPDATE documents SET pending_version_id = '${w.g2A}' WHERE id = '${w.dForge}'`, threeStep(w.dForge, w.g2A, w.gA)];
       const r = { before: probeSeq(BEFORE, w, "publisher", promote, pointer(w, w.dForge)), after: probeSeq(AFTER, w, "publisher", promote, pointer(w, w.dForge)) };
@@ -476,19 +492,19 @@ describe.skipIf(skip !== null)("HAND-13 (20261245): the checkout lock at the dat
       expect(n.after).toBe(n.before);
     });
 
-    it("the remainder DCK-16 records: a publisher's own INSERT of a member-less 'external' draft naming the link that already scopes the document (creator the link's id, or NULL) is admitted on both sides (the client INSERT policy on document_versions, projects-owned) — shaped as the door's, its promote is door (b)'s, which the database cannot tell apart", () => {
+    it("the remainder DCK-16 records, closed by P33 (20261247): a publisher's own INSERT of a member-less 'external' draft naming the link that already scopes the document (creator the link's id, or NULL) — shaped as the door's, so its promote would be door (b)'s — was admitted before and is refused 42501 after", () => {
       const ins = (creator: string) => `INSERT INTO document_versions (org_id, record_id, revision_label, base_rev, review_state, provenance, intake_link_id, file_url, change_type, created_by)
         VALUES ('${w.org}', '${w.dIntake}', '3A', 'B', 'in_review', 'external', '${w.link}', 'p32/forged-scoped.pdf', 'Major', ${creator})`;
       const a = both("publisher", ins(`'${w.link}'`));
       expect(a.before).toBe("ok:1");
-      expect(a.after).toBe("ok:1");
+      expect(a.after).toMatch(/^err:42501:/);
       const dropNotNull = "ALTER TABLE document_versions ALTER COLUMN created_by DROP NOT NULL;";
       const b = { before: probeSeq(BEFORE, w, "publisher", [ins("NULL")], undefined, dropNotNull), after: probeSeq(AFTER, w, "publisher", [ins("NULL")], undefined, dropNotNull) };
       expect(b.before).toBe("ok:1");
-      expect(b.after).toBe("ok:1");
+      expect(b.after).toMatch(/^err:42501:/);
     });
 
-    it("the remainder DCK-17 records: a library publisher RELABELS an earlier reviewed revision (approved, released, superseded, a complete signed roster) back to in_review, points the pending pointer at it and promotes it over another person's checkout — three PostgREST writes, all admitted on BOTH sides (document_versions_update_integrity lets a publisher rewrite review_state; the old roster satisfies door (b)'s roster limb): an unrecorded revert over a live checkout", () => {
+    it("the remainder DCK-17 records, closed by P33 (20261247): a library publisher RELABELS an earlier reviewed revision (approved, released, superseded, a complete signed roster) back to in_review, points the pending pointer at it and promotes it over another person's checkout — three PostgREST writes admitted before (an unrecorded revert over a live checkout); after, the relabel is refused by the version row's column guard and the promote by the lock leg, the pointer stays on B", () => {
       const relabel = [
         `UPDATE document_versions SET review_state = 'in_review' WHERE id = '${w.xA}'`,
         `UPDATE documents SET pending_version_id = '${w.xA}' WHERE id = '${w.dRelabel}'`,
@@ -496,7 +512,7 @@ describe.skipIf(skip !== null)("HAND-13 (20261245): the checkout lock at the dat
       ];
       const r = { before: probeSeq(BEFORE, w, "publisher", relabel, pointer(w, w.dRelabel)), after: probeSeq(AFTER, w, "publisher", relabel, pointer(w, w.dRelabel)) };
       expect(r.before).toBe(`ok:1 / ok:1 / ok:1 / ${w.xA}`);
-      expect(r.after).toBe(r.before);
+      expect(r.after).toMatch(new RegExp(`^err:42501:.* / ok:1 / err:42501:This document is checked out by Holder Person, .* / ${w.xB}$`));
       // without the relabel the same promote is refused after the paste (xA is not in review)
       const plain = [relabel[1], relabel[2]];
       const p = { before: probeSeq(BEFORE, w, "publisher", plain, pointer(w, w.dRelabel)), after: probeSeq(AFTER, w, "publisher", plain, pointer(w, w.dRelabel)) };
@@ -504,7 +520,7 @@ describe.skipIf(skip !== null)("HAND-13 (20261245): the checkout lock at the dat
       expect(p.after).toMatch(new RegExp(`^ok:1 / err:42501:This document is checked out by Holder Person, .* / ${w.xB}$`));
     });
 
-    it("the remainder DCK-16 records, by UPDATE: a library publisher RE-SHAPES an ordinary revision on an intake-born document as the door's submission (in_review, 'external', the authoring link, the link as creator) and promotes it over another person's checkout — admitted on both sides (document_versions_update_integrity, DCK-16 done-when 2)", () => {
+    it("the remainder DCK-16 records, by UPDATE, closed by P33 (20261247): a library publisher RE-SHAPES an ordinary revision on an intake-born document as the door's submission (in_review, 'external', the authoring link, the link as creator) and promotes it over another person's checkout — admitted before; after, the re-shape is refused by the version row's column guard and the promote by the lock leg (the row is not in review), the pointer stays on A", () => {
       const reshape = [
         `UPDATE document_versions SET review_state = 'in_review', provenance = 'external', intake_link_id = '${w.link}', created_by = '${w.link}' WHERE id = '${w.iOld}'`,
         `UPDATE documents SET pending_version_id = '${w.iOld}' WHERE id = '${w.dIntake}'`,
@@ -513,7 +529,7 @@ describe.skipIf(skip !== null)("HAND-13 (20261245): the checkout lock at the dat
       ];
       const r = { before: probeSeq(BEFORE, w, "publisher", reshape, pointer(w, w.dIntake)), after: probeSeq(AFTER, w, "publisher", reshape, pointer(w, w.dIntake)) };
       expect(r.before).toBe(`ok:1 / ok:1 / ok:1 / ${w.iOld}`);
-      expect(r.after).toBe(r.before);
+      expect(r.after).toMatch(new RegExp(`^err:42501:.* / ok:1 / err:42501:This document is checked out by Holder Person, .* / ${w.iA}$`));
     });
 
     it("fail-safe, recorded: a GENUINE submission on an ASSIGNED document whose assignment the project owner later removed (IntakePanel's assignment edit) no longer passes a foreign checkout — the intake limb reads the link's scope as it is now: promoted before, 42501 after, nothing moves; the holder's own approval lands on both sides", () => {
