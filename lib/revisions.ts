@@ -2775,11 +2775,29 @@ export type RetireOverHoldDoor = "split" | "merge" | "reversal_park";
  *  (the guard's or the policies' refusal, an unknown answer, or — `noRow` — a
  *  write that matched no row the caller may change), or `absent` (the
  *  database predates 20261253: the caller makes its own direct write, as
- *  before). */
+ *  before).
+ *  REV-37 (document-control P37): an answer LOST in transport (the call threw,
+ *  or came back with no SQLSTATE / PostgREST code — a database refusal always
+ *  carries one) is not read as a refusal: the document is re-read, and a row
+ *  that shows this very write (Superseded, superseded_at the instant this
+ *  call sent) is `landed` with `recorded: "unknown"` (whether the database
+ *  recorded a pass is read from the record if the saga later rolls back —
+ *  common.ts correctRetiredOverHold); a row that does not is the refusal it
+ *  looked like; a re-read that fails is `refused` with `unconfirmed`, so the
+ *  caller's rollback re-reads before it puts anything back. */
 export type RetireOverHoldOutcome =
-  | { kind: "landed"; recorded: boolean }
-  | { kind: "refused"; reason: string; noRow?: boolean }
+  | { kind: "landed"; recorded: boolean | "unknown" }
+  | { kind: "refused"; reason: string; noRow?: boolean; unconfirmed?: boolean }
   | { kind: "absent" };
+
+/** REV-37 (P37): whether a document row shows the supersession a door wrote
+ *  at `at` — Superseded, superseded_at that very instant (compared as
+ *  instants, so the database's own spelling of the timestamp matches). Pure. */
+export function showsSupersessionAt(row: { status?: string | null; superseded_at?: string | null } | null | undefined, at: string): boolean {
+  if (!row || row.status !== "Superseded" || !row.superseded_at) return false;
+  const a = Date.parse(row.superseded_at), b = Date.parse(at);
+  return Number.isFinite(a) && Number.isFinite(b) && a === b;
+}
 
 /** REV-36 (P36): PostgREST's answer for retire_over_hold before 20261253
  *  (PGRST202 — its schema cache — or Postgres' undefined_function). */
@@ -2820,13 +2838,31 @@ export async function retireOverHold(input: {
       p_force_hold: true,
     });
     if (error) {
-      return isMissingRetireOverHoldRpc(error) ? { kind: "absent" } : { kind: "refused", reason: error.message || "the supersession was refused" };
+      if (isMissingRetireOverHoldRpc(error)) return { kind: "absent" };
+      // REV-37 (P37): no SQLSTATE / PostgREST code — the answer was lost, not refused
+      if (!String((error as { code?: string | null }).code ?? "").trim()) return await reReadLostRetire(input, error.message || "the answer was lost");
+      return { kind: "refused", reason: error.message || "the supersession was refused" };
     }
     if (data === "superseded" || data === "superseded_over_hold") return { kind: "landed", recorded: data === "superseded_over_hold" };
     if (data === "no_match") return { kind: "refused", reason: "the write was refused", noRow: true };
     return { kind: "refused", reason: `the database answered ${JSON.stringify(data ?? null)}` };
   } catch (e) {
-    return { kind: "refused", reason: (e as Error)?.message || String(e) };
+    return await reReadLostRetire(input, (e as Error)?.message || String(e));
+  }
+}
+
+/** REV-37 (P37): retire_over_hold's answer was lost — read the row back and
+ *  decide from what it shows (see RetireOverHoldOutcome). Never throws. */
+async function reReadLostRetire(input: { documentId: string; at: string }, lost: string): Promise<RetireOverHoldOutcome> {
+  try {
+    const { data, error } = await supabase.from("documents").select("status, superseded_at").eq("id", input.documentId).maybeSingle();
+    if (error) {
+      return { kind: "refused", reason: `${lost} — and whether the supersession landed could not be read back (${error.message})`, unconfirmed: true };
+    }
+    if (showsSupersessionAt(data as { status?: string | null; superseded_at?: string | null } | null, input.at)) return { kind: "landed", recorded: "unknown" };
+    return { kind: "refused", reason: lost };
+  } catch (e) {
+    return { kind: "refused", reason: `${lost} — and whether the supersession landed could not be read back (${(e as Error)?.message || String(e)})`, unconfirmed: true };
   }
 }
 

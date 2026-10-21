@@ -17,6 +17,7 @@ import {
   putBackRetiredIssue,
   describePutBackStatus,
   retireOverHold,
+  showsSupersessionAt,
   type CreationStatus,
   type RetireOverHoldDoor,
 } from "@/lib/revisions";
@@ -137,12 +138,19 @@ export async function archiveRolledBackDoc(docId: string, actor: ActorContext): 
  *  true (the put-back's own failure is already named). A correction that
  *  cannot be confirmed or written throws, so withCompensation names it for
  *  manual attention. `pass.recorded` is set by the caller once the write
- *  answered superseded_over_hold; until then this does nothing. */
+ *  answered superseded_over_hold; until then this does nothing.
+ *  REV-37 (document-control P37): `"unknown"` — the write's answer was lost
+ *  (lib/revisions.ts retireOverHold) — is decided from the record: the
+ *  correction is written when the newest REV_HOLD_OVERRIDDEN on the document
+ *  by this actor through this door stands uncorrected (no
+ *  REV_HOLD_OVERRIDE_UNDONE of the same door after it), as reverse.ts
+ *  findUncorrectedPass decides a lost restore's; a read that fails throws
+ *  (named for manual attention). */
 export function correctRetiredOverHold(input: {
   documentId: string;
   via: RetireOverHoldDoor;
   label: string;
-  pass: { recorded: boolean };
+  pass: { recorded: boolean | "unknown" };
   actor: ActorContext;
   rollback?: RollbackCause | null;
 }): Compensation {
@@ -157,6 +165,7 @@ export function correctRetiredOverHold(input: {
       }
       const putBackTo = (data as { status?: string | null }).status ?? null;
       if (putBackTo === "Superseded") return;
+      if (pass.recorded === "unknown" && !(await standingRetiredOverHold(documentId, via, actor, label))) return;
       const { error: logErr } = await logAuditAction({
         action: "REV_HOLD_OVERRIDE_UNDONE",
         resourceId: documentId,
@@ -177,6 +186,27 @@ export function correctRetiredOverHold(input: {
       }
     },
   };
+}
+
+/** REV-37 (P37): whether a pass over a hold this actor's door recorded on the
+ *  document still stands uncorrected — the newest of its REV_HOLD_OVERRIDDEN /
+ *  REV_HOLD_OVERRIDE_UNDONE rows through `via` is a REV_HOLD_OVERRIDDEN.
+ *  A failed read THROWS. */
+async function standingRetiredOverHold(documentId: string, via: RetireOverHoldDoor, actor: ActorContext, label: string): Promise<boolean> {
+  type Row = { action: string; user_id: string | null; details: Record<string, unknown> | null };
+  const { data, error } = await supabase
+    .from("audit_logs")
+    .select("action, user_id, details")
+    .eq("org_id", actor.orgId)
+    .eq("resource_id", documentId)
+    .in("action", ["REV_HOLD_OVERRIDDEN", "REV_HOLD_OVERRIDE_UNDONE"])
+    .order("timestamp", { ascending: false })
+    .limit(50);
+  if (error) {
+    throw new Error(`whether ${label}'s lost supersession recorded a pass over its hold could not be read (${error.message}), so no correction was written — check its history`);
+  }
+  const newest = ((data as Row[] | null) ?? []).find((r) => r.user_id === actor.actorUserId && r.details?.via === via);
+  return newest?.action === "REV_HOLD_OVERRIDDEN";
 }
 
 /** The supersession fields a source held before a lifecycle operation
@@ -600,14 +630,24 @@ export async function markSupersededAndLink(input: {
   // P36 review fix: a flip retire_over_hold recorded as a pass over a hold is
   // corrected on the record if the saga then puts the source back —
   // registered BEFORE the restore, so the LIFO rollback runs it after it.
-  const recordedPass = { recorded: false };
+  const recordedPass: { recorded: boolean | "unknown" } = { recorded: false };
   if (input.forceHold) {
     register(correctRetiredOverHold({ documentId: sourceDocId, via: input.forceHold, label, pass: recordedPass, actor, rollback: input.rollback }));
   }
   let flipped = false;
+  // REV-37 (P37): the recorded flip's answer was lost and could not be read
+  // back — the rollback re-reads before it puts anything back.
+  let flipUnconfirmed = false;
   register({
     describe: `restore ${label} from Superseded`,
     run: async () => {
+      if (!flipped && flipUnconfirmed) {
+        const { data: again, error: againErr } = await supabase
+          .from("documents").select("status, superseded_at").eq("id", sourceDocId).maybeSingle();
+        if (againErr) throw new Error(`whether ${label}'s supersession landed could not be confirmed (${againErr.message}) — check its status`);
+        if (!showsSupersessionAt(again as { status?: string | null; superseded_at?: string | null } | null, now)) return; // it never landed
+        flipped = true;
+      }
       if (!flipped) return; // the flip never landed — nothing to put back
       const putBackAs = await restoreSupersededSource(sourceDocId, priorStatus, addedPairs, actor, {
         superseded_at: prior.superseded_at, superseded_by_user: prior.superseded_by_user,
@@ -627,6 +667,7 @@ export async function markSupersededAndLink(input: {
     ? await retireOverHold({ documentId: sourceDocId, door: input.forceHold, reason: reason.trim(), at: now, supersessionMoc: mocReference?.trim() || null })
     : null;
   if (door?.kind === "refused") {
+    if (door.unconfirmed) { flipUnconfirmed = true; recordedPass.recorded = "unknown"; }
     throw new Error(door.noRow ? "The source document was NOT superseded — you don't have authority to retire it." : door.reason);
   }
   if (door?.kind === "landed") recordedPass.recorded = door.recorded;
