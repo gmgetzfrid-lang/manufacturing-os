@@ -36,13 +36,13 @@
 //     line says, and that is the restore's own: stamped actor_kind 'server'
 //     by the database (admin-and-org 20261201 — only the service role or a
 //     definer function writes one, and no definer function writes a
-//     RESTORE_CHUNK row; a member's own insert is stamped 'member'), or —
-//     on a row with no such stamp (written before that paste, or the column
-//     absent) — written by a member who may run a restore NOW (the restore
-//     surface's entry, lib/adminSurfaces.ts — Admin, active). A member can
-//     insert an audit row only in their own name (audit_logs_insert), so an
-//     unstamped row written by someone outside the restore surface is not
-//     the restore's. The page's mirror (ticketFileCopyPath) reads the
+//     RESTORE_CHUNK row), or — on a row with no such stamp (written before
+//     that paste, or the column absent) — written by a member who may run a
+//     restore NOW (the restore surface's entry, lib/adminSurfaces.ts —
+//     Admin, active). A row stamped 'member' (a member's own insert) never
+//     confirms. A member can insert an audit row only in their own name
+//     (audit_logs_insert), so an unstamped row written by someone outside
+//     the restore surface is not the restore's. The page's mirror (ticketFileCopyPath) reads the
 //     history line only — it picks a path; the server decides, and a refusal
 //     takes the browser path.
 //
@@ -58,8 +58,13 @@
 // admitting an UNLISTED key under its own folder. The holder carries no
 // marker of its own, so this is one tickets read per unlisted attachment on
 // EVERY request (renumbered or not; filtered on
-// metadata->restore_renumbered->>from, no index), answered 503 when it
-// fails — a trade-off done-when 3 needs (DEC-90 line for DF-P17).
+// metadata->restore_renumbered->>from, no index). It refuses only when it
+// SUCCEEDS and finds a renumbered request listing the key; when it fails (or
+// reads more renumbered requests than it reads), the upload gets today's
+// answer (the storage HEAD, exactly as before DF-P17) and the action's audit
+// row records `renumberedSiblingUnchecked: true` — a never-renumbered
+// request's upload never fails or differs because of it (DEC-90, the
+// integrator's ruling at the DF-P17 final fix pass).
 
 import { RESTORE_RENUMBERED_HISTORY_ACTION } from "@/lib/ticketAttention";
 import { adminSurface, adminSurfaceAllows } from "@/lib/adminSurfaces";
@@ -136,11 +141,13 @@ export interface PrefixClient {
 type Answer<T> = { data: T | null; error: { code?: string; message?: string } | null };
 type Q = {
   select(cols: string): Q; eq(c: string, v: unknown): Q; in(c: string, v: unknown[]): Q;
-  contains(c: string, v: unknown): Q; limit(n: number): Q;
+  contains(c: string, v: unknown): Q; is(c: string, v: null): Q;
+  order(c: string, o: { ascending: boolean }): Q; limit(n: number): Q;
 } & PromiseLike<Answer<Array<Record<string, unknown>>>>;
 
-/** How many RESTORE_CHUNK rows naming the request are read (a re-run of the
- *  same restore names it again; a handful is plenty). */
+/** How many RESTORE_CHUNK rows naming the request are read per kind (a
+ *  re-run of the same restore names it again; a handful is plenty — a full
+ *  page of unstamped rows with no confirming writer is not confirmed). */
 const AUDIT_ROWS_READ = 20;
 
 /** The audit row's columns this check reads; ACTOR_KIND only where
@@ -158,13 +165,29 @@ function actorKindMissing(err: { code?: string; message?: string }): boolean {
  * SERVER: whether the restore's audit trail confirms that request row
  * `ticketRowId` of `orgId` was restored as `to` in place of `from` — a
  * RESTORE_CHUNK audit row of the workspace whose `cleared` notes carry the
- * TICKET_RENUMBERED note for that row with exactly that pair, and that is
- * the restore's own: stamped actor_kind 'server' (20261201; lasts whatever
- * becomes of the restoring Admin), else — a row with no stamp — written by
- * a member the restore surface admits who is active NOW (Admin). "unknown"
- * when a read fails (the caller answers 503, never admits). Reads nothing for
- * a request the caller has no history line for — call it only after
- * restoredFromNumber.
+ * TICKET_RENUMBERED note for that row with exactly that pair (the pair is in
+ * the containment filter, so a row naming another pair is never read), and
+ * that is the restore's own:
+ *
+ *   1. rows stamped actor_kind 'server' are read FIRST (20261201: only the
+ *      service role or a definer function writes one, and no definer
+ *      function writes a RESTORE_CHUNK row) — one confirms by itself,
+ *      whatever became of the restoring Admin;
+ *   2. then UNSTAMPED rows (actor_kind null: written before that paste) —
+ *      one confirms only when its writer is a member the restore surface
+ *      admits who is active NOW (Admin; lib/adminSurfaces.ts);
+ *   3. a row stamped 'member' (a member's own insert) never confirms, and is
+ *      never read.
+ *
+ * Each read is ordered oldest first ("timestamp", then id) and capped at
+ * AUDIT_ROWS_READ. A full page of unstamped rows with no confirming writer
+ * is NOT confirmed (fail-safe: forged rows could fill the page; the answer
+ * is then today's — "truncated", said on drafting-flow EDGE-19). Where the
+ * column is absent (42703 / PGRST204 — 20261201 not pasted) the reads fall
+ * back to today's single read with no actor_kind filter, every row taking
+ * the active-Admin check. "unknown" when a read fails (the caller answers
+ * 503, never admits). Reads nothing for a request the caller has no history
+ * line for — call it only after restoredFromNumber.
  */
 export async function restoreRenumberingConfirmed(
   client: PrefixClient,
@@ -172,34 +195,52 @@ export async function restoreRenumberingConfirmed(
 ): Promise<boolean | "unknown"> {
   const surface = adminSurface("restore");
   if (!surface || !input.orgId || !input.ticketRowId || !input.from || !input.to) return false;
-  const read = (cols: string) => (client.from("audit_logs") as Q)
-    .select(cols)
-    .eq("org_id", input.orgId)
-    .eq("action", "RESTORE_CHUNK")
-    // jsonb containment, sent as JSON text (the codebase's convention for a
-    // jsonb filter: app/api/tickets/create/route.ts, lib/ticketKeyGate.ts).
-    .contains("details", JSON.stringify({ table: "tickets", cleared: [{ code: RESTORE_RENUMBERED_NOTE_CODE, id: input.ticketRowId }] }))
-    .limit(AUDIT_ROWS_READ);
-  let audit = await read(AUDIT_COLS_WITH_KIND);
-  // Before 20261201 the column is absent: read without it (every row then
-  // takes the active-Admin check below).
-  if (audit.error && actorKindMissing(audit.error)) audit = await read(AUDIT_COLS);
-  if (audit.error) return "unknown";
-  const writers = new Set<string>();
-  for (const row of Array.isArray(audit.data) ? audit.data : []) {
+  const read = (cols: string, kind: "server" | "unstamped" | "any") => {
+    let q = (client.from("audit_logs") as Q)
+      .select(cols)
+      .eq("org_id", input.orgId)
+      .eq("action", "RESTORE_CHUNK")
+      // jsonb containment, sent as JSON text (the codebase's convention for a
+      // jsonb filter: app/api/tickets/create/route.ts, lib/ticketKeyGate.ts).
+      .contains("details", JSON.stringify({
+        table: "tickets",
+        cleared: [{ code: RESTORE_RENUMBERED_NOTE_CODE, id: input.ticketRowId, renumbered: { from: input.from, to: input.to } }],
+      }));
+    if (kind === "server") q = q.eq("actor_kind", "server");
+    else if (kind === "unstamped") q = q.is("actor_kind", null);
+    return q.order("timestamp", { ascending: true }).order("id", { ascending: true }).limit(AUDIT_ROWS_READ);
+  };
+  const names = (row: Record<string, unknown>): boolean => {
     const details = row.details as { table?: unknown; cleared?: unknown } | null;
-    if (!details || details.table !== "tickets" || !Array.isArray(details.cleared)) continue;
-    const names = details.cleared.some((n) => {
+    if (!details || details.table !== "tickets" || !Array.isArray(details.cleared)) return false;
+    return details.cleared.some((n) => {
       const note = n as { code?: unknown; id?: unknown; renumbered?: { from?: unknown; to?: unknown } } | null;
       return !!note && note.code === RESTORE_RENUMBERED_NOTE_CODE && note.id === input.ticketRowId
         && note.renumbered?.from === input.from && note.renumbered?.to === input.to;
     });
-    if (!names) continue;
-    // The database's stamp: the service role wrote it — the restore's own
-    // row, whoever the restoring Admin is today.
-    if (row.actor_kind === "server") return true;
-    // A member's own insert ('member') or an unstamped row: only as good as
-    // its writer's standing on the restore surface now.
+  };
+  // 1. The database's stamp: the service role wrote it.
+  const server = await read(AUDIT_COLS_WITH_KIND, "server");
+  let unstamped: Answer<Array<Record<string, unknown>>>;
+  if (server.error) {
+    if (!actorKindMissing(server.error)) return "unknown";
+    // Before 20261201 the column is absent: today's single read, every row
+    // unstamped.
+    unstamped = await read(AUDIT_COLS, "any");
+  } else {
+    for (const row of Array.isArray(server.data) ? server.data : []) {
+      if (row.actor_kind === "server" && names(row)) return true;
+    }
+    // 2. Rows written before that paste.
+    unstamped = await read(AUDIT_COLS_WITH_KIND, "unstamped");
+  }
+  if (unstamped.error) return "unknown";
+  const writers = new Set<string>();
+  for (const row of Array.isArray(unstamped.data) ? unstamped.data : []) {
+    // 3. A member's own insert never confirms (and the filter above never
+    // returns one; this guards a database that answers otherwise).
+    if (row.actor_kind !== null && row.actor_kind !== undefined) continue;
+    if (!names(row)) continue;
     if (typeof row.user_id === "string" && row.user_id) writers.add(row.user_id);
   }
   if (writers.size === 0) return false;
@@ -225,7 +266,8 @@ const SIBLINGS_READ = 50;
  * key — it sits in its folder, but it is the renumbered request's file — as
  * its own. A refusal is the safe direction, so the stored marker alone
  * decides it. "unknown" when the read fails or more renumbered requests name
- * the number than are read.
+ * the number than are read — the caller then gives today's answer and
+ * records that the check did not run (never a refusal, never a 503).
  */
 export async function renumberedRequestListsKey(
   client: PrefixClient,

@@ -1491,11 +1491,11 @@ export default function TicketDetailView() {
   }, [waitsOnQueue, ticketOrgId]);
 
   // ROUTE-15 (DF-P17): a routed review waits on its open blocking slots'
-  // occupants (lib/ticketAttention.ts holdersFor) — their names, read through
+  // signers (lib/ticketAttention.ts holdersFor) — their names, read through
   // RLS as the roster panel reads them. Unread (or a failed read): each is
   // described by their slot, never the requester.
   const [rosterNames, setRosterNames] = useState<Map<string, string> | null>(null);
-  const rosterUidsKey = ticket ? rosterHolderUids(ticket).join(',') : '';
+  const rosterUidsKey = ticket ? rosterHolderUids(ticket, { activeMemberCount }).join(',') : '';
   useEffect(() => {
     let alive = true;
     const uids = rosterUidsKey ? rosterUidsKey.split(',') : [];
@@ -2358,7 +2358,7 @@ export default function TicketDetailView() {
   // and whether the ball is in the viewer's court (the engine offers them a
   // live, non-optional action: the attention rule).
   const requesterRolesCtx = requesterRoles !== null && ticket.requesterId ? new Map([[ticket.requesterId, requesterRoles]]) : null;
-  const holders = holdersFor(ticket, { queueNames, requesterRoles, memberNames: rosterNames });
+  const holders = holdersFor(ticket, { queueNames, requesterRoles, memberNames: rosterNames, activeMemberCount });
   const waitingLabel = attentionLabel(ticket.status, { hasDrafter: !!ticket.assignedDrafterId });
   const waited = waitedFor(waitingSince(ticket));
   const yourTurn = liveActions.some((a) => !a.optional && !a.disabledReason);

@@ -18,14 +18,19 @@
 //     once per unlisted upload on every request for that holder check (the
 //     DF-P17 trade-off, pinned too). A RESTORE_CHUNK row the database
 //     stamped actor_kind 'server' (20261201) confirms whoever the restoring
-//     Admin is today (DF-P17 fix pass). The restore half is driven for real
+//     Admin is today (DF-P17 fix pass); a 'member' row never confirms, and a
+//     failed or truncated holder-side read gives today's answer, recorded
+//     `renumberedSiblingUnchecked` (final fix pass, the integrator's rulings
+//     1-3). The restore half is driven for real
 //     (apply-table on the in-memory engine), and its rows then drive the
 //     workflow route and the copy route.
 //   * ROUTE-15 — holdersFor on a review with a current routing roster names
 //     the primaries of its OPEN BLOCKING slots (kind co_reviewers, part = the
 //     slot labels), so the waiting-on line and the no-actions explanation
 //     name them; notify-only and satisfied slots never hold it; an
-//     unconfigured ticket's holders are unchanged in every status.
+//     unconfigured ticket's holders are unchanged in every status. Final fix
+//     pass (ruling 4): an occupant slotSignPlan's drafter / requester legs
+//     block is dropped, a slot's alternates join once their window opens.
 //   * The request page changes only the waiting-on read (and hands the copy
 //     viewer the history) — DF-P6's hunks stay intact (pinned).
 
@@ -163,6 +168,7 @@ import {
 import { ticketFileCopyPath } from "@/lib/ticketCopyRequest";
 import { holdersFor, explainNoActions, rosterHolderUids, RESTORE_RENUMBERED_HISTORY_ACTION } from "@/lib/ticketAttention";
 import { __resetCapabilityPolicyCache } from "@/lib/capabilityPolicy";
+import { currentRoster, slotSignPlan } from "@/lib/workflow";
 
 const ORG = "o1";
 const OLD = "KE-DDRT-26-0007";
@@ -272,7 +278,7 @@ describe("EDGE-19 — lib/ticketFilePrefix.ts: the original number comes from th
     expect(await ask()).toBe("unknown");
   });
 
-  it("restoreRenumberingConfirmed (fix pass): a row the database stamped actor_kind 'server' confirms by itself — the restoring Admin may have left; a 'member' or unstamped row still needs an active Admin writer", async () => {
+  it("restoreRenumberingConfirmed (fix pass): a row the database stamped actor_kind 'server' confirms by itself — the restoring Admin may have left; a 'member' row never confirms; an unstamped row still needs an active Admin writer", async () => {
     const note = (from: string, to: string) => ({ id: B2, code: TICKET_RENUMBERED, message: "m", renumbered: { from, to, numberHeldBy: B1 } });
     const row = (user_id: string, actor_kind?: string, notes: unknown[] = [note(OLD, "DDRT-26-0123")]) =>
       ({ org_id: ORG, action: "RESTORE_CHUNK", user_id, ...(actor_kind ? { actor_kind } : {}), details: { table: "tickets", cleared: notes } });
@@ -287,13 +293,18 @@ describe("EDGE-19 — lib/ticketFilePrefix.ts: the original number comes from th
     // a 'server' stamp on a row naming another pair, another row or another action confirms nothing
     state.rows.audit_logs = [row("gone", "server", [note("KE-OTHER", "DDRT-26-0123")]), { ...row("gone", "server"), action: "RESTORE_PREVIEW" }, { ...row("gone", "server"), org_id: "o2" }];
     expect(await ask()).toBe(false);
-    // a member's own insert is stamped 'member': a Drafter's forged row, a removed Admin's — refused; an active Admin's — as before
+    // a member's own insert is stamped 'member' and NEVER confirms (final fix pass, the integrator's ruling 2): a Drafter's forged row, a removed Admin's, an active Admin's
     state.rows.audit_logs = [row("eve", "member")];
     expect(await ask()).toBe(false);
     state.rows.audit_logs = [row("gone", "member")];
     expect(await ask()).toBe(false);
     state.rows.audit_logs = [row("admin-1", "member")];
+    expect(await ask()).toBe(false);
+    // an unstamped row (actor_kind null) keeps the active-Admin check
+    state.rows.audit_logs = [{ ...row("admin-1"), actor_kind: null }];
     expect(await ask()).toBe(true);
+    state.rows.audit_logs = [{ ...row("gone"), actor_kind: null }];
+    expect(await ask()).toBe(false);
     // before 20261201 the column is absent: the read is re-sent without it and the active-Admin check decides
     state.calls = [];
     state.rows.audit_logs = [row("admin-1")];
@@ -308,6 +319,48 @@ describe("EDGE-19 — lib/ticketFilePrefix.ts: the original number comes from th
     expect(await ask()).toBe("unknown");
     state.errors["audit_logs.select"] = [{ code: "42703", message: "column audit_logs.actor_kind does not exist" }, { message: "timeout" }];
     expect(await ask()).toBe("unknown");
+  });
+
+  it("restoreRenumberingConfirmed (final fix pass, ruling 3): the pair is in the containment filter; 'server' rows are read first, then unstamped rows, each oldest first; 25 forged member rows do not hide the genuine server row", async () => {
+    const note = (from: string, to: string) => ({ id: B2, code: TICKET_RENUMBERED, message: "m", renumbered: { from, to, numberHeldBy: B1 } });
+    const row = (user_id: string, actor_kind: string | null | undefined, notes: unknown[] = [note(OLD, "DDRT-26-0123")]) =>
+      ({ org_id: ORG, action: "RESTORE_CHUNK", user_id, ...(actor_kind !== undefined ? { actor_kind } : {}), details: { table: "tickets", cleared: notes } });
+    const ask = () => restoreRenumberingConfirmed({ from: (t: string) => chain(t) }, { orgId: ORG, ticketRowId: B2, from: OLD, to: "DDRT-26-0123" });
+    state.rows.org_members = [member("eve", "Drafter"), member("admin-1", "Admin"), member("gone", "Admin", ["Admin"], { status: "removed" })];
+    // 25 forged rows a member inserted (stamped 'member'), then the restore's own
+    state.rows.audit_logs = [...Array.from({ length: 25 }, () => row("eve", "member")), row("gone", "server")];
+    state.calls = [];
+    expect(await ask()).toBe(true);
+    const contains = state.calls.find((c) => c.table === "audit_logs" && c.method === "contains");
+    expect(JSON.parse(String(contains?.args[1]))).toEqual({ table: "tickets", cleared: [{ code: TICKET_RENUMBERED, id: B2, renumbered: { from: OLD, to: "DDRT-26-0123" } }] });
+    expect(state.calls.filter((c) => c.table === "audit_logs" && c.method === "eq" && c.args[0] === "actor_kind")).toEqual([{ table: "audit_logs", method: "eq", args: ["actor_kind", "server"] }]);
+    expect(state.calls.filter((c) => c.table === "audit_logs" && c.method === "order").map((c) => c.args)).toEqual([["timestamp", { ascending: true }], ["id", { ascending: true }]]);
+    expect(auditReads()).toHaveLength(1); // confirmed by the server read; no unstamped read
+    // no server row: the unstamped read follows (actor_kind IS NULL), oldest first; the forged 'member' rows are never read
+    state.rows.audit_logs = [...Array.from({ length: 25 }, () => row("eve", "member")), row("admin-1", null)];
+    state.calls = [];
+    expect(await ask()).toBe(true);
+    expect(auditReads()).toHaveLength(2);
+    expect(state.calls.filter((c) => c.table === "audit_logs" && c.method === "is")).toEqual([{ table: "audit_logs", method: "is", args: ["actor_kind", null] }]);
+    expect(state.calls.filter((c) => c.table === "audit_logs" && c.method === "order")).toHaveLength(4);
+    // a FULL page of unstamped rows with no confirming writer: not confirmed (fail-safe — "truncated"), even with a genuine row past the page
+    state.rows.audit_logs = [...Array.from({ length: 20 }, () => row("eve", null)), row("admin-1", null)];
+    expect(await ask()).toBe(false);
+    // a 'member' row a database answered past the filter is still skipped
+    state.rows.audit_logs = [row("admin-1", "member")];
+    expect(await ask()).toBe(false);
+    // the server read failing (not the missing column) is 'unknown', and the unstamped read failing too
+    state.rows.audit_logs = [row("admin-1", null)];
+    state.errors["audit_logs.select"] = [{ code: "57014", message: "canceling statement due to statement timeout" }];
+    expect(await ask()).toBe("unknown");
+    state.errors["audit_logs.select"] = [null, { message: "timeout" }];
+    expect(await ask()).toBe("unknown");
+    // the column absent: today's single read with no actor_kind filter
+    state.calls = [];
+    state.errors["audit_logs.select"] = [{ code: "42703", message: "column audit_logs.actor_kind does not exist" }];
+    state.rows.audit_logs = [row("admin-1", undefined)];
+    expect(await ask()).toBe(true);
+    expect(state.calls.filter((c) => c.table === "audit_logs" && (c.method === "is" || (c.method === "eq" && c.args[0] === "actor_kind")))).toHaveLength(1); // the first (server) read only
   });
 
   it("renumberedRequestListsKey: a request renumbered AWAY from this number listing the key; a read error is 'unknown'", async () => {
@@ -422,7 +475,7 @@ describe("EDGE-19 — the restore's rows through the workflow route's file check
     const final = (r.b2.attachments as TicketAttachment[])[0];
     const res = await workflow({ ticketId: B2, actionType: "submit_final", finalAttachment: final });
     expect(res.status, JSON.stringify(await res.clone().json())).toBe(200);
-    expect(auditReads()).toHaveLength(1); // the restore's audit row, read once
+    expect(auditReads()).toHaveLength(2); // the restore's audit row (unstamped here): the 'server' read, then the unstamped read
     expect(state.calls.filter((c) => c.table === "r2")).toHaveLength(0); // a listed file — no storage round-trip, as before
 
     seed(r, { b2: { status: "PENDING_REVIEW" } });
@@ -513,7 +566,7 @@ describe("EDGE-19 — the restore's rows through the workflow route's file check
     expect(auditReads()).toHaveLength(0); // the holder carries no restore line: no audit read
   });
 
-  it("REGRESSION — a request never renumbered gets today's answers: its own folder only, no AUDIT read; the trade-off pinned: one renumbered-sibling read per unlisted upload, which finds nothing and changes nothing, and is a 503 when it fails", async () => {
+  it("REGRESSION — a request never renumbered gets today's answers: its own folder only, no AUDIT read; the trade-off pinned: one renumbered-sibling read per unlisted upload, which finds nothing and changes nothing", async () => {
     state.rows.org_members = [member("d-1", "Drafter"), member("req-1", "Requester")];
     state.rows.tickets = [{ id: "t1", org_id: ORG, ticket_id: "REQ-1", title: "Pump iso", status: "PENDING_IFC", request_type: "ISO", unit: "U-100",
       requester_id: "req-1", requester_role: "Requester", assigned_drafter_id: "d-1", assigned_engineer_id: null,
@@ -533,16 +586,72 @@ describe("EDGE-19 — the restore's rows through the workflow route's file check
     const sibling = state.calls.findIndex((c) => c.table === "tickets" && c.method === "eq" && c.args[0] === "metadata->restore_renumbered->>from");
     expect(sibling).toBeGreaterThan(-1);
     expect(state.calls[sibling].args[1]).toBe("REQ-1");
-    // a sibling read that fails is a 503, never a silent accept
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-    state.calls = [];
-    state.rows.tickets[0].attachments = [];
-    state.errors["tickets.select"] = [null, { message: "timeout" }]; // the route's ticket read passes; the sibling read fails
-    const down = await workflow({ ticketId: "t1", actionType: "submit_final", finalAttachment: { name: "iso_IFC.pdf", url: key, type: "Final" } });
-    expect(down.status).toBe(503);
-    expect((await down.json()).error).toMatch(/could not be verified right now/);
-    expect(ticketWrites()).toHaveLength(0);
-    expect(state.calls.filter((c) => c.table === "r2")).toHaveLength(0);
+  });
+
+  it("REGRESSION (final fix pass, ruling 1) — a never-renumbered request's fresh upload with the sibling read FAILING (or truncated) is accepted exactly as on base: the storage HEAD runs, the same ticket write lands, and only the audit row adds renumberedSiblingUnchecked", async () => {
+    const key = "orgs/o1/tickets/REQ-1/1727000000000_iso_IFC.pdf";
+    const ticketRow = () => ({ id: "t1", org_id: ORG, ticket_id: "REQ-1", title: "Pump iso", status: "PENDING_IFC", request_type: "ISO", unit: "U-100",
+      requester_id: "req-1", requester_role: "Requester", assigned_drafter_id: "d-1", assigned_engineer_id: null,
+      attachments: [], comments: [], history: [{ action: "Created", user: "req-1@x.io", date: LM }], watchers: [], unread_by: [], revision_count: 0, last_modified: LM });
+    const run = async (setup: () => void) => {
+      state.rows.org_members = [member("d-1", "Drafter"), member("req-1", "Requester")];
+      state.rows.tickets = [ticketRow()];
+      state.objects = { [key]: new Uint8Array([1, 2]) };
+      state.calls = []; state.errors = {};
+      setup();
+      state.user = { id: "d-1" };
+      const res = await workflow({ ticketId: "t1", actionType: "submit_final", finalAttachment: { name: "iso_IFC.pdf", url: key, type: "Final" } });
+      const update = ticketWrites().find((c) => c.method === "update")?.args[0] as Record<string, unknown> | undefined;
+      const audit = state.calls.find((c) => c.table === "audit_logs" && c.method === "insert" && String((c.args[0] as { action?: string }).action) === "TICKET_SUBMIT_FINAL")?.args[0] as { details: Record<string, unknown> } | undefined;
+      return { status: res.status, update, audit, heads: state.calls.filter((c) => c.table === "r2").map((c) => c.args[0]) };
+    };
+    const strip = (u: Record<string, unknown> | undefined) => JSON.parse(JSON.stringify(u ?? {}, (k, v) => (["id", "uploadedAt", "date", "last_modified", "lastModified", "updated_at"].includes(k) ? undefined : v)));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const ok = await run(() => undefined);
+    expect(ok.status).toBe(200);
+    expect(ok.update).toBeDefined();
+    expect(ok.audit).toBeDefined();
+    expect(ok.heads).toContain(key);
+    expect(ok.audit?.details.renumberedSiblingUnchecked).toBeUndefined();
+    // the sibling read fails: the route's own ticket read passes, the sibling read errors
+    const down = await run(() => { state.errors["tickets.select"] = [null, { message: "timeout" }]; });
+    expect(down.status).toBe(200);
+    expect(down.heads).toEqual(ok.heads); // the storage HEAD ran, as on base
+    expect(down.heads).toContain(key);
+    expect(strip(down.update)).toEqual(strip(ok.update)); // the same write
+    expect(down.update?.status).toBe(ok.update?.status);
+    expect(down.audit?.details.renumberedSiblingUnchecked).toBe(true);
+    const { renumberedSiblingUnchecked: _flag, ...rest } = down.audit!.details;
+    void _flag;
+    expect(strip(rest)).toEqual(strip(ok.audit!.details));
+    expect(auditReads()).toHaveLength(0);
+    // more renumbered requests name the number than are read (truncated, none listing the key): the same
+    const many = await run(() => {
+      state.rows.tickets.push(...Array.from({ length: 51 }, (_, i) => ({ id: `r-${i}`, org_id: ORG, ticket_id: `N-${i}`, metadata: { restore_renumbered: { from: "REQ-1" } }, attachments: [] })));
+    });
+    expect(many.status).toBe(200);
+    expect(many.heads).toEqual(ok.heads);
+    expect(many.audit?.details.renumberedSiblingUnchecked).toBe(true);
+    // a file that is NOT in storage is still refused 400 by the HEAD, as on base
+    const gone = await run(() => { state.errors["tickets.select"] = [null, { message: "timeout" }]; state.objects = {}; });
+    expect(gone.status).toBe(400);
+    expect(gone.update).toBeUndefined();
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it("the holder-side refusal stands only when the sibling read SUCCEEDS and finds a renumbered request listing the key", async () => {
+    const r = await restoreTwoCarriers();
+    seed(r, { b1: { status: "PENDING_IFC" } });
+    state.user = { id: "d-1" };
+    const theirs = (r.b2.attachments as TicketAttachment[])[0];
+    state.objects[theirs.url] = new Uint8Array([1]);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    // the read fails: today's answer (base admitted the key under the holder's own folder) — never wider than base
+    state.errors["tickets.select"] = [null, { message: "timeout" }];
+    const unchecked = await workflow({ ticketId: B1, actionType: "submit_final", finalAttachment: { name: theirs.name, url: theirs.url, type: "Final" } });
+    expect(unchecked.status, JSON.stringify(await unchecked.clone().json())).toBe(200);
+    const audit = state.calls.find((c) => c.table === "audit_logs" && c.method === "insert" && String((c.args[0] as { action?: string }).action) === "TICKET_SUBMIT_FINAL")?.args[0] as { details: Record<string, unknown> };
+    expect(audit.details.renumberedSiblingUnchecked).toBe(true);
   });
 });
 
@@ -556,7 +665,7 @@ describe("EDGE-19 — the restore's rows through the server copy route (POST /ap
     const res = await copy({ ticketId: B2, attachmentId: final.id, channel: "download", acknowledged: true, acceptUnstamped: true });
     expect(res.status, res.status === 200 ? "" : JSON.stringify(await res.clone().json())).toBe(200);
     expect(res.headers.get("x-ticket-copy-stamped")).toBe("1");
-    expect(auditReads()).toHaveLength(1);
+    expect(auditReads()).toHaveLength(2); // the 'server' read, then the unstamped read (the in-memory restore's row carries no stamp)
   });
 
   it("fail-safe: without the restore's audit row the answer is today's (409 'not stored under this request' — the page then takes the browser path); an unreadable trail is a 503 (transient)", async () => {
@@ -675,6 +784,69 @@ describe("ROUTE-15 — a routed review waits on its open blocking slots' occupan
   });
 });
 
+describe("ROUTE-15 (final fix pass, ruling 4) — the holders are who may sign now: slotSignPlan's drafter / requester legs drop an occupant, a slot's alternates join once their window opens", () => {
+  const OPENED = "2026-10-20T00:00:00.000Z";
+  const at = (days: number) => Date.parse(OPENED) + days * 86_400_000;
+  const names = new Map([["d-1", "Dan Drafter"], ["req-1", "Rita Requester"], ["q-1", "Quinn QA"], ["alt-1", "Alex Alt"], ["e-1", "Erin Engineer"]]);
+  const ticketWith = (slots: TicketReviewSlot[]) => ({ ...base, status: "PENDING_REVIEW", metadata: { review_roster: roster(slots, { openedAt: OPENED }) } } as Ticket);
+
+  it("the drafter / requester occupying a slot independent of them is not waited on there once separation of duties binds (3+ members) — the same rule slotSignPlan blocks them on", () => {
+    const slots = [
+      slot({ id: "a", kind: "qa", label: "QA", primaries: ["d-1", "q-1"], independentOf: ["drafter"] }),
+      slot({ id: "b", kind: "requester", label: "Requester review", primaries: ["req-1", "e-1"], independentOf: ["requester"] }),
+    ];
+    const t = ticketWith(slots);
+    const h = holdersFor(t, { memberNames: names, activeMemberCount: 3, now: at(0) });
+    expect(h.map((x) => x.uid)).toEqual(["q-1", "e-1"]);
+    expect(rosterHolderUids(t, { activeMemberCount: 3, now: at(0) })).toEqual(["e-1", "q-1"]);
+    // the same rule: exactly the occupants slotSignPlan blocks on those legs are dropped
+    const r = currentRoster(t)!;
+    for (const uid of ["d-1", "req-1"]) {
+      const plan = slotSignPlan(r, t, uid, true, at(0));
+      expect(plan.blocked.map((b) => b.reason).join(" "), uid).toMatch(/must be independent of the (drafter|requester)/);
+      expect(h.some((x) => x.uid === uid)).toBe(false);
+    }
+    for (const uid of ["q-1", "e-1"]) expect(slotSignPlan(r, t, uid, true, at(0)).fillable.length, uid).toBeGreaterThan(0);
+    // below the threshold (or the count unknown) the engine applies no leg — every occupant is waited on, as before
+    for (const ctx of [{}, { activeMemberCount: 2 }]) {
+      expect(holdersFor(t, { memberNames: names, now: at(0), ...ctx }).map((x) => x.uid)).toEqual(["d-1", "q-1", "req-1", "e-1"]);
+    }
+    // a slot whose only occupant is blocked is described, never names the blocked party
+    const lone = ticketWith([slot({ id: "a", kind: "qa", label: "QA", primaries: ["d-1"], independentOf: ["drafter"] })]);
+    expect(holdersFor(lone, { memberNames: names, activeMemberCount: 5, now: at(0) })).toEqual([{ kind: "co_reviewers", uid: null, name: "the reviewers for QA", part: "QA" }]);
+    // a cross-slot leg (independent of another slot) is not a party leg: unchanged
+    const cross = ticketWith([slot({ id: "a", kind: "qa", label: "QA", primaries: ["q-1"], independentOf: ["engineering"] })]);
+    expect(holdersFor(cross, { memberNames: names, activeMemberCount: 5, now: at(0) }).map((x) => x.uid)).toEqual(["q-1"]);
+  });
+
+  it("a slot's alternates are waited on once slotAlternatesActive holds (its timeoutDays elapsed), never before; an alternate the drafter leg blocks is dropped too", () => {
+    const slots = [slot({ id: "a", kind: "qa", label: "QA", primaries: ["q-1"], alternates: ["alt-1", "d-1"], timeoutDays: 2, independentOf: ["drafter"] })];
+    const t = ticketWith(slots);
+    expect(holdersFor(t, { memberNames: names, activeMemberCount: 3, now: at(1) }).map((x) => x.uid)).toEqual(["q-1"]);
+    expect(holdersFor(t, { memberNames: names, activeMemberCount: 3, now: at(2) }).map((x) => x.uid)).toEqual(["q-1", "alt-1"]);
+    expect(rosterHolderUids(t, { activeMemberCount: 3, now: at(2) })).toEqual(["alt-1", "q-1"]);
+    expect(holdersFor(t, { memberNames: names, now: at(2) }).map((x) => x.uid)).toEqual(["q-1", "alt-1", "d-1"]);
+    // the engine agrees: the alternate signs via "alternate" at the same moment, not before
+    const r = currentRoster(t)!;
+    expect(slotSignPlan(r, t, "alt-1", true, at(1)).fillable).toHaveLength(0);
+    expect(slotSignPlan(r, t, "alt-1", true, at(2)).fillable.map((f) => f.via)).toEqual(["alternate"]);
+    // no timeout configured: alternates never join
+    const never = ticketWith([slot({ id: "a", kind: "qa", label: "QA", primaries: ["q-1"], alternates: ["alt-1"], timeoutDays: null })]);
+    expect(holdersFor(never, { memberNames: names, now: at(400) }).map((x) => x.uid)).toEqual(["q-1"]);
+    // an alternate not yet named is described by the slot
+    expect(holdersFor(t, { memberNames: new Map([["q-1", "Quinn QA"]]), activeMemberCount: 3, now: at(3) }).map((x) => x.name)).toEqual(["Quinn QA", "a reviewer for QA"]);
+  });
+
+  it("shared, not forked: slotSignPlan and the waiting-on line call the one leg rule (lib/workflow.ts slotPartyLegReason)", () => {
+    const wf = src("lib/workflow.ts");
+    const att = src("lib/ticketAttention.ts");
+    expect(wf).toContain("reason = slotPartyLegReason(slot, k, ticket, uid);");
+    expect(att).toContain("slotPartyLegReason(slot, k, parties, uid)");
+    expect(att).toContain("slotAlternatesActive(roster, slot, now)");
+    expect(att).not.toMatch(/must be independent of the/);
+  });
+});
+
 describe("ROUTE-15 — REGRESSION: an unconfigured ticket's holders, labels and counts are unchanged in every status", () => {
   // Pinned expectations — what holdersFor answered before DF-P17 for this ticket.
   const expected: Record<string, unknown> = {
@@ -716,8 +888,8 @@ describe("ROUTE-15 — REGRESSION: an unconfigured ticket's holders, labels and 
 describe("the request page changes only the waiting-on read; DF-P6's hunks stay intact", () => {
   const page = src("app/(protected)/requests/[id]/page.tsx");
   it("the waiting-on read hands holdersFor the roster occupants' names, read through RLS like the roster panel", () => {
-    expect(page).toContain("const holders = holdersFor(ticket, { queueNames, requesterRoles, memberNames: rosterNames });");
-    expect(page).toContain("const rosterUidsKey = ticket ? rosterHolderUids(ticket).join(',') : '';");
+    expect(page).toContain("const holders = holdersFor(ticket, { queueNames, requesterRoles, memberNames: rosterNames, activeMemberCount });");
+    expect(page).toContain("const rosterUidsKey = ticket ? rosterHolderUids(ticket, { activeMemberCount }).join(',') : '';");
     expect(page).toContain("supabase.from('org_members').select('uid, display_name, email').eq('org_id', ticketOrgId).in('uid', uids)");
     expect(page).toContain("copyContext={ticket ? { orgId: ticket.orgId, ticketNumber: ticket.ticketId, requesterId: ticket.requesterId, attachments: ticket.attachments, history: ticket.history } : null}");
   });

@@ -43,7 +43,7 @@
 import type { Role, Ticket, TicketStatus } from "@/types/schema";
 import { WorkflowEngine } from "@/lib/workflow";
 // ROUTE-15 (DF-P17): a routed review's holders come from its roster.
-import { currentRoster, slotBlocks } from "@/lib/workflow";
+import { currentRoster, slotBlocks, slotAlternatesActive, slotPartyLegReason, separationOfDutiesActive } from "@/lib/workflow";
 import type { CapabilityPolicy } from "@/lib/capabilityPolicy";
 import { MANAGEMENT_ROLES } from "@/lib/managementRoles";
 
@@ -187,6 +187,14 @@ export interface HoldersContext {
    *  routed review's slot occupants (the roster names them by uid). Absent,
    *  or a uid it does not cover: described by their slot, not named. */
   memberNames?: ReadonlyMap<string, string> | null;
+  /** ROUTE-15 (DF-P17 final fix pass): the org's active member count, as
+   *  the engine reads it (separation of duties binds at 3+): a routed slot's
+   *  occupant its drafter / requester independence leg blocks is not waited
+   *  on. Absent = not applied (the engine's own default). */
+  activeMemberCount?: number;
+  /** ROUTE-15: the clock a slot's alternate window is read against
+   *  (default: now). */
+  now?: number;
 }
 
 const nameOr = (v: string | null | undefined, fallback: string): string => {
@@ -205,37 +213,68 @@ function queueHolders(ctx?: HoldersContext): TicketHolder[] {
  *  (lib/ticketRoster.ts: open and blocking; a notify-only slot never waits). */
 const joinLabels = (labels: readonly string[]): string => labels.join(", ");
 
+/** The ticket fields a routed review's waiting-on reads (the slots' party
+ *  legs name the drafter and the requester). */
+type RosterTicket = Pick<Ticket, "status" | "metadata"> & Partial<Pick<Ticket, "requesterId" | "assignedDrafterId">>;
+
+const uidList = (xs: unknown): string[] =>
+  Array.isArray(xs) ? xs.filter((u): u is string => typeof u === "string" && u.length > 0) : [];
+
 /**
- * ROUTE-15 (DF-P17): who a ROUTED review waits on — the primaries of its
- * roster's OPEN BLOCKING slots, one holder per person (kind
+ * ROUTE-15 (DF-P17): the open blocking slots of a routed review and, for
+ * each, the people who may sign it now — its primaries and, once its
+ * alternate window has opened (lib/workflow.ts slotAlternatesActive, the
+ * engine's own rule), its alternates; less anyone the slot's drafter /
+ * requester independence legs block while separation of duties is active
+ * (lib/workflow.ts slotPartyLegReason — the leg rule slotSignPlan applies,
+ * shared, not copied; `ctx.activeMemberCount` as the engine reads it, absent
+ * = not applied). Null when the ticket carries no current roster, or none of
+ * its slots is open and blocking.
+ */
+function rosterWaits(ticket: RosterTicket, ctx?: HoldersContext): Array<{ label: string; uids: string[] }> | null {
+  const roster = currentRoster(ticket);
+  if (!roster) return null;
+  const open = roster.slots.filter((s) => s && s.status === "open" && slotBlocks(s));
+  if (open.length === 0) return null;
+  const sod = separationOfDutiesActive(ctx?.activeMemberCount);
+  const now = ctx?.now ?? Date.now();
+  const parties = { requesterId: ticket.requesterId ?? null, assignedDrafterId: ticket.assignedDrafterId ?? null };
+  return open.map((slot) => {
+    const alternates = slotAlternatesActive(roster, slot, now) ? uidList(slot.alternates) : [];
+    const candidates = [...new Set([...uidList(slot.primaries), ...alternates])];
+    const legs = Array.isArray(slot.independentOf) ? slot.independentOf : [];
+    const uids = sod ? candidates.filter((uid) => !legs.some((k) => slotPartyLegReason(slot, k, parties, uid) !== null)) : candidates;
+    return { label: slot.label || slot.kind, uids };
+  });
+}
+
+/**
+ * ROUTE-15 (DF-P17): who a ROUTED review waits on — the people who may sign
+ * its roster's OPEN BLOCKING slots now (rosterWaits: primaries, alternates
+ * once their window opens, never an occupant an independence leg on the
+ * drafter or the requester blocks), one holder per person (kind
  * `co_reviewers`, `part` = the labels of the slots still open, so the
  * waiting line names the slots as the roster panel does). A notify-only
  * slot never holds the review. Null when the ticket carries no current
  * roster, or none of its slots is open and blocking — the caller then
  * answers as before. Names come from `ctx.memberNames`; a person it does not
  * name is described by their slot ("a reviewer for QA", one entry per slot —
- * worded so no label needs an article: "a reviewer for Engineering").
+ * worded so no label needs an article: "a reviewer for Engineering"); a slot
+ * nobody may sign now is "the reviewers for QA".
  */
-function rosterHolders(
-  ticket: Pick<Ticket, "status" | "metadata">,
-  ctx?: HoldersContext,
-): TicketHolder[] | null {
-  const roster = currentRoster(ticket);
-  if (!roster) return null;
-  const open = roster.slots.filter((s) => s && s.status === "open" && slotBlocks(s));
-  if (open.length === 0) return null;
-  const part = joinLabels(open.map((s) => s.label || s.kind));
+function rosterHolders(ticket: RosterTicket, ctx?: HoldersContext): TicketHolder[] | null {
+  const waits = rosterWaits(ticket, ctx);
+  if (!waits) return null;
+  const part = joinLabels(waits.map((w) => w.label));
   const out: TicketHolder[] = [];
   const seen = new Set<string>();
-  for (const slot of open) {
-    const label = slot.label || slot.kind;
-    const primaries = Array.isArray(slot.primaries) ? slot.primaries.filter((u) => typeof u === "string" && u) : [];
-    if (primaries.length === 0) {
+  for (const { label, uids } of waits) {
+    if (uids.length === 0) {
       out.push({ kind: "co_reviewers", uid: null, name: `the reviewers for ${label}`, part });
       continue;
     }
     let unnamed = false;
-    for (const uid of primaries) {
+    for (const uid of uids) {
       if (seen.has(uid)) continue;
       const name = (ctx?.memberNames?.get(uid) ?? "").trim();
       if (!name) { unnamed = true; continue; }
@@ -248,16 +287,13 @@ function rosterHolders(
 }
 
 /** ROUTE-15 (DF-P17): the uids whose names a routed review's waiting line
- *  needs (the primaries of its open blocking slots), sorted, de-duplicated;
- *  [] for a ticket without a current roster. The page reads their names
- *  once and hands them back as `memberNames`. */
-export function rosterHolderUids(ticket: Pick<Ticket, "status" | "metadata">): string[] {
-  const roster = currentRoster(ticket);
-  if (!roster) return [];
-  const uids = roster.slots.filter((s) => s && s.status === "open" && slotBlocks(s))
-    .flatMap((s) => (Array.isArray(s.primaries) ? s.primaries : []))
-    .filter((u): u is string => typeof u === "string" && u.length > 0);
-  return [...new Set(uids)].sort();
+ *  needs (rosterWaits — the same people holdersFor names under the same
+ *  `ctx`), sorted, de-duplicated; [] for a ticket without a current roster.
+ *  The page reads their names once and hands them back as `memberNames`. */
+export function rosterHolderUids(ticket: RosterTicket, ctx?: Pick<HoldersContext, "activeMemberCount" | "now">): string[] {
+  const waits = rosterWaits(ticket, ctx);
+  if (!waits) return [];
+  return [...new Set(waits.flatMap((w) => w.uids))].sort();
 }
 
 /**
