@@ -2,6 +2,7 @@ import { Role, TicketStatus, Ticket, type TicketReviewRoster, type TicketReviewS
 import { policyAllows, scopedTokensFor, grantActive, type CapabilityPolicy, type CapabilityResource, type UserGrant } from "@/lib/capabilityPolicy";
 import { isManagementRole } from "@/lib/managementRoles";
 import { CANCEL_OUTCOMES, type TicketOutcome } from "@/lib/ticketOutcome";
+import { ticketEngineeringRequired, reviewModelBinds, isDeclaredLikeInKind } from "@/lib/reviewModel";
 
 export interface WorkflowAction {
   label: string;
@@ -34,6 +35,25 @@ export interface WorkflowAction {
    *  roster's content hash — the roster panel runs the ceremony, then posts
    *  the action with `signatureId`. */
   requiresSignature?: boolean;
+  /** SM-3 (DF-P6, DEC-90 ruling (3)): taking this action on THIS ticket is a
+   *  management OVERRIDE of the engineering sign-off — the ticket requires
+   *  engineering review and the actor holds no Engineer role and does not
+   *  occupy the engineer's place. The route records it as an override
+   *  (history line, audit `authority.override`) and never stamps
+   *  engineer_approved_at for it. */
+  engineeringOverride?: boolean;
+  /** DF-P6 fix pass 4 (review, minor 5): this action issues WITHOUT an
+   *  engineer's sign-off although the request does not require one — a
+   *  manager issuing from PENDING_FINAL_APPROVAL a request that was sent to
+   *  an engineer only because a type-scoped `ticket.direct_approve` rule
+   *  kept its requester from approving. Never stamps engineer_approved_at,
+   *  and is recorded neutrally: no override marker, no override wording. */
+  withoutEngineerSignOff?: boolean;
+  /** HAND-7 done-when 3 (DF-P6): the request's source document has moved to
+   *  a newer revision since the request was raised — approving it asks for
+   *  an explicit acknowledgement (`sourceDriftAcknowledged` on the request),
+   *  which the history line and the audit row record. */
+  requiresSourceDriftAck?: boolean;
 }
 
 /** Optional evaluation context for getActions (WF-7, GAP-2, WF-15).
@@ -77,7 +97,43 @@ export interface WorkflowContext {
    *  it is not ROUTED_NO_ROSTER_REASON — a routing table that cannot be used
    *  (routedNoRosterReason), where a revision would be refused too. */
   reviewRoutedReason?: string | null;
+  /** HAND-7 done-when 3 (DF-P6): the source documents whose register
+   *  revision has moved since the request was raised, as a person reads
+   *  them ("P-101 (now Rev 4)"). Absent / empty = none known to have moved
+   *  (a read that could not be made says nothing — never "moved"). */
+  sourceDrift?: readonly string[] | null;
+  /** DF-P6 fix pass (review, issues 1 and 2): can the ticket's requester
+   *  pick an engineer at all — does the workspace hold an active member the
+   *  engineer pick accepts (lib/ticketPage.ts engineerCandidates, less the
+   *  people the pick refuses in orgs of 3+: the requester, the drafter, the
+   *  picker)? `false` = KNOWN that nobody can be picked; absent / true =
+   *  assume someone can (the strict reading). The route and the request page
+   *  compute it only where it decides something: the requester holds
+   *  `ticket.manage`, the request requires engineering review, and it is in
+   *  review. */
+  engineerPickAvailable?: boolean;
 }
+
+/** DF-P6 fix pass 3 (review, minor): what "Flag for Engineering Review"
+ *  says when it BINDS — on a request filed under the review model that does
+ *  not yet require engineering, request_eng_review raises
+ *  engineering_required, and the database refuses the way back. */
+export const FLAG_ENG_REVIEW_BINDS_DESCRIPTION = "Optional: route to a specific engineer for scope review before a drafter is assigned. This also makes an engineer's sign-off required before the request issues, and that cannot be withdrawn.";
+/** The description a co-reviewer's override at PENDING_REVIEW carries
+ *  (fix pass 3, review minor): said before the click, as at
+ *  PENDING_FINAL_APPROVAL. */
+export const CO_REVIEW_OVERRIDE_NOTE = "Recorded as an override in the history and the audit trail; the engineering sign-off stays unrecorded.";
+
+/** DF-P6 fix pass 4 (review, major 2 — DEC-90 ruling (3) as given): a
+ *  requester holding `ticket.manage` may override the engineering sign-off
+ *  on their own request, as a manager can today; it is recorded as an
+ *  override, and the requester says why (a required comment). The
+ *  sentence the action's description carries. */
+export const SELF_OVERRIDE_NOTE = "You asked for this work: say why in the comment — it is recorded with the override.";
+
+/** DF-P6 fix pass (review, issue 1): why "Send for Engineer Final Approval"
+ *  cannot go when nobody can be picked as the engineer. */
+export const NO_ENGINEER_TO_PICK_REASON = "Nobody in this workspace can be picked as the reviewing engineer (an Engineer role, and not the requester or the drafter in orgs of 3+). An Admin can add an Engineer role to someone in Admin → Users; until then a manager may issue it as a recorded override.";
 
 /** DEC-13 stage 2: the RESOURCE a ticket presents to the capability policy —
  *  its request type and unit. The route, the page and the simulator all
@@ -90,8 +146,91 @@ export interface WorkflowContext {
  *  matching backfilled tickets with no inventory. DF-P5 adds it together with
  *  those mappers and that inventory — 99-fix-sequencing "Hand-offs from
  *  DF-P4".) */
+// DF-P6 fix pass (review, issue 6): the library, the work class and the code
+// class stay OUT of the resource for the reason above — the requests list
+// and lib/inbox.ts still build their Ticket without them (the attention
+// badge), so a rule scoped on any of them would govern the route and the
+// request page and not the badge. They join with those mappers
+// (99-fix-sequencing "Hand-offs from DF-P6": the mappers spread
+// lib/reviewModel.ts reviewModelFieldsFromRow). The evaluator already reads
+// workClass / codeClass (lib/capabilityPolicy.ts TICKET_RESOURCE_KEYS), and
+// 20261250's inventory counts any stored ticket.* rule scoped on them.
 export function ticketResource(ticket: Pick<Ticket, "requestType" | "unit">): CapabilityResource {
   return { requestType: ticket.requestType || null, unit: ticket.unit || null };
+}
+
+/** TIER-1 / DEC-33 (DF-P6): is engineering review required before THIS
+ *  request may issue? The column (lib/reviewModel.ts ticketEngineeringRequired)
+ *  where it can speak for the ticket; today's role-based gate — the SEED,
+ *  engineerApprovalRequired, evaluated live — where it cannot (before
+ *  20261250, and the undeclared rows that predate it). The engine, the
+ *  workflow route (and the roster it opens) and the roster panel share it. */
+export function engineeringGateRequired(
+  ticket: Ticket,
+  currentRoles?: readonly string[] | null,
+  policy?: CapabilityPolicy | null,
+): boolean {
+  return ticketEngineeringRequired(ticket, () => engineerApprovalRequired(ticket.requesterRole, currentRoles, policy, ticket.requesterId, ticketResource(ticket)));
+}
+
+/** DF-P6 fix pass 5 (review, minor): do the requester-binding limbs of
+ *  DEC-33 (the requester's recorded override with its comment, the
+ *  engineer-pick question) apply to this request? On a request filed under
+ *  the review model whose column says engineering is required
+ *  (lib/reviewModel.ts reviewModelBinds) — and on a pre-paste row whose
+ *  requirement was RAISED after the paste (the assigner's flag_engineering,
+ *  or an engineering class): its column says required while today's
+ *  role-based gate says not. The backfill sets true only where that gate
+ *  requires an engineer, so a row it set keeps today's paths exactly while
+ *  that gate still requires one (DEC-90 ruling (2)); if the gate later stops
+ *  requiring one (the requester promoted or reactivated, an exempt list or
+ *  grant stored), the row stays required (fail-safe) and this applies to it
+ *  too — its manager requester gets the recorded override with a required
+ *  comment (the DF-P6 merge, review minor). A raised row is the one today's
+ *  engine let its requester approve directly, and without this its manager
+ *  requester could be left with only "Send for Engineer Final Approval" and
+ *  nobody to pick. */
+export function requesterBindingApplies(
+  ticket: Ticket,
+  requesterRoles: readonly string[] | null | undefined,
+  policy: CapabilityPolicy | null | undefined,
+): boolean {
+  if (reviewModelBinds(ticket)) return true;
+  return ticket.engineeringRequired === true
+    && !engineerApprovalRequired(ticket.requesterRole, requesterRoles, policy, ticket.requesterId, ticketResource(ticket));
+}
+
+/** DF-P6: the actions that issue (or, at final approval, sign off) a
+ *  deliverable — the delivery gate's transitions (DEC-33), and the ones an
+ *  approval over a moved source asks to acknowledge (HAND-7). */
+export const ISSUING_APPROVALS: ReadonlySet<string> = new Set(['approve_draft_ifc', 'approve_minor_correction', 'engineer_approve_final', 'override_engineer_final']);
+
+/** DF-P6 fix pass (review, issues 1 and 2): does `WorkflowContext.
+ *  engineerPickAvailable` decide anything for this caller on this ticket?
+ *  Only for the requester who holds `ticket.manage`, on a request filed
+ *  under the review model whose column says engineering review is required
+ *  (lib/reviewModel.ts reviewModelBinds), in serial review. The route and the request
+ *  page read the members (and set the flag) exactly when this is true, so
+ *  both evaluate the engine on the same context. */
+export function engineerPickQuestionApplies(
+  ticket: Ticket,
+  uid: string | null | undefined,
+  userRole: Role,
+  userRoles: readonly Role[] | null | undefined,
+  policy: CapabilityPolicy | null | undefined,
+  requesterRoles: readonly string[] | null | undefined,
+): boolean {
+  if (!uid || ticket.requesterId !== uid) return false;
+  // Only on a request FILED under the review model whose column says
+  // engineering is required (fix pass 2, review issue 1: a pre-paste row
+  // the backfill set true keeps today's path exactly — no read, no flag).
+  // Fix pass 5 (review, minor): and on a pre-paste row whose requirement
+  // was raised after the paste (requesterBindingApplies).
+  if (!requesterBindingApplies(ticket, requesterRoles, policy)) return false;
+  if (ticket.status !== 'PENDING_REVIEW' && ticket.status !== 'PENDING_FINAL_APPROVAL') return false;
+  if (currentRoster(ticket)) return false;
+  if (!policyAllows(policy, 'ticket.manage', userRole, userRoles && userRoles.length > 0 ? [...userRoles] : null, uid, ticketResource(ticket))) return false;
+  return engineeringGateRequired(ticket, requesterRoles, policy);
 }
 
 /** DEC-12 threshold: independence appears exactly when it becomes possible
@@ -355,7 +494,7 @@ export const ISSUE_AS_IS_NOTE = "The drafter marked this draft issue-ready: appr
 /** FRIC-5 (DF-P5 fix pass 2): the approvals that issue a marked draft
  *  as-is (lib/ticketTransitions.ts asIsIssue) — a minor correction still
  *  returns the request to the drafter. */
-export const ISSUE_AS_IS_APPROVALS: ReadonlySet<string> = new Set(['approve_draft_ifc', 'engineer_approve_final']);
+export const ISSUE_AS_IS_APPROVALS: ReadonlySet<string> = new Set(['approve_draft_ifc', 'engineer_approve_final', 'override_engineer_final']);
 
 /** FRIC-5: the question an approver answers before an approval that issues
  *  the draft as-is — null for every other action, and whenever the drafter
@@ -377,7 +516,7 @@ export function issueAsIsBanner(ticket: Pick<Ticket, 'metadata' | 'deliverableRe
 /** TIER-5 (DF-P5 fix pass 3): the serial approvals a routed ticket with no
  *  roster may not take — each would issue (or route to an issue) without the
  *  slots its library's routing table declares (DEC-36: fail closed). */
-export const ROSTERLESS_APPROVALS: ReadonlySet<string> = new Set(['approve_draft_ifc', 'approve_minor_correction', 'request_final_engineer_approval', 'engineer_approve_final']);
+export const ROSTERLESS_APPROVALS: ReadonlySet<string> = new Set(['approve_draft_ifc', 'approve_minor_correction', 'request_final_engineer_approval', 'engineer_approve_final', 'override_engineer_final']);
 
 export const ROUTED_NO_ROSTER_REASON = "This request's library routes its reviews, and this review has no sign-off roster (it was reopened, or was already in review when the routing was set). Request a revision so the drafter resubmits — the submission opens the review with every sign-off the routing names.";
 
@@ -477,7 +616,31 @@ export const WorkflowEngine = {
     // an in-flight ticket bypassing the gate.
     // DEC-13 stage 3: the exempt roles are the org's
     // `ticket.engineer_gate_exempt` list, scoped to this ticket's resource.
-    const needsEngineerApproval = engineerApprovalRequired(ticket.requesterRole, ctx?.requesterRoles, policy, ticket.requesterId, resource);
+    // TIER-1 / DEC-33 (DF-P6): the gate keys on the WORK — the like-in-kind
+    // declaration and the binding flag (tickets.engineering_required) —
+    // never on who asked; today's role-based gate is the SEED for a request
+    // the column cannot speak for (engineeringGateRequired).
+    const needsEngineerApproval = engineeringGateRequired(ticket, ctx?.requesterRoles, policy);
+    // DF-P6 fix pass (review, issues 1 and 2): can an engineer be picked at
+    // all? Decides whether "Send for Engineer Final Approval" can go and
+    // whether the requester's override is the way forward or the exception.
+    const noEngineerToPick = ctx?.engineerPickAvailable === false;
+    // DF-P6 fix pass 4 (review, major 2 — DEC-90 ruling (3) as given, which
+    // is also proposed ruling R1's stated default): the requester's OWN
+    // override of the engineering sign-off is never taken away — "do not
+    // remove an override path a legitimate manager uses today, record it
+    // instead". It is recorded as an override (history note, audit
+    // authority.override, metadata.engineering_override) and needs the
+    // requester's comment saying why. Only on a request FILED under the
+    // review model (review_model_filed, 20261250) whose column says
+    // engineering is required: a pre-paste row keeps today's requester paths
+    // exactly (DEC-90 ruling (2); fix pass 2, review issue 1).
+    // Fix pass 5 (review, minor): and on a pre-paste row whose requirement
+    // was raised after the paste (requesterBindingApplies) — a flag must
+    // never leave its manager requester with no way to issue.
+    const requesterBinds = requesterBindingApplies(ticket, ctx?.requesterRoles, policy);
+    const selfOverride = isRequesterIdentity && requesterBinds;
+    const selfOverrideComment = selfOverride ? { requiresComment: true } : {};
     // DEC-13 (DRAFT-1 / GAP-1): a rule scoped to this ticket's type on
     // `ticket.direct_approve` binds the REQUESTER'S own approval too. Identity
     // keeps every review action (request revision, send for engineer
@@ -562,13 +725,20 @@ export const WorkflowEngine = {
             description: 'Select a drafter to begin work.',
             ...(engineeringFirstPending ? { disabledReason: ENG_FIRST_REASON } : {}),
           });
+          // DF-P6 fix pass 3 (review, minor): said before the click — on a
+          // request filed under the review model the flag binds the issue
+          // point for good (computeTransition's request_eng_review); not on
+          // a pre-paste row, one already required, or a declared request's
+          // engineering-first loop (the type's, which binds nothing).
+          const flagBinds = ticket.reviewModelFiled === true && ticket.engineeringRequired !== true
+            && !(engineeringFirstPending && ticket.engineeringRequired === false && isDeclaredLikeInKind(ticket));
           actions.push({
             label: 'Flag for Engineering Review',
             action: 'request_eng_review',
             variant: 'secondary',
             requiresComment: true,
             requiresEngineerPick: true,
-            description: 'Optional: route to a specific engineer for scope review before a drafter is assigned.'
+            description: flagBinds ? FLAG_ENG_REVIEW_BINDS_DESCRIPTION : 'Optional: route to a specific engineer for scope review before a drafter is assigned.'
           });
         }
         if (allows('ticket.self_assign')) {
@@ -700,8 +870,33 @@ export const WorkflowEngine = {
               action: 'request_final_engineer_approval',
               variant: 'success',
               requiresEngineerPick: true,
-              description: 'Engineering policy: drawings must be signed off by a qualified engineer before IFC. Pick the engineer who will review.'
+              description: 'Engineering policy: drawings must be signed off by a qualified engineer before IFC. Pick the engineer who will review.',
+              ...(noEngineerToPick ? { disabledReason: NO_ENGINEER_TO_PICK_REASON } : {}),
             });
+            // DF-P6 fix pass (review, issue 1): a requester who holds
+            // ticket.manage, on a request FILED under the review model whose
+            // column says it requires engineering, may issue it as a
+            // recorded override. A pre-paste row keeps today's path while
+            // today's gate decides the same; one whose column says required
+            // where that gate no longer does takes this too
+            // (requesterBindingApplies — fix pass 5; the DF-P6 merge).
+            // Fix pass 4 (review, major 2 — DEC-90 ruling (3)): in every
+            // workspace size, with the requester's comment saying why.
+            if (isManagement && requesterBinds && needsEngineerApproval && !isEng
+                && !requesterScopedOut) {
+              actions.push({
+                label: 'Override: Issue Without Engineer Sign-off',
+                action: 'approve_draft_ifc',
+                variant: 'warning',
+                description: `Management override: issues the deliverable without an engineer's sign-off${noEngineerToPick ? ' (nobody in this workspace can be picked as the engineer)' : ''}. Recorded as an override in the history and the audit trail; the engineering sign-off stays unrecorded.${selfOverride ? ` ${SELF_OVERRIDE_NOTE}` : ''}${issueReady ? ` ${ISSUE_AS_IS_NOTE}` : ''}`,
+                engineeringOverride: true,
+                ...selfOverrideComment,
+                ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
+                // The way forward when nobody can be picked; beside a
+                // possible pick it is the exception, never waited on.
+                ...(noEngineerToPick ? {} : { optional: true }),
+              });
+            }
           } else {
             // Engineer requesters approve directly to IFC.
             actions.push({
@@ -737,22 +932,37 @@ export const WorkflowEngine = {
           // (none set, or the requester is known to have left the org),
           // the co-review IS the review and stays required.
           const onBehalf = requesterCanAct ? { optional: true } : {};
+          // SM-3 (DF-P6, DEC-90 ruling (3)): on a request that requires
+          // engineering review, a co-reviewer holding no Engineer role who
+          // approves is OVERRIDING the engineering sign-off — kept (today's
+          // path), recorded as an override by the route.
+          // Fix pass 3 (review, minor): and SAID to be one before the click
+          // — the label and description name the override, as the
+          // PENDING_FINAL_APPROVAL override does.
+          const coOverrides = needsEngineerApproval && !isEng;
+          const coOverride = coOverrides ? { engineeringOverride: true } : {};
           actions.push({
-            label: 'Approve (Issue for Construction)',
+            label: coOverrides ? 'Override: Approve Without Engineer Sign-off' : 'Approve (Issue for Construction)',
             action: 'approve_draft_ifc',
-            variant: 'success',
-            description: issueReady ? `Accepts the draft. ${ISSUE_AS_IS_NOTE}` : 'Accepts the draft. Drafter will be notified to issue IFC.',
+            variant: coOverrides ? 'warning' : 'success',
+            description: coOverrides
+              ? `Management override: accepts the draft without an engineer's sign-off. ${CO_REVIEW_OVERRIDE_NOTE}${issueReady ? ` ${ISSUE_AS_IS_NOTE}` : ''}`
+              : issueReady ? `Accepts the draft. ${ISSUE_AS_IS_NOTE}` : 'Accepts the draft. Drafter will be notified to issue IFC.',
             ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
             ...onBehalf,
+            ...coOverride,
           });
           actions.push({
-            label: 'Approve with Minor Correction',
+            label: coOverrides ? 'Override: Approve with Minor Correction' : 'Approve with Minor Correction',
             action: 'approve_minor_correction',
             variant: 'secondary',
             requiresComment: true,
-            description: 'Approve as-is except for a small fix (typo, mislabel). Note goes to the drafter — no new review round.',
+            description: coOverrides
+              ? `Management override: approve as-is except for a small fix, without an engineer's sign-off. Note goes to the drafter — no new review round. ${CO_REVIEW_OVERRIDE_NOTE}`
+              : 'Approve as-is except for a small fix (typo, mislabel). Note goes to the drafter — no new review round.',
             ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
             ...onBehalf,
+            ...coOverride,
           });
           actions.push({
             label: 'Request Revision',
@@ -775,20 +985,67 @@ export const WorkflowEngine = {
             : allows('ticket.final_approve') || isManagement;
           if (canActHere) {
             const override = engineerOverride ? { optional: true } : {};
-            actions.push({
-              label: 'Approve as Engineer (Issue for Construction)',
-              action: 'engineer_approve_final',
-              variant: 'success',
-              description: issueReady ? `Engineering sign-off complete. ${ISSUE_AS_IS_NOTE}` : 'Engineering sign-off complete. Drafter will be notified to issue IFC.',
-              ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
-              ...override,
-            });
+            // SM-3 (DF-P6, DEC-90 ruling (3)): only an engineer signs as
+            // the engineer — the assigned engineer, anyone holding an
+            // Engineer role, or (no engineer assigned) a holder of
+            // ticket.final_approve, who occupies the slot. Management
+            // without one keeps today's override (the serial path's seed:
+            // waivable by management), as a DISTINCT action that is
+            // recorded as an override and never stamps engineer_approved_at.
+            const signsAsEngineer = isAssignedEngineerIdentity || isEng
+              || (!ticket.assignedEngineerId && allows('ticket.final_approve'));
+            // DF-P6 fix pass 4 (review, minor 5): an override only where the
+            // request REQUIRES engineering review. A request sent here
+            // without requiring it (a type-scoped ticket.direct_approve rule
+            // kept its requester from approving) is issued by management
+            // without the engineer's stamp, recorded neutrally.
+            const overridesSignOff = !signsAsEngineer && needsEngineerApproval;
+            const neutralIssue = !signsAsEngineer && !needsEngineerApproval;
+            if (signsAsEngineer) {
+              actions.push({
+                label: 'Approve as Engineer (Issue for Construction)',
+                action: 'engineer_approve_final',
+                variant: 'success',
+                description: issueReady ? `Engineering sign-off complete. ${ISSUE_AS_IS_NOTE}` : 'Engineering sign-off complete. Drafter will be notified to issue IFC.',
+                ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
+                ...override,
+              });
+            } else if (overridesSignOff) {
+              actions.push({
+                label: 'Override: Issue Without Engineer Sign-off',
+                action: 'override_engineer_final',
+                variant: 'warning',
+                description: `Management override: issues the deliverable without the engineer's sign-off. Recorded as an override in the history and the audit trail; the engineering sign-off stays unrecorded.${selfOverride ? ` ${SELF_OVERRIDE_NOTE}` : ''}${issueReady ? ` ${ISSUE_AS_IS_NOTE}` : ''}`,
+                engineeringOverride: true,
+                // DF-P6 fix pass 4 (review, major 2 — DEC-90 ruling (3)):
+                // the requester's own override stands, with a comment.
+                ...selfOverrideComment,
+                ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
+                ...override,
+              });
+            } else {
+              actions.push({
+                label: 'Approve (Issue for Construction)',
+                action: 'override_engineer_final',
+                variant: 'success',
+                description: `Issues the deliverable. This request does not require an engineer's sign-off, so none is recorded.${issueReady ? ` ${ISSUE_AS_IS_NOTE}` : ''}`,
+                withoutEngineerSignOff: true,
+                ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
+                ...override,
+              });
+            }
             actions.push({
               label: 'Approve with Minor Correction',
               action: 'approve_minor_correction',
               variant: 'success',
               requiresComment: true,
-              description: 'Approve as-is except for a small fix (typo, mislabel). Note goes to the drafter — no new review round.',
+              description: overridesSignOff
+                ? `Management override: approve as-is except for a small fix, without the engineer's sign-off. Recorded as an override; the engineering sign-off stays unrecorded.${selfOverride ? ` ${SELF_OVERRIDE_NOTE}` : ''}`
+                : neutralIssue
+                  ? 'Approve as-is except for a small fix (typo, mislabel). Note goes to the drafter — no new review round. This request does not require an engineer\'s sign-off, so none is recorded.'
+                  : 'Approve as-is except for a small fix (typo, mislabel). Note goes to the drafter — no new review round.',
+              ...(overridesSignOff ? { engineeringOverride: true } : {}),
+              ...(neutralIssue ? { withoutEngineerSignOff: true } : {}),
               ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
               ...override,
             });
@@ -888,6 +1145,27 @@ export const WorkflowEngine = {
       actions.push({ label: 'Issue As-Is When Approved', action: 'mark_issue_ready', variant: 'outline', optional: true, description: `When Rev ${ticket.deliverableRev} is approved with no corrections, it is issued as the final package — you will not need to upload it again. A correction still returns it to you. Available until the first sign-off lands.` });
     }
 
+    // GAP-111 (DF-P6): the assigner's flag, binding and late. Whoever runs
+    // the assignment queue may require engineering review at any status
+    // before the deliverable is approved — it sets
+    // tickets.engineering_required (true, for good: the database refuses the
+    // way back), changes no status and restarts nothing: drafting goes on,
+    // only the issue waits for the engineering sign-off. Offered only where
+    // the column speaks for the ticket and does not already say so (and not
+    // on a review roster already open — its slots were fixed when it opened).
+    if (allows('ticket.assign') && ticket.engineeringRequired === false
+        && ['PENDING_ASSIGNMENT', 'DRAFTING', 'REVISION_REQ', 'PENDING_REVIEW'].includes(ticket.status)
+        && !(ticket.status === 'PENDING_REVIEW' && roster)) {
+      actions.push({
+        label: 'Require Engineering Sign-off',
+        action: 'flag_engineering',
+        variant: 'secondary',
+        requiresComment: true,
+        optional: true,
+        description: 'This request will require an engineer\'s sign-off before it issues (management may override it, recorded as an override). Drafting carries on; nothing restarts. Your reason is recorded, and the requirement cannot be withdrawn.',
+      });
+    }
+
     // GLOBAL OVERRIDES
     if (allows('ticket.force_close') && !isTerminal) {
        const hasClose = actions.some(a => a.action === 'close_ticket');
@@ -942,6 +1220,22 @@ export const WorkflowEngine = {
         optional: true,
         description: 'Attach a source, draft or reference file to this request.',
       });
+    }
+
+    // TIER-4 dw3 / HAND-7 dw3 (DF-P6): an approval says, before it is
+    // taken, which governing-code class the request is in, and that its
+    // source has moved (and asks for the acknowledgement).
+    const drift = (ctx?.sourceDrift ?? []).filter((x) => typeof x === 'string' && x.trim());
+    if (ticket.codeClass || drift.length > 0) {
+      for (let i = 0; i < actions.length; i++) {
+        const a = actions[i];
+        if (!ISSUING_APPROVALS.has(a.action) && a.action !== 'sign_slot') continue;
+        const notes = [
+          ticket.codeClass ? `Code class: ${ticket.codeClass}.` : null,
+          drift.length > 0 ? `The source revision has moved since this request was raised (${drift.join('; ')}) — approving asks you to acknowledge it.` : null,
+        ].filter((x): x is string => !!x);
+        actions[i] = { ...a, description: [a.description, ...notes].filter(Boolean).join(' '), ...(drift.length > 0 ? { requiresSourceDriftAck: true } : {}) };
+      }
     }
 
     // TIER-5 (DF-P5 fix pass 3): a routed ticket in review with no roster is

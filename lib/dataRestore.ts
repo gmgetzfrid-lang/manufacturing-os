@@ -219,6 +219,9 @@ export const RESTORE_SERVICE_ROLE_WAIVERS: Readonly<Record<string, string>> = {
   // intelligence I-26 (20261235): INCLUDED and restored by the integrator at
   // the I-26 merge, 2026-10-20 (DEC-90).
   knowledge_document_assets: "a knowledge upload's document↔equipment relation (which equipment tags the upload carries, on which sheet and pages, with its machine provenance) — signed-in users cannot write it; the service role writes it (the Bridge's knowledge door). Bounded to this workspace's knowledge documents and assets (RESTORE_PARENT_RULES, and the table's same-workspace trigger refuses any other); a row grants no access (members read it only while they can read the knowledge document) and is no one's act — every row is a machine's reading off the sheet (the drawing-is-machine CHECK), re-written the next time a writer discovers from that upload",
+  // drafting-flow DF-P6 (20261251): INCLUDED and restored by the integrator at
+  // the DF-P6 merge, 2026-10-21 (DEC-90).
+  ticket_equipment: "the equipment a drafting request names — the tag as the requester typed it and the registry asset it resolved to (NULL = not found). Signed-in users cannot write it; the service role writes it (the create route). Bounded to this workspace's tickets and assets (RESTORE_PARENT_RULES — an asset not restored here is cleared, as the live database does when an asset is deleted, and the typed tag stays; the table's integrity trigger refuses any other workspace's ticket or asset); a row grants no access (members read it only while they can read the ticket) and no gate reads it as anyone's sign-off — it is the request's own content, lost with the ticket otherwise",
   // public-surfaces PS-P9 (20261237): INCLUDED and restored by the integrator
   // at the PS-P9 merge, 2026-10-20 (DEC-90).
   print_sheet_tokens: "the per-print sheet tokens of printed packs — a one-way SHA-256 of each sheet's 192-bit token, the print, and the document + version that sheet printed (no scannable code). Bounded to this workspace's documents and versions (RESTORE_PARENT_RULES); a row grants no access and is no one's act: /api/verify computes the verdict from the live document, so a restored row only lets a sheet printed before the restore keep its verdict (a row naming a document of this workspace says no more than that document's own ?v= QR does); the guard keeps what a sheet printed immutable",
@@ -369,6 +372,10 @@ export const RESTORE_PARENT_RULES: Readonly<Record<string, ReadonlyArray<Restore
   table_views: fkRules("library_id>libraries collection_id>collections"),
   team_members: fkRules("team_id>teams"),
   ticket_comments: fkRules("ticket_id>tickets"),
+  // drafting-flow DF-P6 (20261251): the asset is CLEARED when it is not an
+  // asset of this workspace (ON DELETE SET NULL live; the typed tag stays and
+  // reads as not found); the ticket is required.
+  ticket_equipment: fkRules("ticket_id>tickets asset_id>assets?"),
   // drafting-flow DF-P4 (GAP-105, 20261208): a ticket's library. CLEARED,
   // not refused, when it is not a library of this workspace — exactly what
   // the live database does when a library is deleted (ON DELETE SET NULL),
@@ -998,6 +1005,8 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "project_documents", "project_activity",
   "milestones", "milestone_notes",
   "ticket_comments",
+  // drafting-flow DF-P6 (20261251): after tickets and assets, both above.
+  "ticket_equipment",
   // An episode before the sessions and messages that name it (episode_id).
   "checkout_episodes", "checkout_sessions", "checkout_messages",
   "markup_requests",

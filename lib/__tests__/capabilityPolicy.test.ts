@@ -53,7 +53,10 @@ describe("capability policy — defaults reproduce legacy behavior", () => {
     const t = ticket({ status: "PENDING_FINAL_APPROVAL", assignedEngineerId: "eng-9" });
     expect(actionsFor(t, "Engineer-1" as Role, "eng-9")).toContain("engineer_approve_final");
     expect(actionsFor(t, "Engineer-1" as Role, "eng-other")).not.toContain("engineer_approve_final");
-    expect(actionsFor(t, "Manager" as Role, "mgr-1")).toContain("engineer_approve_final");
+    // SM-3 (drafting-flow DF-P6, DEC-90 ruling (3)): management still issues
+    // here, but as a recorded OVERRIDE — never as the engineer's sign-off.
+    expect(actionsFor(t, "Manager" as Role, "mgr-1")).toContain("override_engineer_final");
+    expect(actionsFor(t, "Manager" as Role, "mgr-1")).not.toContain("engineer_approve_final");
     // reassign_engineer stays Admin-only by default
     expect(actionsFor(t, "Admin" as Role, "adm-1")).toContain("reassign_engineer");
     expect(actionsFor(t, "Manager" as Role, "mgr-1")).not.toContain("reassign_engineer");

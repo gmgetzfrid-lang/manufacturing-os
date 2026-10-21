@@ -2,10 +2,10 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { notifyBatchWithReason } from "@/lib/inAppNotifications";
-import { WorkflowEngine, ticketResource, decisiveGrants, currentRoster, slotSignPlan, engineerApprovalRequired, ISSUE_MARK_ACTIONS, ROSTERLESS_APPROVALS, ROUTED_NO_ROSTER_REASON, routedNoRosterReason, ISSUE_AS_IS_APPROVALS, issueReadyFor } from "@/lib/workflow";
+import { WorkflowEngine, ticketResource, decisiveGrants, currentRoster, engineerPickQuestionApplies, slotSignPlan, engineeringGateRequired, ISSUING_APPROVALS, ISSUE_MARK_ACTIONS, ROSTERLESS_APPROVALS, ROUTED_NO_ROSTER_REASON, routedNoRosterReason, ISSUE_AS_IS_APPROVALS, issueReadyFor } from "@/lib/workflow";
 import { loadCapabilityPolicyStrict, policyAllows } from "@/lib/capabilityPolicy";
-import { engineerPickCap, engineerPickRefusal } from "@/lib/ticketPage";
-import { effectiveRoutingForTicket, ticketReviewRouting } from "@/lib/routingControl";
+import { engineerPickCap, engineerPickRefusal, engineerCandidates } from "@/lib/ticketPage";
+import { effectiveRoutingForTicket, ticketReviewRouting, routingForWorkClass } from "@/lib/routingControl";
 import {
   hashStoredFilesBounded, draftsToHashOnApproval, HASH_LIMITS, filesUnderReview, openRoster, applySignPlan, rosterCompletion, rosterBinding,
   signatureRefusal, writeRosterLedger, isMissingRosterLedger, type FileHash, type SignatureRow,
@@ -27,7 +27,8 @@ import {
 } from "@/lib/ticketTransitions";
 import type { Role, TicketAttachment, TicketHistoryEntry, TicketOutcome, TicketReviewRoster } from "@/types/schema";
 import { TICKET_INTENT_TTL_MS } from "@/lib/intents";
-import { parseSourceDocument, parseSourceDocuments } from "@/lib/sourceDocRef";
+import { parseSourceDocument, parseSourceDocuments, revDrift } from "@/lib/sourceDocRef";
+import { reviewClassOptions, resolveReviewClass, hasReviewModelColumns, isDeclaredLikeInKind, engineerPickAvailable as pickAvailableFrom, declarationSignatureStands, type DeclarationSignatureRow } from "@/lib/reviewModel";
 import { unitOptionsFor, resolveUnit, unitListReadFailure } from "@/lib/ticketCreate";
 import { heldRoles } from "@/lib/roleHeld";
 import { noteDeliverableNotInRegister, noteDeliverableNotInLibrary, deliverableStateOf } from "@/lib/ticketHandback";
@@ -109,6 +110,18 @@ interface Body {
    *  signature, so the panel asks for an e-signature only for a sign-off
    *  the route would take. */
   dryRun?: boolean | null;
+  /** GAP-101 / TIER-4 (DF-P6): the work class / code class triage records
+   *  with `assign`, `request_eng_review` or `flag_engineering` at
+   *  PENDING_ASSIGNMENT — values of the workspace's own lists. Never
+   *  required. */
+  workClass?: string | null;
+  codeClass?: string | null;
+  /** HAND-7 done-when 3 (DF-P6): the approver acknowledged that the
+   *  request's source has moved since it was raised. `false` = a client that
+   *  knows about the move and did not acknowledge it (refused, 409);
+   *  absent = a page that does not ask yet (applied, recorded as not
+   *  acknowledged). */
+  sourceDriftAcknowledged?: boolean | null;
 }
 
 /** DCW-4 / HAND-3: the shape of a register row id (document_versions.id,
@@ -123,7 +136,15 @@ const INTENT_BRIDGE_CHUNK = 100;
 
 /** EVID-12: the actions that approve a submitted draft — their audit row
  *  names the drafts the approval was given on. */
-const APPROVING_ACTIONS: ReadonlySet<string> = new Set(["approve_draft_ifc", "engineer_approve_final", "approve_minor_correction"]);
+const APPROVING_ACTIONS: ReadonlySet<string> = new Set(["approve_draft_ifc", "engineer_approve_final", "approve_minor_correction", "override_engineer_final"]);
+
+/** DF-P6 fix pass 4 (review, minor 3): the actions a like-in-kind
+ *  declaration decides — whether the request may issue without an
+ *  engineer (the issuing approvals, and a roster sign-off that may complete
+ *  the review), and whether a scope review or the late flag binds the
+ *  requirement. With the declaration's signature unreadable they answer 503,
+ *  never a guess. */
+const DECLARATION_DECIDES: ReadonlySet<string> = new Set([...ISSUING_APPROVALS, "sign_slot", "request_eng_review", "flag_engineering"]);
 
 /** SM-12: a member's name as the app shows it — display name, else the
  *  local part of their email; null when the membership row carries neither. */
@@ -385,29 +406,52 @@ export async function POST(req: NextRequest) {
     : [callerRole];
 
   // GAP-2/DEC-12: the independence predicates bind at >= 3 active members.
-  const { count: activeMemberCount } = await supabaseAdmin
+  // DF-P6 fix pass 2 (review, major 2): the count is CHECKED. It decides
+  // who may approve (the producer-is-checker block) and whether an engineer
+  // can be picked for the requester's override (lib/workflow.ts — fix pass
+  // 4 no longer refuses that override by size, DEC-90 ruling (3)), so a
+  // failed read never reads as "a small org": an issuing approval or an
+  // override is refused (503, nothing written); any other action is
+  // evaluated with separation of duties ACTIVE (fail closed) and its audit
+  // row says the count was not checked.
+  const { count: memberCountRead, error: memberCountErr } = await supabaseAdmin
     .from("org_members")
     .select("uid", { count: "exact", head: true })
     .eq("org_id", ticket.orgId)
     .eq("status", "active");
-  const sodActive = (activeMemberCount ?? 0) >= 3;
+  const memberCountUnchecked = !!memberCountErr;
+  if (memberCountUnchecked && ISSUING_APPROVALS.has(body.actionType)) {
+    console.error(`[workflow-action] active member count unreadable for org ${ticket.orgId}: ${memberCountErr?.message ?? "unknown"}`);
+    return NextResponse.json(
+      { error: "This workspace's members could not be counted, so the approval was not applied (it decides who may approve or override). Try again in a moment.", code: "member_count_unreadable" },
+      { status: 503 },
+    );
+  }
+  const activeMemberCount = memberCountUnchecked ? Math.max(memberCountRead ?? 0, 3) : (memberCountRead ?? 0);
+  const sodActive = activeMemberCount >= 3;
 
   // WF-15: close-without-review is a property of the CONFIGURED type.
   let closeWithoutReviewTypes: string[] = ["RFI"];
   let engineeringFirstTypes: string[] = [];
+  // GAP-101 / TIER-4 (DF-P6): the same row carries the work / code class
+  // lists (seeded empty). null when it could not be read.
+  let draftingCfg: Record<string, unknown> | null = null;
+  let draftingCfgRead = false;
   try {
-    const { data: cfgRow } = await supabaseAdmin
+    const { data: cfgRow, error: cfgRowErr } = await supabaseAdmin
       .from("org_configurations")
       .select("data")
       .eq("org_id", ticket.orgId)
       .eq("key", "drafting")
       .maybeSingle();
+    if (!cfgRowErr) draftingCfgRead = true;
     const opts = ((cfgRow?.data as { requestTypes?: { options?: Array<{ value?: string; closeWithoutReview?: boolean }> } } | null)
       ?.requestTypes?.options) ?? [];
     const flagged = opts.filter((o) => o.closeWithoutReview === true).map((o) => String(o.value ?? "")).filter(Boolean);
     if (flagged.length > 0) closeWithoutReviewTypes = flagged;
     // DRAFT-2: "engineering first" is the same kind of type property.
     engineeringFirstTypes = flaggedRequestTypes(cfgRow?.data, "engineeringFirst");
+    draftingCfg = (cfgRow?.data as Record<string, unknown> | null) ?? null;
   } catch { /* default stands */ }
 
   // THE enforcement: the action must be one the state machine offers this
@@ -439,8 +483,56 @@ export async function POST(req: NextRequest) {
       .eq("org_id", ticket.orgId).eq("uid", ticket.requesterId).eq("status", "active").maybeSingle();
     requesterRoles = heldRoles(reqMember as { role?: unknown; roles?: unknown } | null);
   }
+  // DF-P6 fix pass (review, minor 11): a declaration stands only on its
+  // e-signature. A row that says "declared" (engineering_required false) but
+  // whose signature is not on record — a restored or hand-written row; the
+  // insert guard exempts the service role and a backup carries no
+  // e_signatures — is evaluated as UNDECLARED: engineering is required.
+  // Read only for a declared ticket.
+  // DF-P6 fix pass 4 (review, minor 3): a read that FAILS is not evidence
+  // the signature is missing. It never changes what the engine and
+  // computeTransition see (an in-memory "required" would let a
+  // request_eng_review write engineering_required = true for good, losing
+  // the declaration over a read error); instead every action the
+  // declaration decides — an issuing approval, request_eng_review,
+  // flag_engineering — answers 503 "try again", nothing written. Only a
+  // signature KNOWN not to stand ("missing") is evaluated as undeclared.
+  let declarationUnverified: "missing" | "unchecked" | null = null;
+  if (ticket.engineeringRequired === false && isDeclaredLikeInKind(ticket)) {
+    const sigId = ticket.likeInKindSignatureId ?? "";
+    const { data: dsig, error: dsigErr } = UUID_RE.test(sigId)
+      ? await supabaseAdmin.from("e_signatures").select("id, org_id, resource_type, resource_id, signer_user_id").eq("id", sigId).maybeSingle()
+      : { data: null, error: null };
+    // The request page's card asks the same question (declarationSignatureStands).
+    if (dsigErr) declarationUnverified = "unchecked";
+    else if (!declarationSignatureStands(dsig as DeclarationSignatureRow | null, { id: body.ticketId, orgId: ticket.orgId, likeInKindDeclaredBy: ticket.likeInKindDeclaredBy })) declarationUnverified = "missing";
+    if (declarationUnverified === "missing") ticket.engineeringRequired = true;
+  }
+  if (declarationUnverified === "unchecked" && DECLARATION_DECIDES.has(body.actionType)) {
+    console.error(`[workflow-action] declaration signature unreadable for ticket ${body.ticketId}`);
+    return NextResponse.json(
+      { error: "This request's like-in-kind declaration could not be checked, so the action was not applied (the declaration decides whether an engineer must sign). Try again in a moment.", code: "declaration_unreadable" },
+      { status: 503 },
+    );
+  }
+  // DF-P6 fix pass (review, issues 1 and 2): can the requester pick an
+  // engineer at all? Read only where it decides something
+  // (engineerPickQuestionApplies — the caller is the requester and holds
+  // ticket.manage, the request requires engineering review, it is in serial
+  // review; the request page asks the same question). A read that fails
+  // leaves it unknown: the strict reading (someone can be picked).
+  let engineerPickAvailable: boolean | undefined;
+  if (engineerPickQuestionApplies(ticket, caller.id, callerRole, callerRoles, capPolicy, requesterRoles)) {
+    const read = await loadPickerMembers(ticket.orgId, supabaseAdmin);
+    if (read.ok) {
+      const cands = engineerCandidates(read.rows, capPolicy, "ticket.final_approve", ticketResource(ticket)).map((c) => c.uid);
+      engineerPickAvailable = pickAvailableFrom(cands, ticket, caller.id, sodActive);
+    }
+  }
   const engineCtx = {
+    ...(engineerPickAvailable === undefined ? {} : { engineerPickAvailable }),
     userRoles: callerRoles,
+    // (fix pass 2: already fail-closed above when the count could not be read)
     activeMemberCount: activeMemberCount ?? 0,
     engineeringFirstTypes,
     closeWithoutReviewTypes,
@@ -519,6 +611,12 @@ export async function POST(req: NextRequest) {
     ticket.assignedEngineerId === caller.id ? "engineer" : null,
   ].filter((x): x is string => !!x);
   const authority = {
+    // SM-3 (DF-P6, DEC-90 ruling (3)): a management override of the
+    // engineering sign-off is named as one in the attempt row.
+    // Fix pass 4 (review, major 2 — DEC-90 ruling (3)): the requester's own
+    // override is named as one (identity carries "requester"; the comment,
+    // required for it, is the why).
+    ...(action.engineeringOverride ? { override: { of: "engineering_sign_off", reason: `The request requires engineering review and the actor holds no Engineer role and does not occupy the engineer's place.${ticket.requesterId === caller.id ? " The actor is the request's requester (a self-override, with the actor's comment)." : ""}` } } : {}),
     via: usedGrants.length > 0 ? "grant" : "role",
     ...(usedGrants.length > 0 ? { grants: usedGrants.map((g) => ({ cap: g.cap, expiresAt: g.expiresAt ?? null, grantedBy: g.grantedBy ?? null, grantedAt: g.grantedAt ?? null, note: g.note ?? null })) } : {}),
     ...(identity.length > 0 ? { identity } : {}),
@@ -813,6 +911,84 @@ export async function POST(req: NextRequest) {
     if (resolved.unit) triage = { ...(triage ?? {}), unit: resolved.unit };
   }
 
+  // ── GAP-101 / TIER-4 (DF-P6): the work class and the code class ────────
+  // Recorded by triage (the assignment queue: assign, request_eng_review or
+  // flag_engineering at PENDING_ASSIGNMENT) from the workspace's own lists —
+  // never free text (DEC-35), never required (99-fix-sequencing "Do not":
+  // no work class required at intake). A value not on the list is refused
+  // with nothing written; a list that could not be read is a 503, never an
+  // unchecked class. Before 20261250 is pasted the columns are not there:
+  // the action applies as today and the answer says the class was not
+  // recorded.
+  const reviewModelColumns = hasReviewModelColumns(ticket);
+  const wantsWorkClass = typeof body.workClass === "string" && body.workClass.trim() !== "";
+  const wantsCodeClass = typeof body.codeClass === "string" && body.codeClass.trim() !== "";
+  let reviewClass: TransitionInput["reviewClass"] = null;
+  let reviewClassNotStored = false;
+  if (wantsWorkClass || wantsCodeClass) {
+    const classTriage = ticket.status === "PENDING_ASSIGNMENT"
+      && (action.action === "assign" || action.action === "request_eng_review" || action.action === "flag_engineering");
+    if (!classTriage) {
+      return NextResponse.json({ error: "A work class or a code class is recorded at triage — when assigning, or flagging for engineering, from the assignment queue." }, { status: 400 });
+    }
+    if (!reviewModelColumns) {
+      reviewClassNotStored = true;
+    } else {
+      if (!draftingCfgRead) return NextResponse.json({ error: "Couldn't read this workspace's work and code classes — try again in a moment." }, { status: 503 });
+      const wc = resolveReviewClass(body.workClass, reviewClassOptions(draftingCfg, "workClasses"));
+      const cc = resolveReviewClass(body.codeClass, reviewClassOptions(draftingCfg, "codeClasses"));
+      if (wc.kind === "unknown") return NextResponse.json({ error: `"${String(body.workClass).trim().slice(0, 60)}" is not one of this workspace's work classes`, field: "workClass" }, { status: 400 });
+      if (cc.kind === "unknown") return NextResponse.json({ error: `"${String(body.codeClass).trim().slice(0, 60)}" is not one of this workspace's code classes`, field: "codeClass" }, { status: 400 });
+      reviewClass = { workClass: wc.kind === "ok" ? wc.option : null, codeClass: cc.kind === "ok" ? cc.option : null };
+    }
+  }
+
+  // ── HAND-7 done-when 3 (DF-P6): an approval over a moved source ─────────
+  // An issuing approval reads each source document's live revision (service
+  // role, this org) and compares it with the version the request captured
+  // (lib/sourceDocRef.ts revDrift — version ids when both carry one). A
+  // move is acknowledged by the approver (`sourceDriftAcknowledged: true`,
+  // recorded), refused when a client that knows about it says it was not
+  // acknowledged (`false`), and — while the request page does not ask yet —
+  // applied as today with the history line and the audit row saying it was
+  // NOT acknowledged. A read that fails proves nothing: never "moved", never
+  // a block; the audit row says the source was not checked.
+  let sourceDrift: { labels: string[]; acknowledged: boolean | null } | null = null;
+  let sourceDriftUnchecked = false;
+  if (ISSUING_APPROVALS.has(action.action) || (action.action === "sign_slot" && body.dryRun !== true)) {
+    const refs = parseSourceDocuments(ticket.metadata).filter((r) => UUID_RE.test(r.id));
+    if (refs.length > 0) {
+      const { data: liveDocs, error: liveErr } = await supabaseAdmin
+        .from("documents").select("id, rev, current_version_id, document_number")
+        .eq("org_id", ticket.orgId).in("id", refs.slice(0, INTENT_BRIDGE_CHUNK).map((r) => r.id));
+      if (liveErr) {
+        sourceDriftUnchecked = true;
+      } else {
+        const live = new Map(((liveDocs ?? []) as Array<{ id: string; rev: string | null; current_version_id: string | null; document_number: string | null }>).map((d) => [d.id, d]));
+        const labels: string[] = [];
+        for (const ref of refs) {
+          const d = live.get(ref.id);
+          if (!d) continue;
+          if (revDrift({ versionId: ref.versionId, rev: ref.rev }, { versionId: d.current_version_id, rev: d.rev }) === "drifted") {
+            labels.push(`${ref.documentNumber || d.document_number || "a source document"}${ref.rev ? ` raised on Rev ${ref.rev}` : ""}, now Rev ${d.rev ?? "—"}`);
+          }
+        }
+        if (labels.length > 0) {
+          if (body.sourceDriftAcknowledged === false) {
+            const driftError = `The source revision has moved since this request was raised (${labels.join("; ")}). Approving needs your acknowledgement.`;
+            // DF-P6 fix pass (review, minor 12): a refused roster sign-off
+            // names the signature it minted (DF-P5's rule).
+            if (action.action === "sign_slot") {
+              await recordRefusedSignOff({ signatureId: body.signatureId, ticketId: body.ticketId, orgId: ticket.orgId, caller: { id: caller.id, email: callerEmail, role: callerRole }, status: 409, reason: driftError, code: "source_drift_unacknowledged", rosterId: currentRoster(ticket)?.id ?? null });
+            }
+            return NextResponse.json({ error: driftError, code: "source_drift_unacknowledged" }, { status: 409 });
+          }
+          sourceDrift = { labels, acknowledged: body.sourceDriftAcknowledged === true ? true : null };
+        }
+      }
+    }
+  }
+
   // ── GAP-103 / GAP-112 (DF-P5 ROSTER) ───────────────────────────────────
   // A draft entering PENDING_REVIEW in a library that declares a routing
   // table opens a PARALLEL roster (lib/ticketRoster.ts): every slot's
@@ -899,13 +1075,18 @@ export async function POST(req: NextRequest) {
         // ticket.engineer_gate_exempt list), or an engineering-first type;
         // when it applies and the table carries no blocking engineering slot,
         // openRoster appends the seed's (lib/ticketRoster.ts withEngineeringGate).
+        // DF-P6 (TIER-1 / GAP-111): the gate is the WORK's — the
+        // declaration and the binding flag — with the role-based seed for a
+        // request the column cannot speak for (engineeringGateRequired).
         const engineeringGate = {
-          required: engineerApprovalRequired(ticket.requesterRole, requesterRoles, capPolicy, ticket.requesterId, resource)
+          required: engineeringGateRequired(ticket, requesterRoles, capPolicy)
             || engineeringFirstTypes.includes(ticket.requestType),
           assignedEngineerId: ticket.assignedEngineerId ?? null,
         };
         const opened = openRoster({
-          id: crypto.randomUUID(), control: routing.control, level: routing.level, cycle, files: hashed,
+          // GAP-102 / TIER-3 (DF-P6): a notify-only slot limited to other
+          // work classes is left out for this request (never a sign-off).
+          id: crypto.randomUUID(), control: routingForWorkClass(routing.control, ticket.workClass), level: routing.level, cycle, files: hashed,
           ctx: { members: members.rows, policy: capPolicy, resource, requesterId: ticket.requesterId },
           openedBy: caller.id, now: new Date().toISOString(), engineeringGate,
         });
@@ -982,6 +1163,20 @@ export async function POST(req: NextRequest) {
     issueReady: action.action === "submit_draft" && body.issueReady === true,
     rosterOpen,
     rosterSign,
+    // SM-3 (DF-P6): the engine marked this action an override of the
+    // engineering sign-off for THIS caller on THIS ticket.
+    engineeringOverride: action.engineeringOverride === true,
+    // Fix pass 4 (review, minor 5): a management issue of a request that
+    // does not require engineering — no stamp, no override marker.
+    withoutEngineerSignOff: action.withoutEngineerSignOff === true,
+    reviewClass,
+    reviewModelColumns,
+    // DF-P6 fix pass 2 (minor 7): the engineering-first type's mandatory loop
+    // (the engine's engineeringFirstPending — before it, the type cannot be
+    // assigned) on a request still waiting for it.
+    engineeringFirstLoop: action.action === "request_eng_review" && engineeringFirstTypes.includes(ticket.requestType)
+      && !ticket.engineerReviewRequestedAt && !ticket.assignedEngineerId,
+    sourceDrift,
     actor: { uid: caller.id, email: callerEmail, role: callerRole },
   };
   const { updates, newStatus, recipients: transitionRecipients, newComment } = computeTransition(ticket, input);
@@ -1270,6 +1465,22 @@ export async function POST(req: NextRequest) {
             ? { reviewRoster: { id: openRosterNow.id, event: "closed", reason: action.action } }
             : {}),
       ...(rosterWarning ? { reviewRosterNotOpened: rosterWarning } : {}),
+      // DF-P6: the review model's facts this decision was made on — the
+      // engineering requirement (null before 20261250), a declared minor
+      // correction (TIER-7), the classes triage set, a moved source.
+      ...(ISSUING_APPROVALS.has(action.action) || action.action === "flag_engineering" || action.action === "request_eng_review"
+        ? { engineeringRequired: reviewModelColumns ? ticket.engineeringRequired === true : null, likeInKindDeclared: !!ticket.likeInKindDeclaredAt, reviewModelFiled: typeof ticket.reviewModelFiled === "boolean" ? ticket.reviewModelFiled : null }
+        : {}),
+      ...(action.action === "approve_minor_correction" ? { declaredClass: "minor_correction" } : {}),
+      ...(reviewClass ? { reviewClass: { workClass: reviewClass.workClass?.value ?? null, codeClass: reviewClass.codeClass?.value ?? null } } : {}),
+      ...(sourceDrift ? { sourceDrift: { moved: sourceDrift.labels, acknowledged: sourceDrift.acknowledged === true } } : {}),
+      ...(sourceDriftUnchecked ? { sourceDriftUnchecked: true } : {}),
+      // DF-P6 fix pass (minor 11): a declaration whose e-signature is not on
+      // record (or could not be read) was evaluated as undeclared.
+      ...(declarationUnverified ? { declarationUnverified } : {}),
+      // Fix pass 2 (major 2): the active-member count could not be read —
+      // this action was evaluated with separation of duties active.
+      ...(memberCountUnchecked ? { memberCountUnchecked: true } : {}),
       ...(action.action === "reassign_drafter" && body.assignment
         ? { from_drafter_id: ticket.assignedDrafterId ?? null, to_drafter_id: body.assignment.id, reason: body.comment ?? null }
         : {}),
@@ -1912,6 +2123,7 @@ export async function POST(req: NextRequest) {
     ok: true, status: newStatus, ...(holdOutcome ?? {}),
     ...(libraryNotStored && !holdOutcome ? { warning: "The request moved on, but its library could not be recorded yet (database update 20261208 is not applied)." } : {}),
     ...(rosterWarning && !holdOutcome && !libraryNotStored ? { warning: rosterWarning } : {}),
+    ...(reviewClassNotStored && !holdOutcome && !libraryNotStored && !rosterWarning ? { warning: "The request moved on, but its work or code class could not be recorded yet (database update 20261250 is not applied)." } : {}),
   });
 }
 

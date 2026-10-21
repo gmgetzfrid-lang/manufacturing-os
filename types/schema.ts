@@ -1318,6 +1318,34 @@ export interface Ticket {
    *  triage. null = not known yet (never required at intake). */
   libraryId?: string | null;
 
+  /** GAP-111 / DEC-33 (DF-P6, 20261250): engineering review is required
+   *  before this request may issue. A ratchet — the database refuses
+   *  true → false for every caller. `undefined` = the column is not in the
+   *  database yet (before the paste): the engine falls back to the
+   *  role-based seed (`engineerApprovalRequired`), today's gate. `false`
+   *  without a like-in-kind declaration = a row that predates the column
+   *  (the seed still decides for it — lib/reviewModel.ts). */
+  engineeringRequired?: boolean | null;
+  /** DF-P6 fix pass 2 (20261250): the request was filed under the review
+   *  model — false on every row that existed before the paste, true on
+   *  every row filed after it; never changed. DEC-33's limbs that bind the
+   *  REQUESTER apply only where it is true (lib/reviewModel.ts
+   *  reviewModelBinds); `undefined` = the column is not there yet. */
+  reviewModelFiled?: boolean | null;
+  /** GAP-110 / DEC-34 (DF-P6, 20261250): the requester's like-in-kind
+   *  declaration — the typed statement, who made it, when, and the
+   *  e-signature that is its record. Set at creation only, never changed. */
+  likeInKindStatement?: string | null;
+  likeInKindDeclaredBy?: string | null;
+  likeInKindDeclaredAt?: Timestamp | null;
+  likeInKindSignatureId?: string | null;
+  /** GAP-101 / TIER-4 (DF-P6, 20261250): the work class and the code class
+   *  triage recorded — values from the workspace's own lists
+   *  (org_configurations 'drafting' workClasses / codeClasses), never a
+   *  vocabulary in code (DEC-35). null = not classified (the safe reading). */
+  workClass?: string | null;
+  codeClass?: string | null;
+
   /** Free-form per-request data. Holds admin-defined custom category values
    *  (metadata.custom_categories[categoryId][fieldKey]) and the source
    *  document a request was raised from (metadata.source_document). Stored as
@@ -1405,6 +1433,28 @@ export interface OrgDraftingSettings {
   customCategories?: CustomCategoryConfig[];
   /** Notification routing policy for incoming drafting requests. */
   routing?: DraftingRoutingConfig;
+  /** GAP-101 (DF-P6): the workspace's own work classes, set at triage.
+   *  Seeded EMPTY (absent): an unclassified request is the safe reading. An
+   *  option with `engineering: true` makes engineering review required when
+   *  triage picks it (it only ever raises the requirement — DEC-33). */
+  workClasses?: ReviewClassConfig;
+  /** TIER-4 (DF-P6): the workspace's own governing-code classes ("which
+   *  code governs this service"), set at triage, same shape. DEC-35: the
+   *  names are the facility's data, never a literal in code. */
+  codeClasses?: ReviewClassConfig;
+}
+
+/** GAP-101 / TIER-4 (DF-P6): one org-configured review vocabulary. */
+export interface ReviewClassConfig {
+  label?: string;
+  options: ReviewClassOption[];
+}
+
+export interface ReviewClassOption {
+  label: string;
+  value: string;
+  /** Picking this class at triage makes engineering review required. */
+  engineering?: boolean;
 }
 
 /** Who gets notified when a drafting request needs approval/assignment.

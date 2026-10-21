@@ -92,6 +92,8 @@ const GRANDFATHERED = new Set<string>();
  *  the row and removes the table from here in the same merge — the tripwire
  *  below fails once both say it, so the entry cannot outlive its merge. */
 const ROW_AT_MERGE: Record<string, string> = {
+  // drafting-flow Round G DF-P6 REVIEW-MODEL's ticket_equipment (20261251) is
+  // listed in EXPECTED_TABLES since its merge and is no longer here.
 };
 
 const BASE = "schema.sql (base schema)";

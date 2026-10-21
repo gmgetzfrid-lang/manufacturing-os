@@ -12,6 +12,7 @@ import type { Ticket, TicketAttachment, TicketComment, TicketHistoryEntry, Ticke
 import { currentRoster, issueReadyFor, rosterEngineerApprovedAt, ISSUE_MARK_ACTIONS, slotBlocks, slotAlternatesActive } from "@/lib/workflow";
 import { lastIssuedFromHistory } from "@/lib/verifyTicketVerdict";
 import { defaultOutcome } from "@/lib/ticketOutcome";
+import { reviewModelFieldsFromRow, ENGINEERING_OVERRIDE_NOTE, isDeclaredLikeInKind } from "@/lib/reviewModel";
 
 export interface TransitionActor {
   uid?: string | null;
@@ -57,6 +58,38 @@ export interface TransitionInput {
   /** GAP-103 (DF-P5): `sign_slot` — the roster with the actor's slots
    *  satisfied, whether every blocking slot now is, and the slots' labels. */
   rosterSign?: { roster: TicketReviewRoster; complete: boolean; labels: string[] } | null;
+  /** SM-3 (DF-P6): the action is a management OVERRIDE of the engineering
+   *  sign-off (lib/workflow.ts WorkflowAction.engineeringOverride) — its
+   *  history line says so, and it never stamps engineer_approved_at. */
+  engineeringOverride?: boolean;
+  /** DF-P6 fix pass 4 (review, minor 5): a management issue at
+   *  PENDING_FINAL_APPROVAL of a request that does NOT require engineering
+   *  review (lib/workflow.ts WorkflowAction.withoutEngineerSignOff) — never
+   *  stamps engineer_approved_at, and carries no override marker. */
+  withoutEngineerSignOff?: boolean;
+  /** GAP-101 / TIER-4 (DF-P6): the work class / code class triage records
+   *  with `assign`, `request_eng_review` or `flag_engineering` at
+   *  PENDING_ASSIGNMENT — options of the workspace's own lists, checked by
+   *  the route. An option marked `engineering` raises the requirement. */
+  reviewClass?: {
+    workClass?: { value: string; label: string; engineering?: boolean } | null;
+    codeClass?: { value: string; label: string; engineering?: boolean } | null;
+  } | null;
+  /** GAP-111 / DEC-33 (DF-P6): the ticket carries 20261250's columns, so the
+   *  transition may write engineering_required (only ever true). False /
+   *  absent before the paste: nothing is written for it. */
+  reviewModelColumns?: boolean;
+  /** DF-P6 fix pass 2 (review, minor 7): this request_eng_review is the
+   *  request type's MANDATORY engineering-first loop (DRAFT-2 — the type
+   *  cannot be assigned without it). On a declared like-in-kind request it
+   *  does not raise engineering_required: the loop is the type's, not a
+   *  finding that the work is engineered (DEC-90 ruling (8) — no added wait
+   *  for a declared request). Set by the route. */
+  engineeringFirstLoop?: boolean;
+  /** HAND-7 done-when 3 (DF-P6): an issuing approval over a moved source —
+   *  the moved documents as a person reads them, and whether the approver
+   *  acknowledged it (null: the page did not ask — recorded as such). */
+  sourceDrift?: { labels: string[]; acknowledged: boolean | null } | null;
   actor: TransitionActor;
   now?: string;
 }
@@ -125,6 +158,10 @@ export function rowToTicket(row: Record<string, unknown>): Ticket {
     // GAP-105 / DCW-1 (DF-P4): the library the request targets (null before
     // 20261208 is pasted, or when none is known yet).
     libraryId: typeof row.library_id === "string" ? row.library_id : null,
+    // GAP-110 / GAP-111 / GAP-101 (DF-P6, 20261250): undefined while the
+    // columns are not in the database (the engine's seed then decides) —
+    // the one mapper every Ticket builder shares (lib/reviewModel.ts).
+    ...reviewModelFieldsFromRow(row),
     searchKeywords: Array.isArray(row.search_keywords) ? (row.search_keywords as string[]) : undefined,
     closedAt: row.closed_at as string | null | undefined,
     archivedAt: row.archived_at as string | null | undefined,
@@ -466,7 +503,28 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
         updates.engineer_review_requested_at = now;
         updates.engineer_review_reason = finalComment || null;
         updates.unread_by = [input.engineer.id];
+        // GAP-111 / DEC-33 (DF-P6): flagging for engineering BINDS the issue
+        // point — the requirement is set, for good (approve_team below
+        // leaves it; the database refuses the way back). Fix pass 2 (minor
+        // 7): not the engineering-first type's mandatory loop on a declared
+        // request — that review is the type's, and adds no wait at issue.
+        // Fix pass 3 (review, major): and only on a request FILED under the
+        // review model (review_model_filed true) — a pre-paste row's scope
+        // review behaves exactly as it does today (DEC-90 ruling (2)), never
+        // moving an in-flight ticket's lane; flag_engineering stays the
+        // explicit way to bind a legacy row.
+        if (input.reviewModelColumns && ticket.reviewModelFiled === true
+          && !(input.engineeringFirstLoop && ticket.engineeringRequired === false && isDeclaredLikeInKind(ticket))) {
+          updates.engineering_required = true;
+        }
       }
+      break;
+    case "flag_engineering":
+      // GAP-111 (DF-P6): the assigner's late flag — no status change, no
+      // restart; the deliverable now issues only with an engineer's
+      // sign-off. Its reason is the history line's details (the comment).
+      if (input.reviewModelColumns) updates.engineering_required = true;
+      historyEntry.action = "Engineering sign-off required — flagged";
       break;
     case "approve_team":
       updates.status = "PENDING_ASSIGNMENT";
@@ -599,7 +657,11 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       currentAttachments = stampIssuedFinals(currentAttachments, updates.deliverable_rev as string, ticket.revisionCount ?? 0); // PHYS-2
       // WF-21 / DEC-15: at the engineer sign-off stage this IS the engineer's
       // approval — stamp it, or the sign-off indicator stays "pending" forever.
-      if (ticket.status === "PENDING_FINAL_APPROVAL") updates.engineer_approved_at = now;
+      // SM-3 (DF-P6): never for a management override — an engineering
+      // sign-off nobody with an Engineer role gave is not stamped.
+      // Fix pass 4 (review, minor 5): nor for a management issue of a
+      // request that does not require one (withoutEngineerSignOff).
+      if (ticket.status === "PENDING_FINAL_APPROVAL" && !input.engineeringOverride && !input.withoutEngineerSignOff) updates.engineer_approved_at = now;
       if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
       break;
     case "request_final_engineer_approval":
@@ -624,6 +686,22 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       asIsIssue(); // FRIC-5: only when the drafter marked it
       if (updates.status === "FINAL_DRAFT" && ticket.requesterId && ticket.requesterId !== actorUid) {
         // The issued package now waits on the requester's acknowledgement.
+        updates.unread_by = Array.from(new Set([...(updates.unread_by as string[]), ticket.requesterId]));
+      }
+      break;
+    case "override_engineer_final":
+      // SM-3 (DF-P6, DEC-90 ruling (3)): management issues without the
+      // engineer's sign-off — engineer_approve_final's effect WITHOUT
+      // engineer_approved_at; the history line names it an override (only
+      // when the engine marked it one — fix pass 4, review minor 5: on a
+      // request that does not require engineering it is a neutral issue).
+      updates.status = "PENDING_IFC";
+      issueRev(); // SM-5: never a label the history already issued
+      historyEntry.action = `${input.actionLabel} — issued Rev ${updates.deliverable_rev}`;
+      currentAttachments = stampIssuedFinals(currentAttachments, updates.deliverable_rev as string, ticket.revisionCount ?? 0); // PHYS-2
+      if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
+      asIsIssue(); // FRIC-5: only when the drafter marked it
+      if (updates.status === "FINAL_DRAFT" && ticket.requesterId && ticket.requesterId !== actorUid) {
         updates.unread_by = Array.from(new Set([...(updates.unread_by as string[]), ticket.requesterId]));
       }
       break;
@@ -682,6 +760,66 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       break;
   }
 
+  // SM-3 (DF-P6): an override of the engineering sign-off says so on its own
+  // history line — the line every reader of the ticket sees.
+  if (input.engineeringOverride && updates.status !== undefined && updates.status !== ticket.status) {
+    const note = ENGINEERING_OVERRIDE_NOTE;
+    historyEntry.details = historyEntry.details ? `${historyEntry.details} [${note}]` : note;
+    // DF-P6 fix pass (review, issue 7): the request carries the override, so
+    // the engineer card and the seeded roster say "issued by management
+    // override — no engineer sign-off" instead of a sign-off still pending
+    // (lib/reviewModel.ts engineeringOverrideOf).
+    const meta = ((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>;
+    updates.metadata = { ...meta, engineering_override: { by: input.actor.email || actorUid || null, uid: actorUid ?? null, at: now, action: input.actionType } };
+    // DF-P6 fix pass 5 (review, minor): a standing "not required" mark from
+    // an earlier cycle is no longer the latest word.
+    if (meta.engineering_sign_off !== undefined && meta.engineering_sign_off !== null) {
+      (updates.metadata as Record<string, unknown>).engineering_sign_off = null;
+    }
+  } else if (
+    (updates.status === "PENDING_IFC" || (updates.status === "FINAL_DRAFT" && ticket.status !== "PENDING_IFC"))
+    && ticket.status !== updates.status
+  ) {
+    // The DF-P6 merge (the integrator, review minor): an issue lands in
+    // PENDING_IFC, or straight in FINAL_DRAFT when the drafter marked it
+    // issue-as-is (asIsIssue) — both are issues; the drafter's own
+    // PENDING_IFC → FINAL_DRAFT submission is not, so it keeps every mark.
+    // DF-P6 fix pass 2 (review, minor 6): an issue that was NOT an override
+    // (a later cycle approved by its requester or signed by an engineer)
+    // clears a standing override marker — null, so neither the card nor the
+    // seeded roster reads the old override (nor its history line) as the
+    // latest word.
+    const meta = ((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>;
+    const standing = meta.engineering_override !== undefined
+      ? meta.engineering_override !== null
+      : (ticket.history ?? []).some((h) => typeof (h as { details?: unknown }).details === "string" && String((h as { details?: unknown }).details).includes(ENGINEERING_OVERRIDE_NOTE));
+    if (standing) {
+      updates.metadata = { ...meta, engineering_override: null };
+    }
+    // DF-P6 fix pass 5 (review, minor): a management issue at final approval
+    // of a request that does NOT require engineering (withoutEngineerSignOff)
+    // stamps no engineer_approved_at and is no override — so the request
+    // says why no sign-off is shown: the engineer card and the seeded roster
+    // read "not required" (lib/reviewModel.ts engineeringSignOffNotRequiredOf)
+    // instead of a sign-off still pending. Any other issue clears a mark an
+    // earlier cycle left.
+    const metaNow = ((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>;
+    if (input.withoutEngineerSignOff && ticket.status === "PENDING_FINAL_APPROVAL") {
+      updates.metadata = { ...metaNow, engineering_sign_off: { notRequired: true, by: input.actor.email || actorUid || null, uid: actorUid ?? null, at: now, action: input.actionType } };
+    } else if (metaNow.engineering_sign_off !== undefined && metaNow.engineering_sign_off !== null) {
+      updates.metadata = { ...metaNow, engineering_sign_off: null };
+    }
+  }
+  // HAND-7 done-when 3 (DF-P6): an approval over a moved source names what
+  // moved and whether the approver acknowledged it.
+  if (input.sourceDrift && input.sourceDrift.labels.length > 0) {
+    const what = input.sourceDrift.labels.join("; ");
+    const note = input.sourceDrift.acknowledged === true
+      ? `Approved over a moved source, acknowledged by the approver: ${what}`
+      : `Approved over a moved source, not acknowledged (the page did not ask): ${what}`;
+    historyEntry.details = historyEntry.details ? `${historyEntry.details} [${note}]` : note;
+  }
+
   // GAP-103 (DF-P5): a draft entering PENDING_REVIEW in a routed library
   // carries the roster the route opened (one parallel wait); everyone the
   // roster names — the occupants of every slot, notify-only slots included —
@@ -723,6 +861,34 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
   // with a history line of their own naming what changed. Setting the unit
   // retires the intake's "unknown / not on the list / not checked" marks
   // (DEC-101 item 1: "triage assigns").
+  // GAP-101 / TIER-4 (DF-P6): triage records the work class and the code
+  // class — at the assignment queue, with the assignment, the engineering
+  // review flag or the binding flag, on the same compare-and-set write. A
+  // class the workspace marked `engineering` raises the requirement (never
+  // lowers it). Each change is named on a history line of its own.
+  if (input.reviewClass && input.reviewModelColumns && ticket.status === "PENDING_ASSIGNMENT"
+      && (input.actionType === "assign" || input.actionType === "request_eng_review" || input.actionType === "flag_engineering")
+      && (input.actionType === "flag_engineering" || updates.status !== undefined)) {
+    const parts: string[] = [];
+    const wc = input.reviewClass.workClass;
+    const cc = input.reviewClass.codeClass;
+    if (wc && wc.value !== (ticket.workClass ?? null)) { updates.work_class = wc.value; parts.push(`Work class: ${wc.label}`); }
+    if (cc && cc.value !== (ticket.codeClass ?? null)) { updates.code_class = cc.value; parts.push(`Code class: ${cc.label}`); }
+    if ((wc?.engineering || cc?.engineering) && ticket.engineeringRequired !== true) {
+      updates.engineering_required = true;
+      parts.push(`Engineering sign-off required by the ${wc?.engineering ? "work" : "code"} class`);
+    }
+    if (parts.length > 0) {
+      (updates.history as TicketHistoryEntry[]).push({
+        action: "Review class set",
+        user: input.actor.email || "Unknown",
+        role: input.actor.role,
+        date: now,
+        details: parts.join(" · "),
+      } as TicketHistoryEntry);
+    }
+  }
+
   if (input.triage && ticket.status === "PENDING_ASSIGNMENT" && updates.status !== undefined
       && (input.actionType === "assign" || input.actionType === "request_eng_review")) {
     const parts: string[] = [];
@@ -837,6 +1003,7 @@ export function classifyTransitionNotification(params: {
   const isApproved =
     actionType === "approve_draft_ifc" ||
     actionType === "engineer_approve_final" ||
+    actionType === "override_engineer_final" ||
     actionType === "approve_minor_correction" ||
     rosterApproval;
   const isRevision =

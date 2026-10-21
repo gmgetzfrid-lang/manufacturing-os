@@ -41,8 +41,10 @@ const names = (acts: WorkflowAction[]) => acts.map((a) => a.action);
 
 /** Every input an offered action could need, so computeTransition sees the
  *  move the route would apply (engineer picks, assignments, files, a note). */
-function inputFor(a: Pick<WorkflowAction, "action" | "label" | "variant">, actor: { uid: string; role: string }): TransitionInput {
+function inputFor(a: Pick<WorkflowAction, "action" | "label" | "variant" | "engineeringOverride">, actor: { uid: string; role: string }): TransitionInput {
   return {
+    // DF-P6 (SM-3): the route passes the engine's override mark through.
+    engineeringOverride: a.engineeringOverride === true,
     actionType: a.action,
     actionLabel: a.label,
     variant: a.variant,
@@ -183,7 +185,14 @@ describe("AUTHZ-1 / SM-1 — the minor-correction bypass is closed by OUTCOME, n
                 const assignedEngineer = status === "PENDING_FINAL_APPROVAL" && uid === "eng";
                 expect(exempt || assignedEngineer, `${r} ticket @${status}: ${collection.join("+")} as ${uid} → ${a.action}`).toBe(true);
                 if (exempt) exemptReached++;
-                if (status === "PENDING_FINAL_APPROVAL") expect(res.updates.engineer_approved_at, `${a.action} at sign-off`).toBe(NOW);
+                // DF-P6 (SM-3, DEC-90 ruling (3)): an engineer's sign-off stamps
+                // engineer_approved_at; a management OVERRIDE (marked by the
+                // engine, offered only to an actor holding no Engineer role)
+                // never does.
+                if (status === "PENDING_FINAL_APPROVAL") {
+                  if (a.engineeringOverride) expect(res.updates.engineer_approved_at, `${a.action} (override) at sign-off`).toBeUndefined();
+                  else expect(res.updates.engineer_approved_at, `${a.action} at sign-off`).toBe(NOW);
+                }
               }
             }
           }

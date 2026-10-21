@@ -99,6 +99,10 @@ const DECISION_AT_MERGE: Record<string, string> = {
   // ticket_review_slot_events were decided at its merge (EXPORTED after
   // ticket_comments; never imported — IMMUTABLE_TABLES; DEC-90) and are no
   // longer here.
+  // drafting-flow Round G DF-P6 REVIEW-MODEL's ticket_equipment was decided at
+  // its merge (EXPORTED after ticket_review_slot_events and restored after
+  // tickets and assets — lib/exportTables.ts, lib/dataRestore.ts; DEC-90) and
+  // is no longer here.
 };
 
 // EGR-7 / XEDGE-10: a column whose NAME says "credential". `_key` alone is

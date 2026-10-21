@@ -347,7 +347,7 @@ the guard that exists on the other side — app/api/admin/ticket-shed/restore/ro
 ## AUTHZ-6 · `ticket.requester_review` grants requester authority org-wide, not per-ticket — any member holding the Requester role can approve anyone else's drafting request
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/capabilityPolicy.ts:72-73`, `lib/capabilityPolicy.ts:141-155`, `lib/workflow.ts:74`, `lib/workflow.ts:198-234`, `lib/workflow.ts:319-323`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct as stated — the identity check `isRequesterIdentity` is ORed with, not ANDed to, the role capability, so the role grants org-wide requester authority over every ticket. Worth noting the workflow-action route re-derives the same getActions server-side (route.ts:96), so this is enforced authority, not just UI.
@@ -404,6 +404,19 @@ export function policyAllows(
 - ✗ The `CAPABILITY_DEFS` descriptions still do not state the reach (`lib/capabilityPolicy.ts:108`, `:110`, `:112`, unchanged).
 
 **Scope / residual.** The three descriptions → **DF-P6** (fleet plan: DF-P6 REVIEW-MODEL lists `AUTHZ-6`).
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P6 REVIEW-MODEL — the remaining done-when (the descriptions). `lib/capabilityPolicy.ts` `CAPABILITY_DEFS` now say the reach plainly: `ticket.draft_work` — acts only on a request with NO assigned drafter ("never acts on another drafter's request"); `ticket.requester_review` — acts only on a request with NO requester ("never acts on another person's request"); `ticket.direct_approve` — "ANY request in review" org-wide, with a non-Engineer's approval of an engineered request recorded as an override; `ticket.engineer_gate_exempt` — applies only to requests filed before the declaration existed or never declared, never to a request whose requester declared it like-in-kind (the declaration decides).
+
+Tests: `lib/__tests__/reviewModel.test.ts` "AUTHZ-6 — the capability descriptions state their reach".
+
+**Done-when.**
+- ✓ `policyAllows` takes the resource (DF-P1 / DEC-13). *Corrected at the DF-P6 second review fix pass (DEC-29): this line first added "the resource now also carries the library and the classes" — stale after the first fix pass reverted `lib/workflow.ts` `ticketResource` to request type and unit (the requests list and `lib/inbox.ts` do not carry the fields yet; 99-fix-sequencing "Hand-offs from DF-P6").*
+- ✓ The default no longer makes a plain Requester an approver on tickets they do not own (WF-8).
+- ✓ The `CAPABILITY_DEFS` descriptions state the reach, so an admin editing the policy sees the blast radius. *Corrected at the DF-P6 second review fix pass (DEC-29): the `ticket.direct_approve` description first said a rule scoped to "a request type, unit, library, work class or code class" narrows it; only request type and unit bind today. It now says so, `components/requests/ReviewClassesSection.tsx` no longer tells admins a rule can be scoped to a code class, and `validateCapabilityPolicy` refuses a library-, work-class- or code-class-scoped rule on a `ticket.*` capability (it would never match — a setting that looks like a narrowing and does nothing) until the resource carries those fields. Pinned: `lib/__tests__/reviewModel.test.ts` "the evaluator reads a code-class rule (TIER-4), but the validator refuses …".*
+
+**Scope / residual.** None beyond the resource hand-off (`TIER-4`, `GAP-105`).
+
+**Fix pass 4 (2026-10-21, drafting-flow Round G — DF-P6 fourth review).** *Correction (DEC-29): the second review fix pass put the refusal of a library-, work-class- or code-class-scoped `ticket.*` rule in `validateCapabilityPolicy`. Every write runs that rail — a grant, a revoke (the route validates the result with the stored caps), and the editor's save, which preserves stored rules it cannot edit — so a workspace already storing a library-scoped `ticket.*` rule (valid at `7893129`: `RESOURCE_KEYS` has carried `libraryId` since DEC-13 stage 2) would have had every later permissions save and every grant add and revoke refused.* Landed: the refusal is `lib/capabilityPolicy.ts` `newDeadTicketRuleRefusal(caps, storedCaps)` (rules compared as sets of tokens and `when` values), run by `app/api/admin/capability-policy/route.ts` after `validateCapabilityPolicy` against the row the write starts from: a NEW such rule is refused (400, nothing written, nothing audited); a stored one rides along unchanged and matches nothing; a changed stored rule counts as new. `validateCapabilityPolicy` no longer refuses them (the editor cannot author one — it shows them as "not editable here"). Tests: `lib/__tests__/sweepRoundE_policyServer.test.ts` "DF-P6 (AUTHZ-6) — a stored library-scoped request rule never blocks a grant, a revoke or a save" (revoke, grant and an unrelated save all 200 with the stored rule untouched; new library / work-class rules and a changed stored rule 400); `lib/__tests__/reviewModel.test.ts` (the validator accepts, `newDeadTicketRuleRefusal` refuses). `20261250` inventory row 41's label says the same (label only). Done-when unchanged: ✓.
 
 ---
 

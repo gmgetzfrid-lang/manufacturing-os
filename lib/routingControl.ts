@@ -82,6 +82,13 @@ export interface RoutingSlot {
   /** Who may sign the slot as an OVERRIDE (optional for them; recorded as
    *  an override). Absent = nobody: a configured blocking slot is blocking. */
   waivable_by?: { roles?: string[]; capability?: CapabilityId };
+  /** GAP-102 / TIER-3 (DF-P6): a NOTIFY-ONLY slot may name the work classes
+   *  it applies to (the workspace's own values — DEC-35) — e.g. the people
+   *  told of every issue of one kind of work. Absent = every request. A
+   *  request with no work class gets the slot (the safe reading: told).
+   *  Refused on a blocking or consent slot: a condition must never be able
+   *  to drop a sign-off (routingForWorkClass). */
+  work_classes?: string[];
 }
 
 export interface RoutingControl {
@@ -164,6 +171,12 @@ export function parseRoutingControl(raw: unknown): { ok: true; control: RoutingC
       const wc = typeof w.capability === "string" && w.capability.trim() ? (w.capability.trim() as CapabilityId) : undefined;
       if (wr.length || wc) slot.waivable_by = { ...(wr.length ? { roles: wr } : {}), ...(wc ? { capability: wc } : {}) };
     }
+    if (o.work_classes !== undefined && o.work_classes !== null) {
+      const wcl = strList(o.work_classes);
+      if (wcl === null) return { ok: false, error: `slot "${kind}": work_classes is not a list of work classes` };
+      if (wcl.length && slot.mode !== "notify_only") return { ok: false, error: `slot "${kind}": only a notify-only slot can be limited to some work classes — a sign-off applies to every request` };
+      if (wcl.length) slot.work_classes = [...new Set(wcl)];
+    }
     slots.push(slot);
   }
   // independent_of may name a party or another slot of THIS table.
@@ -179,6 +192,16 @@ export function parseRoutingControl(raw: unknown): { ok: true; control: RoutingC
   // review at all — a widening a typo could cause. Refused, never assumed.
   if (!slots.some((s) => s.mode !== "notify_only")) return { ok: false, error: "the routing table has no blocking slot (every slot only notifies)" };
   return { ok: true, control: { slots } };
+}
+
+/** GAP-102 / TIER-3 (DF-P6): the table as it applies to ONE request — a
+ *  notify-only slot limited to some work classes is left out for a request
+ *  of another class (kept for an unclassified one). Blocking and consent
+ *  slots are never conditional (parseRoutingControl refuses it), so this can
+ *  never drop a sign-off. Pure. */
+export function routingForWorkClass(control: RoutingControl, workClass: string | null | undefined): RoutingControl {
+  if (!workClass) return control;
+  return { slots: control.slots.filter((s) => s.mode !== "notify_only" || !s.work_classes?.length || s.work_classes.includes(workClass)) };
 }
 
 /** The effective routing for a chain: the nearest DEFINED level, validated.
@@ -327,8 +350,10 @@ export interface SeededSlotView {
   label: string;
   /** "waiting" — the ticket waits on this slot now; "pending" — it will
    *  once the earlier step is done (today's machine is serial); "done";
-   *  "not_required" — the engineer gate does not apply. */
-  state: "waiting" | "pending" | "done" | "not_required";
+   *  "not_required" — the engineer gate does not apply; "overridden" — the
+   *  request was issued by a management override of the engineering
+   *  sign-off, which nobody gave (DF-P6 fix pass, SM-3). */
+  state: "waiting" | "pending" | "done" | "not_required" | "overridden";
   /** Who fills it, in words (an identity, or a named engineer). */
   occupant: string;
 }
@@ -345,7 +370,7 @@ export function seededSlotsFor(ticket: {
   requesterName?: string | null;
   assignedEngineerName?: string | null;
   engineerApprovedAt?: unknown;
-}, engineerRequired: boolean): SeededSlotView[] {
+}, engineerRequired: boolean, engineeringOverridden = false): SeededSlotView[] {
   const s = ticket.status;
   const reviewDone = ["PENDING_FINAL_APPROVAL", "PENDING_IFC", "FINAL_DRAFT", "CLOSED"].includes(s);
   const out: SeededSlotView[] = [{
@@ -359,7 +384,10 @@ export function seededSlotsFor(ticket: {
     label: "Engineering sign-off",
     state: !engineerRequired && s !== "PENDING_FINAL_APPROVAL"
       ? "not_required"
-      : s === "PENDING_FINAL_APPROVAL" ? "waiting" : ticket.engineerApprovedAt ? "done" : "pending",
+      : s === "PENDING_FINAL_APPROVAL" ? "waiting"
+        // DF-P6 fix pass (review, issue 7): issued by override — never "pending".
+        : engineeringOverridden && ["PENDING_IFC", "FINAL_DRAFT", "CLOSED"].includes(s) ? "overridden"
+        : ticket.engineerApprovedAt ? "done" : "pending",
     occupant: ticket.assignedEngineerName || "An engineer the requester picks",
   });
   return out;

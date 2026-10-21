@@ -207,7 +207,9 @@ describe("DEC-13 stage 3 — ticket.engineer_gate_exempt", () => {
     expect(policyAllows(scoped, "ticket.engineer_gate_exempt", "Manager", ["Manager"], "req-1", { requestType: "ASBUILT" })).toBe(false);
   });
   it("getActions passes the policy, the requester and the resource to the gate (pinned by source)", () => {
-    expect(src("lib/workflow.ts")).toContain("const needsEngineerApproval = engineerApprovalRequired(ticket.requesterRole, ctx?.requesterRoles, policy, ticket.requesterId, resource);");
+    // DF-P6 re-pin: the gate is engineeringGateRequired — the column where it speaks, and THIS call (snapshot, current collection, policy, requester, resource) as the seed where it does not.
+    expect(src("lib/workflow.ts")).toContain("const needsEngineerApproval = engineeringGateRequired(ticket, ctx?.requesterRoles, policy);");
+    expect(src("lib/workflow.ts")).toContain("return ticketEngineeringRequired(ticket, () => engineerApprovalRequired(ticket.requesterRole, currentRoles, policy, ticket.requesterId, ticketResource(ticket)));");
   });
 });
 
@@ -632,6 +634,58 @@ describe("QUAL-4 — the policy route and a project-scoped rule", () => {
     const res = await policy({ op: "save", orgId: "o1", caps: { "ticket.assign": ["Admin", "DocCtrl"], "quality.sign_off": ["Safety"] } });
     expect(res.status).toBe(200);
     expect(state.rpcCalls).toHaveLength(0);
+  });
+});
+
+// drafting-flow DF-P6 fix pass 4 (review, major 1): a library-scoped rule on
+// a request capability was valid when stored (RESOURCE_KEYS has carried
+// libraryId since DEC-13 stage 2) and the editor preserves it on save. It
+// never matches (a request presents only its type and unit), so a NEW one is
+// refused at this route — and a STORED one never blocks a later write.
+describe("DF-P6 (AUTHZ-6) — a stored library-scoped request rule never blocks a grant, a revoke or a save", () => {
+  const DEAD_RULE = { tokens: ["Admin", "Manager"], when: { libraryId: ["lib-1"] } };
+  const WITH_DEAD: CapabilityPolicy = {
+    caps: { ...STORED.caps, "ticket.direct_approve": [DEAD_RULE, { tokens: ["Admin", "Manager", "Supervisor"] }] },
+    grants: STORED.grants,
+  };
+  beforeEach(() => { seedPolicyOrg(); state.rows.org_configurations = [config(WITH_DEAD)]; });
+
+  it("an Admin revokes a departing member's grant: 200, the stored rule rides along untouched", async () => {
+    state.user = { id: "a1" };
+    const res = await policy({ op: "revoke", orgId: "o1", uid: "v2", cap: "ticket.assign" });
+    expect(res.status).toBe(200);
+    const written = updates("org_configurations")[0].data as CapabilityPolicy;
+    expect(written.grants).toEqual([]);
+    expect(written.caps?.["ticket.direct_approve"]).toEqual(WITH_DEAD.caps!["ticket.direct_approve"]);
+  });
+
+  it("an Admin adds a grant: 200", async () => {
+    state.user = { id: "a1" };
+    expect((await policy({ op: "grant", orgId: "o1", uid: "d1", cap: "ticket.assign", expiresAt: FUTURE })).status).toBe(200);
+  });
+
+  it("a save of an unrelated change that preserves the stored rule (as the editor does) is accepted", async () => {
+    state.user = { id: "a1" };
+    const caps = { ...WITH_DEAD.caps, "ticket.assign": ["Admin", "DocCtrl"] };
+    const res = await policy({ op: "save", orgId: "o1", caps });
+    expect(res.status).toBe(200);
+    expect((updates("org_configurations")[0].data as CapabilityPolicy).caps?.["ticket.direct_approve"]).toEqual(WITH_DEAD.caps!["ticket.direct_approve"]);
+  });
+
+  it("a NEW library / class-scoped request rule is still refused (400), nothing written — a changed stored rule counts as new", async () => {
+    state.user = { id: "a1" };
+    for (const rule of [
+      { tokens: ["Admin"], when: { libraryId: ["lib-2"] } },
+      { tokens: ["Admin"], when: { workClass: ["w"] } },
+      { tokens: ["Admin", "Manager", "Viewer"], when: { libraryId: ["lib-1"] } },
+    ]) {
+      const caps = { ...WITH_DEAD.caps, "ticket.direct_approve": [DEAD_RULE, rule, { tokens: ["Admin", "Manager", "Supervisor"] }] };
+      const res = await policy({ op: "save", orgId: "o1", caps });
+      expect(res.status, JSON.stringify(rule)).toBe(400);
+      expect((await res.json()).error).toMatch(/request type or a unit only/);
+    }
+    expect(updates("org_configurations")).toHaveLength(0);
+    expect(inserts("audit_logs")).toHaveLength(0);
   });
 });
 

@@ -880,14 +880,21 @@ describe("FRIC-3 / DCW-7 — the unit is optional, explicit when unknown, resolv
   });
 });
 
-describe("the contract's seams (DEC-34 declaration, DEC-40 projectId) travel and are ignored", () => {
-  it("a declaration and a projectId are parsed and not written", async () => {
-    const parsed = parseTicketCreateBody({ ...portal(), declaration: { text: "like for like" }, projectId: PROJECT });
-    expect(parsed.ok && parsed.input.declaration).toEqual({ text: "like for like" });
+describe("the contract's seams: the DEC-40 projectId travels and is ignored; the DEC-34 declaration is DF-P6's (lib/__tests__/reviewModel.test.ts)", () => {
+  it("a projectId is parsed and not written; a declaration that is present but malformed is refused with the reason, and a blank one never blocks", async () => {
+    const parsed = parseTicketCreateBody({ ...portal(), projectId: PROJECT });
     expect(parsed.ok && parsed.input.projectId).toBe(PROJECT);
-    await POST(req({ ...portal({ attachments: [] }), declaration: { text: "x" }, projectId: PROJECT }));
+    const malformed = parseTicketCreateBody({ ...portal(), declaration: { text: "like for like" } });
+    expect(malformed.ok).toBe(false);
+    if (!malformed.ok) expect(malformed.field).toBe("declaration");
+    const blank = parseTicketCreateBody({ ...portal(), declaration: null });
+    expect(blank.ok && blank.input.declaration).toBeFalsy();
+    await POST(req({ ...portal({ attachments: [] }), projectId: PROJECT }));
     expect(tickets()[0].project_id).toBeUndefined();
     expect(JSON.stringify(tickets()[0].metadata)).not.toContain("declaration");
+    // no declaration: nothing is written for one — the database's default (engineered) is the answer
+    expect(tickets()[0].engineering_required).toBeUndefined();
+    expect(tickets()[0].like_in_kind_statement).toBeUndefined();
   });
 });
 
@@ -1821,5 +1828,200 @@ describe("DF-P4 — EDGE-8: every filed request records that its creation notice
     expect(m2.created_notice_owed).toBe(true);
     expect(m2.created_notice_at).toBeUndefined();
     expect(creationNoticeOwed("PENDING_ASSIGNMENT", m2)).toBe(true);
+  });
+});
+
+describe("DF-P6 — GAP-110 / DEC-34: the like-in-kind declaration at filing; GAP-312: the equipment the request names", () => {
+  const KEY = "7a000000-0000-4000-8000-000000000001";
+  const SIG = "5a000000-0000-4000-8000-000000000001";
+  const STATEMENT = "Replacing the PSV-12 spring with an identical spring, same set pressure.";
+  const sigRow = (over: Row = {}) => ({
+    id: SIG, org_id: ORG, resource_type: "ticket", resource_id: KEY, signer_user_id: REQ,
+    statement: `Like-in-kind declaration: ${STATEMENT}`, intent: "Acknowledged", signed_at: new Date(Date.now() - 60_000).toISOString(), ...over,
+  });
+  const declared = (over: Row = {}) => portal({ attachments: [], declaration: { statement: STATEMENT, signatureId: SIG, ticketKey: KEY }, ...over });
+
+  it("a signed declaration files the request under the signed id with the declaration recorded and engineering_required false", async () => {
+    s.tables.e_signatures = [sigRow()];
+    const res = await POST(req(declared()));
+    expect(res.status).toBe(201);
+    const t = tickets()[0];
+    expect(t).toMatchObject({
+      id: KEY, like_in_kind_statement: STATEMENT, like_in_kind_declared_by: REQ, like_in_kind_signature_id: SIG, engineering_required: false,
+    });
+    expect(typeof t.like_in_kind_declared_at).toBe("string");
+    // GAP-110 acceptance 4: attributed in the history, in the requester's words
+    expect(t.history).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: "Declared like-in-kind (signed)", user: "rita@plant.io", role: "Requester", details: STATEMENT }),
+    ]));
+  });
+
+  it("refused BEFORE a number is spent: no signature, another signer, another request, an edited statement, an expired signature", async () => {
+    const cases: Array<[Row[] , RegExp]> = [
+      [[], /not found/],
+      [[sigRow({ signer_user_id: SUP })], /Only the requester/],
+      [[sigRow({ resource_id: "7a000000-0000-4000-8000-000000000099" })], /different request/],
+      [[sigRow({ statement: "Like-in-kind declaration: something else entirely, swapped" })], /changed after it was signed/],
+      [[sigRow({ signed_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() })], /expired/],
+      [[sigRow({ org_id: OTHER_ORG })], /another workspace/],
+      [[sigRow({ intent: "Approved" })], /does not record a declaration/],
+    ];
+    for (const [rows, msg] of cases) {
+      seed(); s.counter = new Map(); s.rpcCalls = [];
+      s.tables.e_signatures = rows;
+      const res = await POST(req(declared()));
+      expect(res.status, String(msg)).toBe(400);
+      const body = await res.json();
+      expect(body.error, String(msg)).toMatch(msg);
+      expect(tickets(), String(msg)).toHaveLength(0);
+      expect(nextTicketRpc(), String(msg)).toHaveLength(0);
+    }
+  });
+
+  it("a declaration already filed is refused 409 declaration_used (a double submit never files twice under one signature)", async () => {
+    s.tables.e_signatures = [sigRow()];
+    expect((await POST(req(declared()))).status).toBe(201);
+    const again = await POST(req(declared()));
+    expect(again.status).toBe(409);
+    expect((await again.json()).code).toBe("declaration_used");
+    expect(tickets()).toHaveLength(1);
+  });
+
+  it("fix pass 2 (review, minor 8): two concurrent posts of one declaration — the second's insert collides on the row's id (tickets_pkey) after the pre-check passed: answered 409 declaration_used naming the filed request, never 'nothing was filed', and no second number is spent", async () => {
+    s.tables.e_signatures = [sigRow()];
+    let raced = false;
+    s.hooks.push((table: string, op: string) => {
+      if (table === "tickets" && op === "insert" && !raced) {
+        raced = true;
+        // the concurrent request lands first, under the same signed id
+        s.tables.tickets.push({ id: KEY, org_id: ORG, ticket_id: `KE-DDRT-${YY}-0009`, requester_id: REQ, status: "PENDING_ASSIGNMENT" });
+      }
+    });
+    s.errors["tickets.insert"] = [{ code: "23505", message: 'duplicate key value violates unique constraint "tickets_pkey"' }];
+    const res = await POST(req(declared()));
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("declaration_used");
+    expect(body.error).toMatch(new RegExp(`KE-DDRT-${YY}-0009`));
+    expect(tickets()).toHaveLength(1);
+    expect(nextTicketRpc()).toHaveLength(1);
+  });
+
+  it("fix pass 3 (review, minor): an id that is another workspace's request is answered 409 declaration_key_used WITHOUT its request number — at the pre-check and on the concurrent-insert re-read alike — and files nothing", async () => {
+    s.tables.e_signatures = [sigRow()];
+    s.tables.tickets.push({ id: KEY, org_id: OTHER_ORG, ticket_id: "B-2026-0042", requester_id: "someone-else", status: "PENDING_ASSIGNMENT" });
+    const res = await POST(req(declared()));
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("declaration_key_used");
+    expect(body.error).not.toMatch(/B-2026-0042/);
+    expect(nextTicketRpc()).toHaveLength(0);
+    // the race path: the foreign row lands between the pre-check and the insert
+    seed(); s.counter = new Map(); s.rpcCalls = [];
+    s.tables.e_signatures = [sigRow()];
+    let raced = false;
+    s.hooks.push((table: string, op: string) => {
+      if (table === "tickets" && op === "insert" && !raced) {
+        raced = true;
+        s.tables.tickets.push({ id: KEY, org_id: OTHER_ORG, ticket_id: "B-2026-0043", requester_id: "someone-else", status: "PENDING_ASSIGNMENT" });
+      }
+    });
+    s.errors["tickets.insert"] = [{ code: "23505", message: 'duplicate key value violates unique constraint "tickets_pkey"' }];
+    const raceRes = await POST(req(declared()));
+    const raceBody = await raceRes.json();
+    expect(raceRes.status).toBe(409);
+    expect(raceBody.code).toBe("declaration_key_used");
+    expect(raceBody.error).not.toMatch(/B-2026-0043/);
+    expect(tickets().filter((t) => t.org_id === ORG)).toHaveLength(0);
+  });
+
+  it("fix pass (review, minor 10): an id that already has a history — another person's signature, any other signature over it, or an audit row that is not this declaration's capture — is refused 409 declaration_key_used BEFORE a number is spent; the requester's own re-sign of the same id is not", async () => {
+    const OTHER_SIG = "5a000000-0000-4000-8000-000000000002";
+    const cases: Array<[Row[], Row[]]> = [
+      [[sigRow(), { id: OTHER_SIG, org_id: ORG, resource_type: "ticket", resource_id: KEY, signer_user_id: SUP, intent: "Approved", statement: "Approved the old request" }], []],
+      [[sigRow()], [{ id: "al-1", action: "TICKET_APPROVE_DRAFT_IFC", resource_id: KEY, org_id: ORG, details: {} }]],
+      [[sigRow()], [{ id: "al-2", action: "ESIGNATURE_CAPTURED", resource_id: KEY, org_id: ORG, details: { signatureId: OTHER_SIG } }]],
+    ];
+    for (const [sigs, logs] of cases) {
+      seed(); s.counter = new Map(); s.rpcCalls = [];
+      s.tables.e_signatures = sigs;
+      s.tables.audit_logs = logs;
+      const res = await POST(req(declared()));
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("declaration_key_used");
+      expect(tickets()).toHaveLength(0);
+      expect(nextTicketRpc()).toHaveLength(0);
+    }
+    // the requester's own earlier declaration signature over the same id, with its capture mirror, is fine
+    seed(); s.counter = new Map(); s.rpcCalls = [];
+    s.tables.e_signatures = [sigRow(), sigRow({ id: OTHER_SIG, statement: "Like-in-kind declaration: an earlier wording of the same declaration" })];
+    s.tables.audit_logs = [{ id: "al-3", action: "ESIGNATURE_CAPTURED", resource_id: KEY, org_id: ORG, details: { signatureId: SIG } }, { id: "al-4", action: "ESIGNATURE_CAPTURED", resource_id: KEY, org_id: ORG, details: { signatureId: OTHER_SIG } }];
+    expect((await POST(req(declared()))).status).toBe(201);
+  });
+
+  it("fix pass (review, minor 10): a history read that fails answers 503 and files nothing", async () => {
+    s.tables.e_signatures = [sigRow()];
+    s.errors["audit_logs.select"] = [{ code: "57014", message: "statement timeout" }];
+    const res = await POST(req(declared()));
+    expect(res.status).toBe(503);
+    expect(tickets()).toHaveLength(0);
+  });
+
+  it("an unreadable signature read answers 503 and files nothing", async () => {
+    s.tables.e_signatures = [sigRow()];
+    s.errors["e_signatures.select"] = [{ code: "57014", message: "statement timeout" }];
+    const res = await POST(req(declared()));
+    expect(res.status).toBe(503);
+    expect(tickets()).toHaveLength(0);
+  });
+
+  it("before 20261250 is pasted (42703 naming a declaration column) the request files the usual way, under the same number, and says the declaration was not recorded", async () => {
+    s.tables.e_signatures = [sigRow()];
+    s.errors["tickets.insert"] = [{ code: "42703", message: 'column "like_in_kind_statement" of relation "tickets" does not exist' }];
+    const res = await POST(req(declared()));
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(JSON.stringify(body.warnings ?? [])).toMatch(/could not be recorded on the request yet/);
+    const t = tickets()[0];
+    expect(t.engineering_required).toBeUndefined();
+    expect(t.like_in_kind_statement).toBeUndefined();
+    expect(JSON.stringify(t.history)).not.toContain("Declared like-in-kind");
+    expect(nextTicketRpc()).toHaveLength(1);
+  });
+
+  it("a malformed declaration is refused with the reason (never silently dropped); a short statement is refused at the contract", async () => {
+    const res = await POST(req(portal({ attachments: [], declaration: { statement: "same", signatureId: SIG, ticketKey: KEY } })));
+    expect(res.status).toBe(400);
+    expect(tickets()).toHaveLength(0);
+  });
+
+  it("equipment: a resolved asset of this workspace is linked; a foreign or unknown one is kept as typed and flagged; the request is filed either way", async () => {
+    const A1 = "a5000000-0000-4000-8000-000000000001";
+    const AF = "a5000000-0000-4000-8000-000000000009";
+    s.tables.assets = [{ id: A1, org_id: ORG, tag: "P-101" }, { id: AF, org_id: OTHER_ORG, tag: "XV-9" }];
+    const res = await POST(req(portal({ attachments: [], equipment: [{ tag: "P-101", assetId: A1 }, { tag: "XV-9", assetId: AF }, { tag: "ZZ-1" }] })));
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    const rows = s.tables.ticket_equipment ?? [];
+    expect(rows.map((r) => [r.tag, r.asset_id])).toEqual([["P-101", A1], ["XV-9", null], ["ZZ-1", null]]);
+    expect(rows.every((r) => r.ticket_id === tickets()[0].id && r.org_id === ORG && r.created_by === REQ)).toBe(true);
+    expect(JSON.stringify(body.warnings)).toMatch(/kept as typed: XV-9, ZZ-1/);
+  });
+
+  it("fix pass (review, minor 14): a tag the form could not look up is said as such — never 'not found' when nobody could ask", async () => {
+    const res = await POST(req(portal({ attachments: [], equipment: [{ tag: "P-101", lookupFailed: true }, { tag: "ZZ-1" }] })));
+    expect(res.status).toBe(201);
+    const w = JSON.stringify((await res.json()).warnings);
+    expect(w).toMatch(/Could not be checked against the equipment registry \(the lookup failed\), kept as typed: P-101/);
+    expect(w).toMatch(/Not found in the equipment registry, kept as typed: ZZ-1\./);
+    expect((s.tables.ticket_equipment ?? []).map((r) => r.tag)).toEqual(["P-101", "ZZ-1"]);
+  });
+
+  it("equipment before 20261251 is pasted: the request is filed and the answer says the equipment was not recorded", async () => {
+    s.errors["ticket_equipment.insert"] = [{ code: "42P01", message: 'relation "ticket_equipment" does not exist' }];
+    const res = await POST(req(portal({ attachments: [], equipment: [{ tag: "P-101" }] })));
+    expect(res.status).toBe(201);
+    expect(JSON.stringify((await res.json()).warnings)).toMatch(/20261251 is not applied/);
+    expect(tickets()).toHaveLength(1);
   });
 });
