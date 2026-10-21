@@ -167,8 +167,8 @@ describe("P18 — a database WITH 20261250", () => {
     expect(audits).toHaveLength(1);
     expect((audits[0].details as Record<string, unknown>).notes).toEqual([filedBeforeReviewModelNote(2)]);
     expect((audits[0].details as Record<string, unknown>).cleared).toBeUndefined();
-    expect(filedBeforeReviewModelNote(2)).toMatch(/^2 request\(s\) in this part of the backup were taken before the review model/);
-    expect(filedBeforeReviewModelNote(2)).toMatch(/today's role-based engineering gate decides for it exactly as it did before/);
+    expect(filedBeforeReviewModelNote(2)).toMatch(/^2 request\(s\) restored from this part of the backup were taken before the review model \(they carry no review_model_filed\) and are marked as filed before it/);
+    expect(filedBeforeReviewModelNote(2)).toMatch(/today's role-based engineering gate decides for each exactly as it did before/);
   });
 
   it("ruling (1): a row whose backup carries the keys keeps its values — true, false, a ratcheted requirement — and no note is written", async () => {
@@ -260,10 +260,94 @@ describe("P18 — a database WITH 20261250", () => {
     const { sb, log } = tracing();
     const r = await applyRestoreChunk(sb as never, { orgId: ORG, table: "tickets", rows: [declared("t-1", "AC-DDRT-26-0001"), prePaste("t-2", "AC-DDRT-26-0002")], idRemap: REMAP });
     expect(r).toMatchObject({ ok: true, inserted: 0, existing: 2, cleared: [], refused: [] });
+    // P18 fix pass 2: t-2 is a pre-paste row, but nothing was written — no line.
+    expect(r).not.toHaveProperty("notes");
     expect(log.filter((l) => /\.update\(/.test(l))).toEqual([]);
     expect(db.writes.filter((w) => w.table === "tickets" && w.op === "update")).toEqual([]);
     expect(ticketHere("t-1")).toEqual(live);
     expect(ticketHere("t-2")).toEqual(liveLegacy);
+  });
+
+  it("P18 fix pass 2 — the line counts only requests a statement WROTE: re-running a finished restore (every request already here) answers with no line, in the answer, the audit row and the driver's outcome", async () => {
+    const rows = [prePaste("t-1", "AC-DDRT-26-0001"), prePaste("t-2", "AC-DDRT-26-0002")];
+    const first = await chunk("tickets", rows);
+    expect(first.body).toEqual({ ok: true, inserted: 2, notes: [filedBeforeReviewModelNote(2)] });
+    const again = await chunk("tickets", rows);
+    expect(again.body).toEqual({ ok: true, inserted: 0, existing: 2 });
+    const audits = chunkAudits();
+    expect(audits).toHaveLength(2);
+    expect(audits[1].details).not.toHaveProperty("notes");
+    // the page's driver over the same backup again: the tickets outcome carries no line
+    const env: RestoreEnvelopeLike = { manifest: { orgId: "backup-org" }, tables: { tickets: rows } };
+    const run = await runChunkedRestore({ orgId: ORG, envelope: env, plan: planRestore(env, { orgId: ORG, orgName: "Acme", members: [] }), orgNameChoice: "current", post: routePost });
+    const tickets = run.tables.find((t) => t.name === "tickets")!;
+    expect(tickets).toMatchObject({ inserted: 0, existing: 2 });
+    expect(tickets).not.toHaveProperty("notes");
+  });
+
+  it("P18 fix pass 2 — a statement that skips some rows: the line counts the rows it wrote, never one already here, held by another workspace, or cleared-and-found-here", async () => {
+    db.rows.libraries = [{ id: "lib-1", org_id: ORG }];
+    db.rows.tickets = [
+      { ...prePaste("t-here", "AC-DDRT-26-0001"), org_id: ORG, review_model_filed: false, engineering_required: true },
+      { ...prePaste("t-else", "OT-DDRT-26-0001"), org_id: OTHER },
+      // a pointer the restore would clear (library not here) on a request already here: settled before the write
+      { ...prePaste("t-here-lib", "AC-DDRT-26-0004"), org_id: ORG, library_id: "lib-gone" },
+    ];
+    const before = JSON.stringify(db.rows.tickets);
+    const r = await applyRestoreChunk({ from } as never, { orgId: ORG, table: "tickets", idRemap: REMAP, rows: [
+      prePaste("t-here", "AC-DDRT-26-0001"),
+      prePaste("t-new", "AC-DDRT-26-0002"),
+      prePaste("t-else", "AC-DDRT-26-0003"),
+      prePaste("t-here-lib", "AC-DDRT-26-0004", { library_id: "lib-gone" }),
+      prePaste("t-new-lib", "AC-DDRT-26-0005", { library_id: "lib-1" }),
+    ] });
+    expect(r).toMatchObject({ ok: true, inserted: 2, existing: 2, heldElsewhere: 1, refused: [] });
+    expect(r.notes).toEqual([filedBeforeReviewModelNote(2)]);
+    expect(JSON.stringify((db.rows.tickets ?? []).slice(0, 3))).toBe(before);
+    expect(ticketHere("t-new")).toMatchObject({ review_model_filed: false, engineering_required: false });
+    expect(ticketHere("t-new-lib")).toMatchObject({ review_model_filed: false, engineering_required: false, library_id: "lib-1" });
+  });
+
+  it("P18 fix pass 2 — when the key read fails the rows are not placed: counted only from a statement that wrote every row (a partial one claims none), and the restore goes on as before", async () => {
+    const keyReadDown = { from: (t: string) => {
+      const b = from(t) as Record<string, (...a: unknown[]) => unknown>;
+      let down = false;
+      const select = b.select; const then = b.then;
+      b.select = (cols?: unknown) => { if (t === "tickets" && cols === "id,org_id") down = true; return select(cols); };
+      b.then = (res: unknown, rej: unknown) => (down ? (res as (v: unknown) => void)({ data: null, error: { message: "key read down" } }) : then(res, rej));
+      return b;
+    } };
+    db.rows.tickets = [{ ...prePaste("t-here", "AC-DDRT-26-0001"), org_id: ORG }];
+    const partial = await applyRestoreChunk(keyReadDown as never, { orgId: ORG, table: "tickets", rows: [prePaste("t-here", "AC-DDRT-26-0001"), prePaste("t-new", "AC-DDRT-26-0002")], idRemap: REMAP });
+    // (the skipped row cannot be placed after the write either — uncounted, as before P18)
+    expect(partial).toMatchObject({ ok: true, inserted: 1, existing: 0, uncounted: 1 });
+    expect(partial).not.toHaveProperty("notes");
+    const whole = await applyRestoreChunk(keyReadDown as never, { orgId: ORG, table: "tickets", rows: [prePaste("t-a", "AC-DDRT-26-0003"), prePaste("t-b", "AC-DDRT-26-0004")], idRemap: REMAP });
+    expect(whole).toMatchObject({ ok: true, inserted: 2, notes: [filedBeforeReviewModelNote(2)] });
+  });
+
+  it("P18 fix pass 2 — a statement with no count writes rows it cannot place: no line (as a cleared pointer is not reported from it)", async () => {
+    db.countless = true;
+    const r = await applyRestoreChunk({ from } as never, { orgId: ORG, table: "tickets", rows: [prePaste("t-1", "AC-DDRT-26-0001")], idRemap: REMAP });
+    expect(r).toMatchObject({ ok: true, uncounted: 1, inserted: 0 });
+    expect(r).not.toHaveProperty("notes");
+  });
+
+  it("P18 fix pass 2 — a chunk that fails: before any write, no line; after a statement wrote some, the line counts exactly those (they are in `inserted`, and a re-run counts them existing)", async () => {
+    db.writeError = (table, op) => (table === "tickets" && op === "upsert" ? { code: "57014", message: "canceling statement due to statement timeout" } : null);
+    const none = await applyRestoreChunk({ from } as never, { orgId: ORG, table: "tickets", rows: [prePaste("t-1", "AC-DDRT-26-0001")], idRemap: REMAP });
+    expect(none).toMatchObject({ ok: false, status: 500, inserted: 0 });
+    expect(none).not.toHaveProperty("notes");
+    const viaRoute = await chunk("tickets", [prePaste("t-1", "AC-DDRT-26-0001")]);
+    expect(viaRoute.status).toBe(500);
+    expect(viaRoute.body).not.toHaveProperty("notes");
+    for (const audit of chunkAudits()) expect(audit.details).not.toHaveProperty("notes");
+    // 501 requests: the first statement (500) is written, the second refused
+    const rows = Array.from({ length: 501 }, (_, i) => prePaste(`t-${String(i).padStart(4, "0")}`, `AC-DDRT-26-${String(i + 1).padStart(4, "0")}`));
+    db.writeError = (table, op, sent) => (table === "tickets" && op === "upsert" && sent.some((x) => x.id === "t-0500") ? { code: "57014", message: "canceling statement due to statement timeout" } : null);
+    const some = await applyRestoreChunk({ from } as never, { orgId: ORG, table: "tickets", rows, idRemap: REMAP });
+    expect(some).toMatchObject({ ok: false, status: 500, inserted: 500 });
+    expect(some.notes).toEqual([filedBeforeReviewModelNote(500)]);
   });
 
   it("a request renumbered on restore (EDGE-5) keeps the transform: filed before the review model, its declaration cleared and reported beside the renumbering", async () => {
@@ -271,6 +355,8 @@ describe("P18 — a database WITH 20261250", () => {
     db.rows.ticket_number_counters = [{ org_id: ORG, year: 2026, next_seq: 5 }];
     const r = await chunk("tickets", [prePaste("t-1", "AC-DDRT-26-0001"), declared("t-2", "AC-DDRT-26-0001")]);
     expect(r.body).toMatchObject({ ok: true, inserted: 2 });
+    // P18 fix pass 2: the renumbered pre-paste row t-1 is counted — written under its fresh number.
+    expect(r.body.notes).toEqual([filedBeforeReviewModelNote(1)]);
     expect(ticketHere("t-1")).toMatchObject({ review_model_filed: false, engineering_required: false });
     expect(ticketHere("t-1")!.ticket_id).not.toBe("AC-DDRT-26-0001");
     expect(ticketHere("t-2")).toMatchObject({ review_model_filed: true, engineering_required: true, like_in_kind_statement: null });
@@ -300,6 +386,7 @@ describe("P18 — a database WITH 20261250", () => {
     db.writeError = (table, op) => (table === "tickets" && op === "upsert" ? { code: "PGRST204", message: dbMessage } : null);
     const a = await applyRestoreChunk({ from } as never, { orgId: ORG, table: "tickets", rows: [prePaste("t-1", "AC-DDRT-26-0001")], idRemap: REMAP });
     expect(a).toMatchObject({ ok: false, status: 500, inserted: 0, code: "PGRST204", error: reviewModelSchemaCacheMessage(dbMessage) });
+    expect(a).not.toHaveProperty("notes");
     expect(reviewModelSchemaCacheMessage(dbMessage)).toMatch(/has not reloaded its schema since that migration .* Wait a minute and run the restore again/);
     expect(db.rows.tickets ?? []).toEqual([]);
     // Through the route: the same sentence.

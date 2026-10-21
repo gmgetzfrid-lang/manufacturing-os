@@ -43,7 +43,7 @@ import { POST as beginRoute } from "@/app/api/admin/restore/begin/route";
 import {
   applyRestoreChunk, planRestore, runChunkedRestore, ticketNumberCarriers, backupNumberCarriersFor, restoreRefusalLabel,
   RESTORE_REMINT_RESERVATIONS, RESTORE_HELD_BACK_ROUNDS, RESTORE_CARRIERS_BYTES, RESTORE_REVIEW_MODEL_COLUMNS,
-  TICKET_NUMBER_IN_USE, TICKET_NUMBER_UNSETTLED, TICKET_RENUMBERED,
+  TICKET_NUMBER_IN_USE, TICKET_NUMBER_UNSETTLED, TICKET_RENUMBERED, DECLARATION_NOT_RESTORED, filedBeforeReviewModelNote,
   type RestorePost, type RestoreEnvelopeLike,
 } from "@/lib/dataRestore";
 
@@ -68,7 +68,9 @@ const sha = (lines: string[]) => createHash("sha256").update(lines.join("\n")).d
  *  20261250 (beforeEach), where DEC-90 ruling (3) says the restore behaves
  *  exactly as before; the one read it adds there — the review-model column
  *  check, answered 42703 — is kept apart in `probes` (one per tickets
- *  request, pinned below) so every other call is compared byte for byte. */
+ *  request, pinned in every traced test below — P18 fix pass 2) so every
+ *  other call is compared byte for byte. The world WITH the columns has its
+ *  own bounded-call golden at the end of this file. */
 const REVIEW_MODEL_PROBE = `tickets.select(${JSON.stringify([RESTORE_REVIEW_MODEL_COLUMNS.join(",")])}).limit([0])`;
 const probes: string[] = [];
 function tracing() {
@@ -152,6 +154,8 @@ describe("EDGE-5 (P16 final fix pass) — a restore where no number collides iss
     ]);
     expect(sha(log)).toBe("ebf9a516d83c1d7a730ad307baab9e957c24803f88ed9dab815373823c154c2e");
     expect(sha([JSON.stringify(run)])).toBe("a2235ca271b6398479ba4713ce9f870d21194d0638cddd04d76cf42ad201f391");
+    // P18: one column check for the one tickets request (none for counters or comments)
+    expect(probes).toEqual([REVIEW_MODEL_PROBE]);
     // the tickets request carries the (empty) list of the backup's requests sharing a number — a request body, not a database call
     expect(posted.find((b) => b.table === "tickets")).toMatchObject({ backupNumberCarriers: [] });
   });
@@ -166,6 +170,7 @@ describe("EDGE-5 (P16 final fix pass) — a restore where no number collides iss
     ]);
     expect(sha(log)).toBe("0e42b6f6ca6e289b75696fea3c4974b6b45d8faf0664ff35cd33337a4801ce82");
     expect(sha([JSON.stringify(run)])).toBe("db24830b9cf519c66572832961673ba0946859945c8e7437ccffcfd48745a981");
+    expect(probes).toEqual([REVIEW_MODEL_PROBE]);
   });
 });
 
@@ -185,6 +190,8 @@ describe("EDGE-5 (P16 final fix pass) — a tickets request costs a bounded numb
     expect(numbersIssuedTwice()).toEqual([]);
     // the whole request: 27 calls (one renumbering per row would be 1,000+)
     expect(log).toHaveLength(27);
+    // P18: one column check for the request — never one per round, per bisect or per row
+    expect(probes).toEqual([REVIEW_MODEL_PROBE]);
     const count = (h: string) => heads(log).filter((x) => x === h).length;
     expect(count("ticket_number_counters.select")).toBe(1);
     expect(count("ticket_number_counters.update")).toBe(1);
@@ -217,6 +224,7 @@ describe("EDGE-5 (P16 final fix pass) — a tickets request costs a bounded numb
     expect((db.rows.ticket_number_counters ?? []).map((c) => [c.year, c.next_seq]).sort()).toEqual([[2022, 100], [2023, 100], [2024, 100], [2025, 100], [2026, 100]]);
     expect(heads(log).filter((h) => h.startsWith("ticket_number_counters."))).toHaveLength(10);
     expect(log.length).toBeLessThanOrEqual(40);
+    expect(probes).toEqual([REVIEW_MODEL_PROBE]);
     expect(numbersIssuedTwice()).toEqual([]);
   });
 
@@ -246,6 +254,7 @@ describe("EDGE-5 (P16 final fix pass) — a tickets request costs a bounded numb
     expect(r.refused.filter((x) => new RegExp(`this request's ${RESTORE_REMINT_RESERVATIONS} reservations on the counter were spent`).test(x.message))).toHaveLength(1);
     // a counter read and a compare-and-set per reservation: 2 × 64
     expect(heads(log).filter((h) => h.startsWith("ticket_number_counters."))).toHaveLength(2 * RESTORE_REMINT_RESERVATIONS);
+    expect(probes).toEqual([REVIEW_MODEL_PROBE]);
     expect(r.renumbered).toEqual([]);
   });
 
@@ -265,6 +274,8 @@ describe("EDGE-5 (P16 final fix pass) — a tickets request costs a bounded numb
     expect(restoreRefusalLabel(TICKET_NUMBER_UNSETTLED)).toMatch(/^a request whose number other rows of the same restore request carry, each of which the database refused/);
     // bounded: the main write and its bisect, then one read and one write a round
     expect(log.length).toBeLessThanOrEqual(5 + 2 * RESTORE_HELD_BACK_ROUNDS + 2);
+    // P18: one column check across every bisect and held-back round
+    expect(probes).toEqual([REVIEW_MODEL_PROBE]);
     expect(numbersIssuedTwice()).toEqual([]);
   });
 });
@@ -278,6 +289,8 @@ describe("EDGE-5 (P16 final fix pass, the review) — a renumbered request's hol
     expect(run).toMatchObject({ stoppedAt: null, totalRefused: 0 });
     const ticketPosts = posted.filter((b) => b.table === "tickets");
     expect(ticketPosts).toHaveLength(2);
+    // P18: one column check per tickets request (per chunk)
+    expect(probes).toEqual([REVIEW_MODEL_PROBE, REVIEW_MODEL_PROBE]);
     // the first request carries t-0000's number (the backup carries it twice), the last carries t-dup's
     expect(ticketPosts[0].backupNumberCarriers).toEqual(["t-0000", "t-dup"]);
     expect(ticketPosts[1].backupNumberCarriers).toEqual(["t-0000", "t-dup"]);
@@ -296,6 +309,7 @@ describe("EDGE-5 (P16 final fix pass, the review) — a renumbered request's hol
     const env: RestoreEnvelopeLike = { manifest: { orgId: "backup-org" }, tables: { tickets: [ticket("t-1", "KE-DDRT-26-0001"), ticket("t-2", "KE-DDRT-26-0002")] } };
     const { run } = await tracedDriverRun(env);
     expect(run).toMatchObject({ stoppedAt: null, totalRefused: 0 });
+    expect(probes).toEqual([REVIEW_MODEL_PROBE]);
     const t1 = ticketsHere().find((t) => t.id === "t-1")!;
     expect((t1.history as Array<{ details: string }>).at(-1)!.details).toBe(`Issued as "KE-DDRT-26-0001"; request t-live of this workspace carries that number, so this request was restored as "${String(t1.ticket_id)}".`);
     const note = run.tables.find((x) => x.name === "tickets")!.cleared.find((x) => x.id === "t-1")!;
@@ -341,5 +355,37 @@ describe("EDGE-5 (P16 final fix pass, the review) — a renumbered request's hol
     const many = ticketNumberCarriers(Array.from({ length: 4000 }, (_, i) => ticket(`00000000-0000-0000-0000-${String(i).padStart(12, "0")}`, "SAME")));
     expect(JSON.stringify(many.get("SAME")).length).toBeGreaterThan(RESTORE_CARRIERS_BYTES);
     expect(backupNumberCarriersFor(many, [ticket("z", "SAME")])).toBeNull();
+  });
+});
+
+describe("admin-and-org Round G P18 (fix pass 2) — the world WITH 20261250: a tickets request stays bounded", () => {
+  it("the 500-row collision request, every row from a backup taken before the review model and 250 carrying a declaration with no e-signature here: 27 calls as without the columns, plus one column check, ceil(250/200) signature reads and ceil(500/200) key reads — 33 in all", async () => {
+    db.missingColumns = {};
+    db.rows.tickets = Array.from({ length: 500 }, (_, i) => ticket(`t-live-${pad(i)}`, `KE-DDRT-26-${pad(i + 1)}`, ORG));
+    db.rows.ticket_number_counters = [{ org_id: ORG, year: YEAR, next_seq: 500 }];
+    const sig = (i: number) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+    const declaredBy = (i: number): Row => ({ like_in_kind_statement: "identical replacement", like_in_kind_declared_by: "u-req", like_in_kind_declared_at: "2026-10-01T10:00:00Z", like_in_kind_signature_id: sig(i) });
+    const rows = [
+      ...Array.from({ length: 250 }, (_, i) => ticket(`t-b-${pad(i)}`, `KE-DDRT-26-${pad(i + 1)}`, "backup-org", declaredBy(i))),
+      ...Array.from({ length: 125 }, (_, i) => ticket(`t-p-${pad(i)}`, `KE-DDRT-26-${pad(2000 + i)}`)),
+      ...Array.from({ length: 125 }, (_, i) => ticket(`t-q-${pad(i)}`, `KE-DDRT-26-${pad(2000 + i)}`)),
+    ];
+    const { sb, log } = tracing();
+    const r = await applyRestoreChunk(sb as never, { orgId: ORG, table: "tickets", rows, idRemap: REMAP });
+    expect(r).toMatchObject({ ok: true, inserted: 500, refused: [] });
+    expect(r.renumbered).toHaveLength(375);
+    expect(r.cleared.filter((n) => n.code === DECLARATION_NOT_RESTORED)).toHaveLength(250);
+    expect(r.notes).toEqual([filedBeforeReviewModelNote(500)]);
+    expect(numbersIssuedTwice()).toEqual([]);
+    expect(probes).toEqual([REVIEW_MODEL_PROBE]);
+    const count = (h: string) => heads(log).filter((x) => x === h).length;
+    expect(count("e_signatures.select")).toBe(2);
+    expect(count("ticket_number_counters.select")).toBe(1);
+    expect(count("ticket_number_counters.update")).toBe(1);
+    expect(count("tickets.upsert")).toBe(2);
+    // the key reads: the backup's 500 ids, 200 a read (locateRestoreKeys), before the write
+    expect(log.filter((l) => l.startsWith('tickets.select(["id,org_id"]).in(["id",'))).toHaveLength(3);
+    expect(log.length + probes.length).toBe(33);
+    expect(ticketsHere().filter((t) => !String(t.id).startsWith("t-live-")).every((t) => t.review_model_filed === false)).toBe(true);
   });
 });

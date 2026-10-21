@@ -1290,8 +1290,10 @@ export interface RestoreChunkResult {
   renumbered: RestoreRenumbering[];
   /** admin-and-org Round G P18 (drafting-flow TIER-1 restore remainder):
    *  plain-language lines about the chunk as a whole — one, for `tickets`,
-   *  when requests from a backup taken before the review model were restored
-   *  as filed before it (filedBeforeReviewModelNote). Absent when empty. */
+   *  when requests from a backup taken before the review model were WRITTEN
+   *  as filed before it (filedBeforeReviewModelNote), counting only the rows
+   *  a statement wrote (P18 fix pass 2: never a request already here, held
+   *  elsewhere, refused or in a statement that failed). Absent when empty. */
   notes?: string[];
 }
 
@@ -1956,10 +1958,12 @@ export function reviewModelSchemaCacheMessage(dbMessage: string): string {
   return `This workspace's database has the review-model columns (20261250), but its API has not reloaded its schema since that migration (it does so shortly after one is applied), so it refused these requests. Wait a minute and run the restore again — what was already restored is kept and skipped. (${dbMessage})`;
 }
 
-/** Ruling (1): the chunk's one line for the requests restored as filed
- *  before the review model. */
+/** Ruling (1): the chunk's one line for the `n` requests WRITTEN as filed
+ *  before the review model (P18 fix pass 2: `n` counts the rows a statement
+ *  wrote — a request already in this workspace is kept as it is and never
+ *  counted). */
 export function filedBeforeReviewModelNote(n: number): string {
-  return `${n} request(s) in this part of the backup were taken before the review model (they carry no review_model_filed): each one restored is marked as filed before it, so today's role-based engineering gate decides for it exactly as it did before the review model — none is held to the new engineering requirement retroactively.`;
+  return `${n} request(s) restored from this part of the backup were taken before the review model (they carry no review_model_filed) and are marked as filed before it, so today's role-based engineering gate decides for each exactly as it did before the review model — none is held to the new engineering requirement retroactively.`;
 }
 
 /** What the transform needs to know about the target, read once per
@@ -2048,9 +2052,15 @@ export async function applyRestoreChunk(
   let uncounted = 0;
   let advanced = 0;
   const notApplied: RestoreRowRefusal[] = [];
-  const notes: string[] = [];
+  // admin-and-org Round G P18 (fix pass 2): the rows written as filed before
+  // the review model — counted in write() under the rule a cleared note is
+  // reported by, so the chunk's line (chunkNotes) speaks only of requests a
+  // statement wrote. A chunk that fails after writing some carries it for
+  // those (they are in `inserted`; a re-run counts them existing).
+  let filedBeforeWritten = 0;
+  const chunkNotes = (): { notes?: string[] } => (filedBeforeWritten > 0 ? { notes: [filedBeforeReviewModelNote(filedBeforeWritten)] } : {});
   const fail = (status: number, error: string, inserted = 0, rowsAfterFilters = 0, code?: string | null): RestoreChunkResult =>
-    ({ ok: false, status, error, ...(code ? { code: String(code) } : {}), inserted, existing, heldElsewhere, uncounted, refused, cleared, advanced, rowsAfterFilters, filtered: params.rows.length - rowsAfterFilters, notApplied, renumbered: renumberedOf(cleared), ...(notes.length ? { notes } : {}) });
+    ({ ok: false, status, error, ...(code ? { code: String(code) } : {}), inserted, existing, heldElsewhere, uncounted, refused, cleared, advanced, rowsAfterFilters, filtered: params.rows.length - rowsAfterFilters, notApplied, renumbered: renumberedOf(cleared), ...chunkNotes() });
 
   const refusal = restoreTableRefusal(table);
   if (refusal) return fail(400, refusal, 0, params.rows.length);
@@ -2065,19 +2075,24 @@ export async function applyRestoreChunk(
   // rides the pre-write rules below (step 4, `sets`).
   let unsignedDeclarations = new Set<Record<string, unknown>>();
   let reviewModelColumnsFound = false;
+  /** The rows the transform marked filed before the review model — carried
+   *  through every step that sends a new object in its place (the clears /
+   *  sets map, the EDGE-5 renumbering), counted only when written. */
+  const filedBefore = new Set<Record<string, unknown>>();
   if (table === "tickets" && mapped.length) {
     const facts = await restoreReviewModelFacts(sb, orgId, mapped);
     if (!facts.ok) return fail(500, facts.error, 0, params.rows.length);
     if (facts.columns) {
       reviewModelColumnsFound = true;
-      const before = mapped.filter(filedBeforeReviewModel).length;
       mapped = mapped.map((r) => {
         const out = asFiledBeforeReviewModel(r);
-        if (out !== r && facts.unsigned.has(r)) facts.unsigned.add(out);
+        if (out !== r) {
+          filedBefore.add(out);
+          if (facts.unsigned.has(r)) facts.unsigned.add(out);
+        }
         return out;
       });
       unsignedDeclarations = facts.unsigned;
-      if (before > 0) notes.push(filedBeforeReviewModelNote(before));
     }
   }
 
@@ -2293,15 +2308,29 @@ export async function applyRestoreChunk(
   const flagged = [...refusedRows.map((x) => x.row), ...mapped.filter((r) => clears.has(r) || sets.has(r))];
   const settled = new Set<Record<string, unknown>>();
   let clearsLocated = true;
-  if (flagged.length) {
-    const where = await locateRestoreKeys(sb, table, orgId, flagged);
-    clearsLocated = where.ok;
+  // P18 fix pass 2: a row marked filed before the review model is located in
+  // the same read (never settled by it — it goes on exactly as before), so a
+  // statement that skips some rows counts only the marked rows whose key no
+  // row held before the write (`heldBeforeWrite`). A read that fails leaves
+  // `filedBeforeLocated` false: they are then counted only from a statement
+  // that wrote every row, and every other rule is as before.
+  const filedBeforeOnly = mapped.filter((r) => filedBefore.has(r) && !clears.has(r) && !sets.has(r));
+  const heldBeforeWrite = new Set<string>();
+  let filedBeforeLocated = true;
+  if (flagged.length || filedBeforeOnly.length) {
+    const where = await locateRestoreKeys(sb, table, orgId, [...flagged, ...filedBeforeOnly]);
+    if (flagged.length) clearsLocated = where.ok;
+    filedBeforeLocated = where.ok;
     if (where.ok) {
       for (const r of flagged) {
         const k = restoreKeyOf(table, r);
         if (k === null) continue;
         if (where.here.has(k)) { existing++; settled.add(r); }
         else if (where.elsewhere.has(k)) { heldElsewhere++; settled.add(r); }
+      }
+      for (const r of filedBeforeOnly) {
+        const k = restoreKeyOf(table, r);
+        if (k !== null && (where.here.has(k) || where.elsewhere.has(k))) heldBeforeWrite.add(k);
       }
     }
   }
@@ -2319,6 +2348,7 @@ export async function applyRestoreChunk(
     for (const { column } of list ?? []) out[column] = null;
     if (set) Object.assign(out, set.values);
     clearNotes.set(out, [...(list ?? []).map((x) => x.note), ...(set ? [set.note] : [])]);
+    if (filedBefore.has(r)) filedBefore.add(out);
     return out;
   });
 
@@ -2399,6 +2429,9 @@ export async function applyRestoreChunk(
       for (const r of rows) {
         const k = restoreKeyOf(table, r);
         const notes = clearNotes.get(r);
+        // P18 fix pass 2: a row marked filed before the review model counts
+        // toward the chunk's line only when this statement wrote it.
+        if (filedBefore.has(r) && counted && (all || (filedBeforeLocated && k !== null && !heldBeforeWrite.has(k) && !acceptedKeys.has(k)))) filedBeforeWritten++;
         if (notes && counted && (all || (clearsLocated && (k === null || !acceptedKeys.has(k))))) cleared.push(...notes);
         else if (notes && (!counted || !clearsLocated)) cleared.push(...unconfirmedRenumberings(notes));
         if (k !== null) acceptedKeys.add(k);
@@ -2553,6 +2586,7 @@ export async function applyRestoreChunk(
       const ofBackup = requestTicketIds.has(holder) || (carriers?.has(holder) ?? false);
       const holderWhere = ofBackup ? "of this backup (restored first)" : carriers ? "of this workspace" : "already in this workspace";
       const out = renumberedTicketRow(r, n, to, holder, holderWhere, new Date().toISOString(), ofBackup);
+      if (filedBefore.has(r)) filedBefore.add(out);
       const folder = ticketFilesFolder(r, n);
       // P18 fix pass: a cleared declaration's note names the number the
       // request is restored under, not the one another request holds here.
@@ -2624,7 +2658,7 @@ export async function applyRestoreChunk(
   return {
     ok: true, inserted, existing, heldElsewhere, uncounted, refused, cleared, advanced, rowsAfterFilters, filtered: params.rows.length - rowsAfterFilters, notApplied,
     renumbered: renumberedOf(cleared),
-    ...(notes.length ? { notes } : {}),
+    ...chunkNotes(),
     ...(meaning && "libraries" in meaning && Object.keys(meaning.libraries).length ? { meaningIndex: meaning.libraries } : {}),
     ...(meaning && "error" in meaning ? { meaningIndexUnchecked: meaning.error } : {}),
   };
