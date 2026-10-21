@@ -951,6 +951,26 @@
    "sequencingNotes": [
     "Added by the integrator at the P34 merge, 2026-10-21 (DEC-31). The guard migration pastes after 20261245 (row 187) and 20261247 (row 191)."
    ]
+  },
+  {
+   "name": "P37 DOOR B GUARD \u2014 the publish guard records a hand-sent reviewed promote over a checkout, door (b)'s intake limb trusts only a submission the database vouches for, and a controller can retire a stray pending submission",
+   "findings": [
+    "document-control DCK-18 remainders (assigned at the P35 merge, 2026-10-21, DEC-31; ruled under DEC-90): (1) enforce_document_publish_guard (re-created from its NEWEST body \u2014 after P36's re-creation; lineDiff-pinned, one DEC-30 file) records a door-(b) promote over another person's checkout made by a hand-sent three-step PATCH (the same REVIEW_PROMOTED_OVER_CHECKOUT row and holder notice 20261252 writes; never a refusal, no double record when finalize_reviewed_promote already wrote it); (2) door (b)'s intake limb admits only a submission named by the intake route's own server-written INTAKE_SUBMISSION record (or the door's role), so a pre-paste door-shaped row cannot be promoted over a checkout; pin that every genuine submission still promotes; (3) a standalone controller retire of a pending submission no Intake tab lists, through the existing voidPendingDraft path (a controller-only action where the document's pending draft is shown), recorded; (4) record the operator's look-over counts from 20261252's paste in DCK-18"
+   ],
+   "files": [
+    "supabase/migrations/2026NNNN_dc_roundG_door_b_guard.sql (one DEC-30 file after 20261253)",
+    "lib/revisions.ts (voidPendingDraft call site only)",
+    "the Inspector's pending-draft area (controller-only retire control)",
+    "tests (I-17 harness before/after)"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "document-control P35 merged (20261252)",
+    "document-control P36 merged (it re-creates enforce_document_publish_guard first)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the P35 merge, 2026-10-21 (DEC-31). Run after P36; its guard migration pastes after P36's."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [
