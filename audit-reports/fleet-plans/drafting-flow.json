@@ -742,6 +742,26 @@
    "sequencingNotes": [
     "Added by the integrator at the DF-P14 merge, 2026-10-20 (DEC-31)."
    ]
+  },
+  {
+   "name": "DF-P17 RENUMBERED REQUEST FILES — a request renumbered on restore still owns its files under its original number's folder",
+   "findings": [
+    "drafting-flow EDGE-19 (assigned at the admin-and-org P16 merge, 2026-10-21, DEC-31; ruled under DEC-90): never move storage objects; the request's file prefix checks (app/api/tickets/**, lib/ticketCopyRequest.ts and every caller of the request-prefix test) also admit the original number's folder recorded by the restore in the request's own history (a stored fact, never client input), and nothing else; a request never renumbered is checked exactly as today (pin)"
+   ],
+   "files": [
+    "app/api/tickets/** (the prefix checks only)",
+    "lib/ticketCopyRequest.ts",
+    "the shared request-prefix helper",
+    "tests"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "admin-and-org P16 merged (2026-10-21)",
+    "drafting-flow DF-P5 merged (shares app/api/tickets/**)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the P16 merge, 2026-10-21 (DEC-31). Run after DF-P5."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

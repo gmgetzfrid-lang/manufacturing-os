@@ -537,6 +537,24 @@
    "sequencingNotes": [
     "Added by the integrator at the DF-P11 merge, 2026-10-21 (DEC-31)."
    ]
+  },
+  {
+   "name": "P17 RESTORE RENUMBER REPORT \u2014 the restore page reports a request restored under a fresh number as its own outcome",
+   "findings": [
+    "admin-and-org BKP-16 (assigned at the P16 merge, 2026-10-21, DEC-31): the restore page and its report show a renumbered request as 'restored as <new> \u2014 <old> was taken' with both numbers as fields (not only inside a note), never as 'a pointer cleared'; every other outcome renders as today (pin)"
+   ],
+   "files": [
+    "app/(protected)/admin/restore/** (the report rendering)",
+    "lib/dataRestore.ts (the outcome shape only, additive)",
+    "tests"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "admin-and-org P16 merged (2026-10-21)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the P16 merge, 2026-10-21 (DEC-31)."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

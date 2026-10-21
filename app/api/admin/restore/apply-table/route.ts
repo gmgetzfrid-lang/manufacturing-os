@@ -1,5 +1,5 @@
 // POST /api/admin/restore/apply-table?orgId=
-// Body: { table, rows, idRemap, preview? }
+// Body: { table, rows, idRemap, preview?, backupNumberCarriers? }
 //
 // Step 2 of the CHUNKED restore: one bounded slice of one table. The client
 // walks tables in FK order (orderTablesForRestore) posting ≤500 rows per call,
@@ -41,6 +41,10 @@ export const runtime = "nodejs";
 // entry, ["Admin"], as the constant this route spelled before); who is
 // admitted is unchanged.
 const MAX_ROWS_PER_CALL = 1000;
+// drafting-flow EDGE-5 (P16 final fix pass): the most backup request ids a
+// call's `backupNumberCarriers` may name (the driver's own bound is
+// RESTORE_CARRIERS_BYTES); a longer list is ignored.
+const MAX_CARRIERS_PER_CALL = 5000;
 
 export async function POST(req: NextRequest) {
   const orgId = req.nextUrl.searchParams.get("orgId") || "";
@@ -48,7 +52,7 @@ export async function POST(req: NextRequest) {
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   const sb = actor.admin;
 
-  let parsed: { table?: string; rows?: Array<Record<string, unknown>>; idRemap?: RestorePlan["idRemap"]; manifest?: { orgId?: string; orgName?: string }; preview?: boolean };
+  let parsed: { table?: string; rows?: Array<Record<string, unknown>>; idRemap?: RestorePlan["idRemap"]; manifest?: { orgId?: string; orgName?: string }; preview?: boolean; backupNumberCarriers?: unknown };
   try { parsed = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
   const table = (parsed.table || "").trim();
@@ -88,7 +92,14 @@ export async function POST(req: NextRequest) {
 
   // Remap, FORCE the org boundary, filter, bound every row by the parents it
   // names, write — the shared function both restore routes call.
-  const result = await applyRestoreChunk(sb, { orgId, table, rows, idRemap });
+  // drafting-flow EDGE-5 (admin-and-org P16 final fix pass): the page's
+  // driver sends, with each tickets slice, the backup's other requests that
+  // share a number with its rows; it only names a renumbered request's
+  // holder (of this backup / of this workspace). A malformed or oversized
+  // list is ignored (the holder is then named neutrally).
+  const carriers = parsed.backupNumberCarriers;
+  const backupNumberCarriers = Array.isArray(carriers) && carriers.length <= MAX_CARRIERS_PER_CALL && carriers.every((c) => typeof c === "string") ? (carriers as string[]) : null;
+  const result = await applyRestoreChunk(sb, { orgId, table, rows, idRemap, backupNumberCarriers });
   const { inserted, existing, heldElsewhere, uncounted, filtered, refused, cleared, advanced, notApplied } = result;
   // ILIFE-10 / ILIFE-11 (admin-and-org Round G, P14): a kept live row whose
   // backup decision was not applied (notApplied), and the libraries whose

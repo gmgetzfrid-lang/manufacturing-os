@@ -8,13 +8,13 @@
     "audit-reports/admin-and-org/04-billing.md"
   ],
   "totals": {
-    "findings": 70,
+    "findings": 71,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 5,
       "HIGH": 17,
       "MEDIUM": 29,
-      "LOW": 19
+      "LOW": 20
     },
     "by_status": {
       "RESOLVED": 61,
@@ -23,9 +23,9 @@
       "RESOLVED *(2026-10-14, admin-and-org Round G P13 — pending the `20261219` paste; see the Resolution below)*": 1,
       "RESOLVED (Done-when 2's contractor intake door landed by the integrator at the I-26 merge, 2026-10-20 (DEC-90); Done-when 3's RLS limb closed by decision — ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90); switching enforcement on is the operator's step, not a done-when)": 1,
       "RESOLVED (2026-10-20, admin-and-org Round G P5; limb (c) closed by decision — ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90): `org_has_active_subscription` kept as documented, unwired scaffolding; the contractor intake door's call is tracked on `BILL-10` Done-when 2 alone)": 1,
+      "OPEN": 2,
       "RESOLVED (code) — database half pending 20261238 (ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90): the status stays exactly this until `20261238` is pasted and its result rows come back all true)": 1,
       "RESOLVED *(2026-10-14, admin-and-org Round G P13; the controller / owner shortcut that precedes the gate is opened as `ORG-23`)*": 1,
-      "OPEN": 1,
       "RESOLVED (2026-10-20, ruled by the integrator at the AO-P5 merge, 2026-10-20 (DEC-90) — fixed in the same package at its merge rather than left open; within the stated bound below)": 1
     }
   },
@@ -1574,6 +1574,33 @@
       ],
       "refuted": false,
       "summary": "An org restores a backup holding three flows to an asset deleted before the paste. The restore completes, but its report lists three failed processflows rows with a generic reason; the operator cannot tell they were already dangling in the source, and the restored workspace silently differs from the backup by those rows.",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/02-backup-restore.md"
+    },
+    {
+      "id": "BKP-16",
+      "title": "The restore page reports a request restored under a fresh number as \"a pointer cleared\", and names its old and new number only inside a note's text",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading the code at the P16 fix pass 3 (`app/(protected)/admin/restore/page.tsx:803`, `:840-844`)",
+      "blast_radius": null,
+      "related": [
+        "EDGE-5",
+        "EDGE-18",
+        "EDGE-19"
+      ],
+      "locations": [
+        "app/(protected)/admin/restore/page.tsx:803",
+        "lib/dataRestore.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "After a disaster-recovery restore the admin reads \"tickets: 1 row(s) restored with a pointer cleared — ticketid (a request whose number another request here already carries … restored under a fresh number …)\" under \"Records restored — 1 pointer(s) cleared\", and cannot tell from the page which request now carries which number without opening the RESTORECHUNK audit rows.",
       "area": "admin-and-org",
       "report": "audit-reports/admin-and-org/02-backup-restore.md"
     },

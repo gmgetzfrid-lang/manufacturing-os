@@ -17,16 +17,16 @@
     "audit-reports/drafting-flow/13-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 153,
+    "findings": 155,
     "gaps": 14,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 47,
-      "MEDIUM": 65,
+      "MEDIUM": 67,
       "LOW": 32
     },
     "by_status": {
-      "RESOLVED": 88,
+      "RESOLVED": 90,
       "RESOLVED (2026-10-13, DF-P4 — PASTE pending: `20261208`, after `20261195` and after the DF-P2 app deploy; until it is pasted a member's hand-written PostgREST insert can still choose `requester_name`)": 1,
       "OPEN": 46,
       "RESOLVED (2026-10-13 — done-when 2's `CLOSED` reading ratified by the integrator at DF-P10's review fix pass 6: \"a closed row with no issued label answers cannot confirm\"; the forged-line residual below is owned by drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS)": 1,
@@ -553,7 +553,7 @@
       "id": "EDGE-5",
       "title": "Restoring a backup into a workspace that already has tickets collides on UNIQUE(org_id, ticket_id), abandons the rest of the tickets table on the first bad chunk, and leaves the number counter pointing at numbers the restore just re-created",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2032,6 +2032,61 @@
       ],
       "refuted": false,
       "summary": "A Viewer sets defaultdays = 1 for ISO. Every ISO request filed afterwards is due tomorrow at 17:00; the clock warns its waiting party and the queue at 75 % of the window and sends a breach notice to the queue and the requester the next day, for each one. (The other half of the review's scenario — defaultdays = 2000000000 failing every ISO request with a 500 — is closed at the create route's read b",
+      "area": "drafting-flow",
+      "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
+    },
+    {
+      "id": "EDGE-18",
+      "title": "A backup that itself carries one request number on two requests restores only the first, and there is no supported path to bring the second back once the source workspace is gone",
+      "severity": "MEDIUM",
+      "status": "RESOLVED",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (exercised against the in-memory restore engine: `lib/__tests__/aoRoundGP16RestoreTicketNumber.test.ts`, \"the one named exception (without the number key)\" — that test was replaced at the P16 fix pass 2 by \"a backup that ITSELF carries one number on two requests\", which pins the fix; on `125ca3b` both requests landed)",
+      "blast_radius": "data recovery (rows of a backup not restored; the backup file itself is untouched)",
+      "related": [
+        "EDGE-5",
+        "BKP-5",
+        "EDGE-13"
+      ],
+      "locations": [
+        "lib/dataRestore.ts",
+        "supabase/migrations/20260724_ticket_numbering.sql"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Disaster recovery: the source workspace (or its database) is gone; the operator restores its backup into a fresh workspace. One of the two requests sharing a number, and every row pointing at it, is not restored, and the product offers no way to bring it back; its content is only in the backup file.",
+      "area": "drafting-flow",
+      "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
+    },
+    {
+      "id": "EDGE-19",
+      "title": "A request renumbered on restore keeps its files under its old number's folder, so the request's own file checks treat them as outside the request",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading the code at the P16 fix pass 3 (`lib/ticketCopyRequest.ts:138`, `app/api/tickets/workflow-action/route.ts:183`); the restore side is pinned by `lib/__tests__/aoRoundGP16RestoreTicketNumber.test.ts` \"a renumbered request's files keep their storage keys, under the old number's folder …\"",
+      "blast_radius": "a request restored under a fresh number (`EDGE-5`, `TICKET_RENUMBERED`) — its Final, Source and redline files; and the request that keeps the old number (the holder), whose prefix checks accept those files as its own (*added at the P16 fix pass 4, from the review*)",
+      "related": [
+        "EDGE-5",
+        "EDGE-18",
+        "BKP-16"
+      ],
+      "locations": [
+        "lib/ticketCopyRequest.ts:138",
+        "app/api/tickets/workflow-action/route.ts:183",
+        "lib/dataRestore.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A disaster-recovery backup carries KE-DDRT-26-0007 on requests A and B; B has a Final and a Source file under orgs/<org>/tickets/KE-DDRT-26-0007/. After the restore B is KE-DDRT-26-0123 with the same file keys. Printing or downloading one of B's files takes the browser path (no stamped, recorded copy), and resubmitting B's Final or redlining one of its files is refused \"That file is not stored und",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/13-edges-and-invariants.md"
     },

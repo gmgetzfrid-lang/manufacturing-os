@@ -748,7 +748,8 @@ describe("HLD-9 — /api/admin/restore/apply-table retries a refused document_ho
     expect(mig("20261073_dc_roundF_document_holds_integrity.sql")).toMatch(/delete it BEFORE\n-- any restore of document_holds from a backup taken before this paste/);
     // admin-and-org ORG-1 / BKP-3: the write moved into the ONE function both restore routes share.
     expect(src("lib/dataRestore.ts")).toMatch(/export const ROW_LEVEL_SQLSTATES: ReadonlySet<string> = new Set\(\["23502", "23503", "23505", "23514", "23P01"\]\);/);
-    expect(src("app/api/admin/restore/apply-table/route.ts")).toMatch(/await applyRestoreChunk\(sb, \{ orgId, table, rows, idRemap \}\)/);
+    // (admin-and-org P16 final fix pass: the tickets slice may also carry the backup's number carriers, which only name a renumbered request's holder)
+    expect(src("app/api/admin/restore/apply-table/route.ts")).toMatch(/await applyRestoreChunk\(sb, \{ orgId, table, rows, idRemap(, backupNumberCarriers)? \}\)/);
   });
 });
 

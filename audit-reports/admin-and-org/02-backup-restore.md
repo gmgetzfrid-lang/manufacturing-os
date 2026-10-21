@@ -1450,3 +1450,23 @@ Fix:
 **Scope / residual.** A flow whose equipment was skipped because another workspace holds its id is reported the same way, as the finding's mechanism notes. The audit trail's `RESTORE_CHUNK` rows carry the new code.
 
 ---
+
+## BKP-16 · The restore page reports a request restored under a fresh number as "a pointer cleared", and names its old and new number only inside a note's text
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** admin-and-org (the restore page's owner) — opened by admin-and-org Round G P16 RESTORE TICKET NUMBER KEY's fix pass 3, 2026-10-21, from the package review (`DEC-31`: the page is outside that package's plan). The integrator assigns the package. **Assigned (2026-10-21, the integrator at the P16 merge, DEC-31): admin-and-org P17 RESTORE RENUMBER REPORT** — the restore page reports a renumbered request as its own outcome ("restored as <new> — <old> was taken"), never as a pointer cleared.
+- **Verification:** CONFIRMED by reading the code at the P16 fix pass 3 (`app/(protected)/admin/restore/page.tsx:803`, `:840-844`)
+- **Independently verified:** — (`author`: the P16 review found it; recorded by the P16 fix pass 3; not yet challenged)
+- **Locations:** `app/(protected)/admin/restore/page.tsx:803` (the headline "Records restored — N pointer(s) cleared"), `:840-844` (per table: "N row(s) restored with a pointer cleared — <column> (<label>)"); `lib/dataRestore.ts` `RestoreTableOutcome.renumbered` (what the page can show instead)
+- **Related:** drafting-flow `EDGE-5` (ruling (3) re-mint, residual (e)), drafting-flow `EDGE-18`, drafting-flow `EDGE-19`
+
+**Mechanism.** Since P16, a backup request whose number another request of the workspace already carries is restored under a fresh number (`TICKET_RENUMBERED`). The chunk reports it in its `cleared` notes — so it reaches the `RESTORE_CHUNK` audit row and the page with no route change — and the note carries the pair (`renumbered: { from, to, numberHeldBy }`). The page renders every `cleared` note through one generic line: the headline counts it as a "pointer cleared", and the table line names the column (`ticket_id`) and the code's label. The old → new pair is only in the note's message and the audit row. `runChunkedRestore` now hands the page `RestoreTableOutcome.renumbered` (old → new, per request) for its own line.
+
+**Failure scenario.** After a disaster-recovery restore the admin reads "tickets: 1 row(s) restored with a pointer cleared — ticket_id (a request whose number another request here already carries … restored under a fresh number …)" under "Records restored — 1 pointer(s) cleared", and cannot tell from the page which request now carries which number without opening the `RESTORE_CHUNK` audit rows.
+
+**Done when.**
+- The restore page shows each renumbered request on its own line, naming the old and the new number (from `RestoreTableOutcome.renumbered`), and does not count it as a pointer cleared in the headline. An entry flagged `unconfirmed` (P16 fix pass 4: the database accepted its statement without confirming the row, so it MAY have been written under the new number) is said as such, not as restored.
+- A rendered test pins the line.
+
+---

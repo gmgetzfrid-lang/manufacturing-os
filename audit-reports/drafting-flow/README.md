@@ -28,7 +28,7 @@ use it without being taught.
 
 ## Findings
 
-**153 findings** — 9 CRITICAL, 47 HIGH, 65 MEDIUM, 32 LOW — plus **14 gap specs**, all
+**155 findings** — 9 CRITICAL, 47 HIGH, 67 MEDIUM, 32 LOW — plus **14 gap specs**, all
 buildable.
 
 Two passes. **`01`–`05`** are the design read: review tiering, friction, wiring,
