@@ -619,6 +619,28 @@ DF-P6 edits files DF-P9 holds next. DF-P9's brief allows DF-P6 one line on the r
 - `app/(protected)/admin/requests/page.tsx` — the `ReviewClassesSection` mount.
 
 
+## Hand-offs from DF-P7 (Round G) that no package brief carries yet
+
+DF-P7 CONSENT built the consent window (`GAP-109` mechanism 1 on `GAP-113`; `DEC-38`, `DEC-39`; DEC-90's rulings (1)–(7) for DF-P7; calls recorded in `DEC-44 (DF-P7-consent)`). It resolved nothing outright. `FRIC-1`, `EVID-8` and `EVID-9` stay OPEN, each with a `Partial (2026-10-21, drafting-flow Round G)` block, and the package opened `DIST-19` (document-control). The integrator assigns each owner below (DEC-31).
+
+| Finding / item | Owner | What the owner must add |
+|---|---|---|
+| `FRIC-1` dw2 (a tier above the queue owners) | the next holder of `lib/ticketSla.ts` (proposed drafting-flow) | Escalate a breach that already reaches the queue's owners once more, to the workspace's Admins (or the `ticket.manage` holders), stamped once like the others. |
+| `EVID-8` document half → **`DIST-19`** | the next document-control package holding `lib/reviewControl.ts`, `lib/acknowledgments.ts` and `lib/distributionAcks.ts` | A durable per-reminder record for review sign-offs, acknowledgments and distribution acks (the `ticket_notice_events` shape, or nag / escalation columns). One audit row per alternate activation. The acks cooldown should read the record, not `notifications`. |
+| `EVID-9` dw1, dw2 (every producer), dw4 | the notifications package that next holds `app/api/notifications/send-queued/route.ts` and `lib/notify/dispatch.ts` | A Resend delivery / bounce webhook. A "not sent by their choice" status that the drain's recovery and the purge both leave alone, written by `emit()` / `queueEmail` and the digest. One per-recipient-per-event query. |
+| `EVID-9` dw3 | admin-and-org P7 (the purge) | Retention of approval / ack / distribution email rows (pointer, as the plan records). |
+| Copy recall on a consent issue (`PHYS-18`) | the next holder of `lib/staleCopies.ts` | Let `nudgeStaleTicketHolders` take the system actor (`system:consent-window`, no uid), and call it from `lib/consentWindowScan.ts` when the advance issues. |
+| The window's settings in the editor | the next holder of `components/documents/RoutingControlSection.tsx` (DF-P5's file) | `window_days` (1–30) and `warn_fraction` (0.1–0.9) inputs on a `consent_window` slot. `lib/routingControl.ts` already parses and validates both, and the defaults (3 days, 2/3) apply until they are set. |
+| The waiting-on line during a window | the next holder of `lib/ticketAttention.ts` (`holdersFor`) | While a window runs, name its recipients as "may object until …" rather than as waited on. The card already says so. |
+| `GAP-109` mechanisms 2 and 3 | the integrator (no package holds them) | Standing pre-authorization needs the resource dimension on grants (`DEC-13`, `GAP-1`). Exception-only review needs standard details as linked artifacts. |
+
+**Migration — paste row (for `MIGRATION-PASTE-ORDER.md`; the integrator writes it).** `20261255_df_roundG_consent_window.sql`. It is DEC-30 one paste and needs `20261241` and `20261242` (the file refuses otherwise). It is independent of `20261250` / `20261251` / `20261254`. **Deploy the app first, then paste.** The app is correct before the paste: a 42703 on a `consent_window_*` column or a 42P01 / PGRST205 on `ticket_notice_events` reads as "not pasted", giving today's roster with no window, the transition answering as before, and the cron step reporting "not run". It is also correct after. The file adds ten columns on `tickets`, two CHECKs, an invoker guard trigger, `ticket_notice_events` (append-only, RLS SELECT only), and two SECURITY DEFINER functions granted to the service role (rows in `rls/definerDecisions.ts`). It widens the two `ticket_review_slots` CHECKs by the `consent` alternative only. It is not a widening of who may read or write (counts-only inventory included). Exercised on PostgreSQL 16: `lib/__tests__/rls/dfP7ConsentWindow.test.ts`, plus the full `vitest.db.config.ts` replay.
+
+**`lib/schemaExpectations.ts` rows (the integrator's).** Table `ticket_notice_events` is listed in `schemaExpectations.test.ts` `ROW_AT_MERGE`. Suggested column probes: `tickets.consent_window_opened_at` and `tickets.consent_window_recipients`. **Export decision (the integrator's; listed in `exportCoverage.test.ts` `DECISION_AT_MERGE`).** The proposal is ORG_SCOPED, exported and never imported: the events' append-only trigger refuses UPDATE, and refuses DELETE while the ticket and org exist, and a restored ticket's window evidence belongs to the source workspace.
+
+**Edits outside the plan's file list, each minimal:** `lib/routingControl.ts` (per-slot window settings; refusing an engineering-capability consent slot), `lib/ticketRoster.ts` (copying the settings; the `consent` sentinel in `rosterCompletion`; a null ledger actor), `types/schema.ts` (slot / roster fields), and the census tests (`aoRoundGP0Records`, `exportCoverage`, `notificationWriteRails`, `rls/definerDecisions.ts`, `schemaExpectations`). No new notification kind, capability or cron entry.
+
+
 ## Verification you cannot skip
 
 **No live database and no browser.** The state machine, capability defaults and
