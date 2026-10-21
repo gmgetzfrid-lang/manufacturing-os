@@ -995,20 +995,31 @@ migration, `20261245_dc_roundG_publish_guard_lock_leg.sql` (drafting-flow
    new revision made current on a document checked out by someone else is
    refused (42501), Document Control included, unless it is
    `publish_revision`'s own promote or the reviewed promote of the pending
-   draft in review. **Never re-paste `20261193`, `20261185`, `20261182`,
+   draft in review that a review decided (a bound roster the review gate
+   proved complete, or an external submission shaped as the intake door
+   writes it — no member creator, `'external'`, a link of the org that
+   scopes the document; review fix pass 2). **Never re-paste `20261193`, `20261185`, `20261182`,
    `20261174`, `20261165`, `20261164`, `20261159`, `20261151`, `20261144`,
    `20261139`, `20261105` or any earlier guard migration after it.**
 - **What changes after the paste:** only a direct PATCH (or any write outside
   the two doors) that moves the pointer over another person's checkout — now
   refused, naming the holder. The holder's publish, an unlocked document's,
   the publisher override with its reason, Document Control's force and a
-  review's promote land exactly as before; a hold still never passes.
-- **The result set:** seven probes (all true) and five counts — documents
+  review's promote (a roster's, or an Intake-tab approval of a genuine
+  submission) land exactly as before; a hold still never passes. A pending
+  draft a publisher labels in review / external with a member creator, or
+  naming a link that does not scope the document, is refused too (the
+  forgeable remainder of the intake shape is `DCK-16`).
+- **The result set:** seven probes (all true) and six counts — documents
   checked out right now; of those, with and without a current revision; with
   a pending draft in review; with a pending draft not marked in review
-  (expected 0).
+  (expected 0); with a pending in-review draft naming an intake link, no
+  roster, not shaped as the door writes one (expected 0).
 - **For the integrator at merge, not edited by P32:** the `20261245` row in
   `MIGRATION-PASTE-ORDER.md` (after row 150's `20261193`); no
   `lib/schemaExpectations.ts` probe (the function keeps its signature; the
   file's own result set is the paste check, as for `20261193`); the
-  owner of new finding `DCK-15`.
+  owners of new findings `DCK-15` (proposed: document-control) and `DCK-16`
+  (proposed: projects — `document_versions_insert_integrity` admits a
+  publisher's forged intake-shaped row, which door (b) cannot tell from the
+  door's own on an intake-born or link-assigned document).

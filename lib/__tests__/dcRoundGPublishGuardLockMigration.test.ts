@@ -9,7 +9,12 @@
 //   signed-in actor is refused (42501), Document Control included, unless it
 //   is (a) publish_revision's own promote — a revision this actor inserted in
 //   this transaction on top of the one replaced — or (b) the reviewed promote
-//   of the pending draft still in review. Nothing else is re-created.
+//   of the pending draft still in review whose content a review decided: a
+//   bound roster (the review gate has proven it complete), or an external
+//   submission as the intake door writes it (no creator, provenance
+//   'external', a link of this org whose scope holds the document). A draft a
+//   publisher merely labels in_review / external borrows nothing (the
+//   reviewer's forged-intake reproduction). Nothing else is re-created.
 //
 // Byte fidelity: lineDiff (nothing removed; every new line is the block) AND
 // an exact cut (the body minus the block IS the base, byte for byte). The
@@ -69,7 +74,15 @@ const BLOCK_CODE = [
   "                      AND EXISTS (SELECT 1 FROM document_versions v",
   "                                   WHERE v.id = NEW.current_version_id",
   "                                     AND v.record_id = NEW.id",
-  "                                     AND v.review_state = 'in_review'), false) THEN",
+  "                                     AND v.review_state = 'in_review'",
+  "                                     AND (COALESCE(v_primary_reqs, 0) > 0",
+  "                                          OR (v.provenance = 'external'",
+  "                                              AND (v.created_by IS NULL OR v.created_by = v.intake_link_id)",
+  "                                              AND EXISTS (SELECT 1 FROM project_intake_links l",
+  "                                                           WHERE l.id = v.intake_link_id",
+  "                                                             AND l.org_id = NEW.org_id",
+  "                                                             AND (l.id = NEW.authored_by_link_id",
+  "                                                                  OR NEW.id = ANY (l.assigned_doc_ids)))))), false) THEN",
   "    RAISE EXCEPTION",
   "      'This document is checked out by %, so a new revision can''t be made current here; publish it from the revision flow with an override reason (shown to them and recorded), or ask them to check it in first.',",
   "      COALESCE(NULLIF(btrim(OLD.checked_out_by_name), ''), 'another user')",
@@ -174,6 +187,31 @@ describe("20261245 — the guard re-created from its NEWEST earlier body (found 
     expect(readFileSync(join(root, "lib", "revisions.ts"), "utf8")).toContain('revision_label: draftLabel, base_rev: baseRev, review_state: "in_review",');
   });
 
+  it("door (b) admits only a draft whose content a review decided — a bound roster the review gate proved complete (it runs BEFORE the block and refuses an incomplete one), or the intake door's own shape: no member creator (NULL, or the link's own id where a live column default fills it under the door's bound identity), provenance 'external', a link of this org scoping the document (the door's own scope rule)", () => {
+    // the roster limb trusts the review gate above, which refuses an incomplete roster first
+    const gate = G.next.indexOf("    IF COALESCE(v_primary_reqs, 0) > 0 AND COALESCE(v_signed, 0) < v_primary_reqs THEN\n");
+    expect(gate).toBeGreaterThan(0);
+    expect(gate).toBeLessThan(G.next.indexOf(BLOCK));
+    // v_primary_reqs is assigned only there, under the same pointer-move condition the block requires
+    expect((stripComments(G.next).match(/INTO v_primary_reqs/g) ?? []).length).toBe(1);
+    // the intake door writes exactly that shape (its newest body — 20261214 today): no created_by column, 'external', its own link
+    const submit = newest("CREATE OR REPLACE FUNCTION public.intake_door_submit_version(");
+    expect(submit).toContain("      INSERT INTO document_versions (id, org_id, record_id, revision_label, file_url, file_type, size, change_log,\n                                     created_by_name, created_at, released_at, review_state, provenance,\n                                     intake_link_id, file_hash, supersedes_version_id)\n");
+    expect(submit).toContain("'in_review', 'external',\n              v_link,");
+    expect(submit).toContain("AND (d.authored_by_link_id = v_link\n                         OR d.id::text IN (SELECT jsonb_array_elements_text(v_door->'assigned')))");
+    // the route's legacy service-role insert (before 20261184) names no creator either
+    const route = readFileSync(join(root, "app", "api", "intake", "upload", "route.ts"), "utf8");
+    const row = route.slice(route.indexOf("    const versionRow = {"), route.indexOf("    let ver: unknown = null;"));
+    expect(row).toContain('provenance: "external",');
+    expect(row).toContain("intake_link_id: linkId,");
+    expect(row).not.toMatch(/\bcreated_by:/);
+    // the publisher's forged draft of the review reproduction (a creator, any link id) fails both limbs
+    const code = stripComments(BLOCK);
+    expect(code).toContain("AND (v.created_by IS NULL OR v.created_by = v.intake_link_id)");
+    expect(code).toContain("WHERE l.id = v.intake_link_id");
+    expect(code).toContain("AND l.org_id = NEW.org_id");
+  });
+
   it("DRLS-16: the guard is executable by no client role; SECURITY DEFINER with its search_path pinned; nothing dropped, nothing else created, no row moved", () => {
     expect(M).toContain("REVOKE ALL ON FUNCTION enforce_document_publish_guard() FROM PUBLIC, anon, authenticated, service_role;");
     expect(G.next).toContain("RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$");
@@ -198,7 +236,7 @@ describe("20261245 — the one-paste shape", () => {
     expect((M.match(/^BEGIN;$/gm) ?? []).length).toBe(1);
     expect((M.match(/^COMMIT;$/gm) ?? []).length).toBe(1);
     const inventory = stripComments(M.slice(M.indexOf("CREATE TEMP TABLE"), M.indexOf("\nBEGIN;")));
-    expect((inventory.match(/COUNT\(\*\)::text/g) ?? []).length).toBe(5);
+    expect((inventory.match(/COUNT\(\*\)::text/g) ?? []).length).toBe(6);
     expect(inventory).not.toMatch(/SELECT \*|document_number|title|d\.id\s+AS|user_email|checked_out_by_name/);
     expect(inventory).toContain("   WHERE d.checked_out_by IS NOT NULL\n");
     const c = stripComments(tail).replace(/'(?:[^']|'')*'/g, "''");
@@ -274,7 +312,7 @@ describe("20261245 — the one-paste shape", () => {
     const p = join(root, "lib", "__tests__", "rls", "dcP32PublishGuardLock.test.ts");
     expect(existsSync(p)).toBe(true);
     const t = readFileSync(p, "utf8");
-    for (const s of ["THE DEFECT, closed", "the lock HOLDER's direct pointer write", "UNLOCKED document", "AUTHORIZED-PUBLISHER OVERRIDE", "Document Control's FORCE", "a hold still never passes", "finalize_reviewed_promote by a publisher", "three-step fallback", "door (b) cannot be borrowed", "door (a) cannot be borrowed", "an OVERRIDE REVERT", "NO current revision yet", "pasted as ONE script"]) {
+    for (const s of ["THE DEFECT, closed", "the lock HOLDER's direct pointer write", "UNLOCKED document", "AUTHORIZED-PUBLISHER OVERRIDE", "Document Control's FORCE", "a hold still never passes", "finalize_reviewed_promote by a publisher", "three-step fallback", "door (b) cannot be borrowed by a draft not marked in review", "door (b) cannot be borrowed by a FORGED intake draft", "a GENUINE external submission", "the remainder DCK-16 records", "door (a) cannot be borrowed", "an OVERRIDE REVERT", "NO current revision yet", "pasted as ONE script"]) {
       expect(t, s).toContain(s);
     }
   });

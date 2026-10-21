@@ -31,11 +31,24 @@
 --           that write only for the holder, an unlocked document, a recorded
 --           publisher override with its reason or a controller's recorded
 --           force, and answers locked_by_other otherwise), or (b) the
---           reviewed promote of the document's pending draft
---           (finalize_reviewed_promote and its three-step fallback; neither
---           has ever read the lock). The holder's publish, a publish on an
---           unlocked document and every override path land exactly as before;
---           a hold still never passes (the hold limbs above are untouched).
+--           reviewed promote of the document's pending draft, still in
+--           review, whose content a review decided — it carries a bound
+--           reviewer roster (the review gate has proven it complete), or it
+--           is an external submission as the intake door writes it (no
+--           member creator, provenance 'external', a link of this org whose
+--           scope holds the document: its immutable authoring link or an
+--           assignment) — finalize_reviewed_promote and its three-step
+--           fallback (neither has ever read the lock). A draft a signed-in
+--           publisher merely labels in_review / external with a creator or
+--           an unrelated link id borrows nothing. The holder's publish, a
+--           publish on an unlocked document and every override path land
+--           exactly as before; a hold still never passes (the hold limbs
+--           above are untouched). Remainder (recorded, DCK-16, owner
+--           proposed: projects): a publisher who inserts a member-less
+--           external draft naming a link that already scopes the document
+--           is indistinguishable here from the door's — the client INSERT
+--           policy on document_versions admits a publisher's row whatever
+--           its provenance.
 --
 --   RE-CREATED FROM THE NEWEST BODY (found by scanning; lineDiff-pinned —
 --   every line of the base is kept, the lines added are exactly the P32
@@ -52,9 +65,14 @@
 -- transaction): the documents checked out right now (the population the lock
 -- leg binds); of those, with a current revision and with none (a first
 -- pointer write by anyone but the holder is now refused); with a pending
--- draft in review (its reviewed promote stays admitted); with a pending draft
--- NOT marked in review (its promote by anyone but the holder is now refused —
--- expected 0: every app door marks a submitted draft in_review).
+-- draft in review (its reviewed promote stays admitted when the review gate
+-- passes it: a complete roster, or an external submission as the door wrote
+-- it); with a pending draft NOT marked in review (its promote by anyone but
+-- the holder is now refused — expected 0: every app door marks a submitted
+-- draft in_review); with a pending draft in review that carries an intake
+-- link and no roster but is not shaped as the door writes one (a creator, a
+-- link of no org or of another org, or a document outside the link's scope
+-- — its promote by anyone but the holder is now refused; expected 0).
 --
 -- HOW TO APPLY: AFTER 20261193 (required — this re-creates 20261193's guard,
 -- and the first statement refuses to run, changing nothing, without its
@@ -99,7 +117,18 @@ WITH locked AS (
   SELECT d.current_version_id IS NOT NULL AS has_current,
          d.pending_version_id IS NOT NULL AS has_pending,
          EXISTS (SELECT 1 FROM document_versions v
-                  WHERE v.id = d.pending_version_id AND v.review_state = 'in_review') AS pending_in_review
+                  WHERE v.id = d.pending_version_id AND v.review_state = 'in_review') AS pending_in_review,
+         EXISTS (SELECT 1 FROM document_versions v
+                  WHERE v.id = d.pending_version_id AND v.review_state = 'in_review'
+                    AND v.intake_link_id IS NOT NULL
+                    AND NOT EXISTS (SELECT 1 FROM document_review_signoffs s
+                                     WHERE s.document_version_id = v.id AND s.slot = 'primary')
+                    AND NOT (COALESCE(v.provenance, '') = 'external'
+                             AND (v.created_by IS NULL OR v.created_by = v.intake_link_id)
+                             AND EXISTS (SELECT 1 FROM project_intake_links l
+                                          WHERE l.id = v.intake_link_id AND l.org_id = d.org_id
+                                            AND (l.id = d.authored_by_link_id
+                                                 OR d.id = ANY (l.assigned_doc_ids))))) AS pending_intake_unshaped
     FROM documents d
    WHERE d.checked_out_by IS NOT NULL
 )
@@ -121,7 +150,11 @@ SELECT 'inventory (before apply): of those, with a pending draft in review (its 
 UNION ALL
 SELECT 'inventory (before apply): of those, with a pending draft NOT marked in review (its promote by anyone but the holder is now refused; expected 0)',
        COUNT(*)::text
-  FROM locked WHERE has_pending AND NOT pending_in_review;
+  FROM locked WHERE has_pending AND NOT pending_in_review
+UNION ALL
+SELECT 'inventory (before apply): of those, with a pending in-review draft that names an intake link and carries no roster but is not shaped as the intake door writes one (a creator, a link of another org or none, or a document outside the link''s scope) — its promote by anyone but the holder is now refused; expected 0',
+       COUNT(*)::text
+  FROM locked WHERE pending_intake_unshaped;
 
 BEGIN;
 
@@ -826,12 +859,27 @@ BEGIN
   --       recorded publisher override or a controller's recorded force
   --       (otherwise it answers locked_by_other and writes nothing), so
   --       every override it admits today lands exactly as before;
-  --   (b) the reviewed promote of the document's pending draft (still
-  --       marked in_review; the review gate above decided its roster, or
-  --       it is an external submission's) — finalize_reviewed_promote and
-  --       its three-step fallback write that shape, and neither has ever
-  --       read the lock, so a review finished while someone holds a
-  --       checkout publishes as it does today.
+  --   (b) the reviewed promote of the document's pending draft, still
+  --       marked in_review, whose content a review decided: either it
+  --       carries a bound reviewer roster (v_primary_reqs > 0 — the review
+  --       gate above has already refused one that is not complete), or it
+  --       is an external submission as the intake door writes it (no
+  --       member as its creator — NULL, or the link's own id where a live
+  --       column default fills it under the door's bound identity (SEC-22,
+  --       20261214) — provenance 'external', its link a link of this org
+  --       whose scope holds this document: the document's immutable
+  --       authoring link, or one it is assigned to — the door's own scope
+  --       check, 20261184) — the click that approves it is the review a
+  --       roster-free policy asks for. finalize_reviewed_promote and its three-
+  --       step fallback write that shape, and neither has ever read the
+  --       lock, so a review finished while someone holds a checkout
+  --       publishes as it does today. A pending draft merely LABELLED
+  --       in_review and as an intake submission by a signed-in publisher
+  --       (any creator, or any link id) borrows nothing: it is refused here.
+  --       What the database cannot tell apart is a draft a publisher
+  --       inserts with no member creator and a link that already scopes the
+  --       document (document_versions_insert_integrity admits a publisher's
+  --       row whatever its provenance — DCK-16, projects owns that policy).
   -- The holder's own publish and a publish on an unlocked document never
   -- reach the refusal. A status-only act (supersede, archive, a status
   -- edit) moves no pointer and is not judged here; the service role
@@ -856,7 +904,15 @@ BEGIN
                       AND EXISTS (SELECT 1 FROM document_versions v
                                    WHERE v.id = NEW.current_version_id
                                      AND v.record_id = NEW.id
-                                     AND v.review_state = 'in_review'), false) THEN
+                                     AND v.review_state = 'in_review'
+                                     AND (COALESCE(v_primary_reqs, 0) > 0
+                                          OR (v.provenance = 'external'
+                                              AND (v.created_by IS NULL OR v.created_by = v.intake_link_id)
+                                              AND EXISTS (SELECT 1 FROM project_intake_links l
+                                                           WHERE l.id = v.intake_link_id
+                                                             AND l.org_id = NEW.org_id
+                                                             AND (l.id = NEW.authored_by_link_id
+                                                                  OR NEW.id = ANY (l.assigned_doc_ids)))))), false) THEN
     RAISE EXCEPTION
       'This document is checked out by %, so a new revision can''t be made current here; publish it from the revision flow with an override reason (shown to them and recorded), or ask them to check it in first.',
       COALESCE(NULLIF(btrim(OLD.checked_out_by_name), ''), 'another user')
@@ -901,8 +957,8 @@ COMMIT;
 -- Probes: ok = true × 7. Inventory rows: n = the aggregate count.
 -- pg_proc.prosrc is verbatim (an apostrophe inside a body's string literal is
 -- '''' here).
-SELECT 'HAND-13 (P32): a new revision made current on a document checked out by someone else is refused (42501) unless it is publish_revision''s own promote (a revision this actor inserted in this transaction on top of the one replaced) or the reviewed promote of the pending draft still in review' AS check,
-       (SELECT prosrc LIKE '%IF OLD.checked_out_by IS NOT NULL%AND OLD.checked_out_by::text <> v_actor::text%AND NEW.current_version_id IS NOT NULL%AND NEW.current_version_id IS DISTINCT FROM OLD.current_version_id%AND NOT EXISTS (%WHERE v.id = NEW.current_version_id%AND v.record_id = NEW.id%AND v.created_by = v_actor%AND v.created_at = now()%AND v.supersedes_version_id IS NOT DISTINCT FROM OLD.current_version_id)%AND NOT COALESCE(NEW.current_version_id = OLD.pending_version_id%AND NEW.pending_version_id IS NULL%AND v.review_state = ''in_review''), false) THEN%''This document is checked out by %, so a new revision can''''t be made current here;%USING ERRCODE = ''insufficient_privilege'';%'
+SELECT 'HAND-13 (P32): a new revision made current on a document checked out by someone else is refused (42501) unless it is publish_revision''s own promote (a revision this actor inserted in this transaction on top of the one replaced) or the reviewed promote of the pending draft still in review that carries a bound roster or is an external submission as the intake door writes it (no creator, a link of this org whose scope holds the document)' AS check,
+       (SELECT prosrc LIKE '%IF OLD.checked_out_by IS NOT NULL%AND OLD.checked_out_by::text <> v_actor::text%AND NEW.current_version_id IS NOT NULL%AND NEW.current_version_id IS DISTINCT FROM OLD.current_version_id%AND NOT EXISTS (%WHERE v.id = NEW.current_version_id%AND v.record_id = NEW.id%AND v.created_by = v_actor%AND v.created_at = now()%AND v.supersedes_version_id IS NOT DISTINCT FROM OLD.current_version_id)%AND NOT COALESCE(NEW.current_version_id = OLD.pending_version_id%AND NEW.pending_version_id IS NULL%AND v.review_state = ''in_review''%AND (COALESCE(v_primary_reqs, 0) > 0%OR (v.provenance = ''external''%AND (v.created_by IS NULL OR v.created_by = v.intake_link_id)%AND EXISTS (SELECT 1 FROM project_intake_links l%WHERE l.id = v.intake_link_id%AND l.org_id = NEW.org_id%AND (l.id = NEW.authored_by_link_id%OR NEW.id = ANY (l.assigned_doc_ids)))))), false) THEN%''This document is checked out by %, so a new revision can''''t be made current here;%USING ERRCODE = ''insufficient_privilege'';%'
           FROM pg_proc WHERE proname = 'enforce_document_publish_guard') AS ok,
        NULL::text AS n
 UNION ALL

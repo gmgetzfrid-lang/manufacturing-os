@@ -26,8 +26,15 @@
 //      Control included, unless it is publish_revision's own promote (whose
 //      lock rules — the holder, a publisher's override with its reason, a
 //      controller's force — already ran) or the reviewed promote of the
-//      pending draft (finalize_reviewed_promote, which never read the lock).
-//      The trigger is a lock backstop only on a database that has 20261245.
+//      pending draft (finalize_reviewed_promote, which never read the lock)
+//      when a review decided it: a bound roster, or an external submission
+//      shaped as the intake door writes it (no member creator, 'external', a
+//      link of the org that scopes the document). Even with 20261245 the
+//      trigger is a PARTIAL lock backstop: a publisher who inserts such a
+//      draft themselves (the client INSERT policy on document_versions
+//      admits it) on an intake-born or link-assigned document, and promotes
+//      it, still passes another person's checkout (DCK-16). Do not describe
+//      it as a complete one.
 //
 // The decision itself is a pure function (`evaluatePublishGuard`) so it can
 // be unit-tested exhaustively without a database.
