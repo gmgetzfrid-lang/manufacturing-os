@@ -123,12 +123,9 @@ describe("RT-12 dw3 — every realtime-subscribed table has its publication stat
  *  RT-4's remainder, with its owner (DEC-31). */
 const RT4_PENDING: Record<string, string> = {
   // (The requests portal's tickets channel carries its unfiltered DELETE
-  // companion since drafting-flow Round G, DF-P9 — RT-4's tickets limb.)
-  // The library page's documents channel (library_id filter). A document IS
-  // hard-deleted from that page (and by the intake route's roll-back), so a
-  // viewer in another session keeps the deleted row until reload (RT-4's own
-  // failure scenario). A file notifications N4 does not hold.
-  "app/(protected)/documents/[libraryId]/page.tsx:documents": "document-control (the library page's holder): add the unfiltered documents DELETE companion, acting on a document the page lists (RT-4)",
+  // companion since drafting-flow Round G, DF-P9 — RT-4's tickets limb; the
+  // library page's documents channel since document-control Round G, P28 —
+  // the last entry. Nothing is pending.)
 };
 
 /** A table whose rows no application path hard-deletes while a filtered
@@ -219,6 +216,16 @@ describe("RT-4 — a filtered subscription that can see DELETEs hears them", () 
     expect(reached).toEqual(["notifications"]);
     // …and the purge's notifications floor is read rows only.
     expect(route).toMatch(/if \(key === "notifications"\) \{\s*let n = q\.not\("read_at", "is", null\)/);
+  });
+
+  it("document-control P28: the library page's documents companion acts only on a document the page holds — it drops that row, never refetches", () => {
+    const page = src("app/(protected)/documents/[libraryId]/page.tsx");
+    const at = page.indexOf('{ event: "DELETE", schema: "public", table: "documents" }');
+    expect(at).toBeGreaterThan(0);
+    const handler = page.slice(at, page.indexOf(".subscribe()", at));
+    expect(handler).toMatch(/const gone = \(payload as \{ old\?: \{ id\?: string \} \| null \} \| undefined\)\?\.old\?\.id;\s*if \(!gone\) return;/);
+    expect(handler).toMatch(/setDocuments\(\(prev\) => \(prev\.some\(\(d\) => d\.id === gone\) \? prev\.filter\(\(d\) => d\.id !== gone\) : prev\)\)/);
+    expect(handler).not.toMatch(/setDocsRefreshTick/);
   });
 
   it("the attention feed's tickets companion acts only on a ticket the feed holds (Supabase sends every tenant's DELETEs to an unfiltered listener)", () => {

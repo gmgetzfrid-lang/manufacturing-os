@@ -189,7 +189,7 @@ What landed:
 ## RT-4 · DELETE events cannot match any of the app's realtime filters except on `collections`, because only three tables have REPLICA IDENTITY FULL — the team fixed this once and never generalised it
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P9 TICKET-PAGE (done-when 2's tickets limb: the requests portal's tickets channel in `app/(protected)/requests/page.tsx` gains its unfiltered `DELETE` companion, acting only on a ticket the page holds — the attention feed's pattern; remove it from `RT4_PENDING` in `lib/__tests__/realtimePublication.test.ts`) — by the integrator, 2026-10-13 (N4 integrator fix pass, DEC-31; fleet plan `audit-reports/fleet-plans/drafting-flow.json` updated at the N4 merge). The library page's documents channel stays with document-control, as the residual names.
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260727_checkout_activity_fix.sql:58-60`, `supabase/migrations/20260729_checkout_episodes.sql:102`, `lib/libraryCollections.ts:419-427`, `app/(protected)/documents/[libraryId]/page.tsx:1532-1535`, `app/(protected)/requests/page.tsx:315-318`, `hooks/useTicketNotifications.ts:223-224`
@@ -244,6 +244,22 @@ What landed — done-when 2 (companions) and done-when 3 (soft-delete only), per
 **Scope / residual.** The library page's documents companion → document-control.
 
 *Assigned (2026-10-14, the integrator at the DF-P9 merge):* the library page's `documents` channel companion → document-control **P28 STATUS-DOOR REMAINDERS** (it holds that page's editor save and bulk archive after intelligence I-12).
+
+**Resolution (2026-10-20, document-control Round G).** Package P28 STATUS-DOOR REMAINDERS, branch `fleet/P28-status-door-remainders` (base `a21c718`) — the library page's limb, the last one. No migration.
+
+**Reproduced first** on `a21c718`: the library page's documents channel (`app/(protected)/documents/[libraryId]/page.tsx:1597`) had only its `library_id`-filtered `event: '*'` listener, and `RT4_PENDING` (`lib/__tests__/realtimePublication.test.ts:131`) named it; a document hard-deleted in another session (the page's own bulk delete, the intake roll-back) stayed on screen until reload.
+
+**What landed.** The channel gains its unfiltered `DELETE` companion (`page.tsx:1636`), the attention feed's and the requests portal's pattern (`DEC-105` §4): it hears every tenant's documents DELETEs (the old row's primary key alone) and acts only on a document this page holds — it drops that row from the list, from the per-folder cache and from the selection (and closes it if it is the selected document); anything else is ignored, with no refetch. `RT4_PENDING` is empty.
+
+**Tests.** `lib/__tests__/realtimePublication.test.ts`: the census now requires the companion for every filtered `'*'` / `'DELETE'` subscription with nothing pending, and "document-control P28: the library page's documents companion acts only on a document the page holds — it drops that row, never refetches" pins the handler.
+
+**Done-when.**
+- Not done, deliberately (unchanged): done-when 1 (REPLICA IDENTITY FULL would not make a filtered listener hear a DELETE — N4's Partial).
+- ✓ Done-when 2 for every remaining subscription: `tickets` (the attention feed, the requests portal), `collections`, and now `documents` on the library page.
+- ✓ Done-when 3 for the never-hard-deleted tables (N4; unchanged).
+- Every filtered `'*'` / `'DELETE'` subscription is covered by one of them (the census, nothing pending).
+
+**Scope / residual.** None. An unfiltered listener hears other tenants' document ids on DELETE — the exposure `DEC-105` §4 records for the same pattern.
 
 ---
 

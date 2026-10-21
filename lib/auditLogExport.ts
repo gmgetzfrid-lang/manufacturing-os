@@ -45,7 +45,7 @@
 //     of the audit log is always answerable).
 
 import { csvCell } from "@/lib/csvSafe";
-import { auditActionFilterQuery, prettyAuditAction } from "@/lib/auditActions";
+import { auditActionFilterQuery, auditRowLabel } from "@/lib/auditActions";
 
 export type AuditRange = "24h" | "7d" | "30d" | "all";
 
@@ -257,7 +257,7 @@ export function buildAuditCsv(
   for (const r of rows) {
     const dm = r.resourceType === "document" ? docMeta.get(r.resourceId) : undefined;
     lines.push([
-      r.timestamp || "(no timestamp)", prettyAuditAction(r.action), r.action, r.resourceType, r.resourceId,
+      r.timestamp || "(no timestamp)", auditRowLabel(r.action, r.details), r.action, r.resourceType, r.resourceId,
       dm ? [dm.documentNumber, dm.title].filter(Boolean).join(" · ") : "",
       r.userId ?? "", r.userEmail ?? "", r.userRole ?? "", r.actorKind ?? "(before 20261201: as sent)",
       r.details ? JSON.stringify(r.details) : "", r.metadata ? JSON.stringify(r.metadata) : "",

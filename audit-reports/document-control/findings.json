@@ -15,18 +15,20 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 174,
+    "findings": 175,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 19,
       "HIGH": 56,
-      "MEDIUM": 73,
+      "MEDIUM": 74,
       "LOW": 26
     },
     "by_status": {
       "RESOLVED": 161,
-      "OPEN": 12,
-      "RESOLVED (as split under `DEC-31`; ruled by the integrator at the P27 merge, 2026-10-20 (`DEC-90`) — the access-control door, a member reading `portal_token` over REST, stays open until `DIST-18` lands)": 1
+      "OPEN": 11,
+      "RESOLVED (as split under `DEC-31`; ruled by the integrator at the P27 merge, 2026-10-20 (`DEC-90`) — the access-control door, a member reading `portal_token` over REST, stays open until `DIST-18` lands)": 1,
+      "RESOLVED (2026-10-21, the integrator's fix pass at the P28 merge — ruled by the integrator at the P28 merge, 2026-10-21 (`DEC-90`): done-when 2 landed; the restore hooks beyond the brief's ruling (4) ratified)": 1,
+      "OPEN — Partial (2026-10-21, the integrator's fix pass at the P28 merge, `DEC-90`): the library page's bulk archive and the bulk editor's Archived are done; the bulk editor's Superseded and the metadata editor's save to Void / Superseded / Archived remain (below)": 1
     }
   },
   "status_vocabulary": [
@@ -2404,7 +2406,7 @@
       "id": "DIST-16",
       "title": "A retirement recall is never withdrawn when the document is put back in force — un-archiving it, or reversing the split or merge that retired it, leaves \"your copy is dead paper\" standing on a drawing that is in force",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED (2026-10-21, the integrator's fix pass at the P28 merge — ruled by the integrator at the P28 merge, 2026-10-21 (`DEC-90`): done-when 2 landed; the restore hooks beyond the brief's ruling (4) ratified)",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED by reading the code on `fleet/DC-P26-status-doors` (base `ce5a053` plus P26).",
       "blast_radius": null,
@@ -3473,6 +3475,35 @@
       ],
       "refuted": false,
       "summary": "In a library whose policy requires sign-off, a library publisher opens Rev Up on a legacy IFC sheet whose Rev 3 was never reviewed and publishes a Minor Rev 4. publishrevision writes the pointer and 'Issued' together, so this is not the REV-21 limb, and RG-7 admits a Minor change. The sheet goes into force with its unreviewed Rev 3 content, with no review and no controller involved. That is the ou",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-31",
+      "title": "The bulk retirements and the metadata editor's retired save skip what the Archive dialog does around a retirement: the review draft is not voided (REV-6), live share links are not revoked (REV-10), no ARCHIVE_DOC record is written",
+      "severity": "MEDIUM",
+      "status": "OPEN — Partial (2026-10-21, the integrator's fix pass at the P28 merge, `DEC-90`): the library page's bulk archive and the bulk editor's Archived are done; the bulk editor's Superseded and the metadata editor's save to Void / Superseded / Archived remain (below)",
+      "verification": null,
+      "verification_note": "READ (the code on `fleet/P28-status-door-remainders`, base `a21c718`)",
+      "blast_radius": null,
+      "related": [
+        "PROD-17",
+        "REV-6",
+        "REV-10",
+        "DIST-1"
+      ],
+      "locations": [
+        "app/(protected)/documents/[libraryId]/page.tsx",
+        "components/documents/BulkEditModal.tsx",
+        "lib/revisions.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Document Control bulk-archives a folder of 40 sheets. A sheet with a public share link handed to a vendor keeps serving its PDF (the share routes refuse a retired status since REV-10, but the link is not revoked and its count is on no record); a sheet with a draft in review keeps its reviewers' requests open; the audit trail shows a status change with no ARCHIVEDOC and no reason.",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },

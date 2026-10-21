@@ -827,6 +827,26 @@
    "sequencingNotes": [
     "Added by the integrator at the P29 merge, 2026-10-20 (DEC-31): DIST-18's limb (b), split out of P29 so P29 (limb (a)) could merge."
    ]
+  },
+  {
+   "name": "P31 RETIREMENT DOOR PARITY \u2014 the bulk editor's Superseded and the metadata editor's save to Void / Superseded / Archived do what their single doors do",
+   "findings": [
+    "document-control REV-31 remainder (assigned by the integrator at the P28 merge, 2026-10-21, DEC-31): the bulk editor's Superseded and the library page metadata editor's save to Void / Superseded / Archived void a pending review draft, revoke live share links and write the per-document audit record exactly as their single doors (archiveDocument / supersede / changeDocumentStatus) do \u2014 batched, one reason per apply, checked writes, a per-row failure named; Void gets a registered audit action (add it to the audit action registry and its label); every save that works today still saves the same rows (pin it)"
+   ],
+   "files": [
+    "app/(protected)/documents/[libraryId]/page.tsx (the metadata save path only)",
+    "components/documents/BulkEditModal.tsx (Superseded)",
+    "lib/revisions.ts (finishBulkArchive-style helper for Superseded / Void; never the approved_by region)",
+    "lib/auditActions.ts (a Void action and label)",
+    "tests: each door's duties pinned; the same rows saved as today"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "document-control P28 merged (2026-10-21; finishBulkArchive, retiredFrom on every door)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the P28 merge, 2026-10-21 (DEC-31)."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

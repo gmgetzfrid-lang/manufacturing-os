@@ -74,6 +74,45 @@
 // unknown ("check its history") rather than given the "start its clocks"
 // advice the page owes only the rows it said it would issue. Every row
 // changed to a status that issues nothing keeps the bare write.
+//
+// PROD-17 (document-control P28): a change to a RETIRED status (Superseded /
+// Archived — isRetiredStatus) keeps each row's bare checked write, and is a
+// retirement: the rows' statuses are read ONCE, fresh, before the apply
+// (never this page's copy; a failed read leaves a row's prior unknown, which
+// recalls), and after the apply ONE batched recall goes for every row the
+// change retired (lib/staleCopies.ts recallRetiredBatch, fired, never
+// awaited): each copy holder gets one notice naming every such document they
+// hold a copy of — recalled only for a row that took away a controlled issue
+// (recallsCopyHolders, DEC-90 R1) — and each document's watchers its FYI. A
+// row already Superseded or Archived gets nothing again
+// (skipsRetirementRecall). Never one recall chain per row (the per-row burst
+// P26's fix pass reverted).
+//
+// DIST-16 (document-control P28 fix pass): a change to an ISSUE status reads
+// the rows' statuses the same way, once, before the apply, and every row it
+// writes over a prior that was not a controlled issue (a retired row put
+// back; a Draft / In Review row issued; a prior the read could not give) is
+// one candidate for ONE batched recall withdrawal after the apply
+// (lib/staleCopies.ts withdrawRetirementBatch, fired, never awaited) — each
+// person a standing recall named gets one notice for the whole apply. Each
+// row's changeDocumentStatus is told withdrawRecall: false, so no row starts
+// its own preference-exempt withdrawal.
+//
+// DIST-16 done-when 2 (document-control P28, the integrator's fix pass at the
+// merge, 2026-10-21): each retired row's prior goes to the batched recall as
+// `retiredFrom` — a row already retired gets nothing again only when its
+// recall record says a retirement notice stands (no longer every Superseded /
+// Archived prior, left out here before).
+//
+// REV-31 (the same fix pass, DEC-90): a change to Archived asks ONE reason for
+// the whole apply ("Reason for archiving" — Apply waits for it), writes the
+// archive columns the Archive dialog writes (archived_at, archived_by,
+// archive_reason) in each row's same checked write, and, for every row it
+// archived, does what archiveDocument does around an archive
+// (lib/revisions.ts finishBulkArchive: the review draft voided, the live
+// share links revoked, the ARCHIVE_DOC record with the reason). A duty that
+// did not complete is said after the apply, its row named; a refused row
+// does none of it.
 
 import React, { useState } from "react";
 import {
@@ -81,11 +120,11 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { computeUniquenessKey } from "@/lib/uniqueness";
-import { isIssueTransition, isIssueRefusal, isControlledIssueStatus } from "@/lib/issueStatus";
+import { isIssueTransition, isIssueRefusal, isControlledIssueStatus, isRetiredStatus } from "@/lib/issueStatus";
 import { BULK_EDIT_STATUS_OPTIONS, isUnguardedEntryIntoForce, ENTRY_INTO_FORCE_ACTION } from "@/lib/documentStatusOptions";
 import { assertNotOnHold } from "@/lib/holdGate";
 import type { DocumentRecord, LibraryConfig, MetadataFieldDefinition } from "@/types/schema";
-import { changeDocumentStatus, type StatusIssueOutcome } from "@/lib/revisions";
+import { changeDocumentStatus, recallsCopyHolders, finishBulkArchive, type StatusIssueOutcome } from "@/lib/revisions";
 import { useRole } from "@/components/providers/RoleContext";
 
 interface BulkEditModalProps {
@@ -111,6 +150,8 @@ export default function BulkEditModal({
 }: BulkEditModalProps) {
   const [target, setTarget] = useState<TargetField>({ kind: "status" });
   const [newValue, setNewValue] = useState<string>(STATUS_OPTIONS[0]);
+  // REV-31 (P28 integrator fix pass): one reason for a change to Archived.
+  const [archiveReason, setArchiveReason] = useState("");
   const [busy, setBusy] = useState(false);
   // REV-19 (P17 review fix): the issue record names who issued it — email and role, not a bare uid.
   const { userEmail, activeRole } = useRole();
@@ -131,9 +172,15 @@ export default function BulkEditModal({
      *  them is unknown. Kept apart from `unseen` so neither heading says
      *  more than the code knows (DEC-29). */
     unchecked: Array<{ doc: string; note: string }>;
+    /** REV-31 (P28 integrator fix pass): archived rows whose archive duties
+     *  (draft void, share revoke, ARCHIVE_DOC record) did not complete. */
+    archiveFollowUps?: Array<{ doc: string; problems: string[] }>;
   } | null>(null);
 
   if (!isOpen) return null;
+
+  // REV-31: a change to Archived is an archive — it takes a reason.
+  const archiving = target.kind === "status" && newValue === "Archived";
 
   // REV-18: the selected rows this status change would ISSUE.
   const issuingRows = target.kind === "status"
@@ -150,6 +197,7 @@ export default function BulkEditModal({
   const selectOptions = target.kind === "custom" && target.def.type === "select" ? (target.def.options ?? []) : null;
 
   const apply = async () => {
+    if (archiving && !archiveReason.trim()) return;
     setBusy(true);
     setResults(null);
     const failed: Array<{ doc: string; reason: string; issue: boolean }> = [];
@@ -161,6 +209,26 @@ export default function BulkEditModal({
     const enteringForceIds = new Set(enteringForceRows.map((d) => d.id));
     let ok = 0;
     const now = new Date().toISOString();
+    // PROD-17 (P28): a retiring change reads every row's status once, before the apply.
+    const retiring = target.kind === "status" && isRetiredStatus(newValue);
+    // DIST-16 (P28 fix pass): so does a change to an issue status (the put-back candidates).
+    const issuing = target.kind === "status" && isControlledIssueStatus(newValue);
+    const priorStatusOf = new Map<string, string | null>();
+    const retired: Array<{ documentId: string; libraryId: string | null; docLabel: string; recallCopyHolders: boolean; retiredFrom: string | null }> = [];
+    // REV-31: the rows this change archived, for their archive duties.
+    const archivedRows: Array<{ documentId: string; label: string; versionId: string | null }> = [];
+    const putBack: Array<{ documentId: string; libraryId: string | null; docLabel: string; restoredStatus: string }> = [];
+    if (retiring || issuing) {
+      const ids = docs.map((d) => d.id).filter((id): id is string => !!id);
+      // A read that fails (or throws) leaves the priors unknown — which
+      // recalls — and never stops the apply.
+      for (let i = 0; i < ids.length; i += 100) {
+        try {
+          const { data: rows, error: readErr } = await supabase.from("documents").select("id, status").in("id", ids.slice(i, i + 100));
+          if (!readErr) for (const r of (rows ?? []) as Array<{ id: string; status: string | null }>) priorStatusOf.set(r.id, r.status ?? null);
+        } catch { /* unknown: recalls */ }
+      }
+    }
     for (const doc of docs) {
       try {
         // P15 review fix: the hold the database does not check for this row
@@ -169,6 +237,12 @@ export default function BulkEditModal({
         const updates: Record<string, unknown> = { updated_at: now, updated_by: actorUserId };
         if (target.kind === "status") {
           updates.status = newValue;
+          // REV-31: the Archive dialog's archive columns, in the same write.
+          if (archiving) {
+            updates.archived_at = now;
+            updates.archived_by = actorUserId;
+            updates.archive_reason = archiveReason.trim();
+          }
         } else if (target.kind === "custom") {
           // Custom field lives in metadata jsonb
           const meta = { ...(doc.metadata ?? {}) };
@@ -209,7 +283,17 @@ export default function BulkEditModal({
             // notifications N17 (R2, DEC-90): one bulk edit, many documents —
             // the rosters it opens keep their bell rows and emails, no push
             notifyPush: false,
+            // DIST-16 (P28 fix pass): the recalls are withdrawn ONCE for the apply, below
+            withdrawRecall: false,
           });
+          // Written: a row whose prior was not a controlled issue — or unknown
+          // (the pre-apply read did not give it: absent from priorStatusOf,
+          // never read as null, which isControlledIssueStatus counts as an
+          // issue) — is a put-back candidate; withdrawRetirementBatch's read
+          // of the row's own record decides whether a recall stands.
+          if (issuing && (!priorStatusOf.has(doc.id) || !isControlledIssueStatus(priorStatusOf.get(doc.id)))) {
+            putBack.push({ documentId: doc.id, libraryId: library.id ?? null, docLabel: doc.documentNumber || doc.title || doc.name || "A document", restoredStatus: newValue });
+          }
           const label = doc.documentNumber || doc.title || doc.id;
           // Written, but not issued by THIS write (P17 integrator fix): the row
           // was already issued — by another change, after this page loaded —
@@ -279,6 +363,10 @@ export default function BulkEditModal({
         if (error) throw error;
         if (!written || written.length === 0) throw new Error("refused — the database updated nothing (no edit access to this document)");
         ok += 1;
+        if (retiring && doc.id) {
+          retired.push({ documentId: doc.id, libraryId: library.id ?? null, docLabel: doc.documentNumber || doc.title || doc.name || "A document", recallCopyHolders: recallsCopyHolders(priorStatusOf.get(doc.id) ?? null), retiredFrom: priorStatusOf.get(doc.id) ?? null });
+        }
+        if (archiving && doc.id) archivedRows.push({ documentId: doc.id, label: String(doc.documentNumber || doc.title || doc.id), versionId: doc.currentVersionId ?? null });
       } catch (e) {
         const reason = (e as Error).message;
         // REV-19 (b) (P23): a write TO an issue status refused in the issue
@@ -286,7 +374,43 @@ export default function BulkEditModal({
         failed.push({ doc: doc.documentNumber || doc.title || doc.id || "?", reason, issue: (issuingIds.has(doc.id) || enteringForceIds.has(doc.id) || (target.kind === "status" && isControlledIssueStatus(newValue))) && isIssueRefusal(reason) });
       }
     }
-    setResults({ ok, failed, followUps, notIssued, unseen, unchecked });
+    if (retired.length > 0) {
+      const orgId = library.orgId || docs.find((d) => d.orgId)?.orgId || null;
+      if (orgId) {
+        void import("@/lib/staleCopies").then(({ recallRetiredBatch }) => recallRetiredBatch({
+          orgId, newStatus: newValue, actorUserId, actorName: userEmail || actorUserId, docs: retired,
+        })).catch((e) => console.error("[bulk-edit] PROD-17: the bulk retirement recall did not run", e));
+      } else {
+        console.error(`[bulk-edit] PROD-17: ${retired.length} document(s) were set to ${newValue} with no workspace known, so no retirement recall was sent`);
+      }
+    }
+    if (putBack.length > 0) {
+      const orgId = library.orgId || docs.find((d) => d.orgId)?.orgId || null;
+      if (orgId) {
+        void import("@/lib/staleCopies").then(({ withdrawRetirementBatch }) => withdrawRetirementBatch({
+          orgId, door: "put_back", actorUserId, actorName: userEmail || actorUserId, docs: putBack,
+        })).catch((e) => console.error("[bulk-edit] DIST-16: the bulk recall withdrawal did not run", e));
+      } else {
+        console.error(`[bulk-edit] DIST-16: ${putBack.length} document(s) were set to ${newValue} with no workspace known, so no recall withdrawal was sent`);
+      }
+    }
+    // REV-31: the archive duties of every row this change archived — after
+    // the recall is on its way; each duty checked, a row whose duties did not
+    // complete named below (its archive stands).
+    let archiveFollowUps: Array<{ doc: string; problems: string[] }> = [];
+    if (archivedRows.length > 0) {
+      const orgId = library.orgId || docs.find((d) => d.orgId)?.orgId || null;
+      if (orgId) {
+        const { problems } = await finishBulkArchive({
+          orgId, actorUserId, actorEmail: userEmail ?? null, actorRole: activeRole ?? null,
+          reason: archiveReason, via: "bulk_edit", docs: archivedRows,
+        });
+        archiveFollowUps = problems.map((p) => ({ doc: p.label, problems: p.problems }));
+      } else {
+        archiveFollowUps = archivedRows.map((r) => ({ doc: r.label, problems: ["its review draft, share links and ARCHIVE_DOC record were not handled: the workspace is not known"] }));
+      }
+    }
+    setResults({ ok, failed, followUps, notIssued, unseen, unchecked, archiveFollowUps });
     setBusy(false);
     if (ok > 0) onApplied?.();
   };
@@ -362,6 +486,20 @@ export default function BulkEditModal({
             )}
           </div>
 
+          {!results && archiving && (
+            // REV-31 (P28 integrator fix pass): one reason for the whole apply.
+            <div>
+              <label className="text-[10px] font-black text-[var(--color-text)] uppercase tracking-widest mb-1.5 block">Reason for archiving</label>
+              <input
+                value={archiveReason} onChange={(e) => setArchiveReason(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
+                placeholder="Recorded on each archived document's history"
+                disabled={busy}
+              />
+              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">Archiving retires each row: its review draft is voided, its live share links revoked, its copy holders recalled and its watchers told.</div>
+            </div>
+          )}
+
           {!results && issuingRows.length > 0 && (
             // REV-18: say which rows this ISSUES before the apply.
             <div data-testid="bulk-issue-note" className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900">
@@ -407,6 +545,20 @@ export default function BulkEditModal({
                   <div className="mb-1">The status change stands and is not rolled back — do not apply it again. Document Control can set what did not complete from the document.</div>
                   <ul className="ml-5 list-disc space-y-0.5 max-h-48 overflow-y-auto">
                     {results.followUps.map((f, i) => (
+                      <li key={i}><span className="font-mono">{f.doc}</span> — {f.problems.join("; ")}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {(results.archiveFollowUps?.length ?? 0) > 0 && (
+                // REV-31 (P28 integrator fix pass): an archive that landed without its duties.
+                <div data-testid="bulk-archive-follow-ups" className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900">
+                  <div className="font-bold flex items-center gap-1.5 mb-1">
+                    <AlertTriangle className="w-4 h-4" /> {results.archiveFollowUps!.length} archived row{results.archiveFollowUps!.length === 1 ? "" : "s"} — follow-up steps did not complete
+                  </div>
+                  <div className="mb-1">The archive stands and is not rolled back — do not apply it again. Document Control can finish what did not complete from the document.</div>
+                  <ul className="ml-5 list-disc space-y-0.5 max-h-48 overflow-y-auto">
+                    {results.archiveFollowUps!.map((f, i) => (
                       <li key={i}><span className="font-mono">{f.doc}</span> — {f.problems.join("; ")}</li>
                     ))}
                   </ul>
@@ -462,7 +614,7 @@ export default function BulkEditModal({
           {!results && (
             <button
               onClick={apply}
-              disabled={busy || !newValue}
+              disabled={busy || !newValue || (archiving && !archiveReason.trim())}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold disabled:opacity-50"
             >
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Pencil className="w-3.5 h-3.5" />}

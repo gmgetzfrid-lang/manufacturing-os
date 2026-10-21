@@ -118,6 +118,21 @@ describe("recall email routing (DIST-13, source pins)", () => {
     // it; then the stale-copy nudge. Both recalls keep the recall category.
     // drafting-flow DF-P12 (PHYS-17) adds the ticket deliverable's copy
     // recall last — a recall too, so the recall category.
-    expect(categories).toEqual(['category: "recall"', 'category: "watched"', 'category: "recall"', 'category: "recall"']);
+    // document-control P28 (PROD-17 / DIST-16) adds, between them, the bulk
+    // doors' batched recall (a one-document notice, a several-document
+    // notice: recall; each document's FYI: watched) and a restore's recall
+    // withdrawal — on the recall category, to reach everyone the recall did.
+    // P28 fix pass: the bulk put-back's withdrawal (withdrawRetirementBatch:
+    // its several-document notice; its one-document notice reuses the single
+    // door's builder) — on the recall category too.
+    // P28 integrator fix pass (DEC-90): the bulk doors' FYI grouped per
+    // follower (a follower of several retired documents of one library gets
+    // one notice naming them) — the watched category, as each document's FYI.
+    expect(categories).toEqual([
+      'category: "recall"', 'category: "watched"',
+      'category: "recall"', 'category: "recall"', 'category: "watched"', 'category: "watched"',
+      'category: "recall"', 'category: "recall"',
+      'category: "recall"', 'category: "recall"',
+    ]);
   });
 });
