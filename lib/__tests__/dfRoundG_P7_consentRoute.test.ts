@@ -164,6 +164,24 @@ describe("DEC-38 — the window opens after the review exists, through ONE call 
     const line = (updates()[0].history as Array<{ action: string; details?: string }>).find((h) => h.action === "Review roster opened")!;
     expect(line.details).toMatch(/"Operations" may object within 3 working days/);
   });
+  it("fix pass 2 (EVID-9 for the window itself): once the RPC lands, the people asked are emailed (an assignment email, an absolute link); the history line names each channel; a person with email off is recorded", async () => {
+    seed({ slots: [CONSENT_ROUTING.slots[0], { kind: "ops", label: "Operations", mode: "consent_window", fill: { users: ["o-1", "e-1"] } }] });
+    state.rows.notification_preferences = [{ user_id: "e-1", email_on_assignment: false }];
+    state.rpcResult = { data: 2, error: null };
+    const { res } = await submit();
+    expect(res.status).toBe(200);
+    const call = rpcs("open_consent_window")[0];
+    expect((call.p_history as { details: string }).details).toMatch(/Each was told in the app; by email as well: o-1; in the app only: e-1 \(they turned assignment emails off\)\./);
+    const windowMails = inserts("email_notifications").filter((m) => (m.metadata as { action?: string } | undefined)?.action === "consent_window_opened");
+    expect(windowMails.map((m) => m.to_user_id)).toEqual(["o-1"]);
+    expect(windowMails[0]).toMatchObject({ event_type: "assignment", resource_id: "t1", status: "queued" });
+    expect(String(windowMails[0].body_text)).toMatch(/https?:\/\/[^/\s]+\/requests\/t1/);
+    expect(inserts("ticket_notice_events").filter((e) => e.kind === "not_emailed" && (e.details as { action?: string }).action === "consent_window_opened"))
+      .toEqual([expect.objectContaining({ recipient: "e-1", slot_kind: "ops", details: expect.objectContaining({ byTheirChoice: true, reason: "they turned assignment emails off" }) })]);
+    // the RPC first, then the emails (no notice, no email)
+    const order = state.calls.filter((c) => c.table === "rpc:open_consent_window" || (c.table === "email_notifications" && c.method === "insert" && ((c.args[0] as Array<Record<string, unknown>>)[0]?.metadata as { action?: string } | undefined)?.action === "consent_window_opened")).map((c) => c.table);
+    expect(order).toEqual(["rpc:open_consent_window", "email_notifications"]);
+  });
   it("DEC-38: the RPC refuses (a notification insert failed) — the submission stands, the slot waits for a sign-off, and the answer says so; the refusal is recorded on the ticket's notice record", async () => {
     seed();
     state.rpcResult = { data: null, error: { code: "P0001", message: "consent window: not every person asked could be told (0 of 1) — no window is opened" } };

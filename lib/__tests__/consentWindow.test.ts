@@ -14,14 +14,14 @@ import { describe, it, expect } from "vitest";
 import {
   planConsentWindow, consentPlanNote, addWorkingDays, windowSchedule, windowConfigOf, consentWindowStep, noticeStates,
   advancedHistoryDetails, openedHistoryDetails, consentFloorHolds, consentSatisfiedSlot, consentWindowFromRow,
-  consentRecipients, consentHeldAction,
+  consentRecipients, consentHeldAction, consentConflictKinds, consentConflictedPeople, consentIndependenceHolds, drafterOnlyOpenSlot, ledgerIndependenceSlot,
   consentWindowMarker, windowRunning, mayObject, isMissingConsentColumn, isMissingConsentSchema,
   CONSENT_REASON, CONSENT_WINDOW_DEFAULT_DAYS, CONSENT_WINDOW_DEFAULT_WARN_FRACTION, CONSENT_WARN_LEAD_MS,
   CONSENT_REFUSED_CAPABILITIES, CONSENT_WINDOW_COLUMNS, type ConsentWindowState,
 } from "@/lib/consentWindow";
 import { parseRoutingControl, validateRoutingDraft, MODE_LABEL } from "@/lib/routingControl";
 import { ENGINEERING_CAPABILITIES, openRoster, rosterCompletion } from "@/lib/ticketRoster";
-import { WorkflowEngine, currentRoster } from "@/lib/workflow";
+import { WorkflowEngine, currentRoster, slotSignPlan } from "@/lib/workflow";
 import { isActionRequired } from "@/lib/ticketAttention";
 import { computeTransition } from "@/lib/ticketTransitions";
 import type { Role, Ticket, TicketReviewRoster, TicketReviewSlot, TicketStatus } from "@/types/schema";
@@ -362,5 +362,104 @@ describe("DEC-12 floor, as it reads for silence", () => {
     expect(consentFloorHolds(roster([done]), { sodActive: false, drafterId: "d-1" }, ["d-1"])).toBe(true);
     expect(consentFloorHolds(roster([done]), { sodActive: true, drafterId: "d-1" }, [])).toBe(true);
     expect(consentFloorHolds(roster([done]), { sodActive: true, drafterId: "d-1" }, ["d-1", "o-1"])).toBe(false);
+  });
+});
+
+// ── DF-P7 fix pass 2 ────────────────────────────────────────────────────────
+describe("DEC-37 slot-to-slot (fix pass 2): a consent slot's silence never stands for a slot it must be independent of", () => {
+  const cols = { engineeringRequired: false, columns: true, drafterId: "d-1", requesterId: "req" };
+  const checker = (over: Partial<TicketReviewSlot> = {}) => slot({ kind: "checker", label: "Checker", primaries: ["b"], ...over });
+  const approver = (over: Partial<TicketReviewSlot> = {}) => consent({ kind: "approver", label: "Approver", primaries: ["b", "c"], independentOf: ["checker"], ...over });
+  it("the review's reproduction: B can sign the checker, so B is never asked on an approver independent of the checker — only C is", () => {
+    const plan = planConsentWindow(roster([checker(), approver()]), cols);
+    expect(plan).toMatchObject({ kind: "open", slot: "approver", recipients: ["c"] });
+  });
+  it("B the approver's ONLY occupant: BLOCKED (escalated) — never a window B's silence satisfies", () => {
+    const plan = planConsentWindow(roster([checker(), approver({ primaries: ["b"] })]), cols);
+    expect(plan).toMatchObject({ kind: "blocked", reason: CONSENT_REASON.onlyParties });
+  });
+  it("read from the other side: a slot that declares itself independent of the consent slot", () => {
+    const plan = planConsentWindow(roster([checker({ independentOf: ["approver"] }), approver({ independentOf: [] })]), cols);
+    expect(plan).toMatchObject({ kind: "open", recipients: ["c"] });
+  });
+  it("a slot with no independence declared asks every occupant as before (REGRESSION)", () => {
+    const plan = planConsentWindow(roster([checker(), approver({ independentOf: [] })]), cols);
+    expect(plan).toMatchObject({ kind: "open", recipients: ["b", "c"] });
+  });
+  it("consentConflictedPeople: whoever SIGNED a conflicting slot, and whoever can still sign an open one (primaries, alternates, overriders); a consent-satisfied slot names nobody", () => {
+    const slots = [
+      checker({ status: "satisfied", satisfiedBy: "b", via: "primary", signatureId: "s", satisfiedAt: "x" }),
+      slot({ kind: "lead", primaries: ["p"], alternates: ["q"], overriders: ["m"], independentOf: ["approver"] }),
+      slot({ kind: "other", primaries: ["z"] }),
+      approver({ independentOf: ["checker"] }),
+    ];
+    expect(consentConflictKinds(slots, "approver")).toEqual(["checker", "lead"]);
+    expect([...consentConflictedPeople(slots, "approver")].sort()).toEqual(["b", "m", "p", "q"]);
+    const consented = [checker({ status: "satisfied", satisfiedBy: null, via: "consent", satisfiedAt: "x" }), approver()];
+    expect([...consentConflictedPeople(consented, "approver")]).toEqual([]);
+  });
+  it("ledgerIndependenceSlot maps a ticket_review_slots row onto the same rule (the close and the retry read the ledger)", () => {
+    const ls = [
+      ledgerIndependenceSlot({ slot_kind: "checker", mode: "blocking", status: "satisfied", primaries: ["b"], independent_of: [], satisfied_by: "b", satisfied_via: "primary" }),
+      ledgerIndependenceSlot({ slot_kind: "approver", mode: "consent_window", status: "open", primaries: ["b", "c"], independent_of: ["checker"] }),
+    ];
+    expect([...consentConflictedPeople(ls, "approver")]).toEqual(["b"]);
+  });
+  it("consentIndependenceHolds: held when everyone told (but the drafter) is conflicted; not when one independent person was told", () => {
+    expect(consentIndependenceHolds(["b"], "d-1", new Set(["b"]))).toBe(true);
+    expect(consentIndependenceHolds(["b", "d-1"], "d-1", new Set(["b"]))).toBe(true);
+    expect(consentIndependenceHolds(["b", "c"], "d-1", new Set(["b"]))).toBe(false);
+    expect(consentIndependenceHolds([], "d-1", new Set(["b"]))).toBe(false); // the floor's own limb holds this one
+    expect(consentHeldAction("Approver", "independence")).toMatch(/must be independent of, so their silence is not a second look/);
+  });
+});
+
+describe("the two floors agree (fix pass 2): a silent close never leaves a slot only the drafter can sign", () => {
+  // The review's reproduction: requester_acceptance filled by the requester,
+  // who is also the drafter D; a consent 'peer' slot asking P1 and P2.
+  const acceptance = (over: Partial<TicketReviewSlot> = {}) => slot({ kind: "requester_acceptance", label: "Requester acceptance", primaries: ["d-1"], ...over });
+  const peer = (over: Partial<TicketReviewSlot> = {}) => consent({ kind: "peer", label: "Peer check", primaries: ["p-1", "p-2"], ...over });
+  const floor = { sodActive: true, drafterId: "d-1" };
+  const ticket = { requesterId: "d-1", assignedDrafterId: "d-1" };
+  it("drafterOnlyOpenSlot names a slot every occupant of which is the drafter; an overrider or a second primary is someone else", () => {
+    expect(drafterOnlyOpenSlot(roster([acceptance(), peer()]), "d-1")?.kind).toBe("requester_acceptance");
+    expect(drafterOnlyOpenSlot(roster([acceptance({ overriders: ["m-1"] }), peer()]), "d-1")).toBeNull();
+    expect(drafterOnlyOpenSlot(roster([acceptance({ primaries: ["d-1", "x-1"] }), peer()]), "d-1")).toBeNull();
+    expect(drafterOnlyOpenSlot(roster([acceptance({ status: "satisfied", satisfiedBy: "d-1" }), peer()]), "d-1")).toBeNull();
+  });
+  it("close BEFORE the drafter signs: HELD (producer floor) — the peer slot waits for P1 or P2; D then signs, and P1's sign-off completes", () => {
+    const advanced = roster([acceptance(), consentSatisfiedSlot(peer(), "x")]);
+    expect(consentFloorHolds(advanced, floor, ["p-1", "p-2"])).toBe(true);
+    // what an advance WOULD have done: D refused for good on the only slot left
+    const stuck = slotSignPlan(advanced, ticket, "d-1", true);
+    expect(stuck.fillable).toEqual([]);
+    expect(stuck.blocked.map((b) => b.reason).join(" ")).toMatch(/Needs a second person/);
+    // the held roster instead: D signs the acceptance (the review still waits on the peer slot) …
+    const held = roster([acceptance(), peer()]);
+    const plan = slotSignPlan(held, ticket, "d-1", true);
+    expect(plan.fillable.map((f) => f.slot.kind)).toEqual(["requester_acceptance"]);
+    // … and P1 signs the peer slot: an independent sign-off completes the review
+    const after = roster([acceptance({ status: "satisfied", satisfiedBy: "d-1", satisfiedAt: "x", signatureId: "s1", via: "primary" }), peer()]);
+    expect(slotSignPlan(after, ticket, "p-1", true).fillable.map((f) => f.slot.kind)).toEqual(["peer"]);
+  });
+  it("close AFTER the drafter signed: HELD as well (the drafter signed every other sign-off) — one rule, both orders", () => {
+    const advanced = roster([acceptance({ status: "satisfied", satisfiedBy: "d-1", satisfiedAt: "x", signatureId: "s1", via: "primary" }), consentSatisfiedSlot(peer(), "x")]);
+    expect(consentFloorHolds(advanced, floor, ["p-1", "p-2"])).toBe(true);
+  });
+  it("below the separation-of-duties threshold, or with someone else able to sign the slot, the close is not held by this limb (REGRESSION)", () => {
+    expect(consentFloorHolds(roster([acceptance(), consentSatisfiedSlot(peer(), "x")]), { sodActive: false, drafterId: "d-1" }, ["p-1"])).toBe(false);
+    expect(consentFloorHolds(roster([acceptance({ primaries: ["d-1", "x-1"] }), consentSatisfiedSlot(peer(), "x")]), floor, ["p-1"])).toBe(false);
+  });
+});
+
+describe("the objection keeps the people the request still waits on (fix pass 2)", () => {
+  it("unread_by keeps every open blocking slot's occupants (the window's own included) and the existing markers; the objector drops out; they are the recipients", () => {
+    const r = roster([slot({ kind: "rev", label: "Reviewer", primaries: ["r-1"] }), consent({ primaries: ["o-1", "o-2"] })], { consentWindow: window });
+    const t = { ...ticketWith(r), unreadBy: ["r-1", "o-1", "o-2", "w-9"] } as Ticket;
+    const { updates, recipients } = computeTransition(t, { actionType: "object_consent_window", actionLabel: "Object", comment: "No", consentObjection: true, actor: { uid: "o-1", email: "o1@x.io", role: "Viewer" }, now: "2026-10-20T10:00:00.000Z" });
+    const unread = updates.unread_by as string[];
+    expect(unread).toEqual(expect.arrayContaining(["r-1", "o-2", "w-9", "req", "d-1"]));
+    expect(unread).not.toContain("o-1");
+    expect(recipients).toEqual(expect.arrayContaining(["r-1", "o-2"]));
   });
 });

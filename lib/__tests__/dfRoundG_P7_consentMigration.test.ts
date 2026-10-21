@@ -47,7 +47,14 @@ describe("DEC-30 one-paste shape", () => {
     expect(tail).toMatch(/AS check,/);
     expect(tail).toMatch(/AS ok,/);
     expect(tail).toMatch(/NULL::text AS n/);
-    expect(tail).toMatch(/FROM df_round_g_255_before ORDER BY ord/);
+    // Fix pass 2: the rows are ordered by the OUTER query (sec, ord), never
+    // by an ORDER BY inside a UNION ALL branch (PostgreSQL keeps no such order).
+    expect(tail).toMatch(/^\s*(--[^\n]*\n)*SELECT "check", ok, n FROM \(/);
+    expect(tail).toMatch(/SELECT 2, ord, inventory, NULL, n FROM df_round_g_255_before\n/);
+    expect(tail).toMatch(/\) AS final_rows\nORDER BY sec, ord;\s*$/);
+    expect(tail.slice(0, tail.lastIndexOf(") AS final_rows"))).not.toMatch(/ORDER BY/);
+    // every probe has its own place: 1..10 in section 1
+    expect([...tail.matchAll(/SELECT 1(?: AS sec)?, (\d+)(?: AS ord)?, '/g)].map((m) => Number(m[1]))).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   });
   it("DEC-35: no facility vocabulary", () => {
     expect(S).not.toMatch(/\bQAQC\b|QA\/QC|\bB31|\bNDE\b|radiograph|PENDING_DOC_CTRL/);
@@ -127,6 +134,14 @@ describe("DEC-38 / DRLS-16 — open_consent_window and record_consent_window_war
     expect(b).toContain("IF 'requester' = ANY (v_ls.independent_of) AND v_t.requester_id = ANY (p_recipients) THEN");
     expect(b.indexOf("assigned_drafter_id = ANY (p_recipients)")).toBeLessThan(b.indexOf("INSERT INTO notifications"));
   });
+  it("DEC-37 slot-to-slot (fix pass 2): nobody who signed, or can still sign, a slot this one must be independent of (either direction) is asked — read from the ledger, before any row", () => {
+    const b = fnBody("open_consent_window");
+    expect(b).toContain("AND (o.slot_kind = ANY (v_ls.independent_of) OR p_slot = ANY (o.independent_of))");
+    expect(b).toContain("AND ((o.status = 'satisfied' AND o.satisfied_by = ANY (p_recipients))");
+    expect(b).toContain("OR (o.status = 'open' AND (o.primaries && p_recipients OR o.alternates && p_recipients OR o.overriders && p_recipients)))) THEN");
+    expect(b).toContain("WHERE o.ticket_id = p_ticket AND o.roster_id = p_roster AND o.slot_kind <> p_slot");
+    expect(b.indexOf("o.satisfied_by = ANY (p_recipients)")).toBeLessThan(b.indexOf("INSERT INTO notifications"));
+  });
   it("the reminder reaches everyone asked and is recorded with its rows; no exception handler", () => {
     const b = fnBody("record_consent_window_warning");
     expect(b).toContain("IF NOT (v_t.consent_window_recipients <@ p_recipients) THEN");
@@ -180,7 +195,9 @@ describe("the roster ledger's two CHECKs — 20261242's, with exactly the consen
   it("the shape: every non-consent satisfied slot still names its signer and its signature (20261242's conjunct, kept); a consent slot names neither", () => {
     expect(OLD).toContain("(status = 'satisfied') = (satisfied_by IS NOT NULL AND satisfied_at IS NOT NULL AND signature_id IS NOT NULL)");
     expect(S).toContain("(satisfied_by IS NOT NULL AND signature_id IS NOT NULL AND satisfied_via IS DISTINCT FROM 'consent')");
-    expect(S).toContain("OR (satisfied_via = 'consent' AND satisfied_by IS NULL AND signature_id IS NULL)");
+    // Fix pass 2: the consent limb holds only on a consent_window slot — a
+    // blocking slot can never be recorded satisfied with no signer.
+    expect(S).toContain("OR (satisfied_via = 'consent' AND mode = 'consent_window' AND satisfied_by IS NULL AND signature_id IS NULL)");
     expect(S).toContain("(status = 'satisfied') = (satisfied_at IS NOT NULL AND (");
   });
 });

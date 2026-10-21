@@ -506,7 +506,7 @@ async function handler(req: NextRequest) {
     result.errors.push(`consent-window: not run — ${Math.max(0, Math.round(left() / 1000))} s of the run were left, and it stops ${TICKET_SLA_RESERVE_MS / 1000} s before the run's end; the next run reminds and closes what is due`);
   } else {
     try {
-      const cw = await runConsentWindowScan({ client: sb as unknown as Parameters<typeof runConsentWindowScan>[0]["client"], deadlineAt: consentDeadlineAt });
+      const cw = await runConsentWindowScan({ client: sb as unknown as Parameters<typeof runConsentWindowScan>[0]["client"], deadlineAt: consentDeadlineAt, origin: publicOrigin() || req.nextUrl.origin });
       const { errors: cwErrors, ...cwCounts } = cw;
       result.consentWindows = cwCounts;
       for (const line of cwErrors) { result.errors.push(line); console.error(`[cron/maintenance] ${line}`); }

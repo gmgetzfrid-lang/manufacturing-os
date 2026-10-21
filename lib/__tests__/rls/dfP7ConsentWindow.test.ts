@@ -15,6 +15,8 @@
 //   inserts one); the roster ledger takes a slot satisfied 'consent' and
 //   still refuses a satisfied slot with no signature otherwise.
 //   The file re-pastes cleanly (DEC-30 one paste) with every probe true.
+//   Fix pass 2: nobody who signed (or can sign) a slot the consent slot must
+//   be independent of is asked; the consent shape only on a consent slot.
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { join } from "node:path";
@@ -174,6 +176,26 @@ describe.skipIf(skip !== null)("DF-P7 — the consent window's columns, its two 
     expect(open(t2, r2, [m.ops2.uid]).ok).toBe(true);
   });
 
+  it("DEC-37 slot-to-slot (fix pass 2): nobody who signed, or can still sign, a slot the consent slot must be independent of is asked — either direction, read from the ledger", () => {
+    // the consent slot declares itself independent of 'accept', which ops1 SIGNED
+    const r = rosterId();
+    const t = reviewTicket(r, [m.ops1.uid, m.ops2.uid], { independentOf: ["accept"] });
+    admin(db, `UPDATE ticket_review_slots SET status = 'satisfied', satisfied_by = '${m.ops1.uid}', satisfied_at = now(), signature_id = gen_random_uuid(), satisfied_via = 'primary' WHERE roster_id = '${r}' AND slot_kind = 'accept'`);
+    const signer = open(t, r, [m.ops1.uid, m.ops2.uid]);
+    expect(signer.ok).toBe(false);
+    if (!signer.ok) expect(signer.message).toMatch(/signs, or can sign, a sign-off this slot must be independent of/);
+    expect(cols(t)).toBe("false||");
+    expect(count(`SELECT COUNT(*) FROM notifications WHERE resource_id = '${t}'`)).toBe(0);
+    expect(open(t, r, [m.ops2.uid]).ok).toBe(true);
+    // the other direction: 'accept' (still open, the requester its occupant) declares itself independent of 'ops'
+    const r2 = rosterId();
+    const t2 = reviewTicket(r2, [m.requester.uid, m.ops2.uid]);
+    admin(db, `UPDATE ticket_review_slots SET independent_of = ARRAY['ops']::text[] WHERE roster_id = '${r2}' AND slot_kind = 'accept'`);
+    const occupant = open(t2, r2, [m.requester.uid, m.ops2.uid]);
+    expect(occupant.ok).toBe(false);
+    expect(open(t2, r2, [m.ops2.uid]).ok).toBe(true);
+  });
+
   it("DRLS-16: a signed-in member cannot call either function (42501); the body also refuses a session", () => {
     const r = rosterId();
     const t = reviewTicket(r, [m.ops1.uid]);
@@ -240,5 +262,7 @@ describe.skipIf(skip !== null)("DF-P7 — the consent window's columns, its two 
     expect(asCaller(db, SERVICE, `INSERT INTO ticket_review_slots (${base}, satisfied_via, satisfied_by) VALUES ('${orgId}', '${t}', '${r}', 'a', 'blocking', 'satisfied', 'h', now(), 'primary', '${m.ops1.uid}')`).ok).toBe(false);
     expect(asCaller(db, SERVICE, `INSERT INTO ticket_review_slots (${base}, satisfied_via, satisfied_by, signature_id) VALUES ('${orgId}', '${t}', '${r}', 'b', 'consent_window', 'satisfied', 'h', now(), 'consent', '${m.ops1.uid}', '${randomUUID()}')`).ok).toBe(false);
     expect(asCaller(db, SERVICE, `INSERT INTO ticket_review_slots (${base}, satisfied_via, satisfied_by, signature_id) VALUES ('${orgId}', '${t}', '${r}', 'c', 'blocking', 'satisfied', 'h', now(), 'primary', '${m.ops1.uid}', '${randomUUID()}')`).ok).toBe(true);
+    // fix pass 2: the consent shape holds only on a consent_window slot — a blocking slot is never satisfied with no signer
+    expect(asCaller(db, SERVICE, `INSERT INTO ticket_review_slots (${base}, satisfied_via) VALUES ('${orgId}', '${t}', '${r}', 'd', 'blocking', 'satisfied', 'h', now(), 'consent')`).ok).toBe(false);
   });
 });

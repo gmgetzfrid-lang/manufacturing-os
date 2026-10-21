@@ -36,6 +36,12 @@
 //       `requester`) — consentRecipients. When nobody else is left the slot
 //       is BLOCKED exactly as in (4). open_consent_window (20261255) refuses
 //       the same people, reading the service-written roster ledger.
+//   (4b) DEC-37 slot-to-slot (fix pass 2): nor anyone who signed, or can
+//       still sign, a slot this one must be independent of (or that must be
+//       independent of it) — consentConflictedPeople. Their silence would
+//       let one person stand for both slots. Applied whatever the org's
+//       size, like (4a): silence is never a second look. The close re-reads
+//       it and holds ("independence") when nobody independent was told.
 //   (5) Before 20261255 is pasted there are no window columns: every consent
 //       slot waits as a sign-off — today's path, said.
 //
@@ -81,6 +87,7 @@ export const CONSENT_REASON = {
   engineered: "this request is engineered work (an engineer's sign-off is required), and a consent window never applies to it — it waits for a sign-off",
   nobody: "its routing named nobody who could be asked (the management tier was rostered instead), so no window was opened — it waits for a sign-off, and the assignment queue was told",
   onlyParties: "the only people its routing names are the drafter or a party it must be independent of, and their silence is never consent, so no window was opened — it waits for a sign-off, and the assignment queue was told",
+  noLongerAskable: "nobody it could ask is still an active member who may be asked, so no window was opened — it waits for a sign-off, and the assignment queue was told",
 } as const;
 
 /** Why a window that closed with no objection still did not advance (the
@@ -96,6 +103,7 @@ export function consentHeldAction(label: string, reason: ConsentHoldReason | nul
     case "source_moved": return `Consent window closed with no objection — "${label}" waits for a sign-off: a source document moved since the request was raised, and a person must acknowledge it before it issues`;
     case "source_unchecked": return `Consent window closed with no objection — "${label}" waits for a sign-off: the source documents could not be checked, so it does not issue on silence`;
     case "record_mismatch": return `Consent window closed with no objection — "${label}" waits for a sign-off: the review's ledger does not agree with the request's roster, so it does not issue on silence`;
+    case "independence": return `Consent window closed with no objection — "${label}" waits for a sign-off: everyone told also signs (or can sign) a sign-off it must be independent of, so their silence is not a second look`;
     default: return `Consent window closed with no objection — "${label}" still waits for a sign-off`;
   }
 }
@@ -110,11 +118,68 @@ export function consentHeldAction(label: string, reason: ConsentHoldReason | nul
 export function consentRecipients(
   slot: Pick<TicketReviewSlot, "primaries" | "independentOf">,
   parties: { drafterId?: string | null; requesterId?: string | null },
+  conflicted?: ReadonlySet<string> | null,
 ): string[] {
   const out = new Set(slot.primaries.filter((u) => typeof u === "string" && !!u));
   if (parties.drafterId) out.delete(parties.drafterId);
   if (parties.requesterId && (slot.independentOf ?? []).includes("requester")) out.delete(parties.requesterId);
+  for (const u of conflicted ?? []) out.delete(u);
   return [...out].sort();
+}
+
+/** A slot as the independence rule reads it — the roster's own slot, or a
+ *  roster ledger row (ticket_review_slots, 20261242) mapped onto it. */
+export type IndependenceSlot = Pick<TicketReviewSlot, "kind" | "mode" | "status" | "primaries" | "alternates" | "overriders" | "independentOf"> & { satisfiedBy?: string | null; via?: TicketReviewSlot["via"] };
+
+/** DEC-37 slot-to-slot (fix pass 2): the slot kinds a consent slot must be
+ *  independent of — the ones it names (the drafter and requester legs are
+ *  consentRecipients' own), and the ones that name it. Pure. */
+export function consentConflictKinds(slots: ReadonlyArray<Pick<IndependenceSlot, "kind" | "independentOf">>, slotKind: string): string[] {
+  const self = slots.find((s) => s.kind === slotKind);
+  const out = new Set<string>();
+  for (const k of self?.independentOf ?? []) if (k !== "drafter" && k !== "requester" && k !== slotKind) out.add(k);
+  for (const s of slots) if (s.kind !== slotKind && (s.independentOf ?? []).includes(slotKind)) out.add(s.kind);
+  return [...out].sort();
+}
+
+/**
+ * DEC-37 slot-to-slot (fix pass 2): the people whose silence on consent slot
+ * `slotKind` would let one person stand for two slots that must be
+ * independent — whoever SIGNED a conflicting slot (consentConflictKinds), and
+ * whoever can still sign one that is open (its primaries, alternates and
+ * overriders: they may sign it after the window closes, and slotSignPlan
+ * cannot see a silence, which has no signer). Fail-safe: a person left out
+ * is simply not asked, and a window nobody independent was told never
+ * advances (the close holds it — "independence"). Pure.
+ */
+export function consentConflictedPeople(slots: ReadonlyArray<IndependenceSlot>, slotKind: string): Set<string> {
+  const kinds = new Set(consentConflictKinds(slots, slotKind));
+  const out = new Set<string>();
+  for (const s of slots) {
+    if (!kinds.has(s.kind)) continue;
+    if (s.status === "satisfied" && s.via !== "consent" && s.satisfiedBy) out.add(s.satisfiedBy);
+    if (s.status === "open") for (const u of [...(s.primaries ?? []), ...(s.alternates ?? []), ...(s.overriders ?? [])]) if (u) out.add(u);
+  }
+  return out;
+}
+
+/** A roster ledger row (ticket_review_slots, 20261242) as the independence
+ *  rule reads it. */
+export function ledgerIndependenceSlot(row: {
+  slot_kind: string; mode: string; status: string; primaries?: string[] | null; alternates?: string[] | null; overriders?: string[] | null;
+  independent_of?: string[] | null; satisfied_by?: string | null; satisfied_via?: string | null;
+}): IndependenceSlot {
+  return {
+    kind: row.slot_kind,
+    mode: row.mode as TicketReviewSlot["mode"],
+    status: row.status as TicketReviewSlot["status"],
+    primaries: row.primaries ?? [],
+    alternates: row.alternates ?? [],
+    overriders: row.overriders ?? [],
+    independentOf: row.independent_of ?? [],
+    satisfiedBy: row.satisfied_by ?? null,
+    via: (row.satisfied_via ?? null) as TicketReviewSlot["via"],
+  };
 }
 
 /** The routing slot's window (validated by lib/routingControl.ts), or the
@@ -174,7 +239,7 @@ export function planConsentWindow(
   if (one.engineering) return { kind: "sign_off", slot: one.kind, label: label!, reason: CONSENT_REASON.engineeringSlot };
   if (ctx.engineeringRequired) return { kind: "sign_off", slot: one.kind, label: label!, reason: CONSENT_REASON.engineered };
   if (one.fallback || one.primaries.length === 0) return { kind: "blocked", slot: one.kind, label: label!, reason: CONSENT_REASON.nobody };
-  const recipients = consentRecipients(one, { drafterId: ctx.drafterId, requesterId: ctx.requesterId });
+  const recipients = consentRecipients(one, { drafterId: ctx.drafterId, requesterId: ctx.requesterId }, consentConflictedPeople(roster.slots, one.kind));
   if (recipients.length === 0) return { kind: "blocked", slot: one.kind, label: label!, reason: CONSENT_REASON.onlyParties };
   const cfg = windowConfigOf(one);
   return { kind: "open", slot: one.kind, label: label!, recipients, windowDays: cfg.windowDays, warnFraction: cfg.warnFraction };
@@ -372,5 +437,32 @@ export function consentFloorHolds(
   if (!asked.some((u) => !!u && u !== drafter)) return true;
   if (!floor.sodActive || !drafter) return false;
   const signed = roster.slots.filter((s) => s.mode !== "notify_only" && s.status === "satisfied" && s.via !== "consent" && !!s.satisfiedBy);
-  return signed.length > 0 && signed.every((s) => s.satisfiedBy === drafter);
+  if (signed.length > 0 && signed.every((s) => s.satisfiedBy === drafter)) return true;
+  // Fix pass 2 — the two floors agree: a slot only the drafter can sign
+  // would be refused for good after a silent close (slotSignPlan's floor,
+  // lib/workflow.ts rosterLacksIndependentSignOff, never counts a silence:
+  // it has no signer), so the review would sit with every way forward
+  // refused. The window's slot waits for a real sign-off instead, and the
+  // drafter's sign-off then completes the review as it always did.
+  return drafterOnlyOpenSlot(roster, drafter) !== null;
+}
+
+/** The first open blocking slot (other than a satisfied one) that only the
+ *  drafter can sign — every primary, alternate and overrider is the drafter
+ *  — or null. Pure. */
+export function drafterOnlyOpenSlot(roster: Pick<TicketReviewRoster, "slots">, drafterId: string | null | undefined): TicketReviewSlot | null {
+  if (!drafterId) return null;
+  return roster.slots.find((s) => {
+    if (s.mode === "notify_only" || s.status !== "open") return false;
+    const occupants = [...s.primaries, ...(s.alternates ?? []), ...(s.overriders ?? [])].filter((u) => !!u);
+    return occupants.length > 0 && occupants.every((u) => u === drafterId);
+  }) ?? null;
+}
+
+/** DEC-37 slot-to-slot (fix pass 2): the close holds when everyone told
+ *  (other than the drafter) is a person whose silence the slot may not take
+ *  (consentConflictedPeople). Pure. */
+export function consentIndependenceHolds(asked: readonly string[], drafterId: string | null | undefined, conflicted: ReadonlySet<string>): boolean {
+  const others = asked.filter((u) => !!u && u !== drafterId);
+  return others.length > 0 && others.every((u) => conflicted.has(u));
 }

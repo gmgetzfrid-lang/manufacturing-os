@@ -8,7 +8,8 @@
 // floor → never silence over the drafter's own sign-off.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { runConsentWindowScan, emailPreferenceReason, assignmentQueueOf, memberNameOf } from "@/lib/consentWindowScan";
+import { runConsentWindowScan, emailPreferenceReason, emailPreferenceOf, assignmentQueueOf, memberNameOf, CONSENT_EMAIL_EVENT } from "@/lib/consentWindowScan";
+import { emailAllowedByPrefs, PREFERENCE_EXEMPT_EVENT_TYPES } from "@/lib/notificationPrefs";
 import { CONSENT_WINDOW_COLUMNS, CONSENT_WARN_LEAD_MS } from "@/lib/consentWindow";
 import type { TicketReviewRoster, TicketReviewSlot } from "@/types/schema";
 
@@ -29,7 +30,7 @@ const pathGet = (r: Row, key: string): unknown => {
 };
 function builder(table: string) {
   const filters: Array<(r: Row) => boolean> = [];
-  let op: "select" | "insert" | "update" = "select";
+  let op: "select" | "insert" | "update" | "delete" = "select";
   let payload: unknown = null;
   let limit = Infinity;
   const matched = () => (db.tables[table] ?? []).filter((r) => filters.every((f) => f(r)));
@@ -46,6 +47,7 @@ function builder(table: string) {
     limit: (n: number) => { limit = n; return b; },
     insert: (rows: unknown) => { op = "insert"; payload = rows; db.calls.push({ table, method: "insert", args: [rows] }); return b; },
     update: (patch: unknown) => { op = "update"; payload = patch; db.calls.push({ table, method: "update", args: [patch] }); return b; },
+    delete: () => { op = "delete"; db.calls.push({ table, method: "delete", args: [] }); return b; },
     maybeSingle: async () => {
       if (db.errors[table]) return { data: null, error: db.errors[table] };
       return { data: matched()[0] ?? null, error: null };
@@ -57,6 +59,11 @@ function builder(table: string) {
         const rows = (Array.isArray(payload) ? payload : [payload]) as Row[];
         db.tables[table] = [...(db.tables[table] ?? []), ...rows];
         return resolve({ data: null, error: null, count: rows.length });
+      }
+      if (op === "delete") {
+        const m = new Set(matched());
+        db.tables[table] = (db.tables[table] ?? []).filter((r) => !m.has(r));
+        return resolve({ data: null, error: null });
       }
       if (op === "update") {
         const m = matched();
@@ -448,5 +455,226 @@ describe("helpers", () => {
     expect(assignmentQueueOf({ members, policy: null, resource: null, requesterId: null })).toEqual(["a-1"]);
     expect(memberNameOf(members)("a-1")).toBe("A-1");
     expect(memberNameOf(members)("zzzzzzzz-gone")).toBe("member zzzzzzzz");
+  });
+});
+
+// ── DF-P7 fix pass 2 ────────────────────────────────────────────────────────
+const lastHistory = () => (db.tables.tickets[0].history as Array<{ action: string; details: string }>).at(-1)!;
+const auditDetails = () => (calls("audit_logs", "insert")[0].args[0] as Row).details as Row;
+const rosterOf = () => (db.tables.tickets[0].metadata as { review_roster: TicketReviewRoster }).review_roster;
+/** The window's slot declares itself independent of the acceptance slot, in
+ *  the roster AND the ledger; who signed the acceptance is `signer`. */
+function independentOfAccept(signer: string) {
+  const rr = rosterOf();
+  rr.slots = rr.slots.map((x) => (x.kind === "ops" ? { ...x, independentOf: ["accept"] } : x.kind === "accept" ? { ...x, primaries: [signer, "req"], satisfiedBy: signer } : x));
+  ledgerOps().independent_of = ["accept"];
+  const la = db.tables.ticket_review_slots.find((r) => r.slot_kind === "accept")!;
+  la.satisfied_by = signer;
+  la.satisfied_via = "primary";
+}
+
+describe("DEC-37 slot-to-slot at the close (review major 1): the silence of the person who signed the other slot is never the second look", () => {
+  it("the only person told signed the slot the window's slot must be independent of: HELD ('independence'), never issued", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    independentOfAccept("o-1");
+    db.tables.tickets[0].consent_window_recipients = ["o-1"];
+    db.tables.ticket_notice_events = db.tables.ticket_notice_events.filter((e) => e.recipient === "o-1");
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 0, held: 1, issued: 0 });
+    expect(db.tables.tickets[0].status).toBe("PENDING_REVIEW");
+    expect(lastHistory().action).toMatch(/must be independent of, so their silence is not a second look/);
+    expect(lastHistory().details).toMatch(/Everyone told also signs, or can sign, a sign-off "Operations" must be independent of \(O-1\)/);
+    expect(auditDetails()).toMatchObject({ holdReason: "independence", independence: { conflicted: ["o-1"] } });
+    expect(ledgerOps().status).toBe("open");
+  });
+  it("read from the LEDGER alone (the roster says nothing): the acceptance row declares itself independent of the window's slot — still HELD", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    db.tables.tickets[0].consent_window_recipients = ["o-1"];
+    db.tables.ticket_notice_events = db.tables.ticket_notice_events.filter((e) => e.recipient === "o-1");
+    const la = db.tables.ticket_review_slots.find((r) => r.slot_kind === "accept")!;
+    Object.assign(la, { satisfied_by: "o-1", satisfied_via: "primary", independent_of: ["ops"] });
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ held: 1, issued: 0 });
+    expect(auditDetails().holdReason).toBe("independence");
+  });
+  it("someone independent was told too: advances as before (O-2 had the window to object)", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    independentOfAccept("o-1");
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 1, issued: 1, held: 0 });
+  });
+});
+
+describe("the two floors agree (review major 2): a silent close never strands a slot only the drafter can sign", () => {
+  it("an open slot only the drafter occupies, separation of duties active: HELD (producer floor), the history names the slot", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z", accept: "open" });
+    const rr = rosterOf();
+    rr.slots = rr.slots.map((x) => (x.kind === "accept" ? { ...x, primaries: ["d-1"] } : x));
+    db.tables.ticket_review_slots.find((r) => r.slot_kind === "accept")!.primaries = ["d-1"];
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 0, held: 1 });
+    expect(lastHistory().details).toMatch(/"Acceptance" can be signed only by the drafter/);
+    expect(auditDetails()).toMatchObject({ holdReason: "producer_floor", producerFloor: true });
+    expect(rosterOf().slots.find((x) => x.kind === "ops")!.status).toBe("open");
+  });
+  it("REGRESSION: the open slot has someone else in it — the close advances (the review waits on that slot)", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z", accept: "open" });
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 1, held: 0, issued: 0 });
+  });
+});
+
+describe("the retry (review minor): only active members are asked; nobody left records the block once and stops", () => {
+  it("one of the two left the org: the window opens asking the one who is still a member", async () => {
+    seedTicket({ window: false });
+    db.tables.org_members = db.tables.org_members.filter((m) => m.uid !== "o-2");
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r.opened).toBe(1);
+    expect((calls("rpc:open_consent_window", "rpc")[0].args[0] as Row).p_recipients).toEqual(["o-1"]);
+  });
+  it("DEC-37 on the retry: someone who signed a slot the window's slot is independent of is not asked", async () => {
+    seedTicket({ window: false });
+    independentOfAccept("o-1");
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r.opened).toBe(1);
+    expect((calls("rpc:open_consent_window", "rpc")[0].args[0] as Row).p_recipients).toEqual(["o-2"]);
+  });
+  it("both left: no call; the plan is marked blocked on the roster (CAS), a 'blocked' notice event is written, the assignment queue told — and the next run does nothing", async () => {
+    seedTicket({ window: false });
+    db.tables.org_members = db.tables.org_members.filter((m) => m.uid !== "o-1" && m.uid !== "o-2");
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ opened: 0, failed: 1 });
+    expect(calls("rpc:open_consent_window", "rpc")).toEqual([]);
+    expect(rosterOf().consentPlan).toMatchObject({ kind: "blocked", slot: "ops" });
+    expect(db.tables.tickets[0].last_modified).toBe(new Date(NOW).toISOString());
+    expect(db.tables.ticket_notice_events.filter((e) => e.kind === "blocked")).toEqual([
+      expect.objectContaining({ slot_kind: "ops", details: expect.objectContaining({ reason: "window_never_opened", escalatedTo: ["a-1", "req"] }) }),
+    ]);
+    const bell = calls("notifications", "insert").flatMap((c) => c.args[0] as Row[]);
+    // the assignment queue (ticket.assign: the Admin and the Manager here)
+    expect(bell.map((n) => n.user_id).sort()).toEqual(["a-1", "req"]);
+    expect(r.errors.join(" ")).toMatch(/nobody "Operations" names may still be asked/);
+    db.calls = [];
+    const again = await runConsentWindowScan({ client, now: NOW + 3_600_000 });
+    expect(again).toMatchObject({ scanned: 0, failed: 0 });
+    expect(calls("notifications", "insert")).toEqual([]);
+  });
+});
+
+describe("the reminder's assigner is resolved for THIS request (review minor)", () => {
+  it("a ticket.assign rule scoped to the request type names the queue the reminder adds", async () => {
+    seedTicket({ warned: null });
+    db.tables.org_configurations = [{ org_id: "o1", key: "capability_policy", data: { caps: { "ticket.assign": [{ tokens: ["Drafter"], when: { requestType: ["ISO"] } }, { tokens: ["Admin"] }] } }, updated_at: null }];
+    const r = await runConsentWindowScan({ client, now: Date.parse("2026-10-21T10:00:00Z") });
+    expect(r.warned).toBe(1);
+    const w = calls("rpc:record_consent_window_warning", "rpc")[0].args[0] as Row;
+    expect(w.p_recipients).toEqual(["o-1", "o-2", "d-1"]);
+  });
+});
+
+describe("EVID-9 / DEC-38 for the window itself (review major 4): its notices are emailed, each channel is named, and a person not emailed is recorded", () => {
+  it("the reminder: emailed to everyone whose preferences allow it (as an assignment email, absolute link); a person with email off gets a not_emailed record; the history names each channel", async () => {
+    seedTicket({ warned: null });
+    db.tables.notification_preferences = [{ user_id: "o-2", email_enabled: false }];
+    db.tables.orgs = [{ id: "o1", name: "Acme" }];
+    const r = await runConsentWindowScan({ client, now: Date.parse("2026-10-21T10:00:00Z"), origin: "https://app.example.com" });
+    expect(r.warned).toBe(1);
+    const mails = calls("email_notifications", "insert").flatMap((c) => c.args[0] as Row[]);
+    expect(mails.map((m) => m.to_user_id).sort()).toEqual(["a-1", "o-1", "req"]);
+    expect(mails[0]).toMatchObject({ event_type: CONSENT_EMAIL_EVENT, resource_id: "t1", status: "queued", metadata: expect.objectContaining({ action: "consent_window_warned" }) });
+    expect(String(mails[0].body_text)).toContain("https://app.example.com/requests/t1");
+    const ne = db.tables.ticket_notice_events.filter((e) => e.kind === "not_emailed");
+    expect(ne).toEqual([expect.objectContaining({ recipient: "o-2", roster_id: ROSTER_ID, slot_kind: "ops", details: expect.objectContaining({ reason: "they turned email off", byTheirChoice: true, action: "consent_window_warned" }) })]);
+    const hist = (calls("rpc:record_consent_window_warning", "rpc")[0].args[0] as { p_history: { details: string } }).p_history.details;
+    expect(hist).toMatch(/Each was told in the app; by email as well: O-1, (A-1, REQ|REQ, A-1); in the app only: O-2 \(they turned email off\)\./);
+  });
+  it("the open (the retry): the people asked are emailed after the RPC lands, and its history line names the channel", async () => {
+    seedTicket({ window: false });
+    const r = await runConsentWindowScan({ client, now: NOW, origin: "https://app.example.com" });
+    expect(r.opened).toBe(1);
+    const order = db.calls.filter((c) => c.table === "rpc:open_consent_window" || (c.table === "email_notifications" && c.method === "insert")).map((c) => c.table);
+    expect(order).toEqual(["rpc:open_consent_window", "email_notifications"]);
+    const mails = calls("email_notifications", "insert").flatMap((c) => c.args[0] as Row[]);
+    expect(mails.map((m) => m.to_user_id)).toEqual(["o-1", "o-2"]);
+    expect(mails[0].metadata).toMatchObject({ action: "consent_window_opened", consentWindow: { roster: ROSTER_ID, slot: "ops" } });
+    expect(((calls("rpc:open_consent_window", "rpc")[0].args[0] as { p_history: { details: string } }).p_history.details)).toMatch(/Each was told in the app; by email as well: O-1, O-2\./);
+  });
+  it("the RPC refuses: nothing is emailed (no notice, no email)", async () => {
+    seedTicket({ window: false });
+    db.rpc.open_consent_window = { data: null, error: { code: "P0001", message: "not every person asked could be told" } };
+    await runConsentWindowScan({ client, now: NOW });
+    expect(calls("email_notifications", "insert")).toEqual([]);
+  });
+  it("the email queue refuses: each person is recorded not emailed (not by their choice), and the run says so", async () => {
+    seedTicket({ warned: null });
+    db.errors["email_notifications:insert"] = { code: "08006", message: "connection lost" };
+    const r = await runConsentWindowScan({ client, now: Date.parse("2026-10-21T10:00:00Z") });
+    expect(r.warned).toBe(1);
+    expect(r.errors.join(" ")).toMatch(/the reminder went out in the app, but the emails were not queued: connection lost/);
+    const ne = db.tables.ticket_notice_events.filter((e) => e.kind === "not_emailed");
+    expect(ne.map((e) => e.recipient).sort()).toEqual(["a-1", "o-1", "o-2", "req"]);
+    expect(ne.every((e) => (e.details as Row).byTheirChoice === false)).toBe(true);
+  });
+  it("the preferences cannot be read: nobody is emailed (it cannot tell who opted out), each recorded, the reminder still goes out", async () => {
+    seedTicket({ warned: null });
+    db.errors.notification_preferences = { code: "08006", message: "connection lost" };
+    const r = await runConsentWindowScan({ client, now: Date.parse("2026-10-21T10:00:00Z") });
+    expect(r.warned).toBe(1);
+    expect(calls("email_notifications", "insert")).toEqual([]);
+    expect(db.tables.ticket_notice_events.filter((e) => e.kind === "not_emailed").length).toBe(4);
+  });
+});
+
+describe("issue-path parity (review minor): an issuing close tells the routed pool and clears the intents as the route does", () => {
+  it("PENDING_IFC: the issue queue (the Admin pool) joins unread_by and the bell", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ issued: 1 });
+    const t = db.tables.tickets[0];
+    expect(t.status).toBe("PENDING_IFC");
+    expect(t.unread_by as string[]).toContain("a-1");
+    const bell = calls("notifications", "insert").flatMap((c) => c.args[0] as Row[]);
+    expect(bell.map((n) => n.user_id)).toContain("a-1");
+  });
+  it("issue-as-is lands at FINAL_DRAFT: the request's ticket-sourced document intents are cleared (others kept)", async () => {
+    const SRC = "22222222-2222-4222-8222-222222222222";
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    const t = db.tables.tickets[0];
+    t.metadata = { ...(t.metadata as Row), source_document: { id: SRC, document_number: "PID-100", rev: "B" }, issue_ready: { rev: "1A" } };
+    t.attachments = [{ id: "a-d", name: "x.pdf", url: "orgs/o1/x.pdf", type: "Draft", rev: "1A", status: "submitted" }];
+    db.tables.documents = [{ id: SRC, org_id: "o1", rev: "B", current_version_id: null, document_number: "PID-100" }];
+    db.tables.document_intents = [
+      { document_id: SRC, ticket_id: "t1", source: "ticket", user_id: "d-1" },
+      { document_id: SRC, ticket_id: "t9", source: "ticket", user_id: "d-2" },
+    ];
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ issued: 1 });
+    expect(t.status).toBe("FINAL_DRAFT");
+    expect(db.tables.document_intents).toEqual([expect.objectContaining({ ticket_id: "t9" })]);
+  });
+});
+
+describe("EVID-9 (review minor): ONE rule for 'emailed?' and 'why not'", () => {
+  const TYPES = ["assignment", "engineer_review_requested", "ticket_status_changed", "ticket_approved", "ticket_revision_requested", "ticket_closed",
+    "comment_mention", "watcher_activity", "sla_warning", "system", "compliance_digest", ...PREFERENCE_EXEMPT_EVENT_TYPES];
+  const PREFS: Array<Record<string, unknown> | undefined> = [
+    undefined, {}, { email_enabled: false }, { digest_frequency: "never" }, { email_on_assignment: false }, { email_on_status_change: false },
+    { email_on_mention: false }, { email_on_watched_activity: false }, { email_on_sla_warning: false }, { email_enabled: true, email_on_assignment: true },
+  ];
+  it("for every event type and preference row: `wants` is lib/notificationPrefs.ts emailAllowedByPrefs, and a reason is given exactly when it does not", () => {
+    for (const t of TYPES) for (const p of PREFS) {
+      const d = emailPreferenceOf(p, t);
+      expect(d.wants, `${t} ${JSON.stringify(p)}`).toBe(emailAllowedByPrefs(p ?? null, t));
+      expect(d.reason === null, `${t} ${JSON.stringify(p)}`).toBe(d.wants);
+      expect(emailPreferenceReason(p, t)).toBe(d.reason);
+    }
+  });
+  it("the route reads it for both the email and the not-emailed record (no hand copy of the switch left there)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const route = readFileSync("app/api/tickets/workflow-action/route.ts", "utf8");
+    expect(route).toContain("const wantsEmail = (uid: string): boolean => emailPreferenceOf(prefByUid.get(uid), cls.eventType).wants;");
+    expect(route).toContain(".map((uid) => ({ uid, reason: emailByUid.has(uid) ? emailPreferenceOf(prefByUid.get(uid), cls.eventType).reason : null }))");
+    expect(route).not.toContain("case \"engineer_review_requested\":");
+    expect(route).not.toContain("their email preferences\" }");
   });
 });

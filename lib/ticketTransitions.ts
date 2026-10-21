@@ -667,6 +667,13 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
         updates.consent_window_objected_at = now;
         updates.consent_window_objected_by = actorUid ?? null;
         historyEntry.action = `Objected — "${label}" will not advance without objection; it waits for a sign-off`;
+        // Fix pass 2: an objection is not a hand-off — the request still
+        // waits on every open blocking slot, the window's own included (its
+        // occupants' sign-off is now required), so their unread markers stay
+        // and they are told (recipients follow unread_by), as a partial
+        // sign-off and the consent advance keep them.
+        const waiting = open.slots.filter((x) => slotBlocks(x) && x.status === "open").flatMap((x) => x.primaries);
+        updates.unread_by = Array.from(new Set([...(ticket.unreadBy ?? []), ...newUnreadBy, ...waiting])).filter((u) => !!u && u !== actorUid);
       }
       break;
     }
@@ -675,7 +682,9 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       // recorded SYSTEM act, written by the maintenance cron (no person
       // signed). The history names everyone asked, when, whether each opened
       // the notice, when they were reminded and when the window closed. The
-      // last blocking slot issues the ticket exactly as a sign-off does.
+      // last blocking slot issues the ticket through the same issue limb a
+      // sign-off uses (the cron adds the routed pool and the intent clearing;
+      // the copy recall and the email are recorded residuals).
       if (input.consentAdvance) {
         const { roster, complete, label, details, held, holdReason } = input.consentAdvance;
         const w = roster.consentWindow ? { ...roster.consentWindow, expiredAt: now, ...(held ? { heldReason: holdReason ?? null } : {}) } : null;

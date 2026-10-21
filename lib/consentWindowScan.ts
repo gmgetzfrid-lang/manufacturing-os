@@ -38,12 +38,28 @@
 // each run reads from a random point of the id space, so no resident set of
 // rows can starve the rest.
 //
+// FIX PASS 2 (DF-P7 review): the people asked are never anyone who signed,
+// or can still sign, a slot the window's slot must be independent of
+// (DEC-37 slot-to-slot — consentConflictedPeople), and a close with nobody
+// independent told holds ("independence"). The close also holds while a
+// slot only the drafter can sign is open (the producer floor would refuse
+// the drafter for good after a silent close). The open and the reminder are
+// emailed to whoever's preferences allow it (the same rule the route uses —
+// emailPreferenceOf), each person's channel is named in the history line,
+// and a person not emailed gets a not_emailed record. An issuing close tells
+// the PENDING_IFC pool (LEAK-1) and clears the request's document intents
+// when it lands at FINAL_DRAFT, as the route does. A retry with nobody left
+// to ask records the block, tells the assignment queue once and stops.
+//
 // ticket_notice_events (20261255) is the record that survives any bell
 // purge: append-only, written only by the service role.
 
-import { computeTransition, rowToTicket } from "@/lib/ticketTransitions";
+import { computeTransition, rowToTicket, escapeHtml } from "@/lib/ticketTransitions";
 import { parseSourceDocuments, revDrift } from "@/lib/sourceDocRef";
-import { currentRoster } from "@/lib/workflow";
+import { currentRoster, ticketResource } from "@/lib/workflow";
+import { resolveTicketRecipients, isRoutedStatus } from "@/lib/ticketRouting";
+import { wrapEmailBody } from "@/lib/emailRender";
+import { isPreferenceExempt } from "@/lib/notificationPrefs";
 import { resolveFill, rosterCompletion, writeRosterLedger, type OccupantContext } from "@/lib/ticketRoster";
 import { loadPickerMembers } from "@/lib/ticketPickerMembers";
 import { loadCapabilityPolicyStrict, type CapabilityPolicy, type CapabilityResource } from "@/lib/capabilityPolicy";
@@ -51,9 +67,10 @@ import { notifyBatchWithReason } from "@/lib/inAppNotifications";
 import {
   CONSENT_REASON, CONSENT_WINDOW_ACTOR, CONSENT_WINDOW_MIGRATION, consentFloorHolds, consentRecipients, consentSatisfiedSlot, consentWindowFromRow,
   consentWindowStep, isMissingConsentColumn, isMissingConsentSchema, noticeStates, openedHistoryDetails,
+  consentConflictedPeople, consentIndependenceHolds, ledgerIndependenceSlot, drafterOnlyOpenSlot,
   recordMoment, warnedHistoryDetails, advancedHistoryDetails, windowSchedule, type ConsentHoldReason, type ConsentWindowState,
 } from "@/lib/consentWindow";
-import type { TicketConsentPlan, TicketHistoryEntry, TicketReviewRoster } from "@/types/schema";
+import type { TicketConsentPlan, TicketHistoryEntry, TicketReviewRoster, TicketStatus } from "@/types/schema";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = { from: (t: string) => any; rpc: (fn: string, args?: Record<string, unknown>) => any };
@@ -103,20 +120,121 @@ export async function recordNoticeEvents(db: Db, rows: Array<Record<string, unkn
   return attempt();
 }
 
+/** The email event a consent notice is queued as: a request for the
+ *  person's sign-off is work routed to them, so their assignment-email
+ *  switch governs it (DEC-44 (DF-P7-consent) item 15). */
+export const CONSENT_EMAIL_EVENT = "assignment";
+
+/** Who of the people a consent notice reaches is emailed too, and why each
+ *  of the others is not — decided BEFORE the notice is written, so its
+ *  history line names each person's channel. */
+export interface ConsentEmailPlan {
+  emails: Array<{ uid: string; email: string }>;
+  notEmailed: Array<{ uid: string; reason: string; byTheirChoice: boolean }>;
+}
+
+/** Read the preferences of the people a consent notice reaches and decide
+ *  each person's email (emailPreferenceOf — the route's own rule). A failed
+ *  read emails nobody (it cannot tell who opted out) and says so per person. */
+export async function planConsentEmails(db: Db, input: { recipients: readonly string[]; members: ReadonlyArray<Member> }): Promise<ConsentEmailPlan> {
+  const plan: ConsentEmailPlan = { emails: [], notEmailed: [] };
+  const uids = [...new Set(input.recipients)];
+  if (uids.length === 0) return plan;
+  const emailOf = new Map<string, string>();
+  for (const m of input.members) if (typeof m.uid === "string" && typeof m.email === "string" && m.email.trim()) emailOf.set(m.uid, m.email.trim());
+  let prefs: Array<Record<string, unknown>> = [];
+  try {
+    const { data, error } = await db.from("notification_preferences").select("*").in("user_id", uids);
+    if (error) throw new Error(error.message || "refused");
+    prefs = (data as Array<Record<string, unknown>> | null) ?? [];
+  } catch (e) {
+    const why = `their email preferences could not be read (${(e as Error)?.message ?? String(e)}), so no email was sent`;
+    return { emails: [], notEmailed: uids.map((uid) => ({ uid, reason: why, byTheirChoice: false })) };
+  }
+  const prefOf = new Map(prefs.map((p) => [String(p.user_id ?? ""), p] as const));
+  for (const uid of uids) {
+    const email = emailOf.get(uid);
+    if (!email) { plan.notEmailed.push({ uid, reason: "no email address is on record for them", byTheirChoice: false }); continue; }
+    const d = emailPreferenceOf(prefOf.get(uid), CONSENT_EMAIL_EVENT);
+    if (d.wants) plan.emails.push({ uid, email });
+    else plan.notEmailed.push({ uid, reason: d.reason ?? "their email preferences", byTheirChoice: true });
+  }
+  return plan;
+}
+
+/** The sentence a consent notice's history line adds: how each person was
+ *  told (GAP-113 — a person told only in the app is named as such). */
+export function consentChannelNote(plan: ConsentEmailPlan, nameOf: (uid: string) => string): string {
+  const emailed = plan.emails.map((e) => nameOf(e.uid));
+  const not = plan.notEmailed.map((n) => `${nameOf(n.uid)} (${n.reason})`);
+  return ` Each was told in the app${emailed.length ? `; by email as well: ${emailed.join(", ")}` : ""}${not.length ? `; in the app only: ${not.join(", ")}` : ""}.`;
+}
+
+/** Queue the emails a consent notice's plan names (once its notice landed),
+ *  and record a not_emailed row for everyone not emailed — by their choice,
+ *  for want of an address, or because the queue refused. Never throws;
+ *  answers the first error (null when everything was written). */
+export async function queueConsentEmails(db: Db, input: {
+  orgId: string; ticketId: string; rosterId: string; slotKind: string | null; phase: "opened" | "warned";
+  plan: ConsentEmailPlan; subject: string; text: string; origin?: string | null;
+}): Promise<string | null> {
+  const notEmailed = [...input.plan.notEmailed];
+  let queueErr: string | null = null;
+  if (input.plan.emails.length > 0) {
+    let orgName: string | null = null;
+    try {
+      const { data } = await db.from("orgs").select("name").eq("id", input.orgId).maybeSingle();
+      orgName = ((data as { name?: string | null } | null)?.name ?? null);
+    } catch { /* the footer goes without the workspace's name */ }
+    const origin = (input.origin ?? "").replace(/\/+$/, "");
+    const link = `${origin}/requests/${input.ticketId}`;
+    const composed = `${input.text}\n\n${link}`;
+    let body: { bodyText: string; bodyHtml: string } | null = null;
+    try { body = wrapEmailBody({ text: composed, orgName, origin: origin || null }); } catch { body = null; }
+    const rows = input.plan.emails.map((e) => ({
+      org_id: input.orgId, to_user_id: e.uid, to_email: e.email, subject: input.subject.slice(0, 200),
+      body_text: body ? body.bodyText : composed,
+      body_html: body ? body.bodyHtml : `<p style="white-space:pre-wrap">${escapeHtml(composed)}</p>`,
+      resource_type: "ticket", resource_id: input.ticketId, event_type: CONSENT_EMAIL_EVENT,
+      metadata: { action: `consent_window_${input.phase}`, status: "PENDING_REVIEW", consentWindow: { roster: input.rosterId, slot: input.slotKind }, ...(body ? { rendered: true } : {}) },
+      status: "queued",
+    }));
+    try {
+      const { error } = await db.from("email_notifications").insert(rows);
+      if (error) queueErr = error.message || "refused";
+    } catch (e) {
+      queueErr = (e as Error)?.message ?? String(e);
+    }
+    if (queueErr) for (const e of input.plan.emails) notEmailed.push({ uid: e.uid, reason: `the email could not be queued (${queueErr})`, byTheirChoice: false });
+  }
+  const recErr = await recordNotEmailed(db, {
+    orgId: input.orgId, ticketId: input.ticketId, action: `consent_window_${input.phase}`, eventType: CONSENT_EMAIL_EVENT,
+    optedOut: notEmailed, rosterId: input.rosterId, slotKind: input.slotKind,
+  });
+  return queueErr ? `the emails were not queued: ${queueErr}` : recErr ? `the not-emailed record was not written: ${recErr}` : null;
+}
+
 /** Open the window `plan` describes on the ticket's CURRENT roster — one
- *  transaction (open_consent_window). */
+ *  transaction (open_consent_window). Then the emails (fix pass 2): the
+ *  history line names each person's channel, decided before the call. */
 export async function openConsentWindow(db: Db, input: {
   ticketId: string;
+  orgId: string;
   roster: Pick<TicketReviewRoster, "id">;
   plan: Extract<TicketConsentPlan, { kind: "open" }>;
   nameOf: (uid: string) => string;
   ticketLabel: string;
+  members: ReadonlyArray<Member>;
+  origin?: string | null;
   now?: number;
-}): Promise<{ ok: true; notified: number; closesAt: string } | { ok: false; missing: boolean; error: string }> {
+}): Promise<{ ok: true; notified: number; closesAt: string; emailError: string | null } | { ok: false; missing: boolean; error: string }> {
   const now = input.now ?? Date.now();
   const { warnAt, closesAt } = windowSchedule(now, input.plan);
   const nowIso = new Date(now).toISOString();
-  const details = openedHistoryDetails({ label: input.plan.label, recipients: input.plan.recipients, nameOf: input.nameOf, openedAt: now, warnAt, closesAt });
+  const emailPlan = await planConsentEmails(db, { recipients: input.plan.recipients, members: input.members });
+  const details = `${openedHistoryDetails({ label: input.plan.label, recipients: input.plan.recipients, nameOf: input.nameOf, openedAt: now, warnAt, closesAt })}${consentChannelNote(emailPlan, input.nameOf)}`;
+  const title = `You may object · ${input.ticketLabel}`.slice(0, 200);
+  const body = `"${input.plan.label}" goes ahead without your sign-off unless you object before ${recordMoment(closesAt)}. Open the request to object (your reason is recorded) or to sign off.`;
   try {
     const { data, error } = await db.rpc("open_consent_window", {
       p_ticket: input.ticketId,
@@ -125,12 +243,16 @@ export async function openConsentWindow(db: Db, input: {
       p_recipients: input.plan.recipients,
       p_warn_at: new Date(warnAt).toISOString(),
       p_closes_at: new Date(closesAt).toISOString(),
-      p_title: `You may object · ${input.ticketLabel}`.slice(0, 200),
-      p_body: `"${input.plan.label}" goes ahead without your sign-off unless you object before ${recordMoment(closesAt)}. Open the request to object (your reason is recorded) or to sign off.`,
+      p_title: title,
+      p_body: body,
       p_history: historyEntry(`Consent window opened — ${input.plan.label}`, details, nowIso),
     });
     if (error) return { ok: false, missing: isMissingConsentSchema(error), error: error.message || "refused" };
-    return { ok: true, notified: typeof data === "number" ? data : input.plan.recipients.length, closesAt: new Date(closesAt).toISOString() };
+    const emailError = await queueConsentEmails(db, {
+      orgId: input.orgId, ticketId: input.ticketId, rosterId: input.roster.id, slotKind: input.plan.slot, phase: "opened",
+      plan: emailPlan, subject: title, text: body, origin: input.origin,
+    });
+    return { ok: true, notified: typeof data === "number" ? data : input.plan.recipients.length, closesAt: new Date(closesAt).toISOString(), emailError };
   } catch (e) {
     return { ok: false, missing: false, error: (e as Error)?.message ?? String(e) };
   }
@@ -151,13 +273,18 @@ export async function afterRosterOpened(db: Db, input: {
   resource: CapabilityResource | null;
   requesterId: string | null | undefined;
   actor: { uid: string; name: string | null };
+  /** The absolute origin email links are built on (the route's). */
+  origin?: string | null;
 }): Promise<string | null> {
   const plan = input.roster.consentPlan;
   if (!plan || plan.kind === "sign_off") return null;
   const nameOf = memberNameOf(input.members);
   if (plan.kind === "open") {
-    const r = await openConsentWindow(db, { ticketId: input.ticketId, roster: input.roster, plan, nameOf, ticketLabel: input.ticketLabel });
-    if (r.ok) return null;
+    const r = await openConsentWindow(db, { ticketId: input.ticketId, orgId: input.orgId, roster: input.roster, plan, nameOf, ticketLabel: input.ticketLabel, members: input.members, origin: input.origin });
+    if (r.ok) {
+      if (r.emailError) console.error(`[consent-window] the window on ticket ${input.ticketId} opened (everyone asked was told in the app), but ${r.emailError}`);
+      return null;
+    }
     console.error(`[consent-window] the window on ticket ${input.ticketId} (roster ${input.roster.id}) was not opened — "${plan.label}" waits for a sign-off; the maintenance run retries it: ${r.error}`);
     // The refusal is recorded on the ticket's notice record (it outlives the
     // response), not only said in the answer. Not before 20261255 (no table).
@@ -206,33 +333,57 @@ export async function recordNotEmailed(db: Db, input: {
   ticketId: string;
   action: string;
   eventType: string;
-  optedOut: ReadonlyArray<{ uid: string; reason: string }>;
+  /** `byTheirChoice` defaults to true (a preference); false for a person
+   *  not emailed for another reason (no address, a refused queue). */
+  optedOut: ReadonlyArray<{ uid: string; reason: string; byTheirChoice?: boolean }>;
+  rosterId?: string | null;
+  slotKind?: string | null;
 }): Promise<string | null> {
   if (input.optedOut.length === 0) return null;
   const err = await recordNoticeEvents(db, input.optedOut.map((o) => ({
     org_id: input.orgId, ticket_id: input.ticketId, kind: "not_emailed", recipient: o.uid,
-    details: { reason: o.reason, byTheirChoice: true, action: input.action, eventType: input.eventType },
+    ...(input.rosterId ? { roster_id: input.rosterId } : {}), ...(input.slotKind ? { slot_kind: input.slotKind } : {}),
+    details: { reason: o.reason, byTheirChoice: o.byTheirChoice ?? true, action: input.action, eventType: input.eventType },
   })));
   return err === "missing" ? null : err;
 }
 
+/** The per-event email switches a preference row carries, and how a record
+ *  words each one turned off (lib/notificationPrefs.ts shouldSendForEvent's
+ *  cases — a test pins the two equal). */
+const EVENT_EMAIL_SWITCH: Record<string, { key: string; reason: string }> = {
+  comment_mention: { key: "email_on_mention", reason: "they turned mention emails off" },
+  assignment: { key: "email_on_assignment", reason: "they turned assignment emails off" },
+  engineer_review_requested: { key: "email_on_assignment", reason: "they turned assignment emails off" },
+  ticket_status_changed: { key: "email_on_status_change", reason: "they turned status-change emails off" },
+  ticket_approved: { key: "email_on_status_change", reason: "they turned status-change emails off" },
+  ticket_revision_requested: { key: "email_on_status_change", reason: "they turned status-change emails off" },
+  ticket_closed: { key: "email_on_status_change", reason: "they turned status-change emails off" },
+  watcher_activity: { key: "email_on_watched_activity", reason: "they turned emails about requests they watch off" },
+  sla_warning: { key: "email_on_sla_warning", reason: "they turned SLA-warning emails off" },
+};
+
+/**
+ * EVID-9 (fix pass 2): ONE rule for whether a member's preference row (none =
+ * the defaults) wants an email of `eventType`, and — when it does not — the
+ * reason, worded for the record. `wants` is false exactly when `reason` is
+ * set, so a "not emailed by their choice" row is written only for a real
+ * preference. The workflow route's fan-out and the consent notices both
+ * read it; a test pins `wants` to lib/notificationPrefs.ts
+ * emailAllowedByPrefs over every event type. Pure.
+ */
+export function emailPreferenceOf(p: Record<string, unknown> | null | undefined, eventType: string): { wants: boolean; reason: string | null } {
+  if (isPreferenceExempt(eventType) || !p) return { wants: true, reason: null };
+  if (p.email_enabled === false) return { wants: false, reason: "they turned email off" };
+  if (p.digest_frequency === "never") return { wants: false, reason: "they set email delivery to never" };
+  const sw = EVENT_EMAIL_SWITCH[eventType];
+  if (sw && p[sw.key] === false) return { wants: false, reason: sw.reason };
+  return { wants: true, reason: null };
+}
+
 /** Why a preference row turns an email off (null: it does not). */
 export function emailPreferenceReason(p: Record<string, unknown> | undefined, eventType: string): string | null {
-  if (!p) return null;
-  if (p.email_enabled === false) return "they turned email off";
-  if (p.digest_frequency === "never") return "they set email delivery to never";
-  switch (eventType) {
-    case "assignment":
-    case "engineer_review_requested":
-      return p.email_on_assignment === false ? "they turned assignment emails off" : null;
-    case "ticket_status_changed":
-    case "ticket_approved":
-    case "ticket_revision_requested":
-    case "ticket_closed":
-      return p.email_on_status_change === false ? "they turned status-change emails off" : null;
-    default:
-      return null;
-  }
+  return emailPreferenceOf(p, eventType).reason;
 }
 
 // ─── The maintenance cron's step ────────────────────────────────────────────
@@ -257,7 +408,10 @@ export interface ConsentScanReport {
 interface OrgCtx { members: Member[]; policy: CapabilityPolicy; sodActive: boolean }
 
 /** A roster ledger row (ticket_review_slots, 20261242) as the window reads it. */
-interface LedgerSlot { slot_kind: string; mode: string; status: string; primaries: string[] | null; independent_of: string[] | null; fallback: boolean | null }
+interface LedgerSlot {
+  slot_kind: string; mode: string; status: string; primaries: string[] | null; alternates?: string[] | null; overriders?: string[] | null;
+  independent_of: string[] | null; fallback: boolean | null; satisfied_by?: string | null; satisfied_via?: string | null;
+}
 
 const AUDIT_ACTION = "TICKET_CONSENT_WINDOW_ADVANCE";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -269,7 +423,7 @@ const SOURCE_READ_CAP = 100;
  * `errors`, and a ticket whose step failed is left exactly as it was for the
  * next run (no stamp without its rows; no advance without its audit row).
  */
-export async function runConsentWindowScan(deps: { client: Db; now?: number; deadlineAt?: number; maxTickets?: number; pivot?: string }): Promise<ConsentScanReport> {
+export async function runConsentWindowScan(deps: { client: Db; now?: number; deadlineAt?: number; maxTickets?: number; pivot?: string; origin?: string | null }): Promise<ConsentScanReport> {
   const sb = deps.client;
   const now = deps.now ?? Date.now();
   const maxTickets = deps.maxTickets ?? 200;
@@ -339,7 +493,7 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
    *  metadata roster cannot change), or the error. */
   async function ledgerOf(ticketId: string, rosterId: string): Promise<{ slots: LedgerSlot[] } | { error: string }> {
     const { data, error } = await sb.from("ticket_review_slots")
-      .select("slot_kind, mode, status, primaries, independent_of, fallback").eq("ticket_id", ticketId).eq("roster_id", rosterId);
+      .select("slot_kind, mode, status, primaries, alternates, overriders, independent_of, fallback, satisfied_by, satisfied_via").eq("ticket_id", ticketId).eq("roster_id", rosterId);
     if (error) return { error: error.message || "refused" };
     return { slots: ((data as LedgerSlot[] | null) ?? []) };
   }
@@ -386,16 +540,27 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
         say(`ticket ${ticket.id}: the review's ledger does not show "${plan.label}" as an open consent slot — no window is opened; it waits for a sign-off`);
         return;
       }
-      const allowed = new Set(consentRecipients({ primaries: ls.primaries ?? [], independentOf: ls.independent_of ?? [] }, { drafterId: ticket.assignedDrafterId, requesterId: ticket.requesterId }));
-      const recipients = plan.recipients.filter((u) => allowed.has(u));
+      // DEC-37 slot-to-slot (fix pass 2): nor anyone who signed, or can
+      // still sign, a slot this one must be independent of — read from the
+      // ledger (and the roster: either one names them). Only people still
+      // active members are asked (open_consent_window refuses the whole set
+      // otherwise, on every run).
+      const conflicted = new Set([
+        ...consentConflictedPeople(ledger.slots.map(ledgerIndependenceSlot), plan.slot),
+        ...consentConflictedPeople(roster.slots, plan.slot),
+      ]);
+      const allowed = new Set(consentRecipients({ primaries: ls.primaries ?? [], independentOf: ls.independent_of ?? [] }, { drafterId: ticket.assignedDrafterId, requesterId: ticket.requesterId }, conflicted));
+      const active = new Set(ctx.members.map((m) => String(m.uid ?? "")));
+      const recipients = plan.recipients.filter((u) => allowed.has(u) && active.has(u));
       if (recipients.length === 0) {
-        report.failed += 1;
-        say(`ticket ${ticket.id}: nobody the plan names may be asked (the drafter, a party the slot is independent of, or not the slot's own occupant) — no window is opened; "${plan.label}" waits for a sign-off`);
+        await blockPlannedWindow(ticket, roster, plan, ctx, row);
         return;
       }
-      const r = await openConsentWindow(sb, { ticketId: ticket.id, roster, plan: { ...plan, recipients }, nameOf, ticketLabel, now });
-      if (r.ok) report.opened += 1;
-      else { report.failed += 1; say(`ticket ${ticket.id}: the consent window still could not be opened — "${plan.label}" waits for a sign-off: ${r.error}`); }
+      const r = await openConsentWindow(sb, { ticketId: ticket.id, orgId: ticket.orgId, roster, plan: { ...plan, recipients }, nameOf, ticketLabel, members: ctx.members, origin: deps.origin, now });
+      if (r.ok) {
+        report.opened += 1;
+        if (r.emailError) say(`ticket ${ticket.id}: the consent window opened (everyone asked was told in the app), but ${r.emailError}`);
+      } else { report.failed += 1; say(`ticket ${ticket.id}: the consent window still could not be opened — "${plan.label}" waits for a sign-off: ${r.error}`); }
       return;
     }
 
@@ -407,24 +572,79 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     // (2) The reminder (DEC-39): the people asked plus the assignment queue,
     // recorded in the same transaction as its rows.
     if (step === "warn") {
-      const queue = assignmentQueueOf({ members: ctx.members, policy: ctx.policy, resource: null, requesterId: ticket.requesterId }).filter((u) => !state.recipients.includes(u));
+      // The assigner, resolved for THIS request (its request type and unit),
+      // as the route's block escalation resolves it (fix pass 2).
+      const queue = assignmentQueueOf({ members: ctx.members, policy: ctx.policy, resource: ticketResource(ticket), requesterId: ticket.requesterId }).filter((u) => !state.recipients.includes(u));
       const recipients = [...state.recipients, ...queue];
       const nowIso = new Date(now).toISOString();
+      const title = `Reminder: you may object · ${ticketLabel}`.slice(0, 200);
+      const body = `"${label}" goes ahead without objection when its window closes ${recordMoment(state.closesAt)}. Open the request to object or to sign off.`;
+      const emailPlan = await planConsentEmails(sb, { recipients, members: ctx.members });
       const { error } = await sb.rpc("record_consent_window_warning", {
         p_ticket: ticket.id,
         p_roster: roster.id,
         p_recipients: recipients,
-        p_title: `Reminder: you may object · ${ticketLabel}`.slice(0, 200),
-        p_body: `"${label}" goes ahead without objection when its window closes ${recordMoment(state.closesAt)}. Open the request to object or to sign off.`,
-        p_history: historyEntry(`Consent window reminder — ${label}`, warnedHistoryDetails({ label, recipients: state.recipients, queue, nameOf, at: now, closesAt: state.closesAt! }), nowIso),
+        p_title: title,
+        p_body: body,
+        p_history: historyEntry(`Consent window reminder — ${label}`, `${warnedHistoryDetails({ label, recipients: state.recipients, queue, nameOf, at: now, closesAt: state.closesAt! })}${consentChannelNote(emailPlan, nameOf)}`, nowIso),
       });
       if (error) { report.failed += 1; say(`ticket ${ticket.id}: the reminder was not sent, so the window cannot close yet (retried next run): ${error.message}`); return; }
       report.warned += 1;
+      const emailErr = await queueConsentEmails(sb, { orgId: ticket.orgId, ticketId: ticket.id, rosterId: roster.id, slotKind: state.slot, phase: "warned", plan: emailPlan, subject: title, text: body, origin: deps.origin });
+      if (emailErr) say(`ticket ${ticket.id}: the reminder went out in the app, but ${emailErr}`);
       return;
     }
 
     // (3) The window closed with no objection.
     await closeWindow(ticket, roster, state, slot.kind, label, ctx, nameOf);
+  }
+
+  /** A planned window nobody can be asked on any more (everyone it named
+   *  left the org, or must stay independent of the slot): recorded as a
+   *  block, the assignment queue told ONCE, and the plan marked "blocked" on
+   *  the roster (compare-and-set) so later runs stop retrying it. The slot
+   *  waits for a sign-off, as any blocked consent slot does (DEC-39). */
+  async function blockPlannedWindow(
+    ticket: ReturnType<typeof rowToTicket>,
+    roster: TicketReviewRoster,
+    plan: Extract<TicketConsentPlan, { kind: "open" }>,
+    ctx: OrgCtx,
+    row: Record<string, unknown>,
+  ): Promise<void> {
+    const ticketId = ticket.id!;
+    const nowIso = new Date(now).toISOString();
+    const blocked: TicketConsentPlan = { kind: "blocked", slot: plan.slot, label: plan.label, reason: CONSENT_REASON.noLongerAskable };
+    const meta = ((row.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>;
+    let q = sb.from("tickets").update({ metadata: { ...meta, review_roster: { ...roster, consentPlan: blocked } }, last_modified: nowIso })
+      .eq("id", ticketId).eq("status", "PENDING_REVIEW");
+    q = ticket.lastModified ? q.eq("last_modified", String(ticket.lastModified)) : q.is("last_modified", null);
+    const { data: landed, error } = await q.select("id");
+    if (error || !Array.isArray(landed) || landed.length === 0) {
+      report.failed += 1;
+      say(`ticket ${ticketId}: nobody "${plan.label}" names may still be asked, and the block could not be recorded (${error ? error.message : "the request changed first"}) — retried next run; it waits for a sign-off`);
+      return;
+    }
+    report.failed += 1;
+    const queue = assignmentQueueOf({ members: ctx.members, policy: ctx.policy, resource: ticketResource(ticket), requesterId: ticket.requesterId });
+    say(`ticket ${ticketId}: nobody "${plan.label}" names may still be asked — no window is opened; it waits for a sign-off${queue.length ? " and the assignment queue was told" : ""}`);
+    const evErr = await recordNoticeEvents(sb, [{
+      org_id: ticket.orgId, ticket_id: ticketId, roster_id: roster.id, slot_kind: plan.slot, kind: "blocked",
+      recipient: null, actor_name: CONSENT_WINDOW_ACTOR,
+      details: { reason: "window_never_opened", why: CONSENT_REASON.noLongerAskable, planned: plan.recipients, escalatedTo: queue },
+    }]);
+    if (evErr && evErr !== "missing") say(`ticket ${ticketId}: the block was not recorded on the notice record: ${evErr}`);
+    if (queue.length > 0) {
+      const ticketLabel = `${ticket.ticketId || ""} ${ticket.title || ""}`.trim() || "a drafting request";
+      const { error: bellErr } = await notifyBatchWithReason(queue.map((uid) => ({
+        orgId: ticket.orgId, userId: uid, kind: "ticket_status" as const,
+        title: `Nobody to ask · ${ticketLabel}`.slice(0, 200),
+        body: `"${plan.label}" is a consent slot, but ${CONSENT_REASON.noLongerAskable}. Check the routing table or the roles.`,
+        link: `/requests/${ticketId}`, resourceType: "ticket", resourceId: ticketId,
+        actorName: "System",
+        metadata: { action: "consent_window_blocked", slot: plan.slot },
+      })), sb as never);
+      if (bellErr) say(`ticket ${ticketId}: the assignment queue was not told of the block: ${bellErr}`);
+    }
   }
 
   /** HAND-7 (DF-P6) as the route runs it before an issuing approval: has a
@@ -496,14 +716,24 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     // DEC-12 / DEC-37: the floor as it reads for silence (consentFloorHolds
     // stands in for rosterCompletion's floor, which never counts a window).
     const floorHolds = consentFloorHolds(advancedRoster, { sodActive: ctx.sodActive, drafterId: ticket.assignedDrafterId }, asked);
+    // DEC-37 slot-to-slot (fix pass 2): someone told must be independent of
+    // every slot this one must be independent of — read from the ledger and
+    // the roster (either one naming a person is enough to hold).
+    const conflicted = new Set([
+      ...consentConflictedPeople(ledger.slots.map(ledgerIndependenceSlot), slotKind),
+      ...consentConflictedPeople(roster.slots, slotKind),
+    ]);
+    const independenceHolds = consentIndependenceHolds(asked, ticket.assignedDrafterId, conflicted);
+    const onlyDrafterSlot = ctx.sodActive ? drafterOnlyOpenSlot(advancedRoster, ticket.assignedDrafterId) : null;
     // Would this close issue the request? Only when the roster is complete
     // AND the ledger agrees every other blocking slot is signed.
     const wouldIssue = rosterCompletion(advancedRoster).complete;
     const ledgerAgrees = ledger.slots.filter((x) => x.mode !== "notify_only" && x.slot_kind !== slotKind && x.status !== "void").every((x) => x.status === "satisfied");
     let drift: { moved: string[]; unchecked: boolean } = { moved: [], unchecked: false };
-    if (undelivered.length === 0 && !floorHolds && wouldIssue && ledgerAgrees) drift = await sourceDriftOf(ticket);
+    if (undelivered.length === 0 && !floorHolds && !independenceHolds && wouldIssue && ledgerAgrees) drift = await sourceDriftOf(ticket);
     const holdReason: ConsentHoldReason | null = undelivered.length > 0 ? "undelivered"
       : floorHolds ? "producer_floor"
+      : independenceHolds ? "independence"
       : wouldIssue && !ledgerAgrees ? "record_mismatch"
       : drift.moved.length > 0 ? "source_moved"
       : drift.unchecked ? "source_unchecked"
@@ -512,9 +742,12 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     const finalRoster = held ? roster : advancedRoster;
     const complete = !held && wouldIssue;
     const heldWhy = holdReason === "undelivered" ? ` No delivery is on record for ${undelivered.map(nameOf).join(", ")}, so this is not consent: "${label}" waits for a sign-off.`
-      : holdReason === "producer_floor" ? (asked.some((u) => u !== ticket.assignedDrafterId)
-        ? ` The drafter signed every other sign-off on this review, so one sign-off must come from someone else: "${label}" waits for a sign-off.`
-        : ` Nobody but the drafter was asked, and the drafter's silence is never a sign-off: "${label}" waits for a sign-off.`)
+      : holdReason === "producer_floor" ? (!asked.some((u) => u !== ticket.assignedDrafterId)
+        ? ` Nobody but the drafter was asked, and the drafter's silence is never a sign-off: "${label}" waits for a sign-off.`
+        : onlyDrafterSlot
+          ? ` "${onlyDrafterSlot.label || onlyDrafterSlot.kind}" can be signed only by the drafter, and at least one sign-off must come from someone else, so silence does not stand for it: "${label}" waits for a sign-off.`
+          : ` The drafter signed every other sign-off on this review, so one sign-off must come from someone else: "${label}" waits for a sign-off.`)
+      : holdReason === "independence" ? ` Everyone told also signs, or can sign, a sign-off "${label}" must be independent of (${asked.filter((u) => u !== ticket.assignedDrafterId).map(nameOf).join(", ")}), so their silence is not a second look: "${label}" waits for a sign-off.`
       : holdReason === "record_mismatch" ? ` The review's ledger does not show every other sign-off as given, so the request is not issued on silence: "${label}" waits for a sign-off.`
       : holdReason === "source_moved" ? ` The source revision has moved since this request was raised (${drift.moved.join("; ")}), and issuing over it needs a person's acknowledgement: "${label}" waits for a sign-off.`
       : holdReason === "source_unchecked" ? ` The source documents could not be checked for a newer revision, so the request is not issued on silence: "${label}" waits for a sign-off.`
@@ -527,6 +760,21 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
       actor: { uid: null, email: CONSENT_WINDOW_ACTOR, role: "System" },
       now: nowIso,
     });
+    // WF-19 / LEAK-1 (fix pass 2): an issuing close ENTERS a routed status
+    // (PENDING_IFC) — its pool (the issue queue and the originating
+    // engineer) joins unread_by and the bell, exactly as the route adds it
+    // when a sign-off completes the review. A failed read tells nobody more
+    // (as the route's), said.
+    let pool: string[] = [];
+    if (complete && newStatus !== ticket.status && isRoutedStatus(String(newStatus), { assignedDrafterId: ticket.assignedDrafterId })) {
+      try {
+        pool = (await resolveTicketRecipients(ticket.orgId, newStatus as TicketStatus, undefined, sb as never, { assignedDrafterId: ticket.assignedDrafterId, assignedEngineerId: ticket.assignedEngineerId }))
+          .map((m) => m.uid).filter((u) => !!u);
+        if (pool.length > 0) updates.unread_by = Array.from(new Set([...((updates.unread_by as string[] | undefined) ?? []), ...pool]));
+      } catch (e) {
+        say(`ticket ${ticketId}: the issue queue for ${String(newStatus)} could not be resolved — it is not badged or told of this issue: ${(e as Error)?.message ?? String(e)}`);
+      }
+    }
 
     // The audit row FIRST (a recorded system act), then the compare-and-set.
     const auditId = crypto.randomUUID();
@@ -539,6 +787,7 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
         openedAt: state.openedAt, warnedAt: state.warnedAt, closesAt: state.closesAt, closedAt: nowIso,
         complete, held, ...(holdReason ? { holdReason } : {}),
         ...(undelivered.length ? { undelivered } : {}), ...(floorHolds ? { producerFloor: true } : {}),
+        ...(independenceHolds ? { independence: { conflicted: [...conflicted].sort() } } : {}),
         // HAND-7 (DF-P6), as the route records it: what moved, or that the
         // source was not checked (only an issuing close checks it).
         ...(drift.moved.length ? { sourceDrift: { moved: drift.moved, acknowledged: false } } : {}),
@@ -582,6 +831,17 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     const recErr = await recordNoticeEvents(sb, evRows);
     if (recErr) say(`ticket ${ticketId}: the window closed (audit row ${auditId}) but its notice events were not written — the ticket's history carries the record: ${recErr}`);
 
+    // The ticket ⇄ intent bridge (fix pass 2): an issue-as-is lands at
+    // FINAL_DRAFT, where the route clears the request's document intents
+    // wholesale. Best-effort, said.
+    if (complete && String(newStatus) === "FINAL_DRAFT") {
+      const sheetIds = parseSourceDocuments(ticket.metadata).map((d) => d.id);
+      for (let i = 0; i < sheetIds.length; i += SOURCE_READ_CAP) {
+        const { error: iErr } = await sb.from("document_intents").delete().in("document_id", sheetIds.slice(i, i + SOURCE_READ_CAP)).eq("ticket_id", ticketId).eq("source", "ticket");
+        if (iErr) { say(`ticket ${ticketId}: the request issued, but its document intents were not cleared (they lapse at their expiry): ${iErr.message}`); break; }
+      }
+    }
+
     if (!held) {
       const touched = advancedRoster.slots.filter((s) => s.kind === slotKind);
       const ledgerErr = await writeRosterLedger(sb, { orgId: ticket.orgId, ticketId, roster: advancedRoster, event: "satisfied", slots: touched, actor: { uid: null, name: CONSENT_WINDOW_ACTOR } });
@@ -591,7 +851,7 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     // Tell the people with a stake (bell): the requester, the drafter, the
     // people asked and anyone the review still waits on.
     const waiting = finalRoster.slots.filter((s) => s.mode !== "notify_only" && s.status === "open").flatMap((s) => s.primaries);
-    const told = [...new Set([ticket.requesterId, ticket.assignedDrafterId, ...state.recipients, ...waiting].filter((u): u is string => !!u))];
+    const told = [...new Set([ticket.requesterId, ticket.assignedDrafterId, ...state.recipients, ...waiting, ...pool].filter((u): u is string => !!u))];
     const activeUids = new Set(ctx.members.map((m) => String(m.uid ?? "")));
     const audience = told.filter((u) => activeUids.has(u));
     if (audience.length > 0) {

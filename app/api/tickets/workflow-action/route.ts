@@ -38,7 +38,7 @@ import { isTicketOutcome, outcomesFor, OUTCOME_LABEL } from "@/lib/ticketOutcome
 import { parseOutcomeReasons, checkOutcomeReason, checkBareOutcome, type OutcomeReason } from "@/lib/ticketOutcomeReasons";
 import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
 import { planConsentWindow, CONSENT_REASON } from "@/lib/consentWindow";
-import { afterRosterOpened, recordNoticeEvents, recordNotEmailed, emailPreferenceReason } from "@/lib/consentWindowScan";
+import { afterRosterOpened, recordNoticeEvents, recordNotEmailed, emailPreferenceOf } from "@/lib/consentWindowScan";
 import { SLA_NOTICE_ACTIONS } from "@/lib/ticketSla";
 import { ticketReadScope } from "@/lib/ticketReadScope";
 import { offerableLibraries, libraryLabelForTicket, libraryChoiceFromRow, LIBRARY_CHOICE_COLUMNS, UNNAMED_TARGET_LIBRARY } from "@/lib/ticketLibrary";
@@ -1935,6 +1935,9 @@ export async function POST(req: NextRequest) {
       ticketId: body.ticketId, orgId: ticket.orgId, ticketLabel: `${ticket.ticketId || ""} ${ticket.title}`.trim(),
       roster: rosterOpen, members: consentMembers, policy: capPolicy, resource, requesterId: ticket.requesterId,
       actor: { uid: caller.id, name: memberName(member as { display_name?: unknown; email?: unknown }) },
+      // The window's notices are emailed to whoever's preferences allow it
+      // (DF-P7 fix pass 2), on the same public origin as the fan-out.
+      origin: publicOrigin() || new URL(req.url).origin,
     });
   }
   // The objection's durable record (it survives any bell purge); the
@@ -2478,24 +2481,11 @@ async function fanOut(params: {
   const prefByUid = new Map<string, Record<string, unknown>>();
   ((prefs as Array<Record<string, unknown>>) ?? []).forEach((p) => prefByUid.set(p.user_id as string, p));
 
-  const wantsEmail = (uid: string): boolean => {
-    const p = prefByUid.get(uid);
-    if (!p) return true;
-    if (p.email_enabled === false) return false;
-    if (p.digest_frequency === "never") return false;
-    switch (cls.eventType) {
-      case "assignment":
-      case "engineer_review_requested":
-        return p.email_on_assignment !== false;
-      case "ticket_status_changed":
-      case "ticket_approved":
-      case "ticket_revision_requested":
-      case "ticket_closed":
-        return p.email_on_status_change !== false;
-      default:
-        return true;
-    }
-  };
+  // EVID-9 (DF-P7 fix pass 2): ONE rule decides both whether a member is
+  // emailed and, when not, the reason the not-emailed record names
+  // (lib/consentWindowScan.ts emailPreferenceOf — pinned to
+  // lib/notificationPrefs.ts emailAllowedByPrefs over every event type).
+  const wantsEmail = (uid: string): boolean => emailPreferenceOf(prefByUid.get(uid), cls.eventType).wants;
 
   // NEDGE-10 dw2: a note's mention markup reaches the email as names; the
   // render layer adds the footer (lib/emailRender.ts — the drain then
@@ -2541,8 +2531,8 @@ async function fanOut(params: {
   // the person who opted out. Best-effort: the transition has landed.
   {
     const optedOut = audience
-      .filter((uid) => emailByUid.has(uid) && !wantsEmail(uid))
-      .map((uid) => ({ uid, reason: emailPreferenceReason(prefByUid.get(uid), cls.eventType) ?? "their email preferences" }));
+      .map((uid) => ({ uid, reason: emailByUid.has(uid) ? emailPreferenceOf(prefByUid.get(uid), cls.eventType).reason : null }))
+      .filter((o): o is { uid: string; reason: string } => o.reason !== null);
     const notEmailedErr = await recordNotEmailed(supabaseAdmin, { orgId: ticket.orgId, ticketId, action: action.type, eventType: cls.eventType, optedOut });
     if (notEmailedErr) console.error(`[workflow-action] the not-emailed record for ${optedOut.length} recipient(s) on ticket ${ticketId} was not written (transition committed): ${notEmailedErr}`);
   }

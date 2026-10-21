@@ -40,15 +40,20 @@
 --       forged roster must not open a window (DF-P7 fix pass). The metadata
 --       mirror must agree as well. DEC-12 / DEC-37: the assigned drafter is
 --       never asked (their silence is never a check), nor the requester on a
---       slot independent of the requester.
+--       slot independent of the requester, nor (fix pass 2, DEC-37
+--       slot-to-slot) anyone who signed, or can still sign, another slot of
+--       this review that the consent slot must be independent of — or that
+--       must be independent of it (the ledger's satisfied_by, primaries,
+--       alternates and overriders).
 --   (4) record_consent_window_warning(...) — the same shape for the reminder
 --       (DEC-39): everyone asked (and the assignment queue the caller adds),
 --       one "warned" event each, warned_at and the history line, together.
 --   (5) ticket_review_slots (20261242): a slot may now be satisfied
 --       'consent' — by a window that closed with no objection, a recorded
 --       system act with no signer and no signature. The two CHECKs widen by
---       exactly that shape; every other satisfied slot still names its signer
---       and its signature.
+--       exactly that shape, and only on a consent_window slot (fix pass 2: a
+--       blocking slot can never be recorded satisfied without a signer);
+--       every other satisfied slot still names its signer and its signature.
 --
 -- The auto-advance itself (the cron's recorded system act — audit row first,
 -- then the compare-and-set) is app code: app/api/cron/maintenance/route.ts
@@ -313,6 +318,16 @@ BEGIN
   IF 'requester' = ANY (v_ls.independent_of) AND v_t.requester_id = ANY (p_recipients) THEN
     RAISE EXCEPTION 'consent window: this slot is independent of the requester, who is never asked' USING ERRCODE = '22023';
   END IF;
+  -- DEC-37 slot-to-slot (fix pass 2): nobody who signed, or can still sign,
+  -- a slot of this review that this one must be independent of (or that
+  -- must be independent of it) — their silence would stand for both.
+  IF EXISTS (SELECT 1 FROM ticket_review_slots o
+              WHERE o.ticket_id = p_ticket AND o.roster_id = p_roster AND o.slot_kind <> p_slot
+                AND (o.slot_kind = ANY (v_ls.independent_of) OR p_slot = ANY (o.independent_of))
+                AND ((o.status = 'satisfied' AND o.satisfied_by = ANY (p_recipients))
+                     OR (o.status = 'open' AND (o.primaries && p_recipients OR o.alternates && p_recipients OR o.overriders && p_recipients)))) THEN
+    RAISE EXCEPTION 'consent window: a person asked signs, or can sign, a sign-off this slot must be independent of — their silence is never a second look' USING ERRCODE = '22023';
+  END IF;
   IF EXISTS (SELECT 1 FROM unnest(p_recipients) r
               WHERE NOT EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = v_t.org_id AND m.uid = r AND m.status = 'active')) THEN
     RAISE EXCEPTION 'consent window: a person to ask is no longer an active member — no window is opened' USING ERRCODE = '22023';
@@ -431,32 +446,35 @@ ALTER TABLE ticket_review_slots DROP CONSTRAINT IF EXISTS ticket_review_slots_sa
 ALTER TABLE ticket_review_slots ADD CONSTRAINT ticket_review_slots_satisfied_shape CHECK (
   (status = 'satisfied') = (satisfied_at IS NOT NULL AND (
     (satisfied_by IS NOT NULL AND signature_id IS NOT NULL AND satisfied_via IS DISTINCT FROM 'consent')
-    OR (satisfied_via = 'consent' AND satisfied_by IS NULL AND signature_id IS NULL)))
+    OR (satisfied_via = 'consent' AND mode = 'consent_window' AND satisfied_by IS NULL AND signature_id IS NULL)))
 );
 
 COMMIT;
 
 -- ── Verification + inventory — ONE result set ───────────────────────────────
 -- Probes: ok = true × 10 on a correct paste. Inventory rows: n = the count.
-SELECT 'GAP-113: the ten consent_window_* columns are on tickets, all-or-none when open (CHECK)' AS check,
+-- One ordered result set (fix pass 2: the order is the outer ORDER BY,
+-- never an ORDER BY inside a UNION ALL branch).
+SELECT "check", ok, n FROM (
+SELECT 1 AS sec, 1 AS ord, 'GAP-113: the ten consent_window_* columns are on tickets, all-or-none when open (CHECK)' AS check,
        (SELECT COUNT(*) = 10 FROM information_schema.columns
          WHERE table_schema = 'public' AND table_name = 'tickets' AND column_name LIKE 'consent\_window\_%')
        AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tickets_consent_window_shape')
        AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tickets_consent_window_objector') AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 'the columns are workflow-owned: a client neither writes nor inserts one (trigger enabled; SECURITY INVOKER, search_path pinned)',
+SELECT 1, 2, 'the columns are workflow-owned: a client neither writes nor inserts one (trigger enabled; SECURITY INVOKER, search_path pinned)',
        EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_ticket_consent_window_guard' AND NOT tgisinternal AND tgenabled = 'O')
        AND (SELECT NOT prosecdef AND proconfig @> ARRAY['search_path=public'] FROM pg_proc WHERE proname = 'ticket_consent_window_guard'),
        NULL
 UNION ALL
-SELECT 'DEC-39: ticket_notice_events exists, row security on, append-only (BEFORE UPDATE OR DELETE trigger, enabled)',
+SELECT 1, 3, 'DEC-39: ticket_notice_events exists, row security on, append-only (BEFORE UPDATE OR DELETE trigger, enabled)',
        (SELECT c.relrowsecurity FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
          WHERE ns.nspname = 'public' AND c.relname = 'ticket_notice_events')
        AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_ticket_notice_events_append_only' AND NOT tgisinternal AND tgenabled = 'O'),
        NULL
 UNION ALL
-SELECT 'read follows the ticket (a not_emailed row only by its person); one SELECT policy; no write policy; no client write grant',
+SELECT 1, 4, 'read follows the ticket (a not_emailed row only by its person); one SELECT policy; no write policy; no client write grant',
        (SELECT COUNT(*) = 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'ticket_notice_events' AND cmd = 'SELECT'
          AND qual LIKE '%FROM tickets t%' AND qual LIKE '%not_emailed%')
        AND NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'ticket_notice_events' AND cmd <> 'SELECT')
@@ -466,24 +484,24 @@ SELECT 'read follows the ticket (a not_emailed row only by its person); one SELE
        AND NOT has_table_privilege('anon', 'public.ticket_notice_events', 'SELECT'),
        NULL
 UNION ALL
-SELECT 'DEC-38 / DRLS-16: open_consent_window is SECURITY DEFINER, search_path pinned, EXECUTE for service_role only',
+SELECT 1, 5, 'DEC-38 / DRLS-16: open_consent_window is SECURITY DEFINER, search_path pinned, EXECUTE for service_role only',
        (SELECT prosecdef AND proconfig @> ARRAY['search_path=public'] FROM pg_proc WHERE proname = 'open_consent_window')
        AND NOT has_function_privilege('anon', 'public.open_consent_window(uuid,uuid,text,uuid[],timestamptz,timestamptz,text,text,jsonb)', 'EXECUTE')
        AND NOT has_function_privilege('authenticated', 'public.open_consent_window(uuid,uuid,text,uuid[],timestamptz,timestamptz,text,text,jsonb)', 'EXECUTE')
        AND has_function_privilege('service_role', 'public.open_consent_window(uuid,uuid,text,uuid[],timestamptz,timestamptz,text,text,jsonb)', 'EXECUTE'),
        NULL
 UNION ALL
-SELECT 'DEC-38: the rows and the timestamp are ONE transaction — notifications, then the delivered events, then the count check, then the ticket stamp',
+SELECT 1, 6, 'DEC-38: the rows and the timestamp are ONE transaction — notifications, then the delivered events, then the count check, then the ticket stamp',
        (SELECT prosrc LIKE '%INSERT INTO notifications%INSERT INTO ticket_notice_events%''delivered''%GET DIAGNOSTICS v_n = ROW_COUNT;%IF v_n <> v_asked THEN%UPDATE tickets SET%consent_window_opened_at = v_now,%'
           FROM pg_proc WHERE proname = 'open_consent_window'),
        NULL
 UNION ALL
-SELECT 'fix pass: open_consent_window reads the roster ledger (ticket_review_slots) for the slot and its occupants, and never asks the drafter',
-       (SELECT prosrc LIKE '%FROM ticket_review_slots%p_recipients <@ v_ls.primaries%v_t.assigned_drafter_id = ANY (p_recipients)%'
+SELECT 1, 7, 'fix pass: open_consent_window reads the roster ledger (ticket_review_slots) for the slot and its occupants, never asks the drafter, nor anyone who signs (or can sign) a slot it must be independent of',
+       (SELECT prosrc LIKE '%FROM ticket_review_slots%p_recipients <@ v_ls.primaries%v_t.assigned_drafter_id = ANY (p_recipients)%p_slot = ANY (o.independent_of)%o.satisfied_by = ANY (p_recipients)%'
           FROM pg_proc WHERE proname = 'open_consent_window'),
        NULL
 UNION ALL
-SELECT 'DEC-39: record_consent_window_warning is SECURITY DEFINER, search_path pinned, service_role only, and reaches everyone asked',
+SELECT 1, 8, 'DEC-39: record_consent_window_warning is SECURITY DEFINER, search_path pinned, service_role only, and reaches everyone asked',
        (SELECT prosecdef AND proconfig @> ARRAY['search_path=public'] AND prosrc LIKE '%consent_window_recipients <@ p_recipients%'
           FROM pg_proc WHERE proname = 'record_consent_window_warning')
        AND NOT has_function_privilege('anon', 'public.record_consent_window_warning(uuid,uuid,uuid[],text,text,jsonb)', 'EXECUTE')
@@ -491,17 +509,20 @@ SELECT 'DEC-39: record_consent_window_warning is SECURITY DEFINER, search_path p
        AND has_function_privilege('service_role', 'public.record_consent_window_warning(uuid,uuid,uuid[],text,text,jsonb)', 'EXECUTE'),
        NULL
 UNION ALL
-SELECT 'the roster ledger takes a slot satisfied by a window (consent: no signer, no signature) and still requires both of every other satisfied slot',
+SELECT 1, 9, 'the roster ledger takes a consent_window slot satisfied by a window (consent: no signer, no signature) and still requires both of every other satisfied slot',
        (SELECT pg_get_constraintdef(oid) LIKE '%consent%' FROM pg_constraint WHERE conname = 'ticket_review_slots_satisfied_via_check')
        AND (SELECT pg_get_constraintdef(oid) LIKE '%signature_id IS NOT NULL%' AND pg_get_constraintdef(oid) LIKE '%signature_id IS NULL%'
+                   AND pg_get_constraintdef(oid) LIKE '%consent_window%'
               FROM pg_constraint WHERE conname = 'ticket_review_slots_satisfied_shape'),
        NULL
 UNION ALL
-SELECT 'the window notices are of a declared kind (notification_kinds() lists ticket_status — or the registry is absent and the rail with it)',
+SELECT 1, 10, 'the window notices are of a declared kind (notification_kinds() lists ticket_status — or the registry is absent and the rail with it)',
        COALESCE((SELECT bool_or(prosrc LIKE '%(''ticket_status'',%') FROM pg_proc WHERE proname = 'notification_kinds'), true),
        NULL
 UNION ALL
-SELECT inventory, NULL, n FROM (SELECT ord, inventory, n FROM df_round_g_255_before ORDER BY ord) b
+SELECT 2, ord, inventory, NULL, n FROM df_round_g_255_before
 UNION ALL
-SELECT 'after: consent windows on record (tickets with consent_window_opened_at set — 0 right after the paste)', NULL,
-       (SELECT COUNT(*) FROM tickets WHERE consent_window_opened_at IS NOT NULL)::text;
+SELECT 3, 1, 'after: consent windows on record (tickets with consent_window_opened_at set — 0 right after the paste)', NULL,
+       (SELECT COUNT(*) FROM tickets WHERE consent_window_opened_at IS NOT NULL)::text
+) AS final_rows
+ORDER BY sec, ord;
