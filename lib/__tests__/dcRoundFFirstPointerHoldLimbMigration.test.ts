@@ -297,6 +297,10 @@ describe("20261182 — the guard re-created from its NEWEST earlier body (found 
       // flag set and cleared by the same two lines, byte for byte, around the same promote (pinned in
       // dcRoundFPromoteTransaction.test.ts and dcRoundGDoorBRecordMigration.test.ts).
       "20261252_dc_roundG_door_b_record.sql",
+      // REV-36 (P36): 20261253 — retire_over_hold and put_back_retired_issue's
+      // re-entry limb (its guard only reads the flag) — pinned in
+      // dcRoundGStatusEditorHoldLegMigration.test.ts.
+      "20261253_dc_roundG_status_editor_hold_leg.sql",
     ]);
     expect(stripComments(M)).toContain("current_setting('app.publish_hold_override', true)");
     // the only set_config this file names is inside a probe's LIKE pattern (a string literal), never a call

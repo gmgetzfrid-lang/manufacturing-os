@@ -104,7 +104,9 @@ const FINALIZE = newest("CREATE OR REPLACE FUNCTION finalize_reviewed_promote(")
 describe("20261245 — the guard re-created from its NEWEST earlier body (found by scanning)", () => {
   it("the base is the newest earlier definition (today 20261193 — the scan, not this comment, decides), and it carries REV-28's block and no lock leg", () => {
     expect(defining).toContain(FILE);
-    expect(defining[defining.length - 1]).toBe(FILE);
+    // document-control P36 (20261253) re-creates the guard after this file, from
+    // this body: every later definition must still carry the lock leg byte for byte.
+    for (const later of defining.filter((f) => f > FILE)) expect(between(mig(later), GUARD_HEAD, "\n$$;"), later).toContain(BLOCK);
     expect(PREV < FILE).toBe(true);
     expect(PREV >= "20261193_dc_roundF_ifc_rev_up_first_issue.sql").toBe(true);
     expect(G.live).toContain("      -- REV-28 (document-control Round F wave 3, P25; DEC-77, option (a),");

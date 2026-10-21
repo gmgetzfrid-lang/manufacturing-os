@@ -16,7 +16,9 @@ import {
   startIssuedDocumentClocks,
   putBackRetiredIssue,
   describePutBackStatus,
+  retireOverHold,
   type CreationStatus,
+  type RetireOverHoldDoor,
 } from "@/lib/revisions";
 import type { AssetTag } from "@/types/schema";
 
@@ -47,22 +49,30 @@ export interface Compensation {
   run: () => Promise<void | string>;
 }
 
+/** REV-36 (document-control P36 review fix): why a saga rolled back — set by
+ *  withCompensation once `work` has thrown, before any compensation runs, for
+ *  a compensation that puts it on the record (correctRetiredOverHold). */
+export interface RollbackCause { reason: string | null }
+
 /**
  * Run `work`, giving it a `register` callback to record compensations as it
  * makes durable changes. On any throw, compensations run in reverse order
  * (best-effort) before the original error is re-thrown. Compensation failures
  * are collected and appended to the thrown error so an operator can finish
  * the cleanup by hand if needed; a note a compensation answered is appended
- * too ("Rollback note: …").
+ * too ("Rollback note: …"). `rollback` (P36 review fix) carries the thrown
+ * error's message to the compensations that record why the saga rolled back.
  */
 export async function withCompensation<T>(
-  work: (register: (c: Compensation) => void) => Promise<T>,
+  work: (register: (c: Compensation) => void, rollback: RollbackCause) => Promise<T>,
 ): Promise<T> {
   const comps: Compensation[] = [];
   const register = (c: Compensation) => comps.push(c);
+  const rollback: RollbackCause = { reason: null };
   try {
-    return await work(register);
+    return await work(register, rollback);
   } catch (err) {
+    rollback.reason = (err as Error)?.message || String(err);
     const failures: string[] = [];
     const notes: string[] = [];
     for (let i = comps.length - 1; i >= 0; i--) {
@@ -109,6 +119,64 @@ export async function archiveRolledBackDoc(docId: string, actor: ActorContext): 
     })
     .eq("id", docId);
   if (error) throw new Error(error.message);
+}
+
+/** REV-36 (document-control P36 review fix): the compensation for a
+ *  supersession retire_over_hold RECORDED as a pass over a hold (it answered
+ *  superseded_over_hold — a split / merge source flip, a reversal's park)
+ *  when the saga then rolls back and puts the document back. The
+ *  REV_HOLD_OVERRIDDEN row stays (audit rows are append-only), so this writes
+ *  the correction beside it — REV_HOLD_OVERRIDE_UNDONE (corrects
+ *  REV_HOLD_OVERRIDDEN, the door's `via`, the status it was put back to and
+ *  why the saga rolled back) — as reverse.ts correctRecordedPass corrects a
+ *  recorded restore (P18). REGISTER IT BEFORE the put-back's own
+ *  compensation, so the LIFO rollback runs it AFTER the put-back; it writes
+ *  only once the row reads back out of Superseded (the put-back landed — a
+ *  recorded pass is always taken from a status other than Superseded): if the
+ *  put-back did not land, the pass over the hold stands and its record is
+ *  true (the put-back's own failure is already named). A correction that
+ *  cannot be confirmed or written throws, so withCompensation names it for
+ *  manual attention. `pass.recorded` is set by the caller once the write
+ *  answered superseded_over_hold; until then this does nothing. */
+export function correctRetiredOverHold(input: {
+  documentId: string;
+  via: RetireOverHoldDoor;
+  label: string;
+  pass: { recorded: boolean };
+  actor: ActorContext;
+  rollback?: RollbackCause | null;
+}): Compensation {
+  const { documentId, via, label, pass, actor } = input;
+  return {
+    describe: `correct the hold-override record on ${label}`,
+    run: async () => {
+      if (!pass.recorded) return;
+      const { data, error } = await supabase.from("documents").select("status").eq("id", documentId).maybeSingle();
+      if (error || !data) {
+        throw new Error(`whether ${label} was put back could not be confirmed (${error?.message ?? "not found"}), so the record of its supersession over its hold (REV_HOLD_OVERRIDDEN) was not corrected — check its status and history`);
+      }
+      const putBackTo = (data as { status?: string | null }).status ?? null;
+      if (putBackTo === "Superseded") return;
+      const { error: logErr } = await logAuditAction({
+        action: "REV_HOLD_OVERRIDE_UNDONE",
+        resourceId: documentId,
+        resourceType: "document",
+        orgId: actor.orgId,
+        userId: actor.actorUserId,
+        userEmail: actor.actorEmail,
+        userRole: actor.actorRole,
+        details: {
+          via,
+          corrects: "REV_HOLD_OVERRIDDEN",
+          putBackTo,
+          rollbackReason: input.rollback?.reason ?? null,
+        },
+      });
+      if (logErr) {
+        throw new Error(`the record of ${label}'s supersession over its hold (REV_HOLD_OVERRIDDEN) could not be corrected (${logErr}) — its history shows a hold override that did not stand`);
+      }
+    },
+  };
 }
 
 /** The supersession fields a source held before a lifecycle operation
@@ -472,15 +540,33 @@ export interface SupersededSource {
  *  (REV-10: revoked_at is frozen, 20261080) — is NOT done here: the caller
  *  runs completeSourceRetirement after its last step that can still roll
  *  back. Until then the source is retired at the database, so finalize
- *  refuses its draft (REV-5) and the share routes refuse its status (P1). */
+ *  refuses its draft (REV-5) and the share routes refuse its status (P1).
+ *
+ *  REV-36 (document-control P36, 20261253): when Document Control chose to
+ *  proceed over the source's active hold (`forceHold` — the split / merge's
+ *  HLD-2 `force`), the flip goes through lib/revisions.ts retireOverHold —
+ *  the same write, recorded as REV_HOLD_OVERRIDDEN in its transaction, which
+ *  the publish guard now requires for a controller's entry into Superseded
+ *  over a hold — and the direct write only while the function is absent
+ *  (today's path). Without `forceHold` the flip is the direct write, as
+ *  before. P36 review fix: a flip that function RECORDED (a pass over the
+ *  hold) is corrected on the record — REV_HOLD_OVERRIDE_UNDONE — when the
+ *  saga then puts the source back (correctRetiredOverHold, registered before
+ *  the restore so it runs after it). */
 export async function markSupersededAndLink(input: {
   sourceDocId: string;
   replacementDocIds: string[];
   reason: string;
   mocReference?: string;
   actor: ActorContext;
+  /** REV-36 (P36): the door ("split" / "merge") when Document Control chose
+   *  to proceed over the source's active hold (its HLD-2 `force`). */
+  forceHold?: "split" | "merge";
   /** The caller's compensation register (withCompensation). */
   register: (c: Compensation) => void;
+  /** P36 review fix: the caller's saga's rollback cause (withCompensation's
+   *  second argument), for the correction of a recorded pass it undoes. */
+  rollback?: RollbackCause;
   /** How the source is named in a compensation failure. */
   label: string;
 }): Promise<SupersededSource> {
@@ -511,6 +597,13 @@ export async function markSupersededAndLink(input: {
   }
   const addedPairs = replacementDocIds.filter((id) => !preExisting.has(id));
 
+  // P36 review fix: a flip retire_over_hold recorded as a pass over a hold is
+  // corrected on the record if the saga then puts the source back —
+  // registered BEFORE the restore, so the LIFO rollback runs it after it.
+  const recordedPass = { recorded: false };
+  if (input.forceHold) {
+    register(correctRetiredOverHold({ documentId: sourceDocId, via: input.forceHold, label, pass: recordedPass, actor, rollback: input.rollback }));
+  }
   let flipped = false;
   register({
     describe: `restore ${label} from Superseded`,
@@ -528,22 +621,33 @@ export async function markSupersededAndLink(input: {
     },
   });
 
-  const { data: flippedRows, error: updErr } = await supabase
-    .from("documents")
-    .update({
-      status: "Superseded",
-      superseded_at: now,
-      superseded_by_user: actor.actorUserId,
-      supersession_reason: reason.trim(),
-      supersession_moc: mocReference?.trim() || null,
-      updated_at: now,
-      updated_by: actor.actorUserId,
-    })
-    .eq("id", sourceDocId)
-    .select("id");
-  if (updErr) throw new Error(updErr.message);
-  if (((flippedRows as unknown[] | null) ?? []).length === 0) {
-    throw new Error("The source document was NOT superseded — you don't have authority to retire it.");
+  // REV-36 (P36): over a hold Document Control chose to proceed over, the
+  // recorded door; absent (before 20261253), the direct write below.
+  const door = input.forceHold
+    ? await retireOverHold({ documentId: sourceDocId, door: input.forceHold, reason: reason.trim(), at: now, supersessionMoc: mocReference?.trim() || null })
+    : null;
+  if (door?.kind === "refused") {
+    throw new Error(door.noRow ? "The source document was NOT superseded — you don't have authority to retire it." : door.reason);
+  }
+  if (door?.kind === "landed") recordedPass.recorded = door.recorded;
+  if (door?.kind !== "landed") {
+    const { data: flippedRows, error: updErr } = await supabase
+      .from("documents")
+      .update({
+        status: "Superseded",
+        superseded_at: now,
+        superseded_by_user: actor.actorUserId,
+        supersession_reason: reason.trim(),
+        supersession_moc: mocReference?.trim() || null,
+        updated_at: now,
+        updated_by: actor.actorUserId,
+      })
+      .eq("id", sourceDocId)
+      .select("id");
+    if (updErr) throw new Error(updErr.message);
+    if (((flippedRows as unknown[] | null) ?? []).length === 0) {
+      throw new Error("The source document was NOT superseded — you don't have authority to retire it.");
+    }
   }
   flipped = true;
 

@@ -212,6 +212,10 @@ describe("20261159 — the guard re-created from its NEWEST earlier body (found 
       // DCK-18 (P35): and 20261252, which re-creates 20261151's finalize_reviewed_promote (the same two
       // set / clear lines, byte for byte) — pinned in dcRoundFPromoteTransaction.test.ts.
       if (f === "20261252_dc_roundG_door_b_record.sql") continue;
+      // REV-36 (P36): and 20261253 — retire_over_hold and put_back_retired_issue's re-entry limb
+      // set it around their own write (its guard only reads it) — pinned in
+      // dcRoundGStatusEditorHoldLegMigration.test.ts.
+      if (f === "20261253_dc_roundG_status_editor_hold_leg.sql") continue;
       expect(withoutFlagReads(stripComments(mig(f))), f).not.toMatch(/publish_hold_override/);
     }
     expect(withoutFlagReads("SET LOCAL app.publish_hold_override = p_doc::text;")).toMatch(/publish_hold_override/);

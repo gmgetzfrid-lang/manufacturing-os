@@ -205,7 +205,10 @@ describe("20261151 — the guard and publish_revision re-created from their NEWE
       expect(f).toContain("  IF v_hold_forced THEN\n    PERFORM set_config('app.publish_hold_override', p_document_id::text, true);\n  END IF;\n  UPDATE documents\n     SET current_version_id = p_pending_id,");
       expect(f).toContain("  GET DIAGNOSTICS v_n = ROW_COUNT;\n  IF v_hold_forced THEN\n    PERFORM set_config('app.publish_hold_override', '', true);\n  END IF;\n  IF v_n = 0 THEN\n    RETURN 'no_match';");
     }
-    for (const f of files.filter((x) => x !== FILE && x !== RESTORE_DOOR && x !== PUT_BACK_DOOR && x !== NULL_PUT_BACK_DOORS && x !== DOOR_B_RECORD)) expect(withoutFlagReads(stripComments(mig(f))), f).not.toMatch(/publish_hold_override/);
+    // REV-36 (P36): and 20261253 — retire_over_hold and put_back_retired_issue's re-entry limb — pinned in
+    // dcRoundGStatusEditorHoldLegMigration.test.ts.
+    const HOLD_LEG_DOORS = "20261253_dc_roundG_status_editor_hold_leg.sql";
+    for (const f of files.filter((x) => x !== FILE && x !== RESTORE_DOOR && x !== PUT_BACK_DOOR && x !== NULL_PUT_BACK_DOORS && x !== DOOR_B_RECORD && x !== HOLD_LEG_DOORS)) expect(withoutFlagReads(stripComments(mig(f))), f).not.toMatch(/publish_hold_override/);
     expect(withoutFlagReads("SET LOCAL app.publish_hold_override = p_doc::text;")).toMatch(/publish_hold_override/);
   });
 

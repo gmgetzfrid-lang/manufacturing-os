@@ -71,7 +71,7 @@ vi.mock("@/lib/reviewControl", async (importOriginal) => {
 
 import { supabase } from "@/lib/supabase";
 import {
-  changeDocumentStatus, finishRetirementDuties, finishBulkArchive, gateStatusEditorRetirement, isSupersessionMocRequired, RetirementOverrideReasonRequiredError,
+  changeDocumentStatus, finishRetirementDuties, finishBulkArchive, gateStatusEditorRetirement, isSupersessionMocRequired, RetirementOverrideReasonRequiredError, authorizeArchive,
   SUPERSEDE_MOC_REQUIRED, SupersessionMocRequiredError, supersedeDocument, notifyHolderOfRetirement, recallsCopyHolders,
 } from "@/lib/revisions";
 import { notify } from "@/lib/inAppNotifications";
@@ -247,7 +247,8 @@ describe("REV-34 (c) / REV-33 — finishRetirementDuties: the MOC on the record,
       docs: [{ documentId: "c1", label: "C1", retiredFrom: "Issued", mocReference: " MOC-7 ", checkoutHolder: { checkedOutBy: OTHER, checkedOutByName: "Eli" }, libraryId: "lib1" }],
     });
     // P34 final fix pass: the closure is in the result, with its count — not only the console
-    expect(out).toEqual({ problems: [], acksClosed: [{ documentId: "c1", label: "C1", closed: 1 }] });
+    // (document-control P36, REV-35: the holder told personally is named in holdersTold, for the recall's FYI)
+    expect(out).toEqual({ problems: [], acksClosed: [{ documentId: "c1", label: "C1", closed: 1 }], holdersTold: ["c1"] });
     expect(audit("SUPERSEDE_DOC")[0].details).toMatchObject({ mocReference: "MOC-7", reason: "Replaced", retiredFrom: "Issued" });
     expect(T("distribution_acks").find((a) => a.id === "ak1")!.superseded_at).toBeTruthy();
     expect(T("distribution_acks").find((a) => a.id === "ak2")!.superseded_at).toBeNull();
@@ -335,6 +336,8 @@ describe("REV-33 / REV-34 (b) / (c) — the library page's metadata save into a 
       selectedDoc: asDoc({ ...d, ...(opts.pageSees ?? {}) }), uid: ME, userEmail: "cara@x", activeRole: state.role, activeOrgId: ORG,
       library: { orgId: ORG, uniquenessKeys: ["documentNumber"] }, supabase, changeDocumentStatus, finishRetirementDuties,
       gateStatusEditorRetirement, isSupersessionMocRequired, SUPERSEDE_MOC_REQUIRED,
+      // document-control P36 (REV-36 (4)): the archive's pre-check a save to Archived runs first
+      authorizeArchive,
       isIssueTransition, isUnguardedEntryIntoForce, isControlledIssueStatus, isRetiredStatus, computeUniquenessKey,
       setError: (v: string | null) => { st.error = v; },
       appAlert: async (a: Record<string, unknown>) => { st.alerts.push(a); },

@@ -71,6 +71,9 @@ const state = vi.hoisted(() => ({
    *  (a transport error after the database committed: supabase-js returns
    *  { error: "Failed to fetch" }) — review fix 4. */
   lostUpdate: null as null | ((table: string, patch: Row) => boolean),
+  /** document-control P36 (REV-36, 20261253): retire_over_hold's answer — null = the database before
+   *  the paste (PGRST202, the direct write these tests pin); a function = the paste applied. */
+  retireOverHold: null as null | ((args: Row) => { data: unknown; error: unknown }),
 }));
 
 /** Wrap a fake builder so a plain read can be made to fail (a PostgREST
@@ -116,6 +119,8 @@ vi.mock("@/lib/supabase", () => ({
       rpc: (...a: unknown[]) => (a[0] === "finalize_reviewed_promote" ? Promise.resolve({ data: null, error: { code: "PGRST202", message: "Could not find the function public.finalize_reviewed_promote" } })
         : a[0] === "restore_reversed_source" ? Promise.resolve({ data: null, error: { code: "PGRST202", message: "Could not find the function public.restore_reversed_source" } })
         : a[0] === "put_back_retired_issue" ? Promise.resolve({ data: null, error: { code: "PGRST202", message: "Could not find the function public.put_back_retired_issue" } })
+        // REV-36 (P36): nor, before 20261253, retire_over_hold — a forced split / merge flip and a forced park are then the direct writes these tests pin (the recorded door is driven in dcRoundGP36RetireOverHold.test.ts).
+        : a[0] === "retire_over_hold" ? Promise.resolve(state.retireOverHold ? state.retireOverHold(a[1] as Row) : { data: null, error: { code: "PGRST202", message: "Could not find the function public.retire_over_hold" } })
         : state.rpc(...a)),
     };
   },
@@ -231,6 +236,7 @@ beforeEach(() => {
   state.db = newFakeDb();
   state.db.unique.document_supersessions = [["superseded_doc_id", "replacement_doc_id"]];
   state.rpc.mockReset();
+  state.retireOverHold = null;
   state.canControl = true;
   state.isOwner = false;
   state.roles = ["Engineer"];
@@ -2059,5 +2065,197 @@ describe("VFY-6 (P15 third review fix) — a reversal names a custom (Other) hol
     const e = await reverseSplit({ splitAuditEventId: "ev-v6", reason: "wrong split", orgId: ORG, actorUserId: ME }).then((): never => { throw new Error("expected a rejection"); }, (x: unknown) => x as Error);
     expect(e.message).toMatch(/^Cannot reverse without an explicit decision: active holds on V6A \(Other: waiting on vendor weld map\); V6B \(Client Review\), which the reversal parks as Superseded\./);
     expect(state.db.calls.some((c) => c.table === "documents" && c.method === "update")).toBe(false);
+  });
+});
+
+// ─── document-control P36 (REV-36, 20261253): the single doors' recorded pass over a hold ───
+describe("REV-36 (P36) — a split / merge over a held source and a reversal's park of a held sheet write through retire_over_hold once 20261253 is pasted (recorded); before it, the direct write as today", () => {
+  const target = (n: string) => ({ documentNumber: n, title: n, assetTags: [], file: pdf(`${n}.pdf`), initialRevLabel: "0", changeLog: "" });
+  /** The paste applied: the function makes the door's write (as the fake's row) and answers as 20261253 does. */
+  const pasted = (calls: Row[]) => (args: Row) => {
+    calls.push(args);
+    const row = docRow(String(args.p_document_id));
+    const held = T("document_holds").some((h) => h.document_id === row.id && h.released_at == null);
+    Object.assign(row, { status: "Superseded", superseded_at: args.p_at, superseded_by_user: ME, supersession_reason: args.p_reason, updated_at: args.p_at, updated_by: ME, ...(args.p_via === "reversal_park" ? {} : { supersession_moc: args.p_supersession_moc }) });
+    const controller = state.roles.includes("DocCtrl") || state.roles.includes("Admin");
+    return { data: held && controller ? "superseded_over_hold" : "superseded", error: null };
+  };
+
+  it("split, Document Control proceeding over the source's hold: the flip is retire_over_hold('split', the reason, the MOC) — no direct write of the source's status; the holds carried first, as before", async () => {
+    state.roles = ["DocCtrl"];
+    const calls: Row[] = [];
+    state.retireOverHold = pasted(calls);
+    const s0 = seedDoc("p36s"); seedHold("p36s");
+    const r = await splitDocument({ source: asRecord(s0), libraryId: LIB, targets: [target("P36A"), target("P36B")], reason: "declutter", mocReference: " MOC-36 ", orgId: ORG, actorUserId: ME, force: true });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ p_document_id: "p36s", p_via: "split", p_reason: "declutter", p_supersession_moc: "MOC-36" });
+    expect(typeof calls[0].p_at).toBe("string");
+    expect(docRow("p36s")).toMatchObject({ status: "Superseded", supersession_reason: "declutter", supersession_moc: "MOC-36" });
+    const sourceStatusWrites = state.db.calls.filter((c) => c.table === "documents" && c.method === "update" && (c.args[0] as Row).status === "Superseded");
+    expect(sourceStatusWrites).toHaveLength(0);
+    expect(r.holdsCopied).toBe(2);
+  });
+
+  it("merge, Document Control proceeding over a source's hold: each absorbed source's flip is retire_over_hold('merge')", async () => {
+    state.roles = ["DocCtrl"];
+    const calls: Row[] = [];
+    state.retireOverHold = pasted(calls);
+    const a = seedDoc("p36m1"); const b = seedDoc("p36m2"); seedHold("p36m2");
+    await mergeDocuments({
+      sources: [asRecord(a), asRecord(b)],
+      target: { kind: "create_new", documentNumber: "P36-M", title: "m", assetTags: [], file: pdf("m.pdf"), initialRevLabel: "0", changeLog: "", libraryId: LIB },
+      reason: "combine", orgId: ORG, actorUserId: ME, force: true,
+    });
+    expect(calls.map((c) => [c.p_document_id, c.p_via])).toEqual([["p36m1", "merge"], ["p36m2", "merge"]]);
+    expect(docRow("p36m1").status).toBe("Superseded");
+    expect(docRow("p36m2").status).toBe("Superseded");
+  });
+
+  it("the reversal's park: the held sheet is parked through retire_over_hold('reversal_park', no MOC); the unheld sheet by the direct write, as before", async () => {
+    state.roles = ["DocCtrl"];
+    const calls: Row[] = [];
+    state.retireOverHold = pasted(calls);
+    seedDoc("p36r", { status: "Superseded", uniqueness_key: "p36r-key", superseded_at: "2026-09-01T10:00:00Z", supersession_reason: "split" });
+    for (const x of ["a", "b"]) seedDoc(`p36r${x}`, { uniqueness_key: `p36r${x}-key` });
+    T("document_supersessions").push(
+      { id: "l-p36ra", org_id: ORG, superseded_doc_id: "p36r", replacement_doc_id: "p36ra", reason: "split", created_by: ME, created_at: "2026-09-01T10:00:00Z" },
+      { id: "l-p36rb", org_id: ORG, superseded_doc_id: "p36r", replacement_doc_id: "p36rb", reason: "split", created_by: ME, created_at: "2026-09-01T10:00:00Z" },
+    );
+    (state.db.tables.audit_logs ??= []).push({ id: "ev-p36r", action: "DOC_SPLIT", resource_id: "p36r", timestamp: "2026-09-01T10:00:00Z", details: { replacementDocIds: ["p36ra", "p36rb"], priorStatus: "Issued", auditAt: "2026-09-01T10:00:00Z" } });
+    seedHold("p36ra");
+    await reverseSplit({ splitAuditEventId: "ev-p36r", reason: "wrong split", orgId: ORG, actorUserId: ME, force: true });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ p_document_id: "p36ra", p_via: "reversal_park", p_reason: "Reverted split — wrong split", p_supersession_moc: null });
+    expect(docRow("p36ra").status).toBe("Superseded");
+    expect(docRow("p36rb").status).toBe("Superseded");
+    const bare = state.db.calls.filter((c) => c.table === "documents" && c.method === "update" && (c.args[0] as Row).status === "Superseded");
+    expect(bare).toHaveLength(1); // p36rb's park, the direct write
+    expect(docRow("p36r").status).toBe("Issued");
+  });
+
+  it("REGRESSION: a split with no force (no hold) never calls retire_over_hold — the direct write, exactly as before, even once 20261253 is pasted", async () => {
+    state.roles = ["DocCtrl"];
+    const calls: Row[] = [];
+    state.retireOverHold = pasted(calls);
+    const s0 = seedDoc("p36n");
+    await splitDocument({ source: asRecord(s0), libraryId: LIB, targets: [target("P36NA"), target("P36NB")], reason: "declutter", orgId: ORG, actorUserId: ME });
+    expect(calls).toHaveLength(0);
+    expect(docRow("p36n").status).toBe("Superseded");
+    expect(state.db.calls.filter((c) => c.table === "documents" && c.method === "update" && (c.args[0] as Row).status === "Superseded")).toHaveLength(1);
+  });
+
+  it("a refusal from retire_over_hold (the guard's, after the paste) refuses the split in its words and rolls the whole split back — the source is never superseded", async () => {
+    state.roles = ["DocCtrl"];
+    state.retireOverHold = () => ({ data: null, error: { code: "23514", message: "Document has an active hold; a held document can't be superseded or voided here" } });
+    const s0 = seedDoc("p36x"); seedHold("p36x");
+    await expect(splitDocument({ source: asRecord(s0), libraryId: LIB, targets: [target("P36XA"), target("P36XB")], reason: "x", orgId: ORG, actorUserId: ME, force: true }))
+      .rejects.toThrow(/a held document can't be superseded or voided here[\s\S]*rolled back/);
+    expect(docRow("p36x").status).toBe("Issued");
+    expect(T("documents").filter((d) => d.id !== "p36x").every((d) => d.status === "Archived")).toBe(true);
+  });
+});
+
+// ─── document-control P36 review fix: a recorded pass the saga undoes is corrected on the record ───
+describe("REV-36 (P36 review fix) — a split / merge flip or a reversal park retire_over_hold RECORDED, which the saga then rolls back, gets its correction (REV_HOLD_OVERRIDE_UNDONE) once the document reads back put back", () => {
+  const target = (n: string) => ({ documentNumber: n, title: n, assetTags: [], file: pdf(`${n}.pdf`), initialRevLabel: "0", changeLog: "" });
+  /** The paste applied: the door's write on the fake's row, answered as 20261253 does (the recorded pass for Document Control over a hold). */
+  const pasted = (calls: Row[]) => (args: Row) => {
+    calls.push(args);
+    const row = docRow(String(args.p_document_id));
+    const held = T("document_holds").some((h) => h.document_id === row.id && h.released_at == null);
+    Object.assign(row, { status: "Superseded", superseded_at: args.p_at, superseded_by_user: ME, supersession_reason: args.p_reason, updated_at: args.p_at, updated_by: ME });
+    const controller = state.roles.includes("DocCtrl") || state.roles.includes("Admin");
+    return { data: held && controller && args.p_force_hold === true ? "superseded_over_hold" : "superseded", error: null };
+  };
+
+  it("split: the recorded flip, then the lineage write refused → the source is put back to Issued, THEN the correction is written (via split, corrects REV_HOLD_OVERRIDDEN, put back to Issued, why the saga rolled back); retire_over_hold was asked with p_force_hold", async () => {
+    state.roles = ["DocCtrl"];
+    const calls: Row[] = [];
+    state.retireOverHold = pasted(calls);
+    const s0 = seedDoc("p36c"); seedHold("p36c");
+    state.db.refuseWrites.add("document_supersessions");
+    await expect(splitDocument({ source: asRecord(s0), libraryId: LIB, targets: [target("P36CA"), target("P36CB")], reason: "declutter", orgId: ORG, actorUserId: ME, force: true }))
+      .rejects.toThrow(/replacement links could not be recorded[\s\S]*rolled back/);
+    expect(calls[0]).toMatchObject({ p_document_id: "p36c", p_via: "split", p_force_hold: true });
+    expect(docRow("p36c").status).toBe("Issued");
+    const undone = audit("REV_HOLD_OVERRIDE_UNDONE");
+    expect(undone).toHaveLength(1);
+    expect(undone[0]).toMatchObject({ resource_id: "p36c", resource_type: "document", org_id: ORG, user_id: ME });
+    expect(undone[0].details).toMatchObject({ via: "split", corrects: "REV_HOLD_OVERRIDDEN", putBackTo: "Issued" });
+    expect(String((undone[0].details as Row).rollbackReason)).toMatch(/replacement links could not be recorded/);
+  });
+
+  it("merge: each recorded source flip the rollback undoes is corrected (via merge)", async () => {
+    state.roles = ["DocCtrl"];
+    const calls: Row[] = [];
+    state.retireOverHold = pasted(calls);
+    const a = seedDoc("p36cm1"); const b = seedDoc("p36cm2"); seedHold("p36cm1"); seedHold("p36cm2");
+    state.db.refuseWrites.add("document_supersessions");
+    await expect(mergeDocuments({
+      sources: [asRecord(a), asRecord(b)],
+      target: { kind: "create_new", documentNumber: "P36-CM", title: "m", assetTags: [], file: pdf("m.pdf"), initialRevLabel: "0", changeLog: "", libraryId: LIB },
+      reason: "combine", orgId: ORG, actorUserId: ME, force: true,
+    })).rejects.toThrow(/rolled back/);
+    expect(docRow("p36cm1").status).toBe("Issued");
+    const undone = audit("REV_HOLD_OVERRIDE_UNDONE");
+    expect(undone.map((r) => r.resource_id)).toEqual(["p36cm1"]); // the first flip landed; the refusal came at its lineage
+    expect(undone[0].details).toMatchObject({ via: "merge", corrects: "REV_HOLD_OVERRIDDEN", putBackTo: "Issued" });
+  });
+
+  it("the reversal: the held sheet's recorded park, then the source's restore refused → the sheet is un-parked, THEN its park is corrected (via reversal_park, why the saga rolled back); the unheld sheet's bare park needs none", async () => {
+    state.roles = ["DocCtrl"];
+    const calls: Row[] = [];
+    state.retireOverHold = pasted(calls);
+    seedDoc("p36q", { status: "Superseded", uniqueness_key: "p36q-key", superseded_at: "2026-09-01T10:00:00Z", supersession_reason: "split" });
+    for (const x of ["a", "b"]) seedDoc(`p36q${x}`, { uniqueness_key: `p36q${x}-key` });
+    T("document_supersessions").push(
+      { id: "l-p36qa", org_id: ORG, superseded_doc_id: "p36q", replacement_doc_id: "p36qa", reason: "split", created_by: ME, created_at: "2026-09-01T10:00:00Z" },
+      { id: "l-p36qb", org_id: ORG, superseded_doc_id: "p36q", replacement_doc_id: "p36qb", reason: "split", created_by: ME, created_at: "2026-09-01T10:00:00Z" },
+    );
+    (state.db.tables.audit_logs ??= []).push({ id: "ev-p36q", action: "DOC_SPLIT", resource_id: "p36q", timestamp: "2026-09-01T10:00:00Z", details: { replacementDocIds: ["p36qa", "p36qb"], priorStatus: "Issued", auditAt: "2026-09-01T10:00:00Z" } });
+    seedHold("p36qa");
+    state.db.beforeUpdate!.documents = (next, old) => {
+      if (old.id === "p36q" && next.status === "Issued") throw { code: "42501", message: "restore refused" };
+      return next;
+    };
+    await expect(reverseSplit({ splitAuditEventId: "ev-p36q", reason: "wrong split", orgId: ORG, actorUserId: ME, force: true }))
+      .rejects.toThrow(/p36q could not be restored to Issued \(restore refused\)[\s\S]*rolled back/);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ p_document_id: "p36qa", p_via: "reversal_park", p_force_hold: true });
+    expect(docRow("p36qa").status).toBe("Issued");
+    expect(docRow("p36qb").status).toBe("Issued");
+    const undone = audit("REV_HOLD_OVERRIDE_UNDONE");
+    expect(undone.map((r) => r.resource_id)).toEqual(["p36qa"]);
+    expect(undone[0].details).toMatchObject({ via: "reversal_park", corrects: "REV_HOLD_OVERRIDDEN", putBackTo: "Issued" });
+    expect(String((undone[0].details as Row).rollbackReason)).toMatch(/p36q could not be restored to Issued/);
+  });
+
+  it("the put-back did NOT land: the source stays Superseded — the pass over the hold stands, so its record is true and NO correction is written (the put-back's own failure is named)", async () => {
+    state.roles = ["DocCtrl"];
+    state.retireOverHold = pasted([]);
+    const s0 = seedDoc("p36d"); seedHold("p36d");
+    state.db.refuseWrites.add("document_supersessions");
+    state.db.beforeUpdate!.documents = (next, old) => {
+      if (old.id === "p36d" && next.status === "Issued") throw { code: "42501", message: "put-back refused" };
+      return next;
+    };
+    await expect(splitDocument({ source: asRecord(s0), libraryId: LIB, targets: [target("P36DA"), target("P36DB")], reason: "declutter", orgId: ORG, actorUserId: ME, force: true }))
+      .rejects.toThrow(/source p36d is still Superseded[\s\S]*put-back refused/);
+    expect(docRow("p36d").status).toBe("Superseded");
+    expect(audit("REV_HOLD_OVERRIDE_UNDONE")).toHaveLength(0);
+  });
+
+  it("REGRESSION: a flip that was NOT a recorded pass (retire_over_hold answered superseded, or the function absent — today's direct write) rolls back with no correction written", async () => {
+    state.roles = ["DocCtrl"];
+    state.retireOverHold = (args: Row) => { Object.assign(docRow(String(args.p_document_id)), { status: "Superseded" }); return { data: "superseded", error: null }; };
+    const s0 = seedDoc("p36e");
+    state.db.refuseWrites.add("document_supersessions");
+    await expect(splitDocument({ source: asRecord(s0), libraryId: LIB, targets: [target("P36EA"), target("P36EB")], reason: "x", orgId: ORG, actorUserId: ME, force: true })).rejects.toThrow(/rolled back/);
+    expect(docRow("p36e").status).toBe("Issued");
+    state.retireOverHold = null;
+    const s1 = seedDoc("p36f"); seedHold("p36f");
+    await expect(splitDocument({ source: asRecord(s1), libraryId: LIB, targets: [target("P36FA"), target("P36FB")], reason: "x", orgId: ORG, actorUserId: ME, force: true })).rejects.toThrow(/rolled back/);
+    expect(docRow("p36f").status).toBe("Issued");
+    expect(audit("REV_HOLD_OVERRIDE_UNDONE")).toHaveLength(0);
   });
 });

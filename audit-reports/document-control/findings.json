@@ -15,17 +15,17 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 184,
+    "findings": 185,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 19,
       "HIGH": 56,
       "MEDIUM": 78,
-      "LOW": 31
+      "LOW": 32
     },
     "by_status": {
-      "RESOLVED": 168,
-      "OPEN": 14,
+      "RESOLVED": 170,
+      "OPEN": 13,
       "RESOLVED (as split under `DEC-31`; ruled by the integrator at the P27 merge, 2026-10-20 (`DEC-90`) — the access-control door, a member reading `portal_token` over REST, stays open until `DIST-18` lands)": 1,
       "RESOLVED (2026-10-21, the integrator's fix pass at the P28 merge — ruled by the integrator at the P28 merge, 2026-10-21 (`DEC-90`): done-when 2 landed; the restore hooks beyond the brief's ruling (4) ratified)": 1
     }
@@ -3588,7 +3588,7 @@
       "id": "REV-36",
       "title": "A controller's retirement through a status editor is held back from an active hold and a missing MOC only by the app's pre-write read: the database's guard returns for a controller before its hold check, the page reads the row twice, and the metadata save to Archived runs no archive pre-check",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": null,
       "verification_note": "READ (on `fleet/DC-P34-status-editor-parity-ii`: `supabase/migrations/20261245_dc_roundG_publish_guard_lock_leg.sql:945`–`:946` (`IF is_org_controller(NEW.org_id) THEN RETURN NEW;`) before its hold refusal at `:960`–`:965`; `lib/revisions.ts` `gateStatusEditorRetirement` (the lock and holds read by `fetchPublishGuardState`, before the write) and `assertSupersessionMoc`; `app/(protected)/documents/[libraryId]/page.tsx` `saveMetadata` — its read of the row (`.select(\"status\")`, `:3046`) and then `changeDocumentStatus`'s own read; `lib/revisions.ts` `authorizeArchive` (`:2224`), which `archiveDocument` runs and the metadata save to Archived does not)",
       "blast_radius": null,
@@ -4695,7 +4695,7 @@
       "id": "REV-35",
       "title": "A status editor's supersession sends no package owners' notice, and the checkout holder it now tells personally is not left out of the watchers' FYI",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": null,
       "verification_note": "READ (on `fleet/DC-P34-status-editor-parity-ii`: `lib/revisions.ts` `finishRetirementDuties` — the holder's notice, no `notifyPackagesOfRetirement`; `changeDocumentStatus`'s `recallOnRetirement` and `lib/staleCopies.ts` `recallRetiredBatch` — `personallyToldElsewhere: { checkoutHolder: false, packageOwners: false }`)",
       "blast_radius": null,
@@ -4714,6 +4714,35 @@
       ],
       "refuted": false,
       "summary": "Eli has P-101 checked out and follows it; Document Control bulk-supersedes it. Eli gets \"Document superseded while you're checked out\" and the watchers' \"retired\" FYI for the same act. The owner of an open work package pinning P-101 who does not follow it hears nothing personally.",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-37",
+      "title": "The recorded passes over a hold prove less than they record: retire_over_hold takes any Document Control call with the force asked, the reversal re-entry's evidence is an audit row a member can also write, and two lost answers leave the record or the notice wrong",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": null,
+      "verification_note": "READ (on `fleet/DC-P36-status-editor-parity-iii` at the final fix pass: `supabase/migrations/20261253_dc_roundG_status_editor_hold_leg.sql` `retire_over_hold` — its recorded door `:1371`–`:1377` reads the caller's tier, `p_force_hold`, the status and the hold, nothing of the split / merge / reversal it names; `put_back_retired_issue`'s reversal evidence `:1155`–`:1206` and its Void arm `:1146`–`:1148`; `supabase/schema.sql:1094` — `audit_logs_insert` admits any row whose `user_id` is the caller's; `lib/documentLifecycle/common.ts` `markSupersededAndLink` `:556` (the flip at `:627`, the lineage row written after it at `:663`); `lib/staleCopies.ts` `HOLDER_TOLD_WAIT_MS` `:1313`, `holderToldAnswer` `:1319`)",
+      "blast_radius": null,
+      "related": [
+        "REV-36",
+        "REV-35",
+        "REV-22",
+        "REV-23",
+        "HLD-2"
+      ],
+      "locations": [
+        "lib/documentLifecycle/common.ts",
+        "lib/staleCopies.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Document Control's script calls retireoverhold('<P-101>', 'split', 'cleanup', now(), NULL, true) on a drawing under a stop-work hold: P-101 is Superseded with no replacement, and its history says \"hold overridden — split\", though no split happened.",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },

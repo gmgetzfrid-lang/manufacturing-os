@@ -1,0 +1,1527 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 20261253_dc_roundG_status_editor_hold_leg.sql
+--
+-- document-control Round G — P36 STATUS EDITOR PARITY III: the database holds
+-- a controller's status-editor retirement to an active hold (REV-36 (1);
+-- assigned by the integrator at the P34 merge, 2026-10-21, DEC-31; ruled
+-- under DEC-90: fail-safe, no regression).
+--
+--   REV-36  Since P34 a status editor (the bulk editor, the library page's
+--           metadata save) refuses a Superseded over an active hold for
+--           every role — but only in the app, from a read made before the
+--           write. The newest publish guard (20261245) returns for a
+--           controller (is_org_controller) BEFORE its hold check, so a
+--           controller's write of documents.status = 'Superseded' — a script
+--           straight through PostgREST, or a status-editor save whose
+--           pre-write read missed a hold opened in the instant between —
+--           retired a held document unrefused and unrecorded; and a change
+--           into Void is not an advancing write, so a hold refused it for
+--           nobody.
+--           Now ONE block, after the retirement stamp and before the guard's
+--           "not advancing" return: a write that moves a document INTO
+--           Superseded or Void from any other status while a hold is active
+--           is refused (check_violation) — Document Control included — unless
+--           the transaction-local flag app.publish_hold_override names the
+--           document. Below a controller the block binds only what the rest
+--           of the guard does not judge (a change into Void, which is not
+--           advancing); every advancing write keeps the publisher
+--           tier's own refusals, in their own words, exactly as before.
+--           The single doors that DO take a held document into Superseded
+--           for Document Control — a split's or merge's supersession of a
+--           held source and a reversal's park of a held sheet, each after
+--           Document Control's explicit "Proceed over the active hold"
+--           (HLD-2) — wrote it bare, with nothing at the database recording
+--           the pass. They now write it through the new retire_over_hold
+--           (below) with p_force_hold — the override asked, never implied:
+--           without it the call is the bare write, refused like the PATCH —
+--           the same write, run as the caller, under the flag and
+--           recorded as REV_HOLD_OVERRIDDEN in the same transaction — the
+--           recorded hold-override path publish_revision's force, the review
+--           promote's, put_back_retired_issue and restore_reversed_source
+--           already use. And two rollbacks of a failed operation make that
+--           write too, through put_back_retired_issue as the bare write: the
+--           reversal's rollback putting a restored split / merge source BACK
+--           into Superseded while a hold stands on it (its own, or one HLD-2
+--           carried onto it), and any rollback putting a held document back
+--           into Void, the status it had before the retirement the caller
+--           made. That door now records both (re-created below with one
+--           limb: Document Control, the force asked, a hold active — the
+--           flag and its own REV_HOLD_OVERRIDDEN; the reversal's re-entry
+--           only on that reversal's own standing restore record — the
+--           REV_HOLD_OVERRIDDEN restore_reversed_source wrote via
+--           reversal_restore, by the caller, uncorrected, its reversal not
+--           landed — and an unproven call is refused, 42501: P36 final fix
+--           pass). The Supersede dialog (supersedeDocument) never
+--           passes force, so it never retires a held document; the archive
+--           is not bound (Archived is not in the ruling); the un-archive and
+--           every rollback put-back leave a retirement, never enter one.
+--
+--   RE-CREATED FROM THE NEWEST BODY (found by scanning; lineDiff-pinned —
+--   every line of the base is kept, the lines added are exactly the P36
+--   block): enforce_document_publish_guard from 20261245 (P32) — HAND-13's
+--   lock leg, REV-28's, REV-21's two, REV-25's, REV-24's, REV-23's,
+--   REV-22's, RG-14's, REV-20's, REV-17's and 20261144's rules all kept.
+--   put_back_retired_issue from 20261192 (P25) — every line kept, the lines
+--   added are exactly the rollbacks' re-entry limb (its flag, its record,
+--   its answer). Created: retire_over_hold (SECURITY INVOKER,
+--   search_path pinned, EXECUTE for authenticated only — DRLS-16; its
+--   p_force_hold defaults to false). Nothing else is created or re-created
+--   (a draft overload of retire_over_hold without p_force_hold is dropped
+--   first if present, so one definition stands); no row is moved. Grants (DRLS-16): the guard executable by
+--   no client role (it RETURNS trigger); SECURITY DEFINER, search_path
+--   pinned.
+--
+-- NOT a widening: the guard refuses writes it admitted (a controller's entry
+-- into Superseded / Void over an active hold outside a recorded pass, and
+-- anyone's entry into Void over one) and admits nothing it refused;
+-- retire_over_hold admits nothing the guard refused before this paste (a
+-- controller's bare supersession over a hold passed it) and records it;
+-- put_back_retired_issue's limb records a put-back the guard admitted bare
+-- before this paste (the reversal's re-entry only on that reversal's own
+-- restore record; without it the call is refused, as the guard would).
+-- DEC-30 inventory (aggregate counts only, captured BEFORE the transaction):
+-- the documents under an active hold right now, not retired (the population
+-- the block binds most often); of those, checked out by someone; the held
+-- documents already retired (Superseded / Archived / Void — a controller's
+-- move of one into Superseded or Void is bound too); the REV_HOLD_OVERRIDDEN
+-- records to date (informational: the recorded passes the flag admits).
+--
+-- HOW TO APPLY: AFTER 20261245 (required — this re-creates 20261245's guard,
+-- and the first statement refuses to run, changing nothing, without its lock
+-- leg) and after 20261247 (paste guide row 191 — independent of this file,
+-- kept in order). 20261245 (row 187) is HOLD behind 20261193 (row 150), so
+-- this file waits with them. Independent of 20261252 (row 192, P35: it
+-- re-creates finalize_reviewed_promote only, whose flag is set around a
+-- revision promote, never a status change into Superseded / Void) — pasted
+-- after it in number order, neither needs the other.
+-- ⚠ DEPLOY FIRST: deploy the app carrying document-control P36 (the split /
+-- merge source flip and the reversal's park over a hold call
+-- retire_over_hold with p_force_hold, and keep today's bare write while the
+-- function is absent — PGRST202 / 42883), THEN paste. The P36 app works
+-- BEFORE and AFTER the paste: before it, retire_over_hold is absent and the
+-- doors make today's bare write (the guard before this paste admits it for a
+-- controller, as today); after it, the doors call it and land exactly as
+-- before, now recorded. An app before P36 makes those flips with the bare
+-- write, which this guard refuses for Document Control over an active hold:
+-- its split or merge with "Proceed over the active hold" (HLD-2) on a held
+-- source, and a forced reversal parking a held sheet, are refused ("Document
+-- has an active hold; a held document can't be superseded or voided here")
+-- and roll back whole until the app is deployed. (Right after the paste,
+-- while PostgREST reloads its schema cache, the P36 app may still get
+-- PGRST202, fall back to the bare write and be refused the same way once;
+-- the operation rolls back whole, nothing is retried automatically, and a
+-- retry by the user goes through.) The status editors' pre-write gate (P34)
+-- already refuses a held document, so for them the guard's refusal is
+-- reached only by a write the app's read did not see.
+-- ⚠ Never re-paste 20261245, 20261193, 20261185, 20261182, 20261174,
+-- 20261165, 20261164, 20261159, 20261151, 20261144, 20261139, 20261105 or
+-- any earlier guard migration after this one: each would drop this block
+-- (and an earlier one the rules after it); nor 20261192 or 20261165, which
+-- would re-create put_back_retired_issue without the re-entry limb (a held
+-- reversal's rollback would then be refused at its re-supersession).
+-- Single paste: prerequisite check → temp-table inventory →
+-- BEGIN/DDL/COMMIT → one SELECT (check text, ok boolean, n text).
+-- ⚠ APPLIED BY HAND (DEC-30). Idempotent.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- ── Prerequisites (refuse to run, changing nothing, without the base) ───────
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'enforce_document_publish_guard'
+                  AND prosrc LIKE '%IF OLD.checked_out_by IS NOT NULL%AND OLD.checked_out_by::text <> v_actor::text%USING ERRCODE = ''insufficient_privilege'';%') THEN
+    RAISE EXCEPTION '20261253 needs 20261245 (the checkout lock leg in the publish guard) pasted first; nothing was changed.';
+  END IF;
+END
+$$;
+
+-- ── Pre-apply inventory (aggregate only; captured BEFORE the DDL) ───────────
+DROP TABLE IF EXISTS dc_round_g_253_before;
+CREATE TEMP TABLE dc_round_g_253_before AS
+WITH held AS (
+  -- Every document under an active hold right now.
+  SELECT COALESCE(d.status, '') IN ('Superseded', 'Archived', 'Void') AS retired,
+         d.checked_out_by IS NOT NULL AS checked_out
+    FROM documents d
+   WHERE EXISTS (SELECT 1 FROM document_holds h
+                  WHERE h.document_id = d.id AND h.released_at IS NULL)
+)
+SELECT 'inventory (before apply): documents under an active hold right now, not retired — REV-36: a write taking one into Superseded or Void is now refused for Document Control too (and into Void for anyone), unless it is a recorded pass (a split / merge / reversal through retire_over_hold, a rollback through put_back_retired_issue)' AS inventory,
+       COUNT(*)::text AS n
+  FROM held WHERE NOT retired
+UNION ALL
+SELECT 'inventory (before apply): of those, checked out by someone',
+       COUNT(*)::text
+  FROM held WHERE NOT retired AND checked_out
+UNION ALL
+SELECT 'inventory (before apply): documents under an active hold already retired (Superseded, Archived or Void) — a controller''s move of one into Superseded or Void is now refused too, unless recorded',
+       COUNT(*)::text
+  FROM held WHERE retired
+UNION ALL
+SELECT 'inventory (before apply): REV_HOLD_OVERRIDDEN records to date — informational: the recorded passes over a hold',
+       COUNT(*)::text
+  FROM audit_logs WHERE action = 'REV_HOLD_OVERRIDDEN';
+
+BEGIN;
+
+-- ── REV-36 (P36): the publish guard — 20261245 body + the hold leg ──────────
+CREATE OR REPLACE FUNCTION enforce_document_publish_guard()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_actor        uuid    := auth.uid();   -- NULL for service-role / SQL console
+  v_advancing    boolean;
+  v_independent  integer;
+  v_on_roster    boolean;
+  v_require_ind  boolean;
+  v_can_publish  boolean;
+  v_has_hold     boolean;
+  v_primary_reqs integer;
+  v_signed       integer;
+  v_review_state text;
+  v_change_type  text;
+  v_intake_link  uuid;
+  v_review_mode  text;
+  v_moc          text;
+  v_doc_class    text;
+  v_issuing      boolean;
+  v_new_door     boolean;
+  v_issue_reqs   integer;
+  v_issue_signed integer;
+  v_restoring    boolean;
+  v_unforced_issue boolean;
+  v_unforced_move boolean;
+BEGIN
+  IF v_actor IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  v_advancing :=
+       (NEW.current_version_id IS DISTINCT FROM OLD.current_version_id)
+    OR (NEW.status = 'Superseded' AND COALESCE(OLD.status, '') <> 'Superseded')
+    -- OWN-15: un-supersede, unarchive and un-void are publish-shaped acts —
+    -- the same authority that put the record there takes it back out.
+    OR (OLD.status IN ('Superseded', 'Archived', 'Void') AND NEW.status IS DISTINCT FROM OLD.status)
+    -- OWN-19: archiving is a lifecycle act of the same shape as supersede —
+    -- the publisher tier (controller / granted publisher / effective owner)
+    -- retires a record whichever door it leaves by.
+    OR (NEW.status = 'Archived' AND COALESCE(OLD.status, '') <> 'Archived');
+  -- REV-18 (document-control Round F wave 2, P13): a status change that
+  -- makes a document WITH a current revision a controlled issue — out of a
+  -- status lib/revisions.ts isControlledIssueStatus does not call an issue
+  -- (Draft, In Review, Superseded, Void, Archived) into one it does (Issued,
+  -- IFC, a library's own status) — is a guarded write too, whichever door
+  -- it comes through: a status edit, or a rev-up / promote that also moves
+  -- the pointer. The predicate is is_controlled_issue_status (this
+  -- migration; pinned to the app's by test). v_new_door marks the writes
+  -- no rule above decided as an issue: a status-only move out of Draft / In
+  -- Review into an issue, and (P13 second review fix) a status-only exit
+  -- into an issue from a retirement that took away no issue (stamped
+  -- 'not-issued' below — Draft -> Void / Archived / Superseded -> Issued).
+  -- (v_advancing is NULL for a NULL NEW.status, which the app calls an
+  -- issue: COALESCE, so a NULL is no way past the hold.)
+  v_issuing := NEW.current_version_id IS NOT NULL
+               AND NOT is_controlled_issue_status(OLD.status)
+               AND is_controlled_issue_status(NEW.status);
+  -- REV-21 (document-control Round F wave 3, P16; DEC-77 §4, ratified by
+  -- the integrator under the user's delegation, 2026-10-07 — DEC-90 A3,
+  -- option 1): a status-only move INTO Issued / Locked from any status
+  -- outside them is an issue too. is_controlled_issue_status counts every
+  -- status but the five above as an issue — "IFC", an empty status, a case
+  -- or spacing variant, a library's own — while the print gate
+  -- (lib/docPack.ts filterPackDocs) and the verify allow-list
+  -- (lib/verifyVerdict.ts IN_FORCE_STATUSES) read only Issued and Locked as
+  -- in force. So IFC -> Issued, the move that puts such a document in
+  -- force, was issue-to-issue here, and the guard returned before its
+  -- publisher tier, its hold check and its require limb. Now a write that
+  -- leaves a document WITH a current revision, its pointer unmoved, moving
+  -- out of an issue status other than Issued / Locked into Issued or Locked
+  -- is v_issuing (lib/documentStatusOptions.ts isUnguardedEntryIntoForce,
+  -- pinned by test; out of Draft / In Review / a retirement it already is),
+  -- judged as every status-only issue is: the new door just below (never
+  -- over an active hold, for anyone), the require limb, the publisher tier.
+  -- A write that ALSO moves the pointer (publish_revision's rev-up or revert
+  -- of an IFC document, which writes 'Issued') is not this: it keeps the
+  -- pointer move's rules — the review gate, RG-7's Minor / Correction hatch,
+  -- RG-14, the publisher tier and its hold, P17's v_unforced_move. No IFC
+  -- row is moved: Document Control re-issues each through this path.
+  v_issuing := v_issuing
+               OR COALESCE(NEW.current_version_id IS NOT NULL
+                           AND NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id
+                           AND is_controlled_issue_status(OLD.status)
+                           AND COALESCE(OLD.status, '') NOT IN ('Issued', 'Locked')
+                           AND NEW.status IN ('Issued', 'Locked'), false);
+  v_new_door := v_issuing
+                AND (NOT COALESCE(v_advancing, false)
+                     OR COALESCE(NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id
+                                 AND OLD.status IN ('Superseded', 'Archived', 'Void')
+                                 AND OLD.retired_issue_status = 'not-issued'
+                                 AND OLD.retired_issue_version_id IS NULL, false));
+  -- REV-20 (document-control Round F wave 3, P14): two writes passed an
+  -- active hold for a controller, unrecorded. (a) The exit of an Archived /
+  -- Void retirement that carries NO stamp (retired before 20261144, or by
+  -- the service role) into an issue status, its pointer unmoved: what that
+  -- retirement took away is not known, so the exit is judged as a
+  -- status-only issue — the new door, whose hold binds everyone. An
+  -- unstamped SUPERSEDED document is spared (P14 review fix): its exit is
+  -- the legacy reversal's put-back of a source superseded before 20261144,
+  -- over the hold HLD-2 carries onto it first — as a stamped put-back
+  -- (v_restoring) passes a controller; the bare un-supersede left open is
+  -- REV-22. (b) ONE write that moves the
+  -- pointer AND makes the status an issue: a controller passes a hold only
+  -- through a recorded force — publish_revision's, or the review promote's
+  -- (finalize_reviewed_promote, P14 final review) — each of which sets the
+  -- transaction-local flag app.publish_hold_override to this document's id
+  -- (20261151) and records REV_HOLD_OVERRIDDEN; a bare UPDATE carries no
+  -- flag. Both bind a controller only: below a controller nothing changes —
+  -- the publisher tier's own hold check (the last one) still refuses every
+  -- advancing write over a hold, in its own words.
+  v_new_door := v_new_door
+                OR COALESCE(v_issuing
+                            AND NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id
+                            AND OLD.status IN ('Archived', 'Void')
+                            AND OLD.retired_issue_status IS NULL
+                            AND is_org_controller(NEW.org_id), false);
+  -- REV-22 (document-control Round F wave 3, P18): REV-20 (a) for the
+  -- unstamped SUPERSEDED exit too. The comments in this body that call it
+  -- spared (REV-20's above, P17's below) describe this guard before
+  -- 20261164: the legacy reversal's put-back of a source superseded before
+  -- 20261144 (lib/documentLifecycle/reverse.ts restoreStatus, after HLD-2
+  -- carries the parked document's hold onto it) now goes through
+  -- restore_reversed_source (20261164), which sets the transaction-local
+  -- flag app.publish_hold_override to the source's id around its own status
+  -- write — for Document Control only, only for a source of the recorded
+  -- split / merge it names that no recorded reversal has undone, only while
+  -- a hold is active — and records REV_HOLD_OVERRIDDEN in the same
+  -- transaction. So a controller's exit of an UNSTAMPED Superseded document
+  -- into an issue status, its pointer unmoved, without that flag naming the
+  -- document (a bare un-supersede) is judged as a status-only issue: the new
+  -- door, whose hold binds a controller too. Below a controller nothing
+  -- changes (the publisher tier's own hold check still refuses it, in its
+  -- own words). A STAMPED retirement's put-back (v_restoring, below) keeps
+  -- its rule: a controller passes the hold there, unrecorded (OWN-15).
+  v_new_door := v_new_door
+                OR COALESCE(v_issuing
+                            AND NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id
+                            AND OLD.status = 'Superseded'
+                            AND OLD.retired_issue_status IS NULL
+                            AND current_setting('app.publish_hold_override', true) IS DISTINCT FROM NEW.id::text
+                            AND is_org_controller(NEW.org_id), false);
+  v_unforced_issue := COALESCE(v_issuing
+                               AND NEW.current_version_id IS DISTINCT FROM OLD.current_version_id
+                               AND current_setting('app.publish_hold_override', true) IS DISTINCT FROM NEW.id::text
+                               AND is_org_controller(NEW.org_id), false);
+  -- REV-22 (document-control Round F wave 3, P17): REV-20 (b)'s recorded-
+  -- force rule, for the controller write it left open: one that moves the
+  -- pointer of a document ALREADY in an issue status (Issued, IFC, a
+  -- library's own) with a current revision. No status becomes an issue, so
+  -- v_issuing and v_unforced_issue are false, and a controller passed an
+  -- active hold there unrecorded — a bare PATCH of current_version_id, or the
+  -- review promote of a held Issued document. Over a hold it now needs the
+  -- transaction-local flag naming this document, set only by
+  -- publish_revision's controller force and the review promote's
+  -- (finalize_reviewed_promote's p_force_hold), each around its own promote
+  -- and each recorded (REV_HOLD_OVERRIDDEN); the inspector offers Document
+  -- Control the review promote's force when this refuses. A first pointer
+  -- write (no current revision yet) is a creation's — REV-17's — not this.
+  -- Bound to a controller only, as REV-20's limbs are: below a controller the
+  -- publisher tier's own hold check still refuses every pointer move over a
+  -- hold. The unstamped Superseded exit REV-20 (a) spares stays spared: its
+  -- put-back is the legacy reversal's (lib/documentLifecycle/reverse.ts
+  -- restoreStatus), a bare PostgREST write that cannot carry the flag, made
+  -- over the hold HLD-2 carries onto the source first — binding it would
+  -- refuse that reversal and roll it back (REV-22's other half, open until
+  -- that put-back has a recorded door).
+  v_unforced_move := COALESCE(OLD.current_version_id IS NOT NULL
+                              AND NEW.current_version_id IS NOT NULL
+                              AND NEW.current_version_id IS DISTINCT FROM OLD.current_version_id
+                              AND is_controlled_issue_status(OLD.status)
+                              AND is_controlled_issue_status(NEW.status)
+                              AND current_setting('app.publish_hold_override', true) IS DISTINCT FROM NEW.id::text
+                              AND is_org_controller(NEW.org_id), false);
+  v_advancing := v_advancing OR v_issuing;
+  -- REV-18 (P13 review fix): the retirement stamp. Entering Superseded /
+  -- Archived / Void from an ISSUE status stamps what was issued (the status
+  -- and the revision); entering one from any other status (a Draft, In
+  -- Review, an issue with no revision) stamps 'not-issued' with no revision
+  -- (second review fix: nothing issued was taken away, so a status-only
+  -- exit into an issue is a new issue under the new-door hold, v_new_door);
+  -- moving between those statuses keeps it; any other write clears it. A
+  -- caller's own value is overwritten here on every
+  -- signed-in UPDATE (and cleared on INSERT, §4), so the stamp says what the
+  -- document WAS. v_restoring: this write puts that same revision back into
+  -- an issue status — the put-back of the issue its retirement took away (a
+  -- failed supersede / split / merge's compensation, an un-archive), not a
+  -- new issue — so the require-mode limb below does not decide it; the
+  -- publisher tier and the hold check still do (OWN-15).
+  v_restoring := COALESCE(v_issuing
+                 AND OLD.status IN ('Superseded', 'Archived', 'Void')
+                 AND OLD.retired_issue_version_id IS NOT NULL
+                 AND NEW.current_version_id = OLD.retired_issue_version_id
+                 AND NEW.current_version_id = OLD.current_version_id, false);
+  -- REV-21 (document-control Round F wave 3, P16 review fix): the same move
+  -- out of a retirement. A retirement entered from an issue status no gate
+  -- reads as in force (IFC, an empty status, a case or spacing variant, a
+  -- library's own, a NULL status) is stamped below with that status and its
+  -- revision, so its exit into Issued / Locked at that revision was
+  -- v_restoring, a put-back: the require limb did not decide it, and the
+  -- flag put_back_retired_issue (the un-archive dialog's recorded override)
+  -- or restore_reversed_source sets passed Document Control over a hold
+  -- (REV-23's limb just below). But that retirement took away nothing in
+  -- force: IFC -> Archived -> Issued (the un-archive dialog's default for
+  -- any stamp naming the current revision), IFC -> Void -> Locked and IFC ->
+  -- Superseded -> Issued put the revision in force exactly as the direct
+  -- move the REV-21 limb of v_issuing above judges. So a put-back INTO
+  -- Issued / Locked of a stamp outside them is not v_restoring (the require
+  -- limb decides it), and it is the new door: refused over an active hold
+  -- for everyone, Document Control included, whatever flag is set (never a
+  -- recorded pass — a controller's override of a hold is publish_revision's
+  -- force, never a status edit). A put-back to the stamped status itself
+  -- (Archived -> IFC), and an Issued / Locked stamp put back into Issued or
+  -- Locked, keep v_restoring and its rules. A retirement with no stamp at
+  -- all (retired before 20261144, or by the service role) keeps REV-20's and
+  -- REV-22's limbs above; a 'not-issued' stamp's exit is the new door
+  -- already.
+  v_restoring := v_restoring
+                 AND NOT COALESCE(NEW.status IN ('Issued', 'Locked')
+                                  AND COALESCE(OLD.retired_issue_status, '') NOT IN ('Issued', 'Locked'), false);
+  v_new_door := v_new_door
+                OR COALESCE(v_issuing
+                            AND NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id
+                            AND OLD.status IN ('Superseded', 'Archived', 'Void')
+                            AND OLD.retired_issue_version_id IS NOT NULL
+                            AND COALESCE(OLD.retired_issue_status, '') NOT IN ('Issued', 'Locked')
+                            AND NEW.status IN ('Issued', 'Locked'), false);
+  -- REV-23 (document-control Round F wave 3, P19): the STAMPED put-back
+  -- (v_restoring, just above) binds a controller over a hold too. The
+  -- comments in this body that say a controller passes the hold there
+  -- (REV-18's just above, P18's further up) describe this guard before
+  -- 20261165. The app's put-backs of a stamped retirement — the un-archive
+  -- (lib/revisions.ts unarchiveDocument), a failed supersede's rollback
+  -- (undoFailedSupersede), a failed split / merge's rollback
+  -- (lib/documentLifecycle/common.ts restoreSupersededSource) and a failed
+  -- reversal's un-park (lib/documentLifecycle/reverse.ts putStatusBack) —
+  -- now go through put_back_retired_issue (20261165), which sets the
+  -- transaction-local flag app.publish_hold_override to the document's id
+  -- around its own status write — for Document Control only, only when the
+  -- caller asks for the force (p_force_hold: the un-archive dialog after an
+  -- explicit confirmation over the holds it showed; the rollbacks), only for
+  -- the put-back of the revision the retirement took away into an issue
+  -- status (for a rollback, of a retirement the caller made), only while a
+  -- hold is active — and records REV_HOLD_OVERRIDDEN in the
+  -- same transaction (the legacy reversal's restore_reversed_source,
+  -- 20261164, sets the same flag around its put-back of a held source,
+  -- stamped or not). So a controller's stamped put-back without that flag
+  -- naming the document (a bare PATCH, a status editor's write) is judged as
+  -- a status-only issue: the new door, whose hold binds a controller too.
+  -- The require limb still does not decide a put-back (v_restoring); below a
+  -- controller nothing changes (the publisher tier's own hold check still
+  -- refuses it, in its own words).
+  v_new_door := v_new_door
+                OR COALESCE(v_restoring
+                            AND current_setting('app.publish_hold_override', true) IS DISTINCT FROM NEW.id::text
+                            AND is_org_controller(NEW.org_id), false);
+  -- REV-24 (document-control Round F wave 3, P20): two controller writes on
+  -- a held RETIRED document (Superseded, Archived, Void) still passed an
+  -- active hold with nothing recorded after 20261165. Both are bound here.
+  -- (b) The pointer move. v_unforced_move (P17, above) binds only a move
+  -- whose OLD status is an issue status, so Document Control's bare move of
+  -- a held retired document's current_version_id was admitted — and it left
+  -- a retirement stamp naming another revision, whose exit (a) then passed
+  -- too. Over a hold such a move now needs the transaction-local flag naming
+  -- this document — set only around a write by a function that records
+  -- REV_HOLD_OVERRIDDEN in the same transaction (publish_revision's
+  -- controller force, the review promote's) — or it is refused, in REV-20
+  -- (b)'s sentence, like any other unforced move over a hold. A move is any
+  -- write that takes the pointer off the current revision: to another
+  -- revision, or cleared to NULL (fix pass 2 — a clear, then an exit into an
+  -- issue with no revision, then a first pointer write, put a revision the
+  -- retirement never issued in force over the hold, unrecorded). No app
+  -- write moves a retired document's pointer, and none clears any
+  -- document's: a rev-up of one is refused before anything is written
+  -- (lib/revisions.ts describeRetiredRevUp), a revert goes through
+  -- publish_revision (which answers on_hold for a held document unless
+  -- Document Control forces it, and then sets the flag), the split / merge /
+  -- reversal sagas, their compensations and every put-back write a status
+  -- and its fields, never the pointer, and every pointer write the app
+  -- makes names a revision. A first pointer write (no current revision yet)
+  -- is a creation's — REV-17's — not this, as in P17's limb. Bound to a
+  -- controller only: below a controller the publisher tier's own hold check
+  -- still refuses every pointer move over a hold, in its own words.
+  -- (a) The exit. A stamped retirement whose stamp names ANOTHER revision
+  -- than its current one (the pointer moved while it was retired, or by the
+  -- service role, whose writes never touch the stamp) is not v_restoring:
+  -- its exit into an issue status, its pointer unmoved, would put in force a
+  -- revision its retirement did not take away. It is judged as a
+  -- status-only issue — the new door, refused over an active hold for
+  -- everyone, Document Control included, as a 'not-issued' stamp's exit is
+  -- (the require limb decides it, as it already did). No flag passes it: it
+  -- is never a recorded controller pass (REV-18: a controller's override of
+  -- a hold is publish_revision's recorded force, never a status edit), and
+  -- put_back_retired_issue never sets the flag for it (its door needs the
+  -- stamp to name the current revision). An exit that also moves the
+  -- pointer is v_unforced_issue's (REV-20 (b)), as before. The REV-18
+  -- comment on the issue block below lists the new door's earlier members;
+  -- this exit is one more.
+  v_unforced_move := v_unforced_move
+                     OR COALESCE(OLD.current_version_id IS NOT NULL
+                                 AND NEW.current_version_id IS DISTINCT FROM OLD.current_version_id
+                                 AND OLD.status IN ('Superseded', 'Archived', 'Void')
+                                 AND current_setting('app.publish_hold_override', true) IS DISTINCT FROM NEW.id::text
+                                 AND is_org_controller(NEW.org_id), false);
+  v_new_door := v_new_door
+                OR COALESCE(v_issuing
+                            AND NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id
+                            AND OLD.status IN ('Superseded', 'Archived', 'Void')
+                            AND OLD.retired_issue_version_id IS NOT NULL
+                            AND OLD.retired_issue_version_id IS DISTINCT FROM OLD.current_version_id, false);
+  -- REV-25 (document-control Round F wave 3, P21): two more controller
+  -- writes over an active hold still put a never-issued revision in force
+  -- with nothing recorded after 20261174. Both are bound here as unforced
+  -- moves: refused over a hold, in REV-20 (b)'s sentence, unless the
+  -- transaction-local flag names this document (set only around a write by
+  -- a function that records REV_HOLD_OVERRIDDEN in the same transaction —
+  -- publish_revision's controller force, the review promote's).
+  -- (i) The FIRST pointer write (no current revision -> a revision), in any
+  -- status. The limbs above judge a move off a current revision and left a
+  -- first pointer write to REV-17 as a creation's. A held document reaches
+  -- "no current revision" by a clear made while it was unheld, or by the
+  -- service role, and its first pointer write then put any revision in
+  -- force over the hold: after an un-archive to Issued with no revision,
+  -- and as the last step of the Draft route (restore to Draft, clear, make
+  -- it Issued with no revision, set the pointer). A creation is not this:
+  -- this trigger fires BEFORE UPDATE only (TG_OP is always UPDATE here), the
+  -- app's creations write the first pointer in their own request after the
+  -- INSERT (so "created in this transaction" cannot tell them apart either),
+  -- and none carries a hold at that write — holds are opened on an existing
+  -- document, and HLD-2 carries a split / merge source's holds onto a new
+  -- sheet only after the sheet's first pointer write. So a first pointer
+  -- write OVER A HOLD is an existing document's; a creation's is unchanged
+  -- (REV-17's rule below decides it, as before). For a write over a hold,
+  -- this supersedes "a first pointer write (no current revision yet) is a
+  -- creation's — REV-17's — not this" in P17's and P20's comments above.
+  -- (ii) The CLEAR of the pointer (the current revision -> NULL) of a
+  -- document in an issue status (Issued, IFC, a library's own), whatever
+  -- status the write leaves: P17's limb binds a move between two revisions
+  -- only, and P20's (b) a retired document's. No app write clears any
+  -- document's pointer; every app pointer write that is not a creation's
+  -- goes through publish_revision or the review promote, whose recorded
+  -- forces set the flag. Both bind a controller only: below a controller
+  -- the publisher tier's own hold check already refuses every pointer write
+  -- over a hold, in its own words.
+  v_unforced_move := v_unforced_move
+                     OR COALESCE(OLD.current_version_id IS NULL
+                                 AND NEW.current_version_id IS NOT NULL
+                                 AND current_setting('app.publish_hold_override', true) IS DISTINCT FROM NEW.id::text
+                                 AND is_org_controller(NEW.org_id), false);
+  v_unforced_move := v_unforced_move
+                     OR COALESCE(OLD.current_version_id IS NOT NULL
+                                 AND NEW.current_version_id IS NULL
+                                 AND is_controlled_issue_status(OLD.status)
+                                 AND current_setting('app.publish_hold_override', true) IS DISTINCT FROM NEW.id::text
+                                 AND is_org_controller(NEW.org_id), false);
+  IF COALESCE(NEW.status IN ('Superseded', 'Archived', 'Void'), false) THEN
+    IF COALESCE(OLD.status IN ('Superseded', 'Archived', 'Void'), false) THEN
+      NEW.retired_issue_status := OLD.retired_issue_status;
+      NEW.retired_issue_version_id := OLD.retired_issue_version_id;
+    ELSIF OLD.current_version_id IS NOT NULL AND is_controlled_issue_status(OLD.status) THEN
+      NEW.retired_issue_status := OLD.status;
+      NEW.retired_issue_version_id := OLD.current_version_id;
+    ELSE
+      NEW.retired_issue_status := 'not-issued';
+      NEW.retired_issue_version_id := NULL;
+    END IF;
+  ELSE
+    NEW.retired_issue_status := NULL;
+    NEW.retired_issue_version_id := NULL;
+  END IF;
+  -- REV-36 (document-control Round G, P36 STATUS EDITOR PARITY III —
+  -- assigned by the integrator at the P34 merge, 2026-10-21, DEC-31; ruled
+  -- under DEC-90: fail-safe, no regression): entry into Superseded or Void
+  -- over an active hold is refused HERE, Document Control included. Before
+  -- this block a controller's write reached the controller return below
+  -- before the publisher tier's hold check, so a status editor's
+  -- supersession (the bulk editor, the metadata save) or a bare PATCH of
+  -- documents.status retired a held document unrefused whenever the app's
+  -- pre-write read missed the hold (opened in the instant between) or was
+  -- never made (a script); and entry into Void out of a status that is not
+  -- retired is not an advancing write, so a hold refused it for nobody. Now
+  -- a write that moves a document INTO Superseded or Void from any other
+  -- status (a NULL one included) while a hold is active is refused unless
+  -- the transaction-local flag app.publish_hold_override names this
+  -- document — set only around a write by a function that records
+  -- REV_HOLD_OVERRIDDEN in the same transaction: retire_over_hold (20261253
+  -- — the split / merge supersession of a held source and a reversal's park
+  -- of a held sheet, each Document Control's explicit proceed-over-the-hold,
+  -- HLD-2), put_back_retired_issue (since 20261253 also a failed
+  -- operation's rollback putting a held document back into Superseded or
+  -- Void, the status it had), restore_reversed_source (the legacy reversal's
+  -- put-back, a Void one included), as publish_revision's force and the
+  -- review promote's set it for theirs. Bound to a controller for every such
+  -- write — the parity of the publisher tier, which refuses each of them
+  -- over a hold below a controller — and below a controller only to the
+  -- write the rest of this guard does not judge (not advancing: entry into
+  -- Void out of a status that is not retired); every advancing one (entry
+  -- into Superseded, a move out of a retired status) keeps the publisher
+  -- tier's own authority and hold refusals, in their own words, as before.
+  -- Every write that is not an entry into Superseded or Void, every
+  -- document with no active hold and every service-role write (returned at
+  -- the top) is decided exactly as before.
+  IF COALESCE(NEW.status IN ('Superseded', 'Void'), false)
+     AND NEW.status IS DISTINCT FROM OLD.status
+     AND current_setting('app.publish_hold_override', true) IS DISTINCT FROM NEW.id::text
+     AND (is_org_controller(NEW.org_id) OR NOT COALESCE(v_advancing, false))
+     AND EXISTS (
+           SELECT 1 FROM document_holds h
+            WHERE h.document_id = NEW.id AND h.released_at IS NULL
+         ) THEN
+    RAISE EXCEPTION
+      'Document has an active hold; a held document can''t be superseded or voided here — release the hold first, or replace it through a split or merge (Document Control proceeds over the hold there, recorded, and it is carried to the new document).'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF NOT v_advancing THEN
+    RETURN NEW;
+  END IF;
+
+  -- Review gate (applies to ALL authenticated publishers, including Admin/DocCtrl):
+  -- if the version being made current has a reviewer roster, every required sign-
+  -- off must be in — and a sign-off only counts when it carries the reviewer's
+  -- OWN e-signature for this draft (RG-1: a row born 'signed' is not an approval).
+  IF NEW.current_version_id IS NOT NULL
+     AND NEW.current_version_id IS DISTINCT FROM OLD.current_version_id THEN
+    -- The version match tolerates a NULL on the SIGNATURE side only: legacy
+    -- signatures predate the column being stamped, and the only ways to MINT
+    -- a signed row now (rail 1 + rail 2) both require a strict match — so
+    -- the tolerant branch is reachable only for pre-existing history.
+    -- RG-4 / DRLS-6: completion is PER SLOT. Every primary row is a slot in
+    -- its slot_group; a slot is filled by its own primary's bound signature
+    -- or by the bound signature of an ACTIVATED alternate of the same group
+    -- (one signature fills one slot). Primaries count in every status; a
+    -- standby alternate, or one with no group and no primary, fills nothing.
+    -- Rows without a group (pre-20261070) share one legacy group.
+    SELECT COALESCE(sum(g.reqs), 0), COALESCE(sum(LEAST(g.reqs, g.filled)), 0)
+      INTO v_primary_reqs, v_signed
+      FROM (
+        SELECT COALESCE(s.slot_group, '') AS grp,
+               count(*) FILTER (WHERE s.slot = 'primary') AS reqs,
+               count(*) FILTER (WHERE (s.slot = 'primary' OR s.activated)
+                                  AND s.status = 'signed'
+                                  AND s.signature_id IS NOT NULL
+                                  AND EXISTS (
+                                    SELECT 1 FROM e_signatures e
+                                    WHERE e.id = s.signature_id
+                                      AND e.signer_user_id = s.reviewer_user_id
+                                      AND e.org_id = s.org_id
+                                      AND (e.document_version_id = s.document_version_id
+                                           OR e.document_version_id IS NULL)
+                                  )) AS filled
+          FROM document_review_signoffs s
+         WHERE s.document_version_id = NEW.current_version_id
+         GROUP BY COALESCE(s.slot_group, '')
+      ) g;
+    IF COALESCE(v_primary_reqs, 0) > 0 AND COALESCE(v_signed, 0) < v_primary_reqs THEN
+      RAISE EXCEPTION
+        'This revision still has outstanding review sign-offs; complete the review before publishing.'
+        USING ERRCODE = 'check_violation';
+    END IF;
+
+    -- RG-14 (document-control Round F wave 3, P17): the owner-must-approve
+    -- rule at the database. Each roster row carries the rule its roster was
+    -- opened under (opened_owner_slot — written by
+    -- trg_review_signoff_owner_stamp as the row is inserted, never by a
+    -- signed-in client, never changed after): 'owner:<uid>' when the
+    -- effective policy set ownerMustApprove and the effective owner must
+    -- approve (GAP-4's placeOwnerSlot, 'rostered'). Such a roster completes
+    -- only when that slot group is filled by THAT owner's own bound
+    -- signature — whether or not the owner's row was ever written (a roster
+    -- opened through PostgREST without it). 'none', 'no_owner' and 'author'
+    -- (the app's other outcomes: no rule, no active owner, an owner who
+    -- authored the revision — DEC-21) and an unstamped roster (opened before
+    -- 20261159: never retrofitted) need nothing beyond the per-slot count.
+    IF EXISTS (
+         SELECT 1 FROM document_review_signoffs o
+          WHERE o.document_version_id = NEW.current_version_id
+            AND o.opened_owner_slot LIKE 'owner:%'
+            AND NOT EXISTS (
+              SELECT 1 FROM document_review_signoffs s
+               WHERE s.document_version_id = NEW.current_version_id
+                 AND s.slot_group = o.opened_owner_slot
+                 AND 'owner:' || s.reviewer_user_id::text = o.opened_owner_slot
+                 AND s.status = 'signed'
+                 AND s.signature_id IS NOT NULL
+                 AND EXISTS (
+                   SELECT 1 FROM e_signatures e
+                   WHERE e.id = s.signature_id
+                     AND e.signer_user_id = s.reviewer_user_id
+                     AND e.org_id = s.org_id
+                     AND (e.document_version_id = s.document_version_id
+                          OR e.document_version_id IS NULL)
+                 ))
+       ) THEN
+      RAISE EXCEPTION
+        'This revision''s review was opened under a policy that requires the document owner''s approval, and the owner has not signed it; resubmit it for review so the owner is on its roster.'
+        USING ERRCODE = 'check_violation';
+    END IF;
+
+    -- RG-7: an absent roster is not "no gate". A draft SUBMITTED for review
+    -- (review_state 'in_review', not an external intake submission) with no
+    -- primary slot was never reviewed; and a direct non-Minor revision of a
+    -- controlled document whose EFFECTIVE policy requires review — resolved
+    -- along the same container chain the app walks — may not skip the gate
+    -- by never opening a roster. Minor / Correction is the declared escape
+    -- hatch; publisher_choice is the publisher's call; a document's first
+    -- controlled revision is not a revision through the gate.
+    IF COALESCE(v_primary_reqs, 0) = 0 THEN
+      SELECT v.review_state, v.change_type, v.intake_link_id
+        INTO v_review_state, v_change_type, v_intake_link
+        FROM document_versions v WHERE v.id = NEW.current_version_id;
+      IF v_review_state = 'in_review' AND v_intake_link IS NULL THEN
+        RAISE EXCEPTION
+          'This draft was submitted for review but has no reviewer roster; set the reviewers and resubmit it before publishing.'
+          USING ERRCODE = 'check_violation';
+      END IF;
+      IF OLD.current_version_id IS NOT NULL AND v_intake_link IS NULL
+         AND COALESCE(v_change_type, '') NOT IN ('Minor', 'Correction') THEN
+        v_review_mode := review_control_mode_for(NEW.review_control, NEW.collection_id, NEW.library_id);
+        IF v_review_mode = 'require' THEN
+          RAISE EXCEPTION
+            'This library requires reviewer sign-off for a Major revision; submit it for review instead of publishing directly.'
+            USING ERRCODE = 'check_violation';
+        END IF;
+      END IF;
+      -- REV-17 (document-control Round F wave 2, P12): a document's FIRST
+      -- issue is no exception for anyone but a controller. A NULL -> version
+      -- first pointer write onto a document in an issued status (anything
+      -- but Draft / In Review and the not-current Superseded / Void /
+      -- Archived: lib/revisions.ts isControlledIssueStatus, pinned by test)
+      -- is refused for a non-controller when the policy that governs it
+      -- requires sign-off: its folder / library chain (what the app's
+      -- creation gate reads) or its own. Create it as a Draft and submit it
+      -- for review. External submissions are bound by SEC-13 below; a
+      -- controller's issue proceeds and the app records it (DEC-63 s.2).
+      IF OLD.current_version_id IS NULL AND v_intake_link IS NULL
+         AND COALESCE(NEW.status, '') NOT IN ('Draft', 'In Review', 'Superseded', 'Void', 'Archived')
+         AND NOT is_org_controller(NEW.org_id)
+         AND (review_control_mode_for(NULL, NEW.collection_id, NEW.library_id) = 'require'
+              OR review_control_mode_for(NEW.review_control, NEW.collection_id, NEW.library_id) = 'require') THEN
+        RAISE EXCEPTION
+          'This library requires reviewer sign-off, so a new document can''t be issued unreviewed; create it as a Draft and submit it for review, or ask Document Control.'
+          USING ERRCODE = 'check_violation';
+      END IF;
+      -- REV-28 (document-control Round F wave 3, P25; DEC-77, option (a),
+      -- decided by the integrator under the user's delegation at the P16
+      -- merge, 2026-10-07): a rev-up (or a revert) of a document whose OLD
+      -- status is an issue status no gate reads as in force (IFC, an empty
+      -- status, a case or spacing variant, a library's own, NULL) is a FIRST
+      -- issue, not a revision through the gate. Its current revision was
+      -- never in force (DEC-77 §3), so nothing says it was reviewed, and this
+      -- write puts the new revision in force (Issued / Locked) for the first
+      -- time. RG-7's Minor / Correction hatch above assumes a reviewed base
+      -- in force, so it does not open such a write: under a policy that
+      -- requires sign-off — the folder / library chain OR the document's own
+      -- (DEC-71), as REV-17's rule just above and the require limb read it —
+      -- a non-controller's pointer move into Issued / Locked out of such a
+      -- status is refused when the new revision carries no reviewer roster
+      -- (a roster it carries was decided by the review gate above: complete,
+      -- or refused), in the require limb's sentence, which the app
+      -- recognises (lib/issueStatus.ts ISSUE_REFUSAL.unreviewed). Document
+      -- Control (DEC-63 §2), a complete roster, an external submission
+      -- (SEC-13 just below), a policy that does not require sign-off, and
+      -- every rev-up of a document IN force (Issued / Locked — RG-7's hatch,
+      -- as before) pass exactly as before; so does a pointer move that keeps
+      -- the document out of force. lib/revisions.ts firstIssueGateForRevUp
+      -- asks the same question, so RevUpModal, setLevelRevUp and the merge
+      -- rev-up route such a rev-up to review before anything is written.
+      IF OLD.current_version_id IS NOT NULL AND v_intake_link IS NULL
+         AND COALESCE(is_controlled_issue_status(OLD.status)
+                      AND COALESCE(OLD.status, '') NOT IN ('Issued', 'Locked')
+                      AND NEW.status IN ('Issued', 'Locked'), false)
+         AND NOT is_org_controller(NEW.org_id)
+         AND (review_control_mode_for(NULL, NEW.collection_id, NEW.library_id) = 'require'
+              OR review_control_mode_for(NEW.review_control, NEW.collection_id, NEW.library_id) = 'require') THEN
+        RAISE EXCEPTION
+          'This library requires reviewer sign-off, so a revision that was not reviewed can''t be made a controlled issue; submit it for review, or ask Document Control.'
+          USING ERRCODE = 'check_violation';
+      END IF;
+      -- SEC-13 (projects Round G): an EXTERNAL submission is no exception to
+      -- a policy that requires sign-off — its first issue included. The
+      -- Intake tab sends it to the resolved roster; a promote that skipped
+      -- the roster is refused here.
+      IF v_intake_link IS NOT NULL THEN
+        v_review_mode := review_control_mode_for(NEW.review_control, NEW.collection_id, NEW.library_id);
+        IF v_review_mode = 'require' THEN
+          RAISE EXCEPTION
+            'This library requires reviewer sign-off; send the external submission to its reviewers before publishing it.'
+            USING ERRCODE = 'check_violation';
+        END IF;
+      END IF;
+    END IF;
+
+    -- DEC-21: reviewer independence. When the publisher is themselves on the
+    -- roster, at least one signed PRIMARY must be someone else. A per-library
+    -- policy, ON by default wherever a roster is configured; a library opts
+    -- out with review_control.requireIndependentReviewer = false.
+    IF COALESCE(v_primary_reqs, 0) > 0 THEN
+      SELECT EXISTS (SELECT 1 FROM document_review_signoffs s
+                      WHERE s.document_version_id = NEW.current_version_id
+                        AND s.reviewer_user_id = v_actor)
+        INTO v_on_roster;
+      IF v_on_roster THEN
+        SELECT COALESCE((l.review_control->>'requireIndependentReviewer')::boolean, true)
+          INTO v_require_ind FROM libraries l WHERE l.id = NEW.library_id;
+        IF COALESCE(v_require_ind, true) THEN
+          SELECT count(*) INTO v_independent
+            FROM document_review_signoffs s
+           WHERE s.document_version_id = NEW.current_version_id
+             AND s.slot = 'primary' AND s.status = 'signed' AND s.signature_id IS NOT NULL
+             AND s.reviewer_user_id <> v_actor;
+          IF COALESCE(v_independent, 0) = 0 THEN
+            RAISE EXCEPTION
+              'Reviewer independence: you are on this revision''s review roster, so at least one other primary reviewer must sign before you can publish it.'
+              USING ERRCODE = 'check_violation';
+          END IF;
+        END IF;
+      END IF;
+    END IF;
+
+    -- SEC-14 (projects Round G): an external submission of a drawing-class
+    -- document carries a management-of-change reference into the
+    -- controlled revision however it is promoted — the class rule
+    -- publish_revision already applies to the service-role door (DCK-1).
+    SELECT v.intake_link_id, v.moc_reference INTO v_intake_link, v_moc
+      FROM document_versions v WHERE v.id = NEW.current_version_id;
+    IF v_intake_link IS NOT NULL THEN
+      BEGIN
+        v_doc_class := COALESCE(
+                         NULLIF(NEW.doc_class, ''),
+                         (SELECT NULLIF(c.doc_class, '') FROM collections c WHERE c.id = NEW.collection_id),
+                         (SELECT NULLIF(l.doc_class, '') FROM libraries l WHERE l.id = NEW.library_id)
+                       );
+      EXCEPTION WHEN undefined_column THEN
+        v_doc_class := NULL;
+      END;
+      IF v_doc_class = 'drawing' AND length(btrim(COALESCE(v_moc, ''))) < 3 THEN
+        RAISE EXCEPTION
+          'PSM requires an MOC reference to publish an external submission of a drawing-class document (OSHA 1910.119(l)); add it to the submission before approving.'
+          USING ERRCODE = 'check_violation';
+      END IF;
+    END IF;
+  END IF;
+
+  -- REV-18 (P13): the issue itself. (1) The new door — a status-only issue
+  -- out of Draft / In Review, or out of a retirement stamped 'not-issued' —
+  -- is never opened over an active hold, by anyone — a controller included:
+  -- a controller's override of a hold is publish_revision's force
+  -- (recorded), never a status edit. Every other issue keeps the hold rule its write already
+  -- had (the check below, for everyone short of a controller). (2) In a
+  -- library whose policy requires sign-off — the folder / library chain
+  -- OR the document's own, as REV-17's first-issue rule reads it, so a
+  -- document-level 'none' written at INSERT is no way past it, DEC-71
+  -- — only a controller may issue a revision that does not carry a
+  -- complete roster (every primary slot filled by a bound signature,
+  -- counted as the review gate above counts it). Who may issue at all is
+  -- the publisher tier below (OWN-15 / OWN-19's authority). A put-back of
+  -- the retired issue (v_restoring) is not a new issue: the require limb
+  -- does not decide it.
+  IF v_issuing THEN
+    IF v_new_door AND EXISTS (
+         SELECT 1 FROM document_holds h
+          WHERE h.document_id = NEW.id AND h.released_at IS NULL
+       ) THEN
+      RAISE EXCEPTION
+        'Document has an active hold; release the hold before issuing it.'
+        USING ERRCODE = 'check_violation';
+    END IF;
+    -- REV-20 (b): a controller's pointer-and-issue write over an active hold
+    -- carries a recorded force (publish_revision's or the review promote's),
+    -- or it is refused.
+    IF v_unforced_issue AND EXISTS (
+         SELECT 1 FROM document_holds h
+          WHERE h.document_id = NEW.id AND h.released_at IS NULL
+       ) THEN
+      RAISE EXCEPTION
+        'Document has an active hold; release the hold before issuing it, or publish over it with Document Control''s recorded override.'
+        USING ERRCODE = 'check_violation';
+    END IF;
+    IF NOT is_org_controller(NEW.org_id)
+       AND NOT v_restoring
+       AND (review_control_mode_for(NULL, NEW.collection_id, NEW.library_id) = 'require'
+            OR review_control_mode_for(NEW.review_control, NEW.collection_id, NEW.library_id) = 'require') THEN
+      SELECT COALESCE(sum(g.reqs), 0), COALESCE(sum(LEAST(g.reqs, g.filled)), 0)
+        INTO v_issue_reqs, v_issue_signed
+        FROM (
+          SELECT COALESCE(s.slot_group, '') AS grp,
+                 count(*) FILTER (WHERE s.slot = 'primary') AS reqs,
+                 count(*) FILTER (WHERE (s.slot = 'primary' OR s.activated)
+                                    AND s.status = 'signed'
+                                    AND s.signature_id IS NOT NULL
+                                    AND EXISTS (
+                                      SELECT 1 FROM e_signatures e
+                                      WHERE e.id = s.signature_id
+                                        AND e.signer_user_id = s.reviewer_user_id
+                                        AND e.org_id = s.org_id
+                                        AND (e.document_version_id = s.document_version_id
+                                             OR e.document_version_id IS NULL)
+                                    )) AS filled
+            FROM document_review_signoffs s
+           WHERE s.document_version_id = NEW.current_version_id
+           GROUP BY COALESCE(s.slot_group, '')
+        ) g;
+      IF COALESCE(v_issue_reqs, 0) = 0 OR COALESCE(v_issue_signed, 0) < v_issue_reqs THEN
+        RAISE EXCEPTION
+          'This library requires reviewer sign-off, so a revision that was not reviewed can''t be made a controlled issue; submit it for review, or ask Document Control.'
+          USING ERRCODE = 'check_violation';
+      END IF;
+    END IF;
+  END IF;
+
+  -- REV-22 (P17): a controller's pointer move over an active hold on a
+  -- document already issued carries a recorded force, or it is refused — in
+  -- REV-20 (b)'s sentence, which the inspector recognises (it then offers
+  -- Document Control the review promote's recorded force).
+  IF v_unforced_move AND EXISTS (
+       SELECT 1 FROM document_holds h
+        WHERE h.document_id = NEW.id AND h.released_at IS NULL
+     ) THEN
+    RAISE EXCEPTION
+      'Document has an active hold; release the hold before issuing it, or publish over it with Document Control''s recorded override.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  -- HAND-13 (drafting-flow; document-control Round G, P32 PUBLISH GUARD LOCK
+  -- LEG — assigned by the integrator at the DF-P11 merge, 2026-10-21, and
+  -- ruled under DEC-90: fail-safe, no regression): the checkout lock is
+  -- enforced HERE for every door, not only inside publish_revision. 20260812
+  -- removed this guard's lock branch on purpose because the override-with-
+  -- reason flow lived only in the app; since DCK-8 that override is
+  -- publish_revision's own (a reason of five characters or more from a
+  -- library publisher or the effective owner, or Document Control's force,
+  -- re-derived and recorded as REV_LOCK_OVERRIDDEN in the same transaction).
+  -- So a write that makes a NEW revision current (a pointer move to a
+  -- revision, first pointer included) on a document checked out by someone
+  -- other than the signed-in actor is refused (insufficient_privilege),
+  -- Document Control included, unless it is one of the two doors that
+  -- already decide the lock:
+  --   (a) publish_revision's own promote — the revision it names was
+  --       inserted by this actor in THIS transaction (created_at is now(),
+  --       the transaction's start, which no separate request can reproduce)
+  --       on top of the revision this write replaces. publish_revision
+  --       reaches that write only for the holder, an unlocked document, a
+  --       recorded publisher override or a controller's recorded force
+  --       (otherwise it answers locked_by_other and writes nothing), so
+  --       every override it admits today lands exactly as before;
+  --   (b) the reviewed promote of the document's pending draft, still
+  --       marked in_review, whose ROW looks reviewed: either it
+  --       carries a bound reviewer roster (v_primary_reqs > 0 — the review
+  --       gate above has already refused one that is not complete), or it
+  --       is an external submission as the intake door writes it (no
+  --       member as its creator — NULL, or the link's own id where a live
+  --       column default fills it under the door's bound identity (SEC-22,
+  --       20261214) — provenance 'external', its link a link of this org
+  --       whose scope holds this document: the document's immutable
+  --       authoring link, or one it is assigned to — the door's own scope
+  --       check, 20261184) — the click that approves it is the review a
+  --       roster-free policy asks for. finalize_reviewed_promote and its three-
+  --       step fallback write that shape, and neither has ever read the
+  --       lock, so a review finished while someone holds a checkout
+  --       publishes as it does today. A pending draft merely LABELLED
+  --       in_review and as an intake submission by a signed-in publisher
+  --       (any creator, or any link id) borrows nothing: it is refused here.
+  --       What the database cannot tell apart is a draft a publisher
+  --       inserts (or re-shapes by UPDATE) with no member creator and a
+  --       link that already scopes the document (document_versions_insert_
+  --       integrity / _update_integrity admit a publisher's row whatever its
+  --       provenance — DCK-16), nor an earlier reviewed revision a publisher
+  --       relabels back to in_review, whose old signed roster satisfies the
+  --       roster limb (_update_integrity lets a publisher rewrite
+  --       review_state, released_at, superseded_at and supersedes_version_id
+  --       — DCK-17). Both are closed in those policies, not here.
+  -- The holder's own publish and a publish on an unlocked document never
+  -- reach the refusal. A status-only act (supersede, archive, a status
+  -- edit) moves no pointer and is not judged here; the service role
+  -- returned at the top, as always. Placed after every refusal above and
+  -- before the controller return: a write a rule above refuses keeps that
+  -- rule's sentence; one the publisher tier below would refuse (no
+  -- authority, an active hold) is refused here first when it is also over
+  -- another person's checkout.
+  IF OLD.checked_out_by IS NOT NULL
+     AND OLD.checked_out_by::text <> v_actor::text
+     AND NEW.current_version_id IS NOT NULL
+     AND NEW.current_version_id IS DISTINCT FROM OLD.current_version_id
+     AND NOT EXISTS (
+           SELECT 1 FROM document_versions v
+            WHERE v.id = NEW.current_version_id
+              AND v.record_id = NEW.id
+              AND v.created_by = v_actor
+              AND v.created_at = now()
+              AND v.supersedes_version_id IS NOT DISTINCT FROM OLD.current_version_id)
+     AND NOT COALESCE(NEW.current_version_id = OLD.pending_version_id
+                      AND NEW.pending_version_id IS NULL
+                      AND EXISTS (SELECT 1 FROM document_versions v
+                                   WHERE v.id = NEW.current_version_id
+                                     AND v.record_id = NEW.id
+                                     AND v.review_state = 'in_review'
+                                     AND (COALESCE(v_primary_reqs, 0) > 0
+                                          OR (v.provenance = 'external'
+                                              AND (v.created_by IS NULL OR v.created_by = v.intake_link_id)
+                                              AND EXISTS (SELECT 1 FROM project_intake_links l
+                                                           WHERE l.id = v.intake_link_id
+                                                             AND l.org_id = NEW.org_id
+                                                             AND (l.id = NEW.authored_by_link_id
+                                                                  OR NEW.id = ANY (l.assigned_doc_ids)))))), false) THEN
+    RAISE EXCEPTION
+      'This document is checked out by %, so a new revision can''t be made current here; publish it from the revision flow with an override reason (shown to them and recorded), or ask them to check it in first.',
+      COALESCE(NULLIF(btrim(OLD.checked_out_by_name), ''), 'another user')
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  -- OWN-3/DEC-2: controllers are a property of the role COLLECTION.
+  -- v_actor IS auth.uid() here (service-role returned above), so the shared
+  -- additive helper applies.
+  IF is_org_controller(NEW.org_id) THEN
+    RETURN NEW;
+  END IF;
+
+  -- Per-library publish authority OR the document's effective owner may publish.
+  v_can_publish := user_can_publish_on_library(NEW.library_id, v_actor::text, NEW.org_id)
+                OR user_is_effective_owner(NEW.owner_user_id, NEW.collection_id, NEW.library_id, v_actor);
+
+  IF NOT v_can_publish THEN
+    RAISE EXCEPTION
+      'You do not have authority to publish revisions in this library.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  SELECT EXISTS (
+    SELECT 1 FROM document_holds h
+     WHERE h.document_id = NEW.id AND h.released_at IS NULL
+  ) INTO v_has_hold;
+  IF v_has_hold THEN
+    RAISE EXCEPTION
+      'Document has an active hold; release the hold before publishing a new revision.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION enforce_document_publish_guard() FROM PUBLIC, anon, authenticated, service_role;
+
+-- ── REV-36 (P36): put_back_retired_issue — 20261192 body + the rollbacks'
+-- re-entry limb. SECURITY INVOKER, as before: every read and the
+-- write run as the caller, under their row-level policies and
+-- trg_document_publish_guard.
+CREATE OR REPLACE FUNCTION put_back_retired_issue(
+  p_document_id uuid,
+  p_status text,
+  p_via text,
+  p_reason text DEFAULT NULL,
+  p_force_hold boolean DEFAULT false,
+  p_superseded_at timestamptz DEFAULT NULL,
+  p_superseded_by_user uuid DEFAULT NULL,
+  p_supersession_reason text DEFAULT NULL,
+  p_supersession_moc text DEFAULT NULL
+) RETURNS text
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+DECLARE
+  v_uid     uuid := auth.uid();
+  v_found   boolean;
+  v_org     uuid;
+  v_status  text;
+  v_stamp   text;
+  v_stamped uuid;
+  v_version uuid;
+  v_rev     text;
+  v_retired_by uuid;
+  v_forced  boolean := false;
+  v_reentry boolean := false;
+  v_n       integer;
+BEGIN
+  -- DRLS-16: a signed-in act only. A call with no session (anon, or the
+  -- service role, whose writes this guard never judges) never sets the flag.
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'put_back_retired_issue: a put-back is a signed-in act, and this call has no session.'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF p_via IS NULL OR p_via NOT IN ('unarchive', 'supersede_rollback', 'lifecycle_rollback', 'reversal_rollback') THEN
+    RAISE EXCEPTION 'put_back_retired_issue: name the put-back (unarchive, supersede_rollback, lifecycle_rollback or reversal_rollback).'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  -- REV-29 (document-control Round F wave 3, P25): a rollback puts back what
+  -- the document WAS, and a document can have had no status (NULL) or an
+  -- empty one. The failed supersede / split / merge / reversal of such a
+  -- document is put back as that — never as 'Issued', which put it in force
+  -- unreviewed and, since 20261185, is judged as a first entry into force.
+  -- So the blank-status refusal just below (20261165's, unchanged) binds the
+  -- un-archive door only — the un-archive dialog restores a status it names;
+  -- the three rollback doors take a NULL or blank status. The guard decides
+  -- that write exactly as any other: a NULL status is an issue status to it
+  -- (is_controlled_issue_status), and putting the stamped revision back is
+  -- its v_restoring.
+  IF p_via = 'unarchive' THEN
+  IF btrim(COALESCE(p_status, '')) = '' THEN
+    RAISE EXCEPTION 'put_back_retired_issue: name the status to put the document back to.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  END IF;
+
+  -- The document, as the caller sees it.
+  SELECT true, d.org_id, d.status, d.retired_issue_status, d.retired_issue_version_id, d.current_version_id, d.rev, d.superseded_by_user
+    INTO v_found, v_org, v_status, v_stamp, v_stamped, v_version, v_rev, v_retired_by
+    FROM documents d WHERE d.id = p_document_id;
+  IF v_found IS NULL THEN
+    RETURN 'no_match';
+  END IF;
+
+  -- The recorded door: exactly the write the guard refuses bare since this
+  -- migration — Document Control (the session's tier, as the guard reads
+  -- it) putting back, into an issue status, the revision a stamped
+  -- retirement took away (the stamp names the current revision, and this
+  -- write moves no pointer: v_restoring), out of the retirement this door
+  -- leaves (Archived for the un-archive, Superseded for the rollbacks),
+  -- while a hold stands — and only when the caller asks for the force
+  -- (p_force_hold: an override over a hold is chosen, never implied — the
+  -- un-archive dialog sends it only after Document Control confirmed
+  -- restoring over the holds it showed; the rollbacks send it) and, for a
+  -- rollback, only for a retirement the caller made (superseded_by_user =
+  -- the session: the supersede, the split / merge saga and the reversal's
+  -- park all write their actor there, so a 'rollback' in the record is one
+  -- the caller's own retirement can be). The issue test is a superset of
+  -- is_controlled_issue_status (whose EXECUTE no client role holds — this
+  -- function runs as the caller): it trims spaces only, so a status the
+  -- predicate calls an issue is always one here; a status padded with other
+  -- whitespace could only record a pass the guard did not need. Anything
+  -- else is the bare write below, judged by the guard as before.
+  IF COALESCE(p_force_hold, false)
+     AND v_status = (CASE WHEN p_via = 'unarchive' THEN 'Archived' ELSE 'Superseded' END)
+     AND (p_via = 'unarchive' OR v_retired_by = v_uid)
+     AND v_stamped IS NOT NULL
+     AND v_stamped = v_version
+     AND btrim(p_status) NOT IN ('Draft', 'In Review', 'Superseded', 'Void', 'Archived')
+     AND is_org_controller(v_org)
+     AND EXISTS (SELECT 1 FROM document_holds h
+                  WHERE h.document_id = p_document_id AND h.released_at IS NULL) THEN
+    v_forced := true;
+  END IF;
+
+  -- REV-29 (P25): the recorded door for a NULL status. A NULL is an issue
+  -- status to the guard, but btrim(p_status) NOT IN (...) just above is
+  -- NULL for it, so the door never opened: Document Control's forced
+  -- rollback of a held NULL-status document — the put-back of what it was —
+  -- was the bare write, refused over the hold (REV-23's limb). It opens for
+  -- a NULL exactly as for any other status a rollback puts the stamped
+  -- revision back to: the same conditions, on a rollback door only.
+  IF NOT v_forced
+     AND p_status IS NULL
+     AND p_via <> 'unarchive'
+     AND COALESCE(p_force_hold, false)
+     AND v_status = 'Superseded'
+     AND v_retired_by = v_uid
+     AND v_stamped IS NOT NULL
+     AND v_stamped = v_version
+     AND is_org_controller(v_org)
+     AND EXISTS (SELECT 1 FROM document_holds h
+                  WHERE h.document_id = p_document_id AND h.released_at IS NULL) THEN
+    v_forced := true;
+  END IF;
+
+  -- REV-36 (document-control Round G, P36, 20261253): since this migration
+  -- the publish guard refuses, Document Control included, a write that
+  -- moves a held document INTO Superseded or Void unless a recording
+  -- function names it. Two rollbacks make exactly that write, and pass it
+  -- here as a recorded pass for Document Control asking for the force (the
+  -- rollbacks always do: they put back the state from before the
+  -- operation), while a hold stands — the same flag, their own record:
+  --   the reversal's rollback putting a split / merge source it RESTORED
+  --   back into Superseded (out of whatever the restore wrote), over the
+  --   hold the source keeps or HLD-2 carried onto it; and
+  --   any rollback putting back Void — the status a document had before the
+  --   supersede, split / merge or reversal park the CALLER made
+  --   (superseded_by_user = the session, as REV-23's door asks).
+  -- Every other call is decided exactly as above.
+  IF NOT v_forced
+     AND p_via <> 'unarchive'
+     AND COALESCE(p_force_hold, false)
+     AND ((p_via = 'reversal_rollback'
+           AND btrim(COALESCE(p_status, '')) = 'Superseded'
+           AND v_status IS DISTINCT FROM 'Superseded')
+          OR (btrim(COALESCE(p_status, '')) = 'Void'
+              AND v_status = 'Superseded'
+              AND v_retired_by = v_uid))
+     AND is_org_controller(v_org)
+     AND EXISTS (SELECT 1 FROM document_holds h
+                  WHERE h.document_id = p_document_id AND h.released_at IS NULL) THEN
+    v_reentry := true;
+  END IF;
+
+  -- REV-36 (P36 final fix pass): the reversal's re-entry is bound to the
+  -- reversal's OWN evidence, never a bare claim of a rollback. A reversal
+  -- brings a held source back only through restore_reversed_source, which —
+  -- for Document Control, a Superseded source of the split / merge it names,
+  -- a hold active (the source's own, or one HLD-2 carried onto it BEFORE the
+  -- restore) — writes REV_HOLD_OVERRIDDEN (via reversal_restore, the
+  -- reversed event, newStatus = the status it restored) in the restore's own
+  -- transaction. So the rollback re-supersedes a held document only when
+  -- that row stands: on this document, by this caller, naming a recorded
+  -- split / merge in this org, its newStatus the status the document stands
+  -- at now (the one the restore wrote, a NULL included), not corrected since
+  -- (no REV_HOLD_OVERRIDE_UNDONE via reversal_restore naming the same event
+  -- at or after it — the reversal writes that only after this put-back) and
+  -- its reversal not landed (no DOC_SPLIT_REVERSED / DOC_MERGE_REVERSED
+  -- naming the event: a reversal that landed has no rollback). Anything else
+  -- that would have opened the limb is refused (42501), changing nothing —
+  -- before this fix pass that call was the recorded pass, and without the
+  -- limb the guard refuses it bare (check_violation). The Void re-entry is
+  -- unchanged (the caller's own retirement, as REV-23's door). REV-37 holds
+  -- what this cannot prove (an audit row a member inserts directly).
+  IF v_reentry
+     AND p_via = 'reversal_rollback'
+     AND btrim(COALESCE(p_status, '')) = 'Superseded'
+     AND NOT EXISTS (
+           SELECT 1
+             FROM audit_logs a
+             JOIN audit_logs e
+               ON e.id::text = a.details->>'reversedAuditEventId'
+              AND e.org_id = v_org
+              AND e.action IN ('DOC_SPLIT', 'DOC_MERGED')
+            WHERE a.org_id = v_org
+              AND a.resource_id = p_document_id::text
+              AND a.action = 'REV_HOLD_OVERRIDDEN'
+              AND a.user_id = v_uid
+              AND a.details->>'via' = 'reversal_restore'
+              AND (a.details->>'newStatus') IS NOT DISTINCT FROM v_status
+              AND NOT EXISTS (SELECT 1 FROM audit_logs u
+                               WHERE u.org_id = v_org
+                                 AND u.resource_id = p_document_id::text
+                                 AND u.action = 'REV_HOLD_OVERRIDE_UNDONE'
+                                 AND u.details->>'via' = 'reversal_restore'
+                                 AND translate(lower(u.details->>'reversedAuditEventId'), '{}-', '') = replace(e.id::text, '-', '')
+                                 AND u."timestamp" >= a."timestamp")
+              AND NOT EXISTS (SELECT 1 FROM audit_logs r
+                               WHERE r.org_id = v_org
+                                 AND r.resource_id = e.resource_id
+                                 AND r.action IN ('DOC_SPLIT_REVERSED', 'DOC_MERGE_REVERSED')
+                                 AND translate(lower(r.details->>'reversedAuditEventId'), '{}-', '') = replace(e.id::text, '-', ''))
+         ) THEN
+    RAISE EXCEPTION 'put_back_retired_issue: a reversal''s rollback re-supersedes a held document only after that reversal''s own recorded restore of it over the hold (REV_HOLD_OVERRIDDEN via reversal_restore, by you, standing and uncorrected), and none was found; nothing was changed.'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  -- The put-back: the app's own write for this door, as the caller. The
+  -- flag names this document for this one statement only.
+  IF v_forced THEN
+    PERFORM set_config('app.publish_hold_override', p_document_id::text, true);
+  END IF;
+  IF v_reentry THEN
+    PERFORM set_config('app.publish_hold_override', p_document_id::text, true);
+  END IF;
+  IF p_via = 'unarchive' THEN
+    UPDATE documents
+       SET status = p_status,
+           archived_at = NULL,
+           archived_by = NULL,
+           archive_reason = NULL,
+           updated_at = now(),
+           updated_by = v_uid
+     WHERE id = p_document_id;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+  ELSE
+    UPDATE documents
+       SET status = p_status,
+           superseded_at = p_superseded_at,
+           superseded_by_user = p_superseded_by_user,
+           supersession_reason = p_supersession_reason,
+           supersession_moc = p_supersession_moc,
+           updated_at = now(),
+           updated_by = v_uid
+     WHERE id = p_document_id;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+  END IF;
+  IF v_forced THEN
+    PERFORM set_config('app.publish_hold_override', '', true);
+  END IF;
+  IF v_reentry THEN
+    PERFORM set_config('app.publish_hold_override', '', true);
+  END IF;
+  IF v_n = 0 THEN
+    RETURN 'no_match';
+  END IF;
+
+  -- The pass over the hold is on the document's record in the same
+  -- transaction — a record that cannot be written rolls the put-back back
+  -- with it. Written as the caller: audit_logs' insert policy admits the
+  -- session's own row in its own org.
+  IF v_forced THEN
+    INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, user_email, details)
+    VALUES ('REV_HOLD_OVERRIDDEN', p_document_id::text, 'document', v_org, v_uid,
+            (SELECT m.email FROM org_members m WHERE m.org_id = v_org AND m.uid = v_uid LIMIT 1),
+            jsonb_build_object(
+              'via', p_via,
+              'holds', (SELECT jsonb_agg(jsonb_build_object('id', h.id, 'reason', h.reason) ORDER BY h.opened_at)
+                          FROM document_holds h
+                         WHERE h.document_id = p_document_id AND h.released_at IS NULL),
+              'reason', NULLIF(btrim(COALESCE(p_reason, '')), ''),
+              'stampedPutBack', true,
+              'retiredIssueStatus', v_stamp,
+              'versionId', v_version,
+              'revisionLabel', v_rev,
+              'priorStatus', v_status,
+              'newStatus', p_status,
+              'branch', false
+            ));
+  END IF;
+
+  -- REV-36 (P36): the rollback's recorded re-entry, on its own record.
+  IF v_reentry THEN
+    INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, user_email, details)
+    VALUES ('REV_HOLD_OVERRIDDEN', p_document_id::text, 'document', v_org, v_uid,
+            (SELECT m.email FROM org_members m WHERE m.org_id = v_org AND m.uid = v_uid LIMIT 1),
+            jsonb_build_object(
+              'via', p_via,
+              'holds', (SELECT jsonb_agg(jsonb_build_object('id', h.id, 'reason', h.reason) ORDER BY h.opened_at)
+                          FROM document_holds h
+                         WHERE h.document_id = p_document_id AND h.released_at IS NULL),
+              'reason', NULLIF(btrim(COALESCE(p_reason, '')), ''),
+              'retiredOverHold', true,
+              'versionId', v_version,
+              'revisionLabel', v_rev,
+              'priorStatus', v_status,
+              'newStatus', p_status,
+              'branch', false
+            ));
+    RETURN 'restored_over_hold';
+  END IF;
+
+  RETURN CASE WHEN v_forced THEN 'restored_over_hold' ELSE 'restored' END;
+END;
+$$;
+-- DRLS-16: authenticated only, as before (the body refuses a NULL uid too).
+REVOKE ALL ON FUNCTION put_back_retired_issue(uuid, text, text, text, boolean, timestamptz, uuid, text, text) FROM PUBLIC, anon, service_role;
+GRANT EXECUTE ON FUNCTION put_back_retired_issue(uuid, text, text, text, boolean, timestamptz, uuid, text, text) TO authenticated;
+
+-- ── REV-36 (P36): the single doors' recorded pass over a hold ──────────────
+-- retire_over_hold: the split / merge supersession of a source and a
+-- reversal's park of a sheet — the write lib/documentLifecycle/common.ts
+-- markSupersededAndLink and lib/documentLifecycle/reverse.ts
+-- parkAsSuperseded make, the same columns and values — run as the caller
+-- (SECURITY INVOKER: the caller's row-level policies and the publish guard
+-- decide it exactly as a bare UPDATE). For Document Control (the session's
+-- tier, as the guard reads it) taking a document into Superseded from any
+-- other status while a hold is active, AND asking for the override
+-- (p_force_hold — an override over a hold is chosen, never implied, as
+-- put_back_retired_issue's p_force_hold; the app passes it only when
+-- Document Control chose to proceed over the hold: HLD-2's acknowledgement,
+-- the split / merge wizards' and the reversal's `force`) —
+-- the write runs under the transaction-local flag app.publish_hold_override
+-- naming the document, and the pass is recorded as REV_HOLD_OVERRIDDEN in
+-- the same transaction (a record that cannot be written rolls the write back
+-- with it). Anyone else's call, a call without p_force_hold, or a document
+-- with no active hold, is exactly the bare write, judged by the guard as
+-- before (so a controller's call over a hold that does not ask for the
+-- override is refused, exactly as the bare PATCH is).
+-- One definition: an overload without p_force_hold (a pre-merge draft of
+-- this file) is dropped first, so PostgREST resolves one function.
+DROP FUNCTION IF EXISTS retire_over_hold(uuid, text, text, timestamptz, text);
+CREATE OR REPLACE FUNCTION retire_over_hold(
+  p_document_id uuid,
+  p_via text,
+  p_reason text,
+  p_at timestamptz DEFAULT NULL,
+  p_supersession_moc text DEFAULT NULL,
+  p_force_hold boolean DEFAULT false
+) RETURNS text
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+DECLARE
+  v_uid     uuid := auth.uid();
+  v_found   boolean;
+  v_org     uuid;
+  v_status  text;
+  v_version uuid;
+  v_rev     text;
+  v_at      timestamptz := COALESCE(p_at, now());
+  v_forced  boolean := false;
+  v_n       integer;
+BEGIN
+  -- DRLS-16: a signed-in act only. A call with no session (anon, or the
+  -- service role, whose writes the guard never judges) never sets the flag.
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'retire_over_hold: a retirement over a hold is a signed-in act, and this call has no session.'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  IF p_via IS NULL OR p_via NOT IN ('split', 'merge', 'reversal_park') THEN
+    RAISE EXCEPTION 'retire_over_hold: name the door (split, merge or reversal_park).'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  IF btrim(COALESCE(p_reason, '')) = '' THEN
+    RAISE EXCEPTION 'retire_over_hold: give the supersession''s reason.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
+  -- The document, as the caller sees it.
+  SELECT true, d.org_id, d.status, d.current_version_id, d.rev
+    INTO v_found, v_org, v_status, v_version, v_rev
+    FROM documents d WHERE d.id = p_document_id;
+  IF v_found IS NULL THEN
+    RETURN 'no_match';
+  END IF;
+
+  -- The recorded door: exactly the write the guard refuses bare since this
+  -- migration — Document Control taking a document into Superseded from any
+  -- other status while a hold stands — and only when the caller asks for the
+  -- override (p_force_hold: chosen, never implied). Anything else is the
+  -- bare write below.
+  IF COALESCE(p_force_hold, false)
+     AND v_status IS DISTINCT FROM 'Superseded'
+     AND is_org_controller(v_org)
+     AND EXISTS (SELECT 1 FROM document_holds h
+                  WHERE h.document_id = p_document_id AND h.released_at IS NULL) THEN
+    v_forced := true;
+  END IF;
+
+  -- The write: the door's own, as the caller. The flag names this document
+  -- for this one statement only.
+  IF v_forced THEN
+    PERFORM set_config('app.publish_hold_override', p_document_id::text, true);
+  END IF;
+  IF p_via = 'reversal_park' THEN
+    UPDATE documents
+       SET status = 'Superseded',
+           superseded_at = v_at,
+           superseded_by_user = v_uid,
+           supersession_reason = p_reason,
+           updated_at = v_at,
+           updated_by = v_uid
+     WHERE id = p_document_id;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+  ELSE
+    UPDATE documents
+       SET status = 'Superseded',
+           superseded_at = v_at,
+           superseded_by_user = v_uid,
+           supersession_reason = p_reason,
+           supersession_moc = p_supersession_moc,
+           updated_at = v_at,
+           updated_by = v_uid
+     WHERE id = p_document_id;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+  END IF;
+  IF v_forced THEN
+    PERFORM set_config('app.publish_hold_override', '', true);
+  END IF;
+  IF v_n = 0 THEN
+    RETURN 'no_match';
+  END IF;
+
+  -- The pass over the hold is on the document's record in the same
+  -- transaction. Written as the caller: audit_logs' insert policy admits the
+  -- session's own row in its own org.
+  IF v_forced THEN
+    INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, user_email, details)
+    VALUES ('REV_HOLD_OVERRIDDEN', p_document_id::text, 'document', v_org, v_uid,
+            (SELECT m.email FROM org_members m WHERE m.org_id = v_org AND m.uid = v_uid LIMIT 1),
+            jsonb_build_object(
+              'via', p_via,
+              'holds', (SELECT jsonb_agg(jsonb_build_object('id', h.id, 'reason', h.reason) ORDER BY h.opened_at)
+                          FROM document_holds h
+                         WHERE h.document_id = p_document_id AND h.released_at IS NULL),
+              'reason', NULLIF(btrim(COALESCE(p_reason, '')), ''),
+              'retiredOverHold', true,
+              'versionId', v_version,
+              'revisionLabel', v_rev,
+              'priorStatus', v_status,
+              'newStatus', 'Superseded',
+              'branch', false
+            ));
+  END IF;
+
+  RETURN CASE WHEN v_forced THEN 'superseded_over_hold' ELSE 'superseded' END;
+END;
+$$;
+COMMENT ON FUNCTION retire_over_hold(uuid, text, text, timestamptz, text, boolean) IS
+  'REV-36 (20261253): the split / merge supersession of a source and a reversal''s park of a sheet (lib/documentLifecycle/common.ts markSupersededAndLink, reverse.ts parkAsSuperseded; p_via split, merge or reversal_park), writing the door''s own columns, called by the app only when Document Control chose to proceed over an active hold (HLD-2). SECURITY INVOKER: the caller''s row-level policies and trg_document_publish_guard decide the write exactly as for a bare UPDATE. For Document Control taking a document into Superseded from any other status while a hold is active and asking for the override (p_force_hold — chosen, never implied), the write runs under the transaction-local flag app.publish_hold_override and the pass is recorded as REV_HOLD_OVERRIDDEN in the same transaction. Returns superseded_over_hold (that recorded pass), superseded (the bare write) or no_match; refuses a call with no session.';
+-- DRLS-16: authenticated only (the body refuses a NULL uid too).
+REVOKE ALL ON FUNCTION retire_over_hold(uuid, text, text, timestamptz, text, boolean) FROM PUBLIC, anon, service_role;
+GRANT EXECUTE ON FUNCTION retire_over_hold(uuid, text, text, timestamptz, text, boolean) TO authenticated;
+
+COMMIT;
+
+-- ── Verification + inventory (the only result set the SQL editor shows) ──
+-- Probes: ok = true × 10. Inventory rows: n = the aggregate count.
+-- pg_proc.prosrc is verbatim (an apostrophe inside a body's string literal is
+-- '''' here).
+SELECT 'REV-36 (P36): a write moving a document into Superseded or Void from any other status while a hold is active is refused (check_violation) — Document Control included, and into Void out of a status not retired for anyone — unless the transaction-local flag a recording function sets names the document' AS check,
+       (SELECT prosrc LIKE '%IF COALESCE(NEW.status IN (''Superseded'', ''Void''), false)%AND NEW.status IS DISTINCT FROM OLD.status%AND current_setting(''app.publish_hold_override'', true) IS DISTINCT FROM NEW.id::text%AND (is_org_controller(NEW.org_id) OR NOT COALESCE(v_advancing, false))%WHERE h.document_id = NEW.id AND h.released_at IS NULL%''Document has an active hold; a held document can''''t be superseded or voided here%USING ERRCODE = ''check_violation'';%'
+          FROM pg_proc WHERE proname = 'enforce_document_publish_guard') AS ok,
+       NULL::text AS n
+UNION ALL
+SELECT 'REV-36 (P36): the hold leg sits after the retirement stamp and before the guard''s "not advancing" return — so before the controller return and the publisher tier',
+       (SELECT prosrc LIKE '%NEW.retired_issue_status := NULL;%NEW.retired_issue_version_id := NULL;%END IF;%IF COALESCE(NEW.status IN (''Superseded'', ''Void''), false)%IF NOT v_advancing THEN%RETURN NEW;%IF is_org_controller(NEW.org_id) THEN%RETURN NEW;%You do not have authority to publish revisions in this library.%Document has an active hold; release the hold before publishing a new revision.%'
+          FROM pg_proc WHERE proname = 'enforce_document_publish_guard'),
+       NULL
+UNION ALL
+SELECT 'HAND-13 (P32) survives the re-create: a new revision made current over another person''s checkout outside publish_revision''s promote and the reviewed promote is refused (42501)',
+       (SELECT prosrc LIKE '%IF OLD.checked_out_by IS NOT NULL%AND OLD.checked_out_by::text <> v_actor::text%AND NEW.current_version_id IS NOT NULL%AND NEW.current_version_id IS DISTINCT FROM OLD.current_version_id%AND v.created_at = now()%AND NOT COALESCE(NEW.current_version_id = OLD.pending_version_id%''This document is checked out by %, so a new revision can''''t be made current here;%USING ERRCODE = ''insufficient_privilege'';%'
+          FROM pg_proc WHERE proname = 'enforce_document_publish_guard'),
+       NULL
+UNION ALL
+SELECT 'REV-28, REV-17, REV-21, REV-25, REV-24, REV-23, REV-22, REV-20, RG-14 and the 20261144 rules survive the re-create',
+       (SELECT prosrc LIKE '%IF OLD.current_version_id IS NOT NULL AND v_intake_link IS NULL%AND COALESCE(is_controlled_issue_status(OLD.status)%AND COALESCE(OLD.status, '''') NOT IN (''Issued'', ''Locked'')%AND NEW.status IN (''Issued'', ''Locked''), false)%'
+           AND prosrc LIKE '%IF OLD.current_version_id IS NULL AND v_intake_link IS NULL%AND NOT is_org_controller(NEW.org_id)%a new document can''''t be issued unreviewed%'
+           AND prosrc LIKE '%v_issuing := v_issuing%OR COALESCE(NEW.current_version_id IS NOT NULL%AND NEW.status IN (''Issued'', ''Locked''), false);%v_new_door := v_issuing%'
+           AND prosrc LIKE '%v_unforced_move := v_unforced_move%OR COALESCE(OLD.current_version_id IS NULL%AND NEW.current_version_id IS NOT NULL%AND current_setting(''app.publish_hold_override'', true) IS DISTINCT FROM NEW.id%'
+           AND prosrc LIKE '%v_new_door := v_new_door%OR COALESCE(v_restoring%AND current_setting(''app.publish_hold_override'', true) IS DISTINCT FROM NEW.id%'
+           AND prosrc LIKE '%v_unforced_issue := COALESCE(v_issuing%'
+           AND prosrc LIKE '%AND s.slot_group = o.opened_owner_slot%'
+           AND prosrc LIKE '%NEW.retired_issue_status := ''not-issued'';%'
+           AND prosrc LIKE '%IF v_new_door AND EXISTS (%''Document has an active hold; release the hold before issuing it.''%'
+          FROM pg_proc WHERE proname = 'enforce_document_publish_guard'),
+       NULL
+UNION ALL
+SELECT 'retire_over_hold: Document Control''s move of a document into Superseded from any other status while a hold is active, asking for the override (p_force_hold), runs under the flag naming the document, clears it after the one write, and records REV_HOLD_OVERRIDDEN; anything else is the bare write',
+       (SELECT prosrc LIKE '%IF v_uid IS NULL THEN%IF p_via IS NULL OR p_via NOT IN (''split'', ''merge'', ''reversal_park'') THEN%IF COALESCE(p_force_hold, false)%AND v_status IS DISTINCT FROM ''Superseded''%AND is_org_controller(v_org)%AND EXISTS (SELECT 1 FROM document_holds h%PERFORM set_config(''app.publish_hold_override'', p_document_id::text, true);%SET status = ''Superseded'',%PERFORM set_config(''app.publish_hold_override'', '''', true);%VALUES (''REV_HOLD_OVERRIDDEN''%'
+          FROM pg_proc WHERE proname = 'retire_over_hold'),
+       NULL
+UNION ALL
+SELECT 'put_back_retired_issue: the reversal rollback putting a restored source back into Superseded (only on that reversal''s own standing restore record — REV_HOLD_OVERRIDDEN via reversal_restore, by the caller, uncorrected, its reversal not landed; else refused 42501), and a rollback putting back Void after the caller''s own retirement, over a hold, for Document Control asking the force, run under the flag and are recorded (REV_HOLD_OVERRIDDEN, retiredOverHold) — after REV-23''s and REV-29''s doors, which are unchanged',
+       (SELECT prosrc LIKE '%IF NOT v_forced%AND p_via <> ''unarchive''%AND COALESCE(p_force_hold, false)%AND ((p_via = ''reversal_rollback''%AND btrim(COALESCE(p_status, '''')) = ''Superseded''%AND v_status IS DISTINCT FROM ''Superseded'')%OR (btrim(COALESCE(p_status, '''')) = ''Void''%AND v_status = ''Superseded''%AND v_retired_by = v_uid))%AND is_org_controller(v_org)%v_reentry := true;%IF v_reentry THEN%PERFORM set_config(''app.publish_hold_override'', p_document_id::text, true);%IF v_reentry THEN%PERFORM set_config(''app.publish_hold_override'', '''', true);%IF v_reentry THEN%''retiredOverHold'', true,%RETURN ''restored_over_hold'';%RETURN CASE WHEN v_forced THEN ''restored_over_hold'' ELSE ''restored'' END;%'
+           AND prosrc LIKE '%AND v_status = (CASE WHEN p_via = ''unarchive'' THEN ''Archived'' ELSE ''Superseded'' END)%AND (p_via = ''unarchive'' OR v_retired_by = v_uid)%IF NOT v_forced%AND p_status IS NULL%AND p_via <> ''unarchive''%'
+           AND prosrc LIKE '%v_reentry := true;%IF v_reentry%AND p_via = ''reversal_rollback''%AND NOT EXISTS (%AND a.action = ''REV_HOLD_OVERRIDDEN''%AND a.user_id = v_uid%AND a.details->>''via'' = ''reversal_restore''%AND (a.details->>''newStatus'') IS NOT DISTINCT FROM v_status%AND u.action = ''REV_HOLD_OVERRIDE_UNDONE''%AND r.action IN (''DOC_SPLIT_REVERSED'', ''DOC_MERGE_REVERSED'')%USING ERRCODE = ''insufficient_privilege'';%IF v_reentry THEN%PERFORM set_config(''app.publish_hold_override'', p_document_id::text, true);%'
+          FROM pg_proc WHERE proname = 'put_back_retired_issue'),
+       NULL
+UNION ALL
+SELECT 'DRLS-16: put_back_retired_issue stays SECURITY INVOKER with its search_path pinned; authenticated may execute it, anon may not',
+       EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public' AND p.proname = 'put_back_retired_issue'
+                  AND NOT p.prosecdef AND p.proconfig @> ARRAY['search_path=public'])
+       AND has_function_privilege('authenticated', 'put_back_retired_issue(uuid, text, text, text, boolean, timestamptz, uuid, text, text)', 'EXECUTE')
+       AND NOT has_function_privilege('anon', 'put_back_retired_issue(uuid, text, text, text, boolean, timestamptz, uuid, text, text)', 'EXECUTE'),
+       NULL
+UNION ALL
+SELECT 'DRLS-16: retire_over_hold runs as the caller (SECURITY INVOKER) with its search_path pinned; authenticated may execute it, anon may not',
+       EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public' AND p.proname = 'retire_over_hold'
+                  AND NOT p.prosecdef AND p.proconfig @> ARRAY['search_path=public'])
+       AND has_function_privilege('authenticated', 'retire_over_hold(uuid, text, text, timestamptz, text, boolean)', 'EXECUTE')
+       AND NOT has_function_privilege('anon', 'retire_over_hold(uuid, text, text, timestamptz, text, boolean)', 'EXECUTE'),
+       NULL
+UNION ALL
+SELECT 'the guard is SECURITY DEFINER with search_path pinned, no client role may execute it, and trg_document_publish_guard still fires it BEFORE UPDATE only (an INSERT never reaches it)',
+       EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public' AND p.proname = 'enforce_document_publish_guard'
+                  AND p.prosecdef AND p.proconfig @> ARRAY['search_path=public'])
+       AND NOT has_function_privilege('anon', 'enforce_document_publish_guard()', 'EXECUTE')
+       AND NOT has_function_privilege('authenticated', 'enforce_document_publish_guard()', 'EXECUTE')
+       AND EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+                    WHERE t.tgname = 'trg_document_publish_guard' AND NOT t.tgisinternal
+                      AND t.tgrelid = 'documents'::regclass AND p.proname = 'enforce_document_publish_guard'
+                      AND (t.tgtype & 2) = 2 AND (t.tgtype & 16) = 16 AND (t.tgtype & 4) = 0),
+       NULL
+UNION ALL
+SELECT 'one definition each: a single enforce_document_publish_guard(), put_back_retired_issue and retire_over_hold in the database (no stray overload)',
+       (SELECT count(*) = 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = 'public' AND p.proname = 'enforce_document_publish_guard')
+       AND (SELECT count(*) = 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = 'public' AND p.proname = 'put_back_retired_issue')
+       AND (SELECT count(*) = 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = 'public' AND p.proname = 'retire_over_hold'),
+       NULL
+UNION ALL
+SELECT inventory, NULL::boolean, n FROM dc_round_g_253_before;
