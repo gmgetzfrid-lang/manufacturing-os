@@ -89,14 +89,16 @@ export async function GET(req: NextRequest) {
     }
     return bad(`Couldn't load sources: ${error.message}`, 500);
   }
-  const { data: docCounts } = await supabaseAdmin
-    .from("knowledge_documents").select("source_id")
-    .eq("library_id", libraryId).not("source_id", "is", null);
+  // A count per source, asked as a count — reading the rows to tally them
+  // stopped at 1,000 and showed "1000" on a 1,134-document source. Set-aside
+  // (retired) entries aren't in the library, so they aren't counted.
   const countBySource = new Map<string, number>();
-  for (const d of docCounts ?? []) {
-    const sid = d.source_id as string;
-    countBySource.set(sid, (countBySource.get(sid) ?? 0) + 1);
-  }
+  await Promise.all((sources ?? []).map(async (s) => {
+    const { count } = await supabaseAdmin.from("knowledge_documents")
+      .select("id", { count: "exact", head: true })
+      .eq("library_id", libraryId).eq("source_id", s.id as string).neq("status", "retired");
+    countBySource.set(s.id as string, count ?? 0);
+  }));
   return NextResponse.json({
     sources: (sources ?? []).map((s) => ({
       id: s.id,

@@ -19,6 +19,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { computeForKnowledgeDoc, applyForDocument, type BridgeConfig } from "@/lib/equipmentBridgeServer";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -48,10 +49,9 @@ export async function GET(req: NextRequest) {
   const auth = await authWriter(req, orgId);
   if (auth instanceof NextResponse) return auth;
 
-  const { data: docs } = await supabaseAdmin
+  const { rows: docList } = await fetchAllRows<{ id: string; document_number: string | null; title: string | null; name: string | null }>((from, to) => supabaseAdmin
     .from("documents").select("id, document_number, title, name")
-    .eq("org_id", orgId).eq("library_id", libraryId).neq("status", "Archived").limit(2000);
-  const docList = (docs ?? []) as Array<{ id: string; document_number: string | null; title: string | null; name: string | null }>;
+    .eq("org_id", orgId).eq("library_id", libraryId).neq("status", "Archived").order("id").range(from, to));
   const ids = docList.map((d) => d.id);
 
   const rows: Array<Record<string, unknown>> = [];
@@ -109,10 +109,10 @@ export async function POST(req: NextRequest) {
     if (!libraryId) return bad("libraryId required");
     // Every knowledge twin of this doc-control library's documents, ready or
     // not — compute skips gracefully when there are no entities yet.
-    const { data: docs } = await supabaseAdmin
+    const { rows: docs } = await fetchAllRows<{ id: string }>((from, to) => supabaseAdmin
       .from("documents").select("id")
-      .eq("org_id", orgId).eq("library_id", libraryId).neq("status", "Archived").limit(2000);
-    const ids = ((docs ?? []) as Array<{ id: string }>).map((d) => d.id);
+      .eq("org_id", orgId).eq("library_id", libraryId).neq("status", "Archived").order("id").range(from, to));
+    const ids = docs.map((d) => d.id);
     let computed = 0;
     for (let i = 0; i < ids.length; i += 100) {
       const { data: twins } = await supabaseAdmin

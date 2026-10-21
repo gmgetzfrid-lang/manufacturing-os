@@ -33,6 +33,7 @@ import {
 } from "@/lib/drawingText";
 import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
 import { verdictsForSheets, verdictRows, type AuditSheet } from "@/lib/drawingAuditLog";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -86,18 +87,20 @@ async function loadVisibleEntities(orgId: string, userId: string, libraryId: str
   const entities: EntityRow[] = [];
   const docIds = docs.map((d) => d.id);
   for (let i = 0; i < docIds.length; i += 50) {
-    const { data, error } = await supabaseAdmin
+    // Paged: 50 drawing sets can carry far more than the 1,000 rows one
+    // read returns.
+    const { rows: data, error } = await fetchAllRows<EntityRow>((from, to) => supabaseAdmin
       .from("knowledge_page_entities")
       .select("document_id, page, kind, tag, raw")
       .in("document_id", docIds.slice(i, i + 50))
       .in("kind", TAG_ENTITY_KINDS as unknown as string[])
-      .order("document_id", { ascending: true })
-      .limit(50000);
+      .order("document_id", { ascending: true }).order("id")
+      .range(from, to), 50_000);
     if (error) {
-      const missing = error.code === "42P01" || /does not exist/i.test(error.message);
-      return { docs, entities: [], error: missing ? "migration-missing" : error.message };
+      const missing = /42P01|does not exist/i.test(error);
+      return { docs, entities: [], error: missing ? "migration-missing" : error };
     }
-    entities.push(...((data ?? []) as EntityRow[]));
+    entities.push(...data);
   }
   return { docs, entities };
 }
@@ -178,11 +181,11 @@ export async function GET(req: NextRequest) {
   {
     const readyIds = docs.filter((d) => d.status === "ready").map((d) => d.id);
     for (let i = 0; i < readyIds.length; i += 50) {
-      const { data } = await supabaseAdmin
+      const { rows: data } = await fetchAllRows<{ document_id: string }>((from, to) => supabaseAdmin
         .from("knowledge_chunks").select("document_id")
         .in("document_id", readyIds.slice(i, i + 50))
-        .limit(20000);
-      for (const r of data ?? []) docsWithText.add(r.document_id as string);
+        .order("id").range(from, to), 50_000);
+      for (const r of data) docsWithText.add(r.document_id);
     }
   }
   const textlessCount = docs.filter((d) => d.status === "ready" && !docsWithText.has(d.id)).length;
@@ -276,10 +279,10 @@ export async function GET(req: NextRequest) {
   {
     const ids = docs.map((d) => d.id);
     for (let i = 0; i < ids.length; i += 50) {
-      const { data } = await supabaseAdmin
+      const { rows: data } = await fetchAllRows<{ document_id: string; content: string }>((from, to) => supabaseAdmin
         .from("knowledge_chunks").select("document_id, content")
-        .in("document_id", ids.slice(i, i + 50)).limit(20000);
-      for (const c of (data ?? []) as Array<{ document_id: string; content: string }>) {
+        .in("document_id", ids.slice(i, i + 50)).order("id").range(from, to), 50_000);
+      for (const c of data) {
         charsByDoc.set(c.document_id, (charsByDoc.get(c.document_id) ?? 0) + (c.content?.length ?? 0));
       }
     }

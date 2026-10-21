@@ -34,6 +34,11 @@ import { computeReadiness, type EstateReadiness } from "./readinessServer";
 import { snapshotDoc, recordDocChange, automaticRun, type RunCtx } from "./runJournal";
 import { looksLikeDrawings } from "./connectPlan";
 import { readAutoRead } from "./autoRead";
+import { fetchAllRows } from "@/lib/fetchAllRows";
+
+/** Every row, paged — one read stops at 1,000 rows without saying so. */
+const allRows = <T,>(build: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>) =>
+  fetchAllRows<T>(build, 100_000).then((r) => r.rows);
 
 /** Bump when the tag reader learns to see more: every read copy is read
  *  again once, so sheets read by an older reader catch up on their own. */
@@ -157,15 +162,17 @@ async function ensureReadLibrary(admin: SupabaseClient, orgId: string, dcLibs: A
   const visionTurnedOn = !!opts.visionAllPages && feats.visionAllPages !== true;
   const readEverything = readerBefore < TAG_READER_VERSION || visionTurnedOn || !!opts.rereadAll;
   const already = new Set<string>(readEverything ? [] : (Array.isArray(feats.connectReread) ? (feats.connectReread as string[]) : []));
-  const { data: ready } = await admin.from("knowledge_documents").select("id, pages_indexed").eq("library_id", libraryId).eq("status", "ready").gt("pages_indexed", 0).limit(3000);
-  const ids = ((ready as Array<{ id: string }> | null) ?? []).map((r) => r.id);
+  const ready = await allRows<{ id: string; pages_indexed: number }>((from, to) => admin.from("knowledge_documents").select("id, pages_indexed").eq("library_id", libraryId).eq("status", "ready").gt("pages_indexed", 0).order("id").range(from, to));
+  const ids = ready.map((r) => r.id);
   const nextFeats: Record<string, unknown> = { ...feats, drawingIntel: true, tagReaderVersion: TAG_READER_VERSION };
   if (opts.visionAllPages !== undefined) nextFeats.visionAllPages = !!opts.visionAllPages;
   if (ids.length) {
     const withTags = new Set<string>();
     for (let i = 0; i < ids.length; i += 200) {
-      const { data: ents } = await admin.from("knowledge_page_entities").select("document_id").eq("org_id", orgId).eq("kind", "equipment").in("document_id", ids.slice(i, i + 200)).limit(20000);
-      for (const e of (ents as Array<{ document_id: string }> | null) ?? []) withTags.add(e.document_id);
+      // Every page of tags: cut at 1,000 rows, drawings past the cut looked
+      // untagged and were sent to be read AGAIN.
+      const ents = await allRows<{ document_id: string }>((from, to) => admin.from("knowledge_page_entities").select("document_id").eq("org_id", orgId).eq("kind", "equipment").in("document_id", ids.slice(i, i + 200)).order("id").range(from, to));
+      for (const e of ents) withTags.add(e.document_id);
     }
     const stale = readEverything ? ids : ids.filter((id) => !withTags.has(id) && !already.has(id));
     for (let i = 0; i < stale.length; i += 200) {
@@ -195,8 +202,7 @@ async function ensureBridge(admin: SupabaseClient, orgId: string, dcLibs: Array<
 
 async function buildRegistry(admin: SupabaseClient, orgId: string, libraryId: string, actor: string | null, deadline: number, run?: RunCtx): Promise<{ drawings: number; applied: number; assets: number; left: number }> {
   const out = { drawings: 0, applied: 0, assets: 0, left: 0 };
-  const { data: ready } = await admin.from("knowledge_documents").select("id, source_document_id").eq("library_id", libraryId).eq("status", "ready").not("source_document_id", "is", null).limit(3000);
-  const mirrors = (ready as Array<{ id: string; source_document_id: string }> | null) ?? [];
+  const mirrors = await allRows<{ id: string; source_document_id: string }>((from, to) => admin.from("knowledge_documents").select("id, source_document_id").eq("library_id", libraryId).eq("status", "ready").not("source_document_id", "is", null).order("id").range(from, to));
   if (!mirrors.length) return out;
   const docIds = mirrors.map((m) => m.source_document_id);
   const done = new Set<string>();
@@ -266,12 +272,11 @@ export async function connectEverything(admin: SupabaseClient, input: { orgId: s
   const { count: errCount } = await admin.from("knowledge_documents").select("id", { count: "exact", head: true }).eq("library_id", r.libraryId).eq("status", "error");
   // How many read copies actually carry equipment tags — the number the
   // registry step lives on.
-  const { data: readyIds } = await admin.from("knowledge_documents").select("id").eq("library_id", r.libraryId).eq("status", "ready").limit(3000);
-  const rids = ((readyIds as Array<{ id: string }> | null) ?? []).map((x) => x.id);
+  const rids = (await allRows<{ id: string }>((from, to) => admin.from("knowledge_documents").select("id").eq("library_id", r.libraryId).eq("status", "ready").order("id").range(from, to))).map((x) => x.id);
   const tagged = new Set<string>();
   for (let i = 0; i < rids.length; i += 200) {
-    const { data: ents } = await admin.from("knowledge_page_entities").select("document_id").eq("org_id", orgId).eq("kind", "equipment").in("document_id", rids.slice(i, i + 200)).limit(20000);
-    for (const e of (ents as Array<{ document_id: string }> | null) ?? []) tagged.add(e.document_id);
+    const ents = await allRows<{ document_id: string }>((from, to) => admin.from("knowledge_page_entities").select("document_id").eq("org_id", orgId).eq("kind", "equipment").in("document_id", rids.slice(i, i + 200)).order("id").range(from, to));
+    for (const e of ents) tagged.add(e.document_id);
   }
   const untagged = rids.length - tagged.size;
   steps.push({

@@ -297,10 +297,11 @@ export async function loadCatalog(admin: SupabaseClient, opts: {
   orgId: string; libraryIds: string[]; excludedDocIds: Set<string>;
 }): Promise<CatalogEntry[]> {
   try {
-    const { data: rows } = await admin
+    // Paged: one read stops at 1,000 — the 1,001st mapped document would
+    // vanish from what the assistant knows.
+    const { rows: profRows } = await fetchAllRows<{ document_id: string; library_id: string; raw: string | null }>((from, to) => admin
       .from("knowledge_page_entities").select("document_id, library_id, raw")
-      .eq("org_id", opts.orgId).eq("kind", "profile").limit(5000);
-    const profRows = (rows ?? []) as Array<{ document_id: string; library_id: string; raw: string | null }>;
+      .eq("org_id", opts.orgId).eq("kind", "profile").order("id").range(from, to), 50_000);
     if (profRows.length === 0) return [];
     const inScope = new Set(opts.libraryIds);
     const docIds = [...new Set(profRows.map((r) => r.document_id))];

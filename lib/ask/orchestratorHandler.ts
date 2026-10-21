@@ -26,6 +26,7 @@ import { ALLOWED_PROVIDERS, estimateCostUsd, AGREEMENT_VERSION, buildAgreementTe
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import { runOrchestrator, type ModelCall } from "@/lib/orchestrator/loop";
 import type { ToolContext } from "@/lib/orchestrator/tools";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 
 /** Wall clock for the loop. Comfortably inside maxDuration so the run always
  *  gets to write its metering row and return prose rather than being killed. */
@@ -194,15 +195,18 @@ export async function handleOrchestrator(input: AskHandlerInput): Promise<AskHan
     const squash = (t: string) => t.toUpperCase().replace(/[^A-Z0-9]/g, "");
     const designations = [...new Set(run.answer.match(/\b[A-Za-z]{1,8}[- ]?\d+(?:[-.]\d+)*[A-Za-z]?\b/g) ?? [])].slice(0, 24);
     if (designations.length > 0) {
+      // Paged — a single read stops at 1,000 rows.
+      const all = <T,>(build: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>) =>
+        fetchAllRows<T>(build, 50_000).then((r) => ({ data: r.rows }));
       const [{ data: ctrlDocs }, { data: kDocs }, { data: exDocs }] = await Promise.all([
-        supabaseAdmin.from("documents")
+        all<{ id: string; document_number: string | null; title: string | null; library_id: string | null }>((from, to) => supabaseAdmin.from("documents")
           .select("id, document_number, title, library_id")
-          .eq("org_id", orgId).eq("ai_excluded", false).neq("status", "Archived").limit(3000),
-        supabaseAdmin.from("knowledge_documents")
+          .eq("org_id", orgId).eq("ai_excluded", false).neq("status", "Archived").order("id").range(from, to)),
+        all<{ id: string; name: string; library_id: string; source_document_id: string | null }>((from, to) => supabaseAdmin.from("knowledge_documents")
           .select("id, name, library_id, source_document_id")
-          .eq("org_id", orgId).limit(3000),
-        supabaseAdmin.from("documents").select("id")
-          .eq("org_id", orgId).eq("ai_excluded", true).limit(2000),
+          .eq("org_id", orgId).neq("status", "retired").order("id").range(from, to)),
+        all<{ id: string }>((from, to) => supabaseAdmin.from("documents").select("id")
+          .eq("org_id", orgId).eq("ai_excluded", true).order("id").range(from, to)),
       ]);
       const excludedSrc = new Set(((exDocs ?? []) as Array<{ id: string }>).map((r) => r.id));
       const seen = new Set<string>();

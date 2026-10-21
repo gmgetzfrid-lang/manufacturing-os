@@ -23,6 +23,7 @@ import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
 import type { ParamSpec } from "@/lib/orchestrator/protocol";
 import { tracePath, traceNeighbourhood, normalizeTag, type LineEdge } from "@/lib/pidTrace";
 import { orIlike } from "@/lib/orFilter";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 
 export interface ToolContext {
   orgId: string;
@@ -146,15 +147,16 @@ const searchDocuments: ToolDef = {
     // to their knowledge mirrors via source_document_id.
     const excluded = new Set<string>();
     try {
-      const { data: exDocs } = await supabaseAdmin
+      // Paged: an exclusion list cut at 1,000 would let held-back files through.
+      const { rows: exDocs } = await fetchAllRows<{ id: string }>((from, to) => supabaseAdmin
         .from("documents").select("id")
-        .eq("org_id", ctx.orgId).eq("ai_excluded", true).limit(2000);
-      const exIds = new Set(((exDocs ?? []) as Array<{ id: string }>).map((r) => r.id));
+        .eq("org_id", ctx.orgId).eq("ai_excluded", true).order("id").range(from, to));
+      const exIds = new Set(exDocs.map((r) => r.id));
       if (exIds.size > 0) {
-        const { data: mirrors } = await supabaseAdmin
+        const { rows: mirrors } = await fetchAllRows<{ id: string; source_document_id: string }>((from, to) => supabaseAdmin
           .from("knowledge_documents").select("id, source_document_id")
-          .eq("org_id", ctx.orgId).not("source_document_id", "is", null).limit(4000);
-        for (const m of (mirrors ?? []) as Array<{ id: string; source_document_id: string }>) {
+          .eq("org_id", ctx.orgId).not("source_document_id", "is", null).order("id").range(from, to));
+        for (const m of mirrors) {
           if (exIds.has(m.source_document_id)) excluded.add(m.id);
         }
       }
