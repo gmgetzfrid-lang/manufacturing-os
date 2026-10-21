@@ -193,6 +193,11 @@ function seed(db: string, w: World): void {
     UPDATE documents SET pending_version_id = '${w.o2A}' WHERE id = '${w.dOut}';
     UPDATE documents SET pending_version_id = '${w.i2A}' WHERE id = '${w.dIntake}';
     UPDATE documents SET pending_version_id = '${w.as2A}' WHERE id = '${w.dAssigned}';
+    -- the intake route's own record of each genuine submission (app/api/intake/upload, the service
+    -- role, no person named) — what door (b)'s intake limb asks for since 20261254 (DCK-18, P37)
+    INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, details) VALUES
+      ('INTAKE_SUBMISSION', '${w.dIntake}', 'document', '${w.org}', NULL, jsonb_build_object('versionId', '${w.i2A}', 'company', 'Contractor Co')),
+      ('INTAKE_SUBMISSION', '${w.dAssigned}', 'document', '${w.org}', NULL, jsonb_build_object('versionId', '${w.as2A}', 'company', 'Contractor Co'));
     RESET session_replication_role;
     INSERT INTO document_holds (id, org_id, document_id, reason, notes, opened_by) VALUES ('${w.hold}', '${w.org}', '${w.dHeld}', 'Other', 'p32 harness', '${u.docctrl}');
     UPDATE documents SET checked_out_by = '${u.holder}', checked_out_by_name = 'Holder Person', checked_out_at = now()

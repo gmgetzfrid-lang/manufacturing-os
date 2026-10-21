@@ -194,6 +194,10 @@ describe("20261174 — the guard re-created from its NEWEST earlier body (found 
       // re-entry limb (its guard only reads the flag) — pinned in
       // dcRoundGStatusEditorHoldLegMigration.test.ts.
       "20261253_dc_roundG_status_editor_hold_leg.sql",
+      // DCK-18 / REV-37 (P37): 20261254 re-creates 20261252's finalize_reviewed_promote and 20261253's
+      // retire_over_hold (their newest bodies; the flag's set / clear lines kept byte for byte) — its guard
+      // only reads the flag — pinned in dcRoundGDoorBGuardMigration.test.ts.
+      "20261254_dc_roundG_door_b_guard.sql",
     ]);
     expect(stripComments(M)).toContain("current_setting('app.publish_hold_override', true)");
     expect(stripComments(M)).not.toMatch(/set_config|SET LOCAL/);

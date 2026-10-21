@@ -334,11 +334,13 @@ describe.skipIf(skip !== null)("REV-36 (20261253): entry into Superseded / Void 
   });
 
   it("the reversal's park of a held sheet: the bare park before; retire_over_hold('reversal_park') after — the park's own columns (no MOC written), recorded", () => {
-    const park = `UPDATE documents SET status = 'Superseded', superseded_at = now(), superseded_by_user = '${w.uid.docctrl}', supersession_reason = 'Reverted split — wrong sheets', updated_at = now(), updated_by = '${w.uid.docctrl}' WHERE id = '${w.dHeld}'`;
-    const cols = `SELECT status || '|' || COALESCE(supersession_reason, '') || '|' || COALESCE(supersession_moc, 'no moc') FROM documents WHERE id = '${w.dHeld}';`;
+    // P37 (20261254, REV-37): a recorded park is bound to the reversal being run — the sheet is one a
+    // recorded split names among its replacements (evSplit names dHeld2), as reverse.ts parks
+    const park = `UPDATE documents SET status = 'Superseded', superseded_at = now(), superseded_by_user = '${w.uid.docctrl}', supersession_reason = 'Reverted split — wrong sheets', updated_at = now(), updated_by = '${w.uid.docctrl}' WHERE id = '${w.dHeld2}'`;
+    const cols = `SELECT status || '|' || COALESCE(supersession_reason, '') || '|' || COALESCE(supersession_moc, 'no moc') FROM documents WHERE id = '${w.dHeld2}';`;
     expect(probe(BEFORE, w, "docctrl", park, cols)).toBe("ok:1 / Superseded|Reverted split — wrong sheets|no moc");
     expect(probe(AFTER, w, "docctrl", park, cols)).toMatch(LEG);
-    const viaRpc = `SELECT 1 FROM (SELECT retire_over_hold('${w.dHeld}', 'reversal_park', 'Reverted split — wrong sheets', now(), 'IGNORED', true) AS r) x WHERE x.r = 'superseded_over_hold'`;
+    const viaRpc = `SELECT 1 FROM (SELECT retire_over_hold('${w.dHeld2}', 'reversal_park', 'Reverted split — wrong sheets', now(), 'IGNORED', true) AS r) x WHERE x.r = 'superseded_over_hold'`;
     expect(probe(AFTER, w, "docctrl", viaRpc, cols)).toBe("ok:1 / Superseded|Reverted split — wrong sheets|no moc");
   });
 
