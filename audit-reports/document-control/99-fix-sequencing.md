@@ -1131,3 +1131,40 @@ migration, `20261252_dc_roundG_door_b_record.sql` (`DCK-18`):
   before it); no `lib/schemaExpectations.ts` probe (the app tolerates both
   signatures; the file's own result set is the paste check); no new table,
   notification kind or audit action.
+
+⚠ **Paste order — P37 DOOR B GUARD (2026-10-21).** One one-paste
+migration, `20261254_dc_roundG_door_b_guard.sql` (`DCK-18` remainders,
+`REV-37`):
+1. **No deploy order.** The guard, `finalize_reviewed_promote` and
+   `retire_over_hold` keep their signatures and answers; the app carrying
+   P37 (the Inspector's retire of a stray pending submission, the re-read of
+   a lost flip or park) works on every database. An app before P37 keeps
+   working after the paste.
+2. **Paste after `20261253` (required** — its first statement refuses,
+   changing nothing, without `20261253`'s hold leg, `20261252`'s
+   eight-argument `finalize_reviewed_promote` or `20261253`'s
+   `retire_over_hold`), so it waits behind row 193 (HOLD behind rows 187 /
+   150). **Never re-paste `20261253`, `20261252`, `20261245`, `20261193` or
+   any earlier guard / finalize migration after it.**
+- **What changes after the paste:** a door-(b) write over another person's
+  checkout made outside `finalize_reviewed_promote` (the three-step PATCH
+  sent by hand) is recorded and the holder told by the guard (a WARNING,
+  never a refusal, if either cannot be written); a door-shaped pending
+  submission with no `INTAKE_SUBMISSION` record of the intake route is no
+  longer promoted over another person's checkout (42501 — the holder checks
+  in, then it is approved; or Document Control retires it); a recorded
+  reversal park of a held document no unreversed split / merge names is
+  refused (42501); a member's own `REV_HOLD_OVERRIDDEN` row is refused
+  (42501) — every database function that records one keeps working.
+- **The result set:** nine probes (all true) and six counts — pending
+  door-shaped submissions the route's record does not name (expected 0); of
+  those, on a checked-out document now (expected 0); the
+  `REVIEW_PROMOTED_OVER_CHECKOUT` and `REV_HOLD_OVERRIDDEN` records to date
+  and of the latter the `reversal_restore` ones (informational); held
+  documents an unreversed split / merge names (informational). A non-zero
+  "expected 0": the paste still applies; tell the integrator.
+- **For the integrator at merge, not edited by P37:** the `20261254` row in
+  `MIGRATION-PASTE-ORDER.md` (after row 193's `20261253`); no
+  `lib/schemaExpectations.ts` probe; no new table or notification kind; one
+  new audit action (`PENDING_SUBMISSION_RETIRED`, registered in
+  `lib/auditActions.ts`).
