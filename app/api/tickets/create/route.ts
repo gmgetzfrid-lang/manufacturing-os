@@ -751,6 +751,12 @@ async function create(
     row.like_in_kind_declared_at = now;
     row.like_in_kind_signature_id = declaration.signatureId;
     row.engineering_required = false;
+    // GAP-110 acceptance 4: the declaration renders attributed in the
+    // ticket's history too (the requester's own words, signed).
+    (row.history as Array<Record<string, unknown>>).push({
+      action: "Declared like-in-kind (signed)", user: email, role: requesterRole, date: now,
+      details: declaration.statement,
+    });
   }
 
   let ticketNumber = "";
@@ -790,6 +796,7 @@ async function create(
       delete row.like_in_kind_declared_at;
       delete row.like_in_kind_signature_id;
       delete row.engineering_required;
+      row.history = (row.history as Array<Record<string, unknown>>).filter((h) => h.action !== "Declared like-in-kind (signed)");
       warnings.push("Your like-in-kind declaration is signed but could not be recorded on the request yet (database update 20261250 is not applied) — the request was filed the usual way.");
       ({ data: inserted, error: insErr } = await supabaseAdmin.from("tickets").insert(row).select("id").single());
       if (insErr && "library_id" in row && missingLibraryColumn(insErr)) {

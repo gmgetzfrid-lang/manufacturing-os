@@ -1850,6 +1850,10 @@ describe("DF-P6 — GAP-110 / DEC-34: the like-in-kind declaration at filing; GA
       id: KEY, like_in_kind_statement: STATEMENT, like_in_kind_declared_by: REQ, like_in_kind_signature_id: SIG, engineering_required: false,
     });
     expect(typeof t.like_in_kind_declared_at).toBe("string");
+    // GAP-110 acceptance 4: attributed in the history, in the requester's words
+    expect(t.history).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: "Declared like-in-kind (signed)", user: "rita@plant.io", role: "Requester", details: STATEMENT }),
+    ]));
   });
 
   it("refused BEFORE a number is spent: no signature, another signer, another request, an edited statement, an expired signature", async () => {
@@ -1901,6 +1905,7 @@ describe("DF-P6 — GAP-110 / DEC-34: the like-in-kind declaration at filing; GA
     const t = tickets()[0];
     expect(t.engineering_required).toBeUndefined();
     expect(t.like_in_kind_statement).toBeUndefined();
+    expect(JSON.stringify(t.history)).not.toContain("Declared like-in-kind");
     expect(nextTicketRpc()).toHaveLength(1);
   });
 
