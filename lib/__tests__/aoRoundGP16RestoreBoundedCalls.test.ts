@@ -42,7 +42,7 @@ import { POST as applyTable } from "@/app/api/admin/restore/apply-table/route";
 import { POST as beginRoute } from "@/app/api/admin/restore/begin/route";
 import {
   applyRestoreChunk, planRestore, runChunkedRestore, ticketNumberCarriers, backupNumberCarriersFor, restoreRefusalLabel,
-  RESTORE_REMINT_RESERVATIONS, RESTORE_HELD_BACK_ROUNDS, RESTORE_CARRIERS_BYTES,
+  RESTORE_REMINT_RESERVATIONS, RESTORE_HELD_BACK_ROUNDS, RESTORE_CARRIERS_BYTES, RESTORE_REVIEW_MODEL_COLUMNS,
   TICKET_NUMBER_IN_USE, TICKET_NUMBER_UNSETTLED, TICKET_RENUMBERED,
   type RestorePost, type RestoreEnvelopeLike,
 } from "@/lib/dataRestore";
@@ -63,7 +63,14 @@ const sha = (lines: string[]) => createHash("sha256").update(lines.join("\n")).d
 
 /** A service-role client over the in-memory engine that records every
  *  database call it runs — the builder chain with its arguments (write
- *  payloads included), one line per executed statement or read. */
+ *  payloads included), one line per executed statement or read.
+ *  admin-and-org Round G P18: these goldens run against a database WITHOUT
+ *  20261250 (beforeEach), where DEC-90 ruling (3) says the restore behaves
+ *  exactly as before; the one read it adds there — the review-model column
+ *  check, answered 42703 — is kept apart in `probes` (one per tickets
+ *  request, pinned below) so every other call is compared byte for byte. */
+const REVIEW_MODEL_PROBE = `tickets.select(${JSON.stringify([RESTORE_REVIEW_MODEL_COLUMNS.join(",")])}).limit([0])`;
+const probes: string[] = [];
 function tracing() {
   const log: string[] = [];
   const sb = { from: (t: string) => {
@@ -71,7 +78,7 @@ function tracing() {
     const parts: string[] = [t];
     const p: Record<string, unknown> = {};
     for (const [k, fn] of Object.entries(b)) {
-      if (k === "then") { p.then = (res: (v: unknown) => void, rej: (e: unknown) => void) => { log.push(parts.join(".")); return fn(res, rej); }; continue; }
+      if (k === "then") { p.then = (res: (v: unknown) => void, rej: (e: unknown) => void) => { const line = parts.join("."); (line === REVIEW_MODEL_PROBE ? probes : log).push(line); return fn(res, rej); }; continue; }
       p[k] = (...a: unknown[]) => { parts.push(`${k}(${JSON.stringify(a)})`); fn(...a); return p; };
     }
     return p;
@@ -109,6 +116,9 @@ beforeEach(() => {
   db.keys = { ticket_number_counters: [["org_id", "year"]] };
   db.writeError = null; db.readError = {}; db.writes = []; db.attempts = []; db.countless = false; db.fks = {}; db.maxRows = 1000; db.generated = {}; db.authUsers = null;
   posted.length = 0;
+  // admin-and-org Round G P18: a database without 20261250 (see tracing()).
+  db.missingColumns = { tickets: [...RESTORE_REVIEW_MODEL_COLUMNS] };
+  probes.length = 0;
 });
 
 describe("EDGE-5 (P16 final fix pass) — a restore where no number collides issues exactly the calls and writes it issued before (captured at 4407b30)", () => {
@@ -121,6 +131,8 @@ describe("EDGE-5 (P16 final fix pass) — a restore where no number collides iss
       'tickets.upsert([[{"id":"t-1","org_id":"org-1","ticket_id":"KE-DDRT-26-0001","title":"Request KE-DDRT-26-0001","status":"CLOSED"},{"id":"t-2","org_id":"org-1","ticket_id":"KE-DDRT-26-0002","title":"Request KE-DDRT-26-0002","status":"CLOSED"},{"id":"t-3","org_id":"org-1","title":"Request null","status":"CLOSED"}],{"onConflict":"id","ignoreDuplicates":true,"count":"exact"}])',
     ]);
     expect(sha([JSON.stringify(r)])).toBe("3cce96d6e1e4b515d8c7b3f6b6fec4baccbc6c038d225074af3c7d09ccc35b31");
+    // admin-and-org Round G P18: the one read added — the column check, answered "not there".
+    expect(probes).toEqual([REVIEW_MODEL_PROBE]);
   });
 
   it("the page's driver, a backup with counters, requests and comments into a workspace with non-overlapping numbers: the same 16 calls, byte for byte", async () => {
