@@ -585,6 +585,12 @@ const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds
   // on the service role) to record who opened the notice. It decides no send.
   "lib/consentWindowScan.ts": [{ marks: '.select("id, read_at").in("id", ids)', none: "not a dedupe: when a consent window closes, the maintenance cron reads read_at of the bell rows open_consent_window itself wrote, by the ids its append-only delivered events name (service role), to record in the ticket's history who opened the notice (GAP-113's three states); a missing row was read and cleared (the purge and a member's delete take only read rows). It withholds no notice" }],
   "lib/distributionAcks.ts": [{ marks: '.in("kind", ["ack_requested", "ack_overdue"])', keys: ["ackEscalation"] }],
+  // document-control P39 (DIST-20; declared to notifications under filesOutsidePlan): after a
+  // request path's bell rows land, the notice record's builder reads them back on the server
+  // (the route's service role, or a server path's) to put each landed notice on the append-only
+  // document_notice_events — by the id its writer chose, or the newest the acting member wrote
+  // since the action began, at most 15 minutes old.
+  "lib/documentNoticeRecord.ts": [{ marks: '.eq("resource_type", "document").eq("resource_id", input.documentId)', none: "not a dedupe: the document notice record's builder (verifiedRequestRows) reads the bell rows a request path just wrote — this workspace's, about this document, to the named recipients, of the path's own kinds, dated within NOTICE_VERIFY_WINDOW_MS and never ahead of the clock, written by the acting member (by the id the writer chose, or the newest it wrote since the action began) — and records each one that landed, once (the record row's id is derived from the bell row's). No bell row, email or push is withheld because one exists. The rows it records hold the distribution nag's robot nudge for one cooldown exactly as those ackRequest bell rows already did (browser-written by design — the distributionAcks entry above): a row a member forges can be recorded only as a notice that reached its recipient's bell, from that member, about a document the member can read" }],
   "lib/holds.ts": [{ marks: '.contains("metadata", { staleHoldId: h.id, staleFor })', keys: ["staleHoldId"] }],
   "lib/intakeRateLimit.ts": [{ marks: '.contains("metadata", { reviewHealthDay: input.day })', keys: ["reviewHealthDay"] }],
   // notifications N10 PUSH (GAP-205): the push sender reads the bell rows an emit() just wrote,

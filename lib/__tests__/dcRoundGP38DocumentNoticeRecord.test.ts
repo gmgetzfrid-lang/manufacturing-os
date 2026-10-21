@@ -128,6 +128,10 @@ function chain(table: string) {
     }
     if (db.refuseReadOf.has(table)) return { data: null, error: { code: "42501", message: `permission denied for table ${table}` } };
     if (table === "document_notice_events") {
+      // the table not in this database (before 20261257): a read is refused
+      // as PostgreSQL refuses it — P39's record-only cooldown then counts the
+      // bell rows, exactly as today
+      if (db.tables[table] === undefined) return { data: null, error: { code: "42P01", message: 'relation "public.document_notice_events" does not exist' } };
       db.noticeReads += 1;
       if (db.failNoticeReadAfter != null && db.noticeReads > db.failNoticeReadAfter) return { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } };
     }
@@ -258,8 +262,11 @@ describe("DIST-19 — the review-reminder scan (lib/reviewControl.ts scanReviews
     expect(reviewStamp()).toBe(iso(T0));
     expect(events("reminded")).toEqual([expect.objectContaining({
       org_id: "o1", document_id: "d1", version_id: "v1", revision_label: "C", source: "review_signoff", source_id: "s1",
-      recipient: "rev", subject_user_id: "rev", actor_name: "System", notification_id: null, noticed_at: iso(T0),
+      recipient: "rev", subject_user_id: "rev", actor_name: "System", noticed_at: iso(T0),
+      // P39 (DIST-20, DIST-19 residual (c)): the row names the bell row it landed as
+      notification_id: bellsTo("rev", "review_requested")[0].id,
     })]);
+    expect(events("escalated").map((e) => e.notification_id).sort()).toEqual(bells("review_overdue").map((b) => b.id).sort());
     expect(events("escalated").map((e) => e.recipient).sort()).toEqual(["ctrl", "own"]);
     expect(events("escalated").every((e) => e.subject_user_id === "rev" && e.source_id === "s1")).toBe(true);
   });
@@ -399,12 +406,19 @@ describe("DIST-19 — the distribution-ack nag (lib/distributionAcks.ts scanDist
     expect(bellsTo("own", "ack_overdue")).toHaveLength(1);
   });
 
-  it("REGRESSION: a manual re-nudge (a bell row, not on the record) still holds the robot's nudge inside the window", async () => {
+  it("REGRESSION (P39 — DIST-20): a manual re-nudge still holds the robot's nudge inside the window — read from the record, where renudgeUnacked now puts it (a reminded row), even after its bell row is purged", async () => {
+    seed();
+    db.tables.document_notice_events.push({ id: "m0", org_id: "o1", document_id: "d1", source: "distribution_ack", source_id: "k1", kind: "reminded", recipient: "asg", subject_user_id: "asg", details: { manual: true, byMember: true }, noticed_at: daysBefore(1) });
+    await cronRun("distribution-acks", scanDistributionAcks, 0);
+    expect(bellsTo("asg", "ack_requested")).toHaveLength(0);              // held by the manual re-nudge on the record
+    expect(bellsTo("rev", "ack_requested")).toHaveLength(1);
+  });
+
+  it("P39 (DIST-20): with the record in place the cooldown reads the record ONLY — a bell row that is not on the record (a manual nudge sent before P39, or a forged one) no longer holds the robot's nudge", async () => {
     seed();
     db.tables.notifications = [{ id: "n0", org_id: "o1", user_id: "asg", kind: "ack_requested", resource_id: "d1", metadata: { ackRequest: true }, created_at: daysBefore(1) }];
     await cronRun("distribution-acks", scanDistributionAcks, 0);
-    expect(bellsTo("asg", "ack_requested")).toHaveLength(1);              // only the manual one
-    expect(bellsTo("rev", "ack_requested")).toHaveLength(1);
+    expect(bellsTo("asg", "ack_requested")).toHaveLength(2);              // the old bell row, and the robot's nudge
   });
 
   it("REGRESSION: before 20261257 the nag counts from the bell rows alone and nudges exactly as before", async () => {
@@ -469,7 +483,7 @@ describe("DIST-19 (P38 fix pass) — the replay trusts only the recorder's own s
   it("the cooldown read never counts a record row dated in the future", async () => {
     seedAcks();
     db.tables.document_notice_events.push({ ...keptRow({ id: "planted", noticed_at: "2099-01-01T00:00:00.000Z" }) });
-    expect(await recentDistributionNotices("o1", daysBefore(3))).toEqual({ reminded: new Set(), escalated: new Set() });
+    expect(await recentDistributionNotices("o1", daysBefore(3))).toEqual({ reminded: new Set(), escalated: new Set(), complete: true });
     await cronRun("distribution-acks", scanDistributionAcks, 0);
     expect(bellsTo("asg", "ack_requested")).toHaveLength(1);
   });

@@ -46,6 +46,45 @@
 //     column) nothing is written and nothing is deferred: today's behaviour,
 //     said once per run in the scan's line.
 //
+// document-control Round G — P39 NOTICE RECORD REQUESTS (DIST-20; DEC-90
+// rulings (1)–(5) for P39). The request paths and the manual reminders are
+// on the record too: requestAcks (a distribution request — `delivered` — and
+// its reminder to a recipient already asked — `reminded`), openReviewRoster
+// and recomputeDocumentAck (the roster requests — `delivered`),
+// nudgeAcknowledgment and renudgeUnacked (a controller's manual re-send —
+// `reminded`, details.manual) and the manual activateAlternate
+// (`alternate_activated`, details.manual) each append one row per person
+// once its bell row LANDED, through recordRequestNotices:
+//   · the row is built from the BELL ROW ITSELF (verifiedRequestRows): the
+//     notification it names is read on the server (the service role) and
+//     must be this document's, that person's, of the notice's kind, written
+//     by the acting member (by its id when the writer chose one —
+//     lib/inAppNotifications.ts newNotificationId — or, for an emit() fan-out
+//     that answers no ids, the newest such row since the action began, at
+//     most NOTICE_VERIFY_WINDOW_MS ago); noticed_at is the bell row's own
+//     created_at and notification_id its id; the row's id is derived from
+//     the bell row's id (requestNoticeId), so a repeat records nothing twice.
+//     A notice whose bell row is not found (refused, dead-lettered) leaves no
+//     row — "once its notice landed";
+//   · in the BROWSER the record cannot be written by the member (20261257
+//     grants no client write), so the rows go through POST
+//     /api/documents/notice-record, which verifies the caller (an active
+//     member who can read the document) and builds the rows as above with the
+//     service role; on the SERVER (the maintenance cron, a route bound to the
+//     service role) they are built and written directly;
+//   · a record failure never fails the action and never changes who is
+//     notified: the bell rows, emails, pushes, notified_at stamps and audit
+//     rows are written exactly as before, first; the record write is retried
+//     and deferred to the audit log exactly as P38's (noticeRecorder), and
+//     the source's daily scan replays it. An unreachable route is said in the
+//     console and the notice is not on the record (residual, DIST-20);
+//   · the distribution nag's cooldown (scanDistributionAcks) reads the record
+//     ONLY once 20261257 is in place and the read completes
+//     (recentDistributionNotices `complete`): a manual request or re-nudge is
+//     a delivered / reminded row, so it still holds the robot's nudge for one
+//     cooldown; before the paste (or on a refused / capped read) the bell rows
+//     count, exactly as today.
+//
 // Never throws.
 
 import { supabase } from "@/lib/supabase";
@@ -98,7 +137,9 @@ export interface DocumentNoticeRow {
   /** the person whose response is awaited (the reviewer / assignee / recipient) */
   subject_user_id: string | null;
   notification_id: string | null;
-  actor_name: string;
+  /** "System" for a scan's notice; the acting member's name for a request
+   *  path's (DIST-20), or null where it was not kept (a replayed member row) */
+  actor_name: string | null;
   details: Record<string, unknown>;
   /** when the notice landed (the app's clock) — kept by a replay */
   noticed_at: string;
@@ -114,13 +155,28 @@ const newId = (): string => {
   });
 };
 
-/** Build a row (a fresh id, noticed now, the System as actor). */
+/** DIST-20 (P39): a fresh id for a bell row its writer will name on the
+ *  record (the row is written under it — lib/inAppNotifications.ts
+ *  NotificationInput.id). A v4 UUID, like every bell row's. */
+export function newBellId(): string {
+  return newId();
+}
+
+/** A run's line, best-effort: never lets the saying of a line throw. */
+function say(note: string): void {
+  try { noteComplianceScan(note); } catch { /* the line is best-effort */ }
+}
+
+/** Build a row (a fresh id, noticed now, the System as actor). DIST-20
+ *  (P39): `notificationId`, when the writer knows the bell row its notice
+ *  landed as (lib/inAppNotifications.ts newNotificationId) — none otherwise,
+ *  exactly as before. */
 export function noticeRow(input: Omit<DocumentNoticeRow, "id" | "notification_id" | "actor_name" | "noticed_at" | "details"> & {
-  details?: Record<string, unknown>; noticedAt?: string;
+  details?: Record<string, unknown>; noticedAt?: string; notificationId?: string | null;
 }): DocumentNoticeRow {
-  const { details, noticedAt, ...rest } = input;
+  const { details, noticedAt, notificationId, ...rest } = input;
   return {
-    id: newId(), ...rest, notification_id: null, actor_name: "System",
+    id: newId(), ...rest, notification_id: notificationId ?? null, actor_name: "System",
     details: details ?? {}, noticed_at: noticedAt ?? new Date().toISOString(),
   };
 }
@@ -282,7 +338,12 @@ export function deferredNoticeRow(v: unknown, orgId: string, source: DocumentNot
     id: r.id, org_id: orgId, document_id: r.document_id, version_id,
     revision_label: (r.revision_label as string | null | undefined) ?? null,
     source, source_id, kind: r.kind as DocumentNoticeKind, recipient: r.recipient, subject_user_id, notification_id,
-    actor_name: typeof r.actor_name === "string" ? r.actor_name : "System",
+    // DIST-20 (P39): a member's notice (details.byMember) or a manual one
+    // (details.manual) was not the System's; the deferred payload keeps no
+    // name, so the replay says none
+    actor_name: typeof r.actor_name === "string" ? r.actor_name
+      : (r.details && typeof r.details === "object"
+          && ((r.details as Record<string, unknown>).byMember === true || (r.details as Record<string, unknown>).manual === true) ? null : "System"),
     details: deferrableDetails(r.kind, r.details),
     noticed_at: new Date(Number.isFinite(at) ? Math.min(at, kept) : kept).toISOString(),
   };
@@ -414,18 +475,23 @@ export async function replayDeferredNotices(orgId: string, source: DocumentNotic
 }
 
 /** The record's own cooldown read for the distribution-ack nag: who was
- *  reminded / escalated for which document since `sinceIso` (never a notice
- *  dated in the future). Keyset-paged newest first on (noticed_at, id), so
- *  PostgREST's max-rows never truncates it silently (merge-time fix pass);
- *  it stops after COOLDOWN_NOTICE_PAGES pages and says so in the run's line
- *  — the older notices of the window are then counted from the
- *  notifications rows alone, as before (the caller's union only ever
- *  withholds more). null when the record cannot be read (missing or
- *  refused, on any page) — the caller then counts from the notifications
- *  rows alone, exactly as before. */
-export async function recentDistributionNotices(orgId: string, sinceIso: string): Promise<{ reminded: Set<string>; escalated: Set<string> } | null> {
+ *  asked / reminded / escalated for which document since `sinceIso` (never
+ *  a notice dated in the future). Keyset-paged newest first on
+ *  (noticed_at, id), so PostgREST's max-rows never truncates it silently
+ *  (merge-time fix pass); it stops after COOLDOWN_NOTICE_PAGES pages and
+ *  says so in the run's line — `complete` is then false and the caller
+ *  counts the window from the notifications rows as well, as before (the
+ *  union only ever withholds more). null when the record cannot be read
+ *  (missing or refused, on any page) — the caller then counts from the
+ *  notifications rows alone, exactly as before.
+ *  DIST-20 (P39): a request (`delivered`) counts with the reminders — a
+ *  manual request or re-nudge is on the record now, and holds the robot's
+ *  nudge for one cooldown as its bell row did; with `complete` true the
+ *  caller reads the record ONLY. */
+export async function recentDistributionNotices(orgId: string, sinceIso: string): Promise<{ reminded: Set<string>; escalated: Set<string>; complete: boolean } | null> {
   const reminded = new Set<string>();
   const escalated = new Set<string>();
+  let complete = true;
   try {
     // a notice dated in the future never holds a nudge (P38 fix pass)
     const nowIso = new Date().toISOString();
@@ -434,12 +500,13 @@ export async function recentDistributionNotices(orgId: string, sinceIso: string)
     for (let page = 0; ; page += 1) {
       if (page >= COOLDOWN_NOTICE_PAGES) {
         noteComplianceScan(`the distribution nag's cooldown read of the document notice record stopped at ${read} rows (${COOLDOWN_NOTICE_PAGES} pages) — the window's older notices were counted from the bell rows alone, as before`);
+        complete = false;
         break;
       }
       let q = db().from("document_notice_events")
         .select("id, recipient, document_id, kind, noticed_at")
         .eq("org_id", orgId).eq("source", "distribution_ack")
-        .in("kind", ["reminded", "escalated"])
+        .in("kind", ["delivered", "reminded", "escalated"])
         .gte("noticed_at", sinceIso)
         .lte("noticed_at", nowIso);
       if (cursor) q = q.or(beforeCursor(cursor, "noticed_at"));
@@ -452,15 +519,302 @@ export async function recentDistributionNotices(orgId: string, sinceIso: string)
       read += list.length;
       for (const r of list) {
         const key = `${String(r.recipient)}:${String(r.document_id)}`;
-        if (r.kind === "reminded") reminded.add(key);
+        if (r.kind === "reminded" || r.kind === "delivered") reminded.add(key);
         else if (r.kind === "escalated") escalated.add(key);
       }
       const last = list[list.length - 1];
       if (!last?.noticed_at || !last?.id) break;
       cursor = { at: last.noticed_at, id: last.id };
     }
-    return { reminded, escalated };
+    return { reminded, escalated, complete };
   } catch {
     return null;
   }
+}
+
+// ── DIST-20 (P39): the request paths and the manual reminders ───────────────
+
+/** The kinds a request path writes (delivered: a request; reminded: a manual
+ *  re-send; alternate_activated: a manual activation). */
+export type RequestNoticeKind = "delivered" | "reminded" | "alternate_activated";
+export const REQUEST_NOTICE_KINDS: readonly RequestNoticeKind[] = ["delivered", "reminded", "alternate_activated"];
+/** How long ago a bell row may date and still be taken for a notice just sent. */
+export const NOTICE_VERIFY_WINDOW_MS = 15 * 60_000;
+/** A bell row dated past the server's clock by more than this is never taken. */
+export const NOTICE_FUTURE_SKEW_MS = 60_000;
+/** Notices one request to the route carries at most (the browser splits a
+ *  larger set; one request stays under the 64 kB a keepalive fetch may send). */
+export const REQUEST_NOTICE_MAX = 200;
+/** The browser's door into the record (the member cannot write it). */
+export const NOTICE_RECORD_ROUTE = "/api/documents/notice-record";
+/** The browser waits at most this long for the route. */
+export const NOTICE_RECORD_TIMEOUT_MS = 8_000;
+/** The route refuses a body larger than this (413). */
+export const NOTICE_RECORD_MAX_BODY = 64_000;
+
+/** One person's notice on a request path. */
+export interface RequestNotice {
+  kind: RequestNoticeKind;
+  /** who was told */
+  recipient: string;
+  /** whose response is awaited (the recipient when omitted) */
+  subject?: string | null;
+  /** the bell row's id, when the writer chose it (newNotificationId) */
+  notificationId?: string | null;
+  /** the obligation's own row, when the writer knows it */
+  sourceId?: string | null;
+  /** numbers and booleans only (deferrableDetails) — e.g. { manual: true } */
+  details?: Record<string, unknown>;
+}
+
+/** What a request path asks the record to hold. */
+export interface RequestNoticeInput {
+  orgId: string;
+  documentId: string;
+  source: DocumentNoticeSource;
+  /** the revision the obligations are on (resolves a notice that names no sourceId) */
+  versionId?: string | null;
+  /** when the action began (ISO): a bell row named by no id is searched for
+   *  from a minute before it — never earlier than NOTICE_VERIFY_WINDOW_MS ago */
+  since?: string | null;
+  notices: RequestNotice[];
+}
+
+/** Who wrote the bell rows: the acting member (the route's verified caller,
+ *  or a server path's actor), or null for a server notice with no actor. */
+export interface NoticeWriter { uid: string | null; name: string | null }
+
+/** The bell kinds a request path's notice may be (the kinds those paths
+ *  write today — lib/distributionAcks.ts, lib/acknowledgments.ts,
+ *  lib/reviewControl.ts). Pure. */
+export function bellKindsFor(source: DocumentNoticeSource, kind: RequestNoticeKind): string[] {
+  if (source === "review_signoff") return kind === "alternate_activated" ? ["review_alternate_activated"] : ["review_requested"];
+  if (kind === "alternate_activated") return [];
+  return ["ack_requested"];
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The record row's id for a notice that landed as bell row `bellId`: the
+ *  bell row's own UUID with its version nibble set to 8 (every bell id is a
+ *  v4 — gen_random_uuid or newNotificationId — so no two bell rows map to
+ *  one record id, and no scan row's random v4 id is ever one). A repeated
+ *  request for the same bell row is the same record row (ON CONFLICT (id)
+ *  DO NOTHING). Pure. */
+export function requestNoticeId(bellId: string): string {
+  const id = bellId.toLowerCase();
+  return `${id.slice(0, 14)}8${id.slice(15)}`;
+}
+
+/** Where each source's obligation row keeps its person, revision and label. */
+const OBLIGATION: Record<DocumentNoticeSource, { table: string; person: string; version: string; label: string }> = {
+  review_signoff: { table: "document_review_signoffs", person: "reviewer_user_id", version: "document_version_id", label: "revision_label" },
+  acknowledgment: { table: "document_acknowledgments", person: "assignee_user_id", version: "document_version_id", label: "revision_label" },
+  distribution_ack: { table: "distribution_acks", person: "recipient_user_id", version: "version_id", label: "rev_label" },
+};
+
+type BellRow = { id?: unknown; user_id?: unknown; kind?: unknown; actor_user_id?: unknown; actor_name?: unknown; metadata?: unknown; created_at?: unknown };
+
+/**
+ * SERVER (the route's service role, or a server path's shared client bound
+ * to it): the record rows for a request path's notices, each built from the
+ * bell row that LANDED for it — read here, never taken from the caller:
+ * this workspace's row about this document, to that recipient, of a kind
+ * the notice may be (bellKindsFor), dated no later than now (plus
+ * NOTICE_FUTURE_SKEW_MS) and no earlier than NOTICE_VERIFY_WINDOW_MS ago; a
+ * distribution notice only a row carrying metadata.ackRequest (what
+ * requestAcks / renudgeUnacked write), a read-&-understood notice only one
+ * without it. Named by its id when the writer chose one (its actor the
+ * writer or none — a browser row before 20261160 carries the actor its
+ * writer passed); otherwise the newest such row the writer wrote since the
+ * action began. Each bell row is taken once. The obligation row (source_id,
+ * revision, label) is read here too: the one named, or the person's row on
+ * the revision named. A notice with no landed bell row, or no obligation
+ * row, is not recorded (counted in `unmatched`). Throws on a refused read
+ * (the caller says it; nothing is written).
+ */
+export async function verifiedRequestRows(
+  client: Db, input: RequestNoticeInput, writer: NoticeWriter, nowMs: number = Date.now(),
+): Promise<{ rows: DocumentNoticeRow[]; unmatched: number }> {
+  const notices = input.notices.filter((n) => n && REQUEST_NOTICE_KINDS.includes(n.kind) && isText(n.recipient)).slice(0, REQUEST_NOTICE_MAX);
+  let unmatched = input.notices.length - notices.length;
+  if (notices.length === 0) return { rows: [], unmatched };
+  const floor = nowMs - NOTICE_VERIFY_WINDOW_MS;
+  const began = input.since ? Date.parse(input.since) : NaN;
+  const searchFrom = Number.isFinite(began) ? Math.max(floor, began - 60_000) : floor;
+  const recipients = [...new Set(notices.map((n) => n.recipient))];
+  const kinds = [...new Set(notices.flatMap((n) => bellKindsFor(input.source, n.kind)))];
+  if (kinds.length === 0) return { rows: [], unmatched: unmatched + notices.length };
+
+  const { data: bellData, error: bellError } = await client.from("notifications")
+    .select("id, user_id, kind, actor_user_id, actor_name, metadata, created_at")
+    .eq("org_id", input.orgId).eq("resource_type", "document").eq("resource_id", input.documentId)
+    .in("user_id", recipients).in("kind", kinds)
+    .gte("created_at", new Date(floor).toISOString())
+    .order("created_at", { ascending: false }).limit(REQUEST_NOTICE_MAX * 4);
+  if (bellError) throw new Error(`the bell rows could not be read (${bellError.message ?? String(bellError)})`);
+  const bells = ((bellData ?? []) as BellRow[]).filter((b) => isText(b.id) && UUID_RE.test(b.id as string) && typeof b.created_at === "string");
+
+  const used = new Set<string>();
+  const matched: Array<{ n: RequestNotice; bell: BellRow; at: number }> = [];
+  for (const n of notices) {
+    const allowed = bellKindsFor(input.source, n.kind);
+    const fits = (b: BellRow): boolean => {
+      const at = Date.parse(String(b.created_at));
+      if (!Number.isFinite(at) || at < floor || at > nowMs + NOTICE_FUTURE_SKEW_MS) return false;
+      if (b.user_id !== n.recipient || !allowed.includes(String(b.kind)) || used.has(String(b.id))) return false;
+      const ackRequest = !!(b.metadata && typeof b.metadata === "object" && (b.metadata as Record<string, unknown>).ackRequest === true);
+      if (input.source === "distribution_ack" && !ackRequest) return false;
+      if (input.source === "acknowledgment" && ackRequest) return false;
+      return true;
+    };
+    const actor = (b: BellRow) => (typeof b.actor_user_id === "string" ? b.actor_user_id : null);
+    const bell = n.notificationId
+      ? bells.find((b) => b.id === n.notificationId && fits(b) && (actor(b) === writer.uid || actor(b) === null))
+      : bells.find((b) => fits(b) && actor(b) === writer.uid && Date.parse(String(b.created_at)) >= searchFrom);
+    if (!bell) { unmatched += 1; continue; }
+    used.add(String(bell.id));
+    matched.push({ n, bell, at: Date.parse(String(bell.created_at)) });
+  }
+  if (matched.length === 0) return { rows: [], unmatched };
+
+  const ob = OBLIGATION[input.source];
+  const subjects = [...new Set(matched.map((m) => m.n.subject || m.n.recipient))];
+  let q = client.from(ob.table).select(`id, ${ob.person}, ${ob.version}, ${ob.label}`)
+    .eq("org_id", input.orgId).eq("document_id", input.documentId).in(ob.person, subjects);
+  if (input.versionId) q = q.eq(ob.version, input.versionId);
+  const { data: obData, error: obError } = await q;
+  if (obError) throw new Error(`the obligation rows could not be read (${obError.message ?? String(obError)})`);
+  const obligations = (obData ?? []) as Array<Record<string, unknown>>;
+
+  const rows: DocumentNoticeRow[] = [];
+  for (const { n, bell, at } of matched) {
+    const subject = n.subject || n.recipient;
+    const mine = obligations.filter((o) => o[ob.person] === subject && (!n.sourceId || o.id === n.sourceId));
+    if (mine.length !== 1 || !isText(mine[0].id)) { unmatched += 1; continue; }
+    const o = mine[0];
+    rows.push({
+      id: requestNoticeId(String(bell.id)),
+      org_id: input.orgId, document_id: input.documentId,
+      version_id: typeof o[ob.version] === "string" ? (o[ob.version] as string) : null,
+      revision_label: typeof o[ob.label] === "string" ? (o[ob.label] as string) : null,
+      source: input.source, source_id: o.id as string, kind: n.kind,
+      recipient: n.recipient, subject_user_id: subject,
+      notification_id: String(bell.id),
+      actor_name: (typeof bell.actor_name === "string" && bell.actor_name) || writer.name || (writer.uid ? null : "System"),
+      details: { ...deferrableDetails(n.kind, n.details), ...(writer.uid ? { byMember: true } : {}) },
+      noticed_at: new Date(Math.min(at, nowMs)).toISOString(),
+    });
+  }
+  return { rows, unmatched };
+}
+
+/** What a request path's record write came to: as noticeRecorder's, or, in
+ *  the browser, `sent` (the route took every chunk) / `failed` (said). */
+export type RequestRecordOutcome = NoticeWriteOutcome | "sent" | "failed";
+
+/** BROWSER: hand the notices to POST /api/documents/notice-record (the
+ *  member's own session as the bearer), REQUEST_NOTICE_MAX a request, each
+ *  bounded by NOTICE_RECORD_TIMEOUT_MS; a request the route could not take
+ *  (unreachable, or a 5xx) is sent once more — a repeat records nothing
+ *  twice (the row id is the bell row's). Never throws. */
+async function postNoticeRecord(input: RequestNoticeInput): Promise<RequestRecordOutcome> {
+  const { data } = await supabase.auth.getSession();
+  const token = data?.session?.access_token;
+  if (!token) {
+    console.warn("[notice-record] no signed-in session — the notices were sent, but are not on the document notice record");
+    return "failed";
+  }
+  let failed = false;
+  for (let i = 0; i < input.notices.length; i += REQUEST_NOTICE_MAX) {
+    const body = JSON.stringify({ ...input, notices: input.notices.slice(i, i + REQUEST_NOTICE_MAX) });
+    const count = Math.min(REQUEST_NOTICE_MAX, input.notices.length - i);
+    let why = "";
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const timer = ctrl ? setTimeout(() => ctrl.abort(), NOTICE_RECORD_TIMEOUT_MS) : null;
+      try {
+        const res = await fetch(NOTICE_RECORD_ROUTE, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body,
+          keepalive: true,
+          ...(ctrl ? { signal: ctrl.signal } : {}),
+        });
+        if (res.ok) { why = ""; break; }
+        const said = await res.json().catch(() => null) as { error?: string } | null;
+        why = said?.error ?? `HTTP ${res.status}`;
+        if (res.status < 500) break;                   // a refusal does not change on a repeat
+      } catch (e) {
+        why = `the record could not be reached: ${(e as Error)?.message ?? String(e)}`;
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    }
+    if (why) {
+      failed = true;
+      console.warn(`[notice-record] the document notice record did not take ${count} notice(s) (${why}) — they were sent as before`);
+    }
+  }
+  return failed ? "failed" : "sent";
+}
+
+/**
+ * DIST-20 (P39): put a request path's landed notices on the record — called
+ * by requestAcks, renudgeUnacked, recomputeDocumentAck, nudgeAcknowledgment,
+ * openReviewRoster and the manual activateAlternate AFTER everything they
+ * already do (the bell rows, the stamps, the audit rows are unchanged and
+ * come first). In the browser the route builds and writes the rows; on the
+ * server they are built here (verifiedRequestRows, `writer` = the action's
+ * actor, or none) and written by noticeRecorder (checked, retried once,
+ * deferred to the audit log for the source's next scan; before 20261257 —
+ * nothing written, said once). Never throws, never changes who is notified.
+ */
+export async function recordRequestNotices(
+  input: RequestNoticeInput, writer?: { actorId?: string | null; actorName?: string | null },
+): Promise<RequestRecordOutcome> {
+  try {
+    if (input.notices.length === 0) return "none";
+    if (typeof window !== "undefined") return await postNoticeRecord(input);
+    const { rows, unmatched } = await verifiedRequestRows(db(), input, { uid: writer?.actorId ?? null, name: writer?.actorName ?? null });
+    if (unmatched > 0) say(`${unmatched} ${input.source} notice(s) were not put on the document notice record — no landed bell row (or no obligation row) was found for them`);
+    return await noticeRecorder().record(rows);
+  } catch (e) {
+    say(`the ${input.source} notices could not be put on the document notice record (${(e as Error)?.message ?? String(e)}) — they were sent as before`);
+    return "failed";
+  }
+}
+
+/** The route's reading of a request body: the input, or why it is refused
+ *  (400). Bounded: REQUEST_NOTICE_MAX notices, known kinds and sources,
+ *  UUID ids, numbers / booleans in details. Pure. */
+export function parseRequestNoticeBody(body: unknown): RequestNoticeInput | { error: string } {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return { error: "The body must be a JSON object" };
+  const b = body as Record<string, unknown>;
+  const uuid = (v: unknown) => typeof v === "string" && UUID_RE.test(v);
+  const optUuid = (v: unknown) => v == null || uuid(v);
+  if (!uuid(b.orgId) || !uuid(b.documentId)) return { error: "orgId and documentId are required" };
+  if (typeof b.source !== "string" || !(DOCUMENT_NOTICE_SOURCES as readonly string[]).includes(b.source)) return { error: "source is not a document notice source" };
+  if (!optUuid(b.versionId)) return { error: "versionId is not an id" };
+  if (b.since != null && (typeof b.since !== "string" || !Number.isFinite(Date.parse(b.since)))) return { error: "since is not a time" };
+  if (!Array.isArray(b.notices) || b.notices.length === 0) return { error: "notices are required" };
+  if (b.notices.length > REQUEST_NOTICE_MAX) return { error: `at most ${REQUEST_NOTICE_MAX} notices a request` };
+  const notices: RequestNotice[] = [];
+  for (const raw of b.notices) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { error: "a notice must be an object" };
+    const n = raw as Record<string, unknown>;
+    if (typeof n.kind !== "string" || !(REQUEST_NOTICE_KINDS as readonly string[]).includes(n.kind)) return { error: "a notice's kind is not a request kind" };
+    if (!uuid(n.recipient) || !optUuid(n.subject) || !optUuid(n.notificationId) || !optUuid(n.sourceId)) return { error: "a notice's ids are not ids" };
+    notices.push({
+      kind: n.kind as RequestNoticeKind, recipient: n.recipient as string,
+      subject: (n.subject as string | null | undefined) ?? null,
+      notificationId: (n.notificationId as string | null | undefined) ?? null,
+      sourceId: (n.sourceId as string | null | undefined) ?? null,
+      details: deferrableDetails(n.kind, n.details),
+    });
+  }
+  return {
+    orgId: b.orgId as string, documentId: b.documentId as string, source: b.source as DocumentNoticeSource,
+    versionId: (b.versionId as string | null | undefined) ?? null, since: (b.since as string | null | undefined) ?? null, notices,
+  };
 }

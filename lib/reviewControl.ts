@@ -35,7 +35,9 @@ import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { ISSUE_REFUSAL } from "@/lib/issueStatus";
 // DIST-19 (document-control P38): each reminder, escalation and timeout
 // activation the daily scan lands is a row on the append-only notice record.
-import { noticeRecorder, noticeRow, replayDeferredNotices } from "@/lib/documentNoticeRecord";
+// DIST-20 (document-control P39): the review request and the manual
+// activation are on the record too, naming the bell row each landed as.
+import { noticeRecorder, noticeRow, newBellId, recordRequestNotices, replayDeferredNotices } from "@/lib/documentNoticeRecord";
 
 /** The push leg never touches the roster's own outcome (DEC-90: a push
  *  failure never fails the action or its bell rows). */
@@ -587,8 +589,11 @@ export async function openReviewRoster(input: {
       await withdrawAndThrow("The reviewer roster could not be saved", upsertErr.message);
     }
     const asked = primaries.filter((r) => r.uid !== input.actorId);
-    const landed = await Promise.all(asked.map((r) =>
+    // DIST-20: each request's bell row under an id this writer chose
+    const bellIds = asked.map(() => newBellId());
+    const landed = await Promise.all(asked.map((r, i) =>
       notify({
+        id: bellIds[i],
         orgId: input.orgId, userId: r.uid, kind: "review_requested",
         title: `Review requested: ${input.revisionLabel}`,
         body: r.groupKey === slotGroupKey.owner(r.uid)
@@ -608,6 +613,13 @@ export async function openReviewRoster(input: {
       orgId: input.orgId, userId: input.actorId ?? "",
       details: { revision: input.revisionLabel, primaries: primaries.length, alternates: alternates.length, authorSkipped: authorSkipped ? authorUid : null, ownerSlot },
     }).catch(() => {});
+    // DIST-20 (P39): each review request that landed is a delivered row on
+    // the notice record — after the bell rows, the push and the audit row,
+    // unchanged; never fails the roster (deferred, said, never thrown)
+    await recordRequestNotices({
+      orgId: input.orgId, documentId: input.documentId, source: "review_signoff", versionId: input.versionId,
+      notices: asked.flatMap((r, i) => (landed[i] === true ? [{ kind: "delivered" as const, recipient: r.uid, notificationId: bellIds[i] }] : [])),
+    }, { actorId: input.actorId ?? null, actorName: input.actorName ?? null });
   }
   if (primaries.length === 0 && authorSkipped) {
     warnings.unshift("the only reviewer the policy resolved authored this revision and was skipped (a reviewer never signs their own work)");
@@ -860,16 +872,23 @@ async function libraryRequiresIndependentReviewer(documentId: string): Promise<b
  *  DIST-19 (P38): the daily scan's timeout activation passes `cause` — its
  *  audit row names the silence that caused it; the manual action passes none
  *  and its audit row is exactly as before. Answers the activated reviewer and
- *  whether their notice landed (null when no row was activated). */
+ *  whether their notice landed (null when no row was activated).
+ *  DIST-20 (P39): the notice's bell row is written under an id chosen here
+ *  (answered as `notificationId`, additive), and the MANUAL activation — no
+ *  `cause` — puts its landed notice on the notice record itself
+ *  (alternate_activated, details.manual) after everything above; the scan's
+ *  activation is recorded by the scan, as before. */
 export async function activateAlternate(input: {
   orgId: string; documentId: string; libraryId: string; signoffId: string; actorId?: string | null;
   cause?: { reason: "review_timeout"; timeoutDays: number; ageDays: number; documentVersionId: string | null };
-}): Promise<{ reviewerUserId: string; revisionLabel: string | null; noticeLanded: boolean } | null> {
+}): Promise<{ reviewerUserId: string; revisionLabel: string | null; noticeLanded: boolean; notificationId: string | null } | null> {
   const { data } = await supabase.from("document_review_signoffs")
     .update({ activated: true, notified_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq("id", input.signoffId).select("reviewer_user_id, revision_label").maybeSingle();
   if (!data) return null;
+  const bellId = newBellId();
   const noticeLanded = await notify({
+    id: bellId,
     orgId: input.orgId, userId: data.reviewer_user_id as string, kind: "review_alternate_activated",
     title: `You're now an active reviewer: ${(data.revision_label as string) || "a draft"}`,
     body: "You've been activated as an alternate reviewer — a draft is waiting for your sign-off.",
@@ -877,7 +896,13 @@ export async function activateAlternate(input: {
     actorUserId: input.actorId ?? undefined,
   });
   await logAuditAction({ action: "REVIEW_ALTERNATE_ACTIVATED", resourceType: "document", resourceId: input.documentId, orgId: input.orgId, userId: input.actorId ?? "", details: input.cause ? { signoffId: input.signoffId, cause: input.cause } : { signoffId: input.signoffId } }).catch(() => {});
-  return { reviewerUserId: data.reviewer_user_id as string, revisionLabel: (data.revision_label as string | null) ?? null, noticeLanded: noticeLanded === true };
+  if (!input.cause && noticeLanded === true) {
+    await recordRequestNotices({
+      orgId: input.orgId, documentId: input.documentId, source: "review_signoff",
+      notices: [{ kind: "alternate_activated", recipient: data.reviewer_user_id as string, sourceId: input.signoffId, notificationId: bellId, details: { manual: true } }],
+    }, { actorId: input.actorId ?? null });
+  }
+  return { reviewerUserId: data.reviewer_user_id as string, revisionLabel: (data.revision_label as string | null) ?? null, noticeLanded: noticeLanded === true, notificationId: noticeLanded === true ? bellId : null };
 }
 
 // ── Finalize (promote the approved draft to the controlled rev) ───────────────
@@ -1407,7 +1432,7 @@ export async function scanReviews(orgId: string, opts?: { cooldownDays?: number 
           org_id: orgId, document_id: r.document_id as string, version_id: (r.document_version_id as string | null) ?? null,
           revision_label: (r.revision_label as string | null) ?? null, source: "review_signoff", source_id: r.id as string,
           kind: "alternate_activated", recipient: act.reviewerUserId, subject_user_id: act.reviewerUserId,
-          details: { cause: "review_timeout", timeoutDays, ageDays },
+          details: { cause: "review_timeout", timeoutDays, ageDays }, notificationId: act.notificationId,
         })]);
         return 1;
       });
@@ -1423,16 +1448,19 @@ export async function scanReviews(orgId: string, opts?: { cooldownDays?: number 
     work.push(async () => {
       const landed: boolean[] = [];
       // DIST-19: each notice and whether it landed — only a landed one is recorded
-      const sent: Array<{ kind: "reminded" | "escalated"; to: string; ok: boolean }> = [];
+      // DIST-20 (P39): with the bell row's id each landed as
+      const sent: Array<{ kind: "reminded" | "escalated"; to: string; ok: boolean; bellId: string }> = [];
       if (wants("review_requested", r.reviewer_user_id as string)) {
+        const bellId = newBellId();
         const ok = await notify({
+          id: bellId,
           orgId, userId: r.reviewer_user_id as string, kind: "review_requested",
           title: `Reminder — review ${label}`,
           body: "A draft revision is still waiting on your sign-off.",
           link, resourceType: "document", resourceId: r.document_id as string,
         }, { retryKey });
         landed.push(ok);
-        sent.push({ kind: "reminded", to: r.reviewer_user_id as string, ok });
+        sent.push({ kind: "reminded", to: r.reviewer_user_id as string, ok, bellId });
       }
       if (ageDays >= timeoutDays) {
         const owner = resolveEffectiveOwner(
@@ -1444,11 +1472,12 @@ export async function scanReviews(orgId: string, opts?: { cooldownDays?: number 
         );
         const escalateTo = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]).filter((u) => u !== (r.reviewer_user_id as string));
         const targets = escalateTo.filter((uid) => wants("review_overdue", uid));
-        const oks = await Promise.all(targets.map((uid) =>
-          notify({ orgId, userId: uid, kind: "review_overdue", title: `Review overdue: ${label}`, body: `${(r.reviewer_name as string) || "A reviewer"} hasn't signed off — ${ageDays} days outstanding.`, link, resourceType: "document", resourceId: r.document_id as string }, { retryKey })
+        const bellIds = targets.map(() => newBellId());
+        const oks = await Promise.all(targets.map((uid, i) =>
+          notify({ id: bellIds[i], orgId, userId: uid, kind: "review_overdue", title: `Review overdue: ${label}`, body: `${(r.reviewer_name as string) || "A reviewer"} hasn't signed off — ${ageDays} days outstanding.`, link, resourceType: "document", resourceId: r.document_id as string }, { retryKey })
         ));
         landed.push(...oks);
-        targets.forEach((uid, i) => sent.push({ kind: "escalated", to: uid, ok: oks[i] }));
+        targets.forEach((uid, i) => sent.push({ kind: "escalated", to: uid, ok: oks[i], bellId: bellIds[i] }));
       }
       // DELIV-7 dw1: stamped only when every notice landed (a lost one is
       // sent again on the next run, to its recipient only).
@@ -1462,7 +1491,7 @@ export async function scanReviews(orgId: string, opts?: { cooldownDays?: number 
         org_id: orgId, document_id: r.document_id as string, version_id: (r.document_version_id as string | null) ?? null,
         revision_label: (r.revision_label as string | null) ?? null, source: "review_signoff", source_id: r.id as string,
         kind: x.kind, recipient: x.to, subject_user_id: r.reviewer_user_id as string,
-        details: x.kind === "escalated" ? { ageDays, timeoutDays } : { ageDays },
+        details: x.kind === "escalated" ? { ageDays, timeoutDays } : { ageDays }, notificationId: x.bellId,
       })));
       return 1;
     });

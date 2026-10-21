@@ -355,10 +355,18 @@ describe("SEC-20 — audit rows about a private project follow the project's vis
   it("the final audit_logs set: one permissive member read, one insert, and ONE restrictive overlay that gates project / cost rows on audit_row_project_visible", () => {
     const set = pol("audit_logs");
     // intelligence Round G I-20 (20261163) adds one restrictive INSERT rule
-    // (pinned below); the read side keeps exactly one restrictive overlay.
+    // (pinned below); the read side keeps exactly one restrictive overlay —
+    // and, since document-control P39 (DIST-20, 20261259; declared to the
+    // projects owner), one more restrictive SELECT rule that gates only the
+    // DOCUMENT_NOTICE_RECORD_DEFERRED action on a read of its document
+    // (pinned below: it names that action first and nothing of a project).
     const restrictive = set.filter(([, p]) => !p.permissive && (p.cmd === "SELECT" || p.cmd === "ALL"));
-    expect(restrictive.map(([n]) => n)).toEqual(["audit_logs_admin_trail"]);
-    const [, trail] = restrictive[0];
+    expect(restrictive.map(([n]) => n).sort()).toEqual(["audit_logs_admin_trail", "audit_logs_notice_deferred_readers"]);
+    const deferred = restrictive.find(([n]) => n === "audit_logs_notice_deferred_readers")![1];
+    expect(deferred.file).toBe("supabase/migrations/20261259_dc_roundG_notice_deferred_read.sql");
+    expect(deferred.body).toMatch(/USING \(\s*\n\s*COALESCE\(action, ''\) <> 'DOCUMENT_NOTICE_RECORD_DEFERRED'\s*\n\s*OR \(resource_type = 'document'/);
+    expect(deferred.body).not.toMatch(/project/);
+    const [, trail] = restrictive.find(([n]) => n === "audit_logs_admin_trail")!;
     // 20261157 (SEC-21) re-created it from 20261142's body with one more
     // clause — the lineDiff is prjRoundGJ12Migration.test.ts's; 20261219
     // (admin-and-org ALOG-16) re-creates it from that body (the census reads

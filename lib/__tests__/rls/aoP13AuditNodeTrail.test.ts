@@ -42,6 +42,14 @@ describe.skipIf(skip !== null)("ALOG-16: node-level authority rows reach only au
   const has = (who: SeededMember, key: string, on = db) =>
     selectAs(on, who.caller, `SELECT count(*) FROM audit_logs WHERE id = '${rows[key]}'`)[0] === "1";
   const paste = (on: string) => runPsql(mosDb().conn!, on, "postgres", { sql: readFileSync(FILE, "utf8") });
+  // document-control P39 (DIST-20, 20261259 — declared to admin-and-org): a
+  // second RESTRICTIVE SELECT policy on audit_logs (the deferred notice rows'
+  // read rule). A re-paste of this file after it reads its "ONE restrictive
+  // overlay" probe false — expected, and said in both headers — and leaves
+  // that rule in force; every other probe stays true.
+  const onlyOverlayProbe = (line: string) => line.startsWith("the read side is still one permissive member read (audit_logs_org_access) and ONE restrictive overlay");
+  const deferredRuleStands = (on: string) =>
+    admin(on, "SELECT count(*) FROM pg_policies WHERE tablename = 'audit_logs' AND policyname = 'audit_logs_notice_deferred_readers' AND permissive = 'RESTRICTIVE'") === "1";
 
   beforeAll(() => {
     const s = seedOrg(db, {
@@ -111,8 +119,9 @@ describe.skipIf(skip !== null)("ALOG-16: node-level authority rows reach only au
     expect(r.error).toBeNull();
     const probes = r.stdout.split("\n").filter((l) => l.split("|").length === 3 && l.split("|")[2] === "");
     expect(probes.length).toBeGreaterThanOrEqual(8);
-    for (const p of probes) expect(p.split("|")[1], p).toBe("t");
+    for (const p of probes) expect(p.split("|")[1], p).toBe(onlyOverlayProbe(p) ? "f" : "t");
     expect(read(m.viewer, again)).toEqual(["VIEW:document"]);
+    expect(deferredRuleStands(again)).toBe(true);
   });
 
   it("20261157 not applied (20261142 is): the paste takes 20261142's body — no SEC-21 clause — and still narrows the node rows", () => {
@@ -121,7 +130,8 @@ describe.skipIf(skip !== null)("ALOG-16: node-level authority rows reach only au
     expect(admin(worldB, "SELECT count(*) FROM pg_policies WHERE tablename = 'audit_logs' AND policyname = 'audit_logs_admin_trail'")).toBe("0");
     const r = paste(worldB);
     expect(r.error).toBeNull();
-    for (const p of r.stdout.split("\n").filter((l) => l.split("|").length === 3 && l.split("|")[2] === "")) expect(p.split("|")[1], p).toBe("t");
+    for (const p of r.stdout.split("\n").filter((l) => l.split("|").length === 3 && l.split("|")[2] === "")) expect(p.split("|")[1], p).toBe(onlyOverlayProbe(p) ? "f" : "t");
+    expect(deferredRuleStands(worldB)).toBe(true);
     const qual = admin(worldB, "SELECT qual FROM pg_policies WHERE tablename = 'audit_logs' AND policyname = 'audit_logs_admin_trail'");
     expect(qual).toContain("audit_row_node_manageable(resource_type, resource_id)");
     expect(qual).toContain("audit_row_project_visible(resource_type, resource_id)");

@@ -29,7 +29,9 @@ import type { AckPolicy } from "@/types/schema";
 import { heldRoles, roleFilter } from "@/lib/roleHeld";
 // DIST-19 (document-control P38): each reminder and escalation the daily
 // scan lands is a row on the append-only notice record.
-import { noticeRecorder, noticeRow, replayDeferredNotices } from "@/lib/documentNoticeRecord";
+// DIST-20 (document-control P39): the roster's requests and the manual
+// re-send are on the record too, naming the bell row each landed as.
+import { noticeRecorder, noticeRow, newBellId, recordRequestNotices, replayDeferredNotices } from "@/lib/documentNoticeRecord";
 
 /** The push leg never touches the roster's own outcome (DEC-90: a push
  *  failure never fails the action or its bell rows). `serverPush`: the
@@ -431,8 +433,11 @@ export async function recomputeDocumentAck(input: {
     } else {
       if (input.notifyNew !== false) {
         const asked = fresh.filter((a) => a.uid !== input.actorId);
-        const landed = await Promise.all(asked.map((a) =>
+        // DIST-20: each request's bell row under an id this writer chose
+        const bellIds = asked.map(() => newBellId());
+        const landed = await Promise.all(asked.map((a, i) =>
           notify({
+            id: bellIds[i],
             orgId: input.orgId, userId: a.uid, kind: "ack_requested",
             title: `Please read & acknowledge: ${label}${revLabel ? ` Rev ${revLabel}` : ""}`,
             body: "Open the document and confirm you've read and understood this revision.",
@@ -445,6 +450,13 @@ export async function recomputeDocumentAck(input: {
         if (input.notifyPush !== false) {
           await pushLandedRows({ orgId: input.orgId, kind: "ack_requested", resourceId: doc.id, recipients: asked.filter((_, i) => landed[i] === true).map((a) => a.uid) }, input.serverPush);
         }
+        // DIST-20 (P39): each request that landed is a delivered row on the
+        // notice record — after the bell rows and the push, unchanged; never
+        // fails the roster (a record failure is deferred, said, never thrown)
+        await recordRequestNotices({
+          orgId: input.orgId, documentId: doc.id, source: "acknowledgment", versionId,
+          notices: asked.flatMap((a, i) => (landed[i] === true ? [{ kind: "delivered" as const, recipient: a.uid, notificationId: bellIds[i] }] : [])),
+        }, { actorId: input.actorId ?? null, actorName: input.actorName ?? null });
       }
       await logAuditAction({
         action: "ACK_REQUESTED", resourceType: "document", resourceId: doc.id,
@@ -592,7 +604,9 @@ export async function nudgeAcknowledgment(input: { orgId: string; rosterId: stri
   const { data: doc } = await supabase.from("documents").select("library_id, document_number, title, name").eq("id", r.document_id as string).maybeSingle();
   const label = (doc?.document_number as string) || (doc?.title as string) || (doc?.name as string) || "Document";
   const rev = (r.revision_label as string) || "";
+  const bellId = newBellId();   // DIST-20: the record names the bell row
   const landed = await notify({
+    id: bellId,
     orgId: input.orgId, userId: r.assignee_user_id as string, kind: "ack_requested",
     title: `Reminder — acknowledge ${label}${rev ? ` Rev ${rev}` : ""}`,
     body: "Please confirm you've read and understood this revision.",
@@ -602,6 +616,15 @@ export async function nudgeAcknowledgment(input: { orgId: string; rosterId: stri
   // OS-14: the re-sent request is pushed once its bell row landed
   if (landed === true) await pushLandedRows({ orgId: input.orgId, kind: "ack_requested", resourceId: r.document_id as string, recipients: [r.assignee_user_id as string] });
   await supabase.from("document_acknowledgments").update({ notified_at: new Date().toISOString() }).eq("id", input.rosterId);
+  // DIST-20 (P39): the manual re-send, once it landed, is a reminded row
+  // (details.manual) on the notice record — the overwritten notified_at above
+  // is no longer the only trace; after it, never failing the re-send
+  if (landed === true) {
+    await recordRequestNotices({
+      orgId: input.orgId, documentId: r.document_id as string, source: "acknowledgment",
+      notices: [{ kind: "reminded", recipient: r.assignee_user_id as string, sourceId: input.rosterId, notificationId: bellId, details: { manual: true } }],
+    });
+  }
 }
 
 // ── Policy set (doc / folder / library) ──────────────────────────────────────
@@ -747,17 +770,20 @@ export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: n
     const wants = plan.only(retryKey, r.notified_at as string | null);
     const landed: boolean[] = [];
     // DIST-19: each notice and whether it landed — only a landed one is recorded
-    const sent: Array<{ kind: "reminded" | "escalated"; to: string; ok: boolean }> = [];
+    // DIST-20 (P39): with the bell row's id each landed as
+    const sent: Array<{ kind: "reminded" | "escalated"; to: string; ok: boolean; bellId: string }> = [];
 
     if (wants("ack_requested", r.assignee_user_id as string)) {
+      const bellId = newBellId();
       const ok = await notify({
+        id: bellId,
         orgId, userId: r.assignee_user_id as string, kind: "ack_requested",
         title: `Reminder — acknowledge ${label}${rev ? ` Rev ${rev}` : ""}`,
         body: "You still need to confirm you've read and understood this revision.",
         link, resourceType: "document", resourceId: r.document_id as string,
       }, { retryKey });
       landed.push(ok);
-      sent.push({ kind: "reminded", to: r.assignee_user_id as string, ok });
+      sent.push({ kind: "reminded", to: r.assignee_user_id as string, ok, bellId });
     }
 
     const overdueDays = Math.floor((now - new Date(r.assigned_at as string).getTime()) / 86_400_000);
@@ -771,8 +797,10 @@ export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: n
       );
       const escalateTo = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]).filter((u) => u !== (r.assignee_user_id as string));
       const targets = escalateTo.filter((uid) => wants("ack_overdue", uid));
-      const oks = await Promise.all(targets.map((uid) =>
+      const bellIds = targets.map(() => newBellId());
+      const oks = await Promise.all(targets.map((uid, i) =>
         notify({
+          id: bellIds[i],
           orgId, userId: uid, kind: "ack_overdue",
           title: `Acknowledgment overdue: ${label}`,
           body: `${(r.assignee_name as string) || "Someone assigned"} hasn't acknowledged ${label}${rev ? ` Rev ${rev}` : ""} — ${overdueDays} days outstanding.`,
@@ -780,7 +808,7 @@ export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: n
         }, { retryKey })
       ));
       landed.push(...oks);
-      targets.forEach((uid, i) => sent.push({ kind: "escalated", to: uid, ok: oks[i] }));
+      targets.forEach((uid, i) => sent.push({ kind: "escalated", to: uid, ok: oks[i], bellId: bellIds[i] }));
     }
 
     // DELIV-7 dw1: the cooldown is stamped only when every notice landed —
@@ -795,7 +823,7 @@ export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: n
       org_id: orgId, document_id: r.document_id as string, version_id: (r.document_version_id as string | null) ?? null,
       revision_label: (r.revision_label as string | null) ?? null, source: "acknowledgment", source_id: r.id as string,
       kind: x.kind, recipient: x.to, subject_user_id: r.assignee_user_id as string,
-      details: x.kind === "escalated" ? { overdueDays, graceDays } : { overdueDays },
+      details: x.kind === "escalated" ? { overdueDays, graceDays } : { overdueDays }, notificationId: x.bellId,
     })));
     n++;
   }
