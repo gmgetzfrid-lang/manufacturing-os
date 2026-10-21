@@ -78,7 +78,7 @@ vi.mock("@/lib/reviewControl", async (importOriginal) => {
 import { supabase } from "@/lib/supabase";
 import {
   changeDocumentStatus, finishRetirementDuties, gateStatusEditorRetirement, isSupersessionMocRequired, authorizeArchive,
-  SUPERSEDE_MOC_REQUIRED, retireOverHold, isMissingRetireOverHoldRpc,
+  SUPERSEDE_MOC_REQUIRED, retireOverHold, isMissingRetireOverHoldRpc, STATUS_CHANGED_SINCE_READ,
 } from "@/lib/revisions";
 import { notifyPackagesOfRetirement } from "@/lib/postPublish";
 import { notify } from "@/lib/inAppNotifications";
@@ -157,7 +157,9 @@ describe("REV-36 (1) (P36) — lib/revisions.ts retireOverHold: the split / merg
     ];
     state.rpc.retire_over_hold = () => answers.shift()!;
     expect(await retireOverHold({ documentId: "s1", door: "split", reason: "declutter", at: "2026-10-21T10:00:00Z", supersessionMoc: "MOC-1" })).toEqual({ kind: "landed", recorded: true });
-    expect(state.rpcCalls[0]).toEqual({ fn: "retire_over_hold", args: { p_document_id: "s1", p_via: "split", p_reason: "declutter", p_at: "2026-10-21T10:00:00Z", p_supersession_moc: "MOC-1" } });
+    expect(state.rpcCalls[0]).toEqual({ fn: "retire_over_hold", args: { p_document_id: "s1", p_via: "split", p_reason: "declutter", p_at: "2026-10-21T10:00:00Z", p_supersession_moc: "MOC-1", p_force_hold: true } });
+    // P36 review fix: the override is asked for on every call (the doors call this only on Document Control's force), never implied
+    expect(state.rpcCalls.every((c) => c.args.p_force_hold === true)).toBe(true);
     expect(await retireOverHold({ documentId: "s2", door: "merge", reason: "m", at: "t" })).toEqual({ kind: "landed", recorded: false });
     expect(state.rpcCalls[1].args).toMatchObject({ p_via: "merge", p_supersession_moc: null });
     expect(await retireOverHold({ documentId: "s3", door: "reversal_park", reason: "Reverted split — x", at: "t", supersessionMoc: "IGNORED" })).toEqual({ kind: "refused", reason: "the write was refused", noRow: true });
@@ -180,13 +182,40 @@ describe("REV-36 (3) (P36) — changeDocumentStatus with the caller's read (`pri
     expect(vi.mocked(recallRetiredDocument).mock.calls[0][0]).toMatchObject({ documentId: "c1", retiredFrom: "Issued", recallCopyHolders: true, personallyToldElsewhere: { checkoutHolder: false, packageOwners: false } });
   });
 
-  it("THE RACE, closed: the caller read Superseded (no retirement — no gate ran), the row is something else by the write — no recall and no `retired` (no duties): the decision is the caller's one read, never a second one", async () => {
+  it("THE RACE, closed: the caller read Superseded (no retirement — no gate ran), the row is something else by the write — P36 review fix: the write is a compare-and-swap on the read, so it is REFUSED (status changed since the read), nothing written, no recall, no duties", async () => {
     seedDoc("c2"); // the row says Issued
-    const out = await changeDocumentStatus({ orgId: ORG, documentId: "c2", toStatus: "Superseded", door: "metadata", actorUserId: ME, reportRetirement: true, prior: { fromStatus: "Superseded", readFailed: false } });
+    await expect(changeDocumentStatus({ orgId: ORG, documentId: "c2", toStatus: "Superseded", door: "metadata", actorUserId: ME, reportRetirement: true, prior: { fromStatus: "Superseded", readFailed: false } }))
+      .rejects.toThrow(`${STATUS_CHANGED_SINCE_READ} (it read Superseded; it is Issued now) — reload it and save again.`);
     await settle();
-    expect(out.retired).toBeUndefined();
+    expect(docRow("c2").status).toBe("Issued");
     expect(recallRetiredDocument).not.toHaveBeenCalled();
     expect(basisReads()).toEqual([]);
+  });
+
+  it("P36 review fix — the read-then-write race during the MOC prompt: another session superseded the row after the caller read Issued — the write (Superseded over Superseded) is refused, the other session's supersession fields untouched, no second recall, no `retired`", async () => {
+    seedDoc("c7", { status: "Superseded", supersession_reason: "the other session's" });
+    await expect(changeDocumentStatus({ orgId: ORG, documentId: "c7", toStatus: "Superseded", door: "metadata", actorUserId: ME, reportRetirement: true, prior: { fromStatus: "Issued", readFailed: false }, patch: { title: "c7 retitled" } }))
+      .rejects.toThrow(`${STATUS_CHANGED_SINCE_READ} (it read Issued; it is Superseded now) — reload it and save again.`);
+    await settle();
+    expect(docRow("c7")).toMatchObject({ status: "Superseded", title: "c7", supersession_reason: "the other session's" });
+    expect(recallRetiredDocument).not.toHaveBeenCalled();
+  });
+
+  it("P36 review fix — the compare-and-swap: a NULL status read is compared as NULL (is null), and lands; a write that matched no row for another reason (the row still reads as the caller read it) keeps the authority refusal; a failed read (`readFailed`) is unguarded, as before", async () => {
+    seedDoc("c8", { status: null });
+    const out = await changeDocumentStatus({ orgId: ORG, documentId: "c8", toStatus: "Void", door: "metadata", actorUserId: ME, reportRetirement: true, prior: { fromStatus: null, readFailed: false } });
+    expect(docRow("c8").status).toBe("Void");
+    expect(out.retired).toEqual({ retiredFrom: null, priorStatusUnknown: false });
+    seedDoc("c9");
+    state.db.refuseWrites.add("documents");
+    await expect(changeDocumentStatus({ orgId: ORG, documentId: "c9", toStatus: "Superseded", door: "metadata", actorUserId: ME, prior: { fromStatus: "Issued", readFailed: false } }))
+      .rejects.toThrow(/^The status was NOT changed — you don't have authority to change this document/);
+    state.db.refuseWrites.delete("documents");
+    seedDoc("c10", { status: "Superseded" });
+    await changeDocumentStatus({ orgId: ORG, documentId: "c10", toStatus: "Archived", door: "metadata", actorUserId: ME, prior: { fromStatus: null, readFailed: true } });
+    expect(docRow("c10").status).toBe("Archived");
+    const casFilters = state.db.calls.filter((c) => c.table === "documents" && (c.method === "is" || (c.method === "eq" && c.args[0] === "status")));
+    expect(casFilters.map((c) => c.method)).toEqual(["is", "eq"]); // c8 (is null), c9 (eq Issued); none for c10
   });
 
   it("the caller's read failed: the prior is UNKNOWN — a retirement (the recall goes to the copy holders, P28's fail-safe), `retired` with priorStatusUnknown", async () => {
@@ -229,6 +258,21 @@ describe("REV-35 (P36) — finishRetirementDuties: a status editor's supersessio
     expect(vi.mocked(notifyPackagesOfRetirement).mock.calls[0][0]).toEqual({ orgId: ORG, documentId: "k1", docLabel: "K1", newStatus: "Superseded", actorUserId: ME, actorName: "cara@x" });
   });
 
+  it("P36 review fix — the fail-safe path: a row whose prior could not be read and that the door showed ALREADY Superseded (shownAlreadyInStatus) may have retired nothing, so no package owner is told it was superseded; the duties and the record still run", async () => {
+    seedDoc("k11", { status: "Superseded" });
+    await duties("Superseded", [{ documentId: "k11", label: "K11", retiredFrom: null, priorStatusUnknown: true, shownAlreadyInStatus: true }]);
+    expect(notifyPackagesOfRetirement).not.toHaveBeenCalled();
+    expect(audit("SUPERSEDE_DOC")[0].details).toMatchObject({ priorStatusUnknown: true, via: "bulk_edit" });
+    // an unknown prior on a row the door showed in ANOTHER status is a retirement as before: the owners are told
+    seedDoc("k12");
+    await duties("Superseded", [{ documentId: "k12", label: "K12", retiredFrom: null, priorStatusUnknown: true }]);
+    expect(notifyPackagesOfRetirement).toHaveBeenCalledTimes(1);
+    // shown already Superseded but with a KNOWN prior: told (the read decided it was a retirement)
+    seedDoc("k13");
+    await duties("Superseded", [{ documentId: "k13", label: "K13", retiredFrom: "Issued", shownAlreadyInStatus: true }]);
+    expect(notifyPackagesOfRetirement).toHaveBeenCalledTimes(2);
+  });
+
   it("REGRESSION: no package notice for a row already Superseded (no retirement made), nor for an archive or a void (supersedeDocument's notice only) — every other recipient as today", async () => {
     seedDoc("k2"); seedDoc("k3"); seedDoc("k4");
     await duties("Superseded", [{ documentId: "k2", label: "K2", alreadyRetired: true }]);
@@ -264,7 +308,7 @@ describe("REV-35 (P36) — finishRetirementDuties: a status editor's supersessio
 // ─── the library page's metadata save ─────────────────────────────────────
 describe("REV-36 (3) / (4) and REV-35 (P36) — the library page's metadata save", () => {
   const asDoc = (d: Row) => ({ id: d.id, orgId: ORG, libraryId: "lib1", collectionId: null, documentNumber: d.document_number, title: d.title, rev: d.rev, status: d.status, currentVersionId: d.current_version_id ?? undefined, metadata: d.metadata });
-  function save(d: Row, opts: { pageSees?: Row; answers?: Array<string | null> } = {}) {
+  function save(d: Row, opts: { pageSees?: Row; answers?: Array<string | null>; onPrompt?: (o: Record<string, unknown>) => void } = {}) {
     const st = { error: null as string | null, alerts: [] as Array<Record<string, unknown>>, prompts: [] as Array<Record<string, unknown>> };
     const answers = [...(opts.answers ?? ["Obsolete unit", "MOC-2026-0142"])];
     const cds = vi.fn(changeDocumentStatus);
@@ -275,7 +319,7 @@ describe("REV-36 (3) / (4) and REV-35 (P36) — the library page's metadata save
       isIssueTransition, isUnguardedEntryIntoForce, isControlledIssueStatus, isRetiredStatus, computeUniquenessKey,
       setError: (v: string | null) => { st.error = v; },
       appAlert: async (a: Record<string, unknown>) => { st.alerts.push(a); },
-      appPrompt: async (o: Record<string, unknown>) => { st.prompts.push(o); return answers.shift() ?? null; },
+      appPrompt: async (o: Record<string, unknown>) => { st.prompts.push(o); opts.onPrompt?.(o); return answers.shift() ?? null; },
     });
     return { st, fn, cds };
   }
@@ -307,6 +351,30 @@ describe("REV-36 (3) / (4) and REV-35 (P36) — the library page's metadata save
     expect(statusReads()).toHaveLength(2);
     expect(st.prompts).toEqual([]);
     expect(statusWrites()).toEqual([]);
+  });
+
+  it("P36 review fix — the race during the MOC prompt: the page read Issued and asked for the MOC; meanwhile another session superseded the drawing — the save is refused (status changed since the read), nothing saved, no second SUPERSEDE_DOC, no second recall", async () => {
+    const d = seedDoc("m5"); state.cls.m5 = "drawing";
+    const { st, fn } = save(d, { onPrompt: (o) => { if (/MOC/.test(String(o.title))) Object.assign(docRow("m5"), { status: "Superseded", supersession_reason: "the other session's" }); } });
+    await expect(fn(core(d, "Superseded"))).rejects.toThrow(
+      `Save refused — nothing was saved: ${STATUS_CHANGED_SINCE_READ} (it read Issued; it is Superseded now) — reload it and save again.`,
+    );
+    await settle();
+    expect(st.prompts.length).toBeGreaterThan(0);
+    expect(docRow("m5")).toMatchObject({ status: "Superseded", supersession_reason: "the other session's" });
+    expect(audit("SUPERSEDE_DOC")).toEqual([]);
+    expect(recallRetiredDocument).not.toHaveBeenCalled();
+    expect(notifyPackagesOfRetirement).not.toHaveBeenCalled();
+  });
+
+  it("P36 review fix — the fail-safe path tells no package owner: a title fix on a non-drawing document this page shows already Superseded, both status reads failing — the save lands and the duties run (priorStatusUnknown), but no 'it was superseded' goes to the open packages' owners", async () => {
+    const d = seedDoc("m6", { status: "Superseded" });
+    state.db.selectErrors!.documents = (cols) => (cols === "status" ? { message: "503" } : null);
+    await save(d).fn({ metadata: {}, core: { title: "m6 fixed", documentNumber: "M6", status: "Superseded" } });
+    await settle();
+    expect(docRow("m6").title).toBe("m6 fixed");
+    expect(audit("SUPERSEDE_DOC")[0].details).toMatchObject({ priorStatusUnknown: true, via: "metadata" });
+    expect(notifyPackagesOfRetirement).not.toHaveBeenCalled();
   });
 
   it("REGRESSION: a title fix on a row really in the status it shows (one read, the same status) runs no gate, no recall, no duties — exactly as before", async () => {

@@ -303,6 +303,7 @@ export default function BulkEditModal({
     const archivedRows: Array<{
       documentId: string; label: string; versionId: string | null; retiredFrom?: string | null; priorStatusUnknown?: boolean; alreadyRetired?: boolean;
       mocReference?: string | null; checkoutHolder?: { checkedOutBy: string | null; checkedOutByName?: string | null } | null; libraryId?: string | null;
+      shownAlreadyInStatus?: boolean;
     }> = [];
     const putBack: Array<{ documentId: string; libraryId: string | null; docLabel: string; restoredStatus: string }> = [];
     // REV-34 (b) (P34 review fix 3): so does every other status change (a
@@ -503,6 +504,10 @@ export default function BulkEditModal({
             ...(alreadyRetired
               ? { alreadyRetired: true }
               : { retiredFrom: known ? (priorStatusOf.get(doc.id) ?? null) : null, ...(known ? {} : { priorStatusUnknown: true }) }),
+            // P36 review fix (REV-35): an unread prior on a row this editor
+            // showed already in the status may be no retirement — no package
+            // owner is told it was superseded.
+            ...(!known && (doc.status ?? "").trim() === newValue.trim() ? { shownAlreadyInStatus: true } : {}),
             // REV-33 / REV-34 (c) (P34): the MOC this row's gate accepted —
             // only on a drawing-class row (P34 final fix pass: a non-drawing
             // row's gate answers null), never on a row already Superseded (no

@@ -32,7 +32,9 @@
 --           Document Control's explicit "Proceed over the active hold"
 --           (HLD-2) — wrote it bare, with nothing at the database recording
 --           the pass. They now write it through the new retire_over_hold
---           (below): the same write, run as the caller, under the flag and
+--           (below) with p_force_hold — the override asked, never implied:
+--           without it the call is the bare write, refused like the PATCH —
+--           the same write, run as the caller, under the flag and
 --           recorded as REV_HOLD_OVERRIDDEN in the same transaction — the
 --           recorded hold-override path publish_revision's force, the review
 --           promote's, put_back_retired_issue and restore_reversed_source
@@ -57,8 +59,10 @@
 --   put_back_retired_issue from 20261192 (P25) — every line kept, the lines
 --   added are exactly the rollbacks' re-entry limb (its flag, its record,
 --   its answer). Created: retire_over_hold (SECURITY INVOKER,
---   search_path pinned, EXECUTE for authenticated only — DRLS-16). Nothing
---   else is created or re-created; no row is moved. Grants (DRLS-16): the guard executable by
+--   search_path pinned, EXECUTE for authenticated only — DRLS-16; its
+--   p_force_hold defaults to false). Nothing else is created or re-created
+--   (a draft overload of retire_over_hold without p_force_hold is dropped
+--   first if present, so one definition stands); no row is moved. Grants (DRLS-16): the guard executable by
 --   no client role (it RETURNS trigger); SECURITY DEFINER, search_path
 --   pinned.
 --
@@ -81,13 +85,25 @@
 -- leg) and after 20261247 (paste guide row 191 — independent of this file,
 -- kept in order). 20261245 (row 187) is HOLD behind 20261193 (row 150), so
 -- this file waits with them.
--- The app works BEFORE and AFTER the paste, and no deploy order is needed:
--- before it, retire_over_hold is absent (PGRST202 / 42883) and the doors
--- make today's bare write (the guard before this paste admits it for a
+-- ⚠ DEPLOY FIRST: deploy the app carrying document-control P36 (the split /
+-- merge source flip and the reversal's park over a hold call
+-- retire_over_hold with p_force_hold, and keep today's bare write while the
+-- function is absent — PGRST202 / 42883), THEN paste. The P36 app works
+-- BEFORE and AFTER the paste: before it, retire_over_hold is absent and the
+-- doors make today's bare write (the guard before this paste admits it for a
 -- controller, as today); after it, the doors call it and land exactly as
--- before, now recorded; the status editors' pre-write gate (P34) already
--- refuses a held document, so the guard's refusal is reached only by a write
--- the app's read did not see.
+-- before, now recorded. An app before P36 makes those flips with the bare
+-- write, which this guard refuses for Document Control over an active hold:
+-- its split or merge with "Proceed over the active hold" (HLD-2) on a held
+-- source, and a forced reversal parking a held sheet, are refused ("Document
+-- has an active hold; a held document can't be superseded or voided here")
+-- and roll back whole until the app is deployed. (Right after the paste,
+-- while PostgREST reloads its schema cache, the P36 app may still get
+-- PGRST202, fall back to the bare write and be refused the same way once;
+-- the operation rolls back whole, nothing is retried automatically, and a
+-- retry by the user goes through.) The status editors' pre-write gate (P34)
+-- already refuses a held document, so for them the guard's refusal is
+-- reached only by a write the app's read did not see.
 -- ⚠ Never re-paste 20261245, 20261193, 20261185, 20261182, 20261174,
 -- 20261165, 20261164, 20261159, 20261151, 20261144, 20261139, 20261105 or
 -- any earlier guard migration after this one: each would drop this block
@@ -1227,20 +1243,28 @@ GRANT EXECUTE ON FUNCTION put_back_retired_issue(uuid, text, text, text, boolean
 -- (SECURITY INVOKER: the caller's row-level policies and the publish guard
 -- decide it exactly as a bare UPDATE). For Document Control (the session's
 -- tier, as the guard reads it) taking a document into Superseded from any
--- other status while a hold is active — the app calls it
--- only when Document Control chose to proceed over the hold (HLD-2's
--- acknowledgement: the split / merge wizards' and the reversal's `force`) —
+-- other status while a hold is active, AND asking for the override
+-- (p_force_hold — an override over a hold is chosen, never implied, as
+-- put_back_retired_issue's p_force_hold; the app passes it only when
+-- Document Control chose to proceed over the hold: HLD-2's acknowledgement,
+-- the split / merge wizards' and the reversal's `force`) —
 -- the write runs under the transaction-local flag app.publish_hold_override
 -- naming the document, and the pass is recorded as REV_HOLD_OVERRIDDEN in
 -- the same transaction (a record that cannot be written rolls the write back
--- with it). Anyone else's call, or a document with no active hold, is
--- exactly the bare write, judged by the guard as before.
+-- with it). Anyone else's call, a call without p_force_hold, or a document
+-- with no active hold, is exactly the bare write, judged by the guard as
+-- before (so a controller's call over a hold that does not ask for the
+-- override is refused, exactly as the bare PATCH is).
+-- One definition: an overload without p_force_hold (a pre-merge draft of
+-- this file) is dropped first, so PostgREST resolves one function.
+DROP FUNCTION IF EXISTS retire_over_hold(uuid, text, text, timestamptz, text);
 CREATE OR REPLACE FUNCTION retire_over_hold(
   p_document_id uuid,
   p_via text,
   p_reason text,
   p_at timestamptz DEFAULT NULL,
-  p_supersession_moc text DEFAULT NULL
+  p_supersession_moc text DEFAULT NULL,
+  p_force_hold boolean DEFAULT false
 ) RETURNS text
 LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
 DECLARE
@@ -1279,8 +1303,11 @@ BEGIN
 
   -- The recorded door: exactly the write the guard refuses bare since this
   -- migration — Document Control taking a document into Superseded from any
-  -- other status while a hold stands. Anything else is the bare write below.
-  IF v_status IS DISTINCT FROM 'Superseded'
+  -- other status while a hold stands — and only when the caller asks for the
+  -- override (p_force_hold: chosen, never implied). Anything else is the
+  -- bare write below.
+  IF COALESCE(p_force_hold, false)
+     AND v_status IS DISTINCT FROM 'Superseded'
      AND is_org_controller(v_org)
      AND EXISTS (SELECT 1 FROM document_holds h
                   WHERE h.document_id = p_document_id AND h.released_at IS NULL) THEN
@@ -1346,11 +1373,11 @@ BEGIN
   RETURN CASE WHEN v_forced THEN 'superseded_over_hold' ELSE 'superseded' END;
 END;
 $$;
-COMMENT ON FUNCTION retire_over_hold(uuid, text, text, timestamptz, text) IS
-  'REV-36 (20261253): the split / merge supersession of a source and a reversal''s park of a sheet (lib/documentLifecycle/common.ts markSupersededAndLink, reverse.ts parkAsSuperseded; p_via split, merge or reversal_park), writing the door''s own columns, called by the app only when Document Control chose to proceed over an active hold (HLD-2). SECURITY INVOKER: the caller''s row-level policies and trg_document_publish_guard decide the write exactly as for a bare UPDATE. For Document Control taking a document into Superseded from any other status while a hold is active, the write runs under the transaction-local flag app.publish_hold_override and the pass is recorded as REV_HOLD_OVERRIDDEN in the same transaction. Returns superseded_over_hold (that recorded pass), superseded (the bare write) or no_match; refuses a call with no session.';
+COMMENT ON FUNCTION retire_over_hold(uuid, text, text, timestamptz, text, boolean) IS
+  'REV-36 (20261253): the split / merge supersession of a source and a reversal''s park of a sheet (lib/documentLifecycle/common.ts markSupersededAndLink, reverse.ts parkAsSuperseded; p_via split, merge or reversal_park), writing the door''s own columns, called by the app only when Document Control chose to proceed over an active hold (HLD-2). SECURITY INVOKER: the caller''s row-level policies and trg_document_publish_guard decide the write exactly as for a bare UPDATE. For Document Control taking a document into Superseded from any other status while a hold is active and asking for the override (p_force_hold — chosen, never implied), the write runs under the transaction-local flag app.publish_hold_override and the pass is recorded as REV_HOLD_OVERRIDDEN in the same transaction. Returns superseded_over_hold (that recorded pass), superseded (the bare write) or no_match; refuses a call with no session.';
 -- DRLS-16: authenticated only (the body refuses a NULL uid too).
-REVOKE ALL ON FUNCTION retire_over_hold(uuid, text, text, timestamptz, text) FROM PUBLIC, anon, service_role;
-GRANT EXECUTE ON FUNCTION retire_over_hold(uuid, text, text, timestamptz, text) TO authenticated;
+REVOKE ALL ON FUNCTION retire_over_hold(uuid, text, text, timestamptz, text, boolean) FROM PUBLIC, anon, service_role;
+GRANT EXECUTE ON FUNCTION retire_over_hold(uuid, text, text, timestamptz, text, boolean) TO authenticated;
 
 COMMIT;
 
@@ -1386,8 +1413,8 @@ SELECT 'REV-28, REV-17, REV-21, REV-25, REV-24, REV-23, REV-22, REV-20, RG-14 an
           FROM pg_proc WHERE proname = 'enforce_document_publish_guard'),
        NULL
 UNION ALL
-SELECT 'retire_over_hold: Document Control''s move of a document into Superseded from any other status while a hold is active runs under the flag naming the document, clears it after the one write, and records REV_HOLD_OVERRIDDEN; anything else is the bare write',
-       (SELECT prosrc LIKE '%IF v_uid IS NULL THEN%IF p_via IS NULL OR p_via NOT IN (''split'', ''merge'', ''reversal_park'') THEN%IF v_status IS DISTINCT FROM ''Superseded''%AND is_org_controller(v_org)%AND EXISTS (SELECT 1 FROM document_holds h%PERFORM set_config(''app.publish_hold_override'', p_document_id::text, true);%SET status = ''Superseded'',%PERFORM set_config(''app.publish_hold_override'', '''', true);%VALUES (''REV_HOLD_OVERRIDDEN''%'
+SELECT 'retire_over_hold: Document Control''s move of a document into Superseded from any other status while a hold is active, asking for the override (p_force_hold), runs under the flag naming the document, clears it after the one write, and records REV_HOLD_OVERRIDDEN; anything else is the bare write',
+       (SELECT prosrc LIKE '%IF v_uid IS NULL THEN%IF p_via IS NULL OR p_via NOT IN (''split'', ''merge'', ''reversal_park'') THEN%IF COALESCE(p_force_hold, false)%AND v_status IS DISTINCT FROM ''Superseded''%AND is_org_controller(v_org)%AND EXISTS (SELECT 1 FROM document_holds h%PERFORM set_config(''app.publish_hold_override'', p_document_id::text, true);%SET status = ''Superseded'',%PERFORM set_config(''app.publish_hold_override'', '''', true);%VALUES (''REV_HOLD_OVERRIDDEN''%'
           FROM pg_proc WHERE proname = 'retire_over_hold'),
        NULL
 UNION ALL
@@ -1409,8 +1436,8 @@ SELECT 'DRLS-16: retire_over_hold runs as the caller (SECURITY INVOKER) with its
        EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
                 WHERE n.nspname = 'public' AND p.proname = 'retire_over_hold'
                   AND NOT p.prosecdef AND p.proconfig @> ARRAY['search_path=public'])
-       AND has_function_privilege('authenticated', 'retire_over_hold(uuid, text, text, timestamptz, text)', 'EXECUTE')
-       AND NOT has_function_privilege('anon', 'retire_over_hold(uuid, text, text, timestamptz, text)', 'EXECUTE'),
+       AND has_function_privilege('authenticated', 'retire_over_hold(uuid, text, text, timestamptz, text, boolean)', 'EXECUTE')
+       AND NOT has_function_privilege('anon', 'retire_over_hold(uuid, text, text, timestamptz, text, boolean)', 'EXECUTE'),
        NULL
 UNION ALL
 SELECT 'the guard is SECURITY DEFINER with search_path pinned, no client role may execute it, and trg_document_publish_guard still fires it BEFORE UPDATE only (an INSERT never reaches it)',

@@ -158,7 +158,7 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
   // Steps 1-3 can still roll back: every durable change registers its undo
   // BEFORE it is made, and a failure anywhere runs them all. Nothing
   // irreversible happens inside — see step 4.
-  const done = await withCompensation(async (register) => {
+  const done = await withCompensation(async (register, rollback) => {
   // 1. Materialize each new doc with its first revision.
   const newDocumentIds: string[] = [];
   for (const t of targets) {
@@ -234,7 +234,8 @@ export async function splitDocument(input: SplitDocumentInput): Promise<SplitDoc
     label: `source ${source.documentNumber ?? source.id}`,
     // REV-36 (P36): Document Control's explicit proceed over the source's
     // hold (HLD-2) — the flip is then recorded at the database (20261253).
-    ...(input.force === true ? { forceHold: "split" as const } : {}),
+    // P36 review fix: a recorded pass the rollback undoes is corrected, with why.
+    ...(input.force === true ? { forceHold: "split" as const, rollback } : {}),
   });
   return { newDocumentIds, holdsCopied, retired };
   });

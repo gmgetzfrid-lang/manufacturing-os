@@ -3197,6 +3197,10 @@ export default function LibraryExplorerPage() {
             documentId: selectedDoc.id, label: String(retireLabel), versionId: selectedDoc.currentVersionId ?? null,
             retiredFrom: retiredOutcome.retired.retiredFrom,
             ...(retiredOutcome.retired.priorStatusUnknown ? { priorStatusUnknown: true } : {}),
+            // P36 review fix (REV-35): this page showed it already in the
+            // status — with an unknown prior, possibly no retirement: the
+            // duties tell no package owner it was superseded.
+            ...(retiredOutcome.retired.priorStatusUnknown && retiredUnchanged ? { shownAlreadyInStatus: true } : {}),
             // REV-33 / REV-34 (c) (P34): the MOC the gate accepted (on the
             // SUPERSEDE_DOC record) and the checkout holder it read (told).
             ...(gate ? { mocReference: gate.mocReference, checkoutHolder: gate.preState, libraryId: selectedDoc.libraryId || library?.id || null } : {}),

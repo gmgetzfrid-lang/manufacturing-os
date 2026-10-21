@@ -192,16 +192,18 @@ describe("20261253 — put_back_retired_issue re-created from its NEWEST earlier
 describe("20261253 — retire_over_hold: the single doors' recorded pass over a hold", () => {
   it("runs as the caller (SECURITY INVOKER, search_path pinned); authenticated only (DRLS-16); refuses no session, an unknown door and a blank reason", () => {
     expect(R).toContain(") RETURNS text\nLANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$");
-    expect(M).toContain("REVOKE ALL ON FUNCTION retire_over_hold(uuid, text, text, timestamptz, text) FROM PUBLIC, anon, service_role;");
-    expect(M).toContain("GRANT EXECUTE ON FUNCTION retire_over_hold(uuid, text, text, timestamptz, text) TO authenticated;");
+    expect(M).toContain("REVOKE ALL ON FUNCTION retire_over_hold(uuid, text, text, timestamptz, text, boolean) FROM PUBLIC, anon, service_role;");
+    expect(M).toContain("GRANT EXECUTE ON FUNCTION retire_over_hold(uuid, text, text, timestamptz, text, boolean) TO authenticated;");
     expect(R).toContain("  IF v_uid IS NULL THEN\n");
     expect(R).toContain("  IF p_via IS NULL OR p_via NOT IN ('split', 'merge', 'reversal_park') THEN\n");
     expect(R).toContain("  IF btrim(COALESCE(p_reason, '')) = '' THEN\n");
   });
 
-  it("the flag is set only for Document Control's move of a held document into Superseded from any other status, around the one write, cleared after it, and the pass recorded in the same transaction", () => {
+  it("the flag is set only for Document Control's move of a held document into Superseded from any other status ASKING for the override (p_force_hold, default false — chosen, never implied), around the one write, cleared after it, and the pass recorded in the same transaction", () => {
     const at = (s: string) => { const i = R.indexOf(s); expect(i, s).toBeGreaterThan(0); return i; };
-    const cond = at("  IF v_status IS DISTINCT FROM 'Superseded'\n     AND is_org_controller(v_org)\n     AND EXISTS (SELECT 1 FROM document_holds h\n                  WHERE h.document_id = p_document_id AND h.released_at IS NULL) THEN\n    v_forced := true;\n");
+    // P36 review fix: the override is asked for, as put_back_retired_issue's p_force_hold — never implied.
+    expect(R).toContain("  p_supersession_moc text DEFAULT NULL,\n  p_force_hold boolean DEFAULT false\n) RETURNS text");
+    const cond = at("  IF COALESCE(p_force_hold, false)\n     AND v_status IS DISTINCT FROM 'Superseded'\n     AND is_org_controller(v_org)\n     AND EXISTS (SELECT 1 FROM document_holds h\n                  WHERE h.document_id = p_document_id AND h.released_at IS NULL) THEN\n    v_forced := true;\n");
     const set = at("    PERFORM set_config('app.publish_hold_override', p_document_id::text, true);\n");
     const write = at("    UPDATE documents\n       SET status = 'Superseded',\n");
     const clear = at("    PERFORM set_config('app.publish_hold_override', '', true);\n");
@@ -292,15 +294,17 @@ describe("20261253 — the one-paste shape", () => {
     expect(tail).toContain("AND NOT has_function_privilege('anon', 'enforce_document_publish_guard()', 'EXECUTE')");
     expect(tail).toContain("AND NOT has_function_privilege('authenticated', 'enforce_document_publish_guard()', 'EXECUTE')");
     expect(tail).toContain("AND (t.tgtype & 2) = 2 AND (t.tgtype & 16) = 16 AND (t.tgtype & 4) = 0),");
-    expect(tail).toContain("AND has_function_privilege('authenticated', 'retire_over_hold(uuid, text, text, timestamptz, text)', 'EXECUTE')");
-    expect(tail).toContain("AND NOT has_function_privilege('anon', 'retire_over_hold(uuid, text, text, timestamptz, text)', 'EXECUTE')");
+    expect(tail).toContain("AND has_function_privilege('authenticated', 'retire_over_hold(uuid, text, text, timestamptz, text, boolean)', 'EXECUTE')");
+    expect(tail).toContain("AND NOT has_function_privilege('anon', 'retire_over_hold(uuid, text, text, timestamptz, text, boolean)', 'EXECUTE')");
     expect(tail).toContain("AND NOT has_function_privilege('anon', 'put_back_retired_issue(uuid, text, text, text, boolean, timestamptz, uuid, text, text)', 'EXECUTE')");
     expect(tail).toContain("WHERE n.nspname = 'public' AND p.proname = 'retire_over_hold')");
   });
 
-  it("nothing else is created, dropped or moved: three functions (one created), no policy, trigger, table or row write outside the bodies", () => {
+  it("nothing else is created, dropped or moved: three functions (one created), no policy, trigger, table or row write outside the bodies; the only drop is a draft overload of retire_over_hold without p_force_hold (one definition stands)", () => {
     const body = stripComments(M);
-    expect(body).not.toMatch(/DROP FUNCTION|DROP TRIGGER|DROP POLICY/);
+    expect((body.match(/DROP FUNCTION/g) ?? []).length).toBe(1);
+    expect(body).toContain("DROP FUNCTION IF EXISTS retire_over_hold(uuid, text, text, timestamptz, text);\nCREATE OR REPLACE FUNCTION retire_over_hold(");
+    expect(body).not.toMatch(/DROP TRIGGER|DROP POLICY/);
     expect((body.match(/CREATE OR REPLACE FUNCTION/g) ?? []).length).toBe(3);
     expect(body).not.toMatch(/CREATE (?:POLICY|TRIGGER)|ALTER TABLE|CREATE TABLE (?!.*TEMP)/);
     // row writes live only inside the two function bodies (the doors' own writes and records)
@@ -308,13 +312,18 @@ describe("20261253 — the one-paste shape", () => {
     expect(outside).not.toMatch(/\bUPDATE\s+documents\b|\bINSERT\s+INTO\b|\bDELETE\s+FROM\b|set_config/i);
   });
 
-  it("the header states the finding, the doors, the paste order (after 20261245 and 20261247), that the app works before and after, the never-re-paste list, and that it is not a widening", () => {
+  it("the header states the finding, the doors, the paste order (after 20261245 and 20261247), the deploy order (the P36 app first, then the paste — an app before P36 is refused its forced split / merge / park), the schema-cache window, the never-re-paste list, and that it is not a widening", () => {
     const head = M.slice(0, M.indexOf("DO $$"));
     expect(head).toMatch(/REV-36 {2}Since P34 a status editor/);
     expect(head).toMatch(/HOW TO APPLY: AFTER 20261245 \(required/);
     expect(head).toMatch(/after 20261247 \(paste guide row 191/);
     expect(head).toMatch(/20261245 \(row 187\) is HOLD behind 20261193 \(row 150\)/);
-    expect(head).toMatch(/The app works BEFORE and AFTER the paste/);
+    expect(head).toMatch(/⚠ DEPLOY FIRST: deploy the app carrying document-control P36/);
+    expect(head).toMatch(/THEN paste\. The P36 app works\s+-- BEFORE and AFTER the paste/);
+    expect(head).toMatch(/An app before P36 makes those flips with the bare\s+-- write, which this guard refuses for Document Control over an active hold/);
+    expect(head).toMatch(/while PostgREST reloads its schema cache, the P36 app may still get\s+-- PGRST202, fall back to the bare write and be refused the same way once/);
+    expect(head).toMatch(/nothing is retried automatically/);
+    expect(head).not.toMatch(/no deploy order is needed/i);
     expect(head).toMatch(/PGRST202 \/ 42883/);
     expect(head).toMatch(/⚠ Never re-paste 20261245, 20261193/);
     expect(head).toMatch(/nor 20261192 or 20261165/);
@@ -327,7 +336,7 @@ describe("20261253 — the one-paste shape", () => {
     const p = join(root, "lib", "__tests__", "rls", "dcP36StatusEditorHoldLeg.test.ts");
     expect(existsSync(p)).toBe(true);
     const t = readFileSync(p, "utf8");
-    for (const s of ["THE DEFECT, closed", "Void over an active hold", "held Draft", "below a controller, a supersession over a hold", "NO active hold", "every non-retiring write", "move between retired statuses", "recorded doors cover the same moves", "service role", "THE SINGLE DOORS still work", "reversal's park", "opens for nobody else", "failed REVERSAL's rollback", "other doors answer the same", "pasted as ONE script", "prerequisite refuses"]) {
+    for (const s of ["THE DEFECT, closed", "Void over an active hold", "held Draft", "below a controller, a supersession over a hold", "NO active hold", "every non-retiring write", "move between retired statuses", "recorded doors cover the same moves", "service role", "THE SINGLE DOORS still work", "reversal's park", "ASKED for, never implied", "opens for nobody else", "failed REVERSAL's rollback", "other doors answer the same", "pasted as ONE script", "prerequisite refuses"]) {
       expect(t, s).toContain(s);
     }
   });

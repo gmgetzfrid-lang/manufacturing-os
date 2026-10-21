@@ -54,7 +54,7 @@ const putBackOf = (f: string) => {
 const PUT_BACK_BASE = [
   `${guardOf(BASE)}\nREVOKE ALL ON FUNCTION enforce_document_publish_guard() FROM PUBLIC, anon, authenticated, service_role;`,
   putBackOf("20261192_dc_roundF_null_prior_status_put_back.sql"),
-  "DROP FUNCTION IF EXISTS retire_over_hold(uuid, text, text, timestamptz, text);",
+  "DROP FUNCTION IF EXISTS retire_over_hold(uuid, text, text, timestamptz, text, boolean);",
 ].join("\n");
 
 const ROLES = { admin: "Admin", docctrl: "DocCtrl", publisher: "Drafter", owner: "Viewer", engineer: "Engineer-2" } as const;
@@ -151,7 +151,7 @@ const setStatus = (doc: string, status: string) => `UPDATE documents SET status 
 const supersedeBare = (doc: string, uid: string) =>
   `UPDATE documents SET status = 'Superseded', superseded_at = now(), superseded_by_user = '${uid}', supersession_reason = 'split into new sheets', supersession_moc = 'MOC-36', updated_at = now(), updated_by = '${uid}' WHERE id = '${doc}'`;
 const retireOverHold = (doc: string, via = "split") =>
-  `SELECT 1 FROM (SELECT retire_over_hold('${doc}', '${via}', 'split into new sheets', now(), 'MOC-36') AS r) x WHERE x.r = 'superseded_over_hold'`;
+  `SELECT 1 FROM (SELECT retire_over_hold('${doc}', '${via}', 'split into new sheets', now(), 'MOC-36', true) AS r) x WHERE x.r = 'superseded_over_hold'`;
 const overrides = (doc: string) => `SELECT count(*) FROM audit_logs WHERE action = 'REV_HOLD_OVERRIDDEN' AND resource_id = '${doc}';`;
 const LEG = /^err:23514:Document has an active hold; a held document can't be superseded or voided here/;
 
@@ -269,7 +269,7 @@ describe.skipIf(skip !== null)("REV-36 (20261253): entry into Superseded / Void 
   });
 
   it("the recorded doors cover the same moves: retire_over_hold on a held ARCHIVED document lands and records (Archived -> Superseded); put_back_retired_issue's rollback to Void of a held document the caller superseded, forced, lands recorded; its re-supersession from Archived too", () => {
-    const viaRpc = `SELECT 1 FROM (SELECT retire_over_hold('${w.dArchHeld}', 'split', 'split into new sheets', now(), 'MOC-36') AS r) x WHERE x.r = 'superseded_over_hold'`;
+    const viaRpc = `SELECT 1 FROM (SELECT retire_over_hold('${w.dArchHeld}', 'split', 'split into new sheets', now(), 'MOC-36', true) AS r) x WHERE x.r = 'superseded_over_hold'`;
     expect(probe(AFTER, w, "docctrl", viaRpc, `${statusOf(w.dArchHeld)} ${overrides(w.dArchHeld)}`)).toBe("ok:1 / Superseded / 1");
     expect(probe(AFTER, w, "docctrl", viaRpc,
       `SELECT (details->>'priorStatus') || '|' || (details->>'newStatus') FROM audit_logs WHERE action = 'REV_HOLD_OVERRIDDEN' AND resource_id = '${w.dArchHeld}';`))
@@ -318,27 +318,40 @@ describe.skipIf(skip !== null)("REV-36 (20261253): entry into Superseded / Void 
     const cols = `SELECT status || '|' || COALESCE(supersession_reason, '') || '|' || COALESCE(supersession_moc, 'no moc') FROM documents WHERE id = '${w.dHeld}';`;
     expect(probe(BEFORE, w, "docctrl", park, cols)).toBe("ok:1 / Superseded|Reverted split — wrong sheets|no moc");
     expect(probe(AFTER, w, "docctrl", park, cols)).toMatch(LEG);
-    const viaRpc = `SELECT 1 FROM (SELECT retire_over_hold('${w.dHeld}', 'reversal_park', 'Reverted split — wrong sheets', now(), 'IGNORED') AS r) x WHERE x.r = 'superseded_over_hold'`;
+    const viaRpc = `SELECT 1 FROM (SELECT retire_over_hold('${w.dHeld}', 'reversal_park', 'Reverted split — wrong sheets', now(), 'IGNORED', true) AS r) x WHERE x.r = 'superseded_over_hold'`;
     expect(probe(AFTER, w, "docctrl", viaRpc, cols)).toBe("ok:1 / Superseded|Reverted split — wrong sheets|no moc");
   });
 
   it("the recorded door opens for nobody else and for nothing else: a publisher's call is the bare write (refused by the publisher tier, unrecorded); an unheld document's is the bare write (no record); the flag never reaches another held document", () => {
     // a publisher (not Document Control) over a hold: the bare write, refused in the tier's words, nothing recorded
-    expect(probe(AFTER, w, "publisher", `SELECT retire_over_hold('${w.dHeld}', 'split', 'x', now(), NULL)`, overrides(w.dHeld)))
+    expect(probe(AFTER, w, "publisher", `SELECT retire_over_hold('${w.dHeld}', 'split', 'x', now(), NULL, true)`, overrides(w.dHeld)))
       .toMatch(/^err:23514:Document has an active hold; release the hold before publishing a new revision\. \/ 0$/);
     // an unheld document: 'superseded', no record
-    expect(probe(AFTER, w, "docctrl", `SELECT retire_over_hold('${w.dFree}', 'split', 'x', now(), NULL)`, overrides(w.dFree))).toBe("ok:1 / 0");
-    expect(probe(AFTER, w, "docctrl", `SELECT 1 FROM (SELECT retire_over_hold('${w.dFree}', 'split', 'x', now(), NULL) AS r) x WHERE x.r = 'superseded'`)).toBe("ok:1");
+    expect(probe(AFTER, w, "docctrl", `SELECT retire_over_hold('${w.dFree}', 'split', 'x', now(), NULL, true)`, overrides(w.dFree))).toBe("ok:1 / 0");
+    expect(probe(AFTER, w, "docctrl", `SELECT 1 FROM (SELECT retire_over_hold('${w.dFree}', 'split', 'x', now(), NULL, true) AS r) x WHERE x.r = 'superseded'`)).toBe("ok:1");
     // the flag names one document for one statement: a bare write on ANOTHER held document in the same transaction is refused
     const seq = probeSeq(AFTER, w, "docctrl", [retireOverHold(w.dHeld), setStatus(w.dHeld2, "Superseded")],
       `SELECT current_setting('app.publish_hold_override', true) || '|' || (SELECT status FROM documents WHERE id = '${w.dHeld2}');`);
     expect(seq).toMatch(/^ok:1 \/ err:23514:Document has an active hold; a held document can't .* \/ \|Issued$/);
     // no session (the service role holds no EXECUTE — DRLS-16), an unknown door, a blank reason: refused, nothing written
-    expect(probe(AFTER, w, "service", `SELECT retire_over_hold('${w.dHeld}', 'split', 'x', now(), NULL)`, statusOf(w.dHeld))).toBe("err:42501:permission denied for function retire_over_hold / Issued");
-    expect(probe(AFTER, w, "docctrl", `SELECT retire_over_hold('${w.dHeld}', 'bulk_edit', 'x', now(), NULL)`, statusOf(w.dHeld))).toMatch(/^err:23514:retire_over_hold: name the door .* \/ Issued$/);
-    expect(probe(AFTER, w, "docctrl", `SELECT retire_over_hold('${w.dHeld}', 'split', '  ', now(), NULL)`, statusOf(w.dHeld))).toMatch(/^err:23514:retire_over_hold: give the supersession's reason\. \/ Issued$/);
+    expect(probe(AFTER, w, "service", `SELECT retire_over_hold('${w.dHeld}', 'split', 'x', now(), NULL, true)`, statusOf(w.dHeld))).toBe("err:42501:permission denied for function retire_over_hold / Issued");
+    expect(probe(AFTER, w, "docctrl", `SELECT retire_over_hold('${w.dHeld}', 'bulk_edit', 'x', now(), NULL, true)`, statusOf(w.dHeld))).toMatch(/^err:23514:retire_over_hold: name the door .* \/ Issued$/);
+    expect(probe(AFTER, w, "docctrl", `SELECT retire_over_hold('${w.dHeld}', 'split', '  ', now(), NULL, true)`, statusOf(w.dHeld))).toMatch(/^err:23514:retire_over_hold: give the supersession's reason\. \/ Issued$/);
     // anon may not execute it
-    expect(admin(AFTER, `SELECT has_function_privilege('anon', 'retire_over_hold(uuid, text, text, timestamptz, text)', 'EXECUTE')`)).toBe("f");
+    expect(admin(AFTER, `SELECT has_function_privilege('anon', 'retire_over_hold(uuid, text, text, timestamptz, text, boolean)', 'EXECUTE')`)).toBe("f");
+  });
+
+  it("the override is ASKED for, never implied (P36 review fix): Document Control's call over a hold without p_force_hold (omitted, or false) is the bare write — refused by the hold leg exactly as the PATCH is, nothing recorded, nothing written", () => {
+    for (const call of [
+      `SELECT retire_over_hold('${w.dHeld}', 'split', 'a script', now(), NULL)`,
+      `SELECT retire_over_hold('${w.dHeld}', 'split', 'a script', now(), NULL, false)`,
+      `SELECT retire_over_hold('${w.dHeld}', 'reversal_park', 'a script', now(), NULL, NULL)`,
+    ]) {
+      expect(probe(AFTER, w, "docctrl", call, `${statusOf(w.dHeld)} ${overrides(w.dHeld)}`), call).toMatch(/^err:23514:Document has an active hold; a held document can't be superseded or voided here.* \/ Issued \/ 0$/);
+      expect(probe(AFTER, w, "admin", call, statusOf(w.dHeld)), call).toMatch(LEG);
+    }
+    // an unheld document needs no override: the bare write lands without it ('superseded', no record)
+    expect(probe(AFTER, w, "docctrl", `SELECT 1 FROM (SELECT retire_over_hold('${w.dFree}', 'split', 'x', now(), NULL) AS r) x WHERE x.r = 'superseded'`, overrides(w.dFree))).toBe("ok:1 / 0");
   });
 
   it("REGRESSION: the rollback of a failed split over a hold (put_back_retired_issue, lifecycle_rollback, forced) puts the source back on both sides — after a bare flip before the paste, after retire_over_hold's flip after it", () => {
@@ -433,7 +446,7 @@ describe.skipIf(skip !== null)("20261253 pasted as ONE script, as the SQL editor
     admin("postgres", `DROP DATABASE IF EXISTS ${SCRATCH}`);
     admin("postgres", `CREATE DATABASE ${SCRATCH} TEMPLATE ${AFTER}`);
     try {
-      admin(SCRATCH, `${guardOf("20261193_dc_roundF_ifc_rev_up_first_issue.sql")}\nDROP FUNCTION IF EXISTS retire_over_hold(uuid, text, text, timestamptz, text);`);
+      admin(SCRATCH, `${guardOf("20261193_dc_roundF_ifc_rev_up_first_issue.sql")}\nDROP FUNCTION IF EXISTS retire_over_hold(uuid, text, text, timestamptz, text, boolean);`);
       const src = () => admin(SCRATCH, `SELECT md5(prosrc) FROM pg_proc WHERE proname = 'enforce_document_publish_guard'`);
       const was = src();
       const r = paste(SCRATCH);

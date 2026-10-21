@@ -23,6 +23,7 @@ import {
   type ActorContext,
   type Compensation,
   type SupersededSource,
+  type RollbackCause,
   createNewDocWithFirstVersion,
   markSupersededAndLink,
   completeSourceRetirement,
@@ -131,7 +132,7 @@ export async function mergeDocuments(input: MergeDocumentsInput): Promise<MergeD
   // effect a rollback could not take back — runs LAST, so every earlier
   // failure rolls back with nothing published. Nothing irreversible happens
   // inside.
-  const committed = await withCompensation((register) => mergeDocumentsInner(input, gate, register));
+  const committed = await withCompensation((register, rollback) => mergeDocumentsInner(input, gate, register, rollback));
   return finishMerge(input, gate, committed);
 }
 
@@ -284,6 +285,8 @@ async function mergeDocumentsInner(
   input: MergeDocumentsInput,
   gate: MergeGate,
   register: (c: Compensation) => void,
+  /** P36 review fix: why the saga rolled back, for the correction of a recorded pass it undoes. */
+  rollback?: RollbackCause,
 ): Promise<MergeCommitted> {
   const {
     sources, target, reason, mocReference,
@@ -377,7 +380,7 @@ async function mergeDocumentsInner(
       label: `merge source ${src.documentNumber ?? src.id}`,
       // REV-36 (P36): Document Control's explicit proceed over a source's
       // hold (HLD-2) — the flip is then recorded at the database (20261253).
-      ...(input.force === true ? { forceHold: "merge" as const } : {}),
+      ...(input.force === true ? { forceHold: "merge" as const, rollback } : {}),
     }));
   }
 

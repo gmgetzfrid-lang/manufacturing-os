@@ -122,6 +122,16 @@ afterEach(() => {
 });
 
 const settle = () => act(async () => { for (let i = 0; i < 30; i++) await new Promise((r) => setTimeout(r, 0)); });
+/** P36 review fix (flake): the apply's duties import lib/postPublish dynamically for every superseded
+ *  row, so under a loaded parallel run a fixed tick count can end while the modal still says
+ *  "Applying…" — wait on the outcome (the busy label gone, bounded at 10 s), then settle as before. */
+const settleApply = async () => {
+  const deadline = Date.now() + 10_000;
+  while (/Applying…/.test(host.textContent ?? "") && Date.now() < deadline) {
+    await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+  }
+  await settle();
+};
 const button = (label: string) => {
   const b = Array.from(host.querySelectorAll("button")).find((x) => x.textContent?.includes(label));
   if (!b) throw new Error(`no button "${label}"`);
@@ -146,7 +156,7 @@ async function apply(docs: DocumentRecord[], value: string, opts: { reason?: str
   if (value === "Archived") await act(async () => setValue(labelled("Reason for archiving") as HTMLInputElement, opts.reason ?? "Tidy"));
   if (opts.moc !== undefined) await act(async () => setValue(labelled("MOC reference") as HTMLInputElement, opts.moc!));
   await act(async () => { button(`Apply to ${docs.length}`).dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-  await settle();
+  await settleApply();
 }
 const statusWrites = () => state.db.calls.filter((c) => c.table === "documents" && c.method === "update" && "status" in (c.args[0] as Row));
 const supersedeDocs = () => T("audit_logs").filter((r) => r.action === "SUPERSEDE_DOC");
@@ -354,5 +364,19 @@ describe("P34 review fix 3 — the bulk editor clears the archive columns of a r
     await apply([asRecord(a)], "Draft");
     expect(Object.keys(statusWrites()[0].args[0] as Row).sort()).toEqual(["status", "uniqueness_key", "updated_at", "updated_by"]);
     expect(docRow("x4")).toMatchObject({ status: "Draft", archived_at: "2025-01-01", archived_by: "old", archive_reason: "first" });
+  });
+});
+
+describe("P36 review fix (REV-35) — the bulk editor's fail-safe path tells no package owner of a supersession it may not have made", () => {
+  it("the priors cannot be read: a row the editor showed already Superseded gets the duties (fail-safe) but no package notice; a row it showed Issued is told as before", async () => {
+    const sup = seedDoc("f1", { status: "Superseded" });
+    const iss = seedDoc("f2");
+    state.db.selectErrors!.documents = (cols) => (cols === "id, status" ? { message: "503" } : null);
+    await apply([asRecord(sup), asRecord(iss)], "Superseded");
+    expect(host.textContent).toMatch(/Applied to 2 documents\./);
+    expect(rec("f1")).toMatchObject({ priorStatusUnknown: true, via: "bulk_edit" });
+    expect(rec("f2")).toMatchObject({ priorStatusUnknown: true, via: "bulk_edit" });
+    const told = vi.mocked(notifyPackagesOfRetirement).mock.calls.map((c) => (c[0] as { documentId: string }).documentId);
+    expect(told).toEqual(["f2"]);
   });
 });

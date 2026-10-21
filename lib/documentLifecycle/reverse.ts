@@ -108,7 +108,7 @@ import {
 } from "@/lib/revisions";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 import {
-  withCompensation, copyActiveHoldsToDoc, releaseCarriedHolds,
+  withCompensation, copyActiveHoldsToDoc, releaseCarriedHolds, correctRetiredOverHold,
   type Compensation, type ActorContext,
 } from "./common";
 
@@ -367,16 +367,25 @@ async function assertRestorable(restoreIds: string[], parkedIds: string[]): Prom
  *  retireOverHold — the same write, recorded as REV_HOLD_OVERRIDDEN, which
  *  the publish guard now requires for a controller's entry into Superseded
  *  over a hold — and by the direct write only while the function is absent
- *  (today's path). Every other park is the direct write, as before. */
-async function parkAsSuperseded(docId: string, supersessionReason: string, actorUserId: string, now: string, register: Register, forceHold = false): Promise<string | null> {
+ *  (today's path). Every other park is the direct write, as before. P36
+ *  review fix: a park that function RECORDED (a pass over the hold) is
+ *  corrected on the record — REV_HOLD_OVERRIDE_UNDONE, with why the saga
+ *  rolled back — once the un-park puts the sheet back (correctRetiredOverHold,
+ *  registered BEFORE the un-park so the LIFO rollback runs it after it). */
+async function parkAsSuperseded(docId: string, supersessionReason: string, actorUserId: string, now: string, register: Register, forceHold: { actor: ActorContext; rollback: SagaRollback } | null = null): Promise<string | null> {
   const snap = await readStatusSnapshot(docId);
   const outcome: WriteOutcome = { attempted: false, landed: false };
+  const recordedPass = { recorded: false };
+  if (forceHold) {
+    register(correctRetiredOverHold({ documentId: docId, via: "reversal_park", label: docId, pass: recordedPass, actor: forceHold.actor, rollback: forceHold.rollback }));
+  }
   register({ describe: `un-park ${docId}`, run: putBackIfChanged(docId, snap, actorUserId, outcome) });
   outcome.attempted = true;
   const door = forceHold ? await retireOverHold({ documentId: docId, door: "reversal_park", reason: supersessionReason, at: now }) : null;
   if (door?.kind === "refused") {
     throw new Error(`Reversal stopped: ${docId} could not be parked as Superseded (${door.reason}).`);
   }
+  if (door?.kind === "landed") recordedPass.recorded = door.recorded;
   if (door?.kind !== "landed") {
     const { data, error } = await supabase.from("documents").update({
       status: "Superseded",
@@ -868,7 +877,7 @@ export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseRes
   const parkedPrior = new Map<string, string | null>();
   await withRollbackCause(async (register, rollback) => {
     for (const newId of replacementIds) {
-      parkedPrior.set(newId, await parkAsSuperseded(newId, `Reverted split — ${input.reason}`, input.actorUserId, now, register, heldParked.some((h) => h.id === newId)));
+      parkedPrior.set(newId, await parkAsSuperseded(newId, `Reverted split — ${input.reason}`, input.actorUserId, now, register, heldParked.some((h) => h.id === newId) ? { actor, rollback } : null));
     }
     // HLD-2: a parked sheet's holds onto the source BEFORE it comes back.
     holdsCarriedBack = await carryParkedHolds(heldParked, [sourceDocId], "split", actor, register);
@@ -1013,7 +1022,7 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
   // and target live at once; nothing irreversible has run yet.
   await withRollbackCause(async (register, rollback) => {
     if (targetWasNewlyCreated) {
-      parkedPrior.set(targetDocId, await parkAsSuperseded(targetDocId, `Reverted merge — ${input.reason}`, input.actorUserId, now, register, heldParked.some((h) => h.id === targetDocId)));
+      parkedPrior.set(targetDocId, await parkAsSuperseded(targetDocId, `Reverted merge — ${input.reason}`, input.actorUserId, now, register, heldParked.some((h) => h.id === targetDocId) ? { actor, rollback } : null));
     }
     // HLD-2: the parked target's holds onto every source BEFORE it returns.
     holdsCarriedBack = await carryParkedHolds(heldParked, allSourceIds, "merge", actor, register);

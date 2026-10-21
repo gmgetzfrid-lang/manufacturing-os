@@ -2457,6 +2457,11 @@ export async function finishRetirementDuties(input: {
     checkoutHolder?: { checkedOutBy: string | null; checkedOutByName?: string | null } | null;
     /** The library, for the holder's notice link. */
     libraryId?: string | null;
+    /** P36 review fix (REV-35): the door's own copy of the row showed it
+     *  already in `toStatus` — with `priorStatusUnknown`, a save that may
+     *  have retired nothing (the fail-safe path), so the package owners are
+     *  not told it was superseded. */
+    shownAlreadyInStatus?: boolean;
   }>;
 }): Promise<{ problems: BulkArchiveProblem[]; acksClosed?: RetirementAcksClosed[]; holdersTold?: string[] }> {
   const problems: BulkArchiveProblem[] = [];
@@ -2543,7 +2548,13 @@ export async function finishRetirementDuties(input: {
       }
       // REV-35 (P36): the open work packages' owners, told as
       // supersedeDocument tells them (the same producer; it never throws).
-      if (kind.action === "SUPERSEDE_DOC" && d.alreadyRetired !== true) {
+      // P36 review fix: not on the fail-safe path — a prior the door could
+      // not read on a row its copy showed already Superseded (a title fix on
+      // a Superseded document whose reads failed) may have retired nothing,
+      // so no "it was superseded" goes to the package owners (the recall and
+      // the duties still run, fail-safe).
+      const maybeNoRetirement = d.priorStatusUnknown === true && d.shownAlreadyInStatus === true;
+      if (kind.action === "SUPERSEDE_DOC" && d.alreadyRetired !== true && !maybeNoRetirement) {
         try {
           // Loaded once and shared, so the rows' concurrent duties wait on one load.
           postPublishLoad ??= import("@/lib/postPublish").catch((e) => { postPublishLoad = null; throw e; });
@@ -2784,7 +2795,9 @@ export function isMissingRetireOverHoldRpc(e: { code?: string | null; message?: 
  *  superseded_at; `supersessionMoc` the MOC column a split / merge writes),
  *  recorded when Document Control is retiring a document under an active
  *  hold. Called only when Document Control chose to proceed over the hold
- *  (the door's `force`): an override over a hold is chosen, never implied.
+ *  (the door's `force`): an override over a hold is chosen, never implied —
+ *  sent as p_force_hold (P36 review fix), without which the function makes
+ *  the bare write the guard refuses over a hold.
  *  Never throws: the caller turns `refused` into its own refusal and makes
  *  its direct write on `absent`. */
 export async function retireOverHold(input: {
@@ -2801,6 +2814,10 @@ export async function retireOverHold(input: {
       p_reason: input.reason,
       p_at: input.at,
       p_supersession_moc: input.door === "reversal_park" ? null : (input.supersessionMoc ?? null),
+      // P36 review fix: the override is asked for, never implied — the
+      // function records a pass over a hold only when this is true, and this
+      // function is called only on Document Control's chosen force.
+      p_force_hold: true,
     });
     if (error) {
       return isMissingRetireOverHoldRpc(error) ? { kind: "absent" } : { kind: "refused", reason: error.message || "the supersession was refused" };
@@ -3415,6 +3432,12 @@ export async function recordStatusIssue(input: {
   return { issued: true, putBack: input.putBack, ...(entryIntoForce ? { entryIntoForce: true as const } : {}), complianceClockErrors, recordError: recordErr ?? null };
 }
 
+/** REV-36 (3) (document-control P36 review fix): changeDocumentStatus's
+ *  refusal when the caller's one read (`prior`) no longer holds at the write —
+ *  another session changed the status meanwhile; nothing was written (the
+ *  metadata save prefixes "Save refused — nothing was saved:"). */
+export const STATUS_CHANGED_SINCE_READ = "the document's status changed since this save read it";
+
 /** REV-19: THE status write for a status editor — one checked UPDATE of the
  *  status (and any other columns the editor saves with it), then, when it
  *  made the document a controlled issue, recordStatusIssue. A refusal is
@@ -3471,7 +3494,12 @@ export async function changeDocumentStatus(input: {
    *  reads can no longer run the duties of a retirement the gates never saw.
    *  `readFailed`: the caller's read failed (after its own retry) — the prior
    *  is unknown, which recalls (P28's fail-safe), exactly as this function's
-   *  own failed read does. Omitted (every other caller), as before. */
+   *  own failed read does. Omitted (every other caller), as before.
+   *  P36 review fix: given and read, the write is a compare-and-swap on
+   *  `fromStatus` (the gates and the MOC prompt ran on it): a status changed
+   *  since is refused (STATUS_CHANGED_SINCE_READ), nothing written. A failed
+   *  read (`readFailed`) has no status to compare — the write is unguarded,
+   *  as before. */
   prior?: { fromStatus: string | null; readFailed: boolean };
   /** REV-35 (document-control P36): whether the checkout holder was told of
    *  this retirement personally — the caller's retirement duties' answer
@@ -3500,12 +3528,30 @@ export async function changeDocumentStatus(input: {
   // only when the database records — a database before 20261205 is sent no
   // custom header.
   const recordedByDatabase = isControlledIssueStatus(input.toStatus) ? await isStatusIssueRecordedByDatabase() : false;
-  const { data: rows, error } = await withIssueDoor(supabase.from("documents")
+  // REV-36 (3) (document-control P36 review fix): with the caller's one read
+  // given (and read), the write is a compare-and-swap on the status that read
+  // gave — the caller's gates and prompts (a MOC asked, which waits on the
+  // person) ran on it, so a status another session changed meanwhile is
+  // never written over and its retirement's duties never run twice. Zero
+  // rows then re-read once: a status that differs from the read is
+  // STATUS_CHANGED_SINCE_READ (nothing saved); otherwise the refusal below.
+  const casFrom: string | null | undefined = input.prior !== undefined && isRetiredStatus(input.toStatus) && !input.prior.readFailed
+    ? input.prior.fromStatus
+    : undefined;
+  const scoped = supabase.from("documents")
     .update({ ...(input.patch ?? {}), status: input.toStatus, updated_at: now, updated_by: input.actorUserId })
-    .eq("id", input.documentId)
+    .eq("id", input.documentId);
+  const { data: rows, error } = await withIssueDoor((casFrom === undefined ? scoped : casFrom === null ? scoped.is("status", null) : scoped.eq("status", casFrom))
     .select("id"), recordedByDatabase ? input.door : null);
   if (error) throw new Error(error.message);
   if (((rows as unknown[] | null) ?? []).length === 0) {
+    if (casFrom !== undefined) {
+      const { data: nowRow, error: nowErr } = await supabase.from("documents").select("status").eq("id", input.documentId).maybeSingle();
+      const nowStatus = (nowRow as { status?: string | null } | null)?.status ?? null;
+      if (!nowErr && nowRow && nowStatus !== casFrom) {
+        throw new Error(`${STATUS_CHANGED_SINCE_READ} (it read ${casFrom?.trim() || "no status"}; it is ${nowStatus?.trim() || "no status"} now) — reload it and save again.`);
+      }
+    }
     throw new Error("The status was NOT changed — you don't have authority to change this document, or it is no longer visible to you. Nothing was changed.");
   }
   // PROD-17 (document-control P26): a write that RETIRES the document (into
