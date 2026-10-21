@@ -110,6 +110,23 @@ describe("DEC-38 / DRLS-16 — open_consent_window and record_consent_window_war
     expect(b).toContain("consent_window_opened_at = v_now,");
     expect(b).toContain("jsonb_set(metadata, '{review_roster,consentWindow}'");
   });
+  it("DF-P7 fix pass (review major): the slot, its mode, its status and its occupants are read from the service-written LEDGER, not metadata alone", () => {
+    const b = fnBody("open_consent_window");
+    expect(b).toContain("v_ls ticket_review_slots%ROWTYPE;");
+    expect(b).toContain("SELECT * INTO v_ls FROM ticket_review_slots\n   WHERE ticket_id = p_ticket AND org_id = v_t.org_id AND roster_id = p_roster AND slot_kind = p_slot;");
+    expect(b).toContain("IF NOT FOUND OR v_ls.mode <> 'consent_window' OR v_ls.status <> 'open' OR v_ls.fallback THEN");
+    expect(b).toContain("IF NOT (p_recipients <@ v_ls.primaries) THEN");
+    // the metadata primaries are no longer the authority for who may be asked
+    expect(b).not.toContain("v_slot->'primaries'");
+    // the ledger check comes before any row is written
+    expect(b.indexOf("FROM ticket_review_slots")).toBeLessThan(b.indexOf("INSERT INTO notifications"));
+  });
+  it("DEC-12 / DEC-37 (review blocker): the drafter is never asked; nor the requester on a slot independent of the requester", () => {
+    const b = fnBody("open_consent_window");
+    expect(b).toContain("IF v_t.assigned_drafter_id IS NOT NULL AND v_t.assigned_drafter_id = ANY (p_recipients) THEN");
+    expect(b).toContain("IF 'requester' = ANY (v_ls.independent_of) AND v_t.requester_id = ANY (p_recipients) THEN");
+    expect(b.indexOf("assigned_drafter_id = ANY (p_recipients)")).toBeLessThan(b.indexOf("INSERT INTO notifications"));
+  });
   it("the reminder reaches everyone asked and is recorded with its rows; no exception handler", () => {
     const b = fnBody("record_consent_window_warning");
     expect(b).toContain("IF NOT (v_t.consent_window_recipients <@ p_recipients) THEN");
@@ -146,6 +163,16 @@ describe("ticket_notice_events — append-only, read as the ticket reads", () =>
 
 describe("the roster ledger's two CHECKs — 20261242's, with exactly the consent alternative", () => {
   const OLD = strip(mig("20261242_df_roundG_ticket_roster.sql"));
+  it("FOLDER SCAN: 20261242 is still the newest definition of both CHECKs before 20261255 (a later re-definition would be reverted by this paste)", () => {
+    const before = files.filter((f) => f < F);
+    const defines = (sql: string) => /ADD CONSTRAINT ticket_review_slots_satisfied_(shape|via_check)\b/.test(sql)
+      || /CONSTRAINT ticket_review_slots_satisfied_shape CHECK/.test(sql)
+      || /satisfied_via TEXT CHECK/.test(sql);
+    const definers = before.filter((f) => defines(strip(mig(f))));
+    expect(definers.at(-1)).toBe("20261242_df_roundG_ticket_roster.sql");
+    // and nothing after 20261255 in the folder re-defines them either (yet)
+    expect(files.filter((f) => f > F && defines(strip(mig(f))))).toEqual([]);
+  });
   it("satisfied_via: 20261242's list plus 'consent'", () => {
     expect(OLD).toContain("satisfied_via TEXT CHECK (satisfied_via IS NULL OR satisfied_via IN ('primary', 'alternate', 'override')),");
     expect(S).toContain("CHECK (satisfied_via IS NULL OR satisfied_via IN ('primary', 'alternate', 'override', 'consent'));");

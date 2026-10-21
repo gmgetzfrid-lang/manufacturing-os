@@ -1200,6 +1200,10 @@ export interface TicketConsentWindowMark {
   objectedAt?: string | null;
   objectedBy?: string | null;
   expiredAt?: string | null;
+  /** Set when the window closed with no objection but did NOT advance (the
+   *  slot waits for a sign-off) — why, as lib/consentWindow.ts
+   *  consentHeldAction words it (DF-P7 fix pass). */
+  heldReason?: "undelivered" | "producer_floor" | "source_moved" | "source_unchecked" | "record_mismatch" | null;
 }
 
 /** drafting-flow DF-P5 ROSTER: the review roster a submission opened. */

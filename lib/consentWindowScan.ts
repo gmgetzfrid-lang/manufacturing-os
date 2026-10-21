@@ -27,19 +27,31 @@
 //     compare-and-set, then the notice events and the ledger), written into
 //     the ticket's own history naming everyone asked.
 //
+// FIX PASS (DF-P7 review): the window trusts the service-written roster
+// ledger (ticket_review_slots, 20261242), never the member-writable
+// metadata alone — the retry and the close read the ledger's slot (open,
+// consent_window, its primaries) and the close issues only when the ledger
+// agrees every other sign-off is in. An issuing close runs the route's
+// source-revision check first (lib/sourceDocRef.ts revDrift): a moved or
+// unreadable source holds it for a person. A running window whose slot was
+// signed or whose review was replaced is retired (its expiry stamped), and
+// each run reads from a random point of the id space, so no resident set of
+// rows can starve the rest.
+//
 // ticket_notice_events (20261255) is the record that survives any bell
 // purge: append-only, written only by the service role.
 
 import { computeTransition, rowToTicket } from "@/lib/ticketTransitions";
+import { parseSourceDocuments, revDrift } from "@/lib/sourceDocRef";
 import { currentRoster } from "@/lib/workflow";
 import { resolveFill, rosterCompletion, writeRosterLedger, type OccupantContext } from "@/lib/ticketRoster";
 import { loadPickerMembers } from "@/lib/ticketPickerMembers";
 import { loadCapabilityPolicyStrict, type CapabilityPolicy, type CapabilityResource } from "@/lib/capabilityPolicy";
 import { notifyBatchWithReason } from "@/lib/inAppNotifications";
 import {
-  CONSENT_WINDOW_ACTOR, CONSENT_WINDOW_MIGRATION, consentFloorHolds, consentSatisfiedSlot, consentWindowFromRow,
+  CONSENT_REASON, CONSENT_WINDOW_ACTOR, CONSENT_WINDOW_MIGRATION, consentFloorHolds, consentRecipients, consentSatisfiedSlot, consentWindowFromRow,
   consentWindowStep, isMissingConsentColumn, isMissingConsentSchema, noticeStates, openedHistoryDetails,
-  recordMoment, warnedHistoryDetails, advancedHistoryDetails, windowSchedule, type ConsentWindowState,
+  recordMoment, warnedHistoryDetails, advancedHistoryDetails, windowSchedule, type ConsentHoldReason, type ConsentWindowState,
 } from "@/lib/consentWindow";
 import type { TicketConsentPlan, TicketHistoryEntry, TicketReviewRoster } from "@/types/schema";
 
@@ -147,11 +159,24 @@ export async function afterRosterOpened(db: Db, input: {
     const r = await openConsentWindow(db, { ticketId: input.ticketId, roster: input.roster, plan, nameOf, ticketLabel: input.ticketLabel });
     if (r.ok) return null;
     console.error(`[consent-window] the window on ticket ${input.ticketId} (roster ${input.roster.id}) was not opened — "${plan.label}" waits for a sign-off; the maintenance run retries it: ${r.error}`);
+    // The refusal is recorded on the ticket's notice record (it outlives the
+    // response), not only said in the answer. Not before 20261255 (no table).
+    if (!r.missing) {
+      const evErr = await recordNoticeEvents(db, [{
+        org_id: input.orgId, ticket_id: input.ticketId, roster_id: input.roster.id, slot_kind: plan.slot, kind: "blocked",
+        recipient: null, actor_id: input.actor.uid, actor_name: input.actor.name,
+        details: { reason: "window_not_opened", error: r.error, recipients: plan.recipients, retriedByMaintenance: true },
+      }]);
+      if (evErr && evErr !== "missing") console.error(`[consent-window] the failed open on ticket ${input.ticketId} was not recorded: ${evErr}`);
+    }
     return r.missing
       ? `"${plan.label}" waits for a sign-off: consent windows need database update ${CONSENT_WINDOW_MIGRATION}.`
       : `"${plan.label}" waits for a sign-off for now: the people it asks could not all be told (${r.error}), so no consent window was opened — nothing advances on silence. It is tried again at the next maintenance run.`;
   }
   // blocked — DEC-39: an empty set never advances; the assignment queue hears.
+  const why = plan.reason === CONSENT_REASON.onlyParties
+    ? "the only people its routing names are the drafter or a party it must be independent of, and their silence is never consent"
+    : "its routing named nobody who could be asked";
   const queue = assignmentQueueOf({ members: input.members, policy: input.policy, resource: input.resource, requesterId: input.requesterId }).filter((u) => u !== input.actor.uid);
   const evErr = await recordNoticeEvents(db, [{
     org_id: input.orgId, ticket_id: input.ticketId, roster_id: input.roster.id, slot_kind: plan.slot, kind: "blocked",
@@ -163,14 +188,14 @@ export async function afterRosterOpened(db: Db, input: {
     const { error } = await notifyBatchWithReason(queue.map((uid) => ({
       orgId: input.orgId, userId: uid, kind: "ticket_status" as const,
       title: `Nobody to ask · ${input.ticketLabel}`.slice(0, 200),
-      body: `"${plan.label}" is a consent slot, but its routing named nobody who could be asked, so it waits for a sign-off. Check the routing table or the roles.`,
+      body: `"${plan.label}" is a consent slot, but ${why}, so it waits for a sign-off. Check the routing table or the roles.`,
       link: `/requests/${input.ticketId}`, resourceType: "ticket", resourceId: input.ticketId,
       actorUserId: input.actor.uid, actorName: input.actor.name ?? undefined,
       metadata: { action: "consent_window_blocked", slot: plan.slot },
     })), db as never);
     if (error) console.error(`[consent-window] the assignment queue was not told of the block on ticket ${input.ticketId}: ${error}`);
   }
-  return `"${plan.label}" waits for a sign-off: its routing named nobody who could be asked, so no consent window was opened${queue.length ? " — the assignment queue was told" : ""}.`;
+  return `"${plan.label}" waits for a sign-off: ${why}, so no consent window was opened${queue.length ? " — the assignment queue was told" : ""}.`;
 }
 
 /** EVID-9 (route limb): the people a transition did not email because their
@@ -221,6 +246,9 @@ export interface ConsentScanReport {
   advanced: number;
   issued: number;
   held: number;
+  /** Running windows whose slot was signed, or whose review was replaced or
+   *  closed, stamped expired so they stop being read (fix pass). */
+  retired: number;
   failed: number;
   truncated: boolean;
   errors: string[];
@@ -228,18 +256,24 @@ export interface ConsentScanReport {
 
 interface OrgCtx { members: Member[]; policy: CapabilityPolicy; sodActive: boolean }
 
+/** A roster ledger row (ticket_review_slots, 20261242) as the window reads it. */
+interface LedgerSlot { slot_kind: string; mode: string; status: string; primaries: string[] | null; independent_of: string[] | null; fallback: boolean | null }
+
 const AUDIT_ACTION = "TICKET_CONSENT_WINDOW_ADVANCE";
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** The most source documents one issuing close reads; more is "not checked". */
+const SOURCE_READ_CAP = 100;
 
 /**
  * ONE step of the maintenance cron. Never throws; every failure is a line in
  * `errors`, and a ticket whose step failed is left exactly as it was for the
  * next run (no stamp without its rows; no advance without its audit row).
  */
-export async function runConsentWindowScan(deps: { client: Db; now?: number; deadlineAt?: number; maxTickets?: number }): Promise<ConsentScanReport> {
+export async function runConsentWindowScan(deps: { client: Db; now?: number; deadlineAt?: number; maxTickets?: number; pivot?: string }): Promise<ConsentScanReport> {
   const sb = deps.client;
   const now = deps.now ?? Date.now();
   const maxTickets = deps.maxTickets ?? 200;
-  const report: ConsentScanReport = { schemaReady: false, scanned: 0, opened: 0, warned: 0, advanced: 0, issued: 0, held: 0, failed: 0, truncated: false, errors: [] };
+  const report: ConsentScanReport = { schemaReady: false, scanned: 0, opened: 0, warned: 0, advanced: 0, issued: 0, held: 0, retired: 0, failed: 0, truncated: false, errors: [] };
   const say = (line: string) => report.errors.push(`consent-window: ${line}`);
   const pastDeadline = () => deps.deadlineAt !== undefined && Date.now() >= deps.deadlineAt;
 
@@ -263,16 +297,31 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     return ctx;
   };
 
+  // Each run reads from a random point of the id space and wraps round (no
+  // cursor to keep): rows that stay in a set for a long time (a planned
+  // window already open, a window waiting on other sign-offs) can never hold
+  // the first places of every run and starve the rest (fix pass).
+  const pivot = deps.pivot ?? crypto.randomUUID();
   const base = () => sb.from("tickets").select("*").eq("status", "PENDING_REVIEW").is("archived_at", null);
-  const [{ data: running, error: runErr }, { data: planned, error: planErr }] = await Promise.all([
-    base().not("consent_window_opened_at", "is", null).is("consent_window_expired_at", null).is("consent_window_objected_at", null).order("id").limit(maxTickets + 1),
-    base().eq("metadata->review_roster->consentPlan->>kind", "open").order("id").limit(maxTickets + 1),
+  const readRotated = async (narrow: (q: ReturnType<typeof base>) => ReturnType<typeof base>): Promise<{ rows: Array<Record<string, unknown>>; more: boolean; error: string | null }> => {
+    const { data: a, error: aErr } = await narrow(base()).gte("id", pivot).order("id").limit(maxTickets + 1);
+    if (aErr) return { rows: [], more: false, error: aErr.message };
+    const first = (a as Array<Record<string, unknown>> | null) ?? [];
+    if (first.length > maxTickets) return { rows: first.slice(0, maxTickets), more: true, error: null };
+    const { data: b, error: bErr } = await narrow(base()).lt("id", pivot).order("id").limit(maxTickets + 1 - first.length);
+    if (bErr) return { rows: first, more: false, error: bErr.message };
+    const all = [...first, ...((b as Array<Record<string, unknown>> | null) ?? [])];
+    return { rows: all.slice(0, maxTickets), more: all.length > maxTickets, error: null };
+  };
+  const [running, planned] = await Promise.all([
+    readRotated((q) => q.not("consent_window_opened_at", "is", null).is("consent_window_expired_at", null).is("consent_window_objected_at", null)),
+    readRotated((q) => q.eq("metadata->review_roster->consentPlan->>kind", "open")),
   ]);
-  if (runErr) say(`the running windows could not be read — none was reminded or closed this run: ${runErr.message}`);
-  if (planErr) say(`the windows still to open could not be read — none was retried this run: ${planErr.message}`);
+  if (running.error) say(`the running windows could not be read — none was reminded or closed this run: ${running.error}`);
+  if (planned.error) say(`the windows still to open could not be read — none was retried this run: ${planned.error}`);
   const rows = new Map<string, Record<string, unknown>>();
-  for (const r of [...((running as Array<Record<string, unknown>> | null) ?? []), ...((planned as Array<Record<string, unknown>> | null) ?? [])]) rows.set(String(r.id), r);
-  if (((running as unknown[] | null)?.length ?? 0) > maxTickets || ((planned as unknown[] | null)?.length ?? 0) > maxTickets) report.truncated = true;
+  for (const r of [...running.rows, ...planned.rows]) rows.set(String(r.id), r);
+  if (running.more || planned.more) report.truncated = true;
 
   for (const row of rows.values()) {
     if (pastDeadline()) { report.truncated = true; break; }
@@ -286,21 +335,65 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
   }
   return report;
 
+  /** The roster's ledger rows (service-written — the authority a forged
+   *  metadata roster cannot change), or the error. */
+  async function ledgerOf(ticketId: string, rosterId: string): Promise<{ slots: LedgerSlot[] } | { error: string }> {
+    const { data, error } = await sb.from("ticket_review_slots")
+      .select("slot_kind, mode, status, primaries, independent_of, fallback").eq("ticket_id", ticketId).eq("roster_id", rosterId);
+    if (error) return { error: error.message || "refused" };
+    return { slots: ((data as LedgerSlot[] | null) ?? []) };
+  }
+
   async function handleTicket(row: Record<string, unknown>): Promise<void> {
     const ticket = rowToTicket(row);
     const state = consentWindowFromRow(row);
     const roster = currentRoster(ticket);
-    if (!state || !roster || !ticket.id) return;
+    if (!state || !ticket.id) return;
+    const plan = roster?.consentPlan;
+
+    // (0) A window left running by a review that moved on — its slot was
+    // signed by a person, or the review was replaced (a revision and a
+    // resubmission) or closed — is retired: its expiry is stamped, so it is
+    // never reminded or closed and stops taking a place in every run. (A
+    // replacement review with its own window still to open is retried below
+    // instead — open_consent_window resets the columns.)
+    const running = !!state.openedAt && !state.expiredAt && !state.objectedAt;
+    const stale = running && (!roster || !!roster.closedAt || roster.id !== state.rosterId
+      || !roster.slots.some((s) => s.kind === state.slot && s.mode === "consent_window" && s.status === "open"));
+    if (stale && !(roster && plan?.kind === "open" && state.rosterId !== roster.id)) {
+      const { data: done, error } = await sb.from("tickets").update({ consent_window_expired_at: new Date(now).toISOString() })
+        .eq("id", ticket.id).eq("consent_window_roster", state.rosterId).is("consent_window_expired_at", null).is("consent_window_objected_at", null).select("id");
+      if (error) { report.failed += 1; say(`ticket ${ticket.id}: a window its review no longer waits on could not be retired (retried next run): ${error.message}`); return; }
+      if (Array.isArray(done) && done.length > 0) report.retired += 1;
+      return;
+    }
+    if (!roster) return;
     const ctx = await orgOf(ticket.orgId);
     if (!ctx) return;
     const nameOf = memberNameOf(ctx.members);
     const ticketLabel = `${ticket.ticketId || ""} ${ticket.title || ""}`.trim() || "a drafting request";
 
-    // (1) A window the route planned but could not open — retried here.
-    const plan = roster.consentPlan;
+    // (1) A window the route planned but could not open — retried here,
+    // asking only who the LEDGER's slot names (never the metadata's plan
+    // alone), less the drafter and any party the slot is independent of.
     if (plan?.kind === "open" && state.rosterId !== roster.id) {
       if (!roster.slots.some((s) => s.kind === plan.slot && s.status === "open")) return;
-      const r = await openConsentWindow(sb, { ticketId: ticket.id, roster, plan, nameOf, ticketLabel, now });
+      const ledger = await ledgerOf(ticket.id, roster.id);
+      if ("error" in ledger) { report.failed += 1; say(`ticket ${ticket.id}: the review's ledger could not be read — the consent window was not retried: ${ledger.error}`); return; }
+      const ls = ledger.slots.find((x) => x.slot_kind === plan.slot);
+      if (!ls || ls.mode !== "consent_window" || ls.status !== "open" || ls.fallback) {
+        report.failed += 1;
+        say(`ticket ${ticket.id}: the review's ledger does not show "${plan.label}" as an open consent slot — no window is opened; it waits for a sign-off`);
+        return;
+      }
+      const allowed = new Set(consentRecipients({ primaries: ls.primaries ?? [], independentOf: ls.independent_of ?? [] }, { drafterId: ticket.assignedDrafterId, requesterId: ticket.requesterId }));
+      const recipients = plan.recipients.filter((u) => allowed.has(u));
+      if (recipients.length === 0) {
+        report.failed += 1;
+        say(`ticket ${ticket.id}: nobody the plan names may be asked (the drafter, a party the slot is independent of, or not the slot's own occupant) — no window is opened; "${plan.label}" waits for a sign-off`);
+        return;
+      }
+      const r = await openConsentWindow(sb, { ticketId: ticket.id, roster, plan: { ...plan, recipients }, nameOf, ticketLabel, now });
       if (r.ok) report.opened += 1;
       else { report.failed += 1; say(`ticket ${ticket.id}: the consent window still could not be opened — "${plan.label}" waits for a sign-off: ${r.error}`); }
       return;
@@ -334,6 +427,28 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     await closeWindow(ticket, roster, state, slot.kind, label, ctx, nameOf);
   }
 
+  /** HAND-7 (DF-P6) as the route runs it before an issuing approval: has a
+   *  source document moved since the request was raised? A read that fails
+   *  (or more sources than one read takes) proves nothing — "unchecked". */
+  async function sourceDriftOf(ticket: ReturnType<typeof rowToTicket>): Promise<{ moved: string[]; unchecked: boolean }> {
+    const refs = parseSourceDocuments(ticket.metadata).filter((r) => UUID_RE.test(r.id));
+    if (refs.length === 0) return { moved: [], unchecked: false };
+    if (refs.length > SOURCE_READ_CAP) return { moved: [], unchecked: true };
+    const { data, error } = await sb.from("documents").select("id, rev, current_version_id, document_number")
+      .eq("org_id", ticket.orgId).in("id", refs.map((r) => r.id));
+    if (error) return { moved: [], unchecked: true };
+    const live = new Map(((data as Array<{ id: string; rev: string | null; current_version_id: string | null; document_number: string | null }> | null) ?? []).map((d) => [d.id, d]));
+    const moved: string[] = [];
+    for (const ref of refs) {
+      const d = live.get(ref.id);
+      if (!d) continue;
+      if (revDrift({ versionId: ref.versionId, rev: ref.rev }, { versionId: d.current_version_id, rev: d.rev }) === "drifted") {
+        moved.push(`${ref.documentNumber || d.document_number || "a source document"}${ref.rev ? ` raised on Rev ${ref.rev}` : ""}, now Rev ${d.rev ?? "—"}`);
+      }
+    }
+    return { moved, unchecked: false };
+  }
+
   async function closeWindow(
     ticket: ReturnType<typeof rowToTicket>,
     roster: TicketReviewRoster,
@@ -344,6 +459,17 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     nameOf: (uid: string) => string,
   ): Promise<void> {
     const ticketId = ticket.id!;
+    // The ledger first: the window's slot must be an open consent slot there
+    // (the service-written record — a forged metadata roster cannot open,
+    // close or complete a window).
+    const ledger = await ledgerOf(ticketId, roster.id);
+    if ("error" in ledger) { report.failed += 1; say(`ticket ${ticketId}: the review's ledger could not be read — the window was not closed (retried next run): ${ledger.error}`); return; }
+    const ls = ledger.slots.find((x) => x.slot_kind === slotKind);
+    if (!ls || ls.mode !== "consent_window" || ls.status !== "open") {
+      report.failed += 1;
+      say(`ticket ${ticketId}: the review's ledger does not show "${label}" as an open consent slot — the window was not closed; it waits for a sign-off`);
+      return;
+    }
     // The record of delivery: the "delivered" events open_consent_window wrote.
     const { data: evs, error: evErr } = await sb.from("ticket_notice_events")
       .select("recipient, notification_id").eq("ticket_id", ticketId).eq("roster_id", roster.id).eq("kind", "delivered");
@@ -365,33 +491,58 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
 
     // DEC-38: a person with no delivery record was never asked — never consent.
     const undelivered = states.filter((s) => s.state === "not_delivered").map((s) => s.uid);
+    const asked = states.filter((s) => s.state !== "not_delivered").map((s) => s.uid);
     const advancedRoster: TicketReviewRoster = { ...roster, slots: roster.slots.map((s) => (s.kind === slotKind && s.status === "open" ? consentSatisfiedSlot(s, nowIso) : s)) };
-    const floorHolds = consentFloorHolds(advancedRoster, { sodActive: ctx.sodActive, drafterId: ticket.assignedDrafterId });
-    const held = undelivered.length > 0 || floorHolds;
+    // DEC-12 / DEC-37: the floor as it reads for silence (consentFloorHolds
+    // stands in for rosterCompletion's floor, which never counts a window).
+    const floorHolds = consentFloorHolds(advancedRoster, { sodActive: ctx.sodActive, drafterId: ticket.assignedDrafterId }, asked);
+    // Would this close issue the request? Only when the roster is complete
+    // AND the ledger agrees every other blocking slot is signed.
+    const wouldIssue = rosterCompletion(advancedRoster).complete;
+    const ledgerAgrees = ledger.slots.filter((x) => x.mode !== "notify_only" && x.slot_kind !== slotKind && x.status !== "void").every((x) => x.status === "satisfied");
+    let drift: { moved: string[]; unchecked: boolean } = { moved: [], unchecked: false };
+    if (undelivered.length === 0 && !floorHolds && wouldIssue && ledgerAgrees) drift = await sourceDriftOf(ticket);
+    const holdReason: ConsentHoldReason | null = undelivered.length > 0 ? "undelivered"
+      : floorHolds ? "producer_floor"
+      : wouldIssue && !ledgerAgrees ? "record_mismatch"
+      : drift.moved.length > 0 ? "source_moved"
+      : drift.unchecked ? "source_unchecked"
+      : null;
+    const held = holdReason !== null;
     const finalRoster = held ? roster : advancedRoster;
-    const complete = !held && rosterCompletion(advancedRoster).complete;
-    const heldWhy = undelivered.length > 0
-      ? ` No delivery is on record for ${undelivered.map(nameOf).join(", ")}, so this is not consent: "${label}" waits for a sign-off.`
-      : floorHolds ? ` The drafter signed every other sign-off on this review, so one sign-off must come from someone else: "${label}" waits for a sign-off.` : "";
+    const complete = !held && wouldIssue;
+    const heldWhy = holdReason === "undelivered" ? ` No delivery is on record for ${undelivered.map(nameOf).join(", ")}, so this is not consent: "${label}" waits for a sign-off.`
+      : holdReason === "producer_floor" ? (asked.some((u) => u !== ticket.assignedDrafterId)
+        ? ` The drafter signed every other sign-off on this review, so one sign-off must come from someone else: "${label}" waits for a sign-off.`
+        : ` Nobody but the drafter was asked, and the drafter's silence is never a sign-off: "${label}" waits for a sign-off.`)
+      : holdReason === "record_mismatch" ? ` The review's ledger does not show every other sign-off as given, so the request is not issued on silence: "${label}" waits for a sign-off.`
+      : holdReason === "source_moved" ? ` The source revision has moved since this request was raised (${drift.moved.join("; ")}), and issuing over it needs a person's acknowledgement: "${label}" waits for a sign-off.`
+      : holdReason === "source_unchecked" ? ` The source documents could not be checked for a newer revision, so the request is not issued on silence: "${label}" waits for a sign-off.`
+      : "";
 
     const { updates, newStatus } = computeTransition(ticket, {
       actionType: "consent_window_advance",
       actionLabel: "Advanced without objection",
-      consentAdvance: { roster: finalRoster, complete, label, details: `${details}${heldWhy}`, held },
+      consentAdvance: { roster: finalRoster, complete, label, details: `${details}${heldWhy}`, held, holdReason },
       actor: { uid: null, email: CONSENT_WINDOW_ACTOR, role: "System" },
       now: nowIso,
     });
 
     // The audit row FIRST (a recorded system act), then the compare-and-set.
     const auditId = crypto.randomUUID();
-    const asked = states.map((s) => ({ uid: s.uid, name: nameOf(s.uid), notice: s.state, openedAt: s.openedAt, cleared: s.cleared }));
+    const askedRows = states.map((s) => ({ uid: s.uid, name: nameOf(s.uid), notice: s.state, openedAt: s.openedAt, cleared: s.cleared }));
     const auditRow = {
       id: auditId, action: AUDIT_ACTION, resource_type: "ticket", resource_id: ticketId, org_id: ticket.orgId,
       user_id: null, user_email: CONSENT_WINDOW_ACTOR, user_role: "system",
       details: {
-        from: ticket.status, to: newStatus, rosterId: roster.id, slot: slotKind, label, asked,
+        from: ticket.status, to: newStatus, rosterId: roster.id, slot: slotKind, label, asked: askedRows,
         openedAt: state.openedAt, warnedAt: state.warnedAt, closesAt: state.closesAt, closedAt: nowIso,
-        complete, held, ...(undelivered.length ? { undelivered } : {}), ...(floorHolds ? { producerFloor: true } : {}),
+        complete, held, ...(holdReason ? { holdReason } : {}),
+        ...(undelivered.length ? { undelivered } : {}), ...(floorHolds ? { producerFloor: true } : {}),
+        // HAND-7 (DF-P6), as the route records it: what moved, or that the
+        // source was not checked (only an issuing close checks it).
+        ...(drift.moved.length ? { sourceDrift: { moved: drift.moved, acknowledged: false } } : {}),
+        ...(drift.unchecked ? { sourceDriftUnchecked: true } : {}),
         deliverable_rev: (updates.deliverable_rev as string | undefined) ?? ticket.deliverableRev ?? null,
         recordedBeforeApply: true,
       },
@@ -425,7 +576,7 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
       {
         org_id: ticket.orgId, ticket_id: ticketId, roster_id: roster.id, slot_kind: slotKind, kind: held ? "expired" : "advanced",
         recipient: null, actor_name: CONSENT_WINDOW_ACTOR,
-        details: { asked, openedAt: state.openedAt, warnedAt: state.warnedAt, closedAt: nowIso, complete, held, auditId, ...(heldWhy ? { why: heldWhy.trim() } : {}) },
+        details: { asked: askedRows, openedAt: state.openedAt, warnedAt: state.warnedAt, closedAt: nowIso, complete, held, auditId, ...(holdReason ? { holdReason } : {}), ...(heldWhy ? { why: heldWhy.trim() } : {}) },
       },
     ];
     const recErr = await recordNoticeEvents(sb, evRows);

@@ -49,7 +49,7 @@ import { parseSourceDocument } from "@/lib/sourceDocRef";
 import type { Ticket } from "@/types/schema";
 import {
   CONSENT_REFUSED_CAPABILITIES, CONSENT_WINDOW_MIN_DAYS, CONSENT_WINDOW_MAX_DAYS, CONSENT_WINDOW_DEFAULT_DAYS,
-  CONSENT_WARN_FRACTION_MIN, CONSENT_WARN_FRACTION_MAX,
+  CONSENT_WARN_FRACTION_MIN, CONSENT_WARN_FRACTION_MAX, CONSENT_WINDOW_MIGRATION,
 } from "@/lib/consentWindow";
 
 export type RoutingSlotMode = "blocking" | "consent_window" | "notify_only";
@@ -349,7 +349,7 @@ export const slotLabel = (s: Pick<RoutingSlot, "kind" | "label">): string => s.l
  *  everywhere else it waits like a sign-off, and the request says why. */
 export const MODE_LABEL: Record<RoutingSlotMode, string> = {
   blocking: "Must sign off",
-  consent_window: `May object within a window (default ${CONSENT_WINDOW_DEFAULT_DAYS} working days); silence is recorded as no objection — never on engineered work, where it waits like a sign-off`,
+  consent_window: `May object within a window (default ${CONSENT_WINDOW_DEFAULT_DAYS} working days) — silence counts as no objection only once database update ${CONSENT_WINDOW_MIGRATION} is applied, on one consent slot per table, never on engineered work, never as the engineering sign-off and never with only the drafter to ask; otherwise it waits like a sign-off`,
   notify_only: "Told, no sign-off",
 };
 

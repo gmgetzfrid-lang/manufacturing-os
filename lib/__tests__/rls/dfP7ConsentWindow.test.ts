@@ -40,14 +40,25 @@ describe.skipIf(skip !== null)("DF-P7 — the consent window's columns, its two 
   let orgId = "";
   let m: Record<string, SeededMember> = {};
   const rosterId = () => randomUUID();
-  const reviewTicket = (roster: string, primaries: string[]) => {
+  // The review as the workflow route leaves it: the metadata mirror AND the
+  // service-written roster ledger (ticket_review_slots) — open_consent_window
+  // trusts the ledger (DF-P7 fix pass). `ledger: false` is a forged roster.
+  const reviewTicket = (roster: string, primaries: string[], opts: { ledger?: boolean; drafter?: string | null; independentOf?: string[] } = {}) => {
     const id = randomUUID();
     const meta = { review_roster: { v: 1, id: roster, openedAt: "2026-10-19T09:00:00Z", slots: [
       { kind: "accept", mode: "blocking", status: "open", primaries: [m.requester.uid] },
       { kind: "ops", mode: "consent_window", status: "open", primaries },
     ] } };
-    admin(db, `INSERT INTO tickets (id, org_id, ticket_id, title, request_type, status, requester_id, metadata, history)
-               VALUES ('${id}', '${orgId}', 'KE-P7-${id.slice(0, 6)}', 'Gasket', 'Revision', 'PENDING_REVIEW', '${m.requester.uid}', '${JSON.stringify(meta)}'::jsonb, '[]'::jsonb)`);
+    const drafter = opts.drafter ? `'${opts.drafter}'` : "NULL";
+    admin(db, `INSERT INTO tickets (id, org_id, ticket_id, title, request_type, status, requester_id, assigned_drafter_id, metadata, history)
+               VALUES ('${id}', '${orgId}', 'KE-P7-${id.slice(0, 6)}', 'Gasket', 'Revision', 'PENDING_REVIEW', '${m.requester.uid}', ${drafter}, '${JSON.stringify(meta)}'::jsonb, '[]'::jsonb)`);
+    if (opts.ledger !== false) {
+      const arr = (xs: string[]) => `ARRAY[${xs.map((x) => `'${x}'`).join(",")}]::uuid[]`;
+      const txt = (xs: string[]) => `ARRAY[${xs.map((x) => `'${x}'`).join(",")}]::text[]`;
+      admin(db, `INSERT INTO ticket_review_slots (org_id, ticket_id, roster_id, slot_kind, mode, primaries, independent_of, status, content_hash)
+                 VALUES ('${orgId}', '${id}', '${roster}', 'accept', 'blocking', ${arr([m.requester.uid])}, '{}'::text[], 'open', 'h'),
+                        ('${orgId}', '${id}', '${roster}', 'ops', 'consent_window', ${primaries.length ? arr(primaries) : "'{}'::uuid[]"}, ${opts.independentOf?.length ? txt(opts.independentOf) : "'{}'::text[]"}, 'open', 'h')`);
+    }
     return id;
   };
   const open = (ticket: string, roster: string, recipients: string[], slot = "ops") => asCaller(db, SERVICE,
@@ -63,7 +74,7 @@ describe.skipIf(skip !== null)("DF-P7 — the consent window's columns, its two 
 
   it("re-pastes cleanly (DEC-30 one paste); every probe answers true; the inventory rows carry counts", () => {
     const { probes, inventory } = paste(F255);
-    expect(probes.length).toBeGreaterThanOrEqual(9);
+    expect(probes.length).toBeGreaterThanOrEqual(10);
     expect(probes.filter((l) => l.endsWith("|f|"))).toEqual([]);
     expect(inventory.length).toBe(5);
   });
@@ -121,6 +132,46 @@ describe.skipIf(skip !== null)("DF-P7 — the consent window's columns, its two 
     }
     expect(cols(t)).toBe("false||");
     expect(count(`SELECT COUNT(*) FROM notifications WHERE resource_id = '${t}'`)).toBe(0);
+  });
+
+  it("DF-P7 fix pass (review major): a FORGED metadata roster — no ledger row behind it — opens nothing; nor a ledger slot that is not an open consent slot", () => {
+    const r = rosterId();
+    const forged = reviewTicket(r, [m.ops1.uid], { ledger: false });
+    const res = open(forged, r, [m.ops1.uid]);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.message).toMatch(/ledger has no open consent slot/);
+    expect(cols(forged)).toBe("false||");
+    expect(count(`SELECT COUNT(*) FROM notifications WHERE resource_id = '${forged}'`)).toBe(0);
+    // the ledger says the slot is already satisfied (the metadata still says open): refused
+    const r2 = rosterId();
+    const t2 = reviewTicket(r2, [m.ops1.uid]);
+    admin(db, `UPDATE ticket_review_slots SET status = 'void', closed_at = now() WHERE roster_id = '${r2}' AND slot_kind = 'ops'`);
+    expect(open(t2, r2, [m.ops1.uid]).ok).toBe(false);
+    // metadata names an extra person the ledger's slot does not: refused
+    const r3 = rosterId();
+    const t3 = reviewTicket(r3, [m.ops1.uid]);
+    admin(db, `UPDATE tickets SET metadata = jsonb_set(metadata, '{review_roster,slots,1,primaries}', '["${m.ops1.uid}","${m.other.uid}"]'::jsonb) WHERE id = '${t3}'`);
+    const extra = open(t3, r3, [m.ops1.uid, m.other.uid]);
+    expect(extra.ok).toBe(false);
+    if (!extra.ok) expect(extra.message).toMatch(/only the slot's own occupants/);
+    expect(count(`SELECT COUNT(*) FROM notifications WHERE resource_id IN ('${t2}', '${t3}')`)).toBe(0);
+  });
+
+  it("DEC-12 / DEC-37 (review blocker): the drafter is never asked, even as the slot's own occupant; nor the requester on a slot independent of the requester", () => {
+    const r = rosterId();
+    const t = reviewTicket(r, [m.ops1.uid, m.ops2.uid], { drafter: m.ops1.uid });
+    const res = open(t, r, [m.ops1.uid, m.ops2.uid]);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.message).toMatch(/the drafter is never asked/);
+    expect(cols(t)).toBe("false||");
+    // the others may be asked
+    expect(open(t, r, [m.ops2.uid]).ok).toBe(true);
+    const r2 = rosterId();
+    const t2 = reviewTicket(r2, [m.requester.uid, m.ops2.uid], { independentOf: ["requester"] });
+    const req = open(t2, r2, [m.requester.uid]);
+    expect(req.ok).toBe(false);
+    if (!req.ok) expect(req.message).toMatch(/independent of the requester/);
+    expect(open(t2, r2, [m.ops2.uid]).ok).toBe(true);
   });
 
   it("DRLS-16: a signed-in member cannot call either function (42501); the body also refuses a session", () => {
@@ -183,7 +234,7 @@ describe.skipIf(skip !== null)("DF-P7 — the consent window's columns, its two 
 
   it("the roster ledger takes a slot satisfied by a window (no signer, no signature) and still refuses a satisfied slot with no signature otherwise", () => {
     const r = rosterId();
-    const t = reviewTicket(r, [m.ops1.uid]);
+    const t = reviewTicket(r, [m.ops1.uid], { ledger: false });
     const base = `org_id, ticket_id, roster_id, slot_kind, mode, status, content_hash, satisfied_at`;
     expect(asCaller(db, SERVICE, `INSERT INTO ticket_review_slots (${base}, satisfied_via) VALUES ('${orgId}', '${t}', '${r}', 'ops', 'consent_window', 'satisfied', 'h', now(), 'consent')`).ok).toBe(true);
     expect(asCaller(db, SERVICE, `INSERT INTO ticket_review_slots (${base}, satisfied_via, satisfied_by) VALUES ('${orgId}', '${t}', '${r}', 'a', 'blocking', 'satisfied', 'h', now(), 'primary', '${m.ops1.uid}')`).ok).toBe(false);

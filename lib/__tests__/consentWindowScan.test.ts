@@ -40,6 +40,8 @@ function builder(table: string) {
     not: (k: string, how: string, v: unknown) => { filters.push((r) => (how === "is" ? (pathGet(r, k) ?? null) !== v : true)); return b; },
     in: (k: string, vs: unknown[]) => { filters.push((r) => vs.includes(pathGet(r, k))); return b; },
     gt: (k: string, v: string) => { filters.push((r) => String(pathGet(r, k)) > v); return b; },
+    gte: (k: string, v: string) => { filters.push((r) => String(pathGet(r, k)) >= v); return b; },
+    lt: (k: string, v: string) => { filters.push((r) => String(pathGet(r, k)) < v); return b; },
     order: () => b,
     limit: (n: number) => { limit = n; return b; },
     insert: (rows: unknown) => { op = "insert"; payload = rows; db.calls.push({ table, method: "insert", args: [rows] }); return b; },
@@ -101,7 +103,13 @@ function seedTicket(opts: { accept?: "signed-by-req" | "signed-by-drafter" | "op
     assigned_drafter_id: "d-1", attachments: [], comments: [], history: [], watchers: [], unread_by: [], revision_count: 0, deliverable_rev: "1A",
     last_modified: "2026-10-21T09:00:00Z", archived_at: null, metadata: { review_roster: roster }, ...COLS, ...windowCols,
   }];
+  // The roster ledger (ticket_review_slots — service-written), agreeing with the roster.
+  db.tables.ticket_review_slots = [
+    { id: "la", ticket_id: "t1", roster_id: ROSTER_ID, slot_kind: "accept", mode: "blocking", status: accept === "open" ? "open" : "satisfied", primaries: acceptSlot.primaries, independent_of: [], fallback: false },
+    { id: "ls", ticket_id: "t1", roster_id: ROSTER_ID, slot_kind: "ops", mode: "consent_window", status: "open", primaries: ["o-1", "o-2"], independent_of: [], fallback: false },
+  ];
 }
+const ledgerOps = () => db.tables.ticket_review_slots.find((r) => r.slot_kind === "ops")!;
 
 beforeEach(() => {
   db.tables = {
@@ -113,7 +121,7 @@ beforeEach(() => {
     ],
     notifications: [{ id: "n-1", read_at: "2026-10-20T10:00:00Z" }, { id: "n-2", read_at: null }],
     audit_logs: [],
-    ticket_review_slots: [{ id: "ls", roster_id: ROSTER_ID, slot_kind: "ops", status: "open" }],
+    ticket_review_slots: [],
   };
   db.calls = []; db.errors = {}; db.rpc = {};
 });
@@ -176,7 +184,7 @@ describe("the close — advanced without objection, a recorded system act", () =
     expect(h.details).not.toMatch(/notification/i);
     const ev = db.tables.ticket_notice_events.filter((e) => e.kind === "expired" || e.kind === "advanced");
     expect(ev.map((e) => `${e.kind}:${e.recipient ?? "-"}`)).toEqual(["expired:o-1", "expired:o-2", "advanced:-"]);
-    expect(db.tables.ticket_review_slots[0]).toMatchObject({ status: "satisfied", satisfied_via: "consent", satisfied_by: null, signature_id: null });
+    expect(ledgerOps()).toMatchObject({ status: "satisfied", satisfied_via: "consent", satisfied_by: null, signature_id: null });
     // the people with a stake are told on the bell
     expect(calls("notifications", "insert").length).toBe(1);
   });
@@ -205,13 +213,30 @@ describe("the close — advanced without objection, a recorded system act", () =
     const rr = (t.metadata as { review_roster: TicketReviewRoster }).review_roster;
     expect(rr.slots.find((s) => s.kind === "ops")!.status).toBe("open");
     expect((t.history as Array<{ details: string }>).at(-1)!.details).toMatch(/No delivery is on record for O-2, so this is not consent/);
-    expect(db.tables.ticket_review_slots[0].status).toBe("open");
+    // the headline names the delivery reason, never the drafter floor (review minor)
+    const action = (t.history as Array<{ action: string }>).at(-1)!.action;
+    expect(action).toMatch(/not everyone asked has a delivery on record/);
+    expect(action).not.toMatch(/drafter/);
+    expect(((calls("audit_logs", "insert")[0].args[0] as Row).details as Row).holdReason).toBe("undelivered");
+    expect(ledgerOps().status).toBe("open");
   });
   it("DEC-12 floor: the drafter signed every other sign-off — silence is not a second person, so the close is HELD", async () => {
     seedTicket({ warned: "2026-10-21T09:00:00Z", accept: "signed-by-drafter" });
     const r = await runConsentWindowScan({ client, now: NOW });
     expect(r).toMatchObject({ held: 1, issued: 0 });
     expect(db.tables.tickets[0].status).toBe("PENDING_REVIEW");
+    expect((db.tables.tickets[0].history as Array<{ action: string }>).at(-1)!.action).toMatch(/someone other than the drafter/);
+  });
+  it("DEC-12 (review blocker): a window whose only person asked is the drafter (a stale or forged plan) never issues — HELD, nobody but the drafter was asked", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    const t = db.tables.tickets[0];
+    t.consent_window_recipients = ["d-1"];
+    db.tables.ticket_notice_events = [{ ticket_id: "t1", roster_id: ROSTER_ID, kind: "delivered", recipient: "d-1", notification_id: "n-1" }];
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 0, held: 1, issued: 0 });
+    expect(t.status).toBe("PENDING_REVIEW");
+    expect((t.history as Array<{ details: string }>).at(-1)!.details).toMatch(/Nobody but the drafter was asked/);
+    expect(ledgerOps().status).toBe("open");
   });
   it("not before its warning has been out a full lead (DEC-39)", async () => {
     seedTicket({ warned: new Date(NOW - CONSENT_WARN_LEAD_MS + 60_000).toISOString() });
@@ -254,6 +279,121 @@ describe("the close — advanced without objection, a recorded system act", () =
   });
 });
 
+describe("HAND-7 parity (review major): an issuing close runs the source-revision check first", () => {
+  const SRC = "22222222-2222-4222-8222-222222222222";
+  const withSource = () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    const t = db.tables.tickets[0];
+    t.metadata = { ...(t.metadata as Row), source_document: { id: SRC, document_number: "PID-100", rev: "B" } };
+  };
+  it("the source moved (Rev B → Rev C): HELD for a person — not issued, the history and the audit row say what moved", async () => {
+    withSource();
+    db.tables.documents = [{ id: SRC, org_id: "o1", rev: "C", current_version_id: null, document_number: "PID-100" }];
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 0, held: 1, issued: 0 });
+    const t = db.tables.tickets[0];
+    expect(t.status).toBe("PENDING_REVIEW");
+    const h = (t.history as Array<{ action: string; details: string }>).at(-1)!;
+    expect(h.action).toMatch(/a source document moved/);
+    expect(h.details).toMatch(/PID-100 raised on Rev B, now Rev C/);
+    const d = (calls("audit_logs", "insert")[0].args[0] as Row).details as Row;
+    expect(d).toMatchObject({ holdReason: "source_moved", sourceDrift: { moved: ["PID-100 raised on Rev B, now Rev C"], acknowledged: false } });
+    expect(ledgerOps().status).toBe("open");
+  });
+  it("the source cannot be read: HELD (never issued unchecked); the audit row records sourceDriftUnchecked", async () => {
+    withSource();
+    db.errors.documents = { code: "08006", message: "connection lost" };
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ held: 1, issued: 0 });
+    const d = (calls("audit_logs", "insert")[0].args[0] as Row).details as Row;
+    expect(d).toMatchObject({ holdReason: "source_unchecked", sourceDriftUnchecked: true });
+    expect(db.tables.tickets[0].status).toBe("PENDING_REVIEW");
+  });
+  it("the source has not moved: issued as before", async () => {
+    withSource();
+    db.tables.documents = [{ id: SRC, org_id: "o1", rev: "B", current_version_id: null, document_number: "PID-100" }];
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 1, issued: 1 });
+    expect(db.tables.tickets[0].status).toBe("PENDING_IFC");
+  });
+  it("a close that does not issue (other sign-offs open) does not read the sources", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z", accept: "open" });
+    db.errors.documents = { code: "08006", message: "connection lost" };
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 1, issued: 0, held: 0 });
+    expect(calls("documents", "select")).toEqual([]);
+  });
+});
+
+describe("the ledger is the authority (review major): a forged metadata roster cannot close, complete or open a window", () => {
+  it("the window's slot is not an open consent slot in the ledger: not closed, a line", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    db.tables.ticket_review_slots = db.tables.ticket_review_slots.filter((r) => r.slot_kind !== "ops");
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 0, held: 0, failed: 1 });
+    expect(r.errors.join(" ")).toMatch(/ledger does not show "Operations" as an open consent slot/);
+    expect(calls("tickets", "update")).toEqual([]);
+    expect(calls("audit_logs", "insert")).toEqual([]);
+  });
+  it("metadata says every other sign-off is in but the ledger does not: HELD (record_mismatch), never issued", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    db.tables.ticket_review_slots.find((r) => r.slot_kind === "accept")!.status = "open";
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ held: 1, issued: 0 });
+    expect(db.tables.tickets[0].status).toBe("PENDING_REVIEW");
+    expect(((calls("audit_logs", "insert")[0].args[0] as Row).details as Row).holdReason).toBe("record_mismatch");
+  });
+  it("the ledger cannot be read: nothing is closed (retried next run)", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    db.errors.ticket_review_slots = { code: "08006", message: "connection lost" };
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r.failed).toBe(1);
+    expect(calls("tickets", "update")).toEqual([]);
+  });
+});
+
+describe("the read cap (review minor): stale windows are retired; each run starts from a random point", () => {
+  it("a running window whose slot a person signed is retired (its expiry stamped) and never closed", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    const t = db.tables.tickets[0];
+    const rr = (t.metadata as { review_roster: TicketReviewRoster }).review_roster;
+    rr.slots = rr.slots.map((x) => (x.kind === "ops" ? { ...x, status: "satisfied", satisfiedBy: "o-1", satisfiedAt: "2026-10-20T00:00:00Z", signatureId: "s2", via: "primary" } : x));
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ retired: 1, advanced: 0, held: 0 });
+    expect(t.consent_window_expired_at).toBe(new Date(NOW).toISOString());
+    expect(t.status).toBe("PENDING_REVIEW");
+    expect(calls("audit_logs", "insert")).toEqual([]);
+    // the next run no longer reads it as running
+    db.calls = [];
+    const again = await runConsentWindowScan({ client, now: NOW + 60_000 });
+    expect(again.retired).toBe(0);
+  });
+  it("a window left over from a replaced review (no consent slot on the new one) is retired", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    const t = db.tables.tickets[0];
+    const rr = (t.metadata as { review_roster: TicketReviewRoster }).review_roster;
+    t.metadata = { review_roster: { ...rr, id: "33333333-3333-4333-8333-333333333333", consentPlan: null, consentWindow: null, slots: [rr.slots[0]] } };
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r.retired).toBe(1);
+    expect(t.consent_window_expired_at).toBe(new Date(NOW).toISOString());
+  });
+  it("rows on both sides of the pivot are read; past the cap the run says truncated", async () => {
+    seedTicket({ warned: null });
+    const t1 = db.tables.tickets[0];
+    db.tables.tickets.push({ ...structuredClone(t1), id: "t0" });
+    // before the reminder is due: each row is read, nothing changes
+    const early = Date.parse("2026-10-20T00:00:00Z");
+    const r = await runConsentWindowScan({ client, now: early, pivot: "t1", maxTickets: 1 });
+    expect(r.truncated).toBe(true);
+    expect(r.scanned).toBe(1);
+    // with room for both, the row before the pivot is read too (wrapped round)
+    db.calls = [];
+    const r2 = await runConsentWindowScan({ client, now: early, pivot: "t1", maxTickets: 5 });
+    expect(r2.scanned).toBe(2);
+    expect(r2.truncated).toBe(false);
+  });
+});
+
 describe("the retry — a window the route could not open", () => {
   it("planned, not open: open_consent_window is called again with the frozen recipients", async () => {
     seedTicket({ window: false });
@@ -261,6 +401,29 @@ describe("the retry — a window the route could not open", () => {
     expect(r.opened).toBe(1);
     const call = calls("rpc:open_consent_window", "rpc")[0].args[0] as Row;
     expect(call).toMatchObject({ p_ticket: "t1", p_roster: ROSTER_ID, p_slot: "ops", p_recipients: ["o-1", "o-2"] });
+  });
+  it("asks only who the LEDGER's slot names, never the drafter — a plan naming the drafter (stale or forged) drops them", async () => {
+    seedTicket({ window: false });
+    const rr = (db.tables.tickets[0].metadata as { review_roster: TicketReviewRoster }).review_roster;
+    rr.consentPlan = { kind: "open", slot: "ops", label: "Operations", recipients: ["d-1", "o-1", "x-forged"], windowDays: 3, warnFraction: 2 / 3 };
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r.opened).toBe(1);
+    expect((calls("rpc:open_consent_window", "rpc")[0].args[0] as Row).p_recipients).toEqual(["o-1"]);
+  });
+  it("nobody left to ask, or no open consent slot in the ledger: no call, a line", async () => {
+    seedTicket({ window: false });
+    const rr = (db.tables.tickets[0].metadata as { review_roster: TicketReviewRoster }).review_roster;
+    rr.consentPlan = { kind: "open", slot: "ops", label: "Operations", recipients: ["d-1"], windowDays: 3, warnFraction: 2 / 3 };
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ opened: 0, failed: 1 });
+    expect(calls("rpc:open_consent_window", "rpc")).toEqual([]);
+    seedTicket({ window: false });
+    db.tables.ticket_review_slots = [];
+    db.calls = [];
+    const r2 = await runConsentWindowScan({ client, now: NOW });
+    expect(r2.opened).toBe(0);
+    expect(r2.errors.join(" ")).toMatch(/ledger does not show "Operations" as an open consent slot/);
+    expect(calls("rpc:open_consent_window", "rpc")).toEqual([]);
   });
   it("refused again: a line, nothing else (the slot waits for a sign-off)", async () => {
     seedTicket({ window: false });

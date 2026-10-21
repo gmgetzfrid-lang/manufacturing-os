@@ -13,7 +13,7 @@ import { currentRoster, issueReadyFor, rosterEngineerApprovedAt, ISSUE_MARK_ACTI
 import { lastIssuedFromHistory } from "@/lib/verifyTicketVerdict";
 import { defaultOutcome } from "@/lib/ticketOutcome";
 import { reviewModelFieldsFromRow, ENGINEERING_OVERRIDE_NOTE, isDeclaredLikeInKind } from "@/lib/reviewModel";
-import { consentPlanNote } from "@/lib/consentWindow";
+import { consentPlanNote, consentHeldAction, type ConsentHoldReason } from "@/lib/consentWindow";
 
 export interface TransitionActor {
   uid?: string | null;
@@ -99,9 +99,11 @@ export interface TransitionInput {
    *  (lib/consentWindowScan.ts): the roster with the window's slot satisfied
    *  via "consent", whether every blocking slot now is, the slot's label and
    *  the DEC-39 history details naming everyone asked. `held`: the window
-   *  closed but the producer floor wants a second person (lib/consentWindow.ts
-   *  consentFloorHolds) — the slot stays open, waiting for a sign-off. */
-  consentAdvance?: { roster: TicketReviewRoster; complete: boolean; label: string; details: string; held?: boolean } | null;
+   *  closed but did not advance — the slot stays open, waiting for a
+   *  sign-off — for `holdReason` (no delivery record, the producer floor,
+   *  a moved or unreadable source, a ledger that disagrees), which words the
+   *  history headline (lib/consentWindow.ts consentHeldAction). */
+  consentAdvance?: { roster: TicketReviewRoster; complete: boolean; label: string; details: string; held?: boolean; holdReason?: ConsentHoldReason | null } | null;
   actor: TransitionActor;
   now?: string;
 }
@@ -675,14 +677,14 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       // the notice, when they were reminded and when the window closed. The
       // last blocking slot issues the ticket exactly as a sign-off does.
       if (input.consentAdvance) {
-        const { roster, complete, label, details, held } = input.consentAdvance;
-        const w = roster.consentWindow ? { ...roster.consentWindow, expiredAt: now } : null;
+        const { roster, complete, label, details, held, holdReason } = input.consentAdvance;
+        const w = roster.consentWindow ? { ...roster.consentWindow, expiredAt: now, ...(held ? { heldReason: holdReason ?? null } : {}) } : null;
         const next = { ...roster, consentWindow: w };
         updates.metadata = { ...((ticket.metadata ?? {}) as Record<string, unknown>), review_roster: complete ? { ...next, closedAt: now, closedReason: "complete" } : next };
         updates.consent_window_expired_at = now;
         historyEntry.details = details;
         if (held) {
-          historyEntry.action = `Consent window closed with no objection — "${label}" still needs a sign-off from someone other than the drafter`;
+          historyEntry.action = consentHeldAction(label, holdReason);
         } else {
           historyEntry.action = `Advanced without objection — ${label}${ticket.deliverableRev ? ` (Rev ${ticket.deliverableRev})` : ""}`;
         }

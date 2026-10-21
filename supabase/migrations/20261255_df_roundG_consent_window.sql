@@ -33,6 +33,14 @@
 --       is not an open consent slot of the review open on the request, or a
 --       count of rows that is not the count asked raises — and then nothing
 --       at all is written: no rows, no timestamp, no clock (DEC-38).
+--       The slot, its mode, its status and its occupants are read from the
+--       roster LEDGER (ticket_review_slots, 20261242 — written only by the
+--       service role), never from tickets.metadata alone: metadata stays
+--       member-writable on a database where 20261166 is not applied, and a
+--       forged roster must not open a window (DF-P7 fix pass). The metadata
+--       mirror must agree as well. DEC-12 / DEC-37: the assigned drafter is
+--       never asked (their silence is never a check), nor the requester on a
+--       slot independent of the requester.
 --   (4) record_consent_window_warning(...) — the same shape for the reminder
 --       (DEC-39): everyone asked (and the assignment queue the caller adds),
 --       one "warned" event each, warned_at and the history line, together.
@@ -55,8 +63,9 @@
 --
 -- PASTE / DEPLOY ORDER. Paste AFTER 20261241 and 20261242 (the first
 -- statement refuses otherwise, changing nothing). Independent of 20261250 /
--- 20261251 / 20261254. Either order with the DF-P7 deploy is safe;
--- RECOMMENDED: deploy the app FIRST, then paste.
+-- 20261251 / 20261254, and of 20261166 (metadata workflow-owned): the two
+-- functions trust the roster ledger, not metadata. Either order with the
+-- DF-P7 deploy is safe; RECOMMENDED: deploy the app FIRST, then paste.
 --   * App deployed, not pasted: the ticket row has no consent_window_*
 --     columns, so every consent slot waits for a sign-off exactly as today
 --     and the submission's response says so (consent windows need this
@@ -242,6 +251,7 @@ CREATE OR REPLACE FUNCTION open_consent_window(
 DECLARE
   v_t tickets%ROWTYPE;
   v_slot JSONB;
+  v_ls ticket_review_slots%ROWTYPE;
   v_now TIMESTAMPTZ := now();
   v_asked INTEGER;
   v_n INTEGER;
@@ -284,9 +294,24 @@ BEGIN
   IF v_slot IS NULL OR v_slot->>'mode' IS DISTINCT FROM 'consent_window' OR v_slot->>'status' IS DISTINCT FROM 'open' THEN
     RAISE EXCEPTION 'consent window: that slot is not an open consent slot of this review' USING ERRCODE = '55000';
   END IF;
-  IF EXISTS (SELECT 1 FROM unnest(p_recipients) r
-              WHERE NOT (CASE WHEN jsonb_typeof(v_slot->'primaries') = 'array' THEN v_slot->'primaries' ELSE '[]'::jsonb END) ? r::text) THEN
+  -- The authority is the roster LEDGER (service-written), never metadata
+  -- alone: the slot must be an open consent slot of THIS review there (not
+  -- the management fallback), and every person asked one of ITS occupants.
+  SELECT * INTO v_ls FROM ticket_review_slots
+   WHERE ticket_id = p_ticket AND org_id = v_t.org_id AND roster_id = p_roster AND slot_kind = p_slot;
+  IF NOT FOUND OR v_ls.mode <> 'consent_window' OR v_ls.status <> 'open' OR v_ls.fallback THEN
+    RAISE EXCEPTION 'consent window: the review''s ledger has no open consent slot by that name — no window is opened' USING ERRCODE = '55000';
+  END IF;
+  IF NOT (p_recipients <@ v_ls.primaries) THEN
     RAISE EXCEPTION 'consent window: only the slot''s own occupants are asked' USING ERRCODE = '22023';
+  END IF;
+  -- DEC-12 / DEC-37: the producer's silence is never a check, nor that of a
+  -- party the slot declares itself independent of.
+  IF v_t.assigned_drafter_id IS NOT NULL AND v_t.assigned_drafter_id = ANY (p_recipients) THEN
+    RAISE EXCEPTION 'consent window: the drafter is never asked — their silence is never consent' USING ERRCODE = '22023';
+  END IF;
+  IF 'requester' = ANY (v_ls.independent_of) AND v_t.requester_id = ANY (p_recipients) THEN
+    RAISE EXCEPTION 'consent window: this slot is independent of the requester, who is never asked' USING ERRCODE = '22023';
   END IF;
   IF EXISTS (SELECT 1 FROM unnest(p_recipients) r
               WHERE NOT EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = v_t.org_id AND m.uid = r AND m.status = 'active')) THEN
@@ -412,7 +437,7 @@ ALTER TABLE ticket_review_slots ADD CONSTRAINT ticket_review_slots_satisfied_sha
 COMMIT;
 
 -- ── Verification + inventory — ONE result set ───────────────────────────────
--- Probes: ok = true × 9 on a correct paste. Inventory rows: n = the count.
+-- Probes: ok = true × 10 on a correct paste. Inventory rows: n = the count.
 SELECT 'GAP-113: the ten consent_window_* columns are on tickets, all-or-none when open (CHECK)' AS check,
        (SELECT COUNT(*) = 10 FROM information_schema.columns
          WHERE table_schema = 'public' AND table_name = 'tickets' AND column_name LIKE 'consent\_window\_%')
@@ -450,6 +475,11 @@ SELECT 'DEC-38 / DRLS-16: open_consent_window is SECURITY DEFINER, search_path p
 UNION ALL
 SELECT 'DEC-38: the rows and the timestamp are ONE transaction — notifications, then the delivered events, then the count check, then the ticket stamp',
        (SELECT prosrc LIKE '%INSERT INTO notifications%INSERT INTO ticket_notice_events%''delivered''%GET DIAGNOSTICS v_n = ROW_COUNT;%IF v_n <> v_asked THEN%UPDATE tickets SET%consent_window_opened_at = v_now,%'
+          FROM pg_proc WHERE proname = 'open_consent_window'),
+       NULL
+UNION ALL
+SELECT 'fix pass: open_consent_window reads the roster ledger (ticket_review_slots) for the slot and its occupants, and never asks the drafter',
+       (SELECT prosrc LIKE '%FROM ticket_review_slots%p_recipients <@ v_ls.primaries%v_t.assigned_drafter_id = ANY (p_recipients)%'
           FROM pg_proc WHERE proname = 'open_consent_window'),
        NULL
 UNION ALL

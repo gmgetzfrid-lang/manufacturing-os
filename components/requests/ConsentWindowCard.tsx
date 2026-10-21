@@ -20,7 +20,7 @@
 import React, { useEffect, useState } from "react";
 import { Hourglass, ShieldAlert, CheckCircle2, AlertTriangle } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { consentWindowMarker, mayObject, recordMoment } from "@/lib/consentWindow";
+import { consentWindowMarker, consentHeldAction, mayObject, recordMoment } from "@/lib/consentWindow";
 import type { Ticket, TicketReviewRoster } from "@/types/schema";
 
 interface NoticeRow { kind: string; recipient: string | null; created_at: string; details: Record<string, unknown> | null }
@@ -33,10 +33,25 @@ export function consentWindowHeadline(roster: Pick<TicketReviewRoster, "consentW
   const label = slot?.label || w.slot;
   if (w.objectedAt) return `"${label}": objected to ${recordMoment(w.objectedAt)} — it waits for a sign-off.`;
   if (slot?.status === "satisfied" && slot.via === "consent") return `"${label}": the window closed ${recordMoment(w.expiredAt ?? slot.satisfiedAt ?? null)} with no objection — recorded as given without objection.`;
+  if (w.expiredAt && w.heldReason) return `${consentHeldAction(label, w.heldReason)} (closed ${recordMoment(w.expiredAt)}; see the history).`;
   if (w.expiredAt) return `"${label}": the window closed ${recordMoment(w.expiredAt)} with no objection, but it still needs a sign-off (see the history).`;
   if (slot?.status === "satisfied") return `"${label}": signed off before the window closed.`;
   if (roster!.closedAt) return `"${label}": the review closed (${roster!.closedReason || "closed"}) before the window did.`;
   return `"${label}" goes ahead without objection when the window closes ${recordMoment(w.closesAt)}.`;
+}
+
+/** The card's state, for its icon (pure; exported for tests): a window that
+ *  closed but did NOT advance is "held" (amber), never the green "advanced"
+ *  — the slot still waits for a sign-off. */
+export function consentWindowTone(roster: Pick<TicketReviewRoster, "consentWindow" | "slots"> | null | undefined): "objected" | "advanced" | "held" | "signed" | "running" | null {
+  const w = roster?.consentWindow;
+  if (!w) return null;
+  const slot = roster!.slots.find((s) => s.kind === w.slot);
+  if (w.objectedAt) return "objected";
+  if (slot?.status === "satisfied" && slot.via === "consent") return "advanced";
+  if (slot?.status === "satisfied") return "signed";
+  if (w.expiredAt) return "held";
+  return "running";
 }
 
 export default function ConsentWindowCard({ ticket, uid }: { ticket: Ticket; uid: string | null | undefined }) {
@@ -56,7 +71,7 @@ export default function ConsentWindowCard({ ticket, uid }: { ticket: Ticket; uid
     if (!ticket.id || !mark) return;
     let alive = true;
     void (async () => {
-      const [{ data: ms }, { data: evs, error: evErr }] = await Promise.all([
+      const [{ data: ms, error: msErr }, { data: evs, error: evErr }] = await Promise.all([
         supabase.from("org_members").select("uid, display_name, email").eq("org_id", ticket.orgId).in("uid", recipients),
         supabase.from("ticket_notice_events").select("kind, recipient, created_at, details").eq("ticket_id", ticket.id!).eq("roster_id", rosterId ?? "").order("created_at"),
       ]);
@@ -66,7 +81,11 @@ export default function ConsentWindowCard({ ticket, uid }: { ticket: Ticket; uid
         m.set(r.uid, (r.display_name || "").trim() || (r.email || "").split("@")[0] || "a member");
       }
       setNames(m);
-      if (evErr) setReadError("The window's notice record could not be read — the request's history carries it.");
+      const faults = [
+        ...(msErr ? ["the names of the people asked could not be read (shown by member id)"] : []),
+        ...(evErr ? ["the window's notice record could not be read — the request's history carries it"] : []),
+      ];
+      setReadError(faults.length ? `${faults.join("; ").replace(/^./, (c) => c.toUpperCase())}.` : null);
       setEvents((evs as NoticeRow[] | null) ?? []);
     })();
     return () => { alive = false; };
@@ -112,7 +131,13 @@ export default function ConsentWindowCard({ ticket, uid }: { ticket: Ticket; uid
   return (
     <section data-testid="consent-window-card" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3 text-sm">
       <div className="flex items-start gap-2">
-        {mark.objectedAt ? <ShieldAlert className="w-4 h-4 mt-0.5 text-amber-600 shrink-0" /> : mark.expiredAt ? <CheckCircle2 className="w-4 h-4 mt-0.5 text-emerald-600 shrink-0" /> : <Hourglass className="w-4 h-4 mt-0.5 text-sky-600 shrink-0" />}
+        {(() => {
+          const tone = consentWindowTone(roster);
+          if (tone === "objected") return <ShieldAlert data-testid="consent-window-icon-objected" className="w-4 h-4 mt-0.5 text-amber-600 shrink-0" />;
+          if (tone === "held") return <AlertTriangle data-testid="consent-window-icon-held" className="w-4 h-4 mt-0.5 text-amber-600 shrink-0" />;
+          if (tone === "advanced" || tone === "signed") return <CheckCircle2 data-testid="consent-window-icon-done" className="w-4 h-4 mt-0.5 text-emerald-600 shrink-0" />;
+          return <Hourglass data-testid="consent-window-icon-running" className="w-4 h-4 mt-0.5 text-sky-600 shrink-0" />;
+        })()}
         <p className="text-[var(--color-text)]" data-testid="consent-window-headline">{consentWindowHeadline(roster)}</p>
       </div>
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-[var(--color-text-muted)]">

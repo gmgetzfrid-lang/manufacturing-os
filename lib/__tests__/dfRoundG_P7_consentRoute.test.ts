@@ -164,7 +164,7 @@ describe("DEC-38 — the window opens after the review exists, through ONE call 
     const line = (updates()[0].history as Array<{ action: string; details?: string }>).find((h) => h.action === "Review roster opened")!;
     expect(line.details).toMatch(/"Operations" may object within 3 working days/);
   });
-  it("DEC-38: the RPC refuses (a notification insert failed) — the submission stands, the slot waits for a sign-off, nothing else is written, and the answer says so", async () => {
+  it("DEC-38: the RPC refuses (a notification insert failed) — the submission stands, the slot waits for a sign-off, and the answer says so; the refusal is recorded on the ticket's notice record", async () => {
     seed();
     state.rpcResult = { data: null, error: { code: "P0001", message: "consent window: not every person asked could be told (0 of 1) — no window is opened" } };
     const { res, body, roster } = await submit();
@@ -173,7 +173,36 @@ describe("DEC-38 — the window opens after the review exists, through ONE call 
     expect(roster!.slots.find((s) => s.kind === "ops")!.status).toBe("open");
     expect(body.consentWarning).toMatch(/waits for a sign-off for now: the people it asks could not all be told/);
     expect(body.warning).toBe(body.consentWarning);
-    expect(inserts("ticket_notice_events")).toEqual([]);
+    // DF-P7 fix pass: the reason outlives the response — one "blocked" notice
+    // event names the failed open (no window, no clock, nothing else).
+    expect(inserts("ticket_notice_events")).toEqual([expect.objectContaining({ kind: "blocked", slot_kind: "ops", recipient: null, details: expect.objectContaining({ reason: "window_not_opened", recipients: ["o-1"] }) })]);
+  });
+});
+
+describe("DEC-12 / DEC-37 hold whatever the routing table declares (review blocker)", () => {
+  it("the drafter is the consent slot's only occupant (independent_of drafter): BLOCKED — no window, no RPC, the queue told; the drafter's silence can never issue their own work", async () => {
+    seed({ slots: [{ kind: "ops", label: "Peer check", mode: "consent_window", fill: { users: ["d-1"] }, independent_of: ["drafter"] }] });
+    state.rpcResult = { data: 1, error: null };
+    const { res, roster, body } = await submit();
+    expect(res.status).toBe(200);
+    expect(roster!.consentPlan).toMatchObject({ kind: "blocked", slot: "ops", reason: expect.stringMatching(/drafter or a party it must be independent of/) });
+    expect(rpcs("open_consent_window")).toEqual([]);
+    expect(inserts("ticket_notice_events")).toEqual([expect.objectContaining({ kind: "blocked", slot_kind: "ops" })]);
+    expect(body.consentWarning).toMatch(/waits for a sign-off: the only people its routing names are the drafter/);
+  });
+  it("the drafter among the occupants: the window asks only the others", async () => {
+    seed({ slots: [CONSENT_ROUTING.slots[0], { kind: "ops", label: "Operations", mode: "consent_window", fill: { users: ["d-1", "o-1"] }, independent_of: ["drafter"] }] });
+    state.rpcResult = { data: 1, error: null };
+    const { roster } = await submit();
+    expect(roster!.consentPlan).toMatchObject({ kind: "open", recipients: ["o-1"] });
+    expect(rpcs("open_consent_window")[0]).toMatchObject({ p_recipients: ["o-1"] });
+  });
+  it("independent_of requester with the requester the only occupant: BLOCKED — the requester's silence never approves their own request", async () => {
+    seed({ slots: [{ kind: "ops", label: "Operations", mode: "consent_window", fill: { users: ["req-1"] }, independent_of: ["requester"] }] });
+    state.rpcResult = { data: 1, error: null };
+    const { roster } = await submit();
+    expect(roster!.consentPlan).toMatchObject({ kind: "blocked" });
+    expect(rpcs("open_consent_window")).toEqual([]);
   });
 });
 

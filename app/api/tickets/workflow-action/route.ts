@@ -1154,9 +1154,14 @@ export async function POST(req: NextRequest) {
         // rides the roster (one decision for the history, the window and
         // the cron's retry). Before 20261255 the row has no window columns:
         // the roster is exactly today's, the slot waits for a sign-off, and
-        // the response says so.
+        // the response says so. DEC-12 / DEC-37 (fix pass): the people
+        // asked are never the drafter, nor a party the slot is independent
+        // of — nobody else left is a block, escalated.
         const consentColumns = Object.prototype.hasOwnProperty.call(row, "consent_window_opened_at");
-        const consentPlan = planConsentWindow(opened.roster, { engineeringRequired: engineeringGate.required, columns: consentColumns });
+        const consentPlan = planConsentWindow(opened.roster, {
+          engineeringRequired: engineeringGate.required, columns: consentColumns,
+          drafterId: ticket.assignedDrafterId ?? null, requesterId: ticket.requesterId ?? null,
+        });
         if (consentPlan && consentColumns) rosterOpen = { ...opened.roster, consentPlan };
         else if (consentPlan) consentWarning = `${consentPlan.label ? `"${consentPlan.label}"` : "The consent slot"} waits for a sign-off: ${CONSENT_REASON.notPasted}.`;
         consentMembers = members.rows;

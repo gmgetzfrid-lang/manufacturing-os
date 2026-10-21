@@ -8,7 +8,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { consentWindowHeadline } from "@/components/requests/ConsentWindowCard";
+import { consentWindowHeadline, consentWindowTone } from "@/components/requests/ConsentWindowCard";
 import type { TicketReviewRoster, TicketReviewSlot } from "@/types/schema";
 
 const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
@@ -61,5 +61,22 @@ describe("the card's headline", () => {
     expect(consentWindowHeadline(r(ops({ status: "satisfied", via: "primary" })))).toMatch(/signed off before the window closed/);
     expect(consentWindowHeadline(r(ops({ status: "void" }), {}, { closedAt: "2026-10-20T00:00:00Z", closedReason: "request_revision" }))).toMatch(/the review closed \(request_revision\) before the window did/);
     expect(consentWindowHeadline(null)).toBeNull();
+    // a HELD close names its reason (DF-P7 fix pass)
+    expect(consentWindowHeadline(r(ops(), { expiredAt: "2026-10-23T03:00:00Z", heldReason: "undelivered" }))).toMatch(/not everyone asked has a delivery on record/);
+  });
+  it("the icon follows the slot, not the expiry: a HELD close is amber (held), never the green check (review minor)", () => {
+    expect(consentWindowTone(r(ops()))).toBe("running");
+    expect(consentWindowTone(r(ops(), { expiredAt: "2026-10-23T03:00:00Z" }))).toBe("held");
+    expect(consentWindowTone(r(ops({ status: "satisfied", via: "consent" }), { expiredAt: "2026-10-23T03:00:00Z" }))).toBe("advanced");
+    expect(consentWindowTone(r(ops(), { objectedAt: "2026-10-20T10:00:00Z" }))).toBe("objected");
+    expect(consentWindowTone(r(ops({ status: "satisfied", via: "primary" })))).toBe("signed");
+    const card = src("components/requests/ConsentWindowCard.tsx");
+    expect(card).toContain('if (tone === "held") return <AlertTriangle data-testid="consent-window-icon-held"');
+    expect(card).not.toMatch(/mark\.expiredAt \? <CheckCircle2/);
+  });
+  it("the members read is checked: a failure is said, never a silent fall-back to ids (review minor)", () => {
+    const card = src("components/requests/ConsentWindowCard.tsx");
+    expect(card).toContain("const [{ data: ms, error: msErr }, { data: evs, error: evErr }] = await Promise.all([");
+    expect(card).toContain("the names of the people asked could not be read (shown by member id)");
   });
 });

@@ -14,6 +14,7 @@ import { describe, it, expect } from "vitest";
 import {
   planConsentWindow, consentPlanNote, addWorkingDays, windowSchedule, windowConfigOf, consentWindowStep, noticeStates,
   advancedHistoryDetails, openedHistoryDetails, consentFloorHolds, consentSatisfiedSlot, consentWindowFromRow,
+  consentRecipients, consentHeldAction,
   consentWindowMarker, windowRunning, mayObject, isMissingConsentColumn, isMissingConsentSchema,
   CONSENT_REASON, CONSENT_WINDOW_DEFAULT_DAYS, CONSENT_WINDOW_DEFAULT_WARN_FRACTION, CONSENT_WARN_LEAD_MS,
   CONSENT_REFUSED_CAPABILITIES, CONSENT_WINDOW_COLUMNS, type ConsentWindowState,
@@ -63,6 +64,28 @@ describe("planConsentWindow — where a window can exist (DEC-90 rulings for DF-
   });
   it("before 20261255 (no columns): waits for a sign-off, said", () => {
     expect(planConsentWindow(roster([consent()]), { engineeringRequired: false, columns: false })).toMatchObject({ kind: "sign_off", reason: CONSENT_REASON.notPasted });
+  });
+  // DF-P7 fix pass (review blocker): DEC-12 / DEC-37 hold whatever the table declares.
+  const parties = { ...cols, drafterId: "d-1", requesterId: "req" };
+  it("DEC-12: the drafter as the slot's ONLY occupant is never asked — BLOCKED (escalated), never a window their own silence satisfies", () => {
+    const p = planConsentWindow(roster([consent({ primaries: ["d-1"], independentOf: ["drafter"] })]), parties);
+    expect(p).toMatchObject({ kind: "blocked", slot: "ops", reason: CONSENT_REASON.onlyParties });
+    // with no independence declared, the drafter's silence is still never a check
+    expect(planConsentWindow(roster([consent({ primaries: ["d-1"] })]), parties)).toMatchObject({ kind: "blocked", reason: CONSENT_REASON.onlyParties });
+  });
+  it("independent_of ['drafter'] with the drafter among the primaries: the window asks only the others", () => {
+    const p = planConsentWindow(roster([consent({ primaries: ["d-1", "x-1"], independentOf: ["drafter"] })]), parties);
+    expect(p).toMatchObject({ kind: "open", recipients: ["x-1"] });
+  });
+  it("independent_of ['requester']: the requester's silence never approves their own request", () => {
+    expect(planConsentWindow(roster([consent({ primaries: ["req"], independentOf: ["requester"] })]), parties)).toMatchObject({ kind: "blocked", reason: CONSENT_REASON.onlyParties });
+    expect(planConsentWindow(roster([consent({ primaries: ["req", "o-1"], independentOf: ["requester"] })]), parties)).toMatchObject({ kind: "open", recipients: ["o-1"] });
+    // without the declaration the requester may be asked (they are not the producer)
+    expect(planConsentWindow(roster([consent({ primaries: ["req", "o-1"] })]), parties)).toMatchObject({ kind: "open", recipients: ["o-1", "req"] });
+  });
+  it("consentRecipients is the one rule (sorted, de-duplicated)", () => {
+    expect(consentRecipients({ primaries: ["o-2", "d-1", "o-1", "o-2"], independentOf: [] }, { drafterId: "d-1", requesterId: "req" })).toEqual(["o-1", "o-2"]);
+    expect(consentRecipients({ primaries: ["req"], independentOf: ["requester"] }, { drafterId: null, requesterId: "req" })).toEqual([]);
   });
 });
 
@@ -288,7 +311,20 @@ describe("computeTransition — the objection and the advance", () => {
     const held = computeTransition(ticketWith(r), { actionType: "consent_window_advance", actionLabel: "x", consentAdvance: { roster: r, complete: false, label: "Operations", details: "d", held: true }, actor: system, now: "2026-10-23T03:00:00.000Z" });
     expect(held.newStatus).toBe("PENDING_REVIEW");
     expect(((held.updates.metadata as Record<string, unknown>).review_roster as TicketReviewRoster).slots.find((s) => s.kind === "ops")!.status).toBe("open");
-    expect((held.updates.history as Array<{ action: string }>).at(-1)!.action).toMatch(/still needs a sign-off from someone other than the drafter/);
+    // a hold with no reason never claims the drafter floor
+    expect((held.updates.history as Array<{ action: string }>).at(-1)!.action).not.toMatch(/other than the drafter/);
+    const floor = computeTransition(ticketWith(r), { actionType: "consent_window_advance", actionLabel: "x", consentAdvance: { roster: r, complete: false, label: "Operations", details: "d", held: true, holdReason: "producer_floor" }, actor: system, now: "2026-10-23T03:00:00.000Z" });
+    expect((floor.updates.history as Array<{ action: string }>).at(-1)!.action).toMatch(/still needs a sign-off from someone other than the drafter/);
+    expect(((floor.updates.metadata as Record<string, unknown>).review_roster as TicketReviewRoster).consentWindow?.heldReason).toBe("producer_floor");
+  });
+  it("a close HELD because a recipient has no delivery record says so — never the drafter-floor headline", () => {
+    const r = roster([slot({ kind: "accept", primaries: ["req"] }), consent()], { consentWindow: window });
+    const held = computeTransition(ticketWith(r), { actionType: "consent_window_advance", actionLabel: "x", consentAdvance: { roster: r, complete: false, label: "Operations", details: "d", held: true, holdReason: "undelivered" }, actor: system, now: "2026-10-23T03:00:00.000Z" });
+    const action = (held.updates.history as Array<{ action: string }>).at(-1)!.action;
+    expect(action).toMatch(/not everyone asked has a delivery on record/);
+    expect(action).not.toMatch(/drafter/);
+    for (const reason of ["source_moved", "source_unchecked", "record_mismatch"] as const) expect(consentHeldAction("Ops", reason)).not.toMatch(/drafter/);
+    expect(consentHeldAction("Ops", "source_moved")).toMatch(/a source document moved/);
   });
   it("the roster-opened history line says what the consent slot does", () => {
     const r = roster([slot({ kind: "accept", primaries: ["req"] }), consent()], { consentPlan: { kind: "sign_off", slot: "ops", label: "Operations", reason: CONSENT_REASON.engineered } });
@@ -312,11 +348,19 @@ describe("rosterCompletion — a slot a window satisfied counts; a satisfied slo
 describe("DEC-12 floor, as it reads for silence", () => {
   it("held when the drafter is the only person who signed; not held when nobody signed at all, or someone else signed", () => {
     const f = { sodActive: true, drafterId: "d-1" };
+    const asked = ["o-1", "o-2"];
     const signedBy = (u: string) => slot({ kind: "a", primaries: [u], status: "satisfied", satisfiedBy: u, satisfiedAt: "x", signatureId: "s", via: "primary" });
     const done = consentSatisfiedSlot(consent(), "x");
-    expect(consentFloorHolds(roster([signedBy("d-1"), done]), f)).toBe(true);
-    expect(consentFloorHolds(roster([done]), f)).toBe(false);
-    expect(consentFloorHolds(roster([signedBy("e-1"), done]), f)).toBe(false);
-    expect(consentFloorHolds(roster([signedBy("d-1"), done]), { sodActive: false, drafterId: "d-1" })).toBe(false);
+    expect(consentFloorHolds(roster([signedBy("d-1"), done]), f, asked)).toBe(true);
+    expect(consentFloorHolds(roster([done]), f, asked)).toBe(false);
+    expect(consentFloorHolds(roster([signedBy("e-1"), done]), f, asked)).toBe(false);
+    expect(consentFloorHolds(roster([signedBy("d-1"), done]), { sodActive: false, drafterId: "d-1" }, asked)).toBe(false);
+  });
+  it("DF-P7 fix pass: held whenever nobody but the drafter was asked and told — whatever the org's size, signed or not", () => {
+    const done = consentSatisfiedSlot(consent({ primaries: ["d-1"] }), "x");
+    expect(consentFloorHolds(roster([done]), { sodActive: true, drafterId: "d-1" }, ["d-1"])).toBe(true);
+    expect(consentFloorHolds(roster([done]), { sodActive: false, drafterId: "d-1" }, ["d-1"])).toBe(true);
+    expect(consentFloorHolds(roster([done]), { sodActive: true, drafterId: "d-1" }, [])).toBe(true);
+    expect(consentFloorHolds(roster([done]), { sodActive: true, drafterId: "d-1" }, ["d-1", "o-1"])).toBe(false);
   });
 });

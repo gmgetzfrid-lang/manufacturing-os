@@ -30,6 +30,12 @@
 //       own fill named nobody (the roster stood the management tier in —
 //       `fallback`) is BLOCKED — it waits as a sign-off and the assignment
 //       queue is told (the "ack_unsatisfiable" polarity).
+//   (4a) DEC-12 / DEC-37 (fix pass): the people asked are never the
+//       assigned drafter (the producer's own silence is never a check) and
+//       never a party the slot declares itself independent of (`drafter`,
+//       `requester`) — consentRecipients. When nobody else is left the slot
+//       is BLOCKED exactly as in (4). open_consent_window (20261255) refuses
+//       the same people, reading the service-written roster ledger.
 //   (5) Before 20261255 is pasted there are no window columns: every consent
 //       slot waits as a sign-off — today's path, said.
 //
@@ -74,7 +80,42 @@ export const CONSENT_REASON = {
   engineeringSlot: "a consent window never stands in for the engineering sign-off — it waits for a sign-off",
   engineered: "this request is engineered work (an engineer's sign-off is required), and a consent window never applies to it — it waits for a sign-off",
   nobody: "its routing named nobody who could be asked (the management tier was rostered instead), so no window was opened — it waits for a sign-off, and the assignment queue was told",
+  onlyParties: "the only people its routing names are the drafter or a party it must be independent of, and their silence is never consent, so no window was opened — it waits for a sign-off, and the assignment queue was told",
 } as const;
+
+/** Why a window that closed with no objection still did not advance (the
+ *  close is HELD: the slot waits for a sign-off). */
+export type ConsentHoldReason = NonNullable<TicketConsentWindowMark["heldReason"]>;
+
+/** The history headline a HELD close writes, by its reason (never the
+ *  drafter-floor wording for a hold that has nothing to do with it). */
+export function consentHeldAction(label: string, reason: ConsentHoldReason | null | undefined): string {
+  switch (reason) {
+    case "undelivered": return `Consent window closed — "${label}" is not consented: not everyone asked has a delivery on record, so it waits for a sign-off`;
+    case "producer_floor": return `Consent window closed with no objection — "${label}" still needs a sign-off from someone other than the drafter`;
+    case "source_moved": return `Consent window closed with no objection — "${label}" waits for a sign-off: a source document moved since the request was raised, and a person must acknowledge it before it issues`;
+    case "source_unchecked": return `Consent window closed with no objection — "${label}" waits for a sign-off: the source documents could not be checked, so it does not issue on silence`;
+    case "record_mismatch": return `Consent window closed with no objection — "${label}" waits for a sign-off: the review's ledger does not agree with the request's roster, so it does not issue on silence`;
+    default: return `Consent window closed with no objection — "${label}" still waits for a sign-off`;
+  }
+}
+
+/**
+ * DEC-12 / DEC-37 (fix pass): the people a consent slot may ask — its
+ * primaries, never the assigned drafter (the producer's silence is not a
+ * check, whatever the org's size), and never the requester when the slot
+ * declares itself independent of the requester. Sorted. Pure; the planner,
+ * the cron's retry and (in SQL) open_consent_window apply the same rule.
+ */
+export function consentRecipients(
+  slot: Pick<TicketReviewSlot, "primaries" | "independentOf">,
+  parties: { drafterId?: string | null; requesterId?: string | null },
+): string[] {
+  const out = new Set(slot.primaries.filter((u) => typeof u === "string" && !!u));
+  if (parties.drafterId) out.delete(parties.drafterId);
+  if (parties.requesterId && (slot.independentOf ?? []).includes("requester")) out.delete(parties.requesterId);
+  return [...out].sort();
+}
 
 /** The routing slot's window (validated by lib/routingControl.ts), or the
  *  defaults. */
@@ -114,13 +155,15 @@ export function windowSchedule(openedAtMs: number, cfg: { windowDays: number; wa
  * BEFORE the submission's compare-and-set and carried on the roster
  * (`consentPlan`), so the history line, the route and the cron's retry all
  * read one decision. Null: the roster has no consent slot (nothing changes).
- *   * `open` — ask the slot's own occupants (its primaries, frozen now).
+ *   * `open` — ask the slot's own occupants (its primaries less the drafter
+ *     and any party the slot is independent of — consentRecipients — frozen
+ *     now).
  *   * `sign_off` — the slot waits for a sign-off, for `reason`.
  *   * `blocked` — nobody could be asked: waits for a sign-off, escalated.
  */
 export function planConsentWindow(
   roster: Pick<TicketReviewRoster, "slots">,
-  ctx: { engineeringRequired: boolean; columns: boolean },
+  ctx: { engineeringRequired: boolean; columns: boolean; drafterId?: string | null; requesterId?: string | null },
 ): TicketConsentPlan | null {
   const consent = roster.slots.filter((s) => s.mode === "consent_window");
   if (consent.length === 0) return null;
@@ -131,8 +174,10 @@ export function planConsentWindow(
   if (one.engineering) return { kind: "sign_off", slot: one.kind, label: label!, reason: CONSENT_REASON.engineeringSlot };
   if (ctx.engineeringRequired) return { kind: "sign_off", slot: one.kind, label: label!, reason: CONSENT_REASON.engineered };
   if (one.fallback || one.primaries.length === 0) return { kind: "blocked", slot: one.kind, label: label!, reason: CONSENT_REASON.nobody };
+  const recipients = consentRecipients(one, { drafterId: ctx.drafterId, requesterId: ctx.requesterId });
+  if (recipients.length === 0) return { kind: "blocked", slot: one.kind, label: label!, reason: CONSENT_REASON.onlyParties };
   const cfg = windowConfigOf(one);
-  return { kind: "open", slot: one.kind, label: label!, recipients: [...one.primaries].sort(), windowDays: cfg.windowDays, warnFraction: cfg.warnFraction };
+  return { kind: "open", slot: one.kind, label: label!, recipients, windowDays: cfg.windowDays, warnFraction: cfg.warnFraction };
 }
 
 /** The sentence a roster's history line adds for its consent plan. */
@@ -304,17 +349,28 @@ export function consentSatisfiedSlot(slot: TicketReviewSlot, now: string): Ticke
 
 /**
  * DEC-12 / DEC-37 producer-versus-checker floor, as it reads for a consent
- * advance: silence is not a check, so the advance is held when the ONLY
- * person who signed any blocking slot is the drafter (the floor then wants a
- * second person, exactly as slotSignPlan holds one slot open for one). A
- * roster on which nobody signed at all (every blocking slot a window) is not
- * the drafter approving their own work, and is not held. Pure.
+ * advance (it stands in for rosterCompletion's floor on the close, which
+ * would never count a window's slot — it has no signer). Held when:
+ *   * the ONLY person who signed any blocking slot is the drafter — silence
+ *     is not a second person over the drafter's own sign-off (slotSignPlan
+ *     holds one slot open for the same reason); or
+ *   * nobody other than the drafter was asked AND told (`asked`: the
+ *     recipients with a delivery on record) — a window only the drafter
+ *     could have objected to is the drafter approving their own work. This
+ *     limb holds whatever the org's size: below the threshold the drafter
+ *     may SIGN their own work, but their silence is never a sign-off.
+ * A roster on which nobody signed at all is not held when someone other
+ * than the drafter was asked and told: they had the window to object (the
+ * recipients never include the drafter — consentRecipients). Pure.
  */
 export function consentFloorHolds(
   roster: Pick<TicketReviewRoster, "slots">,
   floor: { sodActive: boolean; drafterId: string | null | undefined },
+  asked: readonly string[],
 ): boolean {
-  if (!floor.sodActive || !floor.drafterId) return false;
+  const drafter = floor.drafterId ?? null;
+  if (!asked.some((u) => !!u && u !== drafter)) return true;
+  if (!floor.sodActive || !drafter) return false;
   const signed = roster.slots.filter((s) => s.mode !== "notify_only" && s.status === "satisfied" && s.via !== "consent" && !!s.satisfiedBy);
-  return signed.length > 0 && signed.every((s) => s.satisfiedBy === floor.drafterId);
+  return signed.length > 0 && signed.every((s) => s.satisfiedBy === drafter);
 }
