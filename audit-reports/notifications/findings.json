@@ -12,22 +12,25 @@
     "audit-reports/notifications/08-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 130,
+    "findings": 133,
     "gaps": 7,
     "by_severity": {
       "CRITICAL": 2,
       "HIGH": 17,
       "MEDIUM": 79,
-      "LOW": 32
+      "LOW": 35
     },
     "by_status": {
       "REFUTED": 3,
-      "RESOLVED": 104,
-      "OPEN": 19,
+      "RESOLVED": 108,
+      "OPEN": 15,
       "RESOLVED (2026-10-14, notifications Round G, N10 PUSH — done-when 1 met as narrowed by the integrator, `DEC-90`)": 1,
+      "OPEN (Partial — the code landed; done-when 1, the `20261200` inventory comparison, remains: owner the integrator at the `20261200` paste, `DEC-30`, closing by pointer)": 1,
       "RESOLVED *(2026-10-20, by pointer: document-control `DIST-17` is RESOLVED — document-control Round G, P27. Until then the integrator at the N16 merge kept this record OPEN rather than inventing a status outside the corpus vocabulary.)* — the same leak is document-control [`DIST-17`](../document-control/05-distribution.md#dist-17), opened by N16 fix pass 2 under the integrator's ruling at the N16 merge (`DEC-31`, 2026-10-14). That record carries the owner, the severity, the reproduction and the done-whens; this one stays only so the number keeps pointing somewhere, and is not counted in this report.": 1,
       "RESOLVED (2026-10-21, the integrator's fix pass at the P28 merge — ruled by the integrator at the P28 merge, 2026-10-21 (`DEC-90`): the departures ratified, the `heldStatus` trade-off reversed, the pre-deploy remainder closed by document-control `DIST-16` done-when 2)": 1,
-      "RESOLVED (2026-10-13, notifications N15; PASTE pending (both pastes): `20261206` — once BEFORE the N15 deploy and again, REQUIRED, after the next maintenance run following that deploy)": 1
+      "RESOLVED (2026-10-13, notifications N15; PASTE pending (both pastes): `20261206` — once BEFORE the N15 deploy and again, REQUIRED, after the next maintenance run following that deploy)": 1,
+      "RESOLVED (done-when 1 closed by pointer under `DEC-90` — the plan's files entry; see \"Closed by pointer\" below)": 1,
+      "RESOLVED (done-when 3 ruled under `DEC-90` — see \"Ruled\" below)": 1
     }
   },
   "status_vocabulary": [
@@ -546,7 +549,7 @@
       "id": "DELIV-3",
       "title": "Every compliance notification kind falls into sectionCounts.other, which the sidebar computes and throws away — this is the mechanical cause of \"the trail goes cold\"",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1650,7 +1653,7 @@
       "id": "RT-1",
       "title": "Every realtime event that fires while the tab is asleep, backgrounded or disconnected is permanently lost from the live UI — nothing reconciles on reconnect, refocus, or visibility change",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1787,7 +1790,7 @@
       "id": "RT-12",
       "title": "Two subscribed tables are not in the supabase_realtime publication — the milestone board and the shared table-view sync listen to a channel that can never fire",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "OPEN (Partial — the code landed; done-when 1, the `20261200` inventory comparison, remains: owner the integrator at the `20261200` paste, `DEC-30`, closing by pointer)",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -2323,7 +2326,7 @@
       "id": "TAX-10",
       "title": "Nothing below the sidebar consumes the attention feed, so a badge can never propagate library -> folder -> document; and the one \"poke a person\" act has three names, none reachable from a drafting request",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2460,7 +2463,7 @@
       "id": "TRAIL-1",
       "title": "The trail has exactly one link: the sidebar row. No page below /documents, /projects or any library consumes notification state at all",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3190,6 +3193,31 @@
       "report": "audit-reports/notifications/05-realtime-and-lifecycle.md"
     },
     {
+      "id": "RT-13",
+      "title": "The table-view change Broadcast is a public channel on a guessable topic: anyone who knows a view's id sees when it is saved",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/tableViews.ts:42",
+        "lib/tableViews.ts:51",
+        "lib/tableViews.ts:349-350",
+        "lib/tableViews.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial",
+      "challenges": [
+        "adversarial"
+      ],
+      "refuted": false,
+      "summary": "A member who knows a colleague's user id and a library id composes tvuser<org><uid><lib><folder> and listens: each time the colleague saves their columns or sort, an empty message arrives. Low value, but it is presence information the product does not otherwise expose.",
+      "area": "notifications",
+      "report": "audit-reports/notifications/05-realtime-and-lifecycle.md"
+    },
+    {
       "id": "STACK-4",
       "title": "Bottom-center is a second uncoordinated corner: undo toasts and the graph return chip occupy identical coordinates",
       "severity": "LOW",
@@ -3337,10 +3365,35 @@
       "report": "audit-reports/notifications/03-taxonomy.md"
     },
     {
+      "id": "TAX-18",
+      "title": "The three document pokes keep three names, three components and three kinds — the one \"Nudge\" stops at the drafting request",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "components/documents/EditOverlapBanner.tsx:246",
+        "components/documents/DistributionRecall.tsx",
+        "lib/staleCopies.ts",
+        "lib/orchestrator/tools.ts:1184"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial",
+      "challenges": [
+        "adversarial"
+      ],
+      "refuted": false,
+      "summary": "An engineer nudges the approver of a drafting request with \"Nudge\" (once GAP-206 lands), then opens a document with parallel edit work and finds \"Send heads-up\"; a recall shows \"Recall sent to 3 people\"; the assistant \"notifies personnel\". Three verbs, three bell kinds, three icons for one act.",
+      "area": "notifications",
+      "report": "audit-reports/notifications/03-taxonomy.md"
+    },
+    {
       "id": "TRAIL-6",
       "title": "A notification row cannot be rolled up to a container: it carries no library_id or collection_id, and resource_id is TEXT while documents.id is uuid",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED (done-when 1 closed by pointer under `DEC-90` — the plan's files entry; see \"Closed by pointer\" below)",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3391,7 +3444,7 @@
       "id": "TRAIL-11",
       "title": "The one place the chain DOES continue — the requests queue — proves the pattern and shows it was never applied to documents or projects",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED (done-when 3 ruled under `DEC-90` — see \"Ruled\" below)",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3438,6 +3491,30 @@
       ],
       "refuted": false,
       "summary": "A branch is opened on a document whose libraryId wasn't in scope at emit time. The Documents badge increments. The user opens the bell, clicks the row, and lands on /search showing 'no results' for a 36-character uuid — the only pointer to the resource has been converted into a guaranteed miss.",
+      "area": "notifications",
+      "report": "audit-reports/notifications/04-cold-trail.md"
+    },
+    {
+      "id": "TRAIL-14",
+      "title": "The sidebar's Documents badge and the bell still count a notification about a document the viewer cannot read",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "hooks/useTicketNotifications.ts",
+        "components/navigation/Sidebar.tsx",
+        "components/notifications/NotificationBell.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial",
+      "challenges": [
+        "adversarial"
+      ],
+      "refuted": false,
+      "summary": "A document sits in a folder whose ACL was later restricted; a reviewoverdue row about it reaches a user who can no longer read it. The sidebar shows \"Documents 1\" and the bell counts it, while no library, folder or row carries a mark — the badge opens onto nothing, the UI-3 pattern GAP-202's permission trap exists to prevent.",
       "area": "notifications",
       "report": "audit-reports/notifications/04-cold-trail.md"
     }

@@ -540,12 +540,17 @@ describe("RT-8 / NEDGE-18 / TRAIL-9 — the reconcile pass: after the read, on t
 
 describe("TRAIL-12 — a document row without a link opens its library", () => {
   it("resolved in one batched read; unresolved opens Documents; never a search for a raw id", async () => {
-    fx.pages = [[row(1, { link: null, resourceId: "d-known" }), row(2, { link: null, resourceId: "d-unknown" })]];
-    fx.total = 2;
-    fx.documents = [{ id: "d-known", library_id: "lib-9" }];
+    // documents.id is a uuid: only a uuid-shaped id is sent to the read (N11 fix pass —
+    // an id of any other shape names no document and opens Documents, below)
+    const known = "00000000-0000-4000-8000-00000000000a";
+    const unknown = "00000000-0000-4000-8000-00000000000b";
+    fx.pages = [[row(1, { link: null, resourceId: known }), row(2, { link: null, resourceId: unknown }), row(3, { link: null, resourceId: "DOC-0012" })]];
+    fx.total = 3;
+    fx.documents = [{ id: known, library_id: "lib-9" }];
     await mount(withProvider(1));
     const links = Object.fromEntries(last().items.map((i) => [i.notificationId, i.link]));
-    expect(links.n1).toBe("/documents/lib-9?doc=d-known");
+    expect(links.n1).toBe(`/documents/lib-9?doc=${known}`);
+    expect(links.n3).toBe("/documents");
     expect(links.n2).toBe("/documents");
     expect(fx.calls.filter((c: Call) => c.table === "documents" && c.method === "in").length).toBe(1);
     for (const l of Object.values(links)) expect(l).not.toMatch(/^\/search/);

@@ -34,6 +34,9 @@ import { appAlert } from "@/components/providers/DialogProvider";
 import DeleteSafetyModal from "@/app/(protected)/admin/libraries/DeleteSafetyModal";
 import type { LibraryDeleteImpact } from "@/lib/libraryDeleteImpact";
 import { postLibraryDelete, libraryDeleteError } from "@/lib/libraryDeleteClient";
+import { useAttentionRollup } from "@/hooks/useTicketNotifications";
+import { listMarkFor } from "@/lib/attentionRollup";
+import AttentionDot, { AttentionUnknownNote } from "@/components/documents/AttentionDot";
 
 type UiLibrary = LibraryConfig & {
   _id: string;
@@ -52,6 +55,11 @@ const safeLower = (v: unknown) => (typeof v === "string" ? v.toLowerCase() : "")
 export default function DocumentsHomePage() {
   const router = useRouter();
   const { activeRole, roles, hasAnyRole, userEmail, activeOrgId } = useRole();
+  // N11 TRAIL (TRAIL-1 dw1): each library card carries the count of the
+  // Documents badge's rows that live in it — read from the tab's one feed
+  // (no query of its own); a card with nothing to mark renders as before.
+  // An incomplete roll-up is said once above the cards, not on each card.
+  const attention = useAttentionRollup();
 
   // Start false — only flip to true once we actually have everything we need
   // to fetch. This avoids "Loading libraries..." showing up forever when the
@@ -519,6 +527,7 @@ export default function DocumentsHomePage() {
           </div>
         )}
 
+        <AttentionUnknownNote rollup={attention} level="libraries" className="mb-3" />
         {filtered.length === 0 ? (
           search.trim() ? (
             visibleDocHits.length === 0 && !docSearching ? (
@@ -595,6 +604,13 @@ export default function DocumentsHomePage() {
                           <AlertTriangle className="w-3 h-3" /> No Access
                         </span>
                       )}
+                      <AttentionDot
+                        mark={listMarkFor(attention, { libraryId: lib._id })}
+                        variant="count"
+                        partial={attention.libraries === "unknown"}
+                        where="in this library"
+                        className="self-center"
+                      />
                     </div>
                   </div>
 

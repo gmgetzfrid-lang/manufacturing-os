@@ -121,6 +121,9 @@ import {
 } from "@/lib/explorerSelection";
 import DocContextMenu, { type ContextMenuEntry } from "@/components/documents/DocContextMenu";
 import DocGridView from "@/components/documents/DocGridView";
+import AttentionDot, { AttentionUnknownNote } from "@/components/documents/AttentionDot";
+import { useAttentionRollup } from "@/hooks/useTicketNotifications";
+import { attentionFor, listMarkFor } from "@/lib/attentionRollup";
 import {
   buildFolderPlan,
   collectDroppedFiles,
@@ -319,6 +322,17 @@ export default function LibraryExplorerPage() {
 
   const [library, setLibrary] = useState<LibraryConfig | null>(null);
   const [folders, setFolders] = useState<LibraryCollection[]>([]);
+  // N11 TRAIL (TRAIL-1 dw2/dw3, TAX-10 dw2): the badge trail inside the
+  // library — a count on each folder on the path to a document the Documents
+  // badge counts, a dot on the document's row; nothing on the rest. Read from
+  // the tab's one feed: no query and no channel per folder or row. An
+  // incomplete roll-up is said once above the folders (AttentionUnknownNote),
+  // never as a "?" on every folder; the page re-renders when a mark changes,
+  // not on every feed pass (the roll-up keeps its identity).
+  const attention = useAttentionRollup();
+  const folderAttention = useCallback((folderId: string) => listMarkFor(attention, { folderId }), [attention]);
+  const docAttention = useCallback((documentId: string) => attentionFor(attention, { documentId }), [attention]);
+  const folderAttentionPartial = attention.folders === "unknown";
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   // Default false — only flip true while a real fetch is in flight, so a
   // transient null activeOrgId (e.g. on refresh before RoleContext resolves)
@@ -3997,6 +4011,8 @@ export default function LibraryExplorerPage() {
           isController={isController}
           onNavigate={setCurrentFolderId}
           onCreateFolder={openCreateFolder}
+          attentionFor={folderAttention}
+          attentionPartial={folderAttentionPartial}
           onDropItems={isController ? (targetId, payload) => {
             if (payload.folderIds?.length) void dropMoveFolders(payload.folderIds, targetId);
             else if (payload.folderId) void dropMoveFolder(payload.folderId, targetId);
@@ -4135,6 +4151,7 @@ export default function LibraryExplorerPage() {
                 </div>
               )}
 
+              <AttentionUnknownNote rollup={attention} level="folders" className="px-5 pt-3" />
               {/* FOLDERS GRID */}
               {filteredFolders.length > 0 && (
                 <div className="p-5 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]/40">
@@ -4161,6 +4178,8 @@ export default function LibraryExplorerPage() {
                     isController={isController}
                     selectedIds={selectedFolderIds}
                     onTileSelect={handleFolderTileSelect}
+                    attentionFor={folderAttention}
+                    attentionPartial={folderAttentionPartial}
                   />
                 </div>
               )}
@@ -4409,6 +4428,7 @@ export default function LibraryExplorerPage() {
                         <DocThumb documentId={doc.id} width={40} className="mt-0.5" />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
+                            {doc.id && <AttentionDot mark={docAttention(doc.id)} variant="dot" where="on this document" />}
                             <span className="font-mono text-xs font-bold text-[var(--color-text)] truncate flex-1">{doc.documentNumber || doc.title || doc.name || "—"}</span>
                             {doc.rev && <span className="text-[10px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">Rev {doc.rev}</span>}
                           </div>
@@ -4445,6 +4465,7 @@ export default function LibraryExplorerPage() {
                         onItemContextMenu={handleRowContextMenu}
                         onItemDragStart={handleDocDragStart}
                         onBackgroundClick={clearSelection}
+                        attentionFor={docAttention}
                       />
                     </div>
                   ) : (
@@ -4569,6 +4590,9 @@ export default function LibraryExplorerPage() {
                                     onChange={() => {}}
                                     className="w-3.5 h-3.5 rounded accent-blue-600 cursor-pointer"
                                   />
+                                  {/* N11 TRAIL: the document's own mark — a dot, no number — in the row's left gutter
+                                      (positioned against the row, as the selected-row accent above is). */}
+                                  {docRecord.id && <AttentionDot mark={docAttention(docRecord.id)} variant="dot" where="on this document" className="absolute left-[3px] top-1/2 -translate-y-1/2" />}
                                 </td>
                                 {activeColumns.map((colKey) => {
                                   const def = columnMap.get(colKey);

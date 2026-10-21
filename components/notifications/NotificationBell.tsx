@@ -16,11 +16,21 @@
 // everything in the feed; "need action" is the part only doing the work
 // clears — "Mark notifications read" clears notification rows, never that.
 // The icon per kind is the registry's (components/notifications/kindIcon.ts).
+//
+// It says when its number may be out of date (RT-1 dw4, notifications Round
+// G, N11): while the feed's live connection is down (useAttentionStatus().
+// stale) the count carries a mark, the trigger's name says so, and the drawer
+// says "Reconnecting — the count may be out of date" — the line the feed
+// surfaces already show. A refused "mark read" is said in the drawer too,
+// in one line — a row's (status.markError) or "Mark notifications read"'s
+// own (BELL_MARK_ALL_REFUSED, held here and cleared when the drawer opens again)
+// — never a silent success. A row clicked whose mark is refused keeps the
+// drawer open on that line instead of closing it (second fix pass).
 
 import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Bell, CheckCheck, Loader2 } from "lucide-react";
-import { useTicketNotifications, type AttentionItem } from "@/hooks/useTicketNotifications";
+import { useTicketNotifications, useAttentionStatus, type AttentionItem } from "@/hooks/useTicketNotifications";
 import { useNotificationCenter } from "@/components/notifications/NotificationCenter";
 import { iconForKind } from "@/components/notifications/kindIcon";
 
@@ -30,10 +40,21 @@ interface NotificationBellProps {
   variant?: "header";
 }
 
-/** The trigger's accessible name — the number lives here, not in the badge. */
-export function bellLabel(attention: number): string {
-  return attention > 0 ? `Notifications, ${attention} need${attention === 1 ? "s" : ""} attention` : "Notifications";
+/** The trigger's accessible name — the number lives here, not in the badge.
+ *  `stale` (RT-1 dw4): the live connection is down, so the number may be out
+ *  of date — the name says so. */
+export function bellLabel(attention: number, stale = false): string {
+  const base = attention > 0 ? `Notifications, ${attention} need${attention === 1 ? "s" : ""} attention` : "Notifications";
+  return stale ? `${base} — reconnecting, the count may be out of date` : base;
 }
+
+/** The drawer's line while the live connection is down (RT-1 dw4) — the feed
+ *  surfaces' words (components/cockpit/AttentionFeed.tsx). */
+export const BELL_STALE_LINE = "Reconnecting — the count may be out of date until the live connection is back.";
+
+/** The drawer's line when "Mark notifications read" is refused (fix pass:
+ *  the bell says its own refusal; the feed's status line is a row's). */
+export const BELL_MARK_ALL_REFUSED = "Marking these notifications read did not go through — they are still unread. Try again in a moment.";
 
 /** What the live region says: the count, in the drawer header's two words
  *  (RT-9) — "need attention" is everything in the feed, "need action" the
@@ -54,11 +75,16 @@ export default function NotificationBell(_props: NotificationBellProps) {
   const dialogId = useId();
   const { items, count, counts, actionRequiredCount, loading, markRead, markAllRead } = useTicketNotifications();
   const { open: openCenter } = useNotificationCenter();
+  const { stale, markError } = useAttentionStatus();
+  // "Mark notifications read" refused: said in this opening of the drawer;
+  // opening it again starts clean.
+  const [markAllError, setMarkAllError] = useState<string | null>(null);
+  const markLine = markAllError ?? markError;
   const unread = count;
 
   // Let other surfaces (e.g. the Inbox) pop the drawer open via a global event.
   useEffect(() => {
-    const onOpen = () => setOpen(true);
+    const onOpen = () => { setMarkAllError(null); setOpen(true); };
     window.addEventListener("mfgos:open-notifications", onOpen);
     return () => window.removeEventListener("mfgos:open-notifications", onOpen);
   }, []);
@@ -103,9 +129,18 @@ export default function NotificationBell(_props: NotificationBellProps) {
   // feed, which clear when the work is done or the request is opened.
   const remaining = counts.all - counts.notifications;
 
+  // A row's mark that was refused keeps the drawer open (second fix pass):
+  // the drawer's line (status.markError) says it, where closing the drawer
+  // would make the refusal silent. The link still opens its target, as
+  // before; a mark that landed closes the drawer, as before.
   const onItemClick = async (item: AttentionItem) => {
     if (item.notificationId) {
-      try { await markRead(item.notificationId); } catch { /* swallow */ }
+      let landed: boolean | void = false;
+      try { landed = await markRead(item.notificationId); } catch { landed = false; }
+      if (landed === false) {
+        setMarkAllError(null);
+        return;
+      }
     }
     setOpen(false);
   };
@@ -115,12 +150,12 @@ export default function NotificationBell(_props: NotificationBellProps) {
       <button
         ref={triggerRef}
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-label={bellLabel(unread)}
+        onClick={() => { setMarkAllError(null); setOpen((v) => !v); }}
+        aria-label={bellLabel(unread, stale)}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? dialogId : undefined}
-        title={unread > 0 ? `${unread} need${unread === 1 ? "s" : ""} attention` : "Notifications"}
+        title={`${unread > 0 ? `${unread} need${unread === 1 ? "s" : ""} attention` : "Notifications"}${stale ? " — reconnecting, the count may be out of date" : ""}`}
         className={`relative w-9 h-9 inline-flex items-center justify-center rounded-full transition-all ${
           open ? "bg-slate-900 text-white" : "bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)]"
         }`}
@@ -130,6 +165,10 @@ export default function NotificationBell(_props: NotificationBellProps) {
           <span aria-hidden className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-orange-500 text-white text-[10px] font-black ring-2 ring-white">
             {unread > 99 ? "99+" : unread}
           </span>
+        )}
+        {/* RT-1 dw4: the count may be out of date while the live connection is down. */}
+        {stale && (
+          <span aria-hidden data-bell-stale className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-white" />
         )}
       </button>
       {/* The one polite live region for the count (NEDGE-5 dw2): a new
@@ -163,7 +202,10 @@ export default function NotificationBell(_props: NotificationBellProps) {
                 {hasNotifRows && (
                   <button
                     type="button"
-                    onClick={async () => { await markAllRead(); }}
+                    onClick={async () => {
+                      setMarkAllError(null);
+                      try { await markAllRead(); } catch { setMarkAllError(BELL_MARK_ALL_REFUSED); }
+                    }}
                     title={remaining > 0
                       ? `Marks the ${counts.notifications} notification${counts.notifications === 1 ? "" : "s"} read. ${remaining} request${remaining === 1 ? " stays" : "s stay"} until the work is done or the request is opened.`
                       : `Marks the ${counts.notifications} notification${counts.notifications === 1 ? "" : "s"} read.`}
@@ -185,6 +227,18 @@ export default function NotificationBell(_props: NotificationBellProps) {
                 </Link>
               </div>
             </div>
+            {/* RT-1 dw4: the count may be out of date while the live connection is down. */}
+            {stale && (
+              <div role="status" data-bell-stale-line className="px-4 py-1.5 border-b border-amber-200 bg-amber-50 text-[10px] font-semibold text-amber-900">
+                {BELL_STALE_LINE}
+              </div>
+            )}
+            {/* A refused "mark read" is said, never a silent success (N11) — once. */}
+            {markLine && (
+              <div role="alert" data-bell-mark-error className="px-4 py-1.5 border-b border-red-200 bg-red-50 text-[10px] font-semibold text-red-800">
+                {markLine}
+              </div>
+            )}
             {/* RT-9: what "Mark notifications read" cannot clear, said in place. */}
             {remaining > 0 && (
               <div className="px-4 py-1.5 border-b border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)]" data-bell-remaining>

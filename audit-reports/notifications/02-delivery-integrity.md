@@ -172,7 +172,7 @@ It evaluates the recipient's row where the row is visible. The rule is the maste
 ## DELIV-3 · Every compliance notification kind falls into sectionCounts.other, which the sidebar computes and throws away — this is the mechanical cause of "the trail goes cold"
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N11 TRAIL (done-when 3: library, folder and document rows carrying their own counts, delivered by `TRAIL-1`) — by the integrator, 2026-10-01 (N2 merge; fleet plan `audit-reports/fleet-plans/notifications.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:71-103`, `hooks/useTicketNotifications.ts:246-250`, `components/navigation/Sidebar.tsx:229-235`, `lib/inAppNotifications.ts:37-58`, `lib/storageAlerts.ts:60-62`
@@ -232,6 +232,18 @@ It evaluates the recipient's row where the row is visible. The rule is the maste
 - ✓ `'other'` is eliminated: no bucket is computed and thrown away; a bell-only kind is a deliberate, tested placement.
 
 **Scope / residual.** Stays OPEN for done-when 3 only, which `TRAIL-1` (N11) delivers; record RESOLVED when it lands.
+
+**Resolution (2026-10-21, notifications Round G).** Package N11 TRAIL, branch `fleet/N11-trail-markers`, commit `1675bda` — done-when 3, the remainder re-owned by the integrator at the N2 merge. **Reproduced first** on `9bc7884`: no library, folder or document row carried a count (TRAIL-1's census).
+
+What landed: the badge chain continues past the nav item — the library card carries a count, the folders on the path to the document a count, the document row a dot, the project card a dot, each derived from the feed's own rows by `resource_type` / `resource_id` (a document resolved once per pass to its library and folder through the viewer's own read; `lib/attentionRollup.ts`, `hooks/useTicketNotifications.ts` `useAttentionRollup`). TRAIL-1's Resolution has the detail and the tests (`lib/__tests__/attentionRollup.test.ts`).
+
+**Done-when.**
+- ✓ `sectionForKind` maps every kind in the union (N2, Partial above — unchanged).
+- ✓ The storage kinds are in the union (N2 — unchanged).
+- ✓ The badge chain continues past the nav item: library, folder and document rows carry their own marks derived from `resource_type` / `resource_id` — a count on the library card and on the folders on the path, a dot (no number) on the document row (`DEC-90` ruling 1: "a number on every row in a long list is wallpaper", GAP-202).
+- ✓ `'other'` is eliminated (N2 — unchanged).
+
+**Scope / residual.** TRAIL-1's. *Fix pass (2026-10-21, the review):* the library, folder and document marks never count a document the viewer cannot read; the nav item's own count (the sidebar's Documents badge) still does, as before — GAP-202 acceptance 4 is met for the marks below the nav item only, and the nav item's half is `TRAIL-14` (`04-cold-trail.md`, owner notifications N12 NUDGES — assigned at the second fix pass).
 
 ---
 

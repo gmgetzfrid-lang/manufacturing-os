@@ -570,7 +570,7 @@ Tests: `lib/__tests__/notificationListener.test.ts` "40 rows in a burst: the fir
 ## TAX-10 · Nothing below the sidebar consumes the attention feed, so a badge can never propagate library -> folder -> document; and the one "poke a person" act has three names, none reachable from a drafting request
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:134`, `components/documents/EditOverlapBanner.tsx:79-97`, `components/documents/DistributionRecall.tsx:48-56`, `lib/staleCopies.ts:182-208`, `lib/orchestrator/tools.ts:505-515`, `app/(protected)/requests/[id]/page.tsx`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both halves confirmed. All four nudge paths require a document_id (the orchestrator tool at tools.ts:495 loads `d.document_number` / `d.library_id` before emitting), so none is reachable from a ticket stuck at PENDING_FINAL_APPROVAL.
@@ -599,6 +599,18 @@ lib/orchestrator/tools.ts:509-511 -- `kind: "orchestrator_message",\n      title
 - [ ] Opening a badged library shows the badged folder; opening that folder shows the badged document
 - [ ] The feed is fetched once per page (context/provider) rather than once per mounted consumer
 - [ ] One named person-to-person action ("Nudge") with one component and one kind replaces the three ad-hoc implementations, and is available from a drafting request's approval step targeting the assigned engineer
+
+**Resolution (2026-10-21, notifications Round G).** Package N11 TRAIL, branch `fleet/N11-trail-markers`, commit `1675bda`. **Reproduced first** on `9bc7884`: no surface below the rail read the feed (TRAIL-1's census); the feed was already one per tab (`components/providers/AttentionProvider.tsx`, mounted at `app/(protected)/layout.tsx:264` — N4, `DEC-105` §1); the three document pokes keep three names and three kinds (`sendHeadsUp`, `components/documents/EditOverlapBanner.tsx:246`, `overlap_advisory`; `nudgeStaleHolders`, `lib/staleCopies.ts`, `doc_recalled` since N9; the orchestrator's `notify_personnel`, `lib/orchestrator/tools.ts:1184`, `orchestrator_message`).
+
+What landed: `useAttentionFor(target)` (`hooks/useTicketNotifications.ts:1265`) with `useAttentionRollup()` (:1257) — a library, folder, document or project target answers its mark from the tab's one feed; the library card, folder rail and grid, document rows and project cards render it (TRAIL-1's Resolution).
+
+**Done-when.**
+- ✓ A `useAttentionFor(section | resourceId)` selector lets a library row, folder row and document row render the count of feed items whose resource matches (`useAttentionFor({ libraryId | folderId | documentId | projectId })`; the section counts were already `sectionCounts`).
+- ✓ Opening a badged library shows the badged folder (its count on the folder rail and grid); opening that folder shows the badged document (its dot on the row).
+- ✓ The feed is fetched once per page (N4's provider, `DEC-105` §1 — verified, not changed here; the roll-up adds no query per surface or row: test "40 folder tiles … add no query").
+- Not done here — one named "Nudge" replacing the three ad-hoc implementations, available from a drafting request's approval step. Split (`DEC-31`): the drafting-request nudge is `GAP-206` (notifications N12 NUDGES — `app/api/tickets/nudge/route.ts`, offered when the ticket waits on that person, recorded on the ticket); the three document pokes keep their names and are the new finding **`TAX-18`** (below), owner notifications N13 (assigned at the N11 second fix pass), decided once `GAP-206`'s one component and kind exist.
+
+**Scope / residual.** Done-when 4 → `GAP-206` (N12) and `TAX-18`. TAX-10 is recorded RESOLVED for done-when 1–3 under that split. *Fix pass (2026-10-21, the review):* the selector's marks honour the permission trap (a document the viewer cannot read is placed in no library or folder), but the section counts beside them do not — the sidebar's Documents badge and the bell still count a row about such a document (GAP-202 acceptance 4 is met for the container markers only); that remainder is `TRAIL-14` (`04-cold-trail.md`, owner notifications N12 NUDGES — assigned at the N11 second fix pass). *Second fix pass (2026-10-21, the final review):* the cites above re-derived at the final HEAD; the selector's marks are unchanged, and the feed's counts no longer wait for the placement reads behind them (`TRAIL-1`'s second fix pass).
 
 ---
 
@@ -1087,4 +1099,30 @@ The scratch cluster was deleted afterwards. Re-run at the fix pass on a throwawa
 - **The merge with N4 (fix pass 4):** `checkout_stale_escalation` takes N4's `category: "sla_warning"` beside `checkout_released`, and N4's discharge check: `reconcileClassOf` maps it to `stale_checkout` (retired once its session ends), so it stays an action kind under `DEC-105` / `DEC-81` §2. Pinned in `lib/__tests__/notificationReconcile.test.ts` (both names classified; a row of each retired once its session ended, kept while active) and `notificationKinds.test.ts` (`ACTION_ADDED`).
 - **Scope ratified.** The integrator ratified this package's departures from the brief under `DEC-90`: in `20261206`, more than one kind, a new SECURITY DEFINER function (`notification_i_wrote`), and the paste-before-deploy rule. Item (b) under "Scope / residual" above is closed by that ratification. No code changed for it.
 - **Status:** RESOLVED, with PASTE pending (both pastes). Nothing more is claimed until the operator returns both result sets.
+---
+
+<a id="tax-18"></a>
+
+## TAX-18 · The three document pokes keep three names, three components and three kinds — the one "Nudge" stops at the drafting request
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Locations:** `components/documents/EditOverlapBanner.tsx:246` (`sendHeadsUp`, "Send heads-up", kind `overlap_advisory`), `components/documents/DistributionRecall.tsx` / `lib/staleCopies.ts` (`nudgeStaleHolders`, "Recall sent to N people", kind `doc_recalled`), `lib/orchestrator/tools.ts:1184` (`notify_personnel`, kind `orchestrator_message`)
+- **Opened:** 2026-10-21, notifications Round G, package N11 TRAIL — `TAX-10` done-when 4's document half (`DEC-31`).
+- **Assigned:** notifications N13 — at the N11 second fix pass, 2026-10-21, on the integrator's direction (`DEC-31`; the integrator adds the plan entry). N13 runs last in the notifications area, after N12's `GAP-206` merges (the decision this finding waits on), and only when no package of another area holds the files it touches — the rule this finding needs, since `DistributionRecall` / `lib/staleCopies.ts` are document-control's and `lib/orchestrator/tools.ts` intelligence's. (N12 was weighed: it builds the "Nudge" itself, but its files hold none of the three pokes.)
+
+**Mechanism.** `TAX-10` done-when 4 asks for one named person-to-person action ("Nudge"), one component and one kind, replacing the ad-hoc pokes, and available from a drafting request's approval step. The drafting-request half is `GAP-206` (notifications N12 NUDGES — a server route that offers the nudge when the ticket waits on that person and records it on the ticket). The three document pokes are not in N12's plan: the overlap banner's heads-up, the recall's "nudge stale holders" (document-control's `DistributionRecall`) and the orchestrator's `notify_personnel` each keep their own wording, component and kind, so a user who learns "Nudge" on a request finds three other names for the same act on a document.
+
+**Failure scenario.** An engineer nudges the approver of a drafting request with "Nudge" (once GAP-206 lands), then opens a document with parallel edit work and finds "Send heads-up"; a recall shows "Recall sent to 3 people"; the assistant "notifies personnel". Three verbs, three bell kinds, three icons for one act.
+
+**Evidence.** `components/documents/EditOverlapBanner.tsx:246` `const sendHeadsUp = async (row: OverlapRow) => {` (kind `overlap_advisory`); `lib/staleCopies.ts` `nudgeStaleHolders` (kind `doc_recalled`, N9's split); `lib/orchestrator/tools.ts:1240` `kind: "orchestrator_message"`.
+
+**Done when.**
+
+- [ ] The document pokes either adopt `GAP-206`'s one "Nudge" component and kind, or each is recorded as a deliberately different act (a recall is a compliance notice, not a nudge) with its reason in `lib/notificationKinds.ts` `KIND_META` — decided once, after `GAP-206` lands.
+- [ ] Whatever stays a separate act says so in its wording, so no surface calls the same act by two names.
+
+**Owner.** notifications N13 (the Assigned line above) — after N12's `GAP-206` merges. Document-control holds `DistributionRecall` / `lib/staleCopies.ts`, intelligence holds `lib/orchestrator/tools.ts`, the overlap banner is notifications': N13 edits them only when no package holding them is in flight.
+
 ---

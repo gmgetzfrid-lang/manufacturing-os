@@ -370,24 +370,47 @@ export async function listUnreadKindsBeyond(
   }));
 }
 
+// The three "mark read" writes are CHECKED (notifications Round G, N11 — the
+// N3 → N4 hand-off; SAF-18): each reads `{ error }` and throws on a refusal,
+// so a refused update (a session that lapsed, a rail that refused the row)
+// is never reported as done. markRead / markManyRead also read back the rows
+// the update reached (the recipient's own rows — the read policy allows the
+// RETURNING) and treat a row it did not reach as a refusal: row-level
+// security filters a refused update to zero rows with no error. markAllRead
+// cannot: "nothing was unread" is a legitimate zero. The attention hook
+// catches a row's refusal and says it (status.markError); "Mark all read"
+// callers catch and say it too.
+
+/** What a refused mark-read throws. */
+function markReadRefused(error: { message?: string }): Error {
+  return new Error(`Marking read was refused: ${error.message ?? "unknown error"}`);
+}
+
 export async function markRead(id: string): Promise<void> {
-  await supabase.from("notifications").update({ read_at: new Date().toISOString() }).eq("id", id);
+  const { data: hit, error } = await supabase.from("notifications").update({ read_at: new Date().toISOString() }).eq("id", id).select("id");
+  if (error) throw markReadRefused(error);
+  if (!hit || hit.length === 0) throw markReadRefused({ message: "the notification was not marked (not yours, or no longer there)" });
 }
 
 /** Mark several notification rows read in one round-trip. No-op for an empty
- *  list. Used by the attention hook to auto-clear stale workflow alerts. */
+ *  list. Throws on a refusal, or when the update reached fewer rows than
+ *  were asked. */
 export async function markManyRead(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
-  await supabase.from("notifications").update({ read_at: new Date().toISOString() }).in("id", ids);
+  const { data: hit, error } = await supabase.from("notifications").update({ read_at: new Date().toISOString() }).in("id", ids).select("id");
+  if (error) throw markReadRefused(error);
+  if (!hit || hit.length < new Set(ids).size) throw markReadRefused({ message: `${(hit ?? []).length} of ${new Set(ids).size} notifications were marked` });
 }
 
 /** Mark every unread notification read. Pass the active workspace's orgId to
  *  clear only that workspace — without it, a user who belongs to several
- *  workspaces would clear the bell for all of them at once. */
+ *  workspaces would clear the bell for all of them at once. Throws on a
+ *  refusal. */
 export async function markAllRead(orgId?: string | null): Promise<void> {
   let q = supabase.from("notifications").update({ read_at: new Date().toISOString() }).is("read_at", null);
   if (orgId) q = q.eq("org_id", orgId);
-  await q;
+  const { error } = await q;
+  if (error) throw markReadRefused(error);
 }
 
 function rowToNotification(r: Record<string, unknown>): NotificationRow {

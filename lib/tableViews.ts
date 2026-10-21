@@ -6,6 +6,67 @@ import type { ExplorerViewConfig, TableViewConfig, ViewColumn } from "@/types/sc
 
 const TABLE = "table_views";
 
+// Cross-client sync (notifications RT-12 — notifications Round G, N11; DEC-105
+// §5): table_views is deliberately NOT in the supabase_realtime publication.
+// Supabase applies no row-level security to DELETE events, and a table_views
+// key is a composite text id naming the workspace, the person and the library
+// (tableViewId below), so publishing the table would hand those ids, across
+// workspaces, to anyone listening for its DELETEs. Instead the SAVER announces
+// a change with a Realtime Broadcast on the view's own topic, and each viewer
+// of that view re-reads the row under its own row-level security. The message
+// carries NOTHING (an empty payload): only a viewer who already knows the
+// view's id is subscribed to its topic, and what it re-reads is what RLS lets
+// it read — so no row data reaches anyone who did not already have it.
+//
+// The message is a HINT, never data (second fix pass): its payload is
+// ignored, and the listener only re-reads. The topic is a PUBLIC Broadcast
+// channel named after the view's id, and that id is guessable (it is built
+// from the workspace, person, library and folder ids), so anyone who knows
+// it can post to the topic or listen on it. Two consequences, recorded:
+//   * a forged or flooded message costs the listener at most about one
+//     re-read per TABLE_VIEW_RESYNC_MS window — the re-reads are coalesced
+//     (one in flight, one trailing re-read after it; LISTENER below);
+//   * RESIDUAL: someone who knows a topic sees WHEN that view is saved or
+//     deleted (an empty message, no content). Closing it needs a PRIVATE
+//     channel, which needs a realtime.messages row-level-security policy —
+//     a migration, not this package's (RT-12's Partial; the new finding
+//     RT-13, audit-reports/notifications/05-realtime-and-lifecycle.md).
+const TABLE_VIEW_EVENT = "table_view_changed";
+
+/** The listener's coalescing window: a burst of change messages (or a
+ *  flood of forged ones) on a view's topic is answered by about one re-read
+ *  per window — one in flight, and at most one trailing re-read after it. */
+export const TABLE_VIEW_RESYNC_MS = 250;
+
+/** The Broadcast topic of one view (the channel name its listeners join). */
+export function tableViewTopic(id: string): string {
+  return `table-view-${id}`;
+}
+
+/** Tell the view's other viewers it changed (after a save or a delete
+ *  landed). Best-effort: the write already landed, and a viewer that misses
+ *  the message reads the new row on its next load. On a topic this tab
+ *  already listens to, the joined channel sends it (and stays); otherwise a
+ *  short-lived channel sends it over REST and is removed. Never throws. */
+async function announceTableViewChange(id: string): Promise<void> {
+  const topic = tableViewTopic(id);
+  try {
+    const joined = supabase.getChannels().find((c) => c.topic === `realtime:${topic}`);
+    if (joined) {
+      await joined.send({ type: "broadcast", event: TABLE_VIEW_EVENT, payload: {} });
+      return;
+    }
+    const channel = supabase.channel(topic);
+    try {
+      await channel.httpSend(TABLE_VIEW_EVENT, {});
+    } finally {
+      void supabase.removeChannel(channel);
+    }
+  } catch (e) {
+    console.warn("[tableViews] the change announcement did not go out (non-blocking)", (e as Error)?.message ?? e);
+  }
+}
+
 type ViewScope = "user" | "org";
 
 function safePart(v?: string | null) {
@@ -150,6 +211,7 @@ export async function saveTableView(params: {
     ({ error } = await supabase.from(TABLE).upsert(payload, { onConflict: "id" }));
   }
   if (error) throw new Error(error.message);
+  void announceTableViewChange(id);
   return id;
 }
 
@@ -234,6 +296,7 @@ export async function deleteTableView(params: {
   const id = tableViewId(params);
   const { error } = await supabase.from(TABLE).delete().eq("id", id);
   if (error) throw new Error(error.message);
+  void announceTableViewChange(id);
 }
 
 export function listenTableView(
@@ -249,22 +312,47 @@ export function listenTableView(
   let alive = true;
   const id = tableViewId(params);
 
+  // LISTENER (second fix pass): at most one read in flight; a hint that
+  // arrives meanwhile asks for exactly one trailing re-read after it; hints
+  // inside one TABLE_VIEW_RESYNC_MS window are one re-read. So a flood of
+  // messages costs about one read per window, and reads never overlap (the
+  // older answer can no longer land after the newer one).
+  let inFlight = false;
+  let again = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
   const fetch = async () => {
-    const { data } = await supabase.from(TABLE).select("*").eq("id", id).limit(1);
-    if (alive) cb(data && data.length > 0 ? fromDb(data[0] as Record<string, unknown>) : null);
+    if (!alive) return;
+    if (inFlight) { again = true; return; }
+    inFlight = true;
+    try {
+      const { data } = await supabase.from(TABLE).select("*").eq("id", id).limit(1);
+      if (alive) cb(data && data.length > 0 ? fromDb(data[0] as Record<string, unknown>) : null);
+    } finally {
+      inFlight = false;
+      if (again && alive) { again = false; hint(); }
+    }
   };
 
-  fetch();
+  /** A change message: a hint to re-read, never data (its payload is not
+   *  read). Coalesced into the window's one re-read. */
+  const hint = () => {
+    if (!alive || timer) return;
+    timer = setTimeout(() => { timer = null; void fetch(); }, TABLE_VIEW_RESYNC_MS);
+  };
 
+  void fetch();
+
+  // RT-12: the saver's Broadcast (announceTableViewChange), not
+  // postgres_changes — table_views is not published (see the note at the top).
   const channel = supabase
-    .channel(`table-view-${id}`)
-    .on("postgres_changes", { event: "*", schema: "public", table: TABLE, filter: `id=eq.${id}` }, () => {
-      if (alive) fetch();
-    })
+    .channel(tableViewTopic(id))
+    .on("broadcast", { event: TABLE_VIEW_EVENT }, () => hint())
     .subscribe();
 
   return () => {
     alive = false;
+    if (timer) { clearTimeout(timer); timer = null; }
     supabase.removeChannel(channel);
   };
 }

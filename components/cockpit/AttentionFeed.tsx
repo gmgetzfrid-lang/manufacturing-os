@@ -166,6 +166,18 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
             : "Reconnecting — the counts may be out of date until the live connection is back."}
         </div>
       )}
+      {/* A refused "mark read" (lib/inAppNotifications.ts markRead is a
+          checked write — notifications Round G, N11) is said, never a silent
+          success; the row stays listed because it is still unread. */}
+      {status.markError && (
+        <div
+          role="alert"
+          data-attention-mark-error
+          className="px-4 py-2 border-b border-red-200 bg-red-50 text-[11px] font-semibold text-red-800"
+        >
+          {status.markError}
+        </div>
+      )}
 
       {/* Kind-group chips — their own wrapping row, so every chip stays
           visible and tappable at any width. */}

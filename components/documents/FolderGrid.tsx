@@ -15,6 +15,8 @@ import {
   Trash2,} from "lucide-react";
 import { LibraryCollection } from "@/types/schema";
 import NodeCover from "@/components/documents/NodeCover";
+import AttentionDot from "@/components/documents/AttentionDot";
+import type { AttentionMarkState } from "@/lib/attentionRollup";
 
 interface FolderGridProps {
   folders: LibraryCollection[];
@@ -47,6 +49,12 @@ interface FolderGridProps {
   /** Move SEVERAL folders at once (a drag that started on a selected tile
    *  carries the whole selection). Falls back to per-id onMoveInto. */
   onMoveManyInto?: (ids: string[], targetId: string) => void;
+  /** The badge trail (notifications Round G, N11 — TRAIL-1 dw2): a folder's
+   *  mark — the count of the Documents badge's rows in its subtree, or
+   *  'unknown', or null (nothing drawn). Omitted = no marks, as before. */
+  attentionFor?: (folderId: string) => AttentionMarkState;
+  /** The counts are lower bounds (the roll-up is incomplete). */
+  attentionPartial?: boolean;
 }
 
 export default function FolderGrid({
@@ -69,6 +77,8 @@ export default function FolderGrid({
   selectedIds,
   onTileSelect,
   onMoveManyInto,
+  attentionFor,
+  attentionPartial,
 }: FolderGridProps) {
   // Spring-loaded folders: hovering a tile mid-drag for ~900ms opens it, so
   // deep drops don't need a separate navigation step first.
@@ -304,6 +314,9 @@ export default function FolderGrid({
               : 'bg-[var(--color-surface)] border-[var(--color-border)] hover:border-[var(--color-accent)]/50'}
           `}
         >
+          {attentionFor && folder.id && (
+            <AttentionDot mark={attentionFor(folder.id)} variant="count" partial={attentionPartial} where="in this folder" className="absolute top-2 left-2 z-10" />
+          )}
           <div className="flex items-start justify-between mb-3">
             <NodeCover
               appearance={{ color: folder.color, icon: folder.icon, coverImageUrl: folder.coverImageUrl, coverTint: folder.coverTint }}
