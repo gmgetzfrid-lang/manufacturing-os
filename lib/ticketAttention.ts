@@ -232,12 +232,20 @@ export function holdersFor(
   }
 }
 
+/** The history line a restore appends to a request it brought back under a
+ *  fresh number (lib/dataRestore.ts renumberedTicketRow; drafting-flow
+ *  EDGE-5). It records the number the request was issued; it moves neither
+ *  the stage nor who holds it, so it is a NON_STEP line below — the request's
+ *  wait keeps counting from its last real step, not from the restore. */
+export const RESTORE_RENUMBERED_HISTORY_ACTION = "Renumbered on restore";
+
 /** History lines that change neither the stage nor who holds it: a file, a
  *  saved draft, the triage details, the source link at creation, the
- *  register note written beside a close. Every other line marks a step
- *  (a transition, a (re)assignment, a hand-back). A test pins this set
- *  against the engine's labels (an action that never moves the status must
- *  be named here; one named here must never move it). */
+ *  register note written beside a close, the restore's renumbering note.
+ *  Every other line marks a step (a transition, a (re)assignment, a
+ *  hand-back). A test pins this set against the engine's labels (an action
+ *  that never moves the status must be named here; one named here must
+ *  never move it). */
 export const NON_STEP_HISTORY_ACTIONS: readonly string[] = [
   "File Uploaded",
   "Save Progress (Stage Files)",
@@ -245,6 +253,7 @@ export const NON_STEP_HISTORY_ACTIONS: readonly string[] = [
   "Triage details set",
   "Source Linked",
   "Closed — deliverable not in the register",
+  RESTORE_RENUMBERED_HISTORY_ACTION,
 ];
 
 /**

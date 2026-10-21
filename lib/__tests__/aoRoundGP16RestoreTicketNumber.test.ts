@@ -31,6 +31,11 @@
 // repeats one still to come; the chunk and the driver report each
 // renumbering (renumbered: old → new); a renumbered request's files keep
 // their storage keys under the old number's folder (drafting-flow EDGE-19).
+// P16 fix pass 4 (the review): that history entry is a NON_STEP line
+// (lib/ticketAttention.ts RESTORE_RENUMBERED_HISTORY_ACTION), so the request
+// page's "waiting since" is the backup row's; and a renumbering in a
+// statement the database accepted without a count is still reported old →
+// new, flagged unconfirmed.
 //
 // The routes run for real against the in-memory engine (restoreMemoryDb):
 // `db.keys.tickets` unset is the world WITHOUT the number key (only the id
@@ -54,10 +59,11 @@ import { POST as applyTable } from "@/app/api/admin/restore/apply-table/route";
 import { POST as beginRoute } from "@/app/api/admin/restore/begin/route";
 import {
   applyRestoreChunk, planRestore, runChunkedRestore, restoreRefusalLabel, ticketsInRestoreOrder,
-  raiseTicketCountersToBackupNumbers, restoreNumberYear, renumberedOf,
+  raiseTicketCountersToBackupNumbers, restoreNumberYear, renumberedOf, unconfirmedRenumberings,
   TICKET_NUMBER_IN_USE, TICKET_RENUMBERED,
   type RestorePost, type RestoreEnvelopeLike,
 } from "@/lib/dataRestore";
+import { waitingSince, NON_STEP_HISTORY_ACTIONS, RESTORE_RENUMBERED_HISTORY_ACTION } from "@/lib/ticketAttention";
 
 const ORG = "org-1";
 const OTHER = "other-org";
@@ -163,6 +169,50 @@ for (const world of ["without the number key", "with the number key"] as const) 
       db.writeError = (table, op, rows) => (table === "tickets" && op === "upsert" && rows.some((x) => x.id === "t-b-1") ? { code: "23514", message: "refused by a check" } : null);
       const refusedOne = await applyRestoreChunk({ from } as never, { orgId: ORG, table: "tickets", rows: [ticket("t-b-1", "KE-DDRT-26-0001")], idRemap: { orgId: { "backup-org": ORG }, uid: {} } });
       expect(refusedOne).toMatchObject({ ok: true, inserted: 0, renumbered: [], cleared: [], refused: [expect.objectContaining({ id: "t-b-1", code: "23514" })] });
+    });
+
+    it("P16 fix pass 4 (the review): the 'Renumbered on restore' history line is not a step — the renumbered request's 'waiting since' is the backup row's, never the restore time", async () => {
+      db.rows.tickets = [ticket("t-live-1", "KE-DDRT-26-0001", ORG)];
+      const history = [
+        { action: "Created", user: "b@x.io", date: "2026-02-01T00:00:00Z" },
+        { action: "Submitted for review — Rev 1A", user: "d@x.io", date: "2026-02-05T09:00:00Z" },
+        { action: "File Uploaded", user: "d@x.io", date: "2026-02-06T09:00:00Z" },
+      ];
+      const backupRow = ticket("t-b-1", "KE-DDRT-26-0001", "backup-org", { status: "PENDING_REVIEW", history, created_at: "2026-02-01T00:00:00Z" });
+      const r = await applyRestoreChunk({ from } as never, { orgId: ORG, table: "tickets", rows: [backupRow], idRemap: { orgId: { "backup-org": ORG }, uid: {} } });
+      expect(r).toMatchObject({ ok: true, inserted: 1, renumbered: [{ id: "t-b-1", from: "KE-DDRT-26-0001" }] });
+      const restored = ticketsHere().find((t) => t.id === "t-b-1")!;
+      const h = restored.history as Array<{ action: string }>;
+      expect(h[h.length - 1].action).toBe(RESTORE_RENUMBERED_HISTORY_ACTION);
+      expect(NON_STEP_HISTORY_ACTIONS).toContain(RESTORE_RENUMBERED_HISTORY_ACTION);
+      const asTicket = (row: Row) => ({ history: row.history, createdAt: row.created_at } as never);
+      const before = waitingSince(asTicket(backupRow));
+      expect(before?.toISOString()).toBe("2026-02-05T09:00:00.000Z");
+      expect(waitingSince(asTicket(restored))?.toISOString()).toBe(before?.toISOString());
+    });
+
+    it("P16 fix pass 4 (the review): a renumbering in a statement the database accepted WITHOUT a count is still reported old → new, flagged unconfirmed — in the chunk's renumbered list, its cleared notes and its audit row; never as written", async () => {
+      db.rows.tickets = [ticket("t-live-1", "KE-DDRT-26-0001", ORG)];
+      // the counter row exists (its creation would itself be uncounted, so the restore would skip a number — a gap, never a repeat)
+      db.rows.ticket_number_counters = [{ org_id: ORG, year: YEAR, next_seq: 0 }];
+      db.countless = true;
+      const direct = await applyRestoreChunk({ from } as never, { orgId: ORG, table: "tickets", rows: [ticket("t-b-1", "KE-DDRT-26-0001")], idRemap: { orgId: { "backup-org": ORG }, uid: {} } });
+      expect(direct).toMatchObject({ ok: true, inserted: 0, uncounted: 1, renumbered: [{ id: "t-b-1", from: "KE-DDRT-26-0001", to: `DDRT-${YY}-0001`, numberHeldBy: "t-live-1", unconfirmed: true }] });
+      expect(direct.cleared).toEqual([expect.objectContaining({
+        id: "t-b-1", code: RENUMBERED,
+        message: expect.stringContaining(`unconfirmed: the database accepted the statement carrying this request without confirming it was written, so it may have been written under "DDRT-${YY}-0001"`),
+        renumbered: { from: "KE-DDRT-26-0001", to: `DDRT-${YY}-0001`, numberHeldBy: "t-live-1", unconfirmed: true },
+      })]);
+      // through the route: the audit row carries the pair
+      db.rows.tickets = [ticket("t-live-1", "KE-DDRT-26-0001", ORG)];
+      db.rows.ticket_number_counters = [{ org_id: ORG, year: YEAR, next_seq: 0 }];
+      db.rows.audit_logs = [];
+      const r = await chunk("tickets", [ticket("t-b-1", "KE-DDRT-26-0001")]);
+      expect(r.status).toBe(200);
+      expect(r.body).toMatchObject({ uncounted: 1 });
+      const trail = rowsOf("audit_logs").filter((a) => a.action === "RESTORE_CHUNK");
+      expect(JSON.stringify(trail[0].details)).toContain(`ticket_id \\"KE-DDRT-26-0001\\" → \\"DDRT-${YY}-0001\\"`);
+      expect(JSON.stringify(trail[0].details)).toContain("unconfirmed");
     });
 
     it("the same number in ANOTHER workspace is not a collision — numbers are per workspace", async () => {
@@ -653,5 +703,15 @@ describe("EDGE-5 (P16 fix pass 3) — the driver's order and counters, and the y
       { id: "t", code: RENUMBERED, message: "m", renumbered: { from: "A", to: "B", numberHeldBy: "h" } },
       { id: "u", code: RENUMBERED, message: "m" },
     ])).toEqual([{ id: "t", from: "A", to: "B", numberHeldBy: "h" }]);
+    expect(renumberedOf([{ id: "t", code: RENUMBERED, message: "m", renumbered: { from: "A", to: "B", numberHeldBy: "h", unconfirmed: true } }]))
+      .toEqual([{ id: "t", from: "A", to: "B", numberHeldBy: "h", unconfirmed: true }]);
+  });
+
+  it("unconfirmedRenumberings (P16 fix pass 4) keeps only the TICKET_RENUMBERED notes, flagged unconfirmed and saying so; other notes of the row are not reported for an unconfirmed write", () => {
+    const out = unconfirmedRenumberings([
+      { id: "t", code: "owner_team_outside_workspace", message: "pointer" },
+      { id: "t", code: RENUMBERED, message: "renumbered", renumbered: { from: "A", to: "B", numberHeldBy: "h" } },
+    ]);
+    expect(out).toEqual([{ id: "t", code: RENUMBERED, message: expect.stringMatching(/^renumbered — unconfirmed: .* may have been written under "B"/), renumbered: { from: "A", to: "B", numberHeldBy: "h", unconfirmed: true } }]);
   });
 });

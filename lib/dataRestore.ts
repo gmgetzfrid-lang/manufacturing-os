@@ -24,6 +24,7 @@ import { checkedWrite } from "@/lib/checkedWrite";
 import { STORAGE_UNATTRIBUTABLE_CODE } from "@/lib/storageKey";
 import { formatTicketNumber, ticketNumberConfigFromRow } from "@/lib/ticketNumber";
 import { requestNumberYear } from "@/lib/ticketCreate";
+import { RESTORE_RENUMBERED_HISTORY_ACTION } from "@/lib/ticketAttention";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Role } from "@/types/schema";
 
@@ -1185,7 +1186,7 @@ export interface RestoreRowRefusal {
   /** drafting-flow EDGE-5 (P16 fix pass 3): on a TICKET_RENUMBERED note, the
    *  number the request was issued, the number it was restored under, and the
    *  request holding the old one (the `renumbered` lists are built from it). */
-  renumbered?: { from: string; to: string; numberHeldBy: string };
+  renumbered?: { from: string; to: string; numberHeldBy: string; unconfirmed?: true };
 }
 
 export interface RestoreChunkResult {
@@ -1252,7 +1253,12 @@ export interface RestoreChunkResult {
   /** drafting-flow EDGE-5 (P16 fix pass 3): the requests WRITTEN under a fresh
    *  number (old → new; also in `cleared`, code TICKET_RENUMBERED, whose notes
    *  carry the same pair — that is what reaches the page's driver through
-   *  apply-table, which forwards `cleared` as it is). */
+   *  apply-table, which forwards `cleared` as it is). P16 fix pass 4: also a
+   *  request sent under a fresh number in a statement the database accepted
+   *  but did not confirm row by row (no count, or a partial count it could
+   *  not place), flagged `unconfirmed` — it may have been written under the
+   *  fresh number, so the old → new pair is never dropped from the report
+   *  and the audit row. */
   renumbered: RestoreRenumbering[];
 }
 
@@ -1492,7 +1498,13 @@ export const TICKET_RENUMBERED = "ticket_renumbered";
 /** EDGE-5 (P16 fix pass 3): one renumbering, as the chunk and the page's
  *  driver report it (RestoreChunkResult.renumbered,
  *  RestoreTableOutcome.renumbered; the `cleared` note carries the same). */
-export interface RestoreRenumbering { id: string | null; from: string; to: string; numberHeldBy: string }
+export interface RestoreRenumbering {
+  id: string | null; from: string; to: string; numberHeldBy: string;
+  /** P16 fix pass 4: the statement carrying the row was accepted but the
+   *  database did not confirm this row was written (no count, or a partial
+   *  count that could not be placed) — it MAY have been written under `to`. */
+  unconfirmed?: true;
+}
 
 /** EDGE-5 (P16 fix pass 2): how many numbers one re-mint may try (a
  *  compare-and-set lost to a concurrent filer, or a number some row already
@@ -1684,9 +1696,12 @@ async function mintRestoreTicketNumber(
  *  DEC-90 ruling (3) says the restored request's history records its
  *  original number, and tickets.history is the timeline the request page
  *  shows; a history value that is not a list is kept in metadata, never
- *  dropped). Its attachments keep their storage keys — the files are put
- *  back where the backup has them, under the old number's folder (the entry
- *  says so; drafting-flow EDGE-19). */
+ *  dropped). The entry is a NON_STEP history line (lib/ticketAttention.ts,
+ *  RESTORE_RENUMBERED_HISTORY_ACTION; P16 fix pass 4), so the request
+ *  page's "waiting since" keeps the request's last real step. Its
+ *  attachments keep their storage keys — the files are put back where the
+ *  backup has them, under the old number's folder (the entry says so;
+ *  drafting-flow EDGE-19). */
 function renumberedTicketRow(row: Record<string, unknown>, from: string, number: string, holder: string, holderWhere: string, at: string): Record<string, unknown> {
   const folder = ticketFilesFolder(row, from);
   const m = row.metadata;
@@ -1696,7 +1711,7 @@ function renumberedTicketRow(row: Record<string, unknown>, from: string, number:
   const h = row.history;
   if (h !== null && h !== undefined && !Array.isArray(h)) base.history_before_restore = h;
   const history = [...(Array.isArray(h) ? h : []), {
-    action: "Renumbered on restore", user: "restore", date: at,
+    action: RESTORE_RENUMBERED_HISTORY_ACTION, user: "restore", date: at,
     details: `Issued as "${from}"; request ${holder} ${holderWhere} carries that number, so this request was restored as "${number}".${folder ? ` Its files stay where the backup had them, in the "${from}" folder.` : ""}`,
   }];
   return {
@@ -1709,7 +1724,17 @@ function renumberedTicketRow(row: Record<string, unknown>, from: string, number:
  *  notes with their old → new pair), in order. Pure. */
 export function renumberedOf(notes: ReadonlyArray<RestoreRowRefusal>): RestoreRenumbering[] {
   return notes.flatMap((x) => (x && x.code === TICKET_RENUMBERED && x.renumbered && typeof x.renumbered.from === "string" && typeof x.renumbered.to === "string"
-    ? [{ id: x.id, from: x.renumbered.from, to: x.renumbered.to, numberHeldBy: String(x.renumbered.numberHeldBy ?? "") }] : []));
+    ? [{ id: x.id, from: x.renumbered.from, to: x.renumbered.to, numberHeldBy: String(x.renumbered.numberHeldBy ?? ""), ...(x.renumbered.unconfirmed ? { unconfirmed: true as const } : {}) }] : []));
+}
+
+/** EDGE-5 (P16 fix pass 4): the TICKET_RENUMBERED notes of `notes`, each
+ *  flagged `unconfirmed` and its message saying so — for a row the database
+ *  accepted without confirming it was written (see the restore's write).
+ *  Pure. */
+export function unconfirmedRenumberings(notes: ReadonlyArray<RestoreRowRefusal>): RestoreRowRefusal[] {
+  return notes.flatMap((x) => (x && x.code === TICKET_RENUMBERED && x.renumbered
+    ? [{ ...x, message: `${x.message} — unconfirmed: the database accepted the statement carrying this request without confirming it was written, so it may have been written under "${x.renumbered.to}" (it is not counted as written; a look at the request, or a re-run, settles it)`, renumbered: { ...x.renumbered, unconfirmed: true as const } }]
+    : []));
 }
 
 /** EDGE-5 (P16 fix pass 3): the storage folder of number `from`
@@ -2067,12 +2092,18 @@ export async function applyRestoreChunk(
       // (fix pass 5): every row of a statement that wrote them all; in a
       // statement that skipped some, the rows whose key no earlier row of the
       // request carried; none of a statement with no count (`uncounted`).
+      // P16 fix pass 4 (EDGE-5): a renumbering is the exception — a row sent
+      // under a fresh number in an accepted statement that cannot be placed
+      // (no count; a partial count with the keys unread) MAY have been
+      // written under it, so its TICKET_RENUMBERED note is still reported,
+      // flagged `unconfirmed`, never dropped (its other notes are not).
       const counted = typeof up.count === "number";
       const all = counted && up.count === rows.length;
       for (const r of rows) {
         const k = restoreKeyOf(table, r);
         const notes = clearNotes.get(r);
         if (notes && counted && (all || (clearsLocated && (k === null || !acceptedKeys.has(k))))) cleared.push(...notes);
+        else if (notes && (!counted || !clearsLocated)) cleared.push(...unconfirmedRenumberings(notes));
         if (k !== null) acceptedKeys.add(k);
       }
       if (!counted) { uncounted += rows.length; return null; }

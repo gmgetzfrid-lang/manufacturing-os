@@ -1466,7 +1466,7 @@ Fix:
 **Failure scenario.** After a disaster-recovery restore the admin reads "tickets: 1 row(s) restored with a pointer cleared — ticket_id (a request whose number another request here already carries … restored under a fresh number …)" under "Records restored — 1 pointer(s) cleared", and cannot tell from the page which request now carries which number without opening the `RESTORE_CHUNK` audit rows.
 
 **Done when.**
-- The restore page shows each renumbered request on its own line, naming the old and the new number (from `RestoreTableOutcome.renumbered`), and does not count it as a pointer cleared in the headline.
+- The restore page shows each renumbered request on its own line, naming the old and the new number (from `RestoreTableOutcome.renumbered`), and does not count it as a pointer cleared in the headline. An entry flagged `unconfirmed` (P16 fix pass 4: the database accepted its statement without confirming the row, so it MAY have been written under the new number) is said as such, not as restored.
 - A rendered test pins the line.
 
 ---
