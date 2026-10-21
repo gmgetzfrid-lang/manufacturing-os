@@ -116,6 +116,11 @@ describe("20261244 — the one-paste shape (DEC-30)", () => {
     expect(verification).toMatch(/NOT EXISTS \(SELECT 1 FROM tickets WHERE ticket_id IS NOT NULL GROUP BY org_id, ticket_id HAVING COUNT\(\*\) > 1\)/);
     expect(verification).toMatch(/\(SELECT COUNT\(\*\) FROM tickets\) >= \(SELECT n FROM _ao_g244_before WHERE ord = 1\)::bigint/);
     expect(verification).toMatch(/SELECT relrowsecurity FROM pg_class WHERE oid = 'public\.tickets'::regclass/);
+    // P16 fix pass: probes 1 AND 3 are false in the REFUSED world (exercised on PostgreSQL 16); the header and the labels say so
+    expect(labels.some((l) => l.startsWith("EDGE-5: no request number is held by more than one request in one workspace now (false only when this paste REFUSED, with probe 1"))).toBe(true);
+    expect(raw).toMatch(/EXPECTED RESULT: probes 2, 4 and 5 are true on a correct paste in every\n-- world \(probe 2 is the world check\)\. Probes 1 and 3 are true, except in the\n-- REFUSED world/);
+    expect(raw).toMatch(/Probes 1 and 3 are false in exactly one world, and together/);
+    expect(raw).not.toMatch(/Probe 1 is false in exactly one world/);
   });
 
   it("the header names the paste order, the app's behaviour before and after, and the rollback", () => {

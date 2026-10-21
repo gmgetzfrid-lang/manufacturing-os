@@ -1451,67 +1451,116 @@ async function locateRestoreKeys(
  *  restore that rewrote it would re-identify a regulated record. */
 export const TICKET_NUMBER_IN_USE = "ticket_number_in_use";
 
-/** EDGE-5 (P16): split `rows` (tickets, already bound to `orgId`) into the
- *  rows to write and the rows refused TICKET_NUMBER_IN_USE. Read-only. The
- *  live requests of this workspace carrying the rows' numbers are read page
- *  by page (a number may be held more than once where the key is absent). A
- *  row whose id a request already holds — here, or in another workspace — is
- *  left to the write, which skips it on its id exactly as before (counted
- *  existing / held elsewhere), so a re-run never refuses the requests an
- *  earlier run restored. Of two rows of this request sharing a number, the
- *  first one sent is written and the next refused. */
-async function refuseTakenTicketNumbers(
-  sb: RestoreDb, orgId: string, rows: ReadonlyArray<Record<string, unknown>>, label: (r: Record<string, unknown>) => string | null,
-): Promise<{ ok: true; rows: Array<Record<string, unknown>>; refused: RestoreRowRefusal[] } | { ok: false; error: string }> {
-  const numberOf = (r: Record<string, unknown>): string | null => (typeof r.ticket_id === "string" && r.ticket_id ? r.ticket_id : null);
-  const numbers = Array.from(new Set(rows.map(numberOf).filter((v): v is string => v !== null)));
+/** EDGE-5 (P16 fix pass): whether `v` can travel in a PostgREST `in.(…)`
+ *  list as postgrest-js builds it. postgrest-js double-quotes a value that
+ *  carries `,` `(` or `)` but escapes neither `"` nor `\` inside it, so a
+ *  value carrying either would make a malformed list (and the read fail). A
+ *  value with leading or trailing white space is kept out of the list too, so
+ *  nothing depends on how the list parser treats it. Such a value is read with
+ *  its own `eq` filter instead (the whole remainder of `eq.` is the value). */
+const inListSafe = (v: string): boolean => !/["\\]/.test(v) && v.trim() === v;
+
+/** EDGE-5 (P16): the live requests of `orgId` carrying any of `numbers`, by
+ *  number → their ids. Read-only. The numbers are cut into batches by URL
+ *  budget (businessKeyReadBatches, ILIFE-10's bound; P16 fix pass: was fixed
+ *  slices of 100 with no budget); a number that cannot travel in an
+ *  `in.(…)` list (inListSafe) is read on its own with `eq`. Each read is
+ *  paged until an empty page (a number may be held more than once where the
+ *  key is absent, and a server row cap below the page size cannot cut it
+ *  short). */
+async function liveTicketNumbers(
+  sb: RestoreDb, orgId: string, numbers: ReadonlyArray<string>,
+): Promise<{ ok: true; live: Map<string, string[]> } | { ok: false; error: string }> {
   const live = new Map<string, string[]>();
-  for (let i = 0; i < numbers.length; i += 100) {
-    const slice = numbers.slice(i, i + 100);
+  const sorted = Array.from(new Set(numbers)).sort();
+  const reads: Array<{ column: "in"; values: Array<string | number> } | { column: "eq"; value: string }> = [
+    ...businessKeyReadBatches(sorted.filter(inListSafe).map((n) => ({ ticket_id: n })), ["ticket_id"]).map((b) => ({ column: "in" as const, values: b[0] })),
+    ...sorted.filter((n) => !inListSafe(n)).map((n) => ({ column: "eq" as const, value: n })),
+  ];
+  for (const read of reads) {
     for (let from = 0; ;) {
-      const { data, error } = await sb.from("tickets").select("id,ticket_id")
-        .eq("org_id", orgId).in("ticket_id", slice).order("id").range(from, from + KEY_PAGE - 1);
+      const base = sb.from("tickets").select("id,ticket_id").eq("org_id", orgId);
+      const narrowed = read.column === "in" ? base.in("ticket_id", read.values) : base.eq("ticket_id", read.value);
+      const { data, error } = await narrowed.order("id").range(from, from + KEY_PAGE - 1);
       if (error) return { ok: false, error: error.message };
       const page = (data ?? []) as unknown as Array<Record<string, unknown>>;
       for (const t of page) {
         if (typeof t.ticket_id !== "string" || typeof t.id !== "string") continue;
-        if (!live.has(t.ticket_id)) live.set(t.ticket_id, []);
-        live.get(t.ticket_id)!.push(t.id);
+        const ids = live.get(t.ticket_id) ?? [];
+        if (!ids.includes(t.id)) ids.push(t.id);
+        live.set(t.ticket_id, ids);
       }
       if (page.length === 0) break;
       from += page.length;
     }
   }
+  return { ok: true, live };
+}
+
+const ticketNumberOf = (r: Record<string, unknown>): string | null => (typeof r.ticket_id === "string" && r.ticket_id ? r.ticket_id : null);
+/** The live request other than `r` holding number `n`, if any. */
+const liveTicketHolder = (live: Map<string, string[]>, r: Record<string, unknown>, n: string): string | null =>
+  (live.get(n) ?? []).find((id) => id !== r.id) ?? null;
+
+/** EDGE-5 (P16): the TICKET_NUMBER_IN_USE refusal of a backup request whose
+ *  number `holder` holds in this workspace. `sentByThisRequest`: the holder is
+ *  a row this same restore request sent first and the database took — the
+ *  backup itself carries the number on two requests (P16 fix pass: that case
+ *  names the remedy outright; DEC-90 ruling (3) over ruling (4), recorded on
+ *  EDGE-5, and the missing in-product path back is drafting-flow EDGE-18). */
+function ticketNumberRefusal(id: string | null, n: string, holder: string, sentByThisRequest: boolean): RestoreRowRefusal {
+  const consequence = "a restore never files two requests under one number, and never renumbers a restored request (its number may be printed on labels, transmittals and archives); the request that holds it is kept as it is, and rows that point at this one are not restored either";
+  const remedy = "give one of the two requests a new number in the workspace the backup was taken from and take a new backup there; where that workspace no longer exists, this request stays in the backup file — there is no supported way yet to bring it back";
+  return {
+    id, code: TICKET_NUMBER_IN_USE,
+    message: sentByThisRequest
+      ? `request number "${n}" is also carried by request ${holder} of this backup, which this restore sent first and the database took — not restored: ${consequence}. The backup carries this number on two requests (the workspace it was taken from held it twice): ${remedy}`
+      : `request number "${n}" is already held in this workspace by request ${holder} — not restored: ${consequence}. If request ${holder} came from this same backup, the workspace it was taken from held the number twice: ${remedy}`,
+  };
+}
+
+/** EDGE-5 (P16): split `rows` (tickets, already bound to `orgId`) into the
+ *  rows to write now, the rows refused TICKET_NUMBER_IN_USE, and the rows
+ *  held back. Read-only. A row whose id a request already holds — here, or
+ *  in another workspace — is left to the write, which skips it on its id
+ *  exactly as before (counted existing / held elsewhere), so a re-run never
+ *  refuses the requests an earlier run restored. A row whose number a live
+ *  request of this workspace with a different id holds is refused. Of two
+ *  rows of this request sharing a number, the first one sent is written and
+ *  the next is HELD BACK (P16 fix pass: it was refused here, before the
+ *  first had been written — so a first row the database then refused took
+ *  the second down with it, under a message naming a request never
+ *  restored): applyRestoreChunk judges a held-back row only after the write,
+ *  against what the workspace then holds (the held-back rounds after its
+ *  write step). */
+async function refuseTakenTicketNumbers(
+  sb: RestoreDb, orgId: string, rows: ReadonlyArray<Record<string, unknown>>, label: (r: Record<string, unknown>) => string | null,
+): Promise<{ ok: true; rows: Array<Record<string, unknown>>; refused: RestoreRowRefusal[]; heldBack: Array<Record<string, unknown>> } | { ok: false; error: string }> {
+  const read = await liveTicketNumbers(sb, orgId, rows.map(ticketNumberOf).filter((v): v is string => v !== null));
+  if (!read.ok) return read;
+  const { live } = read;
   const carried = new Map<string, number>();
-  for (const r of rows) { const n = numberOf(r); if (n !== null) carried.set(n, (carried.get(n) ?? 0) + 1); }
-  const liveOther = (r: Record<string, unknown>, n: string): string | null => (live.get(n) ?? []).find((id) => id !== r.id) ?? null;
+  for (const r of rows) { const n = ticketNumberOf(r); if (n !== null) carried.set(n, (carried.get(n) ?? 0) + 1); }
   const candidates = Array.from(new Set(rows.filter((r) => {
-    const n = numberOf(r);
-    return n !== null && typeof r.id === "string" && (liveOther(r, n) !== null || (carried.get(n) ?? 0) > 1);
+    const n = ticketNumberOf(r);
+    return n !== null && typeof r.id === "string" && (liveTicketHolder(live, r, n) !== null || (carried.get(n) ?? 0) > 1);
   }).map((r) => r.id as string)));
   const held = candidates.length ? await idsTaken(sb, "tickets", candidates) : { ok: true as const, ids: new Set<string>() };
   if (!held.ok) return { ok: false, error: held.error };
   const first = new Map<string, unknown>();
   const kept: Array<Record<string, unknown>> = [];
   const refused: RestoreRowRefusal[] = [];
-  const consequence = "a restore never files two requests under one number, and never renumbers a restored request (its number may be printed on labels, transmittals and archives); the request that holds it is kept as it is, and rows that point at this one are not restored either";
+  const heldBack: Array<Record<string, unknown>> = [];
   for (const r of rows) {
-    const n = numberOf(r);
+    const n = ticketNumberOf(r);
     if (n === null || (typeof r.id === "string" && held.ids.has(r.id))) { kept.push(r); continue; }
-    const other = liveOther(r, n);
-    if (other !== null) {
-      refused.push({ id: label(r), code: TICKET_NUMBER_IN_USE, message: `request number "${n}" is already held in this workspace by request ${other} — not restored: ${consequence}` });
-      continue;
-    }
-    if (first.has(n) && !(typeof r.id === "string" && first.get(n) === r.id)) {
-      const earlier = first.get(n);
-      refused.push({ id: label(r), code: TICKET_NUMBER_IN_USE, message: `request number "${n}" is carried by another request of this restore (${typeof earlier === "string" ? earlier : "a row with no id"}), restored first — not restored: ${consequence}` });
-      continue;
-    }
+    const other = liveTicketHolder(live, r, n);
+    if (other !== null) { refused.push(ticketNumberRefusal(label(r), n, other, false)); continue; }
+    if (first.has(n) && !(typeof r.id === "string" && first.get(n) === r.id)) { heldBack.push(r); continue; }
     if (!first.has(n)) first.set(n, r.id);
     kept.push(r);
   }
-  return { ok: true, rows: kept, refused };
+  return { ok: true, rows: kept, refused, heldBack };
 }
 
 /** Write one slice of one table into `orgId` additively (existing keys are
@@ -1532,9 +1581,11 @@ async function refuseTakenTicketNumbers(
  *       already held — here or by another workspace — is never written either
  *       way, so it is counted as existing / held elsewhere, not refused;
  *    4b. (tickets) a request number this workspace already uses for another
- *       request, or an earlier row of this request carries, refuses the row
- *       (drafting-flow EDGE-5, TICKET_NUMBER_IN_USE) — never a second
- *       request under one number;
+ *       request refuses the row (drafting-flow EDGE-5, TICKET_NUMBER_IN_USE)
+ *       — never a second request under one number; a row whose number an
+ *       earlier row of this request carries is held back and judged after
+ *       step 5, against what the workspace then holds (written only when
+ *       that earlier row was not);
  *    5. upsert on the table's real conflict target; a statement refused for
  *       one row's sake (ROW_LEVEL_SQLSTATES) is bisected to that row, within
  *       RESTORE_BISECT_MAX_STATEMENTS per request;
@@ -1811,15 +1862,18 @@ export async function applyRestoreChunk(
 
   // drafting-flow EDGE-5 (admin-and-org P16): a request number is held by one
   // request per workspace. A backup request whose number a live request here
-  // holds — or an earlier row of this request carries — is refused, named,
-  // never written beside it (whether or not the database carries the
-  // tickets (org_id, ticket_id) key, 20261244). A read that fails stops the
-  // chunk before any write.
+  // holds is refused, named, never written beside it (whether or not the
+  // database carries the tickets (org_id, ticket_id) key, 20261244); one
+  // whose number an earlier row of this request carries is held back until
+  // that row's write is known (below). A read that fails stops the chunk
+  // before any write.
+  let heldBackTickets: Array<Record<string, unknown>> = [];
   if (table === "tickets" && mapped.length) {
     const taken = await refuseTakenTicketNumbers(sb, orgId, mapped, label);
     if (!taken.ok) return fail(500, `Could not check the request numbers this workspace already holds: ${taken.error}`, 0, rowsAfterFilters);
     refused.push(...taken.refused);
     mapped = taken.rows;
+    heldBackTickets = taken.heldBack;
   }
 
   // BKP-12: the upsert's own refusal is the answer. There is no plain-insert
@@ -1897,6 +1951,43 @@ export async function applyRestoreChunk(
       await settleSkipped();
       return fail(500, failed.error, inserted, rowsAfterFilters, failed.code || null);
     }
+  }
+  // EDGE-5 (P16 fix pass): a held-back request (its number carried by an
+  // earlier row of this request) is judged now, against what the workspace
+  // holds AFTER the write: refused, naming the holder, when a request with a
+  // different id holds its number — the earlier row was written, or the
+  // number was taken meanwhile; otherwise written (the earlier row was
+  // refused by the database, or never landed), one row per number per round,
+  // so a later carrier waits for this one's outcome. Each round settles at
+  // least one row per number, so the loop ends. A re-read that fails stops the
+  // chunk (what was written is counted; a re-run judges the rest).
+  const sentTicketIds = new Set(mapped.map((r) => r.id).filter((v): v is string => typeof v === "string"));
+  for (let pending = heldBackTickets; pending.length;) {
+    const read = await liveTicketNumbers(sb, orgId, pending.map((r) => r.ticket_id as string));
+    if (!read.ok) {
+      await settleSkipped();
+      return fail(500, `Could not re-check the request numbers this restore has just written: ${read.error}`, inserted, rowsAfterFilters);
+    }
+    const next: Array<Record<string, unknown>> = [];
+    const later: Array<Record<string, unknown>> = [];
+    const claimed = new Set<string>();
+    for (const r of pending) {
+      const n = r.ticket_id as string;
+      const holder = liveTicketHolder(read.live, r, n);
+      if (holder !== null) { refused.push(ticketNumberRefusal(label(r), n, holder, sentTicketIds.has(holder))); continue; }
+      if (claimed.has(n)) { later.push(r); continue; }
+      claimed.add(n);
+      next.push(r);
+    }
+    for (let i = 0; i < next.length; i += 500) {
+      const failed = await write(next.slice(i, i + 500));
+      if (failed) {
+        await settleSkipped();
+        return fail(500, failed.error, inserted, rowsAfterFilters, failed.code || null);
+      }
+    }
+    for (const r of next) if (typeof r.id === "string") sentTicketIds.add(r.id);
+    pending = later;
   }
   await settleSkipped();
 

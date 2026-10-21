@@ -72,6 +72,12 @@
 -- Supabase SQL editor. The editor shows only the LAST result set — the one
 -- final SELECT carries every probe (ok true/false, n NULL) and the inventory
 -- counts (ok NULL, n the count), in the order written.
+--
+-- EXPECTED RESULT: probes 2, 4 and 5 are true on a correct paste in every
+-- world (probe 2 is the world check). Probes 1 and 3 are true, except in the
+-- REFUSED world — a workspace holds a number twice — where BOTH are false
+-- (probe 1: no key; probe 3: the duplicates are still there), and inventory
+-- rows 2–4 carry the counts.
 
 -- ── Prerequisites (refuse to run, changing nothing, without the base) ───────
 DO $$
@@ -143,9 +149,10 @@ END $$;
 COMMIT;
 
 -- ── Verification + inventory (ONE result set) ───────────────────────────────
--- Probe 1 is false in exactly one world: this file refused because numbers
--- are held twice (inventory rows 2–4 say how many). Probe 2 says which world
--- the paste is in and is true on a correct paste in every world.
+-- Probes 1 and 3 are false in exactly one world, and together: this file
+-- refused because numbers are held twice (inventory rows 2–4 say how many).
+-- Probe 2 says which world the paste is in and is true on a correct paste in
+-- every world; probes 4 and 5 are true in every world.
 SELECT "check", ok, n FROM (
 SELECT 1 AS sec, 1 AS ord,
        'EDGE-5: tickets carries a unique key on exactly (org_id, ticket_id) — one request per number in a workspace (false only when this paste REFUSED: see probe 2 and inventory rows 2–4)' AS check,
@@ -175,7 +182,7 @@ SELECT 1, 2,
          = ((SELECT n FROM _ao_g244_before WHERE ord = 5) <> '0' OR (SELECT n FROM _ao_g244_before WHERE ord = 2) = '0'),
        NULL
 UNION ALL
-SELECT 1, 3, 'EDGE-5: no request number is held by more than one request in one workspace now',
+SELECT 1, 3, 'EDGE-5: no request number is held by more than one request in one workspace now (false only when this paste REFUSED, with probe 1: see probe 2 and inventory rows 2–4)',
        NOT EXISTS (SELECT 1 FROM tickets WHERE ticket_id IS NOT NULL GROUP BY org_id, ticket_id HAVING COUNT(*) > 1),
        NULL
 UNION ALL
