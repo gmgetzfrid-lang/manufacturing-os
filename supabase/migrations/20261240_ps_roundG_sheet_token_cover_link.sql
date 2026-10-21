@@ -22,10 +22,13 @@
 --      for the recall's lookup by cover. Written by POST
 --      /api/print-sheet-tokens `link` (service role) — awaited by the pack
 --      path right after the cover's snapshot is recorded and BEFORE the
---      download, so a pack whose link cannot be written does not print —
---      once the server has checked the cover: same workspace, printed by the
---      caller, and its printed sheets are exactly the sheets this token print
---      is about to download, at the versions the tokens were minted for.
+--      download, in ONE guarded update (a print is wholly linked or not at
+--      all) — once the server has checked the cover: same workspace, printed
+--      by the caller, and its printed sheets are exactly the sheets this
+--      token print is about to download, at the versions the tokens were
+--      minted for (no package identity is compared). Only the server's
+--      refusal of the cover stops the print; a link that only fails prints
+--      the pack unlinked, as before PS-P10.
 --      (Review fix: first built on the post-download settle, which is fired
 --      and never awaited — a settle that never landed left the print unlinked
 --      for good and its recall unreachable from the print history.)

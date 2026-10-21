@@ -121,17 +121,22 @@ export async function settleSheetTokens(input: {
 
 /** What linking a token print to its cover's print came to (public-surfaces
  *  PS-P10; PHYS-19 c3). `linked: false` with ok — database update 20261240
- *  is not pasted yet: the pack prints as today, unlinked. */
+ *  is not pasted yet: the pack prints as today, unlinked. `refused` — the
+ *  server's own cover-mismatch refusal (a 400 carrying `refused: true, code:
+ *  "cover_mismatch"`), the only answer that stops the print; any other
+ *  failure, a bare 400 included (a malformed body, an older route's
+ *  "Unknown action"), is not a refusal. */
 export type SheetTokenCoverLinkResult =
   | { ok: true; linked: boolean }
-  | { ok: false; status: number; error: string };
+  | { ok: false; refused: boolean; status: number; error: string };
 
 /** Link a work-package pack's token print to the work_package_prints id of
  *  the cover printed with it, by key (the server checks the cover: same
  *  workspace, printed by this member, listing exactly `printedDocumentIds` at
  *  the minted versions). Called by the pack path BEFORE the download and
- *  awaited — a 400 refusal stops the print; any other failure, after one
- *  retry, lets the pack print unlinked (lib/docPack.ts). Never throws. */
+ *  awaited — the marked cover_mismatch refusal stops the print; any other
+ *  failure, after one retry, lets the pack print unlinked (lib/docPack.ts).
+ *  Never throws. */
 export async function linkSheetTokensToCover(input: {
   orgId: string;
   printId: string;
@@ -140,16 +145,17 @@ export async function linkSheetTokensToCover(input: {
 }): Promise<SheetTokenCoverLinkResult> {
   try {
     const token = await bearer();
-    if (!token) return { ok: false, status: 401, error: "You are signed out — sign in and try again." };
+    if (!token) return { ok: false, refused: false, status: 401, error: "You are signed out — sign in and try again." };
     const res = await postTokenRoute(token, {
       action: "link", orgId: input.orgId, printId: input.printId, coverPrintId: input.coverPrintId, printed: input.printedDocumentIds,
     });
-    const body = res.body as { linked?: boolean; available?: boolean; error?: string } | null;
+    const body = res.body as { linked?: boolean; available?: boolean; refused?: boolean; code?: string; error?: string } | null;
     if (res.ok && body?.linked === true) return { ok: true, linked: true };
     if (res.ok && body?.available === false) return { ok: true, linked: false };
-    return { ok: false, status: res.status, error: body?.error ?? `HTTP ${res.status}` };
+    const refused = res.status === 400 && body?.refused === true && body?.code === "cover_mismatch";
+    return { ok: false, refused, status: res.status, error: body?.error ?? `HTTP ${res.status}` };
   } catch (e) {
-    return { ok: false, status: 0, error: (e as Error)?.message || "network" };
+    return { ok: false, refused: false, status: 0, error: (e as Error)?.message || "network" };
   }
 }
 

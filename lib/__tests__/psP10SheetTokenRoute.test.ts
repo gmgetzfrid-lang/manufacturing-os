@@ -5,14 +5,19 @@
 //   link: the server checks the cover (same workspace, the caller printed
 //         it, its printed sheets are exactly this print's at the minted
 //         versions, recorded after the mint, linked to no other print) and
-//         writes cover_print_id on every UNSETTLED token row of the print —
-//         before the download (the pack path awaits it); a mismatch is 400
+//         writes cover_print_id on every UNSETTLED token row of the print in
+//         ONE guarded update (fourth review fix: it was chunked, so a failed
+//         chunk left a part-linked print) — before the download (the pack
+//         path awaits it); a mismatch is the marked refusal (400, refused:
+//         true, code cover_mismatch — the only answer that stops the print)
 //         and NOTHING is written; a repeat is idempotent; before 20261240
 //         (42703 / PGRST204) { available: false }; any other failure 503.
 //   settle: PS-P9's, unchanged — it never reads or writes the link (review
 //         fix: the link first rode on the fire-and-forget settle).
 //   void: a controller (Admin / DocCtrl by the role collection) recalls a
-//         print — audit row FIRST (DISTRIBUTION_RECALL with the reason), then
+//         print — by a cover, the token print(s) linked to it and then EVERY
+//         token of those prints (fourth review fix: a part-linked print is
+//         recalled whole) — audit row FIRST (DISTRIBUTION_RECALL with the reason), then
 //         every live token voided 'recalled' (a settled one keeps its settle,
 //         an unsettled one is settled by it); a non-controller is 403 before
 //         anything is read; before 20261240 nothing is written.
@@ -55,6 +60,9 @@ const state = vi.hoisted(() => ({
   concurrentLink: null as null | string,
   rereadError: null as null | { message: string },
   updateError: null as null | { message: string },
+  /** fourth review fix: reads honour `eq cover_print_id` and `in print_id`
+   *  (off by default — most fixtures carry no link column) */
+  filterReads: false,
   log: [] as string[],
   inserts: [] as Array<{ table: string; rows: Record<string, unknown> }>,
   updates: [] as Array<{ patch: Record<string, unknown>; filters: Filters }>,
@@ -81,7 +89,8 @@ function chain(table: string) {
       if (state.updateError) return { data: null, error: state.updateError };
       const ids = filters.find((f) => f[0] === "in" && f[1] === "id")?.[2] as string[] | undefined;
       for (const id of ids ?? []) state.touched.add(id);
-      const n = ids ? ids.length : state.tokenRows.filter((r) => !r.settled_at && !state.touched.has(String(r.id))).length;
+      const coverNull = filters.some((f) => f[0] === "is" && f[1] === "cover_print_id" && f[2] === null);
+      const n = ids ? ids.length : state.tokenRows.filter((r) => !r.settled_at && !state.touched.has(String(r.id)) && (!coverNull || !r.cover_print_id)).length;
       if (state.updateShort && state.concurrentLink) {
         for (const r of state.tokenRows) r.cover_print_id = state.concurrentLink;
       }
@@ -96,7 +105,16 @@ function chain(table: string) {
       return { data: null, error: state.rereadError };
     }
     if (table === "print_sheet_tokens") {
-      return state.tokenReadError ? { data: null, error: state.tokenReadError } : { data: state.tokenRows, error: null };
+      if (state.tokenReadError) return { data: null, error: state.tokenReadError };
+      let rows = state.tokenRows;
+      if (state.filterReads) {
+        for (const [op2, col, val] of filters) {
+          if (op2 === "eq" && col === "cover_print_id") rows = rows.filter((r) => r.cover_print_id === val);
+          if (op2 === "eq" && col === "print_id") rows = rows.filter((r) => r.print_id === val);
+          if (op2 === "in" && col === "print_id") rows = rows.filter((r) => (val as unknown[]).includes(r.print_id));
+        }
+      }
+      return { data: rows, error: null };
     }
     return { data: [], error: null };
   };
@@ -161,6 +179,7 @@ beforeEach(() => {
   state.concurrentLink = null;
   state.rereadError = null;
   state.updateError = null;
+  state.filterReads = false;
   state.log = [];
   state.inserts = [];
   state.updates = [];
@@ -182,9 +201,10 @@ describe("PS-P10 link — a work-package pack's sheet tokens link by key to its 
     expect(await res.json()).toEqual({ linked: true, sheets: 2 });
     expect(state.updates).toHaveLength(1);
     expect(state.updates[0].patch).toEqual({ cover_print_id: COVER });
-    expect(state.updates[0].filters).toEqual(expect.arrayContaining([
-      ["in", "id", ["t1", "t2"]], ["is", "settled_at", null], ["is", "cover_print_id", null],
-    ]));
+    // ONE guarded statement over the print (fourth review fix) — never by id
+    expect(state.updates[0].filters).toEqual([
+      ["eq", "print_id", PRINT], ["eq", "org_id", ORG], ["eq", "minted_by", UID], ["is", "settled_at", null], ["is", "cover_print_id", null],
+    ]);
     expect(state.log).toEqual(["probe", "update"]);
     const tokenRead = state.reads.find((r) => r.table === "print_sheet_tokens" && !r.filters.some((f) => f[0] === "neq"))!;
     expect(tokenRead.filters).toEqual(expect.arrayContaining([
@@ -199,7 +219,8 @@ describe("PS-P10 link — a work-package pack's sheet tokens link by key to its 
   it("a sheet left out of the PDF (on the cover as printed:false) is not among `printed`; its token is linked too — the settle later voids it", async () => {
     state.cover = coverOf({ sheets: [{ documentId: D1, versionId: V1, printed: true }, { documentId: D2, versionId: V2, printed: false, leftOutCode: "fetch_failed" }] });
     expect(await (await post(linkBody({ printed: [D1] }))).json()).toEqual({ linked: true, sheets: 2 });
-    expect(state.updates[0].filters).toContainEqual(["in", "id", ["t1", "t2"]]);
+    expect(state.updates).toHaveLength(1);
+    expect(state.updates[0].filters).toContainEqual(["eq", "print_id", PRINT]);
   });
 
   it("a cover snapshot from before VFY-19 (no `printed` key) counts every entry as printed", async () => {
@@ -226,10 +247,11 @@ describe("PS-P10 link — a work-package pack's sheet tokens link by key to its 
     ["a print already linked to another cover", () => { state.tokenRows = state.tokenRows.map((r, i) => (i === 0 ? { ...r, cover_print_id: "c2c2c2c2-0000-0000-0000-000000000002" } : r)); }],
   ];
   for (const [what, arrange] of refusals) {
-    it(`refuses ${what} with 400 and writes NOTHING (the pack path then stops the print)`, async () => {
+    it(`refuses ${what} with the marked 400 (refused, cover_mismatch) and writes NOTHING (the pack path then stops the print)`, async () => {
       arrange();
       const res = await post(linkBody());
       expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ refused: true, code: "cover_mismatch", error: expect.any(String) });
       expect(state.updates).toEqual([]);
       expect(state.inserts).toEqual([]);
     });
@@ -237,7 +259,12 @@ describe("PS-P10 link — a work-package pack's sheet tokens link by key to its 
 
   it("a malformed request is 400 before anything is read", async () => {
     for (const body of [linkBody({ coverPrintId: "nope" }), linkBody({ coverPrintId: 7 }), linkBody({ coverPrintId: undefined }), linkBody({ printId: "x" }), linkBody({ printed: [] }), linkBody({ printed: "x" })]) {
-      expect((await post(body)).status).toBe(400);
+      const res = await post(body);
+      expect(res.status).toBe(400);
+      // not the refusal: the pack path prints unlinked on it (fourth review fix)
+      const said = (await res.json()) as Record<string, unknown>;
+      expect(said.refused).toBeUndefined();
+      expect(said.code).toBeUndefined();
     }
     expect(state.reads).toEqual([]);
     expect(state.updates).toEqual([]);
@@ -281,6 +308,38 @@ describe("PS-P10 link — a work-package pack's sheet tokens link by key to its 
     state.coverError = null;
     state.updateError = { message: "print_sheet_tokens: a sheet is linked to its cover's print only before it is settled" };
     expect((await post(linkBody())).status).toBe(503);
+  });
+
+  it("an unknown action is a bare 400 — never the marked refusal", async () => {
+    const res = await post({ action: "frobnicate", orgId: ORG });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Unknown action" });
+  });
+
+  // Fourth review fix: the link was written in chunks of 100 by id, which do
+  // not form one transaction — a pack of 101 to 150 sheets whose second chunk
+  // failed was left part-linked (and printed, fail open). Now ONE statement.
+  it("a pack of 150 sheets is linked by ONE guarded update — whole or not at all", async () => {
+    state.tokenRows = Array.from({ length: 150 }, (_, i) => ({
+      id: `t${i}`, document_id: `d${String(i).padStart(7, "0")}-0000-0000-0000-000000000000`, version_id: V1, minted_at: MINTED, print_id: PRINT, settled_at: null, voided_at: null,
+    }));
+    state.cover = coverOf({ sheets: state.tokenRows.map((r) => ({ documentId: r.document_id, versionId: V1, printed: true })) });
+    const res = await post(linkBody({ printed: state.tokenRows.map((r) => r.document_id) }));
+    expect(await res.json()).toEqual({ linked: true, sheets: 150 });
+    expect(state.updates).toHaveLength(1);
+    expect(state.updates[0].filters.some((f) => f[0] === "in")).toBe(false);
+    // and a failing write links nothing: one statement, one 503
+    state.updates = [];
+    state.updateError = { message: "statement timeout" };
+    expect((await post(linkBody({ printed: state.tokenRows.map((r) => r.document_id) }))).status).toBe(503);
+    expect(state.updates).toHaveLength(1);
+  });
+
+  it("the link write is one statement on the route source (no chunk loop in linkCover)", () => {
+    const src = readFileSync(join(process.cwd(), "app/api/print-sheet-tokens/route.ts"), "utf8");
+    const link = src.slice(src.indexOf("async function linkCover("), src.indexOf("async function checkCoverLink("));
+    expect(link).not.toContain("chunks(");
+    expect(link.match(/\.update\(\{ cover_print_id: coverPrintId \}\)/g)).toHaveLength(1);
   });
 
   it("a short link (the print changed under it) is a 409", async () => {
@@ -349,7 +408,8 @@ describe("PS-P10 link — a work-package pack's sheet tokens link by key to its 
     const res = await post(linkBody({ printed: included.map((s) => s.documentId) }));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ linked: true, sheets: 3 });
-    expect(state.updates[0].filters).toContainEqual(["in", "id", ["t1", "t2", "t3"]]);
+    expect(state.updates).toHaveLength(1);
+    expect(state.updates[0].filters).toContainEqual(["eq", "print_id", PRINT]);
 
     // The page maps the included sheets into the snapshot by these keys, and
     // sends the same included sheets as `printed` (lib/docPack.ts).
@@ -433,9 +493,13 @@ describe("PS-P10 void — a controller recalls a printed pack", () => {
     });
     expect(state.updates[0].patch).toEqual({ voided_at: expect.any(String), void_reason: "recalled" });
     expect(state.updates[0].filters).toEqual(expect.arrayContaining([["in", "id", ["t1", "t2"]], ["is", "voided_at", null]]));
-    // the tokens were found by the cover's print id, in this workspace
-    const tokenRead = state.reads.find((r) => r.table === "print_sheet_tokens")!;
-    expect(tokenRead.filters).toEqual(expect.arrayContaining([["eq", "org_id", ORG], ["eq", "cover_print_id", COVER]]));
+    // the token print was found by the cover's print id, in this workspace,
+    // and then every token of that print was read (fourth review fix)
+    const tokenReads = state.reads.filter((r) => r.table === "print_sheet_tokens");
+    expect(tokenReads).toHaveLength(2);
+    expect(tokenReads[0].cols).toBe("print_id");
+    expect(tokenReads[0].filters).toEqual([["eq", "org_id", ORG], ["eq", "cover_print_id", COVER]]);
+    expect(tokenReads[1].filters).toEqual([["eq", "org_id", ORG], ["in", "print_id", [PRINT]]]);
   });
 
   it("the controller tier is the role COLLECTION: a Manager headline holding DocCtrl additively may recall; an Admin is recorded as Admin", async () => {
@@ -471,8 +535,31 @@ describe("PS-P10 void — a controller recalls a printed pack", () => {
     const res = await post({ action: "void", orgId: ORG, printId: PRINT, reason: "Wrong pack" });
     expect(await res.json()).toEqual({ recalled: true, voided: 2, alreadyVoid: 0 });
     expect(state.inserts[0].rows).toMatchObject({ resource_type: "org", resource_id: ORG, details: { coverPrintId: null, printIds: [PRINT] } });
-    expect(state.reads.find((r) => r.table === "print_sheet_tokens")!.filters).toContainEqual(["eq", "print_id", PRINT]);
+    const tokenReads = state.reads.filter((r) => r.table === "print_sheet_tokens");
+    expect(tokenReads).toHaveLength(1);
+    expect(tokenReads[0].filters).toEqual([["eq", "org_id", ORG], ["in", "print_id", [PRINT]]]);
     expect(state.reads.some((r) => r.table === "work_package_prints")).toBe(false);
+  });
+
+  // Fourth review fix: a print linked only in part (rows a link never reached)
+  // is still recalled WHOLE by its cover — the cover finds the token print,
+  // and the recall takes every token of it; another print's rows are untouched.
+  it("a print with some rows linked and some not is recalled whole by its cover", async () => {
+    asController();
+    state.filterReads = true;
+    const OTHER_PRINT = "f9f9f9f9-0000-0000-0000-000000000009";
+    state.tokenRows = [
+      { id: "t1", document_id: D1, print_id: PRINT, cover_print_id: COVER, settled_at: "2026-10-20T08:01:00Z", voided_at: null },
+      { id: "t2", document_id: D2, print_id: PRINT, cover_print_id: null, settled_at: "2026-10-20T08:01:00Z", voided_at: null },
+      { id: "t3", document_id: "d3d3d3d3-0000-0000-0000-000000000003", print_id: PRINT, cover_print_id: null, settled_at: null, voided_at: null },
+      { id: "t9", document_id: D1, print_id: OTHER_PRINT, cover_print_id: null, settled_at: "2026-10-20T08:01:00Z", voided_at: null },
+    ];
+    const res = await post(voidBody());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ recalled: true, voided: 3, alreadyVoid: 0 });
+    const voidedIds = state.updates.flatMap((u) => (u.filters.find((f) => f[0] === "in" && f[1] === "id")?.[2] as string[]) ?? []);
+    expect(voidedIds.sort()).toEqual(["t1", "t2", "t3"]);
+    expect(state.inserts[0].rows).toMatchObject({ details: { printIds: [PRINT], sheets: 3 } });
   });
 
   it("a reason is required, and exactly one print id", async () => {

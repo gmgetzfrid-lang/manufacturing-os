@@ -7,11 +7,12 @@
 //     before the download click, and the post-download settle is PS-P9's
 //     exactly (review fix: the link first rode on that settle, which is
 //     fired and never awaited — a dropped settle left the print unlinked);
-//   - a link the server REFUSES (400) STOPS the print: no click, no
-//     distribution record, the whole print voided (print_aborted), a
-//     SheetTokenCoverLinkError; a refusal is never retried;
-//   - REGRESSION FIRST (third review fix): a link that only FAILS — no
-//     answer or a 5xx twice (one retry), or a 401 / 404 / 409 — FAILS OPEN:
+//   - a link the server REFUSES (400 marked refused / cover_mismatch) STOPS
+//     the print: no click, no distribution record, the whole print voided
+//     (print_aborted), a SheetTokenCoverLinkError; a refusal is never retried;
+//   - REGRESSION FIRST (third and fourth review fixes): a link that only
+//     FAILS — no answer or a 5xx twice (one retry), a 401 / 404 / 409, or an
+//     UNMARKED 400 (an older route's "Unknown action") — FAILS OPEN:
 //     the pack downloads unlinked, exactly as before PS-P10, with one
 //     console warning; before 20261240 ({ available: false }) the pack prints
 //     as today;
@@ -34,7 +35,7 @@ const state = vi.hoisted(() => ({
   coverThrows: false,
   origin: "https://app.example.com",
   /** how the link route answers, in order (the last one repeats) */
-  link: ["ok"] as Array<"ok" | "unavailable" | "refused" | "error" | "throw" | "signedout" | "unknown" | "conflict">,
+  link: ["ok"] as Array<"ok" | "unavailable" | "refused" | "error" | "throw" | "signedout" | "unknown" | "conflict" | "badrequest">,
 }));
 
 vi.mock("@/lib/supabase", () => {
@@ -117,7 +118,8 @@ beforeEach(() => {
         const mode = state.link.length > 1 ? state.link.shift()! : state.link[0];
         if (mode === "throw") throw new Error("network down");
         if (mode === "unavailable") return { ok: true, status: 200, json: async () => ({ available: false, linked: false }) };
-        if (mode === "refused") return { ok: false, status: 400, json: async () => ({ error: "That cover does not list the sheets of this print" }) };
+        if (mode === "refused") return { ok: false, status: 400, json: async () => ({ refused: true, code: "cover_mismatch", error: "That cover does not list the sheets of this print" }) };
+        if (mode === "badrequest") return { ok: false, status: 400, json: async () => ({ error: "Unknown action" }) };
         if (mode === "error") return { ok: false, status: 503, json: async () => ({ error: "Couldn't link the sheets to the cover — try again" }) };
         if (mode === "signedout") return { ok: false, status: 401, json: async () => ({ error: "Unauthorized" }) };
         if (mode === "unknown") return { ok: false, status: 404, json: async () => ({ error: "Unknown or already settled print" }) };
@@ -199,7 +201,8 @@ describe("PS-P10 — a work-package pack's sheet tokens are linked to its cover'
     ["a 404 (not retried)", ["unknown"], 1],
     ["a 409 (not retried)", ["conflict"], 1],
     ["a 503 then a 409", ["error", "conflict"], 2],
-  ] as Array<[string, Array<"error" | "throw" | "signedout" | "unknown" | "conflict">, number]>) {
+    ["an unmarked 400 \"Unknown action\" (an older route during deploy skew; not retried)", ["badrequest"], 1],
+  ] as Array<[string, Array<"error" | "throw" | "signedout" | "unknown" | "conflict" | "badrequest">, number]>) {
     it(`REGRESSION FIRST: ${what} FAILS OPEN — the pack downloads unlinked as before PS-P10, with one warning, and PS-P9's settle`, async () => {
       state.link = [...modes];
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -263,6 +266,19 @@ describe("PS-P10 — a work-package pack's sheet tokens are linked to its cover'
     expect(settles()).toEqual([]);
   });
 
+  it("CONTRACT: the route marks its refusal with the code the client reads, and the pack path stops only on that marker (fourth review fix)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const route = readFileSync(join(process.cwd(), "app/api/print-sheet-tokens/route.ts"), "utf8");
+    const client = readFileSync(join(process.cwd(), "lib/printSheetTokensClient.ts"), "utf8");
+    const pack = readFileSync(join(process.cwd(), "lib/docPack.ts"), "utf8");
+    expect(route).toContain('const COVER_MISMATCH = "cover_mismatch";');
+    expect(route).toContain("json({ refused: true, code: COVER_MISMATCH, error }, 400)");
+    expect(client).toContain('res.status === 400 && body?.refused === true && body?.code === "cover_mismatch"');
+    expect(pack).toContain("if (r.refused) throw new SheetTokenCoverLinkError(r.error);");
+    expect(pack).not.toMatch(/r\.status === 400\) throw/);
+  });
+
   it("linkSheetTokensToCover says what came back and never throws; settleSheetTokens never sends a cover id", async () => {
     const input = { orgId: "org1", printId: PRINT, coverPrintId: COVER, printedDocumentIds: [D1] };
     state.link = ["ok"];
@@ -270,9 +286,13 @@ describe("PS-P10 — a work-package pack's sheet tokens are linked to its cover'
     state.link = ["unavailable"];
     expect(await linkSheetTokensToCover(input)).toEqual({ ok: true, linked: false });
     state.link = ["refused"];
-    expect(await linkSheetTokensToCover(input)).toEqual({ ok: false, status: 400, error: "That cover does not list the sheets of this print" });
+    expect(await linkSheetTokensToCover(input)).toEqual({ ok: false, refused: true, status: 400, error: "That cover does not list the sheets of this print" });
+    state.link = ["badrequest"];
+    expect(await linkSheetTokensToCover(input)).toEqual({ ok: false, refused: false, status: 400, error: "Unknown action" });
+    state.link = ["error"];
+    expect(await linkSheetTokensToCover(input)).toMatchObject({ ok: false, refused: false, status: 503 });
     state.link = ["throw"];
-    expect(await linkSheetTokensToCover(input)).toMatchObject({ ok: false, status: 0 });
+    expect(await linkSheetTokensToCover(input)).toMatchObject({ ok: false, refused: false, status: 0 });
     await settleSheetTokens({ orgId: "org1", printId: PRINT, printedDocumentIds: [D1] });
     expect(settles().map((c) => c.body)).toEqual([{ action: "settle", orgId: "org1", printId: PRINT, printed: [D1] }]);
   });

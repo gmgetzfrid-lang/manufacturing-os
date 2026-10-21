@@ -130,12 +130,13 @@ export class PackTooLargeError extends Error {
   }
 }
 
-/** PS-P10 (PHYS-19 c3): the server REFUSED (400) to link the pack's sheet
- *  codes to the cover's print record — the cover is not this print's
- *  (DEC-90 ruling (1)) — so the print is STOPPED before the download
- *  (nothing downloaded, no pin moved; the minted codes are voided).
- *  A link that only FAILS (no answer, a 5xx, 401, 404, 409 — after one
- *  retry) does not throw this: the pack prints unlinked, as before PS-P10.
+/** PS-P10 (PHYS-19 c3): the server REFUSED to link the pack's sheet codes
+ *  to the cover's print record (a 400 marked code cover_mismatch) — the
+ *  cover is not this print's (DEC-90 ruling (1)) — so the print is STOPPED
+ *  before the download (nothing downloaded, no pin moved; the minted codes
+ *  are voided). A link that only FAILS (no answer, a 5xx, 401, 404, 409, or
+ *  an unmarked 400 — after one retry) does not throw this: the pack prints
+ *  unlinked, as before PS-P10.
  *  Retrying the print is safe. */
 export class SheetTokenCoverLinkError extends Error {
   readonly code = "sheet_token_cover_link" as const;
@@ -623,8 +624,9 @@ async function buildAndDownloadDocPackOnce(tokenPrint: SheetTokenPrint, input: {
    *  `cover.linkPrint(id)` — the pack's sheet tokens are linked to the
    *  cover's print by key there and then, before the download (the server
    *  checks it). It throws SheetTokenCoverLinkError only when the server
-   *  REFUSES the link (400), which stops the print like any throw here. A
-   *  link that fails (no answer, a 5xx, 401, 404, 409 — after one retry)
+   *  REFUSES the link (a 400 marked cover_mismatch), which stops the print
+   *  like any throw here. A link that fails (no answer, a 5xx, 401, 404,
+   *  409, an unmarked 400 — after one retry)
    *  warns and resolves: the pack prints unlinked, as before PS-P10. With no
    *  token minted (today's QR on every sheet) or before database update
    *  20261240 it resolves and links nothing. A cover that does not call it
@@ -883,13 +885,15 @@ async function buildAndDownloadDocPackOnce(tokenPrint: SheetTokenPrint, input: {
         // is never retried.
         if (!r.ok && (r.status === 0 || r.status >= 500)) r = await link();
         if (r.ok) return;
-        // Only the server's 400 REFUSAL (the cover is not this print's — DEC-90
-        // ruling (1)) stops the print. Anything else that is still failing
-        // after the retry (no answer, a 5xx, 401, 404, 409) FAILS OPEN: the
-        // pack prints unlinked, exactly as it did before PS-P10 (REGRESSION
-        // FIRST — the recall the link serves ships off until PHYS-20, and a
-        // recall of an unlinked print answers the truthful 404).
-        if (r.status === 400) throw new SheetTokenCoverLinkError(r.error);
+        // Only the server's marked REFUSAL (a 400 with code cover_mismatch —
+        // the cover is not this print's, DEC-90 ruling (1)) stops the print.
+        // Anything else that is still failing after the retry (no answer, a
+        // 5xx, 401, 404, 409, or any other 400 — a malformed body, an older
+        // route's "Unknown action" during deploy skew) FAILS OPEN: the pack
+        // prints unlinked, exactly as it did before PS-P10 (REGRESSION FIRST —
+        // the recall the link serves ships off until PHYS-20, and a recall of
+        // an unlinked print answers the truthful 404).
+        if (r.refused) throw new SheetTokenCoverLinkError(r.error);
         console.warn("[print-sheet-tokens] the pack's sheet codes could not be linked to its print record — printing unlinked:", r.error);
       },
     });

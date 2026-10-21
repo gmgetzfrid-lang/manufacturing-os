@@ -235,9 +235,10 @@ export default function PackagesPage() {
           // PS-P10 (PHYS-19 c3): this pack's sheet tokens link to this
           // cover's print by key, here, before the download (the server
           // checks it). A link the server REFUSES (the cover is not this
-          // print's) STOPS the print — nothing downloaded, no pin moved. A
-          // link that only fails (no answer, a 5xx, after one retry) prints
-          // the pack unlinked, as before PS-P10.
+          // print's — a 400 marked cover_mismatch) STOPS the print — nothing
+          // downloaded, no pin moved. A link that only fails (no answer or a
+          // 5xx after one retry, or any other answer, an unmarked 400
+          // included) prints the pack unlinked, as before PS-P10.
           await cover.linkPrint(printId);
           // PKG-12: every cover entry carries its page(s) in this pack — the
           // cover's own pages come first.
