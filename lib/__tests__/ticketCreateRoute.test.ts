@@ -1907,6 +1907,34 @@ describe("DF-P6 — GAP-110 / DEC-34: the like-in-kind declaration at filing; GA
     expect(nextTicketRpc()).toHaveLength(1);
   });
 
+  it("fix pass 3 (review, minor): an id that is another workspace's request is answered 409 declaration_key_used WITHOUT its request number — at the pre-check and on the concurrent-insert re-read alike — and files nothing", async () => {
+    s.tables.e_signatures = [sigRow()];
+    s.tables.tickets.push({ id: KEY, org_id: OTHER_ORG, ticket_id: "B-2026-0042", requester_id: "someone-else", status: "PENDING_ASSIGNMENT" });
+    const res = await POST(req(declared()));
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("declaration_key_used");
+    expect(body.error).not.toMatch(/B-2026-0042/);
+    expect(nextTicketRpc()).toHaveLength(0);
+    // the race path: the foreign row lands between the pre-check and the insert
+    seed(); s.counter = new Map(); s.rpcCalls = [];
+    s.tables.e_signatures = [sigRow()];
+    let raced = false;
+    s.hooks.push((table: string, op: string) => {
+      if (table === "tickets" && op === "insert" && !raced) {
+        raced = true;
+        s.tables.tickets.push({ id: KEY, org_id: OTHER_ORG, ticket_id: "B-2026-0043", requester_id: "someone-else", status: "PENDING_ASSIGNMENT" });
+      }
+    });
+    s.errors["tickets.insert"] = [{ code: "23505", message: 'duplicate key value violates unique constraint "tickets_pkey"' }];
+    const raceRes = await POST(req(declared()));
+    const raceBody = await raceRes.json();
+    expect(raceRes.status).toBe(409);
+    expect(raceBody.code).toBe("declaration_key_used");
+    expect(raceBody.error).not.toMatch(/B-2026-0043/);
+    expect(tickets().filter((t) => t.org_id === ORG)).toHaveLength(0);
+  });
+
   it("fix pass (review, minor 10): an id that already has a history — another person's signature, any other signature over it, or an audit row that is not this declaration's capture — is refused 409 declaration_key_used BEFORE a number is spent; the requester's own re-sign of the same id is not", async () => {
     const OTHER_SIG = "5a000000-0000-4000-8000-000000000002";
     const cases: Array<[Row[], Row[]]> = [

@@ -789,3 +789,18 @@ export function declarationKeyReused(sigs: readonly KeySignatureRow[] | null, au
   }
   return (sigs?.length ?? 0) >= KEY_HISTORY_LIMIT || (audits?.length ?? 0) >= KEY_HISTORY_LIMIT;
 }
+
+export type DeclarationTakenRow = { id?: string | null; org_id?: string | null; ticket_id?: string | null };
+/** The refusal sentence when a request id is already used. */
+export const DECLARATION_KEY_USED_ERROR = "The id this declaration was signed for already has a history of its own — sign the declaration again (a fresh id is minted).";
+
+/** DF-P6 fix pass 3 (review, minor): the 409 for a declaration whose signed
+ *  id is already a row. The create route reads that row as the service role,
+ *  so the request number is named only when the row is in the caller's
+ *  workspace (a double submit); an id that names another workspace's row
+ *  answers the generic declaration_key_used, with no number — never a
+ *  disclosure of another workspace's request. */
+export function declarationTakenAnswer(row: DeclarationTakenRow, orgId: string): { status: 409; field: "declaration"; code: "declaration_used" | "declaration_key_used"; error: string } {
+  if (row.org_id !== orgId) return { status: 409, field: "declaration", code: "declaration_key_used", error: DECLARATION_KEY_USED_ERROR };
+  return { status: 409, field: "declaration", code: "declaration_used", error: `This declaration was already filed as ${String(row.ticket_id ?? "a request")} — check the queue before you submit it again.` };
+}

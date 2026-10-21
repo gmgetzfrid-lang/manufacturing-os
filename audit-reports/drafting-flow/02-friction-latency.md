@@ -154,7 +154,7 @@ Landed — on a routed library the two questions are two slots on one parallel r
 **Done-when.**
 - ✗ in part — holds on routed libraries (DF-P5) and for declared requests everywhere; in an unconfigured workspace an undeclared request still runs requester-then-engineer serially (`request_final_engineer_approval`) — today's path, kept by DEC-90 ruling (2) / the integrator's ruling for DF-P6 (the seed is today's serial path).
 
-**Owner of the remainder:** the integrator — a ruling under DEC-90 that the unconfigured seed itself becomes the parallel requester + engineering roster (the code supports it: `withEngineeringGate` appends the engineering slot to any table). No package can make that change without the ruling. Stays OPEN.
+**Owner of the remainder:** the integrator — a ruling under DEC-90 that the unconfigured seed itself becomes the parallel requester + engineering roster (the code supports it: `withEngineeringGate` appends the engineering slot to any table). No package can make that change without the ruling. Stays OPEN. *Named at the DF-P6 third review fix pass (DEC-31): the decision this waits on is DEC-90's proposed DF-P6 ruling **R2** (proposed: keep the serial seed; not yet given) — if the integrator overturns it, the next holder of `lib/workflow.ts` builds the parallel seed.*
 
 ---
 
@@ -276,7 +276,7 @@ Tests: `lib/__tests__/dfRoundG_P5_routing.test.ts` ("TIER-5 done-when 3 …" —
 - ✗ in part (1) A requester is never required to name a reviewer — holds for declared requests and on routed libraries; not for an undeclared request in an unconfigured workspace (DEC-90 ruling (2)).
 - ✗ in part (2) Defaulted from the library's review policy and the work class — from the library: ✓ (routing); from the class: the class is stored and a routing slot can key on it, but a blocking slot cannot (ruled notify-only for DF-P6) and the fallback picker does not default from it.
 
-**Owner of the remainder:** the integrator (the same DEC-90 ruling as `FRIC-2`: an unconfigured workspace's seed routes the engineer instead of asking the requester), or drafting-flow DF-P9 for a picker default keyed on the class once a ruling says which engineer a class implies. Stays OPEN.
+**Owner of the remainder:** the integrator (the same DEC-90 ruling as `FRIC-2`: an unconfigured workspace's seed routes the engineer instead of asking the requester), or drafting-flow DF-P9 for a picker default keyed on the class once a ruling says which engineer a class implies. Stays OPEN. *Named at the DF-P6 third review fix pass (DEC-31): the decision this waits on is DEC-90's proposed DF-P6 ruling **R3** (proposed: keep the requester's pick in an unconfigured workspace; not yet given) — if overturned, DF-P9 builds the default.*
 
 ---
 

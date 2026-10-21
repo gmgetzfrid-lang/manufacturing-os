@@ -215,14 +215,36 @@ describe("fix pass (review, minor 11) — a declaration stands only on its e-sig
 });
 
 describe("GAP-111 — the flag binds the issue point, never drafting", () => {
-  it("request_eng_review writes engineering_required = true with the engineer pick (columns present)", async () => {
+  it("request_eng_review writes engineering_required = true with the engineer pick (columns present, a request filed under the review model)", async () => {
     seed("Maintenance");
     state.user = { id: "ds-1" };
-    state.rows.tickets = [ticketRow({ status: "PENDING_ASSIGNMENT", requester_role: "Maintenance", ...DECLARED })];
+    state.rows.tickets = [ticketRow({ status: "PENDING_ASSIGNMENT", requester_role: "Maintenance", ...DECLARED, review_model_filed: true })];
     const res = await post({ ticketId: "t1", actionType: "request_eng_review", comment: "new tie-in, not like for like", engineer: { id: "e-1", name: "E", email: "e-1@x.io" } });
     expect(res.status).toBe(200);
     expect(updates()[0].engineering_required).toBe(true);
     expect(updates()[0].status).toBe("PENDING_ENG_TEAM");
+  });
+  it("fix pass 3 (review, major): on a pre-paste row (review_model_filed false) request_eng_review — an optional scope review or an engineering-first type's mandatory loop — writes NO engineering_required: the ticket keeps its lane (DEC-90 ruling (2)); flag_engineering still binds it explicitly", async () => {
+    seed("Manager");
+    state.rows.org_configurations = [{ org_id: "o1", key: "drafting", data: { requestTypes: { options: [{ value: "ISO", label: "ISO", engineeringFirst: true }] } } }];
+    state.user = { id: "ds-1" };
+    const legacy = { status: "PENDING_ASSIGNMENT", requester_role: "Manager", assigned_drafter_id: null, engineering_required: false, review_model_filed: false };
+    state.rows.tickets = [ticketRow(legacy)];
+    const res = await post({ ticketId: "t1", actionType: "request_eng_review", comment: "type routes through engineering first", engineer: { id: "e-1", name: "E", email: "e-1@x.io" } });
+    expect(res.status).toBe(200);
+    expect(updates()[0].status).toBe("PENDING_ENG_TEAM");
+    expect("engineering_required" in updates()[0]).toBe(false);
+    // the optional scope review (the type is not engineering-first) on a legacy row: no write either
+    state.calls = [];
+    state.rows.org_configurations = [];
+    state.rows.tickets = [ticketRow(legacy)];
+    expect((await post({ ticketId: "t1", actionType: "request_eng_review", comment: "quick scope question", engineer: { id: "e-1", name: "E", email: "e-1@x.io" } })).status).toBe(200);
+    expect("engineering_required" in updates()[0]).toBe(false);
+    // flag_engineering is the explicit way to bind a legacy row
+    state.calls = [];
+    state.rows.tickets = [ticketRow({ ...legacy, status: "DRAFTING", assigned_drafter_id: "d-1" })];
+    expect((await post({ ticketId: "t1", actionType: "flag_engineering", comment: "the replacement valve is a different rating" })).status).toBe(200);
+    expect(updates()[0].engineering_required).toBe(true);
   });
   it("flag_engineering at DRAFTING: engineering_required = true, NO status change, the reason on the history line; drafting carries on", async () => {
     seed("Maintenance");

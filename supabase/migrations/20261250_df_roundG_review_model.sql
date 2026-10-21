@@ -172,7 +172,7 @@ SELECT 40, 'inventory (before apply): workspaces storing their own engineer_gate
         OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(c.data->'grants') = 'array' THEN c.data->'grants' ELSE '[]'::jsonb END) g(e)
                     WHERE g.e->>'cap' = 'ticket.engineer_gate_exempt'))
 UNION ALL
-SELECT 41, 'inventory (before apply): GAP-105 — stored rules on a ticket.* capability scoped to a library (they start matching a ticket''s library from the DF-P6 deploy; expected 0)',
+SELECT 41, 'inventory (before apply): GAP-105 — stored rules on a ticket.* capability scoped to a library (they never match: the request does not present its library; the permissions console refuses to save a policy that keeps one — remove the rule; expected 0)',
        COUNT(*)::text
   FROM org_configurations c,
        jsonb_each(CASE WHEN jsonb_typeof(c.data->'caps') = 'object' THEN c.data->'caps' ELSE '{}'::jsonb END) cap(k, v),
@@ -181,7 +181,7 @@ SELECT 41, 'inventory (before apply): GAP-105 — stored rules on a ticket.* cap
    AND jsonb_typeof(rule.e) = 'object'
    AND jsonb_typeof(rule.e->'when'->'libraryId') = 'array' AND jsonb_array_length(rule.e->'when'->'libraryId') > 0
 UNION ALL
-SELECT 42, 'inventory (before apply): GAP-105 — tickets carrying a library in workspaces with such a rule',
+SELECT 42, 'inventory (before apply): GAP-105 — tickets carrying a library in workspaces with such a library-scoped ticket.* rule (the rule does not reach them)',
        COUNT(*)::text
   FROM tickets t
  WHERE t.library_id IS NOT NULL

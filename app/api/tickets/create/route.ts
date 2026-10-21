@@ -23,6 +23,7 @@ import {
   stampedRequesterRole, stampedRequesterName, openingHistory, creationNotice, insertFailureKind,
   isStagedKeyOf, finalAttachmentKey, attachmentSizeLabel, requestNumberYear, checkinNoteOf, psmAlertNotice,
   declarationKeyReused, KEY_HISTORY_LIMIT, type KeySignatureRow, type KeyAuditRow,
+  declarationTakenAnswer, DECLARATION_KEY_USED_ERROR, type DeclarationTakenRow,
   type CreatorMember, type TicketCreateInput, type TicketCreateAttachment, type TicketCreateOrigin, type CheckinMoc,
 } from "@/lib/ticketCreate";
 import type { PsmAlertOutcome } from "@/lib/ticketCreateClient";
@@ -603,11 +604,13 @@ async function create(
       orgId, ticketKey: declaration.ticketKey, requesterId: caller.id, statement: declaration.statement, now: Date.now(),
     });
     if (refusal) return { status: 400, field: "declaration", error: refusal };
-    const { data: taken, error: takenErr } = await supabaseAdmin.from("tickets").select("id, ticket_id").eq("id", declaration.ticketKey).maybeSingle();
+    // DF-P6 fix pass 3 (review, minor): the read runs as the service role,
+    // so the request number is echoed only for a row of THIS workspace — an
+    // id taken elsewhere answers the generic declaration_key_used, never
+    // another workspace's number (declarationTakenAnswer).
+    const { data: taken, error: takenErr } = await supabaseAdmin.from("tickets").select("id, org_id, ticket_id").eq("id", declaration.ticketKey).maybeSingle();
     if (takenErr) return { status: 503, error: "Couldn't confirm the request was not already filed — try again in a moment." };
-    if (taken) {
-      return { status: 409, field: "declaration", code: "declaration_used", error: `This declaration was already filed as ${String((taken as { ticket_id?: string }).ticket_id ?? "a request")} — check the queue before you submit it again.` };
-    }
+    if (taken) return declarationTakenAnswer(taken as DeclarationTakenRow, orgId);
     // DF-P6 fix pass (review, minor 10): the id is minted by the browser, so
     // a live-row check is not enough — an id that ever named something else
     // (a hard-deleted request, or any record with signatures or audit rows
@@ -622,7 +625,7 @@ async function create(
       .eq("resource_id", declaration.ticketKey).limit(KEY_HISTORY_LIMIT);
     if (sigsUnderErr || auditUnderErr) return { status: 503, error: "Couldn't confirm the declaration's request id is new — try again in a moment." };
     if (declarationKeyReused(sigsUnder as KeySignatureRow[] | null, auditUnder as KeyAuditRow[] | null, caller.id)) {
-      return { status: 409, field: "declaration", code: "declaration_key_used", error: "The id this declaration was signed for already has a history of its own — sign the declaration again (a fresh id is minted)." };
+      return { status: 409, field: "declaration", code: "declaration_key_used", error: DECLARATION_KEY_USED_ERROR };
     }
   }
 
@@ -834,10 +837,8 @@ async function create(
     // the request), never as "nothing was filed" after spending another
     // number.
     if (declaration && row.id === declaration.ticketKey && insertFailureKind(insErr) === "duplicate") {
-      const { data: same, error: sameErr } = await supabaseAdmin.from("tickets").select("id, ticket_id").eq("id", declaration.ticketKey).maybeSingle();
-      if (!sameErr && same) {
-        return { status: 409, field: "declaration", code: "declaration_used", error: `This declaration was already filed as ${String((same as { ticket_id?: string }).ticket_id ?? "a request")} — check the queue before you submit it again.` };
-      }
+      const { data: same, error: sameErr } = await supabaseAdmin.from("tickets").select("id, org_id, ticket_id").eq("id", declaration.ticketKey).maybeSingle();
+      if (!sameErr && same) return declarationTakenAnswer(same as DeclarationTakenRow, orgId);
     }
     const settled = await settleFailedInsert({ orgId, year, seq, ticketNumber, callerId: caller.id, now, err: insErr });
     if (settled.kind === "filed") {

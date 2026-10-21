@@ -21,7 +21,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { WorkflowEngine, engineerApprovalRequired, engineeringGateRequired, ticketResource, ISSUING_APPROVALS, SELF_OVERRIDE_REASON, NO_ENGINEER_TO_PICK_REASON, engineerPickQuestionApplies, type WorkflowAction, type WorkflowContext } from "@/lib/workflow";
+import { WorkflowEngine, engineerApprovalRequired, engineeringGateRequired, ticketResource, ISSUING_APPROVALS, SELF_OVERRIDE_REASON, NO_ENGINEER_TO_PICK_REASON, FLAG_ENG_REVIEW_BINDS_DESCRIPTION, engineerPickQuestionApplies, type WorkflowAction, type WorkflowContext } from "@/lib/workflow";
 import { computeTransition, rowToTicket, classifyTransitionNotification, type TransitionInput } from "@/lib/ticketTransitions";
 import {
   ticketEngineeringRequired, checkDeclarationStatement, declarationSignatureRefusal, declarationSignatureStatement,
@@ -664,5 +664,99 @@ describe("fix pass 2 (review, minor 7) — an engineering-first type's mandatory
     // an undeclared request is already required; the loop flag does not matter for it
     const undeclared = mk({ status: "PENDING_ASSIGNMENT", engineeringRequired: true });
     expect(computeTransition(undeclared, inputFor(a, { uid: "ds", role: "DraftingSupervisor" }, { engineeringFirstLoop: true })).updates.engineering_required).toBe(true);
+  });
+});
+
+describe("fix pass 3 (review, major) — request_eng_review on a pre-paste row never moves an in-flight ticket's lane (DEC-90 ruling (2))", () => {
+  // The chain the reviewer named: a pre-paste row (engineering_required
+  // false, review_model_filed false) with a Manager requester goes through
+  // request_eng_review → approve_team → assign → submit_draft; at
+  // PENDING_REVIEW it is offered exactly what the base engine (7893129)
+  // offered the same request, for every actor, identity and member count.
+  const chainTo = (filed: boolean): Ticket => {
+    let row: Record<string, unknown> = {
+      id: "t1", org_id: "o1", ticket_id: "REQ-1", title: "Pump iso", unit: "U-100", request_type: "ISO", status: "PENDING_ASSIGNMENT",
+      requester_id: "req", requester_role: "Manager", assigned_drafter_id: null, assigned_engineer_id: null,
+      attachments: [{ ...DRAFT, status: "staged", rev: undefined }], comments: [], history: [], unread_by: [], watchers: [],
+      revision_count: 0, deliverable_rev: null, created_at: NOW, engineering_required: false, review_model_filed: filed,
+    };
+    const step = (action: string, actor: { uid: string; role: string }, extra: Partial<TransitionInput> = {}) => {
+      const res = computeTransition(rowToTicket(row), inputFor({ action, label: action, variant: "default" } as WorkflowAction, actor, {
+        engineer: { id: "eng", name: "Eng", email: "eng@x.io" }, assignment: { id: "drf", name: "Drafter" }, ...extra,
+      }));
+      if (!filed) expect("engineering_required" in res.updates, action).toBe(false);
+      row = { ...row, ...res.updates };
+      return res;
+    };
+    expect(step("request_eng_review", { uid: "ds", role: "DraftingSupervisor" }).newStatus).toBe("PENDING_ENG_TEAM");
+    expect(step("approve_team", { uid: "eng", role: "Engineer-2" }).newStatus).toBe("PENDING_ASSIGNMENT");
+    expect(step("assign", { uid: "ds", role: "DraftingSupervisor" }).newStatus).toBe("DRAFTING");
+    expect(step("submit_draft", { uid: "drf", role: "Drafter" }).newStatus).toBe("PENDING_REVIEW");
+    return rowToTicket(row);
+  };
+  it("GOLDEN: the chained pre-paste row's PENDING_REVIEW actions equal the 7893129 snapshot (requester Manager, engineer assigned) for every actor role × identity × member count — the only addition flag_engineering (the column exists, still false)", () => {
+    const golden = JSON.parse(readFileSync(join(process.cwd(), "lib", "__tests__", "dfP6EngineBase7893129.golden.json"), "utf8")) as { base: string; entries: number; lists: string[]; seq: number[] };
+    const keys = Object.keys(engineMatrix());
+    const t = chainTo(false);
+    expect(t).toMatchObject({ status: "PENDING_REVIEW", engineeringRequired: false, reviewModelFiled: false, assignedEngineerId: "eng", assignedDrafterId: "drf" });
+    let compared = 0;
+    for (const members of [0, 5]) {
+      for (const actorRole of ALL_ROLES) {
+        for (const uid of ["req", "drf", "eng", "x"]) {
+          const k = `Manager|PENDING_REVIEW|E|${members}|${actorRole}|${uid}`;
+          const i = keys.indexOf(k);
+          expect(i, k).toBeGreaterThanOrEqual(0);
+          const cur = WorkflowEngine.getActions(t, actorRole, uid, undefined, { userRoles: [actorRole], requesterRoles: ["Manager"], activeMemberCount: members })
+            .filter((a) => a.action !== "flag_engineering")
+            .map((a) => `${a.action}|${a.disabledReason ? "D" : ""}|${a.optional ? "O" : ""}`).join(",");
+          expect(cur, k).toBe(golden.lists[golden.seq[i]]);
+          compared++;
+        }
+      }
+    }
+    expect(compared).toBe(2 * ALL_ROLES.length * 4);
+    // the Manager requester keeps today's direct approval
+    expect(live(WorkflowEngine.getActions(t, "Manager", "req", undefined, { userRoles: ["Manager"], requesterRoles: ["Manager"], activeMemberCount: 5 }))).toContain("approve_draft_ifc");
+  });
+  it("the same chain on a request FILED under the review model binds: request_eng_review raises engineering_required, and the Manager requester is routed to an engineer", () => {
+    const t = chainTo(true);
+    expect(t.engineeringRequired).toBe(true);
+    const acts = WorkflowEngine.getActions(t, "Manager", "req", undefined, { userRoles: ["Manager"], requesterRoles: ["Manager"], activeMemberCount: 5 });
+    expect(names(acts)).toContain("request_final_engineer_approval");
+    expect(acts.some((a) => a.action === "approve_draft_ifc" && !a.engineeringOverride)).toBe(false);
+  });
+});
+
+describe("fix pass 3 (review, minors) — an override and a binding flag are SAID before the click", () => {
+  it("a co-reviewer's approval at PENDING_REVIEW that overrides the engineering sign-off is labelled and described as an override; a plain co-review approval keeps today's wording", () => {
+    const ctx: WorkflowContext = { userRoles: ["Manager"], requesterRoles: ["Viewer"] };
+    const over = WorkflowEngine.getActions(mk({ status: "PENDING_REVIEW", requesterRole: "Viewer", reviewModelFiled: false }), "Manager", "boss", undefined, ctx);
+    const ifc = over.find((a) => a.action === "approve_draft_ifc")!;
+    expect(ifc).toMatchObject({ label: "Override: Approve Without Engineer Sign-off", variant: "warning", engineeringOverride: true });
+    expect(ifc.description).toMatch(/^Management override: accepts the draft without an engineer's sign-off\. Recorded as an override in the history and the audit trail; the engineering sign-off stays unrecorded\./);
+    const minor = over.find((a) => a.action === "approve_minor_correction")!;
+    expect(minor).toMatchObject({ label: "Override: Approve with Minor Correction", engineeringOverride: true });
+    expect(minor.description).toMatch(/^Management override: approve as-is except for a small fix, without an engineer's sign-off\./);
+    expect(minor.description).toContain("Recorded as an override");
+    // an Engineer co-reviewer (no override) keeps today's label and wording
+    const eng = WorkflowEngine.getActions(mk({ status: "PENDING_REVIEW", requesterRole: "Viewer" }), "Engineer-2", "e", undefined, { userRoles: ["Engineer-2"], requesterRoles: ["Viewer"] });
+    expect(eng.find((a) => a.action === "approve_draft_ifc")).toMatchObject({ label: "Approve (Issue for Construction)", variant: "success" });
+    expect(eng.find((a) => a.action === "approve_draft_ifc")?.engineeringOverride).toBeUndefined();
+    expect(eng.find((a) => a.action === "approve_minor_correction")?.label).toBe("Approve with Minor Correction");
+  });
+  it("'Flag for Engineering Review' says it binds the issue point for good on a request filed under the review model that is not yet required; not on a pre-paste row, a required one, or a declared request's engineering-first loop", () => {
+    const flagOf = (over: Partial<Ticket>, ctx: WorkflowContext = { userRoles: ["DraftingSupervisor"] }) =>
+      WorkflowEngine.getActions(mk({ status: "PENDING_ASSIGNMENT", assignedDrafterId: null, ...over }), "DraftingSupervisor", "ds", undefined, ctx).find((a) => a.action === "request_eng_review")!;
+    expect(FLAG_ENG_REVIEW_BINDS_DESCRIPTION).toBe("Optional: route to a specific engineer for scope review before a drafter is assigned. This also makes an engineer's sign-off required before the request issues, and that cannot be withdrawn.");
+    expect(flagOf({ ...DECLARED }).description).toBe(FLAG_ENG_REVIEW_BINDS_DESCRIPTION);
+    const plain = "Optional: route to a specific engineer for scope review before a drafter is assigned.";
+    expect(flagOf({ ...DECLARED, reviewModelFiled: false }).description).toBe(plain);
+    expect(flagOf({ engineeringRequired: false, reviewModelFiled: false }).description).toBe(plain);
+    expect(flagOf({ engineeringRequired: true }).description).toBe(plain);
+    expect(flagOf({ ...DECLARED }, { userRoles: ["DraftingSupervisor"], engineeringFirstTypes: ["ISO"] }).description).toBe(plain);
+    // and the transition agrees with what was said
+    const a = { action: "request_eng_review", label: "Flag", variant: "secondary" } as WorkflowAction;
+    expect(computeTransition(mk({ status: "PENDING_ASSIGNMENT", ...DECLARED }), inputFor(a, { uid: "ds", role: "DraftingSupervisor" })).updates.engineering_required).toBe(true);
+    expect("engineering_required" in computeTransition(mk({ status: "PENDING_ASSIGNMENT", ...DECLARED, reviewModelFiled: false }), inputFor(a, { uid: "ds", role: "DraftingSupervisor" })).updates).toBe(false);
   });
 });

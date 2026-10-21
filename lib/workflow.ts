@@ -2,7 +2,7 @@ import { Role, TicketStatus, Ticket, type TicketReviewRoster, type TicketReviewS
 import { policyAllows, scopedTokensFor, grantActive, type CapabilityPolicy, type CapabilityResource, type UserGrant } from "@/lib/capabilityPolicy";
 import { isManagementRole } from "@/lib/managementRoles";
 import { CANCEL_OUTCOMES, type TicketOutcome } from "@/lib/ticketOutcome";
-import { ticketEngineeringRequired, reviewModelBinds } from "@/lib/reviewModel";
+import { ticketEngineeringRequired, reviewModelBinds, isDeclaredLikeInKind } from "@/lib/reviewModel";
 
 export interface WorkflowAction {
   label: string;
@@ -112,6 +112,16 @@ export interface WorkflowContext {
  *  the requester, by declaring, lowers the rigor — overriding the
  *  requirement on one's own request is that lowering, without a second
  *  person). */
+/** DF-P6 fix pass 3 (review, minor): what "Flag for Engineering Review"
+ *  says when it BINDS — on a request filed under the review model that does
+ *  not yet require engineering, request_eng_review raises
+ *  engineering_required, and the database refuses the way back. */
+export const FLAG_ENG_REVIEW_BINDS_DESCRIPTION = "Optional: route to a specific engineer for scope review before a drafter is assigned. This also makes an engineer's sign-off required before the request issues, and that cannot be withdrawn.";
+/** The description a co-reviewer's override at PENDING_REVIEW carries
+ *  (fix pass 3, review minor): said before the click, as at
+ *  PENDING_FINAL_APPROVAL. */
+export const CO_REVIEW_OVERRIDE_NOTE = "Recorded as an override in the history and the audit trail; the engineering sign-off stays unrecorded.";
+
 export const SELF_OVERRIDE_REASON = "Needs a second person: this request requires an engineer's sign-off, and you asked for this work — another manager may override it, or an engineer signs (orgs of 3+).";
 
 /** DF-P6 fix pass (review, issue 1): why "Send for Engineer Final Approval"
@@ -672,13 +682,20 @@ export const WorkflowEngine = {
             description: 'Select a drafter to begin work.',
             ...(engineeringFirstPending ? { disabledReason: ENG_FIRST_REASON } : {}),
           });
+          // DF-P6 fix pass 3 (review, minor): said before the click — on a
+          // request filed under the review model the flag binds the issue
+          // point for good (computeTransition's request_eng_review); not on
+          // a pre-paste row, one already required, or a declared request's
+          // engineering-first loop (the type's, which binds nothing).
+          const flagBinds = ticket.reviewModelFiled === true && ticket.engineeringRequired !== true
+            && !(engineeringFirstPending && ticket.engineeringRequired === false && isDeclaredLikeInKind(ticket));
           actions.push({
             label: 'Flag for Engineering Review',
             action: 'request_eng_review',
             variant: 'secondary',
             requiresComment: true,
             requiresEngineerPick: true,
-            description: 'Optional: route to a specific engineer for scope review before a drafter is assigned.'
+            description: flagBinds ? FLAG_ENG_REVIEW_BINDS_DESCRIPTION : 'Optional: route to a specific engineer for scope review before a drafter is assigned.'
           });
         }
         if (allows('ticket.self_assign')) {
@@ -874,22 +891,30 @@ export const WorkflowEngine = {
           // engineering review, a co-reviewer holding no Engineer role who
           // approves is OVERRIDING the engineering sign-off — kept (today's
           // path), recorded as an override by the route.
-          const coOverride = needsEngineerApproval && !isEng ? { engineeringOverride: true } : {};
+          // Fix pass 3 (review, minor): and SAID to be one before the click
+          // — the label and description name the override, as the
+          // PENDING_FINAL_APPROVAL override does.
+          const coOverrides = needsEngineerApproval && !isEng;
+          const coOverride = coOverrides ? { engineeringOverride: true } : {};
           actions.push({
-            label: 'Approve (Issue for Construction)',
+            label: coOverrides ? 'Override: Approve Without Engineer Sign-off' : 'Approve (Issue for Construction)',
             action: 'approve_draft_ifc',
-            variant: 'success',
-            description: issueReady ? `Accepts the draft. ${ISSUE_AS_IS_NOTE}` : 'Accepts the draft. Drafter will be notified to issue IFC.',
+            variant: coOverrides ? 'warning' : 'success',
+            description: coOverrides
+              ? `Management override: accepts the draft without an engineer's sign-off. ${CO_REVIEW_OVERRIDE_NOTE}${issueReady ? ` ${ISSUE_AS_IS_NOTE}` : ''}`
+              : issueReady ? `Accepts the draft. ${ISSUE_AS_IS_NOTE}` : 'Accepts the draft. Drafter will be notified to issue IFC.',
             ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
             ...onBehalf,
             ...coOverride,
           });
           actions.push({
-            label: 'Approve with Minor Correction',
+            label: coOverrides ? 'Override: Approve with Minor Correction' : 'Approve with Minor Correction',
             action: 'approve_minor_correction',
             variant: 'secondary',
             requiresComment: true,
-            description: 'Approve as-is except for a small fix (typo, mislabel). Note goes to the drafter — no new review round.',
+            description: coOverrides
+              ? `Management override: approve as-is except for a small fix, without an engineer's sign-off. Note goes to the drafter — no new review round. ${CO_REVIEW_OVERRIDE_NOTE}`
+              : 'Approve as-is except for a small fix (typo, mislabel). Note goes to the drafter — no new review round.',
             ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
             ...onBehalf,
             ...coOverride,

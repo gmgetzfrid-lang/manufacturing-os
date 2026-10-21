@@ -503,7 +503,13 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
         // leaves it; the database refuses the way back). Fix pass 2 (minor
         // 7): not the engineering-first type's mandatory loop on a declared
         // request — that review is the type's, and adds no wait at issue.
-        if (input.reviewModelColumns && !(input.engineeringFirstLoop && ticket.engineeringRequired === false && isDeclaredLikeInKind(ticket))) {
+        // Fix pass 3 (review, major): and only on a request FILED under the
+        // review model (review_model_filed true) — a pre-paste row's scope
+        // review behaves exactly as it does today (DEC-90 ruling (2)), never
+        // moving an in-flight ticket's lane; flag_engineering stays the
+        // explicit way to bind a legacy row.
+        if (input.reviewModelColumns && ticket.reviewModelFiled === true
+          && !(input.engineeringFirstLoop && ticket.engineeringRequired === false && isDeclaredLikeInKind(ticket))) {
           updates.engineering_required = true;
         }
       }
