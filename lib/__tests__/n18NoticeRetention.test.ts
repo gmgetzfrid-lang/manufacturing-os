@@ -207,7 +207,7 @@ describe("EVID-13 remainder (DEC-90 ruling (5)) — read_at stays the recipient'
     expect(wf).not.toMatch(/\.update\(\{\s*read_at/);
   });
 
-  it("census: every write of notifications.read_at in the app is the recipient's own session on their own rows — one named exception (NEDGE-23)", () => {
+  it("census: every write of notifications.read_at in the app is the recipient's own session on their own rows — one named exception (NEDGE-24)", () => {
     const walk = (dir: string): string[] => readdirSync(join(ROOT, dir)).flatMap((f) => {
       const rel = join(dir, f);
       if (f === "node_modules" || f === "__tests__" || f.startsWith(".")) return [];
@@ -220,11 +220,11 @@ describe("EVID-13 remainder (DEC-90 ruling (5)) — read_at stays the recipient'
     // each: the recipient's own browser session (own-row RLS — 20261161 lets a
     // member change only read_at, only on their own rows), named by the screen
     // the person opened; the access-request clear is a service-role stamp on
-    // the pool's rows — opened as NEDGE-23 (its owner moves it to a mark)
+    // the pool's rows — opened as NEDGE-24 (its owner moves it to a mark)
     expect(writers).toEqual([
       "app/(protected)/requests/[id]/page.tsx",   // opening the request (.eq('user_id', uid))
       "components/notifications/NotificationCenter.tsx", // "Mark these read" in the person's center
-      "lib/accessRequestOutcome.ts",              // NEDGE-23 — service role, every pool member's row
+      "lib/accessRequestOutcome.ts",              // NEDGE-24 — service role, every pool member's row
       "lib/inAppNotifications.ts",                // the bell's mark read / mark all read (own rows)
       "lib/notificationTrail.ts",                 // opening a document / project (.eq("user_id", uid))
     ]);

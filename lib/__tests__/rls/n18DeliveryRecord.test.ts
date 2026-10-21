@@ -87,6 +87,24 @@ describe.skipIf(skip !== null)("N18 — the delivery record on email_notificatio
     expect(asCaller(db, SERVICE, row({ to: m.optedOut, status: "not_emailed", subject: "Server opted out" }))).toEqual({ ok: true, rows: 1 });
   });
 
+  it("dw2: a repeat of a record inside 60 s (same recipient, event, resource, subject and body) is not written again — by a member or the service role; a different message is", () => {
+    const res = randomUUID();
+    const count = () => one(`SELECT COUNT(*) FROM email_notifications WHERE org_id = '${orgId}' AND status = 'not_emailed' AND resource_id = '${res}'`);
+    const rec = (subject: string, body = "Same body") => row({ to: m.optedOut, status: "not_emailed", subject, body, resource: res });
+    expect(asCaller(db, m.sender.caller, rec("Burst"))).toEqual({ ok: true, rows: 1 });
+    expect(asCaller(db, m.sender.caller, rec("Burst"))).toEqual({ ok: true, rows: 0 });
+    expect(asCaller(db, SERVICE, rec("Burst"))).toEqual({ ok: true, rows: 0 });
+    expect(count()).toBe("1");
+    // a different body (or subject) is a different message: recorded
+    expect(asCaller(db, SERVICE, rec("Burst", "Other body"))).toEqual({ ok: true, rows: 1 });
+    expect(asCaller(db, m.sender.caller, rec("Other subject", "Other body"))).toEqual({ ok: true, rows: 1 });
+    expect(count()).toBe("3");
+    // outside the 60 s window the same words are recorded again
+    admin(db, `UPDATE email_notifications SET created_at = now() - interval '2 minutes' WHERE org_id = '${orgId}' AND resource_id = '${res}'`);
+    expect(asCaller(db, m.sender.caller, rec("Burst"))).toEqual({ ok: true, rows: 1 });
+    expect(count()).toBe("4");
+  });
+
   it("dw2: the drain never re-queues or claims a not_emailed row — its claim, its suppressed recovery and its orphan reclaim all pass it by", () => {
     const before = one(`SELECT COUNT(*) FROM email_notifications WHERE org_id = '${orgId}' AND status = 'not_emailed'`);
     expect(Number(before)).toBeGreaterThanOrEqual(3);

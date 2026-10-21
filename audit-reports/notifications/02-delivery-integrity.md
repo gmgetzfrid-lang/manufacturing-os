@@ -1,6 +1,6 @@
 # 02 · Delivery integrity
 
-**17 findings** — 3 HIGH · 12 MEDIUM · 2 LOW. `DELIV-15` opened by the integrator at the N1 merge, 2026-10-01; `DELIV-16` by notifications Round G (N6), 2026-10-07; `DELIV-17` (MEDIUM) by document-control Round G (P26 STATUS-DOOR FOLLOW-UPS, fix pass 3), 2026-10-14. *(Counts corrected at that pass from the findings' Severity lines: HIGH `DELIV-1`, `2`, `4`; LOW `DELIV-8`, `13`, both lowered by their verifiers; the header had read 5 HIGH · 11 MEDIUM.)*
+**18 findings** — 3 HIGH · 12 MEDIUM · 3 LOW. `DELIV-15` opened by the integrator at the N1 merge, 2026-10-01; `DELIV-16` by notifications Round G (N6), 2026-10-07; `DELIV-17` (MEDIUM) by document-control Round G (P26 STATUS-DOOR FOLLOW-UPS, fix pass 3), 2026-10-14; `DELIV-18` (LOW) by notifications Round G (N18 DELIVERY RECORD, the remainder of drafting-flow `EVID-9` done-when 2), 2026-10-21. *(Counts corrected at that pass from the findings' Severity lines: HIGH `DELIV-1`, `2`, `4`; LOW `DELIV-8`, `13`, both lowered by their verifiers; the header had read 5 HIGH · 11 MEDIUM.)*
 
 What gets dropped between an event happening and a person being told — and whether anything notices.
 

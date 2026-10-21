@@ -62,6 +62,8 @@ export interface TrailEntry {
   attempts: number | null;
   /** Whether a not-emailed row was the person's own choice (null: not that row). */
   byTheirChoice: boolean | null;
+  /** A request record's bell row (ticket_notice_events.notification_id); null otherwise. */
+  notificationId: string | null;
 }
 
 export type LegState = "read" | "absent" | "unavailable";
@@ -79,7 +81,9 @@ export interface NoticeTrail {
     bestEmail: "delivered" | "sent" | "queued" | null;
     bounced: boolean;
     notEmailedByChoice: boolean;
-    /** No email row and no not-emailed record at all for this item. */
+    /** No email row and no decision about an email (a not-emailed record by
+     *  their choice) for this item. A not-emailed record that was NOT their
+     *  choice (e.g. no address on record) is no attempt: it still reads true. */
     emailNeverAttempted: boolean;
     /** The person's first recorded act on the item at or after the first notice. */
     actedAt: string | null;
@@ -112,7 +116,7 @@ function bellEntry(r: Row): TrailEntry {
     channel: "bell", id: String(r.id), createdAt: str(r.created_at), kind: str(r.kind), title: str(r.title),
     state: seenAt ? "opened" : supersededAt ? "retired_unopened" : "unopened",
     seenAt, supersededAt, sentAt: null, deliveredAt: str(r.created_at), bouncedAt: null, complainedAt: null,
-    providerOutcome: null, providerDetail: null, attempts: null, byTheirChoice: null,
+    providerOutcome: null, providerDetail: null, attempts: null, byTheirChoice: null, notificationId: null,
   };
 }
 
@@ -141,6 +145,7 @@ function emailEntry(r: Row): TrailEntry {
     providerOutcome: str(r.delivery_status), providerDetail: str(r.delivery_detail) ?? (status === "failed" ? str(r.error_message) : null),
     attempts: typeof r.attempt_count === "number" ? r.attempt_count : null,
     byTheirChoice: status === "not_emailed" ? true : null,
+    notificationId: null,
   };
 }
 
@@ -159,6 +164,7 @@ function requestEntry(r: Row): TrailEntry {
     bouncedAt: null, complainedAt: null, providerOutcome: null, providerDetail: null, attempts: null,
     // never the preference itself — only whether it was their choice
     byTheirChoice: choice,
+    notificationId: str(r.notification_id),
   };
 }
 
@@ -204,7 +210,7 @@ export async function noticeTrailFor(client: unknown, input: { orgId: string; us
   if (!isUuid) {
     legs.requestRecord = "absent";
   } else {
-    const rec = await read("ticket_notice_events", "id, kind, created_at, details", [["org_id", orgId], ["recipient", userId], ["ticket_id", resourceId]]);
+    const rec = await read("ticket_notice_events", "id, kind, created_at, details, notification_id", [["org_id", orgId], ["recipient", userId], ["ticket_id", resourceId]]);
     if (rec.error && isMissingSchemaError({ message: rec.error.message ?? "", code: rec.error.code })) legs.requestRecord = "absent";
     else if (rec.error) { legs.requestRecord = "unavailable"; notes.push(`The request's notice record could not be read: ${rec.error.message ?? "error"}.`); }
     else for (const r of (rec.data as Row[] | null) ?? []) entries.push(requestEntry(r));
@@ -236,7 +242,11 @@ export async function noticeTrailFor(client: unknown, input: { orgId: string; us
       : sentish.some((m) => m.state === "queued" || m.state === "retrying") ? "queued" : null;
   const notEmailedByChoice = entries.some((e) => e.state === "not_emailed_by_choice");
   const opened = bells.some((b) => b.seenAt !== null);
-  const toldInApp = bells.length + entries.filter((e) => e.state === "delivered_in_app").length;
+  // A consent window's "delivered" event names the bell row it wrote
+  // (20261255 open_consent_window): that notice is counted once, by its bell
+  // row; a delivered event counts only when its bell row is not in the trail.
+  const bellIds = new Set(bells.map((b) => b.id));
+  const toldInApp = bells.length + entries.filter((e) => e.state === "delivered_in_app" && !(e.notificationId && bellIds.has(e.notificationId))).length;
   return {
     orgId, userId, resourceId, entries,
     summary: {
@@ -246,7 +256,7 @@ export async function noticeTrailFor(client: unknown, input: { orgId: string; us
       bestEmail,
       bounced: mails.some((m) => m.state === "bounced"),
       notEmailedByChoice,
-      emailNeverAttempted: legs.email === "read" && mails.length === 0 && !entries.some((e) => e.channel === "request_record" && e.kind === "not_emailed"),
+      emailNeverAttempted: legs.email === "read" && mails.length === 0 && !entries.some((e) => e.channel === "request_record" && e.kind === "not_emailed" && e.byTheirChoice === true),
       actedAt,
       neverResponded: (toldInApp > 0 || sentish.length > 0) && !opened && actedAt === null && legs.acted === "read",
     },

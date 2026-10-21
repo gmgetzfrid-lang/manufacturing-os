@@ -30,8 +30,14 @@
 --       outcome, and lets a stronger outcome win (complained > bounced =
 --       failed > delivered > delayed), so redelivered or out-of-order reports
 --       are harmless. Answers 'recorded' or 'no_row'.
---   (4) enforce_email_delivery_record() — BEFORE INSERT OR UPDATE, for a
---       signed-in writer only (the service role passes): a client never
+--   (4) enforce_email_delivery_record() — BEFORE INSERT OR UPDATE. For EVERY
+--       writer (the service role included) a not_emailed record that repeats,
+--       within 60 seconds, the latest not_emailed record for the same
+--       (recipient, event, resource) with the same subject and body is not
+--       written (the row is skipped, no error) — email_gate()'s repeat rule,
+--       mirrored for records, so a burst an opted-in person gets as ONE email
+--       is ONE record for an opted-out person. Then, for a signed-in writer
+--       only (the service role passes): a client never
 --       writes a delivery outcome; a not_emailed row is accepted only when
 --       email_gate() itself says the recipient's preferences turn this email
 --       off (a member cannot forge "they opted out"); and an Admin / Manager
@@ -180,7 +186,30 @@ GRANT EXECUTE ON FUNCTION record_email_delivery(text, text, timestamptz, text) T
 -- ── 4. a client never writes an outcome, never forges or re-queues a choice ─
 CREATE OR REPLACE FUNCTION enforce_email_delivery_record()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_last_subject text;
+  v_last_body text;
 BEGIN
+  -- A repeat of a record is merged as email_gate() merges a repeated email:
+  -- the latest not_emailed record to this recipient for the same event and
+  -- resource, inside 60 seconds, has this subject AND this body — nothing is
+  -- written. Every writer, the service role included. A NULL subject or body
+  -- never matches; never for a record with no resource.
+  IF TG_OP = 'INSERT' AND NEW.status = 'not_emailed' AND NEW.resource_id IS NOT NULL THEN
+    SELECT e.subject, e.body_text INTO v_last_subject, v_last_body
+      FROM email_notifications e
+     WHERE e.to_user_id = NEW.to_user_id
+       AND e.resource_id = NEW.resource_id
+       AND e.event_type = NEW.event_type
+       AND e.org_id = NEW.org_id
+       AND e.status = 'not_emailed'
+       AND e.created_at >= now() - interval '60 seconds'
+     ORDER BY e.created_at DESC
+     LIMIT 1;
+    IF v_last_subject = NEW.subject AND v_last_body = NEW.body_text THEN
+      RETURN NULL;
+    END IF;
+  END IF;
   -- The service role (the drain, the webhook, server producers) passes.
   IF auth.uid() IS NULL THEN RETURN NEW; END IF;
   IF TG_OP = 'INSERT' THEN
@@ -351,12 +380,14 @@ SELECT 1, 5, 'record_email_delivery keeps the first time of each outcome and let
           FROM pg_proc WHERE proname = 'record_email_delivery'),
        NULL
 UNION ALL
-SELECT 1, 6, 'trg_email_delivery_record: BEFORE INSERT OR UPDATE, enabled; its function is SECURITY DEFINER with search_path pinned and asks email_gate before a not_emailed row',
+SELECT 1, 6, 'trg_email_delivery_record: BEFORE INSERT OR UPDATE, enabled; its function is SECURITY DEFINER with search_path pinned, merges a repeated not_emailed record and asks email_gate before a not_emailed row',
        EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_email_delivery_record' AND tgrelid = 'public.email_notifications'::regclass
                   AND NOT tgisinternal AND tgenabled = 'O')
        AND (SELECT prosecdef AND proconfig @> ARRAY['search_path=public']
                    AND prosrc LIKE '%NEW.status = ''not_emailed'' AND email_gate(NEW.org_id, NEW.to_user_id, NEW.event_type) IS DISTINCT FROM false%'
                    AND prosrc LIKE '%(OLD.status = ''not_emailed'') IS DISTINCT FROM (NEW.status = ''not_emailed'')%'
+                   AND prosrc LIKE '%AND e.status = ''not_emailed''%'
+                   AND prosrc LIKE '%IF v_last_subject = NEW.subject AND v_last_body = NEW.body_text THEN%'
               FROM pg_proc WHERE proname = 'enforce_email_delivery_record'),
        NULL
 UNION ALL

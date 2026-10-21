@@ -15,7 +15,9 @@
 //   instead one row with status='not_emailed' — "not emailed by their
 //   choice" — which nothing ever sends (drafting-flow EVID-9 done-when 2,
 //   notifications N18; 20261258). A repeat inside 60 seconds writes nothing,
-//   as before.
+//   as before — for an opted-out person too: 20261258's insert rail does not
+//   write a not_emailed record that repeats, within 60 seconds, the latest
+//   record to them about the same event and resource (same subject and body).
 //
 // Mentions are extracted from comment text via the @[name](uid) syntax
 // produced by MentionableTextarea.
@@ -247,8 +249,11 @@ export async function queueEmail(input: QueueEmailInput): Promise<QueueEmailOutc
  *  "queued" — the email is queued (sent on the next drain); "repeat" — the
  *  same email went to this person inside 60 seconds, nothing written;
  *  "not_emailed" — their own preference turned it off and that is recorded
- *  (a row nothing sends); "suppressed" — their preference turned it off and
- *  the record could not be written (before 20261258, or refused); "failed" —
+ *  (a row nothing sends; a repeat of the latest record inside 60 seconds —
+ *  same event, resource, subject and body — is merged by 20261258's insert
+ *  rail, so a burst is one record, as it is one email); "suppressed" —
+ *  their preference turned it off and the record could not be written
+ *  (before 20261258, or refused); "failed" —
  *  the queue refused the row. */
 export type QueueEmailOutcome = "queued" | "repeat" | "not_emailed" | "suppressed" | "failed";
 
@@ -264,9 +269,12 @@ let notEmailedUnrecordedLogged = false;
  *  the row is readable by them and their workspace's Admins and Managers, as
  *  every email row is). No drain kick. 20261258's insert rail accepts it from
  *  a browser only when email_gate() agrees the preference turns this email
- *  off. Before 20261258 the status CHECK refuses it (23514): said once,
- *  nothing recorded — today's path. Answers whether the row landed; never
- *  throws. */
+ *  off, and does not write one that repeats the latest record inside 60
+ *  seconds (email_gate()'s repeat rule, for every writer — the repeat key is
+ *  visible there whoever calls). Before 20261258 the status CHECK refuses it
+ *  (23514): said once, nothing recorded — today's path. Answers whether the
+ *  insert was accepted (a merged repeat is accepted: the record exists);
+ *  never throws. */
 async function recordNotEmailed(input: QueueEmailInput): Promise<boolean> {
   try {
     const metadata: Record<string, unknown> = { ...(input.metadata ?? {}) };

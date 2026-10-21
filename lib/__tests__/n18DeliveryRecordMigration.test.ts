@@ -131,6 +131,18 @@ describe("20261258 — what it changes", () => {
     expect(code).toContain("CREATE TRIGGER trg_email_delivery_record\nBEFORE INSERT OR UPDATE ON email_notifications\nFOR EACH ROW EXECUTE FUNCTION enforce_email_delivery_record();");
   });
 
+  it("a repeated not_emailed record is merged for EVERY writer (before the service role passes), with email_gate()'s repeat key: same recipient, event, resource and org, latest record inside 60 s, same subject AND body", () => {
+    const fn = stripComments(between(M, "CREATE OR REPLACE FUNCTION enforce_email_delivery_record()", "\n$$;"));
+    const repeat = fn.indexOf("IF TG_OP = 'INSERT' AND NEW.status = 'not_emailed' AND NEW.resource_id IS NOT NULL THEN");
+    expect(repeat).toBeGreaterThan(-1);
+    expect(repeat).toBeLessThan(fn.indexOf("IF auth.uid() IS NULL THEN RETURN NEW; END IF;"));
+    const block = fn.slice(repeat, fn.indexOf("RETURN NULL;", repeat));
+    for (const k of ["e.to_user_id = NEW.to_user_id", "e.resource_id = NEW.resource_id", "e.event_type = NEW.event_type", "e.org_id = NEW.org_id",
+      "e.status = 'not_emailed'", "e.created_at >= now() - interval '60 seconds'", "ORDER BY e.created_at DESC", "LIMIT 1",
+      "IF v_last_subject = NEW.subject AND v_last_body = NEW.body_text THEN"]) expect(block).toContain(k);
+    expect(code).toContain("prosrc LIKE '%IF v_last_subject = NEW.subject AND v_last_body = NEW.body_text THEN%'");
+  });
+
   it("no policy is created or dropped; no table is created; no notification kind is added", () => {
     expect(code).not.toMatch(/CREATE POLICY|DROP POLICY/);
     expect(code).not.toMatch(/CREATE TABLE (?!.*TEMP)/);

@@ -310,7 +310,10 @@ export async function POST(req: Request) {
       // EVID-9 (notifications N18): the provider's id for this email, kept on
       // the row so its signed delivery report (app/api/webhooks/resend) can
       // find it. Read after the send succeeded and never able to fail it
-      // (providerMessageIdOf never throws). The 'sent' bookkeeping is today's
+      // (providerMessageIdOf never throws, and gives up after
+      // PROVIDER_ID_READ_TIMEOUT_MS — a stalled answer body is recorded
+      // 'sent' without the id, never left 'sending' to be mailed again by the
+      // 15-minute reclaim). The 'sent' bookkeeping is today's
       // update; when the id cannot be written with it (before 20261258 the
       // column is missing — PGRST204 / 42703 — or any other refusal), today's
       // update is sent again without the id, so the row lands exactly as it

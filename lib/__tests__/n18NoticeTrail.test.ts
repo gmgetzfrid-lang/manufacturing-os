@@ -92,6 +92,32 @@ describe("noticeTrailFor — one answer across bell, email and the request recor
     expect(t.summary.emailNeverAttempted).toBe(false);
   });
 
+  it("a consent window's notice is counted once: its bell row and the 'delivered' event naming that row are one notice (20261255 open_consent_window)", async () => {
+    state.tables.notifications = [
+      { id: "b1", org_id: ORG, user_id: BOB, resource_id: DOC, kind: "ticket_status", title: "Your consent is asked", created_at: "2026-10-01T09:00:00Z", read_at: null, metadata: { action: "consent_window_opened" } },
+    ];
+    state.tables.ticket_notice_events = [
+      { id: "t1", org_id: ORG, recipient: BOB, ticket_id: DOC, kind: "delivered", notification_id: "b1", created_at: "2026-10-01T09:00:00Z", details: {} },
+    ];
+    const t = await noticeTrailFor(sb, { orgId: ORG, userId: BOB, resourceId: DOC });
+    expect(t.entries.map((e) => `${e.channel}:${e.id}`)).toEqual(["bell:b1", "request_record:t1"]);
+    expect(t.entries.find((e) => e.id === "t1")!.notificationId).toBe("b1");
+    expect(t.summary.toldInApp).toBe(1);
+    // a delivered event whose bell row is not in the trail still counts (once)
+    state.tables.ticket_notice_events.push({ id: "t2", org_id: ORG, recipient: BOB, ticket_id: DOC, kind: "delivered", notification_id: "gone", created_at: "2026-10-05T09:00:00Z", details: {} });
+    expect((await noticeTrailFor(sb, { orgId: ORG, userId: BOB, resourceId: DOC })).summary.toldInApp).toBe(2);
+  });
+
+  it("a not-emailed record that was NOT their choice (no address on record) is no email attempt: emailNeverAttempted stays true", async () => {
+    state.tables.ticket_notice_events = [
+      { id: "t1", org_id: ORG, recipient: BOB, ticket_id: DOC, kind: "delivered", created_at: "2026-10-01T09:00:00Z", details: {} },
+      { id: "t3", org_id: ORG, recipient: BOB, ticket_id: DOC, kind: "not_emailed", created_at: "2026-10-01T09:00:02Z", details: { reason: "no address on record", byTheirChoice: false } },
+    ];
+    const t = await noticeTrailFor(sb, { orgId: ORG, userId: BOB, resourceId: DOC });
+    expect(t.summary).toMatchObject({ emailNeverAttempted: true, notEmailedByChoice: false });
+    expect(JSON.stringify(t)).not.toMatch(/no address on record/);
+  });
+
   it("BEFORE 20261258 (the delivery columns missing — 42703): the emails are read with today's columns and the gap is said", async () => {
     seed();
     state.readError.email_notifications = { code: "42703", message: 'column email_notifications.delivery_status does not exist' };

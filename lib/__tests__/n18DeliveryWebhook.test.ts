@@ -70,7 +70,7 @@ vi.mock("@supabase/supabase-js", async () => {
   return { createClient: () => client };
 });
 
-import { verifyWebhookSignature, parseDeliveryReport, providerMessageIdOf, outcomeOf, RESEND_WEBHOOK_TOLERANCE_SECONDS } from "@/lib/resendWebhook";
+import { verifyWebhookSignature, parseDeliveryReport, providerMessageIdOf, outcomeOf, RESEND_WEBHOOK_TOLERANCE_SECONDS, PROVIDER_ID_READ_TIMEOUT_MS, RESEND_WEBHOOK_MAX_BYTES } from "@/lib/resendWebhook";
 import { POST as webhook, NO_ROW_RETRY_WINDOW_MS } from "@/app/api/webhooks/resend/route";
 import { POST as drain } from "@/app/api/notifications/send-queued/route";
 
@@ -140,6 +140,15 @@ describe("lib/resendWebhook — the report", () => {
     expect(await providerMessageIdOf(new Response("<html>"))).toBeNull();
     expect(await providerMessageIdOf({ ok: true })).toBeNull();
     expect(await providerMessageIdOf({ text: async () => { throw new Error("stream gone"); } })).toBeNull();
+  });
+
+  it("providerMessageIdOf never hangs: a body that never arrives answers null after the bound", async () => {
+    expect(PROVIDER_ID_READ_TIMEOUT_MS).toBe(2000);
+    const t0 = Date.now();
+    expect(await providerMessageIdOf({ text: () => new Promise<string>(() => undefined) }, 30)).toBeNull();
+    expect(Date.now() - t0).toBeLessThan(1000);
+    // a body that arrives inside the bound is read
+    expect(await providerMessageIdOf({ text: () => new Promise<string>((r) => setTimeout(() => r('{"id":"re_late"}'), 5)) }, 500)).toBe("re_late");
   });
 });
 
@@ -233,6 +242,37 @@ describe("POST /api/webhooks/resend", () => {
     expect(await res.json()).toMatchObject({ recorded: false });
   });
 
+  it("a chunked body with no Content-Length is read as a stream and stopped at the bound → 413; nothing past it is buffered, nothing recorded", async () => {
+    let pulled = 0;
+    const chunk = new Uint8Array(64 * 1024).fill(120);
+    // an endless body: only a reader that stops at the bound ever returns
+    const stream = new ReadableStream<Uint8Array>({ pull(c) { pulled += chunk.byteLength; c.enqueue(chunk); } });
+    const ts = nowTs();
+    const req = new NextRequest("https://app.example.com/api/webhooks/resend", {
+      method: "POST", body: stream, duplex: "half",
+      headers: { "content-type": "application/json", "svix-id": "msg_1", "svix-timestamp": ts, "svix-signature": "v1,AAAA" },
+    } as NonNullable<ConstructorParameters<typeof NextRequest>[1]>);
+    expect(req.headers.get("content-length")).toBeNull();
+    const res = await webhook(req);
+    expect(res.status).toBe(413);
+    expect(pulled).toBeLessThanOrEqual(RESEND_WEBHOOK_MAX_BYTES + 3 * chunk.byteLength);
+    expect(h.rpc).not.toHaveBeenCalled();
+  });
+
+  it("a signed body inside the bound, streamed with no Content-Length, is read whole (multi-byte text decoded once)", async () => {
+    h.rpc.mockResolvedValueOnce({ data: "recorded", error: null });
+    const body = event("email.bounced", { email_id: "re_abc", bounce: { message: "Boîte pleine — überfüllt" } });
+    const bytes = new TextEncoder().encode(body);
+    const stream = new ReadableStream<Uint8Array>({ start(c) { for (let i = 0; i < bytes.length; i += 7) c.enqueue(bytes.slice(i, i + 7)); c.close(); } });
+    const ts = nowTs();
+    const req = new NextRequest("https://app.example.com/api/webhooks/resend", {
+      method: "POST", body: stream, duplex: "half",
+      headers: { "content-type": "application/json", "svix-id": "msg_1", "svix-timestamp": ts, "svix-signature": sign("msg_1", ts, body) },
+    } as NonNullable<ConstructorParameters<typeof NextRequest>[1]>);
+    expect((await webhook(req)).status).toBe(200);
+    expect(h.rpc).toHaveBeenCalledTimes(1);
+  });
+
   it("a body past the bound → 413 before anything is read into the record", async () => {
     const res = await post(JSON.stringify({ type: "email.delivered", data: { email_id: "x", pad: "y".repeat(300 * 1024) } }));
     expect(res.status).toBe(413);
@@ -288,6 +328,19 @@ describe("the drain keeps the provider's id beside 'sent'; nothing it sends chan
     expect(row("e1").provider_message_id).toBeUndefined();
     expect(sends).toHaveLength(1);
   });
+
+  it("a 2xx whose answer body stalls: the row still lands 'sent' (today's update, no id) — never left 'sending' for the reclaim to mail it twice", async () => {
+    globalThis.fetch = vi.fn(async (url: unknown, init?: RequestInit) => {
+      sends.push(JSON.parse(String(init?.body)));
+      void url;
+      return { ok: true, status: 200, text: () => new Promise<string>(() => undefined) } as unknown as Response;
+    }) as typeof fetch;
+    seed([{ id: "e1", status: "queued", to_user_id: "u1", to_email: "a@x.io" }]);
+    expect(await (await run()).json()).toEqual({ processed: 1, sent: 1, failed: 0 });
+    expect(row("e1")).toMatchObject({ status: "sent", attempt_count: 1 });
+    expect("provider_message_id" in row("e1")).toBe(false);
+    expect(sends).toHaveLength(1);
+  }, 15_000);
 
   it("a provider answer with no id (or not JSON): today's update, exactly", async () => {
     answer = "accepted";

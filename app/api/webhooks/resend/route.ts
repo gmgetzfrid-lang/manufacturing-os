@@ -9,7 +9,10 @@
 //   * RESEND_WEBHOOK_SECRET (the endpoint's signing secret, "whsec_…") not
 //     set → 503, nothing read or recorded. An unsigned, mis-signed or stale
 //     (> 5 minutes) delivery → 401, nothing recorded (lib/resendWebhook.ts
-//     verifyWebhookSignature). The body is never trusted before that.
+//     verifyWebhookSignature). The body is never trusted before that, and
+//     never buffered past RESEND_WEBHOOK_MAX_BYTES: a declared length over it
+//     → 413 unread; an undeclared (chunked) body is read as a stream and
+//     stopped at the bound → 413.
 //   * A delivery outcome (email.delivered / .delivery_delayed / .bounced /
 //     .complained / .failed) → record_email_delivery (20261258, service role
 //     only): the first time of each outcome is kept and the strongest outcome
@@ -46,6 +49,31 @@ function isMissingFunction(e: { code?: string; message?: string } | null | undef
   return e.code === "PGRST202" || e.code === "42883" || /could not find the function|function .* does not exist/i.test(e.message ?? "");
 }
 
+/** The request body as text, read as a stream and stopped at `max` bytes:
+ *  null when it is longer (nothing past the bound is ever buffered — the
+ *  endpoint is unauthenticated until the signature is checked, and a chunked
+ *  body declares no Content-Length). */
+async function readBounded(req: NextRequest, max: number): Promise<string | null> {
+  if (!req.body) return "";
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) { all.set(c, at); at += c.byteLength; }
+  return new TextDecoder().decode(all);
+}
+
 export async function POST(req: NextRequest) {
   const secret = process.env.RESEND_WEBHOOK_SECRET || "";
   if (!secret) {
@@ -55,8 +83,8 @@ export async function POST(req: NextRequest) {
   if (Number.isFinite(declared) && declared > RESEND_WEBHOOK_MAX_BYTES) {
     return NextResponse.json({ error: "Too large — nothing was recorded." }, { status: 413 });
   }
-  const body = await req.text();
-  if (body.length > RESEND_WEBHOOK_MAX_BYTES) {
+  const body = await readBounded(req, RESEND_WEBHOOK_MAX_BYTES);
+  if (body === null) {
     return NextResponse.json({ error: "Too large — nothing was recorded." }, { status: 413 });
   }
   const h = (a: string, b: string) => req.headers.get(a) ?? req.headers.get(b);

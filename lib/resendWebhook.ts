@@ -142,18 +142,29 @@ export function parseDeliveryReport(json: unknown): ParsedReport {
   return { kind: "outcome", report: { type, outcome, providerMessageId: id.slice(0, 200), at, detail: detailOf(outcome, data) } };
 }
 
+/** How long the drain waits for the send's answer body before it records
+ *  the email 'sent' without the provider's id (a stalled body must never
+ *  leave the row 'sending' for the 15-minute reclaim to mail it again). */
+export const PROVIDER_ID_READ_TIMEOUT_MS = 2000;
+
 /** The provider's message id in a send's answer (`{ "id": "…" }`), or null.
- *  Never throws and never fails the send: the drain records the email as
- *  sent either way. */
-export async function providerMessageIdOf(resp: unknown): Promise<string | null> {
+ *  Never throws, never hangs (null after `timeoutMs`) and never fails the
+ *  send: the drain records the email as sent either way. */
+export async function providerMessageIdOf(resp: unknown, timeoutMs: number = PROVIDER_ID_READ_TIMEOUT_MS): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const r = resp as { text?: () => Promise<string> };
     if (!r || typeof r.text !== "function") return null;
-    const raw = await r.text();
+    const raw = await Promise.race([
+      r.text(),
+      new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), timeoutMs); }),
+    ]);
     if (!raw) return null;
     const id = (JSON.parse(raw) as { id?: unknown } | null)?.id;
     return typeof id === "string" && id.trim() && id.length <= 200 ? id.trim() : null;
   } catch {
     return null;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
