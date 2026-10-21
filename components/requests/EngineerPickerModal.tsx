@@ -10,12 +10,23 @@
 //      engineer who will do the IFC sign-off
 //   3. "Reassign Engineer Reviewer" — admin override
 //
-// Lists every active org member whose role contains "Engineer" with
-// their email + role tag + count of open tickets they're already on
-// (workload hint). Required comment + engineer selection before submit.
+// Lists every active org member the workflow route would accept as the
+// picked engineer — ONE rule, lib/ticketPage.ts engineerCandidates /
+// engineerPickRefusal (an Engineer role, and the org's scoped reviewing
+// capability for this ticket's resource; ROUTE-8 remainder, drafting-flow
+// DF-P5) — read in keyset pages (lib/ticketPickerMembers.ts, as the drafter
+// picker reads), so nobody the route accepts is hidden past PostgREST's
+// max-rows. Each row shows the member's name, email, role tag and a count of
+// open tickets they're already on (workload hint). Required comment +
+// engineer selection before submit. Under a routed library the roster
+// derives the reviewers and this picker is not used (FRIC-4); it remains the
+// fallback for a workspace with no routing configured.
 
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { loadPickerMembers } from "@/lib/ticketPickerMembers";
+import { engineerCandidates, engineerPickCap } from "@/lib/ticketPage";
+import type { CapabilityPolicy, CapabilityResource } from "@/lib/capabilityPolicy";
 import {
   X, User, AlertTriangle, Loader2, ChevronRight, Briefcase, Inbox,
 } from "lucide-react";
@@ -51,6 +62,12 @@ interface EngineerPickerModalProps {
    *  when the org has 3+ active members (the modal checks the count); the
    *  server refuses the same picks, this just doesn't offer dead ends. */
   independentOf?: Array<string | null | undefined>;
+  /** ROUTE-8 (DF-P5): the org's capability policy and this ticket's
+   *  resource, so the list is exactly what the route accepts. */
+  policy?: CapabilityPolicy | null;
+  resource?: CapabilityResource | null;
+  /** The action the pick is for (decides the scoped capability). */
+  pickActionType?: string;
   onSubmit: (params: {
     engineerId: string;
     engineerName: string;
@@ -65,6 +82,9 @@ export default function EngineerPickerModal({
   commentPlaceholder = "What do you need them to review?",
   currentEngineerId,
   independentOf,
+  policy,
+  resource,
+  pickActionType,
   onSubmit,
 }: EngineerPickerModalProps) {
   const [engineers, setEngineers] = useState<EngineerOption[]>([]);
@@ -74,6 +94,7 @@ export default function EngineerPickerModal({
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const resourceKey = JSON.stringify(resource ?? null);
 
   useEffect(() => {
     if (!isOpen || !orgId) return;
@@ -81,32 +102,15 @@ export default function EngineerPickerModal({
     (async () => {
       setLoading(true);
       try {
-        // Pull every active engineer in the org — headline role OR the
-        // additive roles array (the server validates against both, so an
-        // Admin who also holds Engineer-2 must appear here too).
-        const { data: allMembers } = await supabase
-          .from("org_members")
-          .select("uid, email, role, roles")
-          .eq("org_id", orgId)
-          .eq("status", "active");
-        const activeCount = ((allMembers as Array<Record<string, unknown>>) ?? []).length;
+        // Every ACTIVE member, keyset-paged (headline role OR the additive
+        // roles array — the route validates against both), then the route's
+        // own rule for this pick.
+        const read = await loadPickerMembers(orgId);
+        if (!read.ok) throw new Error(`The engineers could not be listed: ${read.error}`);
+        const activeCount = read.rows.length;
         if (alive) setSodActive(activeCount >= 3);
-        const members = ((allMembers as Array<Record<string, unknown>>) ?? []).filter((m) => {
-          const held: string[] = Array.isArray(m.roles) && (m.roles as string[]).length > 0
-            ? (m.roles as string[])
-            : [String(m.role ?? "")];
-          return held.some((r) => r.includes("Engineer"));
-        });
-
-        const list: EngineerOption[] = (
-          (members ?? []) as Array<{ uid: string; email: string | null; role: string }>
-        ).map((m) => ({
-          uid: m.uid,
-          email: m.email || "",
-          name: (m.email || "").split("@")[0] || "Engineer",
-          role: m.role,
-          workload: 0,
-        }));
+        const list: EngineerOption[] = engineerCandidates(read.rows, policy, engineerPickCap(pickActionType ?? "request_final_engineer_approval"), resource)
+          .map((c) => ({ uid: c.uid, email: c.email, name: c.name, role: c.role, workload: 0 }));
 
         // Best-effort workload count: open tickets where this engineer is
         // either the assigned engineer or has been pulled into final approval.
@@ -136,7 +140,9 @@ export default function EngineerPickerModal({
       }
     })();
     return () => { alive = false; };
-  }, [isOpen, orgId]);
+    // resourceKey: the resource by value (the page builds a fresh object each render).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, orgId, policy, resourceKey, pickActionType]);
 
   if (!isOpen) return null;
 

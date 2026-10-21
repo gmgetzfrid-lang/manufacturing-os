@@ -216,7 +216,13 @@ describe("getActions honours the resource — DEC-13 acceptance: ASBUILT may onl
     expect(src("lib/holds.ts")).toContain("if (!policyAllows(policy, cap, role, extra, uid, resource)) {");
     const r = src("app/api/tickets/workflow-action/route.ts");
     expect(r).toContain("const resource = ticketResource(ticket);");
-    expect(r).toContain("const scoped = scopedTokensFor(capPolicy, pickCap, resource);");
+    // ROUTE-8 remainder (drafting-flow DF-P5): the engineer pick's scoped
+    // check moved into ONE rule the route and the picker share
+    // (lib/ticketPage.ts engineerPickRefusal) — same scopedTokensFor /
+    // policyAllows call shape, now in that file.
+    expect(r).toContain("const pickRefused = engineerPickRefusal(held, capPolicy, engineerPickCap(body.actionType), ref, resource, ticket.requestType);");
+    expect(src("lib/ticketPage.ts")).toContain("const scoped = scopedTokensFor(policy, pickCap, resource ?? null);");
+    expect(src("lib/ticketPage.ts")).toContain('if (scoped !== null && !policyAllows(policy, pickCap, held[0] ?? "Viewer", [...held], uid, resource ?? null)) {');
     expect(r).toContain('(held[0] ?? "Viewer") as Role, held as Role[], ref, resource);');
     expect(r).toMatch(/engineeringFirstTypes,\s*\n\s*closeWithoutReviewTypes,\s*\n\s*requesterRoles,\s*\n\s*\};\s*\n\s*const allowed = WorkflowEngine\.getActions\(ticket, callerRole, caller\.id, capPolicy, engineCtx\);/);
     expect(src("app/(protected)/requests/[id]/page.tsx")).toMatch(/engineeringFirstTypes,\s*\n\s*closeWithoutReviewTypes,\s*\n\s*requesterRoles,\s*\n\s*\}\);/);

@@ -667,7 +667,10 @@ describe("EVID-12 / SM-7 — the audit row is written FIRST: a row that cannot b
     expect(rows[1].id).toBe(rows[0].id);
     const details = rows[1].details as Record<string, unknown>;
     expect(details).toMatchObject({ from: "PENDING_REVIEW", to: "PENDING_IFC", deliverable_rev: "1", recordedBeforeApply: true });
-    expect(details.approvedDrafts).toEqual([{ id: "a-d", name: "iso_1A.pdf", url: DRAFT.url, size: null, etag: null }]);
+    // DF-P5 (EVID-12): each approved draft carries the sha256 the route
+    // computed from its bytes — here the storage stand-in returns no body, so
+    // the row says the hash was unavailable, and the approval still applies.
+    expect(details.approvedDrafts).toEqual([{ id: "a-d", name: "iso_1A.pdf", url: DRAFT.url, size: null, etag: null, sha256: null, sha256Unavailable: "storage returned no bytes" }]);
   });
 
   it("a retry whose first insert landed but lost its reply (23505 on the primary key) counts as landed — never a second row, never a third attempt", async () => {

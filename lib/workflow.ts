@@ -1,4 +1,4 @@
-import { Role, TicketStatus, Ticket } from "@/types/schema";
+import { Role, TicketStatus, Ticket, type TicketReviewRoster, type TicketReviewSlot } from "@/types/schema";
 import { policyAllows, scopedTokensFor, grantActive, type CapabilityPolicy, type CapabilityResource, type UserGrant } from "@/lib/capabilityPolicy";
 import { isManagementRole } from "@/lib/managementRoles";
 import { CANCEL_OUTCOMES, type TicketOutcome } from "@/lib/ticketOutcome";
@@ -29,6 +29,11 @@ export interface WorkflowAction {
   requiresOutcome?: boolean;
   /** The outcomes this action may record (with `requiresOutcome`). */
   outcomes?: readonly TicketOutcome[];
+  /** DF-P5 ROSTER (GAP-103, EVID-12): the action carries an e-signature
+   *  minted by /api/signatures/sign against the ticket and bound to the
+   *  roster's content hash — the roster panel runs the ceremony, then posts
+   *  the action with `signatureId`. */
+  requiresSignature?: boolean;
 }
 
 /** Optional evaluation context for getActions (WF-7, GAP-2, WF-15).
@@ -58,6 +63,9 @@ export interface WorkflowContext {
    *  been in the loop. A property of the CONFIGURED type, read from the same
    *  option list as `closeWithoutReviewTypes`. Absent = no type is gated. */
   engineeringFirstTypes?: string[];
+  /** DF-P5: the clock a roster's alternates are activated against (ms since
+   *  the epoch). Absent = now. */
+  now?: number;
 }
 
 /** DEC-13 stage 2: the RESOURCE a ticket presents to the capability policy —
@@ -84,6 +92,11 @@ export function separationOfDutiesActive(activeMemberCount?: number): boolean {
 // ─── ROLE HELPERS ────────────────────────────────────────────────────────
 // Centralised so the workflow + UI don't disagree on what counts as
 // "qualified to approve engineering work."
+// DEC-35 (DF-P5): these name-matching helpers are QUARANTINED as the seeded
+// default routing (lib/routingControl.ts SEEDED_ROUTING) — the behaviour of
+// an org that configured no routing table. They are not deleted and new
+// routing code never calls them: a configured routing table names its slots'
+// fill as data.
 
 export function isEngineerRole(role?: Role | string): boolean {
   return !!role && role.includes("Engineer");
@@ -175,6 +188,102 @@ export function decisiveGrants(
   return offers(without((g) => g.uid === userId)) ? [] : mine;
 }
 
+// ─── DF-P5 ROSTER (GAP-103 / GAP-112 / DEC-37) ───────────────────────────
+// A ticket whose library declares a routing table reviews on a PARALLEL
+// roster: the workflow route opens it when the draft enters PENDING_REVIEW
+// (`metadata.review_roster`, written compare-and-set with the status), every
+// unsatisfied blocking slot is offered to its occupants at once, and the
+// ticket issues when the last blocking slot is satisfied — one wait state
+// however many slots there are. A ticket with no roster (every ticket of an
+// org that configured nothing) runs the serial machine below, unchanged.
+
+/** The roster under review now, or null (legacy path). Current only while
+ *  the ticket is in PENDING_REVIEW and the roster has not been closed. */
+export function currentRoster(ticket: Pick<Ticket, "status" | "metadata">): TicketReviewRoster | null {
+  if (ticket.status !== "PENDING_REVIEW") return null;
+  const r = (ticket.metadata as Record<string, unknown> | undefined)?.review_roster as TicketReviewRoster | undefined;
+  if (!r || typeof r !== "object" || r.v !== 1 || !Array.isArray(r.slots) || r.closedAt) return null;
+  return r;
+}
+
+/** A slot the ticket waits on (consent_window waits like blocking until
+ *  consent windows exist — DEC-38). */
+export const slotBlocks = (s: Pick<TicketReviewSlot, "mode">): boolean => s.mode !== "notify_only";
+
+const DAY_MS = 86_400_000;
+
+export interface SlotSignPlan {
+  /** The open blocking slots this actor's ONE sign-off satisfies now. */
+  fillable: Array<{ slot: TicketReviewSlot; via: "primary" | "alternate" | "override" }>;
+  /** Slots this actor occupies but may not sign, each with the reason
+   *  (DEC-37: the independence constraint that blocked it, named). */
+  blocked: Array<{ slot: TicketReviewSlot; reason: string }>;
+}
+
+/**
+ * Which open blocking slots `uid` may sign now, and which they occupy but
+ * may not (DEC-37: one person satisfies every slot they can fill, in one
+ * action; independence is a property of the SLOT, enforced at the DEC-12
+ * threshold). Pure — the engine, the route and the roster panel share it.
+ */
+export function slotSignPlan(
+  roster: TicketReviewRoster,
+  ticket: Pick<Ticket, "requesterId" | "assignedDrafterId">,
+  uid: string | null | undefined,
+  sodActive: boolean,
+  now: number = Date.now(),
+): SlotSignPlan {
+  const plan: SlotSignPlan = { fillable: [], blocked: [] };
+  if (!uid) return plan;
+  const fillsKind = (kind: string): boolean =>
+    roster.slots.some((s) => s.kind === kind && s.status === "satisfied" && s.satisfiedBy === uid)
+    || plan.fillable.some((f) => f.slot.kind === kind);
+  for (const slot of roster.slots) {
+    if (slot.status !== "open" || !slotBlocks(slot)) continue;
+    const opened = Date.parse(roster.openedAt);
+    const alternateActive = slot.timeoutDays !== null && Number.isFinite(opened) && now >= opened + slot.timeoutDays * DAY_MS;
+    const via = slot.primaries.includes(uid) ? "primary" as const
+      : alternateActive && slot.alternates.includes(uid) ? "alternate" as const
+      : slot.overriders.includes(uid) ? "override" as const
+      : null;
+    if (!via) continue;
+    const label = slot.label || slot.kind;
+    let reason: string | null = null;
+    if (sodActive) {
+      for (const k of slot.independentOf) {
+        if (k === "drafter" && uid === ticket.assignedDrafterId) {
+          reason = `Needs a second person: "${label}" must be independent of the drafter, and you are this deliverable's drafter (orgs of 3+).`;
+        } else if (k === "requester" && uid === ticket.requesterId) {
+          reason = `Needs a second person: "${label}" must be independent of the requester, and you asked for this work (orgs of 3+).`;
+        } else if (k !== "drafter" && k !== "requester" && fillsKind(k)) {
+          const other = roster.slots.find((s) => s.kind === k);
+          reason = `Needs a second person: "${label}" must be independent of "${other?.label || k}", which you sign (orgs of 3+).`;
+        }
+        if (reason) break;
+      }
+      if (!reason) {
+        // The constraint read from the other side: a slot this actor fills
+        // (or is filling now) that declares itself independent of THIS one.
+        const conflict = roster.slots.find((s) => s.kind !== slot.kind && s.independentOf.includes(slot.kind) && fillsKind(s.kind));
+        if (conflict) reason = `Needs a second person: "${conflict.label || conflict.kind}", which you sign, must be independent of "${label}" (orgs of 3+).`;
+      }
+    }
+    if (reason) plan.blocked.push({ slot, reason });
+    else plan.fillable.push({ slot, via });
+  }
+  return plan;
+}
+
+/** FRIC-5: the drafter marked the draft under review issue-ready — the last
+ *  approval issues it as the final package (no second upload). Bound to the
+ *  revision label it was marked on, so a new submission clears it. */
+export function issueReadyFor(ticket: Pick<Ticket, "metadata" | "deliverableRev">): boolean {
+  const mark = (ticket.metadata as Record<string, unknown> | undefined)?.issue_ready as { rev?: unknown } | undefined;
+  return !!ticket.deliverableRev && typeof mark?.rev === "string" && mark.rev === ticket.deliverableRev;
+}
+
+export const ISSUE_AS_IS_NOTE = "The drafter marked this draft issue-ready: approving it issues the approved draft as the final package — no second upload.";
+
 export const WorkflowEngine = {
   // Every new request lands in the assignment queue — routed to the
   // DraftingSupervisor if one is set, otherwise Admins. Engineering review is
@@ -258,6 +367,10 @@ export const WorkflowEngine = {
       && !ticket.engineerReviewRequestedAt && !ticket.assignedEngineerId;
     const ENG_FIRST_REASON = 'This request type routes through engineering first: flag it for engineering review before a drafter is assigned.';
     const isTerminal = ticket.status === 'CLOSED' || ticket.status === 'CANCELED';
+    // DF-P5: the roster under review (a routed library), and the drafter's
+    // issue-as-is mark on the draft under review (FRIC-5).
+    const roster = currentRoster(ticket);
+    const issueReady = issueReadyFor(ticket);
     // WF-24: when a specific engineer holds the review, management's arm is
     // an OVERRIDE — the ticket waits on the engineer, not on every manager.
     const engineerOverride = !!ticket.assignedEngineerId && !isAssignedEngineerIdentity;
@@ -404,6 +517,52 @@ export const WorkflowEngine = {
       // --- REVIEW STAGE ---
       // This is where the engineer-routing fork lives.
       case 'PENDING_REVIEW':
+        if (roster) {
+          // DF-P5 ROSTER (GAP-103): ONE parallel wait. Every unsatisfied
+          // blocking slot is an action offered to its occupants at once; the
+          // route issues the ticket when the last one is signed. The
+          // requester's own slot (if the routing names one) is "is this what
+          // I asked for", the technical slots "is it correct" — two
+          // questions, neither waiting on the other (FRIC-2).
+          const plan = slotSignPlan(roster, ticket, userId, sod, ctx?.now ?? Date.now());
+          const occupies = plan.fillable.length > 0 || plan.blocked.length > 0;
+          if (plan.fillable.length > 0) {
+            const labels = plan.fillable.map((f) => f.slot.label || f.slot.kind);
+            const allOverride = plan.fillable.every((f) => f.via === "override");
+            actions.push({
+              label: `Sign Off — ${labels.join(", ")}`,
+              action: 'sign_slot',
+              variant: 'success',
+              requiresSignature: true,
+              description: `Your e-signature is bound to the files under review${roster.cycle ? ` (Rev ${roster.cycle})` : ""}. One sign-off covers every slot you fill.${issueReady ? ` ${ISSUE_AS_IS_NOTE}` : ""}`,
+              ...(allOverride ? { optional: true } : {}),
+            });
+          } else if (plan.blocked.length > 0) {
+            actions.push({
+              label: `Sign Off — ${plan.blocked.map((b) => b.slot.label || b.slot.kind).join(", ")}`,
+              action: 'sign_slot',
+              variant: 'success',
+              requiresSignature: true,
+              disabledReason: plan.blocked[0].reason,
+            });
+          }
+          const occupiesOnlyAsOverride = occupies && plan.fillable.length > 0 && plan.fillable.every((f) => f.via === "override") && plan.blocked.length === 0;
+          if (occupies || isRequesterIdentity) {
+            // The ticket waits on its occupants: a requester the routing
+            // does not roster, or an occupant only by override, may send it
+            // back but is not badged for it (WF-24).
+            actions.push({
+              label: 'Request Revision',
+              action: 'request_revision',
+              variant: 'warning',
+              requiresComment: true,
+              ...(!occupies || occupiesOnlyAsOverride ? { optional: true } : {}),
+            });
+          } else if (isManagement) {
+            actions.push({ label: 'Request Revision', action: 'request_revision', variant: 'warning', requiresComment: true, optional: true });
+          }
+          break;
+        }
         if (canActAsRequester) {
           if ((needsEngineerApproval && !isEng) || requesterScopedOut) {
             // Viewer-tier requesters can't sign off on engineering work.
@@ -424,7 +583,7 @@ export const WorkflowEngine = {
               label: 'Approve (Issue for Construction)',
               action: 'approve_draft_ifc',
               variant: 'success',
-              description: 'Accepts the draft. Drafter will be notified to issue IFC.',
+              description: issueReady ? `Accepts the draft. ${ISSUE_AS_IS_NOTE}` : 'Accepts the draft. Drafter will be notified to issue IFC.',
               ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
             });
             // The "fix this typo and it's approved" fast path — for actors
@@ -457,7 +616,7 @@ export const WorkflowEngine = {
             label: 'Approve (Issue for Construction)',
             action: 'approve_draft_ifc',
             variant: 'success',
-            description: 'Accepts the draft. Drafter will be notified to issue IFC.',
+            description: issueReady ? `Accepts the draft. ${ISSUE_AS_IS_NOTE}` : 'Accepts the draft. Drafter will be notified to issue IFC.',
             ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
             ...onBehalf,
           });
@@ -495,7 +654,7 @@ export const WorkflowEngine = {
               label: 'Approve as Engineer (Issue for Construction)',
               action: 'engineer_approve_final',
               variant: 'success',
-              description: 'Engineering sign-off complete. Drafter will be notified to issue IFC.',
+              description: issueReady ? `Engineering sign-off complete. ${ISSUE_AS_IS_NOTE}` : 'Engineering sign-off complete. Drafter will be notified to issue IFC.',
               ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
               ...override,
             });
@@ -585,6 +744,17 @@ export const WorkflowEngine = {
       // not resurrected; the requester files a new one.
       case 'CANCELED':
         break;
+    }
+
+    // FRIC-5 (DF-P5; DEC-90 ruling (1): opt-in per ticket by the drafter,
+    // default OFF = today's PENDING_IFC hop): while the draft is under
+    // review, its drafter may mark it issue-ready — the last approval then
+    // issues the approved draft as the final package instead of returning
+    // the ticket to them for a second upload. Optional, never waited on.
+    if ((ticket.status === 'PENDING_REVIEW' || ticket.status === 'PENDING_FINAL_APPROVAL') && isDrafterIdentity && ticket.deliverableRev) {
+      actions.push(issueReady
+        ? { label: 'Withdraw Issue-As-Is', action: 'clear_issue_ready', variant: 'ghost', optional: true, description: 'The approval returns the request to you to issue the final package, as usual.' }
+        : { label: 'Issue As-Is When Approved', action: 'mark_issue_ready', variant: 'outline', optional: true, description: `When Rev ${ticket.deliverableRev} is approved with no corrections, it is issued as the final package — you will not need to upload it again. A correction still returns it to you.` });
     }
 
     // GLOBAL OVERRIDES

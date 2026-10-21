@@ -8,7 +8,8 @@
 // Behavioral contract: identical to the previous client-side computation.
 // lib/__tests__/ticketTransitions.test.ts freezes it.
 
-import type { Ticket, TicketAttachment, TicketComment, TicketHistoryEntry, TicketOutcome, TicketStatus } from "@/types/schema";
+import type { Ticket, TicketAttachment, TicketComment, TicketHistoryEntry, TicketOutcome, TicketReviewRoster, TicketStatus } from "@/types/schema";
+import { currentRoster, issueReadyFor } from "@/lib/workflow";
 import { lastIssuedFromHistory } from "@/lib/verifyTicketVerdict";
 import { defaultOutcome } from "@/lib/ticketOutcome";
 
@@ -47,6 +48,15 @@ export interface TransitionInput {
    *  lib/ticketCreate.ts unitOptionsFor). Ignored for any other action or
    *  status. Neither is ever required. */
   triage?: { library?: { id: string; name: string } | null; unit?: string | null } | null;
+  /** FRIC-5 (DF-P5): `submit_draft` — the drafter marks the draft issue-ready
+   *  as they submit it (the last approval issues it as the final package). */
+  issueReady?: boolean;
+  /** GAP-103 (DF-P5): the roster the route opened for a draft entering
+   *  PENDING_REVIEW in a routed library (lib/ticketRoster.ts openRoster). */
+  rosterOpen?: TicketReviewRoster | null;
+  /** GAP-103 (DF-P5): `sign_slot` — the roster with the actor's slots
+   *  satisfied, whether every blocking slot now is, and the slots' labels. */
+  rosterSign?: { roster: TicketReviewRoster; complete: boolean; labels: string[] } | null;
   actor: TransitionActor;
   now?: string;
 }
@@ -246,6 +256,22 @@ export function stampIssuedFinals(files: TicketAttachment[], label: string, cycl
   return files.map((a) => (a.type === "Final" && a.rev === null && a.revCycle === cycle ? { ...a, rev: label } : a));
 }
 
+/** FRIC-5 (DF-P5): the Final(s) an issue-as-is approval records — each
+ *  Draft of the revision under review, as the issued package (same bytes,
+ *  same storage key, a new id, the issued label). null when no Draft carries
+ *  that revision (a file from before per-file revisions): the approval then
+ *  returns the request to the drafter, as before. */
+export function issueAsIsFinals(ticket: Pick<Ticket, "attachments" | "deliverableRev">, label: string, now: string): TicketAttachment[] | null {
+  const under = ticket.deliverableRev;
+  if (!under) return null;
+  const drafts = (ticket.attachments ?? []).filter((a) => a?.type === "Draft" && a.rev === under && a.status !== "staged");
+  if (drafts.length === 0) return null;
+  return drafts.map((d) => ({
+    ...d, id: crypto.randomUUID(), type: "Final" as const, status: "submitted" as const, rev: label,
+    revCycle: undefined, issuedFromDraftId: d.id, uploadedAt: now,
+  }));
+}
+
 /**
  * Compute the full DB update for a workflow action. Pure: no IO, no Date.now()
  * (callers may pin `now`), so it is deterministic and testable. Mirrors the
@@ -351,6 +377,25 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
     }
   };
 
+  // FRIC-5 (DF-P5): an approval of a draft its drafter marked issue-ready
+  // issues it as the final package — FINAL_DRAFT, the Draft recorded as the
+  // Final — instead of returning the request for a second upload. Without
+  // the mark (the default) nothing here runs.
+  const asIsIssue = () => {
+    if (!issueReadyFor(ticket)) return;
+    const finals = issueAsIsFinals(ticket, updates.deliverable_rev as string, now);
+    const meta = { ...(((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>) };
+    delete meta.issue_ready;
+    updates.metadata = meta;
+    if (!finals) {
+      historyEntry.details = `${historyEntry.details ? `${historyEntry.details} ` : ""}[Marked issue-ready, but no draft carries Rev ${ticket.deliverableRev} — the drafter issues the final package]`;
+      return;
+    }
+    updates.status = "FINAL_DRAFT";
+    currentAttachments = [...currentAttachments, ...finals];
+    historyEntry.action = `${historyEntry.action} — issued as-is (the approved draft is the final package)`;
+  };
+
   switch (input.actionType) {
     case "save_progress":
       break;
@@ -446,13 +491,57 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
             : { ...a, status: "submitted" as const }
           : a,
       );
+      // FRIC-5 (DF-P5): the issue-as-is mark is bound to the label it was
+      // made on — set for this submission when asked, and an earlier mark
+      // is cleared by any new submission. Nothing is written otherwise.
+      {
+        const meta = (ticket.metadata ?? {}) as Record<string, unknown>;
+        if (input.issueReady) {
+          updates.metadata = { ...meta, issue_ready: { rev: updates.deliverable_rev, by: actorUid ?? null, at: now } };
+          historyEntry.details = `${historyEntry.details ? `${historyEntry.details} ` : ""}[Issue as-is when approved]`;
+        } else if (Object.prototype.hasOwnProperty.call(meta, "issue_ready")) {
+          const rest = { ...meta };
+          delete rest.issue_ready;
+          updates.metadata = rest;
+        }
+      }
       break;
     }
+    case "mark_issue_ready":
+      // FRIC-5 (DF-P5): the drafter's opt-in on the draft under review.
+      updates.metadata = { ...((ticket.metadata ?? {}) as Record<string, unknown>), issue_ready: { rev: ticket.deliverableRev ?? null, by: actorUid ?? null, at: now } };
+      historyEntry.action = `Marked issue-ready — Rev ${ticket.deliverableRev ?? "—"} is issued as the final package when approved`;
+      break;
+    case "clear_issue_ready": {
+      const rest = { ...((ticket.metadata ?? {}) as Record<string, unknown>) };
+      delete rest.issue_ready;
+      updates.metadata = rest;
+      historyEntry.action = "Issue-as-is withdrawn — the approval returns the request to the drafter";
+      break;
+    }
+    case "sign_slot":
+      // GAP-103 (DF-P5): the actor's slots are satisfied on the roster the
+      // ticket carries; the last blocking slot issues the ticket exactly as
+      // a direct approval does (and as-is when the drafter marked it).
+      if (input.rosterSign) {
+        const { roster, complete, labels } = input.rosterSign;
+        updates.metadata = { ...((ticket.metadata ?? {}) as Record<string, unknown>), review_roster: complete ? { ...roster, closedAt: now, closedReason: "complete" } : roster };
+        historyEntry.action = `Signed off — ${labels.join(", ")}${ticket.deliverableRev ? ` (Rev ${ticket.deliverableRev})` : ""}`;
+        if (complete) {
+          updates.status = "PENDING_IFC";
+          issueRev();
+          historyEntry.action = `${historyEntry.action} — every sign-off is in; issued Rev ${updates.deliverable_rev}`;
+          currentAttachments = stampIssuedFinals(currentAttachments, updates.deliverable_rev as string, ticket.revisionCount ?? 0); // PHYS-2
+          asIsIssue();
+        }
+      }
+      break;
     case "approve_draft_ifc":
       updates.status = "PENDING_IFC";
       issueRev(); // SM-5: never a label the history already issued
       historyEntry.action = `${input.actionLabel} — issued Rev ${updates.deliverable_rev}`;
       currentAttachments = stampIssuedFinals(currentAttachments, updates.deliverable_rev as string, ticket.revisionCount ?? 0); // PHYS-2
+      asIsIssue(); // FRIC-5: only when the drafter marked it
       break;
     // "Fix this typo and it's approved" — the minor-correction fast path.
     // Approves the deliverable NOW (rev letter drops) with the correction
@@ -487,6 +576,11 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       historyEntry.action = `${input.actionLabel} — issued Rev ${updates.deliverable_rev}`;
       currentAttachments = stampIssuedFinals(currentAttachments, updates.deliverable_rev as string, ticket.revisionCount ?? 0); // PHYS-2
       if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
+      asIsIssue(); // FRIC-5: only when the drafter marked it
+      if (updates.status === "FINAL_DRAFT" && ticket.requesterId && ticket.requesterId !== actorUid) {
+        // The issued package now waits on the requester's acknowledgement.
+        updates.unread_by = Array.from(new Set([...(updates.unread_by as string[]), ticket.requesterId]));
+      }
       break;
     case "engineer_request_revision":
       updates.status = revisionToQueue ? "PENDING_ASSIGNMENT" : "REVISION_REQ";
@@ -541,6 +635,42 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       // A reopened request has not ended (LEAK-9).
       updates.outcome = null;
       break;
+  }
+
+  // GAP-103 (DF-P5): a draft entering PENDING_REVIEW in a routed library
+  // carries the roster the route opened (one parallel wait); everyone the
+  // roster names — the occupants of every slot, notify-only slots included —
+  // is told. Leaving PENDING_REVIEW any other way (a revision, a cancel, a
+  // force close) closes the roster: its open slots are void.
+  if (input.rosterOpen && updates.status === "PENDING_REVIEW") {
+    const r = input.rosterOpen;
+    const meta = ((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>;
+    updates.metadata = { ...meta, review_roster: r };
+    const blocking = r.slots.filter((x) => x.mode !== "notify_only").map((x) => x.label || x.kind);
+    const told = r.slots.filter((x) => x.mode === "notify_only").map((x) => x.label || x.kind);
+    newHistory.push({
+      action: "Review roster opened",
+      user: input.actor.email || "Unknown",
+      role: input.actor.role,
+      date: now,
+      details: `Sign-offs needed (any order): ${blocking.join(", ")}${told.length ? ` · Told: ${told.join(", ")}` : ""}`,
+    } as TicketHistoryEntry);
+    const named = r.slots.flatMap((x) => x.primaries);
+    updates.unread_by = Array.from(new Set([...((updates.unread_by as string[] | undefined) ?? []), ...named])).filter((u) => u && u !== actorUid);
+  } else {
+    const open = currentRoster(ticket);
+    if (open && updates.status !== undefined && updates.status !== "PENDING_REVIEW" && input.actionType !== "sign_slot") {
+      const meta = ((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>;
+      updates.metadata = {
+        ...meta,
+        review_roster: {
+          ...open,
+          closedAt: now,
+          closedReason: input.actionType,
+          slots: open.slots.map((x) => (x.status === "open" ? { ...x, status: "void" as const } : x)),
+        },
+      };
+    }
   }
 
   // DCW-1 / DCW-7 (DF-P4): triage records the library and the unit with the

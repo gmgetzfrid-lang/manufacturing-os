@@ -91,7 +91,11 @@ const GRANDFATHERED = new Set<string>();
  *  the 2026-10-07 wave), with the file that creates it. The integrator adds
  *  the row and removes the table from here in the same merge — the tripwire
  *  below fails once both say it, so the entry cannot outlive its merge. */
-const ROW_AT_MERGE: Record<string, string> = {};
+const ROW_AT_MERGE: Record<string, string> = {
+  // drafting-flow Round G DF-P5 ROSTER — the integrator adds the rows at merge.
+  ticket_review_slots: "20261242_df_roundG_ticket_roster.sql",
+  ticket_review_slot_events: "20261242_df_roundG_ticket_roster.sql",
+};
 
 const BASE = "schema.sql (base schema)";
 const sqlOf = (file: string) =>

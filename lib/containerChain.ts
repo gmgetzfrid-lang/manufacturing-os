@@ -24,7 +24,7 @@
 import { supabase } from "@/lib/supabase";
 
 /** A column that resolves along the container chain. */
-export type ChainColumn = "review_control" | "doc_class";
+export type ChainColumn = "review_control" | "doc_class" | "routing_control";
 
 export interface ContainerChain<T> {
   /** The document's own value (undefined when no document id was given). */

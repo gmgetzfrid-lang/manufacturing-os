@@ -1,0 +1,103 @@
+// drafting-flow Round G, DF-P5 ROSTER — the roster panel on the request page
+// (who must act, who did, who was told; FRIC-2 / FRIC-4 / TIER-8 / DCW-6),
+// the routing editor beside the review policy (GAP-112, DEC-36), and the
+// page's one mount. Rendered with react-dom/server (effects do not run, so
+// what is asserted is the first paint from the ticket alone).
+
+import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import type { Ticket, TicketReviewRoster } from "@/types/schema";
+
+vi.mock("@/lib/supabase", () => ({ supabase: { from: () => ({}) , auth: { getSession: async () => ({ data: { session: null } }) } } }));
+vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({ uid: "u-1", activeRole: "Admin", roles: ["Admin"] }) }));
+import TicketRosterPanel, { TWO_REVIEWS_NOTE, slotQuestion, slotStateText } from "@/components/requests/TicketRosterPanel";
+import { draftToControl } from "@/components/documents/RoutingControlSection";
+import { parseRoutingControl } from "@/lib/routingControl";
+
+const NOW = "2026-10-21T12:00:00.000Z";
+const roster: TicketReviewRoster = {
+  v: 1, id: "r-1", openedAt: NOW, openedBy: "d-1", level: "library", cycle: "1A", contentHash: "h".repeat(64),
+  files: [{ id: "a-d", name: "iso_1A.pdf", url: "u", sha256: "f".repeat(64) }],
+  slots: [
+    { id: "r-1:accept", kind: "accept", label: "Requester acceptance", mode: "blocking", primaries: ["req-1"], alternates: [], overriders: [], independentOf: [], timeoutDays: null, fallback: false, status: "open" },
+    { id: "r-1:check", kind: "check", label: "Engineering check", mode: "blocking", primaries: ["e-1", "e-2"], alternates: [], overriders: [], independentOf: ["drafter"], timeoutDays: null, fallback: false, status: "satisfied", satisfiedBy: "e-1", satisfiedByName: "Erin", satisfiedAt: NOW, signatureId: "s", via: "primary" },
+    { id: "r-1:told", kind: "told", label: "Process safety", mode: "notify_only", primaries: ["q-1"], alternates: [], overriders: [], independentOf: [], timeoutDays: null, fallback: false, status: "told" },
+  ],
+};
+const ticket = (over: Partial<Ticket> = {}): Ticket => ({
+  id: "t1", orgId: "o1", ticketId: "REQ-1", title: "x", unit: null, requestType: "ISO", status: "PENDING_REVIEW",
+  requesterId: "req-1", requesterRole: "Requester", requesterName: "Rita", assignedDrafterId: "d-1", createdAt: NOW,
+  history: [], attachments: [], comments: [], watchers: [], unreadBy: [], deliverableRev: "1A", libraryId: null, ...over,
+});
+const render = (t: Ticket, uid = "req-1") => renderToStaticMarkup(createElement(TicketRosterPanel, { ticket: t, orgId: "o1", uid, activeMemberCount: 5 }));
+
+describe("TicketRosterPanel — who must act, who did, who was told", () => {
+  it("a routed request lists every slot: the question it asks, who signed and how, who was told; the viewer's open slot gets ONE sign-off", () => {
+    const html = render(ticket({ metadata: { review_roster: roster } }));
+    expect(html).toContain("Sign-offs in any order · Rev 1A");
+    expect(html).toContain("Requester acceptance");
+    expect(html).toContain("Is this what you asked for?"); // FRIC-2: the requester's own question
+    expect(html).toContain("Is it correct?");
+    expect(html).toContain("Signed by Erin");
+    expect(html).toContain("Told — 1 person");
+    expect(html).toContain("Sign off — Requester acceptance");
+    expect(html).toContain(TWO_REVIEWS_NOTE.slice(0, 60)); // TIER-8, said plainly
+  });
+  it("someone who occupies nothing open sees the roster and no sign-off button", () => {
+    const html = render(ticket({ metadata: { review_roster: roster } }), "x-9");
+    expect(html).not.toContain("Sign off —");
+  });
+  it("an unconfigured request in review shows the seeded default, read-only (today's serial steps)", () => {
+    const html = render(ticket({ requesterRole: "Maintenance" as never }));
+    expect(html).toContain('data-testid="seeded-slots"');
+    expect(html).toContain("Requester acceptance");
+    expect(html).toContain("waiting now");
+    expect(html).toContain("Engineering sign-off");
+    expect(html).not.toContain("Sign off —");
+  });
+  it("nothing to show (drafting, no library) renders nothing", () => {
+    expect(render(ticket({ status: "DRAFTING" }))).toBe("");
+  });
+  it("DCW-6 (source pin — effects do not run server-side): the panel resolves the request library's review policy through the one resolver and names its reviewers by CALLING lib/reviewControl.ts", () => {
+    const src = readFileSync(join(process.cwd(), "components", "requests", "TicketRosterPanel.tsx"), "utf8");
+    expect(src).toContain("const control = await effectiveReviewControlForDocument({ libraryId: ticket.libraryId as string });");
+    expect(src).toContain("const { primaries } = await expandReviewers(orgId, control);");
+    expect(src).toContain("This request&apos;s library reviews revisions before they publish");
+  });
+  it("slot words: waiting on any one of N, the management fallback said, alternates' date", () => {
+    const open = roster.slots[0];
+    expect(slotStateText({ ...open, primaries: ["a", "b"], fallback: true }, new Map())).toMatch(/any one of 2 people \(the management tier/);
+    expect(slotStateText({ ...open, alternates: ["z"], timeoutDays: 3 }, new Map(), Date.parse(NOW) + 4 * 86_400_000, NOW)).toMatch(/alternates may sign now/);
+    expect(slotQuestion({ kind: "x", primaries: ["e-1"] }, { requesterId: "req-1" })).toBe("Is it correct?");
+  });
+});
+
+describe("RoutingControlSection — the editor writes the stored shape the resolver accepts", () => {
+  it("draft slots become a routing table parseRoutingControl accepts (facility words, any fill, independence, alternates)", () => {
+    const control = draftToControl([
+      { kind: "insp", label: "Inspection", mode: "blocking", fillKind: "roles", roles: ["Supervisor"], users: [], capability: "", independentOf: ["drafter"], timeoutDays: "3", alternateRoles: ["Manager"] },
+      { kind: "accept", label: "", mode: "blocking", fillKind: "requester", roles: [], users: [], capability: "", independentOf: [], timeoutDays: "", alternateRoles: [] },
+      { kind: "told", label: "Told", mode: "notify_only", fillKind: "capability", roles: [], users: [], capability: "ticket.manage", independentOf: [], timeoutDays: "", alternateRoles: [] },
+    ]);
+    expect(control.slots[0]).toEqual({ kind: "insp", label: "Inspection", mode: "blocking", fill: { roles: ["Supervisor"] }, independent_of: ["drafter"], alternates: { roles: ["Manager"] }, timeoutDays: 3 });
+    expect(control.slots[1].fill).toEqual({ identity: "requester" });
+    expect(parseRoutingControl(control)).toMatchObject({ ok: true });
+  });
+  it("mounted beside the review policy (DEC-36: per container), not on /admin/requests", () => {
+    const modal = readFileSync(join(process.cwd(), "components", "documents", "ReviewControlModal.tsx"), "utf8");
+    expect(modal).toContain("<RoutingControlSection level={level} id={id} orgId={orgId} />");
+    expect(readFileSync(join(process.cwd(), "app", "(protected)", "admin", "requests", "page.tsx"), "utf8")).not.toContain("RoutingControl");
+  });
+});
+
+describe("the request page — one mount; the signature-carrying action is the panel's", () => {
+  const page = readFileSync(join(process.cwd(), "app", "(protected)", "requests", "[id]", "page.tsx"), "utf8");
+  it("mounts TicketRosterPanel once and leaves sign_slot (requiresSignature) to it; the engineer picker gets the policy and resource", () => {
+    expect(page.match(/<TicketRosterPanel /g)).toHaveLength(1);
+    expect(page).toContain("a.action !== 'reassign_drafter' && !a.requiresSignature);");
+    expect(page).toContain("resource={ticketResource(ticket)}");
+  });
+});

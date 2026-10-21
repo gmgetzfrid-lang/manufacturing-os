@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse, after } from "next/server";
-import { HeadObjectCommand } from "@aws-sdk/client-s3";
+import { HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { notifyBatchWithReason } from "@/lib/inAppNotifications";
-import { WorkflowEngine, ticketResource, decisiveGrants } from "@/lib/workflow";
-import { loadCapabilityPolicyStrict, policyAllows, scopedTokensFor } from "@/lib/capabilityPolicy";
+import { WorkflowEngine, ticketResource, decisiveGrants, currentRoster, slotSignPlan } from "@/lib/workflow";
+import { loadCapabilityPolicyStrict, policyAllows } from "@/lib/capabilityPolicy";
+import { engineerPickCap, engineerPickRefusal } from "@/lib/ticketPage";
+import { effectiveRoutingForTicket } from "@/lib/routingControl";
+import {
+  sha256OfStoredObject, filesUnderReview, openRoster, applySignPlan, rosterCompletion, signatureRefusal,
+  writeRosterLedger, isMissingRosterLedger, type FileHash, type SignatureRow,
+} from "@/lib/ticketRoster";
+import { loadPickerMembers } from "@/lib/ticketPickerMembers";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { isSafeStorageKey } from "@/lib/storageKey";
 import { publicOrigin } from "@/lib/publicOrigin";
@@ -14,9 +21,10 @@ import {
   classifyTransitionNotification,
   rowToTicket,
   escapeHtml,
+  draftRevLabel,
   type TransitionInput,
 } from "@/lib/ticketTransitions";
-import type { Role, TicketAttachment, TicketHistoryEntry, TicketOutcome } from "@/types/schema";
+import type { Role, TicketAttachment, TicketHistoryEntry, TicketOutcome, TicketReviewRoster } from "@/types/schema";
 import { TICKET_INTENT_TTL_MS } from "@/lib/intents";
 import { parseSourceDocument, parseSourceDocuments } from "@/lib/sourceDocRef";
 import { unitOptionsFor, resolveUnit, unitListReadFailure } from "@/lib/ticketCreate";
@@ -84,6 +92,13 @@ interface Body {
    *  resolved against the org's unit list (lib/ticketCreate.ts
    *  unitOptionsFor). Never required. */
   unit?: string | null;
+  /** GAP-103 / EVID-12 (DF-P5): `sign_slot` — the e-signature the roster
+   *  panel minted at /api/signatures/sign against this ticket, bound to the
+   *  roster's content hash. */
+  signatureId?: string | null;
+  /** FRIC-5 (DF-P5): `submit_draft` — issue the draft as the final package
+   *  when it is approved (the drafter's opt-in; default off). */
+  issueReady?: boolean | null;
 }
 
 /** DCW-4 / HAND-3: the shape of a register row id (document_versions.id,
@@ -131,6 +146,17 @@ async function accountName(uid: string): Promise<string | null> {
  *  it is the store's tag, not a content hash this route computed. */
 function fileIdentity(a: TicketAttachment, etag: string | null | undefined) {
   return { id: a.id ?? null, name: a.name ?? null, url: a.url ?? null, size: a.size ?? null, etag: etag ?? null };
+}
+
+/** EVID-12 (DF-P5): sha256 of a stored ticket file, computed here from its
+ *  bytes (lib/ticketRoster.ts sha256OfStoredObject over R2). */
+function hashStoredFile(key: string | null | undefined): Promise<FileHash> {
+  return sha256OfStoredObject(key, async (k) => (await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: k }))) as never);
+}
+
+/** EVID-12 (DF-P5): a file's identity with the content hash computed here. */
+function hashedIdentity(a: TicketAttachment, etag: string | null | undefined, h: FileHash | undefined) {
+  return { ...fileIdentity(a, etag), sha256: h?.ok ? h.sha256 : null, ...(h && !h.ok ? { sha256Unavailable: h.reason } : {}) };
 }
 
 /** EVID-12 / SM-7 (DF-P1): one audit row, written with the fixed id it
@@ -475,21 +501,14 @@ export async function POST(req: NextRequest) {
       ? (refMember.roles as string[])
       : [String(refMember.role ?? "")];
     if (ref === body.engineer?.id) {
-      if (!held.some((r) => r.includes("Engineer"))) {
-        return NextResponse.json({ error: "The selected reviewer does not hold an Engineer role" }, { status: 400 });
-      }
-      // DEC-13 (DRAFT-1 / GAP-1): when the org scoped the reviewing
-      // capability to THIS ticket's type, the picked engineer must satisfy
-      // that rule. The assigned engineer acts by identity afterwards, so the
-      // pick is where a type-scoped reviewer group is enforced. No scoped
-      // rule → the Engineer-role check above is the whole test, as before.
-      const pickCap = body.actionType === "request_eng_review" ? "ticket.eng_review" : "ticket.final_approve";
-      const scoped = scopedTokensFor(capPolicy, pickCap, resource);
-      if (scoped !== null && !policyAllows(capPolicy, pickCap, (held[0] ?? "Viewer") as Role, held as Role[], ref, resource)) {
-        return NextResponse.json({
-          error: `The selected reviewer is outside the group this workspace allows to review ${ticket.requestType} requests (${pickCap}: ${scoped.join(", ") || "nobody"})`,
-        }, { status: 400 });
-      }
+      // An Engineer role, and — when the org scoped the reviewing
+      // capability to THIS ticket's type (DEC-13, DRAFT-1 / GAP-1) — that
+      // rule. The assigned engineer acts by identity afterwards, so the pick
+      // is where a type-scoped reviewer group is enforced. ROUTE-8 (DF-P5):
+      // ONE rule, lib/ticketPage.ts engineerPickRefusal — the engineer
+      // picker offers exactly the members it accepts.
+      const pickRefused = engineerPickRefusal(held, capPolicy, engineerPickCap(body.actionType), ref, resource, ticket.requestType);
+      if (pickRefused) return NextResponse.json({ error: pickRefused }, { status: 400 });
       // WF-14 (+DEC-12, +DEC-37): the reviewer slot is INDEPENDENT of the
       // deliverable's producer and its beneficiary. In orgs of 3+ the picked
       // engineer may not be the requester, the assigned drafter, or the
@@ -695,6 +714,116 @@ export async function POST(req: NextRequest) {
     if (resolved.unit) triage = { ...(triage ?? {}), unit: resolved.unit };
   }
 
+  // ── GAP-103 / GAP-112 (DF-P5 ROSTER) ───────────────────────────────────
+  // A draft entering PENDING_REVIEW in a library that declares a routing
+  // table opens a PARALLEL roster (lib/ticketRoster.ts): every slot's
+  // occupants resolved now, every sign-off bound to the sha256 of the files
+  // under review. An unconfigured ticket (no library, no table anywhere on its
+  // chain, or the 20261241 column not pasted) takes today's path with no
+  // read beyond the chain. The routing is DECLARED, never guessed, and fails
+  // CLOSED: a chain that cannot be read, a table that cannot be used, a slot
+  // nobody can fill, or files that cannot be hashed refuse the submission
+  // with the reason — nothing written. All of it is read before the audit
+  // row, the first write.
+  const openRosterNow = currentRoster(ticket);
+  let rosterOpen: TicketReviewRoster | null = null;
+  let rosterSign: TransitionInput["rosterSign"] = null;
+  let rosterWarning: string | null = null;
+  const entersReview = ticket.status !== "PENDING_REVIEW" && (action.action === "submit_draft" || action.action === "reopen_ticket");
+  if (entersReview && ticket.libraryId) {
+    const refuse = (status: number, code: string, error: string) => NextResponse.json({ error, code }, { status });
+    let sourceDocument: { id: string; collectionId: string | null; libraryId: string | null } | null = null;
+    const src = parseSourceDocument(ticket.metadata);
+    if (src?.id && UUID_RE.test(src.id)) {
+      const { data: d, error: dErr } = await supabaseAdmin
+        .from("documents").select("id, collection_id, library_id").eq("id", src.id).eq("org_id", ticket.orgId).maybeSingle();
+      if (dErr) return refuse(503, "routing_unreadable", "This request's review routing could not be read, so the draft was not submitted. Try again in a moment.");
+      const dr = d as { id?: string; collection_id?: string | null; library_id?: string | null } | null;
+      if (dr?.id) sourceDocument = { id: dr.id, collectionId: dr.collection_id ?? null, libraryId: dr.library_id ?? null };
+    }
+    let routing: Awaited<ReturnType<typeof effectiveRoutingForTicket>>;
+    try {
+      // The chain reads through the shared client, bound to the service role
+      // for this request only (loaded here, as the copy recall loads it).
+      const { runWithServerClient } = await import("@/lib/serverClientScope");
+      routing = await runWithServerClient(supabaseAdmin, () => effectiveRoutingForTicket({ libraryId: ticket.libraryId, sourceDocument }));
+    } catch (e) {
+      console.error(`[workflow-action] routing unreadable for ticket ${body.ticketId}:`, (e as Error)?.message ?? e);
+      return refuse(503, "routing_unreadable", "This request's review routing could not be read, so the draft was not submitted. Try again in a moment.");
+    }
+    if (routing.state === "invalid") {
+      return refuse(409, "routing_invalid", `The review routing set on this request's ${routing.level} can't be used (${routing.error}), so the draft was not submitted. Ask a document controller to correct it.`);
+    }
+    if (routing.state === "configured") {
+      const { error: ledgerErr } = await supabaseAdmin.from("ticket_review_slots").select("id", { count: "exact", head: true }).eq("ticket_id", body.ticketId);
+      if (ledgerErr && isMissingRosterLedger(ledgerErr)) {
+        // 20261241 pasted, 20261242 not yet: today's path, said.
+        rosterWarning = "This request's library routes its reviews, but the review roster is not in the database yet (update 20261242 is not applied) — it was submitted for review the usual way.";
+      } else if (ledgerErr) {
+        return refuse(503, "routing_unreadable", "The review roster could not be checked, so the draft was not submitted. Try again in a moment.");
+      } else {
+        const cycle = action.action === "submit_draft" ? draftRevLabel(ticket.revisionCount, (ticket.draftIteration ?? 0) + 1) : null;
+        const projected = action.action === "submit_draft"
+          ? (ticket.attachments ?? []).map((a) => (a.status === "staged" && a.type === "Draft" ? { ...a, status: "submitted" as const, rev: cycle } : a))
+          : (ticket.attachments ?? []);
+        const files = filesUnderReview(projected, cycle);
+        if (files.length === 0) return refuse(409, "routing_no_files", "There is no draft to review on this request, so no review could open.");
+        const hashed: TicketReviewRoster["files"] = [];
+        for (const f of files) {
+          const h = await hashStoredFile(f.url);
+          if (!h.ok) {
+            return h.transient
+              ? refuse(503, "content_unhashable", "The files under review could not be read from storage to bind the sign-offs to them, so the draft was not submitted. Try again in a moment.")
+              : refuse(409, "content_unhashable", `"${f.name}" cannot be bound to the sign-offs (${h.reason}) — upload it again, then submit.`);
+          }
+          hashed.push({ id: f.id ?? null, name: f.name ?? null, url: f.url ?? null, sha256: h.sha256 });
+        }
+        const members = await loadPickerMembers(ticket.orgId, supabaseAdmin);
+        if (!members.ok) return refuse(503, "routing_unreadable", "This workspace's members could not be read to open the review, so the draft was not submitted. Try again in a moment.");
+        const opened = openRoster({
+          id: crypto.randomUUID(), control: routing.control, level: routing.level, cycle, files: hashed,
+          ctx: { members: members.rows, policy: capPolicy, resource, requesterId: ticket.requesterId },
+          openedBy: caller.id, now: new Date().toISOString(),
+        });
+        if (!opened.ok) return refuse(409, opened.code, opened.error);
+        rosterOpen = opened.roster;
+      }
+    }
+  }
+  if (action.action === "sign_slot") {
+    // DEC-37: one sign-off satisfies every slot the caller can fill; the
+    // plan is the engine's own (lib/workflow.ts slotSignPlan), recomputed
+    // here. EVID-12: it carries an e-signature minted by
+    // /api/signatures/sign against THIS ticket, by the caller, bound to the
+    // roster's content hash, given after the roster opened, used once.
+    if (!openRosterNow) return NextResponse.json({ error: "This request has no review open." }, { status: 409 });
+    const plan = slotSignPlan(openRosterNow, ticket, caller.id, sodActive, Date.now());
+    if (plan.fillable.length === 0) return NextResponse.json({ error: plan.blocked[0]?.reason ?? "There is no sign-off open to you on this request." }, { status: 403 });
+    const sigId = typeof body.signatureId === "string" ? body.signatureId.trim() : "";
+    if (!UUID_RE.test(sigId)) return NextResponse.json({ error: "A sign-off needs your e-signature.", code: "signature_required" }, { status: 400 });
+    const { data: sig, error: sigErr } = await supabaseAdmin
+      .from("e_signatures").select("id, org_id, resource_type, resource_id, signer_user_id, content_hash, intent, signed_at")
+      .eq("id", sigId).maybeSingle();
+    if (sigErr) return NextResponse.json({ error: "Your signature could not be checked — try again in a moment." }, { status: 503 });
+    const refusal = signatureRefusal(sig as SignatureRow | null, { orgId: ticket.orgId, ticketId: body.ticketId, signerId: caller.id, roster: openRosterNow });
+    if (refusal) return NextResponse.json({ error: refusal, code: "signature_invalid" }, { status: 403 });
+    const signed = applySignPlan(openRosterNow, plan, { uid: caller.id, name: memberName(member as { display_name?: unknown; email?: unknown }) }, sigId, new Date().toISOString());
+    rosterSign = { roster: signed, complete: rosterCompletion(signed).complete, labels: plan.fillable.map((f) => f.slot.label || f.slot.kind) };
+  }
+  // EVID-12 (DF-P5): the approved drafts and the issued Final, hashed HERE
+  // from their bytes (sha256) for the audit row. Best-effort on the legacy
+  // approvals and the issue — a file storage cannot answer for is recorded
+  // as such, and the approval works exactly as before.
+  const fileHashes = new Map<string, FileHash>();
+  const APPROVED_HASH_CAP = 25;
+  if (APPROVING_ACTIONS.has(action.action)) {
+    const drafts = (ticket.attachments ?? []).filter((a) => a?.type === "Draft" && a.status === "submitted").slice(0, APPROVED_HASH_CAP);
+    for (const a of drafts) if (a.url && !fileHashes.has(a.url)) fileHashes.set(a.url, await hashStoredFile(a.url));
+  }
+  if (vetted.finalAttachment?.url) fileHashes.set(vetted.finalAttachment.url, await hashStoredFile(vetted.finalAttachment.url));
+  const hashOf = (a: TicketAttachment): FileHash | undefined => (a.url ? fileHashes.get(a.url) : undefined)
+    ?? (APPROVING_ACTIONS.has(action.action) ? { ok: false, transient: false, reason: `not hashed (more than ${APPROVED_HASH_CAP} drafts)` } : undefined);
+
   const input: TransitionInput = {
     actionType: action.action,
     actionLabel: action.label,
@@ -710,6 +839,9 @@ export async function POST(req: NextRequest) {
     attachment: vetted.attachment,
     outcome: outcome ?? undefined,
     triage,
+    issueReady: action.action === "submit_draft" && body.issueReady === true,
+    rosterOpen,
+    rosterSign,
     actor: { uid: caller.id, email: callerEmail, role: callerRole },
   };
   const { updates, newStatus, recipients: transitionRecipients, newComment } = computeTransition(ticket, input);
@@ -959,11 +1091,22 @@ export async function POST(req: NextRequest) {
       ...(vetted.attachment
         ? { attachment: { ...fileIdentity(vetted.attachment, vettedEtags.attachment), type: vetted.attachment.type } }
         : {}),
-      ...(vetted.finalAttachment ? { finalAttachment: fileIdentity(vetted.finalAttachment, vettedEtags.finalAttachment) } : {}),
+      ...(vetted.finalAttachment ? { finalAttachment: hashedIdentity(vetted.finalAttachment, vettedEtags.finalAttachment, hashOf(vetted.finalAttachment)) } : {}),
       ...(vetted.redlineAttachment ? { redlineAttachment: fileIdentity(vetted.redlineAttachment, vettedEtags.redlineAttachment) } : {}),
       ...(APPROVING_ACTIONS.has(action.action)
-        ? { approvedDrafts: (ticket.attachments ?? []).filter((a) => a?.type === "Draft" && a.status === "submitted").map((a) => fileIdentity(a, null)) }
+        ? { approvedDrafts: (ticket.attachments ?? []).filter((a) => a?.type === "Draft" && a.status === "submitted").map((a) => hashedIdentity(a, null, hashOf(a))) }
         : {}),
+      // GAP-103 (DF-P5): the roster this transition opened, signed or closed
+      // — its id, the content hash every sign-off is bound to, and each
+      // slot touched (DEC-37: every slot satisfied, and by whom).
+      ...(rosterOpen
+        ? { reviewRoster: { id: rosterOpen.id, event: "opened", level: rosterOpen.level, contentHash: rosterOpen.contentHash, files: rosterOpen.files, slots: rosterOpen.slots.map((x) => ({ kind: x.kind, label: x.label, mode: x.mode, occupants: x.primaries.length, fallback: x.fallback })) } }
+        : rosterSign
+          ? { reviewRoster: { id: rosterSign.roster.id, event: "signed", contentHash: rosterSign.roster.contentHash, signatureId: body.signatureId ?? null, complete: rosterSign.complete, slots: rosterSign.roster.slots.filter((x) => x.signatureId === body.signatureId).map((x) => ({ kind: x.kind, label: x.label, via: x.via ?? null })) } }
+          : openRosterNow && newStatus !== "PENDING_REVIEW"
+            ? { reviewRoster: { id: openRosterNow.id, event: "closed", reason: action.action } }
+            : {}),
+      ...(rosterWarning ? { reviewRosterNotOpened: rosterWarning } : {}),
       ...(action.action === "reassign_drafter" && body.assignment
         ? { from_drafter_id: ticket.assignedDrafterId ?? null, to_drafter_id: body.assignment.id, reason: body.comment ?? null }
         : {}),
@@ -1289,6 +1432,35 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // GAP-103 (DF-P5): the roster's ledger (20261242), written as the service
+  // role now that the transition has landed — the slots a submission opened,
+  // the slots a sign-off satisfied, or the open slots a revision / cancel /
+  // close voided, one event row each. Checked and retried once; a failure
+  // cannot undo the landed transition, so it is logged with both ids and
+  // returned as `warning` (the ticket row and the audit row carry the
+  // roster; the ledger can be reconciled from them).
+  {
+    const actorRef = { uid: caller.id, name: memberName(member as { display_name?: unknown; email?: unknown }) };
+    let ledgerErr: string | null = null;
+    if (rosterOpen) {
+      ledgerErr = await writeRosterLedger(supabaseAdmin, { orgId: ticket.orgId, ticketId: body.ticketId, roster: rosterOpen, event: "opened", slots: rosterOpen.slots, actor: actorRef });
+    } else if (rosterSign) {
+      const touched = rosterSign.roster.slots.filter((x) => x.signatureId === body.signatureId && x.status === "satisfied");
+      ledgerErr = await writeRosterLedger(supabaseAdmin, { orgId: ticket.orgId, ticketId: body.ticketId, roster: rosterSign.roster, event: "satisfied", slots: touched, actor: actorRef });
+    } else if (openRosterNow && newStatus !== "PENDING_REVIEW") {
+      const voided = openRosterNow.slots.filter((x) => x.status === "open").map((x) => ({ ...x, status: "void" as const }));
+      if (voided.length > 0) {
+        ledgerErr = await writeRosterLedger(supabaseAdmin, {
+          orgId: ticket.orgId, ticketId: body.ticketId, roster: { ...openRosterNow, closedReason: action.action }, event: "voided", slots: voided, actor: actorRef, reason: action.action,
+        });
+      }
+    }
+    if (ledgerErr) {
+      console.error(`[workflow-action] ${auditRow.action} (audit row ${auditRow.id}) on ticket ${body.ticketId} landed, but the review roster ledger was not written — reconcile from tickets.metadata.review_roster: ${ledgerErr}`);
+      rosterWarning = rosterWarning ?? "Done — but the review roster's record could not be written; the request carries it and it will be reconciled.";
+    }
+  }
+
   // Mirror the action's comment into the ticket_comments table so the two comment
   // stores stay in sync — computeTransition only appends to the JSONB thread, and
   // until now workflow comments never reached the table. Best-effort: the JSONB is
@@ -1363,7 +1535,7 @@ export async function POST(req: NextRequest) {
   // current one, and puts the recall on the ticket's audit trail
   // (`source: "auto"`, as a document's publish recalls). Best-effort and
   // AFTER the response: the issue has landed, and nothing here can fail it.
-  if (APPROVING_ACTIONS.has(action.action) && typeof updates.deliverable_rev === "string" && updates.deliverable_rev) {
+  if ((APPROVING_ACTIONS.has(action.action) || (action.action === "sign_slot" && rosterSign?.complete)) && typeof updates.deliverable_rev === "string" && updates.deliverable_rev) {
     const recallInput = {
       ticket: {
         id: body.ticketId,
@@ -1518,6 +1690,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     ok: true, status: newStatus, ...(holdOutcome ?? {}),
     ...(libraryNotStored && !holdOutcome ? { warning: "The request moved on, but its library could not be recorded yet (database update 20261208 is not applied)." } : {}),
+    ...(rosterWarning && !holdOutcome && !libraryNotStored ? { warning: rosterWarning } : {}),
   });
 }
 

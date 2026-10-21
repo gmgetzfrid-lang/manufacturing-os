@@ -29,6 +29,7 @@ import { parseOutcomeReasons, outcomeChoiceGroups, decodeOutcomeChoice, type Out
 import LibraryPicker from '@/components/requests/LibraryPicker';
 import SourceDriftBanner from '@/components/requests/SourceDriftBanner';
 import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
+import TicketRosterPanel from '@/components/requests/TicketRosterPanel';
 import MentionableTextarea from '@/components/requests/MentionableTextarea';
 import TicketArchiveViewer from '@/components/archive/TicketArchiveViewer';
 import CommentBody from '@/components/requests/CommentBody';
@@ -2250,7 +2251,7 @@ export default function TicketDetailView() {
   // UI, so they are not rendered as generic action buttons.
   const canAttach = liveActions.some((a) => a.action === 'attach_file');
   const reassignAction = liveActions.find((a) => a.action === 'reassign_drafter');
-  const buttonActions = liveActions.filter((a) => a.action !== 'attach_file' && a.action !== 'reassign_drafter');
+  const buttonActions = liveActions.filter((a) => a.action !== 'attach_file' && a.action !== 'reassign_drafter' && !a.requiresSignature);
 
   // UI-1 / GAP-108: what the request is waiting for, on whom, since when —
   // and whether the ball is in the viewer's court (the engine offers them a
@@ -2462,6 +2463,9 @@ export default function TicketDetailView() {
           onClose={() => { setShowEngineerPicker(false); setPendingAction(null); }}
           orgId={activeOrgId}
           currentEngineerId={pendingAction.action === 'reassign_engineer' ? ticket?.assignedEngineerId ?? undefined : undefined}
+          policy={capPolicy}
+          resource={ticketResource(ticket)}
+          pickActionType={pendingAction.action}
           independentOf={[ticket?.requesterId, ticket?.assignedDrafterId, uid]}
           title={
             pendingAction.action === 'request_final_engineer_approval' ? 'Send for Engineer Final Approval' :
@@ -2729,6 +2733,8 @@ export default function TicketDetailView() {
           </div>
         </div>
       )}
+
+      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><TicketRosterPanel ticket={ticket} orgId={activeOrgId} uid={uid} userName={userEmail} capPolicy={capPolicy} activeMemberCount={activeMemberCount} requesterRoles={requesterRoles} /></div>
 
       {ticket.status === 'REVISION_REQ' && latestRevision && (
         <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">

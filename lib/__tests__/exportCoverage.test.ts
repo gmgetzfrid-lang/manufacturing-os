@@ -95,6 +95,12 @@ const DECISION_AT_MERGE: Record<string, string> = {
   // merge (EXPORTED beside document_assets and restored after
   // knowledge_documents and assets — lib/exportTables.ts, lib/dataRestore.ts;
   // DEC-90) and is no longer here.
+  // drafting-flow Round G DF-P5 ROSTER (20261242) — decided by the integrator
+  // at its merge (lib/exportTables.ts / lib/dataRestore.ts are not DF-P5's):
+  ticket_review_slots:
+    "org-scoped evidence (who must sign a ticket's deliverable, who did, under which e-signature) — proposed ORG_SCOPED and restored after tickets (and e_signatures), like ticket_comments",
+  ticket_review_slot_events:
+    "the append-only event log of the same roster — proposed ORG_SCOPED and restored after ticket_review_slots; its append-only trigger refuses UPDATE, so a restore inserts only",
 };
 
 // EGR-7 / XEDGE-10: a column whose NAME says "credential". `_key` alone is
