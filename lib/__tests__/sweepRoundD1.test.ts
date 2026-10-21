@@ -50,7 +50,9 @@ describe("DEC-16 — engineerApprovalRequired fails closed on either value", () 
     expect(p).toMatch(/closeWithoutReviewTypes,\s*\n\s*requesterRoles,\s*\n\s*\}\);/);
     expect(src("types/schema.ts")).toMatch(/requester's role STAMPED AT FILING[\s\S]*DEC-16/);
     // Round E (DEC-13 stage 3): the same disjunction, now told WHICH roles are exempt by the org's policy
-    expect(src("lib/workflow.ts")).toContain("const needsEngineerApproval = engineerApprovalRequired(ticket.requesterRole, ctx?.requesterRoles, policy, ticket.requesterId, resource);");
+    // DF-P6 re-pin: the gate is engineeringGateRequired — the column where it speaks, and THIS call (snapshot, current collection, policy, requester, resource) as the seed where it does not.
+    expect(src("lib/workflow.ts")).toContain("const needsEngineerApproval = engineeringGateRequired(ticket, ctx?.requesterRoles, policy);");
+    expect(src("lib/workflow.ts")).toContain("return ticketEngineeringRequired(ticket, () => engineerApprovalRequired(ticket.requesterRole, currentRoles, policy, ticket.requesterId, ticketResource(ticket)));");
   });
 });
 

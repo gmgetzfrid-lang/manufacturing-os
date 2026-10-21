@@ -7,7 +7,7 @@
 // request number or sends a notification: the route does all three.
 
 import { supabase } from "@/lib/supabase";
-import { unitListReadFailure, type TicketCreateAttachment, type TicketCreateOrigin, type TicketCreateSourceDoc } from "@/lib/ticketCreate";
+import { unitListReadFailure, type TicketCreateAttachment, type TicketCreateDeclaration, type TicketCreateEquipment, type TicketCreateOrigin, type TicketCreateSourceDoc } from "@/lib/ticketCreate";
 
 /** The body the route reads (lib/ticketCreate.ts parseTicketCreateBody). */
 export interface TicketCreateBody {
@@ -24,6 +24,10 @@ export interface TicketCreateBody {
   sourceDocuments?: TicketCreateSourceDoc[];
   attachments?: TicketCreateAttachment[];
   origin: TicketCreateOrigin;
+  /** GAP-110 / DEC-34 (DF-P6): the like-in-kind declaration, when made. */
+  declaration?: TicketCreateDeclaration | null;
+  /** GAP-312 (DF-P6): equipment the request names. */
+  equipment?: TicketCreateEquipment[];
 }
 
 /** LIFE-7: what became of a check-in's PSM escalation, which the route sends

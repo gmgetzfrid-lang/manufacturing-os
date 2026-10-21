@@ -171,7 +171,8 @@ describe("DF-P5 fix pass 3 — the signature is minted only for a sign-off the r
   });
   it("the page tells the engine when a rosterless review is routed (ticketReviewRouting), so the serial approvals render disabled with the reason", () => {
     expect(page).toContain("void ticketReviewRouting({ id: ticket.id, orgId: ticketOrgId, libraryId: ticket.libraryId ?? null, sourceDocumentId: sourceRefId })");
-    expect(page).toContain("getActions(ticket, activeRole, uid ?? undefined, capPolicy, {\n    reviewRouted, // TIER-5");
+    // DF-P6 fix pass 4 re-pin: the engine sees the ticket as its declaration check leaves it (ticketAsDeclarationChecked).
+    expect(page).toContain("getActions(ticketAsDeclarationChecked(ticket, declarationCheck), activeRole, uid ?? undefined, capPolicy, {\n    reviewRouted, // TIER-5");
   });
 });
 

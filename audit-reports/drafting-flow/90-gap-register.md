@@ -208,6 +208,14 @@ wall. Do neither.
 assigner's flag).
 **Decisions:** `DEC-33`, `DEC-34`.
 
+*Landed 2026-10-21 (drafting-flow Round G, DF-P6 REVIEW-MODEL): `tickets.engineering_required` (`20261250`, pending paste — deploy the app first), the declaration (`GAP-110`), the workspace's own `workClasses` / `codeClasses` (seeded empty, set at triage, an engineering class raises the requirement). Acceptance 1 ✓ (Manager, Admin, Supervisor and DocCtrl pinned, engine and route); 2 ✓ (a declared request reaches IFC through its requester — no engineer, no added state); 3 ✓ in part — immutable for every caller (the guard, PostgreSQL 16) and rendered attributed on the request (`DeclarationCard`), in its history ("Declared like-in-kind (signed)") and in each transition's audit row (`likeInKindDeclared`); NOT on the issued deliverable's stamp (the stamp is public-surfaces' / DF-P15's file — proposed hand-off); 4 ✓ (blank never blocks; the form says blank goes to engineering); 5 ✗ — the columns make the report a query (lanes by `engineering_required` and declaration; every declaration with author and text), but no report surface is built — proposed for drafting-flow DF-P16's analytics page. See `TIER-1`, `TIER-2`, `TIER-7`.*
+
+*Corrected at the DF-P6 review fix pass (2026-10-21, DEC-29): the classes are accepted by the route at triage, but no screen sets one yet (the assign modal's select → DF-P9, 99-fix-sequencing "Hand-offs from DF-P6"), so the class half of the lanes does not act in production; the declaration half does. Acceptance 1 now also binds the requester: in a workspace of 3+ with an engineer to pick, the requester cannot override the engineering sign-off on their own request (`TIER-1` fix pass).*
+
+*Corrected at the DF-P6 fifth review fix pass (2026-10-21, DEC-29): the last sentence above has not held since the fourth review fix pass. Acceptance 1 binds the requester's ISSUE, not their override: the requester holding `ticket.manage` may override the engineering sign-off on their own request in every workspace size, with a required comment, recorded as an override (history note, `metadata.engineering_override`, the audit row's `authority.override` naming the self-override) — DEC-90 ruling (3) as given (R1's default; DEC-33's fourth-pass line). The requester is never offered a PLAIN approval of an undeclared request. Since the fifth pass the same holds on a pre-paste request whose requirement was raised after the paste (`flag_engineering`, an engineering class): `lib/workflow.ts` `requesterBindingApplies`.*
+
+*Assigned (2026-10-21, the integrator at the DF-P6 merge, DEC-31; DF-P9, the package first named, merged on 2026-10-14):* the class at triage → drafting-flow **DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS**.
+
 ---
 
 <a id="gap-102"></a>
@@ -316,6 +324,12 @@ requires its examination scope.
 5. No new role and no new status exists.
 
 **Related findings:** `TIER-3`, `TIER-4`, `TIER-5`.
+
+*Landed 2026-10-21 (drafting-flow Round G, DF-P6 REVIEW-MODEL), by the integrator's ruling for this package (no QA/QC role, status or signature slot): a routing slot may be limited to work classes when it is notify-only (`RoutingSlot.work_classes`); a blocking slot never is. Acceptance 2 ✓ in that form (a library's assurance reviewer is told of every issue of the classes they watch; the code class is on the approval); 3 ✓ (the existing document hold); 5 ✓ (no new role, no new status); 1 and 4 ✗ — examination data has no model yet; proposed for the integrator to assign. See `TIER-3`.* *Owner named at the DF-P6 fifth review fix pass (DEC-31): acceptance 1 and 4 → **the integrator**, who assigns the examination-data model to a package (no package in the fleet plan holds it); recorded in 99-fix-sequencing "Hand-offs from DF-P6".*
+
+*Corrected at the DF-P6 second review fix pass (2026-10-21, DEC-29): acceptance 2 does not act in production yet — no screen edits a slot's `work_classes` (`RoutingControlSection` only carries stored values) and no screen sets a request's work class (DF-P9), so `TIER-3` is re-recorded OPEN / Partial; owners in 99-fix-sequencing "Hand-offs from DF-P6".*
+
+*Assigned (2026-10-21, the integrator at the DF-P6 merge, DEC-31):* acceptance 1 and 4 (what an assurance reviewer examined, the record behind the veto) → drafting-flow **DF-P20 ASSURANCE EXAMINATION RECORD**.
 
 ---
 
@@ -455,6 +469,8 @@ the model and the flow never implemented it** (`FRIC-7`, `DCW-2`).
 
 **Related findings:** `DCW-2`, `DCW-3`, `DCW-6`, `FRIC-7`.
 
+*Landed 2026-10-21 (drafting-flow Round G, DF-P6 REVIEW-MODEL — record and test on DF-P5's roster): a library's routing table can carry a blocking slot filled by document control; acceptance 1 ✓ (libraries without one are unaffected), 2 ✓ (parallel roster, no status), 3 ✓ (FRIC-7, and pinned for the slot). See `DCW-2`.*
+
 ---
 
 <a id="gap-105"></a>
@@ -504,6 +520,10 @@ supports `discover` without read; the request form does not use it.
 3. Library-scoped rules can be evaluated against any ticket past triage.
 
 **Related findings:** `DCW-1`, `DCW-5`, `DCW-6`.
+
+*DF-P6 REVIEW-MODEL (2026-10-21), corrected at its review fix pass (DEC-29): acceptance 3 is NOT met. DF-P6 first added `libraryId` to `ticketResource`, but the attention badge's mappers (the requests list's `fromRow`, `lib/inbox.ts` `rowToTicket`) do not carry `library_id`, so the badge and the buttons would disagree; the resource is back to request type and unit. `20261250`'s inventory still counts stored library-scoped ticket rules (expected 0). Hand-off: 99-fix-sequencing "Hand-offs from DF-P6". See `DCW-6`.*
+
+*Assigned (2026-10-21, the integrator at the DF-P6 merge, DEC-31):* acceptance 3 (the library in the ticket's capability resource) → drafting-flow **DF-P19 TICKET RESOURCE LIBRARY AND CLASS DIMENSION**.
 
 ---
 
@@ -920,6 +940,10 @@ used honestly.
 
 **Related findings:** `TIER-1`, `TIER-2`, `LEAK-3`, `UI-5`.
 
+*Landed 2026-10-21 (drafting-flow Round G, DF-P6 REVIEW-MODEL): the declaration is one optional sentence on the request form (no checkbox, no picker, no canned text), signed through the existing e-signature ceremony (intent `Acknowledged`, statement "Like-in-kind declaration: <the sentence>", resource the ticket id it will be filed under) and checked by `/api/tickets/create` before a number is spent (the requester's, this workspace, this id, this statement, within 30 minutes, the id not already filed — else 400 / 409 `declaration_used`; and, since the review fix pass, the id carries no other history — no other person's signature and no audit row but this declaration's capture, else 409 `declaration_key_used`); stored in four columns (`20261250`), not metadata, immutable for every caller. Acceptance 1 ✓ (every ticket INSERT in the app is the create route's — the three doors post there; enumerated by `lib/__tests__/reviewModel.test.ts` "GAP-110 acceptance 1 …", so a fourth door fails it); 2 ✓ (the contract and a CHECK, 20–2000 characters); 3 ✓ (no transition writes `false`, every action × every status pinned; the guard refuses true → false for every caller); 4 ✓ in part (the request page, its history and the audit trail; not the issued deliverable — see `GAP-101`); 5 ✓ documented: `metadata.minor_correction` / `undocumented_change` are informational records of the check-in (nothing reads them for authority; counted by the inventory, row 43); `metadata.moc` is the hand-back's (LIFE-5). 'Do not' kept.*
+
+*Assigned (2026-10-21, the integrator at the DF-P6 merge, DEC-31):* a declaration restored from a backup (no `e_signatures` row is ever restored) → admin-and-org **P18 RESTORE REVIEW-MODEL ROWS**.
+
 ---
 
 <a id="gap-111"></a>
@@ -1143,6 +1167,10 @@ was already there. Compare a QA/QC status, which inserts a person who was not.
    described, made explicit rather than implicit.
 
 **Related findings:** `TIER-1`, `TIER-5`, `LEAK-3`, `UI-1`.
+
+*Landed 2026-10-21 (drafting-flow Round G, DF-P6 REVIEW-MODEL): `request_eng_review` and the new `flag_engineering` (the assignment queue, at `PENDING_ASSIGNMENT`, `DRAFTING`, `REVISION_REQ`, `PENDING_REVIEW`, a reason required, no status change) write `engineering_required = true`; nothing writes false. Acceptance 1 ✓ and 2 ✓ (every issue transition by name, `approve_minor_correction` included); 3 ✓ (drafting continues); 4 ✓ (any pre-issue status the queue can assign at; no reset); 5 ✓ on routed libraries (the engineering slot is appended where the gate applies — DF-P5 `withEngineeringGate`); 6 ✓ (`approve_team` writes nothing for it); 7 ✓; "the ticket shows why" ✓ (`DeclarationCard`: declared by whom and when / required — flagged or no declaration / the earlier rule for a pre-paste request); the declared like-in-kind request closes through the assigner and requester, the requester's approval recorded as the approval of record.*
+
+*DF-P6 third review fix pass (2026-10-21, DEC-29): `request_eng_review` sets `engineering_required` only on a request FILED under the review model (`tickets.review_model_filed`, `20261250`) — never on a pre-paste row (DEC-90 ruling (2): an in-flight request does not change lane because a triager asked a scope question), and not as a declared request's engineering-first loop (fix pass 2). On those rows `flag_engineering` is the explicit binding flag. Proposal note 1 above ("`request_eng_review` sets `engineering_required = true`, permanently") holds for every request filed after the paste. Where it binds, "Flag for Engineering Review" now says so before the click (`lib/workflow.ts` `FLAG_ENG_REVIEW_BINDS_DESCRIPTION`). Tests: `lib/__tests__/reviewModel.test.ts` "fix pass 3 (review, major) …", `lib/__tests__/dfRoundG_P6_reviewRoute.test.ts` "fix pass 3 (review, major) …".*
 
 ---
 

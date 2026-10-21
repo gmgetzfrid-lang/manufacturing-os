@@ -255,7 +255,8 @@ describe("SESS-6 — the consumers", () => {
 
   it("requests/[id]: no role known offers no action and no publish affordance; getActions is asked only with a real role", () => {
     const t = src("app/(protected)/requests/[id]/page.tsx");
-    expect(t).toMatch(/const availableActions = activeRole === null \? \[\] : WorkflowEngine\.getActions\(ticket, activeRole, uid \?\? undefined, capPolicy, \{/);
+    // DF-P6 fix pass 4 re-pin: the engine sees the ticket as its declaration check leaves it (ticketAsDeclarationChecked).
+    expect(t).toMatch(/const availableActions = activeRole === null \? \[\] : WorkflowEngine\.getActions\(ticketAsDeclarationChecked\(ticket, declarationCheck\), activeRole, uid \?\? undefined, capPolicy, \{/);
     expect(t).toMatch(/if \(!docId \|\| !libId \|\| !uid \|\| activeRole === null\) \{ setCanPublishSource\(false\); return; \}/);
   });
 

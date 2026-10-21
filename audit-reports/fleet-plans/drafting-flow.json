@@ -765,6 +765,76 @@
       "sequencingNotes": [
         "Added by the integrator at the P16 merge, 2026-10-21 (DEC-31). Run after DF-P5."
       ]
+    },
+    {
+     "name": "DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS — the triage class select, what a class carries (minor correction, MOC, notify-only routing), the source-drift acknowledgement, equipment after filing, and the at-submit issue-as-is choice",
+     "findings": [
+      "drafting-flow TIER-2 dw2, TIER-4 dw1/dw3, GAP-101 (assigned at the DF-P6 merge, 2026-10-21, DEC-31): one select per configured list (lib/reviewModel.ts reviewClassOptions(cfg, 'workClasses' / 'codeClasses')) beside the drafter pick in the assign modal, sending workClass / codeClass with assign or request_eng_review at PENDING_ASSIGNMENT (the route already validates; self_assign refuses a class); no select shows when a list is empty (the seeded state: no change for an unconfigured workspace, pin)",
+      "drafting-flow TIER-7 (assigned at the DF-P6 merge, 2026-10-21, DEC-31): a configured class may be flagged 'minor correction'; the minor-correction button requires a request of such a class when the workspace flags any (none flagged = today's button, pin)",
+      "drafting-flow TIER-3 dw1 (assigned at the DF-P6 merge, 2026-10-21, DEC-31): a work_classes editor on a NOTIFY-ONLY routing slot (components/documents/RoutingControlSection.tsx, re-owned to this package for it; lib/routingControl.ts already parses it and refuses it on a blocking slot)",
+      "drafting-flow TIER-6 (assigned at the DF-P6 merge, 2026-10-21, DEC-31): a configured work class may carry 'needs MOC', read by the check-in outcome and the hand-back (lib/checkinOutcomes.ts, RevUpModal) — a request with no class or an unflagged class behaves as today (pin)",
+      "drafting-flow HAND-7 dw3 (assigned at the DF-P6 merge, 2026-10-21, DEC-31): the page passes the drift labels SourceDriftBanner computes into getActions (sourceDrift) so approvals say so and carry requiresSourceDriftAck, and sends sourceDriftAcknowledged from the approval dialog; then the route computes the labels before getActions and refuses an absent acknowledgement (and a failed documents read, 503) only when the action carries the flag",
+      "intelligence GAP-312 (equipment after filing) (assigned at the DF-P6 merge, 2026-10-21, DEC-31): a small server route (the ticket's participants and the queue) that adds or corrects a ticket_equipment row, and an 'Add equipment' control on components/requests/DeclarationCard.tsx; before 20261251 is pasted the control says the list is not available (as the card does today)",
+      "drafting-flow FRIC-5 (the at-submit checkbox) (assigned at the DF-P6 merge, 2026-10-21, DEC-31): the request page's Submit offers 'issue as-is when approved' (issueReady on submit_draft, which the route already takes), default off, shown only where the ticket's toggle is offered today"
+     ],
+     "files": [
+      "components/requests/** (assign modal, DeclarationCard)",
+      "app/(protected)/requests/[id]/page.tsx",
+      "app/api/tickets/** (the equipment route; the drift acknowledgement in workflow-action)",
+      "lib/reviewModel.ts",
+      "lib/workflow.ts (getActions sourceDrift only)",
+      "components/documents/RoutingControlSection.tsx (the work_classes editor only)",
+      "lib/checkinOutcomes.ts and components/documents/RevUpModal.tsx (the MOC read only)",
+      "tests"
+     ],
+     "migrationsLikely": 0,
+     "dependsOn": [
+      "drafting-flow DF-P6 merged (2026-10-21)",
+      "drafting-flow DF-P17 (shares the request page; run after it)"
+     ],
+     "sequencingNotes": [
+      "Added by the integrator at the DF-P6 merge, 2026-10-21 (DEC-31). DF-P9, the package first named for these, merged on 2026-10-14. Serial with DF-P17 / DF-P7 / DF-P8 (the request page and the workflow route). Must carry DF-P6's request-page hunks (99-fix-sequencing 'Expected conflicts at merge (DF-P6 → DF-P9)')."
+     ]
+    },
+    {
+     "name": "DF-P19 TICKET RESOURCE LIBRARY AND CLASS DIMENSION — a request presents its library and classes to the capability resource, so a rule scoped to a library or class acts",
+     "findings": [
+      "drafting-flow GAP-105 acceptance 3, TIER-4 (scoped rules), the DCW-6 hand-off (assigned at the DF-P6 merge, 2026-10-21, DEC-31): lib/workflow.ts ticketResource carries libraryId / workClass / codeClass, and EVERY mapper that builds a ticket for the engine (the request page, the requests list, lib/inbox.ts, the badge) spreads lib/reviewModel.ts reviewModelFieldsFromRow and library_id, so the page, the list and the route decide alike (pin by a parity test); a stored rule scoped to a library / class is inventoried (counts only) before it starts to match, and a rule that would newly NARROW someone's access is reported to the integrator before merge"
+     ],
+     "files": [
+      "lib/workflow.ts (ticketResource)",
+      "app/(protected)/requests/page.tsx and [id]/page.tsx (the mappers only)",
+      "lib/inbox.ts (the mapper only)",
+      "lib/permissions/** (only if the resource type needs the new keys)",
+      "tests"
+     ],
+     "migrationsLikely": 0,
+     "dependsOn": [
+      "drafting-flow DF-P18 merged (shares the request page)"
+     ],
+     "sequencingNotes": [
+      "Added by the integrator at the DF-P6 merge, 2026-10-21 (DEC-31). DF-P6 added libraryId to ticketResource and reverted it at its review fix pass because the list and inbox mappers did not carry it (they are other packages' files); this package owns all of them together."
+     ]
+    },
+    {
+     "name": "DF-P20 ASSURANCE EXAMINATION RECORD — what an assurance reviewer examined is recorded with the veto it backs",
+     "findings": [
+      "drafting-flow GAP-102 acceptance 1 and 4 (assigned at the DF-P6 merge, 2026-10-21, DEC-31): a notify-only or blocking assurance slot's sign-off (or veto) records what was examined (the reviewed version's sha256, which drawings / sheets, a required note for a veto) in the roster's event ledger (ticket_review_slot_events — append-only, 20261242) rather than a new table where the ledger's shape allows; the page shows it on the roster panel; a slot that is not an assurance slot is unchanged (pin)"
+     ],
+     "files": [
+      "lib/ticketRoster.ts",
+      "components/requests/TicketRosterPanel.tsx",
+      "app/api/tickets/workflow-action/route.ts (the sign-off body only)",
+      "supabase/migrations/** (only if the ledger needs a column)",
+      "tests"
+     ],
+     "migrationsLikely": 1,
+     "dependsOn": [
+      "drafting-flow DF-P8 merged (the workflow route's next holder)"
+     ],
+     "sequencingNotes": [
+      "Added by the integrator at the DF-P6 merge, 2026-10-21 (DEC-31): no package held an examination-data model. Run last in drafting-flow."
+     ]
     }
   ],
   "crossAreaFileOverlaps": [

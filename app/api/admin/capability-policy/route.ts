@@ -51,6 +51,7 @@ import {
   CAPABILITY_DEFS, RESOURCE_KEYS, baseTokensFor, grantActive, isRuleArray, normalizeCapabilityEntry,
   parseStoredCapabilityPolicy, ruleIsConditional, validateCapabilityPolicy, invalidateCapabilityPolicy,
   policyHasProjectScopedRule, samePolicyVersion, POLICY_CHANGED, PROJECT_SCOPED_CAPS, sameGrant,
+  newDeadTicketRuleRefusal,
   type CapabilityId, type CapabilityPolicy, type UserGrant,
 } from "@/lib/capabilityPolicy";
 import { memberHoldsAny } from "@/lib/roleHeld";
@@ -263,6 +264,11 @@ export async function POST(req: NextRequest) {
   // every policy and grant write.
   const invalid = validateCapabilityPolicy(after);
   if (invalid) return bad(invalid, 400);
+  // drafting-flow DF-P6 (AUTHZ-6): a NEW library / class-scoped rule on a
+  // request capability is refused (it would never match); one already
+  // stored rides along, so it never blocks a grant, a revoke or a save.
+  const deadRule = newDeadTicketRuleRefusal(after.caps, before.caps);
+  if (deadRule) return bad(deadRule, 400);
   // QUAL-4: a project-scoped rule is stored only once the live evaluator
   // reads projectId (20261136); before that it would read as unconditional.
   if (op === "save" && policyHasProjectScopedRule(after)) {

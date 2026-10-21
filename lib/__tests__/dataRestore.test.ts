@@ -489,7 +489,7 @@ describe("BKP-5 / ORG-1 (fix pass 2) — every foreign key onto users is read be
 
 describe("ORG-1 (fix pass 2) — a pointer is cleared instead of refusing its row only where that never widens access", () => {
   const schema = censusSchema();
-  it("every clearWhenMissing rule is a nullable ON DELETE SET NULL foreign key — and the set is exactly the four reviewed pointers", () => {
+  it("every clearWhenMissing rule is a nullable ON DELETE SET NULL foreign key — and the set is exactly the five reviewed pointers", () => {
     const clearable = Object.entries(RESTORE_PARENT_RULES).flatMap(([t, rules]) => rules.filter((r) => r.clearWhenMissing).map((r) => ({ t, r })));
     for (const { t, r } of clearable) {
       const f = schema.get(t)?.fks.find((x) => x.columns.length === 1 && x.columns[0] === r.column && x.parent === r.parent);
@@ -503,7 +503,10 @@ describe("ORG-1 (fix pass 2) — a pointer is cleared instead of refusing its ro
     // print_sheet_tokens.cover_print_id (public-surfaces PS-P10 fix pass): the link from a pack
     // sheet's token to its cover's print gates no verdict and no read; cleared, the token keeps
     // its sheet's verdict and only a recall by the cover's print id stops reaching it.
-    expect(clearable.map(({ t, r }) => `${t}.${r.column}`).sort()).toEqual(["libraries.owner_team_id", "print_sheet_tokens.cover_print_id", "projects.sow_document_id", "tickets.library_id"]);
+    // ticket_equipment.asset_id (drafting-flow DF-P6, the integrator at its merge): the asset a
+    // request's typed tag resolved to; it gates no read (the row is read through its ticket) and,
+    // cleared, the typed tag stays and reads as not found — as the live FK leaves it.
+    expect(clearable.map(({ t, r }) => `${t}.${r.column}`).sort()).toEqual(["libraries.owner_team_id", "print_sheet_tokens.cover_print_id", "projects.sow_document_id", "ticket_equipment.asset_id", "tickets.library_id"]);
     expect(restoreParentRulesFor("documents").find((r) => r.column === "collection_id")?.clearWhenMissing).toBeUndefined();
   });
 });

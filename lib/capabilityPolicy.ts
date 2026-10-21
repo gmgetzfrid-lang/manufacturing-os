@@ -122,11 +122,11 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
     description: "Pick up unassigned tickets from the queue — the pull model, on by default (DRAFT-5). Clear this list to make assignment supervisor-only; an 'engineering first' request type is never picked up before its review.",
     defaultRoles: ["Drafter"] },
   { id: "ticket.draft_work", area: "Requests", label: "Do drafting work",
-    description: "Save progress, submit drafts, issue IFC (the assigned drafter always can).", defaultRoles: ["Drafter"] },
+    description: "Save progress, submit drafts and issue the IFC package on a request that has NO assigned drafter — the queue's unassigned work only. The assigned drafter always can on their own request, whatever this row says; a role here never acts on another drafter's request.", defaultRoles: ["Drafter"] },
   { id: "ticket.requester_review", area: "Requests", label: "Requester review",
-    description: "Review returned drafts as a requester (the ticket's own requester always can).", defaultRoles: ["Requester"] },
+    description: "Review a returned draft in the requester's place on a request that has NO requester (one filed without, or whose requester is gone from the record). A request's own requester always can on their own request, whatever this row says; a role here never acts on another person's request.", defaultRoles: ["Requester"] },
   { id: "ticket.direct_approve", area: "Requests", label: "Direct engineering approval",
-    description: "Approve a draft to IFC without being the requester.", defaultRoles: ["Engineer"] },
+    description: "Approve a draft to IFC on ANY request in review in this workspace, without being its requester — anyone holding a role ticked here may do so on every request (a rule scoped to a request type or a unit narrows it there). On a request that requires engineering review, an approval by someone holding no Engineer role is recorded as an override of the engineering sign-off.", defaultRoles: ["Engineer"] },
   { id: "ticket.final_approve", area: "Requests", label: "Final engineering approval",
     description: "Sign off at the final-approval stage when unassigned (the assigned engineer always can).",
     defaultRoles: ["Engineer"],
@@ -139,7 +139,7 @@ export const CAPABILITY_DEFS: CapabilityDef[] = [
   { id: "ticket.reassign_engineer", area: "Requests", label: "Reassign engineer reviewer", critical: true,
     description: "Swap the assigned engineer at final approval.", defaultRoles: ["Admin"] },
   { id: "ticket.engineer_gate_exempt", area: "Requests", label: "Approve own request without an engineer",
-    description: "Requesters holding one of these roles approve their own draft to IFC directly; everyone else's approval routes through a picked engineer (DEC-13 stage 3). Judged against BOTH the role stamped at filing AND the requester's current roles — an engineer is required if either says so (DEC-16).",
+    description: "For requests filed before the like-in-kind declaration existed (and while it is not yet installed): requesters holding one of these roles approve their own draft to IFC directly; everyone else's approval routes through a picked engineer (DEC-13 stage 3). Judged against BOTH the role stamped at filing AND the requester's current roles — an engineer is required if either says so (DEC-16). A request filed since requires engineering review unless its requester declared it like-in-kind, whoever they are (DEC-33).",
     defaultRoles: [...MGMT, "Engineer", "DocCtrl"] },
   { id: "holds.open", area: "Holds", label: "Place a hold",
     description: "Open a do-not-advance hold on a document.", defaultRoles: ["*"] },
@@ -253,6 +253,9 @@ export interface CapabilityResource {
   discipline?: string | null;
   /** QUAL-4 (20261136): the project a quality.sign_off decision is about. */
   projectId?: string | null;
+  /** GAP-101 / TIER-4 (DF-P6): the request's work class and code class. */
+  workClass?: string | null;
+  codeClass?: string | null;
 }
 
 /** The resource keys a `when` clause may condition on — the ONLY keys either
@@ -260,6 +263,29 @@ export interface CapabilityResource {
  *  (projectId: 20261136, which re-created the evaluator with it). */
 export const RESOURCE_KEYS = ["requestType", "unit", "libraryId", "discipline", "projectId"] as const;
 export type ResourceKey = (typeof RESOURCE_KEYS)[number];
+
+/** drafting-flow GAP-101 / TIER-4 (DF-P6): two more keys a rule may condition
+ *  on — the request's work class and code class (the workspace's own lists,
+ *  DEC-35). Read by THIS evaluator only, and valid on the `ticket.*`
+ *  capabilities only (validateCapabilityPolicy, TICKET_RESOURCE_CAPS): no
+ *  database function evaluates a `ticket.*` capability for authority (the
+ *  workflow route decides every transition with policyAllows), so
+ *  org_capability_allows_for's key list — pinned to RESOURCE_KEYS — is not
+ *  re-created for them. On any other capability a rule naming them is
+ *  refused at save: the database's evaluator would read it as
+ *  unconditional. DF-P6 fix pass 2 (review, major 3): on a `ticket.*`
+ *  capability a NEW one is refused too, for now — the request does not
+ *  present its classes to the policy yet (lib/workflow.ts ticketResource),
+ *  so the rule would never apply; the refusal lifts when the mappers carry
+ *  them. Fix pass 4: only a new one (newDeadTicketRuleRefusal, at the policy
+ *  route) — a stored one never blocks another write. */
+export const TICKET_RESOURCE_KEYS = ["workClass", "codeClass"] as const;
+export type TicketResourceKey = (typeof TICKET_RESOURCE_KEYS)[number];
+/** Every key a `when` clause may name (the SQL-mirrored ones first). */
+export const RULE_KEYS = [...RESOURCE_KEYS, ...TICKET_RESOURCE_KEYS] as const;
+export type RuleKey = (typeof RULE_KEYS)[number];
+/** The capabilities a work-class / code-class rule may scope. */
+export const isTicketResourceCap = (cap: CapabilityId): boolean => cap.startsWith("ticket.");
 
 /** The capabilities a rule may scope to ONE project (QUAL-4, 20261136) —
  *  the only ones any evaluator is ever handed a projectId for. A projectId
@@ -286,7 +312,7 @@ export function policyHasProjectScopedRule(policy: CapabilityPolicy | null | und
 
 /** `when`: every listed key must match (AND across keys, OR within a list).
  *  A clause with no non-empty list is unconditional. */
-export type CapabilityRuleWhen = Partial<Record<ResourceKey, string[]>>;
+export type CapabilityRuleWhen = Partial<Record<RuleKey, string[]>>;
 
 export interface CapabilityRule {
   tokens: string[];
@@ -348,7 +374,7 @@ export function isRuleArray(entry: CapabilityEntry | undefined): entry is Capabi
 
 /** Does this rule condition on anything? Empty / absent lists don't count. */
 export function ruleIsConditional(rule: CapabilityRule): boolean {
-  return RESOURCE_KEYS.some((k) => (rule.when?.[k]?.length ?? 0) > 0);
+  return RULE_KEYS.some((k) => (rule.when?.[k]?.length ?? 0) > 0);
 }
 
 /** A conditional rule matches when EVERY key it lists finds the resource's
@@ -356,7 +382,7 @@ export function ruleIsConditional(rule: CapabilityRule): boolean {
  *  that passes nothing can only ever see the base list. */
 export function ruleMatches(rule: CapabilityRule, resource: CapabilityResource | null | undefined): boolean {
   if (!ruleIsConditional(rule)) return false;
-  for (const k of RESOURCE_KEYS) {
+  for (const k of RULE_KEYS) {
     const list = rule.when?.[k];
     if (!list || list.length === 0) continue;
     const v = resource?.[k];
@@ -418,7 +444,7 @@ export function heldMatchesTokens(tokens: readonly string[], held: readonly stri
 
 /** Human-readable `when` (for validation messages and the impact preview). */
 export function describeWhen(when: CapabilityRuleWhen | undefined): string {
-  const parts = RESOURCE_KEYS
+  const parts = RULE_KEYS
     .filter((k) => (when?.[k]?.length ?? 0) > 0)
     .map((k) => `${k} ∈ {${(when?.[k] ?? []).join(", ")}}`);
   return parts.length > 0 ? parts.join(" and ") : "always";
@@ -487,7 +513,7 @@ export function normalizeCapabilityEntry(v: unknown): CapabilityEntry | undefine
     const rawWhen = (x as { when?: unknown }).when;
     const when: CapabilityRuleWhen = {};
     if (rawWhen && typeof rawWhen === "object") {
-      for (const k of RESOURCE_KEYS) {
+      for (const k of RULE_KEYS) {
         const list = (rawWhen as Record<string, unknown>)[k];
         if (Array.isArray(list) && list.every((t) => typeof t === "string") && list.length > 0) when[k] = list as string[];
       }
@@ -726,8 +752,21 @@ export function validateCapabilityPolicy(policy: CapabilityPolicy): string | nul
     if (isRuleArray(v)) {
       for (const r of v) {
         for (const k of Object.keys(r.when ?? {})) {
-          if (!(RESOURCE_KEYS as readonly string[]).includes(k)) return `${def.label}: a rule conditions on an unknown resource key "${k}"`;
+          if (!(RULE_KEYS as readonly string[]).includes(k)) return `${def.label}: a rule conditions on an unknown resource key "${k}"`;
         }
+        // DF-P6 (GAP-101 / TIER-4): a work-class / code-class condition only
+        // on a request capability — the database's evaluator does not read
+        // these keys and would treat the rule as unconditional elsewhere.
+        if (!isTicketResourceCap(def.id) && TICKET_RESOURCE_KEYS.some((k) => (r.when?.[k]?.length ?? 0) > 0)) {
+          return `${def.label}: a rule can be scoped to a work class or a code class on a drafting-request capability only.`;
+        }
+        // DF-P6 fix pass 4 (review, major 1): a library / work-class /
+        // code-class condition on a request capability is NOT refused here.
+        // This rail runs on every write — a grant, a revoke, the editor's
+        // save that preserves stored rules it cannot edit — and a rule that
+        // was valid when stored (RESOURCE_KEYS has carried libraryId since
+        // DEC-13 stage 2) must never block an unrelated write. The policy
+        // route refuses only a NEW such rule: newDeadTicketRuleRefusal.
         // QUAL-4: only a capability evaluated per project may be scoped to
         // one (PROJECT_SCOPED_CAPS). Anywhere else the rule never matches —
         // and the database's evaluator before 20261136 would read it as
@@ -753,6 +792,49 @@ export function validateCapabilityPolicy(policy: CapabilityPolicy): string | nul
         const label = CAPABILITY_DEFS.find((d) => d.id === g.cap)?.label ?? String(g.cap);
         return `${label}: a personal grant cannot be scoped to a project — only a capability decided per project can.`;
       }
+    }
+  }
+  return null;
+}
+
+/** The `when` keys a request capability's rule can name today and still
+ *  never match: a request presents only its type and its unit to the policy
+ *  (lib/workflow.ts ticketResource — the requests list and the inbox build
+ *  their Ticket without the library or the classes; 99-fix-sequencing
+ *  "Hand-offs from DF-P6"). */
+export const DEAD_TICKET_RULE_KEYS = ["libraryId", ...TICKET_RESOURCE_KEYS] as const;
+
+/** One rule as a comparable string: token and `when` lists are sets. */
+function ruleKey(r: CapabilityRule): string {
+  const asSet = (xs: readonly unknown[] | undefined) => [...new Set((xs ?? []).map(String))].sort();
+  const when = Object.keys(r?.when ?? {}).sort()
+    .filter((k) => (r.when?.[k as RuleKey]?.length ?? 0) > 0)
+    .map((k) => [k, asSet(r.when?.[k as RuleKey])]);
+  return JSON.stringify({ tokens: asSet(r?.tokens), when });
+}
+
+/** DF-P6 (AUTHZ-6 / GAP-105; fix pass 4, review major 1): a rule on a
+ *  `ticket.*` capability scoped to a library, a work class or a code class
+ *  would never match — it looks like a narrowing and does nothing — so a NEW
+ *  one is refused until the request carries those fields. A rule already
+ *  STORED (`storedCaps`, the row the write starts from) rides along
+ *  untouched: it was valid when it was written, it never applies, and a
+ *  grant, a revoke or an unrelated save must not be refused because of it
+ *  (20261250 inventory row 41 counts them). Returns the refusal, or null. */
+export function newDeadTicketRuleRefusal(
+  caps: CapabilityPolicy["caps"] | null | undefined,
+  storedCaps: CapabilityPolicy["caps"] | null | undefined,
+): string | null {
+  for (const def of CAPABILITY_DEFS) {
+    if (!isTicketResourceCap(def.id)) continue;
+    const v = caps?.[def.id];
+    if (!isRuleArray(v)) continue;
+    const prior = storedCaps?.[def.id];
+    const stored = new Set(isRuleArray(prior) ? prior.map(ruleKey) : []);
+    for (const r of v) {
+      const dead = DEAD_TICKET_RULE_KEYS.filter((k) => (r?.when?.[k]?.length ?? 0) > 0);
+      if (dead.length === 0 || stored.has(ruleKey(r))) continue;
+      return `${def.label}: a rule on a drafting-request capability can be scoped to a request type or a unit only — requests do not yet present their ${dead.map((k) => (k === "libraryId" ? "library" : k === "workClass" ? "work class" : "code class")).join(" or ")} to the permission policy, so the rule would never apply.`;
     }
   }
   return null;

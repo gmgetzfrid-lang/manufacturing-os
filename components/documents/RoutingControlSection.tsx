@@ -45,7 +45,7 @@ interface DraftSlot {
    *  — a fill's other sources (a fill naming roles AND people), the
    *  override (`waivable_by`) and named alternate people. Carried through a
    *  save untouched, never silently dropped; the slot says they are there. */
-  kept?: { fill?: RoutingSlotFill; waivableBy?: RoutingSlot["waivable_by"]; alternateUsers?: string[] };
+  kept?: { fill?: RoutingSlotFill; waivableBy?: RoutingSlot["waivable_by"]; alternateUsers?: string[]; workClasses?: string[] };
 }
 
 const emptySlot = (n: number): DraftSlot => ({
@@ -75,6 +75,8 @@ export function draftToControl(slots: DraftSlot[]): RoutingControl {
           : {}),
         ...(d.timeoutDays.trim() && Number.isInteger(t) ? { timeoutDays: t } : {}),
         ...(d.kept?.waivableBy ? { waivable_by: d.kept.waivableBy } : {}),
+        // DF-P6 (GAP-102): a notify-only slot's work classes, kept as stored.
+        ...(d.kept?.workClasses?.length ? { work_classes: d.kept.workClasses } : {}),
       };
     }),
   };
@@ -91,6 +93,7 @@ export function controlToDraft(c: RoutingControl): DraftSlot[] {
       ...(Object.keys(otherFill).length ? { fill: otherFill } : {}),
       ...(s.waivable_by ? { waivableBy: s.waivable_by } : {}),
       ...(s.alternates?.users?.length ? { alternateUsers: s.alternates.users } : {}),
+      ...(s.work_classes?.length ? { workClasses: s.work_classes } : {}),
     };
     return {
       kind: s.kind, label: s.label ?? "", mode: s.mode, fillKind,
@@ -113,6 +116,7 @@ export function keptNote(d: Pick<DraftSlot, "kept">): string | null {
   if (k.fill?.identity) parts.push("also filled by the requester");
   if (k.waivableBy) parts.push("an override (who may sign in place of the slot's people)");
   if (k.alternateUsers?.length) parts.push(`${k.alternateUsers.length} named alternate ${k.alternateUsers.length === 1 ? "person" : "people"}`);
+  if (k.workClasses?.length) parts.push(`told only for the work classes ${k.workClasses.join(", ")}`);
   return parts.length ? `This slot also carries settings this editor does not show — ${parts.join("; ")}. Saving keeps them as they are.` : null;
 }
 

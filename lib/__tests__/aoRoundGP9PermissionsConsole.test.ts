@@ -691,7 +691,9 @@ describe("ALOG-14 — the permissions explorer tells the truth", () => {
         const r = rs.find((x) => x.cap === st.label)!;
         EXPLORER_COLUMNS.forEach(({ label, roles }, i) => {
           const offered = roles.filter((role) => WorkflowEngine.getActions(st.ticket, role as Role, "actor", policy, { userRoles: [role as Role] })
-            .some((a) => a.action === st.action));
+            // SM-3 (drafting-flow DF-P6): a manager's final approval is the
+            // recorded override (override_engineer_final) — still "can issue here".
+            .some((a) => a.action === st.action || (st.action === "engineer_approve_final" && a.action === "override_engineer_final")));
           const cell = r.cells[i];
           const where = `${st.label} @ ${st.ticket.status}${st.ticket.requesterId ? "" : " (no requester)"} — ${label}`;
           if (st.conditionalOnly) {

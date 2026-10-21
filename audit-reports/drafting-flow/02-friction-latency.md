@@ -105,7 +105,7 @@ date nobody is watching.** That is the shoulder-tap generator.
 ## FRIC-2 · `PENDING_REVIEW` waits on the requester — often the person least able to judge the drawing
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED (2026-10-21, by the integrator's ruling at the DF-P6 merge, `DEC-90` — the unconfigured seed's serial review accepted as a documented exception; see the ruling at the end of this finding)
 - **Verification:** CONFIRMED
 - **Blast radius:** friction / quality
 - **Locations:**
@@ -148,6 +148,17 @@ Landed — on a routed library the two questions are two slots on one parallel r
 - ✗ in part "The requester is asked a question they can answer, and the technical review is not blocked on their answering it" — holds on every request in a routed library (fix pass 3: including who is TOLD — a partial sign-off keeps the reviewers still waited on in `unread_by`, and their alerts are not superseded; `lib/ticketTransitions.ts` `sign_slot`, route `fanOut` `rosterPartial`. The earlier "neither waits on the other" held for the state machine, but the first sign-off silently retired the others' alerts. DEC-29. *Corrected at the DF-P5 fix pass 4 (DEC-29): fix pass 3 kept EVERY occupant ever added in `unread_by`, so the co-occupants of a slot already satisfied stayed alerted and unread though nothing waited on them, and each partial sign-off added another alert. Now `lib/ticketTransitions.ts` `rosterPartialReleased` drops them from `unread_by` and the route retires their action alerts with the signer's (`fanOut` `rosterReleased`); an earlier partial sign-off's notice is retired for anyone told again. The audience is exactly the people still waited on, today's participants and the existing markers. Fix pass 5: "still waited on" includes an open slot's alternates once its alternate window has opened (`slotAlternatesActive`, `slotSignPlan`'s rule), so an active alternate is not released.*); a workspace that configured no routing keeps today's serial review (DEC-90 ruling (2): the seed is byte-for-byte today's behaviour; anything else is configuration).
 
 **Owner of the remainder:** drafting-flow **DF-P6** (the review model: `TIER-1` repoints the engineering gate, after `GAP-101`), or an integrator ruling under DEC-90 that the seed itself becomes the parallel two-slot roster. Stays OPEN.
+
+**Partial (2026-10-21, drafting-flow Round G).** DF-P6 REVIEW-MODEL. The technical review no longer waits on the requester where the requester's answer was never the technical one: a **declared like-in-kind** request needs no engineer, so `PENDING_REVIEW` is one question — "is this what you asked for?" — to the person who can answer it (`TIER-1`); an undeclared request filed after the paste routes to the engineer whoever asked (a Manager no longer approves the technical content as "requester"). On a routed library the two questions are two parallel slots (DF-P5).
+
+**Done-when.**
+- ✗ in part — holds on routed libraries (DF-P5) and for declared requests everywhere; in an unconfigured workspace an undeclared request still runs requester-then-engineer serially (`request_final_engineer_approval`) — today's path, kept by DEC-90 ruling (2) / the integrator's ruling for DF-P6 (the seed is today's serial path).
+
+**Owner of the remainder:** the integrator — a ruling under DEC-90 that the unconfigured seed itself becomes the parallel requester + engineering roster (the code supports it: `withEngineeringGate` appends the engineering slot to any table). No package can make that change without the ruling. Stays OPEN. *Named at the DF-P6 third review fix pass (DEC-31): the decision this waits on is DEC-90's proposed DF-P6 ruling **R2** (proposed: keep the serial seed; not yet given) — if the integrator overturns it, the next holder of `lib/workflow.ts` builds the parallel seed.*
+
+*Corrected at the DF-P6 fifth review fix pass (2026-10-21, DEC-29): R2 is ruled by default, not "not yet given" — the brief's "decisionsNeeded take their proposed defaults" applies to R2 as the fourth pass applied it to R1 (DEC-90's fifth-pass line). The serial seed for an undeclared request in an unconfigured workspace stands as ruled; done-when 1 stays unmet as written there, so this stays OPEN. The integrator acts only to overturn R2; then the next holder of `lib/workflow.ts` builds the parallel seed.*
+
+**Ruling at the DF-P6 merge (2026-10-21, the integrator under `DEC-90`).** R2 is confirmed, and the remainder is accepted as a documented exception rather than kept open: a workspace that wants the requester's question and the technical review asked in parallel configures routing (DF-P5 — a routed library's two slots, with `withEngineeringGate` adding the engineering slot), and a declared like-in-kind request asks only the requester everywhere (`TIER-1`). An unconfigured workspace keeps today's serial requester-then-engineer path for an undeclared request. Changing that seed would change the lane of every request in every workspace that has not opted in — the flag day `DEC-90` ruling (2) rules out (fail-safe, no flag day). No package owns further work here; reopening needs a new ruling that the seed itself changes, and then the next holder of `lib/workflow.ts` builds it.
 
 ---
 
@@ -212,7 +223,7 @@ document.
 ## FRIC-4 · The requester must personally choose an engineer, by email prefix
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED (2026-10-21, by the integrator's ruling at the DF-P6 merge, `DEC-90` — the unconfigured seed's requester pick accepted as a documented exception; see the ruling at the end of this finding)
 - **Verification:** CONFIRMED
 - **Blast radius:** friction / quality
 - **Locations:**
@@ -262,6 +273,18 @@ Tests: `lib/__tests__/dfRoundG_P5_routing.test.ts` ("TIER-5 done-when 3 …" —
 - ✗ in part (2) Where a person must be chosen, the choice is defaulted from the library's review policy and the work class, and the picker shows why — the picker now offers only who the route accepts and shows names, and a library can derive the reviewers instead (routing); defaulting from the work class needs the class (`GAP-101`, not built).
 
 **Owner of the remainder:** drafting-flow **DF-P6** (`GAP-101` → `TIER-1`: the engineering gate keyed to the work class, which moves the fallback pick onto the class / the router), with an integrator ruling under DEC-90 if the unconfigured default itself is to change. Stays OPEN.
+
+**Partial (2026-10-21, drafting-flow Round G).** DF-P6 REVIEW-MODEL. The class now exists (`GAP-101`) and the engineering requirement follows the work (`TIER-1`): a declared like-in-kind request never asks anyone to pick an engineer; a request whose workspace routes it resolves its engineer from the routing table (DF-P5), and a routing slot can be limited to work classes (notify-only — `TIER-3`). In an unconfigured workspace an undeclared request still asks the requester to pick an engineer at `PENDING_REVIEW` (today's path).
+
+**Done-when.**
+- ✗ in part (1) A requester is never required to name a reviewer — holds for declared requests and on routed libraries; not for an undeclared request in an unconfigured workspace (DEC-90 ruling (2)).
+- ✗ in part (2) Defaulted from the library's review policy and the work class — from the library: ✓ (routing); from the class: the class is stored and a routing slot can key on it, but a blocking slot cannot (ruled notify-only for DF-P6) and the fallback picker does not default from it.
+
+**Owner of the remainder:** the integrator (the same DEC-90 ruling as `FRIC-2`: an unconfigured workspace's seed routes the engineer instead of asking the requester), or drafting-flow DF-P9 for a picker default keyed on the class once a ruling says which engineer a class implies. Stays OPEN. *Named at the DF-P6 third review fix pass (DEC-31): the decision this waits on is DEC-90's proposed DF-P6 ruling **R3** (proposed: keep the requester's pick in an unconfigured workspace; not yet given) — if overturned, DF-P9 builds the default.*
+
+*Corrected at the DF-P6 fifth review fix pass (2026-10-21, DEC-29): R3 is ruled by default, not "not yet given" — the brief's "decisionsNeeded take their proposed defaults" applies (DEC-90's fifth-pass line). The requester's pick for an undeclared request in an unconfigured workspace stands as ruled; done-when 1 and 2 stay unmet as written there, so this stays OPEN. The integrator acts only to overturn R3; then DF-P9 builds the default.*
+
+**Ruling at the DF-P6 merge (2026-10-21, the integrator under `DEC-90`).** R3 is confirmed, and the remainder is accepted as a documented exception rather than kept open: where a workspace configures routing, the engineer is routed by the library's table (a named person, a role, a capability) and the requester names no one (DF-P5); a declared like-in-kind request needs no engineer at all (`TIER-1`). An unconfigured workspace keeps today's requester pick for an undeclared request, and a class-keyed default is not built, because no record says which engineer a class implies — the routing table is where a facility says that. No package owns further work here; reopening needs a new ruling, and then the next holder of `EngineerPickerModal.tsx` builds the default.
 
 ---
 
@@ -315,6 +338,8 @@ Tests: `lib/__tests__/dfRoundG_P5_routing.test.ts` ("FRIC-5 — issue-as-is …"
 - ✗ in part "A clean approval with no corrections does not require the drafter to re-enter the ticket to produce a file that already exists" — holds whenever the drafter opted in before the first sign-off; a DEFAULT approval (no opt-in — DEC-90 ruling (1) keeps it off) still returns the request to the drafter at `PENDING_IFC`, and the request page has no at-submit checkbox, so the opt-in is a ticket action rather than part of submitting.
 
 **Owner of the remainder:** the at-submit checkbox on the request page's Submit (`issueReady` on `submit_draft`, which the route already takes) → the next package holding `app/(protected)/requests/[id]/page.tsx` (DF-P9's page); the integrator may instead rule under DEC-90 (1) that the opt-in ticket action satisfies the done-when. No migration (the mark lives in `metadata`, which is workflow-owned since `20261166` / `20261208`). Stays OPEN.
+
+*Assigned (2026-10-21, the integrator at the DF-P6 merge, DEC-31):* the at-submit "issue as-is" checkbox on the request page → drafting-flow **DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS**.
 
 ---
 

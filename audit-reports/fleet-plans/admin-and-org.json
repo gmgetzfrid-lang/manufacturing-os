@@ -555,6 +555,25 @@
    "sequencingNotes": [
     "Added by the integrator at the P16 merge, 2026-10-21 (DEC-31)."
    ]
+  },
+  {
+   "name": "P18 RESTORE REVIEW-MODEL ROWS \u2014 a ticket restored from a backup keeps the review-model meaning it had",
+   "findings": [
+    "drafting-flow TIER-1 restore remainder (assigned at the DF-P6 merge, 2026-10-21, DEC-31): a tickets row from a backup that carries no review_model_filed key is restored with review_model_filed = false (the legacy gate decides, as before the paste) \u2014 sent only when the target has the column (a target without 20261250 restores as today, pin); one line in the restore notes",
+    "drafting-flow GAP-110 / DEC-34 restore remainder (assigned at the DF-P6 merge, 2026-10-21, DEC-31): a restored ticket's like-in-kind declaration has no e_signatures row (never restored), so the restore clears like_in_kind_* together (the all-or-none CHECK) and sets engineering_required = true \u2014 reported in the restore notes; a ticket with no declaration is unchanged (pin)"
+   ],
+   "files": [
+    "lib/dataRestore.ts (the tickets row transform only)",
+    "app/api/admin/restore/** (the notes)",
+    "tests"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "drafting-flow DF-P6 merged (2026-10-21)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the DF-P6 merge, 2026-10-21 (DEC-31). Note the ticket_update_guard (20261250) refuses engineering_required true \u2192 false and any change to the declaration after INSERT; a restore INSERTS (ON CONFLICT DO NOTHING), so the transform runs before the insert."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

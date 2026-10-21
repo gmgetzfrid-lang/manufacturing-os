@@ -37,6 +37,7 @@ import {
   type SlaDefaultRow,
 } from '@/lib/slaDefaultsEditor';
 import { OUTCOME_LABEL } from '@/lib/ticketOutcome';
+import ReviewClassesSection from '@/components/requests/ReviewClassesSection';
 import {
   OUTCOME_REASON_CATEGORIES,
   OUTCOME_REASON_LABEL_MAX,
@@ -329,6 +330,9 @@ export default function DraftingConfigPage() {
             categories={settings.customCategories ?? []}
             onChange={(next) => setSettings({ ...settings, customCategories: next })}
           />
+
+          {/* SECTION: WORK / CODE CLASSES — the workspace's own review vocabulary (GAP-101 / TIER-4, DF-P6) */}
+          <ReviewClassesSection settings={settings} onChange={(patch) => setSettings({ ...settings, ...patch })} />
 
           {/* SECTION: WAYS A REQUEST ENDS — the workspace's own reasons (GAP-13 / GAP-107, DF-P14) */}
           <OutcomeReasonsSection

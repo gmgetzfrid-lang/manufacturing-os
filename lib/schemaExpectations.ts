@@ -174,6 +174,7 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "team_members", migration: "20260707_teams.sql" },
   { table: "teams", migration: "20260707_teams.sql" },
   { table: "ticket_comments", migration: "20260726_ticket_comments.sql" },
+  { table: "ticket_equipment", migration: "20261251_df_roundG_ticket_equipment.sql" },
   { table: "ticket_number_counters", migration: "20260724_ticket_numbering.sql" },
   { table: "ticket_review_slot_events", migration: "20261242_df_roundG_ticket_roster.sql" },
   { table: "ticket_review_slots", migration: "20261242_df_roundG_ticket_roster.sql" },
@@ -219,6 +220,11 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   { table: "libraries", column: "routing_control", migration: "20261241_df_roundG_routing_control.sql", feature: "Request routing table (drafting-flow DF-P5, GAP-112)" },
   { table: "collections", column: "routing_control", migration: "20261241_df_roundG_routing_control.sql", feature: "Request routing table on a folder (drafting-flow DF-P5)" },
   { table: "documents", column: "routing_control", migration: "20261241_df_roundG_routing_control.sql", feature: "Request routing table on a document (drafting-flow DF-P5)" },
+  { table: "tickets", column: "review_model_filed", migration: "20261250_df_roundG_review_model.sql", feature: "Whether a request was filed under the review model — its declarations and classes are read only when set (drafting-flow DF-P6)" },
+  { table: "tickets", column: "like_in_kind_statement", migration: "20261250_df_roundG_review_model.sql", feature: "A like-in-kind request's signed declaration (drafting-flow DF-P6, TIER-1)" },
+  { table: "tickets", column: "engineering_required", migration: "20261250_df_roundG_review_model.sql", feature: "Whether a request needs an engineer's review (drafting-flow DF-P6, TIER-1)" },
+  { table: "tickets", column: "work_class", migration: "20261250_df_roundG_review_model.sql", feature: "A request's work class (drafting-flow DF-P6, TIER-2)" },
+  { table: "tickets", column: "code_class", migration: "20261250_df_roundG_review_model.sql", feature: "A request's code class (drafting-flow DF-P6, TIER-4)" },
   { table: "access_requests", column: "org_id", migration: "20261023_access_requests_scope_and_limit.sql", feature: "Org-scoped access requests (admin pending list, per-org isolation)" },
   // Found absent in the live DB on 2026-09-01 by 20261038's late-binding probe
   // (the archive migrations were never hand-applied); repaired by 20261039.
