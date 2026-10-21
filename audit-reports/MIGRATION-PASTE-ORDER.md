@@ -148,6 +148,7 @@ The other order is tolerated: the app degrades or fails closed until the paste l
 
 ### C. App configuration named beside these gates (not migrations)
 
+- The ask route's calculation evaluator (intelligence I-33, merged 2026-10-21): leave `ASK_CALC_EVALUATOR` UNSET (off). It is built but ships off by the integrator's ruling (`DEC-111`, PR-13) until a verification campaign over real answers reports no wrong value under the 'Computed by the app' label; with it off, the ask route behaves exactly as the I-25 withholding net does today.
 - Set `NEXT_PUBLIC_FACILITY_TIME_ZONE` before the wave-2 app ships (SEQ:149-156).
 - Self-hosted deployments only: set `NEXT_PUBLIC_SITE_URL` (a Docker build argument) before deploying the app that carries P12 (SEQ:237-247).
 - Contractor files on their own origin (projects-tab GAP-401 remainder (c), optional, any time): set `UNTRUSTED_CONTENT_ORIGIN` as the operator note in GAP-401 describes, check the export's Full ZIP fetch from the account host first (CORS there is an operator check), and once the download-url / resolve adoption of `signStorageGet` (remainder (b)) is deployed, check the in-app viewer before leaving the setting on.

@@ -25,17 +25,17 @@
     "audit-reports/intelligence/21-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 276,
+    "findings": 277,
     "gaps": 16,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 59,
-      "MEDIUM": 151,
+      "MEDIUM": 152,
       "LOW": 57
     },
     "by_status": {
       "RESOLVED": 249,
-      "OPEN": 19,
+      "OPEN": 20,
       "RESOLVED (2026-10-14, by the integrator's ruling at the I-17 integrator fix pass — done-when 3 met as narrowed under DEC-90; PASTE pending: `20261128`, unchanged — until it is pasted the live registry keeps 20261045's overlays and DELETE stays with the writer tier)": 1,
       "REFUTED": 2,
       "WONTFIX": 3,
@@ -5599,6 +5599,30 @@
       ],
       "refuted": false,
       "summary": "An engineer asks \"what is the hydrotest pressure for a 285 psig vessel?\" without typing values into the inputs box. The model ignores the protocol and answers \"Answer: The factor is 1.5 [1]. For your vessel the test pressure is 428 psig.\" No chain, no Substituted line, no Applied section, no prose pair in one clause and no inputs: the answer is not marked arithmetic, 428 psig is shown and stored, ",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/20-prompts.md"
+    },
+    {
+      "id": "PR-14",
+      "title": "Model arithmetic outside the substitution step: an answer never marked arithmetic, or one saved before I-25, still shows the model's number",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by the rule's own scope: each shape below returns unchanged from `withholdModelResults` and `presentComputedResults` on branch `fleet/I-33-calc-evaluator`)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/knowledgeAskGuards.ts",
+        "app/api/knowledge/ask/route.ts",
+        "app/(protected)/knowledge/[id]/page.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial",
+      "challenges": [
+        "adversarial"
+      ],
+      "refuted": false,
+      "summary": "PR-13's, unchanged: an engineer asks for a hydrotest pressure without typing values; the model ignores the protocol and answers \"The factor is 1.5 [1]. For your vessel the test pressure is 428 psig.\" — no Substituted line, nothing marked, 428 psig shown and stored with no label.",
       "area": "intelligence",
       "report": "audit-reports/intelligence/20-prompts.md"
     },

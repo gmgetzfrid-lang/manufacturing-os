@@ -79,6 +79,7 @@ import { screenAssistantRequest } from "@/lib/assistantScreen";
 import {
   readAll, readAllByKey, READ_PAGE, columnsMissing, asDocumentData, asName, DATA_OPEN, DATA_CLOSE, OWNER_OPEN, OWNER_CLOSE,
   DATA_BOUNDARY_RULE, answerHasComputation, withholdModelResults, CUT_OFF_LINE, refusedRequestAnswer, PROMPT_TOKEN_BUDGET,
+  presentComputedResults, withoutComputedLines, neutralizeComputedLabels, askCalcEvaluatorOn,
   PROMPT_CHARS_PER_TOKEN, PROMPT_TOKENS_PER_IMAGE, MIN_ANSWER_TOKENS, ANSWER_MAX_TOKENS, MIN_ANSWER_PROMPT_CHARS,
   DRAWING_FACTS_ROW_CEILING, provenPageCurrent, sourceColumnMissing, drawingFactsScope, drawingFactsDocuments,
   insertAnswerRow,
@@ -179,7 +180,11 @@ export async function POST(req: NextRequest) {
       !!t && typeof (t as { question?: unknown }).question === "string"
       && typeof (t as { answer?: unknown }).answer === "string")
     .slice(-4)
-    .map((t) => ({ question: t.question.slice(0, 500), answer: t.answer.slice(0, 1200) }));
+    // (PR-13, I-33 fix pass) An earlier answer is used without the lines the
+    // app's evaluator added — in every prompt that carries the conversation
+    // and in the grounding — so the model never sees, and never imitates,
+    // the computed label (the thread's turns below likewise).
+    .map((t) => ({ question: t.question.slice(0, 500), answer: withoutComputedLines(t.answer).slice(0, 1200) }));
   let threadId = typeof body.threadId === "string" && /^[0-9a-f-]{36}$/i.test(body.threadId)
     ? body.threadId : null;
   if (!orgId || !libraryId || !question) return bad("orgId, libraryId and question are required");
@@ -469,7 +474,7 @@ export async function POST(req: NextRequest) {
         const { visible } = planVisibleHistory(turns, turns, access.readable, user.id, access.gone);
         historyWithheld = turns.length - visible.length;
         history = visible.slice(-4).map((t) => ({
-          question: truncateSafe(t.question ?? "", 500), answer: truncateSafe(t.answer ?? "", 1200),
+          question: truncateSafe(t.question ?? "", 500), answer: truncateSafe(withoutComputedLines(t.answer ?? ""), 1200),
         }));
         historySource = history.length > 0 ? "thread" : "none";
       }
@@ -711,7 +716,10 @@ export async function POST(req: NextRequest) {
       // reason and served a cut-off answer as a complete one). It names no
       // document and sends no history (the question alone rides the prompt).
       const partial = out.truncated === true || out.stopReason === "max_tokens";
-      const answer = partial ? `${out.text}\n\n${CUT_OFF_LINE}` : out.text;
+      // (PR-13, I-33 fix pass) The model's text never carries the app's
+      // computed label: a web answer computes nothing on the server.
+      const webText = neutralizeComputedLabels(out.text);
+      const answer = partial ? `${webText}\n\n${CUT_OFF_LINE}` : webText;
       const webContext: AnswerContext | null = partial
         ? { v: 1, documents: [], uploads: [], complete: true, history: "none", partial: true }
         : null;
@@ -2689,7 +2697,11 @@ export async function POST(req: NextRequest) {
           : "shown (a table or figure), and this month's remaining AI budget could not cover answering again after " +
             "that page request.\n" +
             "! Ask about a narrower part of the question, or ask again once your monthly AI budget allows it.")
-      : answerOut.text;
+      // (PR-13, I-33 fix pass) Only the server's evaluator writes the
+      // computed label the page marks: wherever the MODEL wrote it (or a
+      // passage injected it) — lookup, arithmetic or any other answer — it
+      // is taken out first, line for line (neutralizeComputedLabels).
+      : neutralizeComputedLabels(answerOut.text);
     // ASK-3: the provider says when its output ceiling cut the answer off. A
     // cut-off answer says so, is stored as partial, and is never offered for
     // rating or used as proven ground.
@@ -2740,6 +2752,7 @@ export async function POST(req: NextRequest) {
       // grounds at most the rows read before it failed, which withholds
       // more, never less.
       const pageText: string[] = [];
+      const pageTextOf = new Map<string, string[]>();
       if (pageImages.length > 0) {
         const shown = new Set(pageImages.map((img) => `${img.documentId}:${img.page}`));
         const docs = [...new Set(pageImages.map((img) => img.documentId))];
@@ -2749,15 +2762,50 @@ export async function POST(req: NextRequest) {
           .eq("org_id", orgId).in("document_id", docs).in("page", pages)
           .order("id").range(from, to), 5_000);
         for (const r of read.rows) {
-          if (shown.has(`${r.document_id}:${r.page}`) && r.content) pageText.push(r.content);
+          if (shown.has(`${r.document_id}:${r.page}`) && r.content) {
+            pageText.push(r.content);
+            const key = `${r.document_id}:${r.page}`;
+            pageTextOf.set(key, [...(pageTextOf.get(key) ?? []), r.content]);
+          }
         }
       }
+      // (PR-13, I-33) A value an earlier answer's evaluator computed never
+      // grounds this answer's number: its lines are left out first.
       const grounding = [
         question, inputs, renderPassages(), dataSections(pageImages), focusLine, ownerBlock,
         orgInstructions, answeredFetchNote, ...pageText,
-        ...history.flatMap((t) => [t.question, withholdModelResults(t.answer).text]),
+        ...history.flatMap((t) => [t.question, withholdModelResults(withoutComputedLines(t.answer)).text]),
       ].join("\n");
+      const modelText = answer;
       answer = withholdModelResults(answer, grounding).text;
+      // PR-13 (DEC-90 A17's later path, intelligence I-33): under each
+      // "**Substituted:**" line the server can evaluate, the value it
+      // computes from the answer's OWN cited sources — each cited passage
+      // (with the indexed text of its page when that page image was shown)
+      // and the asker's own values — labelled as computed by the app. The
+      // model's own result stays withheld; anything the evaluator cannot
+      // bind, reconcile or parse adds nothing. A cut-off answer is never
+      // evaluated (its expression may be cut short).
+      // (Ruled by the integrator at the I-33 merge, 2026-10-21, DEC-90) Only
+      // with the server switch ASK_CALC_EVALUATOR on (askCalcEvaluatorOn,
+      // default OFF): off, the evaluator is never called and the answer is
+      // the I-25 answer — the withholding net alone.
+      if (!partial && askCalcEvaluatorOn()) {
+        const cited = new Map<number, string>();
+        for (const n of extractCitationNumbers(modelText)) {
+          const c = n >= 1 && n <= chunks.length ? chunks[n - 1] : null;
+          if (!c || cited.has(n)) continue;
+          cited.set(n, [c.content, ...(pageTextOf.get(`${c.document_id}:${c.page}`) ?? [])].join("\n"));
+        }
+        // (I-33 fix pass 5) Fail-safe: an unexpected fault in the evaluator
+        // never turns a delivered answer into an error — the answer keeps
+        // the I-25 withholding, as if nothing was computed.
+        try {
+          answer = presentComputedResults(modelText, answer, { cited, user: `${question}\n${inputs}` }).text;
+        } catch (e) {
+          console.error("[knowledge/ask] evaluator failed", e);
+        }
+      }
     }
     if (partial) answer += `\n\n${CUT_OFF_LINE}` +
       (lengthLimitedByBudget ? " (This month's remaining AI budget limited how long this answer could be.)" : "");
