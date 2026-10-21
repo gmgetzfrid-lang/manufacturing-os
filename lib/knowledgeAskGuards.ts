@@ -801,7 +801,10 @@ export function withholdModelResults(answer: string, grounding?: string): { text
 // in another dimension (I-33 fix pass 2), an implicit product that reads as
 // a bracketed restatement or conversion of the value before it ("0.85 (85
 // %)", "0.5 in (12.7 mm)"), a chain whose worked expressions do not all bind
-// and agree (I-33 fix pass 3), a bracket nesting or a line past its bounds —
+// and agree (I-33 fix pass 3), a bare unit-conversion factor beside a
+// quantity with a unit, a value its source prints as a conversion, a model
+// result with no unit beside a value with one or in another unit that
+// differs (I-33 fix pass 4), a bracket nesting or a line past its bounds —
 // adds nothing, and the withholding stands. It never
 // un-withholds a model number: the model's own result on the line stays
 // withheld (also after a terminator the net does not read, "≅ 427.5 psig"), and where it differs
@@ -1228,7 +1231,7 @@ function evaluateTokens(tokens: EvalToken[], operand: (tok: Extract<EvalToken, {
 /** Every value a source text holds, read in base units, with its dimension
  *  — never a number an identifier owns ("Class 300", "UG-99", "B31.3",
  *  "§345.4", "[2]", "341.4.1"). */
-type SourceValue = { si: number; dim: Dim | null; ref: PressureRef; temp: boolean };
+type SourceValue = { si: number; dim: Dim | null; ref: PressureRef; temp: boolean; conv?: true };
 /** (I-33 fix pass 2) A unit token right after a value (after one optional
  *  space) that readUnit did not read. A value with one is in a unit the
  *  evaluator cannot check: it binds no operand (not even a unitless one),
@@ -1256,6 +1259,56 @@ const unreadUnitAt = (s: string, i: number): boolean => {
   const at = s.slice(i, i + 24);
   return UNREAD_KNOWN.test(at) || UNREAD_SHORT.test(at) || UNREAD_COMPOUND.test(at);
 };
+/** (I-33 fix pass 4) The bare factors a unit conversion is written with —
+ *  in/ft, mm/in, cm/in, m/in, m/ft, ft/m, kPa/psi, psi/kPa, psi/bar,
+ *  bar/psi, MPa/psi, psi/MPa, the metric prefixes, kg/lb, lb/kg, N/lbf,
+ *  lbf/N, g, °F/°C, L/gal, s/min, s/h, ft of water/psi, psi/ft of water,
+ *  N·m/ft-lb, ft-lb/N·m, in/m, in/mm. A bare one beside a quantity with a
+ *  unit is an inline conversion the evaluator cannot follow ("285 psig ×
+ *  6.895" is kPa, never "1,965 psig"), so the expression is refused. Read
+ *  within CONVERSION_FACTOR_TOLERANCE ("3.28" and "3.281", "6.895" and
+ *  "6.89476"). */
+const CONVERSION_FACTORS: readonly number[] = [
+  12, 25.4, 2.54, 0.0254, 0.3048, 3.28, 3.281, 6.895, 6.89476, 0.145, 0.14504, 14.5, 14.504, 1000, 0.001, 100, 0.01,
+  2.2046, 0.4536, 4.448, 0.2248, 9.81, 9.80665, 1.8, 3.785, 0.2642, 60, 3600, 2.31, 0.433, 0.0689, 0.06895, 145,
+  145.04, 0.006895, 1.3558, 0.7376, 39.37, 0.03937,
+];
+const CONVERSION_FACTOR_TOLERANCE = 1e-3;
+const isConversionFactor = (v: number): boolean =>
+  CONVERSION_FACTORS.some((c) => Math.abs(Math.abs(v) - c) <= CONVERSION_FACTOR_TOLERANCE * c);
+/** (I-33 fix pass 4) Is the bare value at [start, end) of a source line
+ *  printed as a unit conversion? Read within its own sentence: a
+ *  "conversion" / "convert" just before it ("Conversion factor 6.895"),
+ *  "multiply psi by" / "divide psi by" right before it, "1 psi =" right
+ *  before it, or "per psi" / "for kPa" / "to get bar" right after it. Such a
+ *  value is never a formula's factor, whatever its number. */
+const CONVERSION_BEFORE_WORD = /\bconver(?:t|ts|ted|ting|sion|sions)\b/i;
+const CONVERSION_UNIT_WORD = "([A-Za-zµμ°\"″][A-Za-z0-9µμ²³/·⋅-]{0,10})";
+const CONVERSION_BEFORE_VERB = new RegExp(
+  "\\b(?:multipl(?:y|ied)|divid(?:e|ed))\\s+(?:(?:a|the)\\s+)?(?:(?:value|reading|figure)s?\\s+in\\s+)?" +
+  CONVERSION_UNIT_WORD + "\\s+by\\s*$", "i");
+const CONVERSION_BEFORE_ONE = new RegExp("(?:^|[^\\w.,])1\\s?" + CONVERSION_UNIT_WORD + "\\s*(?:=|is|equals)\\s*$", "i");
+const CONVERSION_AFTER = new RegExp(
+  "^\\s*(?:per|for|to\\s+(?:get|obtain|give|convert\\s+to)|gives|in\\s+(?:each|one|a))\\s+" + CONVERSION_UNIT_WORD, "i");
+const isUnitWord = (w: string): boolean => {
+  const r = readUnit(` ${w}`, 0);
+  return (r !== null && r.end === w.length + 1) || UNREAD_KNOWN.test(` ${w}`);
+};
+function inConversionContext(t: string, start: number, end: number): boolean {
+  let before = t.slice(Math.max(0, start - 48), start);
+  const cut = before.search(/[.;!?](?=\s)(?!.*[.;!?](?=\s))/);
+  if (cut >= 0) before = before.slice(cut + 1);
+  let after = t.slice(end, end + 32);
+  const stop = after.search(/[.;!?](?=\s|$)/);
+  if (stop >= 0) after = after.slice(0, stop);
+  if (CONVERSION_BEFORE_WORD.test(before)) return true;
+  for (const re of [CONVERSION_BEFORE_VERB, CONVERSION_BEFORE_ONE]) {
+    const m = re.exec(before);
+    if (m && isUnitWord(m[1])) return true;
+  }
+  const m = CONVERSION_AFTER.exec(after);
+  return m !== null && isUnitWord(m[1]);
+}
 const SOURCE_NUMBER = /(?:(?<![\w.)\]])-)?(?<![\w.[§#]|\d,|[A-Za-z]-)(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\d]|[.,]\d)/g;
 function sourceValues(text: string): SourceValue[] {
   const out: SourceValue[] = [];
@@ -1279,7 +1332,11 @@ function sourceValues(text: string): SourceValue[] {
           continue;
         }
         const def = unit?.def ?? { dim: DIM_NONE, scale: 1, ref: "" as PressureRef, temp: false };
-        out.push({ si: n * def.scale, dim: def.dim, ref: def.ref, temp: def.temp });
+        const v: SourceValue = { si: n * def.scale, dim: def.dim, ref: def.ref, temp: def.temp };
+        // (I-33 fix pass 4) A bare value printed as a unit conversion is
+        // marked: it never binds an operand.
+        if (!unit && inConversionContext(t, numStart, at)) v.conv = true;
+        out.push(v);
       }
     }
   }
@@ -1419,6 +1476,8 @@ export function evaluateSubstitutedLine(
     const inputs: Array<{ text: string; source: string }> = [];
     const displayCandidates: Array<{ dim: Dim; scale: number; ref: PressureRef; text: string }> = [];
     const refs = new Set<PressureRef>();
+    let carriesUnit = false;
+    let bareConversion: string | null = null;
     const operand = (tok: Extract<EvalToken, { t: "num" }>): Quantity => {
       const def = tok.unit ?? { dim: DIM_NONE, scale: 1, ref: "" as PressureRef, temp: false };
       if (def.temp) refuse("a temperature (a scale with an offset is never worked)");
@@ -1438,8 +1497,22 @@ export function evaluateSubstitutedLine(
         ["your value", sources.user],
       ];
       if (tok.cites.some((n) => !sources.cited.has(n))) refuse("an operand citing a source the answer was not given");
+      if (!dimEq(def.dim, DIM_NONE)) carriesUnit = true;
+      // (I-33 fix pass 4) A bare number is checked against the unit
+      // conversions: a known conversion factor is noted (refused below when
+      // a quantity with a unit stands beside it), and a value its source
+      // prints as a conversion ("multiply psi by 6.895", "1 psi = 6.895",
+      // "6.895 per psi") refuses the line outright.
+      if (tok.unit === null) {
+        if (isConversionFactor(q.v)) bareConversion ??= tok.text;
+        for (const [, t] of pools) {
+          if (t && valuesOf(t).some((s) => s.conv === true && !s.temp && same(s))) {
+            refuse(`an operand its source prints as a unit conversion: ${tok.text}`);
+          }
+        }
+      }
       for (const [name, t] of pools) {
-        if (t && valuesOf(t).some((s) => !s.temp && same(s))) { source = name; break; }
+        if (t && valuesOf(t).some((s) => !s.temp && s.conv !== true && same(s))) { source = name; break; }
       }
       if (source === null && tok.cites.length === 0 && earlier.some((e) => same({ si: e.v, dim: e.dim, ref: e.ref }))) {
         source = "an earlier step the app computed";
@@ -1452,6 +1525,9 @@ export function evaluateSubstitutedLine(
       return q;
     };
     const { q, mixedSum } = evaluateTokens(tokens, operand);
+    if (bareConversion !== null && carriesUnit) {
+      refuse(`a bare unit-conversion factor beside a quantity with a unit (the unit it converts to is not read): ${bareConversion}`);
+    }
     if (refs.has("g") && refs.has("a")) refuse("gauge and absolute pressure in one expression");
     if (dimEq(q.dim, DIM_PRESSURE) && mixedSum) refuse("a pressure summed across gauge, absolute or plain units");
     return { q, inputs, displayCandidates };
@@ -1475,6 +1551,7 @@ export function evaluateSubstitutedLine(
   }
   let value = q.v;
   let unit = "";
+  let displayScale = 1;
   if (!dimEq(q.dim, DIM_NONE)) {
     const shown = displayCandidates.find((c) => dimEq(c.dim, q.dim));
     if (!shown) return fail("a result in a unit no operand carries", resultStart);
@@ -1485,6 +1562,7 @@ export function evaluateSubstitutedLine(
       return fail("a pressure whose reference its unit would mislabel", resultStart);
     }
     value = q.v / shown.scale;
+    displayScale = shown.scale;
     unit = shown.text;
   }
   if (!Number.isFinite(value)) return fail("a result that is not a finite number", resultStart);
@@ -1507,12 +1585,26 @@ export function evaluateSubstitutedLine(
       if (mu && (mu.def.temp || !dimEq(mu.def.dim, q.dim))) {
         return fail("the AI's result is in another dimension than the computed value", resultStart);
       }
+      // (I-33 fix pass 4) The model's result written with no unit where the
+      // computed value has one ("× 12 = 24", "/ 14.5 = 29.5") is a unit the
+      // evaluator cannot place — most likely an inline conversion it did not
+      // follow: refused, never shown beside the app's value.
+      if (!dimEq(q.dim, DIM_NONE) && !mu) {
+        return fail("the AI's result has no unit while the computed value has one", resultStart);
+      }
       const mdef = mu?.def ?? { dim: DIM_NONE, scale: 1, ref: "" as PressureRef, temp: false };
       const mtext = n ? seg.slice(lone.index + lone[0].length - lone[1].length, mu ? mu.end : n.end).trim() : lone[1];
       let agrees: boolean | null = null;
       if (n && !mdef.temp && dimEq(mdef.dim, q.dim)) {
         const mv = n.value * mdef.scale;
         agrees = q.v === 0 ? mv === 0 : Math.abs(mv - q.v) <= COMPUTED_TOLERANCE * Math.abs(q.v);
+      }
+      // (I-33 fix pass 4) A differing result in another unit than the one
+      // the app's value is shown in ("2,948 kPa" beside "psig") is a
+      // conversion the evaluator did not follow as likely as an arithmetic
+      // slip: refused, never "the AI's number differs".
+      if (agrees === false && Math.abs(mdef.scale - displayScale) > BIND_EPSILON * displayScale) {
+        return fail("the AI's result is in another unit than the computed value and differs from it", resultStart);
       }
       model = { text: mtext, agrees };
     }
@@ -1546,9 +1638,22 @@ export const AI_WRITTEN_LABEL = "AI-written, not computed by the app:";
  *  server — the exact label or a close variant ("Computed by the app:",
  *  "Computed on the server from the cited inputs:") — read on a folded copy
  *  of the line (foldForLabel). Never the "not computed by the app" of
- *  AI_WRITTEN_LABEL itself, so neutralizing stays idempotent. */
-const FORGED_LABEL =
-  /(?:\*\*)?\s*(?<!\bnot\s{1,3})computed\s+(?:by|on)\s+(?:the\s+)?(?:app|server)\b(?:\s+from\s+the\s+cited\s*inputs)?(?:\s*\*\*)?(?:\s*:)?(?:\s*\*\*)?\s*/gi;
+ *  AI_WRITTEN_LABEL itself, so neutralizing stays idempotent.
+ *  (I-33 fix pass 4) Only in the label's own shape: wrapped in bold
+ *  ("**Computed by the app**", "**computed on the server:**") or ended by
+ *  its colon, inside or outside the bold ("Computed by the server:",
+ *  "**Computed by the app**:"). Prose that only uses the words — "the flow
+ *  total is computed by the server from the transmitter values", "computed
+ *  on the server and sent to the PLC" — is no label and is never rewritten. */
+const FORGED_PHRASE = "computed\\s+(?:by|on)\\s+(?:the\\s+)?(?:app|server)\\b(?:\\s+from\\s+the\\s+cited\\s*inputs)?";
+const FORGED_LABEL = new RegExp(
+  "(?<!\\bnot\\s{1,3}(?:\\*\\*\\s*)?)(?:\\*\\*\\s*" + FORGED_PHRASE + "\\s*:?\\s*\\*\\*(?:\\s*:)?|" +
+  FORGED_PHRASE + "\\s*(?:\\*\\*\\s*)?:(?:\\s*\\*\\*)?)\\s*", "gi");
+/** (I-33 fix pass 4) What a line must hold, read cheaply before it is
+ *  folded, for either pattern to be possible: an ASCII line with neither
+ *  "omput" nor "iffers" is passed over unfolded (its fold is itself). */
+const LABEL_HINT = /omput|iffers/i;
+const NON_ASCII = /[^\x00-\x7f]/;
 const FORGED_NOTE = /differs\s+from\s+the\s+app['’]s\s+value/i;
 /** Latin look-alikes (Cyrillic, Greek) a forged label could be spelt with. */
 const LABEL_CONFUSABLES: Record<string, string> = {
@@ -1567,6 +1672,14 @@ function foldForLabel(line: string): { text: string; at: number[] } {
   let text = "";
   const at: number[] = [];
   for (let i = 0; i < line.length;) {
+    // (I-33 fix pass 4) An ASCII character folds to itself: no regex, no
+    // normalisation (the slow path is for the rest only).
+    if (line.charCodeAt(i) < 0x80) {
+      at.push(i);
+      text += line[i];
+      i++;
+      continue;
+    }
     const ch = String.fromCodePoint(line.codePointAt(i)!);
     const piece = /\p{Cf}/u.test(ch) ? "" : [...ch.normalize("NFKC")].map((c) => LABEL_CONFUSABLES[c] ?? c).join("");
     for (let j = 0; j < piece.length; j++) at.push(i);
@@ -1589,16 +1702,23 @@ function foldForLabel(line: string): { text: string; at: number[] } {
  *  imitates an earlier answer) cannot pass a number off as server-computed.
  *  Run on every model answer (library, lookup, arithmetic and internet)
  *  before anything else reads it: the one named exception to "a lookup is
- *  returned byte for byte". Line for line (no line is added or removed),
- *  idempotent, and text without either comes back as the very same string. */
+ *  returned byte for byte" — and only where the model writes the label in
+ *  its own shape (bold-wrapped, or ended by its colon: FORGED_LABEL, I-33
+ *  fix pass 4); prose that only uses the words "computed by the server" is
+ *  returned as written. Line for line (no line is added or removed),
+ *  idempotent, and text without either comes back as the very same string.
+ *  (I-33 fix pass 4) Each line is read once: an ASCII line with no
+ *  LABEL_HINT is passed over, and only a line with another character is
+ *  folded (its ASCII characters on a fast path). */
 export function neutralizeComputedLabels(text: string): string {
-  const folded = foldForLabel(text).text;
-  FORGED_LABEL.lastIndex = 0;
-  if (!FORGED_LABEL.test(folded) && !FORGED_NOTE.test(folded)) return text;
-  return text.split("\n").map((line) => {
+  let changed = false;
+  const lines = text.split("\n").map((line) => {
+    if (!NON_ASCII.test(line) && !LABEL_HINT.test(line)) return line;
     // (I-33 fix pass 3) Read on the folded copy; each match replaces its
     // span of the original line (the format characters inside it go too).
     const f = foldForLabel(line);
+    FORGED_LABEL.lastIndex = 0;
+    if (!LABEL_HINT.test(f.text) || (!FORGED_LABEL.test(f.text) && !FORGED_NOTE.test(f.text))) return line;
     let out = "";
     let last = 0;
     FORGED_LABEL.lastIndex = 0;
@@ -1612,8 +1732,10 @@ export function neutralizeComputedLabels(text: string): string {
     }
     out += line.slice(last);
     if (FORGED_NOTE.test(foldForLabel(out).text) && !out.startsWith(AI_WRITTEN_LABEL)) out = `${AI_WRITTEN_LABEL} ${out}`;
+    if (out !== line) changed = true;
     return out;
-  }).join("\n");
+  });
+  return changed ? lines.join("\n") : text;
 }
 
 /** The text without the lines the evaluator added — so a value the server

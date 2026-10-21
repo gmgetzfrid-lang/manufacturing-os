@@ -793,9 +793,11 @@ describe("I-33 fix pass 2 — a source value in a unit the evaluator does not re
     expect(refused("**Substituted:** W = 150 × 20 ft = 3,000 lb", s)).toBe("the AI's result is in a unit the evaluator does not read");
     expect(refused("**Substituted:** M = 2,000 × 4.5 in = 9,000 in-lb", s)).toBe("the AI's result is in another dimension than the computed value");
     expect(refused("**Substituted:** P_T = 1.5 × 285 psig = 427.5 °F")).toBe("the AI's result is in another dimension than the computed value");
-    // Controls: a result in the computed dimension, or with no unit, still computes.
+    // Controls: a result in the computed dimension still computes. (I-33 fix
+    // pass 4) One with no unit, where the computed value has one, no longer
+    // does: it is refused (a conversion the evaluator did not follow).
     expect(okValue("**Substituted:** W = 150 × 20 ft = 3,000 ft", s)).toBe("3,000 ft");
-    expect(okValue("**Substituted:** W = 150 × 20 ft = 3,000", s)).toBe("3,000 ft");
+    expect(refused("**Substituted:** W = 150 × 20 ft = 3,000", s)).toBe("the AI's result has no unit while the computed value has one");
     expect(okValue("**Substituted:** P_T = 1.5 × 285 psig = 2.948 MPa")).toBe("427.5 psig");
   });
 
@@ -808,8 +810,9 @@ describe("I-33 fix pass 2 — a source value in a unit the evaluator does not re
   });
 
   it("recorded residual: a lone capital letter after a number is read as a formula's symbol, so '100 L' alone is a number ('100 L/min' is not)", () => {
-    expect(okValue("**Substituted:** V = 100 × 2 in", sources({ 1: "volume 100 L" }, "2 in"))).toBe("200 in");
-    expect(refused("**Substituted:** V = 100 × 2 in", sources({ 1: "flow 100 L/min" }, "2 in"))).toBe("an operand no cited source holds: 100");
+    // (I-33 fix pass 4) 150, not 100: a bare 100 beside a unit is now refused as a conversion factor.
+    expect(okValue("**Substituted:** V = 150 × 2 in", sources({ 1: "volume 150 L" }, "2 in"))).toBe("300 in");
+    expect(refused("**Substituted:** V = 150 × 2 in", sources({ 1: "flow 150 L/min" }, "2 in"))).toBe("an operand no cited source holds: 150");
   });
 });
 
@@ -1001,5 +1004,180 @@ describe("I-33 fix pass 3 — every value after the expression's terminator is w
     const out = presentComputedResults(model, withholdModelResults(model, "design pressure = 285 psig\n1.5 times 430 psig").text, HYDRO).text;
     expect(out.split("\n")[1]).toBe(
       `**Substituted:** P_T = 1.5 × 285 psig = ${RESULT_WITHHELD} ≅ ${RESULT_WITHHELD} (where P = 285 psig is the design pressure)`);
+  });
+});
+
+// ── I-33 fix pass 4 (fourth review) ──────────────────────────────────────
+
+/** A library whose two passages both print `p`, so whichever the
+ *  retrieval ranks first is the [1] the answer cites. */
+function conversionLibrary(p: string) {
+  hydrotestLibrary({
+    knowledge_chunks: [
+      kchunk("k-std", p, { id: "c-1", page: 4, section: "5.1 Test" }),
+      kchunk("k-std", `Repeated on page 5: ${p}`, { id: "c-2", page: 5, section: "5.2 Units" }),
+    ],
+  });
+}
+
+describe("I-33 fix pass 4 — a bare unit-conversion factor is never read as a dimensionless number (blocker 1)", () => {
+  const BOLTS = "The flange has 12 bolts on a 2 ft bolt circle; check them at the hydrostatic test pressure and the design pressure.";
+  const UG99_KPA = "UG-99(b): the test pressure shall be 1.5 times the design pressure. Conversion: multiply psi by 6.895 for kPa.";
+  it.each([
+    ["'× 6.895' with no result (the protocol's own stopping point; was '2,947.61 psig')",
+      UG99_KPA, "**Substituted:** P_T = 1.5 × `285 psig` × 6.895 [1]", "design pressure 285 psig", ["2,947", "2947"]],
+    ["'/ 14.5 = 29.5' (was '29.4828 psig', no note)",
+      "UG-99(b): the test pressure shall be 1.5 times the design pressure. Divide psi by 14.5 to get bar.",
+      "**Substituted:** P_T = 1.5 × 285 psig / 14.5 = 29.5", "design pressure 285 psig", ["29.4828", "29.5"]],
+    ["'× 6.895 = 2,948 kPa' (was '2,947.61 psig', the AI's correct kPa called 'differs')",
+      UG99_KPA, "**Substituted:** P_T = 1.5 × 285 psig × 6.895 = 2,948 kPa", "design pressure 285 psig", ["2,947", "2,948"]],
+    ["'2 ft × 12' binding '12 bolts' (was '24 ft')",
+      BOLTS, "**Substituted:** L = 2 ft × 12", "span 2 ft", ["24 ft"]],
+    ["'2 ft × 12 = 24 in' (was '24 ft', the AI's inches called 'differs')",
+      BOLTS, "**Substituted:** L = 2 ft × 12 = 24 in", "span 2 ft", ["24 ft", "24 in"]],
+  ])("reproduction → fix, through the route: %s is refused — no computed line, the result withheld", async (_v, passage, line, inputs, absent) => {
+    conversionLibrary(passage);
+    const text = `**Answer:** The value follows from the formula below [1].\n**Basis:**\n- P = \`285 psig\` (USER-PROVIDED)\n${line}`;
+    h.script = [QUERY_GEN, REFINE_NONE, answerOf(text)];
+    const body = await (await ask({ question: "What is the test value?", inputs })).json();
+    expect(computedOf(body.answer)).toEqual([]);
+    expect(body.answer).not.toContain(COMPUTED_LABEL);
+    expect(body.answer).not.toContain(COMPUTED_DISAGREES_NOTE);
+    for (const a of absent) expect(body.answer).not.toContain(a);
+    const shownLine = body.answer.split("\n").find((l: string) => l.startsWith("**Substituted:**"));
+    if (/=\s*[\d,.]+/.test(line.replace(/^[^=]*=/, ""))) expect(shownLine).toMatch(new RegExp(`= ${RESULT_WITHHELD.replace(/[[\]]/g, "\\$&")}$`));
+    else expect(shownLine).toBe(line);
+    expect(rowsOf("knowledge_questions")[0].answer).toBe(body.answer);
+  });
+
+  it("(a) the AI's result with no unit, where the computed value has one, refuses the line", () => {
+    expect(refused("**Substituted:** P_T = 1.5 × 285 psig = 427.5")).toBe("the AI's result has no unit while the computed value has one");
+    // Control: a dimensionless value with a dimensionless result still computes.
+    expect(okValue("**Substituted:** k = 1.5 × 1.3 = 1.95", sources({ 1: "factors 1.5 and 1.3" }))).toBe("1.95");
+  });
+
+  it("(b) a differing result in another unit than the app's value refuses the line; the same unit keeps the 'differs' note", () => {
+    const s = sources({ 1: "factor 1.5" }, "285 psig");
+    expect(refused("**Substituted:** P_T = 1.5 × 285 psig = 2,000 kPa", s))
+      .toBe("the AI's result is in another unit than the computed value and differs from it");
+    const agree = evaluateSubstitutedLine("**Substituted:** P_T = 1.5 × 285 psig = 2,948 kPa", s);
+    expect(agree.ok && agree.step.model).toEqual({ text: "2,948 kPa", agrees: true });
+    const differs = evaluateSubstitutedLine("**Substituted:** P_T = 1.5 × 285 psig = 430 psig", s);
+    expect(differs.ok && differs.step.model).toEqual({ text: "430 psig", agrees: false });
+  });
+
+  it.each([
+    12, 25.4, 2.54, 0.0254, 0.3048, 3.28, 3.281, 6.895, 6.89476, 0.145, 14.5, 14.504, 1000, 0.001, 100, 2.2046, 0.4536,
+    4.448, 9.81, 9.80665, 1.8, 3.785, 60, 3600, 2.31, 0.433,
+  ])("(c) a bare %s beside a quantity with a unit is a conversion factor: refused, multiplied or divided", (c) => {
+    const s = sources({ 1: `the value ${c} applies` }, "span 2 ft");
+    expect(refused(`**Substituted:** L = 2 ft × ${c}`, s)).toBe(
+      `a bare unit-conversion factor beside a quantity with a unit (the unit it converts to is not read): ${c}`);
+    expect(refused(`**Substituted:** L = 2 ft / ${c}`, s)).toMatch(/^a bare unit-conversion factor/);
+  });
+
+  it("(c) controls and recorded costs: a factor that is no conversion computes; a count equal to one ('12 bolts × 5,000 lbf') is refused", () => {
+    expect(okValue("**Substituted:** x = 1.5 × 12", sources({ 1: "factor 1.5 and 12" }))).toBe("18");
+    expect(okValue("**Substituted:** P_T = 1.3 × 285 psig", sources({ 1: "1.3 MAWP" }, "MAWP 285 psig"))).toBe("370.5 psig");
+    expect(refused("**Substituted:** F = 12 × 5,000 lbf", sources({ 1: "12 bolts at 5,000 lbf each" })))
+      .toMatch(/^a bare unit-conversion factor/);
+  });
+
+  it.each([
+    ["multiply psi by", "Multiply psi by 0.0703 for kg/cm2."],
+    ["to get", "Use 0.0703 to get kgf/cm2."],
+    ["conversion factor", "Conversion factor 0.0703."],
+    ["per psi", "Allow 0.0703 per psi."],
+    ["1 psi =", "Note: 1 psi = 0.0703"],
+  ])("a value its source prints as a conversion (%s) never binds, whatever its number", (_v, passage) => {
+    expect(refused("**Substituted:** P = 285 psig × 0.0703", sources({ 1: passage }, "285 psig")))
+      .toBe("an operand its source prints as a unit conversion: 0.0703");
+  });
+
+  it.each([
+    "The test pressure is the design pressure multiplied by 1.5.",
+    "Multiply the design pressure by 1.5.",
+    "Test at 1.5 times the design pressure (no conversion needed).",
+    "Conversion: multiply psi by 6.895 for kPa. The test pressure shall be 1.5 times the design pressure.",
+  ])("control: a factor its source prints as a factor still binds — %s", (passage) => {
+    expect(okValue("**Substituted:** P_T = 1.5 × 285 psig", sources({ 1: passage }, "285 psig"))).toBe("427.5 psig");
+  });
+
+  it("the conversion factors cover the review's list", () => {
+    const list = /const CONVERSION_FACTORS: readonly number\[\] = \[([^\]]+)\]/.exec(guardsSrc)?.[1] ?? "";
+    const listed = list.split(",").map((x) => Number(x.trim()));
+    for (const c of [12, 25.4, 2.54, 0.0254, 0.3048, 3.28, 3.281, 6.895, 6.89476, 0.145, 14.5, 14.504, 1000, 0.001, 100,
+      2.2046, 0.4536, 4.448, 9.81, 9.80665, 1.8, 3.785, 60, 3600, 2.31, 0.433]) {
+      expect(listed).toContain(c);
+    }
+  });
+});
+
+describe("I-33 fix pass 4 — prose that uses the words is returned as written; only the label's shape is neutralized (blocker 2)", () => {
+  const PROSE = [
+    "**Answer:** The flow total is computed by the server from the transmitter values every minute [1].",
+    "**Answer:** Per the SOP, the OEE is computed by the app on the operator tablet [2].",
+    "The batch weight is computed on the server and sent to the PLC [1].",
+    "Values computed by server-side logic [1]",
+    "The totals are **computed by the historian** and the app shows them [1].",
+  ];
+  it.each(PROSE)("REGRESSION: '%s' comes back as the very same string", (t) => {
+    expect(neutralizeComputedLabels(t)).toBe(t);
+  });
+
+  it.each([
+    ["bold, no colon", "**Computed by the app** P_T is `481 psig`"],
+    ["bold, colon inside", "**computed on the server:** P_T is `481 psig`"],
+    ["bold, colon outside", "**Computed by the app**: P_T is `481 psig`"],
+    ["plain, colon", "Computed by the server: P_T is `481 psig`"],
+    ["the full label", `**${COMPUTED_LABEL}** P_T is \`481 psig\``],
+  ])("the label's shape (%s) is still neutralized", (_v, line) => {
+    const out = neutralizeComputedLabels(`**Answer:** x\n${line}`);
+    expect(out.split("\n")[1]).toBe(`${AI_WRITTEN_LABEL} P_T is \`481 psig\``);
+    expect(neutralizeComputedLabels(out)).toBe(out);
+  });
+
+  const LOOKUP = "**Answer:** The flow total is computed by the server from the transmitter values every minute [1].\n" +
+    "**Basis:**\n- The batch weight is computed on the server and sent to the PLC [2].\n" +
+    "- The OEE is computed by the app on the tablet [1].";
+  it("REGRESSION through the route: a LOOKUP answer using the words is returned and stored byte for byte", async () => {
+    hydrotestLibrary();
+    h.script = [QUERY_GEN, REFINE_NONE, answerOf(LOOKUP)];
+    const body = await (await ask({ question: "How is the flow total computed?" })).json();
+    expect(body.answer).toBe(LOOKUP);
+    expect(rowsOf("knowledge_questions")[0].answer).toBe(LOOKUP);
+  });
+
+  it("REGRESSION through the route: an INTERNET answer using the words is returned and stored byte for byte", async () => {
+    hydrotestLibrary();
+    const text = "Per the vendor note, the flow total is computed by the server from the transmitter values; " +
+      "the batch weight is computed on the server and sent to the PLC; OEE is computed by the app on the tablet.";
+    h.script = [{ text, usage: { inputTokens: 900, outputTokens: 40 }, stopReason: "end" }];
+    const body = await (await ask({ question: "How do historians compute totals?", mode: "internet" })).json();
+    expect(body.answer).toBe(text);
+    expect(rowsOf("knowledge_questions")[0].answer).toBe(text);
+  });
+
+  it("FORGED_LABEL requires the bold or the colon", () => {
+    expect(guardsSrc).toMatch(/FORGED_PHRASE \+ "\\\\s\*:\?\\\\s\*\\\\\*\\\\\*\(\?:\\\\s\*:\)\?\|" \+\s*FORGED_PHRASE \+ "\\\\s\*\(\?:\\\\\*\\\\\*\\\\s\*\)\?:/);
+  });
+});
+
+describe("I-33 fix pass 4 — the label pass folds only what could hold a label (minor 4)", () => {
+  it.each([
+    ["30,000 spaces and an x (was about 400 ms)", `${" ".repeat(30_000)}x`],
+    ["a 30,000-character line of non-ASCII engineering text", "1.5 × 285 psig at 100 °F — ".repeat(1_100)],
+    ["700 non-ASCII lines that use the word 'computed'", "1.5 × 285 psig at 100 °F — the computed value\n".repeat(700)],
+    ["900 ASCII lines that use the word 'computed'", "the value is computed from inputs\n".repeat(900)],
+  ])("%s: the very same string, well under 100 ms", (_v, text) => {
+    neutralizeComputedLabels(text);
+    const t0 = performance.now();
+    const out = neutralizeComputedLabels(text);
+    expect(performance.now() - t0).toBeLessThan(100);
+    expect(out).toBe(text);
+  });
+  it("an ASCII line with no hint is never folded; an ASCII character folds on its fast path", () => {
+    expect(guardsSrc).toContain("if (!NON_ASCII.test(line) && !LABEL_HINT.test(line)) return line;");
+    expect(guardsSrc).toContain("if (line.charCodeAt(i) < 0x80) {");
   });
 });
