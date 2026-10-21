@@ -14,6 +14,7 @@ import { setDocClass as saveDocClass, type DocClass } from "@/lib/docClass";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { listTeams, type Team } from "@/lib/teams";
 import { ALL_ROLES, type ReviewControl, type ReviewControlMode, type Role } from "@/types/schema";
+import RoutingControlSection from "@/components/documents/RoutingControlSection";
 
 const MODES: { value: ReviewControlMode; label: string; hint: string }[] = [
   { value: "none", label: "No gate", hint: "Publish directly (drawings whose review is handled by the drafting workflow, or simple libraries)." },
@@ -340,6 +341,9 @@ export default function ReviewControlModal({ level, id, orgId, name, uid, userNa
                 {noReviewerText && <div className="text-[11px] text-amber-600">{noReviewerText}</div>}
               </>
             )}
+
+            {/* drafting-flow DF-P5 (GAP-112, DEC-36): the request review routing, beside this policy — its own section and its own save. */}
+            <RoutingControlSection level={level} id={id} orgId={orgId} />
 
             <div className="flex justify-between gap-2 pt-2 border-t border-[var(--color-border)]">
               <button onClick={() => void remove()} disabled={busy || !existing} className="px-3 py-2 rounded-lg text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-40">Remove</button>

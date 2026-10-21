@@ -1,4 +1,4 @@
-import { Role, TicketStatus, Ticket } from "@/types/schema";
+import { Role, TicketStatus, Ticket, type TicketReviewRoster, type TicketReviewSlot } from "@/types/schema";
 import { policyAllows, scopedTokensFor, grantActive, type CapabilityPolicy, type CapabilityResource, type UserGrant } from "@/lib/capabilityPolicy";
 import { isManagementRole } from "@/lib/managementRoles";
 import { CANCEL_OUTCOMES, type TicketOutcome } from "@/lib/ticketOutcome";
@@ -29,6 +29,11 @@ export interface WorkflowAction {
   requiresOutcome?: boolean;
   /** The outcomes this action may record (with `requiresOutcome`). */
   outcomes?: readonly TicketOutcome[];
+  /** DF-P5 ROSTER (GAP-103, EVID-12): the action carries an e-signature
+   *  minted by /api/signatures/sign against the ticket and bound to the
+   *  roster's content hash — the roster panel runs the ceremony, then posts
+   *  the action with `signatureId`. */
+  requiresSignature?: boolean;
 }
 
 /** Optional evaluation context for getActions (WF-7, GAP-2, WF-15).
@@ -58,6 +63,20 @@ export interface WorkflowContext {
    *  been in the loop. A property of the CONFIGURED type, read from the same
    *  option list as `closeWithoutReviewTypes`. Absent = no type is gated. */
   engineeringFirstTypes?: string[];
+  /** DF-P5: the clock a roster's alternates are activated against (ms since
+   *  the epoch). Absent = now. */
+  now?: number;
+  /** TIER-5 (DF-P5 fix pass 3): the ticket's library routes its reviews (a
+   *  routing table on its chain, and the 20261242 ledger there). A routed
+   *  ticket in review WITHOUT a roster (reopened, or in review before the
+   *  table was declared) is never approved on the serial path: those
+   *  approvals are rendered disabled with ROUTED_NO_ROSTER_REASON and the
+   *  route refuses them (409). Absent / false = today's behaviour. */
+  reviewRouted?: boolean;
+  /** DF-P5 fix pass 4: the reason those approvals are disabled with, when
+   *  it is not ROUTED_NO_ROSTER_REASON — a routing table that cannot be used
+   *  (routedNoRosterReason), where a revision would be refused too. */
+  reviewRoutedReason?: string | null;
 }
 
 /** DEC-13 stage 2: the RESOURCE a ticket presents to the capability policy —
@@ -84,6 +103,11 @@ export function separationOfDutiesActive(activeMemberCount?: number): boolean {
 // ─── ROLE HELPERS ────────────────────────────────────────────────────────
 // Centralised so the workflow + UI don't disagree on what counts as
 // "qualified to approve engineering work."
+// DEC-35 (DF-P5): these name-matching helpers are QUARANTINED as the seeded
+// default routing (lib/routingControl.ts SEEDED_ROUTING) — the behaviour of
+// an org that configured no routing table. They are not deleted and new
+// routing code never calls them: a configured routing table names its slots'
+// fill as data.
 
 export function isEngineerRole(role?: Role | string): boolean {
   return !!role && role.includes("Engineer");
@@ -175,6 +199,216 @@ export function decisiveGrants(
   return offers(without((g) => g.uid === userId)) ? [] : mine;
 }
 
+// ─── DF-P5 ROSTER (GAP-103 / GAP-112 / DEC-37) ───────────────────────────
+// A ticket whose library declares a routing table reviews on a PARALLEL
+// roster: the workflow route opens it when the draft enters PENDING_REVIEW
+// (`metadata.review_roster`, written compare-and-set with the status), every
+// unsatisfied blocking slot is offered to its occupants at once, and the
+// ticket issues when the last blocking slot is satisfied — one wait state
+// however many slots there are. A ticket with no roster (every ticket of an
+// org that configured nothing) runs the serial machine below, unchanged.
+
+/** The roster under review now, or null (legacy path). Current only while
+ *  the ticket is in PENDING_REVIEW and the roster has not been closed. */
+export function currentRoster(ticket: Pick<Ticket, "status" | "metadata">): TicketReviewRoster | null {
+  if (ticket.status !== "PENDING_REVIEW") return null;
+  const r = (ticket.metadata as Record<string, unknown> | undefined)?.review_roster as TicketReviewRoster | undefined;
+  if (!r || typeof r !== "object" || r.v !== 1 || !Array.isArray(r.slots) || r.closedAt) return null;
+  return r;
+}
+
+/** A slot the ticket waits on (consent_window waits like blocking until
+ *  consent windows exist — DEC-38). */
+export const slotBlocks = (s: Pick<TicketReviewSlot, "mode">): boolean => s.mode !== "notify_only";
+
+const DAY_MS = 86_400_000;
+
+/** Has `slot`'s alternate window opened (its timeoutDays elapsed since the
+ *  roster opened)? The one rule slotSignPlan and rosterPartialReleased share
+ *  (DF-P5 fix pass 5). */
+export function slotAlternatesActive(
+  roster: Pick<TicketReviewRoster, "openedAt">,
+  slot: Pick<TicketReviewSlot, "timeoutDays">,
+  now: number,
+): boolean {
+  const opened = Date.parse(roster.openedAt);
+  return slot.timeoutDays !== null && Number.isFinite(opened) && now >= opened + slot.timeoutDays * DAY_MS;
+}
+
+export interface SlotSignPlan {
+  /** The open blocking slots this actor's ONE sign-off satisfies now. */
+  fillable: Array<{ slot: TicketReviewSlot; via: "primary" | "alternate" | "override" }>;
+  /** Slots this actor occupies but may not sign, each with the reason
+   *  (DEC-37: the independence constraint that blocked it, named). */
+  blocked: Array<{ slot: TicketReviewSlot; reason: string }>;
+}
+
+/**
+ * Which open blocking slots `uid` may sign now, and which they occupy but
+ * may not (DEC-37: one person satisfies every slot they can fill, in one
+ * action; independence is a property of the SLOT, enforced at the DEC-12
+ * threshold). Pure — the engine, the route and the roster panel share it.
+ */
+export function slotSignPlan(
+  roster: TicketReviewRoster,
+  ticket: Pick<Ticket, "requesterId" | "assignedDrafterId">,
+  uid: string | null | undefined,
+  sodActive: boolean,
+  now: number = Date.now(),
+): SlotSignPlan {
+  const plan: SlotSignPlan = { fillable: [], blocked: [] };
+  if (!uid) return plan;
+  const fillsKind = (kind: string): boolean =>
+    roster.slots.some((s) => s.kind === kind && s.status === "satisfied" && s.satisfiedBy === uid)
+    || plan.fillable.some((f) => f.slot.kind === kind);
+  for (const slot of roster.slots) {
+    if (slot.status !== "open" || !slotBlocks(slot)) continue;
+    const alternateActive = slotAlternatesActive(roster, slot, now);
+    const via = slot.primaries.includes(uid) ? "primary" as const
+      : alternateActive && slot.alternates.includes(uid) ? "alternate" as const
+      : slot.overriders.includes(uid) ? "override" as const
+      : null;
+    if (!via) continue;
+    const label = slot.label || slot.kind;
+    let reason: string | null = null;
+    if (sodActive) {
+      for (const k of slot.independentOf) {
+        if (k === "drafter" && uid === ticket.assignedDrafterId) {
+          reason = `Needs a second person: "${label}" must be independent of the drafter, and you are this deliverable's drafter (orgs of 3+).`;
+        } else if (k === "requester" && uid === ticket.requesterId) {
+          reason = `Needs a second person: "${label}" must be independent of the requester, and you asked for this work (orgs of 3+).`;
+        } else if (k !== "drafter" && k !== "requester" && fillsKind(k)) {
+          const other = roster.slots.find((s) => s.kind === k);
+          reason = `Needs a second person: "${label}" must be independent of "${other?.label || k}", which you sign (orgs of 3+).`;
+        }
+        if (reason) break;
+      }
+      if (!reason) {
+        // The constraint read from the other side: a slot this actor fills
+        // (or is filling now) that declares itself independent of THIS one.
+        const conflict = roster.slots.find((s) => s.kind !== slot.kind && s.independentOf.includes(slot.kind) && fillsKind(s.kind));
+        if (conflict) reason = `Needs a second person: "${conflict.label || conflict.kind}", which you sign, must be independent of "${label}" (orgs of 3+).`;
+      }
+    }
+    if (reason) plan.blocked.push({ slot, reason });
+    else plan.fillable.push({ slot, via });
+  }
+  // DEC-12 / DEC-37 acceptance 2 — the producer-versus-checker FLOOR, held
+  // whatever the routing table declares: above the threshold the drafter
+  // may not be the one whose sign-off completes the review unless somebody
+  // else has already satisfied a blocking slot. The drafter may still sign
+  // the slots they occupy, but one stays open for a second person.
+  if (sodActive && ticket.assignedDrafterId && uid === ticket.assignedDrafterId && plan.fillable.length > 0
+    && rosterLacksIndependentSignOff(roster, uid, plan.fillable.map((f) => f.slot.kind))) {
+    const others = (s: TicketReviewSlot) => [...s.primaries, ...s.alternates, ...s.overriders].some((u) => u !== uid);
+    const idx = [...plan.fillable.keys()].reverse().find((i) => others(plan.fillable[i].slot)) ?? plan.fillable.length - 1;
+    const [held] = plan.fillable.splice(idx, 1);
+    plan.blocked.push({ slot: held.slot, reason: PRODUCER_FLOOR_REASON });
+  }
+  return plan;
+}
+
+/** When a completed roster's engineering approval was given: the latest
+ *  sign-off among its satisfied engineering slots (lib/ticketRoster.ts
+ *  marks a slot `engineering` from its fill's capability), or null when the
+ *  roster has none — the roster itself is then the record of who signed. */
+export function rosterEngineerApprovedAt(roster: TicketReviewRoster): string | null {
+  const at = roster.slots.filter((s) => s.engineering && s.status === "satisfied" && s.satisfiedAt).map((s) => s.satisfiedAt as string).sort();
+  return at.length > 0 ? at[at.length - 1] : null;
+}
+
+export const PRODUCER_FLOOR_REASON = "Needs a second person: you are this deliverable's drafter, and at least one sign-off on its review must come from someone else (orgs of 3+).";
+
+/**
+ * True when the roster would be complete with `signing` satisfied by `uid`
+ * and NO blocking slot satisfied by anyone else — the case the
+ * producer-versus-checker floor refuses (DEC-12 / DEC-37). Pure.
+ */
+export function rosterLacksIndependentSignOff(roster: TicketReviewRoster, uid: string, signing: readonly string[] = []): boolean {
+  const blocking = roster.slots.filter((s) => slotBlocks(s) && s.status !== "void");
+  const completes = blocking.every((s) => s.status === "satisfied" || signing.includes(s.kind));
+  const independent = blocking.some((s) => s.status === "satisfied" && !!s.satisfiedBy && s.satisfiedBy !== uid);
+  return completes && !independent;
+}
+
+/** FRIC-5: the drafter marked the draft under review issue-ready — the last
+ *  approval issues it as the final package (no second upload). Bound to the
+ *  revision label it was marked on, so a new submission clears it. */
+export function issueReadyFor(ticket: Pick<Ticket, "metadata" | "deliverableRev">): boolean {
+  const mark = (ticket.metadata as Record<string, unknown> | undefined)?.issue_ready as { rev?: unknown } | undefined;
+  return !!ticket.deliverableRev && typeof mark?.rev === "string" && mark.rev === ticket.deliverableRev;
+}
+
+/** EVID-12 (DF-P5 fix pass 2): the files a roster binds by identity only
+ *  (not by content — lib/ticketRoster.ts rosterBinding), as a person reads
+ *  them; named on the roster panel and in every sign-off statement. Here,
+ *  not in lib/ticketRoster.ts, because the panel is a client component and
+ *  that module hashes with node:crypto. */
+export function unhashedFilesNote(roster: Pick<TicketReviewRoster, "files">): string | null {
+  const un = (roster.files ?? []).filter((f) => !f.sha256);
+  if (un.length === 0) return null;
+  return `Bound by name, storage location and size only — too large or too slow to fingerprint when the review opened: ${un.map((f) => `${f.name ?? "a file"} (${f.unhashed ?? "not hashed"})`).join(", ")}.`;
+}
+
+export const ISSUE_AS_IS_NOTE = "The drafter marked this draft issue-ready: approving it issues the approved draft as the final package — no second upload.";
+
+/** FRIC-5 (DF-P5 fix pass 2): the approvals that issue a marked draft
+ *  as-is (lib/ticketTransitions.ts asIsIssue) — a minor correction still
+ *  returns the request to the drafter. */
+export const ISSUE_AS_IS_APPROVALS: ReadonlySet<string> = new Set(['approve_draft_ifc', 'engineer_approve_final']);
+
+/** FRIC-5: the question an approver answers before an approval that issues
+ *  the draft as-is — null for every other action, and whenever the drafter
+ *  has not marked the draft under review. The request page asks it in a
+ *  confirm dialog; the roster panel puts the note in the signed statement. */
+export function issueAsIsConfirmation(action: Pick<WorkflowAction, 'action'>, ticket: Pick<Ticket, 'metadata' | 'deliverableRev'>): string | null {
+  if (!ISSUE_AS_IS_APPROVALS.has(action.action) || !issueReadyFor(ticket)) return null;
+  return `${ISSUE_AS_IS_NOTE} The request goes straight to the issued package (Rev ${ticket.deliverableRev} as the Final) — there is no separate step where the drafter uploads the stamped file. Approve and issue as-is?`;
+}
+
+/** FRIC-5: the banner the request page shows while a marked draft waits on
+ *  a SERIAL approval (a routed review shows the note on its roster panel). */
+export function issueAsIsBanner(ticket: Pick<Ticket, 'metadata' | 'deliverableRev' | 'status'>): string | null {
+  if (ticket.status !== 'PENDING_REVIEW' && ticket.status !== 'PENDING_FINAL_APPROVAL') return null;
+  if (!issueReadyFor(ticket) || currentRoster(ticket)) return null;
+  return ISSUE_AS_IS_NOTE;
+}
+
+/** TIER-5 (DF-P5 fix pass 3): the serial approvals a routed ticket with no
+ *  roster may not take — each would issue (or route to an issue) without the
+ *  slots its library's routing table declares (DEC-36: fail closed). */
+export const ROSTERLESS_APPROVALS: ReadonlySet<string> = new Set(['approve_draft_ifc', 'approve_minor_correction', 'request_final_engineer_approval', 'engineer_approve_final']);
+
+export const ROUTED_NO_ROSTER_REASON = "This request's library routes its reviews, and this review has no sign-off roster (it was reopened, or was already in review when the routing was set). Request a revision so the drafter resubmits — the submission opens the review with every sign-off the routing names.";
+
+/** DF-P5 fix pass 4: why a routed review with no roster cannot be approved,
+ *  from the routing that applies. A table that cannot be used refuses the
+ *  resubmission too (routing_invalid), so the way forward is the document
+ *  controller, not a revision. */
+export function routedNoRosterReason(routing?: { state: string; level?: string; error?: string } | null): string {
+  if (routing?.state !== 'invalid') return ROUTED_NO_ROSTER_REASON;
+  const where = routing.level === 'collection' ? 'folder' : routing.level || 'library';
+  return `The review routing set on this request's ${where} can't be used (${routing.error || 'it is malformed'}), so this review can't be approved, and a resubmission would be refused too. Ask a document controller to correct the routing.`;
+}
+
+/** DF-P5 fix pass 4: what the request page says for a 409 from
+ *  /api/tickets/workflow-action. A refusal that carries its own code (the
+ *  routing needs a roster, an unconfirmed issue-as-is, a routing table that
+ *  cannot be used, nothing to review…) is SAID, with its way forward; null
+ *  for the compare-and-set conflict (`conflict: true`), a hold to resolve
+ *  (`holds_open`, handled before this) or a body without a code — those
+ *  keep the "someone else updated it" message. */
+export function workflowRefusalMessage(body: unknown): string | null {
+  const j = (body && typeof body === 'object' ? body : {}) as { code?: unknown; error?: unknown; conflict?: unknown };
+  if (j.conflict === true || typeof j.code !== 'string' || !j.code || j.code === 'holds_open') return null;
+  return typeof j.error === 'string' && j.error.trim() ? j.error : null;
+}
+
+/** UI-4 (DF-P5 fix pass 2): the drafter's optional issue-as-is mark /
+ *  withdrawal — offered beside the "who this waits on" note, never in place
+ *  of it (an optional mark is not something the request waits for). */
+export const ISSUE_MARK_ACTIONS: ReadonlySet<string> = new Set(['mark_issue_ready', 'clear_issue_ready']);
+
 export const WorkflowEngine = {
   // Every new request lands in the assignment queue — routed to the
   // DraftingSupervisor if one is set, otherwise Admins. Engineering review is
@@ -258,6 +492,10 @@ export const WorkflowEngine = {
       && !ticket.engineerReviewRequestedAt && !ticket.assignedEngineerId;
     const ENG_FIRST_REASON = 'This request type routes through engineering first: flag it for engineering review before a drafter is assigned.';
     const isTerminal = ticket.status === 'CLOSED' || ticket.status === 'CANCELED';
+    // DF-P5: the roster under review (a routed library), and the drafter's
+    // issue-as-is mark on the draft under review (FRIC-5).
+    const roster = currentRoster(ticket);
+    const issueReady = issueReadyFor(ticket);
     // WF-24: when a specific engineer holds the review, management's arm is
     // an OVERRIDE — the ticket waits on the engineer, not on every manager.
     const engineerOverride = !!ticket.assignedEngineerId && !isAssignedEngineerIdentity;
@@ -404,6 +642,52 @@ export const WorkflowEngine = {
       // --- REVIEW STAGE ---
       // This is where the engineer-routing fork lives.
       case 'PENDING_REVIEW':
+        if (roster) {
+          // DF-P5 ROSTER (GAP-103): ONE parallel wait. Every unsatisfied
+          // blocking slot is an action offered to its occupants at once; the
+          // route issues the ticket when the last one is signed. The
+          // requester's own slot (if the routing names one) is "is this what
+          // I asked for", the technical slots "is it correct" — two
+          // questions, neither waiting on the other (FRIC-2).
+          const plan = slotSignPlan(roster, ticket, userId, sod, ctx?.now ?? Date.now());
+          const occupies = plan.fillable.length > 0 || plan.blocked.length > 0;
+          if (plan.fillable.length > 0) {
+            const labels = plan.fillable.map((f) => f.slot.label || f.slot.kind);
+            const allOverride = plan.fillable.every((f) => f.via === "override");
+            actions.push({
+              label: `Sign Off — ${labels.join(", ")}`,
+              action: 'sign_slot',
+              variant: 'success',
+              requiresSignature: true,
+              description: `Your e-signature is bound to the files under review${roster.cycle ? ` (Rev ${roster.cycle})` : ""}. One sign-off covers every slot you fill.${issueReady ? ` ${ISSUE_AS_IS_NOTE}` : ""}`,
+              ...(allOverride ? { optional: true } : {}),
+            });
+          } else if (plan.blocked.length > 0) {
+            actions.push({
+              label: `Sign Off — ${plan.blocked.map((b) => b.slot.label || b.slot.kind).join(", ")}`,
+              action: 'sign_slot',
+              variant: 'success',
+              requiresSignature: true,
+              disabledReason: plan.blocked[0].reason,
+            });
+          }
+          const occupiesOnlyAsOverride = occupies && plan.fillable.length > 0 && plan.fillable.every((f) => f.via === "override") && plan.blocked.length === 0;
+          if (occupies || isRequesterIdentity) {
+            // The ticket waits on its occupants: a requester the routing
+            // does not roster, or an occupant only by override, may send it
+            // back but is not badged for it (WF-24).
+            actions.push({
+              label: 'Request Revision',
+              action: 'request_revision',
+              variant: 'warning',
+              requiresComment: true,
+              ...(!occupies || occupiesOnlyAsOverride ? { optional: true } : {}),
+            });
+          } else if (isManagement) {
+            actions.push({ label: 'Request Revision', action: 'request_revision', variant: 'warning', requiresComment: true, optional: true });
+          }
+          break;
+        }
         if (canActAsRequester) {
           if ((needsEngineerApproval && !isEng) || requesterScopedOut) {
             // Viewer-tier requesters can't sign off on engineering work.
@@ -424,7 +708,7 @@ export const WorkflowEngine = {
               label: 'Approve (Issue for Construction)',
               action: 'approve_draft_ifc',
               variant: 'success',
-              description: 'Accepts the draft. Drafter will be notified to issue IFC.',
+              description: issueReady ? `Accepts the draft. ${ISSUE_AS_IS_NOTE}` : 'Accepts the draft. Drafter will be notified to issue IFC.',
               ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
             });
             // The "fix this typo and it's approved" fast path — for actors
@@ -457,7 +741,7 @@ export const WorkflowEngine = {
             label: 'Approve (Issue for Construction)',
             action: 'approve_draft_ifc',
             variant: 'success',
-            description: 'Accepts the draft. Drafter will be notified to issue IFC.',
+            description: issueReady ? `Accepts the draft. ${ISSUE_AS_IS_NOTE}` : 'Accepts the draft. Drafter will be notified to issue IFC.',
             ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
             ...onBehalf,
           });
@@ -495,7 +779,7 @@ export const WorkflowEngine = {
               label: 'Approve as Engineer (Issue for Construction)',
               action: 'engineer_approve_final',
               variant: 'success',
-              description: 'Engineering sign-off complete. Drafter will be notified to issue IFC.',
+              description: issueReady ? `Engineering sign-off complete. ${ISSUE_AS_IS_NOTE}` : 'Engineering sign-off complete. Drafter will be notified to issue IFC.',
               ...(producerIsChecker ? { disabledReason: SOD_REASON } : {}),
               ...override,
             });
@@ -587,6 +871,23 @@ export const WorkflowEngine = {
         break;
     }
 
+    // FRIC-5 (DF-P5; DEC-90 ruling (1): opt-in per ticket by the drafter,
+    // default OFF = today's PENDING_IFC hop): the drafter may mark the draft
+    // issue-ready at submission (`issueReady` on submit_draft) or, the
+    // nearest the request page offers until it has an at-submit checkbox,
+    // before any sign-off has landed on it (PENDING_REVIEW with no roster
+    // slot satisfied) — so no reviewer has signed without the issue-as-is
+    // note in front of them. Once a sign-off is in, the mark can only be
+    // withdrawn (withdrawing asks nothing of a reviewer). The last approval
+    // then issues the approved draft as the final package instead of
+    // returning the ticket for a second upload. Optional, never waited on.
+    const nothingSignedYet = ticket.status === 'PENDING_REVIEW' && !(roster?.slots ?? []).some((s) => s.status === 'satisfied');
+    if (isDrafterIdentity && ticket.deliverableRev && issueReady && (ticket.status === 'PENDING_REVIEW' || ticket.status === 'PENDING_FINAL_APPROVAL')) {
+      actions.push({ label: 'Withdraw Issue-As-Is', action: 'clear_issue_ready', variant: 'ghost', optional: true, description: 'The approval returns the request to you to issue the final package, as usual.' });
+    } else if (isDrafterIdentity && ticket.deliverableRev && !issueReady && nothingSignedYet) {
+      actions.push({ label: 'Issue As-Is When Approved', action: 'mark_issue_ready', variant: 'outline', optional: true, description: `When Rev ${ticket.deliverableRev} is approved with no corrections, it is issued as the final package — you will not need to upload it again. A correction still returns it to you. Available until the first sign-off lands.` });
+    }
+
     // GLOBAL OVERRIDES
     if (allows('ticket.force_close') && !isTerminal) {
        const hasClose = actions.some(a => a.action === 'close_ticket');
@@ -643,6 +944,14 @@ export const WorkflowEngine = {
       });
     }
 
+    // TIER-5 (DF-P5 fix pass 3): a routed ticket in review with no roster is
+    // never approved on the serial path — the approvals stay visible,
+    // disabled, with the way forward (request a revision → resubmission
+    // opens the roster). The route refuses them too.
+    if (ctx?.reviewRouted && !roster && (ticket.status === 'PENDING_REVIEW' || ticket.status === 'PENDING_FINAL_APPROVAL')) {
+      const reason = ctx.reviewRoutedReason || ROUTED_NO_ROSTER_REASON;
+      return actions.map((a) => (ROSTERLESS_APPROVALS.has(a.action) && !a.disabledReason ? { ...a, disabledReason: reason } : a));
+    }
     return actions;
   }
 };

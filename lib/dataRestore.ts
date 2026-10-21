@@ -195,6 +195,13 @@ export const IMMUTABLE_TABLES: Record<string, string> = {
   // call path; the monthly caps sum it, so a restored row would move this
   // month's spend (a negative cost would lift a cap).
   ai_usage_events: "the AI spend ledger is written only by the metered call path — the caps sum it, so a restored row would move this month's spend",
+  // drafting-flow DF-P5 (20261242), by the integrator at the DF-P5 merge,
+  // 2026-10-21 (DEC-90): a satisfied slot names the sign-off's e-signature,
+  // and e_signatures are never imported (above), so a restored roster would
+  // claim sign-offs nobody can show; the event log is append-only. Both stay
+  // in the backup for review; a restored ticket's open review is re-routed.
+  ticket_review_slots: "a routed ticket's reviewer roster — each satisfied slot is bound to the signer's e-signature, which is never restored, so a restored slot would claim a sign-off nobody can show",
+  ticket_review_slot_events: "the roster's append-only event log — written only by the roster's own server path; restored history would be indistinguishable from real",
 };
 
 /** admin-and-org P1 (fix pass 4): contract tables that supabase/ makes

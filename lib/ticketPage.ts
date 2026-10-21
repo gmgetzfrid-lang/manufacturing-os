@@ -26,8 +26,8 @@
 //     linked to.
 
 import type { Ticket, TicketAttachment, CustomCategoryConfig } from "@/types/schema";
-import { policyAllows, type CapabilityPolicy, type CapabilityResource } from "@/lib/capabilityPolicy";
-import { separationOfDutiesActive, type WorkflowAction } from "@/lib/workflow";
+import { policyAllows, scopedTokensFor, type CapabilityId, type CapabilityPolicy, type CapabilityResource } from "@/lib/capabilityPolicy";
+import { isEngineerRole, separationOfDutiesActive, type WorkflowAction } from "@/lib/workflow";
 
 // ── EDGE-6 / ROUTE-8 ─────────────────────────────────────────────────────────
 
@@ -105,6 +105,62 @@ export function drafterCandidates(
     out.push({
       uid: m.uid, email, name: display || email.split("@")[0] || "Unnamed member", roles: held,
       ...(refused ? { refusedReason: REQUESTER_CANNOT_DRAFT } : {}),
+    });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// ── ROUTE-8 remainder (DF-P5) — the engineer pick: ONE rule ────────────────
+//
+// The workflow route refuses a picked engineer unless they hold an Engineer
+// role (headline or additive — the seeded default, DEC-35's quarantined
+// isEngineerRole) and, where the org scoped the reviewing capability to this
+// ticket's resource, satisfy that rule (DEC-13). The engineer picker offers
+// exactly the members this rule accepts — it used to carry a filter of its
+// own — and both call the function below, so the two cannot drift.
+
+/** The capability a pick is scoped by: the scope review's or the final
+ *  approval's. */
+export const engineerPickCap = (actionType: string): CapabilityId =>
+  actionType === "request_eng_review" ? "ticket.eng_review" : "ticket.final_approve";
+
+/** Why the route refuses `held` as the picked engineer, or null. */
+export function engineerPickRefusal(
+  held: readonly string[],
+  policy: CapabilityPolicy | null | undefined,
+  pickCap: CapabilityId,
+  uid: string,
+  resource: CapabilityResource | null | undefined,
+  requestType?: string | null,
+): string | null {
+  if (!held.some((r) => isEngineerRole(r))) return "The selected reviewer does not hold an Engineer role";
+  const scoped = scopedTokensFor(policy, pickCap, resource ?? null);
+  if (scoped !== null && !policyAllows(policy, pickCap, held[0] ?? "Viewer", [...held], uid, resource ?? null)) {
+    return `The selected reviewer is outside the group this workspace allows to review ${requestType ?? "these"} requests (${pickCap}: ${scoped.join(", ") || "nobody"})`;
+  }
+  return null;
+}
+
+export interface EngineerCandidate { uid: string; name: string; email: string; role: string; roles: string[] }
+
+/** The members the engineer picker offers: active members the route's rule
+ *  accepts for this pick. Sorted by name. */
+export function engineerCandidates(
+  members: readonly MemberPickRow[],
+  policy: CapabilityPolicy | null | undefined,
+  pickCap: CapabilityId,
+  resource: CapabilityResource | null | undefined,
+): EngineerCandidate[] {
+  const out: EngineerCandidate[] = [];
+  for (const m of members) {
+    if (typeof m.uid !== "string" || !m.uid) continue;
+    const held = pickRoles(m);
+    if (held.length === 0 || engineerPickRefusal(held, policy, pickCap, m.uid, resource) !== null) continue;
+    const email = typeof m.email === "string" ? m.email : "";
+    const display = typeof m.display_name === "string" ? m.display_name.trim() : "";
+    out.push({
+      uid: m.uid, email, name: display || email.split("@")[0] || "Engineer",
+      role: held.find((r) => isEngineerRole(r)) ?? held[0], roles: held,
     });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));

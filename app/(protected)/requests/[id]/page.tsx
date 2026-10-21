@@ -10,7 +10,8 @@ import { useRole } from '@/components/providers/RoleContext';
 import { useToast } from '@/components/providers/ToastProvider';
 import { appAlert, appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import { Ticket, TicketStatus, TicketAttachment, TicketComment, DocumentRecord, type CustomCategoryConfig, type OrgDraftingSettings } from '@/types/schema';
-import { WorkflowEngine, WorkflowAction, ticketResource } from '@/lib/workflow';
+import { WorkflowEngine, WorkflowAction, ticketResource, issueAsIsConfirmation, issueAsIsBanner, ISSUE_MARK_ACTIONS, currentRoster, routedNoRosterReason, workflowRefusalMessage } from '@/lib/workflow';
+import { ticketReviewRouting } from '@/lib/routingControl';
 import { loadCapabilityPolicyEntry, type CapabilityPolicy } from '@/lib/capabilityPolicy';
 import { affordancePolicyFault } from '@/lib/checkoutAffordances';
 import { flaggedRequestTypes } from '@/lib/requestTypes';
@@ -29,6 +30,7 @@ import { parseOutcomeReasons, outcomeChoiceGroups, decodeOutcomeChoice, type Out
 import LibraryPicker from '@/components/requests/LibraryPicker';
 import SourceDriftBanner from '@/components/requests/SourceDriftBanner';
 import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
+import TicketRosterPanel from '@/components/requests/TicketRosterPanel';
 import MentionableTextarea from '@/components/requests/MentionableTextarea';
 import TicketArchiveViewer from '@/components/archive/TicketArchiveViewer';
 import CommentBody from '@/components/requests/CommentBody';
@@ -1131,7 +1133,7 @@ const FileViewerModal = ({
 export default function TicketDetailView() {
   const params = useParams();
   const router = useRouter();
-  const { activeRole, roles, userEmail, activeOrgId, uid, hasAnyRole } = useRole();
+  const { activeRole, roles, userEmail, activeOrgId, uid, hasAnyRole, member } = useRole();
   // The org's capability policy — so the buttons drawn here match what the
   // workflow-action route will actually allow (it re-derives with the same
   // policy). Undefined until loaded → defaults, which mirror historic rules.
@@ -1474,6 +1476,28 @@ export default function TicketDetailView() {
     return () => { alive = false; };
   }, [waitsOnQueue, ticketOrgId]);
 
+  // TIER-5 (DF-P5 fix pass 3): a routed ticket in review with NO roster
+  // (reopened, or in review before the routing was set) is not approved on
+  // the serial path — the engine renders those approvals disabled with the
+  // way forward, and the route refuses them. Read through RLS only while it
+  // can matter; a read that fails leaves the decision to the route.
+  const [reviewRouted, setReviewRouted] = useState(false);
+  // DF-P5 fix pass 4: a routing table that can't be used is named (a
+  // revision would be refused too) — the reason travels with the flag.
+  const [reviewRoutedReason, setReviewRoutedReason] = useState<string | null>(null);
+  const routedCheckKey = ticket && ticket.libraryId && !currentRoster(ticket)
+    && (ticket.status === 'PENDING_REVIEW' || ticket.status === 'PENDING_FINAL_APPROVAL')
+    ? `${ticket.id ?? ''}|${ticket.libraryId}|${ticket.status}` : null;
+  useEffect(() => {
+    let alive = true;
+    if (!routedCheckKey || !ticket?.id || !ticketOrgId) { setReviewRouted(false); setReviewRoutedReason(null); return; }
+    void ticketReviewRouting({ id: ticket.id, orgId: ticketOrgId, libraryId: ticket.libraryId ?? null, sourceDocumentId: sourceRefId })
+      .then((r) => { if (alive) { setReviewRouted(r.routed); setReviewRoutedReason(r.routed ? routedNoRosterReason(r.routing) : null); } },
+        () => { if (alive) { setReviewRouted(false); setReviewRoutedReason(null); } });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the facts the answer depends on
+  }, [routedCheckKey, ticketOrgId, sourceRefId]);
+
   // PROJ-9: the project a request is linked to (an intake collision names it),
   // read through RLS — a project the viewer cannot see shows as a reference only.
   const projectRef = useMemo(() => projectRefOf(ticket?.metadata), [ticket?.metadata]);
@@ -1810,8 +1834,14 @@ export default function TicketDetailView() {
     }
   };
 
+  // FRIC-5 (DF-P5 fix pass 3): the approval the approver CONFIRMED as an
+  // issue-as-is — sent with it as `issueAsIsAcknowledged`; the route refuses
+  // an as-is issue the approver was never asked about (a mark made after the
+  // page loaded).
+  const asIsAckRef = useRef<string | null>(null);
   const initiateWorkflowAction = async (action: WorkflowAction) => {
     if (!ticket) return;
+    asIsAckRef.current = null;
     if (action.disabledReason) {
       // Separation-of-duties: the server refuses this with the same message,
       // so stop it here with the explanation instead of a round-trip 403.
@@ -1826,6 +1856,12 @@ export default function TicketDetailView() {
     // all used to pass.
     const missingFile = missingRequiredFile(action, ticket.attachments);
     if (missingFile) { await appAlert({ message: `Compliance Check Failed: ${missingFile}`, tone: "danger" }); return; }
+    // FRIC-5 (DF-P5 fix pass 2): an approval that issues a marked draft
+    // as-is is never taken blind — the approver confirms what it does (the
+    // draft becomes the issued Final; no stamped upload follows).
+    const asIs = issueAsIsConfirmation(action, ticket);
+    if (asIs && !(await appConfirm({ title: 'Approve and issue as-is?', message: asIs }))) return;
+    if (asIs) asIsAckRef.current = action.action;
     
     // Open IFC Upload Modal
     if (action.action === 'submit_final') {
@@ -1992,6 +2028,8 @@ export default function TicketDetailView() {
           ...(outcome ? { outcome } : {}),
           // GAP-13 / GAP-107 (DF-P14): the workspace's own reason, beside its category.
           ...(outcome && outcomeReason ? { outcomeReason } : {}),
+          // FRIC-5 (DF-P5 fix pass 3): the approver confirmed the as-is issue.
+          ...(asIsAckRef.current === action.action ? { issueAsIsAcknowledged: true } : {}),
         }),
       });
       let res = await send();
@@ -2026,7 +2064,14 @@ export default function TicketDetailView() {
         setShowUploadIFC(false);
         setPendingRedlineBlob(null);
         setFileToRedline(null);
-        await appAlert({ message: "This request was just updated by someone else, so your action wasn't applied. The latest state is loading — please review the change and try again.", tone: "danger" });
+        // DF-P5 fix pass 4: a refusal with its own code (the routing needs a
+        // roster, an unconfirmed issue-as-is, a routing table that can't be
+        // used…) is said with its way forward — only the compare-and-set
+        // conflict is "someone else updated it".
+        const refusal = workflowRefusalMessage(await res.clone().json().catch(() => null));
+        await appAlert(refusal
+          ? { title: "Your action wasn't applied", message: refusal, tone: "danger" }
+          : { message: "This request was just updated by someone else, so your action wasn't applied. The latest state is loading — please review the change and try again.", tone: "danger" });
         return;
       }
       if (!res.ok) {
@@ -2235,6 +2280,8 @@ export default function TicketDetailView() {
   // SESS-6: no role known (activeRole null) offers no action at all — the
   // engine is asked only with a real role.
   const availableActions = activeRole === null ? [] : WorkflowEngine.getActions(ticket, activeRole, uid ?? undefined, capPolicy, {
+    reviewRouted, // TIER-5 (DF-P5 fix pass 3): a routed review with no roster
+    reviewRoutedReason,
     userRoles: roles,
     activeMemberCount,
     engineeringFirstTypes,
@@ -2250,7 +2297,7 @@ export default function TicketDetailView() {
   // UI, so they are not rendered as generic action buttons.
   const canAttach = liveActions.some((a) => a.action === 'attach_file');
   const reassignAction = liveActions.find((a) => a.action === 'reassign_drafter');
-  const buttonActions = liveActions.filter((a) => a.action !== 'attach_file' && a.action !== 'reassign_drafter');
+  const buttonActions = liveActions.filter((a) => a.action !== 'attach_file' && a.action !== 'reassign_drafter' && !a.requiresSignature);
 
   // UI-1 / GAP-108: what the request is waiting for, on whom, since when —
   // and whether the ball is in the viewer's court (the engine offers them a
@@ -2262,9 +2309,16 @@ export default function TicketDetailView() {
   const yourTurn = liveActions.some((a) => !a.optional && !a.disabledReason);
   const isTerminalStatus = ticket.status === 'CLOSED' || ticket.status === 'CANCELED';
   // UI-4: why there is nothing to do here, naming who to talk to.
-  const noActionsWhy = buttonActions.length === 0 && !policyFault
+  // DF-P5 fix pass 2: the drafter's optional issue-as-is mark / withdrawal
+  // is offered BESIDE the explanation, never in place of it — the request
+  // still waits on someone else.
+  const awaitedButtons = buttonActions.filter((a) => !ISSUE_MARK_ACTIONS.has(a.action));
+  const noActionsWhy = awaitedButtons.length === 0 && !policyFault
     ? explainNoActions(ticket, { uid, roles, policy: capPolicy, activeMemberCount, engineeringFirstTypes, closeWithoutReviewTypes, requesterRoles: requesterRolesCtx, holders })
     : null;
+  // FRIC-5 (DF-P5 fix pass 2): a marked draft waiting on a serial approval
+  // says so to everyone who opens it (a routed review says it on its panel).
+  const asIsBanner = issueAsIsBanner(ticket);
   const unitShown = ticketUnitDisplay(ticket.unit, ticket.metadata);
   const customSections = customCategorySections(ticket.metadata, customCategoryConfig);
   const sourceFiles = ticket.attachments?.filter(a => a.type === 'Source' || a.type === 'Reference') || [];
@@ -2462,6 +2516,9 @@ export default function TicketDetailView() {
           onClose={() => { setShowEngineerPicker(false); setPendingAction(null); }}
           orgId={activeOrgId}
           currentEngineerId={pendingAction.action === 'reassign_engineer' ? ticket?.assignedEngineerId ?? undefined : undefined}
+          policy={capPolicy}
+          resource={ticketResource(ticket)}
+          pickActionType={pendingAction.action}
           independentOf={[ticket?.requesterId, ticket?.assignedDrafterId, uid]}
           title={
             pendingAction.action === 'request_final_engineer_approval' ? 'Send for Engineer Final Approval' :
@@ -2666,7 +2723,13 @@ export default function TicketDetailView() {
                // UI-4: why there is nothing to do here, and who to talk to.
                <div data-testid="no-actions-why" className="flex items-start px-4 py-2 bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-muted)] max-w-md"><ShieldAlert className="w-4 h-4 mr-2 mt-0.5 shrink-0" /> <span>{noActionsWhy?.text ?? 'No action is open to you on this request.'}</span></div>
             ) : (
-              buttonActions.map((action, idx) => (
+              <>
+              {noActionsWhy && (
+                // UI-4: the only buttons are optional (the issue-as-is mark),
+                // so who the request waits on is still said.
+                <div data-testid="no-actions-why" className="flex items-start px-4 py-2 bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-muted)] max-w-md"><ShieldAlert className="w-4 h-4 mr-2 mt-0.5 shrink-0" /> <span>{noActionsWhy.text}</span></div>
+              )}
+              {buttonActions.map((action, idx) => (
                 action.disabledReason ? (
                   // Separation-of-duties: the action stays VISIBLE but disabled,
                   // with the reason spelled out — a vanished button reads as a bug.
@@ -2703,7 +2766,8 @@ export default function TicketDetailView() {
                   )}
                 </button>
                 )
-              ))
+              ))}
+              </>
             )}
           </div>
         </div>
@@ -2729,6 +2793,17 @@ export default function TicketDetailView() {
           </div>
         </div>
       )}
+
+      {asIsBanner && (
+        <div role="note" data-testid="issue-as-is-banner" className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">
+          <div className="flex items-start gap-2 px-4 py-3 rounded-lg border border-amber-300 bg-amber-50 text-sm text-amber-900">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
+            <p><span className="font-bold">Issue as-is.</span> {asIsBanner}</p>
+          </div>
+        </div>
+      )}
+
+      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><TicketRosterPanel ticket={ticket} orgId={activeOrgId} uid={uid} userName={(member?.displayName ?? '').trim() || (userEmail?.split('@')[0] ?? '').trim() || null} capPolicy={capPolicy} activeMemberCount={activeMemberCount} requesterRoles={requesterRoles} reviewRouted={reviewRouted} reviewRoutedReason={reviewRoutedReason} /></div>
 
       {ticket.status === 'REVISION_REQ' && latestRevision && (
         <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">

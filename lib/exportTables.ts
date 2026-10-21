@@ -80,6 +80,12 @@ export const ORG_SCOPED_TABLES = [
   // Workflow / drafting
   "tickets",
   "ticket_comments",
+  // drafting-flow DF-P5 (20261242): a routed ticket's reviewer roster and its
+  // append-only event log — exported as evidence; never blind-imported
+  // (lib/dataRestore.ts IMMUTABLE_TABLES; the integrator at the DF-P5 merge,
+  // 2026-10-21, DEC-90).
+  "ticket_review_slots",
+  "ticket_review_slot_events",
   "ticket_number_counters",
   "checkout_sessions",
   "checkout_episodes",

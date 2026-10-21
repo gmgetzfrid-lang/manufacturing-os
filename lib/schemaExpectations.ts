@@ -175,6 +175,8 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "teams", migration: "20260707_teams.sql" },
   { table: "ticket_comments", migration: "20260726_ticket_comments.sql" },
   { table: "ticket_number_counters", migration: "20260724_ticket_numbering.sql" },
+  { table: "ticket_review_slot_events", migration: "20261242_df_roundG_ticket_roster.sql" },
+  { table: "ticket_review_slots", migration: "20261242_df_roundG_ticket_roster.sql" },
   { table: "tickets", migration: "schema.sql (base schema)" },
   { table: "transmittals", migration: "20260717_transmittals.sql" },
   { table: "turnover_items", migration: "20261013_project_controls_program.sql" },
@@ -214,6 +216,9 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   { table: "checkout_sessions", column: "outcome", migration: "20261012_doc_class_and_checkin_outcomes.sql", feature: "Check-in outcome register (field verification, MOC trail)" },
   { table: "documents", column: "doc_class", migration: "20261012_doc_class_and_checkin_outcomes.sql", feature: "Document classes — PSM MOC gate + drafting routing for drawings" },
   { table: "libraries", column: "doc_class", migration: "20261012_doc_class_and_checkin_outcomes.sql", feature: "Library-level document class declaration" },
+  { table: "libraries", column: "routing_control", migration: "20261241_df_roundG_routing_control.sql", feature: "Request routing table (drafting-flow DF-P5, GAP-112)" },
+  { table: "collections", column: "routing_control", migration: "20261241_df_roundG_routing_control.sql", feature: "Request routing table on a folder (drafting-flow DF-P5)" },
+  { table: "documents", column: "routing_control", migration: "20261241_df_roundG_routing_control.sql", feature: "Request routing table on a document (drafting-flow DF-P5)" },
   { table: "access_requests", column: "org_id", migration: "20261023_access_requests_scope_and_limit.sql", feature: "Org-scoped access requests (admin pending list, per-org isolation)" },
   // Found absent in the live DB on 2026-09-01 by 20261038's late-binding probe
   // (the archive migrations were never hand-applied); repaired by 20261039.

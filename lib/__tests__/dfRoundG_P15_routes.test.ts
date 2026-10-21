@@ -423,7 +423,7 @@ describe("PHYS-18 — an issuing transition recalls the holders of the supersede
     expect(ticketUpdates()[0]).toMatchObject({ status: "PENDING_IFC", deliverable_rev: "2" });
     // nothing is recalled before the response — it is scheduled after it
     expect(auditRows().some((r) => r.action === "DISTRIBUTION_RECALL")).toBe(false);
-    expect(vi.mocked(after).mock.calls.length).toBe(2); // the email drain, then the recall
+    expect(vi.mocked(after).mock.calls.length).toBe(3); // the email drain, the EVID-12 file hashes (DF-P5 fix pass 2: after the response), then the recall
     await lastAfter()!();
     const recall = auditRows().find((r) => r.action === "DISTRIBUTION_RECALL")!;
     expect(recall).toMatchObject({ resource_type: "ticket", resource_id: "t1", org_id: ORG, user_id: SUP });

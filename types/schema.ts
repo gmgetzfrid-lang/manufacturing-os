@@ -1127,6 +1127,76 @@ export interface TicketAttachment {
    *  it (a Final from a rejected round is never stamped by a later issue).
    *  Server-set by lib/ticketTransitions.ts; absent on every other file. */
   revCycle?: number;
+  /** drafting-flow DF-P5 (FRIC-5): on a Final the workflow issued from an
+   *  approved Draft the drafter marked issue-ready — the Draft's id. The
+   *  bytes are the Draft's (same storage key); no second upload was made. */
+  issuedFromDraftId?: string;
+}
+
+/** drafting-flow DF-P5 ROSTER (GAP-103 / GAP-112): one slot of a ticket's
+ *  review roster, as the workflow route opened it from the effective routing
+ *  table (lib/routingControl.ts). The ticket row carries the live roster in
+ *  `metadata.review_roster` (written compare-and-set with the status); the
+ *  `ticket_review_slots` / `ticket_review_slot_events` tables (20261242) are
+ *  its append-only ledger. */
+export interface TicketReviewSlot {
+  id: string;
+  kind: string;
+  label: string;
+  mode: "blocking" | "consent_window" | "notify_only";
+  /** Members who fill the slot (any one of them satisfies it). */
+  primaries: string[];
+  /** Members who may stand in once `timeoutDays` have passed. */
+  alternates: string[];
+  /** Members who may sign the slot as an override (optional for them). */
+  overriders: string[];
+  /** DEC-37: parties ("drafter", "requester") or other slot kinds the
+   *  occupant must not also be. */
+  independentOf: string[];
+  timeoutDays: number | null;
+  /** True when the slot's own fill resolved to nobody and the management
+   *  tier was rostered instead (a stop never resolves to nobody). */
+  fallback: boolean;
+  /** True when the slot is filled by an engineering CAPABILITY
+   *  (ticket.final_approve / ticket.eng_review) — its sign-off is the
+   *  ticket's engineering approval (engineer_approved_at). Read from the
+   *  fill's capability only; a role-named slot is the facility's own word
+   *  and is never guessed to be engineering (DEC-35). */
+  engineering?: boolean;
+  status: "open" | "satisfied" | "told" | "void";
+  satisfiedBy?: string | null;
+  satisfiedByName?: string | null;
+  satisfiedAt?: string | null;
+  signatureId?: string | null;
+  via?: "primary" | "alternate" | "override" | null;
+}
+
+/** drafting-flow DF-P5 ROSTER: the review roster a submission opened. */
+export interface TicketReviewRoster {
+  v: 1;
+  /** The roster's id (the ledger rows carry it). */
+  id: string;
+  openedAt: string;
+  openedBy: string | null;
+  /** The routing level the table was declared at. */
+  level: "document" | "collection" | "library";
+  /** The deliverable revision under review (the Draft label, "1A"). */
+  cycle: string | null;
+  /** sha256 over the files under review (lib/ticketRoster.ts rosterContentHash):
+   *  every sign-off's e-signature is bound to it. */
+  contentHash: string;
+  /** `sha256` is the server's fingerprint of the bytes. A file too large or
+   *  too slow to fingerprint in the request is bound by identity instead:
+   *  `sha256` null, `unhashed` the reason, `size` the recorded size (DF-P5
+   *  fix pass 2) — named on every sign-off. */
+  files: Array<{ id: string | null; name: string | null; url: string | null; sha256: string | null; size?: number | null; unhashed?: string }>;
+  slots: TicketReviewSlot[];
+  /** DF-P5 fix pass 2 (DEC-13 / DEC-16 / DEC-36): true when the routing
+   *  table carried no blocking engineering slot and the org-wide engineering
+   *  gate applied, so the seed's engineering slot was appended. */
+  engineeringGateAdded?: boolean;
+  closedAt?: string | null;
+  closedReason?: string | null;
 }
 
 export interface TicketComment {

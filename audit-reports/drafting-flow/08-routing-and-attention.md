@@ -1,6 +1,6 @@
 # 08 · Routing, notification & attention
 
-**14 findings** — 10 MEDIUM, 4 LOW. *(Corrected at the DF-P14 integrator fix pass, 2026-10-20: this line read "11 findings — 11 MEDIUM", stale since the verification pass lowered `ROUTE-5` / `ROUTE-6` and since `ROUTE-12`, `ROUTE-13` and `ROUTE-14` were opened.)*
+**15 findings** — 10 MEDIUM, 5 LOW. *(DF-P5 fix pass 3, 2026-10-21: `ROUTE-15` opened.)* *(Corrected at the DF-P14 integrator fix pass, 2026-10-20: this line read "11 findings — 11 MEDIUM", stale since the verification pass lowered `ROUTE-5` / `ROUTE-6` and since `ROUTE-12`, `ROUTE-13` and `ROUTE-14` were opened.)*
 
 Who is told what, and what goes silent. Overlaps `04-flow-leaks.md` deliberately — that report owns the leak framing, this one owns the mechanism.
 
@@ -511,7 +511,7 @@ hooks/useTicketNotifications.ts:156 —
 ## ROUTE-8 · The drafter assignment picker queries the headline role only, so a member who holds Drafter additively can never be assigned drafting work
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/[id]/page.tsx:244`, `app/(protected)/requests/[id]/page.tsx:246`, `components/requests/EngineerPickerModal.tsx:77`, `app/api/tickets/workflow-action/route.ts:113`
 - **Same root cause as** `ROUTE-10`, `EDGE-6` — Also owned as `LEAK-2` in [`04-flow-leaks.md`](./04-flow-leaks.md). Settled by `DEC-1` — do that first and these collapse. Fix once; close the rest citing this one.
@@ -566,6 +566,19 @@ contrast components/requests/EngineerPickerModal.tsx:77-89 —
 **Scope / residual.** Done-when 2's engineer picker → DF-P5 (its member read, `components/requests/EngineerPickerModal.tsx:87-91`, is also unpaged — the shared helper should read through `loadPickerMembers`).
 
 *Assigned (2026-10-14, the integrator at the DF-P9 merge):* the remainder (`components/requests/EngineerPickerModal.tsx`: one shared rule and keyset-paged members) → drafting-flow **DF-P5 ROSTER**.
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P5 ROSTER — the remainder assigned at the DF-P9 merge. Reproduced on the base: `components/requests/EngineerPickerModal.tsx:88` read every active member in one unpaged request and filtered with its own rule (`:98`, `r.includes("Engineer")`), so a member past PostgREST's max-rows was hidden though the route accepts them, and the picker's rule could drift from the route's.
+
+Landed: `lib/ticketPage.ts` `engineerPickRefusal` / `engineerCandidates` — THE engineer-pick rule (an Engineer role in the member's collection, headline or additive; and, where the org scoped the reviewing capability to this ticket's resource, that rule — DEC-13), called by the route (`app/api/tickets/workflow-action/route.ts:512`, replacing its inline check) and by the picker, which now reads members through `lib/ticketPickerMembers.ts` `loadPickerMembers` (keyset-paged on `uid`, a failed page fails the read and the picker says so) and receives the page's policy and ticket resource (`app/(protected)/requests/[id]/page.tsx`, the picker's mount). Rows show the member's display name.
+
+Tests: `lib/__tests__/dfRoundG_P5_routing.test.ts` ("ROUTE-8 remainder — the engineer pick: one rule for the route and the picker", three cases incl. the source pin that the modal has no filter or member read of its own); `lib/__tests__/sweepRoundD3.test.ts` re-pinned (the scoped check's call shape now lives in `lib/ticketPage.ts`).
+
+**Done-when.**
+- ✓ (1) as recorded by DF-P9.
+- ✓ (2) the remainder as assigned: the engineer picker reads members in keyset pages, as the drafter picker does, and uses the one shared rule instead of its own filter — the drafter picker (`drafterCandidates`) and the engineer picker (`engineerCandidates`) both live in `lib/ticketPage.ts` over `pickRoles`, the route calls the same rule, and `lib/ticketRouting.ts` reads `heldRoles`; neither picker can hide someone the route accepts.
+- ✓ (3) as recorded by DF-P9.
+
+**Scope / residual.** None.
 
 ---
 
@@ -904,6 +917,32 @@ hooks/useTicketNotifications.ts:188-193 —
 - ✓ A failed count read is said, never shown as zero.
 
 **Resolution (2026-10-20, drafting-flow Round G — the integrator fix pass at the DF-P14 merge, DEC-90).** `DraftingRequestsBody` (`components/dashboard/widgets.tsx:466`) now reads **exact HEAD counts** (`exactCount` `:455`): one of every open request (`select("id", { count: "exact", head: true })`, the workspace, status not `CLOSED` / `CANCELED` — the scope the widget read before) and one per pipeline part (`DRAFTING_PIPELINE` `:443`, the same parts in the same fixed order, each `.in("status", …)`) — six requests that return no rows, whatever the number. Below 2,000 the widget shows exactly what it showed before: the same count (a status outside the pipeline is counted in the total and in no part, as before), the same bar and legend, the same recent list (30 rows). A count read that is refused, throws, or comes back with no number is a fault with its reason: the open count shows "—" with "Open requests could not be counted — …" (`drafting-open-count-fault`); a pipeline part that cannot be counted leaves the bar out and says "Where the open requests sit could not be counted — …" (`drafting-pipeline-fault`), the total standing — never a short bar or a 0. The keyset read DF-P14's review fix pass put here (up to 10,000 rows for a number, with a partial-bar note) is removed. Tests (`lib/__tests__/dfRoundG_P14_labels.test.ts`, the widget AS RENDERED, its PostgREST stand-in answering HEAD counts with the filters applied and honouring `.limit()` on every other read; the big-count tests carry an explicit 30 s timeout): 1 / 2,000 / 2,400 open requests (plus 50 closed) render the count and each part's legend as the rows imply, from six HEAD reads with the scope's filters and no `limit`, the recent list at most 30; REGRESSION: an unknown status in the total and no part; none open → 0, no bar, "No open requests."; a refused count and a count with no number each show "—" and say so; one part's failed count leaves the total, drops the bar and says so.
+
+---
+
+## ROUTE-15 · On a routed review, "waiting on" and the no-actions explanation name the requester, while the roster panel on the same page names the actual slots
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** 2026-10-21, the integrator at the DF-P5 merge (DEC-31): drafting-flow DF-P17 RENUMBERED REQUEST FILES (with its routed waiting-on line; `lib/ticketAttention.ts` and the page's waiting-on read only). Earlier: proposed. Owner: the next holder of `lib/ticketAttention.ts` (notifications N11, or a DF-P14 follow-on; the integrator assigns, under `DEC-31`: a remainder gets a new id and an owner). Opened by drafting-flow DF-P5 ROSTER's review fix pass 3, 2026-10-21, from the reviewer's minor 4. `lib/ticketAttention.ts` is not DF-P5's file, so it is recorded, not edited.
+- **Verification:** CONFIRMED (by reading the branch head of `fleet/DF-P5-roster`; not exercised in a browser)
+- **Independently verified:** — (`author`: the DF-P5 fix-pass-3 reviewer's finding, recorded by the fixer; not yet challenged by a second party).
+- **Blast radius:** attention / wrong person shown
+- **Locations:**
+  - `lib/ticketAttention.ts:228-229`: `holdersFor` returns `requester()` for `PENDING_REVIEW` whether or not the ticket carries a roster (`lib/workflow.ts` `currentRoster`).
+  - `app/(protected)/requests/[id]/page.tsx:2294` (`holdersFor(ticket, …)`) feeds the "waiting on" line (`data-testid="waiting-on"`, `:2604`) and `explainNoActions` (`noActionsWhy`, `:2304`).
+- **Related:** `TIER-5` / `FRIC-2` (the roster, RESOLVED / Partial), `UI-1` / `GAP-108` (who a ticket waits on), `UI-4` (the no-actions explanation)
+
+**Mechanism.** On a routed library a ticket in review waits on the open blocking slots of its roster (`waitingSlotLabels`, the panel). The attention helper still uses the serial machine's single holder for the status, the requester.
+
+**Failure scenario.** A routing table of {engineering, qa} with no requester slot. The drafter opens the request in `PENDING_REVIEW` and reads "You are the drafter — this step is the requester's (waiting on <requester>: needs review)". In fact it waits on QA and engineering, as the roster panel just below says.
+
+**Remediation.** When `currentRoster(ticket)` is set, `holdersFor` returns the primaries of the open blocking slots (`kind: 'co_reviewers'`, `part` = the slot labels). Names resolve as for the other holders. Pin it beside the existing `holdersFor` cases.
+
+**Done when.**
+
+- A routed review's "waiting on" line and the no-actions explanation name the open slots' occupants, never the requester unless the requester occupies an open slot.
+- An unconfigured ticket's holders are unchanged (REGRESSION).
 
 ---
 

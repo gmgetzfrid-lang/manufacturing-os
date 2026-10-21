@@ -148,6 +148,7 @@ export const TRIGGER_FUNCTIONS: readonly string[] = [
   "audit_library_delete()",
   "audit_logs_stamp_identity()",
   "audit_review_control_change()",
+  "audit_routing_control_change()", // 20261241 (GAP-112, drafting-flow DF-P5)
   "capability_policy_write_guard()",
   "checklist_items_decision_rail()",
   "checklist_items_org_matches_parent()",
@@ -197,6 +198,7 @@ export const TRIGGER_FUNCTIONS: readonly string[] = [
   "enforce_project_party_delete()",
   "enforce_project_record_guard()",
   "enforce_review_signoff_guard()",
+  "enforce_routing_control_change()", // 20261241 (GAP-112, drafting-flow DF-P5)
   "enforce_signature_ceremony()",
   "enforce_team_member_org()",
   "enforce_team_org_move()",
@@ -222,6 +224,7 @@ export const TRIGGER_FUNCTIONS: readonly string[] = [
   "sync_current_version_label()",
   "teams_guard_supervisor_change()",
   "ticket_insert_integrity()",
+  "ticket_review_slot_events_append_only()", // 20261242 (GAP-103, drafting-flow DF-P5)
   "ticket_update_guard()",
   "touch_project_last_activity()",
   "turnover_items_decision_rail()",
