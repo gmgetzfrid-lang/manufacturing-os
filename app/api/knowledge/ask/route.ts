@@ -2793,7 +2793,14 @@ export async function POST(req: NextRequest) {
           if (!c || cited.has(n)) continue;
           cited.set(n, [c.content, ...(pageTextOf.get(`${c.document_id}:${c.page}`) ?? [])].join("\n"));
         }
-        answer = presentComputedResults(modelText, answer, { cited, user: `${question}\n${inputs}` }).text;
+        // (I-33 fix pass 5) Fail-safe: an unexpected fault in the evaluator
+        // never turns a delivered answer into an error — the answer keeps
+        // the I-25 withholding, as if nothing was computed.
+        try {
+          answer = presentComputedResults(modelText, answer, { cited, user: `${question}\n${inputs}` }).text;
+        } catch (e) {
+          console.error("[knowledge/ask] evaluator failed", e);
+        }
       }
     }
     if (partial) answer += `\n\n${CUT_OFF_LINE}` +

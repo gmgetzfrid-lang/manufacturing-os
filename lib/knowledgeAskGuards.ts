@@ -1310,6 +1310,15 @@ function inConversionContext(t: string, start: number, end: number): boolean {
   return m !== null && isUnitWord(m[1]);
 }
 const SOURCE_NUMBER = /(?:(?<![\w.)\]])-)?(?<![\w.[§#]|\d,|[A-Za-z]-)(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\d]|[.,]\d)/g;
+/** (I-33 fix pass 5) A power-of-ten tail right after a source's number —
+ *  "× 10⁻⁶", "x 10^6", "* 10**6", "× 10-6", "x 10 6", "E-4", "e-3" — and,
+ *  after a bare "10", an exponent ("10^6", "10**6", "10⁻⁶"). Every number
+ *  of such a value (the mantissa, the 10, the exponent) is recorded as
+ *  unknown (dim null): "6.5 × 10⁻⁶ in/in/°F" holds no 6.5 a bare operand
+ *  may bind, nor "29 × 10^6 psi" a 6 psi. */
+const POWER_OF_TEN_TAIL =
+  /^\s*(?:[×x*·⋅]\s*10\s*(?:(?:\^|\*\*)\s*[-−+]?\s*\d+|[⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺]+|[-−]?\s*\d+)|[eE][-−+]?\d+)/;
+const POWER_OF_TEN_EXPONENT = /^\s*(?:(?:\^|\*\*)\s*[-−+]?\s*\d+|[⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺]+)/;
 function sourceValues(text: string): SourceValue[] {
   const out: SourceValue[] = [];
   for (const line of text.split("\n")) {
@@ -1317,12 +1326,22 @@ function sourceValues(text: string): SourceValue[] {
       const t = stripLine(line, groups).text;
       SOURCE_NUMBER.lastIndex = 0;
       let m: RegExpExecArray | null;
+      let powerEnd = -1;
       while ((m = SOURCE_NUMBER.exec(t)) !== null) {
         const numStart = m.index + m[0].length - m[1].length;
         if (IDENTIFIER_BEFORE.test(t.slice(Math.max(0, numStart - 40), numStart))) continue;
         const n = Number(m[0].replace(/,/g, ""));
         if (!Number.isFinite(n)) continue;
         const at = m.index + m[0].length;
+        // (I-33 fix pass 5) A number in scientific notation, or inside one,
+        // is unknown: its printed digits are not its value.
+        const tail = t.slice(at, at + 24);
+        const power = POWER_OF_TEN_TAIL.exec(tail) ?? (n === 10 ? POWER_OF_TEN_EXPONENT.exec(tail) : null);
+        if (power) powerEnd = Math.max(powerEnd, at + power[0].length);
+        if (power || numStart < powerEnd) {
+          out.push({ si: n, dim: null, ref: "", temp: false });
+          continue;
+        }
         const unit = readUnit(t, at);
         // (I-33 fix pass 2) A unit the evaluator does not read is recorded
         // as unknown (dim null), never as a plain number: "150 lb" is no 150
@@ -1380,6 +1399,14 @@ const EVAL_TERMINATOR = /[=≈≅≒﹦~→⇒]|\b(?:equals|is|gives|yields)\b/g
 /** Where an input clause starts inside a segment: it is not the formula. */
 const EVAL_CLAUSE =
   /;|,\s*(?=(?:for|given|using|when|where|with|and|if|per|from|see)\b)|\(\s*(?=(?:where|with|for|given|using|per|see|from)\b|[a-z]\w*\s*=)|\s(?=(?:where|with|for|given|using|when|if|per|from|see)\b)/i;
+
+/** (I-33 fix pass 5) Where the text before a worked expression is cut to
+ *  find the symbol it is assigned to — a ",", ";", ":" or arrow (never the
+ *  comma of a digit group) — and the lone identifier the remainder must be. */
+const EVAL_SYMBOL_CUT = /[;:→⇒]|,(?!\d{3})/;
+const EVAL_SYMBOL = new RegExp(
+  "^\\s*(?:(?:so|then|thus|hence|therefore)\\s+)?(?:step\\s+\\d+\\s*)?" +
+  "([A-Za-zΑ-Ωα-ω][\\w′'’]{0,15})(?![\\w′'’])(?:\\s+(?:at|per|for)\\s[^=]*)?\\s*$", "i");
 
 /** Split a Substituted line's body at its terminators outside brackets. */
 function splitSegments(body: string): Array<{ start: number; text: string }> {
@@ -1457,10 +1484,18 @@ export function evaluateSubstitutedLine(
     resultEnd = resultStart + (clause ? clause.index : rest.length);
   }
   if (exprs.length === 0) return fail("no worked expression on the line", resultStart);
-  // The symbol the line computes: the left-hand side's first identifier,
-  // past a step label ("Step 2: P_T", "P_T at 100 °F", "t per Eq. 3").
-  const lhs = exprs[0].k > 0 ? segments[0].text.trim() : "";
-  const symbol = /^(?:step\s+\d+\s*:\s*)?([A-Za-zΑ-Ωα-ω][\w′'’]{0,15})(?![\w′'’])/i.exec(lhs)?.[1] ?? null;
+  // The symbol the line computes: (I-33 fix pass 5) the identifier the
+  // first worked expression is assigned to — the segment right before it,
+  // read after its last ",", ";", ":" or arrow and past a "so" / "then" /
+  // "thus" / "hence" / "therefore" ("P = 285 psig [1], so P_T = …" names
+  // P_T, never the input P). It is a symbol only when that remainder is a
+  // lone identifier, optionally after a step label or before an "at" /
+  // "per" / "for" qualifier ("Step 2: P_T", "P_T at 100 °F", "t per Eq.
+  // 3"); anything else ("Design P", "test P_T") names nothing, and the
+  // value is shown with no name.
+  const lhs = exprs[0].k > 0 ? segments[exprs[0].k - 1].text : "";
+  const assigned = lhs.split(EVAL_SYMBOL_CUT).pop() ?? "";
+  const symbol = EVAL_SYMBOL.exec(assigned)?.[1] ?? null;
   const valuesOf = (t: string) => {
     let v = cache.get(t);
     if (!v) {
@@ -1563,7 +1598,9 @@ export function evaluateSubstitutedLine(
     }
     value = q.v / shown.scale;
     displayScale = shown.scale;
-    unit = shown.text;
+    // (I-33 fix pass 5) An inch mark is shown as "in": a detached '"' after
+    // the number reads as a stray quote, not inches.
+    unit = shown.text === '"' || shown.text === "″" ? "in" : shown.text;
   }
   if (!Number.isFinite(value)) return fail("a result that is not a finite number", resultStart);
   // The model's own result, compared in base units.

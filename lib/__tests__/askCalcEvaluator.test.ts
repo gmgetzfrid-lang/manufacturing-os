@@ -43,6 +43,12 @@ vi.mock("@/lib/answerSkillsServer", async () => {
 });
 vi.mock("@/lib/knowledgeTagResolve", () => ({ resolveTagAgainstIndex: vi.fn(async (_o: string, t: string) => ({ resolved: t })) }));
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string | null) => k }));
+// (I-33 fix pass 5) The evaluator's entry point, passed through unchanged
+// unless a test makes it throw (the route's fail-safe).
+vi.mock("@/lib/knowledgeAskGuards", async (orig) => {
+  const real = await orig<typeof import("@/lib/knowledgeAskGuards")>();
+  return { ...real, presentComputedResults: vi.fn(real.presentComputedResults) };
+});
 
 import { POST } from "@/app/api/knowledge/ask/route";
 import {
@@ -538,7 +544,7 @@ describe("PR-13 / PR-9 done-when 2 (I-33) — the ask route presents the server'
 
   it("the route evaluates only after the net, on the model's own text, with the answer's cited passages (and their shown pages' text) and the asker's values", () => {
     expect(routeSrc).toMatch(/const modelText = answer;\s*answer = withholdModelResults\(answer, grounding\)\.text;/);
-    expect(routeSrc).toMatch(/if \(!partial\) \{[\s\S]{0,600}extractCitationNumbers\(modelText\)[\s\S]{0,400}pageTextOf\.get\(`\$\{c\.document_id\}:\$\{c\.page\}`\)[\s\S]{0,200}presentComputedResults\(modelText, answer, \{ cited, user: `\$\{question\}\\n\$\{inputs\}` \}\)/);
+    expect(routeSrc).toMatch(/if \(!partial\) \{[\s\S]{0,600}extractCitationNumbers\(modelText\)[\s\S]{0,400}pageTextOf\.get\(`\$\{c\.document_id\}:\$\{c\.page\}`\)[\s\S]{0,500}presentComputedResults\(modelText, answer, \{ cited, user: `\$\{question\}\\n\$\{inputs\}` \}\)/);
     expect(routeSrc).toContain("withholdModelResults(withoutComputedLines(t.answer)).text");
   });
 });
@@ -1179,5 +1185,140 @@ describe("I-33 fix pass 4 — the label pass folds only what could hold a label 
   it("an ASCII line with no hint is never folded; an ASCII character folds on its fast path", () => {
     expect(guardsSrc).toContain("if (!NON_ASCII.test(line) && !LABEL_HINT.test(line)) return line;");
     expect(guardsSrc).toContain("if (line.charCodeAt(i) < 0x80) {");
+  });
+});
+
+// ── I-33 fix pass 5 (fifth review) ───────────────────────────────────────
+
+describe("I-33 fix pass 5 — a number printed in scientific notation binds nothing: its digits are not its value (blocker 1)", () => {
+  const ALPHA = "Carbon steel: α = 6.5 × 10⁻⁶ in/in/°F. Line length 1,200 in. Design ΔT 70.";
+  it.each([
+    ["'6.5 × 10⁻⁶' (was 'ΔL is 546,000 in' and the AI's correct 0.546 in called 'differs')",
+      ALPHA, "**Substituted:** ΔL = 6.5 × 1,200 in × 70 = 0.546 in", "6.5"],
+    ["'29.0 × 10^6 psi'", "Modulus E = 29.0 × 10^6 psi for carbon steel; knockdown 0.9.",
+      "**Substituted:** E_eff = 29.0 × 0.9 = 26.1", "29.0"],
+    ["the exponent of '29 × 10^6 psi' is no '6 psi'", "Modulus E = 29 × 10^6 psi; factor 2.",
+      "**Substituted:** P = 6 psi × 2 = 12 psi", "6 psi"],
+    ["'6.5 x 10-6'", "Coefficient 6.5 x 10-6 in/in, length 100 ft, temperature rise 70.",
+      "**Substituted:** ΔL = 6.5 × 100 ft × 70 = 45,500 ft", "6.5"],
+    ["'3.2E-4' (was 'Q is 1,280'; the true value is 0.128)", "Leak coefficient 3.2E-4 per hour, 400 hours.",
+      "**Substituted:** Q = 3.2 × 400 = 1,280", "3.2"],
+    ["'1.5e-3' (already refused at 2baf69b: a lower-case 'e' read as an unread unit)",
+      "Expansion coefficient 1.5e-3 per degree, run length 100 ft, rise 70.",
+      "**Substituted:** ΔL = 1.5 × 100 ft × 70 = 10,500 ft", "1.5"],
+    ["'1.5E-3' (was 'ΔL is 10,500 ft')", "Expansion coefficient 1.5E-3 per degree, run length 100 ft, rise 70.",
+      "**Substituted:** ΔL = 1.5 × 100 ft × 70 = 10,500 ft", "1.5"],
+    ["control: the operand written as '6.5e-6' binds nothing either (the source's value is not read)",
+      ALPHA, "**Substituted:** ΔL = 6.5e-6 × 1,200 in × 70 = 0.546 in", "6.5e-6"],
+  ])("%s is refused", (_v, passage, line, operand) => {
+    expect(refused(line, sources({ 1: passage }))).toBe(`an operand no cited source holds: ${operand}`);
+  });
+
+  it("control: the same source's other values still bind ('1,200 in × 70')", () => {
+    expect(okValue("**Substituted:** x = 1,200 in × 70 = 84,000 in", sources({ 1: ALPHA }))).toBe("84,000 in");
+  });
+
+  it.each([
+    ["'6.5 × 10⁻⁶'", ALPHA, "**Substituted:** ΔL = 6.5 × 1,200 in × 70 = 0.546 in", ["546,000", "0.546"]],
+    ["'29.0 × 10^6 psi'", "Modulus E = 29.0 × 10^6 psi for carbon steel; knockdown 0.9.",
+      "**Substituted:** E_eff = 29.0 × 0.9 = 26.1", ["26.1"]],
+    ["'6.5 x 10-6'", "Coefficient 6.5 x 10-6 in/in, length 100 ft, temperature rise 70.",
+      "**Substituted:** ΔL = 6.5 × 100 ft × 70 = 45,500 ft", ["45,500"]],
+    ["'3.2E-4'", "Leak coefficient 3.2E-4 per hour, 400 hours.", "**Substituted:** Q = 3.2 × 400 = 1,280", ["1,280"]],
+    ["'1.5e-3'", "Expansion coefficient 1.5e-3 per degree, run length 100 ft, rise 70.",
+      "**Substituted:** ΔL = 1.5 × 100 ft × 70 = 10,500 ft", ["10,500"]],
+    ["'1.5E-3'", "Expansion coefficient 1.5E-3 per degree, run length 100 ft, rise 70.",
+      "**Substituted:** ΔL = 1.5 × 100 ft × 70 = 10,500 ft", ["10,500"]],
+    ["control '6.5e-6'", ALPHA, "**Substituted:** ΔL = 6.5e-6 × 1,200 in × 70 = 0.546 in", ["546,000", "0.546"]],
+  ])("reproduction → fix, through the route: %s — no computed line, the result withheld, no 'differs' note", async (_v, passage, line, absent) => {
+    // (The trailing sentence is for the scripted retrieval's query words.)
+    conversionLibrary(`${passage} Check it at the hydrostatic test pressure and the design pressure.`);
+    const text = `**Answer:** The value follows from the formula below [1].\n**Formula:** see the passage [1]\n${line}`;
+    h.script = [QUERY_GEN, REFINE_NONE, answerOf(text)];
+    const body = await (await ask({ question: "What is the value?" })).json();
+    expect(computedOf(body.answer)).toEqual([]);
+    expect(body.answer).not.toContain(COMPUTED_LABEL);
+    expect(body.answer).not.toContain(COMPUTED_DISAGREES_NOTE);
+    for (const a of absent) expect(body.answer).not.toContain(a);
+    const shownLine = body.answer.split("\n").find((l: string) => l.startsWith("**Substituted:**"));
+    expect(shownLine).toMatch(new RegExp(`= ${RESULT_WITHHELD.replace(/[[\]]/g, "\\$&")}$`));
+    expect(rowsOf("knowledge_questions")[0].answer).toBe(body.answer);
+  });
+});
+
+describe("I-33 fix pass 5 — the computed value is named by the symbol it is assigned to, never an input (major 2)", () => {
+  const SRC = sources({ 1: "Hydrotest at 1.5 times the design pressure. Design pressure 285 psig." });
+  const symbolOf = (line: string) => {
+    const r = evaluateSubstitutedLine(line, SRC);
+    if (!r.ok) throw new Error(r.reason);
+    return r.step.symbol;
+  };
+  it.each([
+    ["', so P_T' (was 'P is 427.5 psig')", "**Substituted:** P = 285 psig [1], so P_T = 1.5 × 285 psig = 427.5 psig", "P_T"],
+    ["'With … : P_T' (was 'With is …')", "**Substituted:** With P = 285 psig [1]: P_T = 1.5 × 285 psig = 427.5 psig", "P_T"],
+    ["'→ P_T' (was 'P is …')", "**Substituted:** P = 285 psig [1] → P_T = 1.5 × 285 psig = 427.5 psig", "P_T"],
+    ["'with …, P_T' (was 'with is …')", "**Substituted:** with P = 285 psig [1], P_T = 1.5 × 285 psig = 427.5 psig", "P_T"],
+    ["'Design P = …; test P_T' names nothing (was 'Design is …')",
+      "**Substituted:** Design P = 285 psig; test P_T = 1.5 × 285 psig = 427.5 psig", null],
+    ["control: the protocol's own shape", "**Substituted:** P_T = 1.5 × 285 psig", "P_T"],
+    ["control: a step label", "**Substituted:** Step 2: P_T = 1.5 × 285 psig", "P_T"],
+    ["control: an 'at' qualifier", "**Substituted:** P_T at 100 °F = 1.5 × 285 psig", "P_T"],
+    ["control: no symbol written", "**Substituted:** 1.5 × 285 psig", null],
+  ])("%s", (_v, line, symbol) => {
+    expect(symbolOf(line)).toBe(symbol);
+  });
+
+  it("the line the app adds names P_T, or no name at all — never the input", () => {
+    const named = presentComputedResults("**Substituted:** P = 285 psig [1], so P_T = 1.5 × 285 psig",
+      "**Substituted:** P = 285 psig [1], so P_T = 1.5 × 285 psig", SRC).text.split("\n")[1];
+    expect(named.startsWith(`**${COMPUTED_LABEL}** P_T is \`427.5 psig\``)).toBe(true);
+    const unnamed = presentComputedResults("**Substituted:** Design P = 285 psig; test P_T = 1.5 × 285 psig",
+      "**Substituted:** Design P = 285 psig; test P_T = 1.5 × 285 psig", SRC).text.split("\n")[1];
+    expect(unnamed.startsWith(`**${COMPUTED_LABEL}** \`427.5 psig\``)).toBe(true);
+  });
+
+  it("reproduction → fix, through the route: the input P is never shown as 427.5 psig", async () => {
+    hydrotestLibrary();
+    const text = "**Answer:** The test pressure follows below [1].\n" +
+      "**Substituted:** P = 285 psig [1], so P_T = 1.5 × 285 psig = 427.5 psig";
+    h.script = [QUERY_GEN, REFINE_NONE, answerOf(text)];
+    const body = await (await ask({ question: "What is the hydrotest pressure?", inputs: "design pressure = 285 psig" })).json();
+    const line = body.answer.split("\n").find((l: string) => l.startsWith(`**${COMPUTED_LABEL}**`));
+    expect(line).toContain("P_T is `427.5 psig`");
+    expect(line).not.toContain("** P is");
+  });
+});
+
+describe("I-33 fix pass 5 — an evaluator fault never fails the answer: the I-25 answer is delivered (minor 3)", () => {
+  it("presentComputedResults throwing → 200 with the withheld answer byte for byte, saved, and the fault logged", async () => {
+    const text = "**Answer:** The test pressure is below [1].\n- P = `285 psig` (USER-PROVIDED)\n" +
+      "**Substituted:** P_T = 1.5 × `285 psig` = `427.5 psig`";
+    // The reference: the route's answer when the evaluator adds nothing.
+    hydrotestLibrary();
+    vi.mocked(presentComputedResults).mockImplementationOnce((_m, shown) => ({ text: shown, computed: 0, disagreed: 0 }));
+    h.script = [QUERY_GEN, REFINE_NONE, answerOf(text)];
+    const reference = await (await ask({ question: "What is the hydrotest pressure?", inputs: "design pressure = 285 psig" })).json();
+    expect(reference.answer).toContain(RESULT_WITHHELD);
+    expect(reference.answer).not.toContain("427.5");
+
+    resetHarness();
+    hydrotestLibrary();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(presentComputedResults).mockImplementationOnce(() => { throw new RangeError("evaluator fault"); });
+    h.script = [QUERY_GEN, REFINE_NONE, answerOf(text)];
+    const res = await ask({ question: "What is the hydrotest pressure?", inputs: "design pressure = 285 psig" });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.answer).toBe(reference.answer);
+    expect(rowsOf("knowledge_questions")[0].answer).toBe(reference.answer);
+    expect(errors.mock.calls.some((c) => c[0] === "[knowledge/ask] evaluator failed")).toBe(true);
+    errors.mockRestore();
+  });
+});
+
+describe("I-33 fix pass 5 — an inch mark is shown as 'in', never a detached quote (minor 4)", () => {
+  it.each([['"'], ["″"]])("10.75%s → '0.0765938 in'", (mark) => {
+    const s = sources({ 1: `P 285 psig, D 10.75${mark}, S 20,000 psi, factor 2` });
+    expect(okValue(`**Substituted:** t = 285 psig × 10.75${mark} / (2 × 20,000 psi) = 0.0766${mark}`, s)).toBe("0.0765938 in");
   });
 });
