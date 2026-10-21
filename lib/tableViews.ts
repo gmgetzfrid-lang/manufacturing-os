@@ -6,6 +6,50 @@ import type { ExplorerViewConfig, TableViewConfig, ViewColumn } from "@/types/sc
 
 const TABLE = "table_views";
 
+// Cross-client sync (notifications RT-12 — notifications Round G, N11; DEC-105
+// §5): table_views is deliberately NOT in the supabase_realtime publication.
+// Supabase applies no row-level security to DELETE events, and a table_views
+// key is a composite text id naming the workspace, the person and the library
+// (tableViewId below), so publishing the table would hand those ids, across
+// workspaces, to anyone listening for its DELETEs. Instead the SAVER announces
+// a change with a Realtime Broadcast on the view's own topic, and each viewer
+// of that view re-reads the row under its own row-level security. The message
+// carries NOTHING (an empty payload): only a viewer who already knows the
+// view's id is subscribed to its topic, and what it re-reads is what RLS lets
+// it read — so nothing reaches anyone who did not already have it. A forged
+// message on a known topic can only cause one more read of a row the
+// listener may read anyway.
+const TABLE_VIEW_EVENT = "table_view_changed";
+
+/** The Broadcast topic of one view (the channel name its listeners join). */
+export function tableViewTopic(id: string): string {
+  return `table-view-${id}`;
+}
+
+/** Tell the view's other viewers it changed (after a save or a delete
+ *  landed). Best-effort: the write already landed, and a viewer that misses
+ *  the message reads the new row on its next load. On a topic this tab
+ *  already listens to, the joined channel sends it (and stays); otherwise a
+ *  short-lived channel sends it over REST and is removed. Never throws. */
+async function announceTableViewChange(id: string): Promise<void> {
+  const topic = tableViewTopic(id);
+  try {
+    const joined = supabase.getChannels().find((c) => c.topic === `realtime:${topic}`);
+    if (joined) {
+      await joined.send({ type: "broadcast", event: TABLE_VIEW_EVENT, payload: {} });
+      return;
+    }
+    const channel = supabase.channel(topic);
+    try {
+      await channel.httpSend(TABLE_VIEW_EVENT, {});
+    } finally {
+      void supabase.removeChannel(channel);
+    }
+  } catch (e) {
+    console.warn("[tableViews] the change announcement did not go out (non-blocking)", (e as Error)?.message ?? e);
+  }
+}
+
 type ViewScope = "user" | "org";
 
 function safePart(v?: string | null) {
@@ -150,6 +194,7 @@ export async function saveTableView(params: {
     ({ error } = await supabase.from(TABLE).upsert(payload, { onConflict: "id" }));
   }
   if (error) throw new Error(error.message);
+  void announceTableViewChange(id);
   return id;
 }
 
@@ -234,6 +279,7 @@ export async function deleteTableView(params: {
   const id = tableViewId(params);
   const { error } = await supabase.from(TABLE).delete().eq("id", id);
   if (error) throw new Error(error.message);
+  void announceTableViewChange(id);
 }
 
 export function listenTableView(
@@ -256,9 +302,11 @@ export function listenTableView(
 
   fetch();
 
+  // RT-12: the saver's Broadcast (announceTableViewChange), not
+  // postgres_changes — table_views is not published (see the note at the top).
   const channel = supabase
-    .channel(`table-view-${id}`)
-    .on("postgres_changes", { event: "*", schema: "public", table: TABLE, filter: `id=eq.${id}` }, () => {
+    .channel(tableViewTopic(id))
+    .on("broadcast", { event: TABLE_VIEW_EVENT }, () => {
       if (alive) fetch();
     })
     .subscribe();

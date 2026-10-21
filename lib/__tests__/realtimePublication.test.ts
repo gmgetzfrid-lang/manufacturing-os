@@ -85,12 +85,12 @@ function appSources(): string[] {
 
 /** A subscribed table deliberately NOT published, with its reason. */
 const NOT_PUBLISHED: Record<string, string> = {
-  // DEC-105 §5: Supabase applies no row-level security to
-  // DELETE events, and a table_views key is a composite text id naming the
-  // workspace, the person and the library (lib/tableViews.ts tableViewId) —
-  // publishing it would hand those ids, across workspaces, to any DELETE
-  // subscriber. Its cross-client live sync stays off (RT-12, residual).
-  table_views: "a DELETE would leak the composite id (workspace, person, library) to every subscriber",
+  // (table_views was the one entry until notifications Round G, N11 — RT-12:
+  // its cross-client sync is now a Realtime Broadcast from the saver
+  // (lib/tableViews.ts announceTableViewChange / listenTableView), so nothing
+  // subscribes to its postgres_changes and it stays unpublished — DEC-105 §5:
+  // a DELETE event would carry its composite id (workspace, person, library)
+  // to every subscriber. Pinned in the RT-12 block below.)
 };
 
 describe("RT-12 dw3 — every realtime-subscribed table has its publication statement", () => {
@@ -99,7 +99,7 @@ describe("RT-12 dw3 — every realtime-subscribed table has its publication stat
 
   it("the census sees the app's subscriptions (sanity)", () => {
     expect(subs.length).toBeGreaterThanOrEqual(15);
-    for (const t of ["tickets", "notifications", "documents", "checkout_sessions", "milestones", "table_views", "collections"]) {
+    for (const t of ["tickets", "notifications", "documents", "checkout_sessions", "milestones", "collections"]) {
       expect(subs.some((s) => s.table === t), t).toBe(true);
     }
   });
@@ -116,6 +116,19 @@ describe("RT-12 dw3 — every realtime-subscribed table has its publication stat
 
   it("milestones is published (20261106, re-asserted by 20261200)", () => {
     expect(pub.has("milestones")).toBe(true);
+  });
+
+  it("RT-12 (N11): table_views syncs by the saver's Broadcast — no postgres_changes listener on it, and it is still unpublished (DEC-105 §5)", () => {
+    expect(subs.some((s) => s.table === "table_views")).toBe(false);
+    expect(pub.has("table_views")).toBe(false);
+    const code = readFileSync(join(ROOT, "lib/tableViews.ts"), "utf8");
+    // the listener hears the view's own Broadcast topic and re-reads the row under RLS
+    expect(code).toMatch(/\.channel\(tableViewTopic\(id\)\)\s*\.on\("broadcast", \{ event: TABLE_VIEW_EVENT \}/);
+    expect(code).not.toMatch(/\.on\(\s*["']postgres_changes["']/);
+    // the saver announces after the write landed — on save and on delete — with an empty payload
+    expect(code.match(/void announceTableViewChange\(id\);/g)?.length).toBe(2);
+    expect(code).toMatch(/payload: \{\} \}/);
+    expect(code).toMatch(/httpSend\(TABLE_VIEW_EVENT, \{\}\)/);
   });
 });
 
