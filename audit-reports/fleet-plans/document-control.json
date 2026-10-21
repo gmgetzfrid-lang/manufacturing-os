@@ -910,6 +910,24 @@
    "sequencingNotes": [
     "Added by the integrator at the P31 merge, 2026-10-21 (DEC-31). Do not run in parallel with DC P33 if it edits lib/reviewControl.ts call sites in the library page."
    ]
+  },
+  {
+   "name": "P35 DOOR B RECORD \u2014 a reviewed promote over another person's checkout is recorded and told by the database, whichever caller ran it; pre-paste door-shaped submissions are confirmed or retired",
+   "findings": [
+    "document-control DCK-18 (assigned at the P33 merge, 2026-10-21, DEC-31; ruled under DEC-90): finalize_reviewed_promote re-created from its newest body writes the over-checkout record in the promote's own transaction and queues the holder's notice (existing kind), so a promote made outside the app is recorded and told; the app path does not double-record (dedupe with the app's REVIEW_PROMOTED_OVER_CHECKOUT); every pending external submission counted by 20261247's inventory row 2 is confirmed as the door's or retired by an operator-facing step, or door (b)'s intake limb admits only submissions the database can vouch for"
+   ],
+   "files": [
+    "supabase/migrations/2026NNNN_dc_roundG_door_b_record.sql (one DEC-30 file after 20261247)",
+    "lib/reviewControl.ts (dedupe only)",
+    "tests (I-17 harness before/after)"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "document-control P33 merged (20261247)"
+   ],
+   "sequencingNotes": [
+    "Added by the integrator at the P33 merge, 2026-10-21 (DEC-31). Paste after 20261247 (row 191)."
+   ]
   }
  ],
  "crossAreaFileOverlaps": [

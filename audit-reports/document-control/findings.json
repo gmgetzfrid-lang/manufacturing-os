@@ -15,17 +15,17 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 181,
+    "findings": 182,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 19,
       "HIGH": 56,
       "MEDIUM": 77,
-      "LOW": 29
+      "LOW": 30
     },
     "by_status": {
-      "RESOLVED": 162,
-      "OPEN": 17,
+      "RESOLVED": 165,
+      "OPEN": 15,
       "RESOLVED (as split under `DEC-31`; ruled by the integrator at the P27 merge, 2026-10-20 (`DEC-90`) — the access-control door, a member reading `portal_token` over REST, stays open until `DIST-18` lands)": 1,
       "RESOLVED (2026-10-21, the integrator's fix pass at the P28 merge — ruled by the integrator at the P28 merge, 2026-10-21 (`DEC-90`): done-when 2 landed; the restore hooks beyond the brief's ruling (4) ratified)": 1
     }
@@ -2276,7 +2276,7 @@
       "id": "DCK-16",
       "title": "A library publisher can still forge an intake submission on an intake-born or link-assigned document and promote it over another person's checkout — the client INSERT policy admits a publisher's row whatever its provenance",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (found by the P32 review, 2026-10-21, and narrowed by P32's review fix pass 2; the remainder reproduced on the I-17 PostgreSQL 16 harness)",
       "blast_radius": null,
@@ -2300,7 +2300,7 @@
       "id": "DCK-17",
       "title": "A library publisher can relabel an earlier reviewed revision back to \"in review\" and promote it over another person's checkout — an unrecorded revert the lock leg admits through its roster limb",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (found by the second P32 review, 2026-10-21, on the I-17 PostgreSQL 16 harness before and after `20261245`; pinned by P32's fix pass 3)",
       "blast_radius": null,
@@ -4122,7 +4122,7 @@
       "id": "DCK-15",
       "title": "A review's promote publishes over another person's checkout without a word — no lock read at any layer, no notice to the holder, nothing recorded",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (found by document-control Round G P32 while closing drafting-flow `HAND-13`, 2026-10-21; reproduced on the I-17 PostgreSQL 16 harness)",
       "blast_radius": null,
@@ -4141,6 +4141,30 @@
       ],
       "refuted": false,
       "summary": "A field engineer checks out an isometric for a walkdown. Meanwhile the drafter's Rev 3 (2A in review) collects its last signature and a publisher finalizes it. Rev 3 is current; the engineer keeps marking up Rev 2 with no notice. Their own publish will meet publishrevision's expected-base check (stalebase), so nothing is clobbered — but the walkdown was spent on a superseded sheet, and the audit t",
+      "area": "document-control",
+      "report": "audit-reports/document-control/01-checkout.md"
+    },
+    {
+      "id": "DCK-18",
+      "title": "A reviewed promote made outside the app over another person's checkout is neither told nor recorded — the notice and the row are the app's",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (found by document-control Round G P33 while closing [`DCK-15`](#dck-15), 2026-10-21)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/reviewControl.ts",
+        "supabase/migrations/20261151_dc_roundF_promote_transaction_and_hold_override.sql:208-326",
+        "supabase/migrations/20261245_dc_roundG_publish_guard_lock_leg.sql:911-940"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial",
+      "challenges": [
+        "adversarial"
+      ],
+      "refuted": false,
+      "summary": "A publisher finalizes a fully signed 2A by calling finalizereviewedpromote from a script while a field engineer holds the document checked out. The revision lands; the engineer is not told; the history shows the promote but not that a checkout was passed.",
       "area": "document-control",
       "report": "audit-reports/document-control/01-checkout.md"
     },

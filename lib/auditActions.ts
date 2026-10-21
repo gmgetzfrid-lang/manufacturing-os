@@ -57,6 +57,10 @@ const BY_CATEGORY: Record<AuditCategory, readonly string[]> = {
     // meant "voided by a status change"; it reads "Void Doc", beside
     // "Archive Doc" and "Supersede Doc".
     "VOID_DOC",
+    // document-control DCK-15 (P33): a reviewed promote that landed while
+    // someone else held the checkout (the ratified door (b)) — routine, not
+    // an override, so not in DESTRUCTIVE_AUDIT_ACTIONS.
+    "REVIEW_PROMOTED_OVER_CHECKOUT",
   ],
   checkout: ["CHECK_OUT", "CHECK_IN", "ABANDON", "FORCE_RELEASE", "JOIN", "FIELD_VERIFIED", "CHECKOUT_RELEASED"],
   holds: ["HOLD_OPENED", "HOLD_RELEASED", "HOLD_KEPT_ON_CLOSE"],

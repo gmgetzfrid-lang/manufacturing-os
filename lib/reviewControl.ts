@@ -896,8 +896,31 @@ export function finalizeReasonMessage(reason: string | undefined): string {
       if (isFinalizeHoldRefusal(reason)) {
         return "This document has an active hold, so the reviewed revision was not published and nothing was changed. Release the hold, then publish the reviewed revision — its sign-offs stand.";
       }
+      // DCK-15 (document-control P33): the publish guard's checkout lock leg
+      // (20261245) refused this promote. Its own sentence points at the
+      // revision flow's override, a door a review approver (the Intake tab
+      // above all) cannot use for this draft — say what they can do.
+      {
+        const holder = finalizeLockRefusalHolder(reason);
+        if (holder !== null) {
+          return `This document is checked out by ${holder}, so the reviewed revision was not published and nothing was changed. Ask the holder to check it in, then approve it again — the review stands.`;
+        }
+      }
       return `Couldn't publish: ${reason ?? "unknown"}`;
   }
+}
+
+/** DCK-15 (document-control P33): the words the publish guard's checkout lock
+ *  leg refuses with (20261245: "This document is checked out by <holder>, so
+ *  a new revision can't be made current here; …"). */
+export const FINALIZE_LOCK_REFUSAL = "so a new revision can't be made current here";
+
+/** DCK-15: the holder the lock leg named when it refused a finalize, or null
+ *  when the refusal is not the lock leg's. */
+export function finalizeLockRefusalHolder(reason: string | undefined): string | null {
+  if (!reason || !reason.includes(FINALIZE_LOCK_REFUSAL)) return null;
+  const m = /This document is checked out by (.+?), so a new revision can't be made current here/.exec(reason);
+  return m ? m[1] : "another user";
 }
 
 /** REV-20 (P14 final review): the review promote was refused by an active
@@ -934,7 +957,7 @@ export async function finalizeReviewedRevision(input: {
   overrideReason?: string | null;
 }): Promise<{ published: boolean; reason?: string; evidenceSweep?: import("@/lib/checklists").ProjectSweepOutcome & { projects: number } }> {
   const { data: docRow } = await supabase.from("documents")
-    .select("id, library_id, rev, status, current_version_id, pending_version_id").eq("id", input.documentId).maybeSingle();
+    .select("id, library_id, rev, status, current_version_id, pending_version_id, checked_out_by, checked_out_by_name").eq("id", input.documentId).maybeSingle();
   if (!docRow) return { published: false, reason: "not_found" };
   const pendingId = docRow.pending_version_id as string | null;
   if (!pendingId) return { published: false, reason: "no_pending_draft" };
@@ -993,6 +1016,18 @@ export async function finalizeReviewedRevision(input: {
     });
     if (early) return early;
   }
+  // DCK-15 (document-control P33): the promote landed — through
+  // finalize_reviewed_promote or promoteThreeStep — over a checkout someone
+  // else holds (the guard's door (b), ratified under DEC-90: a review stays
+  // finishable). Their checkout stays open; they are told and the history
+  // records it. Best-effort, after the point of no return: never blocks.
+  await notePromoteOverCheckout({
+    orgId: input.orgId, documentId: input.documentId, libraryId: (docRow.library_id as string) ?? "",
+    holderId: (docRow.checked_out_by as string | null) ?? null,
+    holderName: (docRow.checked_out_by_name as string | null) ?? null,
+    actorId: input.actorId ?? null, actorEmail: input.actorEmail ?? input.actorName ?? null,
+    pendingId, previousVersionId, baseRev, draftLabel: (ver?.revision_label as string | null) ?? null,
+  });
   {
     const { error: voidErr } = await supabase.from("document_review_signoffs")
       .update({ status: "void", updated_at: nowIso })
@@ -1069,6 +1104,69 @@ export async function finalizeReviewedRevision(input: {
     } catch { /* best-effort: never fails a landed publish */ }
   }
   return { published: true };
+}
+
+/** DCK-15 (document-control P33): after a reviewed promote landed on a
+ *  document someone OTHER than the actor holds checked out — whichever door
+ *  ran it — tell the holder on their checkout episode's thread and in-app
+ *  (noteOverrideOnHolder's pattern, lib/revisions.ts, and its notification
+ *  kind) and record that the promote passed the checkout: a
+ *  REVIEW_PROMOTED_OVER_CHECKOUT row with `via: "review_promote"` naming the
+ *  holder. Not REV_LOCK_OVERRIDDEN: that is publish_revision's override /
+ *  force (a destructive-class act); this is the ratified door (b), the
+ *  routine end of a review the drafter submitted while keeping the checkout.
+ *  The holder is re-read after the promote, so a checkout released in the
+ *  meantime is not reported (a failed re-read keeps the one read before).
+ *  Best-effort: a failure here is logged and never fails the landed publish. */
+export async function notePromoteOverCheckout(p: {
+  orgId: string; documentId: string; libraryId: string;
+  holderId: string | null; holderName: string | null;
+  actorId: string | null; actorEmail: string | null;
+  pendingId: string; previousVersionId: string | null; baseRev: string; draftLabel: string | null;
+}): Promise<{ told: boolean }> {
+  try {
+    let holderId = p.holderId;
+    let holderName = p.holderName;
+    if (!holderId) return { told: false };
+    const { data: now, error: nowErr } = await supabase.from("documents")
+      .select("checked_out_by, checked_out_by_name").eq("id", p.documentId).maybeSingle();
+    if (!nowErr && now) {
+      holderId = (now.checked_out_by as string | null) ?? null;
+      holderName = (now.checked_out_by_name as string | null) ?? holderName;
+    }
+    if (!holderId || (p.actorId && String(holderId) === String(p.actorId))) return { told: false };
+    const who = p.actorEmail || p.actorId || "Someone";
+    const draft = p.draftLabel && p.draftLabel !== p.baseRev ? ` (reviewed as ${p.draftLabel})` : "";
+    try {
+      const { getActiveEpisode, postEpisodeSystemMessage } = await import("@/lib/checkoutEpisodes");
+      const episode = await getActiveEpisode(p.documentId);
+      await postEpisodeSystemMessage({
+        orgId: p.orgId, documentId: p.documentId, episodeId: episode?.id ?? null,
+        text: `${who} published the reviewed Rev ${p.baseRev}${draft} while you have this checked out — your checkout stays open. The review's sign-offs were complete; check your work against Rev ${p.baseRev} before you publish.`,
+      });
+    } catch { /* best-effort: the notification below is the primary signal */ }
+    const { notify: notifyInApp } = await import("@/lib/inAppNotifications");
+    await notifyInApp({
+      orgId: p.orgId, userId: String(holderId), kind: "revision_published_over_checkout",
+      title: `Reviewed Rev ${p.baseRev} published while you're checked out`,
+      body: `${who} published the reviewed revision${draft}. Your checkout stays open — check your work against Rev ${p.baseRev} before you publish.`,
+      link: `/documents/${p.libraryId}?doc=${p.documentId}`, resourceType: "document", resourceId: p.documentId,
+      actorUserId: p.actorId ?? undefined, actorName: who,
+      metadata: { newVersionId: p.pendingId, newRev: p.baseRev, via: "review_promote" },
+    });
+    await logAuditAction({
+      action: "REVIEW_PROMOTED_OVER_CHECKOUT", resourceType: "document", resourceId: p.documentId,
+      orgId: p.orgId, userId: p.actorId ?? "", userEmail: p.actorEmail ?? undefined,
+      details: {
+        via: "review_promote", holderUserId: String(holderId), holderName: holderName ?? null,
+        versionId: p.pendingId, previousVersionId: p.previousVersionId, revisionLabel: p.baseRev,
+      },
+    });
+    return { told: true };
+  } catch (e) {
+    console.warn("[reviewControl] telling the checkout holder about a reviewed promote failed:", (e as Error)?.message ?? e);
+    return { told: false };
+  }
 }
 
 /** RG-12: what finalize_reviewed_promote (20261151) answered. `unavailable`:

@@ -25,6 +25,13 @@
 // both send) and says its answer. The decision is never held up: the notice
 // is sent after the publish landed, without being awaited by it. An ordinary
 // revision asks nothing.
+//
+// DCK-15 (document-control P33): when someone other than the viewer holds the
+// document checked out, the panel says so BEFORE the publish — informational:
+// a review stays finishable over a checkout (the publish guard's door (b),
+// ratified under DEC-90). The holder's checkout stays open; they are told on
+// their checkout thread and in-app, and the history records the pass
+// (finalizeReviewedRevision → notePromoteOverCheckout).
 
 import React, { useCallback, useEffect, useState } from "react";
 import { appAlert } from "@/components/providers/DialogProvider";
@@ -143,6 +150,10 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   // RG-9: the typed-name check compares against the membership display name (the server records the same).
   const signerName = (member?.displayName ?? "").trim() || (userEmail?.split("@")[0] ?? "").trim() || "user";
   const label = doc.documentNumber || doc.title || doc.name || "this document";
+  // DCK-15 (P33): someone else's checkout, said before the click.
+  const otherHolder = doc.checkedOutBy && doc.checkedOutBy !== uid
+    ? ((doc.checkedOutByName ?? "").trim() || "another user")
+    : null;
 
   // Who may SEE the in-review draft: reviewers/alternates + owner/publisher +
   // Admin/DocCtrl + explicitly-configured draft viewers. Everyone else only
@@ -339,6 +350,12 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
               <a href="/admin/libraries" className="block mt-1 font-black underline">Open library settings →</a>
             </div>
           ) : canManage && (
+            <>
+            {otherHolder && (
+              <div role="note" data-testid="review-checkout-holder" className="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-[11px] text-amber-900">
+                This document is checked out by <b>{otherHolder}</b>. Publishing the approved revision makes it current while their checkout stays open — they are told on their checkout thread and in-app, and the document&apos;s history records it.
+              </div>
+            )}
             <button
               onClick={() => void publish()}
               disabled={busy || !complete}
@@ -347,6 +364,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
             >
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUpFromLine className="w-3.5 h-3.5" />} Publish approved revision
             </button>
+            </>
           )}
           {canManage && isController && holdRefusedFor === doc.id && (
             <div data-testid="review-hold-force" className="space-y-2">
