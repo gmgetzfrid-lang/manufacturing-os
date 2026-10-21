@@ -277,8 +277,10 @@ function formatBytes(n: number | undefined): string | undefined {
  * confirms it (lib/ticketFilePrefix.ts); nothing else under that folder is.
  * The other side: an unlisted key under this ticket's own folder that a
  * request renumbered away from this number lists is that request's file, not
- * this one's — refused. A request with no restore line is vetted exactly as
- * before.
+ * this one's — refused. That check reads tickets once per UNLISTED
+ * attachment on every request, renumbered or not (a failed read is a 503);
+ * a request with no restore line makes no audit read and its own files get
+ * today's answers.
  */
 async function vetTicketAttachment(
   a: TicketAttachment,

@@ -13,8 +13,12 @@
 //     is member-writable wherever ticket_update_guard is not pasted) — and
 //     nothing else. The request KEEPING the old number cannot take, as its
 //     own, a key a request renumbered away from its number lists. A request
-//     never renumbered is tested exactly as before, with no extra read
-//     (pinned on each caller). The restore half is driven for real
+//     never renumbered makes no AUDIT read and its own files get today's
+//     answers (pinned on each caller); the workflow route does read tickets
+//     once per unlisted upload on every request for that holder check (the
+//     DF-P17 trade-off, pinned too). A RESTORE_CHUNK row the database
+//     stamped actor_kind 'server' (20261201) confirms whoever the restoring
+//     Admin is today (DF-P17 fix pass). The restore half is driven for real
 //     (apply-table on the in-memory engine), and its rows then drive the
 //     workflow route and the copy route.
 //   * ROUTE-15 — holdersFor on a review with a current routing roster names
@@ -268,6 +272,44 @@ describe("EDGE-19 — lib/ticketFilePrefix.ts: the original number comes from th
     expect(await ask()).toBe("unknown");
   });
 
+  it("restoreRenumberingConfirmed (fix pass): a row the database stamped actor_kind 'server' confirms by itself — the restoring Admin may have left; a 'member' or unstamped row still needs an active Admin writer", async () => {
+    const note = (from: string, to: string) => ({ id: B2, code: TICKET_RENUMBERED, message: "m", renumbered: { from, to, numberHeldBy: B1 } });
+    const row = (user_id: string, actor_kind?: string, notes: unknown[] = [note(OLD, "DDRT-26-0123")]) =>
+      ({ org_id: ORG, action: "RESTORE_CHUNK", user_id, ...(actor_kind ? { actor_kind } : {}), details: { table: "tickets", cleared: notes } });
+    const ask = () => restoreRenumberingConfirmed({ from: (t: string) => chain(t) }, { orgId: ORG, ticketRowId: B2, from: OLD, to: "DDRT-26-0123" });
+    state.rows.org_members = [member("eve", "Drafter"), member("gone", "Admin", ["Admin"], { status: "removed" }), member("admin-1", "Admin")];
+    // the service role's row (apply-table) whose Admin has since been removed
+    state.rows.audit_logs = [row("gone", "server")];
+    state.calls = [];
+    expect(await ask()).toBe(true);
+    expect(state.calls.filter((c) => c.table === "org_members")).toHaveLength(0); // no membership read needed
+    expect(state.calls.find((c) => c.table === "audit_logs" && c.method === "select")?.args[0]).toBe("user_id, details, actor_kind");
+    // a 'server' stamp on a row naming another pair, another row or another action confirms nothing
+    state.rows.audit_logs = [row("gone", "server", [note("KE-OTHER", "DDRT-26-0123")]), { ...row("gone", "server"), action: "RESTORE_PREVIEW" }, { ...row("gone", "server"), org_id: "o2" }];
+    expect(await ask()).toBe(false);
+    // a member's own insert is stamped 'member': a Drafter's forged row, a removed Admin's — refused; an active Admin's — as before
+    state.rows.audit_logs = [row("eve", "member")];
+    expect(await ask()).toBe(false);
+    state.rows.audit_logs = [row("gone", "member")];
+    expect(await ask()).toBe(false);
+    state.rows.audit_logs = [row("admin-1", "member")];
+    expect(await ask()).toBe(true);
+    // before 20261201 the column is absent: the read is re-sent without it and the active-Admin check decides
+    state.calls = [];
+    state.rows.audit_logs = [row("admin-1")];
+    state.errors["audit_logs.select"] = [{ code: "42703", message: "column audit_logs.actor_kind does not exist" }];
+    expect(await ask()).toBe(true);
+    expect(state.calls.filter((c) => c.table === "audit_logs" && c.method === "select").map((c) => c.args[0])).toEqual(["user_id, details, actor_kind", "user_id, details"]);
+    state.rows.audit_logs = [row("gone")];
+    state.errors["audit_logs.select"] = [{ code: "PGRST204", message: "Could not find the 'actor_kind' column of 'audit_logs' in the schema cache" }];
+    expect(await ask()).toBe(false);
+    // any other failure — or the retry failing — is 'unknown', never an admit
+    state.errors["audit_logs.select"] = [{ code: "57014", message: "canceling statement due to statement timeout" }];
+    expect(await ask()).toBe("unknown");
+    state.errors["audit_logs.select"] = [{ code: "42703", message: "column audit_logs.actor_kind does not exist" }, { message: "timeout" }];
+    expect(await ask()).toBe("unknown");
+  });
+
   it("renumberedRequestListsKey: a request renumbered AWAY from this number listing the key; a read error is 'unknown'", async () => {
     const ask = (key: string) => renumberedRequestListsKey({ from: (t: string) => chain(t) }, { orgId: ORG, number: OLD, key });
     state.rows.tickets = [
@@ -425,6 +467,32 @@ describe("EDGE-19 — the restore's rows through the workflow route's file check
     expect(ticketWrites()).toHaveLength(0);
   });
 
+  it("fix pass: where 20261201 stamps the restore's row actor_kind 'server', the files stay the request's after the restoring Admin leaves (workflow route and copy route)", async () => {
+    const r = await restoreTwoCarriers();
+    const final = (r.b2.attachments as TicketAttachment[])[0];
+    const gone = () => {
+      seed(r);
+      state.rows.audit_logs = r.audit.map((a) => ({ ...a, actor_kind: "server" }));
+      state.rows.org_members = [member("admin-1", "Admin", ["Admin"], { status: "removed" }), member("d-1", "Drafter"), member("req-1", "Requester")];
+      state.calls = [];
+    };
+    gone();
+    state.user = { id: "d-1" };
+    const res = await workflow({ ticketId: B2, actionType: "submit_final", finalAttachment: final });
+    expect(res.status, JSON.stringify(await res.clone().json())).toBe(200);
+    gone();
+    state.user = { id: "d-1", email: "d-1@x.io" };
+    state.objects[final.url] = await pdfBytes();
+    const c = await copy({ ticketId: B2, attachmentId: final.id, channel: "download", acknowledged: true, acceptUnstamped: true });
+    expect(c.status, c.status === 200 ? "" : JSON.stringify(await c.clone().json())).toBe(200);
+    // the same departed Admin with an UNSTAMPED row (written before 20261201): today's answer
+    seed(r);
+    state.rows.org_members = [member("admin-1", "Admin", ["Admin"], { status: "removed" }), member("d-1", "Drafter"), member("req-1", "Requester")];
+    state.user = { id: "d-1" };
+    const before = await workflow({ ticketId: B2, actionType: "submit_final", finalAttachment: final });
+    expect(before.status).toBe(400);
+  });
+
   it("done-when 3: the request KEEPING the old number cannot attach the renumbered request's listed file as its own; its own new upload is accepted as before", async () => {
     const r = await restoreTwoCarriers();
     seed(r, { b1: { status: "PENDING_IFC" } });
@@ -445,7 +513,7 @@ describe("EDGE-19 — the restore's rows through the workflow route's file check
     expect(auditReads()).toHaveLength(0); // the holder carries no restore line: no audit read
   });
 
-  it("REGRESSION — a request never renumbered is vetted exactly as before: its own folder only, no audit read; the renumbered-sibling read finds nothing and changes nothing", async () => {
+  it("REGRESSION — a request never renumbered gets today's answers: its own folder only, no AUDIT read; the trade-off pinned: one renumbered-sibling read per unlisted upload, which finds nothing and changes nothing, and is a 503 when it fails", async () => {
     state.rows.org_members = [member("d-1", "Drafter"), member("req-1", "Requester")];
     state.rows.tickets = [{ id: "t1", org_id: ORG, ticket_id: "REQ-1", title: "Pump iso", status: "PENDING_IFC", request_type: "ISO", unit: "U-100",
       requester_id: "req-1", requester_role: "Requester", assigned_drafter_id: "d-1", assigned_engineer_id: null,
@@ -581,11 +649,12 @@ describe("ROUTE-15 — a routed review waits on its open blocking slots' occupan
     expect(h.every((x) => x.kind === "co_reviewers" && x.part === "Requester review, QA")).toBe(true);
   });
 
-  it("names not yet read: each slot is described ('a QA reviewer'), never the requester; a slot with nobody rostered says so", () => {
-    expect(holdersFor(t).map((x) => [x.uid, x.name])).toEqual([[null, "a Engineering reviewer"], [null, "a QA reviewer"]]);
-    expect(holdersFor(t, { memberNames: new Map([["e-1", "Erin Engineer"]]) }).map((x) => x.name)).toEqual(["Erin Engineer", "a Engineering reviewer", "a QA reviewer"]);
+  it("names not yet read: each slot is described ('a reviewer for QA' — no label takes a wrong article), never the requester; a slot with nobody rostered says so", () => {
+    expect(holdersFor(t).map((x) => [x.uid, x.name])).toEqual([[null, "a reviewer for Engineering"], [null, "a reviewer for QA"]]);
+    expect(holdersFor(t, { memberNames: new Map([["e-1", "Erin Engineer"]]) }).map((x) => x.name)).toEqual(["Erin Engineer", "a reviewer for Engineering", "a reviewer for QA"]);
+    expect(holdersFor(t).map((x) => x.name).join(" ")).not.toMatch(/\ba [AEIOU]/);
     const empty = roster([slot({ label: "QA", primaries: [] })]);
-    expect(holdersFor({ ...base, status: "PENDING_REVIEW", metadata: { review_roster: empty } } as Ticket)).toEqual([{ kind: "co_reviewers", uid: null, name: "the QA reviewers", part: "QA" }]);
+    expect(holdersFor({ ...base, status: "PENDING_REVIEW", metadata: { review_roster: empty } } as Ticket)).toEqual([{ kind: "co_reviewers", uid: null, name: "the reviewers for QA", part: "QA" }]);
   });
 
   it("the waiting line and the no-actions explanation name the slots' occupants (the drafter reads them, not the requester)", () => {

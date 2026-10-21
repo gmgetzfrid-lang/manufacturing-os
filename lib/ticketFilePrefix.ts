@@ -33,21 +33,33 @@
 //     number to the restore's AUDIT row instead (restoreRenumberingConfirmed):
 //     a RESTORE_CHUNK row of this workspace whose `cleared` notes carry the
 //     TICKET_RENUMBERED note for this request row, from → to as the history
-//     line says, written by a member who may run a restore (the restore
-//     surface's entry, lib/adminSurfaces.ts — Admin). A member can insert an
-//     audit row only in their own name (audit_logs_insert), so a row written
-//     by someone outside the restore surface is not the restore's. The page's
-//     mirror (ticketFileCopyPath) reads the history line only — it picks a
-//     path; the server decides, and a refusal takes the browser path.
+//     line says, and that is the restore's own: stamped actor_kind 'server'
+//     by the database (admin-and-org 20261201 — only the service role or a
+//     definer function writes one, and no definer function writes a
+//     RESTORE_CHUNK row; a member's own insert is stamped 'member'), or —
+//     on a row with no such stamp (written before that paste, or the column
+//     absent) — written by a member who may run a restore NOW (the restore
+//     surface's entry, lib/adminSurfaces.ts — Admin, active). A member can
+//     insert an audit row only in their own name (audit_logs_insert), so an
+//     unstamped row written by someone outside the restore surface is not
+//     the restore's. The page's mirror (ticketFileCopyPath) reads the
+//     history line only — it picks a path; the server decides, and a refusal
+//     takes the browser path.
 //
-// A request never renumbered carries no such line: every caller tests it
-// exactly as before (its own number's folder), with no extra read.
+// A request never renumbered carries no such line: every caller tests ITS
+// OWN files against its own number's folder exactly as before, and none
+// reads the audit trail for it. It is not read-free, though: the workflow
+// route's check below runs on every request (see the next paragraph).
 //
 // The other side of the shared folder (EDGE-19 done-when 3): the request
 // that KEEPS the old number must not attach, as its own, a key another
 // request of the workspace lists (the renumbered request's files sit in its
 // folder) — the workflow route asks renumberedRequestListsKey before
-// admitting an unlisted key under its own folder.
+// admitting an UNLISTED key under its own folder. The holder carries no
+// marker of its own, so this is one tickets read per unlisted attachment on
+// EVERY request (renumbered or not; filtered on
+// metadata->restore_renumbered->>from, no index), answered 503 when it
+// fails — a trade-off done-when 3 needs (DEC-90 line for DF-P17).
 
 import { RESTORE_RENUMBERED_HISTORY_ACTION } from "@/lib/ticketAttention";
 import { adminSurface, adminSurfaceAllows } from "@/lib/adminSurfaces";
@@ -131,14 +143,28 @@ type Q = {
  *  same restore names it again; a handful is plenty). */
 const AUDIT_ROWS_READ = 20;
 
+/** The audit row's columns this check reads; ACTOR_KIND only where
+ *  admin-and-org 20261201 is pasted. */
+const AUDIT_COLS = "user_id, details";
+const AUDIT_COLS_WITH_KIND = "user_id, details, actor_kind";
+
+/** The column is not there yet (20261201 unpasted): Postgres 42703 on a
+ *  select, PostgREST PGRST204 / a schema-cache miss naming it. */
+function actorKindMissing(err: { code?: string; message?: string }): boolean {
+  return err.code === "42703" || err.code === "PGRST204" || /actor_kind/.test(err.message ?? "");
+}
+
 /**
  * SERVER: whether the restore's audit trail confirms that request row
  * `ticketRowId` of `orgId` was restored as `to` in place of `from` — a
  * RESTORE_CHUNK audit row of the workspace whose `cleared` notes carry the
- * TICKET_RENUMBERED note for that row with exactly that pair, written by an
- * active member the restore surface admits (Admin). "unknown" when a read
- * fails (the caller answers 503, never admits). Reads nothing for a request
- * the caller has no history line for — call it only after restoredFromNumber.
+ * TICKET_RENUMBERED note for that row with exactly that pair, and that is
+ * the restore's own: stamped actor_kind 'server' (20261201; lasts whatever
+ * becomes of the restoring Admin), else — a row with no stamp — written by
+ * a member the restore surface admits who is active NOW (Admin). "unknown"
+ * when a read fails (the caller answers 503, never admits). Reads nothing for
+ * a request the caller has no history line for — call it only after
+ * restoredFromNumber.
  */
 export async function restoreRenumberingConfirmed(
   client: PrefixClient,
@@ -146,14 +172,18 @@ export async function restoreRenumberingConfirmed(
 ): Promise<boolean | "unknown"> {
   const surface = adminSurface("restore");
   if (!surface || !input.orgId || !input.ticketRowId || !input.from || !input.to) return false;
-  const audit = await (client.from("audit_logs") as Q)
-    .select("user_id, details")
+  const read = (cols: string) => (client.from("audit_logs") as Q)
+    .select(cols)
     .eq("org_id", input.orgId)
     .eq("action", "RESTORE_CHUNK")
     // jsonb containment, sent as JSON text (the codebase's convention for a
     // jsonb filter: app/api/tickets/create/route.ts, lib/ticketKeyGate.ts).
     .contains("details", JSON.stringify({ table: "tickets", cleared: [{ code: RESTORE_RENUMBERED_NOTE_CODE, id: input.ticketRowId }] }))
     .limit(AUDIT_ROWS_READ);
+  let audit = await read(AUDIT_COLS_WITH_KIND);
+  // Before 20261201 the column is absent: read without it (every row then
+  // takes the active-Admin check below).
+  if (audit.error && actorKindMissing(audit.error)) audit = await read(AUDIT_COLS);
   if (audit.error) return "unknown";
   const writers = new Set<string>();
   for (const row of Array.isArray(audit.data) ? audit.data : []) {
@@ -164,7 +194,13 @@ export async function restoreRenumberingConfirmed(
       return !!note && note.code === RESTORE_RENUMBERED_NOTE_CODE && note.id === input.ticketRowId
         && note.renumbered?.from === input.from && note.renumbered?.to === input.to;
     });
-    if (names && typeof row.user_id === "string" && row.user_id) writers.add(row.user_id);
+    if (!names) continue;
+    // The database's stamp: the service role wrote it — the restore's own
+    // row, whoever the restoring Admin is today.
+    if (row.actor_kind === "server") return true;
+    // A member's own insert ('member') or an unstamped row: only as good as
+    // its writer's standing on the restore surface now.
+    if (typeof row.user_id === "string" && row.user_id) writers.add(row.user_id);
   }
   if (writers.size === 0) return false;
   const members = await (client.from("org_members") as Q)

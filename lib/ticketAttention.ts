@@ -213,7 +213,8 @@ const joinLabels = (labels: readonly string[]): string => labels.join(", ");
  * slot never holds the review. Null when the ticket carries no current
  * roster, or none of its slots is open and blocking — the caller then
  * answers as before. Names come from `ctx.memberNames`; a person it does not
- * name is described by their slot ("a QA reviewer", one entry per slot).
+ * name is described by their slot ("a reviewer for QA", one entry per slot —
+ * worded so no label needs an article: "a reviewer for Engineering").
  */
 function rosterHolders(
   ticket: Pick<Ticket, "status" | "metadata">,
@@ -230,7 +231,7 @@ function rosterHolders(
     const label = slot.label || slot.kind;
     const primaries = Array.isArray(slot.primaries) ? slot.primaries.filter((u) => typeof u === "string" && u) : [];
     if (primaries.length === 0) {
-      out.push({ kind: "co_reviewers", uid: null, name: `the ${label} reviewers`, part });
+      out.push({ kind: "co_reviewers", uid: null, name: `the reviewers for ${label}`, part });
       continue;
     }
     let unnamed = false;
@@ -241,7 +242,7 @@ function rosterHolders(
       seen.add(uid);
       out.push({ kind: "co_reviewers", uid, name, part });
     }
-    if (unnamed) out.push({ kind: "co_reviewers", uid: null, name: `a ${label} reviewer`, part });
+    if (unnamed) out.push({ kind: "co_reviewers", uid: null, name: `a reviewer for ${label}`, part });
   }
   return out;
 }
