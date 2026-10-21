@@ -353,7 +353,8 @@ export async function GET(req: NextRequest) {
     noticeRecordRetention: retention.days === null ? { days: null, source: "unreadable" } : retention,
     note:
       "Counts are exact for your workspace; byte figures are estimates from average row size " +
-      "(actual reclaim depends on Postgres VACUUM). Only disposable byproducts are listed — records are never eligible.",
+      "(actual reclaim depends on Postgres VACUUM). Disposable byproducts purge past the window; the record lines " +
+      "(read record notices, sent mail, not-emailed records) are kept for the notice-record retention and purge only past it.",
   });
 }
 

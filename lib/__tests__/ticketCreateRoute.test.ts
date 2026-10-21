@@ -67,6 +67,8 @@ const s = vi.hoisted(() => ({
   rpcCalls: [] as Array<{ client: "admin" | "caller"; fn: string; args: Record<string, unknown> }>,
   callerToken: "" as string,
   emailGate: null as null | ((args: Record<string, unknown>) => { data: unknown; error: Err | null }),
+  /** notifications N18: whether 20261258 is pasted (the status CHECK admits 'not_emailed'). */
+  pasted258: false,
   /** `${table}.${op}` → errors handed out one per call, in order. */
   errors: {} as Record<string, Array<Err | null>>,
   /** `${table}.${op}` → the statement RUNS (the row is written) and then this
@@ -130,9 +132,10 @@ function chain(table: string, client: "admin" | "anon" | "caller") {
     const rows = (s.tables[table] ??= []);
     if (op === "insert") {
       const list: Row[] = (Array.isArray(payload) ? payload : [payload!]).map((r) => ({ id: r.id ?? `${table}-${++s.seq}`, created_at: r.created_at ?? new Date().toISOString(), ...r }));
-      // notifications N18: this world is before 20261258 — the status CHECK
-      // refuses a not_emailed record (23514), exactly as the database does then
-      if (table === "email_notifications" && list.some((r) => r.status === "not_emailed")) {
+      // notifications N18: before 20261258 (the default world here) the status
+      // CHECK refuses a not_emailed record (23514), exactly as the database
+      // does then; after it (s.pasted258) the record is written
+      if (table === "email_notifications" && !s.pasted258 && list.some((r) => r.status === "not_emailed")) {
         return { data: null, error: { code: "23514", message: 'new row for relation "email_notifications" violates check constraint "email_notifications_status_check"' } };
       }
       // schema.sql tickets: UNIQUE(org_id, ticket_id)
@@ -385,6 +388,7 @@ beforeEach(() => {
   s.counter = new Map();
   s.rpcCalls = [];
   s.emailGate = null;
+  s.pasted258 = false;
   s.errors = {};
   s.lostReply = {};
   s.hooks = [];
@@ -740,6 +744,17 @@ describe("EDGE-1 / EDGE-12 — the email leg reads the recipient's preferences w
     await POST(req(portal({ attachments: [] })));
     expect(mail().map((m) => m.to_user_id)).toEqual([SUP2]);
     expect(s.rpcCalls.filter((c) => c.fn === "email_gate").every((c) => c.client === "admin")).toBe(true);
+  });
+
+  it("after 20261258 (notifications N18, EVID-9 dw2): the opted-out supervisor keeps the bell row, gets no queued email and leaves ONE not_emailed record; the other is queued as before", async () => {
+    s.pasted258 = true;
+    s.emailGate = (args) => ({ data: args.p_to_user !== SUP, error: null });
+    await POST(req(portal({ attachments: [] })));
+    expect(creationBell().map((n) => n.user_id).sort()).toEqual([SUP, SUP2].sort());
+    expect(creationMail().map((m) => `${m.to_user_id === SUP ? "SUP" : m.to_user_id === SUP2 ? "SUP2" : m.to_user_id}:${m.status}`).sort()).toEqual(["SUP2:queued", "SUP:not_emailed"]);
+    const rec = creationMail().find((m) => m.to_user_id === SUP)!;
+    expect((rec.metadata as Row).not_emailed).toEqual({ byTheirChoice: true, reason: "preference" });
+    expect(rec.subject).toBe(creationMail().find((m) => m.to_user_id === SUP2)!.subject);
   });
 
   it("the same (recipient, event, resource) email queued twice within 60 s lands once on the server path the route uses", async () => {

@@ -14,7 +14,11 @@
 //   * EVID-13 remainder (ruling (5)): read_at stays the recipient's own act,
 //     and a superseded notice stays a mark — both purge floors require
 //     read_at, so an alert the workflow retired unread is never purged; the
-//     census of read_at writers names each one.
+//     census of read_at writers names each one — the app's own writes (TS)
+//     AND every SQL function body / one-off migration statement that sets
+//     notifications.read_at, with the app's .rpc() callers of those functions
+//     (fix pass 2: clear_resolved_branch_alerts, 20261181, is the second
+//     system stamp — NEDGE-24's second limb).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -61,6 +65,7 @@ import {
   boundedRetentionDays, noticeRecordRetention, recordCutoff,
 } from "@/lib/noticeRetention";
 import { KIND_META } from "@/lib/notificationKinds";
+import { classifyTable } from "@/lib/storageClassify";
 
 const NOW = new Date("2026-10-21T12:00:00.000Z");
 const iso = (days: number) => new Date(NOW.getTime() - days * 86400 * 1000).toISOString();
@@ -178,6 +183,23 @@ describe("/api/admin/purge — the record lines keep the notice-record retention
     expect(db.queries.some((q) => q.kind === "delete")).toBe(false);
   });
 
+  it("fix pass 2: the plan's note and the storage page's tooltips no longer call the record lines disposable", async () => {
+    const res = await GET(new NextRequest("http://x/api/admin/purge?orgId=o1&days=90", { headers: { authorization: "Bearer t" } }));
+    const { note } = await res.json() as { note: string };
+    expect(note).not.toMatch(/records are never eligible/);
+    expect(note).toMatch(/record lines \(read record notices, sent mail, not-emailed records\) are kept for the notice-record retention/);
+    // lib/storageClassify.ts — the tooltip the storage page shows verbatim
+    const mail = classifyTable("email_notifications").reason;
+    expect(mail).not.toMatch(/disposable once sent/i);
+    expect(mail).toMatch(/sent and not-emailed rows .* kept for the notice-record retention/);
+    const bell = classifyTable("notifications").reason;
+    expect(bell).toMatch(/unread ones are never purged/);
+    expect(bell).toMatch(/read record notices .* kept for the notice-record retention/);
+    // the bucket (what the page's purge figure counts) is unchanged: a table-level estimate, as before
+    expect(classifyTable("email_notifications").category).toBe("purge");
+    expect(classifyTable("notifications").category).toBe("purge");
+  });
+
   it("REGRESSION: a subset names one line each, as before; the older bare name still selects the delivered line alone", async () => {
     await purge(30, ["email_notifications"]);
     expect(deletes("email_notifications").map((q) => q.ops.find((o) => o[1] === "status")?.[2])).toEqual(["sent"]);
@@ -207,7 +229,7 @@ describe("EVID-13 remainder (DEC-90 ruling (5)) — read_at stays the recipient'
     expect(wf).not.toMatch(/\.update\(\{\s*read_at/);
   });
 
-  it("census: every write of notifications.read_at in the app is the recipient's own session on their own rows — one named exception (NEDGE-24)", () => {
+  it("census (app code): every TS write of notifications.read_at is the recipient's own session on their own rows — one named exception (NEDGE-24 limb 1); the SQL writers are the next case", () => {
     const walk = (dir: string): string[] => readdirSync(join(ROOT, dir)).flatMap((f) => {
       const rel = join(dir, f);
       if (f === "node_modules" || f === "__tests__" || f.startsWith(".")) return [];
@@ -230,5 +252,59 @@ describe("EVID-13 remainder (DEC-90 ruling (5)) — read_at stays the recipient'
     ]);
     expect(src("app/(protected)/requests/[id]/page.tsx")).toMatch(/\.update\(\{ read_at: new Date\(\)\.toISOString\(\) \}\)\s*\n\s*\.eq\('user_id', uid\)/);
     expect(src("lib/notificationTrail.ts")).toMatch(/\.update\(\{ read_at: new Date\(\)\.toISOString\(\) \}\)\s*\n\s*\.eq\("user_id", input\.uid\)/);
+  });
+
+  // Fix pass 2 (review): a TS grep cannot see a write made inside the
+  // database. Every function's NEWEST definition (schema.sql, then the
+  // numbered migrations in order — the later CREATE OR REPLACE wins) and
+  // every statement outside a function body is scanned for an UPDATE of
+  // notifications that sets read_at; each such function's .rpc() callers in
+  // the app are named. Today that is ONE function, clear_resolved_branch_alerts
+  // (20261181, SECURITY DEFINER): resolving a revision branch stamps read_at
+  // on EVERY recipient's unread branch_open row — a system stamp on other
+  // people's rows, NEDGE-24 limb 2 (retire with metadata.superseded_at; keep
+  // the rows it stamped off the plain purge line). The one-off statement is
+  // 20261181's own backlog of the same stamp.
+  it("census (database): every SQL writer of notifications.read_at and its app callers — one function, clear_resolved_branch_alerts (NEDGE-24 limb 2)", () => {
+    const MIG = "supabase/migrations";
+    const files = ["supabase/schema.sql", ...readdirSync(join(ROOT, MIG)).filter((f) => /^\d+_.*\.sql$/.test(f)).sort().map((f) => `${MIG}/${f}`)];
+    const FN = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?"?(\w+)"?\s*\([\s\S]*?\bAS\s+\$(\w*)\$([\s\S]*?)\$\2\$/gi;
+    const SETS_READ_AT = /\bUPDATE\s+(?:public\.)?notifications\b(?:\s+(?:AS\s+)?\w+)?\s+SET\b[^;]*?\bread_at\s*=/i;
+    const newest = new Map<string, { file: string; body: string }>();
+    const oneOff: string[] = [];
+    for (const f of files) {
+      const sql = src(f).replace(/--[^\n]*/g, "");
+      let outside = sql;
+      for (const m of sql.matchAll(FN)) {
+        newest.set(m[1].toLowerCase(), { file: f, body: m[3] });
+        outside = outside.replace(m[0], "");
+      }
+      if (SETS_READ_AT.test(outside)) oneOff.push(f);
+    }
+    expect(newest.size).toBeGreaterThan(100);   // the scan reads the real function set
+    const sqlWriters = [...newest].filter(([, v]) => SETS_READ_AT.test(v.body)).map(([name, v]) => `${name} @ ${v.file}`).sort();
+    expect(sqlWriters).toEqual([
+      "clear_resolved_branch_alerts @ supabase/migrations/20261181_notif_roundG_producers_free.sql", // NEDGE-24 limb 2 — every recipient's branch_open row
+    ]);
+    // its body is a system stamp: every recipient's row in the org, no user_id filter
+    const body = newest.get("clear_resolved_branch_alerts")!.body;
+    expect(body).toMatch(/n\.kind = 'branch_open'/);
+    expect(body).not.toMatch(/user_id\s*=/);
+    expect(oneOff).toEqual(["supabase/migrations/20261181_notif_roundG_producers_free.sql"]); // its one-time backlog of the same stamp
+    // the other SQL files beside the sequence set no read_at either
+    for (const f of readdirSync(join(ROOT, "supabase")).filter((x) => x.endsWith(".sql") && x !== "schema.sql")) {
+      expect(SETS_READ_AT.test(src(`supabase/${f}`).replace(/--[^\n]*/g, "")), f).toBe(false);
+    }
+    // the app's callers of each SQL writer
+    const walk = (dir: string): string[] => readdirSync(join(ROOT, dir)).flatMap((f) => {
+      const rel = join(dir, f);
+      if (f === "node_modules" || f === "__tests__" || f.startsWith(".")) return [];
+      return statSync(join(ROOT, rel)).isDirectory() ? walk(rel) : /\.tsx?$/.test(f) ? [rel] : [];
+    });
+    const appFiles = ["app", "lib", "hooks", "components"].flatMap(walk);
+    const callers = [...newest].filter(([, v]) => SETS_READ_AT.test(v.body)).flatMap(([name]) => appFiles
+      .filter((f) => new RegExp(`\\.rpc\\(\\s*["'\`]${name}["'\`]`).test(src(f)))
+      .map((f) => `${name} <- ${relative(ROOT, join(ROOT, f))}`)).sort();
+    expect(callers).toEqual(["clear_resolved_branch_alerts <- lib/branches.ts"]); // resolveBranch, any active member resolving a branch
   });
 });
