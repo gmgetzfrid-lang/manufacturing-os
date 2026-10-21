@@ -923,7 +923,7 @@ hooks/useTicketNotifications.ts:188-193 —
 ## ROUTE-15 · On a routed review, "waiting on" and the no-actions explanation name the requester, while the roster panel on the same page names the actual slots
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** 2026-10-21, the integrator at the DF-P5 merge (DEC-31): drafting-flow DF-P17 RENUMBERED REQUEST FILES (with its routed waiting-on line; `lib/ticketAttention.ts` and the page's waiting-on read only). Earlier: proposed. Owner: the next holder of `lib/ticketAttention.ts` (notifications N11, or a DF-P14 follow-on; the integrator assigns, under `DEC-31`: a remainder gets a new id and an owner). Opened by drafting-flow DF-P5 ROSTER's review fix pass 3, 2026-10-21, from the reviewer's minor 4. `lib/ticketAttention.ts` is not DF-P5's file, so it is recorded, not edited.
 - **Verification:** CONFIRMED (by reading the branch head of `fleet/DF-P5-roster`; not exercised in a browser)
 - **Independently verified:** — (`author`: the DF-P5 fix-pass-3 reviewer's finding, recorded by the fixer; not yet challenged by a second party).
@@ -943,6 +943,15 @@ hooks/useTicketNotifications.ts:188-193 —
 
 - A routed review's "waiting on" line and the no-actions explanation name the open slots' occupants, never the requester unless the requester occupies an open slot.
 - An unconfigured ticket's holders are unchanged (REGRESSION).
+
+
+**Resolution (2026-10-21, drafting-flow Round G).** DF-P17 (with its routed waiting-on line; ruled under DEC-90 — ruling (2) of the brief). Reproduced on the base `b96299d` first: `holdersFor` on a `PENDING_REVIEW` ticket carrying a current roster of {Engineering, QA} returned the requester, and `explainNoActions` for the drafter read "this step is the requester's (waiting on <requester> …)". What landed, `lib/ticketAttention.ts`: `rosterHolders` (`:218`) — when `lib/workflow.ts` `currentRoster(ticket)` is set, the holders are the primaries of the roster's OPEN BLOCKING slots (`status === "open"` and `slotBlocks` — the roster panel's own `waitingSlotLabels` rule; a notify-only or satisfied slot never holds the review), one holder per person (named once even when in two slots), `kind: "co_reviewers"`, `part` = the labels of the slots still open ("Engineering, QA"), names from the new `HoldersContext.memberNames` (uid → display name); a person it does not name is described by their slot ("a QA reviewer", one entry per slot), and a slot with nobody rostered as "the QA reviewers". `holdersFor` (`:275`) asks it first and otherwise answers exactly as before (a closed roster, another version, no open blocking slot, any other status, no metadata). `rosterHolderUids` (`:253`) lists the uids the page needs names for. The request page changes only the waiting-on read (`app/(protected)/requests/[id]/page.tsx:1498-1512`: the roster occupants' names read through RLS, `org_members` `uid, display_name, email` — the roster panel's read — and `:2361` hands them to `holdersFor`); `explainNoActions` reads the same holders (a pool kind: "this step is not yours (waiting on Erin Engineer, Eli Eng or Quinn QA: needs review)"). Tests: `lib/__tests__/dfRoundG_P17_renumberedFilesRoutedWaiting.test.ts` "ROUTE-15 — …" (occupants named, requester only when in an open slot, notify-only and satisfied slots never holders, unread names described, the no-actions sentence and the page's line), and the REGRESSION pin: for EVERY status the unconfigured ticket's holders are the pinned pre-DF-P17 values, unchanged by metadata without a roster or by a roster on a status other than review; the departed / absent requester pools and the named queue unchanged; the page's DF-P6 hunks (DeclarationCard mount, `reviewModelFieldsFromRow` spread, `engineerPickAvailable` spread, the override / not-required display, `declarationCheck`) pinned in place.
+
+**Done-when.**
+- ✓ A routed review's "waiting on" line and the no-actions explanation name the open slots' occupants, never the requester unless the requester occupies an open slot.
+- ✓ An unconfigured ticket's holders are unchanged (REGRESSION — pinned across every status).
+
+**Scope / residual.** The waiting line shows the first holder's `part`; every routed holder carries the same part (all open slot labels), so the line names the slots, not which person fills which — the roster panel just below lists each slot's people. Until the names arrive (or if their read fails) the occupants are described by slot, never named wrongly. The badge / inbox (`isActionRequired`) were already engine-derived and are untouched.
 
 ---
 

@@ -13,6 +13,7 @@ import {
 import { loadPickerMembers } from "@/lib/ticketPickerMembers";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { isSafeStorageKey } from "@/lib/storageKey";
+import { ticketFolder, underFolder, restoredFromNumber, restoreRenumberingConfirmed, renumberedRequestListsKey } from "@/lib/ticketFilePrefix";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { plainMentions, wrapEmailBody } from "@/lib/emailRender";
 import { flaggedRequestTypes } from "@/lib/requestTypes";
@@ -268,6 +269,16 @@ function formatBytes(n: number | undefined): string | undefined {
  * uploaded it, when, its size (from storage when it answers), its status and
  * its id (SM-15: a server-minted UUID) are stamped here; the client's claims
  * about them are not kept.
+ *
+ * drafting-flow EDGE-19 (DF-P17, DEC-90): a request the restore brought back
+ * under a fresh number keeps its files under its ORIGINAL number's folder
+ * (never moved). A file this ticket already LISTS there is admitted when the
+ * restore's own history line names that number and the restore's audit row
+ * confirms it (lib/ticketFilePrefix.ts); nothing else under that folder is.
+ * The other side: an unlisted key under this ticket's own folder that a
+ * request renumbered away from this number lists is that request's file, not
+ * this one's — refused. A request with no restore line is vetted exactly as
+ * before.
  */
 async function vetTicketAttachment(
   a: TicketAttachment,
@@ -277,12 +288,28 @@ async function vetTicketAttachment(
     ticketNumber: string;
     listed: TicketAttachment[];
     uploadedBy: string;
+    /** EDGE-19 (DF-P17): the ticket's row id and history — the restore's
+     *  renumbering line is read from it. */
+    ticketRowId: string;
+    history: unknown;
   },
 ): Promise<{ ok: true; attachment: TicketAttachment; etag: string | null } | { ok: false; status: number; error: string }> {
   const url = typeof a?.url === "string" ? a.url : "";
   const name = typeof a?.name === "string" ? a.name.trim().slice(0, 255) : "";
-  const prefix = `orgs/${ctx.orgId}/tickets/${ctx.ticketNumber}/`;
-  if (!url || !name || !ctx.ticketNumber || !isSafeStorageKey(url) || !url.startsWith(prefix) || url.length <= prefix.length) {
+  const prefix = ticketFolder(ctx.orgId, ctx.ticketNumber);
+  const underOwn = underFolder(url, prefix);
+  // EDGE-19: a LISTED file under the original number's folder of a request
+  // the restore renumbered, the number confirmed by the restore's audit row.
+  let underOriginal = false;
+  if (url && name && ctx.ticketNumber && isSafeStorageKey(url) && !underOwn && ctx.listed.some((x) => x?.url === url)) {
+    const from = restoredFromNumber({ ticketNumber: ctx.ticketNumber, history: ctx.history });
+    if (from && underFolder(url, ticketFolder(ctx.orgId, from))) {
+      const confirmed = await restoreRenumberingConfirmed(supabaseAdmin, { orgId: ctx.orgId, ticketRowId: ctx.ticketRowId, from, to: ctx.ticketNumber });
+      if (confirmed === "unknown") return { ok: false, status: 503, error: "Couldn't confirm where this request's files are stored — try again in a moment" };
+      underOriginal = confirmed;
+    }
+  }
+  if (!url || !name || !ctx.ticketNumber || !isSafeStorageKey(url) || !(underOwn || underOriginal)) {
     return { ok: false, status: 400, error: "That file is not stored under this request — upload it to the request and try again" };
   }
   const type = String(a.type ?? "");
@@ -299,6 +326,13 @@ async function vetTicketAttachment(
   let size: string | undefined = alreadyListed?.size ?? undefined;
   let etag: string | null = null;
   if (!alreadyListed) {
+    // EDGE-19 done-when 3: the folder may also hold the files of a request
+    // the restore renumbered away from this number — never this ticket's.
+    const elsewhere = await renumberedRequestListsKey(supabaseAdmin, { orgId: ctx.orgId, number: ctx.ticketNumber, key: url });
+    if (elsewhere === "unknown") return { ok: false, status: 503, error: "The file could not be verified right now — try again in a moment" };
+    if (elsewhere) {
+      return { ok: false, status: 400, error: "That file belongs to another request (one restored under a new number from this request's number) — upload it to this request and try again" };
+    }
     try {
       const head = await r2.send(new HeadObjectCommand({ Bucket: R2_BUCKET, Key: url }));
       size = formatBytes((head as { ContentLength?: number }).ContentLength) ?? size;
@@ -671,7 +705,7 @@ export async function POST(req: NextRequest) {
     if (!a) continue;
     const res = await vetTicketAttachment(a, {
       slot, orgId: ticket.orgId, ticketNumber: ticket.ticketId, listed: ticket.attachments ?? [],
-      uploadedBy: callerEmail,
+      uploadedBy: callerEmail, ticketRowId: body.ticketId, history: ticket.history,
     });
     if (!res.ok) return NextResponse.json({ error: res.error }, { status: res.status });
     vetted[slot] = res.attachment;
