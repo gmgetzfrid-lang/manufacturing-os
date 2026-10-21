@@ -147,6 +147,7 @@ describe.skipIf(skip !== null)("N18 — the delivery record on email_notificatio
     expect(asCaller(db, SERVICE, call("delayed", "2026-10-21T09:59:00Z", "'mailbox busy'"))).toEqual({ ok: true, rows: 1 });
     expect(asCaller(db, SERVICE, call("delivered", "2026-10-21T10:00:00Z"))).toEqual({ ok: true, rows: 1 });
     const read = () => one(`SELECT status || '|' || delivery_status || '|' || COALESCE(to_char(delivered_at AT TIME ZONE 'UTC', 'HH24:MI'), '-') || '|' || COALESCE(to_char(bounced_at AT TIME ZONE 'UTC', 'HH24:MI'), '-') || '|' || COALESCE(delivery_detail, '-') FROM email_notifications WHERE id = '${id}'`);
+    // a delay's note is not carried onto the delivered row (unchanged)
     expect(read()).toBe("sent|delivered|10:00|-|-");
     // a redelivered report changes nothing; a later delay never weakens it
     expect(asCaller(db, SERVICE, call("delivered", "2026-10-21T10:05:00Z"))).toEqual({ ok: true, rows: 1 });
@@ -156,6 +157,18 @@ describe.skipIf(skip !== null)("N18 — the delivery record on email_notificatio
     expect(asCaller(db, SERVICE, call("bounced", "2026-10-21T10:10:00Z", "'mailbox full'"))).toEqual({ ok: true, rows: 1 });
     expect(asCaller(db, SERVICE, call("bounced", "2026-10-21T10:20:00Z", "'again'"))).toEqual({ ok: true, rows: 1 });
     expect(read()).toBe("sent|bounced|10:00|10:10|mailbox full");
+    // a complaint is stronger still; arriving with no detail, it keeps the bounce's reason
+    expect(asCaller(db, SERVICE, call("complained", "2026-10-21T10:30:00Z"))).toEqual({ ok: true, rows: 1 });
+    expect(read()).toBe("sent|complained|10:00|10:10|mailbox full");
+    expect(one(`SELECT to_char(complained_at AT TIME ZONE 'UTC', 'HH24:MI') FROM email_notifications WHERE id = '${id}'`)).toBe("10:30");
+    // a provider failure's reason is kept the same way
+    const id2 = randomUUID();
+    const msg2 = `re_${id2.slice(0, 8)}`;
+    admin(db, `INSERT INTO email_notifications (id, org_id, to_user_id, to_email, subject, body_text, event_type, status, sent_at, provider_message_id)
+               VALUES ('${id2}', '${orgId}', '${m.allOn.uid}', '${m.allOn.email}', 'Second', 'b', 'assignment', 'sent', now(), '${msg2}')`);
+    expect(asCaller(db, SERVICE, `SELECT record_email_delivery('${msg2}', 'failed', now(), 'suppressed address')`)).toEqual({ ok: true, rows: 1 });
+    expect(asCaller(db, SERVICE, `SELECT record_email_delivery('${msg2}', 'complained', now(), NULL)`)).toEqual({ ok: true, rows: 1 });
+    expect(one(`SELECT delivery_status || '|' || COALESCE(delivery_detail, '-') FROM email_notifications WHERE id = '${id2}'`)).toBe("complained|suppressed address");
     // an unknown outcome is refused
     expect(asCaller(db, SERVICE, `SELECT record_email_delivery('${msg}', 'opened', now(), NULL)`)).toMatchObject({ ok: false, code: "22023" });
   });

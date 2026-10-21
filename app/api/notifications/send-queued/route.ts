@@ -16,6 +16,7 @@ import { wrapEmailBody } from "@/lib/emailRender";
 import { addressIsOwn, unsubscribeUrl } from "@/lib/unsubscribeToken";
 import { PREFERENCE_EXEMPT_EVENT_TYPES } from "@/lib/notificationPrefs";
 import { providerMessageIdOf } from "@/lib/resendWebhook";
+import { providerIdColumnLatch } from "@/lib/deliveryRecordLatch";
 
 // A full batch is up to MAX_BATCH sequential-ish Resend round-trips — far
 // beyond the platform's default ~10s function budget. Without this, the
@@ -37,6 +38,14 @@ const MAX_ATTEMPTS = 5;
 /** Said once per process: the provider's id could not be kept beside 'sent'
  *  (before 20261258 is pasted). */
 let providerIdUnwritableLogged = false;
+
+/** The refusal 20261258's absence gives the 'sent' update carrying the
+ *  provider's id: PostgREST's schema-cache miss (PGRST204) or Postgres's
+ *  undefined column (42703), naming provider_message_id. Anything else is
+ *  not the missing paste and latches nothing. */
+function providerIdColumnMissing(error: { code?: string; message?: string }): boolean {
+  return (error.code === "PGRST204" || error.code === "42703") && /provider_message_id/.test(error.message ?? "");
+}
 
 interface EmailNotificationRow {
   id: string;
@@ -317,23 +326,36 @@ export async function POST(req: Request) {
       // update; when the id cannot be written with it (before 20261258 the
       // column is missing — PGRST204 / 42703 — or any other refusal), today's
       // update is sent again without the id, so the row lands exactly as it
-      // did before and is never left 'sending' to be mailed twice.
-      const providerId = await providerMessageIdOf(resp);
+      // did before and is never left 'sending' to be mailed twice. Once the
+      // column is known missing (PGRST204 / 42703 naming provider_message_id
+      // — lib/deliveryRecordLatch.ts), today's update is sent directly for
+      // the next DELIVERY_RECORD_REPROBE_MS (the answer body is not read: as
+      // before N18), so the failing update is paid once per process per
+      // window, not once per send.
+      const providerId = providerIdColumnLatch.held() ? null : await providerMessageIdOf(resp);
       const sentPatch = {
         status: "sent",
         sent_at: new Date().toISOString(),
         attempt_count: (row.attempt_count || 0) + 1,
       };
-      const { error: sentErr } = await supabase
-        .from("email_notifications")
-        .update(providerId ? { ...sentPatch, provider_message_id: providerId } : sentPatch)
-        .eq("id", row.id);
-      if (sentErr && providerId) {
-        if (!providerIdUnwritableLogged) {
-          providerIdUnwritableLogged = true;
-          console.warn(`[send-queued] the provider's message id was not kept (${sentErr.code ?? "?"}: ${sentErr.message}) — delivery reports cannot be matched until 20261258 is pasted; the email is recorded sent as before`);
-        }
+      if (!providerId) {
         await supabase.from("email_notifications").update(sentPatch).eq("id", row.id);
+      } else {
+        const idErr = await providerIdColumnLatch.write<{ code?: string; message?: string } | null | "skipped">(
+          async () => (await supabase
+            .from("email_notifications")
+            .update({ ...sentPatch, provider_message_id: providerId })
+            .eq("id", row.id)).error,
+          (e) => (e == null ? "ok" : e !== "skipped" && providerIdColumnMissing(e) ? "refused" : "other"),
+          () => "skipped",
+        );
+        if (idErr) {
+          if (idErr !== "skipped" && !providerIdUnwritableLogged) {
+            providerIdUnwritableLogged = true;
+            console.warn(`[send-queued] the provider's message id was not kept (${idErr.code ?? "?"}: ${idErr.message}) — delivery reports cannot be matched until 20261258 is pasted; the email is recorded sent as before`);
+          }
+          await supabase.from("email_notifications").update(sentPatch).eq("id", row.id);
+        }
       }
       sent++;
     } catch (e) {

@@ -8,6 +8,7 @@
 // preference row on that same client (emailAllowedByPrefs).
 
 import { describe, it, expect, beforeEach } from "vitest";
+import { resetDeliveryRecordLatches } from "@/lib/deliveryRecordLatch";
 import { tellIssuerOfReceipt } from "@/lib/transmittalReceiptNotice";
 
 type Row = Record<string, unknown>;
@@ -53,7 +54,7 @@ const input = {
 const bells = () => db.inserts.filter((i) => i.table === "notifications");
 const emails = () => db.inserts.filter((i) => i.table === "email_notifications");
 
-beforeEach(() => { db.prefs = null; db.gate = { data: true }; db.inserts = []; db.gateCalls = []; db.pasted258 = false; });
+beforeEach(() => { db.prefs = null; db.gate = { data: true }; db.inserts = []; db.gateCalls = []; db.pasted258 = false; resetDeliveryRecordLatches(); });
 
 describe("DELIV-15 dw3 — the issuer's email preference stops the receipt email, never the bell row", () => {
   it("email_gate says no (the issuer turned email off): the bell row is written, no email row", async () => {

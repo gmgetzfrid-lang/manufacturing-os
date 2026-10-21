@@ -18,6 +18,7 @@
 //   * with no opt-outs, nothing changes and no record is written.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { resetDeliveryRecordLatches } from "@/lib/deliveryRecordLatch";
 import { NextRequest } from "next/server";
 import { newFakeDb, makeFakeSupabase, type FakeDb, type Row } from "./helpers/fakeSupabase";
 
@@ -61,6 +62,7 @@ beforeEach(() => {
   s.db = newFakeDb();
   s.bells = [];
   s.pasted258 = false;
+  resetDeliveryRecordLatches();
   s.off = new Set();
   s.gateCalls = [];
   s.db.tables.orgs = [{ id: ORG, name: "Acme Refining" }];

@@ -161,13 +161,16 @@ BEGIN
   END IF;
 
   -- The first time of each outcome is kept; the strongest outcome wins, so a
-  -- redelivered or out-of-order report changes nothing it should not.
+  -- redelivered or out-of-order report changes nothing it should not. A
+  -- stronger outcome that carries no detail keeps a refusal's reason (a
+  -- complaint after a bounce never erases the bounce's reason); a delay's
+  -- note is not carried onto a delivered row.
   UPDATE email_notifications e
      SET delivered_at = CASE WHEN p_outcome = 'delivered' THEN COALESCE(e.delivered_at, v_at) ELSE e.delivered_at END,
          bounced_at = CASE WHEN p_outcome = 'bounced' THEN COALESCE(e.bounced_at, v_at) ELSE e.bounced_at END,
          complained_at = CASE WHEN p_outcome = 'complained' THEN COALESCE(e.complained_at, v_at) ELSE e.complained_at END,
          delivery_detail = CASE WHEN v_rank > CASE e.delivery_status WHEN 'delayed' THEN 1 WHEN 'delivered' THEN 2 WHEN 'failed' THEN 3 WHEN 'bounced' THEN 3 WHEN 'complained' THEN 4 ELSE 0 END
-                                THEN left(p_detail, 500) ELSE e.delivery_detail END,
+                                THEN COALESCE(left(p_detail, 500), CASE WHEN e.delivery_status IN ('bounced', 'failed') THEN e.delivery_detail END) ELSE e.delivery_detail END,
          delivery_status = CASE WHEN v_rank > CASE e.delivery_status WHEN 'delayed' THEN 1 WHEN 'delivered' THEN 2 WHEN 'failed' THEN 3 WHEN 'bounced' THEN 3 WHEN 'complained' THEN 4 ELSE 0 END
                                 THEN p_outcome ELSE e.delivery_status END,
          delivery_updated_at = now()

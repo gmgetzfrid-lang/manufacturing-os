@@ -6,6 +6,7 @@
 // silently mis-routes notifications.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { resetDeliveryRecordLatches, DELIVERY_RECORD_REPROBE_MS } from "@/lib/deliveryRecordLatch";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -49,6 +50,8 @@ const world = vi.hoisted(() => ({
    *  here, so every case above it pins today's path) the status CHECK
    *  refuses a not_emailed row with 23514, exactly as the database does. */
   pasted258: false,
+  /** Every not_emailed insert tried (refused or not). */
+  notEmailedTries: 0,
 }));
 
 vi.mock("@/lib/supabase", () => {
@@ -103,6 +106,7 @@ vi.mock("@/lib/supabase", () => {
       then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) =>
         Promise.resolve({ data: run(), error: null }).then(res, rej),
       insert: async (row: Row) => {
+        if (row.status === "not_emailed") world.notEmailedTries++;
         if (world.insertError) return { data: null, error: world.insertError };
         if (row.status === "not_emailed" && !world.pasted258) {
           return { data: null, error: { code: "23514", message: 'new row for relation "email_notifications" violates check constraint "email_notifications_status_check"' } };
@@ -264,6 +268,8 @@ beforeEach(() => {
   world.insertError = null;
   world.sessionThrows = false;
   world.pasted258 = false;
+  world.notEmailedTries = 0;
+  resetDeliveryRecordLatches();
   warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   err = vi.spyOn(console, "error").mockImplementation(() => undefined);
 });
@@ -664,6 +670,79 @@ describe("N18 — 'not emailed by their choice' is recorded, never sent", () => 
     expect(err).not.toHaveBeenCalled();
     const said = info.mock.calls.filter((c: unknown[]) => /needs migration 20261258/.test(String(c[0])));
     expect(said.length).toBeLessThanOrEqual(1);
+  });
+
+  it("BEFORE 20261258, many opted-out recipients: ONE refused record insert and ONE second ask per process — after that neither is made; who is emailed and what is queued are unchanged", async () => {
+    const E = "e0000000-0000-4000-8000-00000000000e";
+    setPrefs(B, { email_enabled: false });
+    setPrefs(C, { email_on_mention: false });
+    setPrefs(E, { digest_frequency: "never" });
+    // the first opted-out recipient pays today's cost once: the gate, the second ask, the refused insert
+    await expect(queueEmail(mail())).resolves.toBe("suppressed");
+    expect(world.rpcCalls.map((c) => c.args.p_resource_id)).toEqual([DOC1, null]);
+    expect(world.notEmailedTries).toBe(1);
+    // every later one: the gate alone — no second ask, no insert
+    await expect(queueEmail(mail({ toUserId: C, toEmail: "c@example.test" }))).resolves.toBe("suppressed");
+    await expect(queueEmail(mail({ toUserId: E, toEmail: "e@example.test", resourceId: undefined, resourceType: undefined }))).resolves.toBe("suppressed");
+    expect(world.rpcCalls.map((c) => c.args.p_resource_id)).toEqual([DOC1, null, DOC1, null]);
+    expect(world.notEmailedTries).toBe(1);
+    // the person who wants the email gets it, exactly as before; a repeat of it still writes nothing
+    await expect(queueEmail(mail({ toUserId: U2, toEmail: "u2@example.test" }))).resolves.toBe("queued");
+    await queueEmail(mail({ toUserId: U2, toEmail: "u2@example.test" }));
+    expect(world.emails).toHaveLength(1);
+    expect(queued()[0]).toMatchObject({ to_user_id: U2, to_email: "u2@example.test", subject: "Subject", body_text: "Body", resource_id: DOC1, event_type: "comment_mention", status: "queued" });
+    expect(err).not.toHaveBeenCalled();
+  });
+
+  it("BEFORE 20261258, a burst queued at once (as emit() does): still ONE refused record insert; after the paste the same burst records every one", async () => {
+    const E = "e0000000-0000-4000-8000-00000000000e";
+    for (const u of [B, C, E]) setPrefs(u, { email_enabled: false });
+    const burst = () => Promise.all([B, C, E, U2].map((u) => queueEmail(mail({ toUserId: u, toEmail: `${u.slice(0, 2)}@example.test` }))));
+    expect(await burst()).toEqual(["suppressed", "suppressed", "suppressed", "queued"]);
+    expect(world.notEmailedTries).toBe(1);
+    expect(world.rpcCalls.filter((c) => c.args.p_resource_id === null)).toHaveLength(1);
+    expect(queued().map((e) => e.to_user_id)).toEqual([U2]);
+    // a fresh process after the paste
+    resetDeliveryRecordLatches();
+    world.pasted258 = true;
+    world.emails.length = 0;
+    world.notEmailedTries = 0;
+    expect(await burst()).toEqual(["not_emailed", "not_emailed", "not_emailed", "queued"]);
+    expect(world.notEmailedTries).toBe(3);
+    expect(notEmailed().map((e) => e.to_user_id).sort()).toEqual([B, C, E].sort());
+    expect(queued().map((e) => e.to_user_id)).toEqual([U2]);
+  });
+
+  it("the latch is not forever: past DELIVERY_RECORD_REPROBE_MS the record is tried again, and once 20261258 is pasted it lands", async () => {
+    setPrefs(B, { email_enabled: false });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-21T09:00:00Z"));
+      await expect(queueEmail(mail())).resolves.toBe("suppressed");
+      vi.setSystemTime(new Date(Date.parse("2026-10-21T09:00:00Z") + DELIVERY_RECORD_REPROBE_MS - 1000));
+      await expect(queueEmail(mail({ resourceId: DOC2 }))).resolves.toBe("suppressed");
+      expect(world.notEmailedTries).toBe(1);
+      world.pasted258 = true;
+      vi.setSystemTime(new Date(Date.parse("2026-10-21T09:00:00Z") + DELIVERY_RECORD_REPROBE_MS + 1000));
+      await expect(queueEmail(mail())).resolves.toBe("not_emailed");
+      await expect(queueEmail(mail({ resourceId: DOC2 }))).resolves.toBe("not_emailed");
+      expect(world.notEmailedTries).toBe(3);
+      expect(notEmailed().map((e) => e.resource_id)).toEqual([DOC1, DOC2]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("AFTER 20261258 (no refusal): every opted-out recipient is asked twice and recorded, exactly as before the latch existed", async () => {
+    world.pasted258 = true;
+    setPrefs(B, { email_enabled: false });
+    setPrefs(C, { email_on_mention: false });
+    await expect(queueEmail(mail())).resolves.toBe("not_emailed");
+    await expect(queueEmail(mail({ toUserId: C, toEmail: "c@example.test" }))).resolves.toBe("not_emailed");
+    await expect(queueEmail(mail({ toUserId: B, resourceId: DOC2 }))).resolves.toBe("not_emailed");
+    expect(world.rpcCalls.map((c) => c.args.p_resource_id)).toEqual([DOC1, null, DOC1, null, DOC2, null]);
+    expect(world.notEmailedTries).toBe(3);
+    expect(notEmailed().map((e) => e.to_user_id)).toEqual([B, C, B]);
   });
 
   it("the server path (service role) records it too, through the same gate", async () => {

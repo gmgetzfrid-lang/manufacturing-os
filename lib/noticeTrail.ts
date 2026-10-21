@@ -25,7 +25,7 @@
 //
 // Works before and after every paste it reads: without 20261258 the email
 // leg reads today's columns (42703 / PGRST204 — said in `notes`); without
-// 20261255 the request leg is absent (42P01 / PGRST205 — said). A leg that
+// 20261255 the request leg is absent (42P01 / PGRST205 — said in `notes`). A leg that
 // fails otherwise is reported unavailable, never shown as "nothing".
 //
 // WHO MAY ASK is the route's to decide (app/api/notifications/trail): the
@@ -76,7 +76,15 @@ export interface NoticeTrail {
   summary: {
     toldInApp: number;
     opened: boolean;
-    emailed: number;
+    /** Email rows attempted for this item: queued, retrying, dead-lettered
+     *  (failed), handed to the provider (sent) and every provider outcome,
+     *  refusals included (bounced, provider_failed). Not a not-emailed record
+     *  and not a row an earlier build parked. Says nothing about arrival. */
+    emailAttempted: number;
+    /** Email rows handed to the provider and not refused by it: sent,
+     *  delivered, delayed, complained (a complaint means it arrived). Never a
+     *  queued, retrying, dead-lettered, bounced or provider-failed row. */
+    emailReached: number;
     /** The strongest email fact: delivered > sent > queued; null when none. */
     bestEmail: "delivered" | "sent" | "queued" | null;
     bounced: boolean;
@@ -87,7 +95,10 @@ export interface NoticeTrail {
     emailNeverAttempted: boolean;
     /** The person's first recorded act on the item at or after the first notice. */
     actedAt: string | null;
-    /** Told, never opened, never acted on. */
+    /** Told (a notice in the app, or an email that reached the provider and
+     *  was not refused — `emailReached`), never opened, never acted on. An
+     *  email that never left (queued, retrying, dead-lettered) or was refused
+     *  (bounced, provider_failed) is not "told". */
     neverResponded: boolean;
   };
   legs: { bell: LegState; email: LegState; requestRecord: LegState; acted: LegState };
@@ -211,7 +222,10 @@ export async function noticeTrailFor(client: unknown, input: { orgId: string; us
     legs.requestRecord = "absent";
   } else {
     const rec = await read("ticket_notice_events", "id, kind, created_at, details, notification_id", [["org_id", orgId], ["recipient", userId], ["ticket_id", resourceId]]);
-    if (rec.error && isMissingSchemaError({ message: rec.error.message ?? "", code: rec.error.code })) legs.requestRecord = "absent";
+    if (rec.error && isMissingSchemaError({ message: rec.error.message ?? "", code: rec.error.code })) {
+      legs.requestRecord = "absent";
+      notes.push("The request's own notice record is not installed yet (migration 20261255 is not applied).");
+    }
     else if (rec.error) { legs.requestRecord = "unavailable"; notes.push(`The request's notice record could not be read: ${rec.error.message ?? "error"}.`); }
     else for (const r of (rec.data as Row[] | null) ?? []) entries.push(requestEntry(r));
   }
@@ -237,6 +251,8 @@ export async function noticeTrailFor(client: unknown, input: { orgId: string; us
   const bells = entries.filter((e) => e.channel === "bell");
   const mails = entries.filter((e) => e.channel === "email");
   const sentish = mails.filter((m) => m.state !== "not_emailed_by_choice" && m.state !== "parked");
+  // Reached: handed to the provider and not refused by it.
+  const reached = mails.filter((m) => m.state === "sent" || m.state === "delivered" || m.state === "delayed" || m.state === "complained").length;
   const bestEmail = sentish.some((m) => m.state === "delivered") ? "delivered"
     : sentish.some((m) => m.state === "sent" || m.state === "delayed" || m.state === "complained") ? "sent"
       : sentish.some((m) => m.state === "queued" || m.state === "retrying") ? "queued" : null;
@@ -252,13 +268,14 @@ export async function noticeTrailFor(client: unknown, input: { orgId: string; us
     summary: {
       toldInApp,
       opened,
-      emailed: sentish.length,
+      emailAttempted: sentish.length,
+      emailReached: reached,
       bestEmail,
       bounced: mails.some((m) => m.state === "bounced"),
       notEmailedByChoice,
       emailNeverAttempted: legs.email === "read" && mails.length === 0 && !entries.some((e) => e.channel === "request_record" && e.kind === "not_emailed" && e.byTheirChoice === true),
       actedAt,
-      neverResponded: (toldInApp > 0 || sentish.length > 0) && !opened && actedAt === null && legs.acted === "read",
+      neverResponded: (toldInApp > 0 || reached > 0) && !opened && actedAt === null && legs.acted === "read",
     },
     legs,
     notes,

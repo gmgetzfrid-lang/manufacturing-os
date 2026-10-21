@@ -22,6 +22,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
 import { resetState, type MemoryState } from "./helpers/memoryDb";
+import { resetDeliveryRecordLatches, DELIVERY_RECORD_REPROBE_MS } from "@/lib/deliveryRecordLatch";
 
 const h = vi.hoisted(() => {
   process.env.NEXT_PUBLIC_SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "http://supabase.local";
@@ -287,6 +288,7 @@ describe("the drain keeps the provider's id beside 'sent'; nothing it sends chan
   let answer = '{"id":"re_123"}';
   beforeEach(() => {
     resetState(h.state);
+    resetDeliveryRecordLatches();
     h.idColumnMissing = false;
     h.refusedUpdates = [];
     sends = [];
@@ -327,6 +329,68 @@ describe("the drain keeps the provider's id beside 'sent'; nothing it sends chan
     expect(row("e1")).toMatchObject({ status: "sent", attempt_count: 1 });
     expect(row("e1").provider_message_id).toBeUndefined();
     expect(sends).toHaveLength(1);
+  });
+
+  const sevenRows = () => seed(Array.from({ length: 7 }, (_, i) => ({ id: `e${i}`, status: "queued", to_user_id: `u${i}`, to_email: `u${i}@x.io`, subject: `S${i}`, body_text: `B${i}` })));
+  const sentUpdates = () => h.state.calls.filter((c) => c.table === "email_notifications" && c.method === "update" && (c.args[0] as Record<string, unknown>).status === "sent");
+  const expectedSends = Array.from({ length: 7 }, (_, i) => ({ from: "notifications@manufacturing-os.app", to: `u${i}@x.io`, subject: `S${i}`, text: `B${i}` }));
+
+  it("BEFORE 20261258, a batch across two chunks: ONE refused update carrying the id per process — every later send writes today's update directly; every email sent, byte-identical", async () => {
+    h.idColumnMissing = true;
+    sevenRows();
+    expect(await (await run()).json()).toEqual({ processed: 7, sent: 7, failed: 0 });
+    expect(h.refusedUpdates).toHaveLength(1);
+    // the refused one is followed by today's update; the six others write today's update once
+    expect(sentUpdates().map((c) => "provider_message_id" in (c.args[0] as Record<string, unknown>))).toEqual(Array(7).fill(false));
+    for (let i = 0; i < 7; i++) {
+      expect(row(`e${i}`)).toMatchObject({ status: "sent", attempt_count: 1 });
+      expect("provider_message_id" in row(`e${i}`)).toBe(false);
+    }
+    expect(sends).toEqual(expectedSends);
+    // the next drain in the same process: no refused update at all
+    sevenRows();
+    await run();
+    expect(h.refusedUpdates).toHaveLength(1);
+    expect(sends).toHaveLength(14);
+  });
+
+  it("the latch is not forever: past DELIVERY_RECORD_REPROBE_MS the id is tried again, and once 20261258 is pasted it is kept", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-21T09:00:00Z"));
+      h.idColumnMissing = true;
+      seed([{ id: "e1", status: "queued", to_user_id: "u1", to_email: "a@x.io" }]);
+      await run();
+      expect(h.refusedUpdates).toHaveLength(1);
+      h.idColumnMissing = false; // the paste
+      vi.setSystemTime(new Date(Date.parse("2026-10-21T09:00:00Z") + DELIVERY_RECORD_REPROBE_MS - 1000));
+      seed([{ id: "e2", status: "queued", to_user_id: "u2", to_email: "b@x.io" }]);
+      await run();
+      expect("provider_message_id" in row("e2")).toBe(false);
+      vi.setSystemTime(new Date(Date.parse("2026-10-21T09:00:00Z") + DELIVERY_RECORD_REPROBE_MS + 1000));
+      seed([{ id: "e3", status: "queued", to_user_id: "u3", to_email: "c@x.io" }]);
+      await run();
+      expect(row("e3")).toMatchObject({ status: "sent", attempt_count: 1, provider_message_id: "re_123" });
+      expect(h.refusedUpdates).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("AFTER 20261258 (no refusal): every send keeps its id in ONE update, exactly as before the latch existed", async () => {
+    let n = 0;
+    globalThis.fetch = vi.fn(async (url: unknown, init?: RequestInit) => {
+      void url;
+      sends.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ id: `re_${n++}` }), { status: 200 });
+    }) as typeof fetch;
+    sevenRows();
+    expect(await (await run()).json()).toEqual({ processed: 7, sent: 7, failed: 0 });
+    expect(h.refusedUpdates).toHaveLength(0);
+    expect(sentUpdates()).toHaveLength(7);
+    expect(sentUpdates().every((c) => typeof (c.args[0] as Record<string, unknown>).provider_message_id === "string")).toBe(true);
+    expect(new Set(Array.from({ length: 7 }, (_, i) => row(`e${i}`).provider_message_id)).size).toBe(7);
+    expect(sends).toEqual(expectedSends);
   });
 
   it("a 2xx whose answer body stalls: the row still lands 'sent' (today's update, no id) — never left 'sending' for the reclaim to mail it twice", async () => {

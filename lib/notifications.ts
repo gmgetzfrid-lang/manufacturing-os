@@ -25,6 +25,7 @@
 import { supabase } from "@/lib/supabase";
 import { emailAllowedByPrefs, isMissingEmailGate, isPreferenceExempt } from "@/lib/notificationPrefs";
 import { publicOrigin } from "@/lib/publicOrigin";
+import { notEmailedRecordLatch, type LatchAnswer } from "@/lib/deliveryRecordLatch";
 
 export type QueueEmailInput = {
   orgId: string;
@@ -73,8 +74,11 @@ type GateVerdict = "send" | "suppress" | "unverified";
 
 /** The gate's answer and, for a suppression, whether it was the recipient's
  *  own preference (true) rather than a repeat inside 60 seconds (false), or
- *  could not be told apart (null — nothing is recorded then). */
-type GateAnswer = { verdict: GateVerdict; byPreference: boolean | null };
+ *  could not be told apart (null — nothing is recorded then), or is still to
+ *  be asked ("ask": email_gate() said no about a uuid resource — the second
+ *  ask, with no resource, tells the preference from a repeat; queueEmail
+ *  makes it only when a record could be written). */
+type GateAnswer = { verdict: GateVerdict; byPreference: boolean | null | "ask" };
 
 /** email_gate()'s repeat check runs only for a uuid resource; without one a
  *  suppression can only be the preference. */
@@ -91,7 +95,9 @@ async function evaluateEmailGate(input: QueueEmailInput): Promise<GateAnswer> {
   });
   if (!error) {
     if (data !== false) return { verdict: "send", byPreference: null };
-    return { verdict: "suppress", byPreference: await suppressedByPreference(input) };
+    // Without a uuid resource the repeat check never ran: the "no" can only
+    // be the preference. With one, the second ask decides (queueEmail).
+    return { verdict: "suppress", byPreference: !input.resourceId || !UUID_RE.test(input.resourceId) ? true : "ask" };
   }
   if (isMissingEmailGate(error)) {
     console.warn(
@@ -105,13 +111,12 @@ async function evaluateEmailGate(input: QueueEmailInput): Promise<GateAnswer> {
   return { verdict: "unverified", byPreference: null };
 }
 
-/** EVID-9 (N18): whether email_gate()'s "no" was the recipient's preference.
- *  Without a uuid resource its repeat check never ran, so it was; with one,
- *  the gate is asked once more with no resource (its preference rules alone —
- *  the same call 20261258's insert rail makes). Anything but a clear "no" is
- *  a repeat or unknown: nothing is recorded. Never throws. */
+/** EVID-9 (N18): whether email_gate()'s "no" about a uuid resource was the
+ *  recipient's preference: the gate is asked once more with no resource (its
+ *  preference rules alone — the same call 20261258's insert rail makes).
+ *  Anything but a clear "no" is a repeat or unknown: nothing is recorded.
+ *  Never throws. */
 async function suppressedByPreference(input: QueueEmailInput): Promise<boolean | null> {
-  if (!input.resourceId || !UUID_RE.test(input.resourceId)) return true;
   try {
     const { data, error } = await supabase.rpc("email_gate", {
       p_org: input.orgId,
@@ -204,8 +209,22 @@ export async function queueEmail(input: QueueEmailInput): Promise<QueueEmailOutc
     // subject and body), evaluated by email_gate() where both are visible.
     const { verdict, byPreference } = await evaluateEmailGate(input);
     if (verdict === "suppress") {
-      if (byPreference !== true) return "repeat";
-      return (await recordNotEmailed(input)) ? "not_emailed" : "suppressed";
+      if (byPreference !== true && byPreference !== "ask") return "repeat";
+      // The record (and the second ask, which only serves it) goes through
+      // notEmailedRecordLatch (lib/deliveryRecordLatch.ts): before 20261258
+      // the old status CHECK refuses it, so after one refusal neither is made
+      // in this process for DELIVERY_RECORD_REPROBE_MS, and a burst (emit()
+      // queues every recipient at once) pays that refusal once. Nothing is
+      // emailed either way — the suppression is today's.
+      return notEmailedRecordLatch.write<{ outcome: QueueEmailOutcome; answer: LatchAnswer }>(
+        async () => {
+          if (byPreference === "ask" && (await suppressedByPreference(input)) !== true) return { outcome: "repeat", answer: "other" };
+          const answer = await recordNotEmailed(input);
+          return { outcome: answer === "ok" ? "not_emailed" : "suppressed", answer };
+        },
+        (r) => r.answer,
+        () => ({ outcome: "suppressed", answer: "other" }),
+      ).then((r) => r.outcome);
     }
 
     const metadata: Record<string, unknown> = { ...(input.metadata ?? {}) };
@@ -253,8 +272,10 @@ export async function queueEmail(input: QueueEmailInput): Promise<QueueEmailOutc
  *  same event, resource, subject and body — is merged by 20261258's insert
  *  rail, so a burst is one record, as it is one email); "suppressed" —
  *  their preference turned it off and the record could not be written
- *  (before 20261258, or refused); "failed" —
- *  the queue refused the row. */
+ *  (before 20261258, or refused) — or, once this process has seen the record
+ *  refused by the old status CHECK, any suppression (the preference and a
+ *  repeat are then not told apart: nothing could be recorded either way, and
+ *  nothing is sent either way); "failed" — the queue refused the row. */
 export type QueueEmailOutcome = "queued" | "repeat" | "not_emailed" | "suppressed" | "failed";
 
 /** Said once per process: the not_emailed record is not installed yet. */
@@ -265,17 +286,23 @@ let notEmailedUnrecordedLogged = false;
  *  claims, recovers or reclaims, so nothing is ever sent from it. The same
  *  columns a queued row carries (who, which address, what it would have
  *  said, about what, which event), and metadata.not_emailed naming the
- *  cause: their preference — never which switch (a preference is theirs;
- *  the row is readable by them and their workspace's Admins and Managers, as
- *  every email row is). No drain kick. 20261258's insert rail accepts it from
- *  a browser only when email_gate() agrees the preference turns this email
- *  off, and does not write one that repeats the latest record inside 60
+ *  cause: their preference — the reason never names which switch. The row
+ *  is readable by them and their workspace's Admins and Managers, as every
+ *  email row is, and it carries event_type, so for a per-event switch those
+ *  readers can infer which one is off (ACCEPTED by the integrator under
+ *  DEC-90: whether a person was emailed about an event is an audit fact for
+ *  the people who already read the workspace's email rows). No drain kick.
+ *  20261258's insert rail accepts it from a browser only when email_gate()
+ *  agrees the preference turns this email off, and does not write one that repeats the latest record inside 60
  *  seconds (email_gate()'s repeat rule, for every writer — the repeat key is
  *  visible there whoever calls). Before 20261258 the status CHECK refuses it
- *  (23514): said once, nothing recorded — today's path. Answers whether the
- *  insert was accepted (a merged repeat is accepted: the record exists);
- *  never throws. */
-async function recordNotEmailed(input: QueueEmailInput): Promise<boolean> {
+ *  (23514): said once, nothing recorded — today's path — and queueEmail's
+ *  latch (lib/deliveryRecordLatch.ts) skips the insert for the next
+ *  DELIVERY_RECORD_REPROBE_MS, so the refusal is paid once per process per
+ *  window, not once per opted-out recipient. Answers "ok" when the insert
+ *  was accepted (a merged repeat is accepted: the record exists), "refused"
+ *  for the old status CHECK, "other" for anything else; never throws. */
+async function recordNotEmailed(input: QueueEmailInput): Promise<LatchAnswer> {
   try {
     const metadata: Record<string, unknown> = { ...(input.metadata ?? {}) };
     if (input.link) metadata.link = input.link;
@@ -295,18 +322,27 @@ async function recordNotEmailed(input: QueueEmailInput): Promise<boolean> {
       metadata,
       status: "not_emailed",
     });
-    if (!error) return true;
+    if (!error) return "ok";
+    const notPasted = isStatusCheckRefusal(error);
     if (!notEmailedUnrecordedLogged) {
       notEmailedUnrecordedLogged = true;
-      const notPasted = error.code === "23514" || /email_notifications_status_check|violates check constraint/i.test(error.message ?? "");
       console.info(notPasted
         ? "queueEmail: a recipient's preference turned an email off; the record of it needs migration 20261258 — not recorded (the email is not sent, as before)"
         : `queueEmail: the record that a recipient's preference turned an email off was not written (${error.code ?? "?"}: ${error.message}) — the email is not sent, as before`);
     }
-    return false;
+    return notPasted ? "refused" : "other";
   } catch {
-    return false;
+    return "other";
   }
+}
+
+/** The old status CHECK refusing a not_emailed row (before 20261258): 23514
+ *  naming email_notifications_status_check, or 23514 naming no constraint. A
+ *  refusal naming another constraint is not the missing paste. */
+function isStatusCheckRefusal(error: { code?: string; message?: string }): boolean {
+  const msg = error.message ?? "";
+  if (/email_notifications_status_check/i.test(msg)) return true;
+  return error.code === "23514" && !/constraint/i.test(msg);
 }
 
 

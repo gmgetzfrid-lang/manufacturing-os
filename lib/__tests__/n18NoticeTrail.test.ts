@@ -63,7 +63,7 @@ describe("noticeTrailFor — one answer across bell, email and the request recor
     expect(t.entries.find((e) => e.id === "e1")).toMatchObject({ sentAt: "2026-10-01T09:00:05Z", deliveredAt: "2026-10-01T09:00:09Z", providerOutcome: "delivered" });
     expect(t.entries.find((e) => e.id === "e2")).toMatchObject({ byTheirChoice: true, sentAt: null });
     expect(t.entries.find((e) => e.id === "e3")).toMatchObject({ bouncedAt: "2026-10-04T09:01:00Z", providerDetail: "Mailbox full" });
-    expect(t.summary).toMatchObject({ toldInApp: 3, opened: true, emailed: 2, bestEmail: "delivered", bounced: true, notEmailedByChoice: true, emailNeverAttempted: false });
+    expect(t.summary).toMatchObject({ toldInApp: 3, opened: true, emailAttempted: 2, emailReached: 1, bestEmail: "delivered", bounced: true, notEmailedByChoice: true, emailNeverAttempted: false });
     expect(t.legs).toEqual({ bell: "read", email: "read", requestRecord: "read", acted: "read" });
     // only Bob's rows about this item
     expect(t.entries.some((e) => e.id.startsWith("x"))).toBe(false);
@@ -76,6 +76,38 @@ describe("noticeTrailFor — one answer across bell, email and the request recor
     state.tables.audit_logs = [{ id: "a1", org_id: ORG, user_id: BOB, resource_id: DOC, created_at: "2026-10-02T08:00:00Z" }];
     t = await noticeTrailFor(sb, { orgId: ORG, userId: BOB, resourceId: DOC });
     expect(t.summary).toMatchObject({ actedAt: "2026-10-02T08:00:00Z", neverResponded: false });
+  });
+
+  it("an email that never reached the person is not 'told': a dead-letter-only item and a bounce-only item are attempted, not reached, and never 'never responded'", async () => {
+    const only = (row: Record<string, unknown>) => {
+      state.tables.notifications = [];
+      state.tables.email_notifications = [{ id: "e9", org_id: ORG, to_user_id: BOB, resource_id: DOC, event_type: "assignment", subject: "Review", created_at: "2026-10-01T09:00:01Z", ...row }];
+      return noticeTrailFor(sb, { orgId: ORG, userId: BOB, resourceId: DOC });
+    };
+    // dead-lettered: five failed attempts, never handed to the provider
+    let t = await only({ status: "failed", attempt_count: 5, error_message: "Resend 422: invalid address" });
+    expect(t.entries.map((e) => e.state)).toEqual(["failed"]);
+    expect(t.summary).toMatchObject({ toldInApp: 0, emailAttempted: 1, emailReached: 0, neverResponded: false, emailNeverAttempted: false });
+    // retrying: not reached either
+    t = await only({ status: "failed", attempt_count: 2 });
+    expect(t.summary).toMatchObject({ emailAttempted: 1, emailReached: 0, neverResponded: false });
+    // bounced: handed to the provider and refused
+    t = await only({ status: "sent", attempt_count: 1, sent_at: "2026-10-01T09:00:05Z", delivery_status: "bounced", bounced_at: "2026-10-01T09:01:00Z", delivery_detail: "Mailbox full" });
+    expect(t.entries.map((e) => e.state)).toEqual(["bounced"]);
+    expect(t.summary).toMatchObject({ toldInApp: 0, emailAttempted: 1, emailReached: 0, bounced: true, neverResponded: false });
+    // provider failed: refused too
+    t = await only({ status: "sent", attempt_count: 1, sent_at: "2026-10-01T09:00:05Z", delivery_status: "failed" });
+    expect(t.summary).toMatchObject({ emailAttempted: 1, emailReached: 0, neverResponded: false });
+    // REGRESSION: an email that reached the provider and was not refused, never opened or acted on, is still "never responded"
+    for (const reachedRow of [
+      { status: "sent", attempt_count: 1, sent_at: "2026-10-01T09:00:05Z" },
+      { status: "sent", attempt_count: 1, sent_at: "2026-10-01T09:00:05Z", delivery_status: "delivered", delivered_at: "2026-10-01T09:00:09Z" },
+      { status: "sent", attempt_count: 1, sent_at: "2026-10-01T09:00:05Z", delivery_status: "delayed" },
+      { status: "sent", attempt_count: 1, sent_at: "2026-10-01T09:00:05Z", delivery_status: "complained", complained_at: "2026-10-01T09:05:00Z" },
+    ]) {
+      t = await only(reachedRow);
+      expect(t.summary, JSON.stringify(reachedRow)).toMatchObject({ emailAttempted: 1, emailReached: 1, neverResponded: true });
+    }
   });
 
   it("a request's own notice record (20261255): delivered / warned / not emailed — whether by their choice, never the preference itself", async () => {
@@ -137,6 +169,7 @@ describe("noticeTrailFor — one answer across bell, email and the request recor
     const t = await noticeTrailFor(sb, { orgId: ORG, userId: BOB, resourceId: DOC });
     expect(t.legs.requestRecord).toBe("absent");
     expect(t.entries).toHaveLength(6);
+    expect(t.notes).toContain("The request's own notice record is not installed yet (migration 20261255 is not applied).");
   });
 
   it("a leg that fails otherwise is 'unavailable' and said — never shown as nothing", async () => {

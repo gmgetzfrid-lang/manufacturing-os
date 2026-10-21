@@ -123,6 +123,12 @@ describe("20261258 — what it changes", () => {
     expect(code).toContain("GRANT EXECUTE ON FUNCTION record_email_delivery(text, text, timestamptz, text) TO service_role;");
   });
 
+  it("record_email_delivery: a stronger outcome with no detail keeps a refusal's reason (a complaint never erases a bounce's reason) and never carries a delay's note onto a delivered row", () => {
+    const fn = stripComments(between(M, "CREATE OR REPLACE FUNCTION record_email_delivery(", "\n$$;"));
+    expect(fn).toContain("THEN COALESCE(left(p_detail, 500), CASE WHEN e.delivery_status IN ('bounced', 'failed') THEN e.delivery_detail END) ELSE e.delivery_detail END,");
+    expect(fn).not.toMatch(/THEN left\(p_detail, 500\) ELSE/);
+  });
+
   it("the trigger function is SECURITY DEFINER with search_path pinned, lets the service role through, and is revoked from every client role", () => {
     const fn = between(M, "CREATE OR REPLACE FUNCTION enforce_email_delivery_record()", "\n$$;");
     expect(fn).toContain("RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$");

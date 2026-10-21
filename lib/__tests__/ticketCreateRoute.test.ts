@@ -51,6 +51,7 @@
 //     intake folder and links; the re-key runs after the answer.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { resetDeliveryRecordLatches } from "@/lib/deliveryRecordLatch";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
@@ -389,6 +390,7 @@ beforeEach(() => {
   s.rpcCalls = [];
   s.emailGate = null;
   s.pasted258 = false;
+  resetDeliveryRecordLatches();
   s.errors = {};
   s.lostReply = {};
   s.hooks = [];

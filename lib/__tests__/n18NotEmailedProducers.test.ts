@@ -8,6 +8,7 @@
 // a recorder.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { resetDeliveryRecordLatches } from "@/lib/deliveryRecordLatch";
 import { resetState, type MemoryState } from "./helpers/memoryDb";
 
 const h = vi.hoisted(() => ({
@@ -55,6 +56,7 @@ beforeEach(() => {
   resetState(h.state);
   h.many.length = 0;
   h.pasted258 = false;
+  resetDeliveryRecordLatches();
   h.off = new Set();
   h.state.tables.org_members = ["alice", "bob", "actor"].map((uid) => ({ org_id: ORG, uid, status: "active", role: "Engineer", roles: null, email: `${uid}@x.com` }));
   // email_gate(): the recipient's master switch (no resource → no repeat check)
