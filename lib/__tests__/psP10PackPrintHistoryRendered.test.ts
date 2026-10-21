@@ -66,7 +66,7 @@ vi.mock("@/components/providers/ToastProvider", () => ({ useToast: () => ({ show
 vi.mock("@/lib/printSheetTokensClient", () => ({ recallSheetPrint: (...a: unknown[]) => s.recall(...a) }));
 
 import PackPrintHistory, {
-  printedSheetCount, olderPrintsFilter, PACK_PRINT_HISTORY_LIMIT, PACK_RECALL_UI_ENABLED,
+  printedSheetCount, olderPrintsFilter, PACK_PRINT_HISTORY_LIMIT, PACK_RECALL_UI_ENABLED, PACK_PRINT_HISTORY_UI_ENABLED,
 } from "@/components/documents/PackPrintHistory";
 
 const COVER_A = "c1c1c1c1-0000-0000-0000-000000000001";
@@ -234,8 +234,14 @@ describe("PS-P10 — the packages page's wiring (source pins)", () => {
   });
   it("SHIPPED OFF (second review fix): Recall stays off until public-surfaces PHYS-20 limbs 1 and 2 land — the PHYS-20 package flips PACK_RECALL_UI_ENABLED", () => {
     expect(PACK_RECALL_UI_ENABLED).toBe(false);
-    expect(src).toContain('import PackPrintHistory, { PACK_RECALL_UI_ENABLED } from "@/components/documents/PackPrintHistory";');
+    expect(src).toContain('import PackPrintHistory, { PACK_RECALL_UI_ENABLED, PACK_PRINT_HISTORY_UI_ENABLED } from "@/components/documents/PackPrintHistory";');
     // canRecall is never the controller test alone
     expect(src).not.toMatch(/canRecall=\{isController\}/);
+  });
+  it("SHIPPED OFF (third review fix): the print history itself is not rendered until public-surfaces PHYS-20 limb 3 can mark a print stopped before its download", () => {
+    expect(PACK_PRINT_HISTORY_UI_ENABLED).toBe(false);
+    // the page renders the history only behind the switch
+    expect(src).toMatch(/\{activeOrgId && PACK_PRINT_HISTORY_UI_ENABLED && \(\s*<PackPrintHistory /);
+    expect(src.match(/<PackPrintHistory /g)).toHaveLength(1);
   });
 });

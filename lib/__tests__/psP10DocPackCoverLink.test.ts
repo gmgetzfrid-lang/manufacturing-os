@@ -7,10 +7,13 @@
 //     before the download click, and the post-download settle is PS-P9's
 //     exactly (review fix: the link first rode on that settle, which is
 //     fired and never awaited — a dropped settle left the print unlinked);
-//   - a link that is refused, or fails twice, STOPS the print: no click, no
+//   - a link the server REFUSES (400) STOPS the print: no click, no
 //     distribution record, the whole print voided (print_aborted), a
-//     SheetTokenCoverLinkError; one transient failure is retried once, a
-//     refusal never; before 20261240 ({ available: false }) the pack prints
+//     SheetTokenCoverLinkError; a refusal is never retried;
+//   - REGRESSION FIRST (third review fix): a link that only FAILS — no
+//     answer or a 5xx twice (one retry), or a 401 / 404 / 409 — FAILS OPEN:
+//     the pack downloads unlinked, exactly as before PS-P10, with one
+//     console warning; before 20261240 ({ available: false }) the pack prints
 //     as today;
 //   - REGRESSION: a pack whose cover does not link (or has no cover — the
 //     asset hub's pack) sends no link and PS-P9's settle; no token minted →
@@ -31,7 +34,7 @@ const state = vi.hoisted(() => ({
   coverThrows: false,
   origin: "https://app.example.com",
   /** how the link route answers, in order (the last one repeats) */
-  link: ["ok"] as Array<"ok" | "unavailable" | "refused" | "error" | "throw">,
+  link: ["ok"] as Array<"ok" | "unavailable" | "refused" | "error" | "throw" | "signedout" | "unknown" | "conflict">,
 }));
 
 vi.mock("@/lib/supabase", () => {
@@ -116,6 +119,9 @@ beforeEach(() => {
         if (mode === "unavailable") return { ok: true, status: 200, json: async () => ({ available: false, linked: false }) };
         if (mode === "refused") return { ok: false, status: 400, json: async () => ({ error: "That cover does not list the sheets of this print" }) };
         if (mode === "error") return { ok: false, status: 503, json: async () => ({ error: "Couldn't link the sheets to the cover — try again" }) };
+        if (mode === "signedout") return { ok: false, status: 401, json: async () => ({ error: "Unauthorized" }) };
+        if (mode === "unknown") return { ok: false, status: 404, json: async () => ({ error: "Unknown or already settled print" }) };
+        if (mode === "conflict") return { ok: false, status: 409, json: async () => ({ error: "The print changed while it was linked — try again" }) };
         return { ok: true, status: 200, json: async () => ({ linked: true, sheets: 2 }) };
       }
       const hang = () => new Promise<never>((_, reject) => {
@@ -175,20 +181,40 @@ describe("PS-P10 — a work-package pack's sheet tokens are linked to its cover'
     expect(links().map((c) => c.body?.printed)).toEqual([[D1]]);
   });
 
-  for (const [what, modes] of [
-    ["a refused link (never retried)", ["refused"]],
-    ["a link that fails twice (one retry)", ["error", "error"]],
-    ["a link that cannot be sent twice", ["throw", "throw"]],
-  ] as Array<[string, Array<"refused" | "error" | "throw">]>) {
-    it(`${what} STOPS the print: no click, no distribution record, the whole print voided, a SheetTokenCoverLinkError`, async () => {
+  it("a REFUSED link (400 — the cover is not this print's; never retried) STOPS the print: no click, no distribution record, the whole print voided, a SheetTokenCoverLinkError", async () => {
+    state.link = ["refused"];
+    const err = await buildAndDownloadDocPack({ ...base, buildCoverAfter: linkingCover }).catch((e) => e);
+    expect(err).toBeInstanceOf(SheetTokenCoverLinkError);
+    expect((err as Error).message).toMatch(/nothing was downloaded and no pin moved/);
+    expect(links()).toHaveLength(1);
+    expect(state.log).not.toContain("click");
+    expect(state.log).not.toContain("insert:download_audits");
+    await vi.waitFor(() => expect(settles().map((c) => c.body)).toEqual([{ action: "settle", orgId: "org1", printId: PRINT, printed: [] }]));
+  });
+
+  for (const [what, modes, sent] of [
+    ["two 503s (one retry)", ["error", "error"], 2],
+    ["a link that cannot be sent twice (no answer)", ["throw", "throw"], 2],
+    ["a 401 (session lapsed; not retried)", ["signedout"], 1],
+    ["a 404 (not retried)", ["unknown"], 1],
+    ["a 409 (not retried)", ["conflict"], 1],
+    ["a 503 then a 409", ["error", "conflict"], 2],
+  ] as Array<[string, Array<"error" | "throw" | "signedout" | "unknown" | "conflict">, number]>) {
+    it(`REGRESSION FIRST: ${what} FAILS OPEN — the pack downloads unlinked as before PS-P10, with one warning, and PS-P9's settle`, async () => {
       state.link = [...modes];
-      const err = await buildAndDownloadDocPack({ ...base, buildCoverAfter: linkingCover }).catch((e) => e);
-      expect(err).toBeInstanceOf(SheetTokenCoverLinkError);
-      expect((err as Error).message).toMatch(/nothing was downloaded and no pin moved/);
-      expect(links()).toHaveLength(modes[0] === "refused" ? 1 : 2);
-      expect(state.log).not.toContain("click");
-      expect(state.log).not.toContain("insert:download_audits");
-      await vi.waitFor(() => expect(settles().map((c) => c.body)).toEqual([{ action: "settle", orgId: "org1", printId: PRINT, printed: [] }]));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const r = await buildAndDownloadDocPack({ ...base, buildCoverAfter: linkingCover });
+        expect(r.included).toBe(2);
+        expect(links()).toHaveLength(sent);
+        expect(state.log).toContain("click");
+        expect(state.log).toContain("insert:download_audits");
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0][0])).toMatch(/printing unlinked/);
+        await vi.waitFor(() => expect(settles().map((c) => c.body)).toEqual([{ action: "settle", orgId: "org1", printId: PRINT, printed: [D1, D2] }]));
+      } finally {
+        warn.mockRestore();
+      }
     });
   }
 

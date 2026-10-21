@@ -197,7 +197,7 @@ UNION ALL SELECT 2, 'cover_print_id references work_package_prints(id) ON DELETE
                                          WHERE attrelid = to_regclass('public.print_sheet_tokens') AND attname = 'cover_print_id')]::int2[]), NULL
 UNION ALL SELECT 3, 'print_sheet_tokens indexed on (cover_print_id) where linked',
        EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'print_sheet_tokens_cover_print_idx'), NULL
-UNION ALL SELECT 4, 'a void reason is not_printed, print_aborted or recalled (and nothing else)',
+UNION ALL SELECT 4, 'the void-reason CHECK names not_printed, print_aborted and recalled',
        COALESCE((SELECT pg_get_constraintdef(c.oid) LIKE '%not_printed%'
                         AND pg_get_constraintdef(c.oid) LIKE '%print_aborted%'
                         AND pg_get_constraintdef(c.oid) LIKE '%recalled%'

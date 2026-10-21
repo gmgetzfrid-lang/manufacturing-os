@@ -103,7 +103,8 @@ const json = (body: unknown, status = 200) => NextResponse.json(body, { status, 
 const NO_LINKED_SHEET_CODE =
   "No sheet code is linked to this print record, so a recall from here cannot reach its sheets — nothing was changed. " +
   "Either this print was stopped before anything was downloaded (its record is kept, but no paper left — there is nothing to withdraw), " +
-  "or its sheets carry the document's own QR (no per-print code could be issued) or codes printed before per-print " +
+  "or its per-print codes could not be linked when it was printed (the link failed, so the pack printed unlinked, as before per-print " +
+  "links), or its sheets carry the document's own QR (no per-print code could be issued) or codes printed before per-print " +
   "codes were linked to their print record (database update 20261240 and this release); those sheets keep scanning " +
   "by their revision's status. If paper from this print is in use, withdraw it by hand, and hold or supersede the revision if its sheets must read red.";
 
@@ -266,8 +267,10 @@ export async function POST(req: NextRequest) {
 }
 
 /** PS-P10 (PHYS-19 c3): a work-package pack's token print linked by key to
- *  its cover's print, before the download (the pack path awaits it; a
- *  failure stops the print). Writes only unsettled rows the caller minted. */
+ *  its cover's print, before the download (the pack path awaits it: a 400
+ *  refusal stops the print; any other failure, after one retry, prints the
+ *  pack unlinked as before PS-P10). Writes only unsettled rows the caller
+ *  minted; idempotent under the client's own retry. */
 async function linkCover(actor: AuthorizedActor, orgId: string, body: Record<string, unknown>) {
   const printId = typeof body.printId === "string" ? body.printId.toLowerCase() : "";
   const coverPrintId = typeof body.coverPrintId === "string" ? body.coverPrintId.toLowerCase() : "";
@@ -314,12 +317,37 @@ async function linkCover(actor: AuthorizedActor, orgId: string, body: Record<str
       .select("id");
     if (lErr) {
       if (isMissingCoverLinkColumn(lErr)) return unavailable();
-      console.error("[print-sheet-tokens] link refused — the print is stopped:", lErr.message);
+      console.error("[print-sheet-tokens] link write refused — nothing linked:", lErr.message);
       return json({ error: "Couldn't link the sheets to the cover — try again" }, 503);
     }
     linked += (hit as unknown[] | null)?.length ?? 0;
   }
-  if (linked !== toLink.length) return json({ error: "The print changed while it was linked — try again" }, 409);
+  if (linked !== toLink.length) {
+    // A short write is not yet a conflict: an earlier request for the SAME
+    // link that the client gave up on (its timeout) and then retried may
+    // have written these rows while this one was checking — the guard's
+    // `.is("cover_print_id", null)` then skips them. Re-read: when every row
+    // this request meant to link now names THIS cover, the link is written
+    // (the lost-answer retry) — 409 only when a row is still unlinked or
+    // names another cover.
+    const { data: after, error: rErr } = await actor.admin
+      .from("print_sheet_tokens")
+      .select("id, cover_print_id")
+      .eq("print_id", printId)
+      .eq("org_id", orgId)
+      .eq("minted_by", actor.userId);
+    if (rErr) {
+      console.error("[print-sheet-tokens] link: short write unreadable:", rErr.message);
+      return json({ error: "Couldn't link the sheets to the cover — try again" }, 503);
+    }
+    const linkedNow = new Map(
+      ((after as Array<{ id: string; cover_print_id?: string | null }> | null) ?? [])
+        .map((r) => [String(r.id), r.cover_print_id ? String(r.cover_print_id).toLowerCase() : null] as const),
+    );
+    if (!toLink.every((r) => linkedNow.get(String(r.id)) === coverPrintId)) {
+      return json({ error: "The print changed while it was linked — try again" }, 409);
+    }
+  }
   return json({ linked: true, sheets: rows.length });
 }
 

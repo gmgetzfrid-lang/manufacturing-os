@@ -130,7 +130,8 @@ export type SheetTokenCoverLinkResult =
  *  the cover printed with it, by key (the server checks the cover: same
  *  workspace, printed by this member, listing exactly `printedDocumentIds` at
  *  the minted versions). Called by the pack path BEFORE the download and
- *  awaited — a failure stops the print (lib/docPack.ts). Never throws. */
+ *  awaited — a 400 refusal stops the print; any other failure, after one
+ *  retry, lets the pack print unlinked (lib/docPack.ts). Never throws. */
 export async function linkSheetTokensToCover(input: {
   orgId: string;
   printId: string;

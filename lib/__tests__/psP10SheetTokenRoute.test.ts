@@ -49,6 +49,11 @@ const state = vi.hoisted(() => ({
   coverError: null as null | { message: string },
   auditError: null as null | { message: string },
   updateShort: false,
+  /** review fix 3: what a concurrent request (the same link, the client's
+   *  timed-out first attempt) wrote while this one was checking — applied to
+   *  the token rows when a short update lands */
+  concurrentLink: null as null | string,
+  rereadError: null as null | { message: string },
   updateError: null as null | { message: string },
   log: [] as string[],
   inserts: [] as Array<{ table: string; rows: Record<string, unknown> }>,
@@ -77,12 +82,18 @@ function chain(table: string) {
       const ids = filters.find((f) => f[0] === "in" && f[1] === "id")?.[2] as string[] | undefined;
       for (const id of ids ?? []) state.touched.add(id);
       const n = ids ? ids.length : state.tokenRows.filter((r) => !r.settled_at && !state.touched.has(String(r.id))).length;
+      if (state.updateShort && state.concurrentLink) {
+        for (const r of state.tokenRows) r.cover_print_id = state.concurrentLink;
+      }
       return { data: Array.from({ length: state.updateShort ? Math.max(0, n - 1) : n }, (_, i) => ({ id: `r${i}` })), error: null };
     }
     state.reads.push({ table, cols, filters: [...filters] });
     if (table === "print_sheet_tokens" && neq) {
       state.log.push("probe");
       return state.probeError ? { data: null, error: state.probeError } : { data: state.probeRows, error: null };
+    }
+    if (table === "print_sheet_tokens" && cols === "id, cover_print_id" && state.rereadError) {
+      return { data: null, error: state.rereadError };
     }
     if (table === "print_sheet_tokens") {
       return state.tokenReadError ? { data: null, error: state.tokenReadError } : { data: state.tokenRows, error: null };
@@ -147,6 +158,8 @@ beforeEach(() => {
   state.coverError = null;
   state.auditError = null;
   state.updateShort = false;
+  state.concurrentLink = null;
+  state.rereadError = null;
   state.updateError = null;
   state.log = [];
   state.inserts = [];
@@ -255,7 +268,7 @@ describe("PS-P10 link — a work-package pack's sheet tokens link by key to its 
     expect(await (await post(linkBody())).json()).toEqual({ available: false, linked: false });
   });
 
-  it("any other failure reading the print, the link or the cover — or writing it — is a 503 (the pack path retries once, then stops the print)", async () => {
+  it("any other failure reading the print, the link or the cover — or writing it — is a 503 (the pack path retries once, then prints unlinked — fail open)", async () => {
     state.tokenReadError = { code: "57014", message: "statement timeout" };
     expect((await post(linkBody())).status).toBe(503);
     state.tokenReadError = null;
@@ -273,6 +286,32 @@ describe("PS-P10 link — a work-package pack's sheet tokens link by key to its 
   it("a short link (the print changed under it) is a 409", async () => {
     state.updateShort = true;
     expect((await post(linkBody())).status).toBe(409);
+  });
+
+  // Third review fix: the client's retry after its own timeout can race the
+  // first request it gave up on. The first writes the link while the retry is
+  // checking; the retry's guarded update then lands short. The re-read shows
+  // every row linked to THIS cover — the link is written, and the retry says
+  // so (a 409 here used to stop a correctly linked print).
+  it("a short link whose rows a concurrent request linked to THIS cover answers linked (the lost-answer retry is idempotent)", async () => {
+    state.updateShort = true;
+    state.concurrentLink = COVER;
+    const res = await post(linkBody());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ linked: true, sheets: 2 });
+    const reread = state.reads.filter((r) => r.table === "print_sheet_tokens" && r.cols === "id, cover_print_id");
+    expect(reread).toHaveLength(1);
+    expect(reread[0].filters).toEqual([["eq", "print_id", PRINT], ["eq", "org_id", ORG], ["eq", "minted_by", UID]]);
+  });
+
+  it("a short link whose rows name ANOTHER cover is still a 409; a re-read that fails is a 503", async () => {
+    state.updateShort = true;
+    state.concurrentLink = "c2c2c2c2-0000-0000-0000-000000000002";
+    expect((await post(linkBody())).status).toBe(409);
+    for (const r of state.tokenRows) delete r.cover_print_id;
+    state.concurrentLink = null;
+    state.rereadError = { message: "statement timeout" };
+    expect((await post(linkBody())).status).toBe(503);
   });
 
   // Second review fix: the cover the route checks is the snapshot the
@@ -484,6 +523,8 @@ describe("PS-P10 void — a controller recalls a printed pack", () => {
     // second review fix: a print stopped by a failed link leaves its record and no paper — said too
     expect(said).toMatch(/stopped before anything was downloaded/);
     expect(said).toMatch(/no paper left — there is nothing to withdraw/);
+    // third review fix: a link that failed (fail open) printed the pack unlinked — said too
+    expect(said).toMatch(/could not be linked when it was printed \(the link failed, so the pack printed unlinked/);
     state.tokenRows = [{ id: "t1", document_id: D1, print_id: PRINT, settled_at: "x", voided_at: "y" }];
     expect((await post(voidBody())).status).toBe(409);
     expect(state.inserts).toEqual([]);

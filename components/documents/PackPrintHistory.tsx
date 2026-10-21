@@ -28,6 +28,11 @@
 // The PHYS-20 package flips it as its last step. The route action stays
 // (controller-only, audited).
 //
+// The history itself also ships OFF (PS-P10 third review fix):
+// PACK_PRINT_HISTORY_UI_ENABLED is false until PHYS-20 limb 3 can mark a
+// print that was stopped before its download — its insert-only snapshot row
+// would otherwise list paper that never existed.
+//
 // The history lists the newest PACK_PRINT_HISTORY_LIMIT prints and pages
 // back through older ones ("Show older prints", keyset on printed_at, id),
 // so every print of the package is reachable from here.
@@ -50,6 +55,17 @@ export const PACK_PRINT_HISTORY_LIMIT = 10;
  *  and each sheet saying its paper was never issued. The packages page gates
  *  canRecall on it; the PHYS-20 package sets it to true. */
 export const PACK_RECALL_UI_ENABLED = false;
+
+/** PS-P10 third review fix: the print history itself ships OFF until
+ *  public-surfaces PHYS-20 limb 3 lands. work_package_prints is insert-only,
+ *  so a print stopped after its snapshot was recorded (a refused link, or a
+ *  build that failed before the download) keeps an ordinary-looking row — a
+ *  time, a printer, a sheet count — for paper that never existed. Until the
+ *  history can tell a stopped print apart (the server reads its token state)
+ *  the packages page does not render it. The PHYS-20 package sets this to
+ *  true with limb 3 (and PACK_RECALL_UI_ENABLED once limbs 1 and 2 are
+ *  deployed). */
+export const PACK_PRINT_HISTORY_UI_ENABLED = false;
 
 interface PrintRow { id: string; printedAt: string | null; printedByName: string | null; sheets: number }
 

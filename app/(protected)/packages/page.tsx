@@ -23,7 +23,7 @@ import { appConfirm } from "@/components/providers/DialogProvider";
 import { useToast } from "@/components/providers/ToastProvider";
 import { supabase } from "@/lib/supabase";
 import { isControllerPrincipal } from "@/lib/permissions";
-import PackPrintHistory, { PACK_RECALL_UI_ENABLED } from "@/components/documents/PackPrintHistory";
+import PackPrintHistory, { PACK_RECALL_UI_ENABLED, PACK_PRINT_HISTORY_UI_ENABLED } from "@/components/documents/PackPrintHistory";
 import {
   listWorkPackages, createWorkPackage, refreshWorkPackage, recordPackagePrint,
   setWorkPackageStatus, coverEntryLabels, mergeLeftOut, readPackageMemberIds, type WorkPackage,
@@ -234,9 +234,10 @@ export default function PackagesPage() {
           });
           // PS-P10 (PHYS-19 c3): this pack's sheet tokens link to this
           // cover's print by key, here, before the download (the server
-          // checks it). A link that is refused or fails STOPS the print —
-          // nothing downloaded, no pin moved — like the snapshot above
-          // (VFY-18): a pack its print history could not recall never leaves.
+          // checks it). A link the server REFUSES (the cover is not this
+          // print's) STOPS the print — nothing downloaded, no pin moved. A
+          // link that only fails (no answer, a 5xx, after one retry) prints
+          // the pack unlinked, as before PS-P10.
           await cover.linkPrint(printId);
           // PKG-12: every cover entry carries its page(s) in this pack — the
           // cover's own pages come first.
@@ -437,8 +438,11 @@ export default function PackagesPage() {
                 {/* PS-P10: the pack's print history; a controller recalls a
                     printed pack here (DACL-8 residual (c)) once
                     PACK_RECALL_UI_ENABLED is on — it ships off until
-                    public-surfaces PHYS-20 limbs 1 and 2 land. */}
-                {activeOrgId && (
+                    public-surfaces PHYS-20 limbs 1 and 2 land. The history
+                    itself ships off (PACK_PRINT_HISTORY_UI_ENABLED) until
+                    PHYS-20 limb 3 can mark a print stopped before its
+                    download. */}
+                {activeOrgId && PACK_PRINT_HISTORY_UI_ENABLED && (
                   <PackPrintHistory orgId={activeOrgId} packageId={pkg.id} canRecall={isController && PACK_RECALL_UI_ENABLED} refreshKey={printRound} />
                 )}
 
