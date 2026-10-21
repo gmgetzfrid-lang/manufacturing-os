@@ -6,32 +6,33 @@
 //
 // Each row is one immutable print snapshot (work_package_prints, PKG-2 —
 // readable by every active member of the workspace, as the cover scan's
-// record). A controller (Admin / Document Control by the role COLLECTION —
-// the caller passes isControllerPrincipal over the headline and the roles)
-// sees "Recall" on each: the reason is asked for, then POST
-// /api/print-sheet-tokens `void` voids every live sheet token of that print
-// as the service role, after writing the audit row (DISTRIBUTION_RECALL, with
-// the reason). Every sheet of the recalled print then scans "PRINT CANCELLED
-// — DO NOT USE" (red, never green). The server re-checks the role: the
-// button is a convenience, not the gate.
+// record). Beside each, the print's per-print code state, read by the server
+// (POST /api/print-sheet-tokens `history` — the token rows are service-role
+// only; public-surfaces PHYS-20 limb 3):
+//   * Recalled — on <date> by <who> (from the recall's audit row);
+//   * Stopped — nothing downloaded (every linked code voided 'print_aborted':
+//     the print was stopped after its snapshot was recorded — no paper left);
+//   * Per-print codes not linked — the record cannot show whether the pack
+//     was downloaded or recalled (printed before database update 20261240,
+//     no code could be issued, or its link failed or was refused); a recall
+//     from here cannot reach it, so none is offered;
+//   * otherwise (codes linked) nothing more is said.
+// Before 20261240 every row is "not linked" (no code can be linked yet). A
+// state that could not be read is said once, and each row then shows no state.
 //
-// What a recall does NOT reach is said before it is confirmed: the cover's
-// own QR (it answers from its snapshot, unchanged — public-surfaces PHYS-20)
-// and a print whose sheets carry no per-print code (printed before database
-// update 20261240, or the codes could not be issued — the server answers so
-// and nothing is changed).
-//
-// SHIPPED OFF (PS-P10 second review fix): until public-surfaces PHYS-20
-// limbs 1 and 2 land, a recalled pack's cover QR can still read current and
-// a recalled sheet's scan says its paper was never issued — so the page
-// offers Recall only while PACK_RECALL_UI_ENABLED is true, and it is false.
-// The PHYS-20 package flips it as its last step. The route action stays
-// (controller-only, audited).
-//
-// The history itself also ships OFF (PS-P10 third review fix):
-// PACK_PRINT_HISTORY_UI_ENABLED is false until PHYS-20 limb 3 can mark a
-// print that was stopped before its download — its insert-only snapshot row
-// would otherwise list paper that never existed.
+// A controller (Admin / Document Control by the role COLLECTION — the caller
+// passes isControllerPrincipal over the headline and the roles) sees "Recall"
+// on a print whose codes are linked (or whose state could not be read — the
+// server decides): the reason is asked for, then POST /api/print-sheet-tokens
+// `void` voids every live sheet code of that print as the service role,
+// after writing the audit row (DISTRIBUTION_RECALL, with the reason). Every
+// sheet of the recalled print then scans "PRINT RECALLED — DO NOT USE" (red,
+// never green — PHYS-20 limb 2) and the pack's cover reads "PACK RECALLED"
+// (limb 1). The server re-checks the role: the button is a convenience, not
+// the gate. (PS-P10 shipped the history and the Recall control OFF behind
+// PACK_PRINT_HISTORY_UI_ENABLED / PACK_RECALL_UI_ENABLED until PHYS-20; both
+// switches are gone now that its three limbs hold — the integrator at the
+// PS-P10 merge, DEC-90.)
 //
 // The history lists the newest PACK_PRINT_HISTORY_LIMIT prints and pages
 // back through older ones ("Show older prints", keyset on printed_at, id),
@@ -42,30 +43,11 @@ import { History, Loader2, Ban, ChevronDown, ChevronRight } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { appPrompt } from "@/components/providers/DialogProvider";
 import { useToast } from "@/components/providers/ToastProvider";
-import { recallSheetPrint } from "@/lib/printSheetTokensClient";
+import { readSheetPrintStates, recallSheetPrint, type SheetPrintCodeState } from "@/lib/printSheetTokensClient";
 
 /** How many prints the history reads at a time (newest first; older ones
  *  page in by "Show older prints"). */
 export const PACK_PRINT_HISTORY_LIMIT = 10;
-
-/** PS-P10 second review fix: the Recall control ships OFF until
- *  public-surfaces PHYS-20 limbs 1 and 2 land (the cover QR answers a
- *  recalled print as not current; the sheet scan reads the void reason and
- *  says "recalled"). Until then a recall would leave the cover reading green
- *  and each sheet saying its paper was never issued. The packages page gates
- *  canRecall on it; the PHYS-20 package sets it to true. */
-export const PACK_RECALL_UI_ENABLED = false;
-
-/** PS-P10 third review fix: the print history itself ships OFF until
- *  public-surfaces PHYS-20 limb 3 lands. work_package_prints is insert-only,
- *  so a print stopped after its snapshot was recorded (a refused link, or a
- *  build that failed before the download) keeps an ordinary-looking row — a
- *  time, a printer, a sheet count — for paper that never existed. Until the
- *  history can tell a stopped print apart (the server reads its token state)
- *  the packages page does not render it. The PHYS-20 package sets this to
- *  true with limb 3 (and PACK_RECALL_UI_ENABLED once limbs 1 and 2 are
- *  deployed). */
-export const PACK_PRINT_HISTORY_UI_ENABLED = false;
 
 interface PrintRow { id: string; printedAt: string | null; printedByName: string | null; sheets: number }
 
@@ -110,6 +92,36 @@ export default function PackPrintHistory({ orgId, packageId, canRecall, refreshK
   const [olderError, setOlderError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [recalled, setRecalled] = useState<Set<string>>(new Set());
+  // PHYS-20 limb 3: each print's code state (the server's read), and whether
+  // the read said "not available" (before 20261240) or failed.
+  const [codeStates, setCodeStates] = useState<Map<string, SheetPrintCodeState>>(new Map());
+  const [statesUnavailable, setStatesUnavailable] = useState(false);
+  const [statesUnread, setStatesUnread] = useState(false);
+
+  // Read the code state of these prints and merge it in. A failed read is
+  // said once; its rows show no state (and a controller's Recall stays —
+  // the server decides).
+  const readStates = useCallback(async (ids: string[]) => {
+    if (ids.length === 0) return;
+    const r = await readSheetPrintStates({ orgId, coverPrintIds: ids });
+    if (!r.ok) {
+      setStatesUnread(true);
+      return;
+    }
+    if (!r.available) {
+      setStatesUnavailable(true);
+      return;
+    }
+    setStatesUnavailable(false);
+    setCodeStates((prev) => {
+      const next = new Map(prev);
+      for (const id of ids) next.delete(id.toLowerCase());
+      for (const [id, st] of r.prints) next.set(id, st);
+      return next;
+    });
+  }, [orgId]);
+  const stateOf = (id: string): SheetPrintCodeState | undefined =>
+    statesUnavailable ? { state: "unlinked" } : codeStates.get(id.toLowerCase());
 
   // One page of prints, newest first; `after` is the last row already shown.
   // One more than a page is read, so "Show older prints" appears only when
@@ -142,7 +154,9 @@ export default function PackPrintHistory({ orgId, packageId, canRecall, refreshK
     setReadError(null);
     setRows(page.rows);
     setHasOlder(page.more);
-  }, [readPage]);
+    setStatesUnread(false);
+    await readStates(page.rows.map((r) => r.id));
+  }, [readPage, readStates]);
 
   const loadOlder = async () => {
     const last = rows && rows.length > 0 ? rows[rows.length - 1] : null;
@@ -160,6 +174,7 @@ export default function PackPrintHistory({ orgId, packageId, canRecall, refreshK
         return [...(prev ?? []), ...page.rows.filter((r) => !seen.has(r.id))];
       });
       setHasOlder(page.more);
+      await readStates(page.rows.map((r) => r.id));
     } finally {
       setOlderBusy(false);
     }
@@ -175,8 +190,8 @@ export default function PackPrintHistory({ orgId, packageId, canRecall, refreshK
       title: "Recall this printed pack?",
       message:
         `Every sheet of the pack printed ${when}${row.printedByName ? ` by ${row.printedByName}` : ""} will scan ` +
-        "\"PRINT CANCELLED — DO NOT USE\". This cannot be undone. It does not change the cover's own QR, and it cannot " +
-        "reach a sheet that carries no per-print code — tell the crew holding the pack as well. The reason is recorded in the audit trail.",
+        "\"PRINT RECALLED — DO NOT USE\", and the pack's cover will read \"PACK RECALLED\". This cannot be undone. " +
+        "Tell the crew holding the pack as well. The reason is recorded in the audit trail.",
       placeholder: "Why is this print recalled? (e.g. issued with the wrong revision)",
       required: true,
       minLength: 3,
@@ -192,10 +207,12 @@ export default function PackPrintHistory({ orgId, packageId, canRecall, refreshK
         showToast({
           type: "success",
           title: "Print recalled",
-          message: `${r.voided} sheet${r.voided === 1 ? "" : "s"} of this print now scan${r.voided === 1 ? "s" : ""} "PRINT CANCELLED — DO NOT USE".` +
+          message: `${r.voided} sheet${r.voided === 1 ? "" : "s"} of this print now scan${r.voided === 1 ? "s" : ""} "PRINT RECALLED — DO NOT USE", and its cover reads "PACK RECALLED".` +
             (r.alreadyVoid > 0 ? ` ${r.alreadyVoid} ${r.alreadyVoid === 1 ? "was" : "were"} already void.` : "") +
-            " The cover's own QR is unchanged — tell the crew holding the pack.",
+            " Tell the crew holding the pack.",
         });
+        // The recall's date and author, as the server now records them.
+        void readStates([row.id]);
       } else {
         showToast({ type: r.unavailable ? "warning" : "error", title: "Print not recalled", message: r.error });
       }
@@ -224,15 +241,42 @@ export default function PackPrintHistory({ orgId, packageId, canRecall, refreshK
           ) : rows.length === 0 ? (
             <div className="text-[11px] text-[var(--color-text-faint)]">Not printed yet.</div>
           ) : (
-            rows.map((row) => (
+            rows.map((row) => {
+              const st = stateOf(row.id);
+              return (
+
               <div key={row.id} className="flex items-center gap-2 px-2 py-1 rounded-lg bg-[var(--color-surface-2)] text-[11px]" data-testid="pack-print-row">
                 <span className="font-bold text-[var(--color-text)] truncate flex-1">
                   {row.printedAt ? new Date(row.printedAt).toLocaleString() : "Time not recorded"}
                   {row.printedByName ? ` · ${row.printedByName}` : ""}
                 </span>
                 <span className="text-[var(--color-text-faint)] shrink-0">{row.sheets} sheet{row.sheets === 1 ? "" : "s"}</span>
-                {recalled.has(row.id) ? (
-                  <span className="shrink-0 text-[10px] font-black uppercase text-red-700">Recalled</span>
+                {recalled.has(row.id) || st?.state === "recalled" ? (
+                  <span className="shrink-0 text-[10px] font-black uppercase text-red-700" data-testid="pack-print-recalled">
+                    Recalled
+                    {st?.state === "recalled" && st.recalledAt ? ` ${new Date(st.recalledAt).toLocaleDateString()}` : ""}
+                    {st?.state === "recalled" && st.recalledBy ? ` · by ${st.recalledBy}` : ""}
+                  </span>
+                ) : st?.state === "stopped" ? (
+                  <span
+                    className="shrink-0 text-[10px] font-bold text-[var(--color-text-faint)]"
+                    data-testid="pack-print-stopped"
+                    title="This print was stopped before anything was downloaded — no paper left, so there is nothing to recall."
+                  >
+                    Stopped — nothing downloaded
+                  </span>
+                ) : st?.state === "unlinked" ? (
+                  <span
+                    className="shrink-0 text-[10px] font-bold text-[var(--color-text-faint)]"
+                    data-testid="pack-print-unlinked"
+                    title={
+                      "No per-print sheet code is linked to this print, so this record cannot show whether the pack was downloaded or recalled " +
+                      "(printed before database update 20261240, no code could be issued, or its link failed). A recall from here cannot reach " +
+                      "its sheets — withdraw its paper by hand, and hold or supersede the revision if its sheets must read red."
+                    }
+                  >
+                    Per-print codes not linked
+                  </span>
                 ) : canRecall ? (
                   <button
                     type="button"
@@ -246,7 +290,13 @@ export default function PackPrintHistory({ orgId, packageId, canRecall, refreshK
                   </button>
                 ) : null}
               </div>
-            ))
+              );
+            })
+          )}
+          {!readError && rows && rows.length > 0 && statesUnread && (
+            <div className="text-[11px] text-amber-700 px-2" role="status">
+              Whether these prints were recalled or stopped could not be read just now — reload to try again.
+            </div>
           )}
           {!readError && rows && rows.length > 0 && (hasOlder || olderError) && (
             <div className="flex items-center gap-2 px-2">

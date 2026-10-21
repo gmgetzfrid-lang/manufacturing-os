@@ -4,11 +4,12 @@
 // (c); rulings under DEC-90).
 //
 //   - a recalled sheet (voided 'recalled') reads print_voided — red, never
-//     green — unless a hold or a retirement says more (the verify route reads
-//     voided_at, not the reason: every void reads stale);
+//     green — unless a hold or a retirement says more; since PHYS-20 limb 2
+//     (the integrator's ruling at the PS-P10 merge, DEC-90) the route reads
+//     the void reason and a recalled sheet's answer adds sheetPrint.recalled
+//     / recalledAt (lib/__tests__/psP10Phys20Recall.test.ts);
 //   - REGRESSION (ruling (4)): a doc-only QR, a ?v= QR and every existing
-//     token answer exactly as before; the verify route reads neither the
-//     link nor the reason;
+//     token answer exactly as before; the verify route never reads the link;
 //   - recallSheetPrint posts { action: "void", orgId, coverPrintId, reason }
 //     and says what came back, never throwing;
 //   - 20261240: DEC-30 one-paste shape; print_sheet_tokens_guard re-created
@@ -131,10 +132,12 @@ describe("PS-P10 — a recalled sheet's scan reads stale, never green", () => {
     const t = mint(V, PRINT_1, { voided_at: "2026-10-20T09:00:00Z", void_reason: "recalled", settled_at: "2026-10-20T08:01:00Z", cover_print_id: PRINT_2 });
     const r = await verify({ t });
     expect(r).toMatchObject({ verdict: "print_voided", isCurrent: false });
-    expect(r.sheetPrint).toEqual({ printedAt: "2026-10-19T08:00:00Z", voided: true });
+    // PHYS-20 limb 2: the answer says it was recalled, and when
+    expect(r.sheetPrint).toEqual({ printedAt: "2026-10-19T08:00:00Z", voided: true, recalled: true, recalledAt: "2026-10-20T09:00:00Z" });
     const view = presentDocVerdict(r as unknown as DocVerifyResult);
     expect(view.ok).toBe(false);
     expect(view.bg).toBe("bg-red-600");
+    expect(view.headline).toBe("PRINT RECALLED — DO NOT USE");
   });
 
   it("a hold or a retirement still says more than the recall", async () => {
@@ -162,11 +165,11 @@ describe("PS-P10 REGRESSION — every QR printed before answers exactly as today
     expect(JSON.stringify(r)).not.toMatch(/cover|recall/i);
   });
 
-  it("the verify route reads neither the cover link nor the void reason (pinned on its token select)", () => {
+  it("the verify route never reads the cover link; its token select adds only the void reason (a column since 20261237 — PHYS-20 limb 2)", () => {
     const src = readFileSync(join(process.cwd(), "app/api/verify/route.ts"), "utf8");
-    expect(src).toContain('.select("print_id, document_id, version_id, minted_at, voided_at")');
+    expect(src).toContain('.select("print_id, document_id, version_id, minted_at, voided_at, void_reason")');
     expect(src).not.toContain("cover_print_id");
-    expect(src).not.toContain("void_reason");
+    expect(readFileSync(join(process.cwd(), "supabase/migrations/20261237_ps_roundG_print_sheet_tokens.sql"), "utf8")).toMatch(/^\s+void_reason TEXT,$/m);
   });
 });
 

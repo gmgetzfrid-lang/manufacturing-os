@@ -23,7 +23,7 @@ import { appConfirm } from "@/components/providers/DialogProvider";
 import { useToast } from "@/components/providers/ToastProvider";
 import { supabase } from "@/lib/supabase";
 import { isControllerPrincipal } from "@/lib/permissions";
-import PackPrintHistory, { PACK_RECALL_UI_ENABLED, PACK_PRINT_HISTORY_UI_ENABLED } from "@/components/documents/PackPrintHistory";
+import PackPrintHistory from "@/components/documents/PackPrintHistory";
 import {
   listWorkPackages, createWorkPackage, refreshWorkPackage, recordPackagePrint,
   setWorkPackageStatus, coverEntryLabels, mergeLeftOut, readPackageMemberIds, type WorkPackage,
@@ -436,15 +436,14 @@ export default function PackagesPage() {
                   ))}
                 </div>
 
-                {/* PS-P10: the pack's print history; a controller recalls a
-                    printed pack here (DACL-8 residual (c)) once
-                    PACK_RECALL_UI_ENABLED is on — it ships off until
-                    public-surfaces PHYS-20 limbs 1 and 2 land. The history
-                    itself ships off (PACK_PRINT_HISTORY_UI_ENABLED) until
-                    PHYS-20 limb 3 can mark a print stopped before its
-                    download. */}
-                {activeOrgId && PACK_PRINT_HISTORY_UI_ENABLED && (
-                  <PackPrintHistory orgId={activeOrgId} packageId={pkg.id} canRecall={isController && PACK_RECALL_UI_ENABLED} refreshKey={printRound} />
+                {/* PS-P10: the pack's print history — each print marked
+                    recalled, stopped before its download, or not linked
+                    (public-surfaces PHYS-20 limb 3); a controller (Admin /
+                    Document Control by the role collection) recalls a printed
+                    pack here (DACL-8 residual (c)). On since PHYS-20's limbs
+                    hold: a recalled pack's cover and sheets read recalled. */}
+                {activeOrgId && (
+                  <PackPrintHistory orgId={activeOrgId} packageId={pkg.id} canRecall={isController} refreshKey={printRound} />
                 )}
 
                 <div className="px-3 pb-3 flex items-center gap-2">

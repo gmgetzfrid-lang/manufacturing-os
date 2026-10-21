@@ -37,6 +37,14 @@
 // would not (lib/verifyDisclosure: no number or title for a restricted
 // document). Every QR printed before PS-P9 — doc-only and ?v= — is answered
 // exactly as before.
+//
+// PS-P10 (public-surfaces PHYS-20 limb 2): the token read also names the
+// void reason (a column since 20261237). A sheet whose print a controller
+// RECALLED (void_reason 'recalled', 20261240) is still `print_voided` — red,
+// never green, the same verdict and scan row — and its answer adds
+// sheetPrint.recalled / recalledAt, so the page says Document Control
+// recalled it, and when. 'not_printed' / 'print_aborted' answer exactly as
+// before (no added key).
 
 import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -80,7 +88,7 @@ interface DocRow {
 interface PrintedVersionRow { revision_label: string | null; created_at: string | null; record_id: string | null }
 interface CurrentVersionRow { created_at?: string | null; effective_date?: string | null }
 interface HoldReasonRow { reason: string | null }
-interface SheetTokenRow { print_id: string; document_id: string; version_id: string; minted_at: string | null; voided_at: string | null }
+interface SheetTokenRow { print_id: string; document_id: string; version_id: string; minted_at: string | null; voided_at: string | null; void_reason: string | null }
 
 export async function GET(req: NextRequest) {
   if (!supabaseUrl || !serviceRoleKey) {
@@ -116,7 +124,7 @@ export async function GET(req: NextRequest) {
     }
     const { data: tokData, error: tokErr } = await sb
       .from("print_sheet_tokens")
-      .select("print_id, document_id, version_id, minted_at, voided_at")
+      .select("print_id, document_id, version_id, minted_at, voided_at, void_reason")
       .eq("token_hash", hashSheetToken(sheetToken))
       .maybeSingle();
     if (tokErr && !isMissingSheetTokenTable(tokErr)) {
@@ -302,6 +310,16 @@ export async function GET(req: NextRequest) {
     checkedAt: new Date().toISOString(),
     // PS-P9: only on a token answer — when THIS print was made (not its
     // revision's issue date, which printedAt keeps) and whether it was voided.
-    ...(sheet ? { sheetPrint: { printedAt: sheet.minted_at ?? null, voided: !!sheet.voided_at } } : {}),
+    ...(sheet
+      ? {
+        sheetPrint: {
+          printedAt: sheet.minted_at ?? null,
+          voided: !!sheet.voided_at,
+          // PHYS-20 limb 2: only on a recalled sheet — every other answer
+          // keeps exactly PS-P9's two keys.
+          ...(sheet.voided_at && sheet.void_reason === "recalled" ? { recalled: true, recalledAt: sheet.voided_at } : {}),
+        },
+      }
+      : {}),
   });
 }

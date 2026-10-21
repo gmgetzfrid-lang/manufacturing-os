@@ -68,6 +68,9 @@ const state = vi.hoisted(() => ({
    *  42703, one that does not succeeds; a void 'recalled' is refused by the
    *  20261237 CHECK (23514) */
   preCoverLink: false,
+  /** the error code a pre-20261240 read naming cover_print_id carries
+   *  (42703 from Postgres; PGRST204 from PostgREST's schema cache) */
+  preCoverLinkCode: "42703" as "42703" | "PGRST204",
   /** the column present but the void-reason CHECK still without 'recalled' */
   voidCheckRefuses: false,
   log: [] as string[],
@@ -108,7 +111,9 @@ function chain(table: string) {
     }
     state.reads.push({ table, cols, filters: [...filters] });
     if (table === "print_sheet_tokens" && state.preCoverLink && (cols.includes("cover_print_id") || filters.some((f) => f[1] === "cover_print_id"))) {
-      return { data: null, error: { code: "42703", message: "column print_sheet_tokens.cover_print_id does not exist" } };
+      return state.preCoverLinkCode === "PGRST204"
+        ? { data: null, error: { code: "PGRST204", message: "Could not find the 'cover_print_id' column of 'print_sheet_tokens' in the schema cache" } }
+        : { data: null, error: { code: "42703", message: "column print_sheet_tokens.cover_print_id does not exist" } };
     }
     if (table === "print_sheet_tokens" && neq) {
       state.log.push("probe");
@@ -194,6 +199,7 @@ beforeEach(() => {
   state.updateError = null;
   state.filterReads = false;
   state.preCoverLink = false;
+  state.preCoverLinkCode = "42703";
   state.voidCheckRefuses = false;
   state.log = [];
   state.inserts = [];
@@ -642,15 +648,44 @@ describe("PS-P10 void — a controller recalls a printed pack", () => {
     expect(state.updates).toEqual([]);
   });
 
-  it("a void refused by a void-reason CHECK without 'recalled' answers { available: false } (not 409 'try again'); nothing voided, the attempt and its non-application recorded", async () => {
+  // The integrator's ruling at the PS-P10 merge (DEC-90): EVERY pre-paste
+  // shape answers { available: false } with nothing written — both recall
+  // paths (by a cover, by a token print id) × both error shapes a read naming
+  // the missing column meets (42703 from Postgres, PGRST204 from PostgREST).
+  it("RULING: before 20261240, by a cover AND by a token print id, under 42703 AND PGRST204 — available:false, no audit row, no void", async () => {
+    asController();
+    settled();
+    state.preCoverLink = true;
+    for (const code of ["42703", "PGRST204"] as const) {
+      state.preCoverLinkCode = code;
+      for (const body of [voidBody(), { action: "void", orgId: ORG, printId: PRINT, reason: "Wrong pack" }]) {
+        const res = await post(body);
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ available: false, recalled: false, error: "Recalling a printed pack needs database update 20261240 — nothing was changed." });
+      }
+    }
+    expect(state.inserts).toEqual([]);
+    expect(state.updates).toEqual([]);
+    expect(state.log.filter((l) => l !== "probe")).toEqual([]);
+  });
+
+  it("RULING: the column read comes before the audit row on every path (pinned on the source: no audit() call precedes the read that names cover_print_id)", () => {
+    const src = readFileSync(join(process.cwd(), "app/api/print-sheet-tokens/route.ts"), "utf8");
+    const fn = src.slice(src.indexOf("async function recallPrint("), src.indexOf("async function printHistoryState("));
+    const read = fn.indexOf('.select("id, print_id, settled_at, voided_at, cover_print_id")');
+    expect(read).toBeGreaterThan(0);
+    expect(fn.indexOf("await audit(")).toBeGreaterThan(read);
+    expect(fn.indexOf('.from("audit_logs")')).toBeGreaterThan(read);
+  });
+
+  it("a void refused by a void-reason CHECK without 'recalled' (23514 — the CHECK changed by hand after the paste) answers exactly notYet() (not 409 'try again'); no sheet voided, the attempt and its non-application recorded", async () => {
     asController();
     settled();
     state.voidCheckRefuses = true;
     const res = await post({ action: "void", orgId: ORG, printId: PRINT, reason: "Wrong pack" });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toMatchObject({ available: false, recalled: false, voided: 0 });
-    expect(body.error).toMatch(/20261240/);
+    expect(body).toEqual({ available: false, recalled: false, error: "Recalling a printed pack needs database update 20261240 — nothing was changed." });
     expect(state.updates).toHaveLength(1);
     expect(state.inserts.map((i) => (i.rows.details as Record<string, unknown>).incomplete ?? false)).toEqual([false, true]);
     expect((state.inserts[1].rows.details as Record<string, unknown>).notApplied).toMatch(/20261240/);

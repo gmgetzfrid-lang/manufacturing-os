@@ -8,10 +8,13 @@
 // id; a non-controller sees the history and no Recall; a cancelled prompt
 // sends nothing; a refused recall is said; an unreadable history is said.
 // And the page's wiring (source pins): the cover links its print before the
-// download, and canRecall is the role-COLLECTION controller test AND
-// PACK_RECALL_UI_ENABLED — which ships false until public-surfaces PHYS-20
-// limbs 1 and 2 land (second review fix: a recall would otherwise leave the
-// cover QR reading current and each sheet saying it was never issued).
+// download, and canRecall is the role-COLLECTION controller test. The
+// history and Recall shipped OFF behind PACK_PRINT_HISTORY_UI_ENABLED /
+// PACK_RECALL_UI_ENABLED until public-surfaces PHYS-20; with its three limbs
+// built (the integrator's ruling at the PS-P10 merge, DEC-90) both switches
+// are gone: each print is marked recalled (when, by whom), stopped before its
+// download, or not linked (the server's `history` read), and Recall is
+// offered to a controller only on a print whose codes are linked.
 // The history pages back through older prints ("Show older prints", keyset
 // on printed_at, id — second review fix: every print is reachable).
 
@@ -32,6 +35,7 @@ const s = vi.hoisted(() => ({
   pages: [] as Array<Array<Record<string, unknown>> | "error">,
   prompt: vi.fn(),
   recall: vi.fn(),
+  states: vi.fn(),
   toasts: [] as Array<Record<string, unknown>>,
 }));
 
@@ -63,11 +67,13 @@ vi.mock("@/lib/supabase", () => {
 });
 vi.mock("@/components/providers/DialogProvider", () => ({ appPrompt: (...a: unknown[]) => s.prompt(...a) }));
 vi.mock("@/components/providers/ToastProvider", () => ({ useToast: () => ({ showToast: (t: Record<string, unknown>) => s.toasts.push(t) }) }));
-vi.mock("@/lib/printSheetTokensClient", () => ({ recallSheetPrint: (...a: unknown[]) => s.recall(...a) }));
+vi.mock("@/lib/printSheetTokensClient", () => ({
+  recallSheetPrint: (...a: unknown[]) => s.recall(...a),
+  readSheetPrintStates: (...a: unknown[]) => s.states(...a),
+}));
 
-import PackPrintHistory, {
-  printedSheetCount, olderPrintsFilter, PACK_PRINT_HISTORY_LIMIT, PACK_RECALL_UI_ENABLED, PACK_PRINT_HISTORY_UI_ENABLED,
-} from "@/components/documents/PackPrintHistory";
+import * as History from "@/components/documents/PackPrintHistory";
+import PackPrintHistory, { printedSheetCount, olderPrintsFilter, PACK_PRINT_HISTORY_LIMIT } from "@/components/documents/PackPrintHistory";
 
 const COVER_A = "c1c1c1c1-0000-0000-0000-000000000001";
 const COVER_B = "c2c2c2c2-0000-0000-0000-000000000002";
@@ -100,6 +106,11 @@ beforeEach(() => {
   s.pages = [];
   s.prompt.mockReset();
   s.recall.mockReset();
+  s.states.mockReset();
+  // every print's codes linked (live) unless a test says otherwise
+  s.states.mockImplementation(async ({ coverPrintIds }: { coverPrintIds: string[] }) => ({
+    ok: true, available: true, prints: new Map(coverPrintIds.map((id) => [id.toLowerCase(), { state: "linked" }])),
+  }));
   s.toasts = [];
 });
 afterEach(() => {
@@ -136,12 +147,16 @@ describe("PS-P10 — the print history, rendered", () => {
     const opts = s.prompt.mock.calls[0][0] as { required: boolean; minLength: number; message: string };
     expect(opts.required).toBe(true);
     expect(opts.minLength).toBe(3);
-    expect(opts.message).toMatch(/PRINT CANCELLED — DO NOT USE/);
-    expect(opts.message).toMatch(/does not change the cover's own QR/);
+    // PHYS-20 limbs 1 and 2: the sheets read recalled, and so does the cover
+    expect(opts.message).toMatch(/PRINT RECALLED — DO NOT USE/);
+    expect(opts.message).toMatch(/the pack's cover will read "PACK RECALLED"/);
+    expect(opts.message).not.toMatch(/does not change the cover's own QR|PRINT CANCELLED/);
     expect(s.recall).toHaveBeenCalledWith({ orgId: "org1", coverPrintId: COVER_A, reason: "Issued with the wrong revision" });
     expect(s.toasts[0]).toMatchObject({ type: "success", title: "Print recalled" });
-    expect(String(s.toasts[0].message)).toMatch(/2 sheets of this print now scan/);
+    expect(String(s.toasts[0].message)).toMatch(/2 sheets of this print now scan "PRINT RECALLED — DO NOT USE", and its cover reads "PACK RECALLED"/);
     expect(host!.querySelectorAll('[data-testid="pack-print-row"]')[0].textContent).toMatch(/Recalled/);
+    // the row's recall date and author are re-read from the server
+    expect(s.states).toHaveBeenLastCalledWith({ orgId: "org1", coverPrintIds: [COVER_A] });
   });
 
   it("a cancelled prompt sends nothing", async () => {
@@ -218,6 +233,82 @@ describe("PS-P10 — the print history, rendered", () => {
   });
 });
 
+const COVER_C = "c3c3c3c3-0000-0000-0000-000000000003";
+const COVER_D = "c4c4c4c4-0000-0000-0000-000000000004";
+const rowText = (i: number) => host!.querySelectorAll('[data-testid="pack-print-row"]')[i].textContent ?? "";
+const rowRecall = (i: number) => [...host!.querySelectorAll('[data-testid="pack-print-row"]')[i].querySelectorAll("button")].filter((b) => /Recall/.test(b.textContent ?? ""));
+
+describe("PHYS-20 limb 3 — the history marks each print recalled, stopped or not linked (both states of the role)", () => {
+  beforeEach(() => {
+    s.rows = [
+      { id: COVER_A, printed_at: "2026-10-20T08:00:05Z", printed_by_name: "jo", sheets: [{ documentId: "d1", printed: true }] },
+      { id: COVER_B, printed_at: "2026-10-19T08:00:05Z", printed_by_name: "jo", sheets: [{ documentId: "d1", printed: true }] },
+      { id: COVER_C, printed_at: "2026-10-18T08:00:05Z", printed_by_name: "jo", sheets: [{ documentId: "d1", printed: true }] },
+      { id: COVER_D, printed_at: "2026-10-17T08:00:05Z", printed_by_name: "jo", sheets: [{ documentId: "d1", printed: true }] },
+    ];
+    s.states.mockImplementation(async () => ({
+      ok: true, available: true,
+      prints: new Map<string, unknown>([
+        [COVER_A, { state: "recalled", recalledAt: "2026-10-21T09:30:00.000Z", recalledBy: "dc.lee" }],
+        [COVER_B, { state: "stopped" }],
+        [COVER_C, { state: "linked" }],
+        [COVER_D, { state: "unlinked" }],
+      ]),
+    }));
+  });
+
+  for (const controller of [true, false]) {
+    it(`${controller ? "a CONTROLLER" : "a NON-controller"}: recalled (date, by whom), stopped and not-linked rows are marked for every member; Recall ${controller ? "only on the linked print" : "nowhere"}`, async () => {
+      await render(controller);
+      expect(s.states).toHaveBeenCalledWith({ orgId: "org1", coverPrintIds: [COVER_A, COVER_B, COVER_C, COVER_D] });
+      const recalledMark = host!.querySelectorAll('[data-testid="pack-print-row"]')[0].querySelector('[data-testid="pack-print-recalled"]');
+      expect(recalledMark?.textContent).toMatch(/^Recalled .*2026 · by dc\.lee$/);
+      expect(rowText(1)).toMatch(/Stopped — nothing downloaded/);
+      expect(rowText(2)).not.toMatch(/Recalled|Stopped|not linked/);
+      expect(rowText(3)).toMatch(/Per-print codes not linked/);
+      expect(rowRecall(0)).toHaveLength(0);
+      expect(rowRecall(1)).toHaveLength(0);
+      expect(rowRecall(2)).toHaveLength(controller ? 1 : 0);
+      expect(rowRecall(3)).toHaveLength(0);
+      expect(recallButtons()).toHaveLength(controller ? 1 : 0);
+    });
+  }
+
+  it("before database update 20261240 (the read answers not available): every row reads 'Per-print codes not linked' and no Recall is offered, even to a controller", async () => {
+    s.states.mockResolvedValue({ ok: true, available: false });
+    await render(true);
+    for (let i = 0; i < 4; i++) expect(rowText(i)).toMatch(/Per-print codes not linked/);
+    expect(recallButtons()).toHaveLength(0);
+  });
+
+  it("a state that cannot be read is said once; no row is marked; a controller keeps Recall on every row (the server decides), a non-controller sees none", async () => {
+    s.states.mockResolvedValue({ ok: false, error: "boom" });
+    await render(true);
+    expect(host!.textContent).toMatch(/Whether these prints were recalled or stopped could not be read just now/);
+    expect(host!.querySelectorAll('[data-testid="pack-print-recalled"], [data-testid="pack-print-stopped"], [data-testid="pack-print-unlinked"]')).toHaveLength(0);
+    expect(recallButtons()).toHaveLength(4);
+    act(() => root?.unmount());
+    host?.remove();
+    await render(false);
+    expect(recallButtons()).toHaveLength(0);
+  });
+
+  it("older prints are marked too (their states read with their page)", async () => {
+    const mk = (i: number) => ({ id: `c${String(i).padStart(7, "0")}-0000-0000-0000-000000000000`, printed_at: `2026-10-${String(20 - i).padStart(2, "0")}T08:00:00Z`, printed_by_name: null, sheets: [] });
+    const all = Array.from({ length: 12 }, (_, i) => mk(i));
+    s.pages = [all.slice(0, 11), all.slice(10, 12)];
+    s.states.mockImplementation(async ({ coverPrintIds }: { coverPrintIds: string[] }) => ({
+      ok: true, available: true, prints: new Map(coverPrintIds.map((id) => [id, { state: "stopped" }])),
+    }));
+    await render(false);
+    const older = [...host!.querySelectorAll("button")].find((b) => /Show older prints/.test(b.textContent ?? ""))!;
+    await act(async () => { older.click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(s.states).toHaveBeenLastCalledWith({ orgId: "org1", coverPrintIds: [all[10].id, all[11].id] });
+    expect(host!.querySelectorAll('[data-testid="pack-print-stopped"]')).toHaveLength(12);
+  });
+});
+
 describe("PS-P10 — the packages page's wiring (source pins)", () => {
   const src = readFileSync(join(process.cwd(), "app/(protected)/packages/page.tsx"), "utf8");
   it("the cover links its recorded print before the download", () => {
@@ -228,20 +319,16 @@ describe("PS-P10 — the packages page's wiring (source pins)", () => {
     expect(linked).toBeGreaterThan(recorded);
     expect(linked).toBeLessThan(src.indexOf("return buildPackageCover({"));
   });
-  it("Recall is offered by the role-COLLECTION controller test (isControllerPrincipal over the headline and the roles)", () => {
+  it("Recall is offered by the role-COLLECTION controller test (isControllerPrincipal over the headline and the roles) — and nothing else", () => {
     expect(src).toContain("const isController = isControllerPrincipal({ role: activeRole, roles });");
-    expect(src).toContain("<PackPrintHistory orgId={activeOrgId} packageId={pkg.id} canRecall={isController && PACK_RECALL_UI_ENABLED} refreshKey={printRound} />");
+    expect(src).toContain("<PackPrintHistory orgId={activeOrgId} packageId={pkg.id} canRecall={isController} refreshKey={printRound} />");
   });
-  it("SHIPPED OFF (second review fix): Recall stays off until public-surfaces PHYS-20 limbs 1 and 2 land — the PHYS-20 package flips PACK_RECALL_UI_ENABLED", () => {
-    expect(PACK_RECALL_UI_ENABLED).toBe(false);
-    expect(src).toContain('import PackPrintHistory, { PACK_RECALL_UI_ENABLED, PACK_PRINT_HISTORY_UI_ENABLED } from "@/components/documents/PackPrintHistory";');
-    // canRecall is never the controller test alone
-    expect(src).not.toMatch(/canRecall=\{isController\}/);
-  });
-  it("SHIPPED OFF (third review fix): the print history itself is not rendered until public-surfaces PHYS-20 limb 3 can mark a print stopped before its download", () => {
-    expect(PACK_PRINT_HISTORY_UI_ENABLED).toBe(false);
-    // the page renders the history only behind the switch
-    expect(src).toMatch(/\{activeOrgId && PACK_PRINT_HISTORY_UI_ENABLED && \(\s*<PackPrintHistory /);
+  it("ON (the integrator at the PS-P10 merge, DEC-90 — PHYS-20's limbs hold): the history renders for every member, the switches are gone", () => {
+    expect(src).toContain('import PackPrintHistory from "@/components/documents/PackPrintHistory";');
+    expect(src).toMatch(/\{activeOrgId && \(\s*<PackPrintHistory /);
     expect(src.match(/<PackPrintHistory /g)).toHaveLength(1);
+    expect(src).not.toMatch(/PACK_RECALL_UI_ENABLED|PACK_PRINT_HISTORY_UI_ENABLED/);
+    expect("PACK_RECALL_UI_ENABLED" in History).toBe(false);
+    expect("PACK_PRINT_HISTORY_UI_ENABLED" in History).toBe(false);
   });
 });

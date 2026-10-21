@@ -39,8 +39,9 @@ export interface DocVerifyResult {
   isCurrent: boolean;
   checkedAt: string;
   /** PS-P9: present only when the code was a per-print sheet token — when
-   *  that print was made and whether it was voided. */
-  sheetPrint?: { printedAt: string | null; voided: boolean };
+   *  that print was made and whether it was voided. PS-P10 (PHYS-20 limb 2):
+   *  `recalled` / `recalledAt` only when Document Control recalled the print. */
+  sheetPrint?: { printedAt: string | null; voided: boolean; recalled?: boolean; recalledAt?: string | null };
 }
 
 export interface VerdictView {
@@ -60,6 +61,15 @@ export function formatEffectiveDay(day: string | null): string | null {
   const t = new Date(`${day.slice(0, 10)}T00:00:00Z`);
   if (Number.isNaN(t.getTime())) return null;
   return t.toLocaleDateString(undefined, { timeZone: "UTC", year: "numeric", month: "short", day: "numeric" });
+}
+
+/** A recall's moment as a date the scanner reads ("21 Oct 2026"); null when
+ *  absent or unparseable. */
+export function formatRecallDate(at: string | null | undefined): string | null {
+  if (!at) return null;
+  const t = new Date(at);
+  if (Number.isNaN(t.getTime())) return null;
+  return t.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
 const STOP_ADVICE = "Get the current revision from Document Control before performing any work from this drawing. Mark this print “SUPERSEDED” or destroy it.";
@@ -124,6 +134,13 @@ export function presentDocVerdict(r: DocVerifyResult): VerdictView {
       return { bg: "bg-slate-700", icon: "q", ok: false, headline: "CAN'T CONFIRM THIS REVISION", advice: UNCONFIRMED_ADVICE,
         blurb: "This document has no current revision on record, so the system cannot confirm this print is current. Do not assume it is — check with Document Control." };
     case "print_voided":
+      // PS-P10 (PHYS-20 limb 2): a print Document Control RECALLED was
+      // issued, then withdrawn — said so, with the date. Same red, same advice.
+      if (r.sheetPrint?.recalled === true) {
+        const on = formatRecallDate(r.sheetPrint.recalledAt);
+        return { bg: "bg-red-600", icon: "x", ok: false, headline: "PRINT RECALLED — DO NOT USE", advice: STOP_ADVICE,
+          blurb: `Document Control recalled this sheet's print${on ? ` on ${on}` : ""} — this paper was withdrawn after it was issued. Do not work from it; get a current print from Document Control.` };
+      }
       // Red, as stale: the system has no record that this paper left.
       return { bg: "bg-red-600", icon: "x", ok: false, headline: "PRINT CANCELLED — DO NOT USE", advice: STOP_ADVICE,
         blurb: "This sheet's print was cancelled when it was made — the system has no record that this paper was issued. Do not work from it; get a current print from Document Control." };
@@ -137,7 +154,10 @@ export function presentDocVerdict(r: DocVerifyResult): VerdictView {
 // ─── /verify-package/[packageId] — a printed work pack ───────────────────
 
 export type PackVerdict =
-  | "current" | "not_yet_effective" | "incomplete" | "stale" | "held" | "closed" | "empty" | "unconfirmed_print" | "unverifiable";
+  | "current" | "not_yet_effective" | "incomplete" | "stale" | "held" | "closed" | "empty" | "unconfirmed_print" | "unverifiable"
+  // PS-P10 (PHYS-20 limb 1): a sheet code linked to this cover's print was
+  // recalled by Document Control — the whole pack is withdrawn.
+  | "recalled";
 
 /** One printed sheet's state. `not_issued` is a status outside the
  *  allow-list that the vocabulary names (In Review, an empty status);
@@ -147,7 +167,9 @@ export type PackVerdict =
 export type SheetState =
   | "fresh" | "not_yet_effective" | "stale" | "held"
   | "void" | "archived" | "superseded" | "retired" | "draft" | "not_issued" | "status_unrecognised"
-  | "missing" | "removed" | "unconfirmed";
+  | "missing" | "removed" | "unconfirmed"
+  // PS-P10 (PHYS-20 limb 1): a sheet of a recalled print.
+  | "recalled";
 
 export interface PackSheetRow {
   label: string;
@@ -221,6 +243,8 @@ export interface PackVerifyResult {
   notPrintable?: Array<{ label: string; reason: NotPrintableReason; leftOutAtPrint?: string; addedSincePrint?: boolean }>;
   allFresh: boolean;
   verdict?: PackVerdict;
+  /** PS-P10 (PHYS-20 limb 1): only on a `recalled` answer — when the recall was made. */
+  recalledAt?: string | null;
   sheets: PackSheetRow[];
   checkedAt: string;
 }
@@ -242,6 +266,12 @@ export function presentPackVerdict(r: PackVerifyResult): VerdictView {
       return { bg: "bg-amber-500", icon: "q", ok: false, headline: "NOT YET IN EFFECT",
         advice: "Keep working to the prior in-force revisions until the effective dates.",
         blurb: "Every sheet is the latest revision, but at least one does not come into force yet — the sheets marked below." };
+    case "recalled": {
+      const on = formatRecallDate(r.recalledAt);
+      return { bg: "bg-red-600", icon: "x", ok: false, headline: "PACK RECALLED — DO NOT USE",
+        advice: "Do not work from any sheet in this pack. Return it to Document Control and get a current pack from the package owner or Document Control.",
+        blurb: `Document Control recalled this printed pack${on ? ` on ${on}` : ""}. Its sheets are withdrawn — do not work from any of them.` };
+    }
     case "held":
       return { bg: "bg-red-700", icon: "stop", ok: false, headline: "PACK ON HOLD — STOP WORK",
         advice: legacyCover ? LEGACY_ADVICE : "Do not work from the held sheets until Document Control releases every hold on them.",
@@ -325,6 +355,7 @@ export function sheetLabel(s: PackSheetRow): { text: string; ok: boolean } {
     case "status_unrecognised": return { text: "STATUS NOT RECOGNISED", ok: false };
     case "missing": return { text: "NO LONGER AVAILABLE", ok: false };
     case "removed": return { text: "REMOVED FROM PACKAGE", ok: false };
+    case "recalled": return { text: `${printed} · RECALLED`, ok: false };
     // A legacy cover's counted row (intelligence DACL-8 c3) carries no
     // revision — it stands for several sheets.
     case "unconfirmed": return { text: s.currentRev ? `now Rev ${s.currentRev} · printing unknown` : "PRINTING UNKNOWN", ok: false };

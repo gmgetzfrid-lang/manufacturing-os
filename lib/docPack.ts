@@ -891,8 +891,8 @@ async function buildAndDownloadDocPackOnce(tokenPrint: SheetTokenPrint, input: {
         // 5xx, 401, 404, 409, or any other 400 — a malformed body, an older
         // route's "Unknown action" during deploy skew) FAILS OPEN: the pack
         // prints unlinked, exactly as it did before PS-P10 (REGRESSION FIRST —
-        // the recall the link serves ships off until PHYS-20, and a recall of
-        // an unlinked print answers the truthful 404).
+        // a recall of an unlinked print by its cover answers the truthful 404,
+        // and the print history marks it "not linked" with no Recall).
         if (r.refused) throw new SheetTokenCoverLinkError(r.error);
         console.warn("[print-sheet-tokens] the pack's sheet codes could not be linked to its print record — printing unlinked:", r.error);
       },

@@ -167,7 +167,8 @@ export type SheetPrintRecallResult =
 
 /** Recall a printed work-package pack by its cover's print id: every live
  *  sheet token of that print is voided ('recalled'), so each of its sheets
- *  scans "PRINT CANCELLED — DO NOT USE" (red, never green). Admin / Document
+ *  scans "PRINT RECALLED — DO NOT USE" and its cover reads "PACK RECALLED"
+ *  (red, never green — public-surfaces PHYS-20). Admin / Document
  *  Control only (the server checks the role collection); the reason is
  *  required and is written to the audit row first. Never throws. */
 export async function recallSheetPrint(input: {
@@ -189,5 +190,55 @@ export async function recallSheetPrint(input: {
     };
   } catch (e) {
     return { ok: false, unavailable: false, status: 0, error: `The recall could not be sent (${(e as Error)?.message || "network"}) — nothing was changed.` };
+  }
+}
+
+/** One work-package print's per-print code state, as the print history shows
+ *  it (public-surfaces PHYS-20 limb 3; the route's `history` action):
+ *  recalled (when, by whom), stopped before its download, linked, or
+ *  unlinked (no code linked to it — the history cannot say whether paper
+ *  left, and a recall by its cover cannot reach it). */
+export type SheetPrintCodeState =
+  | { state: "recalled"; recalledAt: string | null; recalledBy: string | null }
+  | { state: "stopped" }
+  | { state: "linked" }
+  | { state: "unlinked" };
+
+/** What reading the print history's code states came to. `available: false`
+ *  — database update 20261240 is not pasted: no code is linked to any print.
+ *  `ok: false` — not read (the history then shows no state and leaves the
+ *  server to decide a recall). */
+export type SheetPrintStatesResult =
+  | { ok: true; available: true; prints: Map<string, SheetPrintCodeState> }
+  | { ok: true; available: false }
+  | { ok: false; error: string };
+
+const CODE_STATES = new Set(["recalled", "stopped", "linked", "unlinked"]);
+
+/** Read the code state of each of these work-package prints (their
+ *  work_package_prints ids). Never throws. */
+export async function readSheetPrintStates(input: { orgId: string; coverPrintIds: string[] }): Promise<SheetPrintStatesResult> {
+  if (input.coverPrintIds.length === 0) return { ok: true, available: true, prints: new Map() };
+  try {
+    const token = await bearer();
+    if (!token) return { ok: false, error: "signed out" };
+    const res = await postTokenRoute(token, { action: "history", orgId: input.orgId, coverPrintIds: input.coverPrintIds });
+    const body = res.body as { available?: boolean; prints?: Record<string, Record<string, unknown>>; error?: string } | null;
+    if (!res.ok || !body) return { ok: false, error: body?.error ?? `HTTP ${res.status}` };
+    if (body.available === false) return { ok: true, available: false };
+    if (body.available !== true || !body.prints || typeof body.prints !== "object") return { ok: false, error: "unexpected answer" };
+    const prints = new Map<string, SheetPrintCodeState>();
+    for (const [id, p] of Object.entries(body.prints)) {
+      if (!p || !CODE_STATES.has(String(p.state))) continue;
+      prints.set(
+        id.toLowerCase(),
+        p.state === "recalled"
+          ? { state: "recalled", recalledAt: typeof p.recalledAt === "string" ? p.recalledAt : null, recalledBy: typeof p.recalledBy === "string" ? p.recalledBy : null }
+          : ({ state: p.state } as SheetPrintCodeState),
+      );
+    }
+    return { ok: true, available: true, prints };
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message || "network" };
   }
 }

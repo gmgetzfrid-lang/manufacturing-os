@@ -65,12 +65,26 @@
 //     guard allows a void after a settle; a void stays one-way). The audit
 //     row (DISTRIBUTION_RECALL, with the reason) is written FIRST — nothing is
 //     voided without it — and a short void writes a second row saying so.
-//     A recalled sheet's scan reads print_voided: red, never green. A
+//     A recalled sheet's scan reads print_voided — red, never green — worded
+//     "recalled by Document Control" with its date (PHYS-20 limb 2), and a
+//     cover with a recalled linked code answers "recalled" (limb 1). A
 //     non-controller is refused 403 before anything is read. Before 20261240
-//     is pasted: { available: false } and nothing is written — by a cover or
+//     is pasted: { available: false } and NOTHING is written — by a cover or
 //     by a token print id, the token read names cover_print_id, so its 42703
-//     answers before the audit row (fifth review fix); a void refused by a
-//     void-reason CHECK without 'recalled' also answers { available: false }.
+//     / PGRST204 answers before the audit row (fifth review fix); a void
+//     refused by a void-reason CHECK without 'recalled' (23514 — a CHECK
+//     changed by hand after the paste) answers the same { available: false },
+//     no sheet voided.
+//
+//   { action: "history", orgId, coverPrintIds: [id…] }
+//     → { available: true, prints: { <id>: { state, recalledAt?, recalledBy? } } }
+//       | { available: false }
+//     PS-P10 (PHYS-20 limb 3): the work-package print history's read of each
+//     print's code state — recalled (when, by whom), stopped before its
+//     download (every linked code voided 'print_aborted'), linked, or
+//     unlinked. Any active member; each cover must be readable by the
+//     caller's own session in this workspace. Read-only. Before 20261240:
+//     { available: false }.
 //
 // Any active member of the workspace may print a pack (the pack builder has
 // no role gate), so any active member may mint (authorizeOrgRole over every
@@ -282,6 +296,8 @@ export async function POST(req: NextRequest) {
   if (body.action === "link") return linkCover(actor, orgId, body);
 
   if (body.action === "void") return recallPrint(actor, orgId, body);
+
+  if (body.action === "history") return printHistoryState(req, actor, orgId, body);
 
   return json({ error: "Unknown action" }, 400);
 }
@@ -551,10 +567,16 @@ async function recallPrint(actor: AuthorizedActor, orgId: string, body: Record<s
         // 20261237 one) means 20261240 is not pasted. Nothing is voided; the
         // attempt is already on the audit trail, so a follow-up row says it
         // did not apply and the answer is "not available", not "try again".
+        // Unreachable through the paste guide: 20261240 adds the link column
+        // and 'recalled' in ONE transaction, and the read above answers
+        // notYet() before the audit row whenever the column is missing — so
+        // this shape means the CHECK was changed by hand after the paste.
+        // It answers exactly notYet(); the audit row already written is
+        // followed by one saying the recall did not apply.
         if (voided === 0 && isVoidReasonCheckRefusal(uErr)) {
           const followErr = await audit({ reason, incomplete: true, sheets: live.length, voided: 0, notApplied: "needs database update 20261240" });
           if (followErr) console.error("[print-sheet-tokens] the recall's follow-up audit row was not written:", followErr);
-          return json({ available: false, recalled: false, voided: 0, error: "Recalling a printed pack needs database update 20261240 — no sheet was voided." });
+          return notYet();
         }
         voidErr = uErr.message;
         break;
@@ -569,4 +591,132 @@ async function recallPrint(actor: AuthorizedActor, orgId: string, body: Record<s
     return json({ error: `Only ${voided} of ${live.length} sheets were recalled — try again.`, voided }, 409);
   }
   return json({ recalled: true, voided, alreadyVoid: rows.length - live.length });
+}
+
+/** How many cover prints one `history` request may ask about (the print
+ *  history reads ten at a time). */
+const HISTORY_MAX_COVERS = 25;
+
+/** One work-package print's per-print code state, as the print history shows
+ *  it (public-surfaces PHYS-20 limb 3):
+ *  - `recalled` — a sheet code linked to this cover was voided 'recalled'
+ *    (when, and by whom from the recall's audit row — the email's local part,
+ *    the print history's own convention for the printer; null if unread);
+ *  - `stopped` — every linked code was voided 'print_aborted': the print was
+ *    stopped before anything was downloaded (no paper left);
+ *  - `linked` — codes are linked and the print was not stopped or recalled;
+ *  - `unlinked` — no code is linked to this cover (printed before 20261240,
+ *    no code could be issued, or its link failed or was refused): the history
+ *    cannot say whether paper left, and a recall by the cover cannot reach it. */
+type PrintCodeState =
+  | { state: "recalled"; recalledAt: string | null; recalledBy: string | null }
+  | { state: "stopped" }
+  | { state: "linked" }
+  | { state: "unlinked" };
+
+interface CodeStateRow { print_id: string; voided_at: string | null; void_reason: string | null }
+
+/** PS-P10 / PHYS-20 limb 3: the print history's server read of each print's
+ *  code state. Any active member (the history is every member's): the caller's
+ *  OWN session must be able to read each cover (RLS judges, as the history's
+ *  own read did) in this workspace; a cover it cannot read is simply not
+ *  answered. Read-only. Before 20261240 (no link column) or 20261237:
+ *  { available: false } — no code can be linked to any print yet. */
+async function printHistoryState(req: NextRequest, actor: AuthorizedActor, orgId: string, body: Record<string, unknown>) {
+  const raw = Array.isArray(body.coverPrintIds) ? body.coverPrintIds : null;
+  if (!raw || raw.length === 0 || raw.length > HISTORY_MAX_COVERS) return json({ error: "Invalid request" }, 400);
+  const ids: string[] = [];
+  for (const x of raw as unknown[]) {
+    const id = typeof x === "string" ? x.toLowerCase() : "";
+    if (!UUID_RE.test(id)) return json({ error: "Invalid request" }, 400);
+    if (!ids.includes(id)) ids.push(id);
+  }
+  const caller = callerScopedClient(req);
+  if ("error" in caller) return json({ error: caller.error }, caller.status);
+  const { data: covers, error: coverErr } = await caller.from("work_package_prints").select("id, org_id").in("id", ids);
+  if (coverErr) return json({ error: "Couldn't read the prints — try again" }, 503);
+  const visible = ((covers as Array<{ id: string; org_id: string | null }> | null) ?? [])
+    .filter((c) => c.org_id === orgId)
+    .map((c) => String(c.id).toLowerCase());
+  const prints: Record<string, PrintCodeState> = {};
+  if (visible.length === 0) return json({ available: true, prints });
+
+  // Two one-row reads per cover over its linked codes, ordered by the void
+  // reason ('not_printed' < 'print_aborted' < 'recalled'): the highest says
+  // whether any was recalled (the earliest recall first); the lowest, live
+  // codes first, says whether EVERY code was voided 'print_aborted'.
+  const oneRow = (coverId: string, highest: boolean) =>
+    actor.admin
+      .from("print_sheet_tokens")
+      .select("print_id, voided_at, void_reason")
+      .eq("org_id", orgId)
+      .eq("cover_print_id", coverId)
+      .order("void_reason", { ascending: !highest, nullsFirst: !highest })
+      .order("voided_at", { ascending: true })
+      .limit(1);
+  const reads = await Promise.all(visible.map(async (id) => {
+    const [top, bottom] = await Promise.all([oneRow(id, true), oneRow(id, false)]);
+    return { id, top, bottom };
+  }));
+  for (const r of reads) {
+    for (const res of [r.top, r.bottom]) {
+      if (!res.error) continue;
+      if (isMissingSheetTokenTable(res.error) || isMissingCoverLinkColumn(res.error)) return json({ available: false });
+      console.error("[print-sheet-tokens] history: code state unreadable:", res.error.message);
+      return json({ error: "Couldn't read the prints — try again" }, 503);
+    }
+  }
+  const firstRow = (data: unknown): CodeStateRow | null => ((data as CodeStateRow[] | null) ?? [])[0] ?? null;
+  const recalledPrint = new Map<string, string>();
+  for (const r of reads) {
+    const top = firstRow(r.top.data);
+    const bottom = firstRow(r.bottom.data);
+    if (!top) prints[r.id] = { state: "unlinked" };
+    else if (top.void_reason === "recalled") {
+      prints[r.id] = { state: "recalled", recalledAt: top.voided_at ?? null, recalledBy: null };
+      recalledPrint.set(r.id, String(top.print_id).toLowerCase());
+    } else if (top.void_reason === "print_aborted" && bottom?.void_reason === "print_aborted") prints[r.id] = { state: "stopped" };
+    else prints[r.id] = { state: "linked" };
+  }
+
+  // Who recalled it: the recall's first audit row (by the cover, or by the
+  // token print id). Unreadable is not fatal — the state stands, unnamed.
+  if (recalledPrint.size > 0) {
+    type AuditRow = { user_email: string | null; details: Record<string, unknown> | null };
+    const who = (row: AuditRow | undefined) => (row?.user_email ? row.user_email.split("@")[0] || null : null);
+    const firstRecall = (rows: AuditRow[], match: (d: Record<string, unknown>) => boolean) =>
+      rows.find((a) => a.details?.kind === "sheet_print_recall" && a.details?.incomplete !== true && match(a.details));
+    try {
+      const { data: byCover, error: aErr } = await actor.admin
+        .from("audit_logs")
+        .select("user_email, details")
+        .eq("org_id", orgId)
+        .eq("action", "DISTRIBUTION_RECALL")
+        .in("details->>coverPrintId", [...recalledPrint.keys()])
+        .order("timestamp", { ascending: true })
+        .limit(200);
+      if (aErr) throw new Error(aErr.message);
+      const rows = (byCover as AuditRow[] | null) ?? [];
+      for (const [coverId, tokenPrintId] of recalledPrint) {
+        let row = firstRecall(rows, (d) => String(d.coverPrintId ?? "").toLowerCase() === coverId);
+        if (!row) {
+          const { data: byPrint, error: pErr } = await actor.admin
+            .from("audit_logs")
+            .select("user_email, details")
+            .eq("org_id", orgId)
+            .eq("action", "DISTRIBUTION_RECALL")
+            .contains("details", { printIds: [tokenPrintId] })
+            .order("timestamp", { ascending: true })
+            .limit(20);
+          if (pErr) throw new Error(pErr.message);
+          row = firstRecall((byPrint as AuditRow[] | null) ?? [], () => true);
+        }
+        const p = prints[coverId];
+        if (p.state === "recalled") p.recalledBy = who(row);
+      }
+    } catch (e) {
+      console.warn("[print-sheet-tokens] history: who recalled could not be read:", (e as Error)?.message);
+    }
+  }
+  return json({ available: true, prints });
 }
