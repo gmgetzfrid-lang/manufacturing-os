@@ -377,7 +377,7 @@ async function parkAsSuperseded(docId: string, supersessionReason: string, actor
   const outcome: WriteOutcome = { attempted: false, landed: false };
   const recordedPass: { recorded: boolean | "unknown" } = { recorded: false };
   if (forceHold) {
-    register(correctRetiredOverHold({ documentId: docId, via: "reversal_park", label: docId, pass: recordedPass, actor: forceHold.actor, rollback: forceHold.rollback }));
+    register(correctRetiredOverHold({ documentId: docId, via: "reversal_park", label: docId, pass: recordedPass, actor: forceHold.actor, rollback: forceHold.rollback, thisCall: { reason: supersessionReason, at: now } }));
   }
   register({ describe: `un-park ${docId}`, run: putBackIfChanged(docId, snap, actorUserId, outcome) });
   outcome.attempted = true;

@@ -43,13 +43,19 @@
 --           audit_logs_insert let any member insert one with their own
 --           user_id. Now a signed-in session's REV_HOLD_OVERRIDDEN row is
 --           admitted only in the transaction that wrote the document it names
---           (the documents row's xmin is a transaction of this session —
---           pg_xact_status 'in progress' — which a row another session wrote
---           never is), so a member cannot write one beside no write. Every
---           writer (publish_revision, finalize_reviewed_promote,
---           put_back_retired_issue, restore_reversed_source, retire_over_hold)
---           writes it right after its own UPDATE of that document, in the same
---           function; the service role (a restore, the SQL console) passes.
+--           — its documents row, or the version the row names
+--           (details.versionId, of that document) — the row's xmin is a
+--           transaction of this session (pg_xact_status 'in progress'), which
+--           a row another session wrote never is; so a member cannot write
+--           one beside no write. Every writer reaches its INSERT only after
+--           such a write in the same function: finalize_reviewed_promote,
+--           put_back_retired_issue, restore_reversed_source and
+--           retire_over_hold after their own UPDATE of that document (a
+--           no-match returns first); publish_revision after its own INSERT of
+--           the version the row names, on both arms — its branch arm (a
+--           controller's forced branch over a hold) writes no documents row,
+--           which is why the version proof is there (P37 fix pass). The
+--           service role (a restore, the SQL console) passes.
 --
 -- RE-CREATED FROM THE NEWEST BODIES (found by scanning; lineDiff-pinned —
 -- every line of each base kept, the lines added are exactly the P37 blocks):
@@ -1528,13 +1534,17 @@ GRANT EXECUTE ON FUNCTION retire_over_hold(uuid, text, text, timestamptz, text, 
 -- held source, and audit_logs_insert admits any row a member writes with
 -- their own user_id in their own workspace — so Document Control could write
 -- that row first and then re-supersede any held document they can read. Every
--- legitimate REV_HOLD_OVERRIDDEN row is written by a database function right
--- after its own UPDATE of the document the row names, in the same transaction
--- (publish_revision, finalize_reviewed_promote, put_back_retired_issue,
--- restore_reversed_source, retire_over_hold — the app writes none). So a
--- signed-in session's row is admitted only when the document it names, in the
--- row's workspace, was written by THIS transaction: the documents row's xmin
--- is a transaction of this session (pg_xact_status 'in progress' — this
+-- legitimate REV_HOLD_OVERRIDDEN row is written by a database function after
+-- its own write of the document the row names, in the same transaction —
+-- finalize_reviewed_promote, put_back_retired_issue, restore_reversed_source
+-- and retire_over_hold after their UPDATE of the documents row;
+-- publish_revision after its INSERT of the version the row names
+-- (details.versionId), on both arms (its branch arm, a controller's forced
+-- branch over a hold, writes no documents row) — and the app writes none. So
+-- a signed-in session's row is admitted only when the document it names, in
+-- the row's workspace, was written by THIS transaction: the documents row's
+-- xmin, or the xmin of the version the row names (of that document, in that
+-- workspace), is a transaction of this session (pg_xact_status 'in progress' — this
 -- transaction or one of its subtransactions; a row another session wrote is
 -- visible only once that transaction committed, so it never reads 'in
 -- progress'). A member's direct insert (a request of its own, no document
@@ -1552,6 +1562,7 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
+  v_xmins  bigint[] := ARRAY[]::bigint[];
   v_xmin   bigint;
   v_cur    bigint;
   v_full   bigint;
@@ -1564,6 +1575,24 @@ BEGIN
       FROM documents d
      WHERE d.id = NEW.resource_id::uuid AND d.org_id = NEW.org_id;
     IF v_xmin IS NOT NULL THEN
+      v_xmins := v_xmins || v_xmin;
+      -- the version proof (publish_revision's branch arm writes no documents
+      -- row — only the version and its revision_branches row): the version
+      -- the row names (details.versionId), of this document in this
+      -- workspace, inserted by this transaction.
+      IF COALESCE(NEW.details->>'versionId', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        v_xmin := NULL;
+        SELECT v.xmin::text::bigint INTO v_xmin
+          FROM document_versions v
+         WHERE v.id = (NEW.details->>'versionId')::uuid
+           AND v.record_id = NEW.resource_id::uuid AND v.org_id = NEW.org_id;
+        IF v_xmin IS NOT NULL THEN
+          v_xmins := v_xmins || v_xmin;
+        END IF;
+      END IF;
+    END IF;
+    FOREACH v_xmin IN ARRAY v_xmins LOOP
+      v_status := NULL;
       BEGIN
         v_cur := pg_current_xact_id()::text::bigint;
         v_full := (v_cur - (v_cur % 4294967296)) + v_xmin;
@@ -1579,7 +1608,7 @@ BEGIN
       IF v_status = 'in progress' THEN
         RETURN NEW;
       END IF;
-    END IF;
+    END LOOP;
   END IF;
   RAISE EXCEPTION 'A hold-override record (REV_HOLD_OVERRIDDEN) is written only by the database function that made the write it records, in that write''s own transaction; nothing was changed. (REV-37, 20261254)'
     USING ERRCODE = 'insufficient_privilege';
@@ -1587,7 +1616,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.enforce_hold_override_record_rail() IS
-  'REV-37 (20261254): BEFORE INSERT on audit_logs for REV_HOLD_OVERRIDDEN. A signed-in session''s row is admitted only when the document it names (resource_type document, in the row''s org) was written by this transaction (its xmin is a transaction of this session: pg_xact_status in progress) — the recording functions write it right after their own UPDATE of that document; a member''s direct insert is refused (42501). The service role passes. Nobody may call it.';
+  'REV-37 (20261254): BEFORE INSERT on audit_logs for REV_HOLD_OVERRIDDEN. A signed-in session''s row is admitted only when the document it names (resource_type document, in the row''s org) was written by this transaction — its documents row, or the version the row names (details.versionId, of that document), has an xmin that is a transaction of this session (pg_xact_status in progress). The recording functions write it after their own UPDATE of that document, or (publish_revision, both arms — its branch arm writes no documents row) after their own INSERT of that version; a member''s direct insert is refused (42501). The service role passes. Nobody may call it.';
 
 REVOKE ALL ON FUNCTION public.enforce_hold_override_record_rail() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.enforce_hold_override_record_rail() FROM anon;
@@ -1657,8 +1686,8 @@ SELECT 'REV-37 (P37): retire_over_hold''s recorded reversal_park needs an unreve
        AND NOT has_function_privilege('anon', 'retire_over_hold(uuid, text, text, timestamptz, text, boolean)', 'EXECUTE'),
        NULL
 UNION ALL
-SELECT 'REV-37 (P37): the REV_HOLD_OVERRIDDEN rail — a signed-in session''s row only in the transaction that wrote the document it names (else 42501); the service role passes',
-       (SELECT prosrc LIKE '%IF auth.uid() IS NULL THEN RETURN NEW; END IF;%SELECT d.xmin::text::bigint INTO v_xmin%WHERE d.id = NEW.resource_id::uuid AND d.org_id = NEW.org_id;%pg_xact_status(v_full::text::xid8)%IF v_status = ''in progress'' THEN%RETURN NEW;%USING ERRCODE = ''insufficient_privilege'';%'
+SELECT 'REV-37 (P37): the REV_HOLD_OVERRIDDEN rail — a signed-in session''s row only in the transaction that wrote the document it names (its documents row, or the version the row names — publish_revision''s forced branch over a hold writes no documents row) (else 42501); the service role passes',
+       (SELECT prosrc LIKE '%IF auth.uid() IS NULL THEN RETURN NEW; END IF;%SELECT d.xmin::text::bigint INTO v_xmin%WHERE d.id = NEW.resource_id::uuid AND d.org_id = NEW.org_id;%SELECT v.xmin::text::bigint INTO v_xmin%WHERE v.id = (NEW.details->>''versionId'')::uuid%AND v.record_id = NEW.resource_id::uuid AND v.org_id = NEW.org_id;%FOREACH v_xmin IN ARRAY v_xmins LOOP%pg_xact_status(v_full::text::xid8)%IF v_status = ''in progress'' THEN%RETURN NEW;%USING ERRCODE = ''insufficient_privilege'';%'
           FROM pg_proc WHERE proname = 'enforce_hold_override_record_rail'),
        NULL
 UNION ALL

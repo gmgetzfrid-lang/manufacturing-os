@@ -127,7 +127,8 @@ describe("retireStrayPendingSubmission — controller-only, re-read first, throu
   it("retires the submission shown: re-read, voidPendingDraft, then PENDING_SUBMISSION_RETIRED naming the version, the link, why and the reason", async () => {
     const r = await retireStrayPendingSubmission(input());
     expect(r).toEqual({ ok: true, voidedVersionId: "v2", recordError: null });
-    expect(s.voidPendingDraft).toHaveBeenCalledWith("d1");
+    // P37 fix pass: the void is bound to the draft shown
+    expect(s.voidPendingDraft).toHaveBeenCalledWith("d1", "v2");
     expect(s.log).toHaveBeenCalledTimes(1);
     expect(s.log.mock.calls[0][0]).toEqual({
       action: "PENDING_SUBMISSION_RETIRED", resourceId: "d1", resourceType: "document", orgId: "o1",

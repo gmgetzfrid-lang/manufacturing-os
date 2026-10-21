@@ -49,6 +49,128 @@ const code = (lines: string[]) => lines.filter((l) => l.trim() !== "" && !l.trim
 const likeRe = (pat: string) => new RegExp("^" + pat.split("%").map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/_/g, ".")).join("[\\s\\S]*") + "$");
 const prosrcOf = (body: string) => body.slice(body.indexOf("$$") + 2, body.lastIndexOf("$$"));
 
+/**
+ * The writer census's path walk (P37 fix pass). A plpgsql body is split into
+ * statements at `;` outside string literals, control prefixes are peeled
+ * (IF / ELSIF / ELSE / END IF, BEGIN / EXCEPTION WHEN / END, loops), and the
+ * walk carries every reachable state (conditions are not evaluated: each IF
+ * arm, and the fall-through of an IF with no ELSE, is a path). A state knows
+ * whether the documents row was written ('yes' only once a no-match gate —
+ * `IF v_n = 0 THEN RETURN` on the UPDATE's own ROW_COUNT — has been passed)
+ * and which variables hold the id of a version the function inserted (with
+ * its record_id). At each `INSERT INTO audit_logs … VALUES ('REV_HOLD_OVERRIDDEN'`
+ * every state must carry the documents proof or name such a version in
+ * `'versionId', <var>` — what enforce_hold_override_record_rail admits.
+ */
+type WalkState = { doc: "no" | "maybe" | "yes"; last: "doc" | "other"; vnDoc: boolean; vers: string[] };
+function walkHoldInserts(src: string, opts: { versionProof?: boolean } = {}) {
+  const versionProof = opts.versionProof ?? true;
+  const text = stripComments(src);
+  const pieces: string[] = [];
+  let cur = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "'") q = !q;
+    if (c === ";" && !q) { pieces.push(cur); cur = ""; continue; }
+    cur += c;
+  }
+  if (cur.trim()) pieces.push(cur);
+  type Item = { k: "if" | "elsif" | "else" | "endif" | "begin" | "exception" | "end" | "loop" | "endloop" | "stmt"; t: string };
+  const items: Item[] = [];
+  const thenAt = (s: string) => {
+    let depth = 0, inq = false;
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (c === "'") inq = !inq;
+      if (inq) continue;
+      if (c === "(") depth++;
+      if (c === ")") depth--;
+      if (depth === 0 && /^THEN\b/.test(s.slice(i)) && /\W/.test(s[i - 1] ?? " ")) return i;
+    }
+    throw new Error(`no THEN in: ${s.slice(0, 80)}`);
+  };
+  for (const p of pieces) {
+    let s = p.trim();
+    while (s) {
+      let m: RegExpMatchArray | null;
+      if (/^END\s+IF$/.test(s)) { items.push({ k: "endif", t: "" }); s = ""; }
+      else if (/^END\s+LOOP$/.test(s)) { items.push({ k: "endloop", t: "" }); s = ""; }
+      else if (/^END$/.test(s)) { items.push({ k: "end", t: "" }); s = ""; }
+      else if ((m = s.match(/^(IF|ELSIF)\b/))) { const at = thenAt(s); items.push({ k: m[1] === "IF" ? "if" : "elsif", t: s.slice(m[1].length, at).trim() }); s = s.slice(at + 4).trim(); }
+      else if (/^ELSE\b/.test(s)) { items.push({ k: "else", t: "" }); s = s.slice(4).trim(); }
+      else if (/^DECLARE\b/.test(s)) { s = s.slice(7).trim(); }
+      else if (/^BEGIN\b/.test(s)) { items.push({ k: "begin", t: "" }); s = s.slice(5).trim(); }
+      else if ((m = s.match(/^(?:EXCEPTION\s+)?WHEN\b/)) && (items.some((x) => x.k === "exception") || /^EXCEPTION/.test(s))) { const at = thenAt(s); items.push({ k: "exception", t: s.slice(0, at).trim() }); s = s.slice(at + 4).trim(); }
+      else if ((m = s.match(/^(?:(?:FOR|FOREACH|WHILE)\b[\s\S]*?\s)?LOOP\b/))) { items.push({ k: "loop", t: "" }); s = s.slice(m[0].length).trim(); }
+      else { items.push({ k: "stmt", t: s }); s = ""; }
+    }
+  }
+  const key = (st: WalkState) => JSON.stringify({ ...st, vers: [...st.vers].sort() });
+  const uniq = (sts: WalkState[]) => [...new Map(sts.map((st) => [key(st), st])).values()];
+  let sites = 0;
+  const unproven: string[] = [];
+  let docAll = true, verAll = true;
+  const stmt = (t: string, sts: WalkState[]): WalkState[] => {
+    if (/^RETURN\b/.test(t)) return [];
+    if (/^RAISE\b/.test(t) && !/^RAISE\s+(WARNING|NOTICE|INFO|LOG|DEBUG)\b/.test(t)) return [];
+    return sts.map((st0) => {
+      const st = { ...st0, vers: [...st0.vers] };
+      if (/^UPDATE\s+documents\b/.test(t)) { st.last = "doc"; if (st.doc !== "yes") st.doc = "maybe"; return st; }
+      if (/^GET\s+DIAGNOSTICS\s+v_n\s*=\s*ROW_COUNT$/.test(t)) { st.vnDoc = st.last === "doc"; return st; }
+      if (/^v_n\s*:=/.test(t)) st.vnDoc = false;
+      const v = /^INSERT\s+INTO\s+document_versions\b/.test(t) && /\brecord_id\b/.test(t) ? t.match(/RETURNING\s+id\s+INTO\s+(\w+)$/) : null;
+      if (v) st.vers.push(v[1]);
+      if (/^INSERT\s+INTO\s+audit_logs\b/.test(t) && t.includes("VALUES ('REV_HOLD_OVERRIDDEN'")) {
+        const named = t.match(/'versionId',\s*(\w+)/)?.[1];
+        const byDoc = st.doc === "yes";
+        const byVer = versionProof && named !== undefined && st.vers.includes(named);
+        if (!byDoc) docAll = false;
+        if (!(named !== undefined && st.vers.includes(named))) verAll = false;
+        if (!byDoc && !byVer) unproven.push(key(st));
+      }
+      st.last = "other";
+      return st;
+    });
+  };
+  const seq = (i: number, sts: WalkState[], stop: Item["k"][]): { i: number; sts: WalkState[] } => {
+    while (i < items.length && !stop.includes(items[i].k)) {
+      const it = items[i];
+      if (it.k === "stmt") {
+        const isSite = /^INSERT\s+INTO\s+audit_logs\b/.test(it.t) && it.t.includes("VALUES ('REV_HOLD_OVERRIDDEN'");
+        if (isSite) sites++;
+        sts = uniq(stmt(it.t, sts)); i++;
+      } else if (it.k === "if") {
+        const gate = /^v_n\s*=\s*0$/.test(it.t);
+        const outs: WalkState[] = [];
+        let r = seq(i + 1, sts, ["elsif", "else", "endif"]);
+        outs.push(...r.sts);
+        let hasElse = false;
+        while (items[r.i].k !== "endif") {
+          if (items[r.i].k === "else") hasElse = true;
+          r = seq(r.i + 1, sts, ["elsif", "else", "endif"]);
+          outs.push(...r.sts);
+        }
+        if (!hasElse) outs.push(...sts.map((st) => (gate && st.vnDoc ? { ...st, doc: "yes" as const } : st)));
+        sts = uniq(outs); i = r.i + 1;
+      } else if (it.k === "begin") {
+        const r = seq(i + 1, sts, ["exception", "end"]);
+        const outs = [...r.sts];
+        let j = r.i;
+        while (items[j].k === "exception") { const h = seq(j + 1, sts, ["exception", "end"]); outs.push(...h.sts); j = h.i; }
+        sts = uniq(outs); i = j + 1;
+      } else if (it.k === "loop") {
+        const r = seq(i + 1, sts, ["endloop"]);
+        sts = uniq([...sts, ...r.sts]); i = r.i + 1;
+      } else {
+        throw new Error(`unexpected ${it.k} at item ${i}`);
+      }
+    }
+    return { i, sts };
+  };
+  seq(0, [{ doc: "no", last: "other", vnDoc: false, vers: [] }], []);
+  return { sites, unproven, docOnEveryPath: docAll, versionOnEveryPath: verAll };
+}
+
 const GUARD_HEAD = "CREATE OR REPLACE FUNCTION enforce_document_publish_guard()";
 const FIN_HEAD = "CREATE OR REPLACE FUNCTION finalize_reviewed_promote(";
 const RETIRE_HEAD = "CREATE OR REPLACE FUNCTION retire_over_hold(";
@@ -257,6 +379,23 @@ describe("20261254 — the REV_HOLD_OVERRIDDEN write rail", () => {
     expect(sc).toContain("v_full := (v_cur - (v_cur % 4294967296)) + v_xmin;\n        IF v_full > v_cur + 2147483648 THEN\n          v_full := v_full - 4294967296;");
   });
 
+  it("P37 fix pass — the version proof: the version the row names (details.versionId), OF THAT DOCUMENT in THAT workspace, inserted by this transaction, also admits it (publish_revision's forced branch over a hold writes no documents row); only after the documents row is found; each xmin judged by the same in-progress test", () => {
+    const sc = stripComments(prosrcOf(RAIL));
+    expect(sc).toContain("v_xmins  bigint[] := ARRAY[]::bigint[];");
+    const doc = sc.indexOf("WHERE d.id = NEW.resource_id::uuid AND d.org_id = NEW.org_id;");
+    const ver = sc.indexOf("SELECT v.xmin::text::bigint INTO v_xmin\n          FROM document_versions v\n         WHERE v.id = (NEW.details->>'versionId')::uuid\n           AND v.record_id = NEW.resource_id::uuid AND v.org_id = NEW.org_id;");
+    expect(doc).toBeGreaterThan(0);
+    expect(ver).toBeGreaterThan(doc);
+    // the version is looked up only once the named document exists in the row's workspace, and only for a uuid-shaped versionId
+    expect(sc.slice(doc, ver)).toContain("IF v_xmin IS NOT NULL THEN\n      v_xmins := v_xmins || v_xmin;");
+    expect(sc.slice(doc, ver)).toContain("IF COALESCE(NEW.details->>'versionId', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN\n        v_xmin := NULL;");
+    // both xmins go through ONE judgement (the loop), which is the only RETURN NEW after the service-role pass
+    const loop = sc.indexOf("FOREACH v_xmin IN ARRAY v_xmins LOOP\n      v_status := NULL;");
+    expect(loop).toBeGreaterThan(ver);
+    expect(sc.indexOf("END LOOP;")).toBeGreaterThan(sc.indexOf("v_status := pg_xact_status(v_full::text::xid8);"));
+    expect(sc.match(/RETURN NEW;/g)).toHaveLength(2);
+  });
+
   it("DRLS-16: executable by no client role; bound BEFORE INSERT on audit_logs FOR EACH ROW only for REV_HOLD_OVERRIDDEN (idempotently re-created)", () => {
     for (const r of ["PUBLIC", "anon", "authenticated", "service_role"]) {
       expect(M).toContain(`REVOKE ALL ON FUNCTION public.enforce_hold_override_record_rail() FROM ${r};`);
@@ -264,7 +403,7 @@ describe("20261254 — the REV_HOLD_OVERRIDDEN write rail", () => {
     expect(M).toContain("DROP TRIGGER IF EXISTS trg_audit_logs_hold_override_rail ON audit_logs;\nCREATE TRIGGER trg_audit_logs_hold_override_rail\n  BEFORE INSERT ON audit_logs\n  FOR EACH ROW\n  WHEN (NEW.action = 'REV_HOLD_OVERRIDDEN')\n  EXECUTE FUNCTION public.enforce_hold_override_record_rail();");
   });
 
-  it("every SQL writer of REV_HOLD_OVERRIDDEN writes it right after its own UPDATE of the document it names, in the same function — the newest body of each", () => {
+  it("every SQL writer of REV_HOLD_OVERRIDDEN reaches EVERY one of its inserts, on EVERY code path, only after a write the rail admits — its own landed UPDATE of the document, or its own INSERT of the version the row names — the newest body of each (a path-by-path walk, not a text search)", () => {
     const writers = new Map<string, string>();
     const re = /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+(?:public\.)?(\w+)\s*\(/g;
     for (const f of files) {
@@ -276,11 +415,30 @@ describe("20261254 — the REV_HOLD_OVERRIDDEN write rail", () => {
       }
     }
     expect([...writers.keys()].sort()).toEqual(["finalize_reviewed_promote", "publish_revision", "put_back_retired_issue", "restore_reversed_source", "retire_over_hold"]);
+    const proofs = new Map<string, ReturnType<typeof walkHoldInserts>>();
     for (const [name, body] of writers) {
-      const sc = stripComments(body);
-      const ins = sc.indexOf("VALUES ('REV_HOLD_OVERRIDDEN'");
-      expect(sc.lastIndexOf("UPDATE documents", ins), name).toBeGreaterThan(0);
+      const r = walkHoldInserts(prosrcOf(body));
+      proofs.set(name, r);
+      expect(r.sites, name).toBeGreaterThan(0);
+      // every state reaching every insert carries a proof the rail admits
+      expect(r.unproven, name).toEqual([]);
     }
+    // the four UPDATE writers stand on their landed UPDATE (a no-match returns first) on every path
+    for (const name of ["finalize_reviewed_promote", "put_back_retired_issue", "restore_reversed_source", "retire_over_hold"]) {
+      expect(proofs.get(name)!.docOnEveryPath, name).toBe(true);
+    }
+    // publish_revision does NOT (its branch arm writes no documents row — the defect the reviewer reproduced):
+    // it stands on the version it inserts on both arms, of the document the row names
+    const pub = proofs.get("publish_revision")!;
+    expect(pub.docOnEveryPath).toBe(false);
+    expect(pub.versionOnEveryPath).toBe(true);
+    const pubBody = stripComments(writers.get("publish_revision")!);
+    expect(pubBody).toContain("INSERT INTO document_versions (\n      org_id, record_id, revision_label,");
+    expect(pubBody).toContain(") VALUES (\n      v_doc.org_id, p_doc, btrim(v_label),");
+    expect(pubBody).toContain("VALUES ('REV_HOLD_OVERRIDDEN', p_doc::text, 'document', v_doc.org_id, p_actor,");
+    expect(pubBody).toContain("'versionId', v_new_id,");
+    // and the walk is not vacuous: without the version proof the census fails publish_revision
+    expect(walkHoldInserts(prosrcOf(writers.get("publish_revision")!), { versionProof: false }).unproven.length).toBeGreaterThan(0);
     // the app writes none of them itself (it reads them: reverse.ts findUncorrectedPass)
     const appWrites = (p: string) => /action:\s*"REV_HOLD_OVERRIDDEN"/.test(readFileSync(join(root, p), "utf8"));
     for (const p of ["lib/revisions.ts", "lib/documentLifecycle/common.ts", "lib/documentLifecycle/reverse.ts", "lib/reviewControl.ts"]) expect(appWrites(p), p).toBe(false);

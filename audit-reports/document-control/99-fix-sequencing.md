@@ -1155,7 +1155,9 @@ migration, `20261254_dc_roundG_door_b_guard.sql` (`DCK-18` remainders,
   in, then it is approved; or Document Control retires it); a recorded
   reversal park of a held document no unreversed split / merge names is
   refused (42501); a member's own `REV_HOLD_OVERRIDDEN` row is refused
-  (42501) — every database function that records one keeps working.
+  (42501) — every database function that records one keeps working
+  (`publish_revision`'s forced branch over a hold through the version
+  proof, added by the P37 fix pass).
 - **The result set:** nine probes (all true) and six counts — pending
   door-shaped submissions the route's record does not name (expected 0); of
   those, on a checked-out document now (expected 0); the

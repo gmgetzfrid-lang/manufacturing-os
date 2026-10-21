@@ -145,7 +145,13 @@ export async function archiveRolledBackDoc(docId: string, actor: ActorContext): 
  *  by this actor through this door stands uncorrected (no
  *  REV_HOLD_OVERRIDE_UNDONE of the same door after it), as reverse.ts
  *  findUncorrectedPass decides a lost restore's; a read that fails throws
- *  (named for manual attention). */
+ *  (named for manual attention). P37 fix pass: only a row THIS call could
+ *  have written counts — `thisCall`, the reason the call sent (retire_over_hold
+ *  records it, trimmed) and the instant it sent (the row is stamped by the
+ *  database at the call, so nothing earlier than that instant less
+ *  LOST_ANSWER_CLOCK_SKEW_MS) — so an earlier operation's stale, uncorrected
+ *  pass through the same door never draws a correction for a pass this call
+ *  never made. */
 export function correctRetiredOverHold(input: {
   documentId: string;
   via: RetireOverHoldDoor;
@@ -153,8 +159,10 @@ export function correctRetiredOverHold(input: {
   pass: { recorded: boolean | "unknown" };
   actor: ActorContext;
   rollback?: RollbackCause | null;
+  /** What this call sent to retire_over_hold: its reason and its instant (p_at). */
+  thisCall: { reason: string; at: string };
 }): Compensation {
-  const { documentId, via, label, pass, actor } = input;
+  const { documentId, via, label, pass, actor, thisCall } = input;
   return {
     describe: `correct the hold-override record on ${label}`,
     run: async () => {
@@ -165,7 +173,7 @@ export function correctRetiredOverHold(input: {
       }
       const putBackTo = (data as { status?: string | null }).status ?? null;
       if (putBackTo === "Superseded") return;
-      if (pass.recorded === "unknown" && !(await standingRetiredOverHold(documentId, via, actor, label))) return;
+      if (pass.recorded === "unknown" && !(await standingRetiredOverHold(documentId, via, actor, label, thisCall))) return;
       const { error: logErr } = await logAuditAction({
         action: "REV_HOLD_OVERRIDE_UNDONE",
         resourceId: documentId,
@@ -188,24 +196,37 @@ export function correctRetiredOverHold(input: {
   };
 }
 
-/** REV-37 (P37): whether a pass over a hold this actor's door recorded on the
- *  document still stands uncorrected — the newest of its REV_HOLD_OVERRIDDEN /
- *  REV_HOLD_OVERRIDE_UNDONE rows through `via` is a REV_HOLD_OVERRIDDEN.
+/** REV-37 (P37 fix pass): how far the browser's clock (the instant a call
+ *  sends) may run ahead of the database's (the instant it stamps the record)
+ *  for a lost answer's record still to be read as this call's. */
+export const LOST_ANSWER_CLOCK_SKEW_MS = 10 * 60 * 1000;
+
+/** REV-37 (P37): whether a pass over a hold THIS call recorded on the
+ *  document still stands uncorrected — among this actor's REV_HOLD_OVERRIDDEN
+ *  / REV_HOLD_OVERRIDE_UNDONE rows through `via` stamped no earlier than the
+ *  call's instant (less LOST_ANSWER_CLOCK_SKEW_MS), the newest is a
+ *  REV_HOLD_OVERRIDDEN carrying the reason this call sent (P37 fix pass: an
+ *  earlier operation's pass through the same door is not this call's).
  *  A failed read THROWS. */
-async function standingRetiredOverHold(documentId: string, via: RetireOverHoldDoor, actor: ActorContext, label: string): Promise<boolean> {
+async function standingRetiredOverHold(documentId: string, via: RetireOverHoldDoor, actor: ActorContext, label: string, thisCall: { reason: string; at: string }): Promise<boolean> {
   type Row = { action: string; user_id: string | null; details: Record<string, unknown> | null };
+  const sent = Date.parse(thisCall.at);
+  const since = new Date((Number.isFinite(sent) ? sent : Date.now()) - LOST_ANSWER_CLOCK_SKEW_MS).toISOString();
   const { data, error } = await supabase
     .from("audit_logs")
     .select("action, user_id, details")
     .eq("org_id", actor.orgId)
     .eq("resource_id", documentId)
     .in("action", ["REV_HOLD_OVERRIDDEN", "REV_HOLD_OVERRIDE_UNDONE"])
+    .gte("timestamp", since)
     .order("timestamp", { ascending: false })
     .limit(50);
   if (error) {
     throw new Error(`whether ${label}'s lost supersession recorded a pass over its hold could not be read (${error.message}), so no correction was written — check its history`);
   }
-  const newest = ((data as Row[] | null) ?? []).find((r) => r.user_id === actor.actorUserId && r.details?.via === via);
+  const reason = thisCall.reason.trim();
+  const newest = ((data as Row[] | null) ?? []).find((r) => r.user_id === actor.actorUserId && r.details?.via === via
+    && (r.action === "REV_HOLD_OVERRIDE_UNDONE" || String(r.details?.reason ?? "").trim() === reason));
   return newest?.action === "REV_HOLD_OVERRIDDEN";
 }
 
@@ -632,7 +653,7 @@ export async function markSupersededAndLink(input: {
   // registered BEFORE the restore, so the LIFO rollback runs it after it.
   const recordedPass: { recorded: boolean | "unknown" } = { recorded: false };
   if (input.forceHold) {
-    register(correctRetiredOverHold({ documentId: sourceDocId, via: input.forceHold, label, pass: recordedPass, actor, rollback: input.rollback }));
+    register(correctRetiredOverHold({ documentId: sourceDocId, via: input.forceHold, label, pass: recordedPass, actor, rollback: input.rollback, thisCall: { reason: reason.trim(), at: now } }));
   }
   let flipped = false;
   // REV-37 (P37): the recorded flip's answer was lost and could not be read

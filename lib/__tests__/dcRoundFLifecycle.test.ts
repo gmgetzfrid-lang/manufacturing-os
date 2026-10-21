@@ -2269,7 +2269,8 @@ describe("REV-37 (P37) — a recorded flip or park whose answer was LOST (a tran
   const landedButLost = (mode: "error" | "throw", after?: () => void) => (args: Row) => {
     const row = docRow(String(args.p_document_id));
     Object.assign(row, { status: "Superseded", superseded_at: args.p_at, superseded_by_user: ME, supersession_reason: args.p_reason, updated_at: args.p_at, updated_by: ME });
-    T("audit_logs").push({ id: `rho-${row.id}`, action: "REV_HOLD_OVERRIDDEN", resource_id: row.id, org_id: ORG, user_id: ME, timestamp: `2026-10-21T10:00:${String(stamp++).padStart(2, "0")}Z`, details: { via: args.p_via, retiredOverHold: true } });
+    // stamped by the database at the call (≈ the instant sent), the reason recorded trimmed — as retire_over_hold writes it
+    T("audit_logs").push({ id: `rho-${row.id}-${stamp++}`, action: "REV_HOLD_OVERRIDDEN", resource_id: row.id, org_id: ORG, user_id: ME, timestamp: String(args.p_at), details: { via: args.p_via, retiredOverHold: true, reason: String(args.p_reason ?? "").trim() || null } });
     after?.();
     if (mode === "throw") throw new TypeError("Failed to fetch");
     return { data: null, error: { message: "Failed to fetch", code: "" } };
@@ -2353,6 +2354,35 @@ describe("REV-37 (P37) — a recorded flip or park whose answer was LOST (a tran
     const undone = audit("REV_HOLD_OVERRIDE_UNDONE");
     expect(undone.map((r) => r.resource_id)).toEqual(["p37qa"]);
     expect(undone[0].details).toMatchObject({ via: "reversal_park", corrects: "REV_HOLD_OVERRIDDEN", putBackTo: "Issued" });
+  });
+
+  it("P37 fix pass: a lost answer that landed WITHOUT recording (no hold active by then) draws no correction from an earlier operation's stale, uncorrected pass through the same door — only a row this call could have written (its reason, stamped no earlier than its instant less the clock allowance) counts", async () => {
+    state.roles = ["DocCtrl"];
+    /** lands the flip, records nothing (the hold was released mid-saga), answer lost */
+    const landedUnrecordedLost = (args: Row) => {
+      Object.assign(docRow(String(args.p_document_id)), { status: "Superseded", superseded_at: args.p_at, superseded_by_user: ME, supersession_reason: args.p_reason });
+      return { data: null, error: { message: "Failed to fetch", code: "" } };
+    };
+    const { LOST_ANSWER_CLOCK_SKEW_MS } = await import("@/lib/documentLifecycle/common");
+    // (a) the earlier split's pass — same reason, same door, same actor, uncorrected — but days ago
+    state.retireOverHold = landedUnrecordedLost;
+    const s0 = seedDoc("p37s"); seedHold("p37s");
+    T("audit_logs").push({ id: "rho-old-p37s", action: "REV_HOLD_OVERRIDDEN", resource_id: "p37s", org_id: ORG, user_id: ME, timestamp: "2026-09-01T10:00:00.000Z", details: { via: "split", retiredOverHold: true, reason: "declutter" } });
+    state.db.refuseWrites.add("document_supersessions");
+    await expect(splitDocument({ source: asRecord(s0), libraryId: LIB, targets: [target("P37SA"), target("P37SB")], reason: "declutter", orgId: ORG, actorUserId: ME, force: true })).rejects.toThrow(/rolled back/);
+    expect(docRow("p37s").status).toBe("Issued");
+    expect(audit("REV_HOLD_OVERRIDE_UNDONE")).toHaveLength(0);
+    // (b) a pass through the same door inside the clock allowance but with ANOTHER reason is not this call's either
+    const s1 = seedDoc("p37t"); seedHold("p37t");
+    T("audit_logs").push({ id: "rho-near-p37t", action: "REV_HOLD_OVERRIDDEN", resource_id: "p37t", org_id: ORG, user_id: ME, timestamp: new Date(Date.now() - LOST_ANSWER_CLOCK_SKEW_MS / 2).toISOString(), details: { via: "split", retiredOverHold: true, reason: "an earlier split" } });
+    await expect(splitDocument({ source: asRecord(s1), libraryId: LIB, targets: [target("P37TA"), target("P37TB")], reason: "declutter", orgId: ORG, actorUserId: ME, force: true })).rejects.toThrow(/rolled back/);
+    expect(docRow("p37t").status).toBe("Issued");
+    expect(audit("REV_HOLD_OVERRIDE_UNDONE")).toHaveLength(0);
+    // the record was read (the unknown pass decided from it), bounded below by the call's instant less the allowance
+    const bounds = state.db.calls.filter((c) => c.table === "audit_logs" && c.method === "gte" && c.args[0] === "timestamp").map((c) => Date.parse(String(c.args[1])));
+    expect(bounds.length).toBe(2);
+    for (const t of bounds) expect(Date.now() - t).toBeGreaterThanOrEqual(LOST_ANSWER_CLOCK_SKEW_MS - 60_000);
+    for (const t of bounds) expect(Date.now() - t).toBeLessThan(LOST_ANSWER_CLOCK_SKEW_MS + 60_000);
   });
 
   it("REGRESSION: an answer that arrives (landed, recorded true) behaves exactly as since P36 — no read of the record for the correction", async () => {

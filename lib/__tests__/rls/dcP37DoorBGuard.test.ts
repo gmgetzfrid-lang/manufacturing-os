@@ -501,6 +501,32 @@ describe.skipIf(skip !== null)("DCK-18 / REV-37 (20261254): door (b) guarded and
       expect(chain.after).toBe(chain.before);
     });
 
+    it("REGRESSION (P37 fix pass), publish_revision — the fifth writer: Document Control's forced publish over a hold AND its forced BRANCH over a hold (which writes the version and its branch row, never the documents row) each publish and record on both sides", () => {
+      const pub = (branch: boolean) => `SELECT 1 WHERE (publish_revision(p_doc := '${w.dStray}', p_expected_base := '${w.zA}', p_op_class := 'content',
+        p_version := '{"revision_label":"B","file_url":"p37/branch-probe.pdf","change_type":"Minor","change_log":"p37 probe"}'::jsonb,
+        p_actor := '${w.uid.docctrl}', p_force := true, p_as_branch := ${branch}, p_branch_reason := 'p37 branch over the hold'))->>'status' = '${branch ? "branched" : "published"}'`;
+      const after = `SELECT (SELECT rev FROM documents WHERE id = '${w.dStray}') || '|' ||
+        (SELECT count(*) FROM revision_branches WHERE document_id = '${w.dStray}') || '|' ||
+        (SELECT string_agg(details->>'branch', ',') FROM audit_logs WHERE resource_id = '${w.dStray}' AND action = 'REV_HOLD_OVERRIDDEN');`;
+      const branch = both("docctrl", [pub(true)], after);
+      expect(branch.before).toBe("ok:1 / A|1|true");
+      expect(branch.after).toBe(branch.before);
+      const plain = both("docctrl", [pub(false)], after);
+      expect(plain.before).toBe("ok:1 / B|0|false");
+      expect(plain.after).toBe(plain.before);
+    });
+
+    it("the version proof's boundary (P37 fix pass): a row naming a version of THIS document inserted in this transaction is admitted; one naming a version of ANOTHER document inserted in this transaction, or this document's version from an earlier committed transaction, is not", () => {
+      const v = randomUUID();
+      const named = (doc: string, ver: string) => `INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, details)
+        VALUES ('REV_HOLD_OVERRIDDEN', '${doc}', 'document', '${w.org}', '${w.uid.docctrl}', jsonb_build_object('versionId', '${ver}', 'branch', true))`;
+      const insV = (doc: string) => `INSERT INTO document_versions (id, org_id, record_id, revision_label, file_url, change_type, created_by, is_branch)
+        VALUES ('${v}', '${w.org}', '${doc}', 'BR', 'p37/v.pdf', 'Minor', '${w.uid.docctrl}', true);`;
+      expect(probeSeq(AFTER, w, "docctrl", [named(w.dStray, v)], count(w.dStray), insV(w.dStray)).out).toBe("ok:1 / 1");
+      expect(probeSeq(AFTER, w, "docctrl", [named(w.dStray, v)], count(w.dStray), insV(w.dSheet)).out).toMatch(/^err:42501:.* \/ 0$/);
+      expect(probeSeq(AFTER, w, "docctrl", [named(w.dStray, w.zA)], count(w.dStray)).out).toMatch(/^err:42501:.* \/ 0$/);
+    });
+
     it("the service role (a restore, a server path) still writes one directly, on both sides; and a row naming no document of its workspace is refused to a member after", () => {
       const svc = both("service", [forged(w.dStray)], count(w.dStray));
       expect(svc.before).toBe("ok:1 / 1");

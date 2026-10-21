@@ -137,11 +137,17 @@ export type StrayRetireOutcome =
 
 /** Document Control's standalone retire of a stray pending submission:
  *  re-read (it must still be the stray submission the person was shown),
- *  then lib/revisions.ts voidPendingDraft, then the record
- *  (PENDING_SUBMISSION_RETIRED). Controller-only: a caller that is not
- *  Document Control is refused before anything is read. A refused void
- *  writes nothing and says what it left (voidPendingDraft's own sentence); a
- *  record that cannot be written is returned, never swallowed. */
+ *  then lib/revisions.ts voidPendingDraft bound to that draft (P37 fix pass:
+ *  a draft filed after the re-read is refused before any write, never voided
+ *  in its place), then the record (PENDING_SUBMISSION_RETIRED). Offered to
+ *  Document Control only: the Inspector shows it only to a controller and
+ *  `actorIsController` (the caller's own role check) refuses anyone else here,
+ *  before anything is read. That is a UI gate, not a database one — the
+ *  writes underneath are voidPendingDraft's, which the database admits for
+ *  anyone with publish authority on the document (the same rights a rev-up
+ *  voids a pending draft with); no new database authority is granted. A
+ *  refused void writes nothing and says what it left (voidPendingDraft's own
+ *  sentence); a record that cannot be written is returned, never swallowed. */
 export async function retireStrayPendingSubmission(input: {
   orgId: string;
   documentId: string;
@@ -166,7 +172,9 @@ export async function retireStrayPendingSubmission(input: {
   }
   let voided: string | null;
   try {
-    voided = await voidPendingDraft(input.documentId);
+    // P37 fix pass: the void is bound to the draft shown — a submission filed after the re-read
+    // above is refused before any write, never voided in its place
+    voided = await voidPendingDraft(input.documentId, input.expectedVersionId);
   } catch (e) {
     return { ok: false, reason: (e as Error).message || "The pending submission could not be retired." };
   }

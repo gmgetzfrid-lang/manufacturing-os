@@ -627,9 +627,13 @@ export function recallsCopyHolders(priorStatus: string | null | undefined): bool
 export type PendingDraftVoid = { voidedVersionId: string | null; problem: string | null };
 
 export class PendingDraftVoidError extends Error {
-  constructor(message: string) {
+  /** P37 fix pass: refused before any write because the pending pointer
+   *  named another draft than the caller's `expectedDraftId`. */
+  readonly draftChanged: boolean;
+  constructor(message: string, draftChanged = false) {
     super(message);
     this.name = "PendingDraftVoidError";
+    this.draftChanged = draftChanged;
   }
 }
 
@@ -637,13 +641,26 @@ export class PendingDraftVoidError extends Error {
  *  sign-offs, stamp the draft superseded, then release the pending pointer
  *  (compare-and-set on the draft it read). Throws PendingDraftVoidError
  *  naming the state it leaves when any write is refused. Returns the voided
- *  draft's id, or null when there was none. */
-export async function voidPendingDraft(documentId: string): Promise<string | null> {
+ *  draft's id, or null when there was none.
+ *  `expectedDraftId` (document-control P37 fix pass, optional — every
+ *  existing caller omits it and is unchanged): the draft the caller means to
+ *  void; when the pointer read here names another draft, it refuses
+ *  (PendingDraftVoidError, `draftChanged`) BEFORE any write — so a draft filed
+ *  after the caller looked is never the one voided. */
+export async function voidPendingDraft(documentId: string, expectedDraftId?: string | null): Promise<string | null> {
   const nowIso = new Date().toISOString();
   const { data: docRow, error: readErr } = await supabase
     .from("documents").select("pending_version_id").eq("id", documentId).maybeSingle();
   if (readErr) throw new PendingDraftVoidError(`Couldn't read whether a revision is in review on this document (${readErr.message}) — nothing was changed.`);
   const draftId = ((docRow as { pending_version_id?: string | null } | null)?.pending_version_id) ?? null;
+  if (expectedDraftId != null && draftId !== expectedDraftId) {
+    throw new PendingDraftVoidError(
+      draftId
+        ? "The document's pending draft changed since it was shown (another draft is now in review) — nothing was changed. Reload the document."
+        : "The document no longer has the pending draft that was shown — nothing was changed. Reload the document.",
+      true,
+    );
+  }
   if (!draftId) return null;
 
   // 1. The roster: every open (pending / signed) sign-off on the draft → void.
