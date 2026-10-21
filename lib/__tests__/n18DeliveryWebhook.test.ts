@@ -33,6 +33,8 @@ const h = vi.hoisted(() => {
     rpc: vi.fn(),
     idColumnMissing: false,
     refusedUpdates: [] as Array<Record<string, unknown>>,
+    /** An update that never answers (a stalled connection), by its payload. */
+    hangUpdate: null as null | ((payload: Record<string, unknown>) => boolean),
   };
 });
 
@@ -51,6 +53,13 @@ vi.mock("@supabase/supabase-js", async () => {
         get(target, prop: string) {
           if (prop === "update") {
             return (payload: Record<string, unknown>) => {
+              if (h.hangUpdate?.(payload)) {
+                const t: Record<string, unknown> = {};
+                t.eq = () => t;
+                t.in = () => t;
+                t.then = () => new Promise(() => undefined);
+                return t;
+              }
               if (h.idColumnMissing && payload && "provider_message_id" in payload) {
                 h.refusedUpdates.push(payload);
                 const err = { data: null, error: { code: "PGRST204", message: "Could not find the 'provider_message_id' column of 'email_notifications' in the schema cache" } };
@@ -112,6 +121,13 @@ describe("lib/resendWebhook — the signature (Standard Webhooks / Svix)", () =>
 });
 
 describe("lib/resendWebhook — the report", () => {
+  it("a complaint carries no detail (detailOf gives null) — which is why record_email_delivery's stronger-outcome branch keeps a bounce's reason (20261258); the two stay tied", () => {
+    const p = parseDeliveryReport(JSON.parse(event("email.complained", { email_id: "re_c", complaint: { type: "abuse", message: "marked as spam" }, bounce: { message: "x" }, failed: { reason: "y" } })));
+    expect(p).toMatchObject({ kind: "outcome", report: { outcome: "complained", detail: null } });
+    const sql = readFileSync(join(process.cwd(), "supabase/migrations/20261258_notif_roundG_delivery_record.sql"), "utf8");
+    expect(sql).toContain("THEN COALESCE(left(p_detail, 500), CASE WHEN e.delivery_status IN ('bounced', 'failed') THEN e.delivery_detail END) ELSE e.delivery_detail END,");
+  });
+
   it("the five delivery outcomes; every other event is ignored", () => {
     expect(["email.delivered", "email.delivery_delayed", "email.bounced", "email.complained", "email.failed"].map(outcomeOf))
       .toEqual(["delivered", "delayed", "bounced", "complained", "failed"]);
@@ -289,6 +305,7 @@ describe("the drain keeps the provider's id beside 'sent'; nothing it sends chan
   beforeEach(() => {
     resetState(h.state);
     resetDeliveryRecordLatches();
+    h.hangUpdate = null;
     h.idColumnMissing = false;
     h.refusedUpdates = [];
     sends = [];
@@ -335,12 +352,12 @@ describe("the drain keeps the provider's id beside 'sent'; nothing it sends chan
   const sentUpdates = () => h.state.calls.filter((c) => c.table === "email_notifications" && c.method === "update" && (c.args[0] as Record<string, unknown>).status === "sent");
   const expectedSends = Array.from({ length: 7 }, (_, i) => ({ from: "notifications@manufacturing-os.app", to: `u${i}@x.io`, subject: `S${i}`, text: `B${i}` }));
 
-  it("BEFORE 20261258, a batch across two chunks: ONE refused update carrying the id per process — every later send writes today's update directly; every email sent, byte-identical", async () => {
+  it("BEFORE 20261258, a batch across two chunks: the five sends in flight together each pay one refused update (nobody waits); every later send writes today's update directly; every email sent, byte-identical", async () => {
     h.idColumnMissing = true;
     sevenRows();
     expect(await (await run()).json()).toEqual({ processed: 7, sent: 7, failed: 0 });
-    expect(h.refusedUpdates).toHaveLength(1);
-    // the refused one is followed by today's update; the six others write today's update once
+    expect(h.refusedUpdates).toHaveLength(5);
+    // each refused one is followed by today's update; the second chunk writes today's update once
     expect(sentUpdates().map((c) => "provider_message_id" in (c.args[0] as Record<string, unknown>))).toEqual(Array(7).fill(false));
     for (let i = 0; i < 7; i++) {
       expect(row(`e${i}`)).toMatchObject({ status: "sent", attempt_count: 1 });
@@ -350,8 +367,31 @@ describe("the drain keeps the provider's id beside 'sent'; nothing it sends chan
     // the next drain in the same process: no refused update at all
     sevenRows();
     await run();
-    expect(h.refusedUpdates).toHaveLength(1);
+    expect(h.refusedUpdates).toHaveLength(5);
     expect(sends).toHaveLength(14);
+  });
+
+  it("no send ever waits on another (DEC-90): a stalled provider-id update on one row holds no other row — before and after the paste", async () => {
+    for (const missing of [false, true]) {
+      resetState(h.state);
+      resetDeliveryRecordLatches();
+      h.idColumnMissing = missing;
+      h.refusedUpdates = [];
+      let n = 0;
+      globalThis.fetch = vi.fn(async (url: unknown, init?: RequestInit) => {
+        void url;
+        sends.push(JSON.parse(String(init?.body)));
+        return new Response(JSON.stringify({ id: `re_${n++}` }), { status: 200 });
+      }) as typeof fetch;
+      // the first send's update carrying its id never answers
+      h.hangUpdate = (payload) => payload.provider_message_id === "re_0";
+      seed(Array.from({ length: 5 }, (_, i) => ({ id: `e${i}`, status: "queued", to_user_id: `u${i}`, to_email: `u${i}@x.io` })));
+      void run();
+      await vi.waitFor(() => {
+        for (let i = 1; i < 5; i++) expect(row(`e${i}`)).toMatchObject({ status: "sent", attempt_count: 1 });
+      }, { timeout: 2000, interval: 10 });
+      for (let i = 1; i < 5; i++) expect("provider_message_id" in row(`e${i}`)).toBe(!missing);
+    }
   });
 
   it("the latch is not forever: past DELIVERY_RECORD_REPROBE_MS the id is tried again, and once 20261258 is pasted it is kept", async () => {

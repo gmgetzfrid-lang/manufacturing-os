@@ -52,6 +52,10 @@ const world = vi.hoisted(() => ({
   pasted258: false,
   /** Every not_emailed insert tried (refused or not). */
   notEmailedTries: 0,
+  /** A write that never answers (a stalled connection), for the no-wait pins. */
+  hangInsert: null as null | ((row: Record<string, unknown>) => boolean),
+  /** Awaited before email_gate answers: a slow or a never-answering ask. */
+  beforeRpc: null as null | ((args: Record<string, unknown>) => Promise<void> | void),
 }));
 
 vi.mock("@/lib/supabase", () => {
@@ -107,6 +111,7 @@ vi.mock("@/lib/supabase", () => {
         Promise.resolve({ data: run(), error: null }).then(res, rej),
       insert: async (row: Row) => {
         if (row.status === "not_emailed") world.notEmailedTries++;
+        if (world.hangInsert?.(row)) return new Promise(() => undefined);
         if (world.insertError) return { data: null, error: world.insertError };
         if (row.status === "not_emailed" && !world.pasted258) {
           return { data: null, error: { code: "23514", message: 'new row for relation "email_notifications" violates check constraint "email_notifications_status_check"' } };
@@ -119,6 +124,7 @@ vi.mock("@/lib/supabase", () => {
   }
   async function rpc(fn: string, args: Record<string, unknown>) {
     world.rpcCalls.push({ fn, args });
+    if (world.beforeRpc) await world.beforeRpc(args);
     if (world.rpc === "missing") {
       return { data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn}(p_body, p_event_type, p_org, p_resource_id, p_subject, p_to_user) in the schema cache` } };
     }
@@ -269,6 +275,8 @@ beforeEach(() => {
   world.sessionThrows = false;
   world.pasted258 = false;
   world.notEmailedTries = 0;
+  world.hangInsert = null;
+  world.beforeRpc = null;
   resetDeliveryRecordLatches();
   warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   err = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -672,7 +680,7 @@ describe("N18 — 'not emailed by their choice' is recorded, never sent", () => 
     expect(said.length).toBeLessThanOrEqual(1);
   });
 
-  it("BEFORE 20261258, many opted-out recipients: ONE refused record insert and ONE second ask per process — after that neither is made; who is emailed and what is queued are unchanged", async () => {
+  it("BEFORE 20261258, opted-out recipients one after another: ONE refused record insert and ONE second ask — after that, within the window, neither is made; who is emailed and what is queued are unchanged", async () => {
     const E = "e0000000-0000-4000-8000-00000000000e";
     setPrefs(B, { email_enabled: false });
     setPrefs(C, { email_on_mention: false });
@@ -694,23 +702,44 @@ describe("N18 — 'not emailed by their choice' is recorded, never sent", () => 
     expect(err).not.toHaveBeenCalled();
   });
 
-  it("BEFORE 20261258, a burst queued at once (as emit() does): still ONE refused record insert; after the paste the same burst records every one", async () => {
+  it("no write ever waits on another (DEC-90): a record insert or a second ask that never answers does not delay the next recipient, before or after the paste", async () => {
     const E = "e0000000-0000-4000-8000-00000000000e";
     for (const u of [B, C, E]) setPrefs(u, { email_enabled: false });
-    const burst = () => Promise.all([B, C, E, U2].map((u) => queueEmail(mail({ toUserId: u, toEmail: `${u.slice(0, 2)}@example.test` }))));
-    expect(await burst()).toEqual(["suppressed", "suppressed", "suppressed", "queued"]);
-    expect(world.notEmailedTries).toBe(1);
-    expect(world.rpcCalls.filter((c) => c.args.p_resource_id === null)).toHaveLength(1);
-    expect(queued().map((e) => e.to_user_id)).toEqual([U2]);
-    // a fresh process after the paste
-    resetDeliveryRecordLatches();
-    world.pasted258 = true;
-    world.emails.length = 0;
-    world.notEmailedTries = 0;
-    expect(await burst()).toEqual(["not_emailed", "not_emailed", "not_emailed", "queued"]);
-    expect(world.notEmailedTries).toBe(3);
-    expect(notEmailed().map((e) => e.to_user_id).sort()).toEqual([B, C, E].sort());
-    expect(queued().map((e) => e.to_user_id)).toEqual([U2]);
+    const within = <T,>(p: Promise<T>) => Promise.race([p, new Promise<"waited">((r) => setTimeout(() => r("waited"), 500))]);
+    for (const pasted of [false, true]) {
+      resetDeliveryRecordLatches();
+      world.pasted258 = pasted;
+      world.emails.length = 0;
+      // B's record insert never answers; C's second ask never answers
+      world.hangInsert = (row) => row.to_user_id === B;
+      world.beforeRpc = (args) => (args.p_to_user === C && args.p_resource_id === null ? new Promise<void>(() => undefined) : undefined);
+      void queueEmail(mail());
+      void queueEmail(mail({ toUserId: C, toEmail: "c@example.test" }));
+      await Promise.resolve();
+      // E and the opted-in U2 finish on their own
+      expect(await within(queueEmail(mail({ toUserId: E, toEmail: "e@example.test" })))).toBe(pasted ? "not_emailed" : "suppressed");
+      expect(await within(queueEmail(mail({ toUserId: U2, toEmail: "u2@example.test" })))).toBe("queued");
+      expect(queued().map((e) => e.to_user_id)).toEqual([U2]);
+    }
+  });
+
+  it("no wait on a 60-second repeat either: a duplicate burst with nobody opted out asks every second question at once", async () => {
+    const recipients = [B, C, U1, U2];
+    await Promise.all(recipients.map((u) => queueEmail(mail({ toUserId: u, toEmail: `${u.slice(0, 2)}@example.test` }))));
+    world.rpcCalls.length = 0;
+    let open = 0;
+    let peak = 0;
+    world.beforeRpc = async (args) => {
+      if (args.p_resource_id !== null) return;
+      open++; peak = Math.max(peak, open);
+      await new Promise((r) => setTimeout(r, 20));
+      open--;
+    };
+    expect(await Promise.all(recipients.map((u) => queueEmail(mail({ toUserId: u, toEmail: `${u.slice(0, 2)}@example.test` })))))
+      .toEqual(["repeat", "repeat", "repeat", "repeat"]);
+    // all four second asks were in flight together: none waited for another
+    expect(peak).toBe(4);
+    expect(world.notEmailedTries).toBe(0);
   });
 
   it("the latch is not forever: past DELIVERY_RECORD_REPROBE_MS the record is tried again, and once 20261258 is pasted it lands", async () => {

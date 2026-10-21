@@ -25,7 +25,7 @@
 import { supabase } from "@/lib/supabase";
 import { emailAllowedByPrefs, isMissingEmailGate, isPreferenceExempt } from "@/lib/notificationPrefs";
 import { publicOrigin } from "@/lib/publicOrigin";
-import { notEmailedRecordLatch, type LatchAnswer } from "@/lib/deliveryRecordLatch";
+import { notEmailedRecordLatch } from "@/lib/deliveryRecordLatch";
 
 export type QueueEmailInput = {
   orgId: string;
@@ -210,21 +210,18 @@ export async function queueEmail(input: QueueEmailInput): Promise<QueueEmailOutc
     const { verdict, byPreference } = await evaluateEmailGate(input);
     if (verdict === "suppress") {
       if (byPreference !== true && byPreference !== "ask") return "repeat";
-      // The record (and the second ask, which only serves it) goes through
-      // notEmailedRecordLatch (lib/deliveryRecordLatch.ts): before 20261258
-      // the old status CHECK refuses it, so after one refusal neither is made
-      // in this process for DELIVERY_RECORD_REPROBE_MS, and a burst (emit()
-      // queues every recipient at once) pays that refusal once. Nothing is
-      // emailed either way — the suppression is today's.
-      return notEmailedRecordLatch.write<{ outcome: QueueEmailOutcome; answer: LatchAnswer }>(
-        async () => {
-          if (byPreference === "ask" && (await suppressedByPreference(input)) !== true) return { outcome: "repeat", answer: "other" };
-          const answer = await recordNotEmailed(input);
-          return { outcome: answer === "ok" ? "not_emailed" : "suppressed", answer };
-        },
-        (r) => r.answer,
-        () => ({ outcome: "suppressed", answer: "other" }),
-      ).then((r) => r.outcome);
+      // notEmailedRecordLatch (lib/deliveryRecordLatch.ts — a plain flag,
+      // nobody waits): before 20261258 the old status CHECK refuses the
+      // record, so once a refusal has been seen neither the record nor the
+      // second ask (which only serves it) is made in this process for
+      // DELIVERY_RECORD_REPROBE_MS. Nothing is emailed either way — the
+      // suppression is today's.
+      if (byPreference === "ask") {
+        if (notEmailedRecordLatch.held()) return "suppressed";
+        if ((await suppressedByPreference(input)) !== true) return "repeat";
+      }
+      if (notEmailedRecordLatch.held()) return "suppressed";
+      return (await recordNotEmailed(input)) ? "not_emailed" : "suppressed";
     }
 
     const metadata: Record<string, unknown> = { ...(input.metadata ?? {}) };
@@ -296,13 +293,14 @@ let notEmailedUnrecordedLogged = false;
  *  agrees the preference turns this email off, and does not write one that repeats the latest record inside 60
  *  seconds (email_gate()'s repeat rule, for every writer — the repeat key is
  *  visible there whoever calls). Before 20261258 the status CHECK refuses it
- *  (23514): said once, nothing recorded — today's path — and queueEmail's
- *  latch (lib/deliveryRecordLatch.ts) skips the insert for the next
- *  DELIVERY_RECORD_REPROBE_MS, so the refusal is paid once per process per
- *  window, not once per opted-out recipient. Answers "ok" when the insert
- *  was accepted (a merged repeat is accepted: the record exists), "refused"
- *  for the old status CHECK, "other" for anything else; never throws. */
-async function recordNotEmailed(input: QueueEmailInput): Promise<LatchAnswer> {
+ *  (23514): said once, nothing recorded — today's path — and this sets
+ *  queueEmail's latch (lib/deliveryRecordLatch.ts, a plain flag), so every
+ *  later caller skips the insert for DELIVERY_RECORD_REPROBE_MS instead of
+ *  paying it per opted-out recipient (callers already in flight when the
+ *  refusal arrives each make theirs — nobody waits). A write that lands
+ *  clears the latch. Answers whether the insert was accepted (a merged
+ *  repeat is accepted: the record exists); never throws. */
+async function recordNotEmailed(input: QueueEmailInput): Promise<boolean> {
   try {
     const metadata: Record<string, unknown> = { ...(input.metadata ?? {}) };
     if (input.link) metadata.link = input.link;
@@ -322,17 +320,18 @@ async function recordNotEmailed(input: QueueEmailInput): Promise<LatchAnswer> {
       metadata,
       status: "not_emailed",
     });
-    if (!error) return "ok";
+    if (!error) { notEmailedRecordLatch.clear(); return true; }
     const notPasted = isStatusCheckRefusal(error);
+    if (notPasted) notEmailedRecordLatch.set();
     if (!notEmailedUnrecordedLogged) {
       notEmailedUnrecordedLogged = true;
       console.info(notPasted
         ? "queueEmail: a recipient's preference turned an email off; the record of it needs migration 20261258 — not recorded (the email is not sent, as before)"
         : `queueEmail: the record that a recipient's preference turned an email off was not written (${error.code ?? "?"}: ${error.message}) — the email is not sent, as before`);
     }
-    return notPasted ? "refused" : "other";
+    return false;
   } catch {
-    return "other";
+    return false;
   }
 }
 

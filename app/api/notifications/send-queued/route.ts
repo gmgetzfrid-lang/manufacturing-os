@@ -328,10 +328,11 @@ export async function POST(req: Request) {
       // update is sent again without the id, so the row lands exactly as it
       // did before and is never left 'sending' to be mailed twice. Once the
       // column is known missing (PGRST204 / 42703 naming provider_message_id
-      // — lib/deliveryRecordLatch.ts), today's update is sent directly for
-      // the next DELIVERY_RECORD_REPROBE_MS (the answer body is not read: as
-      // before N18), so the failing update is paid once per process per
-      // window, not once per send.
+      // — lib/deliveryRecordLatch.ts, a plain flag: no send ever waits on
+      // another), today's update is sent directly for the next
+      // DELIVERY_RECORD_REPROBE_MS (the answer body is not read: as before
+      // N18), so the failing update is paid by the sends already in flight
+      // when it is first refused, not by every later send.
       const providerId = providerIdColumnLatch.held() ? null : await providerMessageIdOf(resp);
       const sentPatch = {
         status: "sent",
@@ -341,18 +342,16 @@ export async function POST(req: Request) {
       if (!providerId) {
         await supabase.from("email_notifications").update(sentPatch).eq("id", row.id);
       } else {
-        const idErr = await providerIdColumnLatch.write<{ code?: string; message?: string } | null | "skipped">(
-          async () => (await supabase
-            .from("email_notifications")
-            .update({ ...sentPatch, provider_message_id: providerId })
-            .eq("id", row.id)).error,
-          (e) => (e == null ? "ok" : e !== "skipped" && providerIdColumnMissing(e) ? "refused" : "other"),
-          () => "skipped",
-        );
-        if (idErr) {
-          if (idErr !== "skipped" && !providerIdUnwritableLogged) {
+        const { error: sentErr } = await supabase
+          .from("email_notifications")
+          .update({ ...sentPatch, provider_message_id: providerId })
+          .eq("id", row.id);
+        if (!sentErr) providerIdColumnLatch.clear();
+        else {
+          if (providerIdColumnMissing(sentErr)) providerIdColumnLatch.set();
+          if (!providerIdUnwritableLogged) {
             providerIdUnwritableLogged = true;
-            console.warn(`[send-queued] the provider's message id was not kept (${idErr.code ?? "?"}: ${idErr.message}) — delivery reports cannot be matched until 20261258 is pasted; the email is recorded sent as before`);
+            console.warn(`[send-queued] the provider's message id was not kept (${sentErr.code ?? "?"}: ${sentErr.message}) — delivery reports cannot be matched until 20261258 is pasted; the email is recorded sent as before`);
           }
           await supabase.from("email_notifications").update(sentPatch).eq("id", row.id);
         }
