@@ -32,6 +32,7 @@ import { heldRoles } from "@/lib/roleHeld";
 import { slotBlocks, rosterLacksIndependentSignOff, type SlotSignPlan } from "@/lib/workflow";
 import type { RoutingControl, RoutingLevel, RoutingSlot } from "@/lib/routingControl";
 import { slotLabel } from "@/lib/routingControl";
+import { windowConfigOf } from "@/lib/consentWindow";
 import type { TicketAttachment, TicketReviewRoster, TicketReviewSlot } from "@/types/schema";
 
 // ─── Content binding (EVID-12) ──────────────────────────────────────────────
@@ -383,6 +384,8 @@ export function openRoster(input: {
       overriders: s.waivable_by ? resolveFill(s.waivable_by, ctx).filter((u) => !primaries.includes(u)) : [],
       independentOf: [...(s.independent_of ?? [])],
       timeoutDays: s.timeoutDays ?? null,
+      // GAP-109 (DF-P7): a consent slot's window, frozen when the roster opens.
+      ...(s.mode === "consent_window" ? windowConfigOf(s) : {}),
       fallback,
       ...((s.fill.capability && ENGINEERING_CAPABILITIES.includes(s.fill.capability)) || s.kind === gateKind ? { engineering: true } : {}),
       status: slotBlocks(s) ? "open" : "told",
@@ -439,7 +442,11 @@ export function rosterCompletion(
     slot: "primary",
     activated: false,
     status: s.status === "satisfied" ? "signed" : "pending",
-    signatureId: s.status === "satisfied" ? (s.signatureId ?? null) : null,
+    // GAP-109 (DF-P7): a slot a consent window satisfied carries no
+    // signature — its backing is the window's record (open_consent_window's
+    // delivered events and the close's audit row), named here so the
+    // evaluator counts it; any other satisfied slot still needs its own.
+    signatureId: s.status === "satisfied" ? (s.signatureId ?? (s.via === "consent" ? `consent-window:${s.id}` : null)) : null,
     slotGroup: s.kind,
   }));
   const { complete, unsatisfiedGroups } = evaluateSlotCompletion(rows);
@@ -531,7 +538,8 @@ export async function writeRosterLedger(client: LedgerClient, input: {
   event: "opened" | "satisfied" | "voided";
   /** The slots this transition changed (all of them for "opened"). */
   slots: TicketReviewSlot[];
-  actor: { uid: string; name: string | null };
+  /** `uid` null: a recorded system act (GAP-109's consent advance — DF-P7). */
+  actor: { uid: string | null; name: string | null };
   reason?: string | null;
 }): Promise<string | null> {
   const { orgId, ticketId, roster } = input;

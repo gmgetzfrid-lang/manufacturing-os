@@ -37,6 +37,8 @@ import { resolveTicketRecipients, isRoutedStatus } from "@/lib/ticketRouting";
 import { isTicketOutcome, outcomesFor, OUTCOME_LABEL } from "@/lib/ticketOutcome";
 import { parseOutcomeReasons, checkOutcomeReason, checkBareOutcome, type OutcomeReason } from "@/lib/ticketOutcomeReasons";
 import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
+import { planConsentWindow, CONSENT_REASON } from "@/lib/consentWindow";
+import { afterRosterOpened, recordNoticeEvents, recordNotEmailed, emailPreferenceReason } from "@/lib/consentWindowScan";
 import { SLA_NOTICE_ACTIONS } from "@/lib/ticketSla";
 import { ticketReadScope } from "@/lib/ticketReadScope";
 import { offerableLibraries, libraryLabelForTicket, libraryChoiceFromRow, LIBRARY_CHOICE_COLUMNS, UNNAMED_TARGET_LIBRARY } from "@/lib/ticketLibrary";
@@ -1053,6 +1055,10 @@ export async function POST(req: NextRequest) {
   let rosterOpen: TicketReviewRoster | null = null;
   let rosterSign: TransitionInput["rosterSign"] = null;
   let rosterWarning: string | null = null;
+  // GAP-109 / GAP-113 (DF-P7): what this submission's consent slot does, said
+  // in the response (never in rosterWarning, which the audit row carries).
+  let consentWarning: string | null = null;
+  let consentMembers: Array<Record<string, unknown>> = [];
   // Only a SUBMISSION opens a roster. reopen_ticket takes today's path into
   // PENDING_REVIEW (DF-P5 fix pass): a reopened request may have no readable
   // Draft at all, and its previous Draft is the already-issued bytes — the
@@ -1141,6 +1147,19 @@ export async function POST(req: NextRequest) {
         });
         if (!opened.ok) return refuse(409, opened.code, opened.error);
         rosterOpen = opened.roster;
+        // GAP-109 / DEC-90 rulings for DF-P7: a consent slot runs a window
+        // only where lib/consentWindow.ts planConsentWindow allows it — never
+        // on engineered work (the same gate the roster just applied), never
+        // as the engineering sign-off, never with nobody to ask. The plan
+        // rides the roster (one decision for the history, the window and
+        // the cron's retry). Before 20261255 the row has no window columns:
+        // the roster is exactly today's, the slot waits for a sign-off, and
+        // the response says so.
+        const consentColumns = Object.prototype.hasOwnProperty.call(row, "consent_window_opened_at");
+        const consentPlan = planConsentWindow(opened.roster, { engineeringRequired: engineeringGate.required, columns: consentColumns });
+        if (consentPlan && consentColumns) rosterOpen = { ...opened.roster, consentPlan };
+        else if (consentPlan) consentWarning = `${consentPlan.label ? `"${consentPlan.label}"` : "The consent slot"} waits for a sign-off: ${CONSENT_REASON.notPasted}.`;
+        consentMembers = members.rows;
       }
     }
   }
@@ -1226,6 +1245,9 @@ export async function POST(req: NextRequest) {
     engineeringFirstLoop: action.action === "request_eng_review" && engineeringFirstTypes.includes(ticket.requestType)
       && !ticket.engineerReviewRequestedAt && !ticket.assignedEngineerId,
     sourceDrift,
+    // GAP-109 (DF-P7): the engine offered the objection to one of the
+    // people the running window asked.
+    consentObjection: action.action === "object_consent_window",
     actor: { uid: caller.id, email: callerEmail, role: callerRole },
   };
   const { updates, newStatus, recipients: transitionRecipients, newComment } = computeTransition(ticket, input);
@@ -1715,6 +1737,10 @@ export async function POST(req: NextRequest) {
   baseQuery = ticket.lastModified
     ? baseQuery.eq("last_modified", String(ticket.lastModified))
     : baseQuery.is("last_modified", null);
+  // GAP-109 (DF-P7): an objection lands only on a window still running — the
+  // cron's close of the same window changes last_modified, and either way
+  // these two keep the first act the only one.
+  if (action.action === "object_consent_window") baseQuery = baseQuery.is("consent_window_expired_at", null).is("consent_window_objected_at", null);
   let { data: updated, error: updErr } = await baseQuery
     .select("id")
     .maybeSingle();
@@ -1891,6 +1917,30 @@ export async function POST(req: NextRequest) {
       console.error(`[workflow-action] ${auditRow.action} (audit row ${auditRow.id}) on ticket ${body.ticketId} landed, but the review roster ledger was not written — reconcile from tickets.metadata.review_roster: ${ledgerErr}`);
       rosterWarning = rosterWarning ?? "Done — but the review roster's record could not be written; the request carries it and it will be reconciled.";
     }
+  }
+
+  // GAP-109 / GAP-113 (DF-P7): the roster this submission opened carries a
+  // consent plan — open its window now that the review exists (DEC-38:
+  // open_consent_window writes the notices and the clock in ONE
+  // transaction, or nothing; a refusal leaves the slot waiting for a
+  // sign-off, said, and the maintenance run retries it), or record the block
+  // and tell the assignment queue (DEC-39: an empty set never advances).
+  if (rosterOpen?.consentPlan && newStatus === "PENDING_REVIEW") {
+    consentWarning = await afterRosterOpened(supabaseAdmin, {
+      ticketId: body.ticketId, orgId: ticket.orgId, ticketLabel: `${ticket.ticketId || ""} ${ticket.title}`.trim(),
+      roster: rosterOpen, members: consentMembers, policy: capPolicy, resource, requesterId: ticket.requesterId,
+      actor: { uid: caller.id, name: memberName(member as { display_name?: unknown; email?: unknown }) },
+    });
+  }
+  // The objection's durable record (it survives any bell purge); the
+  // ticket's own history and columns already carry it.
+  if (action.action === "object_consent_window") {
+    const w = currentRoster(ticket)?.consentWindow;
+    const evErr = await recordNoticeEvents(supabaseAdmin, [{
+      org_id: ticket.orgId, ticket_id: body.ticketId, roster_id: currentRoster(ticket)?.id ?? null, slot_kind: w?.slot ?? null,
+      kind: "objected", recipient: caller.id, actor_id: caller.id, actor_name: callerEmail, details: { comment: body.comment ?? null, auditId: auditRow.id },
+    }]);
+    if (evErr && evErr !== "missing") console.error(`[workflow-action] the objection on ticket ${body.ticketId} landed (audit row ${auditRow.id}) but its notice event was not written — the history carries it: ${evErr}`);
   }
 
   // Mirror the action's comment into the ticket_comments table so the two comment
@@ -2176,6 +2226,8 @@ export async function POST(req: NextRequest) {
     ...(libraryNotStored && !holdOutcome ? { warning: "The request moved on, but its library could not be recorded yet (database update 20261208 is not applied)." } : {}),
     ...(rosterWarning && !holdOutcome && !libraryNotStored ? { warning: rosterWarning } : {}),
     ...(reviewClassNotStored && !holdOutcome && !libraryNotStored && !rosterWarning ? { warning: "The request moved on, but its work or code class could not be recorded yet (database update 20261250 is not applied)." } : {}),
+    ...(consentWarning ? { consentWarning } : {}),
+    ...(consentWarning && !holdOutcome && !libraryNotStored && !rosterWarning && !reviewClassNotStored ? { warning: consentWarning } : {}),
   });
 }
 
@@ -2475,6 +2527,19 @@ async function fanOut(params: {
   if (emailRows.length > 0) {
     const { error: mailErr } = await supabaseAdmin.from("email_notifications").insert(emailRows);
     if (mailErr) console.error("[workflow-action] emails were not queued (transition committed):", mailErr.message);
+  }
+  // EVID-9 (DF-P7, route limb): a person this transition did not email
+  // because their OWN preference turned it off gets a durable "not emailed
+  // by their choice" record (ticket_notice_events, 20261255) — not silence.
+  // Not an email_notifications 'suppressed' row: the drain re-queues those
+  // (app/api/notifications/send-queued/route.ts recovery), which would mail
+  // the person who opted out. Best-effort: the transition has landed.
+  {
+    const optedOut = audience
+      .filter((uid) => emailByUid.has(uid) && !wantsEmail(uid))
+      .map((uid) => ({ uid, reason: emailPreferenceReason(prefByUid.get(uid), cls.eventType) ?? "their email preferences" }));
+    const notEmailedErr = await recordNotEmailed(supabaseAdmin, { orgId: ticket.orgId, ticketId, action: action.type, eventType: cls.eventType, optedOut });
+    if (notEmailedErr) console.error(`[workflow-action] the not-emailed record for ${optedOut.length} recipient(s) on ticket ${ticketId} was not written (transition committed): ${notEmailedErr}`);
   }
 
   // OS-14 (notifications N17): an assignment reaches the push channel —

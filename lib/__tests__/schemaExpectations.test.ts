@@ -94,6 +94,9 @@ const GRANDFATHERED = new Set<string>();
 const ROW_AT_MERGE: Record<string, string> = {
   // drafting-flow Round G DF-P6 REVIEW-MODEL's ticket_equipment (20261251) is
   // listed in EXPECTED_TABLES since its merge and is no longer here.
+  // drafting-flow Round G DF-P7 CONSENT (GAP-113 / DEC-39): the append-only
+  // notice record — the integrator adds it to EXPECTED_TABLES at the merge.
+  ticket_notice_events: "20261255_df_roundG_consent_window.sql",
 };
 
 const BASE = "schema.sql (base schema)";

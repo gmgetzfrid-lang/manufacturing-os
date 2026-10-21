@@ -13,6 +13,7 @@ import { currentRoster, issueReadyFor, rosterEngineerApprovedAt, ISSUE_MARK_ACTI
 import { lastIssuedFromHistory } from "@/lib/verifyTicketVerdict";
 import { defaultOutcome } from "@/lib/ticketOutcome";
 import { reviewModelFieldsFromRow, ENGINEERING_OVERRIDE_NOTE, isDeclaredLikeInKind } from "@/lib/reviewModel";
+import { consentPlanNote } from "@/lib/consentWindow";
 
 export interface TransitionActor {
   uid?: string | null;
@@ -90,6 +91,17 @@ export interface TransitionInput {
    *  the moved documents as a person reads them, and whether the approver
    *  acknowledged it (null: the page did not ask — recorded as such). */
   sourceDrift?: { labels: string[]; acknowledged: boolean | null } | null;
+  /** GAP-109 (DF-P7): `object_consent_window` — one of the people asked
+   *  stops the running window (the route offered it through the engine). */
+  consentObjection?: boolean;
+  /** GAP-109 (DF-P7): `consent_window_advance` — the maintenance cron's
+   *  recorded system act when a window closes with no objection
+   *  (lib/consentWindowScan.ts): the roster with the window's slot satisfied
+   *  via "consent", whether every blocking slot now is, the slot's label and
+   *  the DEC-39 history details naming everyone asked. `held`: the window
+   *  closed but the producer floor wants a second person (lib/consentWindow.ts
+   *  consentFloorHolds) — the slot stays open, waiting for a sign-off. */
+  consentAdvance?: { roster: TicketReviewRoster; complete: boolean; label: string; details: string; held?: boolean } | null;
   actor: TransitionActor;
   now?: string;
 }
@@ -639,6 +651,55 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
         }
       }
       break;
+    case "object_consent_window": {
+      // GAP-109 (DF-P7): an objection stops the window for good — the slot
+      // waits for a sign-off, the objector's reason is the history line's
+      // details, and the stop is stamped on the ticket (workflow-owned
+      // columns, 20261255) and on the roster's mirror together.
+      const open = currentRoster(ticket);
+      const w = open?.consentWindow;
+      if (input.consentObjection && open && w) {
+        const label = open.slots.find((x) => x.kind === w.slot)?.label || w.slot;
+        const meta = ((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>;
+        updates.metadata = { ...meta, review_roster: { ...open, consentWindow: { ...w, objectedAt: now, objectedBy: actorUid ?? null } } };
+        updates.consent_window_objected_at = now;
+        updates.consent_window_objected_by = actorUid ?? null;
+        historyEntry.action = `Objected — "${label}" will not advance without objection; it waits for a sign-off`;
+      }
+      break;
+    }
+    case "consent_window_advance":
+      // GAP-109 / DEC-39 (DF-P7): the window closed with no objection — a
+      // recorded SYSTEM act, written by the maintenance cron (no person
+      // signed). The history names everyone asked, when, whether each opened
+      // the notice, when they were reminded and when the window closed. The
+      // last blocking slot issues the ticket exactly as a sign-off does.
+      if (input.consentAdvance) {
+        const { roster, complete, label, details, held } = input.consentAdvance;
+        const w = roster.consentWindow ? { ...roster.consentWindow, expiredAt: now } : null;
+        const next = { ...roster, consentWindow: w };
+        updates.metadata = { ...((ticket.metadata ?? {}) as Record<string, unknown>), review_roster: complete ? { ...next, closedAt: now, closedReason: "complete" } : next };
+        updates.consent_window_expired_at = now;
+        historyEntry.details = details;
+        if (held) {
+          historyEntry.action = `Consent window closed with no objection — "${label}" still needs a sign-off from someone other than the drafter`;
+        } else {
+          historyEntry.action = `Advanced without objection — ${label}${ticket.deliverableRev ? ` (Rev ${ticket.deliverableRev})` : ""}`;
+        }
+        if (complete && !held) {
+          updates.status = "PENDING_IFC";
+          const engAt = rosterEngineerApprovedAt(roster);
+          if (engAt) updates.engineer_approved_at = engAt;
+          issueRev();
+          historyEntry.action = `${historyEntry.action} — every sign-off is in; issued Rev ${updates.deliverable_rev}`;
+          currentAttachments = stampIssuedFinals(currentAttachments, updates.deliverable_rev as string, ticket.revisionCount ?? 0); // PHYS-2
+          asIsIssue();
+        } else {
+          const waiting = roster.slots.filter((x) => slotBlocks(x) && x.status === "open").flatMap((x) => x.primaries);
+          updates.unread_by = Array.from(new Set([...(ticket.unreadBy ?? []), ...newUnreadBy, ...waiting])).filter((u) => !!u && u !== actorUid);
+        }
+      }
+      break;
     case "approve_draft_ifc":
       updates.status = "PENDING_IFC";
       issueRev(); // SM-5: never a label the history already issued
@@ -836,13 +897,13 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       user: input.actor.email || "Unknown",
       role: input.actor.role,
       date: now,
-      details: `Sign-offs needed (any order): ${blocking.join(", ")}${told.length ? ` · Told: ${told.join(", ")}` : ""}${r.engineeringGateAdded ? " · Engineering sign-off added: this workspace requires an engineer for this request, and the routing table names none" : ""}`,
+      details: `Sign-offs needed (any order): ${blocking.join(", ")}${told.length ? ` · Told: ${told.join(", ")}` : ""}${r.engineeringGateAdded ? " · Engineering sign-off added: this workspace requires an engineer for this request, and the routing table names none" : ""}${r.consentPlan ? ` · ${consentPlanNote(r.consentPlan)}` : ""}`,
     } as TicketHistoryEntry);
     const named = r.slots.flatMap((x) => x.primaries);
     updates.unread_by = Array.from(new Set([...((updates.unread_by as string[] | undefined) ?? []), ...named])).filter((u) => u && u !== actorUid);
   } else {
     const open = currentRoster(ticket);
-    if (open && updates.status !== undefined && updates.status !== "PENDING_REVIEW" && input.actionType !== "sign_slot") {
+    if (open && updates.status !== undefined && updates.status !== "PENDING_REVIEW" && input.actionType !== "sign_slot" && input.actionType !== "consent_window_advance") {
       const meta = ((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>;
       updates.metadata = {
         ...meta,

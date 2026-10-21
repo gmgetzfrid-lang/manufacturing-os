@@ -220,6 +220,9 @@ describe("ALOG-1 done-when 2 — the record's census of the loaders' callers is 
     "lib/adminGate.ts",
     "lib/transmittals.ts",
     "app/api/ai/usage/route.ts",
+    // strict (drafting-flow DF-P7): the consent-window step reads who runs
+    // the assignment queue; a policy it cannot read skips that org's windows
+    "lib/consentWindowScan.ts",
   ]);
 
   it("every caller of loadCapabilityPolicy / …Entry / …Strict outside the module is one the record lists", () => {

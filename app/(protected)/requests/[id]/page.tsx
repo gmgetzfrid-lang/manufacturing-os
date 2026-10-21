@@ -33,6 +33,8 @@ import SourceDriftBanner from '@/components/requests/SourceDriftBanner';
 import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
 import TicketRosterPanel from '@/components/requests/TicketRosterPanel';
 import DeclarationCard from '@/components/requests/DeclarationCard';
+import ConsentWindowCard from '@/components/requests/ConsentWindowCard';
+import { consentWindowMarker } from '@/lib/consentWindow';
 import MentionableTextarea from '@/components/requests/MentionableTextarea';
 import TicketArchiveViewer from '@/components/archive/TicketArchiveViewer';
 import CommentBody from '@/components/requests/CommentBody';
@@ -2868,6 +2870,7 @@ export default function TicketDetailView() {
 
       <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><DeclarationCard ticket={ticket} onDeclarationCheck={setDeclarationCheck} /></div>
       <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><TicketRosterPanel ticket={ticketAsDeclarationChecked(ticket, declarationCheck)} orgId={activeOrgId} uid={uid} userName={(member?.displayName ?? '').trim() || (userEmail?.split('@')[0] ?? '').trim() || null} capPolicy={capPolicy} activeMemberCount={activeMemberCount} requesterRoles={requesterRoles} reviewRouted={reviewRouted} reviewRoutedReason={reviewRoutedReason} /></div>
+      {consentWindowMarker(ticket) && <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6"><ConsentWindowCard ticket={ticket} uid={uid} /></div>}
 
       {ticket.status === 'REVISION_REQ' && latestRevision && (
         <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">

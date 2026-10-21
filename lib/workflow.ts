@@ -3,6 +3,7 @@ import { policyAllows, scopedTokensFor, grantActive, type CapabilityPolicy, type
 import { isManagementRole } from "@/lib/managementRoles";
 import { CANCEL_OUTCOMES, type TicketOutcome } from "@/lib/ticketOutcome";
 import { ticketEngineeringRequired, reviewModelBinds, isDeclaredLikeInKind } from "@/lib/reviewModel";
+import { windowRunning, mayObject } from "@/lib/consentWindow";
 
 export interface WorkflowAction {
   label: string;
@@ -356,8 +357,11 @@ export function currentRoster(ticket: Pick<Ticket, "status" | "metadata">): Tick
   return r;
 }
 
-/** A slot the ticket waits on (consent_window waits like blocking until
- *  consent windows exist — DEC-38). */
+/** A slot the ticket waits on. A consent_window slot is one too: it is
+ *  satisfied by a sign-off, or — GAP-109 (DF-P7), only where a window is
+ *  running (lib/consentWindow.ts) — by the window closing with no objection
+ *  (via "consent", lib/consentWindowScan.ts). With no window it waits like a
+ *  blocking slot, exactly as before (DEC-38). */
 export const slotBlocks = (s: Pick<TicketReviewSlot, "mode">): boolean => s.mode !== "notify_only";
 
 const DAY_MS = 86_400_000;
@@ -477,6 +481,9 @@ export function rosterEngineerApprovedAt(roster: TicketReviewRoster): string | n
   const at = roster.slots.filter((s) => s.engineering && s.status === "satisfied" && s.satisfiedAt).map((s) => s.satisfiedAt as string).sort();
   return at.length > 0 ? at[at.length - 1] : null;
 }
+
+/** GAP-109 (DF-P7): what a sign-off on a running consent window says. */
+export const CONSENT_WINDOW_SIGN_NOTE = "A consent window is running on this sign-off: you do not need to act — if nobody objects before it closes, it is recorded as given without objection.";
 
 export const PRODUCER_FLOOR_REASON = "Needs a second person: you are this deliverable's drafter, and at least one sign-off on its review must come from someone else (orgs of 3+).";
 
@@ -843,6 +850,13 @@ export const WorkflowEngine = {
           // questions, neither waiting on the other (FRIC-2).
           const plan = slotSignPlan(roster, ticket, userId, sod, ctx?.now ?? Date.now());
           const occupies = plan.fillable.length > 0 || plan.blocked.length > 0;
+          // GAP-109 (DF-P7): while a consent window runs, the people asked
+          // need do nothing — silence is recorded as no objection when it
+          // closes. Their sign-off (and a revision) stays open to them, as
+          // OPTIONAL: it is not waited on, so it never badges them.
+          const windowSlot = windowRunning(roster) ? roster.consentWindow!.slot : null;
+          const onlyWindow = (xs: Array<{ slot: TicketReviewSlot }>) => !!windowSlot && xs.length > 0 && xs.every((x) => x.slot.kind === windowSlot);
+          const occupiesOnlyWindow = occupies && onlyWindow([...plan.fillable, ...plan.blocked]);
           if (plan.fillable.length > 0) {
             const labels = plan.fillable.map((f) => f.slot.label || f.slot.kind);
             const allOverride = plan.fillable.every((f) => f.via === "override");
@@ -851,8 +865,8 @@ export const WorkflowEngine = {
               action: 'sign_slot',
               variant: 'success',
               requiresSignature: true,
-              description: `Your e-signature is bound to the files under review${roster.cycle ? ` (Rev ${roster.cycle})` : ""}. One sign-off covers every slot you fill.${issueReady ? ` ${ISSUE_AS_IS_NOTE}` : ""}`,
-              ...(allOverride ? { optional: true } : {}),
+              description: `Your e-signature is bound to the files under review${roster.cycle ? ` (Rev ${roster.cycle})` : ""}. One sign-off covers every slot you fill.${issueReady ? ` ${ISSUE_AS_IS_NOTE}` : ""}${onlyWindow(plan.fillable) ? ` ${CONSENT_WINDOW_SIGN_NOTE}` : ""}`,
+              ...(allOverride || onlyWindow(plan.fillable) ? { optional: true } : {}),
             });
           } else if (plan.blocked.length > 0) {
             actions.push({
@@ -873,10 +887,24 @@ export const WorkflowEngine = {
               action: 'request_revision',
               variant: 'warning',
               requiresComment: true,
-              ...(!occupies || occupiesOnlyAsOverride ? { optional: true } : {}),
+              ...(!occupies || occupiesOnlyAsOverride || occupiesOnlyWindow ? { optional: true } : {}),
             });
           } else if (isManagement) {
             actions.push({ label: 'Request Revision', action: 'request_revision', variant: 'warning', requiresComment: true, optional: true });
+          }
+          // GAP-109 (DF-P7): one of the people asked may stop the window —
+          // the slot then waits for a sign-off, and their reason is recorded.
+          if (mayObject(roster, userId)) {
+            const w = roster.consentWindow!;
+            const label = roster.slots.find((x) => x.kind === w.slot)?.label || w.slot;
+            actions.push({
+              label: 'Object — Stop the Automatic Advance',
+              action: 'object_consent_window',
+              variant: 'warning',
+              requiresComment: true,
+              optional: true,
+              description: `You were asked to object if this should not go ahead. Objecting stops the consent window: "${label}" then waits for a sign-off, and your reason is recorded on the request.`,
+            });
           }
           break;
         }

@@ -1154,6 +1154,12 @@ export interface TicketReviewSlot {
    *  occupant must not also be. */
   independentOf: string[];
   timeoutDays: number | null;
+  /** GAP-109 (DF-P7): a consent_window slot's window, from its routing slot
+   *  (lib/routingControl.ts window_days / warn_fraction; defaults in
+   *  lib/consentWindow.ts) — copied when the roster opens, so a later edit
+   *  of the routing table never rewrites a running window. */
+  windowDays?: number | null;
+  warnFraction?: number | null;
   /** True when the slot's own fill resolved to nobody and the management
    *  tier was rostered instead (a stop never resolves to nobody). */
   fallback: boolean;
@@ -1168,7 +1174,32 @@ export interface TicketReviewSlot {
   satisfiedByName?: string | null;
   satisfiedAt?: string | null;
   signatureId?: string | null;
-  via?: "primary" | "alternate" | "override" | null;
+  /** "consent" (GAP-109, DF-P7): satisfied by a consent window that closed
+   *  with no objection — a recorded system act, no signer, no signature. */
+  via?: "primary" | "alternate" | "override" | "consent" | null;
+}
+
+/** GAP-109 / GAP-113 (DF-P7): what the roster decided about its consent
+ *  window when it opened (lib/consentWindow.ts planConsentWindow). */
+export type TicketConsentPlan =
+  | { kind: "open"; slot: string; label: string; recipients: string[]; windowDays: number; warnFraction: number }
+  | { kind: "sign_off"; slot: string | null; label: string | null; reason: string }
+  | { kind: "blocked"; slot: string; label: string; reason: string };
+
+/** GAP-109 / GAP-113 (DF-P7): the mirror of tickets.consent_window_* on the
+ *  roster, written in the same statement as the columns (open_consent_window,
+ *  record_consent_window_warning, the objection and the advance) — what the
+ *  engine and the request page read. The columns are the record. */
+export interface TicketConsentWindowMark {
+  slot: string;
+  openedAt: string;
+  warnAt: string;
+  closesAt: string;
+  recipients: string[];
+  warnedAt?: string | null;
+  objectedAt?: string | null;
+  objectedBy?: string | null;
+  expiredAt?: string | null;
 }
 
 /** drafting-flow DF-P5 ROSTER: the review roster a submission opened. */
@@ -1195,6 +1226,10 @@ export interface TicketReviewRoster {
    *  table carried no blocking engineering slot and the org-wide engineering
    *  gate applied, so the seed's engineering slot was appended. */
   engineeringGateAdded?: boolean;
+  /** GAP-109 (DF-P7): the consent window's plan, decided when the roster
+   *  opened, and — once open_consent_window has stamped it — the window. */
+  consentPlan?: TicketConsentPlan | null;
+  consentWindow?: TicketConsentWindowMark | null;
   closedAt?: string | null;
   closedReason?: string | null;
 }

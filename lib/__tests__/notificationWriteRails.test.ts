@@ -580,6 +580,10 @@ const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds
   // ackRequest (the nag's watermark) is written by browsers by design — a manual request or
   // re-nudge counts as the nag (the scan's own comment); only the escalation's key is server-only
   // N9 (PROD-13 / TAX-13): the manual distribution-ack requests write ack_requested now (were doc_superseded)
+  // drafting-flow DF-P7 (GAP-113): when a consent window closes, the maintenance cron reads the
+  // read_at of the exact bell rows open_consent_window wrote (by the ids its delivered events name,
+  // on the service role) to record who opened the notice. It decides no send.
+  "lib/consentWindowScan.ts": [{ marks: '.select("id, read_at").in("id", ids)', none: "not a dedupe: when a consent window closes, the maintenance cron reads read_at of the bell rows open_consent_window itself wrote, by the ids its append-only delivered events name (service role), to record in the ticket's history who opened the notice (GAP-113's three states); a missing row was read and cleared (the purge and a member's delete take only read rows). It withholds no notice" }],
   "lib/distributionAcks.ts": [{ marks: '.in("kind", ["ack_requested", "ack_overdue"])', keys: ["ackEscalation"] }],
   "lib/holds.ts": [{ marks: '.contains("metadata", { staleHoldId: h.id, staleFor })', keys: ["staleHoldId"] }],
   "lib/intakeRateLimit.ts": [{ marks: '.contains("metadata", { reviewHealthDay: input.day })', keys: ["reviewHealthDay"] }],

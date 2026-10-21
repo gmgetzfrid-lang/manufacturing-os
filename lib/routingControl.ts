@@ -47,6 +47,10 @@ import type { CapabilityId } from "@/lib/capabilityPolicy";
 import { currentRoster } from "@/lib/workflow";
 import { parseSourceDocument } from "@/lib/sourceDocRef";
 import type { Ticket } from "@/types/schema";
+import {
+  CONSENT_REFUSED_CAPABILITIES, CONSENT_WINDOW_MIN_DAYS, CONSENT_WINDOW_MAX_DAYS, CONSENT_WINDOW_DEFAULT_DAYS,
+  CONSENT_WARN_FRACTION_MIN, CONSENT_WARN_FRACTION_MAX,
+} from "@/lib/consentWindow";
 
 export type RoutingSlotMode = "blocking" | "consent_window" | "notify_only";
 export const ROUTING_SLOT_MODES: readonly RoutingSlotMode[] = ["blocking", "consent_window", "notify_only"];
@@ -89,6 +93,11 @@ export interface RoutingSlot {
    *  Refused on a blocking or consent slot: a condition must never be able
    *  to drop a sign-off (routingForWorkClass). */
   work_classes?: string[];
+  /** GAP-109 (DF-P7): a CONSENT-WINDOW slot's window — whole working days
+   *  (1–30; default 3) and the fraction of it at which the people asked are
+   *  reminded (0.1–0.9; default 2/3). Refused on any other mode. */
+  window_days?: number;
+  warn_fraction?: number;
 }
 
 export interface RoutingControl {
@@ -176,6 +185,19 @@ export function parseRoutingControl(raw: unknown): { ok: true; control: RoutingC
       if (wcl === null) return { ok: false, error: `slot "${kind}": work_classes is not a list of work classes` };
       if (wcl.length && slot.mode !== "notify_only") return { ok: false, error: `slot "${kind}": only a notify-only slot can be limited to some work classes — a sign-off applies to every request` };
       if (wcl.length) slot.work_classes = [...new Set(wcl)];
+    }
+    // GAP-109 (DF-P7): only a consent-window slot has a window.
+    for (const key of ["window_days", "warn_fraction"] as const) {
+      if (o[key] === undefined || o[key] === null) continue;
+      if (slot.mode !== "consent_window") return { ok: false, error: `slot "${kind}": only a consent-window slot has a ${key === "window_days" ? "window length" : "reminder point"}` };
+      const v = o[key];
+      if (key === "window_days") {
+        if (typeof v !== "number" || !Number.isInteger(v) || v < CONSENT_WINDOW_MIN_DAYS || v > CONSENT_WINDOW_MAX_DAYS) return { ok: false, error: `slot "${kind}": window_days is a whole number of working days from ${CONSENT_WINDOW_MIN_DAYS} to ${CONSENT_WINDOW_MAX_DAYS}` };
+        slot.window_days = v;
+      } else {
+        if (typeof v !== "number" || !(v >= CONSENT_WARN_FRACTION_MIN && v <= CONSENT_WARN_FRACTION_MAX)) return { ok: false, error: `slot "${kind}": warn_fraction is a fraction of the window from ${CONSENT_WARN_FRACTION_MIN} to ${CONSENT_WARN_FRACTION_MAX}` };
+        slot.warn_fraction = v;
+      }
     }
     slots.push(slot);
   }
@@ -320,12 +342,14 @@ export async function ticketReviewRouting(ticket: {
 /** The label a slot is shown under. */
 export const slotLabel = (s: Pick<RoutingSlot, "kind" | "label">): string => s.label?.trim() || s.kind;
 
-/** The words for a mode, as a person reads them. consent_window waits like a
- *  blocking slot until consent windows exist (GAP-109 needs GAP-113's
- *  delivery record first — DEC-38: no delivery record, no silent advance). */
+/** The words for a mode, as a person reads them. GAP-109 (DF-P7): a
+ *  consent_window slot advances on silence only where lib/consentWindow.ts
+ *  planConsentWindow allows it (never on engineered work, never as the
+ *  engineering sign-off, never with nobody to ask, never before 20261255) —
+ *  everywhere else it waits like a sign-off, and the request says why. */
 export const MODE_LABEL: Record<RoutingSlotMode, string> = {
   blocking: "Must sign off",
-  consent_window: "Must sign off (consent windows are not available yet, so this waits like a sign-off)",
+  consent_window: `May object within a window (default ${CONSENT_WINDOW_DEFAULT_DAYS} working days); silence is recorded as no objection — never on engineered work, where it waits like a sign-off`,
   notify_only: "Told, no sign-off",
 };
 
@@ -398,7 +422,16 @@ export function seededSlotsFor(ticket: {
 export function validateRoutingDraft(control: RoutingControl | null): string | null {
   if (control === null) return null;
   const p = parseRoutingControl(control);
-  return p && !p.ok ? p.error : null;
+  if (p && !p.ok) return p.error;
+  // GAP-109 / DEC-90 ruling (1) for DF-P7: silence never stands in for the
+  // engineering sign-off — the highest class of review — so a NEW table that
+  // puts a consent window on a slot filled by an engineering capability is
+  // refused with the reason. (A stored one is not invalid: it waits as a
+  // sign-off — lib/consentWindow.ts planConsentWindow — so no in-flight
+  // review changes.)
+  const eng = p?.ok ? p.control.slots.find((s) => s.mode === "consent_window" && !!s.fill.capability && CONSENT_REFUSED_CAPABILITIES.includes(s.fill.capability)) : undefined;
+  if (eng) return `slot "${eng.kind}": a consent window cannot stand in for the engineering sign-off — make it a "must sign off" slot`;
+  return null;
 }
 
 /**
