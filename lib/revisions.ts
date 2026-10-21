@@ -44,6 +44,7 @@ import { onDocumentIssued } from "@/lib/reviewCycles";
 import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { recomputeRetention } from "@/lib/retention";
 import { assertNotOnHold } from "@/lib/holdGate";
+import { isMissingSchemaError } from "@/lib/checkedWrite";
 import { isControlledIssueStatus, isRetiredStatus, isIssueTransition, RETIRED_NOT_ISSUED_STAMP, WORK_IN_PROGRESS_STATUSES } from "@/lib/issueStatus";
 import { isUnguardedEntryIntoForce } from "@/lib/documentStatusOptions";
 import { IN_FORCE_STATUSES } from "@/lib/verifyVerdict";
@@ -248,7 +249,10 @@ export const OVERRIDE_REASON_MIN = 5;
 
 /** What the caller of authorizePublish is doing — it words the refusal, and
  *  only "publish" (a publish_revision call) carries OVERRIDE_REASON_MIN. */
-export type GuardedOperation = "publish" | "supersede" | "split" | "merge" | "submit for review";
+export type GuardedOperation = "publish" | "supersede" | "split" | "merge" | "submit for review"
+  // REV-33 (document-control P34): the metadata editor's save to Void takes
+  // the same authority / lock / hold pre-check (gateStatusEditorRetirement).
+  | "void";
 
 function overrideReasonVerb(op: GuardedOperation): string {
   switch (op) {
@@ -453,7 +457,14 @@ async function noteOverrideOnHolder(opts: {
 /** A retirement (supersede, split, merge) of a document ANOTHER user has
  *  checked out leaves their checkout open but tells them it was retired, and
  *  why, with a link — on their episode thread and in-app. Best-effort: the
- *  retirement already committed. */
+ *  retirement already committed.
+ *
+ *  REV-34 (c) (document-control P34): also the status editors' supersession
+ *  (and, REV-33, the metadata editor's void) of a document someone else has
+ *  checked out — the same notice, the same kind. It now answers what did not
+ *  reach the holder (the in-app notice refused or thrown), for a caller that
+ *  names it; every caller before P34 ignores the answer, so for them nothing
+ *  changed. */
 export async function notifyHolderOfRetirement(opts: {
   preState: PublishGuardState;
   documentId: string;
@@ -461,13 +472,14 @@ export async function notifyHolderOfRetirement(opts: {
   orgId: string;
   actorUserId: string;
   actorEmail?: string;
-  verb: "superseded" | "split" | "merged";
-  action: "supersede" | "split" | "merge";
+  verb: "superseded" | "split" | "merged" | "voided";
+  action: "supersede" | "split" | "merge" | "void";
   reason: string;
-}): Promise<void> {
+}): Promise<string[]> {
   const holder = opts.preState.checkedOutBy;
-  if (!holder || String(holder) === String(opts.actorUserId)) return;
+  if (!holder || String(holder) === String(opts.actorUserId)) return [];
   const who = opts.actorEmail || opts.actorUserId;
+  const missed: string[] = [];
   try {
     const episode = await getActiveEpisode(opts.documentId);
     await postEpisodeSystemMessage({
@@ -478,7 +490,7 @@ export async function notifyHolderOfRetirement(opts: {
     /* best-effort */
   }
   try {
-    await notify({
+    const sent = await notify({
       orgId: opts.orgId, userId: String(holder),
       kind: "revision_published_over_checkout",
       title: `Document ${opts.verb} while you're checked out`,
@@ -488,9 +500,12 @@ export async function notifyHolderOfRetirement(opts: {
       actorUserId: opts.actorUserId, actorName: who,
       metadata: { action: opts.action, reason: opts.reason },
     });
+    if (sent === false) missed.push("the checkout holder's notice could not be sent");
   } catch {
     /* best-effort */
+    missed.push("the checkout holder's notice could not be sent");
   }
+  return missed;
 }
 
 /** PROD-17 (document-control P26): a retirement door's recall — the copy
@@ -2338,7 +2353,10 @@ export type BulkArchiveProblem = { documentId: string; label: string; problems: 
 export async function finishBulkArchive(input: {
   orgId: string; actorUserId: string; actorEmail?: string | null; actorRole?: string | null;
   reason: string; via: "bulk_archive" | "bulk_edit";
-  docs: Array<{ documentId: string; label: string; versionId?: string | null }>;
+  // REV-34 (a) / (d) (document-control P34): the library page's bulk archive
+  // now gives each row's prior (`retiredFrom`), or says the row was already
+  // Archived (`alreadyRetired`) — the record finishRetirementDuties writes.
+  docs: Array<{ documentId: string; label: string; versionId?: string | null; retiredFrom?: string | null; priorStatusUnknown?: boolean; alreadyRetired?: boolean }>;
 }): Promise<{ problems: BulkArchiveProblem[] }> {
   // document-control P31: the archive is now one case of
   // finishRetirementDuties — the same routines, the same record, unchanged.
@@ -2382,11 +2400,42 @@ export type RetirementDutyDoor = "bulk_archive" | "bulk_edit" | "metadata";
  *  retirement recall is NOT sent here (the door's own: ONE batched recall
  *  per bulk apply, changeDocumentStatus's for the metadata save). Rows run a
  *  few at a time. Never throws: every duty that did not complete is returned
- *  against its row, for the door to name. */
+ *  against its row, for the door to name.
+ *
+ *  REV-34 (c) / REV-33 (document-control P34, ruled by the integrator at
+ *  the P31 merge, DEC-90): after the record, what supersedeDocument also does
+ *  after its write —
+ *   - a Superseded row's pending distribution acknowledgments are closed
+ *     (DIST-4: `superseded_at` stamped on every pending ack of the document,
+ *     closeStaleAcksForDocument's statement with the current version null)
+ *     — checked: a refusal is returned against the row (a database before
+ *     the column, 42703 / PGRST204, has nothing to close: today's path).
+ *     Run for an already-Superseded row too (fail-safe, like the link
+ *     revocation: acks an older door left open are closed);
+ *   - the checkout holder's notice (notifyHolderOfRetirement, the existing
+ *     revision_published_over_checkout kind, with the reason) for a row the
+ *     door's gate found checked out by someone else (`checkoutHolder`, from
+ *     gateStatusEditorRetirement) and actually retired by it (never for an
+ *     `alreadyRetired` row: no retirement was made) — Superseded, and Void
+ *     (its recorded lock override); a notice that could not be sent is
+ *     returned against the row.
+ *  And the SUPERSEDE_DOC record carries the MOC reference the door's gate
+ *  accepted (`mocReference`, as supersedeDocument records it; null when none
+ *  was given, as before). The package owners' own notice
+ *  (notifyPackagesOfRetirement) is not sent here: the batched recall keeps
+ *  them in the watchers' audience (not ruled — REV-34's residual). */
 export async function finishRetirementDuties(input: {
   orgId: string; actorUserId: string; actorEmail?: string | null; actorRole?: string | null;
   toStatus: string; reason: string; via: RetirementDutyDoor;
-  docs: Array<{ documentId: string; label: string; versionId?: string | null; retiredFrom?: string | null; priorStatusUnknown?: boolean; alreadyRetired?: boolean }>;
+  docs: Array<{
+    documentId: string; label: string; versionId?: string | null; retiredFrom?: string | null; priorStatusUnknown?: boolean; alreadyRetired?: boolean;
+    /** REV-33: the MOC reference the gate accepted (Superseded only). */
+    mocReference?: string | null;
+    /** REV-34 (c): the lock state the gate read — the holder told after the write. */
+    checkoutHolder?: { checkedOutBy: string | null; checkedOutByName?: string | null } | null;
+    /** The library, for the holder's notice link. */
+    libraryId?: string | null;
+  }>;
 }): Promise<{ problems: BulkArchiveProblem[] }> {
   const problems: BulkArchiveProblem[] = [];
   const reason = input.reason.trim();
@@ -2435,7 +2484,7 @@ export async function finishRetirementDuties(input: {
           ? await logRevisionEvent({
             ...actor, type: "SUPERSEDE_DOC",
             details: {
-              reason, mocReference: null, replacementDocNumbers: [], resolvedReplacementIds: [], unresolvedDocNumbers: [],
+              reason, mocReference: d.mocReference?.trim() || null, replacementDocNumbers: [], resolvedReplacementIds: [], unresolvedDocNumbers: [],
               via: input.via, ...duties, ...prior,
             },
           })
@@ -2451,6 +2500,36 @@ export async function finishRetirementDuties(input: {
             details: { reason, action: "void", via: input.via, ...duties, ...prior, versionId: d.versionId ?? "" },
           });
       if (res && res.ok === false) mine.push(`its ${kind.action} record could not be written (${res.error ?? "refused"}), so the ${kind.noun} and its reason are not on its history`);
+      // REV-34 (c) (P34): the checkout holder's notice, as supersedeDocument
+      // sends it — only for a retirement this door made over someone else's
+      // checkout (the gate read it before the write).
+      const holder = d.checkoutHolder?.checkedOutBy ?? null;
+      if (holder && d.alreadyRetired !== true && (kind.action === "SUPERSEDE_DOC" || kind.action === "VOID_DOC")) {
+        mine.push(...await notifyHolderOfRetirement({
+          preState: { checkedOutBy: holder, checkedOutByName: d.checkoutHolder?.checkedOutByName ?? null, activeHolds: [] },
+          documentId: d.documentId, libraryId: d.libraryId ?? "", orgId: input.orgId,
+          actorUserId: input.actorUserId, actorEmail: input.actorEmail ?? undefined,
+          verb: kind.action === "SUPERSEDE_DOC" ? "superseded" : "voided",
+          action: kind.action === "SUPERSEDE_DOC" ? "supersede" : "void",
+          reason,
+        }));
+      }
+      // REV-34 (c) (P34): DIST-4 — a superseded document's pending
+      // confirmations no longer bind; close them, checked.
+      if (kind.action === "SUPERSEDE_DOC") {
+        const { data: closedAcks, error: ackErr } = await supabase
+          .from("distribution_acks")
+          .update({ superseded_at: new Date().toISOString() })
+          .eq("document_id", d.documentId)
+          .is("acknowledged_at", null)
+          .is("superseded_at", null)
+          .select("id");
+        if (ackErr && !isMissingSchemaError(ackErr)) {
+          mine.push(`its pending acknowledgment requests could not be closed (${ackErr.message}), so they still read as open`);
+        } else if (!ackErr && ((closedAcks as unknown[] | null) ?? []).length > 0) {
+          console.info(`[retire] DIST-4: ${((closedAcks as unknown[] | null) ?? []).length} pending acknowledgment request(s) of ${d.documentId} closed by the ${input.via} supersession`);
+        }
+      }
     } catch (e) {
       mine.push(`its ${kind?.noun ?? "retirement"} duties stopped part-way (${(e as Error)?.message ?? String(e)})`);
     }
@@ -3567,6 +3646,127 @@ async function undoFailedSupersede(opts: {
   );
 }
 
+// ─── REV-33 (document-control P34): the supersession's pre-write gates, ─────
+// shared by supersedeDocument and the status editors' save to Superseded /
+// Void (the bulk editor, the library page's metadata save).
+
+/** DCK-1's refusal, word for word as supersedeDocument has always said it. */
+export const SUPERSEDE_MOC_REQUIRED =
+  "This is a drawing-class document — PSM requires the MOC reference to supersede it (OSHA 1910.119(l)).";
+
+/** DCK-1: a drawing-class document superseded without an MOC reference of at
+ *  least three characters. `name` lets a door that can ask for one tell this
+ *  refusal from the others (isSupersessionMocRequired). */
+export class SupersessionMocRequiredError extends Error {
+  constructor() {
+    super(SUPERSEDE_MOC_REQUIRED);
+    this.name = "SupersessionMocRequiredError";
+  }
+}
+export function isSupersessionMocRequired(e: unknown): boolean {
+  return e instanceof SupersessionMocRequiredError || (e as { name?: string } | null)?.name === "SupersessionMocRequiredError";
+}
+
+/** DCK-1 — supersedeDocument's MOC rule, the one copy of it: a document
+ *  whose effective class is drawing is superseded only with an MOC reference
+ *  of at least three characters; a class that cannot be resolved (a database
+ *  before the class columns, a failed read) does not block — the database
+ *  rail model, as it always was. */
+export async function assertSupersessionMoc(
+  doc: { id: string; collectionId?: string | null; libraryId?: string | null },
+  mocReference: string | null | undefined,
+): Promise<void> {
+  try {
+    const { effectiveDocClassForDocument } = await import("@/lib/docClass");
+    const cls = await effectiveDocClassForDocument({
+      id: doc.id, collectionId: doc.collectionId ?? null, libraryId: doc.libraryId ?? null,
+    });
+    if (cls === "drawing" && (mocReference?.trim().length ?? 0) < 3) throw new SupersessionMocRequiredError();
+  } catch (e) {
+    if (isSupersessionMocRequired(e)) throw e;
+    /* class unresolvable — do not block */
+  }
+}
+
+/** What a status editor's retirement gate found: the lock state it read (the
+ *  checkout holder, for the holder's notice after the write — REV-34 (c)) and
+ *  the MOC reference it accepted (for the SUPERSEDE_DOC record). */
+export type StatusEditorRetirementGate = {
+  preState: PublishGuardState | null;
+  mocReference: string | null;
+};
+
+/** REV-33 (document-control P34; ruled by the integrator at the P31 merge,
+ *  2026-10-21, DEC-90 — fail-safe, PSM / OSHA 1910.119(l)): the pre-write
+ *  gates a status editor runs before it writes a status that RETIRES a
+ *  document, as the single door does. Nothing is written here; a refusal is
+ *  thrown in plain words and the caller writes nothing for that document.
+ *   - Superseded (supersedeDocument's gates, as the ruling names them): the
+ *     drawing-class MOC reference (assertSupersessionMoc — the same rule and
+ *     the same sentence), then the checkout lock: a document another person
+ *     has checked out is superseded only with a reason, which — as the
+ *     Supersede dialog passes it — is the override recorded to the holder
+ *     (their notice after the write, finishRetirementDuties); no reason, the
+ *     authorizePublish refusal. Publish authority and the hold are NOT asked
+ *     here: the database's publish guard already refuses a non-controller's
+ *     Superseded write without the publisher tier or over an active hold, and
+ *     the ruling keeps a non-drawing, unlocked row writing exactly as today.
+ *   - Void: authorizePublish itself (operation "void") — publish authority in
+ *     the library or the document's effective ownership, the foreign checkout
+ *     lock (the reason is the override), an active hold refuses — the same
+ *     pre-check supersedeDocument runs, no force (the Supersede dialog never
+ *     passes one). The database's guard does not treat entry into Void as an
+ *     advancing write, so this is the only layer that asks.
+ *   - Archived: nothing (not ruled; the database decides the archive's
+ *     refusals — OWN-19's publisher tier, the legal hold).
+ *  The lock state is read fresh (never the page's copy); a read that fails
+ *  refuses (fail-closed, as authorizePublish's own read does). */
+export async function gateStatusEditorRetirement(input: {
+  documentId: string; libraryId: string; collectionId?: string | null; orgId: string;
+  actorUserId: string; actorRole?: string | null; toStatus: string;
+  /** The one reason the door asked (null: none asked — a retirement the page did not see). */
+  reason: string | null;
+  mocReference?: string | null;
+}): Promise<StatusEditorRetirementGate> {
+  const to = input.toStatus.trim();
+  const reason = input.reason?.trim() || null;
+  const moc = input.mocReference?.trim() || null;
+  if (to === "Superseded") {
+    await assertSupersessionMoc({ id: input.documentId, collectionId: input.collectionId ?? null, libraryId: input.libraryId }, moc);
+    const { data, error } = await supabase
+      .from("documents").select("checked_out_by, checked_out_by_name").eq("id", input.documentId).maybeSingle();
+    if (error) throw new Error(`Couldn't read whether the document is checked out (${error.message}) — nothing was superseded.`);
+    const row = (data as { checked_out_by?: string | null; checked_out_by_name?: string | null } | null) ?? null;
+    const preState: PublishGuardState = {
+      checkedOutBy: row?.checked_out_by ?? null, checkedOutByName: row?.checked_out_by_name ?? null, activeHolds: [],
+    };
+    const lockedByOther = !!preState.checkedOutBy && String(preState.checkedOutBy) !== String(input.actorUserId);
+    if (lockedByOther && !reason) throw new Error(`A reason is required to ${overrideReasonVerb("supersede")}.`);
+    return { preState, mocReference: moc };
+  }
+  if (to === "Void") {
+    try {
+      const preState = await authorizePublish({
+        documentId: input.documentId, libraryId: input.libraryId, orgId: input.orgId,
+        actorUserId: input.actorUserId, actorRole: input.actorRole ?? undefined,
+        overrideReason: reason ?? undefined, operation: "void",
+      });
+      return { preState, mocReference: null };
+    } catch (e) {
+      const msg = (e as Error)?.message ?? String(e);
+      // authorizePublish speaks of publishing; a void is said as what it is.
+      if (/^You don't have authority to publish revisions in this library/.test(msg)) {
+        throw new Error("Voiding a document takes publish authority in this library (Doc Control, a granted publisher or the document's owner) — ask an Admin or Doc Control to grant it, or to void it.");
+      }
+      if (e instanceof DocumentMutationBlockedError && e.code === "on_hold") {
+        throw new Error(msg.replace(/ Release it before publishing a new revision\.$/, " A held document is not voided — ask Document Control to resolve the hold first."));
+      }
+      throw e;
+    }
+  }
+  return { preState: null, mocReference: null };
+}
+
 export async function supersedeDocument(input: SupersedeInput): Promise<SupersedeResult> {
   const {
     doc, replacementDocNumbers, libraryId, reason, mocReference,
@@ -3580,20 +3780,9 @@ export async function supersedeDocument(input: SupersedeInput): Promise<Supersed
   // Rev-up and revert are gated inside publish_revision at the database;
   // supersede flips documents.status directly, so the gate lives here.
   // Unresolvable class (pre-migration env) does not block — the DB rail model.
-  try {
-    const { effectiveDocClassForDocument } = await import("@/lib/docClass");
-    const cls = await effectiveDocClassForDocument({
-      id: doc.id, collectionId: doc.collectionId ?? null, libraryId,
-    });
-    if (cls === "drawing" && (mocReference?.trim().length ?? 0) < 3) {
-      throw new Error(
-        "This is a drawing-class document — PSM requires the MOC reference to supersede it (OSHA 1910.119(l)).",
-      );
-    }
-  } catch (e) {
-    if ((e as Error).message.includes("MOC reference")) throw e;
-    /* class unresolvable — do not block */
-  }
+  // REV-33 (document-control P34): the one rule, shared with the status
+  // editors' save to Superseded (assertSupersessionMoc) — unchanged here.
+  await assertSupersessionMoc({ id: doc.id, collectionId: doc.collectionId ?? null, libraryId }, mocReference);
 
   // Retiring a document is a canonical-state change too: same per-library publish
   // authority + lock/hold guard, and an override reason if someone else is

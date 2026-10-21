@@ -56,6 +56,10 @@ vi.mock("@/lib/revisions", async (importOriginal) => ({
     s.calls.push({ table: "documents", payload: { ...(input.patch ?? {}), status: input.toStatus }, id: input.documentId });
     return { issued: true, putBack: false, entryIntoForce: true, complianceClockErrors: [], recordError: null };
   }),
+  // document-control P34 (REV-33): the bulk editor's Superseded gate reads the
+  // row's class and lock (driven in dcRoundGP34StatusEditorParity); this file's
+  // minimal client pins only the hold check, so the gate passes here.
+  gateStatusEditorRetirement: vi.fn(async () => ({ preState: null, mocReference: null })),
 }));
 vi.mock("@/lib/stamping", () => ({ applyStampToPdfDoc: vi.fn() }));
 vi.mock("@/lib/intents", () => ({ recordIntent: vi.fn() }));

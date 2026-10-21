@@ -67,7 +67,7 @@ const MultiDocViewer = dynamic(() => import("@/components/viewers/MultiDocViewer
 import type { TagColumnDef } from "@/lib/documentTags";
 import RevUpModal from "@/components/documents/RevUpModal";
 import { loadMyMarkup, saveMyMarkup, myActiveSessionId, type DocumentMarkup } from "@/lib/markups";
-import { listVersions, changeDocumentStatus, recallsCopyHolders, finishBulkArchive, finishRetirementDuties } from "@/lib/revisions";
+import { listVersions, changeDocumentStatus, recallsCopyHolders, finishBulkArchive, finishRetirementDuties, gateStatusEditorRetirement, isSupersessionMocRequired, SUPERSEDE_MOC_REQUIRED, type StatusEditorRetirementGate } from "@/lib/revisions";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 import { isIssueTransition, isControlledIssueStatus, isRetiredStatus } from "@/lib/issueStatus";
 import { isUnguardedEntryIntoForce } from "@/lib/documentStatusOptions";
@@ -1161,9 +1161,20 @@ export default function LibraryExplorerPage() {
       ? await finishBulkArchive({
         orgId: recallOrg, actorUserId: uid, actorEmail: userEmail ?? null, actorRole: activeRole ?? null,
         reason: archiveReason, via: "bulk_archive",
+        // REV-34 (a) / (d) (document-control P34, DEC-90): each record says
+        // what the archive retired the row from (the fresh read above) — or,
+        // for a row already Archived (the duties still run, fail-safe), that
+        // no retirement was made; a prior the read could not give is unknown.
         docs: [...done].map((id) => {
           const row = documents.find((d) => d.id === id);
-          return { documentId: id, label: String(row?.documentNumber || row?.title || row?.name || id), versionId: row?.currentVersionId ?? null };
+          const known = priorStatusOf.has(id);
+          const prior = priorStatusOf.get(id) ?? null;
+          return {
+            documentId: id, label: String(row?.documentNumber || row?.title || row?.name || id), versionId: row?.currentVersionId ?? null,
+            ...(known && (prior ?? "").trim() === "Archived"
+              ? { alreadyRetired: true }
+              : { retiredFrom: known ? prior : null, ...(known ? {} : { priorStatusUnknown: true }) }),
+          };
         }),
       })
       : { problems: [] };
@@ -3021,12 +3032,73 @@ export default function LibraryExplorerPage() {
         }
         retireReason = answer.trim();
       }
+      // REV-33 / REV-34 (b) (document-control P34, ruled by the integrator at
+      // the P31 merge, DEC-90 — fail-safe): whether this save RETIRES the
+      // document is read from the row first, never this page's copy alone —
+      // the row already in the status written (a title fix on a Superseded
+      // drawing; someone else retired it meanwhile) is no retirement and
+      // writes exactly as before; a row in another status is one (also when
+      // this page showed it retired already — another session put it back);
+      // a read that fails counts as one only when this page sees one (it
+      // asked the reason), so a plain edit is never refused for a failed read.
+      let rowStatus: string | null | undefined;
+      {
+        const { data: rowNow, error: rowNowErr } = await supabase.from("documents").select("status").eq("id", selectedDoc.id).maybeSingle();
+        if (!rowNowErr) rowStatus = (rowNow as { status?: string | null } | null)?.status ?? null;
+      }
+      const retiring = !(rowStatus !== undefined && (rowStatus ?? "").trim() === toStatus.trim())
+        && (!retiredUnchanged || rowStatus !== undefined);
+      const dutyReason = retireReason ?? `No reason given: the metadata editor saved this document as ${toStatus.trim()} without asking one (this page showed it as already ${toStatus.trim()}).`;
+      // REV-33 (P34): a save that retires the document into Superseded or
+      // Void takes supersedeDocument's pre-write gates first
+      // (lib/revisions.ts gateStatusEditorRetirement): Superseded — the
+      // drawing-class MOC reference (asked here when the class needs it) and
+      // the foreign checkout lock (the reason is the override, the holder
+      // told after the write); Void — publish authority, the lock, the hold.
+      // A refusal saves nothing. A non-drawing, unlocked Superseded writes
+      // exactly as before.
+      let gate: StatusEditorRetirementGate | null = null;
+      if (retiring && (toStatus.trim() === "Superseded" || toStatus.trim() === "Void")) {
+        const gateFor = (mocReference: string | null) => gateStatusEditorRetirement({
+          documentId: selectedDoc.id!, libraryId: selectedDoc.libraryId || library?.id || "", collectionId: selectedDoc.collectionId ?? null,
+          orgId: retireOrgId, actorUserId: uid, actorRole: activeRole ?? null, toStatus, reason: retireReason, mocReference,
+        });
+        try {
+          gate = await gateFor(null);
+        } catch (e) {
+          if (!isSupersessionMocRequired(e)) throw new Error(`Save refused — nothing was saved: ${(e as Error)?.message || String(e)}`);
+          if (retireReason === null) {
+            throw new Error(`Save refused — nothing was saved: this page shows ${retireLabel} as already Superseded, but it is ${(rowStatus ?? "").trim() || "in another status"} now (changed after this page loaded), so this save would supersede it again. ${SUPERSEDE_MOC_REQUIRED} Reload it and set the status with a reason and the MOC reference.`);
+          }
+          const moc = await appPrompt({
+            title: `MOC reference for ${retireLabel}`,
+            message: `${SUPERSEDE_MOC_REQUIRED} The reference is recorded on its history.`,
+            placeholder: "MOC-2026-0142",
+            confirmLabel: "Save",
+            required: true,
+          });
+          if (moc === null) throw new Error(`Save cancelled — nothing was saved: superseding ${retireLabel} takes its MOC reference.`);
+          if (moc.trim().length < 3) throw new Error(`Save refused — nothing was saved: ${SUPERSEDE_MOC_REQUIRED}`);
+          try {
+            gate = await gateFor(moc.trim());
+          } catch (e2) {
+            throw new Error(`Save refused — nothing was saved: ${(e2 as Error)?.message || String(e2)}`);
+          }
+        }
+      }
+      // REV-34 (b) (P34): a save that ARCHIVES the document writes the archive
+      // columns in its same write, as archiveDocument does (the reason asked,
+      // or the sentence naming this door for an archive this page did not
+      // see); a save on a row already Archived leaves them as they are.
+      const retirePatch = retiring && toStatus.trim() === "Archived"
+        ? { ...payload, archived_at: payload.updated_at, archived_by: uid, archive_reason: dutyReason }
+        : payload;
       let retiredOutcome: Awaited<ReturnType<typeof changeDocumentStatus>>;
       try {
         retiredOutcome = await changeDocumentStatus({
           orgId: retireOrgId, documentId: selectedDoc.id, toStatus, door: "metadata",
           actorUserId: uid, actorEmail: userEmail ?? null, actorRole: activeRole ?? null,
-          patch: payload,
+          patch: retirePatch,
           // P28 fix pass: consulted only if its pre-write read fails — a
           // metadata edit on a document this page holds as already retired
           // in this status is then no retirement (nothing recalled).
@@ -3053,12 +3125,15 @@ export default function LibraryExplorerPage() {
         const { problems: dutyProblems } = await finishRetirementDuties({
           orgId: retireOrgId, actorUserId: uid, actorEmail: userEmail ?? null, actorRole: activeRole ?? null,
           toStatus,
-          reason: retireReason ?? `No reason given: the metadata editor saved this document as ${toStatus.trim()} without asking one (this page showed it as already ${toStatus.trim()}).`,
+          reason: dutyReason,
           via: "metadata",
           docs: [{
             documentId: selectedDoc.id, label: String(retireLabel), versionId: selectedDoc.currentVersionId ?? null,
             retiredFrom: retiredOutcome.retired.retiredFrom,
             ...(retiredOutcome.retired.priorStatusUnknown ? { priorStatusUnknown: true } : {}),
+            // REV-33 / REV-34 (c) (P34): the MOC the gate accepted (on the
+            // SUPERSEDE_DOC record) and the checkout holder it read (told).
+            ...(gate ? { mocReference: gate.mocReference, checkoutHolder: gate.preState, libraryId: selectedDoc.libraryId || library?.id || null } : {}),
           }],
         });
         const lines = dutyProblems.flatMap((p) => p.problems);

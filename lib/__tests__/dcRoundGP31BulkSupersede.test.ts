@@ -159,7 +159,10 @@ function seedDraftAndShare(id: string) {
 const statusWrites = () => writes().filter((c) => "status" in (c.args[0] as Row));
 
 describe("REV-31 (P31) — the bulk editor's Superseded does supersedeDocument's three retirement duties (draft void, link revoke, record)", () => {
-  it("one reason for the apply; each row written EXACTLY as before (same columns); the Issued and Draft rows (retired by it) get the draft voided, the links revoked and a SUPERSEDE_DOC with the reason and retiredFrom; the row already Superseded and the refused row get none; one batched recall as before", async () => {
+  // document-control P34 (REV-34 (d), DEC-90): the row already Superseded now
+  // gets the duties too, its record claiming no retirement (alreadyRetired);
+  // it got none under P31.
+  it("one reason for the apply; each row written EXACTLY as before (same columns); the Issued and Draft rows (retired by it) get the draft voided, the links revoked and a SUPERSEDE_DOC with the reason and retiredFrom; (P34) the row already Superseded gets the duties with alreadyRetired; the refused row gets none; one batched recall as before", async () => {
     const a = seedDoc("s1"); seedDraftAndShare("s1");
     const b = seedDoc("s2", { status: "Draft" });
     const c = seedDoc("s3", { status: "Superseded" }); seedDraftAndShare("s3");
@@ -178,12 +181,13 @@ describe("REV-31 (P31) — the bulk editor's Superseded does supersedeDocument's
     expect(docRow("s4").status).toBe("Issued");
     // the duties: the retired rows only
     expect(docRow("s1").pending_version_id).toBeNull();
-    expect(docRow("s3").pending_version_id).toBe("s3-v3");
+    expect(docRow("s3").pending_version_id).toBeNull();
     expect(docRow("s4").pending_version_id).toBe("s4-v3");
-    expect(T("document_shares").map((r) => [r.id, !!r.revoked_at])).toEqual([["s1-sh", true], ["s3-sh", false], ["s4-sh", false]]);
-    expect(supersedeDocs().map((r) => [r.resource_id, (r.details as Row).reason, (r.details as Row).via, (r.details as Row).retiredFrom]).sort()).toEqual([
-      ["s1", "Replaced by the 2027 set", "bulk_edit", "Issued"],
-      ["s2", "Replaced by the 2027 set", "bulk_edit", "Draft"],
+    expect(T("document_shares").map((r) => [r.id, !!r.revoked_at])).toEqual([["s1-sh", true], ["s3-sh", true], ["s4-sh", false]]);
+    expect(supersedeDocs().map((r) => [r.resource_id, (r.details as Row).reason, (r.details as Row).via, (r.details as Row).retiredFrom, (r.details as Row).alreadyRetired]).sort()).toEqual([
+      ["s1", "Replaced by the 2027 set", "bulk_edit", "Issued", undefined],
+      ["s2", "Replaced by the 2027 set", "bulk_edit", "Draft", undefined],
+      ["s3", "Replaced by the 2027 set", "bulk_edit", undefined, true],
     ]);
     expect(supersedeDocs().find((r) => r.resource_id === "s1")!.details).toMatchObject({ pendingDraftVoided: "s1-v3", revokedShareLinks: 1, replacementDocNumbers: [], mocReference: null, versionId: "s1-v2" });
     expect(supersedeDocs()[0]).toMatchObject({ user_id: ME, user_email: "cara@example.com", user_role: "DocCtrl" });
