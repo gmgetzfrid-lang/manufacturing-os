@@ -44,6 +44,9 @@ import { supabase } from "@/lib/supabase";
 import { checkedWrite } from "@/lib/checkedWrite";
 import { loadContainerChain, firstDefinedInChain, type ContainerChain } from "@/lib/containerChain";
 import type { CapabilityId } from "@/lib/capabilityPolicy";
+import { currentRoster } from "@/lib/workflow";
+import { parseSourceDocument } from "@/lib/sourceDocRef";
+import type { Ticket } from "@/types/schema";
 
 export type RoutingSlotMode = "blocking" | "consent_window" | "notify_only";
 export const ROUTING_SLOT_MODES: readonly RoutingSlotMode[] = ["blocking", "consent_window", "notify_only"];
@@ -402,4 +405,61 @@ export async function readRoutingControlAt(level: RoutingLevel, id: string): Pro
   const { data, error } = await supabase.from(table).select("routing_control").eq("id", id).maybeSingle();
   if (error) return { ok: false, missing: isMissingRoutingSchema(error), error: error.message || "unreadable" };
   return { ok: true, value: (data as { routing_control?: unknown } | null)?.routing_control ?? null };
+}
+
+/** DF-P5 fix pass 4: how many in-review tickets a routing editor reads
+ *  before it says "at least". */
+export const IN_FLIGHT_SCAN_LIMIT = 500;
+
+/**
+ * TIER-5 / DEC-29 (DF-P5 fix pass 4): the requests IN REVIEW right now
+ * (PENDING_REVIEW / PENDING_FINAL_APPROVAL) with no open sign-off roster
+ * whose routing chain runs through this level — once a table is saved here,
+ * their serial approvals are refused (routing_needs_roster) and each needs a
+ * revision so its resubmission opens a roster. The editor shows the number
+ * and asks before the save.
+ *
+ * A library counts every such request filed in it; a folder, those whose
+ * source document sits in it or in a folder under it (path_ids); a document,
+ * those raised on it — the same chain effectiveRoutingForTicket walks (a
+ * source document counts only in the request's own library). Read through
+ * the signed-in client, so it counts the requests the editor can see.
+ */
+export async function reviewsInFlightUnder(level: RoutingLevel, id: string): Promise<
+  { ok: true; n: number; capped: boolean } | { ok: false; error: string }
+> {
+  let libraryId: string | null = level === "library" ? id : null;
+  if (level !== "library") {
+    const { data, error } = await supabase.from(level === "collection" ? "collections" : "documents").select("library_id").eq("id", id).maybeSingle();
+    if (error) return { ok: false, error: error.message || "unreadable" };
+    libraryId = (data as { library_id?: string | null } | null)?.library_id ?? null;
+  }
+  if (!libraryId) return { ok: true, n: 0, capped: false };
+  const { data: rows, error } = await supabase.from("tickets").select("id, status, metadata")
+    .eq("library_id", libraryId).in("status", ["PENDING_REVIEW", "PENDING_FINAL_APPROVAL"]).limit(IN_FLIGHT_SCAN_LIMIT + 1);
+  if (error) return { ok: false, error: error.message || "unreadable" };
+  const all = (rows ?? []) as Array<{ id: string; status: Ticket["status"]; metadata?: Record<string, unknown> | null }>;
+  const capped = all.length > IN_FLIGHT_SCAN_LIMIT;
+  const rosterless = all.slice(0, IN_FLIGHT_SCAN_LIMIT).filter((r) => !currentRoster({ status: r.status, metadata: r.metadata ?? undefined }));
+  if (level === "library") return { ok: true, n: rosterless.length, capped };
+  const sourceOf = (r: { metadata?: Record<string, unknown> | null }) => parseSourceDocument(r.metadata ?? null)?.id ?? null;
+  if (level === "document") return { ok: true, n: rosterless.filter((r) => sourceOf(r) === id).length, capped };
+  // A folder: the source documents' folders, then those folders' ancestry.
+  const docIds = [...new Set(rosterless.map(sourceOf).filter((d): d is string => !!d && /^[0-9a-f-]{36}$/i.test(d)))];
+  const folderOfDoc = new Map<string, string | null>();
+  for (let i = 0; i < docIds.length; i += 100) {
+    const { data, error: e } = await supabase.from("documents").select("id, collection_id").in("id", docIds.slice(i, i + 100)).eq("library_id", libraryId);
+    if (e) return { ok: false, error: e.message || "unreadable" };
+    for (const d of (data ?? []) as Array<{ id: string; collection_id?: string | null }>) folderOfDoc.set(d.id, d.collection_id ?? null);
+  }
+  const folderIds = [...new Set([...folderOfDoc.values()].filter((f): f is string => !!f))];
+  const under = new Set<string>();
+  for (let i = 0; i < folderIds.length; i += 100) {
+    const { data, error: e } = await supabase.from("collections").select("id, path_ids").in("id", folderIds.slice(i, i + 100));
+    if (e) return { ok: false, error: e.message || "unreadable" };
+    for (const c of (data ?? []) as Array<{ id: string; path_ids?: unknown }>) {
+      if (c.id === id || (Array.isArray(c.path_ids) && (c.path_ids as unknown[]).includes(id))) under.add(c.id);
+    }
+  }
+  return { ok: true, n: rosterless.filter((r) => { const d = sourceOf(r); const f = d ? folderOfDoc.get(d) : null; return !!f && under.has(f); }).length, capped };
 }

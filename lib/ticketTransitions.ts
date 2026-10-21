@@ -272,6 +272,23 @@ export function issueAsIsFinals(ticket: Pick<Ticket, "attachments" | "deliverabl
   }));
 }
 
+/** TIER-5 / FRIC-2 (DF-P5 fix pass 4): after a PARTIAL sign-off, who the
+ *  ticket no longer waits on — the occupants of every slot now satisfied,
+ *  less anyone an open blocking slot still waits on, less today's
+ *  participants (requester, drafter, assigned engineer) and the signer.
+ *  They leave `unread_by`, and the route retires their action alerts. */
+export function rosterPartialReleased(
+  roster: Pick<TicketReviewRoster, "slots">,
+  ticket: Pick<Ticket, "requesterId" | "assignedDrafterId" | "assignedEngineerId">,
+  actorUid: string | null | undefined,
+): string[] {
+  const keep = new Set<string>([
+    ...roster.slots.filter((x) => slotBlocks(x) && x.status === "open").flatMap((x) => x.primaries),
+    ...[ticket.requesterId, ticket.assignedDrafterId, ticket.assignedEngineerId, actorUid].filter((u): u is string => !!u),
+  ]);
+  return Array.from(new Set(roster.slots.filter((x) => x.status === "satisfied").flatMap((x) => x.primaries))).filter((u) => !!u && !keep.has(u));
+}
+
 /**
  * Compute the full DB update for a workflow action. Pure: no IO, no Date.now()
  * (callers may pin `now`), so it is deterministic and testable. Mirrors the
@@ -550,8 +567,12 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
           // so their occupants keep their unread marker (and are told of the
           // sign-off), as do the existing markers and today's participants.
           // The route keeps their "review opened" alerts (no supersede).
+          // DF-P5 fix pass 4: the co-occupants of a slot now SATISFIED are
+          // waited on no more — they leave unread_by (rosterPartialReleased),
+          // and the route retires their action alerts with the signer's.
           const waiting = roster.slots.filter((x) => slotBlocks(x) && x.status === "open").flatMap((x) => x.primaries);
-          updates.unread_by = Array.from(new Set([...(ticket.unreadBy ?? []), ...newUnreadBy, ...waiting])).filter((u) => !!u && u !== actorUid);
+          const released = new Set(rosterPartialReleased(roster, ticket, actorUid));
+          updates.unread_by = Array.from(new Set([...(ticket.unreadBy ?? []).filter((u) => !released.has(u)), ...newUnreadBy, ...waiting])).filter((u) => !!u && u !== actorUid);
         }
       }
       break;

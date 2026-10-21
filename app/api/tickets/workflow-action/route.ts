@@ -2,7 +2,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { notifyBatchWithReason } from "@/lib/inAppNotifications";
-import { WorkflowEngine, ticketResource, decisiveGrants, currentRoster, slotSignPlan, engineerApprovalRequired, ISSUE_MARK_ACTIONS, ROSTERLESS_APPROVALS, ROUTED_NO_ROSTER_REASON, ISSUE_AS_IS_APPROVALS, issueReadyFor } from "@/lib/workflow";
+import { WorkflowEngine, ticketResource, decisiveGrants, currentRoster, slotSignPlan, engineerApprovalRequired, ISSUE_MARK_ACTIONS, ROSTERLESS_APPROVALS, ROUTED_NO_ROSTER_REASON, routedNoRosterReason, ISSUE_AS_IS_APPROVALS, issueReadyFor } from "@/lib/workflow";
 import { loadCapabilityPolicyStrict, policyAllows } from "@/lib/capabilityPolicy";
 import { engineerPickCap, engineerPickRefusal } from "@/lib/ticketPage";
 import { effectiveRoutingForTicket, ticketReviewRouting } from "@/lib/routingControl";
@@ -22,6 +22,7 @@ import {
   rowToTicket,
   escapeHtml,
   draftRevLabel,
+  rosterPartialReleased,
   type TransitionInput,
 } from "@/lib/ticketTransitions";
 import type { Role, TicketAttachment, TicketHistoryEntry, TicketOutcome, TicketReviewRoster } from "@/types/schema";
@@ -193,13 +194,34 @@ async function insertAuditRowOnce(row: { id: string } & Record<string, unknown>)
  *  TICKET_SIGN_SLOT_NOT_APPLIED naming the signature and the reason, with no
  *  attempt row (nothing was attempted: `details.attempt` is null, so the
  *  trail's attempt pairing leaves it alone) — so the orphan is explained.
- *  Best-effort: a failed write is logged, never the caller's problem. */
+ *  DF-P5 fix pass 4: only the CALLER'S OWN signature on THIS ticket in THIS
+ *  org is recorded (read from e_signatures, or the row the route already
+ *  read) — an id the client sent that is someone else's, another ticket's,
+ *  another org's, or not a signature at all writes nothing, so no row can
+ *  call another person's signature "not applied".
+ *  Best-effort: a failed read or write is logged, never the caller's problem. */
 async function recordRefusedSignOff(p: {
   signatureId: unknown; ticketId: string; orgId: string; caller: { id: string; email: string; role: string };
   status: number; reason: string; code?: string; rosterId?: string | null;
+  /** the e_signatures row the route already read for this id, if any */
+  signature?: SignatureRow | null;
 }): Promise<void> {
   const sigId = typeof p.signatureId === "string" ? p.signatureId.trim() : "";
   if (!UUID_RE.test(sigId)) return;
+  let sig = p.signature !== undefined && p.signature !== null && (p.signature as { id?: unknown }).id === sigId ? p.signature : null;
+  if (!sig) {
+    const { data, error } = await supabaseAdmin
+      .from("e_signatures").select("id, org_id, resource_type, resource_id, signer_user_id")
+      .eq("id", sigId).maybeSingle();
+    if (error) {
+      console.error(`[workflow-action] could not read signature ${sigId} for the refused sign-off on ticket ${p.ticketId}: ${error.message}`);
+      return;
+    }
+    sig = data as SignatureRow | null;
+  }
+  const own = !!sig && sig.signer_user_id === p.caller.id && sig.resource_type === "ticket"
+    && sig.resource_id === p.ticketId && sig.org_id === p.orgId;
+  if (!own) return;
   const err = await insertAuditRowOnce({
     id: crypto.randomUUID(), action: "TICKET_SIGN_SLOT_NOT_APPLIED", resource_id: p.ticketId, resource_type: "ticket",
     org_id: p.orgId, user_id: p.caller.id, user_email: p.caller.email, user_role: p.caller.role,
@@ -468,7 +490,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "This request's review routing could not be read, so the approval was not applied. Try again in a moment.", code: "routing_unreadable" }, { status: 503 });
     }
     if (reviewRouting.routed) {
-      return NextResponse.json({ error: ROUTED_NO_ROSTER_REASON, code: "routing_needs_roster" }, { status: 409 });
+      // DF-P5 fix pass 4: a table that cannot be used is named — a revision
+      // would be refused too (routing_invalid), so the way forward differs.
+      return reviewRouting.routing.state === "invalid"
+        ? NextResponse.json({ error: routedNoRosterReason(reviewRouting.routing), code: "routing_invalid" }, { status: 409 })
+        : NextResponse.json({ error: ROUTED_NO_ROSTER_REASON, code: "routing_needs_roster" }, { status: 409 });
     }
   }
   // FRIC-5 (DF-P5 fix pass 3): an approval that would issue the draft AS-IS
@@ -900,9 +926,9 @@ export async function POST(req: NextRequest) {
     // arrives with one (a race, a stale page) is recorded beside it
     // (recordRefusedSignOff).
     const sigId = typeof body.signatureId === "string" ? body.signatureId.trim() : "";
-    const refuseSign = async (status: number, error: string, code?: string) => {
+    const refuseSign = async (status: number, error: string, code?: string, signature?: SignatureRow | null) => {
       if (body.dryRun !== true) {
-        await recordRefusedSignOff({ signatureId: sigId, ticketId: body.ticketId, orgId: ticket.orgId, caller: { id: caller.id, email: callerEmail, role: callerRole }, status, reason: error, code, rosterId: openRosterNow?.id ?? null });
+        await recordRefusedSignOff({ signatureId: sigId, ticketId: body.ticketId, orgId: ticket.orgId, caller: { id: caller.id, email: callerEmail, role: callerRole }, status, reason: error, code, rosterId: openRosterNow?.id ?? null, signature });
       }
       return NextResponse.json({ error, ...(code ? { code } : {}) }, { status });
     };
@@ -918,7 +944,7 @@ export async function POST(req: NextRequest) {
       .eq("id", sigId).maybeSingle();
     if (sigErr) return NextResponse.json({ error: "Your signature could not be checked — try again in a moment." }, { status: 503 });
     const refusal = signatureRefusal(sig as SignatureRow | null, { orgId: ticket.orgId, ticketId: body.ticketId, signerId: caller.id, roster: openRosterNow });
-    if (refusal) return refuseSign(403, refusal, "signature_invalid");
+    if (refusal) return refuseSign(403, refusal, "signature_invalid", sig as SignatureRow | null);
     const signed = applySignPlan(openRosterNow, plan, { uid: caller.id, name: memberName(member as { display_name?: unknown; email?: unknown }) }, sigId, new Date().toISOString());
     rosterSign = { roster: signed, complete: rosterCompletion(signed, { sodActive, drafterId: ticket.assignedDrafterId }).complete, labels: plan.fillable.map((f) => f.slot.label || f.slot.kind) };
   }
@@ -1649,7 +1675,7 @@ export async function POST(req: NextRequest) {
   // request arrived on.
   const emailOrigin = publicOrigin() || new URL(req.url).origin;
   try {
-    await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, activity: isActivity, rosterCompleted: action.action === "sign_slot" && rosterSign?.complete === true, rosterPartial: action.action === "sign_slot" && rosterSign?.complete === false, comment: fanOutComment, emailOrigin });
+    await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, activity: isActivity, rosterCompleted: action.action === "sign_slot" && rosterSign?.complete === true, rosterPartial: action.action === "sign_slot" && rosterSign?.complete === false, rosterReleased: action.action === "sign_slot" && rosterSign && !rosterSign.complete ? rosterPartialReleased(rosterSign.roster, ticket, caller.id) : [], comment: fanOutComment, emailOrigin });
     // Kick the email drain AFTER the response is sent (the daily cron is the
     // fallback, not the primary path — recipients should get email in seconds).
     // WF-19 done-when 3: CRON_SECRET ships blank, and a blank bearer is a
@@ -1949,6 +1975,11 @@ async function fanOut(params: {
    *  still waits on the other slots, so only the signer's own alerts are
    *  retired; everyone else's "review opened" alert stays live. */
   rosterPartial?: boolean;
+  /** DF-P5 fix pass 4: on a partial sign-off, the co-occupants of a slot
+   *  now satisfied (lib/ticketTransitions.ts rosterPartialReleased) — the
+   *  ticket waits on them no more, so their action alerts are retired with
+   *  the signer's. */
+  rosterReleased?: string[];
 }) {
   const { ticket, ticketId, action, newStatus, recipients, actorUid, actorEmail, comment, activity, emailOrigin } = params;
   // ROUTE-6 (DF-P3): thread activity with nobody to tell has nothing to do.
@@ -2061,20 +2092,28 @@ async function fanOut(params: {
   //    DF-P5 fix pass 3 (TIER-5 / FRIC-2): a PARTIAL roster sign-off moves
   //    nothing for the reviewers still waited on — only the signer's own
   //    alerts are retired (their part is done); the others keep theirs.
+  //    DF-P5 fix pass 4: so are the alerts of the co-occupants of a slot now
+  //    satisfied (nothing waits on them), and — so sign-off notices do not
+  //    pile up — an earlier partial sign-off's notice (metadata.action
+  //    sign_slot) of anyone this sign-off tells again; their "review opened"
+  //    alert stays live while the ticket waits on them.
   const exits = newStatus === "CLOSED" || newStatus === "CANCELED";
+  const partialRetire = new Set<string>([actorUid, ...(params.rosterReleased ?? [])]);
+  const partialRenotified = new Set<string>(audience.filter((u) => !partialRetire.has(u)));
   try {
     const supersededAt = new Date().toISOString();
     let staleQuery = supabaseAdmin.from("notifications")
-      .select("id, metadata")
+      .select("id, user_id, metadata")
       .eq("resource_id", ticketId)
       .eq("org_id", ticket.orgId)
       .is("read_at", null)
       .not("metadata->>action", "is", null)
       .is("metadata->>superseded_at", null);
-    if (params.rosterPartial === true) staleQuery = staleQuery.eq("user_id", actorUid);
+    if (params.rosterPartial === true) staleQuery = staleQuery.in("user_id", [...partialRetire, ...partialRenotified]);
     const { data: stale } = await staleQuery;
-    for (const row of (stale ?? []) as Array<{ id: string; metadata: Record<string, unknown> | null }>) {
+    for (const row of (stale ?? []) as Array<{ id: string; user_id?: string | null; metadata: Record<string, unknown> | null }>) {
       if (!exits && SLA_NOTICE_ACTIONS.has(String(row.metadata?.action ?? ""))) continue;
+      if (params.rosterPartial === true && !partialRetire.has(String(row.user_id ?? "")) && row.metadata?.action !== "sign_slot") continue;
       await supabaseAdmin.from("notifications")
         .update({ metadata: { ...(row.metadata ?? {}), superseded_at: supersededAt, superseded_by: action.type } })
         .eq("id", row.id)

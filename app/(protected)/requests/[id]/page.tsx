@@ -10,7 +10,7 @@ import { useRole } from '@/components/providers/RoleContext';
 import { useToast } from '@/components/providers/ToastProvider';
 import { appAlert, appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import { Ticket, TicketStatus, TicketAttachment, TicketComment, DocumentRecord, type CustomCategoryConfig, type OrgDraftingSettings } from '@/types/schema';
-import { WorkflowEngine, WorkflowAction, ticketResource, issueAsIsConfirmation, issueAsIsBanner, ISSUE_MARK_ACTIONS, currentRoster } from '@/lib/workflow';
+import { WorkflowEngine, WorkflowAction, ticketResource, issueAsIsConfirmation, issueAsIsBanner, ISSUE_MARK_ACTIONS, currentRoster, routedNoRosterReason, workflowRefusalMessage } from '@/lib/workflow';
 import { ticketReviewRouting } from '@/lib/routingControl';
 import { loadCapabilityPolicyEntry, type CapabilityPolicy } from '@/lib/capabilityPolicy';
 import { affordancePolicyFault } from '@/lib/checkoutAffordances';
@@ -1482,14 +1482,18 @@ export default function TicketDetailView() {
   // way forward, and the route refuses them. Read through RLS only while it
   // can matter; a read that fails leaves the decision to the route.
   const [reviewRouted, setReviewRouted] = useState(false);
+  // DF-P5 fix pass 4: a routing table that can't be used is named (a
+  // revision would be refused too) — the reason travels with the flag.
+  const [reviewRoutedReason, setReviewRoutedReason] = useState<string | null>(null);
   const routedCheckKey = ticket && ticket.libraryId && !currentRoster(ticket)
     && (ticket.status === 'PENDING_REVIEW' || ticket.status === 'PENDING_FINAL_APPROVAL')
     ? `${ticket.id ?? ''}|${ticket.libraryId}|${ticket.status}` : null;
   useEffect(() => {
     let alive = true;
-    if (!routedCheckKey || !ticket?.id || !ticketOrgId) { setReviewRouted(false); return; }
+    if (!routedCheckKey || !ticket?.id || !ticketOrgId) { setReviewRouted(false); setReviewRoutedReason(null); return; }
     void ticketReviewRouting({ id: ticket.id, orgId: ticketOrgId, libraryId: ticket.libraryId ?? null, sourceDocumentId: sourceRefId })
-      .then((r) => { if (alive) setReviewRouted(r.routed); }, () => { if (alive) setReviewRouted(false); });
+      .then((r) => { if (alive) { setReviewRouted(r.routed); setReviewRoutedReason(r.routed ? routedNoRosterReason(r.routing) : null); } },
+        () => { if (alive) { setReviewRouted(false); setReviewRoutedReason(null); } });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the facts the answer depends on
   }, [routedCheckKey, ticketOrgId, sourceRefId]);
@@ -2053,6 +2057,11 @@ export default function TicketDetailView() {
       }
 
       if (res.status === 409) {
+        // DF-P5 fix pass 4: a refusal with its own code (the routing needs a
+        // roster, an unconfirmed issue-as-is, a routing table that can't be
+        // used…) is said with its way forward — only the compare-and-set
+        // conflict is "someone else updated it".
+        const refusal = workflowRefusalMessage(await res.clone().json().catch(() => null));
         setActionLoading(null);
         setPendingAction(null);
         setShowCommentModal(false);
@@ -2060,7 +2069,9 @@ export default function TicketDetailView() {
         setShowUploadIFC(false);
         setPendingRedlineBlob(null);
         setFileToRedline(null);
-        await appAlert({ message: "This request was just updated by someone else, so your action wasn't applied. The latest state is loading — please review the change and try again.", tone: "danger" });
+        await appAlert(refusal
+          ? { title: "Your action wasn't applied", message: refusal, tone: "danger" }
+          : { message: "This request was just updated by someone else, so your action wasn't applied. The latest state is loading — please review the change and try again.", tone: "danger" });
         return;
       }
       if (!res.ok) {
@@ -2270,6 +2281,7 @@ export default function TicketDetailView() {
   // engine is asked only with a real role.
   const availableActions = activeRole === null ? [] : WorkflowEngine.getActions(ticket, activeRole, uid ?? undefined, capPolicy, {
     reviewRouted, // TIER-5 (DF-P5 fix pass 3): a routed review with no roster
+    reviewRoutedReason,
     userRoles: roles,
     activeMemberCount,
     engineeringFirstTypes,
@@ -2791,7 +2803,7 @@ export default function TicketDetailView() {
         </div>
       )}
 
-      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><TicketRosterPanel ticket={ticket} orgId={activeOrgId} uid={uid} userName={(member?.displayName ?? '').trim() || (userEmail?.split('@')[0] ?? '').trim() || null} capPolicy={capPolicy} activeMemberCount={activeMemberCount} requesterRoles={requesterRoles} /></div>
+      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><TicketRosterPanel ticket={ticket} orgId={activeOrgId} uid={uid} userName={(member?.displayName ?? '').trim() || (userEmail?.split('@')[0] ?? '').trim() || null} capPolicy={capPolicy} activeMemberCount={activeMemberCount} requesterRoles={requesterRoles} reviewRouted={reviewRouted} reviewRoutedReason={reviewRoutedReason} /></div>
 
       {ticket.status === 'REVISION_REQ' && latestRevision && (
         <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">

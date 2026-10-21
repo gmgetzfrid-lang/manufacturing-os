@@ -49,14 +49,16 @@
 -- paste. Nobody gains a write they had. The counts-only inventory is
 -- captured BEFORE the transaction (DEC-30) — no customer rows.
 --
--- PASTE / DEPLOY ORDER. Independent of 20261242 (paste either first). The
+-- PASTE / DEPLOY ORDER. Independent of 20261242 in SQL, but paste 20261242
+-- FIRST (or together): see the next sentences and 20261242's header. The
 -- app carrying DF-P5 works BEFORE this paste (a routing_control read answers
 -- 42703 / PGRST204 → every ticket is unconfigured: today's routing; the
 -- routing editor says the update is not applied) and AFTER it (an
 -- unconfigured workspace routes, notifies and gates exactly as today until a
 -- controller declares a table). A table declared before 20261242 is pasted is
 -- not used — the submission goes the usual way and says so (42P01 /
--- PGRST205 on the ledger). Re-runnable: ADD COLUMN IF NOT EXISTS, the CHECK
+-- PGRST205 on the ledger) — and once 20261242 lands, such a request is a
+-- routed review with no roster and needs a revision (TIER-5). Re-runnable: ADD COLUMN IF NOT EXISTS, the CHECK
 -- is added only when missing, CREATE OR REPLACE, DROP TRIGGER IF EXISTS.
 -- Single paste: temp-table inventory → BEGIN/DDL/COMMIT → one SELECT
 -- (check text, ok boolean, n text).  ⚠ APPLIED BY HAND (DEC-30).

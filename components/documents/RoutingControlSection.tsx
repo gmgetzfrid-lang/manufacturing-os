@@ -20,8 +20,9 @@
 import React, { useEffect, useState } from "react";
 import { Route, Plus, Trash2, Loader2 } from "lucide-react";
 import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
+import { appConfirm } from "@/components/providers/DialogProvider";
 import {
-  parseRoutingControl, readRoutingControlAt, setRoutingControl, validateRoutingDraft, MODE_LABEL, ROUTING_PARTIES,
+  parseRoutingControl, readRoutingControlAt, setRoutingControl, validateRoutingDraft, reviewsInFlightUnder, MODE_LABEL, ROUTING_PARTIES,
   type RoutingControl, type RoutingLevel, type RoutingSlot, type RoutingSlotFill, type RoutingSlotMode,
 } from "@/lib/routingControl";
 import { CAPABILITY_DEFS, type CapabilityId } from "@/lib/capabilityPolicy";
@@ -115,6 +116,23 @@ export function keptNote(d: Pick<DraftSlot, "kept">): string | null {
   return parts.length ? `This slot also carries settings this editor does not show — ${parts.join("; ")}. Saving keeps them as they are.` : null;
 }
 
+/** TIER-5 / DEC-29 (DF-P5 fix pass 4): what a saved routing table does, as
+ *  the controller reads it — including to the requests already in review. */
+export function routingSavedNote(levelWord: string): string {
+  return `Routing saved. Every request submitted for review in this ${levelWord} from now on opens a sign-off roster. A request already in review here without a roster can no longer be approved the usual way: it needs a revision, and its resubmission opens the roster.`;
+}
+
+/** The question asked BEFORE a table is declared on a level that had none:
+ *  how many requests in review lose their usual approval (pure; exported
+ *  for tests). null when there is nothing to ask. */
+export function inFlightConfirmMessage(levelWord: string, count: { ok: true; n: number; capped: boolean } | { ok: false; error: string }): string | null {
+  if (count.ok && count.n === 0) return null;
+  const tail = "can no longer be approved the usual way once this routing is saved — each needs a revision, and its resubmission opens a sign-off roster. Save the routing?";
+  if (!count.ok) return `The requests in review in this ${levelWord} could not be counted (${count.error}). Any of them without a sign-off roster ${tail}`;
+  const n = `${count.capped ? "At least " : ""}${count.n}`;
+  return `${n} request${count.n === 1 && !count.capped ? " is" : "s are"} in review in this ${levelWord} (that you can see) without a sign-off roster. ${count.n === 1 && !count.capped ? "It" : "They"} ${tail}`;
+}
+
 const chip = (on: boolean) => `px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${on ? "bg-[var(--color-accent)] text-white border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`;
 const inp = "text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-accent)]";
 
@@ -124,6 +142,9 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
   const [inherit, setInherit] = useState(true);
   const [slots, setSlots] = useState<DraftSlot[]>([]);
   const [storedError, setStoredError] = useState<string | null>(null);
+  // DF-P5 fix pass 4: whether this level declared a table when it was read
+  // (declaring one where there was none is what changes in-flight reviews).
+  const [storedDeclared, setStoredDeclared] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const [userQuery, setUserQuery] = useState<{ index: number; q: string; hits: OrgUser[] } | null>(null);
@@ -138,6 +159,7 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
         setUnavailable(r.missing ? "Review routing needs database update 20261241 — until it is applied, requests here are routed the usual way." : `The routing could not be read: ${r.error}`);
       } else {
         const parsed = parseRoutingControl(r.value);
+        setStoredDeclared(parsed !== null);
         if (parsed === null) { setInherit(true); setSlots([]); }
         else if (parsed.ok) { setInherit(false); setSlots(controlToDraft(parsed.control)); }
         else { setInherit(false); setSlots([]); setStoredError(parsed.error); }
@@ -164,21 +186,29 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
   const draft = inherit ? null : draftToControl(slots);
   const problem = inherit ? null : validateRoutingDraft(draft);
 
+  const levelWord = level === "library" ? "library" : level === "collection" ? "folder" : "document";
+
   const save = async () => {
     setBusy(true);
     setMsg(null);
     try {
+      // TIER-5 / DEC-29 (DF-P5 fix pass 4): declaring a table where there
+      // was none stops the usual approval of every request already in
+      // review under this level without a roster — counted and asked first.
+      if (!inherit && !storedDeclared) {
+        const question = inFlightConfirmMessage(levelWord, await reviewsInFlightUnder(level, id));
+        if (question && !(await appConfirm({ title: "Requests in review are affected", message: question, confirmLabel: "Save the routing", tone: "danger" }))) return;
+      }
       await setRoutingControl({ level, id, control: draft });
       setStoredError(null);
-      setMsg({ tone: "ok", text: inherit ? "Routing cleared — this level inherits." : "Routing saved. It applies from each request's next submission for review." });
+      setStoredDeclared(!inherit);
+      setMsg({ tone: "ok", text: inherit ? "Routing cleared — this level inherits." : routingSavedNote(levelWord) });
     } catch (e) {
       setMsg({ tone: "error", text: (e as Error).message });
     } finally {
       setBusy(false);
     }
   };
-
-  const levelWord = level === "library" ? "library" : level === "collection" ? "folder" : "document";
 
   return (
     <section data-testid="routing-control-section" className="rounded-xl border border-[var(--color-border)] p-3 space-y-3">

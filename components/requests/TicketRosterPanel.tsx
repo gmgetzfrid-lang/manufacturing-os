@@ -32,7 +32,7 @@ import { Users, CheckCircle2, Clock, Bell, ShieldAlert, Loader2, Library } from 
 import { supabase } from "@/lib/supabase";
 import { recordSignature, type SigningCredential, type SignatureIntent } from "@/lib/eSignatures";
 import SignatureCeremony from "@/components/signatures/SignatureCeremony";
-import { currentRoster, slotSignPlan, separationOfDutiesActive, engineerApprovalRequired, ticketResource, slotBlocks, issueReadyFor, ISSUE_AS_IS_NOTE, unhashedFilesNote } from "@/lib/workflow";
+import { currentRoster, slotSignPlan, separationOfDutiesActive, engineerApprovalRequired, ticketResource, slotBlocks, issueReadyFor, ISSUE_AS_IS_NOTE, unhashedFilesNote, ROUTED_NO_ROSTER_REASON } from "@/lib/workflow";
 import { seededSlotsFor, MODE_LABEL } from "@/lib/routingControl";
 import { effectiveReviewControlForDocument, expandReviewers } from "@/lib/reviewControl";
 import type { CapabilityPolicy } from "@/lib/capabilityPolicy";
@@ -50,6 +50,14 @@ export interface TicketRosterPanelProps {
   requesterRoles?: readonly string[] | null;
   /** Called after a sign-off lands, so the page re-reads the ticket. */
   onChanged?: () => void | Promise<void>;
+  /** TIER-5 (DF-P5 fix pass 4): the request's library routes its reviews
+   *  (the page's ticketReviewRouting). A routed review with no roster is
+   *  NOT the unconfigured seed — its serial approvals are refused — so the
+   *  panel says so instead of showing the seed. */
+  reviewRouted?: boolean;
+  /** Why (routedNoRosterReason — a routing table that can't be used names
+   *  the document controller, not a revision). */
+  reviewRoutedReason?: string | null;
 }
 
 /** TIER-8: the one sentence that keeps the two reviews apart. */
@@ -101,7 +109,7 @@ export function slotStateText(slot: TicketReviewSlot, names: ReadonlyMap<string,
 }
 
 export default function TicketRosterPanel({
-  ticket, orgId, uid, userName, capPolicy, activeMemberCount, requesterRoles, onChanged,
+  ticket, orgId, uid, userName, capPolicy, activeMemberCount, requesterRoles, onChanged, reviewRouted, reviewRoutedReason,
 }: TicketRosterPanelProps) {
   const roster: TicketReviewRoster | null = useMemo(() => currentRoster(ticket), [ticket]);
   const [names, setNames] = useState<Map<string, string>>(new Map());
@@ -209,8 +217,13 @@ export default function TicketRosterPanel({
     }
   }, [ticket.id]);
 
-  const showSeed = !roster && (ticket.status === "PENDING_REVIEW" || ticket.status === "PENDING_FINAL_APPROVAL");
-  if (!roster && !showSeed && !libraryReview) return null;
+  const inReview = ticket.status === "PENDING_REVIEW" || ticket.status === "PENDING_FINAL_APPROVAL";
+  // TIER-5 (DF-P5 fix pass 4): routed with no roster — no seed (that is the
+  // unconfigured picture, and its approvals are refused here); the way
+  // forward instead.
+  const routedNoRoster = !roster && inReview && reviewRouted === true;
+  const showSeed = !roster && inReview && !routedNoRoster;
+  if (!roster && !showSeed && !routedNoRoster && !libraryReview) return null;
 
   return (
     <section data-testid="ticket-roster-panel" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
@@ -267,6 +280,13 @@ export default function TicketRosterPanel({
           {busy ? <Loader2 className="w-4 h-4 animate-spin inline mr-1" /> : null}
           Sign off — {plan.fillable.map((f) => f.slot.label).join(", ")}
         </button>
+      )}
+
+      {routedNoRoster && (
+        <div className="text-xs space-y-1" data-testid="routed-no-roster">
+          <div className="font-bold text-[var(--color-text)] flex items-center gap-1"><ShieldAlert className="w-3.5 h-3.5 text-amber-600" /> No sign-off roster</div>
+          <p className="text-[var(--color-text-muted)]">{reviewRoutedReason || ROUTED_NO_ROSTER_REASON}</p>
+        </div>
       )}
 
       {showSeed && (

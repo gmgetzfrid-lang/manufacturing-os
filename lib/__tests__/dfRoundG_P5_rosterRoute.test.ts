@@ -791,6 +791,12 @@ describe("DF-P5 fix pass 3 — a close out of a review closes its roster for goo
     state.rows.notifications = [
       { id: "n-q", user_id: "q-1", resource_id: "t1", org_id: "o1", read_at: null, metadata: { action: "submit_draft" } },
       { id: "n-e1", user_id: "e-1", resource_id: "t1", org_id: "o1", read_at: null, metadata: { action: "submit_draft" } },
+      // fix pass 4: e-2 fills the slot e-1 is about to satisfy
+      { id: "n-e2", user_id: "e-2", resource_id: "t1", org_id: "o1", read_at: null, metadata: { action: "submit_draft" } },
+      // fix pass 4: an earlier partial sign-off's notice to Q (replaced by this one's)
+      { id: "n-q-old", user_id: "q-1", resource_id: "t1", org_id: "o1", read_at: null, metadata: { action: "sign_slot" } },
+      // someone with no part here is never touched by a partial sign-off
+      { id: "n-x", user_id: "x-9", resource_id: "t1", org_id: "o1", read_at: null, metadata: { action: "submit_draft" } },
     ];
     state.rows.e_signatures = [sig(SIG, "e-1", roster.contentHash)];
     state.user = { id: "e-1" };
@@ -800,14 +806,21 @@ describe("DF-P5 fix pass 3 — a close out of a review closes its roster for goo
     // Q's slot is still open: Q keeps the marker; the signer is cleared
     expect(u.unread_by as string[]).toContain("q-1");
     expect(u.unread_by as string[]).not.toContain("e-1");
-    // only the signer's own alert is retired; Q's "review opened" alert stays live
-    const supersedes = state.calls.filter((c) => c.table === "notifications" && c.method === "update").map((c) => c.args[0] as { metadata: Record<string, unknown> });
-    expect(supersedes).toHaveLength(1);
-    const supersedeEq = state.calls.filter((c) => c.table === "notifications" && c.method === "eq" && c.args[0] === "user_id").map((c) => c.args[1]);
-    expect(supersedeEq).toEqual(["e-1"]);
-    // and Q is told of the sign-off
+    // fix pass 4: e-2's slot is satisfied — nothing waits on e-2 any more
+    expect(u.unread_by as string[]).not.toContain("e-2");
+    expect(u.unread_by as string[]).toContain("req-1"); // today's participant, kept
+    // the signer's and e-2's alerts are retired, and Q's earlier sign-off
+    // notice; Q's "review opened" alert stays live, x-9's is untouched
+    const updatedIds = state.calls.filter((c) => c.table === "notifications" && c.method === "eq" && c.args[0] === "id").map((c) => c.args[1]);
+    expect(updatedIds.sort()).toEqual(["n-e1", "n-e2", "n-q-old"]);
+    const supersedeIn = state.calls.filter((c) => c.table === "notifications" && c.method === "in" && c.args[0] === "user_id").map((c) => [...(c.args[1] as string[])].sort());
+    // read: the signer and the released co-occupant (every alert), and the
+    // people this sign-off tells again (their earlier sign_slot notice only)
+    expect(supersedeIn).toEqual([["d-1", "e-1", "e-2", "q-1", "req-1"]]);
+    // and Q is told of the sign-off; e-2 is not
     const bells = state.calls.filter((c) => c.table === "notifications" && c.method === "insert").flatMap((c) => c.args[0] as Array<{ user_id?: string; userId?: string }>);
     expect(bells.map((b) => b.user_id ?? b.userId)).toContain("q-1");
+    expect(bells.map((b) => b.user_id ?? b.userId)).not.toContain("e-2");
   });
 
   it("major 3 (REGRESSION): the COMPLETING sign-off still retires every outstanding alert (the ticket moved on)", async () => {
@@ -894,5 +907,144 @@ describe("DF-P5 fix pass 3 — the as-is confirmation is the server's too; a sig
     // the trail's attempt pairing leaves it alone (no attempt to pair)
     const { pairTicketAttempts } = await import("@/lib/auditActions");
     expect(pairTicketAttempts([{ id: "o", action: orphan.action, details: orphan.details }]).followUps.size).toBe(0);
+  });
+});
+
+describe("DF-P5 fix pass 4 — a refusal reaches the user with its reason; a broken routing table is named; only the caller's own signature is recorded", () => {
+  const sig = (id: string, signer: string, hash: string, over: Record<string, unknown> = {}) => ({ id, org_id: "o1", resource_type: "ticket", resource_id: "t1", signer_user_id: signer, content_hash: hash, intent: "Reviewed", signed_at: "2099-01-01T00:00:00Z", ...over });
+
+  it("major 1: the page's 409 handling shows the route's own refusal (routing_needs_roster → ROUTED_NO_ROSTER_REASON); only the compare-and-set conflict and holds_open keep their own handling", async () => {
+    const { workflowRefusalMessage, ROUTED_NO_ROSTER_REASON } = await import("@/lib/workflow");
+    seed();
+    state.rows.org_members[0] = member("req-1", "Engineer-2");
+    state.rows.tickets = [ticketRow({ status: "PENDING_REVIEW", requester_role: "Engineer-2", deliverable_rev: "1A", draft_iteration: 1, attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }] })];
+    state.user = { id: "req-1" };
+    const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    expect(res.status).toBe(409);
+    // exactly what the page does with the body
+    expect(workflowRefusalMessage(await res.json())).toBe(ROUTED_NO_ROSTER_REASON);
+    // the as-is refusal is said too
+    expect(workflowRefusalMessage({ error: "The drafter marked this draft issue-as-is — reload and confirm.", code: "issue_as_is_unconfirmed" })).toMatch(/issue-as-is/);
+    // the CAS conflict, a hold to resolve, and a code-less 409 keep the old handling
+    expect(workflowRefusalMessage({ error: "The ticket changed while you were acting — refresh and try again", conflict: true })).toBeNull();
+    expect(workflowRefusalMessage({ error: "x", code: "holds_open", holds: [] })).toBeNull();
+    expect(workflowRefusalMessage({ error: "This ticket is archived" })).toBeNull();
+    expect(workflowRefusalMessage(null)).toBeNull();
+  });
+
+  it("minor 6: a rosterless review under a routing table that cannot be used is refused with a reason naming the table and the document controller (not 'request a revision'); the engine uses the same reason", async () => {
+    const { routedNoRosterReason, ROUTED_NO_ROSTER_REASON, WorkflowEngine } = await import("@/lib/workflow");
+    seed({ routing_control: { slots: [{ kind: "x", mode: "notify_only", fill: { roles: ["Engineer"] } }] } });
+    state.rows.org_members[0] = member("req-1", "Engineer-2");
+    const row = ticketRow({ status: "PENDING_REVIEW", requester_role: "Engineer-2", deliverable_rev: "1A", draft_iteration: 1, attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }] });
+    state.rows.tickets = [row];
+    state.user = { id: "req-1" };
+    const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    expect(res.status).toBe(409);
+    const body = await res.json() as { error: string; code: string };
+    expect(body.code).toBe("routing_invalid");
+    expect(body.error).toMatch(/library can't be used/);
+    expect(body.error).toMatch(/document controller/);
+    expect(body.error).not.toBe(ROUTED_NO_ROSTER_REASON);
+    expect(updates()).toEqual([]);
+    const reason = routedNoRosterReason({ state: "invalid", level: "collection", error: "bad slot" });
+    expect(reason).toMatch(/folder can't be used \(bad slot\)/);
+    expect(routedNoRosterReason({ state: "configured" })).toBe(ROUTED_NO_ROSTER_REASON);
+    const { rowToTicket } = await import("@/lib/ticketTransitions");
+    const offered = WorkflowEngine.getActions(rowToTicket(row as never), "Engineer-2" as never, "req-1", undefined, { reviewRouted: true, reviewRoutedReason: reason, activeMemberCount: 5 });
+    expect(offered.find((a) => a.action === "approve_draft_ifc")?.disabledReason).toBe(reason);
+  });
+
+  it("minor 4: a refused sign-off records TICKET_SIGN_SLOT_NOT_APPLIED only for the caller's OWN signature on THIS ticket in THIS org — never another person's, another ticket's or org's, or an id that is no signature", async () => {
+    seed();
+    const roster = await submitRouted();
+    const done = ticketRow({ status: "PENDING_IFC", deliverable_rev: "1", attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }], metadata: { review_roster: { ...roster, closedAt: LM, closedReason: "complete" } } });
+    const orphans = () => audits().filter((x) => x.action === "TICKET_SIGN_SLOT_NOT_APPLIED");
+    state.user = { id: "e-2" };
+    for (const foreign of [
+      sig(SIG, "e-1", roster.contentHash), // reviewer A's signature, posted by B
+      sig(SIG, "e-2", roster.contentHash, { resource_id: "t-other" }), // another ticket's
+      sig(SIG, "e-2", roster.contentHash, { org_id: "o-other" }), // another org's
+      sig(SIG, "e-2", roster.contentHash, { resource_type: "document" }), // not a ticket signature
+    ]) {
+      state.calls = [];
+      state.rows.tickets = [done];
+      state.rows.e_signatures = [foreign];
+      const res = await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG });
+      expect(res.status).toBe(403);
+      expect(orphans()).toEqual([]);
+    }
+    // an id with no signature behind it: nothing recorded
+    state.calls = [];
+    state.rows.e_signatures = [];
+    expect((await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG })).status).toBe(403);
+    expect(orphans()).toEqual([]);
+    // the caller's own signature for this ticket: recorded
+    state.calls = [];
+    state.rows.e_signatures = [sig(SIG, "e-2", roster.contentHash)];
+    expect((await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG })).status).toBe(403);
+    expect(orphans()).toHaveLength(1);
+    // the signature_invalid branch: another person's signature on an OPEN
+    // roster is refused and NOT recorded; the caller's own (wrong hash) is
+    state.calls = [];
+    state.rows.tickets = [ticketRow({ status: "PENDING_REVIEW", deliverable_rev: "1A", draft_iteration: 1, attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }], metadata: { review_roster: roster } })];
+    state.rows.e_signatures = [sig(SIG, "e-1", roster.contentHash)];
+    const notMine = await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG });
+    expect(notMine.status).toBe(403);
+    expect((await notMine.json()).code).toBe("signature_invalid");
+    expect(orphans()).toEqual([]);
+    state.calls = [];
+    state.rows.e_signatures = [sig(SIG, "e-2", "not-the-hash")];
+    expect((await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG })).status).toBe(403);
+    expect(orphans()).toHaveLength(1);
+    expect(orphans()[0].details).toMatchObject({ signatureId: SIG, code: "signature_invalid" });
+  });
+});
+
+describe("DF-P5 fix pass 4 (major 2) — the routing editor counts the requests in review a new table will stop", () => {
+  const DOC_IN = "d0000000-0000-4000-8000-000000000001";
+  const DOC_SUB = "d0000000-0000-4000-8000-000000000002";
+  const DOC_OUT = "d0000000-0000-4000-8000-000000000003";
+  const FOLDER = "f0000000-0000-4000-8000-000000000001";
+  const SUB = "f0000000-0000-4000-8000-000000000002";
+  const OTHER = "f0000000-0000-4000-8000-000000000003";
+  const OPEN_ROSTER = { v: 1, id: "r", slots: [], files: [], contentHash: "h", openedAt: LM, openedBy: "d-1", level: "library", cycle: "1A" };
+  const t = (id: string, status: string, src: string | null, over: Record<string, unknown> = {}) =>
+    ({ id, status, library_id: LIB, metadata: src ? { source_document: { id: src } } : {}, ...over });
+  const seedInFlight = () => {
+    state.rows.tickets = [
+      t("t-a", "PENDING_REVIEW", DOC_IN),
+      t("t-b", "PENDING_FINAL_APPROVAL", DOC_SUB),
+      t("t-c", "PENDING_REVIEW", DOC_OUT),
+      t("t-d", "PENDING_REVIEW", DOC_IN, { metadata: { source_document: { id: DOC_IN }, review_roster: OPEN_ROSTER } }), // already on a roster
+      t("t-e", "DRAFTING", DOC_IN), // not in review
+      t("t-f", "PENDING_REVIEW", null),
+      t("t-g", "PENDING_REVIEW", DOC_IN, { library_id: "other-lib" }), // another library
+    ];
+    state.rows.documents = [
+      { id: DOC_IN, library_id: LIB, collection_id: FOLDER },
+      { id: DOC_SUB, library_id: LIB, collection_id: SUB },
+      { id: DOC_OUT, library_id: LIB, collection_id: OTHER },
+    ];
+    state.rows.collections = [
+      { id: FOLDER, library_id: LIB, path_ids: [] },
+      { id: SUB, library_id: LIB, path_ids: [FOLDER] },
+      { id: OTHER, library_id: LIB, path_ids: [] },
+    ];
+  };
+  it("a library counts every rosterless request in review filed in it; a folder, those whose source document sits in it or under it; a document, those raised on it", async () => {
+    const { reviewsInFlightUnder } = await import("@/lib/routingControl");
+    seedInFlight();
+    expect(await reviewsInFlightUnder("library", LIB)).toEqual({ ok: true, n: 4, capped: false }); // a, b, c, f
+    expect(await reviewsInFlightUnder("collection", FOLDER)).toEqual({ ok: true, n: 2, capped: false }); // a (in it), b (sub-folder)
+    expect(await reviewsInFlightUnder("collection", SUB)).toEqual({ ok: true, n: 1, capped: false }); // b
+    expect(await reviewsInFlightUnder("document", DOC_IN)).toEqual({ ok: true, n: 1, capped: false }); // a (d has a roster)
+    expect(await reviewsInFlightUnder("document", DOC_OUT)).toEqual({ ok: true, n: 1, capped: false });
+  });
+  it("a read that fails is said (the editor still asks), never a silent zero", async () => {
+    const { reviewsInFlightUnder } = await import("@/lib/routingControl");
+    seedInFlight();
+    state.errors.tickets = { code: "XX000", message: "boom" };
+    expect(await reviewsInFlightUnder("library", LIB)).toEqual({ ok: false, error: "boom" });
   });
 });

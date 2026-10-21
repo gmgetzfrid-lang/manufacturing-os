@@ -19,7 +19,7 @@ import {
 } from "@/lib/ticketRoster";
 import * as reviewControl from "@/lib/reviewControl";
 import { WorkflowEngine, slotSignPlan, currentRoster, issueReadyFor, engineerApprovalRequired, ticketResource, PRODUCER_FLOOR_REASON, rosterEngineerApprovedAt, unhashedFilesNote, issueAsIsConfirmation, issueAsIsBanner, ISSUE_MARK_ACTIONS, ISSUE_AS_IS_NOTE } from "@/lib/workflow";
-import { computeTransition, issueAsIsFinals, classifyTransitionNotification, issueMarkAudience, type TransitionInput } from "@/lib/ticketTransitions";
+import { computeTransition, issueAsIsFinals, classifyTransitionNotification, issueMarkAudience, rosterPartialReleased, type TransitionInput } from "@/lib/ticketTransitions";
 import { explainNoActions, holdersFor } from "@/lib/ticketAttention";
 import { engineerCandidates, engineerPickRefusal } from "@/lib/ticketPage";
 import type { Ticket, TicketAttachment, TicketReviewRoster } from "@/types/schema";
@@ -94,7 +94,12 @@ describe("GAP-112 / DEC-36 — the routing resolver: the same cases as resolveEf
     expect(src).toContain("throw new Error(`Couldn't read this request's routing:");
     // ONE resolver: the loader rides lib/containerChain.ts, no second walk
     expect(src).toContain('loadContainerChain<unknown>("routing_control"');
-    expect(src).not.toMatch(/from\("collections"\)/);
+    // (DF-P5 fix pass 4: reviewsInFlightUnder reads folders for the inverse
+    // question — which in-review requests sit under a folder — never to
+    // resolve a ticket's routing; it is the module's last function)
+    const at = src.indexOf("export async function reviewsInFlightUnder");
+    expect(at).toBeGreaterThan(src.indexOf("export async function effectiveRoutingForTicket"));
+    expect(src.slice(0, at)).not.toMatch(/from\("collections"\)/);
   });
 });
 
@@ -818,5 +823,31 @@ describe("DF-P5 fix pass 3 — a partial sign-off keeps the still-waited-on revi
     const rc = await import("@/lib/routingControl");
     expect(isMissingRosterLedger).toBe(rc.isMissingRosterLedger);
     expect(rc.isMissingRosterLedger({ code: "PGRST205", message: "x" })).toBe(true);
+  });
+});
+
+describe("DF-P5 fix pass 4 — after a partial sign-off, the co-occupants of a satisfied slot are waited on no more", () => {
+  it("rosterPartialReleased: the satisfied slot's other occupants — never anyone an open blocking slot waits on, never today's participants, never the signer", () => {
+    const r = opened(); // check: e-1, e-2 (Engineer roles); accept: req-1; told: q-1
+    const t = withRoster(r);
+    const signed = applySignPlan(r, slotSignPlan(r, t, "e-1", true), { uid: "e-1", name: "E" }, "sig", NOW);
+    expect(rosterPartialReleased(signed, t, "e-1")).toEqual(["e-2"]);
+    // nothing satisfied: nobody released
+    expect(rosterPartialReleased(r, t, "e-1")).toEqual([]);
+    // e-2 also fills a still-open blocking slot: kept
+    const both = { ...signed, slots: signed.slots.map((x) => (x.kind === "accept" ? { ...x, primaries: [...x.primaries, "e-2"] } : x)) };
+    expect(rosterPartialReleased(both, t, "e-1")).toEqual([]);
+    // e-2 is the assigned engineer (a participant): kept
+    expect(rosterPartialReleased(signed, withRoster(r, { assignedEngineerId: "e-2" }), "e-1")).toEqual([]);
+  });
+  it("computeTransition: the released co-occupant leaves unread_by and the recipients; the still-waited-on and today's participants stay", () => {
+    const r = opened();
+    const t = withRoster(r, { unreadBy: ["e-2", "x-1"] });
+    const signed = applySignPlan(r, slotSignPlan(r, t, "e-1", true), { uid: "e-1", name: "E" }, "sig", NOW);
+    const out = computeTransition(t, input({ rosterSign: { roster: signed, complete: false, labels: ["Engineering check"] } }));
+    const unread = out.updates.unread_by as string[];
+    expect(unread).not.toContain("e-2");
+    expect(unread).toEqual(expect.arrayContaining(["req-1", "d-1", "x-1"]));
+    expect(out.recipients).not.toContain("e-2");
   });
 });

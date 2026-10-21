@@ -14,8 +14,8 @@ import type { Ticket, TicketReviewRoster } from "@/types/schema";
 vi.mock("@/lib/supabase", () => ({ supabase: { from: () => ({}) , auth: { getSession: async () => ({ data: { session: null } }) } } }));
 vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({ uid: "u-1", activeRole: "Admin", roles: ["Admin"] }) }));
 import TicketRosterPanel, { TWO_REVIEWS_NOTE, ENGINEERING_GATE_NOTE, slotQuestion, slotStateText, rosterSignStatement } from "@/components/requests/TicketRosterPanel";
-import { ISSUE_AS_IS_NOTE } from "@/lib/workflow";
-import { draftToControl, controlToDraft, keptNote } from "@/components/documents/RoutingControlSection";
+import { ISSUE_AS_IS_NOTE, ROUTED_NO_ROSTER_REASON, routedNoRosterReason } from "@/lib/workflow";
+import { draftToControl, controlToDraft, keptNote, routingSavedNote, inFlightConfirmMessage } from "@/components/documents/RoutingControlSection";
 import { parseRoutingControl } from "@/lib/routingControl";
 
 const NOW = "2026-10-21T12:00:00.000Z";
@@ -172,5 +172,65 @@ describe("DF-P5 fix pass 3 — the signature is minted only for a sign-off the r
   it("the page tells the engine when a rosterless review is routed (ticketReviewRouting), so the serial approvals render disabled with the reason", () => {
     expect(page).toContain("void ticketReviewRouting({ id: ticket.id, orgId: ticketOrgId, libraryId: ticket.libraryId ?? null, sourceDocumentId: sourceRefId })");
     expect(page).toContain("getActions(ticket, activeRole, uid ?? undefined, capPolicy, {\n    reviewRouted, // TIER-5");
+  });
+});
+
+describe("DF-P5 fix pass 4 — the page says the route's refusal; the panel and the editor say what is true of a routed review without a roster", () => {
+  const page = readFileSync(join(process.cwd(), "app", "(protected)", "requests", "[id]", "page.tsx"), "utf8");
+  const editor = readFileSync(join(process.cwd(), "components", "documents", "RoutingControlSection.tsx"), "utf8");
+  const renderRouted = (over: Record<string, unknown>) => renderToStaticMarkup(createElement(TicketRosterPanel, { ticket: ticket({ libraryId: "lib-1" }), orgId: "o1", uid: "req-1", activeMemberCount: 5, ...over }));
+
+  it("major 1: the page's 409 branch says the route's coded refusal (workflowRefusalMessage) and keeps 'someone else updated it' for the conflict only", () => {
+    const at = page.indexOf("      if (res.status === 409) {\n        // DF-P5 fix pass 4");
+    expect(at).toBeGreaterThan(0);
+    const branch = page.slice(at, page.indexOf("return;", at));
+    expect(branch).toContain("const refusal = workflowRefusalMessage(await res.clone().json().catch(() => null));");
+    expect(branch).toContain('? { title: "Your action wasn\'t applied", message: refusal, tone: "danger" }');
+    expect(branch).toContain("This request was just updated by someone else");
+  });
+
+  it("minor 6: a routed review with no roster shows 'No sign-off roster' with the way forward — not the unconfigured seed", () => {
+    const html = renderRouted({ reviewRouted: true });
+    expect(html).toContain('data-testid="routed-no-roster"');
+    expect(html).toContain("No sign-off roster");
+    expect(html).toContain("Request a revision so the drafter resubmits");
+    expect(html).not.toContain('data-testid="seeded-slots"');
+    expect(html).not.toContain("waiting now");
+    // a routing table that cannot be used names the document controller instead
+    const broken = routedNoRosterReason({ state: "invalid", level: "library", error: "slot 1 has no key" });
+    const html2 = renderRouted({ reviewRouted: true, reviewRoutedReason: broken });
+    expect(html2).toContain("Ask a document controller to correct the routing.");
+    expect(html2).not.toContain("Request a revision");
+    // REGRESSION: not routed — the seed, as before
+    expect(renderRouted({})).toContain('data-testid="seeded-slots"');
+    expect(ROUTED_NO_ROSTER_REASON).toMatch(/Request a revision/);
+  });
+
+  it("minor 6: the page passes the routing answer (and its reason) to the panel and the engine", () => {
+    expect(page).toContain("reviewRouted={reviewRouted} reviewRoutedReason={reviewRoutedReason} /></div>");
+    expect(page).toContain("setReviewRoutedReason(r.routed ? routedNoRosterReason(r.routing) : null);");
+    expect(page).toMatch(/reviewRouted, \/\/ TIER-5[^\n]*\n\s*reviewRoutedReason,\n\s*userRoles: roles,/);
+  });
+
+  it("major 2: the save confirmation says what a saved table does to requests already in review — never 'applies from the next submission'", () => {
+    const note = routingSavedNote("library");
+    expect(note).toMatch(/already in review here without a roster can no longer be approved the usual way/);
+    expect(note).toMatch(/needs a revision/);
+    expect(editor).not.toContain("It applies from each request's next submission for review.");
+    expect(editor).toContain('setMsg({ tone: "ok", text: inherit ? "Routing cleared — this level inherits." : routingSavedNote(levelWord) });');
+  });
+
+  it("major 2: declaring a table where there was none counts the requests in review it stops and asks first; nothing to ask when there are none", () => {
+    expect(inFlightConfirmMessage("library", { ok: true, n: 0, capped: false })).toBeNull();
+    expect(inFlightConfirmMessage("folder", { ok: true, n: 3, capped: false })).toMatch(/^3 requests are in review in this folder \(that you can see\) without a sign-off roster\. They can no longer be approved the usual way/);
+    expect(inFlightConfirmMessage("library", { ok: true, n: 1, capped: false })).toMatch(/^1 request is in review .* It can no longer/);
+    expect(inFlightConfirmMessage("library", { ok: true, n: 500, capped: true })).toMatch(/^At least 500 requests are/);
+    expect(inFlightConfirmMessage("document", { ok: false, error: "boom" })).toMatch(/could not be counted \(boom\)/);
+    // the save path: counted BEFORE the write, asked, and a "no" writes nothing
+    const save = editor.slice(editor.indexOf("const save = async () => {"), editor.indexOf("await setRoutingControl({ level, id, control: draft });"));
+    expect(save).toContain("if (!inherit && !storedDeclared) {");
+    expect(save).toContain("const question = inFlightConfirmMessage(levelWord, await reviewsInFlightUnder(level, id));");
+    expect(save).toContain("if (question && !(await appConfirm({");
+    expect(save).toContain("return;");
   });
 });

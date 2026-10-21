@@ -34,10 +34,15 @@
 -- NOT A WIDENING (two new tables nobody but the service role writes).
 -- Counts-only inventory BEFORE the transaction (DEC-30).
 --
--- PASTE / DEPLOY ORDER. Independent of 20261241 (either first). The app
--- carrying DF-P5 works BEFORE this paste: a routed submission finds no ledger
+-- PASTE / DEPLOY ORDER. Independent of 20261241 in SQL. The app carrying
+-- DF-P5 works BEFORE this paste: a routed submission finds no ledger
 -- (42P01 / PGRST205) and goes for review the usual way, saying so; and AFTER
--- it. Re-runnable: IF NOT EXISTS everywhere, CREATE OR REPLACE, DROP … IF
+-- it. RECOMMENDED: paste this BEFORE (or together with) 20261241. Once this
+-- is applied, a request under review in a library whose chain carries a
+-- routing table is "routed": with no roster its serial approvals are refused
+-- (409 routing_needs_roster) and it needs a revision (TIER-5, DEC-36). A
+-- request submitted "the usual way" while 20261241 was pasted and this was
+-- not is exactly such a request, so pasting this one first leaves no window. Re-runnable: IF NOT EXISTS everywhere, CREATE OR REPLACE, DROP … IF
 -- EXISTS. Single paste: temp-table inventory → BEGIN/DDL/COMMIT → one SELECT
 -- (check text, ok boolean, n text).  ⚠ APPLIED BY HAND (DEC-30).
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -45,7 +50,7 @@
 -- ── Pre-apply inventory (aggregate counts only; captured BEFORE the DDL) ────
 DROP TABLE IF EXISTS df_round_g_242_before;
 CREATE TEMP TABLE df_round_g_242_before AS
-SELECT 1 AS ord, 'inventory (before apply): tickets under review now (PENDING_REVIEW / PENDING_FINAL_APPROVAL) — they finish on today''s path; a roster opens only at a later submission into a routed library' AS inventory,
+SELECT 1 AS ord, 'inventory (before apply): tickets under review now (PENDING_REVIEW / PENDING_FINAL_APPROVAL) — one in a library with no routing table finishes on today''s path; one whose library (or folder / document) carries a routing table can no longer be approved serially once this is applied and needs a revision, whose resubmission opens a roster' AS inventory,
        COUNT(*)::text AS n
   FROM tickets WHERE status IN ('PENDING_REVIEW', 'PENDING_FINAL_APPROVAL')
 UNION ALL

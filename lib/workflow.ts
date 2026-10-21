@@ -73,6 +73,10 @@ export interface WorkflowContext {
    *  approvals are rendered disabled with ROUTED_NO_ROSTER_REASON and the
    *  route refuses them (409). Absent / false = today's behaviour. */
   reviewRouted?: boolean;
+  /** DF-P5 fix pass 4: the reason those approvals are disabled with, when
+   *  it is not ROUTED_NO_ROSTER_REASON — a routing table that cannot be used
+   *  (routedNoRosterReason), where a revision would be refused too. */
+  reviewRoutedReason?: string | null;
 }
 
 /** DEC-13 stage 2: the RESOURCE a ticket presents to the capability policy —
@@ -365,6 +369,29 @@ export function issueAsIsBanner(ticket: Pick<Ticket, 'metadata' | 'deliverableRe
 export const ROSTERLESS_APPROVALS: ReadonlySet<string> = new Set(['approve_draft_ifc', 'approve_minor_correction', 'request_final_engineer_approval', 'engineer_approve_final']);
 
 export const ROUTED_NO_ROSTER_REASON = "This request's library routes its reviews, and this review has no sign-off roster (it was reopened, or was already in review when the routing was set). Request a revision so the drafter resubmits — the submission opens the review with every sign-off the routing names.";
+
+/** DF-P5 fix pass 4: why a routed review with no roster cannot be approved,
+ *  from the routing that applies. A table that cannot be used refuses the
+ *  resubmission too (routing_invalid), so the way forward is the document
+ *  controller, not a revision. */
+export function routedNoRosterReason(routing?: { state: string; level?: string; error?: string } | null): string {
+  if (routing?.state !== 'invalid') return ROUTED_NO_ROSTER_REASON;
+  const where = routing.level === 'collection' ? 'folder' : routing.level || 'library';
+  return `The review routing set on this request's ${where} can't be used (${routing.error || 'it is malformed'}), so this review can't be approved, and a resubmission would be refused too. Ask a document controller to correct the routing.`;
+}
+
+/** DF-P5 fix pass 4: what the request page says for a 409 from
+ *  /api/tickets/workflow-action. A refusal that carries its own code (the
+ *  routing needs a roster, an unconfirmed issue-as-is, a routing table that
+ *  cannot be used, nothing to review…) is SAID, with its way forward; null
+ *  for the compare-and-set conflict (`conflict: true`), a hold to resolve
+ *  (`holds_open`, handled before this) or a body without a code — those
+ *  keep the "someone else updated it" message. */
+export function workflowRefusalMessage(body: unknown): string | null {
+  const j = (body && typeof body === 'object' ? body : {}) as { code?: unknown; error?: unknown; conflict?: unknown };
+  if (j.conflict === true || typeof j.code !== 'string' || !j.code || j.code === 'holds_open') return null;
+  return typeof j.error === 'string' && j.error.trim() ? j.error : null;
+}
 
 /** UI-4 (DF-P5 fix pass 2): the drafter's optional issue-as-is mark /
  *  withdrawal — offered beside the "who this waits on" note, never in place
@@ -911,7 +938,8 @@ export const WorkflowEngine = {
     // disabled, with the way forward (request a revision → resubmission
     // opens the roster). The route refuses them too.
     if (ctx?.reviewRouted && !roster && (ticket.status === 'PENDING_REVIEW' || ticket.status === 'PENDING_FINAL_APPROVAL')) {
-      return actions.map((a) => (ROSTERLESS_APPROVALS.has(a.action) && !a.disabledReason ? { ...a, disabledReason: ROUTED_NO_ROSTER_REASON } : a));
+      const reason = ctx.reviewRoutedReason || ROUTED_NO_ROSTER_REASON;
+      return actions.map((a) => (ROSTERLESS_APPROVALS.has(a.action) && !a.disabledReason ? { ...a, disabledReason: reason } : a));
     }
     return actions;
   }
