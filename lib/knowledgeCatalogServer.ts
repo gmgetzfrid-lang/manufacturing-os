@@ -334,23 +334,58 @@ export async function loadCatalog(admin: SupabaseClient, opts: {
   }
 }
 
+/** Classes whose rating is exactly `rating` (150 is not 1500), best match
+ *  to the question's service words first. Sour service reads H2S, wet H2S,
+ *  NACE and the other way round. */
+export function rankByRatingAndService<T extends { raw: string | null }>(rows: T[], rating: string, question: string): T[] {
+  const SYN: Record<string, string[]> = { sour: ["sour", "h2s", "nace", "wet h2s", "mr0103", "mr0175"], h2s: ["h2s", "sour", "nace"] };
+  const STOP = new Set(["what", "which", "piping", "spec", "class", "should", "use", "for", "the", "and", "with", "line", "stream", "service", "pipe"]);
+  const words = question.toLowerCase().match(/[a-z0-9]{3,}/g)?.filter((w) => !STOP.has(w) && !/^\d+$/.test(w)) ?? [];
+  const terms = [...new Set(words.flatMap((w) => SYN[w] ?? [w]))];
+  const exact = new RegExp(`(^|[^0-9])${rating}([^0-9]|$)`);
+  const scored: Array<{ r: T; score: number }> = [];
+  for (const r of rows) {
+    let rec: PipeClassRecord;
+    try { rec = JSON.parse(r.raw ?? "") as PipeClassRecord; } catch { continue; }
+    if (!rec?.rating || !exact.test(rec.rating)) continue;
+    const hay = [rec.service, rec.material, ...(rec.notes ?? [])].join(" ").toLowerCase();
+    scored.push({ r, score: terms.reduce((n, t) => n + (hay.includes(t) ? 1 : 0), 0) });
+  }
+  return scored.sort((a, b) => b.score - a.score).map((x) => x.r);
+}
+
 /** Pipe classes named in the conversation, as trusted facts. Same
  *  visibility rule as the catalog. */
 export async function loadPipeClasses(admin: SupabaseClient, opts: {
   orgId: string; libraryIds: string[]; excludedDocIds: Set<string>; text: string;
   match: (text: string, codes: string[]) => string[];
+  /** The pressure class the question is about ("150"): with no class code
+   *  named, the classes OF that rating are looked up, best service first. */
+  rating?: string | null;
 }): Promise<Array<PipeClassRecord & { documentId: string; documentName: string; page: number }>> {
   try {
-    const { data: tagRows } = await admin
+    const { rows: tagRows } = await fetchAllRows<{ tag: string }>((from, to) => admin
       .from("knowledge_page_entities").select("tag")
-      .eq("org_id", opts.orgId).eq("kind", "pipe_class").limit(5000);
-    const codes = [...new Set(((tagRows ?? []) as Array<{ tag: string }>).map((r) => r.tag))];
+      .eq("org_id", opts.orgId).eq("kind", "pipe_class").order("id").range(from, to), 50_000);
+    const codes = [...new Set(tagRows.map((r) => r.tag))];
     const wanted = opts.match(opts.text, codes);
-    if (wanted.length === 0) return [];
-    const { data: rows } = await admin
-      .from("knowledge_page_entities").select("document_id, library_id, page, tag, raw")
-      .eq("org_id", opts.orgId).eq("kind", "pipe_class").in("tag", wanted).limit(200);
-    const recs = (rows ?? []) as Array<{ document_id: string; library_id: string; page: number; tag: string; raw: string | null }>;
+    type Row = { document_id: string; library_id: string; page: number; tag: string; raw: string | null };
+    let recs: Row[] = [];
+    if (wanted.length > 0) {
+      const { data: rows } = await admin
+        .from("knowledge_page_entities").select("document_id, library_id, page, tag, raw")
+        .eq("org_id", opts.orgId).eq("kind", "pipe_class").in("tag", wanted).limit(200);
+      recs = (rows ?? []) as Row[];
+    } else if (opts.rating && codes.length > 0) {
+      // "Which spec for 150 class sour gas": no code named — find the classes
+      // rated for that class, and rank them by how well their service,
+      // material and notes match the question's words.
+      const { rows } = await fetchAllRows<Row>((from, to) => admin
+        .from("knowledge_page_entities").select("document_id, library_id, page, tag, raw")
+        .eq("org_id", opts.orgId).eq("kind", "pipe_class").ilike("raw", `%${opts.rating}%`).order("id").range(from, to), 20_000);
+      recs = rankByRatingAndService(rows, opts.rating, opts.text).slice(0, 8);
+    }
+    if (recs.length === 0) return [];
     const { data: docRows } = await admin
       .from("knowledge_documents").select("id, name, library_id, source_document_id")
       .in("id", [...new Set(recs.map((r) => r.document_id))]).neq("status", "retired");

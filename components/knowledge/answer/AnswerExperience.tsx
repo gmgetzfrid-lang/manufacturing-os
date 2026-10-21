@@ -12,7 +12,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   BookOpen, Sparkles, Send, FileText, CheckCircle2, AlertTriangle, ExternalLink, History, Globe,
   ChevronRight, ChevronDown, Copy, Check, Search, ScanSearch, PenLine, Quote, Eye,
-  ThumbsUp, ThumbsDown, X, Waypoints, Loader2, Mail, Printer, Upload, RefreshCw, ShieldCheck,
+  ThumbsUp, ThumbsDown, X, Waypoints, Loader2, Printer, Upload, RefreshCw, ShieldCheck,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { Button } from "@/components/ui/Button";
@@ -941,23 +941,41 @@ function PartHead({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Copy for email (formatted HTML + a plain-text fallback, so it pastes
- *  into Outlook or Gmail looking like the card, proof included) and Print
- *  (the same content on a clean page). */
+/** Copy (a menu: formatted for email or Word, plain text, Markdown for
+ *  Teams or Slack, the answer alone, or the references alone) and Print
+ *  (the same content on a clean page). The main button copies formatted. */
+type CopyKind = "formatted" | "text" | "markdown" | "answer" | "references";
+const COPY_OPTIONS: Array<{ kind: CopyKind; label: string; hint: string }> = [
+  { kind: "formatted", label: "Formatted", hint: "Email, Word — looks like the card, proof included" },
+  { kind: "text", label: "Plain text", hint: "The whole answer and its proof, no formatting" },
+  { kind: "markdown", label: "Markdown", hint: "Teams, Slack, notes, tickets" },
+  { kind: "answer", label: "Answer only", hint: "The answer line — no proof" },
+  { kind: "references", label: "References only", hint: "Each cited document, page and quote" },
+];
+
 function ExportButtons({ question, answer, large = false }: { question: string; answer: KnowledgeAnswer; large?: boolean }) {
-  const [state, setState] = useState<"idle" | "copied" | "plain" | "failed">("idle");
-  const flash = (s: typeof state) => { setState(s); setTimeout(() => setState("idle"), 1800); };
-  const copy = async () => {
+  const [state, setState] = useState<{ s: "idle" | "copied" | "failed"; label?: string }>({ s: "idle" });
+  const [menu, setMenu] = useState(false);
+  const flash = (s: "copied" | "failed", label?: string) => { setState({ s, label }); setTimeout(() => setState({ s: "idle" }), 1800); };
+  const copy = async (kind: CopyKind) => {
+    setMenu(false);
     const exp = buildAnswerExport(question, answer);
-    try {
-      await navigator.clipboard.write([new ClipboardItem({
-        "text/html": new Blob([exp.html], { type: "text/html" }),
-        "text/plain": new Blob([exp.text], { type: "text/plain" }),
-      })]);
-      flash("copied");
-    } catch {
-      flash((await copyText(exp.text)) ? "plain" : "failed");
+    const label = COPY_OPTIONS.find((o) => o.kind === kind)!.label;
+    if (kind === "formatted") {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({
+          "text/html": new Blob([exp.html], { type: "text/html" }),
+          "text/plain": new Blob([exp.text], { type: "text/plain" }),
+        })]);
+        flash("copied", label);
+      } catch {
+        // A browser that won't take formatted copy still gets the text.
+        flash((await copyText(exp.text)) ? "copied" : "failed", "Plain text");
+      }
+      return;
     }
+    const body = kind === "text" ? exp.text : kind === "markdown" ? exp.markdown : kind === "answer" ? exp.answerOnly : exp.references;
+    flash((await copyText(body)) ? "copied" : "failed", label);
   };
   const print = () => {
     const w = window.open("", "_blank");
@@ -968,18 +986,39 @@ function ExportButtons({ question, answer, large = false }: { question: string; 
     setTimeout(() => w.print(), 250);
   };
   const primary = large
-    ? "inline-flex items-center gap-1.5 text-[13px] font-bold px-3.5 py-2 rounded-lg bg-orange-600 text-white shadow-sm hover:bg-orange-700 transition-colors"
-    : "inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-orange-400 transition-colors";
+    ? "inline-flex items-center gap-1.5 text-[13px] font-bold px-3.5 py-2 bg-orange-600 text-white shadow-sm hover:bg-orange-700 transition-colors"
+    : "inline-flex items-center gap-1 text-[11px] font-bold px-2 py-1 border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-orange-400 transition-colors";
   const secondary = large
     ? "inline-flex items-center gap-1.5 text-[13px] font-bold px-3.5 py-2 rounded-lg border border-[var(--color-border-strong,var(--color-border))] bg-[var(--color-surface)] text-[var(--color-text)] hover:border-orange-400 transition-colors"
-    : primary;
+    : `${primary} rounded-md`;
   const icon = large ? "w-4 h-4" : "w-3 h-3";
   return (
     <div className="flex items-center gap-1.5 shrink-0">
-      <button type="button" onClick={() => void copy()} className={primary} title="Copy the answer and its proof, formatted, ready to paste into an email">
-        {state === "copied" || state === "plain" ? <Check className={icon} /> : <Mail className={icon} />}
-        {state === "copied" ? "Copied — paste into email" : state === "plain" ? "Copied as text" : state === "failed" ? "Copy blocked" : "Copy for email"}
-      </button>
+      <div className="relative inline-flex">
+        <button type="button" onClick={() => void copy("formatted")} className={`${primary} ${large ? "rounded-l-lg" : "rounded-l-md"}`}
+          title="Copy the answer and its proof, formatted — pastes into email or Word looking like the card">
+          {state.s === "copied" ? <Check className={icon} /> : <Copy className={icon} />}
+          {state.s === "copied" ? `Copied — ${state.label}` : state.s === "failed" ? "Copy blocked" : "Copy"}
+        </button>
+        <button type="button" onClick={() => setMenu((v) => !v)} aria-haspopup="menu" aria-expanded={menu} title="Other ways to copy"
+          className={`${primary} ${large ? "rounded-r-lg border-l border-orange-500/60 px-2" : "rounded-r-md border-l-0 px-1"}`}>
+          <ChevronDown className={icon} />
+        </button>
+        {menu && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setMenu(false)} />
+            <div role="menu" className="absolute right-0 top-full mt-1 z-50 w-64 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl py-1">
+              {COPY_OPTIONS.map((o) => (
+                <button key={o.kind} role="menuitem" type="button" onClick={() => void copy(o.kind)}
+                  className="w-full text-left px-3 py-2 hover:bg-[var(--color-surface-2)]">
+                  <div className="text-[12.5px] font-bold text-[var(--color-text)]">{o.label}</div>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">{o.hint}</div>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
       <button type="button" onClick={print} className={secondary} title="Print, or choose Save as PDF in the print dialog">
         <Printer className={icon} /> {large ? "Print / save PDF" : "Print"}
       </button>

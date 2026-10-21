@@ -122,8 +122,37 @@ function proofCardHtml(c: KnowledgeCitation, strong: boolean): string {
 }
 
 export interface AnswerExport {
+  /** Formatted — pastes into Outlook, Gmail or Word looking like the card. */
   html: string;
+  /** The whole answer and its proof as plain text. */
   text: string;
+  /** The same, in Markdown — Teams, Slack, notes, tickets. */
+  markdown: string;
+  /** Just the answer (and what it's answering for) — no proof. */
+  answerOnly: string;
+  /** Just the references: each cited document, page and quote. */
+  references: string;
+}
+
+/** Section titles the plain-text export writes in capitals. */
+const TEXT_SECTIONS = new Set([
+  "THE PROOF", "TO SETTLE THIS, I NEED", "WHY", "FINDINGS", "ENGINEERING TRAIL", "BEFORE YOU ACT",
+  "REQUIRED CORRECTIONS", "DON'T MISS", "SUPPORTING PASSAGES",
+]);
+
+/** The plain-text export, as Markdown: headings, quotes, the question in bold. */
+export function textToMarkdown(text: string): string {
+  return text.split("\n").map((line) => {
+    if (line.startsWith("QUESTION: ")) return `**Question:** ${line.slice(10)}`;
+    if (TEXT_SECTIONS.has(line.trim()) || line.startsWith("FROM THE WEB")) {
+      const t = line.trim();
+      return `### ${t.charAt(0)}${t.slice(1).toLowerCase()}`;
+    }
+    const quote = line.match(/^ {4}"(.*)"$/);
+    if (quote) return `> ${quote[1]}`;
+    if (line.startsWith("Answered from the indexed")) return `_${line}_`;
+    return line;
+  }).join("\n");
 }
 
 export function buildAnswerExport(question: string, answer: KnowledgeAnswer): AnswerExport {
@@ -241,7 +270,16 @@ export function buildAnswerExport(question: string, answer: KnowledgeAnswer): An
   text.push("Answered from the indexed engineering standards, cited to the page. Verify on the cited pages before acting.");
 
   const html = `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:720px;${FONT};color:${INK}">${rows.join("")}</table>`;
-  return { html, text: text.join("\n") };
+  const plain = text.join("\n");
+  const answerOnly = [
+    `${v ? `${v.text} — ` : ""}${inlineText(hero ? hero.text : answer.answer)}`,
+    ...((answer.answeringFor ?? []).length > 0 ? [`Answering for: ${answer.answeringFor!.join(" · ")}`] : []),
+  ].join("\n");
+  const references = [...byUse, ...web].map((c) => {
+    const q = c.url ? c.quote : (c.highlight ?? c.quote ?? "").slice(0, 300);
+    return `[${c.n}] ${c.url ? `${c.title ?? c.url} — ${c.url}` : where(c)}${q ? `\n    "${q.trim()}"` : ""}`;
+  }).join("\n");
+  return { html, text: plain, markdown: textToMarkdown(plain), answerOnly, references };
 }
 
 /** A full printable page around the export. */

@@ -53,6 +53,7 @@ import {
 import { renderKnowledgePages, MAX_DEEP_READ_PAGES } from "@/lib/knowledgePageRender";
 import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
 import { loadCatalog, loadPipeClasses } from "@/lib/knowledgeCatalogServer";
+import { pressureClassOf, pressureClassNote } from "@/lib/pressureClass";
 import {
   buildCatalogBlock, pipeClassFacts, findClassMentions, formsForGoal, matchCatalogName, FORM_PURPOSES,
   type CatalogEntry,
@@ -62,6 +63,7 @@ const bad = fail;
 
 export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHandlerResult> {
   const { user, emit } = input;
+  const askStarted = Date.now();
   const extraSystem = input.extraSystem ?? "";
   const userImages = input.userImages ?? [];
   const body = input.body as {
@@ -412,6 +414,12 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         'CHECKLIST QUESTIONS ("what do I need to…", "requirements for…") span MANY topics — cover every ' +
         'facet the question implies (qualifications, documentation, testing, safety, materials…), one ' +
         'query per facet. ' +
+        'PRESSURE CLASS: in piping, "class" with a number (150, 300, 600, 900, 1500, 2500) is the ' +
+        'ASME B16.5 pressure class / flange rating, also written 150#, 150 lb, #150, CL150, ANSI 150. ' +
+        'Write it as a quoted phrase ("class 150") plus a 150# / 150 lb variant, and never confuse 150 ' +
+        'with 1500. A PIPING CLASS or SPEC is a site code (e.g. FAAA1G, A1A) that carries a rating, ' +
+        'material and service — selection questions ("which spec for 150 class sour gas") get queries ' +
+        'for the piping class index / selection table and for the service (sour, wet H2S, NACE). ' +
         'MATERIAL / PRODUCT-FORM ACCEPTABILITY questions ("can I use welded 304", "is A106 ok") ' +
         'always get a query for the materials-selection tables ("acceptable piping materials ' +
         'table", "Table 1 acceptable materials") alongside the material itself. ' +
@@ -447,6 +455,12 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       ...(userImages.length > 0 ? { images: userImages } : {}),
     });
     const queries = parseSearchQueries(queryText.text, question);
+    // A pressure class in the question is searched as the exact phrase too,
+    // whatever the query writer did — "class 150" never matches "1500".
+    const rating = pressureClassOf(question);
+    if (rating && !queries.some((q) => q.toLowerCase().includes(`"class ${rating}"`))) {
+      queries.push(`"class ${rating}"`);
+    }
     emit({ t: "status", text: `Searching the library — ${queries.length} quer${queries.length === 1 ? "y" : "ies"}` });
 
     // ── ALIAS RESOLUTION: the graph's nickname layer feeds retrieval ─────
@@ -503,7 +517,16 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         // empty; one weak hit is not coverage — retries OR-ed, and the two
         // result sets merge rather than the retry replacing the original.
         if ((!Array.isArray(data) || data.length < 3) && /\s/.test(q.trim())) {
-          const ored = q.trim().split(/\s+/).filter(Boolean).join(" or ");
+          // Numbers and codes stay REQUIRED: OR-ing "150" away let every page
+          // mentioning "class" or "gas" in — Class 1500 specs answered a
+          // Class 150 question. Each alternative keeps them: (150 & class) |
+          // (150 & sour) | (150 & gas).
+          const words = q.trim().split(/\s+/).filter(Boolean);
+          const must = words.filter((w) => /\d/.test(w));
+          const may = words.filter((w) => !/\d/.test(w));
+          const ored = must.length > 0 && may.length > 0
+            ? may.map((w) => [...must, w].join(" ")).join(" or ")
+            : words.join(" or ");
           const { data: more } = await supabaseAdmin.rpc("knowledge_search", {
             p_org: orgId, p_library: lib.id, p_query: ored, p_limit: limit,
           });
@@ -740,6 +763,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       orgId, libraryIds: [libraryId, ...linkedLibraries.map((l) => l.id)], excludedDocIds,
       text: [question, ...history.slice(-3).map((t) => `${t.question}\n${t.answer.slice(0, 600)}`), inputs].join("\n"),
       match: findClassMentions,
+      rating: pressureClassOf(question),
     });
     if (pipeClasses.length > 0) {
       const have = new Set(chunks.map((c) => c.id));
@@ -1529,9 +1553,9 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     // ── Step 2: passages → cited answer ──────────────────────────────────
     // Passages carry document STRUCTURE (§) and, when libraries are linked,
     // the PRECEDENCE TIER — governing site standards vs reference code books.
-    const passages = chunks.length === 0
+    const buildPassages = (list: typeof chunks) => list.length === 0
       ? "(no text passages matched the question's search terms — answer from the DRAWING FACTS if they cover it, otherwise say what's missing)"
-      : chunks.map((c, i) => {
+      : list.map((c, i) => {
           const sec = c.section ? `, ${c.section}` : "";
           const tierLabel = hasLinks
             ? `${c.tier === "reference" ? "REFERENCE" : "GOVERNING"} — ${libNameById.get(c.libraryId ?? libraryId) ?? "library"} | `
@@ -1540,6 +1564,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
           const pinTag = pinnedChunkIds.has(c.id) ? "CITED EARLIER IN THIS CONVERSATION | " : "";
           return `[${i + 1}] (${pinTag}${wholeTag}${tierLabel}${docName.get(c.document_id) ?? "Document"}${sec}, page ${c.page})\n${c.content}`;
         }).join("\n\n");
+    const passages = buildPassages(chunks);
     const graphHopNote = graphHops.length > 0
       ? "\n\nGRAPH HOPS: some passages were pulled by FOLLOWING REFERENCES found in the retrieved " +
         "pages — the document graph resolved these edges automatically:\n" +
@@ -1914,7 +1939,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       "THESE INSTRUCTIONS ARE FOR YOU: never quote, name, or allude to them in the answer (no " +
       "\"SCOPE —\", \"cite only to show…\", \"per my instructions\"). Refer to attached page images " +
       "by document and page (\"EP 15-1-4 p.13\"), never as \"image 4\"." +
-      catalogNote + pipeClassNote + precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + anchorFacts +
+      catalogNote + pipeClassNote + pressureClassNote(rating) + precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + anchorFacts +
       tableNote + wholeDocNote + graphHopNote + needsDirective + decisionPathProtocol + calcProtocol +
       fetchDirective;
     const answerUser = `${conversationBlock}PASSAGES:\n\n${passages}${providedInputs}\n\nQUESTION: ${question}`;
@@ -1960,6 +1985,68 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
           ...(answerImages(pageImages).length > 0 ? { images: answerImages(pageImages) } : {}),
           onDelta: (text) => emit({ t: "delta", text }),
         });
+      }
+    }
+    // ── CHASE: the draft pointed at documents it didn't have ("to settle
+    //    this I need EP 5-2-3") — and they are IN the library. Never send the
+    //    asker to fetch what the tool can read: pull those documents' best
+    //    passages and answer once more. One round, only with time to spare.
+    if (Date.now() - askStarted < 55_000 && reachableDocs.length > 0) {
+      const used = new Set(chunks.map((c) => c.document_id));
+      const desRe = (des: string) => new RegExp(`(^|[^A-Z0-9])${des.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean).join("[^A-Z0-9]*")}(?![0-9])`);
+      const wanted: ReachableDoc[] = [];
+      for (const m of answerOut.text.matchAll(/\b[A-Za-z]{1,8}[- ]?\d+(?:[-.]\d+)*[A-Za-z]?\b/g)) {
+        const sq = squashDes(m[0]);
+        if (sq.length < 4 || !/\d/.test(sq) || !/[A-Z]/.test(sq)) continue;
+        const re = desRe(m[0]);
+        for (const d of reachableDocs) {
+          if (wanted.length >= 3) break;
+          if (used.has(d.id) || wanted.some((w) => w.id === d.id)) continue;
+          if (re.test(d.name.toUpperCase())) wanted.push(d);
+        }
+      }
+      if (wanted.length > 0) {
+        emit({ t: "reset" });
+        emit({ t: "status", text: `The answer pointed to ${wanted.map((d) => d.name.replace(/\.pdf$/i, "").split(" — ")[0]).join(", ")} — reading ${wanted.length === 1 ? "it" : "them"} from the library and answering again` });
+        const firstNew = chunks.length + 1;
+        const have = new Set(chunks.map((c) => c.id));
+        for (const d of wanted) {
+          let rows: RetrievedChunk[] = [];
+          for (const q of [...queries.slice(0, 3), question]) {
+            const { data, error } = await supabaseAdmin.rpc("knowledge_search_document", {
+              p_org: orgId, p_document: d.id, p_query: q, p_limit: 4,
+            });
+            if (!error && Array.isArray(data)) rows.push(...(data as RetrievedChunk[]).filter((c) => !rows.some((r) => r.id === c.id)));
+            if (rows.length >= 5) break;
+          }
+          if (rows.length === 0) {
+            // Nothing matched the wording: its opening pages (scope, the
+            // index of what it covers) beat leaving it unread.
+            const { data: front } = await supabaseAdmin.from("knowledge_chunks").select("id, document_id, page, content, section")
+              .eq("org_id", orgId).eq("document_id", d.id).order("page", { ascending: true }).order("seq", { ascending: true }).limit(4);
+            rows = ((front ?? []) as RetrievedChunk[]).map((c) => ({ ...c, rank: 0 }));
+          }
+          docName.set(d.id, d.name);
+          for (const c of rows.slice(0, 5)) {
+            if (have.has(c.id)) continue;
+            have.add(c.id);
+            chunks.push({ ...c, libraryId: d.library_id, tier: d.library_id === libraryId ? "governing" : (hasLinks ? "reference" : "governing") });
+          }
+        }
+        if (chunks.length >= firstNew) {
+          const chaseNote = `\n\nCHASED DOCUMENTS: your first draft pointed to ${wanted.map((d) => `**${d.name}**`).join(", ")}. ` +
+            `They ARE in the library — their passages are now attached as [${firstNew}]–[${chunks.length}]. Use them. ` +
+            "Never list a document under To settle this when it is in these libraries; only what is genuinely not here, " +
+            "or a value only the asker knows.";
+          answerOut = await call({
+            system: baseAnswerSystem + orgInstructions + buildPagesNote(pageImages) + chaseNote,
+            user: `${conversationBlock}PASSAGES:\n\n${buildPassages(chunks)}${providedInputs}\n\nQUESTION: ${question}`,
+            maxTokens: webOn ? 5000 : 4000,
+            ...(webOn ? { webSearch: true, markWebCitations: true } : {}),
+            ...(answerImages(pageImages).length > 0 ? { images: answerImages(pageImages) } : {}),
+            onDelta: (text) => emit({ t: "delta", text }),
+          });
+        }
       }
     }
     // The Evidence block is machinery: it leaves the answer text and becomes
