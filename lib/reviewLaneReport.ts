@@ -8,10 +8,15 @@
 // code class. This is the number that says whether the like-in-kind lane is
 // being used honestly.
 //
-// Pure: it reads the rows /api/admin/analytics already returns (a
-// select("*") of the workspace's tickets as the caller — RLS decides what
-// is counted, exactly as for the rest of the analytics page) and computes
-// the report in the browser. Nothing is written.
+// Pure: it computes the report in the browser from rows read AS THE CALLER
+// (RLS decides what is counted, exactly as for the rest of the analytics
+// page). Nothing is written. DF-P19 second fix pass (review major 1): the
+// rows come from /api/admin/analytics/review-lanes, which reads EVERY
+// request filed in the chosen period — filtered on created_at on the server
+// and paged past PostgREST's max-rows (readReviewLanePeriod) — so the counts
+// hold for any period, not only for the newest rows the analytics page's
+// shared read holds. That shared read (newest first, counted) remains the
+// fallback when the period read fails, with its coverage notice.
 //
 // The lanes are what the ticket records (DF-P6, 20261250), never a guess,
 // and they are decided exactly as the engine decides the gate
@@ -41,7 +46,7 @@
 // compared as UTC calendar dates (YYYY-MM-DD); either end may be open.
 
 import { csvLine } from "@/lib/csvSafe";
-import { isDeclaredLikeInKind } from "@/lib/reviewModel";
+import { isDeclaredLikeInKind, reviewModelFieldsFromRow } from "@/lib/reviewModel";
 import type { Ticket } from "@/types/schema";
 
 export type ReviewLane = "like_in_kind" | "engineered" | "legacy_gate" | "not_recorded";
@@ -240,4 +245,118 @@ export function reviewLaneReportCsv(
     ]));
   }
   return lines.join("\n");
+}
+
+// ── DF-P19 second fix pass (review major 1): the period read ────────────────
+// "For any period" holds only if the report gets the whole period, whatever
+// the workspace's size: /api/admin/analytics/review-lanes filters created_at
+// on the server and pages through PostgREST's max-rows until every request
+// of the period is read (or the hard cap below, which is then said).
+
+/** The columns the report reads (never comments / history / attachments):
+ *  with 20261250's review-model columns, then without them (every request
+ *  then reads as "lane not recorded"), then "*" — tried in order on 42703. */
+export const REVIEW_LANE_BASE_COLUMNS = "id, ticket_id, title, status, created_at, requester_id, requester_name";
+export const REVIEW_LANE_COLUMNS = `${REVIEW_LANE_BASE_COLUMNS}, engineering_required, review_model_filed, like_in_kind_statement, like_in_kind_declared_by, like_in_kind_declared_at, like_in_kind_signature_id, work_class, code_class`;
+export const REVIEW_LANE_COLUMN_LADDER: readonly string[] = [REVIEW_LANE_COLUMNS, REVIEW_LANE_BASE_COLUMNS, "*"];
+/** Rows asked for per request; the server may return fewer (its max-rows),
+ *  and the next page starts after the rows that actually came back. */
+export const REVIEW_LANE_PAGE = 1000;
+/** The most rows one period read returns; a period holding more is said to
+ *  be incomplete (complete: false) and the panel says so. */
+export const REVIEW_LANE_READ_CAP = 50000;
+
+/** The UTC calendar date after `d` (YYYY-MM-DD) — the exclusive upper bound
+ *  of an inclusive "to" date. */
+export function nextUtcDate(d: string): string {
+  const ms = Date.parse(`${d}T00:00:00Z`);
+  return new Date(ms + 86400000).toISOString().slice(0, 10);
+}
+
+/** One row of the period read as the report's ticket. */
+export function laneTicketFromRow(r: Record<string, unknown>): LaneTicket {
+  const f = reviewModelFieldsFromRow(r);
+  return {
+    id: String(r.id ?? ""),
+    ticketId: typeof r.ticket_id === "string" ? r.ticket_id : "",
+    title: typeof r.title === "string" ? r.title : "",
+    status: r.status as Ticket["status"],
+    createdAt: typeof r.created_at === "string" ? r.created_at : "",
+    requesterId: typeof r.requester_id === "string" ? r.requester_id : "",
+    requesterName: typeof r.requester_name === "string" ? r.requester_name : "",
+    engineeringRequired: f.engineeringRequired,
+    likeInKindStatement: f.likeInKindStatement,
+    likeInKindDeclaredBy: f.likeInKindDeclaredBy,
+    likeInKindDeclaredAt: f.likeInKindDeclaredAt,
+    workClass: f.workClass,
+    codeClass: f.codeClass,
+  } as LaneTicket;
+}
+
+/** What one period read returns: every row of the period (raw), how many
+ *  the server counted for it, and whether the rows are the whole period. */
+export interface ReviewLanePeriodRead {
+  rows: Record<string, unknown>[];
+  total: number | null;
+  complete: boolean;
+}
+
+/** A PostgREST query builder, as far as the period read uses it. */
+interface LaneQuery extends PromiseLike<{ data: unknown[] | null; error: { message?: string; code?: string } | null; count?: number | null }> {
+  eq(col: string, v: unknown): LaneQuery;
+  gte(col: string, v: unknown): LaneQuery;
+  lt(col: string, v: unknown): LaneQuery;
+  order(col: string, opts: { ascending: boolean }): LaneQuery;
+  range(from: number, to: number): LaneQuery;
+}
+type LaneClient = { from(table: "tickets"): { select(cols: string, opts?: { count: "exact" }): LaneQuery } };
+
+/** Read EVERY request of `orgId` filed in `period` through `client` (the
+ *  caller-scoped client: RLS applies). Filtered on created_at on the server
+ *  (inclusive UTC dates: from 00:00 of `from` to before 00:00 of the day
+ *  after `to`), ordered created_at, id (a stable order to page in), and paged
+ *  with .range: each page starts after the rows that came back, so a max-rows
+ *  smaller than REVIEW_LANE_PAGE loses nothing. Stops at an empty page, at
+ *  the count, or at REVIEW_LANE_READ_CAP (complete: false). A 42703 on the
+ *  first page steps down REVIEW_LANE_COLUMN_LADDER. Throws on any other
+ *  error — never a silent partial answer. */
+export async function readReviewLanePeriod(client: LaneClient, orgId: string, period: ReviewLanePeriod): Promise<ReviewLanePeriodRead> {
+  const from = periodBound(period.from);
+  const to = periodBound(period.to);
+  let rung = 0;
+  const rows: Record<string, unknown>[] = [];
+  const seen = new Set<string>();
+  let offset = 0;
+  let total: number | null = null;
+  for (;;) {
+    const first = offset === 0;
+    let q = client.from("tickets").select(REVIEW_LANE_COLUMN_LADDER[rung], first ? { count: "exact" } : undefined).eq("org_id", orgId);
+    if (from) q = q.gte("created_at", `${from}T00:00:00.000Z`);
+    if (to) q = q.lt("created_at", `${nextUtcDate(to)}T00:00:00.000Z`);
+    const want = Math.min(REVIEW_LANE_PAGE, REVIEW_LANE_READ_CAP - rows.length);
+    const { data, error, count } = await q.order("created_at", { ascending: true }).order("id", { ascending: true }).range(offset, offset + want - 1);
+    if (error) {
+      if (first && error.code === "42703" && rung < REVIEW_LANE_COLUMN_LADDER.length - 1) { rung += 1; continue; }
+      throw new Error(error.message || "The period could not be read");
+    }
+    if (first) total = typeof count === "number" ? count : null;
+    const batch = (data ?? []) as Record<string, unknown>[];
+    offset += batch.length;
+    for (const r of batch) {
+      const id = String(r.id ?? "");
+      if (id && seen.has(id)) continue;
+      if (id) seen.add(id);
+      rows.push(r);
+    }
+    if (batch.length === 0) return { rows, total, complete: true };
+    if (total !== null && offset >= total) return { rows, total, complete: true };
+    if (rows.length >= REVIEW_LANE_READ_CAP) return { rows, total, complete: false };
+  }
+}
+
+/** What the panel says about a period read — null when it is the whole
+ *  period. */
+export function reviewLanePeriodNotice(read: Pick<ReviewLanePeriodRead, "total" | "complete"> & { loaded: number }): string | null {
+  if (read.complete) return null;
+  return `Showing the first ${read.loaded} of ${read.total ?? "more"} requests filed in this period — one read stops at ${REVIEW_LANE_READ_CAP}. Narrow the period for complete counts.`;
 }

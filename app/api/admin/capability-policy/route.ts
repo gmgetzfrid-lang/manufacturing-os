@@ -41,9 +41,10 @@
 // drafting-flow GAP-105 / TIER-4 (DF-P19; DEC-90 ruling (2) for DF-P19): a
 // request presents its library, work class and code class to the policy, so
 // a rule on a `ticket.*` capability scoped to one of them now applies. A NEW
-// such rule is accepted and CONFIRMED by the save that writes it (the
+// such rule is accepted and CONFIRMED by an Admin's save that writes it (the
 // server stamps it — carryTicketRuleConfirmation; a client never sends the
-// stamp); one already stored keeps its stamp or stays unconfirmed, and an
+// stamp; a DocCtrl's new rule is stored unconfirmed — second fix pass,
+// review minor 3); one already stored keeps its stamp or stays unconfirmed, and an
 // unconfirmed one only ADDS (lib/capabilityPolicy.ts effectiveTokens) until
 // an Admin confirms it here (`confirm_rule`, the rule named by
 // capabilityRuleKey), so a narrowing nobody chose since the request started
@@ -216,10 +217,15 @@ export async function POST(req: NextRequest) {
       caps[def.id] = entry;
     }
     // DF-P19: a library- / class-scoped request rule keeps the stored rule's
-    // confirmation; a new one is confirmed by this save (server-stamped).
-    const carried = carryTicketRuleConfirmation(caps, before.caps, { at: nowIso, by: caller.id });
+    // confirmation; a new one is confirmed by this save (server-stamped) only
+    // when an Admin saves it — confirming is Admin's (confirm_rule below).
+    // Second fix pass (review minor 3): a DocCtrl's new rule is stored
+    // unconfirmed (it only adds until an Admin confirms it), so deleting a
+    // stored unconfirmed narrowing and re-adding it confirms nothing.
+    const carried = carryTicketRuleConfirmation(caps, before.caps, { at: nowIso, by: caller.id }, isAdmin);
     after = { caps: carried.caps, grants: liveGrants };
     if (carried.confirmed.length > 0) grantDetail = { confirmedRules: carried.confirmed.map((c) => ({ cap: c.cap, rule: c.rule })) };
+    if (carried.unconfirmedNew.length > 0) grantDetail = { ...grantDetail, unconfirmedRules: carried.unconfirmedNew.map((c) => ({ cap: c.cap, rule: c.rule })) };
     // WF-11 done-when 2: a critical capability's entry is Admin's to change —
     // a DocCtrl controller may edit the rest of the grid. "Change" is what
     // the evaluator would answer differently, not a different JSON shape.

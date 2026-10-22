@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
@@ -27,6 +27,7 @@ import { ticketStatusLabel } from '@/lib/ticketStatusLabels';
 import { summarizeOutcomes } from '@/lib/ticketOutcome';
 import RequestOutcomes, { reasonBreakdown } from '@/components/requests/RequestOutcomes';
 import ReviewLaneReport from '@/components/requests/ReviewLaneReport';
+import type { ReviewLanePeriod, ReviewLanePeriodRead } from '@/lib/reviewLaneReport';
 import { reviewModelFieldsFromRow } from '@/lib/reviewModel';
 import { parseOutcomeReasons, type OutcomeReason } from '@/lib/ticketOutcomeReasons';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
@@ -105,6 +106,21 @@ export default function AnalyticsPage() {
   // the read is newest first and cut at the server's row limit.
   const [ticketsTotal, setTicketsTotal] = useState<number | null>(null);
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  // DF-P19 second fix pass (GAP-101 acceptance 5, review major 1): the
+  // Review Lanes panel reads its period WHOLE from the server (filtered on
+  // created_at, paged past the row limit), under the same gate as this page.
+  const loadReviewLanePeriod = useCallback(async (period: ReviewLanePeriod): Promise<ReviewLanePeriodRead> => {
+    if (!activeOrgId) throw new Error('No workspace selected');
+    const { data: sess } = await supabase.auth.getSession();
+    const token = sess.session?.access_token ?? '';
+    const qs = new URLSearchParams({ orgId: activeOrgId });
+    if (period.from) qs.set('from', period.from);
+    if (period.to) qs.set('to', period.to);
+    const res = await fetch(`/api/admin/analytics/review-lanes?${qs.toString()}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+    const body = (await res.json().catch(() => null)) as { tickets?: Record<string, unknown>[]; total?: number | null; complete?: boolean; error?: string } | null;
+    if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+    return { rows: body?.tickets ?? [], total: typeof body?.total === 'number' ? body.total : null, complete: body?.complete === true };
+  }, [activeOrgId]);
   
   // CONTROLS
   const [timeRange, setTimeRange] = useState<TimeRange>('6M');
@@ -657,8 +673,9 @@ export default function AnalyticsPage() {
 
       {/* REVIEW LANES (drafting-flow GAP-101 acceptance 5, DF-P19): requests by
           review lane for any period, and every like-in-kind declaration with
-          its author, text and work / code class — read-only. */}
-      <ReviewLaneReport tickets={tickets} ticketsTotal={ticketsTotal} draftingConfig={draftingConfig && draftingConfig.orgId === activeOrgId ? draftingConfig.data : null} />
+          its author, text and work / code class — read-only; the period is
+          read whole from /api/admin/analytics/review-lanes (second fix pass). */}
+      <ReviewLaneReport tickets={tickets} ticketsTotal={ticketsTotal} loadPeriod={loadReviewLanePeriod} draftingConfig={draftingConfig && draftingConfig.orgId === activeOrgId ? draftingConfig.data : null} />
 
       {/* SECTION 2: CHARTS & LISTS */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

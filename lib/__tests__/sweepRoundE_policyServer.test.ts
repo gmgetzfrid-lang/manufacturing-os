@@ -697,6 +697,39 @@ describe("DF-P6 (AUTHZ-6) — a stored library-scoped request rule never blocks 
     }
   });
 
+  // DF-P19 second fix pass (review minor 3): confirming is Admin's — a
+  // DocCtrl's NEW rule is stored unconfirmed, so it only adds until an Admin
+  // confirms it, and removing a stored unconfirmed narrowing in one save and
+  // re-adding it in the next confirms nothing.
+  it("DF-P19 (review minor 3): a DocCtrl's single new rule is stored unconfirmed (audited as such)", async () => {
+    state.user = { id: "c1" };
+    const NEW_RULE = { tokens: ["Engineer-3"], when: { libraryId: ["lib-2"] } };
+    const caps = { ...WITH_DEAD.caps, "ticket.direct_approve": [DEAD_RULE, NEW_RULE, { tokens: ["Admin", "Manager", "Supervisor"] }] };
+    const res = await policy({ op: "save", orgId: "o1", caps });
+    expect(res.status).toBe(200);
+    const written = (updates("org_configurations")[0].data as CapabilityPolicy).caps?.["ticket.direct_approve"] as unknown as Array<Record<string, unknown>>;
+    expect(written[1]).toEqual(NEW_RULE);                                     // no stamp
+    const audit = inserts("audit_logs")[0] as { details: { confirmedRules?: unknown[]; unconfirmedRules?: unknown[] } };
+    expect(audit.details.confirmedRules).toBeUndefined();
+    expect(audit.details.unconfirmedRules).toEqual([{ cap: "ticket.direct_approve", rule: NEW_RULE }]);
+  });
+
+  it("DF-P19 (review minor 3): a DocCtrl cannot confirm a stored unconfirmed narrowing by deleting it in one save and re-adding it in the next", async () => {
+    state.user = { id: "c1" };
+    const without = { ...WITH_DEAD.caps, "ticket.direct_approve": [{ tokens: ["Admin", "Manager", "Supervisor"] }] };
+    expect((await policy({ op: "save", orgId: "o1", caps: without })).status).toBe(200);
+    const afterFirst = updates("org_configurations")[0].data as CapabilityPolicy;
+    expect(afterFirst.caps?.["ticket.direct_approve"]).toEqual([{ tokens: ["Admin", "Manager", "Supervisor"] }]);
+    state.rows.org_configurations = [{ ...config(afterFirst), updated_at: "2026-10-22T01:00:00.000Z" }];
+    const back = { ...WITH_DEAD.caps, "ticket.direct_approve": [DEAD_RULE, { tokens: ["Admin", "Manager", "Supervisor"] }] };
+    expect((await policy({ op: "save", orgId: "o1", caps: back })).status).toBe(200);
+    const afterSecond = updates("org_configurations").at(-1)!.data as CapabilityPolicy;
+    const rule = (afterSecond.caps?.["ticket.direct_approve"] as unknown as Array<Record<string, unknown>>)[0];
+    expect(rule).toEqual(DEAD_RULE);                                          // still unconfirmed
+    expect(rule.confirmedAt).toBeUndefined();
+    expect(policyAllows(afterSecond, "ticket.direct_approve", "Supervisor", null, null, { libraryId: "lib-1" })).toBe(true);   // the narrowing does not apply
+  });
+
   it("DF-P19: a client cannot confirm a stored rule by sending a stamp — the server carries the stored state", async () => {
     state.user = { id: "a1" };
     const forged = { ...DEAD_RULE, confirmedAt: "2026-10-22T00:00:00.000Z", confirmedBy: "a1" };

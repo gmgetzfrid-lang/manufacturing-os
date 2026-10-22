@@ -951,17 +951,28 @@ export function ticketDimensionRules(policy: CapabilityPolicy | null | undefined
  *  client never confirms a rule by sending a stamp): every request dimension
  *  rule in `caps` that is already STORED (the same rule — capabilityRuleKey —
  *  on the same capability) keeps the stored stamp, or stays unconfirmed; one
- *  that is NEW is confirmed by this save (`stamp`) — an Admin or controller
- *  who writes a library- or class-scoped rule means it. Any stamp on any
- *  other rule is dropped. Returns the caps to store and the rules this save
- *  confirmed (for the audit row). */
+ *  that is NEW is confirmed by this save (`stamp`) only when `confirmNew` —
+ *  the saver is an Admin, the one person who may confirm a rule
+ *  (op "confirm_rule"). DF-P19 second fix pass (review minor 3): a NEW rule
+ *  saved by anyone else (a DocCtrl controller) is stored UNCONFIRMED — it
+ *  only adds until an Admin confirms it — so removing a stored unconfirmed
+ *  narrowing in one save and adding it back in the next can no longer
+ *  confirm it. Any stamp on any other rule is dropped. Returns the caps to
+ *  store, the rules this save confirmed and the new rules it stored
+ *  unconfirmed (both for the audit row). */
 export function carryTicketRuleConfirmation(
   caps: CapabilityPolicy["caps"] | null | undefined,
   storedCaps: CapabilityPolicy["caps"] | null | undefined,
   stamp: { at: string; by: string | null },
-): { caps: NonNullable<CapabilityPolicy["caps"]>; confirmed: Array<{ cap: CapabilityId; rule: CapabilityRule }> } {
+  confirmNew: boolean,
+): {
+  caps: NonNullable<CapabilityPolicy["caps"]>;
+  confirmed: Array<{ cap: CapabilityId; rule: CapabilityRule }>;
+  unconfirmedNew: Array<{ cap: CapabilityId; rule: CapabilityRule }>;
+} {
   const out: NonNullable<CapabilityPolicy["caps"]> = {};
   const confirmed: Array<{ cap: CapabilityId; rule: CapabilityRule }> = [];
+  const unconfirmedNew: Array<{ cap: CapabilityId; rule: CapabilityRule }> = [];
   for (const [id, entry] of Object.entries(caps ?? {}) as Array<[CapabilityId, CapabilityEntry]>) {
     if (!isRuleArray(entry)) { out[id] = entry; continue; }
     const prior = storedCaps?.[id];
@@ -974,11 +985,12 @@ export function carryTicketRuleConfirmation(
       if (was) {
         return was.confirmedAt ? { ...bare, confirmedAt: was.confirmedAt, ...(was.confirmedBy ? { confirmedBy: was.confirmedBy } : {}) } : bare;
       }
+      if (!confirmNew) { unconfirmedNew.push({ cap: id, rule: bare }); return bare; }
       confirmed.push({ cap: id, rule: bare });
       return { ...bare, confirmedAt: stamp.at, ...(stamp.by ? { confirmedBy: stamp.by } : {}) };
     });
   }
-  return { caps: out, confirmed };
+  return { caps: out, confirmed, unconfirmedNew };
 }
 
 /** An Admin's confirmation of ONE stored, not-yet-confirmed request
@@ -1073,20 +1085,23 @@ async function postPolicyChange(change: CapabilityPolicyChange): Promise<{ polic
  *  through addUserGrant / revokeUserGrant and preserved by the server. The
  *  actor is derived from the session on the server; the actor fields are
  *  kept for call-site compatibility. ALOG-12: pass the `version` the grid
- *  was loaded at; the answer is the version the save wrote. */
+ *  was loaded at; the answer is the version the save wrote. DF-P19 second
+ *  fix pass: and the policy the server stored (with the confirmation stamps
+ *  it decided — carryTicketRuleConfirmation), so the console can say which
+ *  library- / class-scoped rules are in force without another read. */
 export async function saveCapabilityPolicy(input: {
   orgId: string;
   policy: CapabilityPolicy;
   actorUserId: string;
   actorEmail?: string | null;
   version?: string | null;
-}): Promise<{ version: string | null }> {
+}): Promise<{ version: string | null; policy: CapabilityPolicy | null }> {
   const err = validateCapabilityPolicy({ caps: input.policy.caps });
   if (err) throw new Error(err);
   const change: CapabilityPolicyChange = { op: "save", orgId: input.orgId, caps: input.policy.caps ?? {} };
   if (input.version !== undefined) change.version = input.version;
   const out = await postPolicyChange(change);
-  return { version: out.version };
+  return { version: out.version, policy: out.policy && typeof out.policy === "object" && out.policy.caps ? out.policy : null };
 }
 
 // ── Per-person delegation (server-side read-modify-write on grants only) ───

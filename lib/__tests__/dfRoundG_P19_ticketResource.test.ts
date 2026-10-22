@@ -44,7 +44,8 @@ import { ALL_ROLES, type Role, type Ticket, type TicketStatus } from "@/types/sc
 import {
   summarizeReviewLanes, reviewLaneOf, filedInPeriod, periodBound, reviewLaneReportCsv, reviewLaneCoverage, REVIEW_LANES,
 } from "@/lib/reviewLaneReport";
-import { ticketDimensionRuleStatus, splitPolicyForEditor, joinPolicyFromEditor } from "@/components/permissions/CapabilityPolicyEditor";
+import { ticketDimensionRuleStatus, splitPolicyForEditor, joinPolicyFromEditor, CODE_CLASS_RULE_CAPS } from "@/components/permissions/CapabilityPolicyEditor";
+import { isActionRequired } from "@/lib/ticketAttention";
 import { reviewLaneCoverageNotice } from "@/components/requests/ReviewLaneReport";
 
 const root = process.cwd();
@@ -386,9 +387,10 @@ describe("fix pass (review minor 4) — a grid save keeps the stored order of co
   });
   it("the editor passes the stored policy on every join (load baseline, save, conflict re-read)", () => {
     const editor = read("components/permissions/CapabilityPolicyEditor.tsx");
-    expect(editor).toContain("joinPolicyFromEditor(split.base, split.overrides, split.opaque, split.projectOverrides, stored)");
-    expect(editor).toContain("joinPolicyFromEditor(policy, overrides, opaque, projectOverrides, storedPolicy)");
-    expect(editor).toContain("joinPolicyFromEditor(s2.base, s2.overrides, s2.opaque, s2.projectOverrides, fresh.policy)");
+    // second fix pass: and the code-class rows on every join
+    expect(editor).toContain("joinPolicyFromEditor(split.base, split.overrides, split.opaque, split.projectOverrides, stored, split.codeClassOverrides)");
+    expect(editor).toContain("joinPolicyFromEditor(policy, overrides, opaque, projectOverrides, storedPolicy, codeClassOverrides)");
+    expect(editor).toContain("joinPolicyFromEditor(s2.base, s2.overrides, s2.opaque, s2.projectOverrides, fresh.policy, s2.codeClassOverrides)");
   });
 });
 
@@ -432,13 +434,35 @@ describe("DF-P19 — the rule's state: classification, confirmation, the server-
       { tokens: ["DocCtrl"], when: { requestType: ["ISO"] }, confirmedAt: NOW },            // not a dimension rule
       { tokens: ["Admin", "Manager"] },
     ] } as CapabilityPolicy["caps"];
-    const out = carryTicketRuleConfirmation(incoming, stored, { at: NOW, by: "a1" });
+    const out = carryTicketRuleConfirmation(incoming, stored, { at: NOW, by: "a1" }, true);
     const rules = out.caps[cap] as CapabilityRule[];
     expect(rules[0]).toEqual({ tokens: ["Admin"], when: { libraryId: [LIB] } });
     expect(rules[1]).toEqual({ tokens: ["Admin"], when: { workClass: ["w"] }, confirmedAt: "2026-10-01T00:00:00.000Z", confirmedBy: "a0" });
     expect(rules[2]).toEqual({ tokens: ["Admin", "Drafter"], when: { codeClass: ["c"] }, confirmedAt: NOW, confirmedBy: "a1" });
     expect(rules[3]).toEqual({ tokens: ["DocCtrl"], when: { requestType: ["ISO"] } });
     expect(out.confirmed).toEqual([{ cap, rule: { tokens: ["Admin", "Drafter"], when: { codeClass: ["c"] } } }]);
+  });
+
+  it("second fix pass (review minor 3): a NEW rule saved by a non-Admin is stored UNCONFIRMED — so delete-then-re-add confirms nothing", () => {
+    const R: CapabilityRule = { tokens: ["Engineer-3"], when: { libraryId: [LIB] } };
+    const base: CapabilityRule = { tokens: ["Admin", "Manager"] };
+    const stored = { [cap]: [R, base] } as CapabilityPolicy["caps"];
+    // one save without R (allowed on a non-critical capability), then one with R back
+    const removed = carryTicketRuleConfirmation({ [cap]: [base] } as CapabilityPolicy["caps"], stored, { at: NOW, by: "c1" }, false);
+    expect(removed.caps[cap]).toEqual([base]);
+    const readded = carryTicketRuleConfirmation({ [cap]: [R, base] } as CapabilityPolicy["caps"], removed.caps, { at: NOW, by: "c1" }, false);
+    expect((readded.caps[cap] as CapabilityRule[])[0]).toEqual(R);            // no stamp
+    expect(readded.confirmed).toEqual([]);
+    expect(readded.unconfirmedNew).toEqual([{ cap, rule: R }]);
+    expect(ruleInForce(cap, (readded.caps[cap] as CapabilityRule[])[0])).toBe(false);
+    // the console names it as not in force (a narrowing on direct approval)
+    const [state] = ticketDimensionRules({ caps: readded.caps });
+    expect(ticketDimensionRuleStatus(state)).toBe("Not yet in force where it would take an action away — confirm to apply");
+    // a stored, confirmed rule keeps its stamp on a non-Admin's save
+    const confirmedStored = { [cap]: [{ ...R, confirmedAt: "2026-10-01T00:00:00.000Z", confirmedBy: "a0" }, base] } as CapabilityPolicy["caps"];
+    expect((carryTicketRuleConfirmation({ [cap]: [R, base] } as CapabilityPolicy["caps"], confirmedStored, { at: NOW, by: "c1" }, false).caps[cap] as CapabilityRule[])[0].confirmedBy).toBe("a0");
+    // an Admin's save of the same new rule confirms it
+    expect(carryTicketRuleConfirmation({ [cap]: [R, base] } as CapabilityPolicy["caps"], removed.caps, { at: NOW, by: "a1" }, true).confirmed).toHaveLength(1);
   });
 
   it("confirm: one stored unconfirmed rule, by its key; an unknown or confirmed one is refused", () => {
@@ -470,7 +494,7 @@ describe("DF-P19 — the rule's state: classification, confirmation, the server-
   it("the policy route no longer refuses a new library / class-scoped request rule; it carries the confirmation and offers confirm_rule (Admin only)", () => {
     const route = read("app/api/admin/capability-policy/route.ts");
     expect(route).not.toMatch(/newDeadTicketRuleRefusal\(/);
-    expect(route).toContain("carryTicketRuleConfirmation(caps, before.caps, { at: nowIso, by: caller.id })");
+    expect(route).toContain("carryTicketRuleConfirmation(caps, before.caps, { at: nowIso, by: caller.id }, isAdmin)");
     expect(route).toContain('if (!isAdmin) return bad("Only an Admin may confirm a permission rule", 403);');
     // a class-scoped rule on a critical capability is a change (canonicalEntry reads every rule key)
     expect(route).toContain("const keys = RULE_KEYS.filter((k) => (r.when?.[k]?.length ?? 0) > 0);");
@@ -595,4 +619,121 @@ describe("20261263 — the counts-only inventory (DEC-30 shape)", () => {
     expect(sql.indexOf("WHEN dm.cap = 'ticket.engineer_gate_exempt'")).toBeLessThan(sql.indexOf("WHEN NOT (dm.rule->'tokens' ? '*')"));
     expect(sql).toMatch(/never a ticket\.engineer_gate_exempt rule\) — in force at the deploy/);
   });
+});
+
+// ── DF-P19 second fix pass (review major 2 — TIER-4 done-when 1) ────────────
+describe("second fix pass (review major 2) — a code-class review requirement is authored from the permissions console", () => {
+  const cap: CapabilityId = "ticket.final_approve";
+  it("the console offers code-class rows on exactly the request capabilities", () => {
+    expect([...CODE_CLASS_RULE_CAPS].sort()).toEqual(CAPABILITY_DEFS.filter((d) => d.id.startsWith("ticket.")).map((d) => d.id).sort());
+  });
+  it("split: a rule naming ONE code class (and nothing else) on a request capability is a code-class row; several classes, another key, or a non-request capability stays preserved verbatim", () => {
+    const stored: CapabilityPolicy = { caps: {
+      [cap]: [{ tokens: ["Engineer"] }, { tokens: ["Engineer-3"], when: { codeClass: ["c-1"] }, confirmedAt: NOW, confirmedBy: "a1" }, { tokens: ["Engineer-2"], when: { codeClass: ["c-2", "c-3"] } }, { tokens: ["Admin"], when: { codeClass: ["c-4"], requestType: ["ISO"] } }],
+      "transmittal.issue": [{ tokens: ["Admin", "DocCtrl"] }, { tokens: ["Admin"], when: { codeClass: ["c-1"] } }],
+    } as CapabilityPolicy["caps"] };
+    const s = splitPolicyForEditor(stored);
+    expect(s.codeClassOverrides[cap]).toEqual([{ codeClass: "c-1", tokens: ["Engineer-3"] }]);
+    expect(s.opaque[cap]).toHaveLength(2);
+    expect(s.codeClassOverrides["transmittal.issue"]).toBeUndefined();
+    // a loaded-then-saved grid is the stored entry: the row keeps its place,
+    // and the server carries its stamp (the client never sends one)
+    const j = joinPolicyFromEditor(s.base, s.overrides, s.opaque, s.projectOverrides, stored, s.codeClassOverrides);
+    expect((j[cap] as CapabilityRule[])[1]).toEqual({ tokens: ["Engineer-3"], when: { codeClass: ["c-1"] } });
+    const carried = carryTicketRuleConfirmation(j, stored.caps, { at: "2026-10-23T00:00:00.000Z", by: "c9" }, false);
+    expect(carried.caps[cap]).toEqual(stored.caps![cap]);
+    expect(carried.confirmed).toEqual([]);
+    expect(carried.unconfirmedNew).toEqual([]);
+  });
+  it("an Admin authors 'final approval on code class c-1 only by Engineer-3': the server stamps it, and it binds where the class matches — nowhere else", () => {
+    const s = splitPolicyForEditor({});
+    const rows = { [cap]: [{ codeClass: "c-1", tokens: ["Engineer-3"] }] };
+    const caps = joinPolicyFromEditor(s.base, s.overrides, s.opaque, s.projectOverrides, {}, rows);
+    expect(caps[cap]).toEqual([{ tokens: ["Engineer"] }, { tokens: ["Engineer-3"], when: { codeClass: ["c-1"] } }]);
+    expect(validateCapabilityPolicy({ caps })).toBeNull();
+    const saved = carryTicketRuleConfirmation(caps, {}, { at: NOW, by: "admin" }, true);
+    expect(saved.confirmed).toEqual([{ cap, rule: { tokens: ["Engineer-3"], when: { codeClass: ["c-1"] } } }]);
+    const policy: CapabilityPolicy = { caps: saved.caps };
+    const onCode = { requestType: "ISO", unit: "U-1", libraryId: null, workClass: null, codeClass: "c-1" };
+    expect(policyAllows(policy, cap, "Engineer-2", null, null, onCode)).toBe(false);
+    expect(policyAllows(policy, cap, "Engineer-3", null, null, onCode)).toBe(true);
+    expect(policyAllows(policy, cap, "Engineer-2", null, null, { ...onCode, codeClass: "c-2" })).toBe(true);
+    expect(policyAllows(policy, cap, "Engineer-2", null, null, { ...onCode, codeClass: null })).toBe(true);
+    // the request page / route decide it on the ticket's recorded code class
+    const t = routeRowToTicket(baseRow({ ...DIM_ROW, library_id: null, work_class: null, code_class: "c-1" }));
+    expect(policyAllows(policy, cap, "Engineer-2", null, null, ticketResource(t))).toBe(false);
+    // the same row added by a DocCtrl is stored unconfirmed: it takes nobody's approval away until an Admin confirms it
+    const byController = carryTicketRuleConfirmation(caps, {}, { at: NOW, by: "c1" }, false);
+    expect(byController.unconfirmedNew).toHaveLength(1);
+    expect(policyAllows({ caps: byController.caps }, cap, "Engineer-2", null, null, onCode)).toBe(true);
+  });
+  it("a new row goes after the stored rules; an edited row keeps its place; a removed row drops out", () => {
+    const stored: CapabilityPolicy = { caps: { [cap]: [{ tokens: ["Engineer"] }, { tokens: ["Engineer-3"], when: { codeClass: ["c-1"] }, confirmedAt: NOW }, { tokens: ["Admin"], when: { unit: ["U-1"] } }] } as CapabilityPolicy["caps"] };
+    const s = splitPolicyForEditor(stored);
+    const edited = joinPolicyFromEditor(s.base, s.overrides, s.opaque, s.projectOverrides, stored, { [cap]: [{ codeClass: "c-1", tokens: ["Engineer-2"] }, { codeClass: "c-9", tokens: ["Engineer-3"] }] });
+    expect((edited[cap] as CapabilityRule[]).map((r) => JSON.stringify([r.tokens, r.when ?? null]))).toEqual([
+      JSON.stringify([["Engineer"], null]), JSON.stringify([["Engineer-2"], { codeClass: ["c-1"] }]), JSON.stringify([["Admin"], { unit: ["U-1"] }]), JSON.stringify([["Engineer-3"], { codeClass: ["c-9"] }]),
+    ]);
+    const removed = joinPolicyFromEditor(s.base, s.overrides, s.opaque, s.projectOverrides, stored, {});
+    expect(removed[cap]).toEqual([{ tokens: ["Engineer"] }, { tokens: ["Admin"], when: { unit: ["U-1"] } }]);
+  });
+  it("the console renders the rows, reads the workspace's code classes (no code names in the app), and says who puts a rule in force", () => {
+    const editor = read("components/permissions/CapabilityPolicyEditor.tsx");
+    expect(editor).toContain('data-testid="code-class-rules"');
+    expect(editor).toContain('aria-label="Code class"');
+    expect(editor).toContain('reviewClassOptions(cfg, "codeClasses")');
+    expect(editor).toContain('const takesEffect = hasAnyRole(["Admin"]) ? "in force once saved" : "adds people only until an Admin confirms it";');
+    expect(editor).toContain("commit(out.version, out.policy?.caps);");
+  });
+});
+
+// ── DF-P19 second fix pass (review minor 4) ─────────────────────────────────
+describe("second fix pass (review minor 4) — the list, inbox and badge now read the review-model columns for every request", () => {
+  // Before DF-P19 those three mappers carried none of the review-model
+  // fields, so they decided every request by the legacy role gate. Now they
+  // spread reviewModelFieldsFromRow, so a review-model request with NO library
+  // and NO class can answer differently from before — the route's answer.
+  const REVIEW_KEYS = Object.keys(reviewModelFieldsFromRow({}));
+  const preDfP19 = (t: Ticket): Ticket => {
+    const copy = { ...t } as Record<string, unknown>;
+    for (const k of REVIEW_KEYS) delete copy[k];
+    return copy as unknown as Ticket;
+  };
+  const NO_DIM = { library_id: null, work_class: null, code_class: null };
+  const ROWS: Array<[string, Record<string, unknown>]> = [
+    ["declared like-in-kind (engineering_required false)", { ...NO_DIM, engineering_required: false, review_model_filed: true, like_in_kind_statement: "same as before", like_in_kind_declared_by: "req", like_in_kind_declared_at: NOW, requester_role: "Viewer" }],
+    ["filed under the review model with engineering_required true (today's role gate says exempt)", { ...NO_DIM, engineering_required: true, review_model_filed: true, requester_role: "Engineer-3" }],
+  ];
+  const ATTENTION_MAPPERS = {
+    "requests list": listFromRow,
+    "inbox": inboxRowToTicket,
+    "attention badge": badgeFromDbTicket,
+  };
+  for (const [label, over] of ROWS) {
+    it(`${label}: the list / inbox / badge engine answers and isActionRequired equal the route's — and the engine answers differ from the pre-DF-P19 mappers'`, () => {
+      const row = baseRow(over);
+      const route = routeRowToTicket(row);
+      let differs = 0;
+      for (const status of STATUSES) {
+        for (const role of ALL_ROLES) {
+          for (const uid of IDENTITIES) {
+            const at = (t: Ticket) => ({ ...t, status, assignedEngineerId: uid === "eng" ? "eng" : t.assignedEngineerId } as Ticket);
+            const acts = (t: Ticket) => actionSet(WorkflowEngine.getActions(at(t), role, uid, undefined, { userRoles: [role], activeMemberCount: 5, requesterRoles: [String(row.requester_role)] }));
+            const ctx = { uid, roles: [role], policy: null, activeMemberCount: 5, requesterRoles: new Map([["req", [String(row.requester_role)]]]) };
+            const want = acts(route);
+            const wantNeeds = isActionRequired(at(route), ctx);
+            for (const [name, m] of Object.entries(ATTENTION_MAPPERS)) {
+              expect(acts(m(row)), `${name} ${status}|${role}|${uid}`).toEqual(want);
+              expect(isActionRequired(at(m(row)), ctx), `${name} needs-me ${status}|${role}|${uid}`).toBe(wantNeeds);
+            }
+            if (JSON.stringify(acts(preDfP19(inboxRowToTicket(row)))) !== JSON.stringify(want)) differs++;
+          }
+        }
+      }
+      // what the list and inbox offer (approve vs override, the engineer
+      // hand-off) changed for these requests; the needs-me answer follows
+      // the route's wherever it differs
+      expect(differs).toBeGreaterThan(0);
+    });
+  }
 });

@@ -511,7 +511,7 @@ describe("GAP-101 / TIER-4 / GAP-105 — classes and the resource", () => {
   });
   it("the evaluator reads a code-class rule (TIER-4); DF-P19 lifts DF-P6's refusal of a NEW library / work-class / code-class rule on a request capability — the policy route confirms a new one (carryTicketRuleConfirmation) and a stored, unconfirmed one only adds; a work/code-class rule is refused on a capability the database evaluates", () => {
     const policy: CapabilityPolicy = { caps: { "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { codeClass: ["c1"] }, confirmedAt: NOW }, { tokens: ["Engineer"] }] } };
-    const carried = carryTicketRuleConfirmation({ "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { workClass: ["w"] } }, { tokens: ["Engineer"] }] }, {}, { at: NOW, by: "admin" });
+    const carried = carryTicketRuleConfirmation({ "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { workClass: ["w"] } }, { tokens: ["Engineer"] }] }, {}, { at: NOW, by: "admin" }, true);
     expect(carried.confirmed).toHaveLength(1);
     expect((carried.caps["ticket.direct_approve"] as Array<{ confirmedAt?: string }>)[0].confirmedAt).toBe(NOW);
     // fix pass 4: the rail every write runs (a grant, a revoke, the editor's save) never refuses them
@@ -519,7 +519,7 @@ describe("GAP-101 / TIER-4 / GAP-105 — classes and the resource", () => {
     expect(validateCapabilityPolicy({ caps: { "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { libraryId: ["L"] } }, { tokens: ["Engineer"] }] } })).toBeNull();
     // a request type / unit rule on a request capability is still accepted
     expect(validateCapabilityPolicy({ caps: { "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { requestType: ["ISO"] } }, { tokens: ["Engineer"] }] } })).toBeNull();
-    expect(carryTicketRuleConfirmation({ "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { requestType: ["ISO"] } }, { tokens: ["Engineer"] }] }, {}, { at: NOW, by: null }).confirmed).toEqual([]);
+    expect(carryTicketRuleConfirmation({ "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { requestType: ["ISO"] } }, { tokens: ["Engineer"] }] }, {}, { at: NOW, by: null }, true).confirmed).toEqual([]);
     // a library rule on a capability that is evaluated per library is untouched
     expect(validateCapabilityPolicy({ caps: { "transmittal.issue": [{ tokens: ["Admin", "DocCtrl"] }, { tokens: ["Admin", "DocCtrl"], when: { libraryId: ["ifc"] } }] } })).toBeNull();
     // the AUTHZ-6 wording names only the keys that bind today

@@ -59,7 +59,17 @@
 //     before (no confirmation stamp) only ADDS until an Admin confirms it:
 //     it is listed here with its state ("not yet in force where it narrows —
 //     confirm to apply"), and Confirm posts `confirm_rule` to the policy
-//     route (Admin only, audited). The grid does not author such a rule.
+//     route (Admin only, audited).
+//     DF-P19 second fix pass (review major 2 — TIER-4 done-when 1): CODE-CLASS
+//     RULES — for a request capability, a rule naming ONE of the workspace's
+//     code classes (org_configurations 'drafting' codeClasses), whose tokens
+//     REPLACE the row above for requests of that class — "final approval on
+//     a B31.3-class request only by Engineer-3". Authored here like a
+//     request-type override; the policy route stamps a new one confirmed when
+//     an Admin saves it, and stores a DocCtrl's unconfirmed (it only adds
+//     until an Admin confirms it in the list below). A library- or
+//     work-class-scoped rule is still listed, preserved and confirmed here,
+//     not authored (not a TIER-4 done-when).
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { SlidersHorizontal, Loader2, RotateCcw, Check, AlertTriangle, Plus, X } from "lucide-react";
@@ -70,10 +80,12 @@ import {
   CAPABILITY_DEFS, defaultCapabilityPolicy, loadCapabilityPolicyEntry, saveCapabilityPolicy,
   validateCapabilityPolicy, invalidateCapabilityPolicy, isRuleArray, ruleIsConditional, describeWhen,
   CapabilityPolicyChangeError, POLICY_CHANGED, PROJECT_SCOPED_CAPS, announceCapabilityPolicyChanged,
-  HOLD_OPENER_TOKEN, ticketDimensionRules, confirmCapabilityRule, capabilityRuleKey, GATE_EXEMPT_CAP,
+  HOLD_OPENER_TOKEN, ticketDimensionRules, confirmCapabilityRule, capabilityRuleKey, GATE_EXEMPT_CAP, isTicketResourceCap,
   type CapabilityId, type CapabilityEntry, type CapabilityRule, type CapabilityPolicy, type TicketDimensionRuleState,
 } from "@/lib/capabilityPolicy";
 import { loadRequestTypeOptions, type RequestTypeOption } from "@/lib/requestTypes";
+import { reviewClassOptions } from "@/lib/reviewModel";
+import type { OrgDraftingSettings } from "@/types/schema";
 import { DORMANT_ROLES, POLICY_TOKENS } from "@/lib/roleCapabilities";
 
 /** Every token the grid and the override rows can set — declared once, in
@@ -100,31 +112,42 @@ const tokenLabel = (t: string) => TOKEN_LABEL[t] ?? t;
 interface Override { type: string; tokens: string[] }
 /** QUAL-14: one editable project-scoped row: a rule naming exactly one project. */
 interface ProjectOverride { projectId: string; tokens: string[] }
+/** DF-P19 second fix pass (TIER-4 done-when 1): one editable code-class row —
+ *  a request-capability rule naming exactly one of the workspace's code
+ *  classes. */
+interface CodeClassOverride { codeClass: string; tokens: string[] }
 type Base = Record<CapabilityId, string[]>;
 type Overrides = Partial<Record<CapabilityId, Override[]>>;
 type ProjectOverrides = Partial<Record<CapabilityId, ProjectOverride[]>>;
+type CodeClassOverrides = Partial<Record<CapabilityId, CodeClassOverride[]>>;
 /** Conditional rules this editor cannot render (unit / library / discipline
  *  or multi-key clauses) — preserved verbatim so a save never drops them. */
 type Opaque = Partial<Record<CapabilityId, CapabilityRule[]>>;
 
 /** Which editor row a stored conditional rule is: a request-type row (the
  *  rule names request types only), a project row (project only, on a
- *  project-scoped capability), or a rule the editor preserves verbatim. */
-function editorRowKind(cap: CapabilityId, r: CapabilityRule): "type" | "project" | "opaque" {
+ *  project-scoped capability), a code-class row (exactly ONE code class and
+ *  nothing else, on a request capability — DF-P19 second fix pass; a rule
+ *  naming several classes stays preserved verbatim, so a save never splits
+ *  it into rules the server would see as new and unconfirmed), or a rule
+ *  the editor preserves verbatim. */
+function editorRowKind(cap: CapabilityId, r: CapabilityRule): "type" | "project" | "codeClass" | "opaque" {
   const keys = Object.keys(r.when ?? {}).filter((k) => ((r.when as Record<string, string[] | undefined>)[k]?.length ?? 0) > 0);
   if (keys.length === 1 && keys[0] === "requestType") return "type";
   if (keys.length === 1 && keys[0] === "projectId" && PROJECT_SCOPED_CAPS.has(cap)) return "project";
+  if (keys.length === 1 && keys[0] === "codeClass" && isTicketResourceCap(cap) && r.when?.codeClass?.length === 1) return "codeClass";
   return "opaque";
 }
 
 /** Split a stored policy into what the grid edits, what the override panels
  *  edit (request-type rows; QUAL-14: project rows on a project-scoped
  *  capability), and what must ride along untouched. */
-export function splitPolicyForEditor(stored: CapabilityPolicy): { base: Base; overrides: Overrides; opaque: Opaque; projectOverrides: ProjectOverrides } {
+export function splitPolicyForEditor(stored: CapabilityPolicy): { base: Base; overrides: Overrides; opaque: Opaque; projectOverrides: ProjectOverrides; codeClassOverrides: CodeClassOverrides } {
   const base = defaultCapabilityPolicy();
   const overrides: Overrides = {};
   const opaque: Opaque = {};
   const projectOverrides: ProjectOverrides = {};
+  const codeClassOverrides: CodeClassOverrides = {};
   for (const def of CAPABILITY_DEFS) {
     const entry = stored.caps?.[def.id];
     if (entry === undefined) continue;
@@ -142,12 +165,14 @@ export function splitPolicyForEditor(stored: CapabilityPolicy): { base: Base; ov
         for (const projectId of r.when?.projectId ?? []) {
           (projectOverrides[def.id] ??= []).push({ projectId, tokens: [...r.tokens] });
         }
+      } else if (kind === "codeClass") {
+        (codeClassOverrides[def.id] ??= []).push({ codeClass: r.when!.codeClass![0], tokens: [...r.tokens] });
       } else {
         (opaque[def.id] ??= []).push(r);
       }
     }
   }
-  return { base, overrides, opaque, projectOverrides };
+  return { base, overrides, opaque, projectOverrides, codeClassOverrides };
 }
 
 /** True when two token lists name the same tokens (order and repeats aside). */
@@ -180,12 +205,15 @@ function conditionalRulesInStoredOrder(
   rows: readonly Override[],
   projectRows: readonly ProjectOverride[],
   keep: readonly CapabilityRule[],
+  classRows: readonly CodeClassOverride[] = [],
 ): CapabilityRule[] {
   const typeRule = (o: Override): CapabilityRule => ({ tokens: o.tokens, when: { requestType: [o.type] } });
   const projectRule = (o: ProjectOverride): CapabilityRule => ({ tokens: o.tokens, when: { projectId: [o.projectId] } });
-  if (!isRuleArray(storedEntry)) return [...rows.map(typeRule), ...projectRows.map(projectRule), ...keep];
+  const classRule = (o: CodeClassOverride): CapabilityRule => ({ tokens: o.tokens, when: { codeClass: [o.codeClass] } });
+  if (!isRuleArray(storedEntry)) return [...rows.map(typeRule), ...projectRows.map(projectRule), ...classRows.map(classRule), ...keep];
   const rowsLeft = [...rows];
   const projectLeft = [...projectRows];
+  const classLeft = [...classRows];
   const keepLeft = [...keep];
   const take = <T,>(list: T[], pred: (x: T) => boolean): T | undefined => {
     const i = list.findIndex(pred);
@@ -205,19 +233,23 @@ function conditionalRulesInStoredOrder(
         const o = take(projectLeft, (x) => x.projectId === projectId);
         if (o) out.push(projectRule(o));
       }
+    } else if (kind === "codeClass") {
+      const o = take(classLeft, (x) => x.codeClass === r.when?.codeClass?.[0]);
+      if (o) out.push(classRule(o));
     } else {
       const key = capabilityRuleKey(r);
       const k = take(keepLeft, (x) => capabilityRuleKey(x) === key);
       if (k) out.push(k);
     }
   }
-  return [...out, ...rowsLeft.map(typeRule), ...projectLeft.map(projectRule), ...keepLeft];
+  return [...out, ...rowsLeft.map(typeRule), ...projectLeft.map(projectRule), ...classLeft.map(classRule), ...keepLeft];
 }
 
 /** Recombine for saving: a capability with no override keeps the bare-list
  *  shape (byte-compatible with what it stored before); one with overrides
  *  becomes a rule list — base first, then one rule per request-type row,
- *  then one rule per project row (QUAL-14), then any preserved rules.
+ *  then one rule per project row (QUAL-14), then one rule per code-class
+ *  row (DF-P19 second fix pass), then any preserved rules.
  *  DF-P19 fix pass (review minor 4): given the `stored` policy the grid was
  *  loaded from, the conditional rules keep the stored order instead
  *  (conditionalRulesInStoredOrder) — a save never changes which stored rule
@@ -225,20 +257,21 @@ function conditionalRulesInStoredOrder(
  *  HAND-2 (fix pass 3): a capability with no override whose row equals its
  *  shipped default is left out — absent IS the default, and writing it out
  *  froze that default in the workspace. */
-export function joinPolicyFromEditor(base: Base, overrides: Overrides, opaque: Opaque, projectOverrides: ProjectOverrides = {}, stored?: CapabilityPolicy | null): Partial<Record<CapabilityId, CapabilityEntry>> {
+export function joinPolicyFromEditor(base: Base, overrides: Overrides, opaque: Opaque, projectOverrides: ProjectOverrides = {}, stored?: CapabilityPolicy | null, codeClassOverrides: CodeClassOverrides = {}): Partial<Record<CapabilityId, CapabilityEntry>> {
   const caps: Partial<Record<CapabilityId, CapabilityEntry>> = {};
   for (const def of CAPABILITY_DEFS) {
     const rows = overrides[def.id] ?? [];
     const projectRows = projectOverrides[def.id] ?? [];
+    const classRows = codeClassOverrides[def.id] ?? [];
     const keep = opaque[def.id] ?? [];
-    if (rows.length === 0 && projectRows.length === 0 && keep.length === 0) {
+    if (rows.length === 0 && projectRows.length === 0 && classRows.length === 0 && keep.length === 0) {
       const tokens = base[def.id] ?? [];
       if (!sameTokens(tokens, def.defaultRoles)) caps[def.id] = tokens;
       continue;
     }
     caps[def.id] = [
       { tokens: base[def.id] ?? [] },
-      ...conditionalRulesInStoredOrder(def.id, stored?.caps?.[def.id], rows, projectRows, keep),
+      ...conditionalRulesInStoredOrder(def.id, stored?.caps?.[def.id], rows, projectRows, keep, classRows),
     ];
   }
   return caps;
@@ -254,6 +287,25 @@ export function ticketDimensionRuleStatus(r: Pick<TicketDimensionRuleState, "inF
   if (r.effect === "narrow") return "Not yet in force where it would take an action away — confirm to apply";
   return "In force (it only adds people) — not yet confirmed";
 }
+
+/** DF-P19 second fix pass (TIER-4 done-when 1): the workspace's code classes
+ *  (org_configurations 'drafting' codeClasses — DEC-35, no code names in the
+ *  application), for the code-class rows. A failed read is said, and a
+ *  stored rule's class is then shown by its value. */
+async function loadCodeClassOptions(orgId: string): Promise<{ options: Array<{ value: string; label: string }>; error: string | null }> {
+  try {
+    const { data, error } = await supabase.from("org_configurations").select("data").eq("org_id", orgId).eq("key", "drafting").maybeSingle();
+    if (error) return { options: [], error: error.message };
+    const cfg = ((data as { data?: unknown } | null)?.data ?? null) as Partial<OrgDraftingSettings> | null;
+    return { options: reviewClassOptions(cfg, "codeClasses").map((o) => ({ value: o.value, label: o.label })), error: null };
+  } catch (e) {
+    return { options: [], error: (e as Error)?.message ?? "the read failed" };
+  }
+}
+
+/** DF-P19 second fix pass: the request capabilities a code-class row can be
+ *  written on (the evaluator reads `when.codeClass` on `ticket.*` only). */
+export const CODE_CLASS_RULE_CAPS: readonly CapabilityId[] = CAPABILITY_DEFS.filter((d) => isTicketResourceCap(d.id)).map((d) => d.id);
 
 export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }) {
   const { activeOrgId, uid, userEmail, hasAnyRole } = useRole();
@@ -271,6 +323,13 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
   const [projectsErr, setProjectsErr] = useState<string | null>(null);
   const [newProjectCap, setNewProjectCap] = useState<CapabilityId>("quality.sign_off");
   const [newProject, setNewProject] = useState("");
+  // DF-P19 second fix pass (TIER-4 done-when 1): code-class rows.
+  const [codeClassOverrides, setCodeClassOverrides] = useState<CodeClassOverrides>({});
+  const [baselineCodeClassOverrides, setBaselineCodeClassOverrides] = useState<CodeClassOverrides>({});
+  const [codeClasses, setCodeClasses] = useState<Array<{ value: string; label: string }>>([]);
+  const [codeClassesErr, setCodeClassesErr] = useState<string | null>(null);
+  const [newClassCap, setNewClassCap] = useState<CapabilityId>("ticket.final_approve");
+  const [newClass, setNewClass] = useState("");
   // ALOG-12: the version the grid was loaded at, and the grid it started from.
   const [version, setVersion] = useState<string | null>(null);
   const [baselineCaps, setBaselineCaps] = useState<string>("");
@@ -300,19 +359,24 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
     setBaselineOverrides(split.overrides);
     setProjectOverrides(split.projectOverrides);
     setBaselineProjectOverrides(split.projectOverrides);
+    setCodeClassOverrides(split.codeClassOverrides);
+    setBaselineCodeClassOverrides(split.codeClassOverrides);
     setOpaque(split.opaque);
     setVersion(at);
-    setBaselineCaps(JSON.stringify(joinPolicyFromEditor(split.base, split.overrides, split.opaque, split.projectOverrides, stored)));
+    setBaselineCaps(JSON.stringify(joinPolicyFromEditor(split.base, split.overrides, split.opaque, split.projectOverrides, stored, split.codeClassOverrides)));
     setDirty(false);
   }, []);
   const load = useCallback(async () => {
     if (!activeOrgId) return;
-    const [entry, types, proj] = await Promise.all([
+    const [entry, types, proj, classes] = await Promise.all([
       readFresh(),
       loadRequestTypeOptions(activeOrgId),
       supabase.from("projects").select("id, name").eq("org_id", activeOrgId).order("name"),
+      loadCodeClassOptions(activeOrgId),
     ]);
     setRequestTypes(types);
+    setCodeClasses(classes.options);
+    setCodeClassesErr(classes.error);
     setProjectsErr(proj.error ? proj.error.message : null);
     setProjects((((proj.data ?? []) as Array<Record<string, unknown>>)).map((r) => ({ id: String(r.id), name: String(r.name ?? r.id) })));
     if (!entry) return;
@@ -331,6 +395,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
   const projectLabel = (id: string) => projects.find((p) => p.id === id)?.name
     ?? `project ${id.slice(0, 8)}… (${projectsErr ? "projects could not be listed" : "not visible to you"})`;
   const capLabel = (c: CapabilityId) => CAPABILITY_DEFS.find((d) => d.id === c)?.label ?? c;
+  const classLabel = (v: string) => codeClasses.find((c) => c.value === v)?.label ?? v;
 
   const toggle = (cap: CapabilityId, token: string) => {
     if (!canEdit || !policy) return;
@@ -408,9 +473,42 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
     setMsg(null);
   };
 
+  // DF-P19 second fix pass (TIER-4 done-when 1): code-class rows — a request
+  // capability decided for requests of one code class.
+  const addClassOverride = () => {
+    if (!canEdit || !newClass || !policy) return;
+    if ((codeClassOverrides[newClassCap] ?? []).some((r) => r.codeClass === newClass)) {
+      setMsg({ tone: "err", text: `${capLabel(newClassCap)} already has a rule for ${classLabel(newClass)} — edit that row.` });
+      return;
+    }
+    const def = CAPABILITY_DEFS.find((d) => d.id === newClassCap);
+    // Start a critical capability's row from Admin so the rail holds.
+    setCodeClassOverrides((o) => ({ ...o, [newClassCap]: [...(o[newClassCap] ?? []), { codeClass: newClass, tokens: def?.critical ? ["Admin"] : [] }] }));
+    setDirty(true);
+    setMsg(null);
+  };
+  const toggleClassOverride = (cap: CapabilityId, idx: number, token: string) => {
+    if (!canEdit) return;
+    setCodeClassOverrides((o) => {
+      const rows = [...(o[cap] ?? [])];
+      const row = rows[idx];
+      if (!row) return o;
+      rows[idx] = { ...row, tokens: row.tokens.includes(token) ? row.tokens.filter((t) => t !== token) : [...row.tokens, token] };
+      return { ...o, [cap]: rows };
+    });
+    setDirty(true);
+    setMsg(null);
+  };
+  const removeClassOverride = (cap: CapabilityId, idx: number) => {
+    if (!canEdit) return;
+    setCodeClassOverrides((o) => ({ ...o, [cap]: (o[cap] ?? []).filter((_, i) => i !== idx) }));
+    setDirty(true);
+    setMsg(null);
+  };
+
   const save = async () => {
     if (!activeOrgId || !uid || !policy) return;
-    const caps = joinPolicyFromEditor(policy, overrides, opaque, projectOverrides, storedPolicy);
+    const caps = joinPolicyFromEditor(policy, overrides, opaque, projectOverrides, storedPolicy, codeClassOverrides);
     const err = validateCapabilityPolicy({ caps });
     if (err) { setMsg({ tone: "err", text: err }); return; }
     // IMPACT PREVIEW — spell out exactly what changes before it takes effect.
@@ -443,6 +541,20 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
       for (const w of wasProj) {
         if (!nowProj.some((r) => r.projectId === w.projectId)) changes.push(`${d.label} on ${projectLabel(w.projectId)}: project rule removed — the row above applies again`);
       }
+      // DF-P19 second fix pass: a new or edited code-class rule is in force at
+      // once only when an Admin saves it; anyone else's only adds people until
+      // an Admin confirms it (the policy route decides — review minor 3).
+      const wasCls = baselineCodeClassOverrides[d.id] ?? [];
+      const nowCls = codeClassOverrides[d.id] ?? [];
+      const takesEffect = hasAnyRole(["Admin"]) ? "in force once saved" : "adds people only until an Admin confirms it";
+      for (const r of nowCls) {
+        const prev = wasCls.find((w) => w.codeClass === r.codeClass);
+        if (!prev) changes.push(`${d.label} for code class ${classLabel(r.codeClass)}: ONLY ${r.tokens.join(", ") || "nobody"} (new code-class rule — ${takesEffect})`);
+        else if (!sameTokens(prev.tokens, r.tokens)) changes.push(`${d.label} for code class ${classLabel(r.codeClass)}: ONLY ${r.tokens.join(", ") || "nobody"} (was ${prev.tokens.join(", ") || "nobody"} — ${takesEffect})`);
+      }
+      for (const w of wasCls) {
+        if (!nowCls.some((r) => r.codeClass === w.codeClass)) changes.push(`${d.label} for code class ${classLabel(w.codeClass)}: code-class rule removed — the row above applies again`);
+      }
     }
     if (changes.length > 0) {
       const ok = await appConfirm({
@@ -451,14 +563,17 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
       if (!ok) return;
     }
     setSaving(true);
-    const commit = (written: string | null) => {
+    const commit = (written: string | null, storedCaps?: CapabilityPolicy["caps"]) => {
       setBaseline(policy);
       setBaselineOverrides(overrides);
       setBaselineProjectOverrides(projectOverrides);
+      setBaselineCodeClassOverrides(codeClassOverrides);
       setVersion(written);
       setBaselineCaps(JSON.stringify(caps));
       // DF-P19 fix pass: the order the next save keeps is the one just stored.
-      setStoredPolicy((p) => ({ ...(p ?? {}), caps }));
+      // Second fix pass: the caps the server stored (with the confirmation
+      // stamps it decided), so the rule list below says what is in force.
+      setStoredPolicy((p) => ({ ...(p ?? {}), caps: storedCaps ?? caps }));
       setDirty(false);
       setMsg({ tone: "ok", text: "Saved — validated and audited on the server; enforced on the next action." });
       // ALOG-14 (fix pass 2): the other panels on this page re-read.
@@ -471,7 +586,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
       // it carries the version the grid was loaded at.
       const out = await saveCapabilityPolicy({ orgId: activeOrgId, policy: { caps }, actorUserId: uid, actorEmail: userEmail, version });
       invalidateCapabilityPolicy(activeOrgId);
-      commit(out.version);
+      commit(out.version, out.policy?.caps);
     } catch (e) {
       if (!(e instanceof CapabilityPolicyChangeError) || e.code !== POLICY_CHANGED) {
         setMsg({ tone: "err", text: (e as Error).message });
@@ -484,14 +599,14 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
         return;
       }
       const s2 = splitPolicyForEditor(fresh.policy);
-      const storedCaps = JSON.stringify(joinPolicyFromEditor(s2.base, s2.overrides, s2.opaque, s2.projectOverrides, fresh.policy));
+      const storedCaps = JSON.stringify(joinPolicyFromEditor(s2.base, s2.overrides, s2.opaque, s2.projectOverrides, fresh.policy, s2.codeClassOverrides));
       if (storedCaps === baselineCaps) {
         // Only grants moved (a delegation, an expiry pruned): the grid this
         // edit started from is still the stored one — save it on the new version.
         try {
           const out = await saveCapabilityPolicy({ orgId: activeOrgId, policy: { caps }, actorUserId: uid, actorEmail: userEmail, version: fresh.version });
           invalidateCapabilityPolicy(activeOrgId);
-          commit(out.version);
+          commit(out.version, out.policy?.caps);
         } catch (e2) {
           setMsg({ tone: "err", text: (e2 as Error).message });
         }
@@ -529,6 +644,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
     setPolicy(defaultCapabilityPolicy());
     setOverrides({});
     setProjectOverrides({});
+    setCodeClassOverrides({});
     setOpaque({});
     setDirty(true);
     setMsg(null);
@@ -552,6 +668,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
 
   const overrideRows = CAPABILITY_DEFS.flatMap((d) => (overrides[d.id] ?? []).map((row, idx) => ({ def: d, row, idx })));
   const projectRows = CAPABILITY_DEFS.flatMap((d) => (projectOverrides[d.id] ?? []).map((row, idx) => ({ def: d, row, idx })));
+  const classRows = CAPABILITY_DEFS.flatMap((d) => (codeClassOverrides[d.id] ?? []).map((row, idx) => ({ def: d, row, idx })));
   const projectScopedDefs = CAPABILITY_DEFS.filter((d) => PROJECT_SCOPED_CAPS.has(d.id));
   const opaqueCount = Object.values(opaque).reduce((n, rs) => n + (rs?.length ?? 0), 0);
   const dimensionRules = ticketDimensionRules(storedPolicy);
@@ -604,6 +721,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
                       {d.critical && <span className="ml-1.5 text-[9px] font-black text-amber-600 dark:text-amber-400 cursor-help" title="Critical: Admin cannot be removed">CRITICAL</span>}
                       {d.dormant && <span className="ml-1.5 text-[9px] font-black text-[var(--color-text-faint)] cursor-help" title={d.dormantNote}>DORMANT</span>}
                       {(overrides[d.id]?.length ?? 0) > 0 && <span className="ml-1.5 text-[9px] font-black text-sky-700 dark:text-sky-300 cursor-help" title="Request-type overrides below replace this row for tickets of those types">{overrides[d.id]?.length} OVERRIDE{(overrides[d.id]?.length ?? 0) > 1 ? "S" : ""}</span>}
+                      {(codeClassOverrides[d.id]?.length ?? 0) > 0 && <span className="ml-1.5 text-[9px] font-black text-teal-700 dark:text-teal-300 cursor-help" title="Code-class rules below replace this row for requests of those code classes">{codeClassOverrides[d.id]?.length} CODE-CLASS RULE{(codeClassOverrides[d.id]?.length ?? 0) > 1 ? "S" : ""}</span>}
                       {(projectOverrides[d.id]?.length ?? 0) > 0 && <span className="ml-1.5 text-[9px] font-black text-violet-700 dark:text-violet-300 cursor-help" title="Project rules below replace this row on those projects">{projectOverrides[d.id]?.length} PROJECT RULE{(projectOverrides[d.id]?.length ?? 0) > 1 ? "S" : ""}</span>}
                       <div className="text-[10px] text-[var(--color-text-faint)]">{d.description}</div>
                       {/* drafting-flow HAND-2 (DF-P11 fix pass 2): the opener of
@@ -734,6 +852,63 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
         ) : (
           <div className="mt-2 text-[11px] italic text-[var(--color-text-faint)]">No request-type overrides — every capability uses its row above for every ticket.</div>
         )}
+        {/* DF-P19 second fix pass (TIER-4 done-when 1) — code-class rules */}
+        <div className="mt-3 pt-3 border-t border-[var(--color-border)]" data-testid="code-class-rules">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-black text-[var(--color-text)]">Code-class rules</span>
+            <span className="text-[10px] text-[var(--color-text-faint)]">for requests of one code class (set at triage), the rule&apos;s list REPLACES the row above &mdash; &ldquo;final approval on this code&apos;s requests only by Engineer-3&rdquo;. Enforced in the workflow route, the request page, the requests list, the inbox and the badge. An Admin&apos;s save puts a new rule in force; anyone else&apos;s only adds people until an Admin confirms it (listed below).</span>
+          </div>
+          {canEdit && (
+            <div className="mt-2 flex items-center gap-2 flex-wrap">
+              <select aria-label="Code-class rule capability" value={newClassCap} onChange={(e) => setNewClassCap(e.target.value as CapabilityId)} className="h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[11px]">
+                {CAPABILITY_DEFS.filter((d) => CODE_CLASS_RULE_CAPS.includes(d.id)).map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
+              </select>
+              <select aria-label="Code class" value={newClass} onChange={(e) => setNewClass(e.target.value)} className="h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[11px] min-w-[160px]">
+                <option value="">Code class…</option>
+                {codeClasses.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+              </select>
+              <button onClick={addClassOverride} disabled={!newClass} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40">
+                <Plus className="w-3 h-3" /> Add code-class rule
+              </button>
+              {codeClasses.length === 0 && !codeClassesErr && <span className="text-[10px] text-[var(--color-text-faint)]">No code classes are configured (Admin → Request forms) — these rules key off that list.</span>}
+            </div>
+          )}
+          {codeClassesErr && <div role="alert" className="mt-1 text-[10px] font-bold text-rose-700 dark:text-rose-300">The code classes could not be read ({codeClassesErr}) — a rule&apos;s class below is shown by its stored value.</div>}
+          {classRows.length > 0 ? (
+            <ul className="mt-2 space-y-1">
+              {classRows.map(({ def, row, idx }) => (
+                <li key={`${def.id}:${row.codeClass}`} data-code-class-rule={row.codeClass} className="rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-[11px] flex items-center gap-2 flex-wrap">
+                  <span className="font-bold text-[var(--color-text)]">{def.label}</span>
+                  <span className="text-[var(--color-text-faint)]">for code class</span>
+                  <span className="font-bold text-teal-700 dark:text-teal-300">{classLabel(row.codeClass)}</span>
+                  <span className="text-[var(--color-text-faint)]">→ only</span>
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {TOKENS.map((t) => {
+                      const on = row.tokens.includes(t);
+                      const locked = !canEdit || (def.critical && t === "Admin" && on);
+                      return (
+                        <button key={t} onClick={() => !locked && toggleClassOverride(def.id, idx, t)} disabled={locked}
+                          title={locked && on ? "Admin is locked on critical capabilities" : undefined}
+                          className={`px-1.5 py-0.5 rounded border text-[10px] ${on ? "bg-emerald-500 border-emerald-500 text-white" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"} ${locked ? "opacity-70 cursor-not-allowed" : ""}`}>
+                          {TOKEN_LABEL[t] ?? t}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {row.tokens.length === 0 && <span className="text-[10px] font-bold text-rose-700 dark:text-rose-300">nobody by role — only personal grants and identity rights apply</span>}
+                  {tokensOutsideGrid(row.tokens).length > 0 && <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300">also stored: {tokensOutsideGrid(row.tokens).join(", ")} — still live</span>}
+                  {canEdit && (
+                    <button onClick={() => removeClassOverride(def.id, idx)} className="ml-auto text-[var(--color-text-faint)] hover:text-rose-600" title="Remove this code-class rule (the row above applies again)">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="mt-2 text-[11px] italic text-[var(--color-text-faint)]">No code-class rules — every request capability uses its row above whatever the request&apos;s code class.</div>
+          )}
+        </div>
         {/* QUAL-14 — project-scoped rules */}
         {projectScopedDefs.length > 0 && (
           <div className="mt-3 pt-3 border-t border-[var(--color-border)]">
@@ -803,8 +978,8 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
         )}
         {dimensionRules.length > 0 && (
           <div data-testid="ticket-dimension-rules" className="mt-2 rounded-lg border border-[var(--color-border)] px-2.5 py-2">
-            <div className="text-xs font-black text-[var(--color-text)]">Request rules scoped to a library or a work / code class</div>
-            <div className="text-[10px] text-[var(--color-text-faint)]">Requests present their library and classes to these rules. A rule stored before they did only adds people until an Admin confirms it: where it would take an action away from someone, that person keeps it until then. On &ldquo;Approve own request without an engineer&rdquo; it does nothing at all until confirmed (adding a role there removes an engineer review).</div>
+            <div className="text-xs font-black text-[var(--color-text)]">Request rules scoped to a library or a work / code class — state</div>
+            <div className="text-[10px] text-[var(--color-text-faint)]">Requests present their library and classes to these rules. A rule no Admin has saved or confirmed (one stored before requests presented them, or added by a non-Admin) only adds people until an Admin confirms it: where it would take an action away from someone, that person keeps it until then. On &ldquo;Approve own request without an engineer&rdquo; it does nothing at all until confirmed (adding a role there removes an engineer review).</div>
             <ul className="mt-1 space-y-1">
               {dimensionRules.map((r) => (
                 <li key={`${r.cap}:${r.key}`} data-dimension-rule={r.inForce ? "in-force" : r.effect} className="text-[11px] flex items-center gap-2 flex-wrap">
