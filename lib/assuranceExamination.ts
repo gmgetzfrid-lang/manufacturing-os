@@ -319,3 +319,50 @@ export function holdExaminationOf(examination: unknown, ticketId: string): (Exam
   if (!rec) return null;
   return { ...rec, slotKind: typeof e.slotKind === "string" ? e.slotKind : null, rosterId: typeof e.rosterId === "string" ? e.rosterId : null };
 }
+
+/** Who filled one slot of one review round: the roster on record's slots, or
+ *  the roster ledger's rows (ticket_review_slots — roster_id, slot_kind,
+ *  mode, primaries, alternates) for an earlier round. */
+export interface SlotOccupancy {
+  rosterId: string;
+  kind: string;
+  mode: string;
+  primaries: readonly string[];
+  alternates: readonly string[];
+  /** The slot's label as that round named it (shown instead of the
+   *  record's own claim). */
+  label?: string | null;
+}
+
+/** The occupancy of the roster on record (empty without one). Pure. */
+export function rosterOccupancy(roster: Pick<TicketReviewRoster, "id" | "slots"> | null | undefined): SlotOccupancy[] {
+  if (!roster || !Array.isArray(roster.slots)) return [];
+  return roster.slots.map((s) => ({ rosterId: roster.id, kind: s.kind, mode: s.mode, primaries: s.primaries ?? [], alternates: s.alternates ?? [], label: s.label ?? null }));
+}
+
+/**
+ * DF-P25 review fix: may a hold's record be shown as a stop by the slot it
+ * names? The record names its round (`rosterId`) and slot (`slotKind`), but
+ * those — and the hold's opener — are what the client wrote, so the record
+ * is shown as that slot's stop only when the hold's opener (`opened_by`,
+ * which 20261267 ties to the session for a record) is a primary or an
+ * alternate of that notify-only slot in that round:
+ *   "slot"     — yes;
+ *   "not_slot" — the round is known and the opener is not one of that
+ *                notify-only slot's people (or the record names no round or
+ *                slot);
+ *   "unknown"  — the round is neither the roster on record nor in the
+ *                ledger rows given (the ledger could not be read): it is
+ *                not shown as anyone's stop either. Pure.
+ */
+export function holdOpenerInSlot(
+  openedBy: string | null | undefined,
+  rec: { rosterId: string | null; slotKind: string | null },
+  occupancy: readonly SlotOccupancy[],
+): "slot" | "not_slot" | "unknown" {
+  if (!openedBy || !rec.rosterId || !rec.slotKind) return "not_slot";
+  const round = occupancy.filter((o) => o.rosterId === rec.rosterId);
+  if (round.length === 0) return "unknown";
+  const s = round.find((o) => o.kind === rec.slotKind && o.mode === "notify_only");
+  return s && (s.primaries.includes(openedBy) || s.alternates.includes(openedBy)) ? "slot" : "not_slot";
+}

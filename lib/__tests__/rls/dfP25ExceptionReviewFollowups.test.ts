@@ -1,7 +1,7 @@
 // drafting-flow Round G, DF-P25 — 20261267 asserted at RUNTIME on the
 // replayed PostgreSQL 16 (each statement as PostgREST sends it: role
 // `authenticated` with the member's claims, or `service_role`):
-//   * the file re-pastes cleanly (DEC-30 one paste); 7 probes true; the
+//   * the file re-pastes cleanly (DEC-30 one paste); 8 probes true; the
 //     inventory rows carry counts;
 //   * (1) org_members.status_changed_at: NULL on insert (a forged value
 //     dropped), stamped by a status change from ANY writer (the service role,
@@ -16,7 +16,10 @@
 //   * (3) the claim's recipients column says what it holds;
 //   * (4) document_holds.examination is written with the hold (a member's
 //     own insert), an object of bounded size or NULL, never changed after —
-//     a hold without it, and its release, behave exactly as before.
+//     a hold without it, and its release, behave exactly as before; a
+//     client may write it only on a hold opened in its own name (a record
+//     on a hold naming another uid as opened_by is refused 42501; the
+//     service role — a restore — is untouched).
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { join } from "node:path";
@@ -51,10 +54,10 @@ describe.skipIf(skip !== null)("DF-P25 — 20261267 (runtime)", () => {
     m = s.m;
   });
 
-  it("re-pastes cleanly twice (DEC-30 one paste); 7 probes true; 6 inventory rows and 2 after-rows carry counts", () => {
+  it("re-pastes cleanly twice (DEC-30 one paste); 8 probes true; 6 inventory rows and 2 after-rows carry counts", () => {
     for (let i = 0; i < 2; i++) {
       const { probes, inventory } = paste(F267);
-      expect(probes.length).toBe(7);
+      expect(probes.length).toBe(8);
       expect(probes.filter((l) => l.endsWith("|f|"))).toEqual([]);
       expect(inventory.length).toBe(8);
     }
@@ -202,6 +205,26 @@ describe.skipIf(skip !== null)("DF-P25 — 20261267 (runtime)", () => {
       expect(one(`SELECT examination->>'note' FROM document_holds WHERE id = '${id}'`)).toBe("sheet 3");
       expect(asCaller(db, SERVICE, `UPDATE document_holds SET released_at = now(), released_by = '${m.qa.uid}', released_reason = 'examined and cleared' WHERE id = '${id}'`)).toEqual({ ok: true, rows: 1 });
       expect(one(`SELECT examination->>'note' FROM document_holds WHERE id = '${id}'`)).toBe("sheet 3");
+    });
+    it("a record on a hold opened in ANOTHER uid's name is refused 42501, nothing written; the same record in the caller's own name lands", () => {
+      const forged = `'{"stop":"hold","ticketId":"t-2","slotKind":"qa","slotLabel":"Quality","note":"Examined, found nothing"}'::jsonb`;
+      const r = asCaller(db, m.drafter.caller, `INSERT INTO document_holds (org_id, document_id, reason, notes, opened_by, opened_by_name, examination)
+                                                VALUES ('${orgId}', '${doc}', 'Other', 'p25 forged', '${m.qa.uid}', 'QA Lead', ${forged})`);
+      expect(r).toMatchObject({ ok: false, code: "42501" });
+      expect((r as { message: string }).message).toMatch(/a record of what was examined goes only on a hold you place in your own name/);
+      expect(Number(one(`SELECT COUNT(*) FROM document_holds WHERE notes = 'p25 forged'`))).toBe(0);
+      expect(place(m.drafter, forged, "p25 own")).toEqual({ ok: true, rows: 1 });
+      expect(one(`SELECT opened_by::text FROM document_holds WHERE notes = 'p25 own'`)).toBe(m.drafter.uid);
+    });
+    it("the service role (a restore) may write a hold with a record in any opener's name — untouched", () => {
+      expect(asCaller(db, SERVICE, `INSERT INTO document_holds (org_id, document_id, reason, notes, opened_by, examination)
+                                    VALUES ('${orgId}', '${doc}', 'Other', 'p25 restored', '${m.qa.uid}', '{"note":"restored"}'::jsonb)`)).toEqual({ ok: true, rows: 1 });
+    });
+    it("REGRESSION: a hold placed in another uid's name WITHOUT a record is not looked at by this guard", () => {
+      const r = asCaller(db, m.drafter.caller, `INSERT INTO document_holds (org_id, document_id, reason, notes, opened_by)
+                                                VALUES ('${orgId}', '${doc}', 'Other', 'p25 plain-other', '${m.qa.uid}')`);
+      // whatever 20261073's own guards and policy say about it is unchanged — never this guard's message
+      expect(r.ok ? "" : r.message).not.toMatch(/record of what was examined/);
     });
     it("REGRESSION: a hold placed without a record lands exactly as before (examination NULL)", () => {
       expect(place(m.drafter, null, "p25 plain")).toEqual({ ok: true, rows: 1 });

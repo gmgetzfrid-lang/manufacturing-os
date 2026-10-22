@@ -1238,9 +1238,12 @@ export function assembleOrgGraph(rows: GraphRows, opts: AssembleOptions = {}): O
   }
   // drafting-flow PROJ-7 edge limb (DF-P25): a request that names a readable
   // source document is the same project-class node (once, whichever list
-  // names it first).
+  // names it first) — drawn only when that document is on the map (a capped
+  // or narrowed read that left it off counts the edge as leading off the
+  // map, by addEdge, and never leaves the request as an unlinked node).
+  const docsOnMap = new Set(rows.documents.map((d) => String(d.id)));
   for (const t of rows.documentRequests ?? []) {
-    if (nodes.has(`req:${t.id}`)) continue;
+    if (nodes.has(`req:${t.id}`) || !docsOnMap.has(String(t.document_id))) continue;
     put({
       id: `req:${t.id}`, type: "project", label: [t.ticket_id, t.title].filter(Boolean).join(" · ") || "Drafting request",
       sub: `Drafting request${t.status ? ` · ${ticketStatusLabel(t.status)}` : ""}`, href: `/requests/${t.id}`, degree: 0,

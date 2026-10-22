@@ -16,6 +16,13 @@
 //     request names a source document, "Stop it with a hold" — the files
 //     they examined (every file under review by default), a note of what
 //     they found (required — a stop says why) and the hold's reason.
+// A record is shown as a slot's stop ONLY when the hold's opener (opened_by —
+// tied to the session for a record by 20261267's opener check) is one of
+// that notify-only slot's people in the round the record names (the roster
+// on record, or the roster ledger ticket_review_slots for an earlier round —
+// lib/assuranceExamination.ts holdOpenerInSlot). Any other record is counted,
+// never shown as anyone's stop. The holds are read filtered to this request
+// in the query (examination->>ticketId), and a full page says more exist.
 // It renders NOTHING and reads NOTHING on a request whose roster has no such
 // slot (every request today) — the roster panel is exactly as before. It
 // adds no sign-off and no wait; nothing about the review's sign-offs, vetoes
@@ -28,7 +35,7 @@ import { currentRoster } from "@/lib/workflow";
 import { parseSourceDocument } from "@/lib/sourceDocRef";
 import {
   rosterOnRecord, isNotifyExaminationSlot, holdExaminationRecord, holdExaminationOf, examinationFileKey, examinedFilesText, shortHash,
-  EXAMINATION_NOTE_MAX,
+  EXAMINATION_NOTE_MAX, rosterOccupancy, holdOpenerInSlot, type SlotOccupancy,
 } from "@/lib/assuranceExamination";
 import { openHold, isMissingHoldExaminationColumn, HOLD_REASON_CODES, OTHER_HOLD_REASON } from "@/lib/holds";
 import type { Ticket } from "@/types/schema";
@@ -44,6 +51,16 @@ export interface NotifyHoldExaminationProps {
  *  stored (the database has no column for it yet — before 20261267). */
 export const HOLD_RECORD_NOT_STORED =
   "The hold is placed. What you examined could not be stored with it yet (the database update 20261267 is not applied) — add it to the hold's description if it matters.";
+/** How many holds the panel reads for one request (a fuller page says more exist). */
+export const NOTIFY_HOLD_READ_LIMIT = 50;
+/** What the panel says when the read filled its page. */
+export const NOTIFY_HOLDS_MORE =
+  `Only the ${NOTIFY_HOLD_READ_LIMIT} newest holds placed from this request are shown — more exist on the source document.`;
+/** What the panel says of records it will not show as a slot's stop. */
+export const notSlotHoldsText = (n: number): string =>
+  `${n} hold${n === 1 ? "" : "s"} on the source document name${n === 1 ? "s" : ""} this request but ${n === 1 ? "was" : "were"} not placed by the people of the slot named — not shown as their stop.`;
+export const uncheckedHoldsText = (n: number): string =>
+  `${n} hold${n === 1 ? "" : "s"} from an earlier review round could not be checked against that round's slot (its roster record could not be read) — not shown.`;
 /** What the panel says to an occupant when the request names no document. */
 export const NO_SOURCE_TO_HOLD =
   "This request names no controlled document, so there is nothing to hold. To stop it, raise it with the assignment queue.";
@@ -62,6 +79,7 @@ interface HoldRow {
 export default function NotifyHoldExamination({ ticket, orgId, uid, userName }: NotifyHoldExaminationProps) {
   const ticketId = ticket.id ?? "";
   const recordRoster = useMemo(() => rosterOnRecord(ticket), [ticket]);
+  const recordRosterId = recordRoster?.id ?? null;
   const openRoster = useMemo(() => currentRoster(ticket), [ticket]);
   const slots = useMemo(() => (recordRoster ? recordRoster.slots.filter((s) => isNotifyExaminationSlot(s, ticket)) : []), [recordRoster, ticket]);
   const active = slots.length > 0;
@@ -72,6 +90,8 @@ export default function NotifyHoldExamination({ ticket, orgId, uid, userName }: 
     : undefined), [openRoster, uid, ticket]);
 
   const [holds, setHolds] = useState<HoldRow[] | "unreadable" | "not_migrated" | null>(null);
+  const [more, setMore] = useState(false);
+  const [ledger, setLedger] = useState<SlotOccupancy[]>([]);
   const [reloadKey, setReloadKey] = useState(0);
   const [pick, setPick] = useState<string[] | null>(null);
   const [note, setNote] = useState("");
@@ -84,16 +104,36 @@ export default function NotifyHoldExamination({ ticket, orgId, uid, userName }: 
     if (!active || !sourceId || !orgId || !ticketId) { setHolds(null); return; }
     let alive = true;
     void (async () => {
+      // Filtered to THIS request in the query, so other requests' holds on
+      // the same document never crowd it out of the page.
       const { data, error } = await supabase.from("document_holds")
         .select("id, reason, notes, opened_by, opened_by_name, opened_at, released_at, examination")
-        .eq("org_id", orgId).eq("document_id", sourceId).not("examination", "is", null)
-        .order("opened_at", { ascending: false }).limit(50);
+        .eq("org_id", orgId).eq("document_id", sourceId).eq("examination->>ticketId", ticketId)
+        .order("opened_at", { ascending: false }).limit(NOTIFY_HOLD_READ_LIMIT + 1);
       if (!alive) return;
-      if (error) { setHolds(isMissingHoldExaminationColumn(error) ? "not_migrated" : "unreadable"); return; }
-      setHolds(((data ?? []) as HoldRow[]).filter((h) => holdExaminationOf(h.examination, ticketId) !== null));
+      if (error) { setHolds(isMissingHoldExaminationColumn(error) ? "not_migrated" : "unreadable"); setMore(false); setLedger([]); return; }
+      const all = (data ?? []) as HoldRow[];
+      const rows = all.slice(0, NOTIFY_HOLD_READ_LIMIT).filter((h) => holdExaminationOf(h.examination, ticketId) !== null);
+      // An earlier round's slots come from the roster ledger (read as the
+      // viewer). Unreadable → those records stay unchecked, never shown.
+      const earlier = [...new Set(rows.map((h) => holdExaminationOf(h.examination, ticketId)?.rosterId).filter((x): x is string => !!x && x !== recordRosterId))];
+      let occ: SlotOccupancy[] = [];
+      if (earlier.length > 0) {
+        const { data: slotRows, error: slotErr } = await supabase.from("ticket_review_slots")
+          .select("roster_id, slot_kind, label, mode, primaries, alternates")
+          .eq("org_id", orgId).eq("ticket_id", ticketId).in("roster_id", earlier);
+        if (!alive) return;
+        if (!slotErr) {
+          occ = ((slotRows ?? []) as Array<{ roster_id: string; slot_kind: string; label: string | null; mode: string; primaries: string[] | null; alternates: string[] | null }>)
+            .map((r) => ({ rosterId: r.roster_id, kind: r.slot_kind, mode: r.mode, primaries: r.primaries ?? [], alternates: r.alternates ?? [], label: r.label }));
+        }
+      }
+      setLedger(occ);
+      setMore(all.length > NOTIFY_HOLD_READ_LIMIT);
+      setHolds(rows);
     })();
     return () => { alive = false; };
-  }, [active, sourceId, orgId, ticketId, reloadKey]);
+  }, [active, sourceId, orgId, ticketId, reloadKey, recordRosterId]);
 
   const files = openRoster?.files ?? [];
   const allKeys = files.map(examinationFileKey);
@@ -128,7 +168,16 @@ export default function NotifyHoldExamination({ ticket, orgId, uid, userName }: 
 
   if (!active) return null;
 
-  const placed = Array.isArray(holds) ? holds : [];
+  const occupancy = [...rosterOccupancy(recordRoster), ...ledger];
+  const judged = (Array.isArray(holds) ? holds : []).map((h) => {
+    const rec = holdExaminationOf(h.examination, ticketId)!;
+    // the slot's name as the round named it, never the record's own claim
+    const label = occupancy.find((o) => o.rosterId === rec.rosterId && o.kind === rec.slotKind)?.label || rec.slotKind;
+    return { h, rec, label, by: holdOpenerInSlot(h.opened_by, rec, occupancy) };
+  });
+  const placed = judged.filter((j) => j.by === "slot");
+  const notSlot = judged.filter((j) => j.by === "not_slot").length;
+  const unchecked = judged.filter((j) => j.by === "unknown").length;
   return (
     <div className="text-xs space-y-2" data-testid="notify-hold-examination">
       <div className="font-bold text-[var(--color-text)] flex items-center gap-1.5">
@@ -138,11 +187,10 @@ export default function NotifyHoldExamination({ ticket, orgId, uid, userName }: 
       {holds === "unreadable" && <p className="text-[var(--color-text-faint)]" data-testid="notify-hold-unreadable">The holds on the source document could not be read just now.</p>}
       {placed.length > 0 && (
         <ul className="space-y-1.5" data-testid="notify-hold-list">
-          {placed.map((h) => {
-            const rec = holdExaminationOf(h.examination, ticketId)!;
+          {placed.map(({ h, rec, label }) => {
             return (
               <li key={h.id}>
-                <span className="font-bold text-[var(--color-text)]">{rec.slotLabel || rec.slotKind || "Told"}</span>{" "}
+                <span className="font-bold text-[var(--color-text)]">{label || "Told"}</span>{" "}
                 <span className="text-[var(--color-text-muted)]">— held by {h.opened_by_name || "someone"} · {new Date(h.opened_at).toLocaleString()}{h.released_at ? ` · released ${new Date(h.released_at).toLocaleString()}` : " · in force"}</span>
                 <div className="text-[var(--color-text-muted)]">{examinedFilesText(rec)}</div>
                 {rec.note && <div className="text-[var(--color-text)] whitespace-pre-wrap">{rec.note}</div>}
@@ -152,6 +200,9 @@ export default function NotifyHoldExamination({ ticket, orgId, uid, userName }: 
           })}
         </ul>
       )}
+      {notSlot > 0 && <p className="text-[var(--color-text-faint)]" data-testid="notify-hold-not-slot">{notSlotHoldsText(notSlot)}</p>}
+      {unchecked > 0 && <p className="text-[var(--color-text-faint)]" data-testid="notify-hold-unchecked">{uncheckedHoldsText(unchecked)}</p>}
+      {more && <p className="text-[var(--color-text-faint)]" data-testid="notify-hold-more">{NOTIFY_HOLDS_MORE}</p>}
       {occupantSlot && !sourceId && <p className="text-[var(--color-text-muted)]" data-testid="notify-hold-no-source">{NO_SOURCE_TO_HOLD}</p>}
       {occupantSlot && sourceId && (
         <div className="space-y-1.5 border border-[var(--color-border)] rounded-lg p-2" data-testid="notify-hold-form">

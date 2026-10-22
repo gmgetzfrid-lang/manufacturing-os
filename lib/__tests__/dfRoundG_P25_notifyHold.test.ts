@@ -54,9 +54,9 @@ vi.mock("@/components/signatures/SignatureCeremony", () => ({ default: () => nul
 
 import { parseRoutingControl, validateRoutingDraft, notifyExaminationOptInAllowed, preauthorizationOptInAllowed, type RoutingControl } from "@/lib/routingControl";
 import { controlToDraft, draftToControl, notifyExaminationOptInFor, preauthOptInFor, assuranceOptInFor, NOTIFY_EXAMINATION_HINT } from "@/components/documents/RoutingControlSection";
-import { isAssuranceSlot, isNotifyExaminationSlot, holdExaminationRecord, holdExaminationOf } from "@/lib/assuranceExamination";
+import { isAssuranceSlot, isNotifyExaminationSlot, holdExaminationRecord, holdExaminationOf, holdOpenerInSlot, rosterOccupancy } from "@/lib/assuranceExamination";
 import { preauthEligibleSlots } from "@/lib/ticketPreauthorization";
-import NotifyHoldExamination, { HOLD_RECORD_NOT_STORED, NO_SOURCE_TO_HOLD } from "@/components/requests/NotifyHoldExamination";
+import NotifyHoldExamination, { HOLD_RECORD_NOT_STORED, NO_SOURCE_TO_HOLD, NOTIFY_HOLD_READ_LIMIT, NOTIFY_HOLDS_MORE, notSlotHoldsText, uncheckedHoldsText } from "@/components/requests/NotifyHoldExamination";
 import TicketRosterPanel from "@/components/requests/TicketRosterPanel";
 
 const NOW = "2026-10-22T12:00:00.000Z";
@@ -177,7 +177,73 @@ describe("NotifyHoldExamination — renders and reads nothing without an opted-i
   });
 });
 
+describe("who placed the hold — a record is a slot's stop only when its opener is one of that slot's people (review fix)", () => {
+  const rec = { rosterId: "r-1", slotKind: "watch" };
+  const occ = rosterOccupancy(rosterOf([SIGN, { ...WATCH, alternates: ["q-alt"] }]));
+  it("a primary or an alternate of the named notify-only slot in the named round → slot", () => {
+    expect(holdOpenerInSlot("q-2", rec, occ)).toBe("slot");
+    expect(holdOpenerInSlot("q-alt", rec, occ)).toBe("slot");
+  });
+  it("anyone else, a blocking slot's person naming their own slot, or a record naming no round or slot → not_slot", () => {
+    expect(holdOpenerInSlot("s-1", rec, occ)).toBe("not_slot");
+    expect(holdOpenerInSlot("s-1", { rosterId: "r-1", slotKind: "sign" }, occ)).toBe("not_slot");
+    expect(holdOpenerInSlot("q-2", { rosterId: "r-1", slotKind: "nope" }, occ)).toBe("not_slot");
+    expect(holdOpenerInSlot("q-2", { rosterId: null, slotKind: "watch" }, occ)).toBe("not_slot");
+    expect(holdOpenerInSlot(null, rec, occ)).toBe("not_slot");
+  });
+  it("a round neither on record nor in the ledger rows given → unknown (never shown)", () => {
+    expect(holdOpenerInSlot("q-2", { rosterId: "r-0", slotKind: "watch" }, occ)).toBe("unknown");
+  });
+});
+
 describe("NotifyHoldExamination — with an opted-in notify-only slot", () => {
+  it("REVIEW FIX: a record on a hold placed by someone outside the slot it names (a forged 'Quality' stop) is never shown as that slot's stop — only counted", async () => {
+    const forged = holdRow({ id: "h-f", opened_by: "s-1", opened_by_name: "QA Lead", examination: { ...(holdRow().examination as object), slotLabel: "Quality", note: "Examined, found nothing" } });
+    db.results.document_holds = { data: [forged], error: null };
+    await renderHold(ticket(rosterOf([SIGN, WATCH])), "s-1");
+    expect(q("notify-hold-list")).toBeNull();
+    expect(host.textContent).not.toContain("Examined, found nothing");
+    expect(host.textContent).not.toContain("QA Lead");
+    expect(q("notify-hold-not-slot")!.textContent).toBe(notSlotHoldsText(1));
+  });
+  it("an earlier round's record is checked against the roster ledger: its slot's person → shown; the ledger unreadable → counted as unchecked, not shown", async () => {
+    const earlier = holdRow({ id: "h-0", examination: { ...(holdRow().examination as object), rosterId: "r-0", note: "round one finding" } });
+    db.results.document_holds = { data: [earlier], error: null };
+    db.results.ticket_review_slots = { data: [{ roster_id: "r-0", slot_kind: "watch", label: "Round-one inspection", mode: "notify_only", primaries: ["q-2"], alternates: [] }], error: null };
+    await renderHold(ticket(rosterOf([SIGN, WATCH])), "s-1");
+    expect(q("notify-hold-list")!.textContent).toContain("round one finding");
+    // the slot is named as that round named it, not by the record's own claim
+    expect(q("notify-hold-list")!.textContent).toContain("Round-one inspection");
+    const ins = db.calls.filter((c) => c.table === "ticket_review_slots" && c.method === "in").map((c) => c.args);
+    expect(ins).toEqual([["roster_id", ["r-0"]]]);
+    act(() => root.unmount());
+    root = createRoot(host);
+    db.results.ticket_review_slots = { data: null, error: { code: "42P01", message: "relation does not exist" } };
+    await renderHold(ticket(rosterOf([SIGN, WATCH])), "s-1");
+    expect(q("notify-hold-list")).toBeNull();
+    expect(host.textContent).not.toContain("round one finding");
+    expect(q("notify-hold-unchecked")!.textContent).toBe(uncheckedHoldsText(1));
+  });
+  it("REVIEW FIX: the read is filtered to this request in the query and capped at the limit + 1; a full page says more exist", async () => {
+    const many = Array.from({ length: NOTIFY_HOLD_READ_LIMIT + 1 }, (_, i) => holdRow({ id: `h-${i}` }));
+    db.results.document_holds = { data: many, error: null };
+    await renderHold(ticket(rosterOf([SIGN, WATCH])), "s-1");
+    expect(db.calls).toContainEqual({ table: "document_holds", method: "eq", args: ["examination->>ticketId", "t1"] });
+    expect(db.calls).toContainEqual({ table: "document_holds", method: "limit", args: [NOTIFY_HOLD_READ_LIMIT + 1] });
+    expect(q("notify-hold-list")!.querySelectorAll("li")).toHaveLength(NOTIFY_HOLD_READ_LIMIT);
+    expect(q("notify-hold-more")!.textContent).toBe(NOTIFY_HOLDS_MORE);
+  });
+  it("the slot's own person's record is headed by the slot's label on the roster, never by a label the record claims", async () => {
+    db.results.document_holds = { data: [holdRow({ examination: { ...(holdRow().examination as object), slotLabel: "Quality" } })], error: null };
+    await renderHold(ticket(rosterOf([SIGN, WATCH])), "s-1");
+    expect(q("notify-hold-list")!.textContent).toContain("Inspection notice");
+    expect(q("notify-hold-list")!.textContent).not.toContain("Quality");
+  });
+  it("a page that did not fill says nothing more", async () => {
+    db.results.document_holds = { data: [holdRow()], error: null };
+    await renderHold(ticket(rosterOf([SIGN, WATCH])), "s-1");
+    expect(q("notify-hold-more")).toBeNull();
+  });
   it("shows each hold placed from this request with its record; another request's hold is not shown", async () => {
     const other = holdRow({ id: "h-2", examination: { ...(holdRow().examination as object), ticketId: "t-other" } });
     db.results.document_holds = { data: [holdRow(), other], error: null };
@@ -187,10 +253,13 @@ describe("NotifyHoldExamination — with an opted-in notify-only slot", () => {
     expect(list.textContent).toContain("Inspection notice");
     expect(list.textContent).toContain("weld map disagrees");
     expect(list.textContent).toContain("Examined 1 of 2 files: iso_1A_sh2.pdf");
-    // read as the viewer, on the source document, only holds with a record
+    // read as the viewer, on the source document, filtered to THIS request in the query
     const eqs = db.calls.filter((c) => c.table === "document_holds" && c.method === "eq").map((c) => c.args);
     expect(eqs).toContainEqual(["document_id", "doc-1"]);
-    expect(db.calls.some((c) => c.table === "document_holds" && c.method === "not" && c.args[0] === "examination")).toBe(true);
+    expect(eqs).toContainEqual(["examination->>ticketId", "t1"]);
+    // the record names the roster on record: no ledger read
+    expect(db.reads).not.toContain("ticket_review_slots");
+    expect(q("notify-hold-not-slot")).toBeNull();
     // not one of the slot's people: no form
     expect(q("notify-hold-form")).toBeNull();
   });

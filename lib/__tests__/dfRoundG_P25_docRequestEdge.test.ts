@@ -21,7 +21,7 @@ vi.mock("@/lib/supabase", async () => {
   return { supabase: makeGraphFake(db) };
 });
 
-import { buildOrgGraph, assembleOrgGraph, emptyGraphRows } from "@/lib/orgGraph";
+import { buildOrgGraph, assembleOrgGraph, emptyGraphRows, GRAPH_CAPS } from "@/lib/orgGraph";
 
 const ORG = "org-1";
 const D1 = "11111111-1111-4111-8111-111111111111";
@@ -112,6 +112,20 @@ describe("PROJ-7 edge limb (DF-P25) — the document ↔ request edge, from a re
     const g = await buildOrgGraph(ORG);
     expect(g.truncations.join(" ")).toMatch(/Drafting requests on documents could not be loaded/);
     expect(g.nodes.some((x) => x.id === "req:t1")).toBe(false);
+  });
+
+  it("REVIEW FIX: a readable source document left OFF the map (beyond the documents cap) draws no request node — never an unlinked orphan — and the edge is counted, not drawn", async () => {
+    // assembled directly: the request names a document the rows do not carry
+    const direct = assembleOrgGraph({ ...emptyGraphRows(), documents: [doc(D2, "PID-2")], documentRequests: [{ id: "t1", ticket_id: "KE-t1", title: "Request t1", status: "DRAFTING", document_id: D1 }] } as never);
+    expect(direct.nodes.some((x) => x.id === "req:t1")).toBe(false);
+    expect(direct.edges.some((e) => e.b === "req:t1")).toBe(false);
+    // end to end: D1 is the oldest of DOC_CAP + 1 documents, so the capped read leaves it off the map; it still reads back
+    const filler = Array.from({ length: GRAPH_CAPS.DOC_CAP }, (_, i) => ({ ...doc(`f${String(i).padStart(5, "0")}-0000-4000-8000-000000000000`, `F-${i}`), updated_at: "2026-10-01" }));
+    reset({ ...world([ticket("t1", D1)]), documents: [{ ...doc(D1, "PID-1"), updated_at: "2020-01-01" }, ...filler] });
+    const g = await buildOrgGraph(ORG);
+    expect(g.nodes.some((x) => x.id === `doc:${D1}`)).toBe(false);
+    expect(g.nodes.some((x) => x.id === "req:t1")).toBe(false);
+    expect(g.nodes.filter((x) => x.type === "project" && x.degree === 0 && x.id.startsWith("req:"))).toEqual([]);
   });
 
   it("REGRESSION: a map with no such request is byte-identical (no rows key, no note) — assembled directly and end to end", async () => {

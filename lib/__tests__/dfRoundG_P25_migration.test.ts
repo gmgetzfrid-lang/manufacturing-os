@@ -67,15 +67,15 @@ describe("20261267 — DEC-30 one paste", () => {
     expect((inv.match(/COUNT\(\*\)/g) ?? []).length).toBeGreaterThanOrEqual(6);
     expect(inv).not.toMatch(/SELECT\s+\*/);
   });
-  it("7 probes, the inventory and 2 after-rows in the one result set", () => {
+  it("8 probes, the inventory and 2 after-rows in the one result set", () => {
     const tail = S.slice(S.indexOf('SELECT "check", ok, n FROM ('));
-    expect((tail.match(/SELECT 1, \d+, '|SELECT 1 AS sec, 1 AS ord/g) ?? []).length).toBe(7);
+    expect((tail.match(/SELECT 1, \d+, '|SELECT 1 AS sec, 1 AS ord/g) ?? []).length).toBe(8);
     expect(tail).toContain("SELECT 2, ord, inventory, NULL, n FROM df_round_g_267_before");
     expect((tail.match(/SELECT 3, \d+, 'after:/g) ?? []).length).toBe(2);
   });
   it("no SECURITY DEFINER; every function SECURITY INVOKER, search_path pinned, EXECUTE revoked from client roles (DRLS-16 shape)", () => {
     expect(S).not.toMatch(/SECURITY DEFINER/);
-    for (const fn of ["org_members_status_change_stamp", "ticket_history_actor_guard", "document_hold_examination_fixed"]) {
+    for (const fn of ["org_members_status_change_stamp", "ticket_history_actor_guard", "document_hold_examination_fixed", "document_hold_examination_opener"]) {
       expect(S).toContain(`CREATE OR REPLACE FUNCTION ${fn}()\nRETURNS TRIGGER LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$`);
       expect(S).toContain(`REVOKE ALL ON FUNCTION ${fn}() FROM PUBLIC, anon, authenticated;`);
     }
@@ -112,9 +112,9 @@ describe("20261267 — what it re-creates, and what it does NOT", () => {
     for (const name of ["ticket_update_guard", "enforce_document_hold_guard", "enforce_document_hold_org_guard"]) expect(S).not.toContain(`FUNCTION ${name}(`);
     expect(S).not.toMatch(/CREATE POLICY/);
     const triggers = [...S.matchAll(/CREATE TRIGGER (\w+)/g)].map((x) => x[1]).sort();
-    expect(triggers).toEqual(["trg_document_hold_examination_fixed", "trg_org_members_status_changed", "trg_ticket_history_actor_guard"]);
+    expect(triggers).toEqual(["trg_document_hold_examination_fixed", "trg_document_hold_examination_opener", "trg_org_members_status_changed", "trg_ticket_history_actor_guard"]);
     for (const t of triggers) for (const f of files.filter((x) => x < F)) expect(strip(mig(f))).not.toContain(`CREATE TRIGGER ${t}`);
-    for (const fn of ["org_members_status_change_stamp", "ticket_history_actor_guard", "document_hold_examination_fixed"]) {
+    for (const fn of ["org_members_status_change_stamp", "ticket_history_actor_guard", "document_hold_examination_fixed", "document_hold_examination_opener"]) {
       for (const f of files.filter((x) => x < F)) expect(strip(mig(f))).not.toContain(`FUNCTION ${fn}(`);
     }
   });
@@ -124,6 +124,13 @@ describe("20261267 — what it re-creates, and what it does NOT", () => {
     expect(g).toContain("WHERE h.ordinality > v_old_len LOOP");
     expect(g).toContain("USING ERRCODE = '42501'");
     expect(S).toContain("BEFORE UPDATE OF history ON tickets");
+  });
+  it("the hold record's opener check: only a client insert carrying a record, refused 42501 unless opened_by is the caller (review fix pass)", () => {
+    const g = fnBody(S, "document_hold_examination_opener");
+    expect(g).toContain("IF NEW.examination IS NOT NULL AND current_user IN ('authenticated', 'anon')");
+    expect(g).toContain("AND (auth.uid() IS NULL OR NEW.opened_by IS DISTINCT FROM auth.uid()) THEN");
+    expect(g).toContain("USING ERRCODE = '42501'");
+    expect(S).toContain("CREATE TRIGGER trg_document_hold_examination_opener\n  BEFORE INSERT ON document_holds\n  FOR EACH ROW EXECUTE FUNCTION document_hold_examination_opener();");
   });
   it("the status stamp: NULL on insert, the time on a status change, the stored value otherwise", () => {
     const f = fnBody(S, "org_members_status_change_stamp");

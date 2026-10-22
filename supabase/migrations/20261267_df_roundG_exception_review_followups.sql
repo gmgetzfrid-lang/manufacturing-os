@@ -46,15 +46,23 @@
 --       act cannot disagree. A CHECK keeps it a JSON object of bounded size
 --       (or NULL); a NEW trigger (document_hold_examination_fixed, BEFORE
 --       UPDATE OF examination, SECURITY INVOKER, search_path pinned) refuses
---       any change to it once written, for every role. 20261073's guards are
---       NOT re-created (a column-only change): every existing hold, and
---       every hold placed without a record, behaves exactly as before.
+--       any change to it once written, for every role. A second NEW trigger
+--       (document_hold_examination_opener, BEFORE INSERT, SECURITY INVOKER,
+--       search_path pinned) ties the record to its writer: a client role's
+--       insert that carries a record is refused 42501 unless the hold is
+--       placed in the caller's own name (opened_by = auth.uid()) — so a
+--       record can never be written in another person's name. The service
+--       role (a restore, a server route) and a SECURITY DEFINER path pass
+--       untouched; a hold without a record is not looked at. 20261073's
+--       guards are NOT re-created (column-only checks): every existing hold,
+--       and every hold placed without a record, behaves exactly as before.
 --
 -- NOT a widening: nobody gains a read or a write. (1) stamps a fact and
 -- narrows when a pre-authorization is in force; (2) refuses a client's
 -- forged actorId; (3) is a comment; (4) adds a column a person writes only
--- with their own hold (the hold's existing INSERT policy and guards decide
--- who may place one, unchanged) and refuses its rewrite. The counts-only
+-- with a hold placed in their own name (the hold's existing INSERT policy
+-- and guards decide who may place one, unchanged), refuses a record on a
+-- hold opened in another uid's name, and refuses its rewrite. The counts-only
 -- inventory is captured first anyway (DEC-30).
 --
 -- PASTE / DEPLOY ORDER. Paste AFTER 20261264 (the first statement refuses,
@@ -281,10 +289,34 @@ CREATE TRIGGER trg_document_hold_examination_fixed
   BEFORE UPDATE OF examination ON document_holds
   FOR EACH ROW EXECUTE FUNCTION document_hold_examination_fixed();
 
+-- The record names who examined only through the hold's opener, so a client
+-- may write a record only on a hold placed in its own name. (opened_by is
+-- pinned once placed by 20261073's guard, so the insert is the one place to
+-- check it.) Column-only: a hold without a record is not looked at.
+CREATE OR REPLACE FUNCTION document_hold_examination_opener()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+BEGIN
+  -- Only a client role's own statement is checked. The service role (a
+  -- restore, a server route) and a SECURITY DEFINER path pass untouched.
+  IF NEW.examination IS NOT NULL AND current_user IN ('authenticated', 'anon')
+     AND (auth.uid() IS NULL OR NEW.opened_by IS DISTINCT FROM auth.uid()) THEN
+    RAISE EXCEPTION 'document_holds: a record of what was examined goes only on a hold you place in your own name (opened_by)'
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION document_hold_examination_opener() FROM PUBLIC, anon, authenticated;
+
+DROP TRIGGER IF EXISTS trg_document_hold_examination_opener ON document_holds;
+CREATE TRIGGER trg_document_hold_examination_opener
+  BEFORE INSERT ON document_holds
+  FOR EACH ROW EXECUTE FUNCTION document_hold_examination_opener();
+
 COMMIT;
 
 -- ── Verification + inventory — ONE result set ───────────────────────────────
--- Probes: ok = true × 7 on a correct paste. Inventory rows: n = the count.
+-- Probes: ok = true × 8 on a correct paste. Inventory rows: n = the count.
 SELECT "check", ok, n FROM (
 SELECT 1 AS sec, 1 AS ord, 'DF-P22 follow-up (a): org_members.status_changed_at exists (timestamptz, nullable)' AS check,
        EXISTS (SELECT 1 FROM information_schema.columns
@@ -341,6 +373,15 @@ SELECT 1, 7, 'a hold''s examination record is never changed once written (BEFORE
                        FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
                       WHERE ns.nspname = 'public' AND p.proname = 'document_hold_examination_fixed'), false)
        AND NOT has_function_privilege('authenticated', 'public.document_hold_examination_fixed()', 'EXECUTE'),
+       NULL
+UNION ALL
+SELECT 1, 8, 'a client may write an examination record only on a hold placed in its own name — opened_by = auth.uid() (BEFORE INSERT trigger, enabled; SECURITY INVOKER, search_path pinned; no client EXECUTE)',
+       EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_document_hold_examination_opener' AND tgrelid = 'public.document_holds'::regclass AND NOT tgisinternal AND tgenabled = 'O')
+       AND COALESCE((SELECT NOT p.prosecdef AND p.proconfig @> ARRAY['search_path=public']
+                       AND p.prosrc LIKE '%NEW.opened_by IS DISTINCT FROM auth.uid()%' AND p.prosrc LIKE '%current_user IN (''authenticated'', ''anon'')%'
+                       FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
+                      WHERE ns.nspname = 'public' AND p.proname = 'document_hold_examination_opener'), false)
+       AND NOT has_function_privilege('authenticated', 'public.document_hold_examination_opener()', 'EXECUTE'),
        NULL
 UNION ALL
 SELECT 2, ord, inventory, NULL, n FROM df_round_g_267_before
