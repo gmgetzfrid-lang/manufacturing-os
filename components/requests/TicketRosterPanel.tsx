@@ -23,12 +23,14 @@
 //   * TIER-8: the panel says plainly that signing here approves the drafting
 //     deliverable, and that publishing it as a revision is the library's own
 //     review — a different question, not the same review twice.
-//   * GAP-102 (DF-P20): an ASSURANCE slot (lib/assuranceExamination.ts — not
-//     the engineering approval, not the requester's own acceptance) records
+//   * GAP-102 (DF-P20): an ASSURANCE slot (lib/assuranceExamination.ts — a
+//     blocking slot that is not the engineering approval and not the
+//     requester's own acceptance; never notify-only or consent-window) records
 //     what its reviewer examined with the sign-off or the veto it backs: the
 //     reviewed version's hash (the roster's, shortened, with a copy button),
 //     the files examined (all by default; the reviewer may narrow) and a note
-//     — required, asked here in place, for a revision request. Each assurance
+//     — required, asked here in place, for a revision request (with the same
+//     reason category the page's Request Revision asks). Each assurance
 //     sign-off shows its record (read from the roster's ledger); one signed
 //     before DF-P20 says "Examination not recorded". A roster with no
 //     assurance slot, and every request with none, is exactly as before:
@@ -125,6 +127,20 @@ export function examinationBody(pick: string[] | null, note: string): { files?: 
   return { ...(pick ? { files: pick } : {}), note: note.trim() || null };
 }
 
+/** DF-P20 fix pass: the reason categories the panel's in-place revision
+ *  request offers — the request page's own Request Revision list
+ *  (REVISION_REASONS in app/(protected)/requests/[id]/page.tsx; a test pins
+ *  the two equal), so a revision requested here carries its category too. */
+export const REVISION_CATEGORIES: readonly string[] = [
+  "Drafting Error",
+  "Missing Information",
+  "Incorrect Information",
+  "Standards Violation",
+  "Scope Change",
+  "Design Update",
+  "Other",
+];
+
 /** DF-P20: one row of the roster's ledger as the panel reads it. */
 export interface SlotEventRow {
   id: string;
@@ -155,7 +171,7 @@ export function ExaminationView({ record }: { record: ExaminationRecord }) {
         <button type="button" onClick={copy} className="underline text-[var(--color-accent)]" aria-label="Copy the reviewed version's full content hash">{copied ? "Copied" : "Copy"}</button>
       </div>
       <div data-testid="examination-files">{examinedFilesText(record)}</div>
-      {record.note && <div data-testid="examination-note">Note: {record.note}</div>}
+      {record.note && <div data-testid="examination-note">Note: {record.note}{record.noteTruncated ? "… (shortened — the full reason is the revision request's comment)" : ""}</div>}
     </div>
   );
 }
@@ -229,6 +245,7 @@ export default function TicketRosterPanel({
   const [eventsSettled, setEventsSettled] = useState(false);
   const [examPick, setExamPick] = useState<string[] | null>(null);
   const [examNote, setExamNote] = useState("");
+  const [vetoCategory, setVetoCategory] = useState<string>(REVISION_CATEGORIES[0]);
 
   // Names of everyone the roster names (RLS: members of the workspace).
   useEffect(() => {
@@ -254,6 +271,9 @@ export default function TicketRosterPanel({
   const signedAssuranceKey = recordRoster ? recordRoster.slots.filter((s) => s.status === "satisfied" && isAssuranceSlot(s, ticket)).map((s) => s.kind).join("\u0001") : "";
   useEffect(() => {
     if (!assuranceOnRecord || !ticket.id) { setEvents(null); setEventsSettled(false); return; }
+    // A re-read (a sign-off just landed, a realtime refresh): the rows held
+    // are the old ones, so nothing is "not recorded" until this read answers.
+    setEventsSettled(false);
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const want = signedAssuranceKey ? signedAssuranceKey.split("\u0001") : [];
@@ -412,20 +432,21 @@ export default function TicketRosterPanel({
       const res = await fetch("/api/tickets/workflow-action", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
-        body: JSON.stringify({ ticketId: ticket.id, actionType: "request_revision", comment: note, examination: { ...(examPick ? { files: examPick } : {}), note } }),
+        body: JSON.stringify({ ticketId: ticket.id, actionType: "request_revision", comment: note, category: vetoCategory, examination: { ...(examPick ? { files: examPick } : {}), note } }),
       });
       const out = (await res.json().catch(() => ({}))) as { error?: string; warning?: string };
       if (!res.ok) throw new Error(out.error || `The revision request was not recorded (HTTP ${res.status})`);
       if (out.warning) setError(out.warning);
       setExamNote("");
       setExamPick(null);
+      setVetoCategory(REVISION_CATEGORIES[0]);
       await onChanged?.();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
-  }, [ticket.id, examNote, examPick, onChanged]);
+  }, [ticket.id, examNote, examPick, vetoCategory, onChanged]);
 
   const inReview = ticket.status === "PENDING_REVIEW" || ticket.status === "PENDING_FINAL_APPROVAL";
   // TIER-5 (DF-P5 fix pass 4): routed with no roster — no seed (that is the
@@ -461,7 +482,7 @@ export default function TicketRosterPanel({
                     <div className="text-[var(--color-text-faint)]">{s.primaries.map((p) => names.get(p) ?? "member").join(", ")}</div>
                   )}
                   {blockedHere && <div className="text-red-700 flex items-center gap-1"><ShieldAlert className="w-3 h-3" /> {blockedHere.reason}</div>}
-                  {s.status === "satisfied" && events !== null && isAssuranceSlot(s, ticket) && (() => {
+                  {s.status === "satisfied" && s.via !== "consent" && events !== null && isAssuranceSlot(s, ticket) && (() => {
                     if (events === "unreadable") return <div className="text-[var(--color-text-faint)]" data-testid="examination-unreadable">The record of what was examined could not be read right now.</div>;
                     const rec = slotRecord(s.kind);
                     if (rec === undefined && !eventsSettled) return null;
@@ -532,6 +553,18 @@ export default function TicketRosterPanel({
               className="mt-0.5 w-full rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-1 text-[var(--color-text)]"
             />
           </label>
+          <label className="block">
+            <span className="text-[var(--color-text-muted)]">Reason category — with a revision request</span>
+            <select
+              value={vetoCategory}
+              onChange={(e) => setVetoCategory(e.target.value)}
+              data-testid="examination-veto-category"
+              className="mt-0.5 w-full rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-1 text-[var(--color-text)]"
+            >
+              {REVISION_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
+          <div className="text-[var(--color-text-faint)]" data-testid="examination-veto-redline">To send a redline with it, use the page&rsquo;s Request Revision — it records every file, with your comment as the note.</div>
           <button
             type="button"
             onClick={() => { void veto(); }}

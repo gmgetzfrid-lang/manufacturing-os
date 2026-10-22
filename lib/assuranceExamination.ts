@@ -22,13 +22,24 @@
 //       written before this shipped renders "Examination not recorded".
 //
 // An ASSURANCE SLOT is a property of the slot, never of its name (DEC-35):
-// a roster slot that asks "is it correct?" of someone other than the
-// requester, and is not the request's engineering approval. So the
-// engineering sign-off (a slot filled by an engineering capability, or the
-// gate the roster appended — `engineering: true`) and the requester's own
-// acceptance (a slot only the requester fills — the panel's "Is this what you
-// asked for?") are not; a facility's other slots — a notify-only slot told
-// of every issue, a blocking check per library — are.
+// a BLOCKING roster slot — one a person signs, the act a record can ride —
+// that asks "is it correct?" of someone other than the requester, and is not
+// the request's engineering approval. So the engineering sign-off (a slot
+// filled by an engineering capability, or the gate the roster appended —
+// `engineering: true`), the requester's own acceptance (a slot only the
+// requester fills — the panel's "Is this what you asked for?"), a notify-only
+// slot (told, never signed: no act to record on) and a consent-window slot
+// (it can advance by silence, when nobody examined anything — DF-P7) are
+// not; a facility's other blocking checks are. DF-P20 fix pass: this derived
+// reading still reaches the existing non-engineering blocking slots of
+// configured rosters, so it is put to the integrator (DEC-44 (DF-P20) item 1).
+//
+// A veto's note that falls back to the revision request's own comment is
+// never a reason to refuse the revision request (bookkeeping never blocks a
+// person's act — DEC-90): past EXAMINATION_NOTE_MAX it is kept shortened,
+// marked `noteTruncated` (the comment itself is stored whole on the ticket).
+// Only a note the reviewer typed into the record (the panel caps it) is
+// length-checked.
 //
 // Pure, and safe for the browser (the roster panel imports it; lib/
 // ticketRoster.ts hashes with node:crypto and cannot be imported there).
@@ -62,6 +73,10 @@ export interface ExaminationRecord {
   allFiles: boolean;
   /** The reviewer's note (trimmed); always present for a veto. */
   note: string | null;
+  /** True when the note is the first EXAMINATION_NOTE_MAX characters of a
+   *  longer revision comment (the comment is kept whole on the ticket).
+   *  Absent otherwise. */
+  noteTruncated?: true;
 }
 
 /** The slot only the requester fills — "Is this what you asked for?" (the
@@ -70,10 +85,10 @@ export function requesterOnlySlot(slot: Pick<TicketReviewSlot, "primaries">, tic
   return slot.primaries.length === 1 && slot.primaries[0] === ticket.requesterId;
 }
 
-/** True for an assurance slot (see the header): not the engineering approval,
- *  not the requester's own acceptance. Pure. */
-export function isAssuranceSlot(slot: Pick<TicketReviewSlot, "primaries" | "engineering">, ticket: Pick<Ticket, "requesterId">): boolean {
-  return slot.engineering !== true && !requesterOnlySlot(slot, ticket);
+/** True for an assurance slot (see the header): a blocking slot, not the
+ *  engineering approval, not the requester's own acceptance. Pure. */
+export function isAssuranceSlot(slot: Pick<TicketReviewSlot, "primaries" | "engineering" | "mode">, ticket: Pick<Ticket, "requesterId">): boolean {
+  return slot.mode === "blocking" && slot.engineering !== true && !requesterOnlySlot(slot, ticket);
 }
 
 /** True when the roster carries at least one assurance slot. */
@@ -129,8 +144,15 @@ export function buildExaminationRecord(
     if (typeof o.note !== "string") return { ok: false, error: "The note must be text." };
     note = o.note.trim() || null;
   }
-  if (opts.act === "veto" && !note) note = (opts.comment ?? "").trim() || null;
+  // Only the note the reviewer typed into the record is length-checked.
   if (note && note.length > EXAMINATION_NOTE_MAX) return { ok: false, error: `The note is longer than ${EXAMINATION_NOTE_MAX} characters.` };
+  // A veto's note falls back to the revision comment — never refused for its
+  // length (the revision request works as before): kept shortened, marked.
+  let noteTruncated = false;
+  if (opts.act === "veto" && !note) {
+    note = (opts.comment ?? "").trim() || null;
+    if (note && note.length > EXAMINATION_NOTE_MAX) { note = note.slice(0, EXAMINATION_NOTE_MAX); noteTruncated = true; }
+  }
   if (opts.act === "veto" && !note) return { ok: false, error: "A revision request must say why — add a note." };
   return {
     ok: true,
@@ -143,6 +165,7 @@ export function buildExaminationRecord(
       ofFiles: all.length,
       allFiles: picked.length === all.length,
       note,
+      ...(noteTruncated ? { noteTruncated: true as const } : {}),
     },
   };
 }
@@ -164,6 +187,7 @@ export function examinationOf(details: unknown): ExaminationRecord | null {
     ofFiles: typeof e.ofFiles === "number" && e.ofFiles >= files.length ? e.ofFiles : files.length,
     allFiles: e.allFiles === true,
     note: typeof e.note === "string" && e.note.trim() ? e.note : null,
+    ...(e.noteTruncated === true ? { noteTruncated: true as const } : {}),
   };
 }
 

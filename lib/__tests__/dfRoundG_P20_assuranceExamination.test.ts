@@ -275,6 +275,29 @@ describe("GAP-102 (DF-P20) — a veto records what was examined, and must say wh
     expect(events()).toEqual([]);
   });
 
+  it("fix pass (review blocker): the page's own Request Revision (no examination body) with a 2,500-character comment from the assurance occupant is accepted as before — the voided row carries the record, the note shortened and marked; the comment is kept whole", async () => {
+    const roster = await submitRouted(ASSURED);
+    actOn(roster, "q-1");
+    const comment = "w".repeat(2500);
+    const res = await post({ ticketId: "t1", actionType: "request_revision", comment, category: "Drafting Error" });
+    expect(res.status).toBe(200);
+    const assure = events().find((e) => e.slot_kind === "assure")!;
+    expect(assure.event).toBe("voided");
+    expect(assure.details.examination).toMatchObject({ act: "veto", allFiles: true, note: "w".repeat(EXAMINATION_NOTE_MAX), noteTruncated: true });
+    expect(JSON.stringify(updates())).toContain(comment);
+    expect((audits().find((x) => x.action === "TICKET_REQUEST_REVISION")!.details.reviewRoster as { examination: { noteTruncated?: boolean } }).examination.noteTruncated).toBe(true);
+  });
+
+  it("a note the reviewer typed into the record past the limit is refused (the panel caps it) — nothing written", async () => {
+    const roster = await submitRouted(ASSURED);
+    actOn(roster, "q-1");
+    const res = await post({ ticketId: "t1", actionType: "request_revision", comment: "why", examination: { note: "n".repeat(EXAMINATION_NOTE_MAX + 1) } });
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("examination_invalid");
+    expect(updates()).toEqual([]);
+    expect(events()).toEqual([]);
+  });
+
   it("a veto naming a file not under review is refused before anything is written", async () => {
     const roster = await submitRouted(ASSURED);
     actOn(roster, "q-1");
@@ -358,9 +381,14 @@ describe("lib/assuranceExamination.ts — the record, pure", () => {
   const T = { requesterId: "req-1" } as Pick<Ticket, "requesterId">;
   const R = { contentHash: "c".repeat(64), cycle: "1A", files: [{ id: "a", name: "a.pdf", url: "k/a", sha256: "1".repeat(64) }, { id: null, name: "b.pdf", url: "k/b", sha256: null, unhashed: "too large to hash in a request" }] };
 
-  it("an assurance slot is a property, not a name: not the engineering approval, not the requester-only slot; notify-only and fallback slots are", () => {
+  it("an assurance slot is a property, not a name: a blocking slot, not the engineering approval, not the requester-only slot; a fallback slot is; notify-only and consent-window slots are not (fix pass)", () => {
     expect(isAssuranceSlot(slot({}), T)).toBe(true);
-    expect(isAssuranceSlot(slot({ mode: "notify_only", status: "told" }), T)).toBe(true);
+    // notify-only: told, never signed — no act a record could ride
+    expect(isAssuranceSlot(slot({ mode: "notify_only", status: "told" }), T)).toBe(false);
+    // consent window: it can advance by silence (nobody examined anything)
+    expect(isAssuranceSlot(slot({ mode: "consent_window" }), T)).toBe(false);
+    expect(isAssuranceSlot(slot({ mode: "consent_window", status: "satisfied", via: "consent" }), T)).toBe(false);
+    expect(rosterHasAssuranceSlot({ slots: [slot({ mode: "consent_window" }), slot({ mode: "notify_only", status: "told" })] }, T)).toBe(false);
     expect(isAssuranceSlot(slot({ fallback: true, primaries: ["a-1", "a-2"] }), T)).toBe(true);
     expect(isAssuranceSlot(slot({ engineering: true }), T)).toBe(false);
     expect(isAssuranceSlot(slot({ primaries: ["req-1"] }), T)).toBe(false);
@@ -379,6 +407,21 @@ describe("lib/assuranceExamination.ts — the record, pure", () => {
     expect(buildExaminationRecord(R, null, { act: "veto", comment: "  why  " })).toMatchObject({ ok: true, record: { act: "veto", note: "why" } });
     expect(buildExaminationRecord(R, { note: "mine" }, { act: "veto", comment: "theirs" })).toMatchObject({ ok: true, record: { note: "mine" } });
     expect(buildExaminationRecord(R, { note: " " }, { act: "veto", comment: " " })).toEqual({ ok: false, error: "A revision request must say why — add a note." });
+  });
+  it("fix pass (review blocker): a veto's note that falls back to a long comment is never refused — kept to EXAMINATION_NOTE_MAX, marked noteTruncated; a typed note past the limit is still refused", () => {
+    const long = buildExaminationRecord(R, undefined, { act: "veto", comment: `  ${"x".repeat(2500)}  ` });
+    expect(long.ok).toBe(true);
+    if (long.ok) {
+      expect(long.record.note).toBe("x".repeat(EXAMINATION_NOTE_MAX));
+      expect(long.record.noteTruncated).toBe(true);
+      expect(examinationOf({ examination: long.record })).toEqual(long.record);
+    }
+    // a blank typed note falls back too
+    expect(buildExaminationRecord(R, { note: " " }, { act: "veto", comment: "y".repeat(2001) })).toMatchObject({ ok: true, record: { noteTruncated: true } });
+    // exactly the limit: kept whole, no mark
+    const exact = buildExaminationRecord(R, undefined, { act: "veto", comment: "z".repeat(EXAMINATION_NOTE_MAX) });
+    expect(exact.ok && "noteTruncated" in exact.record).toBe(false);
+    expect(buildExaminationRecord(R, { note: "n".repeat(EXAMINATION_NOTE_MAX + 1) }, { act: "veto", comment: "short" })).toEqual({ ok: false, error: `The note is longer than ${EXAMINATION_NOTE_MAX} characters.` });
   });
   it("examinationOf: a pre-DF-P20 event ({ via } / { reason }) or junk is 'not recorded' (null), never a throw; a stored record reads back", () => {
     for (const d of [{ via: "primary" }, { reason: "request_revision" }, null, undefined, "x", { examination: "x" }, { examination: { contentHash: 1, files: [] } }]) expect(examinationOf(d)).toBeNull();

@@ -1282,6 +1282,8 @@ export async function POST(req: NextRequest) {
   // GAP-102 (DF-P20): a veto — a revision request by someone who occupies an
   // open assurance slot — records what they examined on that slot's
   // "voided" event, with the reason (the required comment, or their note).
+  // A comment used as the note is never refused for its length (kept
+  // shortened, marked noteTruncated): the revision request works as before.
   if (action.action === "request_revision" && openRosterNow) {
     const occ = slotSignPlan(openRosterNow, ticket, caller.id, sodActive, Date.now());
     const vetoKinds = [...occ.fillable, ...occ.blocked].filter((x) => isAssuranceSlot(x.slot, ticket)).map((x) => x.slot.kind);

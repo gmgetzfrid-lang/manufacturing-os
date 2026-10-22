@@ -17,6 +17,8 @@ import type { Ticket, TicketReviewRoster, TicketReviewSlot, TicketStatus } from 
 
 const db = vi.hoisted(() => ({
   results: {} as Record<string, { data: unknown; error: null | { code?: string; message: string } }>,
+  // when set, a read answers only once this settles (a read in flight)
+  hold: null as null | Promise<void>,
   reads: [] as string[],
   calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
 }));
@@ -27,7 +29,7 @@ vi.mock("@/lib/supabase", () => {
     const c: Record<string, unknown> = {};
     const p: ProxyHandler<Record<string, unknown>> = {
       get(_t, prop: string) {
-        if (prop === "then") return (resolve: (v: unknown) => void) => resolve(res());
+        if (prop === "then") return (resolve: (v: unknown) => void) => { if (db.hold) void db.hold.then(() => resolve(res())); else resolve(res()); };
         if (prop === "maybeSingle" || prop === "single") return () => Promise.resolve({ data: null, error: null });
         return (...args: unknown[]) => { db.calls.push({ table, method: prop, args }); return new Proxy(c, p); };
       },
@@ -46,14 +48,16 @@ vi.mock("@/components/signatures/SignatureCeremony", () => ({
     React.createElement("button", { "data-testid": "ceremony", "data-statement": p.defaultStatement, onClick: () => p.onSign("Reviewed", p.defaultStatement) }, "sign"),
 }));
 
-import TicketRosterPanel, { rosterSignStatement, examinationBody } from "@/components/requests/TicketRosterPanel";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import TicketRosterPanel, { rosterSignStatement, examinationBody, REVISION_CATEGORIES } from "@/components/requests/TicketRosterPanel";
 import { EXAMINATION_NOT_RECORDED } from "@/lib/assuranceExamination";
 
 let host: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  db.results = {}; db.reads = []; db.calls = [];
+  db.results = {}; db.reads = []; db.calls = []; db.hold = null;
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -122,7 +126,32 @@ describe("the assurance reviewer is asked in place what they examined", () => {
     await act(async () => { ((q("examination-form")!.querySelectorAll('input[type="checkbox"]')[0]) as HTMLInputElement).click(); });
     await act(async () => { (q("examination-veto") as HTMLButtonElement).click(); });
     await flush();
-    expect(bodies).toEqual([{ ticketId: "t1", actionType: "request_revision", comment: "dimension missing on sheet 2", examination: { files: ["a-e"], note: "dimension missing on sheet 2" } }]);
+    expect(bodies).toEqual([{ ticketId: "t1", actionType: "request_revision", comment: "dimension missing on sheet 2", category: "Drafting Error", examination: { files: ["a-e"], note: "dimension missing on sheet 2" } }]);
+  });
+
+  it("fix pass (review minor 6): the in-place revision request carries the reason category the page's Request Revision asks, from the same list; the redline route is named", async () => {
+    const bodies = fetchBodies();
+    await render(ticket(rosterOf([ACCEPT, CHECK, ASSURE])), "q-1");
+    const sel = q("examination-veto-category") as HTMLSelectElement;
+    expect([...sel.options].map((o) => o.value)).toEqual([...REVISION_CATEGORIES]);
+    await act(async () => { sel.value = "Standards Violation"; sel.dispatchEvent(new Event("change", { bubbles: true })); });
+    const ta = q("examination-note-input") as HTMLTextAreaElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(ta, "wrong line class");
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { (q("examination-veto") as HTMLButtonElement).click(); });
+    await flush();
+    expect(bodies[0]).toMatchObject({ actionType: "request_revision", comment: "wrong line class", category: "Standards Violation" });
+    expect(q("examination-veto-redline")!.textContent).toMatch(/page.s Request Revision/);
+  });
+
+  it("the panel's categories are the request page's REVISION_REASONS, in order (drift pin)", () => {
+    const src = readFileSync(join(process.cwd(), "app", "(protected)", "requests", "[id]", "page.tsx"), "utf8");
+    const m = src.match(/const REVISION_REASONS = \[([\s\S]*?)\];/);
+    expect(m).not.toBeNull();
+    const page = [...m![1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+    expect(page).toEqual([...REVISION_CATEGORIES]);
   });
 
   it("the sign-off: the dry run and the post carry the record (every file → no list; blank note → null); the signed statement is exactly as before when nothing was narrowed", async () => {
@@ -173,6 +202,31 @@ describe("each assurance event shows its record (ruling (5)); one from before DF
     await act(async () => { button(/^Copy$/).click(); });
     expect(writeText).toHaveBeenCalledWith(HASH);
     expect(rec.textContent).toContain("Copied");
+  });
+
+  it("fix pass (review minor 5): right after a sign-off the re-read is in flight — the slot just signed never shows 'Examination not recorded' before its record arrives", async () => {
+    db.results.ticket_review_slot_events = { data: [], error: null };
+    await render(ticket(rosterOf([ACCEPT, CHECK, ASSURE])), "x-9");
+    expect(db.reads).toContain("ticket_review_slot_events");
+    // the sign-off lands; the refreshed ticket re-keys the read, which is slow
+    let release!: () => void;
+    db.hold = new Promise<void>((r) => { release = r; });
+    db.results.ticket_review_slot_events = { data: [ev({ details: { via: "primary", examination: record() } })], error: null };
+    const signed = { ...ASSURE, status: "satisfied" as const, satisfiedBy: "q-1", satisfiedAt: NOW, signatureId: "s", via: "primary" as const };
+    await render(ticket(rosterOf([ACCEPT, CHECK, signed])), "x-9");
+    expect(q("examination-not-recorded")).toBeNull();
+    expect(q("examination-record")).toBeNull();
+    await act(async () => { release(); db.hold = null; });
+    await flush();
+    expect(q("examination-not-recorded")).toBeNull();
+    expect(q("examination-record")).not.toBeNull();
+  });
+
+  it("fix pass (review blocker): a veto note shortened from a long comment says so", async () => {
+    db.results.ticket_review_slot_events = { data: [ev({ id: "v1", event: "voided", details: { reason: "request_revision", examination: record({ act: "veto", note: "long reason", noteTruncated: true }) } })], error: null };
+    const closed = rosterOf([ACCEPT, CHECK, { ...ASSURE, status: "void" }], { closedAt: NOW, closedReason: "request_revision" });
+    await render(ticket(closed, "REVISION_REQ"), "d-1");
+    expect(q("examination-note")!.textContent).toBe("Note: long reason… (shortened — the full reason is the revision request's comment)");
   });
 
   it("a sign-off written before DF-P20 ({ via } only) reads 'Examination not recorded'", async () => {
@@ -230,6 +284,18 @@ describe("REGRESSION — no assurance slot: nothing new is read or shown, every 
       expect(q("examination-veto"), uid).toBeNull();
     }
   });
+  it("fix pass (review major 3): a consent-window slot is not an assurance slot — open, its occupant sees no form; advanced by silence, nothing is read and nothing reads 'Examination not recorded'", async () => {
+    const CONSENT = slot({ id: "r-1:consent", kind: "consent", label: "Operations consent", mode: "consent_window", primaries: ["c-1"] });
+    for (const s2 of [CONSENT, { ...CONSENT, status: "satisfied" as const, satisfiedAt: NOW, via: "consent" as const }]) {
+      for (const uid of ["c-1", "x-9", "d-1"]) {
+        db.reads = [];
+        await render(ticket(rosterOf([ACCEPT, CHECK, s2])), uid);
+        expect(db.reads, uid).not.toContain("ticket_review_slot_events");
+        expect(host.innerHTML, uid).not.toMatch(/data-testid="examination-/);
+      }
+    }
+  });
+
   it("the notify-only slot's occupant has no form (no sign-off, no veto of the panel's) — told, as before", async () => {
     await render(ticket(rosterOf([ACCEPT, CHECK, ASSURE, WATCH])), "q-2");
     expect(q("examination-form")).toBeNull();
