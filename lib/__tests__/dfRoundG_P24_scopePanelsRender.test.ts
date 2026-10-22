@@ -127,6 +127,12 @@ describe("ExaminationScopePanel — configured", () => {
 });
 
 describe("ExaminationScopeSection — the editor", () => {
+  it("a workspace with no requirement reads nothing more on the page (the library choices load only once a requirement exists)", async () => {
+    await render(React.createElement(ExaminationScopeSection, { settings: { requestTypes: { options: [] } } as never, orgId: "o1", onChange: () => {} } as never));
+    expect(db.reads).toEqual([]);
+    await render(React.createElement(ExaminationScopeSection, { settings: CFG, orgId: "o1", onChange: () => {} } as never));
+    expect(db.reads).toEqual(["libraries"]);
+  });
   it("adds a field and a requirement into the page's settings (no time until the page's save stamps it)", async () => {
     const patches: Array<Record<string, unknown>> = [];
     await render(React.createElement(ExaminationScopeSection, { settings: { requestTypes: { options: [] } } as never, orgId: null, onChange: (p: Record<string, unknown>) => patches.push(p) } as never));

@@ -83,15 +83,24 @@ export default function ExaminationScopeSection({
   const [optionText, setOptionText] = useState<Record<number, string>>({});
   const workClasses = reviewClassOptions(settings, "workClasses");
 
+  // The library choices are read only once a requirement row exists (a
+  // workspace that configures nothing reads nothing more on this page); a
+  // failed read leaves the stored ids shown as they are.
+  const needsLibraries = scope.requirements.length > 0;
   useEffect(() => {
-    if (!orgId) return;
+    if (!orgId || !needsLibraries) return;
     let alive = true;
     (async () => {
-      const { data } = await supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name");
-      if (alive) setLibraries(((data as Array<{ id: string; name: string | null }> | null) ?? []).map((l) => ({ id: l.id, name: (l.name ?? "").trim() || l.id })));
+      try {
+        const { data } = await supabase.from("libraries").select("id, name").eq("org_id", orgId);
+        if (!alive) return;
+        setLibraries(((data as Array<{ id: string; name: string | null }> | null) ?? [])
+          .map((l) => ({ id: l.id, name: (l.name ?? "").trim() || l.id }))
+          .sort((a, b) => a.name.localeCompare(b.name)));
+      } catch { /* the stored ids stay shown as they are */ }
     })();
     return () => { alive = false; };
-  }, [orgId]);
+  }, [orgId, needsLibraries]);
 
   const set = (next: EditableScope) => onChange({ [EXAMINATION_SCOPE_KEY]: next } as unknown as Partial<OrgDraftingSettings>);
   const fieldKeys = new Set(scope.fields.map((f) => f.key));
