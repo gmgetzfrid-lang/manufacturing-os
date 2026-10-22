@@ -24,12 +24,16 @@
 //     closed: until it is read, or when it cannot be, no form). A round with
 //     no files under review records the note alone.
 // A record is shown as a slot's stop ONLY when the hold's opener (opened_by —
-// tied to the session for a record by 20261267's opener check) is one of
+// tied to the session for a record, and pinned once it carries one, by
+// 20261267's opener checks) is one of
 // that notify-only slot's people in the round the record names (the roster
 // on record, or the roster ledger ticket_review_slots for an earlier round —
 // lib/assuranceExamination.ts holdOpenerInSlot). Any other record is counted,
-// never shown as anyone's stop. The holds are read filtered to this request
-// in the query (examination->>ticketId), and a full page says more exist.
+// never shown as anyone's stop. A slot's stop is headed with the name the
+// workspace's member list gives that opener (org_members, read as the
+// viewer) — never the hold's opened_by_name, which its writer typed (it is
+// not even read). The holds are read filtered to this request in the query
+// (examination->>ticketId), and a full page says more exist.
 // It renders NOTHING and reads NOTHING on a request whose roster has no such
 // slot (every request today) — the roster panel is exactly as before. It
 // adds no sign-off and no wait; nothing about the review's sign-offs, vetoes
@@ -83,6 +87,14 @@ export const holdPermissionUncheckedText = (why: string): string =>
 /** What the panel says when the round has no files under review. */
 export const NO_FILES_UNDER_REVIEW =
   "There are no files under review in this round — what you found is the record.";
+/** Who a slot's stop is shown as placed by: the opener's name from the
+ *  workspace's member list (`names`, uid → display name), never the hold's
+ *  own opened_by_name (written by the client that placed it); when the
+ *  member list could not give a name, the slot's people, unnamed. Pure. */
+export function slotStopHolder(openedBy: string, names: ReadonlyMap<string, string>, slotLabel: string | null | undefined): string {
+  return names.get(openedBy) || `a member of ${slotLabel || "this slot"}`;
+}
+
 /** What the panel says to an occupant when the request names no document. */
 export const NO_SOURCE_TO_HOLD =
   "This request names no controlled document, so there is nothing to hold. To stop it, raise it with the assignment queue.";
@@ -92,7 +104,6 @@ interface HoldRow {
   reason: string;
   notes: string | null;
   opened_by: string;
-  opened_by_name: string | null;
   opened_at: string;
   released_at: string | null;
   examination: unknown;
@@ -114,6 +125,7 @@ export default function NotifyHoldExamination({ ticket, orgId, uid, userName, ro
   const [holds, setHolds] = useState<HoldRow[] | "unreadable" | "not_migrated" | null>(null);
   const [more, setMore] = useState(false);
   const [ledger, setLedger] = useState<SlotOccupancy[]>([]);
+  const [openerNames, setOpenerNames] = useState<ReadonlyMap<string, string>>(new Map());
   const [reloadKey, setReloadKey] = useState(0);
   const [pick, setPick] = useState<string[] | null>(null);
   const [note, setNote] = useState("");
@@ -154,11 +166,11 @@ export default function NotifyHoldExamination({ ticket, orgId, uid, userName, ro
       // Filtered to THIS request in the query, so other requests' holds on
       // the same document never crowd it out of the page.
       const { data, error } = await supabase.from("document_holds")
-        .select("id, reason, notes, opened_by, opened_by_name, opened_at, released_at, examination")
+        .select("id, reason, notes, opened_by, opened_at, released_at, examination")
         .eq("org_id", orgId).eq("document_id", sourceId).eq("examination->>ticketId", ticketId)
         .order("opened_at", { ascending: false }).limit(NOTIFY_HOLD_READ_LIMIT + 1);
       if (!alive) return;
-      if (error) { setHolds(isMissingHoldExaminationColumn(error) ? "not_migrated" : "unreadable"); setMore(false); setLedger([]); return; }
+      if (error) { setHolds(isMissingHoldExaminationColumn(error) ? "not_migrated" : "unreadable"); setMore(false); setLedger([]); setOpenerNames(new Map()); return; }
       const all = (data ?? []) as HoldRow[];
       const rows = all.slice(0, NOTIFY_HOLD_READ_LIMIT).filter((h) => holdExaminationOf(h.examination, ticketId) !== null);
       // An earlier round's slots come from the roster ledger (read as the
@@ -175,6 +187,20 @@ export default function NotifyHoldExamination({ ticket, orgId, uid, userName, ro
             .map((r) => ({ rosterId: r.roster_id, kind: r.slot_kind, mode: r.mode, primaries: r.primaries ?? [], alternates: r.alternates ?? [], label: r.label }));
         }
       }
+      // The openers' names come from the member list (read as the viewer),
+      // never from the hold's own opened_by_name. Unreadable → unnamed.
+      const openers = [...new Set(rows.map((h) => h.opened_by).filter((x): x is string => !!x))];
+      let names = new Map<string, string>();
+      if (openers.length > 0) {
+        const { data: mem, error: memErr } = await supabase.from("org_members")
+          .select("uid, display_name, email").eq("org_id", orgId).in("uid", openers);
+        if (!alive) return;
+        if (!memErr) {
+          names = new Map(((mem ?? []) as Array<{ uid: string; display_name?: string | null; email?: string | null }>)
+            .map((m) => [m.uid, (m.display_name ?? "").trim() || (m.email ?? "").split("@")[0] || "member"]));
+        }
+      }
+      setOpenerNames(names);
       setLedger(occ);
       setMore(all.length > NOTIFY_HOLD_READ_LIMIT);
       setHolds(rows);
@@ -239,7 +265,7 @@ export default function NotifyHoldExamination({ ticket, orgId, uid, userName, ro
             return (
               <li key={h.id}>
                 <span className="font-bold text-[var(--color-text)]">{label || "Told"}</span>{" "}
-                <span className="text-[var(--color-text-muted)]">— held by {h.opened_by_name || "someone"} · {new Date(h.opened_at).toLocaleString()}{h.released_at ? ` · released ${new Date(h.released_at).toLocaleString()}` : " · in force"}</span>
+                <span className="text-[var(--color-text-muted)]">— held by {slotStopHolder(h.opened_by, openerNames, label)} · {new Date(h.opened_at).toLocaleString()}{h.released_at ? ` · released ${new Date(h.released_at).toLocaleString()}` : " · in force"}</span>
                 <div className="text-[var(--color-text-muted)]">{examinedFilesText(rec)}</div>
                 {rec.note && <div className="text-[var(--color-text)] whitespace-pre-wrap">{rec.note}</div>}
                 <div className="text-[var(--color-text-faint)]">Reviewed version {shortHash(rec.contentHash)}{rec.cycle ? ` · Rev ${rec.cycle}` : ""}</div>

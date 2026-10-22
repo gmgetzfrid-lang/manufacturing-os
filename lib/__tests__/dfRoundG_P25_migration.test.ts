@@ -60,6 +60,11 @@ describe("20261267 — DEC-30 one paste", () => {
     expect(pre).toContain("to_regclass('public.ticket_preauthorizations') IS NULL");
     expect(pre).toContain("p.proname = 'apply_ticket_preauthorizations'");
     expect(pre).toContain("nothing was changed");
+    // review fix pass 3: the inventory reads 20261241's routing_control — the
+    // prerequisite says so instead of the paste stopping on a bare 42703
+    expect(pre).toContain("column_name = 'routing_control'");
+    expect(pre).toContain("table_name IN ('libraries', 'collections', 'documents')) < 3 THEN");
+    expect(pre).toContain("20261267 needs 20261241");
   });
   it("the inventory is aggregate counts only (6 rows) — never a customer row", () => {
     const inv = S.slice(S.indexOf("CREATE TEMP TABLE"), S.indexOf("\nBEGIN;"));
@@ -134,6 +139,19 @@ describe("20261267 — what it re-creates, and what it does NOT", () => {
     expect(g).toContain("AND (auth.uid() IS NULL OR NEW.opened_by IS DISTINCT FROM auth.uid()) THEN");
     expect(g).toContain("USING ERRCODE = '42501'");
     expect(S).toContain("CREATE TRIGGER trg_document_hold_examination_opener\n  BEFORE INSERT ON document_holds\n  FOR EACH ROW EXECUTE FUNCTION document_hold_examination_opener();");
+  });
+  it("a recorded hold's opener is pinned by THIS file, for every role, without 20261073 (review fix pass 3)", () => {
+    const g = fnBody(S, "document_hold_examination_fixed");
+    expect(g).toContain("IF NEW.examination IS DISTINCT FROM OLD.examination THEN");
+    expect(g).toContain("IF OLD.examination IS NOT NULL\n     AND (NEW.opened_by IS DISTINCT FROM OLD.opened_by OR NEW.opened_by_name IS DISTINCT FROM OLD.opened_by_name) THEN");
+    expect(g).not.toContain("current_user");
+    expect(g.match(/USING ERRCODE = '42501'/g)).toHaveLength(2);
+    expect(S).toContain("CREATE TRIGGER trg_document_hold_examination_fixed\n  BEFORE UPDATE OF examination, opened_by, opened_by_name ON document_holds\n  FOR EACH ROW EXECUTE FUNCTION document_hold_examination_fixed();");
+    // probe 7 checks the trigger's columns and the opener clause
+    expect(S).toContain("= ARRAY['examination', 'opened_by', 'opened_by_name'])");
+    expect(S).toContain("AND p.prosrc LIKE '%NEW.opened_by IS DISTINCT FROM OLD.opened_by OR NEW.opened_by_name IS DISTINCT FROM OLD.opened_by_name%'");
+    // the header no longer leans on 20261073 for the opener
+    expect(raw).not.toContain("pinned once placed by 20261073's guard");
   });
   it("the status stamp: NULL on insert, the time on a status change, the stored value otherwise", () => {
     const f = fnBody(S, "org_members_status_change_stamp");

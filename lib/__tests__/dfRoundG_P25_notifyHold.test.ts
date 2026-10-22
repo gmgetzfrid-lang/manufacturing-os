@@ -58,7 +58,7 @@ import { parseRoutingControl, validateRoutingDraft, notifyExaminationOptInAllowe
 import { controlToDraft, draftToControl, notifyExaminationOptInFor, preauthOptInFor, assuranceOptInFor, NOTIFY_EXAMINATION_HINT } from "@/components/documents/RoutingControlSection";
 import { isAssuranceSlot, isNotifyExaminationSlot, holdExaminationRecord, holdExaminationOf, holdOpenerInSlot, rosterOccupancy, examinedFilesText } from "@/lib/assuranceExamination";
 import { preauthEligibleSlots } from "@/lib/ticketPreauthorization";
-import NotifyHoldExamination, { HOLD_RECORD_NOT_STORED, HOLD_NOT_PERMITTED, NO_FILES_UNDER_REVIEW, holdPermissionUncheckedText, NO_SOURCE_TO_HOLD, NOTIFY_HOLD_READ_LIMIT, NOTIFY_HOLDS_MORE, notSlotHoldsText, uncheckedHoldsText } from "@/components/requests/NotifyHoldExamination";
+import NotifyHoldExamination, { HOLD_RECORD_NOT_STORED, HOLD_NOT_PERMITTED, NO_FILES_UNDER_REVIEW, holdPermissionUncheckedText, NO_SOURCE_TO_HOLD, NOTIFY_HOLD_READ_LIMIT, NOTIFY_HOLDS_MORE, notSlotHoldsText, uncheckedHoldsText, slotStopHolder } from "@/components/requests/NotifyHoldExamination";
 import TicketRosterPanel from "@/components/requests/TicketRosterPanel";
 
 const NOW = "2026-10-22T12:00:00.000Z";
@@ -244,6 +244,30 @@ describe("NotifyHoldExamination — with an opted-in notify-only slot", () => {
     await renderHold(ticket(rosterOf([SIGN, WATCH])), "s-1");
     expect(q("notify-hold-list")!.textContent).toContain("Inspection notice");
     expect(q("notify-hold-list")!.textContent).not.toContain("Quality");
+  });
+  it("REVIEW FIX 3: a slot's stop is headed with the opener's name from the member list — never the opened_by_name the hold's writer typed; the member list unreadable → the slot's people, unnamed", async () => {
+    db.results.document_holds = { data: [holdRow({ opened_by_name: "Plant Manager" })], error: null };
+    db.results.org_members = { data: [{ uid: "q-2", display_name: "Quinn Q", email: "quinn@plant.test" }], error: null };
+    await renderHold(ticket(rosterOf([SIGN, WATCH])), "s-1");
+    expect(q("notify-hold-list")!.textContent).toContain("held by Quinn Q");
+    expect(host.textContent).not.toContain("Plant Manager");
+    // the member read names only the openers of the records read, in this workspace
+    expect(db.calls).toContainEqual({ table: "org_members", method: "in", args: ["uid", ["q-2"]] });
+    expect(db.calls).toContainEqual({ table: "org_members", method: "eq", args: ["org_id", "o1"] });
+    // opened_by_name is not even read
+    const sel = db.calls.find((c) => c.table === "document_holds" && c.method === "select")!.args[0] as string;
+    expect(sel).not.toContain("opened_by_name");
+    act(() => root.unmount());
+    root = createRoot(host);
+    db.results.org_members = { data: null, error: { code: "42501", message: "permission denied" } };
+    await renderHold(ticket(rosterOf([SIGN, WATCH])), "s-1");
+    expect(q("notify-hold-list")!.textContent).toContain("held by a member of Inspection notice");
+    expect(host.textContent).not.toContain("Plant Manager");
+  });
+  it("slotStopHolder: the member list's name, else the slot's people unnamed (pure)", () => {
+    expect(slotStopHolder("q-2", new Map([["q-2", "Quinn Q"]]), "Inspection notice")).toBe("Quinn Q");
+    expect(slotStopHolder("q-2", new Map(), "Inspection notice")).toBe("a member of Inspection notice");
+    expect(slotStopHolder("q-2", new Map(), "")).toBe("a member of this slot");
   });
   it("a page that did not fill says nothing more", async () => {
     db.results.document_holds = { data: [holdRow()], error: null };

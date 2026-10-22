@@ -50,13 +50,19 @@
 --       the hold's OWN insert (lib/holds.ts openHold), so the record and the
 --       act cannot disagree. A CHECK keeps it a JSON object of bounded size
 --       (or NULL); a NEW trigger (document_hold_examination_fixed, BEFORE
---       UPDATE OF examination, SECURITY INVOKER, search_path pinned) refuses
---       any change to it once written, for every role. A second NEW trigger
+--       UPDATE OF examination, opened_by, opened_by_name, SECURITY INVOKER,
+--       search_path pinned) refuses any change to it once written, and any
+--       change to the hold's opener (opened_by, opened_by_name) once it
+--       carries one, for every role — on its own, not leaning on 20261073's
+--       identity guard (pending as a PASTE, MIGRATION-PASTE-ORDER row 68),
+--       so a holds.release holder cannot re-attribute a record to a slot's
+--       person after the insert where 20261073 is not live. A second NEW trigger
 --       (document_hold_examination_opener, BEFORE INSERT, SECURITY INVOKER,
 --       search_path pinned) ties the record to its writer: a client role's
 --       insert that carries a record is refused 42501 unless the hold is
 --       placed in the caller's own name (opened_by = auth.uid()) — so a
---       record can never be written in another person's name. The service
+--       record can never be written in another person's name (and, with the
+--       update trigger above, never moved to another person after). The service
 --       role (a restore, a server route) and a SECURITY DEFINER path pass
 --       untouched; a hold without a record is not looked at. 20261073's
 --       guards are NOT re-created (column-only checks): every existing hold,
@@ -67,11 +73,13 @@
 -- forged actorId; (3) is a comment; (4) adds a column a person writes only
 -- with a hold placed in their own name (the hold's existing INSERT policy
 -- and guards decide who may place one, unchanged), refuses a record on a
--- hold opened in another uid's name, and refuses its rewrite. The counts-only
+-- hold opened in another uid's name, and refuses its rewrite or its hold's
+-- re-attribution. The counts-only
 -- inventory is captured first anyway (DEC-30).
 --
--- PASTE / DEPLOY ORDER. Paste AFTER 20261264 (the first statement refuses,
--- changing nothing, without its function and table). Either order with the
+-- PASTE / DEPLOY ORDER. Paste AFTER 20261264 and 20261241 (the first
+-- statement refuses, changing nothing, without 20261264's function and table
+-- or 20261241's routing_control columns, which the inventory reads). Either order with the
 -- DF-P25 deploy is safe; RECOMMENDED: deploy the app FIRST, then paste.
 --   * App deployed, not pasted: the continuity check reads org_members
 --     without status_changed_at (42703 / PGRST204 → today's read, the audit
@@ -88,7 +96,8 @@
 --     earlier body (nothing breaks — the app's own continuity check still
 --     reads the stamp — but the database's re-check no longer does).
 -- Independent of every other pending migration (ticket_update_guard and
--- 20261073's guards are untouched; 20261166 / 20261221 / 20261250 may be
+-- 20261073's guards are untouched and not relied on — §4 pins a recorded
+-- hold's opener itself; 20261073 / 20261166 / 20261221 / 20261250 may be
 -- pasted before or after).
 -- Re-runnable: ADD COLUMN IF NOT EXISTS (a stored stamp or record is kept),
 -- CREATE OR REPLACE, DROP … IF EXISTS, the CHECK dropped and re-added.
@@ -108,6 +117,11 @@ BEGIN
   END IF;
   IF to_regclass('public.org_members') IS NULL OR to_regclass('public.tickets') IS NULL OR to_regclass('public.document_holds') IS NULL THEN
     RAISE EXCEPTION '20261267 needs org_members, tickets and document_holds; nothing was changed.';
+  END IF;
+  IF (SELECT COUNT(*) FROM information_schema.columns
+       WHERE table_schema = 'public' AND column_name = 'routing_control'
+         AND table_name IN ('libraries', 'collections', 'documents')) < 3 THEN
+    RAISE EXCEPTION '20261267 needs 20261241 (routing tables: routing_control on libraries, collections and documents) pasted first; nothing was changed.';
   END IF;
 END
 $$;
@@ -288,6 +302,14 @@ BEGIN
     RAISE EXCEPTION 'document_holds: the record of what was examined is written with the hold and never changed'
       USING ERRCODE = '42501';
   END IF;
+  -- The record names who examined only through the hold's opener, so once
+  -- a hold carries one its opener is pinned too, for every role — whether
+  -- or not 20261073's identity guard is live.
+  IF OLD.examination IS NOT NULL
+     AND (NEW.opened_by IS DISTINCT FROM OLD.opened_by OR NEW.opened_by_name IS DISTINCT FROM OLD.opened_by_name) THEN
+    RAISE EXCEPTION 'document_holds: a hold that carries a record of what was examined keeps the person who placed it (opened_by)'
+      USING ERRCODE = '42501';
+  END IF;
   RETURN NEW;
 END;
 $$;
@@ -295,13 +317,14 @@ REVOKE ALL ON FUNCTION document_hold_examination_fixed() FROM PUBLIC, anon, auth
 
 DROP TRIGGER IF EXISTS trg_document_hold_examination_fixed ON document_holds;
 CREATE TRIGGER trg_document_hold_examination_fixed
-  BEFORE UPDATE OF examination ON document_holds
+  BEFORE UPDATE OF examination, opened_by, opened_by_name ON document_holds
   FOR EACH ROW EXECUTE FUNCTION document_hold_examination_fixed();
 
 -- The record names who examined only through the hold's opener, so a client
--- may write a record only on a hold placed in its own name. (opened_by is
--- pinned once placed by 20261073's guard, so the insert is the one place to
--- check it.) Column-only: a hold without a record is not looked at.
+-- may write a record only on a hold placed in its own name. (A recorded
+-- hold's opener is pinned after the insert by document_hold_examination_fixed
+-- above, so the insert is the one place to check it.) Column-only: a hold
+-- without a record is not looked at.
 CREATE OR REPLACE FUNCTION document_hold_examination_opener()
 RETURNS TRIGGER LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
 BEGIN
@@ -377,9 +400,13 @@ SELECT 1, 6, 'GAP-102 notify-only limb: document_holds.examination exists (jsonb
                      AND pg_get_constraintdef(oid) LIKE '%jsonb_typeof(examination)%'),
        NULL
 UNION ALL
-SELECT 1, 7, 'a hold''s examination record is never changed once written (BEFORE UPDATE OF examination trigger, enabled; SECURITY INVOKER, search_path pinned; no client EXECUTE)',
-       EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_document_hold_examination_fixed' AND tgrelid = 'public.document_holds'::regclass AND NOT tgisinternal AND tgenabled = 'O')
+SELECT 1, 7, 'a hold''s examination record is never changed once written, nor the opener of a hold that carries one (BEFORE UPDATE OF examination, opened_by, opened_by_name trigger, enabled; SECURITY INVOKER, search_path pinned; no client EXECUTE)',
+       EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgname = 'trg_document_hold_examination_fixed' AND t.tgrelid = 'public.document_holds'::regclass AND NOT t.tgisinternal AND t.tgenabled = 'O'
+                 AND (SELECT array_agg(a.attname::text ORDER BY a.attname::text) FROM pg_attribute a
+                       WHERE a.attrelid = t.tgrelid AND a.attnum = ANY (t.tgattr::int2[])) = ARRAY['examination', 'opened_by', 'opened_by_name'])
        AND COALESCE((SELECT NOT p.prosecdef AND p.proconfig @> ARRAY['search_path=public']
+                       AND p.prosrc LIKE '%OLD.examination IS NOT NULL%'
+                       AND p.prosrc LIKE '%NEW.opened_by IS DISTINCT FROM OLD.opened_by OR NEW.opened_by_name IS DISTINCT FROM OLD.opened_by_name%'
                        FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
                       WHERE ns.nspname = 'public' AND p.proname = 'document_hold_examination_fixed'), false)
        AND NOT has_function_privilege('authenticated', 'public.document_hold_examination_fixed()', 'EXECUTE'),

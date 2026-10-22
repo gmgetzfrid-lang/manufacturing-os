@@ -22,7 +22,10 @@
 //     a hold without it, and its release, behave exactly as before; a
 //     client may write it only on a hold opened in its own name (a record
 //     on a hold naming another uid as opened_by is refused 42501; the
-//     service role — a restore — is untouched).
+//     service role — a restore — is untouched), and a recorded hold's
+//     opener is pinned by this file for every role, even with 20261073's
+//     identity guard not live (trg_document_hold_guard disabled for that
+//     case — production while 20261073 is a PASTE).
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { join } from "node:path";
@@ -246,6 +249,31 @@ describe.skipIf(skip !== null)("DF-P25 — 20261267 (runtime)", () => {
       expect(Number(one(`SELECT COUNT(*) FROM document_holds WHERE notes = 'p25 forged'`))).toBe(0);
       expect(place(m.drafter, forged, "p25 own")).toEqual({ ok: true, rows: 1 });
       expect(one(`SELECT opened_by::text FROM document_holds WHERE notes = 'p25 own'`)).toBe(m.drafter.uid);
+    });
+    it("REVIEW FIX 3: with 20261073's identity guard NOT live (trg_document_hold_guard disabled — production while 20261073 is a PASTE), a recorded hold's opener cannot be moved to another person, by a client or the service role; its notes still move; a hold without a record is not looked at", () => {
+      const rec = `'{"stop":"hold","ticketId":"t-3","rosterId":"r-1","slotKind":"qa","note":"Examined, found nothing"}'::jsonb`;
+      expect(place(m.admin, rec, "p25 reattr")).toEqual({ ok: true, rows: 1 });
+      expect(place(m.admin, null, "p25 reattr-plain")).toEqual({ ok: true, rows: 1 });
+      const id = one(`SELECT id FROM document_holds WHERE notes = 'p25 reattr'`);
+      const plain = one(`SELECT id FROM document_holds WHERE notes = 'p25 reattr-plain'`);
+      admin(db, "ALTER TABLE document_holds DISABLE TRIGGER trg_document_hold_guard;");
+      try {
+        // the forgery the review named: re-point the opener (and its name) at a slot's person after the insert
+        const moved = asCaller(db, m.admin.caller, `UPDATE document_holds SET opened_by = '${m.qa.uid}', opened_by_name = 'QA Lead' WHERE id = '${id}'`);
+        expect(moved).toMatchObject({ ok: false, code: "42501" });
+        expect((moved as { message: string }).message).toMatch(/keeps the person who placed it/);
+        expect(asCaller(db, m.admin.caller, `UPDATE document_holds SET opened_by_name = 'QA Lead' WHERE id = '${id}'`)).toMatchObject({ ok: false, code: "42501" });
+        expect(asCaller(db, SERVICE, `UPDATE document_holds SET opened_by = '${m.qa.uid}' WHERE id = '${id}'`)).toMatchObject({ ok: false, code: "42501" });
+        expect(one(`SELECT opened_by::text FROM document_holds WHERE id = '${id}'`)).toBe(m.admin.uid);
+        // REGRESSION: the same columns written unchanged, and the notes, still move on a recorded hold
+        expect(asCaller(db, m.admin.caller, `UPDATE document_holds SET opened_by = opened_by, opened_by_name = opened_by_name, notes = 'p25 reattr' WHERE id = '${id}'`)).toEqual({ ok: true, rows: 1 });
+        // REGRESSION: a hold without a record is not looked at by this guard (20261073's own guard decides, as before)
+        expect(asCaller(db, SERVICE, `UPDATE document_holds SET opened_by_name = 'Renamed' WHERE id = '${plain}'`)).toEqual({ ok: true, rows: 1 });
+      } finally {
+        admin(db, "ALTER TABLE document_holds ENABLE TRIGGER trg_document_hold_guard;");
+      }
+      // with 20261073 live the move is refused too (this guard fires first)
+      expect(asCaller(db, m.admin.caller, `UPDATE document_holds SET opened_by = '${m.qa.uid}' WHERE id = '${id}'`)).toMatchObject({ ok: false });
     });
     it("the service role (a restore) may write a hold with a record in any opener's name — untouched", () => {
       expect(asCaller(db, SERVICE, `INSERT INTO document_holds (org_id, document_id, reason, notes, opened_by, examination)
