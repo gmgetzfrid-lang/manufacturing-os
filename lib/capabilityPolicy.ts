@@ -1333,7 +1333,10 @@ export type CapabilityPolicyChange =
   // (`key` = capabilityRuleKey of the rule), so a narrowing it makes applies.
   // Merge-time fix pass 2 (review nit 3): `ordinal` names the copy among
   // the capability's rules with that key (TicketDimensionRuleState.ordinal).
-  | { op: "confirm_rule"; orgId: string; cap: CapabilityId; key: string; ordinal?: number };
+  // DF-P23 (the DF-P19 final review's nit): `version` — the policy version
+  // the console read the rule at; the route answers 409 policy_changed on a
+  // mismatch, as it does for a save.
+  | { op: "confirm_rule"; orgId: string; cap: CapabilityId; key: string; ordinal?: number; version?: string | null };
 
 /** The route's 409 code when the stored policy moved on under a write. */
 export const POLICY_CHANGED = "policy_changed";
@@ -1443,10 +1446,12 @@ export async function revokeUserGrant(input: {
  *  library, a work class or a code class — until then it only adds (a
  *  narrowing it makes is "not yet in force"). Admin only, audited, through
  *  the policy route like every write. */
-export async function confirmCapabilityRule(input: { orgId: string; cap: CapabilityId; rule: CapabilityRule; ordinal?: number }): Promise<void> {
+export async function confirmCapabilityRule(input: { orgId: string; cap: CapabilityId; rule: CapabilityRule; ordinal?: number; version?: string | null }): Promise<void> {
   await postPolicyChange({
     op: "confirm_rule", orgId: input.orgId, cap: input.cap, key: capabilityRuleKey(input.rule),
     ...(typeof input.ordinal === "number" ? { ordinal: input.ordinal } : {}),
+    // DF-P23: the version the rule was read at (ALOG-12's rule, as for a save).
+    ...(input.version !== undefined ? { version: input.version } : {}),
   });
 }
 

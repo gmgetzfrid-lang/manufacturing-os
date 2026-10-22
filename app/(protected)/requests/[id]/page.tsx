@@ -2622,7 +2622,14 @@ export default function TicketDetailView() {
         userId={uid ?? undefined}
         archived={!!ticket?.archivedAt}
         archiveId={ticket?.archiveId}
-        liveTicket={ticket ? { status: ticket.status, deliverableRev: ticket.deliverableRev ?? null, history: ticket.history, revisionCount: ticket.revisionCount ?? null } : null}
+        liveTicket={ticket ? {
+          status: ticket.status, deliverableRev: ticket.deliverableRev ?? null, history: ticket.history, revisionCount: ticket.revisionCount ?? null,
+          // GAP-101 acceptance 3 (drafting-flow DF-P23): a deliverable copy
+          // names the requester's like-in-kind declaration, attributed.
+          declaration: ticket.likeInKindDeclaredAt
+            ? { by: (ticket.likeInKindDeclaredBy && ticket.likeInKindDeclaredBy === ticket.requesterId ? (ticket.requesterName || ticket.requesterEmail) : null) ?? null, declaredAt: new Date(ticket.likeInKindDeclaredAt).toISOString(), statement: ticket.likeInKindStatement ?? null }
+            : null,
+        } : null}
         copyContext={ticket ? { orgId: ticket.orgId, ticketNumber: ticket.ticketId, requesterId: ticket.requesterId, attachments: ticket.attachments, history: ticket.history } : null}
         onApprove={(() => {
           // DF-P6 fix pass 5 (review, major): the viewer's plain green "Approve" offers only a plain

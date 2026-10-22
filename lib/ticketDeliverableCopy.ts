@@ -42,6 +42,16 @@
 //   EVID-16 (DF-P12) The same plan and record serve the server stamping
 //           route (app/api/tickets/copy), which stamps and records in the
 //           request that issues the bytes.
+//   GAP-101 (drafting-flow DF-P23 — acceptance 3, the deliverable limb) A
+//           deliverable (any file but a review Draft) of a request its
+//           requester declared like-in-kind carries the declaration,
+//           attributed, beside the request reference the footer already
+//           names: "KE-1 (declared like-in-kind by <name> on <date>: "<the
+//           statement>")". A request with no declaration (or a database
+//           before 20261250, where none can exist) prints exactly what it
+//           printed before. A declaration the reader could not read is said
+//           ("like-in-kind declaration not available"), never guessed, and
+//           never blocks or delays the copy.
 
 import type { TicketAttachment } from "@/types/schema";
 import { stampWatermark, type StampControlState } from "@/lib/stamping";
@@ -90,6 +100,40 @@ export interface TicketCopyLiveFacts {
    *  after it is the workflow's own (lib/verifyTicketVerdict.ts
    *  provenIssueFromHistory). Absent / null: read as before the paste. */
   historyGuardedFrom?: number | null;
+  /** GAP-101 acceptance 3 (DF-P23): the requester's like-in-kind
+   *  declaration (20261250), to print attributed on a deliverable. Absent /
+   *  null: no declaration (or none can exist yet) — nothing printed.
+   *  "unavailable": it could not be read — said on the copy. */
+  declaration?: TicketCopyDeclaration | "unavailable" | null;
+}
+
+/** GAP-101 acceptance 3 (DF-P23): the declaration as a copy prints it. */
+export interface TicketCopyDeclaration {
+  /** Who declared it, as the request names them (the requester). */
+  by: string | null;
+  /** When (ISO); printed as the date. */
+  declaredAt: string | null;
+  /** The requester's own sentence. */
+  statement: string | null;
+}
+
+/** GAP-101 acceptance 3 (DF-P23): the longest part of the statement a footer
+ *  prints (the request page and the audit trail carry it whole). */
+export const DECLARATION_FOOTER_MAX = 140;
+export const DECLARATION_NOT_AVAILABLE = "like-in-kind declaration not available";
+
+/** GAP-101 acceptance 3 (DF-P23): the parenthesis printed beside the request
+ *  reference on a deliverable — "" for no declaration. Pure. */
+export function declarationFooterClause(d: TicketCopyLiveFacts["declaration"]): string {
+  if (d === undefined || d === null) return "";
+  if (d === "unavailable") return ` (${DECLARATION_NOT_AVAILABLE})`;
+  const by = d.by && d.by.trim() ? d.by.trim() : "the requester";
+  const date = d.declaredAt && !Number.isNaN(Date.parse(d.declaredAt)) ? new Date(d.declaredAt).toISOString().slice(0, 10) : null;
+  // A dash clause in the sentence would read as one of the footer's own
+  // clauses (the stamper drops the scan clause by them), so it is a hyphen here.
+  const text = (d.statement ?? "").replace(/\s+/g, " ").replace(/ — /g, " - ").trim();
+  const quoted = text ? `: "${text.length > DECLARATION_FOOTER_MAX ? `${text.slice(0, DECLARATION_FOOTER_MAX - 1).trimEnd()}…` : text}"` : "";
+  return ` (declared like-in-kind by ${by}${date ? ` on ${date}` : ""}${quoted})`;
 }
 
 /** Where an issued file stands against the ticket as the page holds it.
@@ -145,21 +189,24 @@ export function ticketCopyPlan(input: {
 }): TicketCopyPlan {
   const controlState = ticketCopyControlState(input.file);
   const rev = typeof input.file.rev === "string" && input.file.rev.trim() ? input.file.rev.trim() : null;
+  // GAP-101 acceptance 3 (DF-P23): a deliverable names the request's
+  // like-in-kind declaration beside the request reference ("" when none).
   const label = input.ticketNumber || "Ticket";
+  const ref = `${label}${input.file.type === "Draft" ? "" : declarationFooterClause(input.live?.declaration)}`;
   const when = input.channel === "print" ? "printing" : "download";
   const standing = ticketCopyStanding(rev, input.live);
   const what = input.file.type === "Draft" ? "review draft" : "deliverable";
   let footerNotice: string;
   if (!rev) {
-    footerNotice = `${label} ${input.file.type ?? "ticket"} file — no deliverable revision is recorded for this file, so which printing this is cannot be confirmed. Not a controlled document revision.`;
+    footerNotice = `${ref} ${input.file.type ?? "ticket"} file — no deliverable revision is recorded for this file, so which printing this is cannot be confirmed. Not a controlled document revision.`;
   } else if (standing?.kind === "withdrawn") {
-    footerNotice = `REQUEST WITHDRAWN at time of ${when} — this file is ${label} ${what} Rev ${rev} — do not work from it — not a controlled document revision — scan the QR for the current status.`;
+    footerNotice = `REQUEST WITHDRAWN at time of ${when} — this file is ${ref} ${what} Rev ${rev} — do not work from it — not a controlled document revision — scan the QR for the current status.`;
   } else if (standing?.kind === "superseded") {
-    footerNotice = `SUPERSEDED by Rev ${standing.by} at time of ${when} — this file is ${label} ${what} Rev ${rev}, not the current revision — not a controlled document revision — scan the QR for the current status.`;
+    footerNotice = `SUPERSEDED by Rev ${standing.by} at time of ${when} — this file is ${ref} ${what} Rev ${rev}, not the current revision — not a controlled document revision — scan the QR for the current status.`;
   } else if (standing?.kind === "in_progress") {
-    footerNotice = `This file is ${label} ${what} Rev ${rev} — a newer revision is in progress at time of ${when} — not a controlled document revision — scan the QR to confirm it is still the latest.`;
+    footerNotice = `This file is ${ref} ${what} Rev ${rev} — a newer revision is in progress at time of ${when} — not a controlled document revision — scan the QR to confirm it is still the latest.`;
   } else {
-    footerNotice = `This file is ${label} ${what} Rev ${rev} — not a controlled document revision — scan the QR to confirm it is still the latest.`;
+    footerNotice = `This file is ${ref} ${what} Rev ${rev} — not a controlled document revision — scan the QR to confirm it is still the latest.`;
   }
   const verb = input.channel === "print" ? "Print" : "Download";
   const confirmMessage = !standing || !rev

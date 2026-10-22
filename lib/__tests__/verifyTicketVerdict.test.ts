@@ -556,7 +556,8 @@ describe("the ticket page's FileViewerModal — wired to the rules above", () =>
     expect(modal).not.toMatch(/deliverableRev/);
     expect(page).not.toContain("deliverableRev={ticket?.deliverableRev}");
     expect(modal).toContain("ticketCopyPlan({ file, ticketNumber: ticketId, ticketRowId, origin: publicOrigin(), channel, live: liveTicket })");
-    expect(page).toContain("liveTicket={ticket ? { status: ticket.status, deliverableRev: ticket.deliverableRev ?? null, history: ticket.history, revisionCount: ticket.revisionCount ?? null } : null}");
+    // drafting-flow DF-P23 (GAP-101 acceptance 3): the live facts now also carry the declaration (a footer input only)
+    expect(page).toContain("liveTicket={ticket ? {\n          status: ticket.status, deliverableRev: ticket.deliverableRev ?? null, history: ticket.history, revisionCount: ticket.revisionCount ?? null,\n");
   });
   it("a superseded or re-worked file is confirmed before stamping, on both paths", () => {
     expect(modal).toContain('!plan.confirmMessage || (await appConfirm({ message: plan.confirmMessage, tone: "danger" }))');
