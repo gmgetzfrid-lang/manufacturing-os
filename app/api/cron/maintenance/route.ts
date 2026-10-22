@@ -24,7 +24,10 @@
 //      waiting on; one past its target escalates to them, the assignment
 //      queue and the requester — once each, stamped on the ticket
 //      (lib/ticketSla.ts runTicketSlaScan). Escalation notifies; it never
-//      advances, closes or reassigns a request.
+//      advances, closes or reassigns a request. DF-P22: a workspace that
+//      configured an escalation contact also has a breach its queue owners
+//      have not cleared within the period told to that contact, once per
+//      breach per period (runSlaEscalationScan, ticket_sla_escalations).
 //   5c. Consent windows (drafting-flow GAP-109 / GAP-113, DF-P7): a window
 //      the workflow route could not open is retried; a running window is
 //      reminded at its configured fraction (the people asked and the
@@ -122,7 +125,7 @@ import { notEmailedRecordLatch } from "@/lib/deliveryRecordLatch";
 import { renderNotificationEmail } from "@/lib/emailRender";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { formatRecordDate, formatRecordTime, orgTimeZone } from "@/lib/recordTime";
-import { runTicketSlaScan, type SlaScanReport } from "@/lib/ticketSla";
+import { runTicketSlaScan, runSlaEscalationScan, type SlaScanReport, type SlaEscalationReport } from "@/lib/ticketSla";
 import { runDepartureBackstop, type DepartureBackstopReport, type DepartureRpcClient } from "@/lib/ticketDepartureBackstop";
 import { drainAuditDeadLetters, type AuditOutboxReport } from "@/lib/auditOutboxDrain";
 import { runConsentWindowScan, type ConsentScanReport } from "@/lib/consentWindowScan";
@@ -204,6 +207,9 @@ async function handler(req: NextRequest) {
     auditOutbox?: AuditOutboxReport;
     /** GAP-106: the drafting-request SLA step (5b). */
     ticketSla?: Omit<SlaScanReport, "errors">;
+    /** FRIC-1 dw2 / GAP-106 (drafting-flow DF-P22): step 5b's escalation
+     *  tier — present only when a workspace configured a contact. */
+    ticketSlaEscalation?: Omit<SlaEscalationReport, "errors">;
     /** GAP-109 (DF-P7): the consent-window step (5c). */
     consentWindows?: Omit<ConsentScanReport, "errors">;
     /** SM-7 / EVID-12 (drafting-flow DF-P8): the ticket audit drain (5d). */
@@ -492,6 +498,21 @@ async function handler(req: NextRequest) {
       // this run did not reach is due no sooner than what it did, and a ticket
       // leaves the scan once its breach is sent (lib/ticketSla.ts).
       if (sla.truncated) result.errors.push("ticket-sla: this run stopped before every open request was read (its read cap or time ran out) — the next run starts again with the soonest-due; a request leaves the scan once its breach is sent");
+      // FRIC-1 dw2 / GAP-106 (drafting-flow DF-P22): the escalation tier
+      // above the queue owners — part of this step, inside its time. Only a
+      // workspace that configured an escalation contact is read past one
+      // configuration list; with none, nothing else happens (today's step).
+      if (Date.now() < slaDeadlineAt) {
+        const esc = await runSlaEscalationScan({
+          client: sb,
+          emit: (input) => runWithServerClient(sb, () => emit(input)),
+          zoneOf: (orgId) => orgTimeZone(sb, orgId),
+          deadlineAt: slaDeadlineAt,
+        });
+        const { errors: escErrors, ...escCounts } = esc;
+        if (esc.configured > 0 || escErrors.length > 0) result.ticketSlaEscalation = escCounts;
+        for (const line of escErrors) { result.errors.push(line); console.error(`[cron/maintenance] ${line}`); }
+      }
     } catch (e) {
       result.errors.push(`ticket-sla: ${(e as Error).message}`);
     }

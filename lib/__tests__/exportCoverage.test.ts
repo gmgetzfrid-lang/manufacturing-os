@@ -108,6 +108,12 @@ const DECISION_AT_MERGE: Record<string, string> = {
   // document-control Round G P38 DOCUMENT NOTICE RECORD's document_notice_events was decided at its merge
   // (EXPORTED after ticket_notice_events, a not_emailed row's reason stripped; never imported — IMMUTABLE_TABLES; DEC-90)
   // and is no longer here.
+  // drafting-flow Round G DF-P22 CONSENT AND ESCALATION (20261264) — the
+  // integrator decides at the merge. Proposals:
+  ticket_sla_escalations:
+    "ORG_SCOPED, proposed EXPORTED after ticket_notice_events and never imported (IMMUTABLE_TABLES): the escalation tier's record and claim — one row per breach per period told to the workspace's escalation contact; a restored ticket's escalations belong to the source workspace's clock",
+  ticket_preauthorizations:
+    "ORG_SCOPED, proposed EXPORTED and never imported (IMMUTABLE_TABLES): a person's standing pre-authorization — signed, scoped, expiring, revoked never deleted; the e-signature it rests on is not imported either, so a restored record could not stand and must not be re-created by a restore",
 };
 
 // EGR-7 / XEDGE-10: a column whose NAME says "credential". `_key` alone is

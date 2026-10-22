@@ -457,7 +457,9 @@ describe("GAP-106 — the cron step (no new cron entry; one hunk in the maintena
   });
   it("step 5b runs the scan under the service role through emit(), bounded, its lines reported", () => {
     const r = src("app/api/cron/maintenance/route.ts");
-    expect(r).toContain('import { runTicketSlaScan, type SlaScanReport } from "@/lib/ticketSla";');
+    // drafting-flow DF-P22 (FRIC-1 dw2): the same import names the
+    // escalation tier's pass too (runSlaEscalationScan, inside step 5b).
+    expect(r).toContain('import { runTicketSlaScan, runSlaEscalationScan, type SlaScanReport, type SlaEscalationReport } from "@/lib/ticketSla";');
     expect(r).toContain("const sla = await runTicketSlaScan({");
     expect(r).toContain("emit: (input) => runWithServerClient(sb, () => emit(input)),");
     // fix pass 2: it stops before what the later steps are guaranteed

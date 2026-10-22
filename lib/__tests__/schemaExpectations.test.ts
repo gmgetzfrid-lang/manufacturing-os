@@ -98,6 +98,9 @@ const ROW_AT_MERGE: Record<string, string> = {
   // notice record — the integrator adds it to EXPECTED_TABLES at the merge.
   // drafting-flow Round G DF-P7 CONSENT's ticket_notice_events (20261255) is listed in EXPECTED_TABLES since its merge.
   // document-control Round G P38 DOCUMENT NOTICE RECORD's document_notice_events (20261257) is listed in EXPECTED_TABLES since its merge.
+  // drafting-flow Round G DF-P22 CONSENT AND ESCALATION — the integrator adds both to EXPECTED_TABLES at the merge.
+  ticket_sla_escalations: "20261264_df_roundG_consent_escalation.sql",
+  ticket_preauthorizations: "20261264_df_roundG_consent_escalation.sql",
 };
 
 const BASE = "schema.sql (base schema)";

@@ -38,6 +38,8 @@ import {
 } from '@/lib/slaDefaultsEditor';
 import { OUTCOME_LABEL } from '@/lib/ticketOutcome';
 import ReviewClassesSection from '@/components/requests/ReviewClassesSection';
+// FRIC-1 / GAP-106 (drafting-flow DF-P22): the escalation tier above the queue.
+import SlaEscalationSection from '@/components/requests/SlaEscalationSection';
 import {
   OUTCOME_REASON_CATEGORIES,
   OUTCOME_REASON_LABEL_MAX,
@@ -298,6 +300,17 @@ export default function DraftingConfigPage() {
 
           {/* SECTION: DUE-DATE WINDOWS (sla_defaults — drafting-flow DF-P13) */}
           <SlaDefaultsSection orgId={activeOrgId} requestTypes={savedRequestTypes} requestTypesUnsaved={requestTypesUnsaved} />
+
+          {/* SECTION: ESCALATION ABOVE THE QUEUE (drafting-flow DF-P22) — saved with this page */}
+          <SlaEscalationSection
+            orgId={activeOrgId}
+            value={(settings as unknown as Record<string, unknown>).slaEscalation}
+            onChange={(next) => {
+              const rest = { ...(settings as unknown as Record<string, unknown>) };
+              delete rest.slaEscalation;
+              setSettings((next ? { ...rest, slaEscalation: next } : rest) as unknown as typeof settings);
+            }}
+          />
 
           {/* SECTION: UNITS */}
           <ConfigSection 
