@@ -447,7 +447,10 @@ export function applySignPlan(
   const via = new Map(plan.fillable.map((f) => [f.slot.kind, f.via] as const));
   return {
     ...roster,
-    slots: roster.slots.map((s) => (s.status === "open" && via.has(s.kind)
+    // GAP-115 (DF-P26 review fix): a slot the exception-only rule satisfied
+    // is upgraded to the person's sign-off (lib/workflow.ts slotSignPlan
+    // offers it to its own occupants only).
+    slots: roster.slots.map((s) => ((s.status === "open" || (s.status === "satisfied" && s.via === "rule")) && via.has(s.kind)
       ? { ...s, status: "satisfied" as const, satisfiedBy: actor.uid, satisfiedByName: actor.name, satisfiedAt: now, signatureId, via: via.get(s.kind)! }
       : s)),
   };

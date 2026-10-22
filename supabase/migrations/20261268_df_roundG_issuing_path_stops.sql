@@ -25,13 +25,18 @@
 --       default name ticket_review_slot_events_event_check) with exactly one
 --       value added: 'reopened'. The append-only trigger is untouched: a
 --       re-open is a NEW event row, never a rewrite.
---   (4) exception_only_review_ready() — new; returns true. The app asks it
+--   (4) exception_only_review_ready() — new; answers whether the LIVE
+--       definitions of (1)–(3) still admit the rule's facts ('rule' in the
+--       satisfied_via CHECK and in the shape CHECK, 'reopened' in the event
+--       CHECK — read from pg_get_constraintdef each call). The app asks it
 --       (one RPC, only when a submission opens a roster carrying an
 --       exception-only slot) before it satisfies any slot by the rule: until
---       this file is pasted the function is missing (PGRST202 / 42883) and
---       the rule applies nothing — the slot waits for its sign-off, exactly
---       as today. SECURITY INVOKER, search_path pinned, executable only by
---       the service role (the route and the cron).
+--       this file is pasted the function is missing (PGRST202 / 42883), and
+--       after a regressed re-paste of 20261242 / 20261255 / 20261264 it
+--       answers false — either way the rule applies nothing and the slot
+--       waits for its sign-off, exactly as today. SECURITY INVOKER,
+--       search_path pinned, executable only by the service role (the route
+--       and the cron).
 --
 -- NOT a widening of who may do anything: no policy, no grant to a client
 -- role, no SECURITY DEFINER. (1)–(3) widen what the service-written ledger
@@ -55,9 +60,10 @@
 --     app writes what it always wrote, which the widened CHECKs accept.
 --   * NEVER re-paste 20261242, 20261255 or 20261264 after this file without
 --     pasting this file again right after: each restores a CHECK without the
---     rule's value — a later rule satisfaction would then be refused by the
---     ledger (the request's own record keeps it; the consent close then holds
---     on the ledger disagreeing — fail-safe — until this file is re-pasted).
+--     rule's value. exception_only_review_ready() reads the live CHECKs, so
+--     it then answers false and the app satisfies no NEW slot by the rule
+--     (every exception-only slot waits for its sign-off — today's review)
+--     until this file is re-pasted.
 --     Once a rule satisfaction is on record such a re-paste is itself
 --     refused as a whole (its CHECK cannot be re-added over the row) and
 --     changes nothing.
@@ -132,9 +138,17 @@ ALTER TABLE ticket_review_slot_events ADD CONSTRAINT ticket_review_slot_events_e
   CHECK (event IN ('opened', 'told', 'satisfied', 'voided', 'reopened'));
 
 -- ── 4. the readiness probe the app asks before it applies the rule ──────────
+-- It reads the LIVE CHECK definitions: a regressed re-paste of 20261242 /
+-- 20261255 / 20261264 makes it answer false, so the app applies no rule the
+-- ledger would refuse.
 CREATE OR REPLACE FUNCTION exception_only_review_ready()
 RETURNS boolean LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public AS $$
-  SELECT true
+  SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ticket_review_slots_satisfied_via_check'
+                   AND pg_get_constraintdef(oid) LIKE '%''rule''%')
+     AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ticket_review_slots_satisfied_shape'
+                   AND pg_get_constraintdef(oid) LIKE '%''rule''%')
+     AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ticket_review_slot_events_event_check'
+                   AND pg_get_constraintdef(oid) LIKE '%''reopened''%')
 $$;
 REVOKE ALL ON FUNCTION exception_only_review_ready() FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION exception_only_review_ready() TO service_role;
@@ -163,10 +177,11 @@ SELECT 1, 3, 'the roster ledger records a slot re-opened for its reviewer (event
                      AND tgrelid = 'public.ticket_review_slot_events'::regclass AND NOT tgisinternal AND tgenabled = 'O'),
        NULL
 UNION ALL
-SELECT 1, 4, 'exception_only_review_ready() answers true; SECURITY INVOKER, search_path pinned; only the service role executes it',
+SELECT 1, 4, 'exception_only_review_ready() answers true (it reads the live CHECKs above); SECURITY INVOKER, search_path pinned; only the service role executes it',
        COALESCE((SELECT NOT p.prosecdef AND p.proconfig @> ARRAY['search_path=public']
                    FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
                   WHERE ns.nspname = 'public' AND p.proname = 'exception_only_review_ready'), false)
+       AND public.exception_only_review_ready()
        AND has_function_privilege('service_role', 'public.exception_only_review_ready()', 'EXECUTE')
        AND NOT has_function_privilege('authenticated', 'public.exception_only_review_ready()', 'EXECUTE')
        AND NOT has_function_privilege('anon', 'public.exception_only_review_ready()', 'EXECUTE'),

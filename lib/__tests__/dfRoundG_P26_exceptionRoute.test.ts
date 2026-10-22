@@ -354,6 +354,42 @@ describe("limb 2 — re-opened before anything issues", () => {
       expect(ticketUpdates()).toEqual([]);
     }
   });
+  it("DF-P26 review fix: more source documents than one read takes (101): 503 exception_review_unchecked, nothing written — never only the first 100 read", async () => {
+    const row = await ruledRow();
+    const many = Array.from({ length: 101 }, (_, i) => ({ id: `d0c00000-0000-4000-8000-${String(i + 2).padStart(12, "0")}`, document_number: `P-${i + 2}`, rev: "1" }));
+    const row101 = { ...row, metadata: { ...(row.metadata as object), source_documents: many } };
+    for (const dryRun of [true, false]) {
+      const r = await run(row101, "e-2", { actionType: "sign_slot", signatureId: SIG, dryRun }, WITH_EO);
+      expect(r.status, `${dryRun}`).toBe(503);
+      expect(r.json.code).toBe("exception_review_unchecked");
+      expect(ticketUpdates()).toEqual([]);
+    }
+  });
+  it("DF-P26 review fix: a like-in-kind declaration whose signature could not be READ is a retry (503), never a recorded exception — nothing re-opened (sign_slot is in DECLARATION_DECIDES, so the route refuses before limb 2; limb 2 refuses an \"unchecked\" too, and exceptionsOnRecord never counts one)", async () => {
+    const row = await ruledRow();
+    const DSIG = "5a000000-0000-4000-8000-0000000000dd";
+    const declared = { ...row, engineering_required: false, like_in_kind_statement: "same as before", like_in_kind_declared_at: "2026-10-05T00:00:00.000Z", like_in_kind_declared_by: "req-1", like_in_kind_signature_id: DSIG };
+    for (const dryRun of [true, false]) {
+      const r = await run(declared, "e-2", { actionType: "sign_slot", signatureId: SIG, dryRun }, WITH_EO, { extra: () => { state.errors.e_signatures = { code: "08006", message: "down" }; } });
+      expect(r.status, `${dryRun} ${JSON.stringify(r.json)}`).toBe(503);
+      expect(r.json.code).toBe("declaration_unreadable");
+      expect(ticketUpdates()).toEqual([]);
+      expect(writesTo("ticket_review_slot_events", "insert")).toEqual([]);
+    }
+  });
+  it("DF-P26 review fix: the rule's slot's own reviewer may still sign it — the sign-off upgrades the rule's (ledger satisfied by the person); nothing to re-open", async () => {
+    const row = await ruledRow();
+    const r = await run(row, "q-1", { actionType: "sign_slot", signatureId: SIG }, WITH_EO);
+    expect(r.status, JSON.stringify(r.json)).toBe(200);
+    expect(r.json.status).toBe("PENDING_REVIEW");
+    expect(r.json.exceptionReopened).toBeUndefined();
+    const slots = (ticketUpdates()[0].args[0] as { metadata: { review_roster: TicketReviewRoster } }).metadata.review_roster.slots;
+    expect(slots.find((x) => x.kind === "doc")).toMatchObject({ status: "satisfied", via: "primary", satisfiedBy: "q-1", signatureId: SIG });
+    expect(writesTo("ticket_review_slots", "update")).toContainEqual(expect.objectContaining({ status: "satisfied", satisfied_by: "q-1", satisfied_via: "primary", signature_id: SIG }));
+    const events = (writesTo("ticket_review_slot_events", "insert") as Array<Array<Record<string, unknown>>>).flat();
+    expect(events).toContainEqual(expect.objectContaining({ slot_kind: "doc", event: "satisfied" }));
+    expect(events.some((e) => e.event === "reopened")).toBe(false);
+  });
   it("after the re-open, the slot's reviewer signs and the request issues", async () => {
     const row = await ruledRow();
     const extra = () => { state.rows.ticket_examination_scopes = [{ ticket_id: "t1", org_id: "o1", field_values: {}, waiver: { reason: "vendor data" } }]; };

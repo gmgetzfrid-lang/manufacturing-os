@@ -433,13 +433,22 @@ export function slotSignPlan(
     roster.slots.some((s) => s.kind === kind && s.status === "satisfied" && s.satisfiedBy === uid)
     || plan.fillable.some((f) => f.slot.kind === kind);
   for (const slot of roster.slots) {
-    if (slot.status !== "open" || !slotBlocks(slot)) continue;
+    // GAP-115 (DF-P26 review fix): a slot the exception-only rule satisfied
+    // stays signable by its OWN occupants (a primary, or an alternate once
+    // alternates are active — never an overrider: an override is itself an
+    // exception), so a person's sign-off can upgrade the rule's. Without
+    // this, a review whose only other independent occupant left would wait
+    // behind the DEC-12 floor (the rule is never the second person) with
+    // nobody able to sign the rule's slot. Only a roster carrying such a
+    // slot (the opt-in) is affected.
+    const ruleSatisfied = slot.status === "satisfied" && slot.via === "rule";
+    if ((slot.status !== "open" && !ruleSatisfied) || !slotBlocks(slot)) continue;
     const alternateActive = slotAlternatesActive(roster, slot, now);
     const via = slot.primaries.includes(uid) ? "primary" as const
       : alternateActive && slot.alternates.includes(uid) ? "alternate" as const
       : slot.overriders.includes(uid) ? "override" as const
       : null;
-    if (!via) continue;
+    if (!via || (ruleSatisfied && via === "override")) continue;
     const label = slot.label || slot.kind;
     let reason: string | null = null;
     if (sodActive) {

@@ -73,14 +73,20 @@ export interface NotifyHoldExaminationProps {
   roles?: readonly string[] | null;
 }
 
+/** DF-P26 review fix: a hold that landed WITHOUT its examination record
+ *  names no request, so lib/requestHoldStop.ts never matches it — it stops
+ *  work on the document only. Appended to both "record not stored" messages
+ *  so the occupant is never left believing the request is stopped. */
+export const HOLD_WITHOUT_RECORD_DOES_NOT_STOP_REQUEST =
+  "Without that record this hold stops work on the document only — it does not stop this request; raise it with the assignment queue to stop the request.";
 /** What the panel says when the hold landed but its record could not be
  *  stored (the database has no column for it yet — before 20261267). */
 export const HOLD_RECORD_NOT_STORED =
-  "The hold is placed. What you examined could not be stored with it yet (the database update 20261267 is not applied) — add it to the hold's description if it matters.";
+  "The hold is placed. What you examined could not be stored with it yet (the database update 20261267 is not applied) — add it to the hold's description if it matters. " + HOLD_WITHOUT_RECORD_DOES_NOT_STOP_REQUEST;
 /** DF-P25 (review fix pass 4): what the panel says when the hold landed
  *  but the database refused its record for size. */
 export const HOLD_RECORD_TOO_LARGE =
-  "The hold is placed. What you examined was too large to store with it — add what matters to the hold's description.";
+  "The hold is placed. What you examined was too large to store with it — add what matters to the hold's description. " + HOLD_WITHOUT_RECORD_DOES_NOT_STOP_REQUEST;
 /** How many holds the panel reads for one request (a fuller page says more exist). */
 export const NOTIFY_HOLD_READ_LIMIT = 50;
 /** What the panel says when the read filled its page. */
@@ -96,9 +102,11 @@ export const uncheckedHoldsText = (n: number): string =>
  *  (the workflow route's issuing approvals and completing sign-off, the
  *  consent window's close) refuses while it is in force
  *  (lib/requestHoldStop.ts). (DF-P25's HOLD_DOES_NOT_STOP_REQUEST said the
- *  opposite, true until DF-P26.) */
+ *  opposite, true until DF-P26.) Qualified (DF-P26 review fix): only a
+ *  hold that records what was examined names this request, so only such a
+ *  hold stops it — HOLD_WITHOUT_RECORD_DOES_NOT_STOP_REQUEST otherwise. */
 export const HOLD_STOPS_REQUEST =
-  "A hold stops work on the document itself — no new revision of it is published, and it is not transmitted or shared, until the hold is released (unless Document Control forces a publish past it). It also stops this request: while it is in force the review cannot complete and the deliverable cannot be issued. Releasing the hold lets the request go on.";
+  "A hold stops work on the document itself — no new revision of it is published, and it is not transmitted or shared, until the hold is released (unless Document Control forces a publish past it). A hold that records what you examined also stops this request: while it is in force the review cannot complete and the deliverable cannot be issued. Releasing the hold lets the request go on.";
 /** The form's opening sentence (pure; exported for tests). */
 export function notifyHoldFormIntro(slotLabel: string, documentNumber?: string | null): string {
   return `You are told of this review (${slotLabel}) and nobody waits on you. You can place a hold on its source document${documentNumber ? ` ${documentNumber}` : ""} — it records what you examined. ${HOLD_STOPS_REQUEST}`;

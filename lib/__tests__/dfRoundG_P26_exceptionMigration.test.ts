@@ -71,6 +71,16 @@ describe("20261268 — DEC-30 one paste", () => {
     expect(S).toContain("REVOKE ALL ON FUNCTION exception_only_review_ready() FROM PUBLIC, anon, authenticated;");
     expect(S).toContain("GRANT EXECUTE ON FUNCTION exception_only_review_ready() TO service_role;");
     expect(S.indexOf("CREATE OR REPLACE FUNCTION exception_only_review_ready()")).toBeLessThan(S.indexOf("\nCOMMIT;"));
+    // DF-P26 review fix: the probe reads the LIVE CHECK definitions (never a bare `SELECT true`), so a
+    // regressed re-paste of 20261242 / 20261255 / 20261264 makes it answer false and the rule applies nothing
+    const fn = S.slice(S.indexOf("CREATE OR REPLACE FUNCTION exception_only_review_ready()"), S.indexOf("REVOKE ALL ON FUNCTION exception_only_review_ready()"));
+    expect(fn).not.toMatch(/SELECT true/);
+    for (const [con, val] of [["ticket_review_slots_satisfied_via_check", "rule"], ["ticket_review_slots_satisfied_shape", "rule"], ["ticket_review_slot_events_event_check", "reopened"]]) {
+      expect(fn).toContain(`SELECT 1 FROM pg_constraint WHERE conname = '${con}'\n                   AND pg_get_constraintdef(oid) LIKE '%''${val}''%')`);
+    }
+    expect(fn.match(/EXISTS \(/g)).toHaveLength(3);
+    // the verification probe calls it, so a paste whose probe would answer false shows ok = false
+    expect(S).toContain("       AND public.exception_only_review_ready()");
     // the app's probe name is the function this file creates (and no earlier file does)
     const app = readFileSync(join(process.cwd(), "lib", "exceptionOnlyReview.ts"), "utf8");
     expect(app).toContain('db.rpc("exception_only_review_ready")');

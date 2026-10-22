@@ -36,8 +36,8 @@
 // roster carrying a slot satisfied by the rule, whether an exception is on
 // record NOW — the source revision moved (whatever the approver
 // acknowledges), an override sign-off on the roster, an examination-data
-// waiver, a like-in-kind declaration whose signature is not on record or
-// could not be checked, the request become engineered work — and when one
+// waiver, a like-in-kind declaration whose signature is not on record, the
+// request become engineered work — and when one
 // is, re-opens that slot for its reviewer in the SAME compare-and-set as the
 // act (the act still lands — a sign-off is recorded, a window closes — but
 // the request does not issue: it waits on the re-opened slot). Paths: the
@@ -45,8 +45,10 @@
 // request under a roster has; the serial issuing approvals are not offered
 // there, and the route refuses one on such a roster anyway) and the consent
 // window's close (lib/consentWindowScan.ts). A read that cannot prove there
-// is no exception (the waiver row, the source documents) is a retry — 503 on
-// the route, the window waits a run — never a pass.
+// is no exception (the waiver row, the source documents — all of them, by
+// readSourceMoved — or the like-in-kind declaration's signature) is a retry
+// — 503 on the route, the window waits a run — never a pass, and never an
+// exception either (a failed read is not a fact on record).
 //
 // Default off: a roster with no exception-only slot reads nothing here and
 // behaves exactly as before (pinned by A/B sweeps).
@@ -156,7 +158,11 @@ export function exceptionsOnRecord(input: {
     if (s.status === "satisfied" && s.via === "override") out.push({ kind: "override", text: `"${s.label || s.kind}" was signed as an override` });
   }
   if (input.waiver) out.push({ kind: "waiver", text: "a waiver of required examination data is recorded" });
-  if (input.declarationUnverified) out.push({ kind: "declaration", text: input.declarationUnverified === "missing" ? "the like-in-kind declaration's signature is not on record" : "the like-in-kind declaration could not be checked" });
+  // DF-P26 review fix: only a declaration whose signature is NOT on record
+  // is an exception; one that merely could not be READ ("unchecked") is a
+  // retry for the caller (the route refuses 503 exception_review_unchecked),
+  // never a permanent re-open.
+  if (input.declarationUnverified === "missing") out.push({ kind: "declaration", text: "the like-in-kind declaration's signature is not on record" });
   if (input.engineered) out.push({ kind: "engineered", text: "the request is now engineered work" });
   return out;
 }

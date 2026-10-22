@@ -13,7 +13,7 @@ import {
   RULE_SATISFIED_NAME,
 } from "@/lib/exceptionOnlyReview";
 import { parseRoutingControl, validateRoutingDraft, exceptionOnlyOptInAllowed, type RoutingControl } from "@/lib/routingControl";
-import { openRoster, rosterCompletion } from "@/lib/ticketRoster";
+import { openRoster, rosterCompletion, applySignPlan } from "@/lib/ticketRoster";
 import { rosterLacksIndependentSignOff, slotSignPlan } from "@/lib/workflow";
 import { consentFloorHolds } from "@/lib/consentWindow";
 import { preauthLeavesNoSecondPerson } from "@/lib/ticketPreauthorization";
@@ -147,8 +147,11 @@ describe("limb 1 — which slots the rule may satisfy when a review opens (pure)
 describe("limb 2 — the exceptions on record and the re-open (pure)", () => {
   it("each kind of fact, never a free-text guess", () => {
     const signed = roster([EO, { ...LIVE, status: "satisfied", via: "override", satisfiedBy: "m-1", signatureId: "s" }]);
-    const ex = exceptionsOnRecord({ driftLabels: ["P-100 raised on Rev 2, now Rev 3"], roster: signed, waiver: true, declarationUnverified: "unchecked", engineered: true });
+    const ex = exceptionsOnRecord({ driftLabels: ["P-100 raised on Rev 2, now Rev 3"], roster: signed, waiver: true, declarationUnverified: "missing", engineered: true });
     expect(ex.map((e) => e.kind)).toEqual(["source_moved", "override", "waiver", "declaration", "engineered"]);
+    // DF-P26 review fix: a declaration whose signature merely could not be READ is a retry for the
+    // caller (503), never an exception on record — it does not re-open the rule's slot for good
+    expect(exceptionsOnRecord({ driftLabels: [], roster: roster([EO, LIVE]), waiver: false, declarationUnverified: "unchecked", engineered: false })).toEqual([]);
     expect(exceptionsOnRecord({ driftLabels: [], roster: roster([EO, LIVE]), waiver: false, declarationUnverified: null, engineered: false })).toEqual([]);
     expect(exceptionsOnRecord({ driftLabels: [], roster: roster([EO]), waiver: false, declarationUnverified: "missing", engineered: false })[0].text).toMatch(/signature is not on record/);
   });
@@ -237,5 +240,38 @@ describe("the reads (fail-safe: anything unreadable applies nothing)", () => {
       expect(res.roster, reason).toBe(r);
     }
     expect(await exceptionRuleAtOpen(fakeDb(docs).db, { roster: roster([EO]), ticket: t, ticketId: "t1", sodActive: true, engineered: false, now: NOW })).toMatchObject({ applied: false, reason: "no_live_sign_off" });
+  });
+});
+
+describe("DF-P26 review fix — a slot the rule satisfied stays signable by its own occupants (no deadlock behind the DEC-12 floor)", () => {
+  // Separation of duties active; drafter d-1. Slot A is exception-only (primary x-1, overrider o-1);
+  // slot B has primaries d-1 and y-1. At open y-1 was live, so the rule satisfied A. Then y-1 left
+  // (no longer offered anything — modelled by removing them from B).
+  const A = slot({ kind: "a", primaries: ["x-1"], overriders: ["o-1"], exceptionOnly: true });
+  const B = slot({ kind: "b", primaries: ["d-1", "y-1"] });
+  const atOpen = applyExceptionRule(roster([A, B]), ["a"], "2026-10-22T08:00:00.000Z");
+  const afterLeave: TicketReviewRoster = { ...atOpen, slots: atOpen.slots.map((x) => (x.kind === "b" ? { ...x, primaries: ["d-1"] } : x)) };
+  it("the drafter alone is held by the floor (the rule is never the second person)", () => {
+    const d = slotSignPlan(afterLeave, T, "d-1", true, NOW);
+    expect(d.fillable).toEqual([]);
+    expect(d.blocked.map((b) => b.slot.kind)).toEqual(["b"]);
+  });
+  it("the rule's slot's primary may sign it (a person's sign-off upgrades the rule's); an overrider may not", () => {
+    const x = slotSignPlan(afterLeave, T, "x-1", true, NOW);
+    expect(x.fillable.map((f) => [f.slot.kind, f.via])).toEqual([["a", "primary"]]);
+    expect(slotSignPlan(afterLeave, T, "o-1", true, NOW).fillable).toEqual([]);
+    const upgraded = applySignPlan(afterLeave, x, { uid: "x-1", name: "X" }, "sig-x", "2026-10-22T09:00:00.000Z");
+    expect(upgraded.slots[0]).toMatchObject({ status: "satisfied", via: "primary", satisfiedBy: "x-1", signatureId: "sig-x" });
+    expect(ruleSatisfiedSlots(upgraded)).toEqual([]);
+    // ... and the drafter can now complete B: someone else has signed
+    const d = slotSignPlan(upgraded, T, "d-1", true, NOW);
+    expect(d.fillable.map((f) => f.slot.kind)).toEqual(["b"]);
+    expect(rosterCompletion(applySignPlan(upgraded, d, { uid: "d-1", name: "D" }, "sig-d", "2026-10-22T10:00:00.000Z"), { sodActive: true, drafterId: "d-1" }).complete).toBe(true);
+  });
+  it("REGRESSION: a slot satisfied by anyone else (a person, consent, a pre-authorization) is never offered again", () => {
+    for (const via of ["primary", "consent", "preauthorization", "override"] as const) {
+      const r = roster([{ ...A, status: "satisfied", via, satisfiedBy: via === "consent" ? null : "z-1", signatureId: via === "consent" ? null : "s" }, B]);
+      expect(slotSignPlan(r, T, "x-1", true, NOW).fillable, via).toEqual([]);
+    }
   });
 });

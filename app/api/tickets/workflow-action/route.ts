@@ -49,10 +49,10 @@ import { workflowEngineContext, rosterlessRoutedRefusal, draftingTypeFlags, DECL
 // GAP-116 (drafting-flow DF-P26): a notify-only hold that stops the request.
 import { issueHoldStopGate } from "@/lib/requestHoldStop";
 // GAP-102 acceptance 2 (drafting-flow DF-P26): the issue notice carries the examination data.
-import { issueExaminationNote } from "@/lib/issueNoticeExamination";
+import { issueExaminationNote, issueExaminationMayExist } from "@/lib/issueNoticeExamination";
 // GAP-115 / GAP-109 mechanism 3 (drafting-flow DF-P26): exception-only review.
 import {
-  rosterHasExceptionOnlySlot, exceptionRuleAtOpen, ruleSatisfiedSlots, exceptionsOnRecord, reopenRuleSatisfied, readWaiverOnRecord,
+  rosterHasExceptionOnlySlot, exceptionRuleAtOpen, ruleSatisfiedSlots, exceptionsOnRecord, reopenRuleSatisfied, readWaiverOnRecord, readSourceMoved,
   ruleOpenNote, ruleReopenNote, EXCEPTION_RULE_ACTOR,
 } from "@/lib/exceptionOnlyReview";
 import { ticketReadScope } from "@/lib/ticketReadScope";
@@ -1312,22 +1312,31 @@ export async function POST(req: NextRequest) {
     // declaration that is not on record or could not be checked, the request
     // become engineered work — re-opens that slot for its reviewer in this
     // same compare-and-set: the sign-off is recorded, the request does not
-    // issue. What cannot be checked (the waiver row, the source documents)
-    // is a retry, never a pass. Read only for such a roster.
+    // issue. What cannot be checked (the waiver row, the source documents —
+    // ALL of them, read by readSourceMoved as limb 1 and the consent close
+    // read them, more than one read takes being "unchecked", never the first
+    // page only — or the like-in-kind declaration's signature) is a retry,
+    // never a pass and never an exception (DF-P26 review fix: a failed read
+    // is not a fact on record). Read only for such a roster.
     let reopenWith: string[] | null = null;
+    let reopenLabels: string[] = [];
     if (ruleSatisfiedSlots(openRosterNow).length > 0) {
       const waiver = await readWaiverOnRecord(supabaseAdmin, body.ticketId);
-      if (!waiver.ok || sourceDriftUnchecked) {
-        console.error(`[workflow-action] exception-only review unchecked for ticket ${body.ticketId}: ${!waiver.ok ? waiver.error : "the source documents could not be read"}`);
-        return refuseSign(503, "Whether an exception is on record for this review (a moved source or a recorded waiver) could not be checked, so the sign-off was not taken. Try again in a moment.", "exception_review_unchecked");
+      const moved = await readSourceMoved(supabaseAdmin, ticket);
+      if (!waiver.ok || !moved.ok || declarationUnverified === "unchecked") {
+        console.error(`[workflow-action] exception-only review unchecked for ticket ${body.ticketId}: ${!waiver.ok ? waiver.error : !moved.ok ? `the source documents could not be read (${moved.error})` : "the like-in-kind declaration's signature could not be read"}`);
+        return refuseSign(503, "Whether an exception is on record for this review (a moved source, a recorded waiver or the like-in-kind declaration's signature) could not be checked, so the sign-off was not taken. Try again in a moment.", "exception_review_unchecked");
       }
       const preview = applySignPlan(openRosterNow, plan, { uid: caller.id, name: null }, "exception-review-preview", new Date().toISOString());
       const engineeredNow = engineeringGateRequired(ticket, requesterRoles, capPolicy) || engineeringFirstTypes.includes(ticket.requestType);
-      const found = exceptionsOnRecord({ driftLabels, roster: preview, waiver: waiver.waiver, declarationUnverified, engineered: engineeredNow });
-      if (found.length > 0) reopenWith = found.map((e) => e.text);
+      const found = exceptionsOnRecord({ driftLabels: moved.labels, roster: preview, waiver: waiver.waiver, declarationUnverified, engineered: engineeredNow });
+      // (DF-P26 review fix: a sign-off that upgrades the last slot the rule
+      // satisfied leaves nothing to re-open.)
+      reopenLabels = ruleSatisfiedSlots(preview).map((x) => x.label || x.kind);
+      if (found.length > 0 && reopenLabels.length > 0) reopenWith = found.map((e) => e.text);
     }
     if (body.dryRun === true) {
-      return NextResponse.json({ ok: true, dryRun: true, slots: plan.fillable.map((f) => f.slot.label || f.slot.kind), contentHash: openRosterNow.contentHash, ...(reopenWith ? { exceptionReopens: ruleSatisfiedSlots(openRosterNow).map((s) => s.label || s.kind) } : {}) });
+      return NextResponse.json({ ok: true, dryRun: true, slots: plan.fillable.map((f) => f.slot.label || f.slot.kind), contentHash: openRosterNow.contentHash, ...(reopenWith ? { exceptionReopens: reopenLabels } : {}) });
     }
     if (!UUID_RE.test(sigId)) return NextResponse.json({ error: "A sign-off needs your e-signature.", code: "signature_required" }, { status: 400 });
     const { data: sig, error: sigErr } = await supabaseAdmin
@@ -2254,33 +2263,56 @@ export async function POST(req: NextRequest) {
   // tells its people what was recorded about the examination — the scope
   // values, the assurance records, the notify-only holds — names and counts
   // only, one line on the existing notice (lib/issueNoticeExamination.ts).
-  // Read only where such a record could exist, after the act has landed,
-  // bounded in time; anything unread leaves the notice exactly as today's.
-  let issueExamination: string | null = null;
-  if (ISSUING_APPROVALS.has(action.action) || (action.action === "sign_slot" && rosterSign?.complete === true)) {
-    issueExamination = await issueExaminationNote(supabaseAdmin, { ticket, ticketId: body.ticketId, orgId: ticket.orgId, draftingCfg: draftingCfgRead ? scopeDraftingCfg : null, roster: rosterSign?.roster ?? null });
-  }
-  try {
-    await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, activity: isActivity, rosterCompleted: action.action === "sign_slot" && rosterSign?.complete === true, rosterPartial: action.action === "sign_slot" && rosterSign?.complete === false, rosterReleased: action.action === "sign_slot" && rosterSign && !rosterSign.complete ? rosterPartialReleased(rosterSign.roster, ticket, caller.id) : [], examinationNote: issueExamination, comment: fanOutComment, emailOrigin });
-    // Kick the email drain AFTER the response is sent (the daily cron is the
-    // fallback, not the primary path — recipients should get email in seconds).
-    // WF-19 done-when 3: CRON_SECRET ships blank, and a blank bearer is a
-    // 401 at the drain — so in a default deployment every workflow email
-    // waited for the daily cron. The caller's own session token is a
-    // legitimate drain credential (SURF-5 scopes it to their orgs, which
-    // include this ticket's), so it is the fallback.
-    const drainUrl = new URL("/api/notifications/send-queued", req.url);
-    const drainToken = process.env.CRON_SECRET || authHeader.slice(7);
-    after(async () => {
-      try {
-        await fetch(drainUrl, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${drainToken}` },
-        });
-      } catch { /* cron fallback */ }
-    });
-  } catch (e) {
-    console.error("[workflow-action] fan-out failed (transition committed):", e);
+  // Read only where such a record could exist (issueExaminationMayExist —
+  // pure, no read), bounded in time; anything unread leaves the notice
+  // exactly as today's. DF-P26 review fix (DEC-90 ruling (4) — bookkeeping
+  // never delays a person's act): where such a record could exist, composing
+  // the line AND sending the notice run AFTER the response (next/server
+  // after(), as the pre-authorization step and the email drain do), so a slow
+  // examination read never holds the person's answer. Where none could
+  // exist (every unconfigured workspace) the notice is sent in the request,
+  // exactly as before.
+  const issueNoticeInput = { ticket, ticketId: body.ticketId, orgId: ticket.orgId, draftingCfg: draftingCfgRead ? scopeDraftingCfg : null, roster: rosterSign?.roster ?? null };
+  const issuingAct = ISSUING_APPROVALS.has(action.action) || (action.action === "sign_slot" && rosterSign?.complete === true);
+  const deferNotice = issuingAct && issueExaminationMayExist(issueNoticeInput);
+  // Kick the email drain AFTER the response is sent (the daily cron is the
+  // fallback, not the primary path — recipients should get email in seconds).
+  // WF-19 done-when 3: CRON_SECRET ships blank, and a blank bearer is a
+  // 401 at the drain — so in a default deployment every workflow email
+  // waited for the daily cron. The caller's own session token is a
+  // legitimate drain credential (SURF-5 scopes it to their orgs, which
+  // include this ticket's), so it is the fallback.
+  const drainUrl = new URL("/api/notifications/send-queued", req.url);
+  const drainToken = process.env.CRON_SECRET || authHeader.slice(7);
+  const kickDrain = async () => {
+    try {
+      await fetch(drainUrl, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${drainToken}` },
+      });
+    } catch { /* cron fallback */ }
+  };
+  if (deferNotice) {
+    try {
+      after(async () => {
+        try {
+          const issueExamination = await issueExaminationNote(supabaseAdmin, issueNoticeInput);
+          await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, activity: isActivity, rosterCompleted: action.action === "sign_slot" && rosterSign?.complete === true, rosterPartial: action.action === "sign_slot" && rosterSign?.complete === false, rosterReleased: action.action === "sign_slot" && rosterSign && !rosterSign.complete ? rosterPartialReleased(rosterSign.roster, ticket, caller.id) : [], examinationNote: issueExamination, comment: fanOutComment, emailOrigin });
+          await kickDrain();
+        } catch (e) {
+          console.error("[workflow-action] fan-out failed (transition committed):", e);
+        }
+      });
+    } catch (e) {
+      console.error(`[workflow-action] the issue notice for ticket ${body.ticketId} could not be scheduled (transition committed):`, e);
+    }
+  } else {
+    try {
+      await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, activity: isActivity, rosterCompleted: action.action === "sign_slot" && rosterSign?.complete === true, rosterPartial: action.action === "sign_slot" && rosterSign?.complete === false, rosterReleased: action.action === "sign_slot" && rosterSign && !rosterSign.complete ? rosterPartialReleased(rosterSign.roster, ticket, caller.id) : [], comment: fanOutComment, emailOrigin });
+      after(kickDrain);
+    } catch (e) {
+      console.error("[workflow-action] fan-out failed (transition committed):", e);
+    }
   }
 
   // EVID-12 (DF-P5 fix pass 2): today's path hashes AFTER the response, and

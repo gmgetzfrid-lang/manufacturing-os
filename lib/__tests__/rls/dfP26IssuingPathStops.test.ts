@@ -8,7 +8,9 @@
 //     re-pastes 20261255 and 20261264 first, as the paste hand-off says an
 //     operator must; and the hand-off itself is pinned: re-pasting 20261264
 //     after this file drops the rule's value (a rule satisfaction is then
-//     refused — fail-safe), and pasting this file again restores it.
+//     refused, and exception_only_review_ready() — which reads the live
+//     CHECKs — answers false, so the app applies no rule), and pasting this
+//     file again restores both.
 //   * ticket_review_slots: a BLOCKING slot satisfied 'rule' (the
 //     exception-only rule, GAP-115) names no signer and no signature; a rule
 //     satisfaction naming a signer or a signature, or on a slot that is not
@@ -102,11 +104,17 @@ describe.skipIf(skip !== null)("DF-P26 — the exception-only rule's satisfactio
     const t = ticket();
     const roster = randomUUID();
     slots(t, roster, [["doc", "blocking"]]);
+    expect(admin(db, "SELECT exception_only_review_ready()")).toBe("t");
     paste(F264);
+    // DF-P26 review fix: the readiness probe reads the live CHECKs — after the regressed paste it answers
+    // false, so the app satisfies no slot by the rule the ledger would now refuse
+    expect(admin(db, "SELECT exception_only_review_ready()")).toBe("f");
+    expect(asCaller(db, SERVICE, "SELECT exception_only_review_ready()")).toMatchObject({ ok: true });
     const refused = set(roster, "doc", "status = 'satisfied', satisfied_at = now(), satisfied_via = 'rule'");
     expect(refused.ok).toBe(false);
     if (!refused.ok) expect(refused.code).toBe("23514");
     paste(F268);
+    expect(admin(db, "SELECT exception_only_review_ready()")).toBe("t");
     expect(set(roster, "doc", "status = 'satisfied', satisfied_at = now(), satisfied_via = 'rule'")).toEqual({ ok: true, rows: 1 });
     // with a rule satisfaction on record, re-pasting 20261264 is refused
     // as a whole (its CHECK cannot be re-added over the row) — nothing changed

@@ -40,6 +40,7 @@ const state = vi.hoisted(() => ({
   after: [] as Array<() => unknown>,
   noP26: false,
   noNote: false,
+  hangNote: false,
 }));
 const pathGet = (r: Record<string, unknown>, key: string): unknown => {
   if (!key.includes("->")) return r[key];
@@ -111,7 +112,7 @@ vi.mock("@/lib/requestHoldStop", async (importOriginal) => {
 // the issue notice's examination line (the route without DF-P26 at all).
 vi.mock("@/lib/issueNoticeExamination", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/issueNoticeExamination")>();
-  return { ...real, issueExaminationNote: (...a: Parameters<typeof real.issueExaminationNote>) => (state.noNote ? Promise.resolve(null) : real.issueExaminationNote(...a)) };
+  return { ...real, issueExaminationNote: (...a: Parameters<typeof real.issueExaminationNote>) => (state.hangNote ? new Promise<string | null>(() => {}) : state.noNote ? Promise.resolve(null) : real.issueExaminationNote(...a)) };
 });
 import { POST as workflowAction } from "@/app/api/tickets/workflow-action/route";
 import { WorkflowEngine, ISSUING_APPROVALS } from "@/lib/workflow";
@@ -140,7 +141,7 @@ const ticketRow = (over: Record<string, unknown> = {}) => ({
 const reviewRow = (over: Record<string, unknown> = {}) => ticketRow({ status: "PENDING_REVIEW", deliverable_rev: "1A", draft_iteration: 1, attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }], ...over });
 const reset = () => {
   __resetCapabilityPolicyCache();
-  state.user = null; state.rows = {}; state.calls = []; state.errors = {}; state.after = []; state.noP26 = false; state.noNote = false;
+  state.user = null; state.rows = {}; state.calls = []; state.errors = {}; state.after = []; state.noP26 = false; state.noNote = false; state.hangNote = false;
 };
 const seed = (routing: unknown = null) => {
   state.rows.org_members = MEMBERS.map((m) => ({ ...m }));
@@ -410,6 +411,43 @@ describe("GAP-102 acceptance 2 — the issue notice carries the recorded examina
     // every other write is the same
     const strip = (w: string) => w.replace(/"body(_text|_html)?":"(\\.|[^"\\])*"/g, '"body":"-"');
     expect(strip(a.writes)).toBe(strip(b.writes));
+  });
+  it("DF-P26 review fix (DEC-90 ruling (4)): the examination read never delays the act — the response returns while issueExaminationNote hangs; the notice is composed and sent after the response", async () => {
+    const row = reviewRow();
+    const who = issuer(row);
+    reset();
+    seed(null);
+    state.rows.tickets = [row];
+    state.rows.org_configurations = [{ org_id: "o1", key: "drafting", data: CFG }];
+    state.rows.ticket_examination_scopes = [{ ticket_id: "t1", org_id: "o1", field_values: { exam: { value: "rt5", by: "e-1", at: "2026-10-20T00:00:00Z" } }, waiver: null }];
+    state.hangNote = true;
+    state.user = { id: who.uid };
+    const res = await post({ ticketId: "t1", actionType: who.action, issueAsIsAcknowledged: true });
+    // the act's answer is back although the examination read never resolves
+    expect(res.status).toBe(200);
+    expect(ticketUpdates().length).toBeGreaterThan(0);
+    // nothing of the notice was written inside the request — it waits in an after-response task
+    expect(bells()).toEqual([]);
+    expect(mails()).toEqual([]);
+    expect(state.after.length).toBeGreaterThan(0);
+    // released: the after-response task composes the line and sends the notice
+    state.hangNote = false;
+    for (const fn of state.after.splice(0)) await fn();
+    expect(bells().length).toBeGreaterThan(0);
+    for (const bell of bells()) expect(bell.body).toContain("Examination data: Examination scope: 5% RT.");
+  });
+  it("DF-P26 review fix: where no record could exist (unconfigured), the notice is still written inside the request, as before", async () => {
+    const row = reviewRow();
+    const who = issuer(row);
+    reset();
+    seed(null);
+    state.rows.tickets = [row];
+    state.hangNote = true; // would hang if it were called — it is not
+    state.user = { id: who.uid };
+    const res = await post({ ticketId: "t1", actionType: who.action, issueAsIsAcknowledged: true });
+    expect(res.status).toBe(200);
+    expect(bells().length).toBeGreaterThan(0);
+    for (const bell of bells()) expect(bell.body).not.toMatch(/Examination data/);
   });
   it("PIN: a request with none (fields configured but nothing recorded; or unconfigured) sends exactly today's notice", async () => {
     const row = reviewRow();
