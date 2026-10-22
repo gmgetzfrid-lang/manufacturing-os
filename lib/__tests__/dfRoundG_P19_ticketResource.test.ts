@@ -44,7 +44,7 @@ import { ALL_ROLES, type Role, type Ticket, type TicketStatus } from "@/types/sc
 import {
   summarizeReviewLanes, reviewLaneOf, filedInPeriod, periodBound, reviewLaneReportCsv, reviewLaneCoverage, REVIEW_LANES,
 } from "@/lib/reviewLaneReport";
-import { ticketDimensionRuleStatus, splitPolicyForEditor, joinPolicyFromEditor, CODE_CLASS_RULE_CAPS } from "@/components/permissions/CapabilityPolicyEditor";
+import { ticketDimensionRuleStatus, splitPolicyForEditor, joinPolicyFromEditor, CODE_CLASS_RULE_CAPS, rulesDecidingBeforeClassRule } from "@/components/permissions/CapabilityPolicyEditor";
 import { isActionRequired } from "@/lib/ticketAttention";
 import { reviewLaneCoverageNotice } from "@/components/requests/ReviewLaneReport";
 
@@ -667,12 +667,15 @@ describe("second fix pass (review major 2) — a code-class review requirement i
     expect(byController.unconfirmedNew).toHaveLength(1);
     expect(policyAllows({ caps: byController.caps }, cap, "Engineer-2", null, null, onCode)).toBe(true);
   });
-  it("a new row goes after the stored rules; an edited row keeps its place; a removed row drops out", () => {
+  // fifth fix pass (review major 1): a NEW code-class row now goes ahead of
+  // the first request-type / project / preserved rule (here the unit rule),
+  // after the code-class rows already leading.
+  it("a new row goes ahead of the stored request-type / unit rules (after the leading code-class rows); an edited row keeps its place; a removed row drops out", () => {
     const stored: CapabilityPolicy = { caps: { [cap]: [{ tokens: ["Engineer"] }, { tokens: ["Engineer-3"], when: { codeClass: ["c-1"] }, confirmedAt: NOW }, { tokens: ["Admin"], when: { unit: ["U-1"] } }] } as CapabilityPolicy["caps"] };
     const s = splitPolicyForEditor(stored);
     const edited = joinPolicyFromEditor(s.base, s.overrides, s.opaque, s.projectOverrides, stored, { [cap]: [{ codeClass: "c-1", tokens: ["Engineer-2"] }, { codeClass: "c-9", tokens: ["Engineer-3"] }] });
     expect((edited[cap] as CapabilityRule[]).map((r) => JSON.stringify([r.tokens, r.when ?? null]))).toEqual([
-      JSON.stringify([["Engineer"], null]), JSON.stringify([["Engineer-2"], { codeClass: ["c-1"] }]), JSON.stringify([["Admin"], { unit: ["U-1"] }]), JSON.stringify([["Engineer-3"], { codeClass: ["c-9"] }]),
+      JSON.stringify([["Engineer"], null]), JSON.stringify([["Engineer-2"], { codeClass: ["c-1"] }]), JSON.stringify([["Engineer-3"], { codeClass: ["c-9"] }]), JSON.stringify([["Admin"], { unit: ["U-1"] }]),
     ]);
     const removed = joinPolicyFromEditor(s.base, s.overrides, s.opaque, s.projectOverrides, stored, {});
     expect(removed[cap]).toEqual([{ tokens: ["Engineer"] }, { tokens: ["Admin"], when: { unit: ["U-1"] } }]);
@@ -975,5 +978,97 @@ describe("fourth fix pass (review minor 4) — the Review Lanes panel reads the 
     expect(panel).toContain("if (!loadPeriod || !wanted) return;");
     expect(panel).toContain("const reading = wanted && current === null;");
     expect(panel).toContain('data-testid="review-lanes-count-all"');
+  });
+});
+
+// ── DF-P19 fifth fix pass ───────────────────────────────────────────────────
+describe("fifth fix pass (review major 1) — a code-class rule authored in Admin → Permissions decides before the request-type rows", () => {
+  const cap: CapabilityId = "ticket.final_approve";
+  // the reviewer's case: a stored EWR override, then an Admin adds B313 → Engineer-3
+  const stored: CapabilityPolicy = { caps: { [cap]: [{ tokens: ["Engineer", "Manager"] }, { tokens: ["Engineer", "Manager"], when: { requestType: ["EWR"] } }] } as CapabilityPolicy["caps"] };
+  const authored = (isAdmin: boolean) => {
+    const s = splitPolicyForEditor(stored);
+    const caps = joinPolicyFromEditor(s.base, s.overrides, s.opaque, s.projectOverrides, stored, { [cap]: [{ codeClass: "B313", tokens: ["Engineer-3"] }] });
+    return { caps, saved: carryTicketRuleConfirmation(caps, stored.caps, { at: NOW, by: isAdmin ? "admin" : "c1" }, isAdmin) };
+  };
+
+  it("the join writes the new code-class row AHEAD of the stored EWR row", () => {
+    const { caps } = authored(true);
+    expect(caps[cap]).toEqual([
+      { tokens: ["Engineer", "Manager"] },
+      { tokens: ["Engineer-3"], when: { codeClass: ["B313"] } },
+      { tokens: ["Engineer", "Manager"], when: { requestType: ["EWR"] } },
+    ]);
+    expect(rulesDecidingBeforeClassRule(cap, caps[cap], "B313")).toEqual([]);
+  });
+
+  it("an Admin's rule binds for an EWR request of class B313 as for any other type — a Manager can no longer final-approve it", () => {
+    const { saved } = authored(true);
+    expect(saved.confirmed).toHaveLength(1);
+    const policy: CapabilityPolicy = { caps: saved.caps };
+    for (const requestType of ["EWR", "DCN", "ISO"]) {
+      expect(tokensFor(policy, cap, { requestType, codeClass: "B313" })).toEqual(["Engineer-3"]);
+      expect(policyAllows(policy, cap, "Manager", null, null, { requestType, codeClass: "B313" })).toBe(false);
+      expect(policyAllows(policy, cap, "Engineer-3", null, null, { requestType, codeClass: "B313" })).toBe(true);
+    }
+    // the EWR override still decides EWR requests of any other class, or none
+    expect(tokensFor(policy, cap, { requestType: "EWR", codeClass: "B999" })).toEqual(["Engineer", "Manager"]);
+    expect(tokensFor(policy, cap, { requestType: "EWR" })).toEqual(["Engineer", "Manager"]);
+    // the engine reads the same ticket resource
+    const t = routeRowToTicket(baseRow({ ...DIM_ROW, request_type: "EWR", library_id: null, work_class: null, code_class: "B313" }));
+    expect(policyAllows(policy, cap, "Manager", null, null, ticketResource(t))).toBe(false);
+  });
+
+  it("a DocCtrl's same row is stored unconfirmed ahead: it only adds (the EWR answer stands, joined), and no in-force rule is shadowed", async () => {
+    const { inForceTicketRulesShadowed } = await import("@/lib/capabilityPolicy");
+    const { caps, saved } = authored(false);
+    expect(saved.unconfirmedNew).toHaveLength(1);
+    expect(inForceTicketRulesShadowed(caps, stored.caps)).toEqual([]);
+    expect(tokensFor({ caps: saved.caps }, cap, { requestType: "EWR", codeClass: "B313" }).sort()).toEqual(["Engineer", "Engineer-3", "Manager"]);
+  });
+
+  it("with an in-force code-class rule already leading, a DocCtrl's new code-class row goes after it and is accepted by the shadow check", async () => {
+    const { inForceTicketRulesShadowed } = await import("@/lib/capabilityPolicy");
+    const lead: CapabilityPolicy = { caps: { [cap]: [{ tokens: ["Engineer"] }, { tokens: ["Engineer-3"], when: { codeClass: ["B313"] }, confirmedAt: NOW, confirmedBy: "a1" }, { tokens: ["Engineer"], when: { requestType: ["EWR"] } }] } as CapabilityPolicy["caps"] };
+    const s = splitPolicyForEditor(lead);
+    const caps = joinPolicyFromEditor(s.base, s.overrides, s.opaque, s.projectOverrides, lead, { [cap]: [...(s.codeClassOverrides[cap] ?? []), { codeClass: "B16", tokens: ["Engineer-2"] }] });
+    expect((caps[cap] as CapabilityRule[]).map((r) => r.when ?? null)).toEqual([null, { codeClass: ["B313"] }, { codeClass: ["B16"] }, { requestType: ["EWR"] }]);
+    expect(inForceTicketRulesShadowed(caps, lead.caps)).toEqual([]);
+  });
+
+  it("with nothing stored as a rule list, code-class rows come first too", () => {
+    const s = splitPolicyForEditor({});
+    const caps = joinPolicyFromEditor(s.base, { [cap]: [{ type: "EWR", tokens: ["Engineer"] }] }, s.opaque, s.projectOverrides, {}, { [cap]: [{ codeClass: "B313", tokens: ["Engineer-3"] }] });
+    expect((caps[cap] as CapabilityRule[]).map((r) => r.when ?? null)).toEqual([null, { codeClass: ["B313"] }, { requestType: ["EWR"] }]);
+  });
+
+  it("a STORED code-class rule behind a request-type / unit rule keeps its place, and the console names the rules that decide first", () => {
+    const legacy: CapabilityPolicy = { caps: { [cap]: [
+      { tokens: ["Engineer"] },
+      { tokens: ["Engineer", "Manager"], when: { requestType: ["EWR"] } },
+      { tokens: ["Admin"], when: { codeClass: ["B16"] } },
+      { tokens: ["Admin"], when: { unit: ["U-1"] } },
+      { tokens: ["Engineer-3"], when: { codeClass: ["B313"] }, confirmedAt: NOW, confirmedBy: "a1" },
+    ] } as CapabilityPolicy["caps"] };
+    const s = splitPolicyForEditor(legacy);
+    const caps = joinPolicyFromEditor(s.base, s.overrides, s.opaque, s.projectOverrides, legacy, s.codeClassOverrides);
+    expect((caps[cap] as CapabilityRule[]).map((r) => r.when ?? null)).toEqual([null, { requestType: ["EWR"] }, { codeClass: ["B16"] }, { unit: ["U-1"] }, { codeClass: ["B313"] }]);
+    // the B16 rule names only another class, so it cannot match a B313 request
+    expect(rulesDecidingBeforeClassRule(cap, caps[cap], "B313").map((r) => r.when)).toEqual([{ requestType: ["EWR"] }, { unit: ["U-1"] }]);
+    expect(rulesDecidingBeforeClassRule(cap, caps[cap], "B16").map((r) => r.when)).toEqual([{ requestType: ["EWR"] }]);
+    expect(rulesDecidingBeforeClassRule(cap, caps[cap], "nope")).toEqual([]);
+    // what that note says is what the evaluator does
+    const policy: CapabilityPolicy = { caps: legacy.caps };
+    expect(tokensFor(policy, cap, { requestType: "EWR", codeClass: "B313" })).toEqual(["Engineer", "Manager"]);
+    expect(tokensFor(policy, cap, { requestType: "DCN", codeClass: "B313" })).toEqual(["Engineer-3"]);
+  });
+
+  it("the console wires the note and the preview to rulesDecidingBeforeClassRule, and the copy says the first match decides", () => {
+    const editor = read("components/permissions/CapabilityPolicyEditor.tsx");
+    expect(editor).toContain("const draftCaps = joinPolicyFromEditor(policy, overrides, opaque, projectOverrides, storedPolicy, codeClassOverrides);");
+    expect(editor).toContain("rulesDecidingBeforeClassRule(def.id, draftCaps[def.id], row.codeClass)");
+    expect(editor).toContain("data-class-rule-decided-first");
+    expect(editor).toContain("const ahead = rulesDecidingBeforeClassRule(d.id, caps[d.id], r.codeClass);");
+    expect(editor).toContain("a new code-class rule is written ahead of the request-type and unit rules, so it applies whatever the request type");
   });
 });
