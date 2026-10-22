@@ -455,6 +455,7 @@ export async function POST(req: NextRequest) {
         controlState: plan.controlState,
         verifyUrl: plan.verifyUrl,
         footerNotice: plan.footerNotice,
+        plainCharacters: plan.plainCharacters,
       });
       out = await pdfDoc.save();
       stamped = true;

@@ -905,6 +905,7 @@ const FileViewerModal = ({
         controlState: plan.controlState,
         verifyUrl: plan.verifyUrl,
         footerNotice: plan.footerNotice,
+        plainCharacters: plan.plainCharacters,
       });
       printUrl = URL.createObjectURL(blob);
       stamped = true;
@@ -997,6 +998,7 @@ const FileViewerModal = ({
           controlState: plan.controlState,
           verifyUrl: plan.verifyUrl,
           footerNotice: plan.footerNotice,
+          plainCharacters: plan.plainCharacters,
         },
       });
       stamped = true;

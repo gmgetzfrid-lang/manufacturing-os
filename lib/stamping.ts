@@ -93,6 +93,12 @@ export type StampOptions = {
    *  footer land where the drawing ISN'T. Omit (or no DOM) → the blind,
    *  title-block-aware placement (SHR-8). */
   sourceBytes?: ArrayBuffer | Uint8Array;
+  /** drafting-flow DF-P25: characters the CALLER already printed in a plain
+   *  form inside `footerNotice` (a request deliverable's declaration folded —
+   *  lib/ticketDeliverableCopy.ts plainCharacters), named in the copy's
+   *  "Printed in plain characters" note after the stamper's own. Absent or
+   *  empty: the note is exactly as before. */
+  plainCharacters?: readonly StampTextMapping[];
 };
 
 function formatDate(d?: Date | null) {
@@ -539,7 +545,7 @@ export async function applyStampToPdfDoc(pdfDoc: PDFDocument, opts: StampOptions
   const drawnMain = stampText(mainText);
   const drawnNotice = footerOpts.footerNotice ? stampText(footerOpts.footerNotice) : null;
   const mapped: StampTextMapping[] = [];
-  for (const m of [...drawnWatermark.mapped, ...drawnMain.mapped, ...(drawnNotice?.mapped ?? [])]) {
+  for (const m of [...drawnWatermark.mapped, ...drawnMain.mapped, ...(drawnNotice?.mapped ?? []), ...(opts.plainCharacters ?? [])]) {
     if (!mapped.some((x) => x.char === m.char)) mapped.push(m);
   }
   const note = stampTextNote(mapped);
