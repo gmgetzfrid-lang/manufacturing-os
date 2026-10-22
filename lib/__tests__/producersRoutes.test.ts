@@ -17,7 +17,8 @@
 // address that is not one well-formed address is shown as invalid and gets
 // no email leg, and past the per-org hourly cap a request gets no notice of
 // its own (bell or email) — each pool member holds ONE unread "more are
-// waiting" row instead; and a decided request's pool notices are marked read.
+// waiting" row instead; and a decided request's pool notices are retired (since N19 with the
+// mark, metadata.superseded_at — never read_at).
 // REGRESSION FIRST: every response is the one the route gave before — the
 // rate limit, the decline's authority, the member grant — except the ones
 // ORG-8 (admin-and-org Round G P5) deliberately collapsed: no such workspace
@@ -520,27 +521,39 @@ describe("PROD-2 dw2 — the decision reaches the address the person gave", () =
       poolNotice("n-read", "admin1", { read_at: "2026-10-01T00:00:00Z" }),                               // already read: untouched
     ];
   };
-  const unread = () => (s.db.tables.notifications ?? []).filter((n) => n.read_at == null).map((n) => n.id).sort();
+  // notifications N19 (NEDGE-24 limb 1): a decided request's pool notices are RETIRED with the mark
+  // (metadata.superseded_at / superseded_by) — never read_at, the recipient's own act. "Live" is what
+  // the bell's unread list and badge count: unread and unmarked (lib/inAppNotifications.ts).
+  const unread = () => (s.db.tables.notifications ?? [])
+    .filter((n) => n.read_at == null && !(n.metadata as Record<string, unknown> | null)?.superseded_at).map((n) => n.id).sort();
+  const readAtUntouched = () => {
+    for (const n of s.db.tables.notifications ?? []) expect(n.read_at, String(n.id)).toBe(n.id === "n-read" ? "2026-10-01T00:00:00Z" : null);
+  };
 
-  it("a decline marks read every pool member's access_request_pending row about THAT request — nothing else", async () => {
+  it("a decline retires every pool member's access_request_pending row about THAT request with the mark — nothing else, and no read_at written", async () => {
     seedPool();
     expect((await decline()).status).toBe(200);
     expect(unread()).toEqual(["n-other-kind", "n-other-org", "n-other-req"]);
-    expect(s.db.tables.notifications.find((n) => n.id === "n-read")!.read_at).toBe("2026-10-01T00:00:00Z");
+    readAtUntouched();
+    for (const id of ["n-admin", "n-dc", "n-mgr"]) {
+      expect(s.db.tables.notifications.find((n) => n.id === id)!.metadata).toMatchObject({ accessRequestId: "req1", superseded_by: "access_request_decided", superseded_at: expect.any(String) });
+    }
+    expect((s.db.tables.notifications.find((n) => n.id === "n-read")!.metadata as Record<string, unknown>).superseded_at).toBeUndefined();
   });
 
-  it("an approval (the membership that answered the request) clears them the same way; an 'Add member' that answered no request clears nothing", async () => {
+  it("an approval (the membership that answered the request) retires them the same way; an 'Add member' that answered no request retires nothing", async () => {
     seedPool();
     s.db.tables.users = [{ id: "u-greg", email: "greg@corp.com" }];
     expect((await createUser(post("https://app/api/admin/create-user", { email: "greg@corp.com", password: "x", orgId: ORG, role: "Viewer" }))).status).toBe(200);
     expect(unread()).toEqual(["n-other-kind", "n-other-org", "n-other-req"]);
+    readAtUntouched();
     seedPool();
     s.db.tables.users = [{ id: "u-ann", email: "ann@corp.com" }];
     expect((await createUser(post("https://app/api/admin/create-user", { email: "ann@corp.com", password: "x", orgId: ORG, role: "Viewer" }))).status).toBe(200);
     expect(unread()).toEqual(["n-admin", "n-dc", "n-mgr", "n-other-kind", "n-other-org", "n-other-req"]);
   });
 
-  it("a refused caller clears nothing; a clearing that fails never changes the decline's answer", async () => {
+  it("a refused caller retires nothing; a mark that fails never changes the decline's answer", async () => {
     seedPool();
     s.caller = { id: "eng", email: "eng@acme.test" };
     expect((await decline()).status).toBe(403);

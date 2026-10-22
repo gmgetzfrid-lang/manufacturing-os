@@ -13,7 +13,8 @@
 // the DocCtrl review queue. Both authors (the brancher and the author of the
 // revision that was current at divergence) and the DocCtrl pool are notified
 // when a branch opens; the brancher and the DocCtrl pool when it resolves,
-// and the pool's branch_open alerts are then marked read (PROD-3).
+// and the pool's branch_open alerts are then retired with a mark (PROD-3;
+// NEDGE-24, N19 — never a read).
 
 import { supabase } from "@/lib/supabase";
 import { emit } from "@/lib/notify/dispatch";
@@ -246,14 +247,23 @@ export async function resolveBranch(input: {
   await clearBranchOpenAlerts(branch.id);
 }
 
-/** PROD-3 dw2: the branch_open alerts about a resolved branch are marked
- *  read for every recipient, so the DocCtrl queue clears itself — a browser
- *  may mark only its own rows read (20261161), so the database does it:
- *  clear_resolved_branch_alerts (20261181, SECURITY DEFINER; a resolved
- *  branch of an org the caller is active in, read_at only). Before that
- *  paste (42883 / PGRST202) the alerts stay unread, as they always did, and
- *  the miss is logged. Never thrown: the branch is already resolved.
- *  Answers how many alerts were cleared (null when it could not run). */
+/** PROD-3 dw2: the branch_open alerts about a resolved branch are retired
+ *  for every recipient, so the DocCtrl queue clears itself — a browser may
+ *  change only read_at on its own rows (20261161), so the database does it:
+ *  clear_resolved_branch_alerts (SECURITY DEFINER; a resolved branch of an
+ *  org the caller is active in). notifications NEDGE-24 limb 2 (N19,
+ *  20261260; drafting-flow EVID-13, DEC-90 ruling (5)): retired with a MARK
+ *  (metadata.superseded_at / superseded_by 'branch_resolved'), never a read —
+ *  read_at is the recipient's own act. The caller's OWN alert is not marked
+ *  there (20261161's rail refuses a recipient's session any change but
+ *  read_at on their own row, and a definer runs in that session), so it is
+ *  retired here by the server's reconcile pass (retireOwnBranchAlerts — the
+ *  mark the attention feed's own pass would make). Before 20261260 the
+ *  function stamps read_at for everyone (20261181, today's path) and the
+ *  caller's own retire finds nothing. Before 20261181 (42883 / PGRST202) the
+ *  alerts stay unread, as they always did, and the miss is logged. Never
+ *  thrown: the branch is already resolved. Answers how many alerts the
+ *  function retired (null when it could not run). */
 export async function clearBranchOpenAlerts(branchId: string): Promise<number | null> {
   try {
     const { data, error } = await supabase.rpc("clear_resolved_branch_alerts", { p_branch: branchId });
@@ -264,9 +274,42 @@ export async function clearBranchOpenAlerts(branchId: string): Promise<number | 
         : `[branches] couldn't clear the branch_open alerts: ${error.message}`);
       return null;
     }
+    // the caller's own alert — after the function answered; nothing waits on it
+    void retireOwnBranchAlerts(branchId);
     return typeof data === "number" ? data : 0;
   } catch (e) {
     console.warn("[branches] couldn't clear the branch_open alerts", e);
     return null;
+  }
+}
+
+/** NEDGE-24 limb 2 (N19): the signed-in member's own still-unread, unmarked
+ *  branch_open alerts about the resolved branch, retired with the mark by the
+ *  server's reconcile pass (/api/notifications/reconcile — it re-checks that
+ *  the branch is resolved and marks only the caller's own rows,
+ *  metadata.superseded_at, never read_at). Own rows only (notifications are
+ *  readable by their recipient alone). Best-effort, never throws: an alert it
+ *  misses is retired by the attention feed's own reconcile pass, which treats
+ *  a resolved branch's branch_open as gone (lib/notificationReconcile.ts). */
+export async function retireOwnBranchAlerts(branchId: string): Promise<number> {
+  try {
+    const { data, error } = await supabase.from("notifications")
+      .select("id, org_id")
+      .eq("kind", "branch_open")
+      .is("read_at", null)
+      .is("metadata->>superseded_at", null)
+      .contains("metadata", { branchId });
+    if (error) return 0;
+    const rows = (data as Array<{ id: string; org_id: string }> | null) ?? [];
+    if (rows.length === 0) return 0;
+    const { requestReconcile } = await import("@/lib/notificationReconcile");
+    let retired = 0;
+    for (const orgId of [...new Set(rows.map((r) => r.org_id))]) {
+      const answer = await requestReconcile(orgId, rows.filter((r) => r.org_id === orgId).map((r) => r.id));
+      retired += answer?.retired.length ?? 0;
+    }
+    return retired;
+  } catch {
+    return 0;
   }
 }

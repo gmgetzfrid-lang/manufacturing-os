@@ -18,7 +18,9 @@
 //     AND every SQL function body / one-off migration statement that sets
 //     notifications.read_at, with the app's .rpc() callers of those functions
 //     (fix pass 2: clear_resolved_branch_alerts, 20261181, is the second
-//     system stamp — NEDGE-24's second limb).
+//     system stamp — NEDGE-24's second limb). Since notifications N19 both
+//     censuses name no system stamp: the access-request clear and
+//     clear_resolved_branch_alerts (20261260) retire with the mark.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -229,7 +231,7 @@ describe("EVID-13 remainder (DEC-90 ruling (5)) — read_at stays the recipient'
     expect(wf).not.toMatch(/\.update\(\{\s*read_at/);
   });
 
-  it("census (app code): every TS write of notifications.read_at is the recipient's own session on their own rows — one named exception (NEDGE-24 limb 1); the SQL writers are the next case", () => {
+  it("census (app code): every TS write of notifications.read_at is the recipient's own session on their own rows — no exception since N19 (NEDGE-24 limb 1 marks instead); the SQL writers are the next case", () => {
     const walk = (dir: string): string[] => readdirSync(join(ROOT, dir)).flatMap((f) => {
       const rel = join(dir, f);
       if (f === "node_modules" || f === "__tests__" || f.startsWith(".")) return [];
@@ -241,15 +243,16 @@ describe("EVID-13 remainder (DEC-90 ruling (5)) — read_at stays the recipient'
       .sort();
     // each: the recipient's own browser session (own-row RLS — 20261161 lets a
     // member change only read_at, only on their own rows), named by the screen
-    // the person opened; the access-request clear is a service-role stamp on
-    // the pool's rows — opened as NEDGE-24 (its owner moves it to a mark)
+    // the person opened. The access-request clear (lib/accessRequestOutcome.ts,
+    // a service-role stamp on the pool's rows) was the one exception until
+    // notifications N19 moved it to the mark (NEDGE-24 limb 1).
     expect(writers).toEqual([
       "app/(protected)/requests/[id]/page.tsx",   // opening the request (.eq('user_id', uid))
       "components/notifications/NotificationCenter.tsx", // "Mark these read" in the person's center
-      "lib/accessRequestOutcome.ts",              // NEDGE-24 — service role, every pool member's row
       "lib/inAppNotifications.ts",                // the bell's mark read / mark all read (own rows)
       "lib/notificationTrail.ts",                 // opening a document / project (.eq("user_id", uid))
     ]);
+    expect(src("lib/accessRequestOutcome.ts")).toMatch(/superseded_by: "access_request_decided"/);
     expect(src("app/(protected)/requests/[id]/page.tsx")).toMatch(/\.update\(\{ read_at: new Date\(\)\.toISOString\(\) \}\)\s*\n\s*\.eq\('user_id', uid\)/);
     expect(src("lib/notificationTrail.ts")).toMatch(/\.update\(\{ read_at: new Date\(\)\.toISOString\(\) \}\)\s*\n\s*\.eq\("user_id", input\.uid\)/);
   });
@@ -265,7 +268,7 @@ describe("EVID-13 remainder (DEC-90 ruling (5)) — read_at stays the recipient'
   // people's rows, NEDGE-24 limb 2 (retire with metadata.superseded_at; keep
   // the rows it stamped off the plain purge line). The one-off statement is
   // 20261181's own backlog of the same stamp.
-  it("census (database): every SQL writer of notifications.read_at and its app callers — one function, clear_resolved_branch_alerts (NEDGE-24 limb 2)", () => {
+  it("census (database): every SQL writer of notifications.read_at and its app callers — none since N19 (20261260: clear_resolved_branch_alerts marks instead, NEDGE-24 limb 2); 20261181's one-off backlog stays named as history", () => {
     const MIG = "supabase/migrations";
     const files = ["supabase/schema.sql", ...readdirSync(join(ROOT, MIG)).filter((f) => /^\d+_.*\.sql$/.test(f)).sort().map((f) => `${MIG}/${f}`)];
     const FN = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?"?(\w+)"?\s*\([\s\S]*?\bAS\s+\$(\w*)\$([\s\S]*?)\$\2\$/gi;
@@ -283,14 +286,16 @@ describe("EVID-13 remainder (DEC-90 ruling (5)) — read_at stays the recipient'
     }
     expect(newest.size).toBeGreaterThan(100);   // the scan reads the real function set
     const sqlWriters = [...newest].filter(([, v]) => SETS_READ_AT.test(v.body)).map(([name, v]) => `${name} @ ${v.file}`).sort();
-    expect(sqlWriters).toEqual([
-      "clear_resolved_branch_alerts @ supabase/migrations/20261181_notif_roundG_producers_free.sql", // NEDGE-24 limb 2 — every recipient's branch_open row
-    ]);
-    // its body is a system stamp: every recipient's row in the org, no user_id filter
-    const body = newest.get("clear_resolved_branch_alerts")!.body;
-    expect(body).toMatch(/n\.kind = 'branch_open'/);
-    expect(body).not.toMatch(/user_id\s*=/);
-    expect(oneOff).toEqual(["supabase/migrations/20261181_notif_roundG_producers_free.sql"]); // its one-time backlog of the same stamp
+    expect(sqlWriters).toEqual([]);
+    // N19 (20261260): the newest clear_resolved_branch_alerts retires with the
+    // mark (metadata.superseded_at) on every OTHER recipient's row — the
+    // caller's own is the app's (the reconcile pass) — and writes no read_at
+    const fn = newest.get("clear_resolved_branch_alerts")!;
+    expect(fn.file).toBe("supabase/migrations/20261260_notif_roundG_branch_alert_mark.sql");
+    expect(fn.body).toMatch(/n\.kind = 'branch_open'/);
+    expect(fn.body).toContain("'superseded_by', 'branch_resolved')");
+    expect(fn.body).toContain("AND n.user_id IS DISTINCT FROM v_uid");
+    expect(oneOff).toEqual(["supabase/migrations/20261181_notif_roundG_producers_free.sql"]); // 20261181's one-time backlog (history; its rows are kept off the purge's plain read line)
     // the other SQL files beside the sequence set no read_at either
     for (const f of readdirSync(join(ROOT, "supabase")).filter((x) => x.endsWith(".sql") && x !== "schema.sql")) {
       expect(SETS_READ_AT.test(src(`supabase/${f}`).replace(/--[^\n]*/g, "")), f).toBe(false);
@@ -305,6 +310,7 @@ describe("EVID-13 remainder (DEC-90 ruling (5)) — read_at stays the recipient'
     const callers = [...newest].filter(([, v]) => SETS_READ_AT.test(v.body)).flatMap(([name]) => appFiles
       .filter((f) => new RegExp(`\\.rpc\\(\\s*["'\`]${name}["'\`]`).test(src(f)))
       .map((f) => `${name} <- ${relative(ROOT, join(ROOT, f))}`)).sort();
-    expect(callers).toEqual(["clear_resolved_branch_alerts <- lib/branches.ts"]); // resolveBranch, any active member resolving a branch
+    expect(callers).toEqual([]); // no app path calls a read_at writer in the database
+    expect(src("lib/branches.ts")).toContain('supabase.rpc("clear_resolved_branch_alerts", { p_branch: branchId })'); // the caller keeps its call (now a mark)
   });
 });

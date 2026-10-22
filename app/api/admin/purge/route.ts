@@ -153,6 +153,14 @@ function retentionUnreadable(retention: NoticeRetention): string {
  *  NEWEST definition of that function. */
 const PURGE_KEEPS_WATERMARK_KEYS = ["staleSessionId", "staleHoldId", "reviewHealthDay", "ackEscalation"];
 const PURGE_KEEPS_KINDS = ["transmittal_unstampable", "storage_alert", "storage_platform_r2", "storage_platform_db"];
+/** notifications NEDGE-24 (N19; drafting-flow EVID-13 done-when 3): the two
+ *  kinds a system path once stamped read on other people's rows — a decided
+ *  access request's pool notices (lib/accessRequestOutcome.ts, service role)
+ *  and a resolved branch's alerts (clear_resolved_branch_alerts, 20261181 and
+ *  its backlog). Both now retire with a mark (metadata.superseded_at), but a
+ *  row stamped before cannot be told from one its recipient opened, so the
+ *  plain read line keeps both kinds, as a mark is kept: never purged. */
+const PURGE_KEEPS_SYSTEM_STAMPED_KINDS = ["access_request_pending", "branch_open"];
 
 /** A PostgREST filter builder (a count or a delete) — kept structural: the
  *  generated builder types are too deep to thread through one helper. */
@@ -183,7 +191,8 @@ function floorOf(key: string, q: FilterBuilder): FilterBuilder {
     // EVID-13 dw3 (N18): a record notice — a compliance kind, or a ticket
     // workflow alert (metadata.action) — is its own line below, kept for the
     // notice-record retention; every other read row keeps today's floor.
-    return n.not("kind", "in", `(${RECORD_NOTICE_KINDS.join(",")})`).is("metadata->>action", null);
+    return n.not("kind", "in", `(${RECORD_NOTICE_KINDS.join(",")})`).is("metadata->>action", null)
+      .not("kind", "in", `(${PURGE_KEEPS_SYSTEM_STAMPED_KINDS.join(",")})`);
   }
   if (key === "notifications_record") {
     // the same read-rows floor (read_at set — the recipient's own act — and
