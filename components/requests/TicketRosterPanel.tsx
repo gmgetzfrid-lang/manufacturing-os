@@ -23,6 +23,16 @@
 //   * TIER-8: the panel says plainly that signing here approves the drafting
 //     deliverable, and that publishing it as a revision is the library's own
 //     review — a different question, not the same review twice.
+//   * GAP-102 (DF-P20): an ASSURANCE slot (lib/assuranceExamination.ts — not
+//     the engineering approval, not the requester's own acceptance) records
+//     what its reviewer examined with the sign-off or the veto it backs: the
+//     reviewed version's hash (the roster's, shortened, with a copy button),
+//     the files examined (all by default; the reviewer may narrow) and a note
+//     — required, asked here in place, for a revision request. Each assurance
+//     sign-off shows its record (read from the roster's ledger); one signed
+//     before DF-P20 says "Examination not recorded". A roster with no
+//     assurance slot, and every request with none, is exactly as before:
+//     nothing is read and nothing new is shown.
 //
 // Read only through the signed-in client (RLS decides); the one write is the
 // workflow route.
@@ -34,7 +44,11 @@ import { recordSignature, type SigningCredential, type SignatureIntent } from "@
 import SignatureCeremony from "@/components/signatures/SignatureCeremony";
 import { currentRoster, slotSignPlan, separationOfDutiesActive, engineeringGateRequired, slotBlocks, issueReadyFor, ISSUE_AS_IS_NOTE, unhashedFilesNote, ROUTED_NO_ROSTER_REASON } from "@/lib/workflow";
 import { engineeringOverrideOf } from "@/lib/reviewModel";
-import { seededSlotsFor, MODE_LABEL } from "@/lib/routingControl";
+import { seededSlotsFor, MODE_LABEL, isMissingRosterLedger } from "@/lib/routingControl";
+import {
+  isAssuranceSlot, rosterHasAssuranceSlot, rosterOnRecord, examinationFileKey, examinationOf, shortHash, examinedFilesText,
+  EXAMINATION_NOT_RECORDED, EXAMINATION_NOTE_MAX, type ExaminationRecord,
+} from "@/lib/assuranceExamination";
 import { effectiveReviewControlForDocument, expandReviewers } from "@/lib/reviewControl";
 import type { CapabilityPolicy } from "@/lib/capabilityPolicy";
 import type { Ticket, TicketReviewRoster, TicketReviewSlot } from "@/types/schema";
@@ -87,17 +101,63 @@ export const ENGINEERING_GATE_NOTE =
 
 /** The statement a sign-off's e-signature carries: what was reviewed, as
  *  which slots — and, when they apply, the issue-as-is mark (FRIC-5) and the
- *  files bound by identity rather than content (EVID-12). */
+ *  files bound by identity rather than content (EVID-12). DF-P20: `examined`
+ *  — the names of the files an assurance reviewer narrowed their examination
+ *  to; said only when it is fewer than every file under review (absent or
+ *  all: the statement is exactly as before). */
 export function rosterSignStatement(input: {
   userName?: string | null;
   ticketLabel: string;
   roster: Pick<TicketReviewRoster, "cycle" | "files">;
   labels: string[];
   issueReady: boolean;
+  examined?: string[] | null;
 }): string {
   const { roster } = input;
   const unhashed = unhashedFilesNote(roster);
-  return `I, ${input.userName ?? ""}, have reviewed ${input.ticketLabel}${roster.cycle ? ` Rev ${roster.cycle}` : ""} (${roster.files.map((f) => f.name).filter(Boolean).join(", ")}) and sign off as ${input.labels.join(", ")}, and affirm this as my electronic signature.${input.issueReady ? ` ${ISSUE_AS_IS_NOTE}` : ""}${unhashed ? ` ${unhashed}` : ""}`;
+  const narrowed = input.examined && input.examined.length < roster.files.length ? `, having examined ${input.examined.join(", ")},` : "";
+  return `I, ${input.userName ?? ""}, have reviewed ${input.ticketLabel}${roster.cycle ? ` Rev ${roster.cycle}` : ""} (${roster.files.map((f) => f.name).filter(Boolean).join(", ")})${narrowed} and sign off as ${input.labels.join(", ")}, and affirm this as my electronic signature.${input.issueReady ? ` ${ISSUE_AS_IS_NOTE}` : ""}${unhashed ? ` ${unhashed}` : ""}`;
+}
+
+/** DF-P20: what the panel sends as `examination` — the files picked (absent:
+ *  every file under review) and the note (trimmed; null when blank). Pure. */
+export function examinationBody(pick: string[] | null, note: string): { files?: string[]; note: string | null } {
+  return { ...(pick ? { files: pick } : {}), note: note.trim() || null };
+}
+
+/** DF-P20: one row of the roster's ledger as the panel reads it. */
+export interface SlotEventRow {
+  id: string;
+  roster_id: string;
+  slot_kind: string;
+  event: string;
+  actor_id: string | null;
+  actor_name: string | null;
+  content_hash: string | null;
+  details: unknown;
+  created_at: string;
+}
+
+/** DF-P20: an examination record as the panel shows it — the reviewed
+ *  version's hash shortened with a copy button (the full value is copied),
+ *  the files examined, the note. */
+export function ExaminationView({ record }: { record: ExaminationRecord }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    try {
+      void navigator.clipboard?.writeText(record.contentHash).then(() => setCopied(true), () => undefined);
+    } catch { /* no clipboard: the hash stays readable in the title */ }
+  };
+  return (
+    <div data-testid="examination-record" className="mt-1 rounded border border-[var(--color-border)] px-2 py-1 text-[var(--color-text-muted)] space-y-0.5">
+      <div>
+        Reviewed version{record.cycle ? ` (Rev ${record.cycle})` : ""}: <code title={record.contentHash} data-testid="examination-hash">{shortHash(record.contentHash)}</code>{" "}
+        <button type="button" onClick={copy} className="underline text-[var(--color-accent)]" aria-label="Copy the reviewed version's full content hash">{copied ? "Copied" : "Copy"}</button>
+      </div>
+      <div data-testid="examination-files">{examinedFilesText(record)}</div>
+      {record.note && <div data-testid="examination-note">Note: {record.note}</div>}
+    </div>
+  );
 }
 
 /** FRIC-2: what a slot asks, as a person reads it. */
@@ -158,6 +218,17 @@ export default function TicketRosterPanel({
   const [signing, setSigning] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // GAP-102 (DF-P20): the roster's ledger, read only when the request's
+  // roster (open or closed) carries an assurance slot; what the viewer
+  // examined (null = every file under review) and their note.
+  const recordRoster = useMemo(() => rosterOnRecord(ticket), [ticket]);
+  const assuranceOnRecord = rosterHasAssuranceSlot(recordRoster, ticket);
+  const [events, setEvents] = useState<SlotEventRow[] | "unreadable" | null>(null);
+  // True once a sign-off with no event on record has been read again (the
+  // event never came: "not recorded", as an event without a record says).
+  const [eventsSettled, setEventsSettled] = useState(false);
+  const [examPick, setExamPick] = useState<string[] | null>(null);
+  const [examNote, setExamNote] = useState("");
 
   // Names of everyone the roster names (RLS: members of the workspace).
   useEffect(() => {
@@ -173,6 +244,40 @@ export default function TicketRosterPanel({
     })();
     return () => { alive = false; };
   }, [roster, orgId]);
+
+  // GAP-102 (DF-P20): the ledger's sign-off and veto events (RLS: read as
+  // the ticket reads), re-read when a slot or the roster's state changes.
+  // The route writes the ledger just AFTER the ticket row, so a sign-off
+  // whose event is not there yet is read once more, shortly after.
+  const eventsKey = recordRoster ? `${recordRoster.id}:${recordRoster.slots.filter((s) => s.status !== "open").length}:${recordRoster.closedAt ?? ""}` : "";
+  const recordRosterId = recordRoster?.id ?? "";
+  const signedAssuranceKey = recordRoster ? recordRoster.slots.filter((s) => s.status === "satisfied" && isAssuranceSlot(s, ticket)).map((s) => s.kind).join("\u0001") : "";
+  useEffect(() => {
+    if (!assuranceOnRecord || !ticket.id) { setEvents(null); setEventsSettled(false); return; }
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const want = signedAssuranceKey ? signedAssuranceKey.split("\u0001") : [];
+    const load = async (attempt: number) => {
+      try {
+        const { data, error: e } = await supabase.from("ticket_review_slot_events")
+          .select("id, roster_id, slot_kind, event, actor_id, actor_name, content_hash, details, created_at")
+          .eq("ticket_id", ticket.id).in("event", ["satisfied", "voided"]).order("created_at", { ascending: false }).limit(200);
+        if (!alive) return;
+        if (e) { setEvents(isMissingRosterLedger(e) ? [] : "unreadable"); setEventsSettled(true); return; }
+        const rows = (data ?? []) as SlotEventRow[];
+        setEvents(rows);
+        const missing = want.some((k) => !rows.some((r) => r.roster_id === recordRosterId && r.slot_kind === k && r.event === "satisfied"));
+        setEventsSettled(!missing || attempt > 0);
+        if (missing && attempt === 0) timer = setTimeout(() => { void load(1); }, 2000);
+      } catch {
+        if (alive) setEvents("unreadable");
+      }
+    };
+    void load(0);
+    return () => { alive = false; if (timer) clearTimeout(timer); };
+  }, [assuranceOnRecord, ticket.id, eventsKey, recordRosterId, signedAssuranceKey]);
+  // A new roster reviews new files: what was picked for the old one goes.
+  useEffect(() => { setExamPick(null); }, [roster?.id]);
 
   // DCW-6: the target library's own review policy, before approval.
   useEffect(() => {
@@ -199,6 +304,23 @@ export default function TicketRosterPanel({
   const issueReady = issueReadyFor(ticket);
   // EVID-12 (fix pass 2): files bound by identity, not content, are named.
   const unhashed = roster ? unhashedFilesNote(roster) : null;
+  // GAP-102 (DF-P20): the viewer signs an assurance slot / occupies one they
+  // may send back (a veto).
+  const signsAssurance = !!plan && plan.fillable.some((f) => isAssuranceSlot(f.slot, ticket));
+  const occupiesAssurance = !!plan && [...plan.fillable, ...plan.blocked].some((x) => isAssuranceSlot(x.slot, ticket));
+  const examinedNames = roster && examPick ? roster.files.filter((f) => examPick.includes(examinationFileKey(f))).map((f) => f.name || "a file") : null;
+  // The examination records the ledger holds: per slot of the roster under
+  // review, and every record of an earlier round (a veto closes its roster).
+  const eventRows = Array.isArray(events) ? events : [];
+  // undefined: no event on record yet (the ledger is written just after the
+  // ticket row); null: an event with no record (written before DF-P20).
+  const slotRecord = (kind: string): ExaminationRecord | null | undefined => {
+    const ev = roster ? eventRows.find((e) => e.roster_id === roster.id && e.slot_kind === kind && e.event === "satisfied") : undefined;
+    return ev ? examinationOf(ev.details) : undefined;
+  };
+  const history = eventRows
+    .filter((e) => (!roster || e.roster_id !== roster.id) && examinationOf(e.details))
+    .slice(0, 20);
 
   const sign = useCallback(async (intent: SignatureIntent, statement: string, signatureImage?: string | null, reauth?: SigningCredential) => {
     if (!roster || !orgId || !uid || !ticket.id) return;
@@ -214,7 +336,7 @@ export default function TicketRosterPanel({
       const post = () => fetch("/api/tickets/workflow-action", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
-        body: JSON.stringify({ ticketId: ticket.id, actionType: "sign_slot", signatureId: sig.id, ...(driftNote && driftAck ? { sourceDriftAcknowledged: true } : {}) }),
+        body: JSON.stringify({ ticketId: ticket.id, actionType: "sign_slot", signatureId: sig.id, ...(driftNote && driftAck ? { sourceDriftAcknowledged: true } : {}), ...(signsAssurance ? { examination: examinationBody(examPick, examNote) } : {}) }),
       });
       const { res, out } = await postSignOffOnce(post);
       if (!res.ok) {
@@ -233,7 +355,7 @@ export default function TicketRosterPanel({
     } finally {
       setBusy(false);
     }
-  }, [roster, orgId, uid, ticket.id, userName, onChanged, driftNote, driftAck]);
+  }, [roster, orgId, uid, ticket.id, userName, onChanged, driftNote, driftAck, signsAssurance, examPick, examNote]);
 
   // TIER-8 / EVID-12 (DF-P5 fix pass 3): the route is asked FIRST whether
   // it would take this sign-off (a dry run: nothing written, no signature),
@@ -242,6 +364,7 @@ export default function TicketRosterPanel({
   const openCeremony = useCallback(async () => {
     if (!ticket.id) return;
     if (driftNote && !driftAck) { setError("Tick the acknowledgement that the source revision has moved before signing off."); return; }
+    if (signsAssurance && examPick && examPick.length === 0) { setError("Mark at least one file you examined."); return; }
     setBusy(true);
     setError(null);
     try {
@@ -249,7 +372,7 @@ export default function TicketRosterPanel({
       const dryRun = (ack: boolean) => fetch("/api/tickets/workflow-action", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
-        body: JSON.stringify({ ticketId: ticket.id, actionType: "sign_slot", dryRun: true, ...(ack ? { sourceDriftAcknowledged: true } : {}) }),
+        body: JSON.stringify({ ticketId: ticket.id, actionType: "sign_slot", dryRun: true, ...(ack ? { sourceDriftAcknowledged: true } : {}), ...(signsAssurance ? { examination: examinationBody(examPick, examNote) } : {}) }),
       });
       const acked = !!driftNote && driftAck;
       let res = await dryRun(acked);
@@ -272,7 +395,37 @@ export default function TicketRosterPanel({
     } finally {
       setBusy(false);
     }
-  }, [ticket.id, driftNote, driftAck]);
+  }, [ticket.id, driftNote, driftAck, signsAssurance, examPick, examNote]);
+
+  // GAP-102 (DF-P20): a veto in place — the revision request, with the note
+  // (required: a rejection must say why) as its comment and the record of
+  // what was examined. One step: nothing else is asked.
+  const veto = useCallback(async () => {
+    if (!ticket.id) return;
+    const note = examNote.trim();
+    if (!note) { setError("Say why you are requesting a revision — the note is required."); return; }
+    if (examPick && examPick.length === 0) { setError("Mark at least one file you examined."); return; }
+    setBusy(true);
+    setError(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch("/api/tickets/workflow-action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
+        body: JSON.stringify({ ticketId: ticket.id, actionType: "request_revision", comment: note, examination: { ...(examPick ? { files: examPick } : {}), note } }),
+      });
+      const out = (await res.json().catch(() => ({}))) as { error?: string; warning?: string };
+      if (!res.ok) throw new Error(out.error || `The revision request was not recorded (HTTP ${res.status})`);
+      if (out.warning) setError(out.warning);
+      setExamNote("");
+      setExamPick(null);
+      await onChanged?.();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }, [ticket.id, examNote, examPick, onChanged]);
 
   const inReview = ticket.status === "PENDING_REVIEW" || ticket.status === "PENDING_FINAL_APPROVAL";
   // TIER-5 (DF-P5 fix pass 4): routed with no roster — no seed (that is the
@@ -280,7 +433,7 @@ export default function TicketRosterPanel({
   // forward instead.
   const routedNoRoster = !roster && inReview && reviewRouted === true;
   const showSeed = !roster && inReview && !routedNoRoster;
-  if (!roster && !showSeed && !routedNoRoster && !libraryReview) return null;
+  if (!roster && !showSeed && !routedNoRoster && !libraryReview && history.length === 0) return null;
 
   return (
     <section data-testid="ticket-roster-panel" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
@@ -308,6 +461,12 @@ export default function TicketRosterPanel({
                     <div className="text-[var(--color-text-faint)]">{s.primaries.map((p) => names.get(p) ?? "member").join(", ")}</div>
                   )}
                   {blockedHere && <div className="text-red-700 flex items-center gap-1"><ShieldAlert className="w-3 h-3" /> {blockedHere.reason}</div>}
+                  {s.status === "satisfied" && events !== null && isAssuranceSlot(s, ticket) && (() => {
+                    if (events === "unreadable") return <div className="text-[var(--color-text-faint)]" data-testid="examination-unreadable">The record of what was examined could not be read right now.</div>;
+                    const rec = slotRecord(s.kind);
+                    if (rec === undefined && !eventsSettled) return null;
+                    return rec ? <ExaminationView record={rec} /> : <div className="text-[var(--color-text-faint)]" data-testid="examination-not-recorded">{EXAMINATION_NOT_RECORDED}</div>;
+                  })()}
                 </div>
               </li>
             );
@@ -332,6 +491,56 @@ export default function TicketRosterPanel({
           <input type="checkbox" checked={driftAck} onChange={(e) => setDriftAck(e.target.checked)} className="mt-0.5" />
           <span>{driftNote} I have checked the draft against the current revision.</span>
         </label>
+      )}
+
+      {roster && occupiesAssurance && (
+        <fieldset className="text-xs space-y-1.5 rounded-lg border border-[var(--color-border)] p-2" data-testid="examination-form" disabled={busy || signing}>
+          <legend className="font-bold text-[var(--color-text)] px-1">What you examined</legend>
+          <div className="text-[var(--color-text-muted)]">
+            Recorded with your sign-off or revision request, against the reviewed version <code title={roster.contentHash}>{shortHash(roster.contentHash)}</code>.
+          </div>
+          <ul className="space-y-0.5">
+            {roster.files.map((f) => {
+              const key = examinationFileKey(f);
+              const checked = examPick ? examPick.includes(key) : true;
+              return (
+                <li key={key || f.name || "file"}>
+                  <label className="flex items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => {
+                        const cur = examPick ?? roster.files.map(examinationFileKey);
+                        const next = e.target.checked ? [...new Set([...cur, key])] : cur.filter((k) => k !== key);
+                        setExamPick(next.length === roster.files.length ? null : next);
+                      }}
+                    />
+                    <span>{f.name || "a file"}</span>
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+          <label className="block">
+            <span className="text-[var(--color-text-muted)]">Note — optional with a sign-off; required to request a revision</span>
+            <textarea
+              value={examNote}
+              onChange={(e) => setExamNote(e.target.value)}
+              maxLength={EXAMINATION_NOTE_MAX}
+              rows={2}
+              data-testid="examination-note-input"
+              className="mt-0.5 w-full rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-1 text-[var(--color-text)]"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => { void veto(); }}
+            data-testid="examination-veto"
+            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
+          >
+            Request revision
+          </button>
+        </fieldset>
       )}
 
       {roster && plan && plan.fillable.length > 0 && (
@@ -377,6 +586,25 @@ export default function TicketRosterPanel({
         <p className="text-[10px] text-[var(--color-text-faint)]" data-testid="two-reviews-note">{TWO_REVIEWS_NOTE}</p>
       )}
 
+      {history.length > 0 && (
+        <div className="text-xs space-y-1" data-testid="examination-history">
+          <div className="font-bold text-[var(--color-text)]">What assurance reviewers examined{roster ? " — earlier rounds" : ""}</div>
+          <ul className="space-y-1.5">
+            {history.map((e) => {
+              const rec = examinationOf(e.details)!;
+              const label = recordRoster?.id === e.roster_id ? (recordRoster.slots.find((x) => x.kind === e.slot_kind)?.label || e.slot_kind) : e.slot_kind;
+              return (
+                <li key={e.id}>
+                  <span className="font-bold text-[var(--color-text)]">{label}</span>{" "}
+                  <span className="text-[var(--color-text-muted)]">— {rec.act === "veto" ? "revision requested" : "signed off"} by {(e.actor_id && names.get(e.actor_id)) || e.actor_name || "someone"} · {new Date(e.created_at).toLocaleString()}</span>
+                  <ExaminationView record={rec} />
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
       {error && <div role="alert" className="text-xs text-red-700">{error}</div>}
 
       {signing && roster && (
@@ -384,7 +612,7 @@ export default function TicketRosterPanel({
           signerName={userName ?? ""}
           resourceLabel={`${ticket.ticketId}${roster.cycle ? ` Rev ${roster.cycle}` : ""}`}
           defaultIntent="Reviewed"
-          defaultStatement={rosterSignStatement({ userName, ticketLabel: ticket.ticketId, roster, labels: (plan?.fillable ?? []).map((f) => f.slot.label), issueReady })}
+          defaultStatement={rosterSignStatement({ userName, ticketLabel: ticket.ticketId, roster, labels: (plan?.fillable ?? []).map((f) => f.slot.label), issueReady, ...(signsAssurance ? { examined: examinedNames } : {}) })}
           lockIntent
           busy={busy}
           onCancel={() => !busy && setSigning(false)}

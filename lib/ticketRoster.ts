@@ -34,6 +34,7 @@ import type { RoutingControl, RoutingLevel, RoutingSlot } from "@/lib/routingCon
 import { slotLabel } from "@/lib/routingControl";
 import { windowConfigOf } from "@/lib/consentWindow";
 import type { TicketAttachment, TicketReviewRoster, TicketReviewSlot } from "@/types/schema";
+import type { ExaminationRecord } from "@/lib/assuranceExamination";
 
 // ─── Content binding (EVID-12) ──────────────────────────────────────────────
 
@@ -540,7 +541,12 @@ const onceRows = async (run: () => RowsThenable): Promise<string | null> => {
  *  one event row each. Every write is checked and retried once (an update
  *  that matched no slot row counts as a failure); the first failure is
  *  returned (the route reports it), never swallowed — and no event row is
- *  written for a slot whose row could not be updated. */
+ *  written for a slot whose row could not be updated.
+ *  DF-P20 (GAP-102): `examination` — what an assurance reviewer examined
+ *  (lib/assuranceExamination.ts) — rides `details.examination` of the event
+ *  row of each slot it names, in the same insert as the sign-off ("satisfied")
+ *  or the veto ("voided" by their revision request). Absent, every row is
+ *  exactly as before. */
 export async function writeRosterLedger(client: LedgerClient, input: {
   orgId: string;
   ticketId: string;
@@ -551,6 +557,9 @@ export async function writeRosterLedger(client: LedgerClient, input: {
   /** `uid` null: a recorded system act (GAP-109's consent advance — DF-P7). */
   actor: { uid: string | null; name: string | null };
   reason?: string | null;
+  /** DF-P20: the examination record, and the slot kinds it is recorded on
+   *  (the assurance slots this sign-off or veto acts on). */
+  examination?: { kinds: readonly string[]; record: ExaminationRecord } | null;
 }): Promise<string | null> {
   const { orgId, ticketId, roster } = input;
   const slotsTable = () => client.from("ticket_review_slots") as {
@@ -558,6 +567,8 @@ export async function writeRosterLedger(client: LedgerClient, input: {
     update: (r: unknown) => { eq: (k: string, v: unknown) => { eq: (k: string, v: unknown) => { select: (c: string) => RowsThenable } } };
   };
   const eventsTable = () => client.from("ticket_review_slot_events") as { insert: (r: unknown) => Thenable };
+  const examinedOn = (kind: string): { examination?: ExaminationRecord } =>
+    input.event !== "opened" && input.examination && input.examination.kinds.includes(kind) ? { examination: input.examination.record } : {};
   if (input.event === "opened") {
     const err = await once(() => slotsTable().insert(input.slots.map((s) => ({
       org_id: orgId, ticket_id: ticketId, roster_id: roster.id, cycle: roster.cycle,
@@ -583,7 +594,7 @@ export async function writeRosterLedger(client: LedgerClient, input: {
     content_hash: roster.contentHash,
     details: input.event === "opened"
       ? { primaries: s.primaries.length, alternates: s.alternates.length, fallback: s.fallback, level: roster.level }
-      : input.event === "satisfied" ? { via: s.via ?? null } : { reason: input.reason ?? roster.closedReason ?? null },
+      : { ...(input.event === "satisfied" ? { via: s.via ?? null } : { reason: input.reason ?? roster.closedReason ?? null }), ...examinedOn(s.kind) },
   }))));
 }
 

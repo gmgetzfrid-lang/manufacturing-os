@@ -40,6 +40,7 @@ import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
 import { planConsentWindow, CONSENT_REASON, issueAsIsMarkOf, isUnconfirmedConsentPlan } from "@/lib/consentWindow";
 import { afterRosterOpened, recordNoticeEvents, recordNotEmailed, emailPreferenceOf } from "@/lib/consentWindowScan";
 import { SLA_NOTICE_ACTIONS } from "@/lib/ticketSla";
+import { buildExaminationRecord, isAssuranceSlot, type ExaminationRecord } from "@/lib/assuranceExamination";
 import { ticketReadScope } from "@/lib/ticketReadScope";
 import { offerableLibraries, libraryLabelForTicket, libraryChoiceFromRow, LIBRARY_CHOICE_COLUMNS, UNNAMED_TARGET_LIBRARY } from "@/lib/ticketLibrary";
 import { LIBRARY_RUNG_COLUMNS } from "@/lib/libraryAccess";
@@ -125,6 +126,13 @@ interface Body {
    *  absent = a page that does not ask yet (applied, recorded as not
    *  acknowledged). */
   sourceDriftAcknowledged?: boolean | null;
+  /** GAP-102 (DF-P20): what an assurance reviewer examined, with
+   *  `sign_slot` (its dry run too) or `request_revision` — the files under
+   *  review they examined (attachment ids / storage keys; absent = all) and
+   *  their note (a revision request's falls back to its comment). Read only
+   *  when the caller acts on an assurance slot (lib/assuranceExamination.ts);
+   *  ignored otherwise. */
+  examination?: { files?: string[] | null; note?: string | null } | null;
 }
 
 /** DCW-4 / HAND-3: the shape of a register row id (document_versions.id,
@@ -1100,6 +1108,9 @@ export async function POST(req: NextRequest) {
   const openRosterNow = currentRoster(ticket);
   let rosterOpen: TicketReviewRoster | null = null;
   let rosterSign: TransitionInput["rosterSign"] = null;
+  // GAP-102 (DF-P20): what the assurance reviewer examined, recorded on the
+  // event of each assurance slot this sign-off or veto acts on (null: none).
+  let examination: { kinds: string[]; record: ExaminationRecord } | null = null;
   let rosterWarning: string | null = null;
   // GAP-109 / GAP-113 (DF-P7): what this submission's consent slot does, said
   // in the response (never in rosterWarning, which the audit row carries).
@@ -1245,6 +1256,16 @@ export async function POST(req: NextRequest) {
     if (!openRosterNow) return refuseSign(409, "This request has no review open.");
     const plan = slotSignPlan(openRosterNow, ticket, caller.id, sodActive, Date.now());
     if (plan.fillable.length === 0) return refuseSign(403, plan.blocked[0]?.reason ?? "There is no sign-off open to you on this request.");
+    // GAP-102 (DF-P20): a sign-off on an assurance slot carries what was
+    // examined (default: every file under review, no note), checked before
+    // the dry run answers so a signature is never minted for a record that
+    // would be refused. Any other sign-off is exactly as before.
+    const examKinds = plan.fillable.filter((f) => isAssuranceSlot(f.slot, ticket)).map((f) => f.slot.kind);
+    if (examKinds.length > 0) {
+      const built = buildExaminationRecord(openRosterNow, body.examination, { act: "sign_off" });
+      if (!built.ok) return refuseSign(400, built.error, "examination_invalid");
+      examination = { kinds: examKinds, record: built.record };
+    }
     if (body.dryRun === true) {
       return NextResponse.json({ ok: true, dryRun: true, slots: plan.fillable.map((f) => f.slot.label || f.slot.kind), contentHash: openRosterNow.contentHash });
     }
@@ -1257,6 +1278,18 @@ export async function POST(req: NextRequest) {
     if (refusal) return refuseSign(403, refusal, "signature_invalid", sig as SignatureRow | null);
     const signed = applySignPlan(openRosterNow, plan, { uid: caller.id, name: memberName(member as { display_name?: unknown; email?: unknown }) }, sigId, new Date().toISOString());
     rosterSign = { roster: signed, complete: rosterCompletion(signed, { sodActive, drafterId: ticket.assignedDrafterId }).complete, labels: plan.fillable.map((f) => f.slot.label || f.slot.kind) };
+  }
+  // GAP-102 (DF-P20): a veto — a revision request by someone who occupies an
+  // open assurance slot — records what they examined on that slot's
+  // "voided" event, with the reason (the required comment, or their note).
+  if (action.action === "request_revision" && openRosterNow) {
+    const occ = slotSignPlan(openRosterNow, ticket, caller.id, sodActive, Date.now());
+    const vetoKinds = [...occ.fillable, ...occ.blocked].filter((x) => isAssuranceSlot(x.slot, ticket)).map((x) => x.slot.kind);
+    if (vetoKinds.length > 0) {
+      const built = buildExaminationRecord(openRosterNow, body.examination, { act: "veto", comment: body.comment ?? null });
+      if (!built.ok) return NextResponse.json({ error: built.error, code: "examination_invalid" }, { status: 400 });
+      examination = { kinds: vetoKinds, record: built.record };
+    }
   }
   // EVID-12 (DF-P5): the approved drafts and the issued Final are hashed
   // from their bytes (sha256) for the audit trail — on TODAY'S path, AFTER
@@ -1608,9 +1641,9 @@ export async function POST(req: NextRequest) {
       ...(rosterOpen
         ? { reviewRoster: { id: rosterOpen.id, event: "opened", level: rosterOpen.level, contentHash: rosterOpen.contentHash, files: rosterOpen.files, ...(rosterOpen.engineeringGateAdded ? { engineeringGateAdded: true } : {}), slots: rosterOpen.slots.map((x) => ({ kind: x.kind, label: x.label, mode: x.mode, occupants: x.primaries.length, fallback: x.fallback })) } }
         : rosterSign
-          ? { reviewRoster: { id: rosterSign.roster.id, event: "signed", contentHash: rosterSign.roster.contentHash, signatureId: body.signatureId ?? null, complete: rosterSign.complete, slots: rosterSign.roster.slots.filter((x) => x.signatureId === body.signatureId).map((x) => ({ kind: x.kind, label: x.label, via: x.via ?? null })) } }
+          ? { reviewRoster: { id: rosterSign.roster.id, event: "signed", contentHash: rosterSign.roster.contentHash, signatureId: body.signatureId ?? null, complete: rosterSign.complete, slots: rosterSign.roster.slots.filter((x) => x.signatureId === body.signatureId).map((x) => ({ kind: x.kind, label: x.label, via: x.via ?? null })), ...(examination ? { examination: { slots: examination.kinds, ...examination.record } } : {}) } }
           : openRosterNow && newStatus !== "PENDING_REVIEW"
-            ? { reviewRoster: { id: openRosterNow.id, event: "closed", reason: action.action } }
+            ? { reviewRoster: { id: openRosterNow.id, event: "closed", reason: action.action, ...(examination ? { examination: { slots: examination.kinds, ...examination.record } } : {}) } }
             : {}),
       ...(rosterWarning ? { reviewRosterNotOpened: rosterWarning } : {}),
       // DF-P6: the review model's facts this decision was made on — the
@@ -2005,12 +2038,12 @@ export async function POST(req: NextRequest) {
       ledgerErr = await writeRosterLedger(supabaseAdmin, { orgId: ticket.orgId, ticketId: body.ticketId, roster: rosterOpen, event: "opened", slots: rosterOpen.slots, actor: actorRef });
     } else if (rosterSign) {
       const touched = rosterSign.roster.slots.filter((x) => x.signatureId === body.signatureId && x.status === "satisfied");
-      ledgerErr = await writeRosterLedger(supabaseAdmin, { orgId: ticket.orgId, ticketId: body.ticketId, roster: rosterSign.roster, event: "satisfied", slots: touched, actor: actorRef });
+      ledgerErr = await writeRosterLedger(supabaseAdmin, { orgId: ticket.orgId, ticketId: body.ticketId, roster: rosterSign.roster, event: "satisfied", slots: touched, actor: actorRef, examination });
     } else if (openRosterNow && newStatus !== "PENDING_REVIEW") {
       const voided = openRosterNow.slots.filter((x) => x.status === "open").map((x) => ({ ...x, status: "void" as const }));
       if (voided.length > 0) {
         ledgerErr = await writeRosterLedger(supabaseAdmin, {
-          orgId: ticket.orgId, ticketId: body.ticketId, roster: { ...openRosterNow, closedReason: action.action }, event: "voided", slots: voided, actor: actorRef, reason: action.action,
+          orgId: ticket.orgId, ticketId: body.ticketId, roster: { ...openRosterNow, closedReason: action.action }, event: "voided", slots: voided, actor: actorRef, reason: action.action, examination,
         });
       }
     }
