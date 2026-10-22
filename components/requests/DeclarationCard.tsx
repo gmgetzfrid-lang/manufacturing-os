@@ -183,7 +183,12 @@ export default function DeclarationCard({ ticket, onDeclarationCheck, canEditEqu
   const line = engineeringLine(ticket, declared ? declaration : "verified");
   const hasClasses = !!ticket.workClass || !!ticket.codeClass;
   const hasEquipment = (equipment?.length ?? 0) > 0;
-  if (!line && !hasClasses && !hasEquipment && !equipmentError && !canEditEquipment) return null;
+  // DF-P18 fix pass (review, minor): the equipment control shows only once
+  // the equipment read has answered — never an empty bordered card while it
+  // loads. DEC-90 ruling (4): it is a control in EVERY workspace (configured
+  // or not) for the participants and the assignment queue.
+  const showControl = !!canEditEquipment && equipment !== null;
+  if (!line && !hasClasses && !hasEquipment && !equipmentError && !showControl) return null;
 
   return (
     <section data-testid="declaration-card" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3 text-sm">
@@ -241,7 +246,7 @@ export default function DeclarationCard({ ticket, onDeclarationCheck, canEditEqu
           </ul>
         </div>
       )}
-      {canEditEquipment && equipment !== null && (
+      {showControl && (
         <div data-testid="equipment-control" className="text-xs">
           {equipmentMissing ? (
             <p className="text-[var(--color-text-muted)]" data-testid="equipment-not-available">{EQUIPMENT_NOT_AVAILABLE}</p>

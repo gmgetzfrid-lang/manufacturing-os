@@ -69,6 +69,7 @@ vi.mock("next/server", async (importOriginal) => ({ ...(await importOriginal<typ
 vi.mock("@/lib/r2", () => ({ R2_BUCKET: "b", r2: { send: vi.fn(async () => ({ ContentLength: 4, ETag: '"e"' })) } }));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async () => ({ ok: true })) }));
 import { POST as workflowAction } from "@/app/api/tickets/workflow-action/route";
+import { sourceDriftRefusalLabels, sourceDriftConfirmation } from "@/lib/requestPageReview";
 
 const post = (body: unknown) => workflowAction(new NextRequest("http://x/api/tickets/workflow-action", {
   method: "POST", headers: { authorization: "Bearer t", "content-type": "application/json" }, body: JSON.stringify(body),
@@ -182,6 +183,62 @@ describe("HAND-7 dw3 (DF-P18) — a roster sign-off over a moved source", () => 
     state.user = { id: "e-1" };
     state.rows.tickets = [await rosterTicket(moved)];
     expect((await post({ ticketId: "t1", actionType: "sign_slot", dryRun: true })).status).toBe(200);
+  });
+});
+
+describe("HAND-7 dw3 (DF-P18 fix pass, review blocker) — the route is the source of truth for a moved source", () => {
+  // The page's own read of the source documents is RLS-limited (an approver
+  // under a document ACL, a read still in flight or failed): the page then
+  // has NO drift labels, asks nothing and sends no acknowledgement. The
+  // route — reading as the service role — still finds the move. The 409
+  // names it, the page asks from those labels and resends once.
+  const moved = { source_document: { id: DOC, document_number: "P-101", rev: "3", version_id: V3 } };
+  const LABEL = "P-101 raised on Rev 3, now Rev 4";
+  it("an issuing approval from a page with no labels: 409 names the moved sheet; the page's confirm is built from it; the resend with the acknowledgement applies and records it", async () => {
+    seed("Manager");
+    state.user = { id: "req-1" };
+    state.rows.documents = [{ id: DOC, org_id: "o1", rev: "4", current_version_id: V4, document_number: "P-101" }];
+    state.rows.tickets = [ticketRow({ metadata: moved })];
+    // The page found nothing, so it sends no acknowledgement.
+    const refused = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    expect(refused.status).toBe(409);
+    const body = await refused.json();
+    expect(body).toMatchObject({ code: "source_drift_unacknowledged", moved: [LABEL] });
+    expect(updates()).toEqual([]);
+    // The page's 409 branch: the labels come from the route, not the banner.
+    const labels = sourceDriftRefusalLabels(body);
+    expect(labels).toEqual([LABEL]);
+    expect(sourceDriftConfirmation(labels!)).toContain(LABEL);
+    // Confirmed: resent once with the acknowledgement — the approval lands.
+    const ok = await post({ ticketId: "t1", actionType: "approve_draft_ifc", sourceDriftAcknowledged: true });
+    expect(ok.status).toBe(200);
+    expect(updates()).toHaveLength(1);
+    expect(audits()[0].details.sourceDrift).toEqual({ moved: [LABEL], acknowledged: true });
+  });
+  it("a roster sign-off's dry run from a panel with no labels: 409 names the moved sheet; the resend with the acknowledgement is answered", async () => {
+    seed("Manager");
+    state.user = { id: "e-1" };
+    state.rows.documents = [{ id: DOC, org_id: "o1", rev: "4", current_version_id: V4, document_number: "P-101" }];
+    const { openRoster } = await import("@/lib/ticketRoster");
+    const { parseRoutingControl } = await import("@/lib/routingControl");
+    const parsed = parseRoutingControl({ slots: [{ kind: "check", label: "Engineering check", mode: "blocking", fill: { roles: ["Engineer"] } }] });
+    if (!parsed || !parsed.ok) throw new Error("bad control");
+    const r = openRoster({ id: "r-1", control: parsed.control, level: "library", cycle: "1A",
+      files: [{ id: "a-d", name: "iso_1A.pdf", url: "orgs/o1/tickets/REQ-1/iso_1A.pdf", sha256: "f".repeat(64) }],
+      ctx: { members: state.rows.org_members as never, policy: null, resource: { requestType: "ISO", unit: null }, requesterId: "req-1" }, openedBy: "d-1", now: LM });
+    if (!r.ok) throw new Error(r.error);
+    state.rows.tickets = [ticketRow({ library_id: "1b000000-0000-4000-8000-000000000001", metadata: { review_roster: r.roster, ...moved } })];
+    const refused = await post({ ticketId: "t1", actionType: "sign_slot", dryRun: true });
+    expect(refused.status).toBe(409);
+    expect(sourceDriftRefusalLabels(await refused.json())).toEqual([LABEL]);
+    expect((await post({ ticketId: "t1", actionType: "sign_slot", dryRun: true, sourceDriftAcknowledged: true })).status).toBe(200);
+  });
+  it("the dead `sourceDriftUnchecked` audit key is gone (a failed read refuses before any audit row)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const src = readFileSync(join(process.cwd(), "app", "api", "tickets", "workflow-action", "route.ts"), "utf8");
+    expect(src).not.toContain("sourceDriftUnchecked: true }");
+    expect(src).toContain('code: "source_drift_unacknowledged", moved: driftLabels');
   });
 });
 

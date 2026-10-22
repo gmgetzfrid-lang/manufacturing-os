@@ -38,6 +38,8 @@ import { seededSlotsFor, MODE_LABEL } from "@/lib/routingControl";
 import { effectiveReviewControlForDocument, expandReviewers } from "@/lib/reviewControl";
 import type { CapabilityPolicy } from "@/lib/capabilityPolicy";
 import type { Ticket, TicketReviewRoster, TicketReviewSlot } from "@/types/schema";
+import { appConfirm } from "@/components/providers/DialogProvider";
+import { sourceDriftRefusalLabels, sourceDriftConfirmation } from "@/lib/requestPageReview";
 
 export interface TicketRosterPanelProps {
   ticket: Ticket;
@@ -143,7 +145,12 @@ export async function postSignOffOnce(post: () => Promise<Response>): Promise<{ 
 export default function TicketRosterPanel({
   ticket, orgId, uid, userName, capPolicy, activeMemberCount, requesterRoles, onChanged, reviewRouted, reviewRoutedReason, sourceDrift,
 }: TicketRosterPanelProps) {
-  const driftNote = rosterDriftNote(sourceDrift);
+  // DF-P18 fix pass (review, blocker): the route reads the source documents
+  // as the service role, so a move the page's own (RLS-limited) read could
+  // not see comes back on the dry run as a 409 naming it — those labels
+  // then stand in for the page's, and the panel asks from them.
+  const [serverDrift, setServerDrift] = useState<string[]>([]);
+  const driftNote = rosterDriftNote(sourceDrift && sourceDrift.length > 0 ? sourceDrift : serverDrift);
   const [driftAck, setDriftAck] = useState(false);
   const roster: TicketReviewRoster | null = useMemo(() => currentRoster(ticket), [ticket]);
   const [names, setNames] = useState<Map<string, string>>(new Map());
@@ -210,7 +217,14 @@ export default function TicketRosterPanel({
         body: JSON.stringify({ ticketId: ticket.id, actionType: "sign_slot", signatureId: sig.id, ...(driftNote && driftAck ? { sourceDriftAcknowledged: true } : {}) }),
       });
       const { res, out } = await postSignOffOnce(post);
-      if (!res.ok) throw new Error(out.error || `The sign-off was not recorded (HTTP ${res.status})`);
+      if (!res.ok) {
+        // (DF-P18 fix pass) a source that moved after the dry run: the
+        // refusal names it, so the acknowledgement checkbox shows from the
+        // route's labels before the viewer signs again.
+        const moved = res.status === 409 ? sourceDriftRefusalLabels(out) : null;
+        if (moved) { setServerDrift(moved); setDriftAck(false); setSigning(false); }
+        throw new Error(out.error || `The sign-off was not recorded (HTTP ${res.status})`);
+      }
       setSigning(false);
       if (out.warning) setError(out.warning);
       await onChanged?.();
@@ -232,12 +246,25 @@ export default function TicketRosterPanel({
     setError(null);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch("/api/tickets/workflow-action", {
+      const dryRun = (ack: boolean) => fetch("/api/tickets/workflow-action", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
-        body: JSON.stringify({ ticketId: ticket.id, actionType: "sign_slot", dryRun: true, ...(driftNote && driftAck ? { sourceDriftAcknowledged: true } : {}) }),
+        body: JSON.stringify({ ticketId: ticket.id, actionType: "sign_slot", dryRun: true, ...(ack ? { sourceDriftAcknowledged: true } : {}) }),
       });
-      const out = (await res.json().catch(() => ({}))) as { error?: string };
+      const acked = !!driftNote && driftAck;
+      let res = await dryRun(acked);
+      let out = (await res.json().catch(() => ({}))) as { error?: string };
+      // HAND-7 dw3 (DF-P18 fix pass): the route found a moved source the
+      // panel was not told about — ask from the route's own labels, and on
+      // the acknowledgement ask the dry run once more (never a second time).
+      const moved = res.status === 409 && !acked ? sourceDriftRefusalLabels(out) : null;
+      if (moved) {
+        setServerDrift(moved);
+        if (!(await appConfirm({ title: "The source revision has moved", message: sourceDriftConfirmation(moved), confirmLabel: "Acknowledge and continue" }))) return;
+        setDriftAck(true);
+        res = await dryRun(true);
+        out = (await res.json().catch(() => ({}))) as { error?: string };
+      }
       if (!res.ok) throw new Error(out.error || `This sign-off can't be taken right now (HTTP ${res.status})`);
       setSigning(true);
     } catch (e) {

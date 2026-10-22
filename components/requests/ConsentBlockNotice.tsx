@@ -17,12 +17,18 @@
 // with no consent slot sees exactly today's page and makes no extra read).
 // Before 20261255 the table is not there: nothing is said (nothing could have
 // been recorded).
+//
+// DF-P18 fix pass (review, major): only THIS roster's rows are read (an
+// earlier roster's blocks say nothing about the current review), newest
+// first before the cap (so the cap drops the oldest, never the newest), and a
+// failed open the maintenance run later opened is no longer said here (the
+// Audit Log tab keeps it, marked "opened later").
 
 import React, { useEffect, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { isMissingConsentSchema } from "@/lib/consentWindow";
-import { consentBlockReason, type ConsentBlockRow } from "@/lib/requestPageReview";
+import { consentBlockReason, currentConsentBlockRows, type ConsentBlockRow } from "@/lib/requestPageReview";
 import type { TicketReviewRoster } from "@/types/schema";
 
 /** Does this request's roster ask for the notice record at all? (pure) */
@@ -42,17 +48,20 @@ export default function ConsentBlockNotice({
   const [rows, setRows] = useState<ConsentBlockRow[]>([]);
   const [readError, setReadError] = useState(false);
   const asks = rosterHasConsent(roster);
+  const rosterId = roster && typeof roster.id === "string" && roster.id ? roster.id : null;
 
   useEffect(() => {
     if (!ticketId || !asks) return;
     let alive = true;
     void (async () => {
-      const { data, error } = await supabase
+      let q = supabase
         .from("ticket_notice_events")
-        .select("created_at, slot_kind, actor_name, details")
+        .select("created_at, roster_id, slot_kind, actor_name, details")
         .eq("ticket_id", ticketId)
-        .eq("kind", "blocked")
-        .order("created_at", { ascending: true })
+        .eq("kind", "blocked");
+      if (rosterId) q = q.eq("roster_id", rosterId);
+      const { data, error } = await q
+        .order("created_at", { ascending: false })
         .limit(50);
       if (!alive) return;
       if (error) {
@@ -61,18 +70,24 @@ export default function ConsentBlockNotice({
         return;
       }
       setReadError(false);
-      setRows((data ?? []) as ConsentBlockRow[]);
+      // Oldest first, this roster only (a row of another roster is dropped
+      // even if the filter could not be applied).
+      setRows(currentConsentBlockRows((data ?? []) as ConsentBlockRow[], roster).rows);
     })();
     return () => { alive = false; };
-  }, [ticketId, asks, roster?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticketId, asks, rosterId]);
 
   useEffect(() => { onRows?.(rows); }, [rows, onRows]);
 
-  if (!asks || (rows.length === 0 && !readError)) return null;
+  // What still holds: a failed open the maintenance run later opened is not
+  // said (re-evaluated on every render, so it clears as the roster updates).
+  const standing = currentConsentBlockRows(rows, roster).standing;
+  if (!asks || (standing.length === 0 && !readError)) return null;
   const labelOf = (slot: string | null) => roster?.slots.find((s) => s.kind === slot)?.label ?? null;
   return (
     <section data-testid="consent-block-notice" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 space-y-1">
-      {rows.map((r, i) => (
+      {standing.map((r, i) => (
         <p key={`${r.created_at}-${i}`} className="flex items-start gap-1.5">
           <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
           <span>{consentBlockReason(r, labelOf(r.slot_kind))}</span>

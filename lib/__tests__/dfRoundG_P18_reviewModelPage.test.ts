@@ -20,13 +20,13 @@ import { editableClasses, withFlag } from "@/components/requests/ReviewClassesSe
 import { mocRequirementFor, publishMocRequired, checkInCardsFor, type CheckInContext } from "@/lib/checkinOutcomes";
 import {
   triageClassSelects, classTriagePayload, sourceDriftLabels, sourceDriftConfirmation, issueReadyAtSubmitOffered,
-  consentBlockReason, consentBlockHistoryEntries,
+  consentBlockReason, consentBlockHistoryEntries, sourceDriftRefusalLabels, currentConsentBlockRows, consentWindowOpenedFor,
 } from "@/lib/requestPageReview";
 import { keptNote, workClassChoices, windowSettingsFromInput, draftToControl, controlToDraft } from "@/components/documents/RoutingControlSection";
 import { parseRoutingControl } from "@/lib/routingControl";
 import { rosterDriftNote } from "@/components/requests/TicketRosterPanel";
 import { rosterHasConsent } from "@/components/requests/ConsentBlockNotice";
-import { cleanEquipmentTag, equipmentEditAllowed, isMissingEquipmentTable, isTicketParticipant, EQUIPMENT_NOT_AVAILABLE } from "@/lib/ticketEquipment";
+import { cleanEquipmentTag, equipmentEditAllowed, equipmentTagListed, isMissingEquipmentTable, isTicketParticipant, EQUIPMENT_NOT_AVAILABLE } from "@/lib/ticketEquipment";
 import { WorkflowEngine } from "@/lib/workflow";
 import type { OrgDraftingSettings, Ticket } from "@/types/schema";
 
@@ -194,6 +194,26 @@ describe("HAND-7 dw3 — the page passes the drift into getActions (ruling (2))"
     expect(page).toContain("<SourceDriftBanner metadata={ticket.metadata} orgId={ticket.orgId} onDrift={setSourceDrifts} />");
     expect(page.indexOf("driftAckRef.current = null;")).toBeLessThan(page.indexOf("driftAckRef.current = action.action;"));
   });
+  it("DF-P18 fix pass (review blocker): the route's refusal is the source of truth — its labels are read off the 409; any other body is not a drift refusal", () => {
+    expect(sourceDriftRefusalLabels({ code: "source_drift_unacknowledged", moved: ["P-101 raised on Rev 3, now Rev 4"] })).toEqual(["P-101 raised on Rev 3, now Rev 4"]);
+    expect(sourceDriftRefusalLabels({ code: "source_drift_unacknowledged" })).toEqual(["a source document"]);
+    expect(sourceDriftRefusalLabels({ code: "source_drift_unacknowledged", moved: [1, "", null] })).toEqual(["a source document"]);
+    expect(sourceDriftRefusalLabels({ code: "holds_open", moved: ["x"] })).toBeNull();
+    expect(sourceDriftRefusalLabels({ conflict: true })).toBeNull();
+    expect(sourceDriftRefusalLabels(null)).toBeNull();
+  });
+  it("DF-P18 fix pass (review blocker): the page asks from the route's 409 when its own read found nothing, and resends ONCE with the acknowledgement — also after a hold was resolved (source)", () => {
+    const page = src("app/(protected)/requests/[id]/page.tsx");
+    const body = page.slice(page.indexOf("const askDriftAndResend = async ()"), page.indexOf("if (res.status === 409) {\n        setActionLoading(null);"));
+    expect(body).toContain("if (res.status !== 409 || driftAckRef.current === action.action) return 'none';");
+    expect(body).toContain("const moved = sourceDriftRefusalLabels(await res.clone().json().catch(() => null));");
+    expect(body).toContain("message: sourceDriftConfirmation(moved)");
+    expect(body).toContain("driftAckRef.current = action.action;\n        res = await send();");
+    expect(body.match(/await askDriftAndResend\(\)/g)).toHaveLength(2);
+    const panel = src("components/requests/TicketRosterPanel.tsx");
+    expect(panel).toContain("const moved = res.status === 409 && !acked ? sourceDriftRefusalLabels(out) : null;");
+    expect(panel).toContain("res = await dryRun(true);");
+  });
   it("the roster panel asks only when there is a move", () => {
     expect(rosterDriftNote(undefined)).toBeNull();
     expect(rosterDriftNote([])).toBeNull();
@@ -242,6 +262,24 @@ describe("GAP-113 acceptance 1 — a consent window that was not opened (ruling 
     expect(rosterHasConsent({ slots: [], consentPlan: { kind: "blocked" } } as never)).toBe(true);
     const page = src("app/(protected)/requests/[id]/page.tsx");
     expect(page).toContain("const historyShown = consentBlockRows.length === 0\n    ? (ticket.history ?? [])");
+  });
+});
+
+describe("GAP-113 acceptance 1 — DF-P18 fix pass (review major): only what still holds for THIS roster", () => {
+  const row = (over: Record<string, unknown>) => ({ created_at: "2026-10-21T09:00:00Z", roster_id: "r1", slot_kind: "ops", details: { reason: "window_not_opened" }, ...over }) as never;
+  const plan = { slot: "ops", label: "Ops", recipients: ["a"], windowDays: 3, warnFraction: 0.5 };
+  it("rows of another roster are dropped; the rest come oldest first", () => {
+    const out = currentConsentBlockRows([row({ created_at: "2026-10-21T10:00:00Z" }), row({ roster_id: "r0" }), row({ created_at: "2026-10-21T08:00:00Z", details: { reason: "no_longer_member" } })], { id: "r1" } as never);
+    expect(out.rows.map((r) => (r as { created_at: string }).created_at)).toEqual(["2026-10-21T08:00:00Z", "2026-10-21T10:00:00Z"]);
+    expect(out.standing).toHaveLength(2);
+  });
+  it("a failed open stands until the window opens (plan marked opened, or the roster's window mark), then no longer stands; other reasons always stand", () => {
+    const rows = [row({}), row({ created_at: "2026-10-21T09:30:00Z", details: { reason: "window_never_opened", why: "x" } })];
+    expect(currentConsentBlockRows(rows, { id: "r1", consentPlan: { kind: "open", ...plan } } as never).standing).toHaveLength(2);
+    expect(currentConsentBlockRows(rows, { id: "r1", consentPlan: { kind: "opened", ...plan } } as never).standing).toHaveLength(1);
+    expect(currentConsentBlockRows(rows, { id: "r1", consentWindow: { slot: "ops" } } as never).standing).toHaveLength(1);
+    expect(consentWindowOpenedFor({ consentPlan: { kind: "opened", ...plan, slot: "other" } } as never, "ops")).toBe(false);
+    expect(consentWindowOpenedFor(null, "ops")).toBe(false);
   });
 });
 
@@ -313,6 +351,17 @@ describe("intelligence GAP-312 — equipment after filing (ruling (4)), the pure
     expect(isMissingEquipmentTable({ code: "57014", message: "timeout" })).toBe(false);
     expect(isMissingEquipmentTable(null)).toBe(false);
     expect(EQUIPMENT_NOT_AVAILABLE).toMatch(/not available/);
+  });
+});
+
+describe("intelligence GAP-312 — DF-P18 fix pass (review minor): a tag already listed", () => {
+  it("is found through the one tag grammar, skipping the entry a correction replaces", () => {
+    const rows = [{ id: "a", tag: "P-101" }, { id: "b", tag: "XV 9" }];
+    expect(equipmentTagListed(rows, "p 101")).toEqual({ id: "a", tag: "P-101" });
+    expect(equipmentTagListed(rows, "xv-9")?.id).toBe("b");
+    expect(equipmentTagListed(rows, "P-101", "a")).toBeNull();
+    expect(equipmentTagListed(rows, "P-1O1")).toBeNull();
+    expect(equipmentTagListed([], "P-101")).toBeNull();
   });
 });
 

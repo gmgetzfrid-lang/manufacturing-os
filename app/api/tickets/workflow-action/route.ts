@@ -1055,13 +1055,19 @@ export async function POST(req: NextRequest) {
     }
     if (action.requiresSourceDriftAck && driftLabels.length > 0) {
       if (body.sourceDriftAcknowledged !== true) {
-        const driftError = `The source revision has moved since this request was raised (${driftLabels.join("; ")}). Approving needs your acknowledgement — reload the request and confirm.`;
+        // DF-P18 fix pass (review, blocker): the route is the source of
+        // truth for the move — it read the documents as the service role,
+        // which an approver under a document ACL cannot. The 409 carries the
+        // labels (`moved`), so the page and the roster panel ask from them
+        // and resend once with the acknowledgement, whatever the browser's
+        // own (RLS-limited) read found.
+        const driftError = `The source revision has moved since this request was raised (${driftLabels.join("; ")}). Approving needs your acknowledgement.`;
         // DF-P6 fix pass (review, minor 12): a refused roster sign-off
         // names the signature it minted (DF-P5's rule).
         if (recordsSignature) {
           await recordRefusedSignOff({ signatureId: body.signatureId, ticketId: body.ticketId, orgId: ticket.orgId, caller: { id: caller.id, email: callerEmail, role: callerRole }, status: 409, reason: driftError, code: "source_drift_unacknowledged", rosterId: currentRoster(ticket)?.id ?? null });
         }
-        return NextResponse.json({ error: driftError, code: "source_drift_unacknowledged" }, { status: 409 });
+        return NextResponse.json({ error: driftError, code: "source_drift_unacknowledged", moved: driftLabels }, { status: 409 });
       }
       sourceDrift = { labels: driftLabels, acknowledged: true };
     }
@@ -1608,7 +1614,6 @@ export async function POST(req: NextRequest) {
         : {}),
       ...(reviewClass ? { reviewClass: { workClass: reviewClass.workClass?.value ?? null, codeClass: reviewClass.codeClass?.value ?? null } } : {}),
       ...(sourceDrift ? { sourceDrift: { moved: sourceDrift.labels, acknowledged: sourceDrift.acknowledged === true } } : {}),
-      ...(sourceDriftUnchecked ? { sourceDriftUnchecked: true } : {}),
       // DF-P6 fix pass (minor 11): a declaration whose e-signature is not on
       // record (or could not be read) was evaluated as undeclared.
       ...(declarationUnverified ? { declarationUnverified } : {}),

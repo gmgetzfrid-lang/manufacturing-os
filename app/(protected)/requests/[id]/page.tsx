@@ -25,7 +25,7 @@ import { reviewModelFieldsFromRow, engineerPickAvailable as pickAvailableFrom, e
 // drafting-flow Round G, DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS: the
 // class at triage, the source-drift acknowledgement, issue-as-is at submit,
 // equipment after filing and a consent window that was not opened.
-import { triageClassSelects, classTriagePayload, sourceDriftLabels, sourceDriftConfirmation, issueReadyAtSubmitOffered, consentBlockHistoryEntries, type ConsentBlockRow } from '@/lib/requestPageReview';
+import { triageClassSelects, classTriagePayload, sourceDriftLabels, sourceDriftConfirmation, sourceDriftRefusalLabels, issueReadyAtSubmitOffered, consentBlockHistoryEntries, type ConsentBlockRow } from '@/lib/requestPageReview';
 import { isTicketParticipant, EQUIPMENT_CLOSED_STATUSES } from '@/lib/ticketEquipment';
 import TriageClassSelects, { type TriageClassChoice } from '@/components/requests/TriageClassSelects';
 import ConsentBlockNotice from '@/components/requests/ConsentBlockNotice';
@@ -2142,6 +2142,22 @@ export default function TicketDetailView() {
         }),
       });
       let res = await send();
+      // HAND-7 dw3 (DF-P18 fix pass, review blocker): the route is the source
+      // of truth for a moved source — it reads the documents as the service
+      // role, which this browser (under a document ACL, or before the
+      // banner's read lands) may not. A 409 source_drift_unacknowledged names
+      // the moved sheets; the approver is asked from those and the action is
+      // re-sent once with the acknowledgement (never a second time).
+      const askDriftAndResend = async (): Promise<'resent' | 'declined' | 'none'> => {
+        if (res.status !== 409 || driftAckRef.current === action.action) return 'none';
+        const moved = sourceDriftRefusalLabels(await res.clone().json().catch(() => null));
+        if (!moved) return 'none';
+        if (!(await appConfirm({ title: 'The source revision has moved', message: sourceDriftConfirmation(moved), confirmLabel: 'Acknowledge and continue' }))) return 'declined';
+        driftAckRef.current = action.action;
+        res = await send();
+        return 'resent';
+      };
+      if ((await askDriftAndResend()) === 'declined') { setActionLoading(null); return; }
       if (res.status === 409 && !holdResolution) {
         const j = await res.clone().json().catch(() => ({})) as { code?: string; holds?: Array<{ reason: string }> };
         if (j.code === 'holds_open') {
@@ -2162,6 +2178,9 @@ export default function TicketDetailView() {
             holdResolution = { action: 'keep', reason };
           }
           res = await send();
+          // (DF-P18 fix pass) a close that met the hold first may meet the
+          // moved source next — asked once, the same way.
+          if ((await askDriftAndResend()) === 'declined') { setActionLoading(null); return; }
         }
       }
 
@@ -2467,7 +2486,7 @@ export default function TicketDetailView() {
   const rosterRecord = ((ticket.metadata as Record<string, unknown> | undefined)?.review_roster ?? null) as NonNullable<ReturnType<typeof currentRoster>> | null;
   const historyShown = consentBlockRows.length === 0
     ? (ticket.history ?? [])
-    : [...(ticket.history ?? []), ...consentBlockHistoryEntries(consentBlockRows, (slot) => (rosterRecord && Array.isArray(rosterRecord.slots) ? rosterRecord.slots.find((x) => x.kind === slot)?.label ?? null : null))]
+    : [...(ticket.history ?? []), ...consentBlockHistoryEntries(consentBlockRows, (slot) => (rosterRecord && Array.isArray(rosterRecord.slots) ? rosterRecord.slots.find((x) => x.kind === slot)?.label ?? null : null), rosterRecord)]
         .sort((a, b) => toDate(a.date).getTime() - toDate(b.date).getTime());
   const unitShown = ticketUnitDisplay(ticket.unit, ticket.metadata);
   const customSections = customCategorySections(ticket.metadata, customCategoryConfig);

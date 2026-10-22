@@ -132,6 +132,34 @@ describe("what is written", () => {
     const row = audits().find((a) => a.action === "TICKET_EQUIPMENT_CORRECTED")!;
     expect(row.details).toMatchObject({ tag: "P-101", assetId: ASSET, replaces: { rowId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", tag: "P-1O1", assetId: null } });
   });
+  it("DF-P18 fix pass (review minor): an add of a tag already listed (a double click, a retry — 'p 101' is 'P-101') writes nothing, not even an audit row", async () => {
+    expect((await req({ ticketId: T, action: "add", tag: "P-101" })).status).toBe(200);
+    expect(equipment()).toHaveLength(1);
+    expect(audits()).toHaveLength(1);
+    for (const again of ["P-101", "p 101"]) {
+      const res = await req({ ticketId: T, action: "add", tag: again });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ ok: true, unchanged: true, message: "P-101 is already listed on this request." });
+    }
+    expect(equipment()).toHaveLength(1);
+    expect(audits()).toHaveLength(1);
+  });
+  it("DF-P18 fix pass (review minor): a correction to a tag listed on another entry is refused (409, nothing written); a correction of the entry's own spelling is not", async () => {
+    const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    h.admin.tables.ticket_equipment = [
+      { id: A, org_id: ORG, ticket_id: T, tag: "P-101", asset_id: ASSET, created_by: "u-req" },
+      { id: B, org_id: ORG, ticket_id: T, tag: "P-1O1", asset_id: null, created_by: "u-req" },
+    ];
+    const refused = await req({ ticketId: T, action: "correct", rowId: B, tag: "P-101" });
+    expect(refused.status).toBe(409);
+    expect((await refused.json()).code).toBe("already_listed");
+    expect(equipment()).toHaveLength(2);
+    expect(audits()).toEqual([]);
+    const own = await req({ ticketId: T, action: "correct", rowId: A, tag: "p-101" });
+    expect(own.status).toBe(200);
+    expect(equipment().map((r) => r.tag).sort()).toEqual(["P-1O1", "p-101"]);
+  });
   it("an audit row that cannot be written refuses the change (500), nothing applied", async () => {
     h.admin.tableWriteError = { audit_logs: { code: "42501", message: "denied" } };
     const res = await req({ ticketId: T, action: "add", tag: "P-101" });
@@ -160,7 +188,8 @@ describe("the request page's control (source)", () => {
   it("posts to the route; says the list is not available before 20261251; shown only where the route would take it", () => {
     expect(card).toContain('fetch("/api/tickets/equipment"');
     expect(card).toContain("EQUIPMENT_NOT_AVAILABLE");
-    expect(card).toContain("{canEditEquipment && equipment !== null && (");
+    expect(card).toContain("const showControl = !!canEditEquipment && equipment !== null;");
+    expect(card).toContain("{showControl && (");
     expect(page).toContain("(isTicketParticipant(ticket, uid) || (!policyFault && !!capPolicy && activeRole !== null && policyAllows(capPolicy, 'ticket.assign', activeRole, roles, uid, ticketResource(ticket))))");
   });
 });

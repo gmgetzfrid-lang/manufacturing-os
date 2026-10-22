@@ -13,6 +13,7 @@
 // says the list is not available and the route answers 503 `not_migrated`.
 
 import { isMissingSchemaError } from "@/lib/checkedWrite";
+import { tagKey } from "@/lib/codebook";
 
 /** The tag's length bound — ticket_equipment.tag's CHECK (20261251). */
 export const EQUIPMENT_TAG_MAX = 80;
@@ -61,3 +62,19 @@ export function equipmentOutcomeLine(tag: string, asset: "linked" | "not_found" 
 
 /** The control's sentence before 20261251 is pasted (GAP-312, ruling (4)). */
 export const EQUIPMENT_NOT_AVAILABLE = "The equipment list is not available yet (database update 20261251 is not applied) — equipment cannot be added here until it is.";
+
+/** DF-P18 fix pass (review, minor): is this tag already listed on the
+ *  request? Compared through the registry's one tag grammar (tagKey — "P-101"
+ *  and "p 101" are the same tag), skipping the row a correction replaces.
+ *  ticket_equipment has no uniqueness constraint, so the route asks this
+ *  before it writes anything (a double click or a retry lists nothing twice).
+ *  (pure) */
+export function equipmentTagListed<R extends { id?: string | null; tag: string }>(
+  rows: readonly R[],
+  tag: string,
+  exceptRowId?: string | null,
+): R | null {
+  const keyOf = (t: string) => tagKey(t) || t.trim().toLowerCase();
+  const key = keyOf(tag);
+  return rows.find((r) => (exceptRowId == null || r.id !== exceptRowId) && keyOf(String(r.tag ?? "")) === key) ?? null;
+}

@@ -6,7 +6,7 @@ import { heldRoles } from "@/lib/roleHeld";
 import { ticketResource } from "@/lib/workflow";
 import { tagKey } from "@/lib/codebook";
 import {
-  cleanEquipmentTag, equipmentEditAllowed, equipmentOutcomeLine, isMissingEquipmentTable, isTicketParticipant,
+  cleanEquipmentTag, equipmentEditAllowed, equipmentOutcomeLine, equipmentTagListed, isMissingEquipmentTable, isTicketParticipant,
   EQUIPMENT_CLOSED_STATUSES, EQUIPMENT_TAG_MAX,
 } from "@/lib/ticketEquipment";
 
@@ -137,10 +137,20 @@ export async function POST(req: NextRequest) {
     if (prevErr) return isMissingEquipmentTable(prevErr) ? NextResponse.json(NOT_MIGRATED, { status: 503 }) : NextResponse.json({ error: "Couldn't read the equipment entry — try again in a moment." }, { status: 503 });
     if (!prev) return NextResponse.json({ error: "That equipment entry is not on this request." }, { status: 404 });
     previous = prev as { id: string; tag: string; asset_id: string | null };
-  } else {
-    // A cheap probe so an unpasted table answers before an audit row is written.
-    const { error: probeErr } = await supabaseAdmin.from("ticket_equipment").select("id").eq("ticket_id", t.id).limit(1);
-    if (probeErr) return isMissingEquipmentTable(probeErr) ? NextResponse.json(NOT_MIGRATED, { status: 503 }) : NextResponse.json({ error: "Couldn't read this request's equipment — try again in a moment." }, { status: 503 });
+  }
+  // The request's listed tags (this request, this workspace) — read before
+  // any audit row, so an unpasted table answers first, and (DF-P18 fix pass,
+  // review minor) a tag already listed is never written twice: an add of a
+  // listed tag (a double click, a retry) changes nothing; a correction to a
+  // tag listed on another entry is refused.
+  const { data: listedRows, error: listErr } = await supabaseAdmin
+    .from("ticket_equipment").select("id, tag")
+    .eq("ticket_id", t.id).eq("org_id", t.org_id).limit(500);
+  if (listErr) return isMissingEquipmentTable(listErr) ? NextResponse.json(NOT_MIGRATED, { status: 503 }) : NextResponse.json({ error: "Couldn't read this request's equipment — try again in a moment." }, { status: 503 });
+  const already = equipmentTagListed((listedRows ?? []) as Array<{ id: string; tag: string }>, tag, previous?.id ?? null);
+  if (already) {
+    if (action === "add") return NextResponse.json({ ok: true, unchanged: true, id: already.id, message: `${already.tag} is already listed on this request.` });
+    return NextResponse.json({ error: `${already.tag} is already listed on this request — correcting this entry to it would list it twice.`, code: "already_listed" }, { status: 409 });
   }
 
   // Resolve through the registry's one tag grammar, in this workspace.
