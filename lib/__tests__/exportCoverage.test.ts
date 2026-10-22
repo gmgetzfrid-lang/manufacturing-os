@@ -111,6 +111,8 @@ const DECISION_AT_MERGE: Record<string, string> = {
   // drafting-flow Round G DF-P22 CONSENT AND ESCALATION's ticket_sla_escalations and
   // ticket_preauthorizations were decided at its merge (EXPORTED after ticket_notice_events;
   // never imported — IMMUTABLE_TABLES; DEC-90) and are no longer here.
+  // drafting-flow Round G DF-P24 EXAMINATION SCOPE (20261266) — the integrator decides at the merge.
+  ticket_examination_scopes: "drafting-flow DF-P24 (20261266): a request's examination data (values picked from the workspace's own lists, and a waiver). Proposed: EXPORTED after tickets and restored after tickets (the values are the request's data, like ticket_equipment), the waiver cleared on restore (it is a person's decision in the source workspace); the integrator decides at the merge.",
 };
 
 // EGR-7 / XEDGE-10: a column whose NAME says "credential". `_key` alone is

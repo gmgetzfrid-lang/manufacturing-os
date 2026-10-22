@@ -10,7 +10,7 @@ import { useRole } from '@/components/providers/RoleContext';
 import { useToast } from '@/components/providers/ToastProvider';
 import { appAlert, appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import { Ticket, TicketStatus, TicketAttachment, TicketComment, DocumentRecord, type CustomCategoryConfig, type OrgDraftingSettings } from '@/types/schema';
-import { WorkflowEngine, WorkflowAction, ticketResource, issueAsIsConfirmation, issueAsIsBanner, ISSUE_MARK_ACTIONS, currentRoster, routedNoRosterReason, workflowRefusalMessage, engineerPickQuestionApplies, separationOfDutiesActive } from '@/lib/workflow';
+import { WorkflowEngine, WorkflowAction, ticketResource, issueAsIsConfirmation, issueAsIsBanner, ISSUE_MARK_ACTIONS, ISSUING_APPROVALS, currentRoster, routedNoRosterReason, workflowRefusalMessage, engineerPickQuestionApplies, separationOfDutiesActive } from '@/lib/workflow';
 import { ticketReviewRouting } from '@/lib/routingControl';
 import { loadCapabilityPolicyEntry, policyAllows, type CapabilityPolicy } from '@/lib/capabilityPolicy';
 import { affordancePolicyFault } from '@/lib/checkoutAffordances';
@@ -40,6 +40,9 @@ import LibraryPicker from '@/components/requests/LibraryPicker';
 import SourceDriftBanner from '@/components/requests/SourceDriftBanner';
 import EngineerPickerModal from '@/components/requests/EngineerPickerModal';
 import TicketRosterPanel from '@/components/requests/TicketRosterPanel';
+// GAP-102 acceptance 4 (drafting-flow DF-P24): the request's examination data (renders nothing unless the workspace configured it).
+import ExaminationScopePanel from '@/components/requests/ExaminationScopePanel';
+import { examinationScopeConfigured, parseExaminationScopeConfig } from '@/lib/examinationScope';
 import DeclarationCard from '@/components/requests/DeclarationCard';
 import ConsentWindowCard from '@/components/requests/ConsentWindowCard';
 import { consentWindowMarker } from '@/lib/consentWindow';
@@ -3012,6 +3015,7 @@ export default function TicketDetailView() {
 
       <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><DeclarationCard ticket={ticket} onDeclarationCheck={setDeclarationCheck} canEditEquipment={canEditEquipment} /></div>
       <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><TicketRosterPanel ticket={ticketAsDeclarationChecked(ticket, declarationCheck)} orgId={activeOrgId} uid={uid} userName={(member?.displayName ?? '').trim() || (userEmail?.split('@')[0] ?? '').trim() || null} capPolicy={capPolicy} activeMemberCount={activeMemberCount} requesterRoles={requesterRoles} sourceDrift={driftLabelsForEngine} reviewRouted={reviewRouted} reviewRoutedReason={reviewRoutedReason} /></div>
+      {examinationScopeConfigured(parseExaminationScopeConfig(draftingCfg)) && <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-4 empty:hidden"><ExaminationScopePanel ticket={ticket} draftingCfg={draftingCfg} uid={uid} role={activeRole} roles={roles ?? []} capPolicy={capPolicy} issuing={availableActions.some((a) => !a.disabledReason && (ISSUING_APPROVALS.has(a.action) || a.action === 'sign_slot'))} /></div>}
       {consentWindowMarker(ticket) && <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6"><ConsentWindowCard ticket={ticket} uid={uid} /></div>}
       <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><ConsentBlockNotice ticketId={ticket.id} roster={rosterRecord && Array.isArray(rosterRecord.slots) ? rosterRecord : null} ticketStatus={ticket.status} onRows={setConsentBlockRows} /></div>
 

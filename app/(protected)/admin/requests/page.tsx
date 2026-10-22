@@ -38,6 +38,9 @@ import {
 } from '@/lib/slaDefaultsEditor';
 import { OUTCOME_LABEL } from '@/lib/ticketOutcome';
 import ReviewClassesSection from '@/components/requests/ReviewClassesSection';
+// GAP-102 acceptance 4 (drafting-flow DF-P24): the workspace's examination data and what requires it.
+import ExaminationScopeSection from '@/components/requests/ExaminationScopeSection';
+import { stampExaminationScope } from '@/lib/examinationScope';
 // FRIC-1 / GAP-106 (drafting-flow DF-P22): the escalation tier above the queue.
 import SlaEscalationSection from '@/components/requests/SlaEscalationSection';
 import {
@@ -150,7 +153,10 @@ export default function DraftingConfigPage() {
       // GAP-13 / GAP-107 (DF-P14): the reasons for ending a request are
       // cleaned on the way out (a blank one dropped, a new one given its id);
       // settings without them are written exactly as before (the same object).
-      const data = withNormalizedOutcomeReasons(settings);
+      // DF-P24: a requirement added in this edit is stamped with the save's
+      // time (it binds only requests filed after it); settings without one are
+      // the same object, written exactly as before.
+      const data = withNormalizedOutcomeReasons(stampExaminationScope(settings, new Date().toISOString()));
       const { error } = await supabase
         .from('org_configurations')
         .upsert({ org_id: activeOrgId, key: 'drafting', data }, { onConflict: 'org_id,key' });
@@ -339,6 +345,9 @@ export default function DraftingConfigPage() {
 
           {/* SECTION: WORK / CODE CLASSES — the workspace's own review vocabulary (GAP-101 / TIER-4, DF-P6) */}
           <ReviewClassesSection settings={settings} onChange={(patch) => setSettings({ ...settings, ...patch })} />
+
+          {/* SECTION: EXAMINATION DATA — what a package must carry before it issues (GAP-102, DF-P24) */}
+          <ExaminationScopeSection settings={settings} orgId={activeOrgId} onChange={(patch) => setSettings({ ...settings, ...patch })} />
 
           {/* SECTION: WAYS A REQUEST ENDS — the workspace's own reasons (GAP-13 / GAP-107, DF-P14) */}
           <OutcomeReasonsSection
