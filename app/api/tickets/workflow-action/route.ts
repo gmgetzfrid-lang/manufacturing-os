@@ -39,6 +39,9 @@ import { parseOutcomeReasons, checkOutcomeReason, checkBareOutcome, type Outcome
 import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
 import { planConsentWindow, CONSENT_REASON, issueAsIsMarkOf, isUnconfirmedConsentPlan } from "@/lib/consentWindow";
 import { afterRosterOpened, recordNoticeEvents, recordNotEmailed, emailPreferenceOf } from "@/lib/consentWindowScan";
+// GAP-109 mechanism 2 (drafting-flow DF-P22): standing pre-authorization.
+import { preauthEligibleSlots } from "@/lib/ticketPreauthorization";
+import { applyStandingPreauthorizations } from "@/lib/ticketPreauthorizationApply";
 import { SLA_NOTICE_ACTIONS } from "@/lib/ticketSla";
 import { examinationForAct, examinationAuditFields, type ExaminationOnAct } from "@/lib/assuranceExamination";
 import { ticketReadScope } from "@/lib/ticketReadScope";
@@ -1116,6 +1119,10 @@ export async function POST(req: NextRequest) {
   // in the response (never in rosterWarning, which the audit row carries).
   let consentWarning: string | null = null;
   let consentMembers: Array<Record<string, unknown>> = [];
+  // GAP-109 mechanism 2 (DF-P22): the engineered-lane answer this submission's
+  // roster was opened under — a standing pre-authorization never acts on
+  // engineered work (nor while the declaration could not be checked).
+  let rosterEngineered = true;
   // Only a SUBMISSION opens a roster. reopen_ticket takes today's path into
   // PENDING_REVIEW (DF-P5 fix pass): a reopened request may have no readable
   // Draft at all, and its previous Draft is the already-issued bytes — the
@@ -1204,6 +1211,7 @@ export async function POST(req: NextRequest) {
         });
         if (!opened.ok) return refuse(409, opened.code, opened.error);
         rosterOpen = opened.roster;
+        rosterEngineered = engineeringGate.required || declarationUnverified !== null;
         // GAP-109 / DEC-90 rulings for DF-P7: a consent slot runs a window
         // only where lib/consentWindow.ts planConsentWindow allows it — never
         // on engineered work (the same gate the roster just applied), never
@@ -2071,6 +2079,21 @@ export async function POST(req: NextRequest) {
         deliverableRev: ((updates.deliverable_rev as string | undefined) ?? ticket.deliverableRev ?? null),
       }),
     });
+  }
+  // GAP-109 mechanism 2 (drafting-flow DF-P22; DEC-90 ruling (2)): a slot
+  // the workspace opted in to standing pre-authorization is satisfied by the
+  // standing record of a person who would otherwise sign it — never on
+  // engineered work, never the engineering or an assurance slot, never the
+  // last open sign-off (lib/ticketPreauthorization.ts). Only when the roster
+  // has such a slot is anything read; after the submission landed, so it
+  // never refuses or delays it — a failure leaves the slot waiting for its
+  // sign-off, logged.
+  if (rosterOpen && newStatus === "PENDING_REVIEW" && preauthEligibleSlots(rosterOpen).length > 0) {
+    const pa = await applyStandingPreauthorizations(supabaseAdmin, {
+      ticketId: body.ticketId, orgId: ticket.orgId, roster: rosterOpen, engineered: rosterEngineered, members: consentMembers,
+      ticketLabel: `${ticket.ticketId || ""} ${ticket.title}`.trim(),
+    });
+    if (pa.note) console.error(`[workflow-action] ticket ${body.ticketId}: standing pre-authorization — ${pa.note}`);
   }
   // The objection's durable record (it survives any bell purge); the
   // ticket's own history and columns already carry it.

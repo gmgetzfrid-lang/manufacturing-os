@@ -240,6 +240,8 @@ export const AUDIT_RESOURCE_TYPES: ReadonlyArray<{ value: string; label: string 
   { value: "document", label: "Documents" }, { value: "document_version", label: "Document revisions" },
   { value: "collection", label: "Folders" }, { value: "library", label: "Libraries" }, { value: "note", label: "Notes" },
   { value: "ticket", label: "Drafting requests" }, { value: "project", label: "Projects" }, { value: "milestone", label: "Milestones" },
+  // drafting-flow DF-P22 (GAP-109 mechanism 2): a person's standing pre-authorization (recorded / revoked).
+  { value: "ticket_preauthorization", label: "Standing pre-authorizations" },
   { value: "project_intake_link", label: "Intake links" }, { value: "project_checklist", label: "Project checklists" },
   { value: "turnover_item", label: "Turnover items" }, { value: "cost", label: "Cost records" }, { value: "company", label: "Companies" },
   { value: "transmittal", label: "Transmittals" }, { value: "work_package", label: "Work packages" },

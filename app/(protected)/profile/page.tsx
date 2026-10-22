@@ -20,6 +20,9 @@ import { Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
 import UserAvatar from "@/components/ui/UserAvatar";
 import { saveMyAvatar, clearProfileCache } from "@/lib/userProfiles";
+// GAP-109 mechanism 2 (drafting-flow DF-P22): the person's own standing
+// pre-authorizations.
+import PreauthorizationPanel from "@/components/requests/PreauthorizationPanel";
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -205,6 +208,9 @@ export default function ProfilePage() {
           <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3">Current session</div>
           <Row icon={Shield} label="Role" value={activeRole || "—"} />
         </div>
+
+        {/* DF-P22: standing pre-authorizations (GAP-109 mechanism 2) */}
+        <PreauthorizationPanel />
 
         {/* Quick links */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

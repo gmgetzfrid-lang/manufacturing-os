@@ -57,6 +57,11 @@ interface DraftSlot {
    *  records_examination). Written only on a blocking slot; never set by
    *  default. */
   recordsExamination?: boolean;
+  /** GAP-109 mechanism 2 (DF-P22): the controller's standing
+   *  pre-authorization opt-in (lib/routingControl.ts
+   *  accepts_preauthorization). Written only where an assurance check could
+   *  ride and the slot is not one; never set by default. */
+  acceptsPreauthorization?: boolean;
   /** DF-P5 fix pass: what a stored slot carries that this editor cannot show
    *  — a fill's other sources (a fill naming roles AND people), the
    *  override (`waivable_by`) and named alternate people. Carried through a
@@ -100,6 +105,17 @@ export function assuranceOptInFor(d: DraftSlot): "offer" | "engineering" | "none
   return examinationOptInAllowed({ mode: d.mode, fill: draftFill(d) }) ? "offer" : "engineering";
 }
 
+/** GAP-109 mechanism 2 (DF-P22): may this slot accept a standing
+ *  pre-authorization? Exactly where the assurance opt-in may ride
+ *  (assuranceOptInFor "offer"), and not while the slot IS an assurance
+ *  check (lib/routingControl.ts preauthorizationOptInAllowed). */
+export function preauthOptInFor(d: DraftSlot): "offer" | "none" {
+  return assuranceOptInFor(d) === "offer" && !d.recordsExamination ? "offer" : "none";
+}
+
+export const PREAUTH_OPT_IN_HINT =
+  "A person this slot names who recorded a standing pre-authorization covering the request (their own, signed, with an expiry) has it signed off for them — never on engineered work, and never for the last sign-off a review waits on.";
+
 /** Draft slots → the stored shape (pure; exported for tests). */
 export function draftToControl(slots: DraftSlot[]): RoutingControl {
   return {
@@ -128,6 +144,10 @@ export function draftToControl(slots: DraftSlot[]): RoutingControl {
         // filled by the requester alone, nor (merge-time fix pass) by an
         // engineering capability — a slot switched away drops it.
         ...(d.recordsExamination && assuranceOptInFor(d) === "offer" ? { records_examination: true as const } : {}),
+        // DF-P22 (GAP-109 mechanism 2): the standing pre-authorization
+        // opt-in, on a slot that can carry it (never an assurance check) — a
+        // slot switched away, or made an assurance check, drops it.
+        ...(d.acceptsPreauthorization && preauthOptInFor(d) === "offer" ? { accepts_preauthorization: true as const } : {}),
       };
     }),
   };
@@ -154,6 +174,7 @@ export function controlToDraft(c: RoutingControl): DraftSlot[] {
       capability: s.fill.capability ?? "", independentOf: s.independent_of ?? [],
       timeoutDays: s.timeoutDays ? String(s.timeoutDays) : "", alternateRoles: s.alternates?.roles ?? [],
       ...(s.records_examination === true ? { recordsExamination: true } : {}),
+      ...(s.accepts_preauthorization === true ? { acceptsPreauthorization: true } : {}),
       ...(Object.keys(kept).length ? { kept } : {}),
     };
   });
@@ -448,6 +469,13 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
                       <input type="checkbox" checked={!!s.recordsExamination} onChange={(e) => patch(i, { recordsExamination: e.target.checked })} />
                       <span className="font-bold text-[var(--color-text-muted)]">Assurance check — its reviewer records what they examined</span>
                       <span className="text-[var(--color-text-faint)]">{ASSURANCE_OPT_IN_HINT}</span>
+                    </label>
+                  )}
+                  {preauthOptInFor(s) === "offer" && (
+                    <label className="flex flex-wrap items-center gap-1.5 text-[11px]" data-testid="routing-slot-accepts-preauthorization">
+                      <input type="checkbox" checked={!!s.acceptsPreauthorization} onChange={(e) => patch(i, { acceptsPreauthorization: e.target.checked })} />
+                      <span className="font-bold text-[var(--color-text-muted)]">Accepts a standing pre-authorization</span>
+                      <span className="text-[var(--color-text-faint)]">{PREAUTH_OPT_IN_HINT}</span>
                     </label>
                   )}
                   {keptNote(s, { workClasses: s.mode === "notify_only" && workClassOptions.length > 0, window: s.mode === "consent_window" }) && <p className="text-[11px] text-[var(--color-text-muted)]" data-testid="routing-slot-kept">{keptNote(s, { workClasses: s.mode === "notify_only" && workClassOptions.length > 0, window: s.mode === "consent_window" })}</p>}
