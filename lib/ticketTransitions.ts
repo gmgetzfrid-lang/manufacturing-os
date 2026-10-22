@@ -8,7 +8,7 @@
 // Behavioral contract: identical to the previous client-side computation.
 // lib/__tests__/ticketTransitions.test.ts freezes it.
 
-import type { Ticket, TicketAttachment, TicketComment, TicketHistoryEntry, TicketOutcome, TicketReviewRoster, TicketStatus } from "@/types/schema";
+import type { Ticket, TicketAttachment, TicketComment, TicketHistoryEntry, TicketOutcome, TicketReviewRoster, TicketReviewSlot, TicketStatus } from "@/types/schema";
 import { currentRoster, issueReadyFor, rosterEngineerApprovedAt, ISSUE_MARK_ACTIONS, slotBlocks, slotAlternatesActive } from "@/lib/workflow";
 import { lastIssuedFromHistory } from "@/lib/verifyTicketVerdict";
 import { defaultOutcome } from "@/lib/ticketOutcome";
@@ -926,7 +926,12 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       : input.rosterOpen;
     const meta = ((updates.metadata as Record<string, unknown> | undefined) ?? ticket.metadata ?? {}) as Record<string, unknown>;
     updates.metadata = { ...meta, review_roster: r };
-    const blocking = r.slots.filter((x) => x.mode !== "notify_only").map((x) => x.label || x.kind);
+    // GAP-115 (DF-P26 fix pass 2): a slot the exception-only rule satisfied
+    // at open is not "needed" and its people are not asked — the route names
+    // the rule's act on this same line (ruleOpenNote). With no such slot (every
+    // roster without the opt-in) both lists are exactly as before.
+    const byRule = (x: TicketReviewSlot) => x.status === "satisfied" && x.via === "rule";
+    const blocking = r.slots.filter((x) => x.mode !== "notify_only" && !byRule(x)).map((x) => x.label || x.kind);
     const told = r.slots.filter((x) => x.mode === "notify_only").map((x) => x.label || x.kind);
     newHistory.push({
       action: "Review roster opened",
@@ -936,7 +941,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       ...(actorUid ? { actorId: actorUid } : {}),
       details: `Sign-offs needed (any order): ${blocking.join(", ")}${told.length ? ` · Told: ${told.join(", ")}` : ""}${r.engineeringGateAdded ? " · Engineering sign-off added: this workspace requires an engineer for this request, and the routing table names none" : ""}${r.consentPlan ? ` · ${consentPlanNote(r.consentPlan)}` : ""}`,
     } as TicketHistoryEntry);
-    const named = r.slots.flatMap((x) => x.primaries);
+    const named = r.slots.filter((x) => !byRule(x)).flatMap((x) => x.primaries);
     updates.unread_by = Array.from(new Set([...((updates.unread_by as string[] | undefined) ?? []), ...named])).filter((u) => u && u !== actorUid);
   } else {
     const open = currentRoster(ticket);

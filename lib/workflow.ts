@@ -440,8 +440,14 @@ export function slotSignPlan(
     // this, a review whose only other independent occupant left would wait
     // behind the DEC-12 floor (the rule is never the second person) with
     // nobody able to sign the rule's slot. Only a roster carrying such a
-    // slot (the opt-in) is affected.
+    // slot (the opt-in) is affected. DF-P26 fix pass 2: the upgrade exists
+    // only for the floor — so only above the DEC-12 threshold, and never to
+    // the drafter (their sign-off is never the second person). The engine
+    // offers it as OPTIONAL unless the floor would otherwise leave nobody
+    // named able to complete (ruleUpgradeNeeded), so the reviewer the rule
+    // excused is not badged for it.
     const ruleSatisfied = slot.status === "satisfied" && slot.via === "rule";
+    if (ruleSatisfied && (!sodActive || uid === ticket.assignedDrafterId)) continue;
     if ((slot.status !== "open" && !ruleSatisfied) || !slotBlocks(slot)) continue;
     const alternateActive = slotAlternatesActive(roster, slot, now);
     const via = slot.primaries.includes(uid) ? "primary" as const
@@ -485,6 +491,35 @@ export function slotSignPlan(
   }
   return plan;
 }
+
+/**
+ * GAP-115 (DF-P26 fix pass 2): is a sign-off on a slot the exception-only
+ * rule satisfied NEEDED for the review to complete — rather than an optional
+ * "sign it yourself" upgrade? True only above the DEC-12 threshold, with a
+ * drafter assigned, when nobody but the drafter has signed a blocking slot
+ * (the rule, a pre-authorization and a consent silence are nobody's look)
+ * and every open blocking slot names nobody but the drafter (primary,
+ * alternate or overrider) — so the floor would otherwise leave nobody named
+ * on the roster able to complete. Pure.
+ */
+export function ruleUpgradeNeeded(
+  roster: Pick<TicketReviewRoster, "slots">,
+  ticket: Pick<Ticket, "assignedDrafterId">,
+  sodActive: boolean,
+): boolean {
+  const drafter = ticket.assignedDrafterId ?? null;
+  if (!sodActive || !drafter) return false;
+  const blocking = roster.slots.filter((s) => slotBlocks(s) && s.status !== "void");
+  if (!blocking.some((s) => s.status === "satisfied" && s.via === "rule")) return false;
+  if (blocking.some((s) => s.status === "satisfied" && !!s.satisfiedBy && s.satisfiedBy !== drafter && s.via !== "preauthorization" && s.via !== "rule")) return false;
+  const open = blocking.filter((s) => s.status === "open");
+  return open.length > 0 && open.every((s) => [...s.primaries, ...s.alternates, ...s.overriders].every((u) => u === drafter));
+}
+
+/** GAP-115 (DF-P26 fix pass 2): what a sign-off offered only on a slot the
+ *  exception-only rule satisfied says — optional, or needed (the floor). */
+export const RULE_UPGRADE_OPTIONAL_NOTE = "Optional — the exception-only rule already satisfied this sign-off (no exception on record), so the request does not wait on you. Sign it yourself only if you want your own sign-off on record in place of the rule's.";
+export const RULE_UPGRADE_NEEDED_NOTE = "Needed — the exception-only rule satisfied this sign-off, but the rule is never the second person over the drafter's own sign-off, and nobody else named on this review can give one: sign it yourself so the review can complete.";
 
 /** When a completed roster's engineering approval was given: the latest
  *  sign-off among its satisfied engineering slots (lib/ticketRoster.ts
@@ -876,6 +911,12 @@ export const WorkflowEngine = {
           const windowSlot = windowRunning(roster) ? roster.consentWindow!.slot : null;
           const onlyWindow = (xs: Array<{ slot: TicketReviewSlot }>) => !!windowSlot && xs.length > 0 && xs.every((x) => x.slot.kind === windowSlot);
           const occupiesOnlyWindow = occupies && onlyWindow([...plan.fillable, ...plan.blocked]);
+          // GAP-115 (DF-P26 fix pass 2): a sign-off offered only on slots the
+          // exception-only rule satisfied is an optional upgrade — never
+          // waited on, so never badged — unless the DEC-12 floor would
+          // otherwise leave nobody named able to complete (ruleUpgradeNeeded).
+          const onlyRule = plan.fillable.length > 0 && plan.fillable.every((f) => f.slot.status === "satisfied" && f.slot.via === "rule");
+          const ruleOptional = onlyRule && !ruleUpgradeNeeded(roster, ticket, sod);
           if (plan.fillable.length > 0) {
             const labels = plan.fillable.map((f) => f.slot.label || f.slot.kind);
             const allOverride = plan.fillable.every((f) => f.via === "override");
@@ -884,8 +925,8 @@ export const WorkflowEngine = {
               action: 'sign_slot',
               variant: 'success',
               requiresSignature: true,
-              description: `Your e-signature is bound to the files under review${roster.cycle ? ` (Rev ${roster.cycle})` : ""}. One sign-off covers every slot you fill.${issueReady ? ` ${ISSUE_AS_IS_NOTE}` : ""}${onlyWindow(plan.fillable) ? ` ${CONSENT_WINDOW_SIGN_NOTE}` : ""}`,
-              ...(allOverride || onlyWindow(plan.fillable) ? { optional: true } : {}),
+              description: `Your e-signature is bound to the files under review${roster.cycle ? ` (Rev ${roster.cycle})` : ""}. One sign-off covers every slot you fill.${issueReady ? ` ${ISSUE_AS_IS_NOTE}` : ""}${onlyWindow(plan.fillable) ? ` ${CONSENT_WINDOW_SIGN_NOTE}` : ""}${onlyRule ? ` ${ruleOptional ? RULE_UPGRADE_OPTIONAL_NOTE : RULE_UPGRADE_NEEDED_NOTE}` : ""}`,
+              ...(allOverride || onlyWindow(plan.fillable) || ruleOptional ? { optional: true } : {}),
             });
           } else if (plan.blocked.length > 0) {
             actions.push({
@@ -897,6 +938,9 @@ export const WorkflowEngine = {
             });
           }
           const occupiesOnlyAsOverride = occupies && plan.fillable.length > 0 && plan.fillable.every((f) => f.via === "override") && plan.blocked.length === 0;
+          // GAP-115 (DF-P26 fix pass 2): nor is an occupant only of slots the
+          // rule satisfied badged to send it back.
+          const occupiesOnlyRuleSatisfied = ruleOptional && plan.blocked.length === 0;
           if (occupies || isRequesterIdentity) {
             // The ticket waits on its occupants: a requester the routing
             // does not roster, or an occupant only by override, may send it
@@ -906,7 +950,7 @@ export const WorkflowEngine = {
               action: 'request_revision',
               variant: 'warning',
               requiresComment: true,
-              ...(!occupies || occupiesOnlyAsOverride || occupiesOnlyWindow ? { optional: true } : {}),
+              ...(!occupies || occupiesOnlyAsOverride || occupiesOnlyWindow || occupiesOnlyRuleSatisfied ? { optional: true } : {}),
             });
           } else if (isManagement) {
             actions.push({ label: 'Request Revision', action: 'request_revision', variant: 'warning', requiresComment: true, optional: true });

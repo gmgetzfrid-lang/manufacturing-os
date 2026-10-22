@@ -1272,6 +1272,11 @@ export interface TicketReviewRoster {
    *  opened, and — once open_consent_window has stamped it — the window. */
   consentPlan?: TicketConsentPlan | null;
   consentWindow?: TicketConsentWindowMark | null;
+  /** GAP-116 (DF-P26 fix pass 2): an earlier round of this request carried a
+   *  notify-only slot opted in to recording what its people examined, so an
+   *  open hold placed with its record then still stops the request
+   *  (lib/requestHoldStop.ts). Absent on every other roster. */
+  notifyHoldRecordsEarlier?: true;
   closedAt?: string | null;
   closedReason?: string | null;
 }

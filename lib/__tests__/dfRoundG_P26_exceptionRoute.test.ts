@@ -312,7 +312,7 @@ describe("limb 2 — re-opened before anything issues", () => {
     const extra = () => { state.rows.ticket_examination_scopes = [{ ticket_id: "t1", org_id: "o1", field_values: {}, waiver: { reason: "vendor data" } }]; };
     const dry = await run(row, "e-2", { actionType: "sign_slot", dryRun: true }, WITH_EO, { extra });
     expect(dry.status).toBe(200);
-    expect(dry.json).toMatchObject({ dryRun: true, exceptionReopens: ["Document check"] });
+    expect(dry.json).toMatchObject({ dryRun: true, exceptionReopens: ["Document check"], exceptionReopenReasons: ["a waiver of required examination data is recorded"] });
     const r = await run(row, "e-2", { actionType: "sign_slot", signatureId: SIG }, WITH_EO, { extra });
     expect(r.status).toBe(200);
     expect(r.json.status).toBe("PENDING_REVIEW");

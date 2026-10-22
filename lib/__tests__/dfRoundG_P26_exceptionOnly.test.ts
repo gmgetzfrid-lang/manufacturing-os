@@ -14,12 +14,14 @@ import {
 } from "@/lib/exceptionOnlyReview";
 import { parseRoutingControl, validateRoutingDraft, exceptionOnlyOptInAllowed, type RoutingControl } from "@/lib/routingControl";
 import { openRoster, rosterCompletion, applySignPlan } from "@/lib/ticketRoster";
-import { rosterLacksIndependentSignOff, slotSignPlan } from "@/lib/workflow";
+import { rosterLacksIndependentSignOff, slotSignPlan, ruleUpgradeNeeded, WorkflowEngine, RULE_UPGRADE_OPTIONAL_NOTE, RULE_UPGRADE_NEEDED_NOTE } from "@/lib/workflow";
+import { isActionRequired } from "@/lib/ticketAttention";
+import { computeTransition } from "@/lib/ticketTransitions";
 import { consentFloorHolds } from "@/lib/consentWindow";
 import { preauthLeavesNoSecondPerson } from "@/lib/ticketPreauthorization";
 import { controlToDraft, draftToControl, exceptionOptInFor, withSlotMode, EXCEPTION_ONLY_HINT } from "@/components/documents/RoutingControlSection";
-import { slotStateText, RULE_SATISFIED_TEXT } from "@/components/requests/TicketRosterPanel";
-import type { Ticket, TicketReviewRoster, TicketReviewSlot } from "@/types/schema";
+import { slotStateText, RULE_SATISFIED_TEXT, exceptionReopenConfirmation, ruleUpgradeButtonText } from "@/components/requests/TicketRosterPanel";
+import type { Role, Ticket, TicketReviewRoster, TicketReviewSlot, TicketStatus } from "@/types/schema";
 
 const T = { requesterId: "req", assignedDrafterId: "d-1" } as Pick<Ticket, "requesterId" | "assignedDrafterId">;
 const NOW = Date.parse("2026-10-22T08:00:00Z");
@@ -273,5 +275,87 @@ describe("DF-P26 review fix — a slot the rule satisfied stays signable by its 
       const r = roster([{ ...A, status: "satisfied", via, satisfiedBy: via === "consent" ? null : "z-1", signatureId: via === "consent" ? null : "s" }, B]);
       expect(slotSignPlan(r, T, "x-1", true, NOW).fillable, via).toEqual([]);
     }
+  });
+});
+
+describe("DF-P26 fix pass 2 — the rule's slot is never DEMANDED of the reviewer it excused (engine, attention, panel)", () => {
+  const ticketWith = (r: TicketReviewRoster, status: TicketStatus = "PENDING_REVIEW"): Ticket => ({
+    id: "t1", orgId: "o1", ticketId: "REQ-1", title: "x", requestType: "ISO", status, requesterId: "req", requesterRole: "Manager" as Role,
+    assignedDrafterId: "d-1", attachments: [], comments: [], history: [], watchers: [], unreadBy: [], createdAt: "2026-10-01",
+    deliverableRev: "1A", revisionCount: 0, metadata: { review_roster: r },
+  } as unknown as Ticket);
+  const ctx = { activeMemberCount: 5, reviewRouted: true, now: NOW };
+  const acts = (r: TicketReviewRoster, uid: string) => WorkflowEngine.getActions(ticketWith(r), "Viewer", uid, undefined, ctx);
+  const required = (r: TicketReviewRoster, uid: string) => isActionRequired(ticketWith(r), { uid, roles: ["Viewer"], activeMemberCount: 5 } as never);
+  // The reviewer's reproduction: doc {primaries c-1, exception-only} and lead {primaries l-1}; the rule satisfied doc.
+  // doc also names the drafter d-1 as a primary and a-1 as an alternate (window opens after 1 day).
+  const DOC = slot({ kind: "doc", primaries: ["c-1", "d-1"], alternates: ["a-1"], timeoutDays: 1, exceptionOnly: true });
+  const ruled = applyExceptionRule(roster([DOC, LIVE]), ["doc"], "2026-10-22T08:00:00.000Z");
+  const late = { ...ruled, openedAt: "2026-10-19T07:00:00Z" };
+
+  it("the rule's slot's primary: a sign-off is OFFERED (the upgrade) but optional, as is a revision — not action-required", () => {
+    expect(ruleUpgradeNeeded(ruled, T, true)).toBe(false);
+    const a = acts(ruled, "c-1");
+    const sign = a.find((x) => x.action === "sign_slot")!;
+    expect(sign).toMatchObject({ label: "Sign Off — DOC", optional: true });
+    expect(sign.description).toContain(RULE_UPGRADE_OPTIONAL_NOTE);
+    expect(a.find((x) => x.action === "request_revision")).toMatchObject({ optional: true });
+    expect(required(ruled, "c-1")).toBe(false);
+  });
+  it("the drafter (a primary of the rule's slot too) is never offered the rule's slot — their sign-off is never the second person", () => {
+    expect(slotSignPlan(ruled, T, "d-1", true, NOW).fillable.map((f) => f.slot.kind)).toEqual([]);
+    expect(acts(ruled, "d-1").some((x) => x.action === "sign_slot" && !x.disabledReason)).toBe(false);
+  });
+  it("an alternate: nothing before the alternate window opens; after it, the optional upgrade only", () => {
+    expect(acts(ruled, "a-1").some((x) => x.action === "sign_slot")).toBe(false);
+    expect(required(ruled, "a-1")).toBe(false);
+    expect(acts(late, "a-1").find((x) => x.action === "sign_slot")).toMatchObject({ optional: true });
+    expect(isActionRequired(ticketWith(late), { uid: "a-1", roles: ["Viewer"], activeMemberCount: 5 } as never)).toBe(false);
+  });
+  it("the live slot's reviewer is still badged (the review waits on them)", () => {
+    expect(acts(ruled, "l-1").find((x) => x.action === "sign_slot")!.optional).toBeUndefined();
+    expect(required(ruled, "l-1")).toBe(true);
+  });
+  it("below the DEC-12 threshold the rule's slot is offered to nobody (the upgrade exists only for the floor)", () => {
+    expect(slotSignPlan(ruled, T, "c-1", false, NOW).fillable).toEqual([]);
+  });
+  it("NEEDED only where the floor would otherwise leave nobody named able to complete — then required, and said", () => {
+    // only the drafter is named on the open slot: without the upgrade the review cannot complete
+    const stuck: TicketReviewRoster = { ...ruled, slots: ruled.slots.map((x) => (x.kind === "lead" ? { ...x, primaries: ["d-1"] } : x)) };
+    expect(ruleUpgradeNeeded(stuck, T, true)).toBe(true);
+    const sign = acts(stuck, "c-1").find((x) => x.action === "sign_slot")!;
+    expect(sign.optional).toBeUndefined();
+    expect(sign.description).toContain(RULE_UPGRADE_NEEDED_NOTE);
+    expect(required(stuck, "c-1")).toBe(true);
+    // ... not when someone else has already signed, nor below the threshold, nor with no drafter
+    const signedOther: TicketReviewRoster = { ...stuck, slots: [...stuck.slots, slot({ kind: "x", primaries: ["z-1"], status: "satisfied", satisfiedBy: "z-1", signatureId: "s", via: "primary" })] };
+    expect(ruleUpgradeNeeded(signedOther, T, true)).toBe(false);
+    expect(ruleUpgradeNeeded(stuck, T, false)).toBe(false);
+    expect(ruleUpgradeNeeded(stuck, { assignedDrafterId: null }, true)).toBe(false);
+    // ... nor on a roster the rule never touched
+    expect(ruleUpgradeNeeded(roster([slot({ kind: "lead", primaries: ["d-1"] })]), T, true)).toBe(false);
+  });
+  it("the panel labels it as an optional 'sign it yourself' upgrade, or as needed", () => {
+    expect(ruleUpgradeButtonText(["DOC"], false)).toBe("Sign it yourself (optional) — DOC");
+    expect(ruleUpgradeButtonText(["DOC"], true)).toMatch(/^Sign off — DOC \(needed/);
+  });
+  it("the dry run's re-open is told before the e-signature is minted", () => {
+    expect(exceptionReopenConfirmation(["DOC"], ["a waiver of required examination data is recorded"]))
+      .toBe("Your sign-off will be recorded, but DOC will be re-opened for its reviewer because a waiver of required examination data is recorded. The request will not issue yet.");
+    expect(exceptionReopenConfirmation(["DOC"], undefined)).toMatch(/because an exception is now on record\. The request will not issue yet\.$/);
+  });
+  it("the roster-opened line: the rule's slot is not 'needed', and its people are neither unread nor told", () => {
+    const t = { ...ticketWith(ruled, "DRAFTING"), metadata: {} } as Ticket;
+    const { updates, recipients } = computeTransition(t, { actionType: "submit_draft", actionLabel: "Submit", rosterOpen: ruled, actor: { uid: "d-1", email: "d@x", role: "Drafter" }, now: "2026-10-22T08:00:00Z" });
+    const line = (updates.history as Array<{ action: string; details?: string }>).find((h) => h.action === "Review roster opened")!;
+    expect(line.details).toMatch(/^Sign-offs needed \(any order\): LEAD(?! ?,)/);
+    expect(line.details).not.toMatch(/DOC/);
+    expect(updates.unread_by).toEqual(["req", "l-1"]); // the requester, as the base transition tells them
+    expect(recipients).toEqual(["req", "l-1"]);
+    // REGRESSION: a roster the rule never touched lists and tells everyone, as before
+    const plain = roster([DOC, LIVE]);
+    const out = computeTransition(t, { actionType: "submit_draft", actionLabel: "Submit", rosterOpen: plain, actor: { uid: "d-1", email: "d@x", role: "Drafter" }, now: "2026-10-22T08:00:00Z" });
+    expect((out.updates.history as Array<{ action: string; details?: string }>).find((h) => h.action === "Review roster opened")!.details).toMatch(/^Sign-offs needed \(any order\): DOC, LEAD/);
+    expect(out.updates.unread_by).toEqual(["req", "c-1", "l-1"]);
   });
 });

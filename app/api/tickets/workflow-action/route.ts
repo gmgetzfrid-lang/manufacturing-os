@@ -47,7 +47,7 @@ import { examinationForAct, examinationAuditFields, type ExaminationOnAct } from
 import { issueScopeGate } from "@/lib/examinationScopeGate";
 import { workflowEngineContext, rosterlessRoutedRefusal, draftingTypeFlags, DECLARATION_DECIDES } from "@/lib/workflowAuthority";
 // GAP-116 (drafting-flow DF-P26): a notify-only hold that stops the request.
-import { issueHoldStopGate } from "@/lib/requestHoldStop";
+import { issueHoldStopGate, carryNotifyHoldMark } from "@/lib/requestHoldStop";
 // GAP-102 acceptance 2 (drafting-flow DF-P26): the issue notice carries the examination data.
 import { issueExaminationNote, issueExaminationMayExist } from "@/lib/issueNoticeExamination";
 // GAP-115 / GAP-109 mechanism 3 (drafting-flow DF-P26): exception-only review.
@@ -1219,7 +1219,12 @@ export async function POST(req: NextRequest) {
           openedBy: caller.id, now: new Date().toISOString(), engineeringGate,
         });
         if (!opened.ok) return refuse(409, opened.code, opened.error);
-        rosterOpen = opened.roster;
+        // GAP-116 (DF-P26 fix pass 2): a hold placed with its record in an
+        // earlier round keeps stopping the request after the routing drops
+        // the notify-only opt-in — the new roster carries that an earlier one
+        // could hold such a record (lib/requestHoldStop.ts). Never set where
+        // no earlier roster carried such a slot: the roster is then today's.
+        rosterOpen = carryNotifyHoldMark(opened.roster, ticket);
         rosterEngineered = engineeringGate.required || declarationUnverified !== null;
         // GAP-109 / DEC-90 rulings for DF-P7: a consent slot runs a window
         // only where lib/consentWindow.ts planConsentWindow allows it — never
@@ -1336,7 +1341,7 @@ export async function POST(req: NextRequest) {
       if (found.length > 0 && reopenLabels.length > 0) reopenWith = found.map((e) => e.text);
     }
     if (body.dryRun === true) {
-      return NextResponse.json({ ok: true, dryRun: true, slots: plan.fillable.map((f) => f.slot.label || f.slot.kind), contentHash: openRosterNow.contentHash, ...(reopenWith ? { exceptionReopens: reopenLabels } : {}) });
+      return NextResponse.json({ ok: true, dryRun: true, slots: plan.fillable.map((f) => f.slot.label || f.slot.kind), contentHash: openRosterNow.contentHash, ...(reopenWith ? { exceptionReopens: reopenLabels, exceptionReopenReasons: reopenWith } : {}) });
     }
     if (!UUID_RE.test(sigId)) return NextResponse.json({ error: "A sign-off needs your e-signature.", code: "signature_required" }, { status: 400 });
     const { data: sig, error: sigErr } = await supabaseAdmin

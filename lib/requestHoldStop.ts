@@ -24,7 +24,11 @@
 //
 // Read ONLY where such a record could exist: the request names a source
 // document (a uuid) and the roster on record carries a notify-only slot
-// opted in to recording what its people examined. Every other request —
+// opted in to recording what its people examined — or (DF-P26 fix pass 2)
+// an earlier round's roster did (`notifyHoldRecordsEarlier`, carried
+// forward by carryNotifyHoldMark when the route opens a new roster), so a
+// hold placed then still stops the request after the routing drops the
+// opt-in. Every other request —
 // every request today — reads nothing and decides nothing here
 // (`{ kind: "none" }`), so its outcome is byte-identical (pinned by an A/B
 // sweep). Where a record could exist, a read that fails (the holds, or an
@@ -79,11 +83,30 @@ export type RequestHoldStop =
   /** A read where a record could exist failed — a retry, never a pass. */
   | { kind: "unreadable"; error: string };
 
+/** Could a hold with this request's examination record exist under this
+ *  roster: it carries an opted-in notify-only slot, or (DF-P26 fix pass 2)
+ *  an earlier round did (`notifyHoldRecordsEarlier`, carried forward when a
+ *  new roster opens — a hold placed then keeps stopping the request after
+ *  the routing drops the opt-in). Pure. */
+export function couldHoldNotifyRecord(roster: Pick<TicketReviewRoster, "slots" | "notifyHoldRecordsEarlier">, ticket: Pick<Ticket, "requesterId">): boolean {
+  return roster.notifyHoldRecordsEarlier === true || roster.slots.some((s) => isNotifyExaminationSlot(s, ticket));
+}
+
+/** The roster a submission opens, marked when the roster on record (the
+ *  request's previous round) could hold such a record; otherwise the very
+ *  same object (every request whose earlier rounds carried no opted-in
+ *  notify-only slot — its new roster is today's, byte for byte). Pure. */
+export function carryNotifyHoldMark(opened: TicketReviewRoster, ticket: Pick<Ticket, "metadata" | "requesterId">): TicketReviewRoster {
+  const previous = rosterOnRecord(ticket);
+  if (!previous || previous.id === opened.id || !couldHoldNotifyRecord(previous, ticket)) return opened;
+  return { ...opened, notifyHoldRecordsEarlier: true };
+}
+
 /** Where a record could exist: the source document's id and the roster on
  *  record, or null (nothing to read). Pure. */
 export function holdStopScope(ticket: Pick<Ticket, "metadata" | "requesterId">): { sourceId: string; documentLabel: string; roster: TicketReviewRoster } | null {
   const roster = rosterOnRecord(ticket);
-  if (!roster || !roster.slots.some((s) => isNotifyExaminationSlot(s, ticket))) return null;
+  if (!roster || !couldHoldNotifyRecord(roster, ticket)) return null;
   const src = parseSourceDocument(ticket.metadata as Record<string, unknown> | null | undefined);
   if (!src?.id || !UUID_RE.test(src.id)) return null;
   return { sourceId: src.id, documentLabel: src.documentNumber || "The source document", roster };

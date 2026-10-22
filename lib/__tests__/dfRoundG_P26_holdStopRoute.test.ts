@@ -117,7 +117,7 @@ vi.mock("@/lib/issueNoticeExamination", async (importOriginal) => {
 import { POST as workflowAction } from "@/app/api/tickets/workflow-action/route";
 import { WorkflowEngine, ISSUING_APPROVALS } from "@/lib/workflow";
 import { rowToTicket } from "@/lib/ticketTransitions";
-import { requestHoldRefusal, holdStopScope } from "@/lib/requestHoldStop";
+import { requestHoldRefusal, holdStopScope, carryNotifyHoldMark } from "@/lib/requestHoldStop";
 
 const post = (body: unknown) => workflowAction(new NextRequest("http://x/api/tickets/workflow-action", {
   method: "POST", headers: { authorization: "Bearer t", "content-type": "application/json" }, body: JSON.stringify(body),
@@ -359,6 +359,43 @@ describe("GAP-116 — an issuing approval on a request whose roster on record ca
       expect(a.stopReads).toBe(1);
       expect(b.stopReads).toBe(0);
     }
+  });
+});
+
+describe("DF-P26 fix pass 2 — a hold placed in an earlier round keeps stopping the request after the routing drops the opt-in", () => {
+  it("the next round's roster carries the mark; the round-1 hold of the slot's person stops round 2's completing sign-off", async () => {
+    const round1 = await openRoster(WITH_WATCH);
+    const closed1 = { ...round1, closedAt: "2026-10-21T00:00:00.000Z", closedReason: "request_revision" };
+    // the controller removes records_examination; the draft is re-submitted
+    const round2 = await openRoster(PLAIN_WATCH, { ...SOURCE, review_roster: closed1 });
+    expect(round2.id).not.toBe(round1.id);
+    expect(round2.slots.some((x) => x.recordsExamination)).toBe(false);
+    expect(round2.notifyHoldRecordsEarlier).toBe(true);
+    const row = reviewRow({ metadata: { ...SOURCE, review_roster: round2 } });
+    const signer = round2.slots.find((x) => x.kind === "check")!.primaries[0];
+    const ledgerRow = { org_id: "o1", ticket_id: "t1", roster_id: round1.id, slot_kind: "watch", label: "Inspection notice", mode: "notify_only", primaries: ["q-2"], alternates: [] };
+    const extra = () => { state.rows.document_holds = [hold({}, round1.id)]; state.rows.ticket_review_slots = [ledgerRow]; };
+    const r = await run(row, signer, { actionType: "sign_slot", signatureId: SIG }, false, PLAIN_WATCH, extra);
+    expect(r.status).toBe(409);
+    expect(r.raw.code).toBe("request_on_hold");
+    // released → it issues
+    const released = await run(row, signer, { actionType: "sign_slot", signatureId: SIG }, false, PLAIN_WATCH, () => { extra(); state.rows.document_holds = [hold({ released_at: "2026-10-22T07:00:00.000Z" }, round1.id)]; });
+    expect(released.status).toBe(200);
+    expect(released.raw.status).toBe("PENDING_IFC");
+    // the mark carries on into a third round
+    const round3 = await openRoster(PLAIN_WATCH, { ...SOURCE, review_roster: { ...round2, closedAt: "2026-10-22T09:00:00.000Z" } });
+    expect(round3.notifyHoldRecordsEarlier).toBe(true);
+  });
+  it("REGRESSION: where no earlier round carried an opted-in notify-only slot, the new roster has no mark (no key) and the scope reads nothing", async () => {
+    const plain1 = await openRoster(PLAIN_WATCH);
+    expect("notifyHoldRecordsEarlier" in plain1).toBe(false);
+    const plain2 = await openRoster(PLAIN_WATCH, { ...SOURCE, review_roster: { ...plain1, closedAt: "2026-10-21T00:00:00.000Z" } });
+    expect("notifyHoldRecordsEarlier" in plain2).toBe(false);
+    expect(holdStopScope({ metadata: { ...SOURCE, review_roster: plain2 }, requesterId: "req-1" } as never)).toBeNull();
+    // pure: the same object back when nothing carries
+    expect(carryNotifyHoldMark(plain2, { metadata: { review_roster: plain1 }, requesterId: "req-1" } as never)).toBe(plain2);
+    expect(carryNotifyHoldMark(plain2, { metadata: {}, requesterId: "req-1" } as never)).toBe(plain2);
+    expect(holdStopScope({ metadata: { ...SOURCE, review_roster: { ...plain2, notifyHoldRecordsEarlier: true } }, requesterId: "req-1" } as never)).toMatchObject({ sourceId: DOC });
   });
 });
 
