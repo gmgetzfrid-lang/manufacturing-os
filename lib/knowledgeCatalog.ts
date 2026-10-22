@@ -2,29 +2,37 @@
 // can reason over.
 //
 // Retrieval finds passages; it can't know that the library has a deviation
-// request form, a hydrotest checklist, or a pipe-class table for 1S4 unless
-// a question happens to match their text. So every document gets a PROFILE
-// — what kind of document it is, its designation and purpose, and for the
-// kinds that need it, structure: a form's fields, a piping spec's classes.
+// request form, a hydrotest checklist, or a catalog entry for 1S4 unless a
+// question happens to match their text. So every document gets a PROFILE —
+// what kind of document it is, its designation and purpose, and for the
+// kinds that need it, structure: a form's fields, a catalog's entries.
 // The ask pipeline carries the catalog as context, so "is there a checklist
 // for this?" is the system's job, not the user's.
 //
-// Storage needs no migration: profiles and pipe classes are rows in
+// Storage needs no migration: profiles and catalog entries are rows in
 // knowledge_page_entities (kind is free text) with the JSON in `raw`.
-//   kind "profile"    — one per document, page 1, tag = document type
-//   kind "pipe_class" — one per class per page, tag = the class code
+//   kind "profile"       — one per document, page 1, tag = document type
+//   kind "catalog_entry" — one per entry, on its first page, tag = its code
+//
+// A CATALOG is whatever a person marked as one ("Piping specs", "Valve data
+// sheets"): a document whose sections are entries, or a library whose
+// documents are. Nothing guesses which documents those are.
 //
 // Pure: parsing, validation, prompt blocks, matching. Server work lives in
 // lib/knowledgeCatalogServer.ts.
 
+import type { EntryRecord } from "@/lib/catalogBooks";
+/** One catalog entry as stored (see lib/catalogBooks.ts). */
+export type { EntryRecord };
+
 export const DOC_TYPES = [
-  "standard", "pipe_spec", "form", "checklist", "std_drawing", "pid", "procedure", "datasheet", "other",
+  "standard", "catalog", "form", "checklist", "std_drawing", "pid", "procedure", "datasheet", "other",
 ] as const;
 export type DocType = typeof DOC_TYPES[number];
 
 export const DOC_TYPE_LABEL: Record<DocType, string> = {
   standard: "Engineering standard",
-  pipe_spec: "Piping specification",
+  catalog: "Catalog",
   form: "Form",
   checklist: "Checklist",
   std_drawing: "Standard drawing",
@@ -78,32 +86,28 @@ export interface DocProfile {
   };
   /** What a checklist is used for ("hydrotest", "flange joint assembly"). */
   checklistFor?: string;
-  /** Pipe-class extraction progress for piping specs. */
-  pipeSpec?: { pagesDone: number; pageCount: number; classes: number; done: boolean;
-    /** How it was read: "text-v2" = mapped class by class from the text. */
-    method?: string };
+  /** Set when a person marked this document as a catalog: the name they
+   *  gave it, and what reading its sections found. */
+  catalog?: CatalogMark;
   profiledAt: string;
 }
 
-export interface PipeClassRow {
-  component: string;
-  size?: string;
-  spec: string;
-  details?: string;
-  notes?: string;
+/** A person's mark on a document or library: "this is our catalog of …". */
+export interface CatalogMark {
+  /** What they call it ("Piping specs"). */
+  name: string;
+  markedBy?: string;
+  markedAt?: string;
+  /** Entries recorded on the last read; 0 with `problem` when none. */
+  entries: number;
+  /** The labelled fields the entries print, as learned from them. */
+  fields?: string[];
+  /** Which reader produced the entries — re-read when it changes. */
+  method?: string;
+  readAt?: string;
+  problem?: string;
 }
 
-export interface PipeClassRecord {
-  code: string;
-  service?: string;
-  rating?: string;
-  material?: string;
-  corrosionAllowance?: string;
-  /** Other labelled fields printed on the class's opening page. */
-  attrs?: Record<string, string>;
-  rows: PipeClassRow[];
-  notes?: string[];
-}
 
 const str = (v: unknown, max = 400): string =>
   typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, max) : "";
@@ -189,44 +193,15 @@ export function normalizeProfile(
 export function parseProfile(raw: string | null | undefined): DocProfile | null {
   if (!raw) return null;
   try {
-    const v = JSON.parse(raw) as DocProfile;
-    return v && v.v === 1 && (DOC_TYPES as readonly string[]).includes(v.type) ? v : null;
+    const v = JSON.parse(raw) as DocProfile & { pipeSpec?: unknown };
+    if (!v || v.v !== 1) return null;
+    // Profiles written before catalogs were marked by people: a guessed
+    // "piping spec" is an unmarked document again.
+    if ((v.type as string) === "pipe_spec") { v.type = "other"; delete v.pipeSpec; }
+    return (DOC_TYPES as readonly string[]).includes(v.type) ? v : null;
   } catch {
     return null;
   }
-}
-
-/** Validate one page's pipe-class extraction. */
-export function normalizePipeClasses(raw: Record<string, unknown> | null, opts: { allowEmptyRows?: boolean } = {}): PipeClassRecord[] {
-  const list = Array.isArray(raw?.classes) ? raw!.classes as Array<Record<string, unknown>> : [];
-  const out: PipeClassRecord[] = [];
-  for (const c of list.slice(0, 12)) {
-    const code = str(c.code, 30).toUpperCase();
-    if (!code || code.length < 2) continue;
-    const rows = (Array.isArray(c.rows) ? c.rows as Array<Record<string, unknown>> : [])
-      .map((r) => ({
-        component: str(r.component, 60),
-        ...(str(r.size, 40) ? { size: str(r.size, 40) } : {}),
-        spec: str(r.spec, 160),
-        ...(str(r.details, 160) ? { details: str(r.details, 160) } : {}),
-        ...(str(r.notes, 200) ? { notes: str(r.notes, 200) } : {}),
-      }))
-      .filter((r) => r.component && r.spec)
-      .slice(0, 80);
-    // A class read from its opening page may have no component rows yet —
-    // its rating, service and material still identify it.
-    if (rows.length === 0 && !(opts.allowEmptyRows && (str(c.rating, 40) || str(c.service, 160) || str(c.material, 80)))) continue;
-    out.push({
-      code,
-      ...(str(c.service, 160) ? { service: str(c.service, 160) } : {}),
-      ...(str(c.rating, 40) ? { rating: str(c.rating, 40) } : {}),
-      ...(str(c.material, 80) ? { material: str(c.material, 80) } : {}),
-      ...(str(c.corrosionAllowance, 30) ? { corrosionAllowance: str(c.corrosionAllowance, 30) } : {}),
-      rows,
-      ...(strList(c.notes, 12, 240).length > 0 ? { notes: strList(c.notes, 12, 240) } : {}),
-    });
-  }
-  return out;
 }
 
 // ── The catalog as the assistant sees it ────────────────────────────────────
@@ -240,7 +215,7 @@ export interface CatalogEntry {
   profile: DocProfile;
 }
 
-const ORDER: DocType[] = ["form", "checklist", "pipe_spec", "standard", "procedure", "std_drawing", "datasheet", "pid", "other"];
+const ORDER: DocType[] = ["form", "checklist", "catalog", "standard", "procedure", "std_drawing", "datasheet", "pid", "other"];
 
 /** One line per document, grouped by type — forms and checklists first,
  *  because those are what a user can't find by asking a question. */
@@ -262,7 +237,7 @@ export function buildCatalogBlock(entries: CatalogEntry[], budget = 6000): strin
         ? ` — for ${p.checklistFor}${p.form?.fillable ? ", fillable PDF" : ""}`
         : p.form
         ? ` — ${FORM_PURPOSE_LABEL[p.form.purpose]}${p.form.fillable ? ", fillable PDF" : ""}, ${p.form.fields.length} fields`
-        : p.pipeSpec ? ` — ${p.pipeSpec.classes} pipe classes indexed`
+        : p.catalog ? ` — marked as "${p.catalog.name}", ${p.catalog.entries} entries indexed`
         : p.purpose ? ` — ${p.purpose.slice(0, 110)}` : "";
       const line = `- "${e.name.replace(/\.pdf$/i, "")}"${p.designation && !e.name.includes(p.designation) ? ` (${p.designation})` : ""}: ${p.title}${extra}`;
       if (used + line.length > budget) { dropped += 1; continue; }
@@ -311,9 +286,9 @@ export function matchCatalogName(entries: CatalogEntry[], written: string): Cata
     ?? null;
 }
 
-// ── Pipe classes at ask time ────────────────────────────────────────────────
+// ── Catalog entries at ask time ─────────────────────────────────────────────
 
-/** Which known pipe-class codes does this text mention? Whole-token,
+/** Which known entry codes does this text mention? Whole-token,
  *  case-insensitive; short codes (≤2 chars) need a "class" word nearby. */
 export function findClassMentions(text: string, codes: string[]): string[] {
   const hits: string[] = [];
@@ -328,22 +303,21 @@ export function findClassMentions(text: string, codes: string[]): string[] {
   return hits.slice(0, 4);
 }
 
-/** Pipe-class records as trusted facts for the answer prompt. */
-export function pipeClassFacts(
-  records: Array<PipeClassRecord & { documentName: string; page: number; matched?: { literal: string[]; leads: string[] } }>,
+/** Catalog entries as trusted facts for the answer prompt. */
+export function entryFacts(
+  records: Array<EntryRecord & { catalog?: string; documentName: string; page: number; matched?: { literal: string[]; leads: string[] } }>,
 ): string {
   if (records.length === 0) return "";
   return records.map((r) => {
-    const head = `PIPE CLASS ${r.code} — ${r.documentName} p.${r.page}` +
-      [r.service && `service: ${r.service}`, r.rating && `rating: ${r.rating}`, r.material && `material: ${r.material}`,
-        r.corrosionAllowance && `CA: ${r.corrosionAllowance}`].filter(Boolean).map((x) => `; ${x}`).join("");
+    const head = `${r.catalog ? `${r.catalog.toUpperCase()} ` : ""}ENTRY ${r.code} — ${r.documentName} p.${r.page}` +
+      [r.service && `for: ${r.service}`, r.rating && `rating: ${r.rating}`,
+        ...Object.entries(r.attrs ?? {}).slice(0, 6).map(([k, v]) => `${k}: ${v}`)].filter(Boolean).map((x) => `; ${x}`).join("");
     const m = r.matched;
     const why = !m ? []
       : m.literal.length > 0 ? [`  found because: its printed service/notes use the asker's words (${m.literal.join(", ")})`]
       : m.leads.length > 0 ? [`  found because: it mentions a RELATED term (${m.leads.join(", ")}) — a lead only. Do not treat it as the asker's service unless a passage ties the two together.`]
       : [`  found because: it has the asked rating; its printed service does not name the asker's service`];
-    const rows = r.rows.map((x) => `  - ${x.component}${x.size ? ` [${x.size}]` : ""}: ${x.spec}${x.details ? ` (${x.details})` : ""}${x.notes ? ` — ${x.notes}` : ""}`);
     const notes = (r.notes ?? []).map((n) => `  note: ${n}`);
-    return [head, ...why, ...rows, ...notes].join("\n");
+    return [head, ...why, ...notes].join("\n");
   }).join("\n\n");
 }

@@ -41,3 +41,18 @@ describe("skills picked for one question", () => {
     expect(buildAnswerSkillsBlock(rows, "me", [])).toBe("");
   });
 });
+
+describe("a skill's SEARCH: notes go to the query writer, not the answer", () => {
+  it("splits them out", async () => {
+    const { searchNotesOf, BUILTIN_ANSWER_SKILLS } = await import("@/lib/answerSkillsData");
+    const { buildAnswerSkillsBlock } = await import("@/lib/answerSkillsServer");
+    const instructions = "APPLIES WHEN x. Otherwise ignore this skill.\n- answer rule\nSEARCH: quote the class as \"class 150\"";
+    expect(searchNotesOf(instructions)).toEqual(["quote the class as \"class 150\""]);
+    const block = buildAnswerSkillsBlock([{ builtin_key: null, name: "S", instructions, enabled: true, visibility: "org", created_by: null }], null);
+    expect(block).toContain("answer rule");
+    expect(block).not.toContain("SEARCH:");
+    const ratings = BUILTIN_ANSWER_SKILLS.find((b) => b.builtin_key === "pressure_ratings")!;
+    expect(new RegExp(ratings.cue, "i").test("can I use a 300# flange on a 150 class line")).toBe(true);
+    expect(new RegExp(ratings.cue, "i").test("why is hydrotest required")).toBe(false);
+  });
+});

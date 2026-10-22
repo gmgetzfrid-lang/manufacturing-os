@@ -1115,7 +1115,7 @@ const GOAL_LABEL: Record<string, string> = {
 };
 
 const DOC_TYPE_WORD: Record<string, string> = {
-  form: "Form", checklist: "Checklist", pipe_spec: "Piping spec", standard: "Standard",
+  form: "Form", checklist: "Checklist", catalog: "Catalog", standard: "Standard",
   procedure: "Procedure", std_drawing: "Standard drawing", pid: "Drawing", datasheet: "Data sheet", other: "Document",
 };
 

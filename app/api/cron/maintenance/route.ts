@@ -21,7 +21,7 @@
 // token. Degrades gracefully if optional env vars are missing.
 
 import { NextRequest, NextResponse } from "next/server";
-import { drainPipeSpecs } from "@/lib/knowledgeCatalogServer";
+import { refreshMarkedCatalogs } from "@/lib/knowledgeCatalogServer";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { autoReleaseExpiredAdHoc } from "@/lib/projects";
 import { runStorageAlerts } from "@/lib/storageAlerts";
@@ -329,24 +329,14 @@ async function handler(req: NextRequest) {
     result.errors.push(`estate-registry: ${(e as Error).message}`);
   }
 
-  // 14. SPEC BOOKS mapped class by class, by themselves. Reading a spec
-  //     book's classes from its text needs no AI and costs nothing, so it
-  //     isn't left waiting for someone to find a button. Libraries holding a
-  //     book-sized document are visited; mapped books are skipped.
+  // 14. MARKED CATALOGS re-read: a catalog a person marked before its text
+  //     was indexed, or read by an older reader, is read again — from its
+  //     text, no AI, so it costs nothing.
   try {
-    const { data: big } = await sb.from("knowledge_documents").select("org_id, library_id")
-      .gte("page_count", 150).neq("status", "retired").limit(500);
-    const libs = [...new Map(((big ?? []) as Array<{ org_id: string; library_id: string }>).map((r) => [r.library_id, r])).values()];
-    const until = Date.now() + 20_000;
-    let books = 0, classes = 0;
-    for (const l of libs) {
-      if (Date.now() > until) break;
-      const r = await drainPipeSpecs(sb, { orgId: l.org_id, libraryId: l.library_id, conn: null, deadlineMs: Math.min(until + 30_000, Date.now() + 45_000) });
-      books += r.books; classes += r.classes;
-    }
-    (result as Record<string, unknown>).specBooks = { libraries: libs.length, books, classes };
+    const r = await refreshMarkedCatalogs(sb, { deadlineMs: Date.now() + 25_000 });
+    (result as Record<string, unknown>).catalogs = r;
   } catch (e) {
-    result.errors.push(`spec-books: ${(e as Error).message}`);
+    result.errors.push(`catalogs: ${(e as Error).message}`);
   }
 
   // 13. RESEARCH RECORDS age out after 90 days — they're for diagnosing an

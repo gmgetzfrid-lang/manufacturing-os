@@ -11,7 +11,7 @@
 // passage in every reachable document that uses the term, then reads them
 // for the sentences that matter: where the term is tied to another term
 // ("sour gas (Wet H2S)"), where it is defined, and — in a book of sections
-// like a piping-spec database — which sections' own text uses it. The
+// a person marked as a catalog — which sections' own text uses it. The
 // answer gets the whole map, and the passages that carry ties are attached
 // so they can be cited.
 //
@@ -159,19 +159,19 @@ export interface TermSweep {
   tooCommon: boolean;
   /** Per document, most hits first: its best sentences. */
   docs: Array<{ documentId: string; hits: number; best: SweepHit[] }>;
-  /** Sections of a sectioned book (piping classes) whose own text uses the term. */
+  /** Sections of a sectioned book (a marked catalog's entries) whose own text uses the term. */
   sections: Array<{ documentId: string; items: SweepSection[] }>;
 }
 
 /** Order a document's hits: ties first, then definitions, then the rest. */
 const tieRank = (h: SweepHit) => (h.tie?.kind === "paren" ? 0 : h.tie?.kind === "defines" || h.tie?.kind === "together" ? 1 : h.tie ? 2 : 3);
 
-/** Sections of a book document already mapped (piping classes, read class
- *  by class from the spec book): each section's key and first page. */
+/** Sections of a book a person marked as a catalog, already read entry by
+ *  entry: each section's key and first page. */
 async function mappedSections(admin: SupabaseClient, docId: string): Promise<Array<{ key: string; page: number }>> {
   const { rows } = await fetchAllRows<{ tag: string; page: number }>((from, to) => admin
     .from("knowledge_page_entities").select("tag, page")
-    .eq("document_id", docId).eq("kind", "pipe_class").order("page").range(from, to), 20_000);
+    .eq("document_id", docId).eq("kind", "catalog_entry").order("page").range(from, to), 20_000);
   return rows.map((r) => ({ key: r.tag, page: r.page }));
 }
 
@@ -180,7 +180,7 @@ async function sectionRatings(admin: SupabaseClient, docId: string, keys: string
   const out = new Map<string, string>();
   await inSlices(keys, 100, 3, async (slice) => {
     const { data } = await admin.from("knowledge_page_entities").select("tag, raw")
-      .eq("document_id", docId).eq("kind", "pipe_class").in("tag", slice);
+      .eq("document_id", docId).eq("kind", "catalog_entry").in("tag", slice);
     for (const r of (data ?? []) as Array<{ tag: string; raw: string | null }>) {
       try {
         const rating = (JSON.parse(r.raw ?? "{}") as { rating?: unknown }).rating;

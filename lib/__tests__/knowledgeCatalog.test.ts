@@ -1,11 +1,11 @@
-// Tests for the library catalog (profiles, forms, pipe classes), goal
+// Tests for the library catalog (profiles, forms, catalog entries), goal
 // detection in answers, and putting values onto real PDF forms.
 
 import { describe, it, expect } from "vitest";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import {
-  normalizeProfile, parseProfile, normalizePipeClasses, buildCatalogBlock, formsForGoal, matchCatalogName,
-  findClassMentions, pipeClassFacts, parseModelJson, type CatalogEntry, type DocProfile,
+  normalizeProfile, parseProfile, buildCatalogBlock, formsForGoal, matchCatalogName,
+  findClassMentions, entryFacts, parseModelJson, type CatalogEntry, type DocProfile,
 } from "../knowledgeCatalog";
 import { extractAnswerMeta } from "../knowledgeText";
 import { fillAcroForm, buildCompletedForm, toWinAnsi } from "../formFill";
@@ -45,20 +45,12 @@ describe("normalizeProfile", () => {
   });
 });
 
-describe("pipe classes", () => {
-  const classes = normalizePipeClasses({ classes: [
-    { code: "1s4", service: "Sour water", rating: "Class 150", rows: [
-      { component: "Pipe", size: "1/2-1-1/2", spec: "ASTM A312 TP304 SMLS", details: "Sch 80S" },
-      { component: "Pipe", size: "2-24", spec: "ASTM A312 TP304 WLD", details: "Sch 10S", notes: "100% RT" },
-      { component: "", spec: "dropped — no component" },
-    ] },
-    { code: "X", rows: [] },
-  ] });
-
-  it("keeps real classes, uppercases codes, drops empty rows", () => {
-    expect(classes).toHaveLength(1);
-    expect(classes[0].code).toBe("1S4");
-    expect(classes[0].rows).toHaveLength(2);
+describe("catalog entries", () => {
+  it("a profile guessed as a piping spec by an older version is an ordinary document again", () => {
+    const old = JSON.stringify({ v: 1, type: "pipe_spec", designation: null, title: "Specs", purpose: "", covers: [], references: [], profiledAt: "x", pipeSpec: { classes: 3 } });
+    const p = parseProfile(old)!;
+    expect(p.type).toBe("other");
+    expect((p as unknown as { pipeSpec?: unknown }).pipeSpec).toBeUndefined();
   });
 
   it("spots class codes in conversation, guarding short codes", () => {
@@ -68,10 +60,9 @@ describe("pipe classes", () => {
     expect(findClassMentions("21S45 pump", ["1S4"])).toEqual([]);
   });
 
-  it("renders trusted facts with document and page", () => {
-    const facts = pipeClassFacts([{ ...classes[0], documentName: "PS-100", page: 12 }]);
-    expect(facts).toContain("PIPE CLASS 1S4 — PS-100 p.12; service: Sour water; rating: Class 150");
-    expect(facts).toContain("Pipe [2-24]: ASTM A312 TP304 WLD (Sch 10S) — 100% RT");
+  it("renders trusted facts with the catalog's name, document and page", () => {
+    const facts = entryFacts([{ code: "1S4", catalog: "Valve sheets", service: "Sour water", rating: "Class 150", attrs: { Body: "WCB" }, documentName: "PS-100", page: 12 }]);
+    expect(facts).toContain("VALVE SHEETS ENTRY 1S4 — PS-100 p.12; for: Sour water; rating: Class 150; Body: WCB");
   });
 });
 

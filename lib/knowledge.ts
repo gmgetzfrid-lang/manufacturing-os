@@ -54,7 +54,7 @@ export interface KnowledgeAiFeatures {
 export const LIBRARY_KINDS = [
   { id: "mixed", label: "Mixed — figure it out per document" },
   { id: "standards", label: "Engineering standards / practices (EPs)" },
-  { id: "pipe_specs", label: "Piping specifications & material lists" },
+  { id: "pipe_specs", label: "Specifications, data sheets & material lists" },
   { id: "forms", label: "Forms & checklists" },
   { id: "std_drawings", label: "Standard drawings / typical details" },
   { id: "pids", label: "P&IDs & plant drawings" },
@@ -124,14 +124,16 @@ export type AskMode = "library" | "internet";
 export interface CandidateTable {
   /** How the shortlist was made, in words. */
   basis: string;
+  /** The name of the catalog the entries come from, when it is one. */
+  catalog?: string | null;
   total: number;
-  /** Classes matched only on a related word, left off the table. */
+  /** Entries matched only on a related word, left off the table. */
   related: number;
   /** Fields on which the shortlist differs — what would narrow it. */
   differ: Array<{ field: string; values: string[] }>;
   rows: Array<{
     code: string; documentId: string; documentName: string; fileKey: string | null; page: number;
-    rating: string | null; service: string | null; material: string | null; corrosionAllowance: string | null;
+    rating: string | null; service: string | null;
     attrs: Record<string, string>;
     matched: Array<{ term: string; how: "asker" | "company" | "lead" }>;
   }>;
@@ -1184,11 +1186,11 @@ export interface CatalogSummaryEntry {
   documentId: string; name: string; type: string; designation: string | null; title: string;
   purpose: string; checklistFor: string | null;
   form: { purpose: string; fillable: boolean; fieldCount: number } | null;
-  pipeSpec: { pagesDone: number; pageCount: number; classes: number; done: boolean } | null;
+  catalog: CatalogMarkInfo | null;
 }
 
 export async function getLibraryCatalog(orgId: string, libraryId: string): Promise<{
-  canMap: boolean; entries: CatalogSummaryEntry[]; unmapped: number; notReady: number;
+  canMap: boolean; entries: CatalogSummaryEntry[]; unmapped: number; notReady: number; catalogs: CatalogListingInfo[];
 }> {
   return apiGet(`/api/knowledge/catalog?orgId=${encodeURIComponent(orgId)}&libraryId=${encodeURIComponent(libraryId)}`);
 }
@@ -1197,13 +1199,13 @@ export async function getLibraryCatalog(orgId: string, libraryId: string): Promi
  *  pass makes no progress (then it says so instead of spinning). */
 export async function mapLibraryCatalog(
   orgId: string, libraryId: string,
-  onProgress?: (p: { profiled: number; pipePages: number; remaining: number }) => void,
+  onProgress?: (p: { profiled: number; remaining: number }) => void,
   documentId?: string,
 ): Promise<void> {
   let stalls = 0;
-  let total = { profiled: 0, pipePages: 0 };
+  let total = { profiled: 0 };
   for (let i = 0; i < 400; i++) {
-    let out: { profiled: number; pipePages: number; remaining: number; failed: number };
+    let out: { profiled: number; remaining: number; failed: number };
     try {
       out = await apiPost("/api/knowledge/catalog", { orgId, libraryId, ...(documentId ? { documentId } : {}) });
     } catch (e) {
@@ -1211,10 +1213,10 @@ export async function mapLibraryCatalog(
       await new Promise((r) => setTimeout(r, 1500 * stalls));
       continue;
     }
-    total = { profiled: total.profiled + out.profiled, pipePages: total.pipePages + out.pipePages };
+    total = { profiled: total.profiled + out.profiled };
     onProgress?.({ ...total, remaining: out.remaining });
     if (out.remaining === 0) return;
-    if (out.profiled === 0 && out.pipePages === 0) {
+    if (out.profiled === 0) {
       if (++stalls >= 3) {
         throw new Error(`Mapping stopped with ${out.remaining} document(s) left${out.failed ? ` — ${out.failed} failed to read` : ""}. Try again, or check your AI key and monthly budget.`);
       }
@@ -1222,40 +1224,26 @@ export async function mapLibraryCatalog(
   }
 }
 
-/** Index only the library's piping-spec books (found by content), class by
- *  class. Repeats bounded server rounds until every book is done. */
-export interface SpecIndexResult {
-  books: number; classes: number;
-  /** Per spec book: its name, classes recorded, and how it was read. */
-  report: Array<{ name: string; classes: number; how: string }>;
-  /** Large documents checked for being a spec book. */
-  checked: number;
+/** A catalog a person marked: a document whose sections are entries, or a
+ *  library whose documents are. */
+export interface CatalogMarkInfo {
+  name: string; entries: number; fields?: string[]; method?: string; readAt?: string; problem?: string;
+  markedAt?: string;
 }
-export async function indexPipeSpecs(
-  orgId: string, libraryId: string,
-  onProgress?: (p: { books: number; classes: number; pipePages: number; remaining: number }) => void,
-): Promise<SpecIndexResult> {
-  let stalls = 0;
-  let pages = 0;
-  let last: SpecIndexResult = { books: 0, classes: 0, report: [], checked: 0 };
-  for (let i = 0; i < 200; i++) {
-    let out: { pipePages: number; remaining: number; books: number; classes: number; report?: SpecIndexResult["report"]; checked?: number };
-    try {
-      out = await apiPost("/api/knowledge/catalog", { orgId, libraryId, action: "pipeSpecs" });
-    } catch (e) {
-      if (!(e as { transient?: boolean }).transient || ++stalls > 4) throw e;
-      await new Promise((r) => setTimeout(r, 1500 * stalls));
-      continue;
-    }
-    pages += out.pipePages;
-    last = { books: out.books, classes: out.classes, report: out.report ?? [], checked: out.checked ?? 0 };
-    onProgress?.({ books: out.books, classes: out.classes, pipePages: pages, remaining: out.remaining });
-    if (out.remaining === 0) return last;
-    if (out.pipePages === 0 && ++stalls >= 3) {
-      throw new Error(`Spec indexing stopped with ${out.remaining} document(s) still to check. Press it again to continue.`);
-    } else if (out.pipePages > 0) stalls = 0;
-  }
-  return last;
+export interface CatalogListingInfo {
+  name: string; scope: "document" | "library"; documentId?: string; documentName?: string;
+  libraryId: string; libraryName: string; mark: CatalogMarkInfo;
+}
+
+/** Mark a document (or, with no documentId, the library) as a catalog and
+ *  read it. Returns what reading it found. */
+export async function markCatalog(orgId: string, libraryId: string, name: string, documentId?: string): Promise<CatalogMarkInfo> {
+  const out = await apiPost<{ mark: CatalogMarkInfo }>("/api/knowledge/catalog", { orgId, libraryId, action: "markCatalog", name, ...(documentId ? { documentId } : {}) });
+  return out.mark;
+}
+
+export async function unmarkCatalog(orgId: string, libraryId: string, documentId?: string): Promise<void> {
+  await apiPost("/api/knowledge/catalog", { orgId, libraryId, action: "unmarkCatalog", ...(documentId ? { documentId } : {}) });
 }
 
 export interface DraftedFormField {

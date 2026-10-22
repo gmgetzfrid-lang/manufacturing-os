@@ -1,9 +1,8 @@
 "use client";
 
-// CandidateTablePanel — the shortlist behind a "which spec / class should I
-// use" answer: every class the catalog filter kept, with the fields an
-// engineer picks on, and what would narrow it further. Each class opens its
-// page in the spec book.
+// CandidateTablePanel — the shortlist behind a "which … should I use"
+// answer: every entry the catalog filter kept, with the fields its catalog
+// prints, and what would narrow it further. Each entry opens its page.
 
 import React from "react";
 import { ListFilter, ExternalLink } from "lucide-react";
@@ -14,26 +13,22 @@ export default function CandidateTablePanel({ table, onOpen }: {
   onOpen?: (row: CandidateTable["rows"][number]) => void;
 }) {
   // Extra columns: the printed fields the shortlist differs on.
-  const fieldCols = table.differ.map((d) => d.field)
-    .filter((f) => !/^(rating|material|corrosion allowance)$/i.test(f)).slice(0, 3);
-  const hasMaterial = table.rows.some((r) => r.material);
-  const hasCa = table.rows.some((r) => r.corrosionAllowance);
+  const fieldCols = table.differ.map((d) => d.field).filter((f) => !/^rating$/i.test(f)).slice(0, 4);
+  const hasRating = table.rows.some((r) => r.rating);
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
       <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
         <ListFilter className="w-4 h-4 text-[var(--color-accent)]" />
-        <span className="text-sm font-black text-[var(--color-text)]">Shortlist — {table.rows.length} class{table.rows.length === 1 ? "" : "es"}</span>
+        <span className="text-sm font-black text-[var(--color-text)]">Shortlist — {table.rows.length} {table.rows.length === 1 ? "entry" : "entries"}{table.catalog ? ` from ${table.catalog}` : ""}</span>
         <span className="text-[11px] text-[var(--color-text-muted)]">{table.basis}</span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-[12px]">
           <thead>
             <tr className="bg-[var(--color-surface-2)] text-left text-[9.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
-              <th className="px-3 py-1.5">Class</th>
-              <th className="px-3 py-1.5">Rating</th>
-              <th className="px-3 py-1.5">Service</th>
-              {hasMaterial && <th className="px-3 py-1.5">Material</th>}
-              {hasCa && <th className="px-3 py-1.5">CA</th>}
+              <th className="px-3 py-1.5">Code</th>
+              {hasRating && <th className="px-3 py-1.5">Rating</th>}
+              <th className="px-3 py-1.5">For</th>
               {fieldCols.map((f) => <th key={f} className="px-3 py-1.5">{f}</th>)}
               <th className="px-3 py-1.5">Matched on</th>
             </tr>
@@ -48,10 +43,8 @@ export default function CandidateTablePanel({ table, onOpen }: {
                     </button>
                   ) : <span className="font-mono font-bold">{r.code}</span>}
                 </td>
-                <td className="px-3 py-1.5 whitespace-nowrap font-mono">{r.rating ?? <span className="font-sans text-[10px] text-[var(--color-text-faint)]" title="Not read from the page — check it on the class sheet">not recorded</span>}</td>
+                {hasRating && <td className="px-3 py-1.5 whitespace-nowrap font-mono">{r.rating ?? <span className="font-sans text-[10px] text-[var(--color-text-faint)]" title="Not read from the page — check it on the entry's page">not recorded</span>}</td>}
                 <td className="px-3 py-1.5 min-w-[240px]">{r.service ?? "—"}</td>
-                {hasMaterial && <td className="px-3 py-1.5">{r.material ?? "—"}</td>}
-                {hasCa && <td className="px-3 py-1.5 whitespace-nowrap font-mono">{r.corrosionAllowance ?? "—"}</td>}
                 {fieldCols.map((f) => <td key={f} className="px-3 py-1.5 whitespace-nowrap">{r.attrs[f] ?? "—"}</td>)}
                 <td className="px-3 py-1.5">
                   <div className="flex flex-wrap gap-1">
@@ -71,7 +64,7 @@ export default function CandidateTablePanel({ table, onOpen }: {
       {(table.differ.length > 0 || table.related > 0) && (
         <div className="px-4 py-2 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] space-y-0.5">
           {table.differ.length > 0 && <div><b className="text-[var(--color-text)]">Narrow it by:</b> {table.differ.map((d) => `${d.field} (${d.values.join(" / ")})`).join(" · ")}</div>}
-          {table.related > 0 && <div>{table.related} more class{table.related === 1 ? "" : "es"} matched only on a related word — not shown.</div>}
+          {table.related > 0 && <div>{table.related} more {table.related === 1 ? "entry" : "entries"} matched only on a related word — not shown.</div>}
         </div>
       )}
     </div>

@@ -31,7 +31,7 @@ import { fetchAllRows } from "@/lib/fetchAllRows";
 import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { loadAnswerSkillRows, buildAnswerSkillsBlock, skillsInPlay } from "@/lib/answerSkillsServer";
-import { skillFits } from "@/lib/answerSkillsData";
+import { skillFits, searchNotesOf } from "@/lib/answerSkillsData";
 import { VISION_MODEL } from "@/lib/knowledgeVision";
 import { callAiModel, AiCallError, type AiProviderId, type AiCallInput } from "@/lib/ai/providerCall";
 import {
@@ -53,18 +53,18 @@ import {
 } from "@/lib/drawingText";
 import { renderKnowledgePages, MAX_DEEP_READ_PAGES } from "@/lib/knowledgePageRender";
 import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
-import { loadCatalog, loadPipeClasses } from "@/lib/knowledgeCatalogServer";
+import { loadCatalog, loadEntries, ENTRY_KIND } from "@/lib/knowledgeCatalogServer";
 import { pressureClassOf, pressureClassesOf, pressureClassNote } from "@/lib/pressureClass";
 import { AskTrace, saveAskTrace } from "@/lib/ask/askTraceServer";
 import { compactHit } from "@/lib/ask/askTrace";
 import { docsNamedIn as docsNamedInText, docsTitledIn, designationsIn, designationMatcher } from "@/lib/ask/designations";
 import { sweepTerms, sweepLibrary, sweepPassages, sweepBlock, type TermSweep } from "@/lib/ask/termSweep";
-import { isSelectionQuestion, filterCandidates, selectionBlock, distinguishers, normChem, guideTerms, type CatalogRecord, type Candidate } from "@/lib/specSelect";
+import { isSelectionQuestion, catalogsNamedIn, filterCandidates, selectionBlock, distinguishers, normChem, guideTerms, type CatalogRecord, type Candidate } from "@/lib/specSelect";
 import { leadsFor } from "@/lib/searchLeads";
-import type { PipeClassRecord } from "@/lib/knowledgeCatalog";
+import type { EntryRecord } from "@/lib/knowledgeCatalog";
 import { settleItems, keywordsOf, dropLibraryAsks, loosened } from "@/lib/ask/settleItems";
 import {
-  buildCatalogBlock, pipeClassFacts, findClassMentions, formsForGoal, matchCatalogName, FORM_PURPOSES,
+  buildCatalogBlock, entryFacts, findClassMentions, formsForGoal, matchCatalogName, FORM_PURPOSES,
   type CatalogEntry,
 } from "@/lib/knowledgeCatalog";
 
@@ -79,14 +79,15 @@ function candidateTableOf(
   const rows = (strong.length ? strong : sel.cands).slice(0, 40);
   const fileKey = new Map(docs.map((d) => [d.id, d.file_key]));
   return {
-    basis: `${sel.total} classes filtered by ${ratings.length ? `Class ${ratings.join(" / ")}` : "service only"} and service ` +
+    catalog: [...new Set(rows.map((r) => r.catalog).filter(Boolean))].join(", ") || null,
+    basis: `${sel.total} entries filtered by ${ratings.length ? `Class ${ratings.join(" / ")}` : "use only"} and ` +
       [...sel.askerTerms.map((t) => `“${t}”`), ...sel.companyTerms.map((t) => `“${t}” (the company's word for it)`)].join(", "),
     total: sel.total,
     related: sel.cands.length - rows.length,
     differ: distinguishers(rows),
     rows: rows.map((c) => ({
       code: c.code, documentId: c.documentId, documentName: c.documentName, fileKey: fileKey.get(c.documentId) ?? null, page: c.page,
-      rating: c.rating ?? null, service: c.service ?? null, material: c.material ?? null, corrosionAllowance: c.corrosionAllowance ?? null,
+      rating: c.rating ?? null, service: c.service ?? null,
       attrs: c.attrs ?? {}, matched: c.matched,
     })),
   };
@@ -395,7 +396,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       emit({ t: "status", text: "Searching the web" });
       const out = await call({
         system:
-          "You are the reference assistant for a refinery document control system. The user chose " +
+          "You are the reference assistant for a document control system. The user chose " +
           "INTERNET mode, so answer from the web / your general knowledge — this answer is explicitly " +
           "NOT from their controlled internal documents, and you must not pretend it is. Prefer " +
           "authoritative sources (standards bodies, manufacturers, regulators). Name the source of " +
@@ -458,12 +459,23 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
     }
   }
 
+  // Skills: the workspace's enabled ones, or exactly the ones the asker
+  // picked for this question in the prompt bar. Their SEARCH: notes shape
+  // the queries; the rest of each skill shapes the answer.
+  const pickedSkills = Array.isArray((body as { skills?: unknown }).skills)
+    ? ((body as { skills: unknown[] }).skills).filter((x): x is string => typeof x === "string" && /^[0-9a-f-]{36}$/i.test(x)).slice(0, 40)
+    : null;
+  const skillRows = await loadAnswerSkillRows(supabaseAdmin, orgId);
+  const inPlay = skillsInPlay(skillRows, user.id, pickedSkills);
+  const fitting = inPlay.filter((r) => skillFits(r, question));
+  const searchNotes = fitting.flatMap((r) => searchNotesOf(r.instructions)).slice(0, 12);
+
   try {
     // ── Step 1: question → search queries ────────────────────────────────
     emit({ t: "status", text: userImages.length > 0 ? "Reading your attachment and writing search queries" : "Writing search queries" });
     const queryText = await callFast({
       system:
-        'You generate full-text search queries for a technical document library at an oil refinery. ' +
+        'You generate full-text search queries for a technical document library. ' +
         'Given a question, reply with ONLY a JSON array of 2-5 short keyword queries (2-6 words each) ' +
         'that would find the relevant passages. Include exact designations (like "ASME B16.5") verbatim ' +
         'when present. Standards often use different wording than the question (e.g. "support spacing" ' +
@@ -475,15 +487,10 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
         '("sour gas", "lethal service", "AES", "category M"), add one query with the term as an exact quoted ' +
         'phrase in double quotes, and one with the term plus the word definition — the library\'s own wording governs, ' +
         'and a related term is not the same term. ' +
-        'PRESSURE CLASS: in piping, "class" with a number (150, 300, 600, 900, 1500, 2500) is the ' +
-        'ASME B16.5 pressure class / flange rating, also written 150#, 150 lb, #150, CL150, ANSI 150. ' +
-        'Write it as a quoted phrase ("class 150") plus a 150# / 150 lb variant, and never confuse 150 ' +
-        'with 1500. A PIPING CLASS or SPEC is a site code (e.g. FAAA1G, A1A) that carries a rating, ' +
-        'material and service — selection questions ("which spec for 150 class sour gas") get queries ' +
-        'for the piping class index / selection table and for the service (sour, wet H2S, NACE). ' +
-        'MATERIAL / PRODUCT-FORM ACCEPTABILITY questions ("can I use welded 304", "is A106 ok") ' +
-        'always get a query for the materials-selection tables ("acceptable piping materials ' +
-        'table", "Table 1 acceptable materials") alongside the material itself. ' +
+        (searchNotes.length > 0
+          ? 'HOW THIS WORKSPACE\'S DOCUMENTS WORD THINGS (from its skills that fit this question): ' +
+            searchNotes.map((n) => `- ${n}`).join(' ') + ' '
+          : '') +
         'DEVIATION / "WHY IS THIS REQUIRED" questions also get queries for the REASON behind the rule ' +
         '(the clause topic plus "because", "intent", "to prevent", "purpose") and for the exception or ' +
         'deviation process ("deviation request", "exception approval Owner\'s Engineer"). ' +
@@ -821,22 +828,22 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       } catch { /* conversation memory is additive — retrieval stands without it */ }
     }
 
-    // ── THE CATALOG: what the libraries hold, and pipe classes in play ────
-    // The model is told what exists — forms, checklists, specs, standard
+    // ── THE CATALOG: what the libraries hold, and catalog entries in play ─
+    // The model is told what exists — forms, checklists, catalogs, standard
     // drawings — so finding "the checklist for this" is the system's job.
-    // Pipe classes the conversation names come in as trusted table rows,
-    // and their pages join the passages so they can be cited and marked.
+    // Entries of a marked catalog that the conversation names come in as
+    // trusted facts, and their pages join the passages to be cited.
     const catalog = await loadCatalog(supabaseAdmin, {
       orgId, libraryIds: [libraryId, ...linkedLibraries.map((l) => l.id)], excludedDocIds,
     });
-    const pipeClasses = await loadPipeClasses(supabaseAdmin, {
+    const pipeClasses = await loadEntries(supabaseAdmin, {
       orgId, libraryIds: [libraryId, ...linkedLibraries.map((l) => l.id)], excludedDocIds,
       text: [question, ...history.slice(-3).map((t) => `${t.question}\n${t.answer.slice(0, 600)}`), inputs].join("\n"),
       match: findClassMentions,
       rating: pressureClassOf(question),
       question,
     });
-    trace.stage("pipe_classes", {
+    trace.stage("catalog_entries", {
       rating: pressureClassOf(question),
       classes: pipeClasses.map((r) => ({ code: r.code, documentId: r.documentId, page: r.page, rating: r.rating, service: r.service?.slice(0, 120), matched: r.matched })),
     });
@@ -933,20 +940,24 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
         type ClassRow = { document_id: string; page: number; tag: string; raw: string | null };
         const { rows: classRows } = await fetchAllRows<ClassRow>((from, to) => supabaseAdmin
           .from("knowledge_page_entities").select("document_id, page, tag, raw")
-          .eq("org_id", orgId).eq("kind", "pipe_class").order("id").range(from, to), 20_000);
+          .eq("org_id", orgId).eq("kind", ENTRY_KIND).order("id").range(from, to), 20_000);
         const docById = new Map(reachableDocs.map((d) => [d.id, d]));
         const records: CatalogRecord[] = [];
         for (const r of classRows) {
           const d = docById.get(r.document_id);
           if (!d) continue;
           try {
-            const rec = JSON.parse(r.raw ?? "{}") as PipeClassRecord;
+            const rec = JSON.parse(r.raw ?? "{}") as EntryRecord;
             records.push({
               code: r.tag, documentId: d.id, documentName: d.name, page: r.page,
-              rating: rec.rating, service: rec.service, material: rec.material, corrosionAllowance: rec.corrosionAllowance, attrs: rec.attrs,
+              rating: rec.rating, service: rec.service, attrs: rec.attrs, catalog: rec.catalog,
             });
           } catch { /* a bad record is skipped */ }
         }
+        // A question that names a marked catalog ("which piping spec…")
+        // is answered from that catalog alone.
+        const named = catalogsNamedIn(question, records.map((r) => r.catalog ?? "").filter(Boolean));
+        if (named.length > 0) records.splice(0, records.length, ...records.filter((r) => r.catalog && named.includes(r.catalog)));
         if (records.length > 0) {
           const askerTerms = sweepTerms(question, [], 6).filter((t) => !t.includes(" + "));
           // The company's own words for the asker's term: what its documents
@@ -1015,7 +1026,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
             chunks.push(tiered);
           }
           trace.stage("selection", {
-            catalog: records.length, ratings, askerTerms, companyTerms,
+            catalog: records.length, catalogs: named, ratings, askerTerms, companyTerms,
             candidates: cands.slice(0, 40).map((c) => ({ code: c.code, page: c.page, rating: c.rating, matched: c.matched })),
           });
         }
@@ -1885,13 +1896,13 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
     const catalogBlock = buildCatalogBlock(catalog);
     const catalogNote = catalogBlock
       ? "\n\nWHAT THE LIBRARIES HOLD — a catalog of every mapped document the user can reach. You know " +
-        "this library: when a form, checklist, procedure, standard drawing, pipe class or standard in it " +
+        "this library: when a form, checklist, procedure, standard drawing, catalog entry or standard in it " +
         "fits what the user is doing, say so — never make them ask whether one exists:\n" + catalogBlock
       : "";
     const pipeClassNote = pipeClasses.length > 0
-      ? "\n\nPIPE CLASS FACTS — extracted from the printed class tables; TRUST these rows for what a class " +
-        "calls for (component, size range, spec and grade, seamless or welded). Their pages are among the " +
-        "passages — cite those [n]:\n" + pipeClassFacts(pipeClasses)
+      ? "\n\nCATALOG ENTRY FACTS — read from the opening pages of a catalog a person marked; TRUST these " +
+        "fields as printed, and read the entry's pages (among the passages — cite those [n]) for its tables:\n" +
+        entryFacts(pipeClasses)
       : "";
     const standing =
       (aiInstructions
@@ -2002,13 +2013,8 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
     // private ones.
     // Skills: the workspace's enabled ones, or exactly the ones the asker
     // picked for this question in the prompt bar.
-    const pickedSkills = Array.isArray((body as { skills?: unknown }).skills)
-      ? ((body as { skills: unknown[] }).skills).filter((x): x is string => typeof x === "string" && /^[0-9a-f-]{36}$/i.test(x)).slice(0, 40)
-      : null;
-    const skillRows = await loadAnswerSkillRows(supabaseAdmin, orgId);
-    const inPlay = skillsInPlay(skillRows, user.id, pickedSkills);
-    skillsApplied = inPlay.filter((r) => skillFits(r, question)).map((r) => ({ id: r.id ?? "", name: r.name }));
-    trace.stage("skills", { picked: pickedSkills, inPlay: inPlay.map((r) => r.name), applied: skillsApplied.map((x) => x.name) });
+    skillsApplied = fitting.map((r) => ({ id: r.id ?? "", name: r.name }));
+    trace.stage("skills", { picked: pickedSkills, inPlay: inPlay.map((r) => r.name), applied: skillsApplied.map((x) => x.name), searchNotes: searchNotes.length });
     const orgInstructions =
       (await loadOrgInstructionsBlock(supabaseAdmin, orgId, "knowledge")) +
       buildAnswerSkillsBlock(skillRows, user.id, pickedSkills) +

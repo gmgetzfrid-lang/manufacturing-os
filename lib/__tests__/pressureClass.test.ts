@@ -56,10 +56,10 @@ describe("rankByRatingAndService", () => {
   });
 });
 
-describe("pipeClassFacts says why each class was found", () => {
+describe("entryFacts says why each entry was found", () => {
   it("labels a related-term match as a lead", async () => {
-    const { pipeClassFacts } = await import("@/lib/knowledgeCatalog");
-    const text = pipeClassFacts([{ code: "WET1", rating: "150", service: "Wet H2S", rows: [], documentName: "Spec", page: 3, matched: { literal: [], leads: ["wet h2s"] } }]);
+    const { entryFacts } = await import("@/lib/knowledgeCatalog");
+    const text = entryFacts([{ code: "WET1", rating: "150", service: "Wet H2S", documentName: "Spec", page: 3, matched: { literal: [], leads: ["wet h2s"] } }]);
     expect(text).toMatch(/RELATED term \(wet h2s\) — a lead only/);
   });
 });

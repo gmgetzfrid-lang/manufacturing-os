@@ -292,7 +292,7 @@ describe("Reasoning Skills — built-ins and prompt block", () => {
     const { BUILTIN_ANSWER_SKILLS } = await import("@/lib/answerSkillsData");
     const keys = new Set(BUILTIN_ANSWER_SKILLS.map((b) => b.builtin_key));
     expect(keys.size).toBe(BUILTIN_ANSWER_SKILLS.length);
-    expect(BUILTIN_ANSWER_SKILLS.length).toBe(7);
+    expect(BUILTIN_ANSWER_SKILLS.length).toBe(8);
     for (const b of BUILTIN_ANSWER_SKILLS) {
       expect(b.name.length).toBeGreaterThan(3);
       expect(b.instructions).toMatch(/APPLIES WHEN/);

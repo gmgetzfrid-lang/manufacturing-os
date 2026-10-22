@@ -33,7 +33,9 @@ export function buildAnswerSkillsBlock(rows: SkillRow[], askerId: string | null,
   const parts: string[] = [];
   let used = 0;
   for (const r of applicable) {
-    const chunk = `### Skill: ${r.name}\n${r.instructions.trim()}`;
+    // SEARCH: lines are for the query writer, not the answer.
+    const body = r.instructions.split("\n").filter((l) => !/^\s*SEARCH:/i.test(l)).join("\n").trim();
+    const chunk = `### Skill: ${r.name}\n${body}`;
     if (used + chunk.length > BLOCK_BUDGET_CHARS) break;
     parts.push(chunk);
     used += chunk.length;

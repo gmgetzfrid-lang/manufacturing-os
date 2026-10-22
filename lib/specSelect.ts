@@ -2,11 +2,11 @@
 // an engineer does: filter the catalog, then narrow.
 //
 // A selection question isn't answered by finding a sentence. The library
-// holds a catalog — piping classes, each with a rating, a service
-// description, a material, a corrosion allowance, a temperature range — and
-// the answer is the catalog filtered by what the asker gave (the rating, the
-// service in their words AND in the words the company's documents use for
-// it), followed by what would narrow it further: the fields on which the
+// holds a catalog a person marked — entries keyed by a code, each with the
+// fields it prints (a rating, what it's for, a material…) — and the answer
+// is the catalog filtered by what the asker gave (the rating, the use in
+// their words AND in the words the company's documents use for it),
+// followed by what would narrow it further: the fields on which the
 // remaining candidates differ. Pure functions; the engine feeds them the
 // records and the term ties it found.
 
@@ -17,10 +17,10 @@ export interface CatalogRecord {
   page: number;
   rating?: string;
   service?: string;
-  material?: string;
-  corrosionAllowance?: string;
-  /** Other "Label: value" fields printed on the class's opening page. */
+  /** Other "Label: value" fields printed on the entry's opening page. */
   attrs?: Record<string, string>;
+  /** The name a person gave the catalog it belongs to. */
+  catalog?: string;
 }
 
 export interface Candidate extends CatalogRecord {
@@ -131,12 +131,21 @@ export function distinguishers(cands: Candidate[]): Array<{ field: string; value
   const put = (k: string, v?: string) => { if (!v) return; const s = fields.get(k) ?? new Set<string>(); s.add(v.trim()); fields.set(k, s); };
   for (const c of cands) {
     put("Rating", c.rating);
-    put("Material", c.material);
-    put("Corrosion allowance", c.corrosionAllowance);
     for (const [k, v] of Object.entries(c.attrs ?? {})) if (!/^services?$/i.test(k)) put(k, v);
   }
   return [...fields].filter(([, v]) => v.size > 1).map(([field, v]) => ({ field, values: [...v].slice(0, 6) }))
     .sort((a, b) => b.values.length - a.values.length).slice(0, 6);
+}
+
+/** The marked catalogs a question names, by the name a person gave them:
+ *  "what piping spec…" names a catalog called "Piping specs". */
+export function catalogsNamedIn(question: string, names: string[]): string[] {
+  const stem = (w: string) => w.toLowerCase().replace(/(ies)$/, "y").replace(/(s|es)$/, "");
+  const q = new Set(question.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map(stem));
+  return [...new Set(names)].filter((n) => {
+    const words = n.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2 && !["the", "and", "our", "for", "all"].includes(w)).map(stem);
+    return words.length > 0 && words.every((w) => q.has(w));
+  });
 }
 
 /** Where a library explains how to select and what its codes mean: its
@@ -156,23 +165,23 @@ export function selectionBlock(cands: Candidate[], o: {
 }): string {
   if (cands.length === 0) {
     return `\n\nCATALOG FILTERED — the catalog of ${o.total} classes was filtered by ${o.ratings.length ? `rating ${o.ratings.join("/")}` : "no rating"} ` +
-      `and service words ${[...o.askerTerms, ...o.companyTerms].map((t) => `"${t}"`).join(", ")}: NO class matched.`;
+      `and the words ${[...o.askerTerms, ...o.companyTerms].map((t) => `"${t}"`).join(", ")}: NO entry matched.`;
   }
   const strong = cands.filter((c) => c.matched.some((m) => m.how !== "lead"));
   const shown = (strong.length ? strong : cands).slice(0, 24);
   const lines = shown.map((c) => {
     const why = c.matched.map((m) => (m.how === "asker" ? `"${m.term}" (asker's word)` : m.how === "company" ? `"${m.term}" (company's word for it)` : `"${m.term}" (related only)`)).join(", ");
-    const fields = [c.rating ? `rating ${c.rating}` : "rating not recorded — read it on the page or from the code's legend", c.material && `material ${c.material}`, c.corrosionAllowance && `CA ${c.corrosionAllowance}`,
+    const fields = [c.rating ? `rating ${c.rating}` : "rating not recorded — read it on the page or from the code's legend",
       ...Object.entries(c.attrs ?? {}).filter(([k]) => !/^services?$/i.test(k)).slice(0, 4).map(([k, v]) => `${k} ${v}`)].filter(Boolean).join(" · ");
     const n = o.cite(c);
-    return `- ${c.code}${n ? ` [${n}]` : ""} — ${c.documentName.replace(/\.pdf$/i, "")} p.${c.page} — service: "${(c.service ?? "").slice(0, 160)}"${fields ? ` — ${fields}` : ""} — matched ${why}`;
+    return `- ${c.code}${n ? ` [${n}]` : ""} — ${c.catalog ? `${c.catalog}, ` : ""}${c.documentName.replace(/\.pdf$/i, "")} p.${c.page} — for: "${(c.service ?? "").slice(0, 160)}"${fields ? ` — ${fields}` : ""} — matched ${why}`;
   });
   const split = distinguishers(shown);
-  return "\n\nCATALOG FILTERED — every class in the libraries " +
-    `(${o.total}) was filtered by ${o.ratings.length ? `rating ${o.ratings.map((r) => `Class ${r}`).join(" or ")}` : "service only (no rating given)"} ` +
-    `and by service words ${[...o.askerTerms.map((t) => `"${t}"`), ...o.companyTerms.map((t) => `"${t}" (the company's word for it)`)].join(", ")}. ` +
+  return "\n\nCATALOG FILTERED — every catalog entry in the libraries " +
+    `(${o.total}) was filtered by ${o.ratings.length ? `rating ${o.ratings.map((r) => `Class ${r}`).join(" or ")}` : "use only (no rating given)"} ` +
+    `and by the words ${[...o.askerTerms.map((t) => `"${t}"`), ...o.companyTerms.map((t) => `"${t}" (the company's word for it)`)].join(", ")}. ` +
     `${strong.length || cands.length} matched${strong.length && strong.length < cands.length ? ` (${cands.length - strong.length} more only on a related word)` : ""}:\n` +
     lines.join("\n") +
     (split.length ? `\nTHEY DIFFER ON: ${split.map((d) => `${d.field} (${d.values.join(" / ")})`).join("; ")}.` : "") +
-    "\nA table of these classes is shown to the user with your answer.";
+    "\nA table of these entries is shown to the user with your answer.";
 }

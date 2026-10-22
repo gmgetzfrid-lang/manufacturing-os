@@ -461,7 +461,7 @@ export default function KnowledgeLibraryPage() {
       )}
 
       {/* What the assistant knows is in here — forms, checklists, specs. */}
-      {activeOrgId && readyDocs > 0 && <LibraryMapPanel orgId={activeOrgId} libraryId={libraryId} />}
+      {activeOrgId && readyDocs > 0 && <LibraryMapPanel orgId={activeOrgId} libraryId={libraryId} libraryName={library.name} docs={docs} />}
 
       {/* Proof the answers hold up: real questions, re-asked and scored. */}
       {activeOrgId && isController && readyDocs > 0 && <AnswerTestsPanel orgId={activeOrgId} libraryId={libraryId} />}

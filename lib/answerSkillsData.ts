@@ -21,7 +21,9 @@ export interface BuiltinAnswerSkillDef {
   builtin_key: string;
   name: string;
   description: string;
-  /** The instruction pack injected into the answer prompt when enabled. */
+  /** The instruction pack injected into the answer prompt when enabled.
+   *  Lines that start "SEARCH:" go to the step that writes the search
+   *  queries instead — how this field's documents word things. */
   instructions: string;
   /** What a question that this skill fits looks like (a regex source) — so
    *  the prompt bar can say "this skill will apply" as you type. */
@@ -172,7 +174,37 @@ export const BUILTIN_ANSWER_SKILLS: BuiltinAnswerSkillDef[] = [
       "- If nothing narrows it further, give the best shortlist and say plainly which decisions remain the " +
       "asker's (or the Owner's Engineer's) and on what basis.",
   },
+  {
+    builtin_key: "pressure_ratings",
+    cue: "\\b(class|cl\\.?|ansi|asme)\\s*#?\\s*\\d{3,4}\\b|\\b\\d{3,4}\\s*(#|lbs?\\b|pound)|#\\s*\\d{3,4}\\b|\\bflanges?\\b|\\b(piping|line|pipe) (spec|class)",
+    name: "Flange Ratings & Line Classes",
+    description:
+      "Reads piping questions the way a piping engineer does: \"150 class\" is a flange rating in any of its " +
+      "notations, never 1500, and a line class is a site code that carries a rating, material and service.",
+    instructions:
+      "APPLIES WHEN the question involves a flange rating, pressure class or piping line class (\"150 class\", " +
+      "\"300#\", \"which piping spec\"). Otherwise ignore this skill.\n" +
+      "- \"Class\" with a number (150, 300, 600, 900, 1500, 2500) is the ASME B16.5 pressure class / flange " +
+      "rating, however it is written: 150#, 150 lb, #150, CL150, ANSI 150. 150 is never 1500 — say which class " +
+      "every cited table or entry is for.\n" +
+      "- A piping (line) class or spec is the site's own code (its legend says what each character means) — it " +
+      "carries a rating, material and service. Name the code AND its rating when you recommend one.\n" +
+      "- Where two ratings meet (a 300 class flange on a 150 class line, a nozzle rated differently from the " +
+      "line), state which rating governs each part and quote the rule that says so.\n" +
+      "SEARCH: write a pressure class as a quoted phrase (\"class 150\") plus a 150# / 150 lb variant; never " +
+      "confuse 150 with 1500.\n" +
+      "SEARCH: selection questions (\"which spec for 150 class sour gas\") get queries for the line class " +
+      "index or selection table and for the service in the asker's words.\n" +
+      "SEARCH: material or product-form acceptability questions (\"can I use welded 304\", \"is A106 ok\") get a " +
+      "query for the acceptable-materials table alongside the material itself.",
+  },
 ];
+
+/** The skill's search notes — its "SEARCH:" lines — for the step that
+ *  writes the search queries. */
+export function searchNotesOf(instructions: string): string[] {
+  return instructions.split("\n").map((l) => l.trim()).filter((l) => /^SEARCH:/i.test(l)).map((l) => l.replace(/^SEARCH:\s*/i, ""));
+}
 
 /** Does a skill fit this question? Built-ins carry a cue; a workspace's own
  *  skill is matched on the examples quoted in its APPLIES WHEN line. A hint

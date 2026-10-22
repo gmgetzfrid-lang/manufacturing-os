@@ -3,7 +3,7 @@ import { isSelectionQuestion, filterCandidates, distinguishers, openingFields, l
 
 // The Service Index rows from the real question, plus distractors.
 const rec = (code: string, rating: string, service: string, ca: string, temp: string, material: string): CatalogRecord =>
-  ({ code, documentId: "spec", documentName: "E2G Piping Specs (All).pdf", page: 1, rating, service, corrosionAllowance: ca, material, attrs: { "Temperature Range": temp } });
+  ({ code, documentId: "spec", documentName: "E2G Piping Specs (All).pdf", page: 1, rating, service, attrs: { "Corrosion Allowance": ca, "Temperature Range": temp, "Pipe Material": material } });
 const catalog = [
   rec("AAAC2H", "150", "Hydrocarbon and/or Hydrogen Rich Service, Sour Service (200 BHN MAX)", "0.125", "-20 - 450", "CS - PWHT if wall thk.>3/4"),
   rec("AAAW2H", "150", "Wet H2S Per EP 10-2-1, DEA Service (150 F Max), Hydrogen", "0.125", "-20 - 800", "CS - PWHT if wall thk.>3/4"),
@@ -31,10 +31,10 @@ describe("selection: filter the catalog, then narrow", () => {
   it("names what splits the shortlist", () => {
     const c = filterCandidates(catalog, { ratings: ["150"], askerTerms: ["sour"], companyTerms: ["wet h2s"], leadTerms: [] });
     const fields = distinguishers(c).map((d) => d.field);
-    expect(fields).toEqual(expect.arrayContaining(["Corrosion allowance", "Temperature Range", "Material"]));
+    expect(fields).toEqual(expect.arrayContaining(["Corrosion Allowance", "Temperature Range", "Pipe Material"]));
     const text = selectionBlock(c, { ratings: ["150"], askerTerms: ["sour"], companyTerms: ["wet h2s"], total: 700, cite: () => null });
-    expect(text).toMatch(/every class in the libraries \(700\)/);
-    expect(text).toMatch(/THEY DIFFER ON: .*Corrosion allowance/);
+    expect(text).toMatch(/every catalog entry in the libraries \(700\)/);
+    expect(text).toMatch(/THEY DIFFER ON: .*Corrosion Allowance/);
   });
   it("reads labelled fields off a class's opening page, learning the labels from the book", () => {
     const page = (svc: string, r: string, mat: string) => `Service: ${svc} Rating: ${r} Corrosion Allowance: 0.250 in. Temperature Range: -20 - 800 Pipe Material: ${mat} Valve Trim: 316 SS w/ Stellite Seat`;

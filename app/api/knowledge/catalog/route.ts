@@ -1,12 +1,15 @@
 // /api/knowledge/catalog — the library's map of what it holds.
 //
 // GET  ?orgId&libraryId → every document's profile (type, designation,
-//      purpose, form fields, pipe-class progress) plus what is still
-//      unmapped. Any active member.
+//      purpose, form fields), the catalogs marked here and in linked
+//      libraries, and what is still unmapped. Any active member.
 // POST { orgId, libraryId, documentId? } → one bounded mapping pass:
-//      profile unprofiled documents, advance pipe-class extraction. The
-//      client calls again until `remaining` is 0. Admin/DocCtrl only — it
-//      writes the shared catalog — on the caller's own key, fast tier.
+//      profile unprofiled documents. The client calls again until
+//      `remaining` is 0. Admin/DocCtrl only — it writes the shared catalog —
+//      on the caller's own key, fast tier.
+// POST { action: "markCatalog", name, documentId? } → mark a document (its
+//      sections are entries) or this library (its documents are) as a
+//      catalog and read it from its text. "unmarkCatalog" removes it.
 
 import { NextRequest, NextResponse } from "next/server";
 import { fetchAllRows } from "@/lib/fetchAllRows";
@@ -15,7 +18,7 @@ import { openAiKey } from "@/lib/ai/keyVault";
 import { ALLOWED_PROVIDERS, type AiUsage } from "@/lib/ai/pricing";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import type { AiProviderId } from "@/lib/ai/providerCall";
-import { drainPipeSpecs, drainCatalog, profilesFor } from "@/lib/knowledgeCatalogServer";
+import { drainCatalog, profilesFor, listCatalogs, markCatalog, unmarkCatalog } from "@/lib/knowledgeCatalogServer";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -60,13 +63,11 @@ export async function GET(req: NextRequest) {
         documentId: d.id, name: d.name, type: p.type, designation: p.designation, title: p.title,
         purpose: p.purpose, checklistFor: p.checklistFor ?? null,
         form: p.form ? { purpose: p.form.purpose, fillable: p.form.fillable, fieldCount: p.form.fields.length } : null,
-        pipeSpec: p.pipeSpec ?? null,
+        catalog: p.catalog ?? null,
       };
     }),
-    unmapped: ready.filter((d) => {
-      const p = profiles.get(d.id);
-      return !p || (p.type === "pipe_spec" && !p.pipeSpec?.done);
-    }).length,
+    unmapped: ready.filter((d) => !profiles.has(d.id)).length,
+    catalogs: await listCatalogs(supabaseAdmin, { orgId, libraryId }),
     notReady: list.length - ready.length,
   });
 }
@@ -74,7 +75,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const user = await authUser(req);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  let body: { orgId?: string; libraryId?: string; documentId?: string; action?: string };
+  let body: { orgId?: string; libraryId?: string; documentId?: string; action?: string; name?: string };
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Expected JSON body" }, { status: 400 }); }
   const orgId = String(body.orgId ?? "");
   const libraryId = String(body.libraryId ?? "");
@@ -82,6 +83,29 @@ export async function POST(req: NextRequest) {
   const roles = await memberRoles(orgId, user.id);
   if (!roles || (!roles.has("Admin") && !roles.has("DocCtrl"))) {
     return NextResponse.json({ error: "Only Admins and Document Control can map a library." }, { status: 403 });
+  }
+
+  // Marking a catalog: a person says what a document (or this library) is —
+  // "Piping specs", "Valve data sheets" — and it's read from its text. No
+  // AI, so no key needed.
+  if (body.action === "markCatalog" || body.action === "unmarkCatalog") {
+    if (body.documentId) {
+      const { data: doc } = await supabaseAdmin.from("knowledge_documents").select("id")
+        .eq("id", body.documentId).eq("org_id", orgId).eq("library_id", libraryId).maybeSingle();
+      if (!doc) return NextResponse.json({ error: "That document isn't in this library." }, { status: 404 });
+    }
+    try {
+      if (body.action === "unmarkCatalog") {
+        await unmarkCatalog(supabaseAdmin, { orgId, libraryId, documentId: body.documentId || undefined });
+        return NextResponse.json({ ok: true });
+      }
+      const name = String(body.name ?? "").trim();
+      if (!name) return NextResponse.json({ error: "Give the catalog a name — what your team calls it." }, { status: 400 });
+      const mark = await markCatalog(supabaseAdmin, { orgId, libraryId, documentId: body.documentId || undefined, name, by: user.id });
+      return NextResponse.json({ mark });
+    } catch (e) {
+      return NextResponse.json({ error: `Couldn't read the catalog: ${(e as Error).message}` }, { status: 502 });
+    }
   }
   const { data: conn } = await supabaseAdmin
     .from("ai_connections").select("provider, model, api_key")
@@ -97,18 +121,15 @@ export async function POST(req: NextRequest) {
   const usage: AiUsage = { inputTokens: 0, outputTokens: 0 };
   let usedModel = conn.model as string;
   try {
-    // "pipeSpecs": index only the library's piping-spec books, by content.
     const conn2 = {
       provider: conn.provider as AiProviderId, model: conn.model as string, apiKey: openAiKey(conn.api_key as string),
       onUsage: (u: AiUsage, model: string) => { usage.inputTokens += u.inputTokens; usage.outputTokens += u.outputTokens; usedModel = model; },
     };
-    const result = body.action === "pipeSpecs"
-      ? await drainPipeSpecs(supabaseAdmin, { orgId, libraryId, deadlineMs: Date.now() + BUDGET_MS, conn: conn2 })
-      : await drainCatalog(supabaseAdmin, {
-        orgId, libraryId, documentId: body.documentId || undefined,
-        deadlineMs: Date.now() + BUDGET_MS,
-        conn: conn2,
-      });
+    const result = await drainCatalog(supabaseAdmin, {
+      orgId, libraryId, documentId: body.documentId || undefined,
+      deadlineMs: Date.now() + BUDGET_MS,
+      conn: conn2,
+    });
     await recordAskUsage({ orgId, userId: user.id, provider: conn.provider as string, model: usedModel, usage, ok: true, op: "knowledgeCatalog" });
     return NextResponse.json(result);
   } catch (e) {

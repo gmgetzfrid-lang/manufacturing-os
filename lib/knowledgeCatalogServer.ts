@@ -6,9 +6,9 @@
 //      first pages' text (plus, for PDFs with fillable fields, the field
 //      names read straight from the file). Works on documents already
 //      indexed — no re-index needed to build a catalog.
-//   2. For piping specs, EXTRACT PIPE CLASSES page by page from the printed
-//      page images (tables survive images; they rarely survive text layers),
-//      a couple of pages per call, progress kept on the profile.
+//   2. READ THE CATALOGS people marked ("Piping specs", "Valve data
+//      sheets"): a marked document's sections, or a marked library's
+//      documents, become entries — from the indexed text, no AI.
 //
 // Billing: the triggering user's own key, fast tier, metered as
 // knowledgeCatalog — same model as vision indexing.
@@ -19,16 +19,13 @@ import { callAiModel, type AiProviderId } from "@/lib/ai/providerCall";
 import type { AiUsage } from "@/lib/ai/pricing";
 import { VISION_MODEL } from "@/lib/knowledgeVision";
 import { fetchBytes } from "@/lib/r2Bytes";
-import { renderPdfPages } from "@/lib/knowledgePageRender";
 import { questionWords, leadsFor } from "@/lib/searchLeads";
 import { fetchAllRows } from "@/lib/fetchAllRows";
-import { findRunningKey, findParenKeys } from "@/lib/sectionTemplate";
-import { classMentions } from "@/lib/pressureClass";
-import { openingFields, labelCounts } from "@/lib/specSelect";
-import { inSlices } from "@/lib/inSlices";
+import { findSections } from "@/lib/sectionTemplate";
+import { sectionRecords, setRecords, type EntryRecord } from "@/lib/catalogBooks";
 import {
-  normalizeProfile, normalizePipeClasses, parseProfile, parseModelJson,
-  type CatalogEntry, type DocProfile, type FieldKind, type PipeClassRecord,
+  normalizeProfile, parseProfile, parseModelJson,
+  type CatalogEntry, type CatalogMark, type DocProfile, type FieldKind,
 } from "@/lib/knowledgeCatalog";
 
 export interface CatalogConn {
@@ -95,7 +92,6 @@ const PROFILE_SYSTEM =
   '"checklistFor": "..."}\n\n' +
   "type — exactly one of:\n" +
   "- standard: an engineering practice / standard / specification written as clauses (e.g. \"EP 5-2-1 Selection of Piping Components and Materials\")\n" +
-  "- pipe_spec: a piping class / material specification — tables listing, per pipe class, the components, sizes and ASTM/API specs\n" +
   "- form: a blank form to fill in (deviation or waiver request, NCR, MOC, technical query, permit, test record)\n" +
   "- checklist: a checklist used while doing work (inspection, hydrotest, flange joint assembly, pre-startup)\n" +
   "- std_drawing: a standard or typical detail drawing\n" +
@@ -156,183 +152,11 @@ async function writeProfile(admin: SupabaseClient, doc: DocRow, profile: DocProf
   });
 }
 
-const PIPE_SYSTEM =
-  "You read pages of a piping material specification. Extract every PIPE CLASS whose component table appears " +
-  "on these pages. Reply with ONLY JSON:\n" +
-  '{"classes": [{"code": "...", "page": 0, "service": "...", "rating": "...", "material": "...", ' +
-  '"corrosionAllowance": "...", "rows": [{"component": "...", "size": "...", "spec": "...", "details": "...", "notes": "..."}], "notes": ["..."]}]}\n' +
-  "- code: the class designation exactly as printed (\"1S4\", \"A1A\", \"CS-150-01\"). page: the page number it is on.\n" +
-  "- component: Pipe, Nipple, Elbow, Tee, Reducer, Cap, Flange, Blind, Gasket, Stud bolt, Nut, Valve-Gate, Valve-Ball, Branch…\n" +
-  "- size: the size range as printed (\"1/2-1-1/2\", \"2-24\").\n" +
-  "- spec: material specification and grade AS PRINTED, keeping product-form words — Seamless, Welded, ERW, EFW, " +
-  "SMLS, WLD (\"ASTM A312 TP304 SMLS\", \"ASTM A106 Gr B\").\n" +
-  "- details: schedule / wall, pressure class, end prep, facing (\"Sch 40S, BW\", \"Cl 150 RF WN\").\n" +
-  "- notes: the row's note text or note numbers; class-level notes go in the class \"notes\" list, quoted.\n" +
-  "Copy exactly; never infer a value that isn't printed. A class continued from an earlier page still gets its " +
-  "rows here with its code. No class table on these pages → {\"classes\": []}.";
-
-/** A page likely holds a pipe-class table: material specs and size/class words. */
-const PIPE_PAGE_RE = /\b(A\s?\d{2,3}|B16\.\d+|API\s?(5L|6D|600|602)|SCH(EDULE)?|SMLS|SEAMLESS|CLASS\s*\d{3,4}|RATING)\b/i;
-
-/** Spec books whose sections can be found from their own text — a running
- *  header, or the code repeated in each table heading ("Fitting (AAAA1)")
- *  — are mapped class by class from the TEXT, with no AI: each class's
- *  code, pages, opening line (its service description) and rating (the
- *  class most written on its pages). Fast and free, so a 2,000-page book
- *  is mapped in one pass. Returns null when no sections can be found. */
-async function extractPipeClassesFromText(
-  admin: SupabaseClient, _conn: CatalogConn | null, doc: DocRow, profile: DocProfile, _deadlineMs: number,
-): Promise<number | null> {
-  // The first two chunks of every page: where a header, a service line and
-  // the first table headings are.
-  const { rows } = await fetchAllRows<{ page: number; seq: number; content: string }>((from, to) => admin
-    .from("knowledge_chunks").select("page, seq, content").eq("document_id", doc.id).lte("seq", 1)
-    .order("page", { ascending: true }).order("seq", { ascending: true }).range(from, to), 20_000);
-  const byPage = new Map<number, string[]>();
-  for (const r of rows) byPage.set(r.page, [...(byPage.get(r.page) ?? []), r.content]);
-  const tops = [...byPage].map(([page, parts]) => ({ page, text: parts[0] ?? "" }));
-  const full = [...byPage].map(([page, parts]) => ({ page, text: parts.join("\n") }));
-  const found = findRunningKey(tops) ?? findParenKeys(full);
-  if (!found || found.ranges.length < 2) return null;
-
-  const records = sectionRecords(found.ranges, byPage);
-  await admin.from("knowledge_page_entities").delete().eq("document_id", doc.id).eq("kind", "pipe_class");
-  for (let i = 0; i < records.length; i += 300) {
-    await admin.from("knowledge_page_entities").insert(records.slice(i, i + 300).map((rec) => ({
-      org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
-      page: rec.page, kind: "pipe_class", tag: rec.code, raw: JSON.stringify(rec.record),
-    })));
-  }
-  const pageCount = doc.page_count ?? full.length;
-  profile.pipeSpec = { pagesDone: pageCount, pageCount, classes: records.length, done: true, method: TEXT_METHOD };
-  await writeProfile(admin, doc, profile);
-  return pageCount;
-}
-
-/** Which text mapper produced a book's classes — bumped when it learns to
- *  read more, so mapped books are re-read (it costs nothing). */
-const TEXT_METHOD = "text-v3";
-
-/** One record per section: code, first page, opening line, dominant rating. */
-export function sectionRecords(ranges: Array<{ key: string; first: number; last: number }>, byPage: Map<number, string[]>) {
-  const seen = new Set<string>();
-  const out: Array<{ code: string; page: number; record: PipeClassRecord }> = [];
-  // Field labels are learned from the whole book: the wording that repeats
-  // on every class's opening page.
-  const counts = labelCounts(ranges.map((r) => (byPage.get(r.first) ?? []).join(" ")));
-  for (const r of ranges) {
-    const code = r.key.toUpperCase().slice(0, 30);
-    if (seen.has(`${code}:${r.first}`)) continue;
-    seen.add(`${code}:${r.first}`);
-    const firstText = (byPage.get(r.first) ?? [])[0] ?? "";
-    // The opening line: the text before the first table heading, or the
-    // first sentence — in most books, the class's service description.
-    const opening = firstText.replace(/\s+/g, " ").trim()
-      .split(/\s(?=[A-Z][A-Za-z]+(?: [A-Z][A-Za-z]+)? \([A-Z0-9][A-Z0-9.-]{2,11}\))|(?<=[.;])\s/)[0]
-      .slice(0, 240);
-    let text = "";
-    for (let p = r.first; p <= r.last; p++) text += " " + (byPage.get(p) ?? []).join(" ");
-    const mentions = classMentions(text);
-    // Labelled fields printed on the opening page ("Rating: 150",
-    // "Corrosion Allowance: 0.125") — printed values beat counted ones.
-    // A value ends where the first table begins ("… Pipe (AAAC2H) Compcode …").
-    const cut = (v: string) => v.split(/\s(?=[A-Z][A-Za-z]+(?: [A-Z][A-Za-z]+)? \([A-Z0-9][A-Z0-9.-]{2,11}\))/)[0].trim();
-    const fields = Object.fromEntries(Object.entries(openingFields((byPage.get(r.first) ?? []).join(" "), counts))
-      .map(([k, v]) => [k, cut(v)] as const).filter(([, v]) => v));
-    const pick = (re: RegExp) => Object.entries(fields).find(([k]) => re.test(k))?.[1];
-    const service = pick(/^services?( description)?$/i) ?? opening.replace(/^services?\s*:\s*/i, "");
-    const printedRating = pick(/rating|pressure class|flange class/i);
-    const attrs = Object.fromEntries(Object.entries(fields).filter(([k]) => !/^services?( description)?$/i.test(k)).slice(0, 10));
-    out.push({
-      code, page: r.first,
-      record: {
-        code,
-        ...(service ? { service: service.slice(0, 240) } : {}),
-        ...(printedRating ? { rating: printedRating.slice(0, 40) } : mentions[0] ? { rating: `Class ${mentions[0][0]}` } : {}),
-        ...(pick(/material/i) ? { material: pick(/material/i)!.slice(0, 80) } : {}),
-        ...(pick(/corrosion/i) ? { corrosionAllowance: pick(/corrosion/i)!.slice(0, 30) } : {}),
-        ...(Object.keys(attrs).length ? { attrs } : {}),
-        rows: [],
-        notes: [
-          `Pages ${r.first}–${r.last}`,
-          ...(mentions.length ? [`Classes written on its pages: ${mentions.slice(0, 4).map(([n, k]) => `${n} ×${k}`).join(", ")}`] : []),
-        ],
-      },
-    });
-  }
-  return out;
-}
-
-/** Extract the next pages' pipe classes. Returns pages processed this call. */
-export async function extractPipeClassesStep(
-  admin: SupabaseClient, conn: CatalogConn | null, doc: DocRow, profile: DocProfile, deadlineMs: number,
-): Promise<number> {
-  if (!doc.file_key) return 0;
-  // Text first: a spec book with a running header is read class by class
-  // from its text. Image reading is the fallback for books without one.
-  const viaText = await extractPipeClassesFromText(admin, conn, doc, profile, deadlineMs);
-  if (viaText !== null) return viaText;
-  // Image reading needs an AI connection (the nightly job has none).
-  if (!conn) return 0;
-  const state = profile.pipeSpec ?? { pagesDone: 0, pageCount: doc.page_count ?? 0, classes: 0, done: false };
-  // Candidate pages from the indexed text: cheap, and skips cover pages,
-  // revision logs and prose sections.
-  const { data: rows } = await admin
-    .from("knowledge_chunks").select("page, content")
-    .eq("document_id", doc.id).gt("page", state.pagesDone)
-    .order("page", { ascending: true }).limit(400);
-  const pageHits = new Map<number, number>();
-  for (const r of (rows ?? []) as Array<{ page: number; content: string }>) {
-    const n = (r.content.match(new RegExp(PIPE_PAGE_RE.source, "gi")) ?? []).length;
-    pageHits.set(r.page, (pageHits.get(r.page) ?? 0) + n);
-  }
-  const candidates = [...pageHits.entries()].filter(([, n]) => n >= 3).map(([p]) => p).sort((a, b) => a - b);
-  let processed = 0;
-  let bytes: Uint8Array | null = null;
-  while (candidates.length > 0 && Date.now() < deadlineMs - 25_000) {
-    const pages = candidates.splice(0, 2);
-    if (!bytes) bytes = new Uint8Array(await fetchBytes(doc.file_key));
-    const images = await renderPdfPages(bytes, pages, 2);
-    if (images.length === 0) { state.pagesDone = pages[pages.length - 1]; continue; }
-    const text = await callFast(conn, {
-      system: PIPE_SYSTEM,
-      user: `Pages attached in order: ${images.map((im, i) => `image ${i + 1} = page ${im.page}`).join(", ")}.`,
-      images: images.map((im) => ({ base64: im.base64, mediaType: im.mediaType })),
-      maxTokens: 6000,
-      timeoutMs: Math.max(10_000, deadlineMs - Date.now() - 5_000),
-    });
-    const parsed = parseModelJson(text);
-    const classes = normalizePipeClasses(parsed);
-    const pageOf = (c: Record<string, unknown> | undefined) => {
-      const p = Number(c?.page);
-      return pages.includes(p) ? p : pages[0];
-    };
-    const rawList = Array.isArray(parsed?.classes) ? parsed!.classes as Array<Record<string, unknown>> : [];
-    if (classes.length > 0) {
-      // Re-runs of the same pages replace, never duplicate.
-      await admin.from("knowledge_page_entities").delete()
-        .eq("document_id", doc.id).eq("kind", "pipe_class").in("page", pages);
-      await admin.from("knowledge_page_entities").insert(classes.map((c) => ({
-        org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
-        page: pageOf(rawList.find((r) => String(r.code ?? "").toUpperCase() === c.code)),
-        kind: "pipe_class", tag: c.code, raw: JSON.stringify(c),
-      })));
-      state.classes += classes.length;
-    }
-    state.pagesDone = pages[pages.length - 1];
-    processed += pages.length;
-  }
-  state.done = candidates.length === 0;
-  profile.pipeSpec = state;
-  await writeProfile(admin, doc, profile);
-  return processed;
-}
-
-/** One bounded pass over a library: profile what's unprofiled, then advance
- *  pipe-class extraction. Resumable — call again until remaining is 0. */
+/** One bounded pass over a library: profile what's unprofiled. Resumable —
+ *  call again until remaining is 0. */
 export async function drainCatalog(admin: SupabaseClient, opts: {
   orgId: string; libraryId: string; conn: CatalogConn; deadlineMs: number; documentId?: string;
-}): Promise<{ profiled: number; pipePages: number; remaining: number; failed: number }> {
+}): Promise<{ profiled: number; remaining: number; failed: number }> {
   const { data: lib } = await admin
     .from("knowledge_libraries").select("ai_features").eq("id", opts.libraryId).eq("org_id", opts.orgId).maybeSingle();
   const libraryKind = String(((lib?.ai_features ?? {}) as Record<string, unknown>).kind ?? "") || null;
@@ -348,7 +172,6 @@ export async function drainCatalog(admin: SupabaseClient, opts: {
   const profiles = await profilesFor(admin, docList.map((d) => d.id));
 
   let profiled = 0;
-  let pipePages = 0;
   let failed = 0;
   for (const d of docList) {
     if (Date.now() > opts.deadlineMs - 20_000) break;
@@ -360,105 +183,206 @@ export async function drainCatalog(admin: SupabaseClient, opts: {
       failed++;
     }
   }
-  for (const d of docList) {
-    if (Date.now() > opts.deadlineMs - 25_000) break;
-    const p = profiles.get(d.id);
-    if (!p || p.type !== "pipe_spec" || p.pipeSpec?.done) continue;
-    try { pipePages += await extractPipeClassesStep(admin, opts.conn, d, p, opts.deadlineMs); } catch { failed++; }
-  }
-  const remaining = docList.filter((d) => {
-    const p = profiles.get(d.id);
-    return !p || (p.type === "pipe_spec" && !p.pipeSpec?.done);
-  }).length;
-  return { profiled, pipePages, remaining, failed };
+  const remaining = docList.filter((d) => !profiles.has(d.id)).length;
+  return { profiled, remaining, failed };
 }
 
-/** Index the piping-spec books of a library — and only those — without
- *  mapping every document. A spec book is recognised by its CONTENT (pages
- *  dense with material specs, schedules, ratings), not its name, so any
- *  company's books are found however they're titled. Resumable. */
-export interface SpecBookReport { name: string; classes: number; how: string }
-export async function drainPipeSpecs(admin: SupabaseClient, opts: {
-  orgId: string; libraryId: string; conn: CatalogConn | null; deadlineMs: number;
-}): Promise<{ pipePages: number; remaining: number; books: number; classes: number; report: SpecBookReport[]; checked: number }> {
-  // The library and the libraries linked to it: a spec book often lives in a
-  // library of its own that the engineering practices link to.
+/** Entries are stored under this kind (see lib/knowledgeCatalog.ts). */
+export const ENTRY_KIND = "catalog_entry";
+
+/** Which text reader produced a catalog's entries — bumped when it learns
+ *  to read more, so marked catalogs are re-read (it costs nothing). */
+export const CATALOG_METHOD = "text-v4";
+
+const INSERT_BATCH = 300;
+
+async function writeEntries(admin: SupabaseClient, rows: Array<{ org_id: string; library_id: string; document_id: string; page: number; tag: string; raw: string }>) {
+  for (let i = 0; i < rows.length; i += INSERT_BATCH) {
+    await admin.from("knowledge_page_entities").insert(rows.slice(i, i + INSERT_BATCH).map((r) => ({ ...r, kind: ENTRY_KIND })));
+  }
+}
+
+/** Read a document a person marked as a catalog: find its sections from
+ *  its own text (a code repeating in a header or in table headings), one
+ *  entry per section. When no sections can be found, say so on the mark —
+ *  never invent them. */
+export async function readCatalogDocument(admin: SupabaseClient, doc: DocRow, mark: CatalogMark): Promise<CatalogMark> {
+  // The first two chunks of every page: where a header, an opening line
+  // and the first table headings are.
+  const { rows } = await fetchAllRows<{ page: number; seq: number; content: string }>((from, to) => admin
+    .from("knowledge_chunks").select("page, seq, content").eq("document_id", doc.id).lte("seq", 1)
+    .order("page", { ascending: true }).order("seq", { ascending: true }).range(from, to), 20_000);
+  const byPage = new Map<number, string[]>();
+  for (const r of rows) byPage.set(r.page, [...(byPage.get(r.page) ?? []), r.content]);
+  const tops = [...byPage].map(([page, parts]) => ({ page, text: parts[0] ?? "" }));
+  const full = [...byPage].map(([page, parts]) => ({ page, text: parts.join("\n") }));
+  const found = findSections(tops) ?? findSections(full);
+  await admin.from("knowledge_page_entities").delete().eq("document_id", doc.id).eq("kind", ENTRY_KIND);
+  const readAt = new Date().toISOString();
+  if (byPage.size === 0) {
+    return { ...mark, entries: 0, fields: [], method: CATALOG_METHOD, readAt, problem: "This document has no indexed text yet — it is read once indexing finishes." };
+  }
+  if (!found || found.ranges.length < 2) {
+    return { ...mark, entries: 0, fields: [], method: CATALOG_METHOD, readAt,
+      problem: "Couldn't find where one entry ends and the next begins: no code repeats in its page headers, footers or table headings. If each entry is its own file, mark the library instead." };
+  }
+  const records = sectionRecords(found.ranges, byPage, mark.name);
+  await writeEntries(admin, records.map((rec) => ({
+    org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id, page: rec.page, tag: rec.code, raw: JSON.stringify(rec.record),
+  })));
+  const fields = [...new Set(records.flatMap((r) => Object.keys(r.record.attrs ?? {})))].slice(0, 12);
+  return { ...mark, entries: records.length, fields, method: CATALOG_METHOD, readAt, problem: undefined };
+}
+
+/** Read a library a person marked as a catalog: each document is an entry,
+ *  its fields read from its first page. */
+export async function readCatalogLibrary(admin: SupabaseClient, opts: { orgId: string; libraryId: string; mark: CatalogMark }): Promise<CatalogMark> {
+  const { rows: docs } = await fetchAllRows<DocRow>((from, to) => admin
+    .from("knowledge_documents").select("id, org_id, library_id, name, file_key, page_count")
+    .eq("org_id", opts.orgId).eq("library_id", opts.libraryId).eq("status", "ready").order("id").range(from, to));
+  const text = new Map<string, string[]>();
+  for (let i = 0; i < docs.length; i += 200) {
+    const { data } = await admin.from("knowledge_chunks").select("document_id, seq, content")
+      .in("document_id", docs.slice(i, i + 200).map((d) => d.id)).eq("page", 1).lte("seq", 1).order("seq").limit(1000);
+    for (const r of (data ?? []) as Array<{ document_id: string; content: string }>) text.set(r.document_id, [...(text.get(r.document_id) ?? []), r.content]);
+  }
+  const withText = docs.filter((d) => text.has(d.id));
+  const { fields, entries } = setRecords(withText.map((d) => ({ id: d.id, name: d.name, text: text.get(d.id)!.join(" ") })), opts.mark.name);
+  for (let i = 0; i < docs.length; i += 200) {
+    await admin.from("knowledge_page_entities").delete().in("document_id", docs.slice(i, i + 200).map((d) => d.id)).eq("kind", ENTRY_KIND);
+  }
+  const byId = new Map(docs.map((d) => [d.id, d]));
+  await writeEntries(admin, entries.map((e) => ({
+    org_id: opts.orgId, library_id: opts.libraryId, document_id: e.documentId, page: 1, tag: e.code, raw: JSON.stringify(e.record),
+  })).filter((r) => byId.has(r.document_id)));
+  return {
+    ...opts.mark, entries: entries.length, fields: fields.slice(0, 12), method: CATALOG_METHOD, readAt: new Date().toISOString(),
+    problem: docs.length === 0 ? "No indexed documents in this library yet." : undefined,
+  };
+}
+
+const libraryMarkOf = (aiFeatures: unknown): CatalogMark | null => {
+  const m = (aiFeatures as { catalog?: CatalogMark } | null)?.catalog;
+  return m && typeof m.name === "string" && m.name ? m : null;
+};
+
+async function saveLibraryMark(admin: SupabaseClient, libraryId: string, mark: CatalogMark | null) {
+  const { data } = await admin.from("knowledge_libraries").select("ai_features").eq("id", libraryId).maybeSingle();
+  const features = { ...((data?.ai_features ?? {}) as Record<string, unknown>) };
+  if (mark) features.catalog = mark; else delete features.catalog;
+  await admin.from("knowledge_libraries").update({ ai_features: features }).eq("id", libraryId);
+}
+
+/** Mark (or re-read) a catalog: a document whose sections are entries, or
+ *  a library whose documents are. Returns the mark with what was found. */
+export async function markCatalog(admin: SupabaseClient, opts: {
+  orgId: string; libraryId: string; documentId?: string; name: string; by: string;
+}): Promise<CatalogMark> {
+  const mark: CatalogMark = { name: opts.name.trim().slice(0, 60), markedBy: opts.by, markedAt: new Date().toISOString(), entries: 0 };
+  if (opts.documentId) {
+    const { data: doc } = await admin.from("knowledge_documents").select("id, org_id, library_id, name, file_key, page_count")
+      .eq("id", opts.documentId).eq("org_id", opts.orgId).maybeSingle();
+    if (!doc) throw new Error("Document not found");
+    const d = doc as DocRow;
+    const before = (await profilesFor(admin, [d.id])).get(d.id);
+    const read = await readCatalogDocument(admin, d, mark);
+    const profile: DocProfile = before
+      ? { ...before, type: "catalog", catalog: read }
+      : {
+        v: 1, type: "catalog", designation: null, title: d.name.replace(/\.pdf$/i, ""),
+        purpose: `${read.name} — one entry per section`, covers: [], references: [],
+        profiledAt: new Date().toISOString(), catalog: read,
+      };
+    await writeProfile(admin, d, profile);
+    return read;
+  }
+  const read = await readCatalogLibrary(admin, { orgId: opts.orgId, libraryId: opts.libraryId, mark });
+  await saveLibraryMark(admin, opts.libraryId, read);
+  return read;
+}
+
+/** Remove a mark and the entries read for it. */
+export async function unmarkCatalog(admin: SupabaseClient, opts: { orgId: string; libraryId: string; documentId?: string }): Promise<void> {
+  if (opts.documentId) {
+    const { data: doc } = await admin.from("knowledge_documents").select("id, org_id, library_id, name, file_key, page_count")
+      .eq("id", opts.documentId).eq("org_id", opts.orgId).maybeSingle();
+    if (!doc) return;
+    await admin.from("knowledge_page_entities").delete().eq("document_id", opts.documentId).eq("kind", ENTRY_KIND);
+    const p = (await profilesFor(admin, [opts.documentId])).get(opts.documentId);
+    if (p) {
+      const { catalog: _gone, ...rest } = p;
+      await writeProfile(admin, doc as DocRow, { ...rest, type: rest.designation ? "standard" : "other" });
+    }
+    return;
+  }
+  const { rows: docs } = await fetchAllRows<{ id: string }>((from, to) => admin
+    .from("knowledge_documents").select("id").eq("org_id", opts.orgId).eq("library_id", opts.libraryId).order("id").range(from, to));
+  for (let i = 0; i < docs.length; i += 200) {
+    await admin.from("knowledge_page_entities").delete().in("document_id", docs.slice(i, i + 200).map((d) => d.id)).eq("kind", ENTRY_KIND);
+  }
+  await saveLibraryMark(admin, opts.libraryId, null);
+}
+
+/** Every catalog marked in a library and the libraries linked to it. */
+export interface CatalogListing { name: string; scope: "document" | "library"; documentId?: string; documentName?: string; libraryId: string; libraryName: string; mark: CatalogMark }
+export async function listCatalogs(admin: SupabaseClient, opts: { orgId: string; libraryId: string }): Promise<CatalogListing[]> {
   const { data: links } = await admin.from("knowledge_library_links").select("linked_library_id").eq("library_id", opts.libraryId);
   const libIds = [opts.libraryId, ...((links ?? []) as Array<{ linked_library_id: string }>).map((l) => l.linked_library_id)];
-  const { rows: docList } = await fetchAllRows<DocRow>((from, to) => admin
-    .from("knowledge_documents").select("id, org_id, library_id, name, file_key, page_count")
-    .eq("org_id", opts.orgId).in("library_id", libIds).neq("status", "retired")
-    .gte("page_count", 10).order("id").range(from, to));
-  const profiles = await profilesFor(admin, docList.map((d) => d.id));
-  const books: DocRow[] = [];
-  const unprofiled: DocRow[] = [];
-  for (const d of docList) {
-    const p = profiles.get(d.id);
-    if (p?.type === "pipe_spec") books.push(d);
-    // Unprofiled, or profiled as something else but book-sized: the text
-    // decides. A spec book filed as a "standard" was never read before.
-    else if ((!p && (d.page_count ?? 0) >= 30) || (p && (d.page_count ?? 0) >= 100)) unprofiled.push(d);
+  const { data: libs } = await admin.from("knowledge_libraries").select("id, name, ai_features").in("id", libIds).eq("org_id", opts.orgId);
+  const libRows = (libs ?? []) as Array<{ id: string; name: string; ai_features: unknown }>;
+  const libName = new Map(libRows.map((l) => [l.id, l.name]));
+  const out: CatalogListing[] = [];
+  for (const l of libRows) {
+    const m = libraryMarkOf(l.ai_features);
+    if (m) out.push({ name: m.name, scope: "library", libraryId: l.id, libraryName: l.name, mark: m });
   }
-  // Big, unprofiled documents: read the tops of their first pages and keep
-  // the ones that read like a spec book. Biggest first — a spec book is
-  // usually the largest document there is — and any left unchecked when
-  // time runs out are counted as remaining, never reported as "none".
-  unprofiled.sort((a, b) => (b.page_count ?? 0) - (a.page_count ?? 0));
-  let unchecked = 0;
-  await inSlices(unprofiled, 1, 6, async ([d]) => {
-    if (Date.now() > opts.deadlineMs - 30_000) { unchecked++; return; }
-    const { data } = await admin.from("knowledge_chunks").select("content")
-      .eq("document_id", d.id).eq("seq", 0).order("page", { ascending: true }).limit(40);
-    const tops = ((data ?? []) as Array<{ content: string }>).map((r) => r.content);
-    const dense = tops.filter((t) => (t.match(new RegExp(PIPE_PAGE_RE.source, "gi")) ?? []).length >= 3).length;
-    const before = profiles.get(d.id);
-    // A document already filed as something else becomes a spec book only
-    // when its sections can be found from its text — never on word counts
-    // alone (a materials standard is dense with ASTM numbers too).
-    if (before && tops.length >= 10 && dense / tops.length >= 0.3) {
-      const { data: head } = await admin.from("knowledge_chunks").select("page, seq, content")
-        .eq("document_id", d.id).lte("seq", 1).lte("page", 80).order("page").order("seq").limit(200);
-      const pages = new Map<number, string[]>();
-      for (const r of (head ?? []) as Array<{ page: number; content: string }>) pages.set(r.page, [...(pages.get(r.page) ?? []), r.content]);
-      const tp = [...pages].map(([page, parts]) => ({ page, text: parts[0] ?? "" }));
-      const fp = [...pages].map(([page, parts]) => ({ page, text: parts.join("\n") }));
-      if (!(findRunningKey(tp) ?? findParenKeys(fp))) return;
-    }
-    if (tops.length >= 10 && dense / tops.length >= 0.3) {
-      const profile: DocProfile = before
-        ? { ...before, type: "pipe_spec" }
-        : {
-          v: 1, type: "pipe_spec", designation: null, title: d.name.replace(/\.pdf$/i, ""),
-          purpose: "Piping material specifications — one piping class per section",
-          covers: [], references: [], profiledAt: new Date().toISOString(),
-        };
-      await writeProfile(admin, d, profile);
-      profiles.set(d.id, profile);
-      books.push(d);
-    }
-  });
-  let pipePages = 0;
-  for (const d of books) {
-    if (Date.now() > opts.deadlineMs - 25_000) break;
-    const p = profiles.get(d.id)!;
-    // Done — unless it finished with nothing recorded, or was mapped from
-    // its text by an older reader (re-mapping is free and picks up fields).
-    const stale = p.pipeSpec?.method?.startsWith("text-") && p.pipeSpec.method !== TEXT_METHOD;
-    if (p.pipeSpec?.done && p.pipeSpec.classes > 0 && !stale) continue;
-    if (p.pipeSpec?.done) p.pipeSpec = undefined;
-    try { pipePages += await extractPipeClassesStep(admin, opts.conn, d, p, opts.deadlineMs); } catch { /* next call retries */ }
+  const { rows: profRows } = await fetchAllRows<{ document_id: string; library_id: string; raw: string | null }>((from, to) => admin
+    .from("knowledge_page_entities").select("document_id, library_id, raw")
+    .in("library_id", libIds).eq("kind", "profile").eq("tag", "catalog").order("id").range(from, to));
+  const docIds = profRows.map((r) => r.document_id);
+  const names = new Map<string, string>();
+  for (let i = 0; i < docIds.length; i += 200) {
+    const { data } = await admin.from("knowledge_documents").select("id, name").in("id", docIds.slice(i, i + 200)).neq("status", "retired");
+    for (const d of (data ?? []) as Array<{ id: string; name: string }>) names.set(d.id, d.name);
   }
-  const remaining = books.filter((d) => !profiles.get(d.id)?.pipeSpec?.done).length + unchecked;
-  const classes = books.reduce((n, d) => n + (profiles.get(d.id)?.pipeSpec?.classes ?? 0), 0);
-  // What was found, per book, so the button can say it in plain words.
-  const report: SpecBookReport[] = books.map((d) => {
-    const ps = profiles.get(d.id)?.pipeSpec;
-    return {
-      name: d.name.replace(/\.pdf$/i, ""), classes: ps?.classes ?? 0,
-      how: ps?.method?.startsWith("text-") ? "mapped from its text" : ps?.done ? "read from page images" : "in progress",
-    };
-  });
-  return { pipePages, remaining, books: books.length, classes, report, checked: unprofiled.length - unchecked + books.length };
+  for (const r of profRows) {
+    const p = parseProfile(r.raw);
+    if (!p?.catalog || !names.has(r.document_id)) continue;
+    out.push({ name: p.catalog.name, scope: "document", documentId: r.document_id, documentName: names.get(r.document_id), libraryId: r.library_id, libraryName: libName.get(r.library_id) ?? "Library", mark: p.catalog });
+  }
+  return out;
+}
+
+/** Re-read every marked catalog whose reader changed, or that was marked
+ *  before its text was indexed. Text only, no AI — the nightly job's. */
+export async function refreshMarkedCatalogs(admin: SupabaseClient, opts: { deadlineMs: number }): Promise<{ read: number; entries: number }> {
+  let read = 0, entries = 0;
+  const { rows: libs } = await fetchAllRows<{ id: string; org_id: string; ai_features: unknown }>((from, to) => admin
+    .from("knowledge_libraries").select("id, org_id, ai_features").order("id").range(from, to));
+  for (const l of libs) {
+    if (Date.now() > opts.deadlineMs) break;
+    const m = libraryMarkOf(l.ai_features);
+    if (!m) continue;
+    const { count } = await admin.from("knowledge_documents").select("id", { count: "exact", head: true }).eq("library_id", l.id).eq("status", "ready");
+    if (m.method === CATALOG_METHOD && (count ?? 0) === m.entries) continue;
+    const r = await readCatalogLibrary(admin, { orgId: l.org_id, libraryId: l.id, mark: m });
+    await saveLibraryMark(admin, l.id, r);
+    read++; entries += r.entries;
+  }
+  const { rows: profRows } = await fetchAllRows<{ document_id: string; raw: string | null }>((from, to) => admin
+    .from("knowledge_page_entities").select("document_id, raw").eq("kind", "profile").eq("tag", "catalog").order("id").range(from, to));
+  for (const r of profRows) {
+    if (Date.now() > opts.deadlineMs) break;
+    const p = parseProfile(r.raw);
+    if (!p?.catalog || (p.catalog.method === CATALOG_METHOD && p.catalog.entries > 0)) continue;
+    const { data: doc } = await admin.from("knowledge_documents").select("id, org_id, library_id, name, file_key, page_count")
+      .eq("id", r.document_id).eq("status", "ready").maybeSingle();
+    if (!doc) continue;
+    const mark = await readCatalogDocument(admin, doc as DocRow, p.catalog);
+    await writeProfile(admin, doc as DocRow, { ...p, catalog: mark });
+    read++; entries += mark.entries;
+  }
+  return { read, entries };
 }
 
 /** Profiles for a set of documents, keyed by document id. */
@@ -509,7 +433,7 @@ export async function loadCatalog(admin: SupabaseClient, opts: {
       const p = parseProfile(r.raw);
       if (!d || !p || opts.excludedDocIds.has(d.id)) continue;
       const local = inScope.has(d.library_id);
-      const sharedKind = p.type === "form" || p.type === "checklist" || p.type === "pipe_spec";
+      const sharedKind = p.type === "form" || p.type === "checklist" || p.type === "catalog";
       if (!local && !(sharedKind && !d.source_document_id)) continue;
       out.push({
         documentId: d.id, libraryId: d.library_id, libraryName: libName.get(d.library_id) ?? "Library",
@@ -526,7 +450,7 @@ export async function loadCatalog(admin: SupabaseClient, opts: {
  *  words, or only through a related term (a lead, not proof). */
 export interface ServiceMatch { literal: string[]; leads: string[] }
 
-const CLASS_STOP = new Set(["what", "which", "piping", "spec", "specs", "class", "classes", "should", "use", "for", "the", "and", "with", "line", "lines", "stream", "service", "pipe", "is", "a", "an", "of", "in", "to", "do", "we", "i", "my", "our", "rating", "lb"]);
+const CLASS_STOP = new Set(["what", "which", "spec", "specs", "class", "classes", "should", "use", "for", "the", "and", "with", "line", "lines", "stream", "service", "is", "a", "an", "of", "in", "to", "do", "we", "i", "my", "our", "rating", "lb"]);
 
 /** Classes whose rating is exactly `rating` (150 is not 1500). The asker's
  *  own words decide the order; a class found only through a related term
@@ -539,19 +463,19 @@ export function rankByRatingAndService<T extends { raw: string | null }>(rows: T
   const exact = new RegExp(`(^|[^0-9])${rating}([^0-9]|$)`);
   const scored: Array<{ r: T & { matched: ServiceMatch }; score: number }> = [];
   for (const r of rows) {
-    let rec: PipeClassRecord;
-    try { rec = JSON.parse(r.raw ?? "") as PipeClassRecord; } catch { continue; }
+    let rec: EntryRecord;
+    try { rec = JSON.parse(r.raw ?? "") as EntryRecord; } catch { continue; }
     if (!rec?.rating || !exact.test(rec.rating)) continue;
-    const hay = [rec.service, rec.material, ...(rec.notes ?? [])].join(" ").toLowerCase();
+    const hay = [rec.service, ...Object.values(rec.attrs ?? {}), ...(rec.notes ?? [])].join(" ").toLowerCase();
     const matched = { literal: words.filter((w) => has(hay, w)), leads: leads.filter((t) => has(hay, t)) };
     scored.push({ r: { ...r, matched }, score: matched.literal.length * 10 + matched.leads.length });
   }
   return scored.sort((a, b) => b.score - a.score).map((x) => x.r);
 }
 
-/** Pipe classes named in the conversation, as trusted facts. Same
+/** Catalog entries named in the conversation, as trusted facts. Same
  *  visibility rule as the catalog. */
-export async function loadPipeClasses(admin: SupabaseClient, opts: {
+export async function loadEntries(admin: SupabaseClient, opts: {
   orgId: string; libraryIds: string[]; excludedDocIds: Set<string>; text: string;
   match: (text: string, codes: string[]) => string[];
   /** The pressure class the question is about ("150"): with no class code
@@ -560,11 +484,11 @@ export async function loadPipeClasses(admin: SupabaseClient, opts: {
   /** The question alone — classes are ranked on the asker's own words, not
    *  words an earlier answer used. */
   question?: string;
-}): Promise<Array<PipeClassRecord & { documentId: string; documentName: string; page: number; matched?: ServiceMatch }>> {
+}): Promise<Array<EntryRecord & { documentId: string; documentName: string; page: number; matched?: ServiceMatch }>> {
   try {
     const { rows: tagRows } = await fetchAllRows<{ tag: string }>((from, to) => admin
       .from("knowledge_page_entities").select("tag")
-      .eq("org_id", opts.orgId).eq("kind", "pipe_class").order("id").range(from, to), 50_000);
+      .eq("org_id", opts.orgId).eq("kind", ENTRY_KIND).order("id").range(from, to), 50_000);
     const codes = [...new Set(tagRows.map((r) => r.tag))];
     const wanted = opts.match(opts.text, codes);
     type Row = { document_id: string; library_id: string; page: number; tag: string; raw: string | null; matched?: ServiceMatch };
@@ -572,7 +496,7 @@ export async function loadPipeClasses(admin: SupabaseClient, opts: {
     if (wanted.length > 0) {
       const { data: rows } = await admin
         .from("knowledge_page_entities").select("document_id, library_id, page, tag, raw")
-        .eq("org_id", opts.orgId).eq("kind", "pipe_class").in("tag", wanted).limit(200);
+        .eq("org_id", opts.orgId).eq("kind", ENTRY_KIND).in("tag", wanted).limit(200);
       recs = (rows ?? []) as Row[];
     } else if (opts.rating && codes.length > 0) {
       // "Which spec for 150 class sour gas": no code named — find the classes
@@ -580,7 +504,7 @@ export async function loadPipeClasses(admin: SupabaseClient, opts: {
       // material and notes match the question's words.
       const { rows } = await fetchAllRows<Row>((from, to) => admin
         .from("knowledge_page_entities").select("document_id, library_id, page, tag, raw")
-        .eq("org_id", opts.orgId).eq("kind", "pipe_class").ilike("raw", `%${opts.rating}%`).order("id").range(from, to), 20_000);
+        .eq("org_id", opts.orgId).eq("kind", ENTRY_KIND).ilike("raw", `%${opts.rating}%`).order("id").range(from, to), 20_000);
       // Every class whose printed service carries the asker's words; then a
       // few found only through a related term, marked as leads; and when
       // nothing matches at all, a handful of the rating's classes so the
@@ -596,14 +520,14 @@ export async function loadPipeClasses(admin: SupabaseClient, opts: {
       .in("id", [...new Set(recs.map((r) => r.document_id))]).neq("status", "retired");
     const docs = new Map(((docRows ?? []) as Array<{ id: string; name: string; library_id: string; source_document_id: string | null }>).map((d) => [d.id, d]));
     const inScope = new Set(opts.libraryIds);
-    const out: Array<PipeClassRecord & { documentId: string; documentName: string; page: number; matched?: ServiceMatch; order: number }> = [];
+    const out: Array<EntryRecord & { documentId: string; documentName: string; page: number; matched?: ServiceMatch; order: number }> = [];
     for (const r of recs) {
       const d = docs.get(r.document_id);
       if (!d || opts.excludedDocIds.has(d.id)) continue;
       if (!inScope.has(d.library_id) && d.source_document_id) continue;
       try {
-        const rec = JSON.parse(r.raw ?? "") as PipeClassRecord;
-        if (rec && Array.isArray(rec.rows)) out.push({ ...rec, documentId: d.id, documentName: d.name.replace(/\.pdf$/i, ""), page: r.page, matched: r.matched, order: out.length });
+        const rec = JSON.parse(r.raw ?? "") as EntryRecord;
+        if (rec?.code) out.push({ ...rec, documentId: d.id, documentName: d.name.replace(/\.pdf$/i, ""), page: r.page, matched: r.matched, order: out.length });
       } catch { /* skip a bad row */ }
     }
     // Best match first; a class split across pages keeps its pages together.

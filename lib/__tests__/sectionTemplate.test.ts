@@ -88,7 +88,7 @@ describe("books with no header line: the code is in the table headings", () => {
   });
 
   it("each class's records: service line and the class most written on its pages", async () => {
-    const { sectionRecords } = await import("@/lib/knowledgeCatalogServer");
+    const { sectionRecords } = await import("@/lib/catalogBooks");
     const byPage = new Map(book.map((b) => [b.page, b.parts]));
     const recs = sectionRecords(findParenKeys(full)!.ranges, byPage);
     const sour = recs.find((r) => r.code === "AAAC2H")!;
