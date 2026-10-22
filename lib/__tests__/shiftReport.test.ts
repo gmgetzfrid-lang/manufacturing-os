@@ -189,3 +189,35 @@ describe("the plan is held against the baseline once one is captured", () => {
     expect(buildShiftReport({ milestones: [slippedNoBase, other], tz: CHI, shift, now: shift.end }).overall.baselineSetAt).toBeNull();
   });
 });
+
+describe("a chain that hasn't started: everything late says so", () => {
+  // Modelled on a real turnover: five steps in sequence under one parent,
+  // no recorded links, no durations, nothing started by the end of day shift.
+  const p = mk({ id: "sd", name: "Shutdown", plannedStartAt: at("2026-10-24", "14:00"), plannedAt: at("2026-10-26", "10:00"), isSummary: true });
+  const step = (id: string, name: string, s: [string, string], f: [string, string]) =>
+    mk({ id, name, parentId: "sd", plannedStartAt: at(...s), plannedAt: at(...f), weight: 1 });
+  const feed = step("feed", "Pull Feed", ["2026-10-24", "14:00"], ["2026-10-24", "18:00"]);
+  const cool = step("cool", "Cool Down", ["2026-10-24", "18:00"], ["2026-10-25", "00:00"]);
+  const prep = step("prep", "Prep for Chem Clean", ["2026-10-25", "00:00"], ["2026-10-25", "06:00"]);
+  const chem = step("chem", "Chem Cleaning", ["2026-10-25", "06:00"], ["2026-10-25", "18:00"]);
+  const rinse = step("rinse", "Rinse and Drain", ["2026-10-25", "18:00"], ["2026-10-26", "02:00"]);
+  const shift = shiftWindow("2026-10-25", "day", CHI);
+  const r = buildShiftReport({ milestones: [p, feed, cool, prep, chem, rinse], tz: CHI, shift, now: shift.end });
+  const row = (id: string) => [...r.goals.all, ...r.review.notStarted, ...r.review.carryOver].find((x) => x.leaf.id === id)!;
+
+  it("every step past its finish is overdue — not only the one due inside the shift", () => {
+    expect(["feed", "cool", "prep"].map((id) => row(id).overdue)).toEqual([true, true, true]);
+  });
+  it("a step past its start with nothing done is a late start, not yet overdue", () => {
+    expect(row("chem").overdue).toBe(false);
+    expect(row("chem").lateStart).toBe(true);
+  });
+  it("each step names what it is waiting on", () => {
+    expect(row("chem").waitingOn.map((w) => w.id)).toEqual(["prep"]);
+    expect(row("rinse").waitingOn.map((w) => w.id)).toEqual(["chem"]);
+  });
+  it("hours come from the planned window when the schedule has no durations", () => {
+    expect(row("chem").hours).toBe(12);
+    expect(row("rinse").hoursLeft).toBe(8);
+  });
+});

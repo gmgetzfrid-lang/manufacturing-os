@@ -9,11 +9,11 @@
 //              open, what finished late.
 
 import type { Milestone } from "@/types/schema";
-import { effectiveWeight, leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
+import { leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
 import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
 import { dayDiff } from "@/lib/scheduleTz";
 import {
-  buildShiftReport, shiftAt, nextShift, previousShift, DEFAULT_SHIFT_TIMES,
+  buildShiftReport, shiftAt, nextShift, previousShift, workHours, DEFAULT_SHIFT_TIMES,
   type ShiftTimes, type ShiftWindow, type ShiftRow,
 } from "@/lib/shiftReport";
 
@@ -104,7 +104,7 @@ function planRow(m: Milestone, chain: Milestone[], criticalIds: Set<string>, pro
     parentName: chain[0]?.name ?? null,
     crumbs: chain.slice(1).reverse().map((a) => a.name),
     start: startMsOf(m), finish: finishMsOf(m),
-    hours: effectiveWeight(m),
+    hours: workHours(m),
     percent: (m.id ? progress?.get(m.id)?.percent : undefined) ?? leafPercent(m),
     critical: !!m.id && criticalIds.has(m.id),
     who: m.responsibleParty?.trim() || null,

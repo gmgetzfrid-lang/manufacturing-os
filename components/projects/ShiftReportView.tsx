@@ -389,6 +389,16 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         : `About ${c.hrs(gap)} behind plan. Nothing else is ready to pull forward — clearing must-do is the whole job.`)
     : gap < -0.5 ? `About ${c.hrs(-gap)} ahead of plan. Anything here banks more time.` : "On plan. Anything here puts you ahead.";
   const critCarry = goals.carryOver.filter((r) => r.critical).length;
+  // "After #2": a step waiting on another must-do step names its number;
+  // on something off this list, its name.
+  const waitTag = (r: ShiftRow): TagT | null => {
+    if (r.waitingOn.length === 0) return null;
+    const nums = r.waitingOn.map((w) => priorityOf.get(w.id)).filter((n): n is number => n != null);
+    return nums.length === r.waitingOn.length
+      ? { t: `after #${nums.join(", #")}`, tone: "amber" }
+      : { t: `waits on ${r.waitingOn[0].name}${r.waitingOn.length > 1 ? ` +${r.waitingOn.length - 1}` : ""}`, tone: "amber" };
+  };
+  const waiting = goals.all.filter((r) => r.waitingOn.length > 0);
 
   return [
     {
@@ -439,7 +449,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
               right: r.percent > 0 ? `${r.percent}%` : "not started",
               extraTags: [
                 r.status === "blocked" ? { t: "blocked", tone: "rose" } : r.status === "on_hold" ? { t: "on hold", tone: "amber" } : null,
-                r.carryOver && !r.offSchedule ? { t: "overdue", tone: "amber" } : null,
+                r.overdue ? { t: "overdue", tone: "amber" } : r.lateStart ? { t: "late start", tone: "amber" } : null,
               ],
             }))} />
           )}
@@ -474,6 +484,11 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       body: (print) => (
         <div className="space-y-2">
           <Sub tone="slate" icon={<Flag className="w-3.5 h-3.5" />} title="Must do — in this order" count={goals.all.length} />
+          {waiting.length > 0 && (
+            <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300 keep">
+              {waiting.length} step{waiting.length === 1 ? "" : "s"} ({waiting.map((r) => `#${priorityOf.get(r.leaf.id ?? "") ?? "?"}`).join(", ")}) can&apos;t start until the steps before {waiting.length === 1 ? "it are" : "them are"} done — {waiting.length === 1 ? "it" : "they"} will run late unless those are cleared first.
+            </div>
+          )}
           {goals.all.length === 0 ? <Empty>Nothing is scheduled for the next shift.</Empty> : (
             <StepTable print={print} box rightHead="Left" rows={goals.all.map((r) => rowFromShift(r, c, {
               when: r.carryOver ? `due ${c.DTs(r.finish)}` : rowTime(r, next),
@@ -481,6 +496,8 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
               right: `${r.percent > 0 ? `${r.percent}% · ` : ""}${c.hrs(r.hoursLeft)}`,
               extraTags: [
                 r.carryOver ? { t: "carry-over", tone: "amber" } : null,
+                !r.carryOver && r.lateStart ? { t: "late start", tone: "amber" } : null,
+                waitTag(r),
                 !r.carryOver && r.start < next.start ? { t: `since ${c.D(r.start)}`, tone: "muted" } : null,
                 r.finish > next.end ? { t: `to ${c.D(r.finish)}`, tone: "muted" } : null,
               ],

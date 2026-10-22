@@ -139,6 +139,24 @@ export interface ShiftRow {
   hours: number;
   /** Hours still to do = hours × (1 − percent). */
   hoursLeft: number;
+  /** Its planned finish has passed and it isn't done. */
+  overdue: boolean;
+  /** Its planned start has passed and nothing has been done on it. */
+  lateStart: boolean;
+  /** Steps that must finish before it can start and aren't done — it
+   *  cannot run on its planned time while these are open. */
+  waitingOn: Array<{ id: string; name: string }>;
+}
+
+/** Planned work-hours for a step: its duration when the schedule gives
+ *  one, else the length of its planned window, else its weight. A schedule
+ *  imported without durations would otherwise count every step as 1 hour. */
+export function workHours(m: Milestone): number {
+  const d = m.durationHours;
+  if (d != null && Number.isFinite(d) && d > 0) return d;
+  const span = (finishMsOf(m) - startMsOf(m)) / 3_600_000;
+  if (Number.isFinite(span) && span > 0) return Math.round(span * 10) / 10;
+  return effectiveWeight(m);
 }
 
 export interface ShiftReport {
@@ -238,10 +256,29 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   const pctOf = (m: Milestone) => (m.id ? progress?.get(m.id)?.percent : undefined) ?? leafPercent(m);
   const toMs = (v: unknown): number => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
 
+  // What each step waits on: its recorded predecessors; when the schedule
+  // records none at all, the step before it under the same parent that
+  // finishes by the time it starts (a sequence of steps on one piece of
+  // equipment runs in order).
+  const anyLinks = milestones.some((m) => (m.dependsOn ?? []).length > 0);
+  const siblingsOf = new Map<string, Milestone[]>();
+  for (const [pid, list] of kids) siblingsOf.set(pid, [...list].sort((a, b) => startMsOf(a) - startMsOf(b)));
+  const predecessorsOf = (m: Milestone): Milestone[] => {
+    if (anyLinks) return (m.dependsOn ?? []).map((id) => byId.get(id)).filter((x): x is Milestone => !!x);
+    if (!m.parentId) return [];
+    const sibs = siblingsOf.get(m.parentId) ?? [];
+    const i = sibs.findIndex((x) => x.id === m.id);
+    const prev = i > 0 ? sibs[i - 1] : undefined;
+    return prev && finishMsOf(prev) <= startMsOf(m) + 3_600_000 ? [prev] : [];
+  };
+  const doneM = (m: Milestone) => m.status === "completed" || pctOf(m) >= 100;
+
   const rowFor = (m: Milestone, win: ShiftWindow): ShiftRow => {
     const chain = pathOf(m);
     const s = startMsOf(m), f = finishMsOf(m);
     const percent = pctOf(m);
+    const finished = m.status === "completed" || percent >= 100;
+    const hours = workHours(m);
     return {
       leaf: m,
       path: chain.slice().reverse().map((a) => a.name),
@@ -255,8 +292,11 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       startsInShift: s >= win.start && s < win.end,
       offSchedule: !(s < win.end && f > win.start),
       reason: m.statusReason ?? null,
-      hours: effectiveWeight(m),
-      hoursLeft: Math.round(effectiveWeight(m) * (1 - Math.min(100, Math.max(0, percent)) / 100) * 10) / 10,
+      hours,
+      hoursLeft: Math.round(hours * (1 - Math.min(100, Math.max(0, percent)) / 100) * 10) / 10,
+      overdue: !finished && Number.isFinite(f) && f <= now,
+      lateStart: !finished && percent <= 0 && m.status !== "in_progress" && Number.isFinite(s) && s < now,
+      waitingOn: finished ? [] : predecessorsOf(m).filter((p) => !doneM(p)).map((p) => ({ id: p.id ?? p.name, name: p.name })),
     };
   };
   const inWin = (ms: number, win: ShiftWindow) => Number.isFinite(ms) && ms >= win.start && ms < win.end;
@@ -267,7 +307,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     (a.start - b.start) || (a.finish - b.finish) || wbsCompare(a.leaf.wbs, b.leaf.wbs) || a.leaf.name.localeCompare(b.leaf.name);
 
   // ── 1. Overall standing ──────────────────────────────────────────
-  let wsum = 0, wplanned = 0, stepsDone = 0, baselined = 0;
+  let wsum = 0, wplanned = 0, stepsDone = 0, baselined = 0, hsum = 0;
   let baselineSetAt: string | null = null;
   let plannedStart = Infinity, plannedFinish = -Infinity;
   for (const m of leaves) {
@@ -285,7 +325,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     }
     const ps = useBase ? bs : s, pf = useBase ? bf : f;
     const frac = pf <= ps ? (now >= pf ? 1 : 0) : Math.max(0, Math.min(1, (now - ps) / (pf - ps)));
-    wsum += w; wplanned += w * frac;
+    wsum += w; wplanned += w * frac; hsum += workHours(m);
     if (DONE({ status: m.status, percent: pctOf(m) })) stepsDone++;
   }
   const plannedPct = wsum > 0 ? Math.round((wplanned / wsum) * 100) : 0;
@@ -353,7 +393,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     .sort((a, b) => Number(b.critical) - Number(a.critical) || cmp(a, b))
     .slice(0, 12);
   // Deficit in work-hours against the plan as of now.
-  const gapHours = Math.round(((plannedPct - actualPct) / 100) * wsum * 10) / 10;
+  const gapHours = Math.round(((plannedPct - actualPct) / 100) * hsum * 10) / 10;
   let backOnTrackAt: number | null = null;
   if (gapHours > 0) {
     let acc = 0;
