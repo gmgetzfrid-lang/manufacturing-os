@@ -15,9 +15,19 @@
 //   * A version no request produced (no related_ticket_id) makes no call.
 //   * A request with no project: the route answers that nothing was owed.
 //   * A transport failure or a retryable answer (5xx) is retried once.
-//   * A reference not written (no register authority, a refused write) is
-//     recorded by the route on the request's audit trail and said here —
-//     to `onNote` when the caller passed one, else the console.
+//   * A reference not written (no register authority, a refused write, a
+//     promote whose release stamp is outside the finalizer window) is
+//     recorded by the route on the request's audit trail and its history
+//     (the request's Audit Log tab) and said here — to `onNote` when the
+//     caller passed one (ReviewGateSection shows it on screen), else the
+//     console.
+//   * Residual (J21 merge-time ruling, the P39 ruling (d) precedent): if
+//     the call is lost entirely — the route unreachable on both tries, or
+//     the page closed before the POST went out (it is sent keepalive, so a
+//     page closed after it went out still has a miss recorded; only the
+//     on-screen note is lost) — nothing is recorded on the request; that one
+//     reference is lost and recovered by attaching the document from the
+//     project's Documents card (re-linking).
 
 import { supabase } from "@/lib/supabase";
 

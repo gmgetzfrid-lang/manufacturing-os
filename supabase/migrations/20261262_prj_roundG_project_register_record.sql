@@ -11,7 +11,10 @@
 --     checkout resync (checkouts_resync_project_documents), the intake door
 --     (intake_door_housekeep 'reference' or its service-role fallback),
 --     adoption, DF-P8's routes, a restore, or a direct API call that writes
---     no feed row. NEW AFTER INSERT OR DELETE trigger
+--     no feed row — and a service-role UPDATE that MOVES a link to another
+--     project or document (20261102's enforce_project_document_link_fixed
+--     admits it when auth.uid() IS NULL: merge-time fix, DEC-90). NEW AFTER
+--     INSERT OR DELETE OR UPDATE OF project_id, document_id trigger
 --     trg_project_documents_record_link on project_documents →
 --     project_documents_record_link_change() (SECURITY DEFINER, search_path
 --     pinned, EXECUTE revoked from every client role — DRLS-16):
@@ -31,6 +34,12 @@
 --         table owner, every NOT NULL satisfied; PostgreSQL 16 cases below);
 --       * a re-attach that changes nothing (ON CONFLICT DO NOTHING / DO
 --         UPDATE) fires no AFTER INSERT, so it writes nothing;
+--       * an UPDATE that changes project_id or document_id is a detach of
+--         the OLD pair and an attach of the NEW one: two rows
+--         (PROJECT_DOCUMENT_DETACHED for OLD, PROJECT_DOCUMENT_ATTACHED for
+--         NEW), in that order; an UPDATE that changes neither (a
+--         last_seen_at / source touch, or a SET of the same ids) writes
+--         nothing;
 --       * a cascade from the project's, the document's or the workspace's
 --         own deletion is that deletion's record, not a detach: nothing is
 --         written (and the deletion never fails on it).
@@ -44,19 +53,30 @@
 --     rewrite would have touched). NEW BEFORE INSERT OR UPDATE OF source
 --     trigger trg_project_documents_intake_source →
 --     project_documents_intake_source() (SECURITY DEFINER, pinned, revoked):
---       * a 'manual' reference written by THE INTAKE DOOR — the writer is
---         not an active member of the row's workspace (the door's link
---         identity, or the service role of its fallback) — to a document the
---         door CREATED (documents.authored_by_link_id set: the stored
---         intake-born fact, 20261104, which no signed-in session can stamp
---         once 20261141 is in) that sits in THE PROJECT'S OWN intake folder
---         (projects.intake_collection_id = documents.collection_id) is
---         written 'intake' — the door's reference at the moment it creates
---         the document, whichever of its paths wrote it. A member attaching
---         by hand — even a sheet filed by hand into the intake folder, or one
---         the door created — writes 'manual', exactly as today (J21 fix
---         pass: the badge and the audit row never say the intake link did
---         what a member did);
+--       * a 'manual' reference is written 'intake' ONLY when the writer IS
+--         the intake door (merge-time fix, DEC-90 — "no member behind the
+--         write" is not the door: a restore, or DF-P8's server-side
+--         referenceDeliverableInProject, is the service role too), one of:
+--           - the door's own identity: auth.uid() names a
+--             project_intake_links row OF THIS PROJECT (intake_door_housekeep
+--             'reference', 20261214, binds the link's id as the session's
+--             uid — 20261184 intake_door_bind);
+--           - the intake upload route's service-role fallback write (a
+--             database before 20261214): the request header
+--             x-mos-intake-door-reference: on, which PostgREST sets
+--             transaction-locally (request.headers), honoured only for the
+--             service role with no signed-in uid. Only that one write in
+--             app/api/intake/upload/route.ts sends it;
+--         AND the document is one THAT link created
+--         (documents.authored_by_link_id names a link of this project: the
+--         stored intake-born fact, 20261104, which no signed-in session can
+--         stamp once 20261141 is in) sitting in THE PROJECT'S OWN intake
+--         folder (projects.intake_collection_id = documents.collection_id).
+--         Every other writer keeps the value it sends: a member attaching by
+--         hand (even a sheet filed by hand into the intake folder, or one the
+--         door created) writes 'manual'; a restore reproduces the backed-up
+--         value; DF-P8's server reference stays 'manual' (the badge and the
+--         audit row never say the intake link did what someone else did);
 --       * an 'intake' row keeps 'intake' when a later write would call it
 --         'manual' (the adoption's upsert, a re-attach from the card): the
 --         origin stays. A 'checkout' value is never changed.
@@ -79,7 +99,8 @@
 -- Paste / deploy order: deploy the app carrying J21 first, then paste (an
 -- app before J21 reads a source 'intake' row as "via checkout"). Either
 -- order is safe for every flow: before the paste nothing is recorded or
--- rewritten (today's path); the app never writes 'intake' itself. It needs
+-- rewritten (today's path; the intake route's header is read by nothing);
+-- the app never writes 'intake' itself. It needs
 -- 20260609 project_documents, 20260614 milestones, 20260902
 -- projects.intake_collection_id and 20261104 documents.authored_by_link_id
 -- (J21 fix pass) — it REFUSES TO RUN, changing nothing, without that column;
@@ -150,6 +171,11 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+  v_uid    uuid := auth.uid();
+  v_header text;
+  v_role   text;
+  v_door   boolean := false;
 BEGIN
   IF TG_OP = 'UPDATE' THEN
     -- The origin stays: a later 'manual' write keeps an intake reference 'intake'.
@@ -158,24 +184,40 @@ BEGIN
     END IF;
     RETURN NEW;
   END IF;
-  -- A 'manual' reference is the intake door's only when the door writes it
-  -- (no active member of the workspace behind it: the door's link identity,
-  -- or the service role) for a document the door CREATED
-  -- (authored_by_link_id) that sits in the project's own intake folder. A
-  -- member's attach stays 'manual', whatever the document.
-  IF NEW.source = 'manual'
-     AND NOT EXISTS (
-       SELECT 1
-         FROM org_members m
-        WHERE m.org_id = NEW.org_id AND m.uid = auth.uid() AND m.status = 'active')
+  IF NEW.source IS DISTINCT FROM 'manual' THEN
+    RETURN NEW;
+  END IF;
+  -- Is the writer THE INTAKE DOOR? Only (a) its own bound identity — the
+  -- session's uid is a link of THIS project (intake_door_housekeep
+  -- 'reference') — or (b) the intake upload route's service-role fallback,
+  -- which names itself with the x-mos-intake-door-reference header
+  -- (PostgREST's transaction-local request.headers), honoured for the
+  -- service role only. Anyone else keeps the source they send.
+  IF v_uid IS NOT NULL THEN
+    v_door := EXISTS (SELECT 1 FROM project_intake_links l WHERE l.id = v_uid AND l.project_id = NEW.project_id);
+  ELSE
+    BEGIN
+      v_header := lower(btrim(NULLIF(current_setting('request.headers', true), '')::jsonb ->> 'x-mos-intake-door-reference'));
+      v_role := COALESCE(NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role',
+                         NULLIF(current_setting('request.jwt.claim.role', true), ''));
+    EXCEPTION WHEN others THEN
+      v_header := NULL;
+    END;
+    v_door := v_header IS NOT DISTINCT FROM 'on' AND v_role IS NOT DISTINCT FROM 'service_role';
+  END IF;
+  -- ... writing the reference of a document THAT link created
+  -- (authored_by_link_id, a link of this project) in the project's own
+  -- intake folder.
+  IF v_door
      AND EXISTS (
        SELECT 1
          FROM projects p
          JOIN documents d ON d.id = NEW.document_id
+         JOIN project_intake_links l ON l.id = d.authored_by_link_id AND l.project_id = NEW.project_id
         WHERE p.id = NEW.project_id
           AND p.intake_collection_id IS NOT NULL
           AND d.collection_id = p.intake_collection_id
-          AND d.authored_by_link_id IS NOT NULL) THEN
+          AND (v_uid IS NULL OR l.id = v_uid)) THEN
     NEW.source := 'intake';
   END IF;
   RETURN NEW;
@@ -184,7 +226,7 @@ $$;
 REVOKE ALL ON FUNCTION public.project_documents_intake_source() FROM PUBLIC, anon, authenticated;
 
 COMMENT ON FUNCTION public.project_documents_intake_source() IS
-  'drafting-flow PROJ-5 (projects-joint J21, 20261262): a manual project_documents reference written by the intake door (no active member of the workspace behind it) to a document the door created (authored_by_link_id) in the project''s own intake folder is written source = ''intake''; a member''s attach stays ''manual''; an intake row keeps ''intake'' when a later write would call it ''manual''; ''checkout'' is never changed. Trigger only; SECURITY DEFINER (it reads projects / documents whatever the writer may see), search_path pinned, no client may EXECUTE it.';
+  'drafting-flow PROJ-5 (projects-joint J21, 20261262): a manual project_documents reference is written source = ''intake'' ONLY when the writer is the intake door — its bound identity (auth.uid() a project_intake_links row of this project: intake_door_housekeep ''reference'') or the intake upload route''s service-role fallback (request header x-mos-intake-door-reference: on, service role only) — for a document that link created (authored_by_link_id) in the project''s own intake folder; every other writer (a member, a restore, DF-P8''s server reference) keeps the value it sends; an intake row keeps ''intake'' when a later write would call it ''manual''; ''checkout'' is never changed. Trigger only; SECURITY DEFINER (it reads projects / documents / project_intake_links whatever the writer may see), search_path pinned, no client may EXECUTE it.';
 
 DROP TRIGGER IF EXISTS trg_project_documents_intake_source ON project_documents;
 CREATE TRIGGER trg_project_documents_intake_source
@@ -199,63 +241,84 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
+  v_rows   project_documents[];
+  v_kinds  text[];
   v_row    project_documents%ROWTYPE;
+  v_i      integer;
   v_uid    uuid := auth.uid();
-  v_member boolean := false;
+  v_member boolean;
   v_email  text;
   v_number text;
-  v_extra  jsonb := '{}'::jsonb;
+  v_extra  jsonb;
 BEGIN
   IF TG_OP = 'INSERT' THEN
-    v_row := NEW;
+    v_rows := ARRAY[NEW];
+    v_kinds := ARRAY['attach'];
+  ELSIF TG_OP = 'DELETE' THEN
+    v_rows := ARRAY[OLD];
+    v_kinds := ARRAY['detach'];
   ELSE
-    v_row := OLD;
-  END IF;
-  -- A cascade from the workspace's, the project's or the document's own
-  -- deletion is that deletion's record, not a detach.
-  IF NOT EXISTS (SELECT 1 FROM orgs o WHERE o.id = v_row.org_id)
-     OR NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = v_row.project_id)
-     OR NOT EXISTS (SELECT 1 FROM documents d WHERE d.id = v_row.document_id) THEN
-    RETURN NULL;
-  END IF;
-  IF v_uid IS NOT NULL THEN
-    -- The member's email only: their role is stamped by 20261201's
-    -- audit_logs_stamp_identity from their role collection (a headline read
-    -- here would be the one DB-7 forbids).
-    SELECT m.email INTO v_email
-      FROM org_members m
-     WHERE m.org_id = v_row.org_id AND m.uid = v_uid AND m.status = 'active'
-     LIMIT 1;
-    v_member := FOUND;
-    IF NOT v_member THEN
-      v_extra := jsonb_build_object('actorUid', v_uid);
+    -- UPDATE OF project_id, document_id: a move is a detach of the OLD pair
+    -- and an attach of the NEW one; an UPDATE that changes neither id writes
+    -- nothing.
+    IF NEW.project_id IS NOT DISTINCT FROM OLD.project_id AND NEW.document_id IS NOT DISTINCT FROM OLD.document_id THEN
+      RETURN NULL;
     END IF;
+    v_rows := ARRAY[OLD, NEW];
+    v_kinds := ARRAY['detach', 'attach'];
   END IF;
-  SELECT d.document_number INTO v_number FROM documents d WHERE d.id = v_row.document_id;
-  IF TG_OP = 'INSERT' THEN
-    INSERT INTO audit_logs (action, resource_type, resource_id, org_id, user_id, user_email, user_role, details)
-    VALUES ('PROJECT_DOCUMENT_ATTACHED', 'project', v_row.project_id::text, v_row.org_id,
-            CASE WHEN v_member THEN v_uid END, v_email, NULL,
-            jsonb_build_object('projectId', v_row.project_id, 'documentId', v_row.document_id, 'documentNumber', v_number,
-                               'linkId', v_row.id, 'source', v_row.source, 'recordedBy', 'database') || v_extra);
-  ELSE
-    INSERT INTO audit_logs (action, resource_type, resource_id, org_id, user_id, user_email, user_role, details)
-    VALUES ('PROJECT_DOCUMENT_DETACHED', 'project', v_row.project_id::text, v_row.org_id,
-            CASE WHEN v_member THEN v_uid END, v_email, NULL,
-            jsonb_build_object('projectId', v_row.project_id, 'documentId', v_row.document_id, 'documentNumber', v_number,
-                               'linkId', v_row.id, 'source', v_row.source, 'recordedBy', 'database') || v_extra);
-  END IF;
+  FOR v_i IN 1 .. array_length(v_rows, 1) LOOP
+    v_row := v_rows[v_i];
+    -- A cascade from the workspace's, the project's or the document's own
+    -- deletion is that deletion's record, not a detach.
+    CONTINUE WHEN NOT EXISTS (SELECT 1 FROM orgs o WHERE o.id = v_row.org_id)
+     OR NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = v_row.project_id)
+     OR NOT EXISTS (SELECT 1 FROM documents d WHERE d.id = v_row.document_id);
+    v_member := false;
+    v_email := NULL;
+    v_extra := '{}'::jsonb;
+    IF v_uid IS NOT NULL THEN
+      -- The member's email only: their role is stamped by 20261201's
+      -- audit_logs_stamp_identity from their role collection (a headline read
+      -- here would be the one DB-7 forbids).
+      SELECT m.email INTO v_email
+        FROM org_members m
+       WHERE m.org_id = v_row.org_id AND m.uid = v_uid AND m.status = 'active'
+       LIMIT 1;
+      v_member := FOUND;
+      IF NOT v_member THEN
+        v_extra := jsonb_build_object('actorUid', v_uid);
+      END IF;
+    END IF;
+    IF TG_OP = 'UPDATE' THEN
+      v_extra := v_extra || jsonb_build_object('moved', true);
+    END IF;
+    SELECT d.document_number INTO v_number FROM documents d WHERE d.id = v_row.document_id;
+    IF v_kinds[v_i] = 'attach' THEN
+      INSERT INTO audit_logs (action, resource_type, resource_id, org_id, user_id, user_email, user_role, details)
+      VALUES ('PROJECT_DOCUMENT_ATTACHED', 'project', v_row.project_id::text, v_row.org_id,
+              CASE WHEN v_member THEN v_uid END, v_email, NULL,
+              jsonb_build_object('projectId', v_row.project_id, 'documentId', v_row.document_id, 'documentNumber', v_number,
+                                 'linkId', v_row.id, 'source', v_row.source, 'recordedBy', 'database') || v_extra);
+    ELSE
+      INSERT INTO audit_logs (action, resource_type, resource_id, org_id, user_id, user_email, user_role, details)
+      VALUES ('PROJECT_DOCUMENT_DETACHED', 'project', v_row.project_id::text, v_row.org_id,
+              CASE WHEN v_member THEN v_uid END, v_email, NULL,
+              jsonb_build_object('projectId', v_row.project_id, 'documentId', v_row.document_id, 'documentNumber', v_number,
+                                 'linkId', v_row.id, 'source', v_row.source, 'recordedBy', 'database') || v_extra);
+    END IF;
+  END LOOP;
   RETURN NULL;
 END;
 $$;
 REVOKE ALL ON FUNCTION public.project_documents_record_link_change() FROM PUBLIC, anon, authenticated;
 
 COMMENT ON FUNCTION public.project_documents_record_link_change() IS
-  'drafting-flow PROJ-3 done-when 2 (projects-joint J21, 20261262): every project_documents attach / detach writes one audit_logs row (PROJECT_DOCUMENT_ATTACHED / PROJECT_DOCUMENT_DETACHED, resource_type project) in its own transaction, whichever door made it; a cascade from the workspace''s, project''s or document''s own deletion writes nothing. The actor is the signed-in caller when an active member of the row''s workspace, else NULL (a non-member caller''s uid in details.actorUid). Trigger only; SECURITY DEFINER, search_path pinned, no client may EXECUTE it.';
+  'drafting-flow PROJ-3 done-when 2 (projects-joint J21, 20261262): every project_documents attach / detach writes one audit_logs row (PROJECT_DOCUMENT_ATTACHED / PROJECT_DOCUMENT_DETACHED, resource_type project) in its own transaction, whichever door made it; an UPDATE moving a link''s project_id / document_id writes DETACHED for the old pair and ATTACHED for the new (details.moved), one changing neither writes nothing; a cascade from the workspace''s, project''s or document''s own deletion writes nothing. The actor is the signed-in caller when an active member of the row''s workspace, else NULL (a non-member caller''s uid in details.actorUid). Trigger only; SECURITY DEFINER, search_path pinned, no client may EXECUTE it.';
 
 DROP TRIGGER IF EXISTS trg_project_documents_record_link ON project_documents;
 CREATE TRIGGER trg_project_documents_record_link
-  AFTER INSERT OR DELETE ON project_documents
+  AFTER INSERT OR DELETE OR UPDATE OF project_id, document_id ON project_documents
   FOR EACH ROW EXECUTE FUNCTION public.project_documents_record_link_change();
 
 -- ── (3) PROJ-10 dw2: milestones.linked_ticket_id — unused, kept ─────────────
@@ -285,22 +348,23 @@ SELECT 1, 3, 'PROJ-5: trg_project_documents_intake_source runs BEFORE INSERT OR 
        AND NOT has_function_privilege('authenticated', 'public.project_documents_intake_source()', 'EXECUTE'),
        NULL
 UNION ALL
-SELECT 1, 4, 'PROJ-5: only the intake door''s manual reference to a document it created (authored_by_link_id) in the project''s own intake folder reads intake — a member''s attach stays manual; an intake row keeps intake against a later manual write',
-       (SELECT prosrc LIKE '%OLD.source = ''intake'' AND NEW.source = ''manual''%NEW.source := ''intake''%FROM org_members m%m.uid = auth.uid()%d.collection_id = p.intake_collection_id%d.authored_by_link_id IS NOT NULL%NEW.source := ''intake''%'
+SELECT 1, 4, 'PROJ-5: a manual reference reads intake only when the writer IS the door — its bound identity (auth.uid() a link of this project) or the upload route''s service-role write naming itself (x-mos-intake-door-reference) — for a document that link created in the project''s own intake folder; every other writer keeps its value; an intake row keeps intake against a later manual write',
+       (SELECT prosrc LIKE '%OLD.source = ''intake'' AND NEW.source = ''manual''%NEW.source := ''intake''%FROM project_intake_links l WHERE l.id = v_uid AND l.project_id = NEW.project_id%current_setting(''request.headers'', true)%''x-mos-intake-door-reference''%v_role IS NOT DISTINCT FROM ''service_role''%JOIN project_intake_links l ON l.id = d.authored_by_link_id AND l.project_id = NEW.project_id%d.collection_id = p.intake_collection_id%(v_uid IS NULL OR l.id = v_uid)%NEW.source := ''intake''%'
+               AND prosrc NOT LIKE '%FROM org_members%'
           FROM pg_proc WHERE oid = 'public.project_documents_intake_source()'::regprocedure),
        NULL
 UNION ALL
-SELECT 2, 1, 'PROJ-3 dw2: trg_project_documents_record_link runs AFTER INSERT OR DELETE (enabled; SECURITY DEFINER, search_path pinned; no client may EXECUTE it)',
+SELECT 2, 1, 'PROJ-3 dw2: trg_project_documents_record_link runs AFTER INSERT OR DELETE OR UPDATE OF project_id, document_id (enabled; SECURITY DEFINER, search_path pinned; no client may EXECUTE it)',
        EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgname = 'trg_project_documents_record_link' AND t.tgrelid = 'public.project_documents'::regclass
                  AND NOT t.tgisinternal AND t.tgenabled = 'O'
-                 AND pg_get_triggerdef(t.oid) LIKE '%AFTER INSERT OR DELETE ON public.project_documents FOR EACH ROW%')
+                 AND pg_get_triggerdef(t.oid) LIKE '%AFTER INSERT OR DELETE OR UPDATE OF project_id, document_id ON public.project_documents FOR EACH ROW%')
        AND (SELECT p.prosecdef AND p.proconfig @> ARRAY['search_path=public'] FROM pg_proc p WHERE p.oid = 'public.project_documents_record_link_change()'::regprocedure)
        AND NOT has_function_privilege('anon', 'public.project_documents_record_link_change()', 'EXECUTE')
        AND NOT has_function_privilege('authenticated', 'public.project_documents_record_link_change()', 'EXECUTE'),
        NULL
 UNION ALL
-SELECT 2, 2, 'PROJ-3 dw2: the record writes PROJECT_DOCUMENT_ATTACHED and PROJECT_DOCUMENT_DETACHED as project rows, and nothing for a cascade from the workspace, project or document deletion',
-       (SELECT prosrc LIKE '%NOT EXISTS (SELECT 1 FROM orgs o WHERE o.id = v_row.org_id)%NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = v_row.project_id)%NOT EXISTS (SELECT 1 FROM documents d WHERE d.id = v_row.document_id)%''PROJECT_DOCUMENT_ATTACHED'', ''project''%''PROJECT_DOCUMENT_DETACHED'', ''project''%'
+SELECT 2, 2, 'PROJ-3 dw2: the record writes PROJECT_DOCUMENT_ATTACHED and PROJECT_DOCUMENT_DETACHED as project rows — an UPDATE moving the ids writes DETACHED for OLD then ATTACHED for NEW, one changing neither writes nothing — and nothing for a cascade from the workspace, project or document deletion',
+       (SELECT prosrc LIKE '%NEW.project_id IS NOT DISTINCT FROM OLD.project_id AND NEW.document_id IS NOT DISTINCT FROM OLD.document_id THEN%RETURN NULL;%ARRAY[OLD, NEW]%ARRAY[''detach'', ''attach'']%NOT EXISTS (SELECT 1 FROM orgs o WHERE o.id = v_row.org_id)%NOT EXISTS (SELECT 1 FROM projects p WHERE p.id = v_row.project_id)%NOT EXISTS (SELECT 1 FROM documents d WHERE d.id = v_row.document_id)%''PROJECT_DOCUMENT_ATTACHED'', ''project''%''PROJECT_DOCUMENT_DETACHED'', ''project''%'
           FROM pg_proc WHERE oid = 'public.project_documents_record_link_change()'::regprocedure),
        NULL
 UNION ALL

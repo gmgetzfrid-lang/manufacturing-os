@@ -129,6 +129,7 @@ describe("REV-20 (P14 final review) — the inspector offers a controller the re
     expect(s.finalize.mock.calls[1][0]).toEqual({
       orgId: "o1", documentId: "d1", actorId: "u1", actorName: "u1@example.com", actorEmail: "u1@example.com",
       forceHold: true, overrideReason: "shutdown pack under MOC-77",
+      onProjectReferenceNote: expect.any(Function), // J21 merge-time fix (PROJ-1): the note handler only listens
     });
     expect(panel()).toBeNull(); // published: the offer is gone
     expect(s.appAlert).not.toHaveBeenCalled();
@@ -155,7 +156,8 @@ describe("REV-20 (P14 final review) — the inspector offers a controller the re
     await render();
     await click(button("Publish approved revision"));
     expect(s.finalize).toHaveBeenCalledTimes(1);
-    expect(s.finalize.mock.calls[0][0]).toEqual({ orgId: "o1", documentId: "d1", actorId: "u1", actorName: "u1@example.com", actorEmail: "u1@example.com" });
+    // (J21 merge-time fix, PROJ-1: plus the note handler, which only listens)
+    expect(s.finalize.mock.calls[0][0]).toEqual({ orgId: "o1", documentId: "d1", actorId: "u1", actorName: "u1@example.com", actorEmail: "u1@example.com", onProjectReferenceNote: expect.any(Function) });
     expect(s.appAlert).not.toHaveBeenCalled();
     expect(panel()).toBeNull();
   });

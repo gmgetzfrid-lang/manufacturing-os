@@ -97,15 +97,36 @@ describe("20261262 — DEC-30 one paste, DRLS-16, no destructive DDL", () => {
     const guard = SQL.slice(0, SQL.indexOf("DROP TABLE IF EXISTS prj_round_g_262_before;"));
     expect(guard).toMatch(/DO \$\$\nBEGIN\n  IF NOT EXISTS \(SELECT 1 FROM information_schema\.columns\n\s+WHERE table_schema = 'public' AND table_name = 'documents' AND column_name = 'authored_by_link_id'\) THEN\n\s+RAISE EXCEPTION 'Apply 20261104_prj_roundG_intake_links\.sql first/);
   });
-  it("PROJ-5 (J21 fix pass, review major 2): 'intake' only for the door's reference — no active member behind the write, a document the door created (authored_by_link_id), in the project's own intake folder", () => {
+  it("PROJ-5 (merge-time fix, DEC-90 ruling 4): 'intake' only when the writer IS the door — its bound identity (auth.uid() a link of THIS project) or the upload route's service-role write naming itself (x-mos-intake-door-reference, service role only) — for a document that link created in the project's own intake folder; 'no member behind it' alone no longer qualifies", () => {
     const head = code.indexOf("CREATE OR REPLACE FUNCTION public.project_documents_intake_source()");
     const fn = code.slice(head, code.indexOf("$$;", head));
-    const insertLimb = fn.slice(fn.indexOf("IF NEW.source = 'manual'"));
-    expect(insertLimb).toContain("AND NOT EXISTS (\n       SELECT 1\n         FROM org_members m\n        WHERE m.org_id = NEW.org_id AND m.uid = auth.uid() AND m.status = 'active')");
-    expect(insertLimb).toContain("AND d.collection_id = p.intake_collection_id\n          AND d.authored_by_link_id IS NOT NULL) THEN\n    NEW.source := 'intake';");
-    expect(fn).not.toMatch(/m\.role|roles/); // DB-7: the trigger reads no role
+    const insertLimb = fn.slice(fn.indexOf("IF NEW.source IS DISTINCT FROM 'manual' THEN"));
+    expect(insertLimb).toContain("IF v_uid IS NOT NULL THEN\n    v_door := EXISTS (SELECT 1 FROM project_intake_links l WHERE l.id = v_uid AND l.project_id = NEW.project_id);");
+    expect(insertLimb).toContain("v_header := lower(btrim(NULLIF(current_setting('request.headers', true), '')::jsonb ->> 'x-mos-intake-door-reference'));");
+    expect(insertLimb).toContain("v_door := v_header IS NOT DISTINCT FROM 'on' AND v_role IS NOT DISTINCT FROM 'service_role';");
+    expect(insertLimb).toContain("JOIN project_intake_links l ON l.id = d.authored_by_link_id AND l.project_id = NEW.project_id");
+    expect(insertLimb).toContain("AND d.collection_id = p.intake_collection_id\n          AND (v_uid IS NULL OR l.id = v_uid)) THEN\n    NEW.source := 'intake';");
+    expect(fn).not.toContain("org_members"); // the old "no member behind it" limb is gone
+    expect(fn).not.toMatch(/\bm\.role\b|\broles\b/); // DB-7: the trigger reads no member role (the JWT's request role is not one)
     // the UPDATE limb is unchanged: an intake row keeps 'intake'; 'checkout' is never changed by the trigger
     expect(fn).toContain("IF OLD.source = 'intake' AND NEW.source = 'manual' THEN\n      NEW.source := 'intake';");
+  });
+  it("PROJ-5 (merge-time fix, ruling 4): the intake upload route's service-role fallback reference is the ONLY writer that sends x-mos-intake-door-reference (no other app or lib file names it)", () => {
+    const route = readFileSync(join(root, "app/api/intake/upload/route.ts"), "utf8");
+    expect(route).toContain(`{ onConflict: "project_id,document_id", ignoreDuplicates: true },
+      ).setHeader("x-mos-intake-door-reference", "on"));`);
+    expect(route.match(/x-mos-intake-door-reference/g)).toHaveLength(2); // the comment and the one write
+    const walk = (dir: string): string[] => readdirSync(join(root, dir), { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory() ? (e.name === "node_modules" || e.name === "__tests__" ? [] : walk(join(dir, e.name))) : /\.(ts|tsx)$/.test(e.name) ? [join(dir, e.name)] : []);
+    const senders = [...walk("app"), ...walk("lib"), ...walk("components")].filter((f) => readFileSync(join(root, f), "utf8").includes("x-mos-intake-door-reference"));
+    expect(senders).toEqual(["app/api/intake/upload/route.ts"]);
+  });
+  it("PROJ-3 dw2 (merge-time fix, ruling 3): the record trigger fires AFTER INSERT OR DELETE OR UPDATE OF project_id, document_id; an UPDATE that moves an id writes DETACHED (OLD) then ATTACHED (NEW); one that changes neither writes nothing", () => {
+    expect(code).toContain("CREATE TRIGGER trg_project_documents_record_link\n  AFTER INSERT OR DELETE OR UPDATE OF project_id, document_id ON project_documents");
+    const head = code.indexOf("CREATE OR REPLACE FUNCTION public.project_documents_record_link_change()");
+    const fn = code.slice(head, code.indexOf("$$;", head));
+    expect(fn).toContain("IF NEW.project_id IS NOT DISTINCT FROM OLD.project_id AND NEW.document_id IS NOT DISTINCT FROM OLD.document_id THEN\n      RETURN NULL;");
+    expect(fn).toContain("v_rows := ARRAY[OLD, NEW];\n    v_kinds := ARRAY['detach', 'attach'];");
   });
   it("PROJ-5: the CHECK keeps checkout and manual and adds intake; existing rows are not rewritten (no UPDATE of project_documents)", () => {
     expect(code).toContain("CHECK (source IN ('checkout', 'manual', 'intake'))");

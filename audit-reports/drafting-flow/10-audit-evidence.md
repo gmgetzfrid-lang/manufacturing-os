@@ -87,6 +87,8 @@ lib/projects.ts:832-839 —
 
 *Assigned (2026-10-21, the integrator at the DF-P8 merge, DEC-31):* done-when 3 (the actor uid on every history entry) → drafting-flow **DF-P23 TRANSITION RECORD AND RECONCILE**.
 
+*Recorded (2026-10-22, projects-joint J21 merge-time fix, DEC-90 ruling 5 — no status change):* one new writer of `tickets.history`. `POST /api/projects/deliverable-reference` (`app/api/projects/deliverable-reference/route.ts` `recordNotWritten`) appends ONE line — "Deliverable not put on project register" — when a request's reviewed deliverable could not be put on its project register, so the miss is on the request's Audit Log tab as well as its `TICKET_DELIVERABLE_REFERENCE_NOT_WRITTEN` audit row. It holds done-when 2's rule: written by the server (service role, after the caller is authenticated, a member, the promote's finalizer and inside the request's read scope), by compare-and-set on `last_modified` (read again and tried once more on a conflict — never a blind overwrite of the array), naming its audit row as `attempt` (`historyAttempt: true` on the row, the SM-7 shape `/api/tickets/project-link` uses). Like every other entry it carries the actor's email, not their uid — done-when 3, DF-P23's, which should cover this writer too. Tests: `lib/__tests__/prjRoundGJ21DeliverableReferenceRoute.test.ts` "merge-time fix (ruling 5) …".
+
 ---
 
 <a id="evid-2"></a>
