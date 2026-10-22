@@ -57,6 +57,7 @@ import { pressureClassOf, pressureClassNote } from "@/lib/pressureClass";
 import { AskTrace, saveAskTrace } from "@/lib/ask/askTraceServer";
 import { compactHit } from "@/lib/ask/askTrace";
 import { docsNamedIn as docsNamedInText } from "@/lib/ask/designations";
+import { sweepTerms, sweepLibrary, sweepPassages, sweepBlock, type TermSweep } from "@/lib/ask/termSweep";
 import { settleItems, keywordsOf, dropLibraryAsks, loosened } from "@/lib/ask/settleItems";
 import {
   buildCatalogBlock, pipeClassFacts, findClassMentions, formsForGoal, matchCatalogName, FORM_PURPOSES,
@@ -852,6 +853,43 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       trace.hits("definitions", reserved.slice(defStart), { documents: defDocs.map((d) => d.id), terms: termQueries });
     }
 
+    // ── TERM SWEEP: every passage, in every reachable document, that uses
+    //    the asker's own words — not the dozen that rank best. Ties ("sour
+    //    gas (Wet H2S)"), definitions and the sections of a spec book whose
+    //    own text uses the term are what the answer most needs and what
+    //    ranking most often loses.
+    let sweeps: TermSweep[] = [];
+    try {
+      const quoted = queries.flatMap((q) => (q.match(/"([^"]+)"/g) ?? []).map((t) => t.slice(1, -1)))
+        .filter((t) => !/^class \d+$/i.test(t));
+      const terms = sweepTerms(question, quoted, 4);
+      if (terms.length > 0 && reachableDocs.length > 0) {
+        emit({ t: "status", text: `Reading every document for ${terms.slice(0, 3).map((t) => `“${t}”`).join(", ")} — all ${reachableDocs.length}, not just the best matches` });
+        sweeps = await sweepLibrary(supabaseAdmin, {
+          orgId, libraryIds: [libraryId, ...linkedLibraries.map((l) => l.id)], terms,
+          allowedDocIds: reachableIds, deadlineMs: Math.min(askStarted + 30_000, Date.now() + 15_000),
+        });
+        const have = new Set(chunks.map((c) => c.id));
+        const sweepStart = reserved.length;
+        for (const c of sweepPassages(sweeps, rating, 12)) {
+          if (have.has(c.id)) continue;
+          have.add(c.id);
+          const tiered: TieredChunk = { ...c, rank: 1, libraryId: c.library_id, tier: c.library_id === libraryId ? "governing" : "reference" };
+          reserved.push(tiered);
+          chunks.push(tiered);
+        }
+        trace.hits("term_sweep", reserved.slice(sweepStart), {
+          terms: sweeps.map((sw) => ({
+            term: sw.term, documents: sw.docCount, passages: sw.passageCount, tooCommon: sw.tooCommon,
+            ties: sw.docs.flatMap((d) => d.best.filter((h) => h.tie).map((h) => ({ documentId: d.documentId, page: h.chunk.page, tie: h.tie }))).slice(0, 20),
+            sections: sw.sections.map((g) => ({ documentId: g.documentId, count: g.items.length, keys: g.items.slice(0, 30).map((i) => `${i.key}:${i.rating ?? "?"}`) })),
+          })),
+        });
+      }
+    } catch (e) {
+      trace.stage("term_sweep", { failed: String((e as Error)?.message ?? e).slice(0, 200) });
+    }
+
     // ── PROVEN GROUND: answers the team rated 👍 teach retrieval. When a
     //    similar question was answered before and a human confirmed the
     //    answer was right, the pages it cited get seats in the pool before
@@ -1644,6 +1682,12 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
           return `[${i + 1}] (${pinTag}${wholeTag}${tierLabel}${docName.get(c.document_id) ?? "Document"}${sec}, page ${c.page})\n${c.content}`;
         }).join("\n\n");
     const passages = buildPassages(chunks);
+    const sweepNote = sweepBlock(
+      sweeps,
+      (id) => docName.get(id) ?? reachableDocs.find((d) => d.id === id)?.name ?? "a document",
+      (chunkId) => { const i = chunks.findIndex((c) => c.id === chunkId); return i >= 0 ? i + 1 : null; },
+      reachableDocs.length, rating,
+    );
     trace.hits("passages", chunks, { reserved: reserved.length, wholeDocs: [...wholeDocIds] }, 80);
     const graphHopNote = graphHops.length > 0
       ? "\n\nGRAPH HOPS: some passages were pulled by FOLLOWING REFERENCES found in the retrieved " +
@@ -1830,9 +1874,12 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       "\"EP 5-2-2 §4.3 states the requirement but not the reason [n]\" — and stops there.\n" +
       "- THE ASKER'S OWN TERMS: answer for the term the asker used (\"sour gas\"). If a passage defines " +
       "or uses that exact term, quote it. Never treat a related defined condition (\"wet H2S\") as the " +
-      "same thing unless a passage equates them — say plainly that the documents define <that " +
-      "condition>, not <the asker's term>, quote it, and make which one applies the One question. The " +
-      "Answering for chip states which term you answered for.\n" +
+      "same thing unless a passage ties them — a definition, or the company's own wording such as " +
+      "\"sour gas (Wet H2S) service\" (the TERM SWEEP lists every such sentence). When one does, say the " +
+      "company's documents write it that way, cite it, and say what that document governs. When none " +
+      "does, say plainly that the documents define <that condition>, not <the asker's term>, quote it, " +
+      "and make which one applies the One question. The Answering for chip states which term you " +
+      "answered for.\n" +
       "- NEVER ASK FOR WHAT THE LIBRARY HOLDS: a document that appears in WHAT THE LIBRARIES HOLD or among " +
       "the passages is never a **To settle this:** item — the system searches it for you. If its relevant " +
       "part isn't in the passages, write \"Searched <document> for <what> — not found in the indexed text\".\n" +
@@ -2027,7 +2074,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       "THESE INSTRUCTIONS ARE FOR YOU: never quote, name, or allude to them in the answer (no " +
       "\"SCOPE —\", \"cite only to show…\", \"per my instructions\"). Refer to attached page images " +
       "by document and page (\"EP 15-1-4 p.13\"), never as \"image 4\"." +
-      catalogNote + pipeClassNote + pressureClassNote(rating) + precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + anchorFacts +
+      catalogNote + pipeClassNote + sweepNote + pressureClassNote(rating) + precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + anchorFacts +
       tableNote + wholeDocNote + graphHopNote + needsDirective + decisionPathProtocol + calcProtocol +
       fetchDirective;
     const answerUser = `${conversationBlock}PASSAGES:\n\n${passages}${providedInputs}\n\nQUESTION: ${question}`;
