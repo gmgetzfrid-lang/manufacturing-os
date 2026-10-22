@@ -186,7 +186,7 @@ describe("ruling (4) — the notify-only limb is NOT built; nothing about it cha
       { kind: "told", mode: "notify_only", fill: { users: ["q-1"] }, records_examination: true },
     ] });
     expect(p && p.ok).toBe(true);
-    expect((p as { ok: true; control: { slots: Array<Record<string, unknown>> } }).control.slots[1]).not.toHaveProperty("records_examination");
+    expect((p as unknown as { ok: true; control: { slots: Array<Record<string, unknown>> } }).control.slots[1]).not.toHaveProperty("records_examination");
   });
   it("the editor's hint never steers a facility toward a blocking assurance slot", () => {
     expect(ASSURANCE_OPT_IN_HINT).toMatch(/adds no sign-off/);
