@@ -22,6 +22,14 @@ const LEADS: Record<string, string[]> = {
   chloride: ["chlorides", "hcl"],
   steam: ["condensate", "boiler feedwater", "bfw"],
   cryogenic: ["low temperature", "impact test", "mdmt"],
+  vessel: ["equipment", "nozzle", "drum"],
+  vessels: ["equipment", "nozzle", "drum"],
+  nozzle: ["equipment", "vessel"],
+  nozzles: ["equipment", "vessel"],
+  equipment: ["nozzle", "vessel"],
+  tank: ["equipment", "nozzle"],
+  exchanger: ["equipment", "nozzle"],
+  pump: ["equipment", "nozzle"],
 };
 
 /** The lowercase words of a question worth matching (not the filler). */

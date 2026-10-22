@@ -32,3 +32,12 @@ describe("the draft's To settle this list", () => {
     expect(out).toContain("**Why:**");
   });
 });
+
+describe("an empty ask is never shown", () => {
+  it("drops a bare bullet left behind", async () => {
+    const { settleItems: items, dropLibraryAsks: drop } = await import("@/lib/ask/settleItems");
+    const a = "**To settle this:**\n- \n* **\n- **Best answer with what I have:** use the line class row.\n**Why:**\n- x";
+    expect(items(a)).toEqual([]);
+    expect(drop(a, () => false)).not.toMatch(/^- \s*$/m);
+  });
+});

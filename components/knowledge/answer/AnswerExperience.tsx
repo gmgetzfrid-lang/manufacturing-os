@@ -1048,11 +1048,14 @@ function SettleBox({ items, inline, onAttach, onRethink }: {
     setAdded((a) => [...a, ...files.map((f) => f.name)]);
   };
   const best = items.filter((b) => /^\*{0,2}best answer/i.test(b.text));
-  const needs = items.filter((b) => b.type !== "label" && !best.includes(b));
+  // An item with no words (a stray "*" left when an ask for a document the
+  // library holds was removed) is not something to ask for.
+  const needs = items.filter((b) => b.type !== "label" && !best.includes(b) && b.text.replace(/[*_\s:—–-]/g, "").length > 0);
+  if (needs.length === 0 && best.length === 0) return null;
   return (
     <div className="rounded-xl border border-slate-300 dark:border-slate-700 bg-[var(--color-surface)] px-4 py-3.5 space-y-2.5">
-      <div className="text-[14px] font-bold text-[var(--color-text)]">I can settle this if you give me:</div>
-      <ul className="space-y-1.5">
+      {needs.length > 0 && <div className="text-[14px] font-bold text-[var(--color-text)]">I can settle this if you give me:</div>}
+      <ul className={needs.length ? "space-y-1.5" : "hidden"}>
         {needs.map((b, i) => (
           <li key={i} className="grid grid-cols-[1rem_minmax(0,1fr)] gap-2 items-start text-[14px] leading-relaxed text-[var(--color-text)]">
             <span className="mt-2 w-1.5 h-1.5 rounded-full bg-slate-500" />
@@ -1061,7 +1064,7 @@ function SettleBox({ items, inline, onAttach, onRethink }: {
         ))}
       </ul>
       {best.map((b, i) => (
-        <div key={i} className="text-[13.5px] leading-relaxed text-[var(--color-text-muted)] border-t border-[var(--color-border)] pt-2">{inline(b.text)}</div>
+        <div key={i} className={`text-[13.5px] leading-relaxed text-[var(--color-text-muted)] ${needs.length ? "border-t border-[var(--color-border)] pt-2" : ""}`}>{inline(b.text)}</div>
       ))}
       {onAttach && (
         <div

@@ -59,8 +59,8 @@ describe("the sweep, as the answer reads it", () => {
     {
       term: "sour", docCount: 40, passageCount: 300, tooCommon: false, docs: [],
       sections: [{ documentId: "SPEC", items: [
-        { key: "AAAC2H", page: 812, rating: "150#", line: "AAAC2H - Hydrocarbon and/or Hydrogen Rich Service, Sour Service (200 BHN MAX)", chunk: spec },
-        { key: "FAAA1G", page: 1700, rating: "1500#", line: "FAAA1G - Hydrocarbon, Sour Service", chunk: spec2 },
+        { key: "AAAC2H", page: 812, rating: "150#", seen: [], line: "AAAC2H - Hydrocarbon and/or Hydrogen Rich Service, Sour Service (200 BHN MAX)", chunk: spec },
+        { key: "FAAA1G", page: 1700, rating: "1500#", seen: [], line: "FAAA1G - Hydrocarbon, Sour Service", chunk: spec2 },
       ] }],
     },
   ];
@@ -122,5 +122,33 @@ describe("a part rated differently from its line", () => {
     const re = partRegex("class 300");
     expect(["Class 300", "300#", "300 lb", "CL300", "300 class"].every((x) => re.test(x))).toBe(true);
     expect(re.test("Class 3000")).toBe(false);
+  });
+});
+
+import { ratingsSeen } from "@/lib/ask/termSweep";
+
+describe("the questions that failed on the real library", () => {
+  it("'where it connects to a vessel': searches Class 300 with equipment and nozzle, never 'connects'", () => {
+    const q = "can i use a 300 class flange on a 150 class piping system if its where it connects to a vessel";
+    const t = sweepTerms(q, [], 7, ["300", "150"], "150");
+    expect(t).toEqual(expect.arrayContaining(["class 300 + vessel", "class 300 + equipment", "class 300 + nozzle"]));
+    expect(t.join(" ")).not.toMatch(/connects/);
+  });
+  it("reads which classes a spec page is written for when no rating was recorded", () => {
+    const page = "Services: AAAC2H - Hydrocarbon and/or Hydrogen Rich Service, Sour Service (200 BHN MAX) Flanges 1D15210300 0.5 150 FLANGES: CS, Class 150, XXS 1D16210000 150 Blind, Class 150 1D15230300 300 FLANGES: Class 300, XXS";
+    expect(ratingsSeen(page)[0]).toEqual(["150", 2]);
+    expect(ratingsSeen(page).map(([n]) => n)).toContain("300");
+  });
+  it("a spec-book class with no recorded rating but Class 150 on its page is attached for a Class 150 question", () => {
+    const ch = chunk("aaac2h", "SPEC", 812, "Services: AAAC2H - Hydrocarbon and/or Hydrogen Rich Service, Sour Service (200 BHN MAX)");
+    const other = chunk("x", "SPEC", 1700, "Services: FAAA1G - Hydrocarbon, Sour Service");
+    const sw: TermSweep[] = [{ term: "sour", docCount: 1, passageCount: 2, tooCommon: false, docs: [], sections: [{ documentId: "SPEC", items: [
+      { key: "FAAA1G", page: 1700, rating: null, seen: [["1500", 9]], line: "FAAA1G - Hydrocarbon, Sour Service", chunk: other },
+      { key: "AAAC2H", page: 812, rating: null, seen: [["150", 12], ["300", 4]], line: "AAAC2H - Hydrocarbon and/or Hydrogen Rich Service, Sour Service (200 BHN MAX)", chunk: ch },
+    ] }] }];
+    expect(sweepPassages(sw, ["150"]).map((c) => c.id)).toEqual(["aaac2h"]);
+    const text = sweepBlock(sw, () => "E2G Piping Specs (All)", (id) => (id === "aaac2h" ? 9 : null), 1300, ["150"]);
+    expect(text).toMatch(/AAAC2H p\.812 · no rating recorded · page shows Class 150 ×12, Class 300 ×4 \[9\]/);
+    expect(text.indexOf("AAAC2H")).toBeLessThan(text.indexOf("FAAA1G"));
   });
 });

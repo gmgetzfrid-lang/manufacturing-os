@@ -8,7 +8,7 @@ export function settleItems(answer: string): string[] {
   const m = answer.match(SETTLE_SECTION);
   if (!m) return [];
   return m[2].split("\n").map((l) => l.replace(/^\s*[-*]\s*/, "").trim())
-    .filter((l) => l && !/^\*\*Best answer/i.test(l)).slice(0, 4);
+    .filter((l) => l.replace(/[*_\s]/g, "") && !/^\*\*Best answer/i.test(l)).slice(0, 4);
 }
 
 const STOP = new Set(["the", "and", "for", "that", "this", "with", "from", "its", "would", "give", "gives", "section",
@@ -38,6 +38,9 @@ export function loosened(q: string): string {
 export function dropLibraryAsks(answer: string, namesLibraryDoc: (line: string) => boolean): string {
   const m = answer.match(SETTLE_SECTION);
   if (!m) return answer;
-  const kept = m[2].split("\n").filter((l) => !/^\s*[-*]\s/.test(l) || /Best answer/i.test(l) || !namesLibraryDoc(l)).join("\n");
+  const kept = m[2].split("\n")
+    // An empty bullet ("- " or "* ") is never an ask.
+    .filter((l) => !/^\s*[-*]\s*[*_\s]*$/.test(l) || !l.trim())
+    .filter((l) => !/^\s*[-*]\s/.test(l) || /Best answer/i.test(l) || !namesLibraryDoc(l)).join("\n");
   return kept === m[2] ? answer : answer.replace(m[0], `${m[1]}${kept}`);
 }

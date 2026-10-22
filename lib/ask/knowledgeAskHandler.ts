@@ -872,6 +872,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
         sweeps = await sweepLibrary(supabaseAdmin, {
           orgId, libraryIds: [libraryId, ...linkedLibraries.map((l) => l.id)], terms,
           allowedDocIds: reachableIds, deadlineMs: Math.min(askStarted + 30_000, Date.now() + 15_000),
+          pageCounts: new Map(reachableDocs.map((d) => [d.id, d.page_count ?? 0])),
         });
         const have = new Set(chunks.map((c) => c.id));
         const sweepStart = reserved.length;

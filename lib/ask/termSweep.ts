@@ -30,7 +30,9 @@ const STOP = new Set((
   "need needs needed use used using uses get give find show tell me us there here any all some each every per than then so if not no yes " +
   "spec specs specification specifications piping pipe pipes class classes rating rated line lines stream streams service services system " +
   "required requirement requirements require allowed allow ok okay right best good new existing type types kind size sizes number " +
-  "lb lbs pound pounds psi psig asme ansi cl want trying going put install installing installed"
+  "lb lbs pound pounds psi psig asme ansi cl want trying going put install installing installed " +
+  "connect connects connected connecting attach attaches attached attaching goes go going work working works " +
+  "able okay sure thing things stuff part parts piece place"
 ).split(/\s+/));
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -66,7 +68,11 @@ export function sweepTerms(question: string, quoted: string[] = [], max = 6, cla
   const singles = [...new Set(runs.flat().filter((w) => w.length >= 4 || /\d/.test(w)))];
   // A part rated differently from its line: that rating with each subject.
   const others = classes.filter((c) => c !== lineClass);
+  // The asker's words first, then the words the documents more likely use
+  // for the same thing ("vessel" → "equipment", "nozzle").
+  const leads = leadsFor(singles);
   for (const c of others) for (const w of [...singles].reverse()) push(`class ${c} + ${w}`);
+  for (const c of others) for (const w of leads) push(`class ${c} + ${w}`);
   for (const r of runs) for (let i = 0; i + 1 < r.length; i++) push(`${r[i]} ${r[i + 1]}`);
   for (const w of singles) push(w);
   return out.slice(0, max);
@@ -121,7 +127,27 @@ export interface SweepHit {
   sentence: string;
   tie: { kind: "paren" | "defines" | "together" | "related"; to: string } | null;
 }
-export interface SweepSection { key: string; page: number; rating: string | null; line: string; chunk: SweepChunk }
+export interface SweepSection {
+  key: string; page: number;
+  /** The section's recorded rating (from the class-by-class read). */
+  rating: string | null;
+  /** Pressure classes written on the page, most frequent first — when no
+   *  rating is recorded, what the page itself says. */
+  seen: Array<[string, number]>;
+  line: string; chunk: SweepChunk;
+}
+
+const RATING_CLASSES = ["150", "300", "400", "600", "900", "1500", "2500"];
+/** How often each pressure class is written in a text, in any notation. */
+export function ratingsSeen(text: string): Array<[string, number]> {
+  const out: Array<[string, number]> = [];
+  for (const n of RATING_CLASSES) {
+    const re = new RegExp(partRegex(`class ${n}`).source, "gi");
+    const k = (text.match(re) ?? []).length;
+    if (k > 0) out.push([n, k]);
+  }
+  return out.sort((a, b) => b[1] - a[1]);
+}
 export interface TermSweep {
   term: string;
   docCount: number;
@@ -173,9 +199,11 @@ const searchOf = (term: string) => {
   return parts.map((p) => p.match(/^class (\d{3,4})$/)?.[1] ?? `"${p}"`).join(" ");
 };
 
-/** A document this dense with the term is a book of sections (a spec
- *  database, a data-sheet book): its hits are listed section by section. */
+/** A book of sections (a spec database, a data-sheet book) — by its size,
+ *  or by how densely it uses the term — is listed section by section, so a
+ *  class that uses the word once on page 812 is still on the list. */
 const BOOK_HITS = 30;
+const BOOK_PAGES = 150;
 
 /** Sweep the libraries for each term. Every query is ids-only first; text is
  *  read only for the passages that will be looked at. */
@@ -183,8 +211,11 @@ export async function sweepLibrary(admin: SupabaseClient, opts: {
   orgId: string; libraryIds: string[]; terms: string[];
   /** Documents the asker may read (retired and AI-excluded already removed). */
   allowedDocIds: Set<string>;
+  /** Page counts, to recognise book-sized documents. */
+  pageCounts?: Map<string, number>;
   deadlineMs: number;
 }): Promise<TermSweep[]> {
+  const isBook = (docId: string, hits: number) => hits >= BOOK_HITS || (opts.pageCounts?.get(docId) ?? 0) >= BOOK_PAGES;
   const out: TermSweep[] = [];
   const sectionCache = new Map<string, Array<{ key: string; page: number }>>();
   for (const term of opts.terms) {
@@ -200,7 +231,8 @@ export async function sweepLibrary(admin: SupabaseClient, opts: {
     for (const r of hits) byDoc.set(r.document_id, [...(byDoc.get(r.document_id) ?? []), r]);
     const sweep: TermSweep = {
       term, docCount: byDoc.size, passageCount: hits.length,
-      tooCommon: byDoc.size > Math.max(40, opts.allowedDocIds.size * 0.5),
+      // In a third of the library or more, a word names nothing in particular.
+      tooCommon: byDoc.size > Math.max(40, opts.allowedDocIds.size * 0.3),
       docs: [], sections: [],
     };
     out.push(sweep);
@@ -208,14 +240,14 @@ export async function sweepLibrary(admin: SupabaseClient, opts: {
 
     // Books get their mapped sections; everything else is a document.
     for (const [docId, list] of byDoc) {
-      if (list.length >= BOOK_HITS && !sectionCache.has(docId)) sectionCache.set(docId, await mappedSections(admin, docId));
+      if (isBook(docId, list.length) && !sectionCache.has(docId)) sectionCache.set(docId, await mappedSections(admin, docId));
     }
     // Which passages to read: an ordinary document, up to 12 spread across
     // it; a book, one per section (or per page when it isn't mapped).
     const toRead: Row[] = [];
     for (const [docId, list] of byDoc) {
       const sorted = [...list].sort((a, b) => a.page - b.page);
-      if (list.length >= BOOK_HITS) {
+      if (isBook(docId, list.length)) {
         const sections = sectionCache.get(docId) ?? [];
         const seen = new Set<string>();
         for (const r of sorted) {
@@ -240,7 +272,7 @@ export async function sweepLibrary(admin: SupabaseClient, opts: {
     const combo = partsOf(term).length > 1;
     for (const [docId, list] of byDoc) {
       const chunks = list.map((r) => read.get(r.id)).filter((c): c is SweepChunk => !!c).sort((a, b) => a.page - b.page);
-      if (list.length >= BOOK_HITS) {
+      if (isBook(docId, list.length)) {
         const sections = sectionCache.get(docId) ?? [];
         const items: SweepSection[] = [];
         const seen = new Set<string>();
@@ -251,7 +283,7 @@ export async function sweepLibrary(admin: SupabaseClient, opts: {
           const key = sectionAt(sections, c.page)?.key ?? codeOf(line) ?? `p${c.page}`;
           if (seen.has(key)) continue;
           seen.add(key);
-          items.push({ key, page: c.page, rating: null, line, chunk: c });
+          items.push({ key, page: c.page, rating: null, seen: ratingsSeen(c.content), line, chunk: c });
         }
         if (sections.length > 0) {
           const ratings = await sectionRatings(admin, docId, items.map((i) => i.key));
@@ -296,8 +328,8 @@ export function sweepPassages(sweeps: TermSweep[], ratings: string[], max = 12):
   for (const s of sweeps) for (const d of s.docs) for (const h of d.best) if (h.tie && h.tie.kind !== "related") add(h.chunk);
   for (const s of sweeps) for (const g of s.sections) {
     const combo = partsOf(s.term).length > 1;
-    const items = orderByFit(g.items, ratings).filter((i) => combo || fits(i, ratings));
-    for (const it of items.slice(0, 4)) add(it.chunk);
+    const items = orderByFit(g.items, ratings).filter((i) => combo || fits(i, ratings) || mayFit(i, ratings) || ratings.length === 0);
+    for (const it of items.slice(0, 5)) add(it.chunk);
   }
   for (const s of sweeps) for (const d of s.docs) for (const h of d.best) if (h.tie) add(h.chunk);
   for (const s of sweeps) for (const d of s.docs.slice(0, 6)) if (d.best[0]) add(d.best[0].chunk);
@@ -306,13 +338,18 @@ export function sweepPassages(sweeps: TermSweep[], ratings: string[], max = 12):
 
 export const sameRating = (recorded: string, asked: string) => new RegExp(`(^|[^0-9])${asked}([^0-9]|$)`).test(recorded);
 const fits = (i: SweepSection, ratings: string[]) => !!i.rating && ratings.some((r) => sameRating(i.rating!, r));
+/** No recorded rating, but the page writes one of the asked classes. */
+const mayFit = (i: SweepSection, ratings: string[]) => !i.rating && i.seen.some(([n]) => ratings.includes(n));
 /** Sections recorded with the line's rating first, then other asked
  *  ratings, then unrecorded, then the rest. */
 function orderByFit(items: SweepSection[], ratings: string[]): SweepSection[] {
   const rank = (i: SweepSection) => {
-    if (!i.rating) return ratings.length + 1;
+    if (!i.rating) {
+      const k = i.seen.length ? ratings.indexOf(i.seen[0][0]) : -1;
+      return k >= 0 ? ratings.length + k : mayFit(i, ratings) ? 2 * ratings.length : 2 * ratings.length + 1;
+    }
     const k = ratings.findIndex((r) => sameRating(i.rating!, r));
-    return k >= 0 ? k : ratings.length + 2;
+    return k >= 0 ? k : 2 * ratings.length + 2;
   };
   return [...items].sort((a, b) => rank(a) - rank(b));
 }
@@ -350,7 +387,8 @@ export function sweepBlock(sweeps: TermSweep[], docName: (id: string) => string,
         (ratings.length ? ` — ${fit.length} recorded as Class ${ratings.join("/")}${unknown.length ? `, ${unknown.length} with no rating recorded` : ""}` : "") + ":");
       const list = orderByFit(g.items, ratings).slice(0, 16);
       for (const it of list) {
-        lines.push(`    - ${it.key} p.${it.page}${it.rating ? ` · rating ${it.rating}` : " · rating not recorded (read it on the page)"}${cite(it.chunk.id)}: "${it.line}"`);
+        const onPage = it.seen.length ? ` · page shows ${it.seen.slice(0, 3).map(([n, k]) => `Class ${n} ×${k}`).join(", ")}` : "";
+        lines.push(`    - ${it.key} p.${it.page}${it.rating ? ` · rating ${it.rating}` : ` · no rating recorded${onPage}`}${cite(it.chunk.id)}: "${it.line}"`);
       }
       if (g.items.length > list.length) lines.push(`    - …and ${g.items.length - list.length} more sections.`);
     }
