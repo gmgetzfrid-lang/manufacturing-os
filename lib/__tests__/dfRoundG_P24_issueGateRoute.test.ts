@@ -56,7 +56,7 @@ function chain(table: string) {
       };
       return (...args: unknown[]) => {
         state.calls.push({ table, method: prop, args });
-        if (prop === "insert" && table === "ticket_review_slots" && !state.errors[table]) {
+        if (prop === "insert" && (table === "ticket_review_slots" || table === "ticket_examination_scopes") && !state.errors[table]) {
           state.rows[table] = [...(state.rows[table] ?? []), ...(Array.isArray(args[0]) ? args[0] : [args[0]]) as Array<Record<string, unknown>>];
         }
         if (prop === "select" && (args[1] as { head?: boolean } | undefined)?.head) head = true;
@@ -99,6 +99,7 @@ vi.mock("@/lib/examinationScope", async (importOriginal) => {
   return { ...real, applicableRequirements: (...a: Parameters<typeof real.applicableRequirements>) => (state.noP24 ? [] : real.applicableRequirements(...a)) };
 });
 import { POST as workflowAction } from "@/app/api/tickets/workflow-action/route";
+import { POST as scopeRoute } from "@/app/api/tickets/examination-scope/route";
 import { WorkflowEngine, ISSUING_APPROVALS } from "@/lib/workflow";
 import { rowToTicket } from "@/lib/ticketTransitions";
 
@@ -279,6 +280,32 @@ describe("ruling (2) — the gate on an issuing approval", () => {
     state.user = { id: who.uid };
     expect((await post({ ticketId: "t1", actionType: who.action })).status).toBe(200);
     expect(scopeReads()).toEqual([]);
+    // Fix pass (minor 4): the issuing row says the gate was unchecked, so an
+    // issue that bypassed it can be told apart from an unconfigured workspace.
+    expect(auditRow()!.details.examinationScope).toEqual({ configUnchecked: true });
+  });
+  it("fix pass (minor 3): an unreadable row for a request filed BEFORE every requirement issues (never a 503); the row says it was unchecked", async () => {
+    const row = reviewRow({ created_at: "2026-09-01T00:00:00.000Z" });
+    const who = issuer(row);
+    reset();
+    seed(cfg);
+    state.rows.tickets = [row];
+    state.errors.ticket_examination_scopes = { code: "PGRST000", message: "upstream timeout" };
+    state.user = { id: who.uid };
+    const r = await post({ ticketId: "t1", actionType: who.action });
+    expect(r.status).toBe(200);
+    expect(auditRow()!.details.examinationScope).toEqual({ unchecked: true, required: ["exam", "gov"] });
+    expect(ticketUpdates().length).toBeGreaterThan(0);
+  });
+  it("fix pass (minor 3): a requirement with no readable since binds nothing — an unreadable row is not a 503 there either", async () => {
+    const row = reviewRow();
+    const who = issuer(row);
+    reset();
+    seed(scopeCfg([{ field: "exam", libraryId: LIB }]));
+    state.rows.tickets = [row];
+    state.errors.ticket_examination_scopes = { code: "PGRST000", message: "upstream timeout" };
+    state.user = { id: who.uid };
+    expect((await post({ ticketId: "t1", actionType: who.action })).status).toBe(200);
   });
   it("a requirement on the request's WORK CLASS binds the same way", async () => {
     const row = reviewRow({ work_class: "code" });
@@ -322,6 +349,27 @@ describe("ruling (2) — a roster sign-off that completes the review", () => {
     const ok = await post({ ticketId: "t1", actionType: "sign_slot", dryRun: true });
     expect(ok.status).toBe(200);
     expect((await ok.json()).dryRun).toBe(true);
+  });
+  it("fix pass (minor 5): a waiver needs the issue authority — a sign-off that would not complete the review is not it (403); the completing signer may (200)", async () => {
+    const roster = await openRoster();
+    const signer = roster.slots[0].primaries[0];
+    const twoSlots: TicketReviewRoster = { ...roster, slots: [...roster.slots, { ...roster.slots[0], id: "s2", kind: "lead", label: "Lead", primaries: ["q-1"], engineering: false }] };
+    const waive = async (r: TicketReviewRoster) => {
+      reset();
+      seed(cfg, ENGINEERING_ONLY);
+      const TU = "7e000000-0000-4000-8000-000000000001";
+      state.rows.tickets = [reviewRow({ id: TU, metadata: { review_roster: r } })];
+      state.user = { id: signer };
+      return scopeRoute(new NextRequest("http://x/api/tickets/examination-scope", {
+        method: "POST", headers: { authorization: "Bearer t", "content-type": "application/json" }, body: JSON.stringify({ ticketId: TU, waiver: { reason: "vendor report to follow" } }),
+      }));
+    };
+    const peer = await waive(twoSlots);
+    expect(peer.status).toBe(403);
+    expect(state.calls.some((c) => c.table === "audit_logs" && c.method === "insert")).toBe(false);
+    const completing = await waive(roster);
+    expect(completing.status).toBe(200);
+    expect((await completing.json()).waiver).toMatchObject({ fields: ["exam"], by: signer });
   });
   it("a sign-off that does NOT complete the review is never gated (no read)", async () => {
     const roster = await openRoster();

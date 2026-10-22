@@ -152,9 +152,13 @@ describe("mounted where the plan puts them", () => {
   it("the request page mounts the panel only when the workspace configured examination data", () => {
     expect(src("app/(protected)/requests/[id]/page.tsx")).toMatch(/\{examinationScopeConfigured\(parseExaminationScopeConfig\(draftingCfg\)\) && <div [^>]*><ExaminationScopePanel ticket=\{ticket\} draftingCfg=\{draftingCfg\}/);
   });
-  it("Admin → Request forms mounts the section and stamps new requirements at its own Save", () => {
+  it("Admin → Request forms mounts the section and stamps new requirements at its own Save — with the server's clock, after the unstamped save (fix pass)", () => {
     const page = src("app/(protected)/admin/requests/page.tsx");
     expect(page).toMatch(/<ExaminationScopeSection settings=\{settings\} orgId=\{activeOrgId\} onChange=/);
-    expect(page).toMatch(/const data = withNormalizedOutcomeReasons\(stampExaminationScope\(settings, new Date\(\)\.toISOString\(\)\)\);/);
+    expect(page).toMatch(/let data = withNormalizedOutcomeReasons\(unstampNewlyFillable\(settings, storedSettings\)\);/);
+    const save = page.slice(page.indexOf("const handleSave"));
+    expect(save.indexOf(".upsert(")).toBeLessThan(save.indexOf("await readServerClock()"));
+    expect(save.indexOf("await readServerClock()")).toBeLessThan(save.indexOf("stampExaminationScope(data, new Date(serverMs).toISOString())"));
+    expect(save).not.toMatch(/stampExaminationScope\([^)]*new Date\(\)\.toISOString\(\)/);
   });
 });

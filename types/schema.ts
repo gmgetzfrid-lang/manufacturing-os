@@ -1227,7 +1227,7 @@ export interface TicketConsentWindowMark {
   /** Set when the window closed with no objection but did NOT advance (the
    *  slot waits for a sign-off) — why, as lib/consentWindow.ts
    *  consentHeldAction words it (DF-P7 fix pass). */
-  heldReason?: "undelivered" | "producer_floor" | "independence" | "source_moved" | "source_unchecked" | "record_mismatch" | "no_longer_member" | "engineered" | null;
+  heldReason?: "undelivered" | "producer_floor" | "independence" | "source_moved" | "source_unchecked" | "record_mismatch" | "no_longer_member" | "engineered" | "examination_scope_missing" | "examination_scope_unchecked" | null;
 }
 
 /** drafting-flow DF-P5 ROSTER: the review roster a submission opened. */

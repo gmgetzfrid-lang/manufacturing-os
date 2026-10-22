@@ -71,6 +71,16 @@
 // capability (CONSENT_REFUSED_CAPABILITIES) — a forged metadata plan, or a
 // table changed since the roster opened, can never open or close a window.
 //
+// DF-P24 FIX PASS (GAP-102 acceptance 4): a close that would ISSUE the
+// request runs the examination-scope gate the workflow route runs on an
+// issuing approval (lib/examinationScope.ts scopeGateOutcome, from the
+// workspace's 'drafting' configuration this scan already reads): data a
+// binding requirement names that is missing and not waived holds the close
+// ("examination_scope_missing"); the request's data unreadable where a
+// requirement binds holds it ("examination_scope_unchecked"). A request
+// filed before every requirement issues, as on the route. No requirement
+// applies → no read, the close is today's.
+//
 // ticket_notice_events (20261255) is the record that survives any bell
 // purge: append-only, written only by the service role.
 
@@ -81,6 +91,7 @@ import { currentRoster, ticketResource, engineeringGateRequired, ISSUE_AS_IS_NOT
 import { isDeclaredLikeInKind, declarationSignatureStands, type DeclarationSignatureRow } from "@/lib/reviewModel";
 import { heldRoles } from "@/lib/roleHeld";
 import { flaggedRequestTypes } from "@/lib/requestTypes";
+import { parseExaminationScopeConfig, applicableRequirements, scopeGateOutcome, type ScopeGateOutcome } from "@/lib/examinationScope";
 import { resolveTicketRecipients, isRoutedStatus } from "@/lib/ticketRouting";
 import { wrapEmailBody } from "@/lib/emailRender";
 import { isPreferenceExempt } from "@/lib/notificationPrefs";
@@ -549,7 +560,7 @@ export interface ConsentScanReport {
 
 /** `engineeringFirstTypes` null: the org's request types could not be read
  *  (the close then cannot re-check the engineered lane and waits a run). */
-interface OrgCtx { members: Member[]; policy: CapabilityPolicy; sodActive: boolean; engineeringFirstTypes: string[] | null }
+interface OrgCtx { members: Member[]; policy: CapabilityPolicy; sodActive: boolean; engineeringFirstTypes: string[] | null; draftingCfg?: Record<string, unknown> | null }
 
 /** A roster ledger row (ticket_review_slots, 20261242) as the window reads it. */
 interface LedgerSlot {
@@ -591,18 +602,21 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
       loadPickerMembers(orgId, sb as never),
       loadCapabilityPolicyStrict(orgId, sb as never),
       // DRAFT-2: the engineering-first request types (the route's gate too).
-      (async (): Promise<string[] | null> => {
+      // DF-P24 fix pass: the same row carries the examination-scope
+      // configuration the issuing close is gated on.
+      (async (): Promise<{ types: string[]; data: Record<string, unknown> | null } | null> => {
         try {
           const { data, error } = await sb.from("org_configurations").select("data").eq("org_id", orgId).eq("key", "drafting").maybeSingle();
           if (error) return null;
-          return flaggedRequestTypes((data as { data?: unknown } | null)?.data, "engineeringFirst");
+          const raw = (data as { data?: unknown } | null)?.data;
+          return { types: flaggedRequestTypes(raw, "engineeringFirst"), data: raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null };
         } catch { return null; }
       })(),
     ]);
     let ctx: OrgCtx | null = null;
     if (!members.ok) say(`org ${orgId}: its members could not be read — nothing was done for its consent windows this run: ${members.error}`);
     else if (!policy.ok) say(`org ${orgId}: its permission policy could not be read — nothing was done for its consent windows this run: ${policy.error}`);
-    else ctx = { members: members.rows, policy: policy.policy, sodActive: members.rows.length >= 3, engineeringFirstTypes: cfg };
+    else ctx = { members: members.rows, policy: policy.policy, sodActive: members.rows.length >= 3, engineeringFirstTypes: cfg ? cfg.types : null, draftingCfg: cfg ? cfg.data : null };
     orgs.set(orgId, ctx);
     return ctx;
   };
@@ -1056,6 +1070,19 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     const ledgerAgrees = ledger.slots.filter((x) => x.mode !== "notify_only" && x.slot_kind !== slotKind && x.status !== "void").every((x) => x.status === "satisfied");
     let drift: { moved: string[]; unchecked: boolean } = { moved: [], unchecked: false };
     if (undelivered.length === 0 && !engineered && !floorHolds && !independenceHolds && !noLongerMember && wouldIssue && ledgerAgrees) drift = await sourceDriftOf(ticket);
+    // DF-P24 fix pass (GAP-102 acceptance 4): an issuing close meets the
+    // examination-scope gate, as an issuing approval does on the route. The
+    // configuration was read with the engineered lane (an unreadable one
+    // never reaches here — the close waited above). No requirement applies
+    // → no read.
+    let scopeGate: ScopeGateOutcome | null = null;
+    if (undelivered.length === 0 && !engineered && !floorHolds && !independenceHolds && !noLongerMember && wouldIssue && ledgerAgrees && drift.moved.length === 0 && !drift.unchecked) {
+      const scopeConfig = parseExaminationScopeConfig(ctx.draftingCfg ?? null);
+      if (applicableRequirements(scopeConfig, ticket).length > 0) {
+        const read = await sb.from("ticket_examination_scopes").select("field_values, waiver").eq("ticket_id", ticketId).maybeSingle();
+        scopeGate = scopeGateOutcome(scopeConfig, ticket, { data: read.data, error: read.error }, ctx.draftingCfg ?? null);
+      }
+    }
     const holdReason: ConsentHoldReason | null = undelivered.length > 0 ? "undelivered"
       : engineered ? "engineered"
       : floorHolds ? "producer_floor"
@@ -1064,6 +1091,8 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
       : wouldIssue && !ledgerAgrees ? "record_mismatch"
       : drift.moved.length > 0 ? "source_moved"
       : drift.unchecked ? "source_unchecked"
+      : scopeGate?.kind === "blocked" ? "examination_scope_missing"
+      : scopeGate?.kind === "unreadable" ? "examination_scope_unchecked"
       : null;
     const held = holdReason !== null;
     const finalRoster = held ? roster : advancedRoster;
@@ -1080,6 +1109,8 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
       : holdReason === "record_mismatch" ? ` The review's ledger does not show every other sign-off as given, so the request is not issued on silence: "${label}" waits for a sign-off.`
       : holdReason === "source_moved" ? ` The source revision has moved since this request was raised (${drift.moved.join("; ")}), and issuing over it needs a person's acknowledgement: "${label}" waits for a sign-off.`
       : holdReason === "source_unchecked" ? ` The source documents could not be checked for a newer revision, so the request is not issued on silence: "${label}" waits for a sign-off.`
+      : holdReason === "examination_scope_missing" && scopeGate?.kind === "blocked" ? ` ${scopeGate.blocking.map((b) => b.label).join(", ")} must be recorded before this request issues, so it is not issued on silence: "${label}" waits for a sign-off.`
+      : holdReason === "examination_scope_unchecked" ? ` The request's examination data could not be checked, so it is not issued on silence: "${label}" waits for a sign-off.`
       : "";
 
     // FRIC-5 (fix pass 3): issue as-is only on a mark the opening notice
@@ -1129,6 +1160,11 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
         // source was not checked (only an issuing close checks it).
         ...(drift.moved.length ? { sourceDrift: { moved: drift.moved, acknowledged: false } } : {}),
         ...(drift.unchecked ? { sourceDriftUnchecked: true } : {}),
+        // DF-P24 fix pass: what an issuing close was checked against (only
+        // where a requirement applies — no key otherwise).
+        ...(scopeGate?.kind === "pass" ? { examinationScope: scopeGate.audit } : {}),
+        ...(scopeGate?.kind === "blocked" ? { examinationScope: { missing: scopeGate.blocking.map((b) => b.key) } } : {}),
+        ...(scopeGate?.kind === "unreadable" ? { examinationScope: { unreadable: true } } : {}),
         deliverable_rev: (updates.deliverable_rev as string | undefined) ?? ticket.deliverableRev ?? null,
         recordedBeforeApply: true,
       },

@@ -22,7 +22,9 @@ import {
   parseExaminationScopeConfig, examinationScopeConfigured, applicableRequirements, examinationScopeStatus, parseScopeValues, parseScopeWaiver,
   waiverCovers, examinationScopeRefusal, examinationScopeWarning, examinationScopeAuditFields, checkScopeValuesInput, applyScopeChanges,
   scopeEditorBasis, isMissingScopeTable, stampExaminationScope, EXAMINATION_SCOPE_KEY,
+  hasBindingRequirement, scopeGateOutcome, unstampNewlyFillable, examinationScopeNeedsStamp, readServerClock,
 } from "@/lib/examinationScope";
+import { consentHeldAction } from "@/lib/consentWindow";
 import { editableScope, optionsToText, textToOptions, editRequirement } from "@/components/requests/ExaminationScopeSection";
 import { parseRoutingControl } from "@/lib/routingControl";
 import { ASSURANCE_OPT_IN_HINT } from "@/components/documents/RoutingControlSection";
@@ -176,6 +178,70 @@ describe("the editor — a requirement binds from the save that stores it", () =
     expect(textToOptions("rt5 | 5% RT\nVT\n\n  ")).toEqual(opts);
     expect(editableScope(CFG).fields[0].options).toEqual(CFG[EXAMINATION_SCOPE_KEY].fields[0].options);
     expect(editableScope({} as never)).toEqual({ fields: [], requirements: [] });
+  });
+});
+
+describe("fix pass — ruling (2): never newly block a request already in flight", () => {
+  const req = (field: string, since?: string) => ({ field, workClass: "code", ...(since ? { since } : {}) });
+  const cfgOf = (options: Array<{ value: string; label: string }> | null, requirements: Array<Record<string, unknown>>) => ({
+    [EXAMINATION_SCOPE_KEY]: { fields: options === null ? [] : [{ key: "exam", label: "Exam", options }], requirements },
+  });
+  it("unstampNewlyFillable: a requirement whose field had NO CHOICES in the stored configuration loses its old since when choices are added", () => {
+    const stored = cfgOf([], [req("exam", SINCE)]);
+    const edited = cfgOf([{ value: "a", label: "A" }], [req("exam", SINCE)]);
+    const out = unstampNewlyFillable(edited, stored) as typeof edited;
+    expect(out[EXAMINATION_SCOPE_KEY].requirements[0]).toEqual({ field: "exam", workClass: "code" });
+    expect(examinationScopeNeedsStamp(out)).toBe(true);
+    // and the save's stamp is the new time, never the old one
+    expect((stampExaminationScope(out, "2026-10-22T10:00:01.000Z") as typeof edited)[EXAMINATION_SCOPE_KEY].requirements[0].since).toBe("2026-10-22T10:00:01.000Z");
+  });
+  it("unstampNewlyFillable: a requirement whose field was NOT CONFIGURED (removed, renamed, never added) loses its old since when the key is (re-)added", () => {
+    const stored = cfgOf(null, [req("exam", SINCE)]);
+    const edited = cfgOf([{ value: "a", label: "A" }], [req("exam", SINCE)]);
+    expect((unstampNewlyFillable(edited, stored) as typeof edited)[EXAMINATION_SCOPE_KEY].requirements[0]).not.toHaveProperty("since");
+    // no stored configuration at all reads as nothing fillable
+    expect((unstampNewlyFillable(edited, null) as typeof edited)[EXAMINATION_SCOPE_KEY].requirements[0]).not.toHaveProperty("since");
+  });
+  it("unstampNewlyFillable: already fillable, still unfillable, or nothing stamped — the SAME object (the save is today's)", () => {
+    const fillable = cfgOf([{ value: "a", label: "A" }], [req("exam", SINCE)]);
+    expect(unstampNewlyFillable(fillable, fillable)).toBe(fillable);
+    const unfillable = cfgOf([], [req("exam", SINCE)]);
+    expect(unstampNewlyFillable(unfillable, unfillable)).toBe(unfillable);
+    const plain = { requestTypes: { options: [] } };
+    expect(unstampNewlyFillable(plain, null)).toBe(plain);
+    expect(examinationScopeNeedsStamp(plain)).toBe(false);
+    expect(examinationScopeNeedsStamp(fillable)).toBe(false);
+  });
+  it("hasBindingRequirement: only a readable since at or before the filing binds; known before the row is read", () => {
+    const config = parseExaminationScopeConfig(CFG);
+    expect(hasBindingRequirement(config, ticket())).toBe(true);
+    expect(hasBindingRequirement(config, ticket({ createdAt: "2026-09-01T00:00:00.000Z" }))).toBe(false);
+    expect(hasBindingRequirement(config, ticket({ createdAt: undefined }))).toBe(false);
+    expect(hasBindingRequirement(parseExaminationScopeConfig(cfgOf([{ value: "a", label: "A" }], [req("exam")])), ticket())).toBe(false);
+  });
+  it("scopeGateOutcome: an unreadable row refuses only where a requirement binds; not migrated never refuses", () => {
+    const config = parseExaminationScopeConfig(CFG);
+    const err = { code: "PGRST000", message: "upstream timeout" };
+    expect(scopeGateOutcome(config, ticket(), { data: null, error: err }).kind).toBe("unreadable");
+    expect(scopeGateOutcome(config, ticket({ createdAt: "2026-09-01T00:00:00.000Z" }), { data: null, error: err })).toEqual({ kind: "pass", audit: { unchecked: true, required: ["exam", "gov"] }, warning: null });
+    expect(scopeGateOutcome(config, ticket(), { data: null, error: { code: "42P01", message: "x" } })).toEqual({ kind: "pass", audit: { notMigrated: true, required: ["exam", "gov"] }, warning: null });
+    const blocked = scopeGateOutcome(config, ticket(), { data: null, error: null });
+    expect(blocked.kind).toBe("blocked");
+    const warned = scopeGateOutcome(config, ticket({ createdAt: "2026-09-01T00:00:00.000Z" }), { data: null, error: null });
+    expect(warned).toMatchObject({ kind: "pass", warning: expect.stringMatching(/filed before the requirement/) });
+  });
+  it("readServerClock: the Date header of /api/version rounded UP a second; unreadable → null", async () => {
+    const at = (headers: Record<string, string>) => async () => new Response("{}", { headers });
+    expect(await readServerClock(at({ date: "Thu, 22 Oct 2026 10:00:00 GMT" }))).toBe(Date.parse("2026-10-22T10:00:01.000Z"));
+    expect(await readServerClock(at({}))).toBeNull();
+    expect(await readServerClock(async () => { throw new Error("offline"); })).toBeNull();
+    const seen: Array<[string, RequestInit | undefined]> = [];
+    await readServerClock(async (i, init) => { seen.push([i, init]); return new Response("{}"); });
+    expect(seen).toEqual([["/api/version", { cache: "no-store" }]]);
+  });
+  it("a consent close held by the gate says why in its history headline", () => {
+    expect(consentHeldAction("Operations", "examination_scope_missing")).toMatch(/examination data this workspace requires is not recorded/);
+    expect(consentHeldAction("Operations", "examination_scope_unchecked")).toMatch(/examination data could not be checked/);
   });
 });
 

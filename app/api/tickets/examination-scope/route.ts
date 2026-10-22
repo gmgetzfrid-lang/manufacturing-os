@@ -3,7 +3,8 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { ticketReadScope } from "@/lib/ticketReadScope";
 import { loadCapabilityPolicyStrict, policyAllows } from "@/lib/capabilityPolicy";
 import { heldRoles } from "@/lib/roleHeld";
-import { WorkflowEngine, ISSUING_APPROVALS, ticketResource } from "@/lib/workflow";
+import { WorkflowEngine, ISSUING_APPROVALS, ticketResource, currentRoster, slotSignPlan } from "@/lib/workflow";
+import { applySignPlan, rosterCompletion } from "@/lib/ticketRoster";
 import { rowToTicket } from "@/lib/ticketTransitions";
 import { flaggedRequestTypes } from "@/lib/requestTypes";
 import { isDeclaredLikeInKind, declarationSignatureStands, type DeclarationSignatureRow } from "@/lib/reviewModel";
@@ -177,7 +178,18 @@ export async function POST(req: NextRequest) {
       closeWithoutReviewTypes: flaggedClose.length > 0 ? flaggedClose : ["RFI"],
       requesterRoles,
     });
-    const issuing = actions.filter((a) => !a.disabledReason && (ISSUING_APPROVALS.has(a.action) || a.action === "sign_slot"));
+    // Fix pass (ruling (2)): a roster sign-off is issue authority only when
+    // the caller's own sign-off would COMPLETE the review (the preview the
+    // workflow route's gate computes) — a peer checker whose sign-off never
+    // issues may not waive the requirement for the whole issue.
+    const sodActive = (memberCount ?? 0) >= 3;
+    const signOffIssues = (): boolean => {
+      const r = currentRoster(ticket);
+      const p = r ? slotSignPlan(r, ticket, caller.id, sodActive, Date.now()) : null;
+      return !!r && !!p && p.fillable.length > 0
+        && rosterCompletion(applySignPlan(r, p, { uid: caller.id, name: null }, "examination-scope-preview", new Date().toISOString()), { sodActive, drafterId: ticket.assignedDrafterId }).complete;
+    };
+    const issuing = actions.filter((a) => !a.disabledReason && (ISSUING_APPROVALS.has(a.action) || (a.action === "sign_slot" && signOffIssues())));
     if (issuing.length === 0) {
       return NextResponse.json({ error: "Only someone who can issue this request now may record why it issues without its examination data." }, { status: 403 });
     }

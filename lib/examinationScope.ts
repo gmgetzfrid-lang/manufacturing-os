@@ -26,7 +26,9 @@
 // the flow, or the assignment queue; never a new role, slot or stop).
 //
 // THE ISSUE GATE (ruling (2)). The issuing transitions (lib/workflow.ts
-// ISSUING_APPROVALS, and a roster sign-off that completes the review) refuse
+// ISSUING_APPROVALS, a roster sign-off that completes the review, and — fix
+// pass — a consent window whose close on silence would complete it, which
+// lib/consentWindowScan.ts then HOLDS for a sign-off instead) refuse
 // with a plain sentence naming what is missing — but ONLY where a
 // requirement applies to the request AND the request was filed at or after
 // the requirement's `since`. A request already in flight when a requirement
@@ -44,7 +46,17 @@
 //     recorded (it was valid when picked) — the page says it is no longer in
 //     the list;
 //   * a configuration that cannot be read is no configuration (today's path;
-//     the audit row says it was unchecked).
+//     the issuing audit row carries `examinationScope: { configUnchecked:
+//     true }`, so an issue that bypassed the gate can be told apart);
+//   * the request's examination data that cannot be read refuses (503) only
+//     where a requirement BINDS the request (filed at or after its `since`);
+//     otherwise it issues, the audit row saying the data was unchecked;
+//   * a requirement's `since` is the server's time AFTER the save that
+//     stored it committed (the admin page saves it unstamped — binding
+//     nothing — reads the server's clock, then stamps; never the browser's
+//     clock), and a requirement whose field had no values to pick from (or
+//     did not exist) in the stored configuration is re-stamped by the save
+//     that makes it fillable — it binds only requests filed after THAT save.
 //
 // Pure and browser-safe: the workflow route, the fill route, the request
 // page's panel and the admin editor share it.
@@ -259,6 +271,55 @@ export function examinationScopeStatus(
   return { required, missing, blocking: missing.filter((r) => r.enforced), warnOnly: missing.filter((r) => !r.enforced) };
 }
 
+/** True when at least one requirement that applies to the request BINDS it
+ *  (a readable `since`, the request filed at or after it) — knowable before
+ *  the request's data is read. Pure. */
+export function hasBindingRequirement(
+  config: ExaminationScopeConfig,
+  ticket: Pick<Ticket, "workClass" | "libraryId" | "createdAt">,
+): boolean {
+  const filed = at(ticket.createdAt as string | null | undefined);
+  if (!Number.isFinite(filed)) return false;
+  return applicableRequirements(config, ticket).some((e) => { const since = at(e.since); return Number.isFinite(since) && filed >= since; });
+}
+
+/** What an issuing transition does with the request's examination data, from
+ *  the read of its ticket_examination_scopes row (the workflow route and the
+ *  consent-window close share it). Only called where a requirement applies.
+ *  Pure.
+ *   * `unreadable` — the row could not be read AND a requirement binds the
+ *     request: the issue is refused (route 503) or held (consent close);
+ *   * `blocked` — enforced data missing, no waiver covers it;
+ *   * `pass` — it issues; `audit` is the issuing row's `examinationScope`
+ *     key, `warning` what is missing but not enforced. */
+export type ScopeGateOutcome =
+  | { kind: "unreadable"; error: string }
+  | { kind: "blocked"; blocking: RequiredScopeField[]; refusal: string }
+  | { kind: "pass"; audit: Record<string, unknown>; warning: string | null };
+
+export function scopeGateOutcome(
+  config: ExaminationScopeConfig,
+  ticket: Pick<Ticket, "workClass" | "libraryId" | "createdAt" | "deliverableRev">,
+  read: { data: unknown; error: { code?: string | null; message?: string | null } | null },
+  draftingCfg?: Partial<OrgDraftingSettings> | Record<string, unknown> | null,
+): ScopeGateOutcome {
+  const required = [...new Set(applicableRequirements(config, ticket).map((e) => e.field))];
+  if (read.error) {
+    // 20261266 not applied: nothing can be recorded yet — never a refusal.
+    if (isMissingScopeTable(read.error)) return { kind: "pass", audit: { notMigrated: true, required }, warning: null };
+    // Unreadable: refused only where a requirement binds this request; a
+    // request filed before every requirement could only ever be warned.
+    if (hasBindingRequirement(config, ticket)) return { kind: "unreadable", error: String(read.error.message ?? "unreadable") };
+    return { kind: "pass", audit: { unchecked: true, required }, warning: null };
+  }
+  const row = read.data as { field_values?: unknown; waiver?: unknown } | null;
+  const status = examinationScopeStatus(config, ticket, parseScopeValues(row?.field_values), draftingCfg);
+  const waiver = parseScopeWaiver(row?.waiver);
+  const waived = waiverCovers(waiver, status.blocking, ticket.deliverableRev);
+  if (status.blocking.length > 0 && !waived) return { kind: "blocked", blocking: status.blocking, refusal: examinationScopeRefusal(status.blocking) };
+  return { kind: "pass", audit: examinationScopeAuditFields(status, waiver, waived), warning: status.warnOnly.length > 0 ? examinationScopeWarning(status.warnOnly) : null };
+}
+
 /** Does a recorded waiver cover what blocks the issue now — every blocking
  *  field among those it named, recorded for the revision under review? */
 export function waiverCovers(
@@ -381,10 +442,12 @@ export function isMissingScopeTable(err: { code?: string | null; message?: strin
 // ─── The editor (Admin → Request forms) ─────────────────────────────────
 
 /** The settings as the page saves them: every requirement the editor added
- *  (no `since` yet) is stamped with the save's time, so a requirement binds
+ *  (no `since` yet) is stamped with the given time, so a requirement binds
  *  only requests filed after it was stored (ruling (2)); an entry already
  *  stored keeps its time. Settings with nothing to stamp come back as the
- *  same object (the save is byte-for-byte today's). Pure. */
+ *  same object (the save is byte-for-byte today's). The page passes the
+ *  SERVER's time read after the unstamped save committed (readServerClock),
+ *  never the browser's clock. Pure. */
 export function stampExaminationScope<T extends object>(settings: T, nowIso: string): T {
   const raw = (settings as Record<string, unknown>)[EXAMINATION_SCOPE_KEY] as Record<string, unknown> | undefined;
   if (!raw || typeof raw !== "object" || !Array.isArray(raw.requirements)) return settings;
@@ -397,4 +460,64 @@ export function stampExaminationScope<T extends object>(settings: T, nowIso: str
       requirements: reqs.map((r) => (r && typeof r === "object" && !Number.isFinite(at(str(r.since))) ? { ...r, since: nowIso } : r)),
     },
   } as T;
+}
+
+const fillableKeys = (cfg: unknown): Set<string> => {
+  const parsed = parseExaminationScopeConfig(cfg as Record<string, unknown> | null);
+  return new Set(parsed.fields.filter((f) => f.options.length > 0).map((f) => f.key));
+};
+
+/** Fix pass (ruling (2)): a requirement whose field had no values to pick
+ *  from — or was not configured at all — in the STORED configuration
+ *  (`previous`, as last loaded or saved) refused nothing there; the save
+ *  that makes its field fillable must not revive its old `since` (requests
+ *  filed in between would be newly blocked). Its `since` is dropped here, so
+ *  the save stamps it afresh. A requirement whose field is still unfillable,
+ *  or was already fillable, keeps its time. Settings with nothing to drop
+ *  come back as the same object. Pure. */
+export function unstampNewlyFillable<T extends object>(settings: T, previous: unknown): T {
+  const raw = (settings as Record<string, unknown>)[EXAMINATION_SCOPE_KEY] as Record<string, unknown> | undefined;
+  if (!raw || typeof raw !== "object" || !Array.isArray(raw.requirements)) return settings;
+  const before = fillableKeys(previous);
+  const now = fillableKeys(settings);
+  const reqs = raw.requirements as Array<Record<string, unknown>>;
+  const revive = (r: Record<string, unknown>) => !!r && typeof r === "object" && Number.isFinite(at(str(r.since)))
+    && now.has(str(r.field)) && !before.has(str(r.field));
+  if (!reqs.some(revive)) return settings;
+  return {
+    ...settings,
+    [EXAMINATION_SCOPE_KEY]: {
+      ...raw,
+      requirements: reqs.map((r) => {
+        if (!revive(r)) return r;
+        const next = { ...r };
+        delete next.since;
+        return next;
+      }),
+    },
+  } as T;
+}
+
+/** True when the settings carry a requirement with no readable `since` (the
+ *  save must stamp it). Pure. */
+export function examinationScopeNeedsStamp(settings: object): boolean {
+  const raw = (settings as Record<string, unknown>)[EXAMINATION_SCOPE_KEY] as Record<string, unknown> | undefined;
+  if (!raw || typeof raw !== "object" || !Array.isArray(raw.requirements)) return false;
+  return (raw.requirements as Array<Record<string, unknown>>).some((r) => !!r && typeof r === "object" && !Number.isFinite(at(str(r.since))));
+}
+
+/** The server's clock, read AFTER a save committed (fix pass, ruling (2)):
+ *  the `Date` header of a no-store same-origin GET of /api/version (an
+ *  existing route), rounded UP to the next second (the header is whole
+ *  seconds), so the stamp is never earlier than the commit it follows.
+ *  null when it cannot be read — the page then leaves the requirement
+ *  unstamped (it binds nothing until a later save stamps it) and says so. */
+export async function readServerClock(fetcher: (input: string, init?: RequestInit) => Promise<Response> = (i, init) => fetch(i, init)): Promise<number | null> {
+  try {
+    const res = await fetcher("/api/version", { cache: "no-store" });
+    const ms = Date.parse(res.headers.get("date") ?? "");
+    return Number.isFinite(ms) ? ms + 1000 : null;
+  } catch {
+    return null;
+  }
 }

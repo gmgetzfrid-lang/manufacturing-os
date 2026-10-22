@@ -45,10 +45,7 @@ import { applyStandingPreauthorizations } from "@/lib/ticketPreauthorizationAppl
 import { slaNoticeSurvivesTransition } from "@/lib/ticketSla";
 import { examinationForAct, examinationAuditFields, type ExaminationOnAct } from "@/lib/assuranceExamination";
 // GAP-102 acceptance 4 (drafting-flow DF-P24): the examination-scope issue gate.
-import {
-  parseExaminationScopeConfig, applicableRequirements, examinationScopeStatus, parseScopeValues, parseScopeWaiver, waiverCovers,
-  examinationScopeRefusal, examinationScopeWarning, examinationScopeAuditFields, isMissingScopeTable,
-} from "@/lib/examinationScope";
+import { parseExaminationScopeConfig, applicableRequirements, scopeGateOutcome } from "@/lib/examinationScope";
 import { ticketReadScope } from "@/lib/ticketReadScope";
 import { offerableLibraries, libraryLabelForTicket, libraryChoiceFromRow, LIBRARY_CHOICE_COLUMNS, UNNAMED_TARGET_LIBRARY } from "@/lib/ticketLibrary";
 import { LIBRARY_RUNG_COLUMNS } from "@/lib/libraryAccess";
@@ -1120,48 +1117,44 @@ export async function POST(req: NextRequest) {
   // filed before it issues with what is missing said (`examinationScopeWarning`).
   // A workspace that configures nothing reads nothing and records nothing
   // here; a configuration that could not be read is no configuration (today's
-  // path — DEC-90 ruling (6) for DF-P24), as is a database without 20261266.
+  // path — DEC-90 ruling (6) for DF-P24; fix pass: the issuing row then says
+  // `examinationScope: { configUnchecked: true }`), as is a database without
+  // 20261266. The row unreadable refuses (503) only where a requirement BINDS
+  // the request (lib/examinationScope.ts scopeGateOutcome) — a request filed
+  // before every requirement issues, the row saying it was unchecked.
   let examinationScopeAudit: Record<string, unknown> | null = null;
   let examinationScopeWarningText: string | null = null;
   if (ISSUING_APPROVALS.has(action.action) || action.action === "sign_slot") {
     const scopeConfig = draftingCfgRead ? parseExaminationScopeConfig(draftingCfg) : null;
     const scopeEntries = scopeConfig ? applicableRequirements(scopeConfig, ticket) : [];
     let issues = ISSUING_APPROVALS.has(action.action);
-    if (!issues && scopeEntries.length > 0) {
+    if (!issues && (scopeEntries.length > 0 || !scopeConfig)) {
       const r = currentRoster(ticket);
       const p = r ? slotSignPlan(r, ticket, caller.id, sodActive, Date.now()) : null;
       issues = !!r && !!p && p.fillable.length > 0
         && rosterCompletion(applySignPlan(r, p, { uid: caller.id, name: null }, "examination-scope-preview", new Date().toISOString()), { sodActive, drafterId: ticket.assignedDrafterId }).complete;
     }
+    if (!scopeConfig && issues) examinationScopeAudit = { configUnchecked: true };
     if (scopeConfig && scopeEntries.length > 0 && issues) {
-      const { data: scopeRow, error: scopeErr } = await supabaseAdmin
+      const scopeRead = await supabaseAdmin
         .from("ticket_examination_scopes").select("field_values, waiver").eq("ticket_id", body.ticketId).maybeSingle();
-      if (scopeErr && !isMissingScopeTable(scopeErr)) {
-        console.error(`[workflow-action] examination data unreadable for ticket ${body.ticketId}: ${scopeErr.message}`);
+      const gate = scopeGateOutcome(scopeConfig, ticket, { data: scopeRead.data, error: scopeRead.error }, draftingCfg);
+      if (gate.kind === "unreadable") {
+        console.error(`[workflow-action] examination data unreadable for ticket ${body.ticketId}: ${gate.error}`);
         const unreadable = "This request's examination data could not be checked, so the approval was not applied. Try again in a moment.";
         if (action.action === "sign_slot" && body.dryRun !== true) {
           await recordRefusedSignOff({ signatureId: body.signatureId, ticketId: body.ticketId, orgId: ticket.orgId, caller: { id: caller.id, email: callerEmail, role: callerRole }, status: 503, reason: unreadable, code: "examination_scope_unreadable", rosterId: currentRoster(ticket)?.id ?? null });
         }
         return NextResponse.json({ error: unreadable, code: "examination_scope_unreadable" }, { status: 503 });
       }
-      if (scopeErr) {
-        // 20261266 not applied: nothing can be recorded yet — never a refusal.
-        examinationScopeAudit = { notMigrated: true, required: [...new Set(scopeEntries.map((e) => e.field))] };
-      } else {
-        const sr = scopeRow as { field_values?: unknown; waiver?: unknown } | null;
-        const scopeStatus = examinationScopeStatus(scopeConfig, ticket, parseScopeValues(sr?.field_values), draftingCfg);
-        const scopeWaiver = parseScopeWaiver(sr?.waiver);
-        const waived = waiverCovers(scopeWaiver, scopeStatus.blocking, ticket.deliverableRev);
-        if (scopeStatus.blocking.length > 0 && !waived) {
-          const refusal = examinationScopeRefusal(scopeStatus.blocking);
-          if (action.action === "sign_slot" && body.dryRun !== true) {
-            await recordRefusedSignOff({ signatureId: body.signatureId, ticketId: body.ticketId, orgId: ticket.orgId, caller: { id: caller.id, email: callerEmail, role: callerRole }, status: 409, reason: refusal, code: "examination_scope_missing", rosterId: currentRoster(ticket)?.id ?? null });
-          }
-          return NextResponse.json({ error: refusal, code: "examination_scope_missing", missing: scopeStatus.blocking.map((b) => ({ field: b.key, label: b.label })) }, { status: 409 });
+      if (gate.kind === "blocked") {
+        if (action.action === "sign_slot" && body.dryRun !== true) {
+          await recordRefusedSignOff({ signatureId: body.signatureId, ticketId: body.ticketId, orgId: ticket.orgId, caller: { id: caller.id, email: callerEmail, role: callerRole }, status: 409, reason: gate.refusal, code: "examination_scope_missing", rosterId: currentRoster(ticket)?.id ?? null });
         }
-        examinationScopeAudit = examinationScopeAuditFields(scopeStatus, scopeWaiver, waived);
-        if (scopeStatus.warnOnly.length > 0) examinationScopeWarningText = examinationScopeWarning(scopeStatus.warnOnly);
+        return NextResponse.json({ error: gate.refusal, code: "examination_scope_missing", missing: gate.blocking.map((b) => ({ field: b.key, label: b.label })) }, { status: 409 });
       }
+      examinationScopeAudit = gate.audit;
+      examinationScopeWarningText = gate.warning;
     }
   }
 
