@@ -9,6 +9,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
+import { spanLabel, startOf, finishOf } from "@/lib/scheduleTime";
 import { fmtInTz, fromDateTimeInput, hasTimeOfDay, toDateTimeInput, tzAbbrev } from "@/lib/scheduleTz";
 import {
   X as XIcon, Pencil, Trash2, Loader2, Save, Clock, MapPin, Hash,
@@ -341,7 +342,7 @@ export default function TaskDetailPanel({
                         </span>
                         <button onClick={() => onSelectSubtask?.(s)} className="flex-1 min-w-0 text-left" title="Open subtask">
                           <span className={`block text-[12px] truncate ${sStatus === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{s.name}</span>
-                          <span className="block text-[9px] text-[var(--color-text-faint)] font-mono">{shortDate(s.plannedAt as string, tz)}{sInfo ? ` · ${sInfo.percent}%` : ""}</span>
+                          <span className="block text-[10px] text-[var(--color-text-muted)] font-mono">{spanLabel(startOf(s), finishOf(s), tz)}{sInfo ? ` · ${sInfo.percent}%` : ""}</span>
                         </button>
                         {canEdit && onMoveDays && s.id && (
                           <span className="shrink-0 flex items-center gap-0.5">
@@ -623,10 +624,6 @@ function labelOf(s: MilestoneStatus): string {
   return s === "in_progress" ? "In progress" : s === "on_hold" ? "On hold" : s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-function shortDate(iso: string | undefined, tz: string): string {
-  if (!iso) return "";
-  return fmtInTz(iso, tz, { month: "short", day: "numeric" });
-}
 
 // One end of a planned span, in the plant's zone (a task entered as 08:00
 // reads as 08:00 for every viewer). Tasks with no meaningful time-of-day

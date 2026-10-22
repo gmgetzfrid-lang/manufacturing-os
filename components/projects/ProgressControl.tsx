@@ -11,7 +11,7 @@
 // Summary/parent tasks never use this — their % is rolled up from children
 // (see lib/scheduleProgress.ts), so callers render it read-only there.
 
-import React, { useRef, useState } from "react";
+import React, { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 function clamp(p: number): number {
@@ -96,14 +96,22 @@ interface ChipProps extends SliderProps {
 export default function ProgressControl({ percent, onPick, disabled, onDisabledClick, busy, size = "md" }: ChipProps) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; anchorTop: number }>({ top: 0, left: 0, anchorTop: 0 });
   const pct = clamp(percent);
+  // Opens upward when there's no room below (bottom of a list or panel).
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!open || !el) return;
+    const h = el.offsetHeight;
+    el.style.top = `${pos.top + h > window.innerHeight - 8 ? Math.max(8, pos.anchorTop - h - 4) : pos.top}px`;
+  }, [open, pos]);
 
   const openMenu = () => {
     if (disabled) { onDisabledClick?.(); return; }
     if (btnRef.current) {
       const r = btnRef.current.getBoundingClientRect();
-      setPos({ top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 240)) });
+      setPos({ top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 240)), anchorTop: r.top });
     }
     setOpen((v) => !v);
   };
@@ -131,6 +139,7 @@ export default function ProgressControl({ percent, onPick, disabled, onDisabledC
         <>
           <div className="fixed inset-0 z-[300]" onClick={() => setOpen(false)} />
           <div
+            ref={menuRef}
             className="fixed z-[310] w-[224px] bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg p-3 animate-in fade-in zoom-in-95 duration-150"
             style={{ top: pos.top, left: pos.left }}
             onClick={(e) => e.stopPropagation()}

@@ -16,7 +16,7 @@
 // reason. The popover renders in a portal so it's never clipped by a
 // card's overflow.
 
-import React, { useRef, useState } from "react";
+import React, { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Circle, Loader2, CircleCheck, PauseCircle, AlertTriangle, XCircle } from "lucide-react";
 import type { MilestoneStatus } from "@/types/schema";
@@ -68,7 +68,19 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
   const [reason, setReason] = useState("");
   const [pctStep, setPctStep] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; anchorTop: number }>({ top: 0, left: 0, anchorTop: 0 });
+  // Near the bottom of the screen (the last sub-task in the side bar) the
+  // menu opens UPWARD instead of running off the page — measured after it
+  // renders, and again when it grows (the % slider, the reason box).
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!open || !el) return;
+    const h = el.offsetHeight;
+    const below = pos.top;
+    const top = below + h > window.innerHeight - 8 ? Math.max(8, pos.anchorTop - h - 4) : below;
+    el.style.top = `${top}px`;
+  }, [open, pctStep, reasonFor, pos]);
   const meta = STATUS_META[status];
 
   const openMenu = () => {
@@ -76,7 +88,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
     if (btnRef.current) {
       const r = btnRef.current.getBoundingClientRect();
       const left = Math.min(r.left, window.innerWidth - 188);
-      setPos({ top: r.bottom + 4, left: Math.max(8, left) });
+      setPos({ top: r.bottom + 4, left: Math.max(8, left), anchorTop: r.top });
     }
     setReasonFor(null);
     setReason("");
@@ -153,6 +165,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
         <>
           <div className="fixed inset-0 z-[300]" onClick={() => setOpen(false)} />
           <div
+            ref={menuRef}
             className="fixed z-[310] w-[180px] bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg py-1 animate-in fade-in zoom-in-95 duration-150"
             style={{ top: pos.top, left: pos.left }}
             onClick={(e) => e.stopPropagation()}

@@ -46,6 +46,8 @@ import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { addDays as addDaysTz, dayDiff as dayDiffTz, dayOfWeek, fmtInTz, startOfDay as startOfDayTz, wallClock } from "@/lib/scheduleTz";
 import { needsFutureConfirm } from "@/lib/scheduleRules";
 import { startMsOf as plannedStartMsOf } from "@/lib/calendarPlacement";
+import { effectiveSpans, byStart, spanLabel, barGeometry, xAt, hourStep, startOf as timedStart, finishOf as timedFinish } from "@/lib/scheduleTime";
+import { DEFAULT_SHIFT_TIMES, type ShiftTimes } from "@/lib/shiftReport";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl from "@/components/projects/ProgressControl";
@@ -82,10 +84,10 @@ interface Props {
 // shrink a day below MIN_PX_PER_DAY (so labels stay legible — scroll
 // horizontally instead) nor grow past MAX_PX_PER_DAY.
 const MIN_PX_PER_DAY = 30;
-const MAX_PX_PER_DAY = 240;
+const MAX_PX_PER_DAY = 1440; // 60 px an hour — a turnaround is planned in hours
 const ZOOM_STEP = 1.35;
 const ROW_H = 40;     // height of each timeline row, px
-const AXIS_H = 46;    // height of the date axis header, px
+const AXIS_H = 58;    // height of the date axis header (days / shifts / hours), px
 const LEFT_W = 320;   // width of the frozen outline column, px
 const PAD_DAYS = 2;   // padding on each side of the schedule span
 
@@ -199,6 +201,23 @@ export default function ExecutionView({
     return m;
   }, [items, byId]);
 
+  // Siblings in the order the work happens: a parent by the earliest step
+  // under it (its stored date can disagree), then WBS, then name.
+  const effSpan = useMemo(() => effectiveSpans(items), [items]);
+  const effStart = useMemo(() => new Map([...effSpan].map(([k, v]) => [k, v.start])), [effSpan]);
+  const cmp = useMemo(() => byStart(effStart, wbsCompare), [effStart]);
+  const spanOf = useCallback((m: Milestone) => (m.id ? effSpan.get(m.id) : undefined) ?? { start: startMs(m), finish: finishMs(m) }, [effSpan]);
+
+  // Shift change times (set on the shift report) — the timeline marks day
+  // and night shifts with them.
+  const [shiftTimes, setShiftTimes] = useState<ShiftTimes>(DEFAULT_SHIFT_TIMES);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`shiftTimes:${projectId}`);
+      if (raw) setShiftTimes({ ...DEFAULT_SHIFT_TIMES, ...(JSON.parse(raw) as Partial<ShiftTimes>) });
+    } catch { /* private mode */ }
+  }, [projectId]);
+
   // ── Search / filter ──────────────────────────────────────────
   const [filter, setFilter] = useState<ScheduleFilter>(EMPTY_FILTER);
   const filterOn = isFilterActive(filter);
@@ -219,8 +238,8 @@ export default function ExecutionView({
       if (m.parentId && byId.has(m.parentId)) continue; // not top-level
       if (m.id) seen.set(m.id, m);
     }
-    return Array.from(seen.values()).sort(cmpMilestone);
-  }, [items, byId]);
+    return Array.from(seen.values()).sort(cmp);
+  }, [items, byId, cmp]);
   // Match count = leaf tasks that survive the filter.
   const matchStats = useMemo(() => {
     const isLeaf = (m: Milestone) => !m.id || (childrenOf.get(m.id) ?? []).length === 0;
@@ -245,12 +264,12 @@ export default function ExecutionView({
   // Siblings sort by execution time (start), then WBS, then name.
   const roots = useMemo(() => {
     const build = (ms: Milestone, depth: number): TreeNode => {
-      const kids = (childrenOf.get(ms.id!) ?? []).slice().sort(cmpMilestone);
+      const kids = (childrenOf.get(ms.id!) ?? []).slice().sort(cmp);
       return { ms, depth, children: kids.map((k) => build(k, depth + 1)) };
     };
-    const top = items.filter((x) => !x.parentId || !byId.has(x.parentId)).sort(cmpMilestone);
+    const top = items.filter((x) => !x.parentId || !byId.has(x.parentId)).sort(cmp);
     return top.map((m) => build(m, 0));
-  }, [items, childrenOf, byId]);
+  }, [items, childrenOf, byId, cmp]);
 
   // One pass over the whole tree: each task's effective % + status. Leaves
   // report their own (status-reconciled) percent; summaries roll their leaf
@@ -313,7 +332,8 @@ export default function ExecutionView({
 
   const timelineW = domain ? domain.totalDays * pxPerDay : 0;
   const today = useMemo(() => startOfDayUTC(new Date(), tz), [tz]);
-  const todayX = domain ? (dayDiff(domain.start, today, tz) + 0.5) * pxPerDay : -1;
+  // The red line is NOW, at its clock time — not the middle of today.
+  const todayX = domain ? xAt(Date.now(), domain.start.getTime(), pxPerDay, tz) : -1;
 
   // Center the viewport on "today" (or schedule start) on first paint.
   useEffect(() => {
@@ -860,6 +880,7 @@ export default function ExecutionView({
                 <OutlineRow
                   key={r.ms.id}
                   row={r}
+                  span={spanOf(r.ms)}
                   color={colors.colorOf(r.ms)}
                   collapsed={!!r.ms.id && collapsed.has(r.ms.id)}
                   selected={!!r.ms.id && selectedIds.has(r.ms.id)}
@@ -880,9 +901,9 @@ export default function ExecutionView({
 
             {/* ── Timeline column ── */}
             <div className="relative" style={{ width: timelineW, height: AXIS_H + rows.length * ROW_H }}>
-              <Axis domain={domain} pxPerDay={pxPerDay} />
-              <Gridlines domain={domain} pxPerDay={pxPerDay} rowCount={rows.length} />
-              <DependencyArrows rows={rows} byId={byId} domain={domain} pxPerDay={pxPerDay} />
+              <Axis domain={domain} pxPerDay={pxPerDay} shiftTimes={shiftTimes} />
+              <Gridlines domain={domain} pxPerDay={pxPerDay} rowCount={rows.length} shiftTimes={shiftTimes} />
+              <DependencyArrows rows={rows} byId={byId} domain={domain} pxPerDay={pxPerDay} spanOf={spanOf} />
               {todayX >= 0 && todayX <= timelineW && (
                 <div className="absolute z-10 pointer-events-none" style={{ left: todayX, top: AXIS_H, bottom: 0, width: 0 }}>
                   <div className="absolute top-0 bottom-0 w-px bg-rose-500/80" />
@@ -893,6 +914,7 @@ export default function ExecutionView({
                 <Bar
                   key={r.ms.id}
                   row={r}
+                  span={spanOf(r.ms)}
                   top={AXIS_H + i * ROW_H}
                   domain={domain}
                   pxPerDay={pxPerDay}
@@ -933,7 +955,7 @@ export default function ExecutionView({
       {detailId && byId.get(detailId) && (
         <TaskDetailPanel
           milestone={byId.get(detailId)!}
-          subtasks={(childrenOf.get(detailId) ?? []).slice().sort(cmpMilestone)}
+          subtasks={(childrenOf.get(detailId) ?? []).slice().sort(cmp)}
           allTasks={items}
           childCount={(id) => (childrenOf.get(id) ?? []).length}
           ancestors={ancestorsOf(byId.get(detailId)!)}
@@ -1114,10 +1136,10 @@ function Toolbar({
 // ─── Outline row (left, frozen) ────────────────────────────────
 
 function OutlineRow({
-  row, color, collapsed, selected, focused, canEdit, busy,
+  row, span, color, collapsed, selected, focused, canEdit, busy,
   onToggleCollapse, onToggleSelected, onSetStatus, onSetProgress, onSetDuration, onOpenDetail, onViewOnly, onSequence,
 }: {
-  row: FlatRow; color: GroupColor; collapsed: boolean; selected: boolean; focused?: boolean; canEdit: boolean; busy: boolean;
+  row: FlatRow; span: { start: number; finish: number }; color: GroupColor; collapsed: boolean; selected: boolean; focused?: boolean; canEdit: boolean; busy: boolean;
   onToggleCollapse: () => void; onToggleSelected: () => void;
   onSetStatus: (s: MilestoneStatus, reason?: string) => void; onSetProgress: (percent: number) => void;
   onSetDuration: () => void; onOpenDetail: () => void;
@@ -1177,7 +1199,7 @@ function OutlineRow({
         </div>
         <div className="flex items-center gap-1.5 text-[10px] text-[var(--color-text-faint)] font-mono leading-tight min-w-0">
           {ms.wbs && <span className="text-[var(--color-text-faint)] shrink-0">{ms.wbs}</span>}
-          <span className="truncate">{rangeLabel(ms, tz)}</span>
+          <span className="truncate" title={spanLabel(span.start, span.finish, tz)}>{spanLabel(span.start, span.finish, tz)}</span>
           {(ms.dependsOn?.length ?? 0) > 0 && (
             <span className="inline-flex items-center gap-0.5 text-[var(--color-accent)] font-bold shrink-0" title={`Depends on ${ms.dependsOn!.length} task${ms.dependsOn!.length === 1 ? "" : "s"} — can't start until they finish`}>
               <Link2 className="w-2.5 h-2.5" />{ms.dependsOn!.length}
@@ -1216,10 +1238,13 @@ function OutlineRow({
 // ─── Timeline bar (right) ──────────────────────────────────────
 
 function Bar({
+  span,
   row, top, domain, pxPerDay, canEdit, dragDelta,
   onPointerDown, onPointerMove, onPointerUp, onNudge, onResize, onOpenDetail, critical, color,
 }: {
   row: FlatRow; top: number;
+  /** When it really runs — a parent from its first step to its last. */
+  span: { start: number; finish: number };
   domain: { start: Date; end: Date; totalDays: number };
   pxPerDay: number; canEdit: boolean; dragDelta: number;
   onPointerDown: (e: React.PointerEvent) => void;
@@ -1258,15 +1283,16 @@ function Bar({
     if (days !== 0) onResize(r.edge, days);
   };
 
-  const start = new Date(startMs(ms));
-  const finish = new Date(finishMs(ms));
-  const startIdx = dayDiff(domain.start, start, tz);
+  const start = new Date(span.start);
+  const finish = new Date(span.finish);
   const spanDays = Math.max(1, dayDiff(start, finish, tz) + 1);
-  // Apply live resize preview to the rendered geometry.
+  // At its clock times (6:00–10:00 and 18:00–22:00 no longer look alike);
+  // a date-only task fills its days. Live resize/drag previews shift by days.
+  const geo = barGeometry(start.getTime(), finish.getTime(), domain.start.getTime(), pxPerDay, tz);
   const previewStartShift = resize?.edge === "start" ? resize.days : 0;
   const previewSpanShift = resize?.edge === "finish" ? resize.days : (resize?.edge === "start" ? -resize.days : 0);
-  const left = (startIdx + previewStartShift) * pxPerDay + dragDelta * pxPerDay;
-  const width = Math.max(pxPerDay * 0.7, (spanDays + previewSpanShift) * pxPerDay - 2);
+  const left = geo.left + previewStartShift * pxPerDay + dragDelta * pxPerDay;
+  const width = Math.max(4, geo.width + previewSpanShift * pxPerDay);
   // Leaf = its own % complete; summary = weighted roll-up of its children.
   const pct = row.pct;
   const tone = statusTone(ms.status);
@@ -1397,72 +1423,129 @@ function Bar({
 
 // ─── Axis + gridlines ──────────────────────────────────────────
 
-function Axis({ domain, pxPerDay }: { domain: { start: Date; totalDays: number }; pxPerDay: number }) {
+const DAY_ROW = 22, SHIFT_ROW = 16;
+
+/** Three rows: the days on top; under them the shifts (Day ☀ / Night ☾ at
+ *  the project's shift-change times) and, zoomed in, the hours. */
+function Axis({ domain, pxPerDay, shiftTimes }: { domain: { start: Date; totalDays: number }; pxPerDay: number; shiftTimes: ShiftTimes }) {
   const tz = useScheduleTz();
-  // Choose a tick step that keeps labels legible at the current zoom.
+  // Day labels: every day when there's room, else every N days plus the
+  // anchors the eye looks for (first, last, 1st of the month).
   const step = pxPerDay >= 60 ? 1 : pxPerDay >= 34 ? 2 : pxPerDay >= 16 ? 7 : pxPerDay >= 8 ? 14 : 30;
-  // Anchor ticks the eye looks for: the schedule's first and last day and
-  // the 1st of each month. A plain every-N-days grid can skip the last
-  // day entirely ("the axis stops at the 29th while the bars run to the
-  // 31st"), so these are always labelled and a regular tick that would
-  // collide with one steps aside.
   const firstDay = PAD_DAYS, lastDay = Math.max(firstDay, domain.totalDays - 1 - PAD_DAYS);
   const anchors = new Set<number>([firstDay, lastDay]);
   for (let d = 0; d < domain.totalDays; d++) {
     if (wallClock(addDaysUTC(domain.start, d, tz).getTime(), tz).day === 1) anchors.add(d);
   }
-  const minGapDays = Math.max(1, Math.ceil(30 / pxPerDay)); // ~30px so labels don't overlap
+  const minGapDays = Math.max(1, Math.ceil(30 / pxPerDay));
   const days = new Set<number>(anchors);
   for (let d = 0; d < domain.totalDays; d += step) {
     if ([...anchors].some((a) => Math.abs(a - d) < minGapDays)) continue;
     days.add(d);
   }
-  const ticks: Array<{ x: number; label: string; anchor: boolean }> = [...days].sort((a, b) => a - b).map((d) => {
+  const fmt: Intl.DateTimeFormatOptions = pxPerDay >= 110 ? { weekday: "short", month: "short", day: "numeric" } : { month: "short", day: "numeric" };
+  const ticks = [...days].sort((a, b) => a - b).map((d) => {
     const date = addDaysUTC(domain.start, d, tz);
     const monthStart = wallClock(date.getTime(), tz).day === 1;
-    return {
-      x: d * pxPerDay,
-      anchor: anchors.has(d),
-      label: step >= 28 && monthStart
-        ? fmtInTz(date, tz, { month: "short", year: "2-digit" })
-        : fmtInTz(date, tz, { month: "short", day: "numeric" }),
-    };
+    return { d, x: d * pxPerDay, anchor: anchors.has(d), label: step >= 28 && monthStart ? fmtInTz(date, tz, { month: "short", year: "2-digit" }) : fmtInTz(date, tz, fmt) };
   });
+  // Shift bands and hours, once a day is wide enough to read them.
+  const showShifts = pxPerDay >= 48;
+  const hStep = hourStep(pxPerDay);
+  const bands: Array<{ x: number; w: number; night: boolean; label: string }> = [];
+  const hours: Array<{ x: number; label: string }> = [];
+  if (showShifts) {
+    const [dh, dm] = shiftTimes.dayStart.split(":").map(Number);
+    const [nh, nm] = shiftTimes.nightStart.split(":").map(Number);
+    const dayAt = ((dh || 0) * 60 + (dm || 0)) / 1440, nightAt = ((nh || 0) * 60 + (nm || 0)) / 1440;
+    for (let d = -1; d < domain.totalDays; d++) {
+      const dayX = (d + dayAt) * pxPerDay, nightX = (d + nightAt) * pxPerDay;
+      bands.push({ x: dayX, w: nightX - dayX, night: false, label: shiftTimes.dayStart });
+      bands.push({ x: nightX, w: (d + 1 + dayAt) * pxPerDay - nightX, night: true, label: shiftTimes.nightStart });
+    }
+    if (hStep) {
+      for (let d = 0; d < domain.totalDays; d++) {
+        for (let h = hStep; h < 24; h += hStep) {
+          const x = (d + h / 24) * pxPerDay;
+          hours.push({ x, label: `${h}:00` });
+        }
+      }
+    }
+  }
   return (
-    <div className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur border-b border-[var(--color-border)]" style={{ height: AXIS_H }}>
-      {ticks.map((t, i) => (
-        <div key={i} className="absolute top-0 bottom-0 flex flex-col justify-center" style={{ left: t.x }}>
-          <div className="absolute top-0 bottom-0 w-px bg-slate-200" />
-          <span className={`pl-1 text-[9px] font-mono whitespace-nowrap ${t.anchor ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{t.label}</span>
+    <div className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur border-b border-[var(--color-border)] overflow-hidden" style={{ height: AXIS_H }}>
+      {/* Days */}
+      <div className="absolute inset-x-0 top-0" style={{ height: showShifts ? DAY_ROW : AXIS_H }}>
+        {ticks.map((t) => (
+          <div key={t.d} className="absolute top-0 bottom-0 flex items-center" style={{ left: t.x, width: step === 1 ? pxPerDay : undefined }}>
+            <div className="absolute top-0 bottom-0 left-0 w-px bg-slate-300" />
+            <span className={`pl-1.5 text-[10px] whitespace-nowrap ${t.anchor || step === 1 ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{t.label}</span>
+          </div>
+        ))}
+      </div>
+      {/* Shifts + hours */}
+      {showShifts && (
+        <div className="absolute inset-x-0 bottom-0 border-t border-slate-200" style={{ height: AXIS_H - DAY_ROW }}>
+          {bands.map((b, i) => (
+            <div key={i} className={`absolute top-0 flex items-center gap-1 overflow-hidden border-b border-slate-200 ${b.night ? "bg-indigo-100/80 text-indigo-800" : "bg-amber-50 text-amber-800"}`}
+              style={{ left: b.x, width: b.w, height: SHIFT_ROW }} title={`${b.night ? "Night" : "Day"} shift from ${b.label}`}>
+              <div className="absolute top-0 bottom-0 left-0 w-px bg-slate-300" />
+              <span className="pl-1 text-[9px] font-black whitespace-nowrap">{b.night ? "☾" : "☀"}{pxPerDay >= 110 ? ` ${b.night ? "Night" : "Day"} ${b.label}` : ""}</span>
+            </div>
+          ))}
+          {hours.map((h, i) => (
+            <div key={`h${i}`} className="absolute bottom-0" style={{ left: h.x }}>
+              <div className="absolute bottom-0 w-px h-1.5 bg-slate-400" />
+              <span className="absolute bottom-1.5 -translate-x-1/2 text-[8.5px] font-mono text-slate-600 whitespace-nowrap">{h.label}</span>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
     </div>
   );
 }
 
-function Gridlines({ domain, pxPerDay, rowCount }: { domain: { start: Date; totalDays: number }; pxPerDay: number; rowCount: number }) {
+/** Day lines, night shifts shaded, and hour lines when zoomed in. */
+function Gridlines({ domain, pxPerDay, rowCount, shiftTimes }: { domain: { start: Date; totalDays: number }; pxPerDay: number; rowCount: number; shiftTimes: ShiftTimes }) {
   const tz = useScheduleTz();
   const step = pxPerDay >= 60 ? 1 : pxPerDay >= 34 ? 2 : pxPerDay >= 16 ? 7 : pxPerDay >= 8 ? 14 : 30;
   const lines: React.ReactNode[] = [];
+  const showShifts = pxPerDay >= 48;
+  if (showShifts) {
+    const [dh, dm] = shiftTimes.dayStart.split(":").map(Number);
+    const [nh, nm] = shiftTimes.nightStart.split(":").map(Number);
+    const dayAt = ((dh || 0) * 60 + (dm || 0)) / 1440, nightAt = ((nh || 0) * 60 + (nm || 0)) / 1440;
+    for (let d = -1; d < domain.totalDays; d++) {
+      const nx = (d + nightAt) * pxPerDay;
+      lines.push(<div key={`n${d}`} className="absolute top-0 bottom-0 bg-indigo-50/70" style={{ left: nx, width: (d + 1 + dayAt) * pxPerDay - nx }} />);
+    }
+    const hStep = hourStep(pxPerDay);
+    if (hStep && hStep <= 3) {
+      for (let d = 0; d < domain.totalDays; d++) for (let h = hStep; h < 24; h += hStep) {
+        lines.push(<div key={`h${d}-${h}`} className="absolute top-0 bottom-0 w-px bg-slate-100" style={{ left: (d + h / 24) * pxPerDay }} />);
+      }
+    }
+  }
   for (let d = 0; d < domain.totalDays; d += step) {
     const date = addDaysUTC(domain.start, d, tz);
-    const weekend = pxPerDay >= 12 && [0, 6].includes(dayOfWeek(date.getTime(), tz));
+    const weekend = !showShifts && pxPerDay >= 12 && [0, 6].includes(dayOfWeek(date.getTime(), tz));
     lines.push(
       <div key={d} className={`absolute top-0 bottom-0 ${weekend ? "bg-[var(--color-surface-2)]" : ""}`} style={{ left: d * pxPerDay, width: step * pxPerDay }}>
-        <div className="absolute top-0 bottom-0 left-0 w-px bg-[var(--color-surface-2)]" />
+        <div className={`absolute top-0 bottom-0 left-0 w-px ${showShifts ? "bg-slate-300" : "bg-[var(--color-surface-2)]"}`} />
       </div>,
     );
   }
-  return <div className="absolute pointer-events-none" style={{ top: AXIS_H, left: 0, right: 0, height: rowCount * ROW_H }}>{lines}</div>;
+  return <div className="absolute pointer-events-none overflow-hidden" style={{ top: AXIS_H, left: 0, right: 0, height: rowCount * ROW_H }}>{lines}</div>;
 }
 
 // ─── Dependency arrows (finish-to-start connectors) ─────────────
 
-function DependencyArrows({ rows, byId, domain, pxPerDay }: {
+function DependencyArrows({ rows, byId, domain, pxPerDay, spanOf }: {
   rows: FlatRow[];
   byId: Map<string, Milestone>;
   domain: { start: Date; end: Date; totalDays: number };
   pxPerDay: number;
+  spanOf: (m: Milestone) => { start: number; finish: number };
 }) {
   const tz = useScheduleTz();
   const indexById = new Map<string, number>();
@@ -1471,13 +1554,11 @@ function DependencyArrows({ rows, byId, domain, pxPerDay }: {
 
   const geom = (i: number) => {
     const ms = rows[i].ms;
-    const s = new Date(startMs(ms));
-    const f = new Date(finishMs(ms));
-    const startIdx = dayDiff(domain.start, s, tz);
-    const span = Math.max(1, dayDiff(s, f, tz) + 1);
+    const sp = spanOf(ms);
+    const g = barGeometry(sp.start, sp.finish, domain.start.getTime(), pxPerDay, tz);
     return {
-      leftX: startIdx * pxPerDay,
-      rightX: (startIdx + span) * pxPerDay - 2,
+      leftX: g.left,
+      rightX: g.left + g.width,
       midY: AXIS_H + i * ROW_H + ROW_H / 2,
     };
   };
@@ -1732,19 +1813,9 @@ function statusTone(status: MilestoneStatus): { bar: string; border: string; dot
 function startOfDayUTC(d: Date, tz: string): Date { return new Date(startOfDayTz(d.getTime(), tz)); }
 function addDaysUTC(d: Date, n: number, tz: string): Date { return new Date(addDaysTz(d.getTime(), n, tz)); }
 function dayDiff(a: Date, b: Date, tz: string): number { return dayDiffTz(a.getTime(), b.getTime(), tz); }
-function startMs(m: Milestone): number {
-  const s = (m.plannedStartAt as string | undefined) ?? (m.plannedAt as string);
-  return Date.parse(s);
-}
-function finishMs(m: Milestone): number { return Date.parse(m.plannedAt as string); }
-
-function cmpMilestone(a: Milestone, b: Milestone): number {
-  const d = startMs(a) - startMs(b);
-  if (d) return d;
-  const w = wbsCompare(a.wbs, b.wbs);
-  if (w) return w;
-  return (a.name || "").localeCompare(b.name || "");
-}
+// Dates arrive as strings, Dates or epoch numbers — read them all.
+function startMs(m: Milestone): number { return timedStart(m); }
+function finishMs(m: Milestone): number { return timedFinish(m); }
 
 function wbsCompare(a?: string | null, b?: string | null): number {
   if (!a && !b) return 0;
@@ -1760,19 +1831,10 @@ function wbsCompare(a?: string | null, b?: string | null): number {
   return 0;
 }
 
-function rangeLabel(m: Milestone, tz: string): string {
-  const s = new Date(startMs(m)), f = new Date(finishMs(m));
-  const span = dayDiff(s, f, tz) + 1;
-  if (span <= 1) return fmtDayUTC(f, tz);
-  return `${fmtDayUTC(s, tz)} – ${fmtDayUTC(f, tz)} · ${span}d`;
-}
 
 // Human labels are formatted in the plant's zone, the same zone the
 // timeline geometry runs in, so the date printed under a task matches the
 // axis tick it sits on for every viewer.
-function fmtDayUTC(d: Date, tz: string): string {
-  return fmtInTz(d, tz, { month: "short", day: "numeric" });
-}
 function fmtDateUTC(d: Date, tz: string): string {
   return fmtInTz(d, tz, { year: "numeric", month: "numeric", day: "numeric" });
 }
