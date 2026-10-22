@@ -44,6 +44,9 @@ import type { Role, Ticket, TicketStatus } from "@/types/schema";
 import { WorkflowEngine } from "@/lib/workflow";
 // ROUTE-15 (DF-P17): a routed review's holders come from its roster.
 import { currentRoster, slotBlocks, slotAlternatesActive, slotPartyLegReason, separationOfDutiesActive } from "@/lib/workflow";
+// DF-P22 (the DF-P7 hand-off): a running consent window's people are told,
+// not waited on.
+import { windowRunning, recordMoment } from "@/lib/consentWindow";
 import type { CapabilityPolicy } from "@/lib/capabilityPolicy";
 import { MANAGEMENT_ROLES } from "@/lib/managementRoles";
 
@@ -159,7 +162,7 @@ export function attentionLabel(status: string, opts?: { hasDrafter?: boolean }):
  *  FINAL_DRAFT): `ticket.direct_approve` holders (engineers by default) and
  *  `ticket.manage` holders (management); with NO requester on the ticket,
  *  `ticket.requester_review` holders too. */
-export type HolderKind = "requester" | "drafter" | "engineer" | "queue" | "co_reviewers";
+export type HolderKind = "requester" | "drafter" | "engineer" | "queue" | "co_reviewers" | "consent_window";
 
 export interface TicketHolder {
   kind: HolderKind;
@@ -231,7 +234,14 @@ const uidList = (xs: unknown): string[] =>
  * = not applied). Null when the ticket carries no current roster, or none of
  * its slots is open and blocking.
  */
-function rosterWaits(ticket: RosterTicket, ctx?: HoldersContext): Array<{ label: string; uids: string[] }> | null {
+/** DF-P22 (the DF-P7 hand-off): the open slot a RUNNING consent window
+ *  stands on (lib/consentWindow.ts windowRunning — opened, not objected to,
+ *  not expired, its slot still open) carries `window`: its people may object
+ *  until the window closes, and silence is the expected path, so they are
+ *  told, never waited on. */
+type RosterWait = { label: string; uids: string[]; window?: { closesAt: string; recipients: string[] } };
+
+function rosterWaits(ticket: RosterTicket, ctx?: HoldersContext): RosterWait[] | null {
   const roster = currentRoster(ticket);
   if (!roster) return null;
   const open = roster.slots.filter((s) => s && s.status === "open" && slotBlocks(s));
@@ -239,7 +249,11 @@ function rosterWaits(ticket: RosterTicket, ctx?: HoldersContext): Array<{ label:
   const sod = separationOfDutiesActive(ctx?.activeMemberCount);
   const now = ctx?.now ?? Date.now();
   const parties = { requesterId: ticket.requesterId ?? null, assignedDrafterId: ticket.assignedDrafterId ?? null };
+  const w = windowRunning(roster) ? roster.consentWindow ?? null : null;
   return open.map((slot) => {
+    if (w && slot.kind === w.slot && slot.mode === "consent_window") {
+      return { label: slot.label || slot.kind, uids: [], window: { closesAt: w.closesAt, recipients: uidList(w.recipients) } };
+    }
     const alternates = slotAlternatesActive(roster, slot, now) ? uidList(slot.alternates) : [];
     const candidates = [...new Set([...uidList(slot.primaries), ...alternates])];
     const legs = Array.isArray(slot.independentOf) ? slot.independentOf : [];
@@ -263,8 +277,22 @@ function rosterWaits(ticket: RosterTicket, ctx?: HoldersContext): Array<{ label:
  * nobody may sign now is "the reviewers for QA".
  */
 function rosterHolders(ticket: RosterTicket, ctx?: HoldersContext): TicketHolder[] | null {
-  const waits = rosterWaits(ticket, ctx);
-  if (!waits) return null;
+  const all = rosterWaits(ticket, ctx);
+  if (!all) return null;
+  // DF-P22 (the DF-P7 hand-off): a running consent window's people are told,
+  // not waited on. While another slot is open the review waits on that
+  // slot's people alone; when the window's slot is the only one open, the
+  // review waits on nobody's sign-off and the line says who may object until
+  // when (the window's card says the rest).
+  const waits = all.filter((w) => !w.window);
+  if (waits.length === 0) {
+    return all.map((w) => {
+      const names = (w.window?.recipients ?? []).map((uid) => (ctx?.memberNames?.get(uid) ?? "").trim());
+      const named = names.filter(Boolean);
+      const who = named.length === names.length && named.length > 0 ? named.join(", ") : "the people it asked";
+      return { kind: "consent_window" as const, uid: null, name: `no sign-off ("${w.label}" goes ahead unless someone objects)`, part: `${who} may object until ${recordMoment(w.window?.closesAt)}` };
+    });
+  }
   const part = joinLabels(waits.map((w) => w.label));
   const out: TicketHolder[] = [];
   const seen = new Set<string>();
@@ -293,7 +321,8 @@ function rosterHolders(ticket: RosterTicket, ctx?: HoldersContext): TicketHolder
 export function rosterHolderUids(ticket: RosterTicket, ctx?: Pick<HoldersContext, "activeMemberCount" | "now">): string[] {
   const waits = rosterWaits(ticket, ctx);
   if (!waits) return [];
-  return [...new Set(waits.flatMap((w) => w.uids))].sort();
+  // DF-P22: a running window's people are named too (as told, not waited on).
+  return [...new Set(waits.flatMap((w) => [...w.uids, ...(w.window?.recipients ?? [])]))].sort();
 }
 
 /**
@@ -471,7 +500,7 @@ export function explainNoActions(
   const holderPart = holders[0]?.part ?? "someone else";
   if (party) {
     // A pool (the queue, the co-reviewers) has no possessive part to name.
-    const pool = holders[0]?.kind === "queue" || holders[0]?.kind === "co_reviewers";
+    const pool = holders[0]?.kind === "queue" || holders[0]?.kind === "co_reviewers" || holders[0]?.kind === "consent_window";
     const step = holderPart === party ? "not yours yet" : pool ? "not yours" : `${holderPart}'s`;
     return { kind: "not_your_turn", text: `You are ${party} — this step is ${step} (waiting on ${who}: ${what}).` };
   }
