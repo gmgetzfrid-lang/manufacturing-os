@@ -33,9 +33,12 @@
 //     — required, asked here in place, for a revision request (with the same
 //     reason category the page's Request Revision asks). Each assurance
 //     sign-off shows its record (read from the roster's ledger); one signed
-//     before DF-P20 says "Examination not recorded". A roster with no
-//     assurance slot, and every request with none, is exactly as before:
-//     nothing is read and nothing new is shown.
+//     before DF-P20 says "Examination not recorded". A request that never
+//     had a roster reads nothing new and shows nothing new. A roster with no
+//     assurance slot shows nothing new unless an earlier round recorded one
+//     (merge-time fix pass: ONE probe — an id, limit 1 — asks whether any of
+//     the ticket's events carries a record; the history is read only on a
+//     hit, and a probe that fails shows nothing, never an error).
 //
 // Read only through the signed-in client (RLS decides); the one write is the
 // workflow route.
@@ -47,10 +50,10 @@ import { recordSignature, type SigningCredential, type SignatureIntent } from "@
 import SignatureCeremony from "@/components/signatures/SignatureCeremony";
 import { currentRoster, slotSignPlan, separationOfDutiesActive, engineeringGateRequired, slotBlocks, issueReadyFor, ISSUE_AS_IS_NOTE, unhashedFilesNote, ROUTED_NO_ROSTER_REASON } from "@/lib/workflow";
 import { engineeringOverrideOf } from "@/lib/reviewModel";
-import { seededSlotsFor, MODE_LABEL, isMissingRosterLedger } from "@/lib/routingControl";
+import { seededSlotsFor, MODE_LABEL, isMissingRosterLedger, ROSTER_LEDGER_NOT_WRITTEN } from "@/lib/routingControl";
 import {
   isAssuranceSlot, rosterHasAssuranceSlot, rosterOnRecord, examinationFileKey, examinationOf, shortHash, examinedFilesText,
-  EXAMINATION_NOT_RECORDED, EXAMINATION_NOTE_MAX, type ExaminationRecord,
+  EXAMINATION_NOT_RECORDED, EXAMINATION_NOT_READ_YET, EXAMINATION_NOTE_MAX, type ExaminationRecord,
 } from "@/lib/assuranceExamination";
 import { effectiveReviewControlForDocument, expandReviewers } from "@/lib/reviewControl";
 import type { CapabilityPolicy } from "@/lib/capabilityPolicy";
@@ -246,6 +249,11 @@ export default function TicketRosterPanel({
   // True once a sign-off with no event on record has been read again (the
   // event never came: "not recorded", as an event without a record says).
   const [eventsSettled, setEventsSettled] = useState(false);
+  // DF-P20 merge-time fix pass: the assurance slots this viewer just signed
+  // whose ledger write the route reported as failed (the record is on the
+  // audit row until it is reconciled) — "could not be read yet", never
+  // "not recorded", for that act.
+  const [ledgerUnwritten, setLedgerUnwritten] = useState<{ rosterId: string; kinds: string[] } | null>(null);
   const [examPick, setExamPick] = useState<string[] | null>(null);
   const [examNote, setExamNote] = useState("");
   const [vetoCategory, setVetoCategory] = useState<string>(REVISION_CATEGORIES[0]);
@@ -272,8 +280,15 @@ export default function TicketRosterPanel({
   const eventsKey = recordRoster ? `${recordRoster.id}:${recordRoster.slots.filter((s) => s.status !== "open").length}:${recordRoster.closedAt ?? ""}` : "";
   const recordRosterId = recordRoster?.id ?? "";
   const signedAssuranceKey = recordRoster ? recordRoster.slots.filter((s) => s.status === "satisfied" && isAssuranceSlot(s, ticket)).map((s) => s.kind).join("\u0001") : "";
+  // DF-P20 merge-time fix pass: a roster on record with no assurance slot
+  // (a later round without the opt-in) may still follow rounds that
+  // recorded one. ONE cheap probe (an id, limit 1) asks whether any event of
+  // this ticket carries a record; the history is read only if one does. A
+  // request that never had a roster reads nothing; a probe that fails shows
+  // nothing new, never an error.
+  const probeHistory = !assuranceOnRecord && !!recordRoster;
   useEffect(() => {
-    if (!assuranceOnRecord || !ticket.id) { setEvents(null); setEventsSettled(false); return; }
+    if ((!assuranceOnRecord && !probeHistory) || !ticket.id) { setEvents(null); setEventsSettled(false); return; }
     // A re-read (a sign-off just landed, a realtime refresh): the rows held
     // are the old ones, so nothing is "not recorded" until this read answers.
     setEventsSettled(false);
@@ -282,23 +297,29 @@ export default function TicketRosterPanel({
     const want = signedAssuranceKey ? signedAssuranceKey.split("\u0001") : [];
     const load = async (attempt: number) => {
       try {
+        if (probeHistory && attempt === 0) {
+          const { data: hit, error: pe } = await supabase.from("ticket_review_slot_events")
+            .select("id").eq("ticket_id", ticket.id).not("details->examination", "is", null).limit(1);
+          if (!alive) return;
+          if (pe || !Array.isArray(hit) || hit.length === 0) { setEvents(null); setEventsSettled(false); return; }
+        }
         const { data, error: e } = await supabase.from("ticket_review_slot_events")
           .select("id, roster_id, slot_kind, event, actor_id, actor_name, content_hash, details, created_at")
           .eq("ticket_id", ticket.id).in("event", ["satisfied", "voided"]).order("created_at", { ascending: false }).limit(200);
         if (!alive) return;
-        if (e) { setEvents(isMissingRosterLedger(e) ? [] : "unreadable"); setEventsSettled(true); return; }
+        if (e) { setEvents(probeHistory || isMissingRosterLedger(e) ? [] : "unreadable"); setEventsSettled(true); return; }
         const rows = (data ?? []) as SlotEventRow[];
         setEvents(rows);
         const missing = want.some((k) => !rows.some((r) => r.roster_id === recordRosterId && r.slot_kind === k && r.event === "satisfied"));
         setEventsSettled(!missing || attempt > 0);
         if (missing && attempt === 0) timer = setTimeout(() => { void load(1); }, 2000);
       } catch {
-        if (alive) setEvents("unreadable");
+        if (alive) setEvents(probeHistory ? null : "unreadable");
       }
     };
     void load(0);
     return () => { alive = false; if (timer) clearTimeout(timer); };
-  }, [assuranceOnRecord, ticket.id, eventsKey, recordRosterId, signedAssuranceKey]);
+  }, [assuranceOnRecord, probeHistory, ticket.id, eventsKey, recordRosterId, signedAssuranceKey]);
   // A new roster reviews new files: what was picked for the old one goes.
   useEffect(() => { setExamPick(null); }, [roster?.id]);
 
@@ -330,6 +351,8 @@ export default function TicketRosterPanel({
   // GAP-102 (DF-P20): the viewer signs an assurance slot / occupies one they
   // may send back (a veto).
   const signsAssurance = !!plan && plan.fillable.some((f) => isAssuranceSlot(f.slot, ticket));
+  // The assurance slots a sign-off now would fill, as one stable key.
+  const assuranceSignKinds = plan ? plan.fillable.filter((f) => isAssuranceSlot(f.slot, ticket)).map((f) => f.slot.kind).join("\u0001") : "";
   const occupiesAssurance = !!plan && [...plan.fillable, ...plan.blocked].some((x) => isAssuranceSlot(x.slot, ticket));
   // DF-P20 fix pass 2: every file key under review (what "all ticked" sends).
   const allFileKeys = useMemo(() => (roster ? roster.files.map(examinationFileKey) : []), [roster]);
@@ -374,13 +397,18 @@ export default function TicketRosterPanel({
       }
       setSigning(false);
       if (out.warning) setError(out.warning);
+      // DF-P20 merge-time fix pass: the ledger write failed — the record is
+      // on the audit row until it is reconciled.
+      if (out.warning === ROSTER_LEDGER_NOT_WRITTEN && assuranceSignKinds) {
+        setLedgerUnwritten({ rosterId: roster.id, kinds: assuranceSignKinds.split("\u0001") });
+      }
       await onChanged?.();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
-  }, [roster, orgId, uid, ticket.id, userName, onChanged, driftNote, driftAck, signsAssurance, examPick, examNote, allFileKeys]);
+  }, [roster, orgId, uid, ticket.id, userName, onChanged, driftNote, driftAck, signsAssurance, examPick, examNote, allFileKeys, assuranceSignKinds]);
 
   // TIER-8 / EVID-12 (DF-P5 fix pass 3): the route is asked FIRST whether
   // it would take this sign-off (a dry run: nothing written, no signature),
@@ -494,6 +522,7 @@ export default function TicketRosterPanel({
                     if (events === "unreadable") return <div className="text-[var(--color-text-faint)]" data-testid="examination-unreadable">The record of what was examined could not be read right now.</div>;
                     const rec = slotRecord(s.kind);
                     if (rec === undefined && !eventsSettled) return null;
+                    if (!rec && ledgerUnwritten?.rosterId === roster?.id && ledgerUnwritten.kinds.includes(s.kind)) return <div className="text-[var(--color-text-faint)]" data-testid="examination-not-read-yet">{EXAMINATION_NOT_READ_YET}</div>;
                     return rec ? <ExaminationView record={rec} /> : <div className="text-[var(--color-text-faint)]" data-testid="examination-not-recorded">{EXAMINATION_NOT_RECORDED}</div>;
                   })()}
                 </div>

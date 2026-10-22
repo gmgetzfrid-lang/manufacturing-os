@@ -5,7 +5,7 @@ import { notifyBatchWithReason } from "@/lib/inAppNotifications";
 import { WorkflowEngine, ticketResource, decisiveGrants, currentRoster, engineerPickQuestionApplies, slotSignPlan, engineeringGateRequired, ISSUING_APPROVALS, ISSUE_MARK_ACTIONS, ROSTERLESS_APPROVALS, ROUTED_NO_ROSTER_REASON, routedNoRosterReason, ISSUE_AS_IS_APPROVALS, issueReadyFor } from "@/lib/workflow";
 import { loadCapabilityPolicyStrict, policyAllows } from "@/lib/capabilityPolicy";
 import { engineerPickCap, engineerPickRefusal, engineerCandidates } from "@/lib/ticketPage";
-import { effectiveRoutingForTicket, ticketReviewRouting, routingForWorkClass } from "@/lib/routingControl";
+import { effectiveRoutingForTicket, ticketReviewRouting, routingForWorkClass, ROSTER_LEDGER_NOT_WRITTEN } from "@/lib/routingControl";
 import {
   hashStoredFilesBounded, draftsToHashOnApproval, HASH_LIMITS, filesUnderReview, openRoster, applySignPlan, rosterCompletion, rosterBinding,
   signatureRefusal, writeRosterLedger, isMissingRosterLedger, type FileHash, type SignatureRow,
@@ -2041,8 +2041,11 @@ export async function POST(req: NextRequest) {
       }
     }
     if (ledgerErr) {
-      console.error(`[workflow-action] ${auditRow.action} (audit row ${auditRow.id}) on ticket ${body.ticketId} landed, but the review roster ledger was not written — reconcile from tickets.metadata.review_roster: ${ledgerErr}`);
-      rosterWarning = rosterWarning ?? "Done — but the review roster's record could not be written; the request carries it and it will be reconciled.";
+      // DF-P20 merge-time fix pass (GAP-102): the examination record lives
+      // only on this audit row until the ledger is reconciled — the line
+      // names it, so the reconciliation copies it into details.examination.
+      console.error(`[workflow-action] ${auditRow.action} (audit row ${auditRow.id}) on ticket ${body.ticketId} landed, but the review roster ledger was not written — reconcile from tickets.metadata.review_roster${examination ? `; the examination record for slot(s) ${examination.kinds.join(", ")} is on audit row ${auditRow.id} details.reviewRoster.examination — copy it into each of those slots' event details.examination` : ""}: ${ledgerErr}`);
+      rosterWarning = rosterWarning ?? ROSTER_LEDGER_NOT_WRITTEN;
     }
   }
 

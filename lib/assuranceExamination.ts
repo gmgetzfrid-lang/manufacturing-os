@@ -53,6 +53,13 @@ export const EXAMINATION_NOTE_MAX = 2000;
  *  no record — one written before DF-P20 shipped. Never an error. */
 export const EXAMINATION_NOT_RECORDED = "Examination not recorded";
 
+/** DF-P20 merge-time fix pass: what the request page says for an assurance
+ *  sign-off whose ledger write the route just reported as failed — the
+ *  record is on the transition's audit row (`details.reviewRoster.
+ *  examination`) until a reconciliation copies it to the event. Never
+ *  "not recorded" for that act. */
+export const EXAMINATION_NOT_READ_YET = "Examination record could not be read yet";
+
 /** What a reviewer examined, as it is stored on the slot event
  *  (`details.examination`) and repeated on the transition's audit row. */
 export interface ExaminationRecord {

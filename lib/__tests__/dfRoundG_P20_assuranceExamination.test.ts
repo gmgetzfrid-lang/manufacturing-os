@@ -104,8 +104,10 @@ import {
   examinationFileKey, EXAMINATION_NOTE_MAX, EXAMINATION_NOT_RECORDED, type ExaminationRecord,
   examinationForAct, examinationAuditFields,
 } from "@/lib/assuranceExamination";
-import { parseRoutingControl, type RoutingControl } from "@/lib/routingControl";
-import { draftToControl, controlToDraft, ASSURANCE_OPT_IN_HINT } from "@/components/documents/RoutingControlSection";
+import { parseRoutingControl, resolveEffectiveRoutingControl, validateRoutingDraft, examinationOptInAllowed, type RoutingControl } from "@/lib/routingControl";
+import { CONSENT_REFUSED_CAPABILITIES } from "@/lib/consentWindow";
+import { ENGINEERING_CAPABILITIES } from "@/lib/ticketRoster";
+import { draftToControl, controlToDraft, assuranceOptInFor, ASSURANCE_OPT_IN_HINT, ASSURANCE_ENGINEERING_NOTE } from "@/components/documents/RoutingControlSection";
 
 const post = (body: unknown) => workflowAction(new NextRequest("http://x/api/tickets/workflow-action", {
   method: "POST", headers: { authorization: "Bearer t", "content-type": "application/json" }, body: JSON.stringify(body),
@@ -557,13 +559,51 @@ describe("DF-P20 fix pass 2 (review major) — an assurance slot is the controll
     expect(assureOf(base({ records_examination: true }))).toMatchObject({ kind: "assure", records_examination: true });
     for (const v of [false, null, undefined]) expect("records_examination" in (assureOf(base({ records_examination: v })) as object)).toBe(false);
   });
-  it("refused on a notify-only or consent-window slot, on a slot only the requester fills, and as anything but true", () => {
-    expect(parseRoutingControl(base({ mode: "notify_only", records_examination: true }))).toMatchObject({ ok: false, error: expect.stringMatching(/only a blocking slot records what its reviewer examined/) });
-    expect(parseRoutingControl(base({ mode: "consent_window", records_examination: true }))).toMatchObject({ ok: false });
-    expect(parseRoutingControl(base({ fill: { identity: "requester" }, records_examination: true }))).toMatchObject({ ok: false, error: expect.stringMatching(/requester's own acceptance/) });
-    expect(parseRoutingControl(base({ records_examination: "yes" }))).toMatchObject({ ok: false, error: expect.stringMatching(/records_examination is true or absent/) });
-    // the requester AND others: the others' check may record
+  it("merge-time fix pass (DEC-90, no regression): a stored value in the wrong place is DROPPED silently, never a reason to refuse the table — notify-only, consent-window, requester-only, an engineering capability, \"yes\", 1", () => {
+    const dropped = [
+      base({ mode: "notify_only", records_examination: true }),
+      base({ mode: "consent_window", records_examination: true }),
+      base({ fill: { identity: "requester" }, records_examination: true }),
+      base({ fill: { capability: "ticket.final_approve" }, records_examination: true }),
+      base({ fill: { capability: "ticket.eng_review" }, records_examination: true }),
+      base({ fill: { roles: ["Viewer"], capability: "ticket.final_approve" }, records_examination: true }),
+      base({ records_examination: "yes" }),
+      base({ records_examination: 1 }),
+    ];
+    for (const raw of dropped) {
+      const p = parseRoutingControl(raw);
+      expect(p, JSON.stringify(raw)).toMatchObject({ ok: true });
+      expect((p as { ok: true; control: RoutingControl }).control.slots.some((x) => "records_examination" in x), JSON.stringify(raw)).toBe(false);
+      // the effective routing is configured, never invalid
+      expect(resolveEffectiveRoutingControl(undefined, undefined, raw).state).toBe("configured");
+    }
+    // the engineering capabilities the parser drops are exactly the roster's
+    expect([...CONSENT_REFUSED_CAPABILITIES].sort()).toEqual([...ENGINEERING_CAPABILITIES].sort());
+    for (const cap of ENGINEERING_CAPABILITIES) expect(examinationOptInAllowed({ mode: "blocking", fill: { capability: cap as never } })).toBe(false);
+    // the requester AND others: the others' check may record; a direct-approve check may too (the controller's call)
     expect(assureOf(base({ fill: { identity: "requester", users: ["q-1"] }, records_examination: true }))).toMatchObject({ records_examination: true });
+    expect(assureOf(base({ fill: { capability: "ticket.direct_approve" }, records_examination: true }))).toMatchObject({ records_examination: true });
+  });
+  it("merge-time fix pass: the editor's save still refuses a misplaced opt-in with a visible reason (validateRoutingDraft) — it is never stored", () => {
+    expect(validateRoutingDraft(base({ mode: "notify_only", records_examination: true }) as RoutingControl)).toMatch(/only a "must sign off" slot can be an assurance check/);
+    expect(validateRoutingDraft(base({ fill: { capability: "ticket.final_approve" }, records_examination: true }) as RoutingControl)).toMatch(/engineering approval records its own sign-off/);
+    expect(validateRoutingDraft(base({ fill: { identity: "requester" }, records_examination: true }) as RoutingControl)).toMatch(/requester's own acceptance is not an assurance check/);
+    expect(validateRoutingDraft(base({ records_examination: "yes" }) as unknown as RoutingControl)).toMatch(/true or absent/);
+    expect(validateRoutingDraft(base({ records_examination: true }) as RoutingControl)).toBeNull();
+    expect(validateRoutingDraft(base({ records_examination: false }) as RoutingControl)).toBeNull();
+  });
+  it("merge-time fix pass (route): a library whose stored table carries a misplaced or non-boolean opt-in still takes submissions and sign-offs (it used to refuse them 409 routing_invalid); nothing records", async () => {
+    for (const bad of [
+      { kind: "assure", label: "Inspection check", mode: "notify_only", fill: { users: ["q-1"] }, records_examination: true },
+      { kind: "assure", label: "Inspection check", mode: "blocking", fill: { users: ["q-1"] }, independent_of: ["drafter"], records_examination: "yes" },
+    ]) {
+      const table = { slots: [...PLAIN.slots.map((x) => (x.kind === "check" ? { ...x, records_examination: true } : x)), bad] };
+      const roster = await submitRouted(table);
+      expect(roster.slots.some((x) => "recordsExamination" in x)).toBe(false);
+      actOn(roster, "e-1", SIG);
+      expect((await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG, examination: { files: ["a-d"] } })).status).toBe(200);
+      expect(events().every((e) => !("examination" in e.details))).toBe(true);
+    }
   });
   it("the routing editor: never ticked by default, round-trips a stored opt-in, writes it only on a blocking slot not filled by the requester alone", () => {
     const stored: RoutingControl = { slots: [
@@ -573,15 +613,42 @@ describe("DF-P20 fix pass 2 (review major) — an assurance slot is the controll
     const drafts = controlToDraft(stored);
     expect(drafts.map((d) => d.recordsExamination ?? false)).toEqual([false, true]);
     expect(draftToControl(drafts)).toEqual(stored);
-    // switched to notify-only, or to the requester: dropped (a stored value the parser would refuse is never written)
+    // switched to notify-only, to the requester, or to an engineering capability: dropped (a value the parser would drop is never written)
     expect("records_examination" in draftToControl([{ ...drafts[1], mode: "notify_only" }]).slots[0]).toBe(false);
     expect("records_examination" in draftToControl([{ ...drafts[1], fillKind: "requester" }]).slots[0]).toBe(false);
+    expect("records_examination" in draftToControl([{ ...drafts[1], fillKind: "capability", capability: "ticket.final_approve" }]).slots[0]).toBe(false);
     // a slot the editor never opted in writes nothing new (a pre-DF-P20 table saves byte-identical)
     expect(draftToControl(controlToDraft({ slots: [stored.slots[0]] }))).toEqual({ slots: [stored.slots[0]] });
-    expect(ASSURANCE_OPT_IN_HINT).toMatch(/neither the engineering approval nor the requester's own acceptance/);
+    // merge-time fix pass (item 6): the hint never steers a notice into a sign-off (GAP-102: no added slot or sign-off)
+    expect(ASSURANCE_OPT_IN_HINT).toMatch(/adds no sign-off/);
+    expect(ASSURANCE_OPT_IN_HINT).toMatch(/only needs to be told stays "Told, no sign-off"/);
+    expect(ASSURANCE_OPT_IN_HINT).not.toMatch(/suited to|make it a|switch|convert/i);
     const src = readFileSync(join(process.cwd(), "components", "documents", "RoutingControlSection.tsx"), "utf8");
-    expect(src).toContain('{s.mode === "blocking" && s.fillKind !== "requester" && (');
+    expect(src).toContain('{assuranceOptInFor(s) === "offer" && (');
+    expect(src).toContain('{assuranceOptInFor(s) === "engineering" && (');
     expect(src).toContain('checked={!!s.recordsExamination}');
+  });
+  it("merge-time fix pass (item 2): a blocking slot filled by an engineering capability offers no box (the reason is said) and round-trips with no flag; a stored flag there is dropped on read and never written back", () => {
+    const stored = { slots: [
+      { kind: "eng", label: "Engineering check", mode: "blocking", fill: { capability: "ticket.final_approve" }, records_examination: true },
+      { kind: "eng2", mode: "blocking", fill: { roles: ["Viewer"], capability: "ticket.eng_review" }, records_examination: true },
+      { kind: "assure", label: "Inspection check", mode: "blocking", fill: { users: ["q-1"] }, records_examination: true },
+    ] };
+    const parsed = parseRoutingControl(stored) as { ok: true; control: RoutingControl };
+    expect(parsed.ok).toBe(true);
+    const drafts = controlToDraft(parsed.control);
+    expect(drafts.map((d) => assuranceOptInFor(d))).toEqual(["engineering", "engineering", "offer"]);
+    expect(drafts.map((d) => d.recordsExamination ?? false)).toEqual([false, false, true]);
+    // ticked anyway (a stale draft): never written on the engineering slots
+    const out = draftToControl(drafts.map((d) => ({ ...d, recordsExamination: true })));
+    expect(out.slots.map((x) => x.records_examination ?? false)).toEqual([false, false, true]);
+    expect(validateRoutingDraft(out)).toBeNull();
+    // the round trip is stable: parse → draft → stored → parse
+    expect(parseRoutingControl(draftToControl(drafts))).toEqual({ ok: true, control: parsed.control });
+    // the requester's own slot and other modes: no box and no reason (as before)
+    expect(assuranceOptInFor({ ...drafts[2], fillKind: "requester" })).toBe("none");
+    expect(assuranceOptInFor({ ...drafts[2], mode: "notify_only" })).toBe("none");
+    expect(ASSURANCE_ENGINEERING_NOTE).toMatch(/engineering approval records its own sign-off/);
   });
   it("examinationForAct: nothing to record when no occupied slot is opted in (the body ignored, even junk); the audit copy is empty then", () => {
     const R = { contentHash: "c".repeat(64), cycle: "1A", files: [{ id: "a", name: "a.pdf", url: "k/a", sha256: null }] };

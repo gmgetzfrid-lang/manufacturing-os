@@ -6,9 +6,10 @@
 // default, a note — required for a veto, so a veto is still one step); each
 // assurance sign-off shows its record (the hash shortened with a copy button,
 // the files, the note); one signed before DF-P20 says "Examination not
-// recorded", never an error; a closed round's veto stays readable. A roster
-// with no assurance slot, and every request with none, reads nothing new and
-// shows nothing new — pinned across every status and viewer.
+// recorded", never an error; a closed round's veto stays readable. A request
+// that never had a roster reads nothing new; a roster with no assurance slot
+// shows nothing new and reads at most ONE probe for an earlier round's record
+// (merge-time fix pass) — pinned across every status and viewer.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -51,7 +52,8 @@ vi.mock("@/components/signatures/SignatureCeremony", () => ({
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import TicketRosterPanel, { rosterSignStatement, examinationBody, REVISION_CATEGORIES } from "@/components/requests/TicketRosterPanel";
-import { EXAMINATION_NOT_RECORDED } from "@/lib/assuranceExamination";
+import { EXAMINATION_NOT_RECORDED, EXAMINATION_NOT_READ_YET } from "@/lib/assuranceExamination";
+import { ROSTER_LEDGER_NOT_WRITTEN } from "@/lib/routingControl";
 
 let host: HTMLDivElement;
 let root: Root;
@@ -92,6 +94,14 @@ const ticket = (roster: TicketReviewRoster | null, status: TicketStatus = "PENDI
 } as unknown as Ticket);
 const record = (over: Record<string, unknown> = {}) => ({ v: 1, act: "sign_off", contentHash: HASH, cycle: "1A", files: [{ id: "a-e", name: "iso_1A_sh2.pdf", sha256: "e".repeat(64) }], ofFiles: 2, allFiles: false, note: "weld map checked", ...over });
 const ev = (over: Record<string, unknown>) => ({ id: "ev-1", roster_id: "r-1", slot_kind: "assure", event: "satisfied", actor_id: "q-1", actor_name: "Quinn", content_hash: HASH, created_at: NOW, details: { via: "primary" }, ...over });
+// DF-P20 merge-time fix pass: the ledger reads, told apart by what they select —
+// the probe (`id` only, limit 1, details->examination not null) and the history.
+const ledgerSelects = () => db.calls.filter((c) => c.table === "ticket_review_slot_events" && c.method === "select").map((c) => String(c.args[0]));
+const PROBE = "id";
+const probeShape = () => {
+  const i = db.calls.findIndex((c) => c.table === "ticket_review_slot_events" && c.method === "select" && c.args[0] === PROBE);
+  return db.calls.slice(i, i + 4).map((c) => [c.method, ...c.args]);
+};
 const fetchBodies = () => {
   const bodies: Array<Record<string, unknown>> = [];
   vi.stubGlobal("fetch", vi.fn(async (_u: string, init: { body: string }) => { bodies.push(JSON.parse(init.body)); return new Response(JSON.stringify({ ok: true }), { status: 200 }); }));
@@ -304,14 +314,15 @@ describe("each assurance event shows its record (ruling (5)); one from before DF
 describe("REGRESSION — no assurance slot: nothing new is read or shown, every status and viewer", () => {
   const STATUSES: TicketStatus[] = ["PENDING_ENG_TEAM", "PENDING_ASSIGNMENT", "DRAFTING", "REVISION_REQ", "PENDING_REVIEW", "PENDING_IFC", "FINAL_DRAFT", "PENDING_FINAL_APPROVAL", "CLOSED", "CANCELED"];
   const VIEWERS = ["req-1", "d-1", "e-1", "a-1", "x-9"];
-  it("a roster of the requester's acceptance and the engineering approval (open or closed), and a request with no roster: no ledger read, no examination markup", async () => {
+  it("a roster of the requester's acceptance and the engineering approval (open or closed): at most ONE cheap probe (merge-time fix pass), no history read when it finds nothing, no examination markup; a request with no roster: no ledger read at all", async () => {
     const plain = rosterOf([ACCEPT, { ...CHECK, status: "satisfied", satisfiedBy: "e-1", satisfiedAt: NOW, signatureId: "s", via: "primary" }]);
     for (const status of STATUSES) {
       for (const uid of VIEWERS) {
         for (const r of [plain, { ...plain, closedAt: NOW }, null]) {
-          db.reads = [];
+          db.reads = []; db.calls = [];
           await render(ticket(r, status), uid);
-          expect(db.reads, `${status} ${uid}`).not.toContain("ticket_review_slot_events");
+          if (r) expect(ledgerSelects(), `${status} ${uid}`).toEqual([PROBE]);
+          else expect(db.reads, `${status} ${uid}`).not.toContain("ticket_review_slot_events");
           expect(host.innerHTML, `${status} ${uid}`).not.toMatch(/data-testid="examination-/);
         }
       }
@@ -323,9 +334,11 @@ describe("REGRESSION — no assurance slot: nothing new is read or shown, every 
     const signed = { ...UNFLAGGED, status: "satisfied" as const, satisfiedBy: "q-1", satisfiedAt: NOW, signatureId: "s", via: "primary" as const };
     for (const r of [rosterOf([ACCEPT, CHECK, UNFLAGGED, LEAD]), rosterOf([ACCEPT, CHECK, signed, LEAD])]) {
       for (const uid of ["q-1", "q-3", "x-9"]) {
-        db.reads = [];
+        db.reads = []; db.calls = [];
         await render(ticket(r), uid);
-        expect(db.reads, uid).not.toContain("ticket_review_slot_events");
+        // at most the one probe (none on a re-render of the same roster), never the history read
+        expect(ledgerSelects().filter((x) => x !== PROBE), uid).toEqual([]);
+        expect(ledgerSelects().length, uid).toBeLessThanOrEqual(1);
         expect(host.innerHTML, uid).not.toMatch(/data-testid="examination-/);
       }
     }
@@ -342,9 +355,11 @@ describe("REGRESSION — no assurance slot: nothing new is read or shown, every 
     const CONSENT = slot({ id: "r-1:consent", kind: "consent", label: "Operations consent", mode: "consent_window", primaries: ["c-1"] });
     for (const s2 of [CONSENT, { ...CONSENT, status: "satisfied" as const, satisfiedAt: NOW, via: "consent" as const }]) {
       for (const uid of ["c-1", "x-9", "d-1"]) {
-        db.reads = [];
+        db.reads = []; db.calls = [];
         await render(ticket(rosterOf([ACCEPT, CHECK, s2])), uid);
-        expect(db.reads, uid).not.toContain("ticket_review_slot_events");
+        // at most the one probe (none on a re-render of the same roster), never the history read
+        expect(ledgerSelects().filter((x) => x !== PROBE), uid).toEqual([]);
+        expect(ledgerSelects().length, uid).toBeLessThanOrEqual(1);
         expect(host.innerHTML, uid).not.toMatch(/data-testid="examination-/);
       }
     }
@@ -355,4 +370,89 @@ describe("REGRESSION — no assurance slot: nothing new is read or shown, every 
     expect(q("examination-form")).toBeNull();
     expect(host.textContent).toContain("Told — 1 person");
   });
+});
+
+describe("DF-P20 merge-time fix pass — earlier rounds' records survive a round without the opt-in; a ledger write that failed is never 'not recorded'", () => {
+  const VETO_R1 = ev({ id: "v1", roster_id: "r-0", event: "voided", details: { reason: "request_revision", examination: record({ act: "veto", note: "dimension missing", slotLabel: "Inspection check" }) } });
+  it("round 1 vetoed with a record, round 2 opened without the opt-in: ONE probe (id, limit 1, details->examination not null) finds it, the history is read, the round-1 record is shown", async () => {
+    db.results.ticket_review_slot_events = { data: [VETO_R1], error: null };
+    const round2 = rosterOf([ACCEPT, CHECK, { ...ASSURE, recordsExamination: undefined }], { id: "r-1", cycle: "1B" });
+    await render(ticket(round2), "x-9");
+    expect(ledgerSelects()[0]).toBe(PROBE);
+    expect(ledgerSelects()).toHaveLength(2);
+    expect(probeShape()).toEqual([["select", "id"], ["eq", "ticket_id", "t1"], ["not", "details->examination", "is", null], ["limit", 1]]);
+    const hist = q("examination-history")!;
+    expect(hist.textContent).toContain("Inspection check");
+    expect(hist.textContent).toContain("revision requested by Quinn");
+    expect(hist.textContent).toContain("Note: dimension missing");
+    // still nothing per slot of round 2 (no assurance slot there), no form
+    expect(q("examination-form")).toBeNull();
+    expect(q("examination-not-recorded")).toBeNull();
+  });
+
+  it("the same with the round-2 roster closed and the request back in drafting: the round-1 record is still shown", async () => {
+    db.results.ticket_review_slot_events = { data: [VETO_R1], error: null };
+    const round2 = rosterOf([ACCEPT, { ...CHECK, status: "void" }], { id: "r-1", cycle: "1B", closedAt: NOW, closedReason: "request_revision" });
+    await render(ticket(round2, "REVISION_REQ"), "d-1");
+    expect(q("examination-history")!.textContent).toContain("Note: dimension missing");
+  });
+
+  it("a probe that fails renders nothing new and never an error (the page stays as today); a probe that finds nothing reads no history", async () => {
+    const round2 = rosterOf([ACCEPT, CHECK], { id: "r-1" });
+    db.results.ticket_review_slot_events = { data: null, error: { code: "08006", message: "connection lost" } };
+    await render(ticket(round2), "x-9");
+    expect(ledgerSelects()).toEqual([PROBE]);
+    expect(host.innerHTML).not.toMatch(/data-testid="examination-/);
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    db.calls = [];
+    db.results.ticket_review_slot_events = { data: [], error: null };
+    await render(ticket({ ...round2, id: "r-2" }), "x-9");
+    expect(ledgerSelects()).toEqual([PROBE]);
+    expect(host.innerHTML).not.toMatch(/data-testid="examination-/);
+  });
+
+  it("a request that never had a roster issues no ledger read — every status and viewer, the panel showing or not", async () => {
+    const STATUSES: TicketStatus[] = ["PENDING_ENG_TEAM", "PENDING_ASSIGNMENT", "DRAFTING", "REVISION_REQ", "PENDING_REVIEW", "PENDING_IFC", "FINAL_DRAFT", "PENDING_FINAL_APPROVAL", "CLOSED", "CANCELED"];
+    db.results.ticket_review_slot_events = { data: [VETO_R1], error: null };
+    for (const status of STATUSES) {
+      for (const uid of ["req-1", "d-1", "e-1", "x-9"]) {
+        db.reads = []; db.calls = [];
+        await render(ticket(null, status), uid);
+        expect(db.reads, `${status} ${uid}`).not.toContain("ticket_review_slot_events");
+        expect(host.innerHTML, `${status} ${uid}`).not.toMatch(/data-testid="examination-/);
+      }
+    }
+  });
+
+  it("the route answered with the roster-ledger warning: the sign-off just made reads 'Examination record could not be read yet', never 'Examination not recorded'", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_u: string, init: { body: string }) => {
+      const b = JSON.parse(init.body) as { dryRun?: boolean };
+      return new Response(JSON.stringify(b.dryRun ? { ok: true, dryRun: true } : { ok: true, warning: ROSTER_LEDGER_NOT_WRITTEN }), { status: 200 });
+    }));
+    db.results.ticket_review_slot_events = { data: [], error: null };
+    await render(ticket(rosterOf([ACCEPT, CHECK, ASSURE])), "q-1");
+    await act(async () => { button(/Sign off — Inspection check/).click(); });
+    await flush();
+    await act(async () => { (q("ceremony") as HTMLButtonElement).click(); });
+    await flush();
+    expect(host.querySelector('[role="alert"]')!.textContent).toBe(ROSTER_LEDGER_NOT_WRITTEN);
+    // the refreshed ticket: the slot is signed, the ledger has no event for it
+    const signed = { ...ASSURE, status: "satisfied" as const, satisfiedBy: "q-1", satisfiedAt: NOW, signatureId: "sig-1", via: "primary" as const };
+    await render(ticket(rosterOf([ACCEPT, CHECK, signed])), "q-1");
+    // the one re-read a missing event gets (2 s later) settles it
+    await act(async () => { await new Promise((r) => setTimeout(r, 2100)); });
+    await flush();
+    expect(q("examination-not-read-yet")!.textContent).toBe(EXAMINATION_NOT_READ_YET);
+    expect(q("examination-not-recorded")).toBeNull();
+  }, 10_000);
+
+  it("REGRESSION: without the warning, a signed assurance slot with no event still reads 'Examination not recorded' once settled", async () => {
+    db.results.ticket_review_slot_events = { data: [], error: null };
+    const signed = { ...ASSURE, status: "satisfied" as const, satisfiedBy: "q-1", satisfiedAt: NOW, signatureId: "sig-1", via: "primary" as const };
+    await render(ticket(rosterOf([ACCEPT, CHECK, signed])), "x-9");
+    await act(async () => { await new Promise((r) => setTimeout(r, 2100)); });
+    await flush();
+    expect(q("examination-not-recorded")!.textContent).toBe(EXAMINATION_NOT_RECORDED);
+    expect(q("examination-not-read-yet")).toBeNull();
+  }, 10_000);
 });

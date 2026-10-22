@@ -30,7 +30,7 @@ import { Route, Plus, Trash2, Loader2 } from "lucide-react";
 import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import {
-  parseRoutingControl, readRoutingControlAt, setRoutingControl, validateRoutingDraft, reviewsInFlightUnder, MODE_LABEL, ROUTING_PARTIES,
+  parseRoutingControl, readRoutingControlAt, setRoutingControl, validateRoutingDraft, reviewsInFlightUnder, MODE_LABEL, ROUTING_PARTIES, examinationOptInAllowed,
   type RoutingControl, type RoutingLevel, type RoutingSlot, type RoutingSlotFill, type RoutingSlotMode,
 } from "@/lib/routingControl";
 import { CAPABILITY_DEFS, type CapabilityId } from "@/lib/capabilityPolicy";
@@ -69,20 +69,42 @@ const emptySlot = (n: number): DraftSlot => ({
   independentOf: ["drafter"], timeoutDays: "", alternateRoles: [],
 });
 
-/** GAP-102 (DF-P20 fix pass 2): what the assurance opt-in does, and the
- *  slots it suits — the editor's suggestion; nothing is ticked for you. */
+/** GAP-102 (DF-P20 fix pass 2; reworded at the merge-time fix pass): what
+ *  the assurance opt-in does — never a suggestion to add a sign-off. GAP-102
+ *  says not to add a roster slot or a sign-off for assurance: the opt-in only
+ *  records on a slot that already must sign off; a check that is told stays
+ *  notify-only. Nothing is ticked for you. */
 export const ASSURANCE_OPT_IN_HINT =
-  "(the files and a note with each sign-off; a revision request must say why). Suited to a check that is neither the engineering approval nor the requester's own acceptance — those never record one.";
+  "(the files and a note with each sign-off; a revision request must say why). It records on a slot that already must sign off and adds no sign-off — a check that only needs to be told stays \"Told, no sign-off\". The requester's own acceptance never records one.";
+
+/** GAP-102 (DF-P20 merge-time fix pass): why a "must sign off" slot filled
+ *  by an engineering capability offers no assurance check. */
+export const ASSURANCE_ENGINEERING_NOTE = "No assurance check here — the engineering approval records its own sign-off.";
+
+/** The fill a draft slot stores: what the editor shows over what it keeps. */
+function draftFill(d: DraftSlot): RoutingSlot["fill"] {
+  const shown: RoutingSlot["fill"] = d.fillKind === "requester" ? { identity: "requester" }
+    : d.fillKind === "users" ? { users: d.users.map((u) => u.uid) }
+    : d.fillKind === "capability" ? (d.capability ? { capability: d.capability } : {})
+    : { roles: d.roles };
+  return { ...(d.kept?.fill ?? {}), ...shown };
+}
+
+/** GAP-102 (DF-P20 merge-time fix pass): how a draft slot offers the
+ *  assurance opt-in — "offer" (the checkbox), "engineering" (a blocking slot
+ *  filled by an engineering capability: hidden, with the reason) or "none"
+ *  (another mode, or the requester's own slot: hidden, as before). Pure;
+ *  exported for tests. */
+export function assuranceOptInFor(d: DraftSlot): "offer" | "engineering" | "none" {
+  if (d.mode !== "blocking" || d.fillKind === "requester") return "none";
+  return examinationOptInAllowed({ mode: d.mode, fill: draftFill(d) }) ? "offer" : "engineering";
+}
 
 /** Draft slots → the stored shape (pure; exported for tests). */
 export function draftToControl(slots: DraftSlot[]): RoutingControl {
   return {
     slots: slots.map((d): RoutingSlot => {
-      const shown: RoutingSlot["fill"] = d.fillKind === "requester" ? { identity: "requester" }
-        : d.fillKind === "users" ? { users: d.users.map((u) => u.uid) }
-        : d.fillKind === "capability" ? (d.capability ? { capability: d.capability } : {})
-        : { roles: d.roles };
-      const fill: RoutingSlot["fill"] = { ...(d.kept?.fill ?? {}), ...shown };
+      const fill = draftFill(d);
       const altUsers = d.kept?.alternateUsers ?? [];
       const t = Number(d.timeoutDays);
       return {
@@ -103,8 +125,9 @@ export function draftToControl(slots: DraftSlot[]): RoutingControl {
         ...(d.mode === "consent_window" && d.kept?.windowDays !== undefined ? { window_days: d.kept.windowDays } : {}),
         ...(d.mode === "consent_window" && d.kept?.warnFraction !== undefined ? { warn_fraction: d.kept.warnFraction } : {}),
         // DF-P20 fix pass 2: the assurance opt-in, on a blocking slot not
-        // filled by the requester alone (a slot switched away drops it).
-        ...(d.recordsExamination && d.mode === "blocking" && d.fillKind !== "requester" ? { records_examination: true as const } : {}),
+        // filled by the requester alone, nor (merge-time fix pass) by an
+        // engineering capability — a slot switched away drops it.
+        ...(d.recordsExamination && assuranceOptInFor(d) === "offer" ? { records_examination: true as const } : {}),
       };
     }),
   };
@@ -417,7 +440,10 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
                       <span className="text-[var(--color-text-muted)]">% of it ({Math.round(CONSENT_WARN_FRACTION_MIN * 100)}–{Math.round(CONSENT_WARN_FRACTION_MAX * 100)}). Blank = the default.</span>
                     </div>
                   )}
-                  {s.mode === "blocking" && s.fillKind !== "requester" && (
+                  {assuranceOptInFor(s) === "engineering" && (
+                    <p className="text-[11px] text-[var(--color-text-faint)]" data-testid="routing-slot-records-examination-engineering">{ASSURANCE_ENGINEERING_NOTE}</p>
+                  )}
+                  {assuranceOptInFor(s) === "offer" && (
                     <label className="flex flex-wrap items-center gap-1.5 text-[11px]" data-testid="routing-slot-records-examination">
                       <input type="checkbox" checked={!!s.recordsExamination} onChange={(e) => patch(i, { recordsExamination: e.target.checked })} />
                       <span className="font-bold text-[var(--color-text-muted)]">Assurance check — its reviewer records what they examined</span>
