@@ -27,16 +27,26 @@
 // Reads only what the viewer may read (the ticket row they already hold,
 // ticket_equipment and the drawings through RLS). Before 20261250 / 20261251
 // are pasted it shows nothing for what is not there — never a guess.
+//
+// DF-P18 (intelligence GAP-312, equipment after filing; DEC-90 ruling (4)):
+// for the request's participants and the assignment queue
+// (`canEditEquipment`, computed by the page from lib/ticketEquipment.ts —
+// the route's own rule), an "Add equipment" control and a "Correct" button on
+// each listed tag, posting to /api/tickets/equipment (server-side workspace
+// check, checked write, audit row first). Before 20261251 is pasted the
+// control says the list is not available. Everyone else sees the card as
+// before.
 
 import React, { useEffect, useState } from "react";
-import { ShieldCheck, ShieldAlert, Wrench, FileText, AlertTriangle } from "lucide-react";
+import { ShieldCheck, ShieldAlert, Wrench, FileText, AlertTriangle, Plus } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { isMissingSchemaError } from "@/lib/checkedWrite";
 import { lookupTag, type TagLookupHit } from "@/lib/search";
 import { engineeringBasis, isDeclaredLikeInKind, declarationSignatureStands, type DeclarationCheck, type DeclarationSignatureRow } from "@/lib/reviewModel";
+import { cleanEquipmentTag, isMissingEquipmentTable, EQUIPMENT_NOT_AVAILABLE, EQUIPMENT_TAG_MAX } from "@/lib/ticketEquipment";
 import type { Ticket } from "@/types/schema";
 
-interface EquipmentRow { tag: string; asset_id: string | null }
+interface EquipmentRow { id?: string; tag: string; asset_id: string | null }
 
 /** The sentence the card leads with (pure; exported for tests).
  *  `declaration`: the declaration's e-signature check — "pending" while the
@@ -80,8 +90,14 @@ export function engineeringLine(
 /** `onDeclarationCheck` (DF-P6 fix pass 4, review minor 6): the card's
  *  e-signature check, shared with the request page so its buttons are
  *  evaluated on the ticket the route evaluates (ticketAsDeclarationChecked). */
-export default function DeclarationCard({ ticket, onDeclarationCheck }: { ticket: Ticket; onDeclarationCheck?: (check: DeclarationCheck | "pending") => void }) {
+export default function DeclarationCard({ ticket, onDeclarationCheck, canEditEquipment }: { ticket: Ticket; onDeclarationCheck?: (check: DeclarationCheck | "pending") => void; canEditEquipment?: boolean }) {
   const [equipment, setEquipment] = useState<EquipmentRow[] | null>(null);
+  // DF-P18 (GAP-312): the add / correct control's state.
+  const [equipmentMissing, setEquipmentMissing] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [editing, setEditing] = useState<{ rowId: string | null; tag: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [editMsg, setEditMsg] = useState<{ tone: "ok" | "warn" | "error"; text: string } | null>(null);
   const [sheets, setSheets] = useState<Map<string, TagLookupHit>>(new Map());
   const [equipmentError, setEquipmentError] = useState<string | null>(null);
   // The declaration's e-signature, checked as the workflow route checks it
@@ -107,14 +123,17 @@ export default function DeclarationCard({ ticket, onDeclarationCheck }: { ticket
     if (!ticket.id) return;
     let alive = true;
     void (async () => {
-      const { data, error } = await supabase.from("ticket_equipment").select("tag, asset_id").eq("ticket_id", ticket.id!).order("created_at");
+      const { data, error } = await supabase.from("ticket_equipment").select("id, tag, asset_id").eq("ticket_id", ticket.id!).order("created_at");
       if (!alive) return;
       if (error) {
         // Not pasted yet: nothing to show. Any other failure is said.
         if (!isMissingSchemaError(error)) setEquipmentError("The equipment this request names could not be read.");
+        setEquipmentMissing(isMissingEquipmentTable(error));
         setEquipment([]);
         return;
       }
+      setEquipmentMissing(false);
+      setEquipmentError(null);
       const rows = (data ?? []) as EquipmentRow[];
       setEquipment(rows);
       const found = new Map<string, TagLookupHit>();
@@ -130,12 +149,46 @@ export default function DeclarationCard({ ticket, onDeclarationCheck }: { ticket
       if (alive) setSheets(found);
     })();
     return () => { alive = false; };
-  }, [ticket.id, ticket.orgId]);
+  }, [ticket.id, ticket.orgId, reloadKey]);
+
+  // DF-P18 (GAP-312): add a tag, or correct a listed one, through the route.
+  const saveEquipment = async () => {
+    if (!editing || !ticket.id) return;
+    const tag = cleanEquipmentTag(editing.tag);
+    if (!tag) { setEditMsg({ tone: "error", text: `Enter an equipment tag (1 to ${EQUIPMENT_TAG_MAX} characters).` }); return; }
+    setSaving(true);
+    setEditMsg(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch("/api/tickets/equipment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
+        body: JSON.stringify({ ticketId: ticket.id, action: editing.rowId ? "correct" : "add", tag, ...(editing.rowId ? { rowId: editing.rowId } : {}) }),
+      });
+      const out = (await res.json().catch(() => ({}))) as { error?: string; code?: string; message?: string; warning?: string };
+      if (!res.ok) {
+        if (out.code === "not_migrated") setEquipmentMissing(true);
+        throw new Error(out.error || `The equipment was not recorded (HTTP ${res.status})`);
+      }
+      setEditing(null);
+      setEditMsg(out.warning ? { tone: "warn", text: out.warning } : out.message ? { tone: "ok", text: out.message } : null);
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      setEditMsg({ tone: "error", text: (e as Error).message });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const line = engineeringLine(ticket, declared ? declaration : "verified");
   const hasClasses = !!ticket.workClass || !!ticket.codeClass;
   const hasEquipment = (equipment?.length ?? 0) > 0;
-  if (!line && !hasClasses && !hasEquipment && !equipmentError) return null;
+  // DF-P18 fix pass (review, minor): the equipment control shows only once
+  // the equipment read has answered — never an empty bordered card while it
+  // loads. DEC-90 ruling (4): it is a control in EVERY workspace (configured
+  // or not) for the participants and the assignment queue.
+  const showControl = !!canEditEquipment && equipment !== null;
+  if (!line && !hasClasses && !hasEquipment && !equipmentError && !showControl) return null;
 
   return (
     <section data-testid="declaration-card" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3 text-sm">
@@ -184,10 +237,31 @@ export default function DeclarationCard({ ticket, onDeclarationCheck }: { ticket
                       ))}
                     </span>
                   )}
+                  {canEditEquipment && !equipmentMissing && e.id && !editing && (
+                    <button type="button" data-testid="equipment-correct" className="ml-2 text-xs font-semibold text-blue-600 hover:underline" onClick={() => { setEditMsg(null); setEditing({ rowId: e.id!, tag: e.tag }); }}>Correct</button>
+                  )}
                 </li>
               );
             })}
           </ul>
+        </div>
+      )}
+      {showControl && (
+        <div data-testid="equipment-control" className="text-xs">
+          {equipmentMissing ? (
+            <p className="text-[var(--color-text-muted)]" data-testid="equipment-not-available">{EQUIPMENT_NOT_AVAILABLE}</p>
+          ) : editing ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <input aria-label={editing.rowId ? "Corrected equipment tag" : "Equipment tag"} data-testid="equipment-tag-input" maxLength={EQUIPMENT_TAG_MAX} value={editing.tag}
+                onChange={(ev) => setEditing({ ...editing, tag: ev.target.value })}
+                className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-sm" placeholder="e.g. P-101" />
+              <button type="button" disabled={saving} onClick={() => void saveEquipment()} className="rounded bg-slate-900 px-3 py-1 font-semibold text-white disabled:opacity-50">{editing.rowId ? "Save correction" : "Add"}</button>
+              <button type="button" disabled={saving} onClick={() => { setEditing(null); setEditMsg(null); }} className="rounded px-2 py-1">Cancel</button>
+            </div>
+          ) : (
+            <button type="button" data-testid="equipment-add" className="inline-flex items-center gap-1 font-semibold text-blue-600 hover:underline" onClick={() => { setEditMsg(null); setEditing({ rowId: null, tag: "" }); }}><Plus className="w-3.5 h-3.5" />Add equipment</button>
+          )}
+          {editMsg && <p role={editMsg.tone === "error" ? "alert" : "status"} className={`mt-1 ${editMsg.tone === "error" ? "text-red-700" : editMsg.tone === "warn" ? "text-amber-700" : "text-[var(--color-text-muted)]"}`}>{editMsg.text}</p>}
         </div>
       )}
     </section>

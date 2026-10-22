@@ -29,7 +29,7 @@ import {
 import type { Role, TicketAttachment, TicketHistoryEntry, TicketOutcome, TicketReviewRoster } from "@/types/schema";
 import { TICKET_INTENT_TTL_MS } from "@/lib/intents";
 import { parseSourceDocument, parseSourceDocuments, revDrift } from "@/lib/sourceDocRef";
-import { reviewClassOptions, resolveReviewClass, hasReviewModelColumns, isDeclaredLikeInKind, engineerPickAvailable as pickAvailableFrom, declarationSignatureStands, type DeclarationSignatureRow } from "@/lib/reviewModel";
+import { reviewClassOptions, resolveReviewClass, withMinorCorrectionClass, minorCorrectionClassOf, hasReviewModelColumns, isDeclaredLikeInKind, engineerPickAvailable as pickAvailableFrom, declarationSignatureStands, type DeclarationSignatureRow } from "@/lib/reviewModel";
 import { unitOptionsFor, resolveUnit, unitListReadFailure } from "@/lib/ticketCreate";
 import { heldRoles } from "@/lib/roleHeld";
 import { noteDeliverableNotInRegister, noteDeliverableNotInLibrary, noteDeliverableNotInAnyRegister, deliverableStateOf, latestFinalAttachment } from "@/lib/ticketHandback";
@@ -576,8 +576,48 @@ export async function POST(req: NextRequest) {
       engineerPickAvailable = pickAvailableFrom(cands, ticket, caller.id, sodActive);
     }
   }
+  // ── HAND-7 done-when 3 (DF-P6 seam; DF-P18 binds it) ─────────────────────
+  // An issuing approval (and a roster sign-off) reads each source document's
+  // live revision (service role, this org) and compares it with the version
+  // the request captured (lib/sourceDocRef.ts revDrift — version ids when
+  // both carry one), BEFORE getActions: the labels go into the engine's
+  // context (`sourceDrift`), so exactly the actions the request page shows
+  // with "approving asks you to acknowledge it" carry
+  // `requiresSourceDriftAck` here too. Read only for those action types on a
+  // request with source documents — every other action reads nothing. A
+  // failed read is tried once more (DF-P18 fix pass 2: a transient error
+  // should not decide anything) before the source counts as unchecked.
+  const driftLabels: string[] = [];
+  let sourceDriftUnchecked = false;
+  const driftAsked = ISSUING_APPROVALS.has(body.actionType) || body.actionType === "sign_slot";
+  const driftRefs = driftAsked ? parseSourceDocuments(ticket.metadata).filter((r) => UUID_RE.test(r.id)) : [];
+  if (driftRefs.length > 0) {
+    let liveDocs: unknown[] | null = null;
+    let liveErr: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const read = await supabaseAdmin
+        .from("documents").select("id, rev, current_version_id, document_number")
+        .eq("org_id", ticket.orgId).in("id", driftRefs.slice(0, INTENT_BRIDGE_CHUNK).map((r) => r.id));
+      liveDocs = (read.data ?? null) as unknown[] | null;
+      liveErr = read.error;
+      if (!liveErr) break;
+    }
+    if (liveErr) {
+      sourceDriftUnchecked = true;
+    } else {
+      const live = new Map(((liveDocs ?? []) as Array<{ id: string; rev: string | null; current_version_id: string | null; document_number: string | null }>).map((d) => [d.id, d]));
+      for (const ref of driftRefs) {
+        const d = live.get(ref.id);
+        if (!d) continue;
+        if (revDrift({ versionId: ref.versionId, rev: ref.rev }, { versionId: d.current_version_id, rev: d.rev }) === "drifted") {
+          driftLabels.push(`${ref.documentNumber || d.document_number || "a source document"}${ref.rev ? ` raised on Rev ${ref.rev}` : ""}, now Rev ${d.rev ?? "—"}`);
+        }
+      }
+    }
+  }
   const engineCtx = {
     ...(engineerPickAvailable === undefined ? {} : { engineerPickAvailable }),
+    ...(driftLabels.length > 0 ? { sourceDrift: driftLabels } : {}),
     userRoles: callerRoles,
     // (fix pass 2: already fail-closed above when the count could not be read)
     activeMemberCount: activeMemberCount ?? 0,
@@ -586,10 +626,15 @@ export async function POST(req: NextRequest) {
     requesterRoles,
   };
   const allowed = WorkflowEngine.getActions(ticket, callerRole, caller.id, capPolicy, engineCtx);
+  // TIER-7 (DF-P18): on a request of a work class the workspace flags
+  // "minor correction", the minor-correction approval names its class (the
+  // page applies the same note) — nothing else changes, and nothing at all
+  // for any other request (DEC-90 ruling (3) for DF-P18: the same array).
+  const offeredActions = withMinorCorrectionClass(allowed, draftingCfg, ticket.workClass);
   // DEC-13 stage 2: the resource this ticket presents to the policy — the
   // same fields getActions just evaluated with.
   const resource = ticketResource(ticket);
-  const action = allowed.find((a) => a.action === body.actionType);
+  const action = offeredActions.find((a) => a.action === body.actionType);
   if (!action) {
     const notAvailable = `Action "${body.actionType}" is not available to you at status “${ticketStatusLabel(ticket.status)}”`;
     // DF-P5 fix pass 3: a sign-off whose roster closed under it (another
@@ -994,49 +1039,50 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── HAND-7 done-when 3 (DF-P6): an approval over a moved source ─────────
-  // An issuing approval reads each source document's live revision (service
-  // role, this org) and compares it with the version the request captured
-  // (lib/sourceDocRef.ts revDrift — version ids when both carry one). A
-  // move is acknowledged by the approver (`sourceDriftAcknowledged: true`,
-  // recorded), refused when a client that knows about it says it was not
-  // acknowledged (`false`), and — while the request page does not ask yet —
-  // applied as today with the history line and the audit row saying it was
-  // NOT acknowledged. A read that fails proves nothing: never "moved", never
-  // a block; the audit row says the source was not checked.
+  // ── HAND-7 done-when 3 (DF-P6; bound by DF-P18): an approval over a moved source
+  // DEC-90 ruling (2) for DF-P18: the acknowledgement is required only when
+  // the action carries `requiresSourceDriftAck` (the labels computed above,
+  // before getActions): without `sourceDriftAcknowledged: true` it is refused
+  // (409 source_drift_unacknowledged), nothing written; with it, it applies
+  // and the history line and the audit row record the move and the
+  // acknowledgement. A refused roster sign-off names the e-signature the
+  // panel minted (DF-P5's rule; a dry run has none).
+  //
+  // A documents read that FAILED (twice — above) — DF-P18 fix pass 2 (review,
+  // major), held to the text of DEC-90 ruling (2): it refuses (503
+  // source_drift_unchecked) ONLY an action the client's own engine flagged,
+  // i.e. a post carrying `sourceDriftAcknowledged: true` (the client saw a
+  // move the route can now neither confirm nor record). Every other issuing
+  // approval or sign-off applies exactly as on the base, and its audit row
+  // records `sourceDriftUnchecked: true`; a dry-run sign-off is never refused
+  // by a failed read (on the base it read nothing).
   let sourceDrift: { labels: string[]; acknowledged: boolean | null } | null = null;
-  let sourceDriftUnchecked = false;
-  if (ISSUING_APPROVALS.has(action.action) || (action.action === "sign_slot" && body.dryRun !== true)) {
-    const refs = parseSourceDocuments(ticket.metadata).filter((r) => UUID_RE.test(r.id));
-    if (refs.length > 0) {
-      const { data: liveDocs, error: liveErr } = await supabaseAdmin
-        .from("documents").select("id, rev, current_version_id, document_number")
-        .eq("org_id", ticket.orgId).in("id", refs.slice(0, INTENT_BRIDGE_CHUNK).map((r) => r.id));
-      if (liveErr) {
-        sourceDriftUnchecked = true;
-      } else {
-        const live = new Map(((liveDocs ?? []) as Array<{ id: string; rev: string | null; current_version_id: string | null; document_number: string | null }>).map((d) => [d.id, d]));
-        const labels: string[] = [];
-        for (const ref of refs) {
-          const d = live.get(ref.id);
-          if (!d) continue;
-          if (revDrift({ versionId: ref.versionId, rev: ref.rev }, { versionId: d.current_version_id, rev: d.rev }) === "drifted") {
-            labels.push(`${ref.documentNumber || d.document_number || "a source document"}${ref.rev ? ` raised on Rev ${ref.rev}` : ""}, now Rev ${d.rev ?? "—"}`);
-          }
-        }
-        if (labels.length > 0) {
-          if (body.sourceDriftAcknowledged === false) {
-            const driftError = `The source revision has moved since this request was raised (${labels.join("; ")}). Approving needs your acknowledgement.`;
-            // DF-P6 fix pass (review, minor 12): a refused roster sign-off
-            // names the signature it minted (DF-P5's rule).
-            if (action.action === "sign_slot") {
-              await recordRefusedSignOff({ signatureId: body.signatureId, ticketId: body.ticketId, orgId: ticket.orgId, caller: { id: caller.id, email: callerEmail, role: callerRole }, status: 409, reason: driftError, code: "source_drift_unacknowledged", rosterId: currentRoster(ticket)?.id ?? null });
-            }
-            return NextResponse.json({ error: driftError, code: "source_drift_unacknowledged" }, { status: 409 });
-          }
-          sourceDrift = { labels, acknowledged: body.sourceDriftAcknowledged === true ? true : null };
-        }
+  if (ISSUING_APPROVALS.has(action.action) || action.action === "sign_slot") {
+    const recordsSignature = action.action === "sign_slot" && body.dryRun !== true;
+    if (sourceDriftUnchecked && body.dryRun !== true && body.sourceDriftAcknowledged === true) {
+      const uncheckedError = "The source documents this request was raised against could not be checked for a newer revision, so the move you acknowledged could not be confirmed and the approval was not applied. Try again in a moment.";
+      if (recordsSignature) {
+        await recordRefusedSignOff({ signatureId: body.signatureId, ticketId: body.ticketId, orgId: ticket.orgId, caller: { id: caller.id, email: callerEmail, role: callerRole }, status: 503, reason: uncheckedError, code: "source_drift_unchecked", rosterId: currentRoster(ticket)?.id ?? null });
       }
+      return NextResponse.json({ error: uncheckedError, code: "source_drift_unchecked" }, { status: 503 });
+    }
+    if (action.requiresSourceDriftAck && driftLabels.length > 0) {
+      if (body.sourceDriftAcknowledged !== true) {
+        // DF-P18 fix pass (review, blocker): the route is the source of
+        // truth for the move — it read the documents as the service role,
+        // which an approver under a document ACL cannot. The 409 carries the
+        // labels (`moved`), so the page and the roster panel ask from them
+        // and resend once with the acknowledgement, whatever the browser's
+        // own (RLS-limited) read found.
+        const driftError = `The source revision has moved since this request was raised (${driftLabels.join("; ")}). Approving needs your acknowledgement.`;
+        // DF-P6 fix pass (review, minor 12): a refused roster sign-off
+        // names the signature it minted (DF-P5's rule).
+        if (recordsSignature) {
+          await recordRefusedSignOff({ signatureId: body.signatureId, ticketId: body.ticketId, orgId: ticket.orgId, caller: { id: caller.id, email: callerEmail, role: callerRole }, status: 409, reason: driftError, code: "source_drift_unacknowledged", rosterId: currentRoster(ticket)?.id ?? null });
+        }
+        return NextResponse.json({ error: driftError, code: "source_drift_unacknowledged", moved: driftLabels }, { status: 409 });
+      }
+      sourceDrift = { labels: driftLabels, acknowledged: true };
     }
   }
 
@@ -1574,8 +1620,16 @@ export async function POST(req: NextRequest) {
         ? { engineeringRequired: reviewModelColumns ? ticket.engineeringRequired === true : null, likeInKindDeclared: !!ticket.likeInKindDeclaredAt, reviewModelFiled: typeof ticket.reviewModelFiled === "boolean" ? ticket.reviewModelFiled : null }
         : {}),
       ...(action.action === "approve_minor_correction" ? { declaredClass: "minor_correction" } : {}),
+      // TIER-7 (DF-P18): the workspace's minor-correction class the request
+      // is of, when it is one (no key otherwise — today's row).
+      ...(action.action === "approve_minor_correction" && minorCorrectionClassOf(draftingCfg, ticket.workClass)
+        ? { minorCorrectionClass: minorCorrectionClassOf(draftingCfg, ticket.workClass)!.value }
+        : {}),
       ...(reviewClass ? { reviewClass: { workClass: reviewClass.workClass?.value ?? null, codeClass: reviewClass.codeClass?.value ?? null } } : {}),
       ...(sourceDrift ? { sourceDrift: { moved: sourceDrift.labels, acknowledged: sourceDrift.acknowledged === true } } : {}),
+      // DF-P18 fix pass 2 (review, major): an approval applied over a source
+      // that could not be read says so (the base's key, restored).
+      // (Only an issuing approval or a sign-off ever reads the documents.)
       ...(sourceDriftUnchecked ? { sourceDriftUnchecked: true } : {}),
       // DF-P6 fix pass (minor 11): a declaration whose e-signature is not on
       // record (or could not be read) was evaluated as undeclared.

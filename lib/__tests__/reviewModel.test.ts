@@ -841,7 +841,8 @@ describe("fix pass 4 (review, minor 6) — the request page evaluates the ticket
     expect(names(checked)).toContain("request_final_engineer_approval");
   });
   it("the page shares the DeclarationCard's check and applies it before getActions and the engineer-pick question (pinned by source)", () => {
-    expect(page).toContain("<DeclarationCard ticket={ticket} onDeclarationCheck={setDeclarationCheck} />");
+    // DF-P18 (GAP-312): the mount also passes canEditEquipment; the declaration check is carried unchanged.
+    expect(page).toContain("<DeclarationCard ticket={ticket} onDeclarationCheck={setDeclarationCheck} canEditEquipment={canEditEquipment} />");
     expect(page).toContain("WorkflowEngine.getActions(ticketAsDeclarationChecked(ticket, declarationCheck), activeRole");
     expect(page).toContain("engineerPickQuestionApplies(ticketAsDeclarationChecked(ticket, declarationCheck), uid");
     const card = readFileSync(join(process.cwd(), "components", "requests", "DeclarationCard.tsx"), "utf8");

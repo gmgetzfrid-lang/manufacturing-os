@@ -36,7 +36,8 @@ describe("the request page: one mount, behind the marker; the DF-P6 / DF-P17 hun
     expect(page).toContain("{consentWindowMarker(ticket) && <div className=\"max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6\"><ConsentWindowCard ticket={ticket} uid={uid} /></div>}");
   });
   it("DF-P6's hunks (DeclarationCard, the declaration check fed to the roster panel, the review-model fields) and DF-P17's waiting-on line are still there", () => {
-    expect(page).toContain("<DeclarationCard ticket={ticket} onDeclarationCheck={setDeclarationCheck} />");
+    // DF-P18 (GAP-312): the mount also passes canEditEquipment; the declaration check is carried unchanged.
+    expect(page).toContain("<DeclarationCard ticket={ticket} onDeclarationCheck={setDeclarationCheck} canEditEquipment={canEditEquipment} />");
     expect(page).toContain("<TicketRosterPanel ticket={ticketAsDeclarationChecked(ticket, declarationCheck)}");
     expect(page).toContain("...reviewModelFieldsFromRow(r),");
     expect(page).toContain("const holders = holdersFor(ticket, { queueNames, requesterRoles, memberNames: rosterNames, activeMemberCount });");

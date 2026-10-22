@@ -16,6 +16,14 @@
 // after a number of days. "Inherit" clears the level (the folder / library
 // above decides; nothing anywhere = today's routing). The database decides
 // who may save (20261241) and records every change.
+//
+// DF-P18 (drafting-flow TIER-3 dw1; the DF-P7 editor residual): a NOTIFY-ONLY
+// slot may be limited to some of the workspace's work classes — chips from
+// its own list (lib/reviewModel.ts reviewClassOptions), shown only when the
+// workspace configured work classes (DEC-90 ruling (1) for DF-P18); a
+// consent-window slot's window length (working days) and reminder point are
+// edited on the slot (blank = the defaults). lib/routingControl.ts validates
+// both as before (a class limit on a blocking slot is refused).
 
 import React, { useEffect, useState } from "react";
 import { Route, Plus, Trash2, Loader2 } from "lucide-react";
@@ -26,7 +34,10 @@ import {
   type RoutingControl, type RoutingLevel, type RoutingSlot, type RoutingSlotFill, type RoutingSlotMode,
 } from "@/lib/routingControl";
 import { CAPABILITY_DEFS, type CapabilityId } from "@/lib/capabilityPolicy";
-import { ALL_ROLES } from "@/types/schema";
+import { ALL_ROLES, type OrgDraftingSettings } from "@/types/schema";
+import { supabase } from "@/lib/supabase";
+import { reviewClassOptions, type ReviewClassEntry } from "@/lib/reviewModel";
+import { CONSENT_WINDOW_DEFAULT_DAYS, CONSENT_WINDOW_DEFAULT_WARN_FRACTION, CONSENT_WINDOW_MIN_DAYS, CONSENT_WINDOW_MAX_DAYS, CONSENT_WARN_FRACTION_MIN, CONSENT_WARN_FRACTION_MAX } from "@/lib/consentWindow";
 
 type FillKind = "roles" | "users" | "capability" | "requester";
 
@@ -111,10 +122,17 @@ export function controlToDraft(c: RoutingControl): DraftSlot[] {
   });
 }
 
-/** What a slot carries that the editor does not show, in words (or null). */
-export function keptNote(d: Pick<DraftSlot, "kept">): string | null {
-  const k = d.kept;
-  if (!k) return null;
+/** What a slot carries that the editor does not show, in words (or null).
+ *  DF-P18: `shown` names what the editor now shows on this slot (the work
+ *  classes on a notify-only slot when the workspace has a list; the window on
+ *  a consent slot) — those are no longer "settings this editor does not
+ *  show". Absent = as before. */
+export function keptNote(d: Pick<DraftSlot, "kept">, shown?: { workClasses?: boolean; window?: boolean }): string | null {
+  const k0 = d.kept;
+  if (!k0) return null;
+  const k = { ...k0 };
+  if (shown?.workClasses) delete k.workClasses;
+  if (shown?.window) { delete k.windowDays; delete k.warnFraction; }
   const parts: string[] = [];
   if (k.fill?.roles?.length) parts.push(`also filled by roles: ${k.fill.roles.join(", ")}`);
   if (k.fill?.users?.length) parts.push(`also filled by ${k.fill.users.length} named ${k.fill.users.length === 1 ? "person" : "people"}`);
@@ -148,6 +166,36 @@ export function inFlightConfirmMessage(levelWord: string, count: { ok: true; n: 
 const chip = (on: boolean) => `px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${on ? "bg-[var(--color-accent)] text-white border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`;
 const inp = "text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-accent)]";
 
+/** DF-P18: the class chips a notify-only slot offers — the workspace's work
+ *  classes, plus any value the slot already stores that the list no longer
+ *  names (so it can be seen and removed, never silently kept). Pure. */
+export function workClassChoices(options: readonly ReviewClassEntry[], stored: readonly string[] | undefined): Array<{ value: string; label: string; unlisted?: boolean }> {
+  const out: Array<{ value: string; label: string; unlisted?: boolean }> = options.map((o) => ({ value: o.value, label: o.label }));
+  for (const v of stored ?? []) if (!options.some((o) => o.value === v)) out.push({ value: v, label: v, unlisted: true });
+  return out;
+}
+
+/** DF-P18: a consent window's settings as typed → the stored numbers (blank
+ *  = the default, so nothing is stored). Out-of-range input is kept as
+ *  typed so lib/routingControl.ts names the problem. Pure. */
+export function windowSettingsFromInput(daysText: string, percentText: string): { windowDays?: number; warnFraction?: number } {
+  const out: { windowDays?: number; warnFraction?: number } = {};
+  if (daysText.trim()) out.windowDays = Number(daysText.trim());
+  if (percentText.trim()) out.warnFraction = Number(percentText.trim()) / 100;
+  return out;
+}
+
+/** DF-P18 fix pass 3 (review minor): the patch ONE window field's edit makes
+ *  — the days field sets only windowDays, the percent field only
+ *  warnFraction (the key is always present; undefined = blank = cleared).
+ *  The other stored setting is never re-derived from its displayed text, so
+ *  editing the days keeps a stored fraction that is not a whole percent
+ *  (0.333) exactly as stored. Pure. */
+export function windowFieldPatch(field: "days" | "percent", text: string): { windowDays: number | undefined } | { warnFraction: number | undefined } {
+  const v = field === "days" ? windowSettingsFromInput(text, "") : windowSettingsFromInput("", text);
+  return field === "days" ? { windowDays: v.windowDays } : { warnFraction: v.warnFraction };
+}
+
 export default function RoutingControlSection({ level, id, orgId }: { level: RoutingLevel; id: string; orgId: string }) {
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState<string | null>(null);
@@ -164,6 +212,21 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const [userQuery, setUserQuery] = useState<{ index: number; q: string; hits: OrgUser[] } | null>(null);
+  // DF-P18 (TIER-3 dw1): the workspace's own work classes (empty = no chips —
+  // a workspace with no list sees the slot exactly as before).
+  const [workClassOptions, setWorkClassOptions] = useState<ReviewClassEntry[]>([]);
+  useEffect(() => {
+    if (!orgId) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const { data, error } = await supabase.from("org_configurations").select("data").eq("org_id", orgId).eq("key", "drafting").maybeSingle();
+        if (!alive || error) return;
+        setWorkClassOptions(reviewClassOptions((data?.data ?? null) as Partial<OrgDraftingSettings> | null, "workClasses"));
+      } catch { /* the chips are a convenience; the stored values stay in the note */ }
+    })();
+    return () => { alive = false; };
+  }, [orgId]);
 
   useEffect(() => {
     let alive = true;
@@ -200,6 +263,16 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
   }, [userQuery?.q, orgId]);
 
   const patch = (i: number, p: Partial<DraftSlot>) => setSlots((all) => all.map((s, j) => (j === i ? { ...s, ...p } : s)));
+  // DF-P18: edit what the slot keeps (work classes, window settings).
+  const patchKept = (i: number, p: Partial<NonNullable<DraftSlot["kept"]>>) => setSlots((all) => all.map((s, j) => {
+    if (j !== i) return s;
+    const kept: NonNullable<DraftSlot["kept"]> = { ...(s.kept ?? {}), ...p };
+    for (const key of Object.keys(kept) as Array<keyof typeof kept>) if (kept[key] === undefined) delete kept[key];
+    const { kept: _drop, ...rest } = s;
+    void _drop;
+    return Object.keys(kept).length ? { ...rest, kept } : rest;
+  }));
+
   const draft = inherit ? null : draftToControl(slots);
   const problem = inherit ? null : validateRoutingDraft(draft, storedValue);
 
@@ -298,7 +371,39 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
                       </button>
                     ))}
                   </div>
-                  {keptNote(s) && <p className="text-[11px] text-[var(--color-text-muted)]" data-testid="routing-slot-kept">{keptNote(s)}</p>}
+                  {s.mode === "notify_only" && workClassOptions.length > 0 && (
+                    <div className="flex flex-wrap gap-1 items-center text-[11px]" data-testid="routing-slot-work-classes">
+                      <span className="font-bold text-[var(--color-text-muted)] mr-1">Told only for work classes</span>
+                      {workClassChoices(workClassOptions, s.kept?.workClasses).map((c) => {
+                        const on = !!s.kept?.workClasses?.includes(c.value);
+                        return (
+                          <button key={c.value} type="button" className={chip(on)} title={c.unlisted ? "No longer on the workspace's list" : undefined}
+                            onClick={() => {
+                              const cur = s.kept?.workClasses ?? [];
+                              const next = on ? cur.filter((x) => x !== c.value) : [...cur, c.value];
+                              patchKept(i, { workClasses: next.length ? next : undefined });
+                            }}>{c.label}{c.unlisted ? " (not listed)" : ""}</button>
+                        );
+                      })}
+                      <span className="text-[var(--color-text-faint)]">{s.kept?.workClasses?.length ? "" : "— none picked: told for every request"}</span>
+                    </div>
+                  )}
+                  {s.mode === "consent_window" && (
+                    <div className="flex flex-wrap gap-2 items-center text-[11px]" data-testid="routing-slot-window">
+                      <span className="font-bold text-[var(--color-text-muted)]">Window</span>
+                      <input aria-label="Consent window working days" className={`${inp} w-16`} inputMode="numeric"
+                        value={s.kept?.windowDays !== undefined ? String(s.kept.windowDays) : ""}
+                        placeholder={String(CONSENT_WINDOW_DEFAULT_DAYS)}
+                        onChange={(e) => patchKept(i, windowFieldPatch("days", e.target.value.replace(/[^0-9]/g, "")))} />
+                      <span className="text-[var(--color-text-muted)]">working days ({CONSENT_WINDOW_MIN_DAYS}–{CONSENT_WINDOW_MAX_DAYS}); reminder at</span>
+                      <input aria-label="Consent window reminder percent" className={`${inp} w-14`} inputMode="numeric"
+                        value={s.kept?.warnFraction !== undefined ? String(Math.round(s.kept.warnFraction * 100)) : ""}
+                        placeholder={String(Math.round(CONSENT_WINDOW_DEFAULT_WARN_FRACTION * 100))}
+                        onChange={(e) => patchKept(i, windowFieldPatch("percent", e.target.value.replace(/[^0-9]/g, "")))} />
+                      <span className="text-[var(--color-text-muted)]">% of it ({Math.round(CONSENT_WARN_FRACTION_MIN * 100)}–{Math.round(CONSENT_WARN_FRACTION_MAX * 100)}). Blank = the default.</span>
+                    </div>
+                  )}
+                  {keptNote(s, { workClasses: s.mode === "notify_only" && workClassOptions.length > 0, window: s.mode === "consent_window" }) && <p className="text-[11px] text-[var(--color-text-muted)]" data-testid="routing-slot-kept">{keptNote(s, { workClasses: s.mode === "notify_only" && workClassOptions.length > 0, window: s.mode === "consent_window" })}</p>}
                   <div className="flex flex-wrap gap-1 items-center text-[11px]">
                     <span className="font-bold text-[var(--color-text-muted)] mr-1">Alternates (roles) after</span>
                     <input aria-label="Alternate after days" className={`${inp} w-14`} value={s.timeoutDays} onChange={(e) => patch(i, { timeoutDays: e.target.value.replace(/[^0-9]/g, "") })} placeholder="days" />

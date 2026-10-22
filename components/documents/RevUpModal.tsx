@@ -35,6 +35,7 @@ import {
 } from "@/lib/revisions";
 import { effectiveReviewControlForDocument, effectiveModeForRevUp } from "@/lib/reviewControl";
 import { effectiveDocClassForDocument, type DocClass } from "@/lib/docClass";
+import { publishMocRequired } from "@/lib/checkinOutcomes";
 import { logAuditAction } from "@/lib/audit";
 import { getMyEditBase } from "@/lib/intents";
 import { postActivity } from "@/lib/activityThread";
@@ -84,6 +85,11 @@ interface RevUpModalProps {
   /** GAP-6: provenance — written to document_versions.related_ticket_id.
    *  Never a review waiver (DEC-23). */
   relatedTicketId?: string | null;
+  /** DF-P18 (drafting-flow TIER-6): the hand-back's request is of a work
+   *  class the workspace flags "needs MOC" (its label). The MOC number is
+   *  then required whatever the change type (lib/checkinOutcomes.ts
+   *  publishMocRequired). Absent = today's rule exactly. */
+  classMoc?: { label: string } | null;
 }
 
 const ISSUE_TYPES: { value: NonNullable<DocumentVersion["issueType"]>; label: string }[] = [
@@ -106,7 +112,7 @@ export default function RevUpModal({
   isOpen, onClose, doc, libraryId, folderPath,
   orgId, actorUserId, actorEmail, actorRole, onSuccess, onReviewSubmitted,
   onDirectPublished, presetChangeType, presetChangeLog, presetIssueType, presetIssueTypeNote,
-  presetFile, presetMocOrigin, relatedTicketId,
+  presetFile, presetMocOrigin, relatedTicketId, classMoc,
 }: RevUpModalProps) {
   const [file, setFile] = useState<File | null>(null);
   const [sourceFile, setSourceFile] = useState<File | null>(null);
@@ -285,7 +291,10 @@ export default function RevUpModal({
   // the same boundary the review gate already draws. An UNKNOWN class
   // (resolution failed) is treated as drawing: PSM gates fail closed.
   const isMinorLike = changeType === "Minor" || changeType === "Correction";
-  const mocRequired = (docClass === "drawing" || docClassUnknown) && !isMinorLike;
+  // DF-P18 (TIER-6): one rule with the check-in's (lib/checkinOutcomes.ts) —
+  // a request whose work class needs MOC asks for it whatever the change type.
+  const mocRequired = publishMocRequired({ docClass, docClassUnknown, changeType, classNeedsMoc: !!classMoc });
+  const mocByClassOnly = !!classMoc && !((docClass === "drawing" || docClassUnknown) && !isMinorLike);
 
   // The document is held by SOMEONE ELSE — publishing will leave their checkout
   // open, note it on their thread, and notify them. Requires an override message.
@@ -363,8 +372,9 @@ export default function RevUpModal({
       );
     }
     if (mocRequired && mocReference.trim().length < 3) {
-      return setError(
-        "This is a drawing-class document — PSM requires the MOC reference for a non-minor revision. Enter the MOC number, or set the change type to Minor/Correction if this is replacement-in-kind.",
+      return setError(mocByClassOnly
+        ? `This request's work class (${classMoc!.label}) needs an MOC — enter the MOC number.`
+        : "This is a drawing-class document — PSM requires the MOC reference for a non-minor revision. Enter the MOC number, or set the change type to Minor/Correction if this is replacement-in-kind.",
       );
     }
     // LIFE-5 done-when 2: an origin that recorded "no MOC exists" cannot
@@ -856,8 +866,10 @@ export default function RevUpModal({
               field leaves the fold and stands where it can't be missed. */}
           {mocRequired && (
             <Field
-              label={docClassUnknown ? "MOC Reference (required — class unverified)" : "MOC Reference (required — drawing class)"}
-              hint={docClassUnknown
+              label={mocByClassOnly ? `MOC Reference (required — work class ${classMoc!.label})` : docClassUnknown ? "MOC Reference (required — class unverified)" : "MOC Reference (required — drawing class)"}
+              hint={mocByClassOnly
+                ? "This workspace marks the request's work class as needing an MOC, so the number is required whatever the change type."
+                : docClassUnknown
                 ? "The document's class couldn't be verified right now, so drawing rules apply: a non-minor revision needs its Management of Change."
                 : "PSM: a non-minor drawing revision needs its Management of Change. Minor/Correction change types are replacement-in-kind and exempt."}
               isoTopic="moc_reference"
@@ -874,7 +886,7 @@ export default function RevUpModal({
           {/* The exemption must be VISIBLE, not silent: a remembered "Minor"
               change type on a drawing waives the MOC — say so, so a real
               process change doesn't slip out under last week's setting. */}
-          {docClass === "drawing" && isMinorLike && (
+          {docClass === "drawing" && isMinorLike && !classMoc && (
             <div className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">
               <b>{changeType}</b> on a drawing is replacement-in-kind — no MOC required. If this revision
               changes the process, switch the change type to <b>Major</b> (the MOC becomes mandatory).

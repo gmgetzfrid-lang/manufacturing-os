@@ -38,6 +38,8 @@ import { seededSlotsFor, MODE_LABEL } from "@/lib/routingControl";
 import { effectiveReviewControlForDocument, expandReviewers } from "@/lib/reviewControl";
 import type { CapabilityPolicy } from "@/lib/capabilityPolicy";
 import type { Ticket, TicketReviewRoster, TicketReviewSlot } from "@/types/schema";
+import { appConfirm } from "@/components/providers/DialogProvider";
+import { sourceDriftRefusalLabels, sourceDriftConfirmation } from "@/lib/requestPageReview";
 
 export interface TicketRosterPanelProps {
   ticket: Ticket;
@@ -59,6 +61,19 @@ export interface TicketRosterPanelProps {
   /** Why (routedNoRosterReason — a routing table that can't be used names
    *  the document controller, not a revision). */
   reviewRoutedReason?: string | null;
+  /** HAND-7 dw3 (DF-P18): the source documents that moved since the request
+   *  was raised (the page's SourceDriftBanner read). Non-empty = a sign-off
+   *  asks for the acknowledgement the workflow route requires, and sends
+   *  `sourceDriftAcknowledged` with its dry run and its post. Absent / empty
+   *  = the panel exactly as before. */
+  sourceDrift?: readonly string[] | null;
+}
+
+/** HAND-7 dw3 (DF-P18): what the panel asks before a sign-off over a moved
+ *  source (pure; exported for tests). null = nothing to ask. */
+export function rosterDriftNote(sourceDrift: readonly string[] | null | undefined): string | null {
+  const moved = (sourceDrift ?? []).filter((x) => typeof x === "string" && x.trim());
+  return moved.length ? `The source revision has moved since this request was raised (${moved.join("; ")}). Signing off asks you to acknowledge it.` : null;
 }
 
 /** TIER-8: the one sentence that keeps the two reviews apart. */
@@ -128,8 +143,15 @@ export async function postSignOffOnce(post: () => Promise<Response>): Promise<{ 
 }
 
 export default function TicketRosterPanel({
-  ticket, orgId, uid, userName, capPolicy, activeMemberCount, requesterRoles, onChanged, reviewRouted, reviewRoutedReason,
+  ticket, orgId, uid, userName, capPolicy, activeMemberCount, requesterRoles, onChanged, reviewRouted, reviewRoutedReason, sourceDrift,
 }: TicketRosterPanelProps) {
+  // DF-P18 fix pass (review, blocker): the route reads the source documents
+  // as the service role, so a move the page's own (RLS-limited) read could
+  // not see comes back on the dry run as a 409 naming it — those labels
+  // then stand in for the page's, and the panel asks from them.
+  const [serverDrift, setServerDrift] = useState<string[]>([]);
+  const driftNote = rosterDriftNote(sourceDrift && sourceDrift.length > 0 ? sourceDrift : serverDrift);
+  const [driftAck, setDriftAck] = useState(false);
   const roster: TicketReviewRoster | null = useMemo(() => currentRoster(ticket), [ticket]);
   const [names, setNames] = useState<Map<string, string>>(new Map());
   const [libraryReview, setLibraryReview] = useState<{ mode: string; reviewers: string[] } | "none" | "unreadable" | null>(null);
@@ -192,10 +214,17 @@ export default function TicketRosterPanel({
       const post = () => fetch("/api/tickets/workflow-action", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
-        body: JSON.stringify({ ticketId: ticket.id, actionType: "sign_slot", signatureId: sig.id }),
+        body: JSON.stringify({ ticketId: ticket.id, actionType: "sign_slot", signatureId: sig.id, ...(driftNote && driftAck ? { sourceDriftAcknowledged: true } : {}) }),
       });
       const { res, out } = await postSignOffOnce(post);
-      if (!res.ok) throw new Error(out.error || `The sign-off was not recorded (HTTP ${res.status})`);
+      if (!res.ok) {
+        // (DF-P18 fix pass) a source that moved after the dry run: the
+        // refusal names it, so the acknowledgement checkbox shows from the
+        // route's labels before the viewer signs again.
+        const moved = res.status === 409 ? sourceDriftRefusalLabels(out) : null;
+        if (moved) { setServerDrift(moved); setDriftAck(false); setSigning(false); }
+        throw new Error(out.error || `The sign-off was not recorded (HTTP ${res.status})`);
+      }
       setSigning(false);
       if (out.warning) setError(out.warning);
       await onChanged?.();
@@ -204,7 +233,7 @@ export default function TicketRosterPanel({
     } finally {
       setBusy(false);
     }
-  }, [roster, orgId, uid, ticket.id, userName, onChanged]);
+  }, [roster, orgId, uid, ticket.id, userName, onChanged, driftNote, driftAck]);
 
   // TIER-8 / EVID-12 (DF-P5 fix pass 3): the route is asked FIRST whether
   // it would take this sign-off (a dry run: nothing written, no signature),
@@ -212,16 +241,30 @@ export default function TicketRosterPanel({
   // orphan attesting a review that satisfied nothing.
   const openCeremony = useCallback(async () => {
     if (!ticket.id) return;
+    if (driftNote && !driftAck) { setError("Tick the acknowledgement that the source revision has moved before signing off."); return; }
     setBusy(true);
     setError(null);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch("/api/tickets/workflow-action", {
+      const dryRun = (ack: boolean) => fetch("/api/tickets/workflow-action", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
-        body: JSON.stringify({ ticketId: ticket.id, actionType: "sign_slot", dryRun: true }),
+        body: JSON.stringify({ ticketId: ticket.id, actionType: "sign_slot", dryRun: true, ...(ack ? { sourceDriftAcknowledged: true } : {}) }),
       });
-      const out = (await res.json().catch(() => ({}))) as { error?: string };
+      const acked = !!driftNote && driftAck;
+      let res = await dryRun(acked);
+      let out = (await res.json().catch(() => ({}))) as { error?: string };
+      // HAND-7 dw3 (DF-P18 fix pass): the route found a moved source the
+      // panel was not told about — ask from the route's own labels, and on
+      // the acknowledgement ask the dry run once more (never a second time).
+      const moved = res.status === 409 && !acked ? sourceDriftRefusalLabels(out) : null;
+      if (moved) {
+        setServerDrift(moved);
+        if (!(await appConfirm({ title: "The source revision has moved", message: sourceDriftConfirmation(moved), confirmLabel: "Acknowledge and continue" }))) return;
+        setDriftAck(true);
+        res = await dryRun(true);
+        out = (await res.json().catch(() => ({}))) as { error?: string };
+      }
       if (!res.ok) throw new Error(out.error || `This sign-off can't be taken right now (HTTP ${res.status})`);
       setSigning(true);
     } catch (e) {
@@ -229,7 +272,7 @@ export default function TicketRosterPanel({
     } finally {
       setBusy(false);
     }
-  }, [ticket.id]);
+  }, [ticket.id, driftNote, driftAck]);
 
   const inReview = ticket.status === "PENDING_REVIEW" || ticket.status === "PENDING_FINAL_APPROVAL";
   // TIER-5 (DF-P5 fix pass 4): routed with no roster — no seed (that is the
@@ -282,6 +325,13 @@ export default function TicketRosterPanel({
 
       {roster && unhashed && (
         <p className="text-xs text-[var(--color-text-muted)]" data-testid="roster-unhashed-files">{unhashed}</p>
+      )}
+
+      {roster && plan && plan.fillable.length > 0 && driftNote && (
+        <label className="flex items-start gap-2 text-xs text-amber-900" data-testid="roster-source-drift">
+          <input type="checkbox" checked={driftAck} onChange={(e) => setDriftAck(e.target.checked)} className="mt-0.5" />
+          <span>{driftNote} I have checked the draft against the current revision.</span>
+        </label>
       )}
 
       {roster && plan && plan.fillable.length > 0 && (

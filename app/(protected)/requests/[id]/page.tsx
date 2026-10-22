@@ -21,7 +21,15 @@ import { flaggedRequestTypes } from '@/lib/requestTypes';
 import { ticketStatusLabel, ticketUnitDisplay } from '@/lib/ticketStatusLabels';
 import { attentionLabel, holdersFor, waitingSince, waitedFor, explainNoActions, rosterHolderUids } from '@/lib/ticketAttention';
 import { drafterCandidates, NO_DRAFTER_CANDIDATES, missingRequiredFile, triagePayload, customCategorySections, projectRefOf, engineerCandidates, type DrafterCandidate } from '@/lib/ticketPage';
-import { reviewModelFieldsFromRow, engineerPickAvailable as pickAvailableFrom, engineeringOverrideOf, engineeringSignOffNotRequiredOf, ticketAsDeclarationChecked, type DeclarationCheck } from '@/lib/reviewModel';
+import { reviewModelFieldsFromRow, engineerPickAvailable as pickAvailableFrom, engineeringOverrideOf, engineeringSignOffNotRequiredOf, ticketAsDeclarationChecked, reviewClassOptions, minorCorrectionClassOf, minorCorrectionClassNote, workClassNeedingMoc, type DeclarationCheck, type ReviewClassEntry } from '@/lib/reviewModel';
+// drafting-flow Round G, DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS: the
+// class at triage, the source-drift acknowledgement, issue-as-is at submit,
+// equipment after filing and a consent window that was not opened.
+import { triageClassSelects, classTriagePayload, sourceDriftLabels, sourceDriftConfirmation, sourceDriftRefusalLabels, issueReadyAtSubmitOffered, consentBlockHistoryEntries, type ConsentBlockRow } from '@/lib/requestPageReview';
+import { isTicketParticipant, EQUIPMENT_CLOSED_STATUSES } from '@/lib/ticketEquipment';
+import TriageClassSelects, { type TriageClassChoice } from '@/components/requests/TriageClassSelects';
+import ConsentBlockNotice from '@/components/requests/ConsentBlockNotice';
+import type { SourceDrift } from '@/components/requests/SourceDriftBanner';
 import { loadPickerMembers } from '@/lib/ticketPickerMembers';
 import { loadRoutingContext, queuePool } from '@/lib/ticketRouting';
 import { unitOptionsFor, type UnitOption } from '@/lib/ticketCreate';
@@ -308,7 +316,7 @@ const ActionModal = ({ isOpen, onClose, onSubmit, onRedline, title, description,
 interface AssignmentModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (drafterId: string, drafterName: string, reason?: string, triage?: { libraryId?: string; unit?: string }) => void;
+  onSubmit: (drafterId: string, drafterName: string, reason?: string, triage?: { libraryId?: string; unit?: string; workClass?: string; codeClass?: string }) => void;
   isLoading?: boolean;
   activeOrgId: string | null;
   isReassignment?: boolean;
@@ -328,9 +336,13 @@ interface AssignmentModalProps {
   /** Active members in the workspace: in an org of 3+ the route refuses the
    *  requester as their own request's drafter (separation of duties). */
   activeMemberCount: number;
+  /** DF-P18 (TIER-2 dw2, TIER-4 dw1, GAP-101): the workspace's own class
+   *  lists (empty = no select — today's dialog). */
+  workClassOptions?: ReviewClassEntry[];
+  codeClassOptions?: ReviewClassEntry[];
 }
 
-const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, isReassignment, ticket, policy, triage, unitOptions, unitListState, activeMemberCount }: AssignmentModalProps) => {
+const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, isReassignment, ticket, policy, triage, unitOptions, unitListState, activeMemberCount, workClassOptions = [], codeClassOptions = [] }: AssignmentModalProps) => {
   const [members, setMembers] = useState<Array<Record<string, unknown>>>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -339,12 +351,16 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, is
   // unchanged it is no change at the route); DCW-7: no unit change by default.
   const [libraryId, setLibraryId] = useState<string | null>(ticket.libraryId ?? null);
   const [unit, setUnit] = useState('');
+  // DF-P18 (GAP-101): the class picked at triage ("" = no change).
+  const [classChoice, setClassChoice] = useState<TriageClassChoice>({ workClass: '', codeClass: '' });
+  const classOffered = triage ? triageClassSelects(ticket, workClassOptions, codeClassOptions) : { work: false, code: false };
 
   useEffect(() => {
     if (isOpen) {
       setReason(''); // Reset reason on open
       setLibraryId(ticket.libraryId ?? null);
       setUnit('');
+      setClassChoice({ workClass: '', codeClass: '' });
       if (activeOrgId) {
         const fetchDrafters = async () => {
           setListError(null);
@@ -430,6 +446,7 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, is
                   <input data-testid="triage-unit" value={unit} onChange={(e) => setUnit(e.target.value.toUpperCase())} placeholder="No change (this workspace has no unit list yet)" className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm" />
                 )}
               </label>
+              <TriageClassSelects offered={classOffered} workOptions={workClassOptions} codeOptions={codeClassOptions} current={{ workClass: ticket.workClass, codeClass: ticket.codeClass }} value={classChoice} onChange={setClassChoice} />
             </div>
           )}
 
@@ -453,7 +470,7 @@ const AssignmentModal = ({ isOpen, onClose, onSubmit, isLoading, activeOrgId, is
                         await appAlert({ message: "Please provide a reason for reassignment." });
                         return;
                       }
-                      onSubmit(drafter.uid, drafter.name, reason, triage ? triagePayload(ticket, { libraryId, unit }) : undefined);
+                      onSubmit(drafter.uid, drafter.name, reason, triage ? { ...triagePayload(ticket, { libraryId, unit }), ...classTriagePayload(classChoice, classOffered) } : undefined);
                     }}
                     disabled={isLoading || !!drafter.refusedReason} 
                     className="flex items-center p-3 hover:bg-orange-50 rounded-lg transition-colors group text-left w-full border border-transparent hover:border-orange-100 disabled:opacity-60 disabled:hover:bg-transparent disabled:cursor-not-allowed"
@@ -1184,6 +1201,18 @@ export default function TicketDetailView() {
   // check — a declaration that does not stand is evaluated as undeclared
   // here too (ticketAsDeclarationChecked), as the route does.
   const [declarationCheck, setDeclarationCheck] = useState<DeclarationCheck | 'pending'>('pending');
+  // DF-P18: the drafting configuration as read (null = not read / unreadable —
+  // no class select, no class flag: today's page).
+  const [draftingCfg, setDraftingCfg] = useState<OrgDraftingSettings | null>(null);
+  // DF-P18 (HAND-7 dw3): the moved source documents SourceDriftBanner found,
+  // passed to getActions so the approvals ask for the acknowledgement.
+  const [sourceDrifts, setSourceDrifts] = useState<SourceDrift[]>([]);
+  // DF-P18 (FRIC-5): the at-submit "issue as-is when approved" choice (default off).
+  const [issueReadyAtSubmit, setIssueReadyAtSubmit] = useState(false);
+  // DF-P18 (GAP-101): the class picked with a scope review at triage.
+  const [engClassChoice, setEngClassChoice] = useState<TriageClassChoice>({ workClass: '', codeClass: '' });
+  // DF-P18 (GAP-113 acceptance 1): a consent window that was not opened, from the notice record.
+  const [consentBlockRows, setConsentBlockRows] = useState<ConsentBlockRow[]>([]);
   useEffect(() => {
     if (!activeOrgId) return;
     let alive = true;
@@ -1217,6 +1246,7 @@ export default function TicketDetailView() {
         if (flagged.length > 0) setCloseWithoutReviewTypes(flagged);
         setEngineeringFirstTypes(flaggedRequestTypes(cfgRow?.data, 'engineeringFirst'));
         const cfg = (cfgRow?.data ?? null) as OrgDraftingSettings | null;
+        setDraftingCfg(cfgErr ? null : cfg);
         setCustomCategoryConfig(Array.isArray(cfg?.customCategories) ? cfg!.customCategories! : []);
         setOutcomeReasons(cfgErr ? [] : parseOutcomeReasons(cfgRow?.data));
         setOutcomeReasonsUnreadable(!!cfgErr);
@@ -1898,9 +1928,14 @@ export default function TicketDetailView() {
   // an as-is issue the approver was never asked about (a mark made after the
   // page loaded).
   const asIsAckRef = useRef<string | null>(null);
+  // HAND-7 dw3 (DF-P18): the approval the approver confirmed over a moved
+  // source — sent with it as `sourceDriftAcknowledged`; the route refuses an
+  // approval that carries requiresSourceDriftAck without it.
+  const driftAckRef = useRef<string | null>(null);
   const initiateWorkflowAction = async (action: WorkflowAction) => {
     if (!ticket) return;
     asIsAckRef.current = null;
+    driftAckRef.current = null;
     if (action.disabledReason) {
       // Separation-of-duties: the server refuses this with the same message,
       // so stop it here with the explanation instead of a round-trip 403.
@@ -1921,6 +1956,13 @@ export default function TicketDetailView() {
     const asIs = issueAsIsConfirmation(action, ticket);
     if (asIs && !(await appConfirm({ title: 'Approve and issue as-is?', message: asIs }))) return;
     if (asIs) asIsAckRef.current = action.action;
+    // HAND-7 dw3 (DF-P18): an approval over a moved source asks first (only
+    // an action the engine marked — every other action is unchanged).
+    if (action.requiresSourceDriftAck) {
+      const labels = sourceDriftLabels(sourceDrifts);
+      if (!(await appConfirm({ title: 'The source revision has moved', message: sourceDriftConfirmation(labels.length ? labels : ['a source document']), confirmLabel: 'Acknowledge and continue' }))) return;
+      driftAckRef.current = action.action;
+    }
     
     // Open IFC Upload Modal
     if (action.action === 'submit_final') {
@@ -2000,7 +2042,7 @@ export default function TicketDetailView() {
     newFinalFile?: TicketAttachment,
     category?: string,
     engineerData?: {id: string, name: string, email: string},
-    triage?: { libraryId?: string; unit?: string },
+    triage?: { libraryId?: string; unit?: string; workClass?: string; codeClass?: string },
     outcome?: TicketOutcome,
     outcomeReason?: string,
   ) => {
@@ -2083,6 +2125,14 @@ export default function TicketDetailView() {
           // PENDING_ASSIGNMENT only; the route validates both, neither required).
           ...(triage?.libraryId ? { libraryId: triage.libraryId } : {}),
           ...(triage?.unit ? { unit: triage.unit } : {}),
+          // GAP-101 / TIER-4 (DF-P18): the class picked at triage (only a
+          // configured list, only a pick — the route validates it).
+          ...(triage?.workClass ? { workClass: triage.workClass } : {}),
+          ...(triage?.codeClass ? { codeClass: triage.codeClass } : {}),
+          // HAND-7 dw3 (DF-P18): the approver acknowledged the moved source.
+          ...(driftAckRef.current === action.action ? { sourceDriftAcknowledged: true } : {}),
+          // FRIC-5 (DF-P18): issue as-is when approved, ticked at submit.
+          ...(action.action === 'submit_draft' && issueReadyAtSubmit && ticket.assignedDrafterId === uid ? { issueReady: true } : {}),
           // LEAK-9: how the request ended (cancel_request).
           ...(outcome ? { outcome } : {}),
           // GAP-13 / GAP-107 (DF-P14): the workspace's own reason, beside its category.
@@ -2092,6 +2142,22 @@ export default function TicketDetailView() {
         }),
       });
       let res = await send();
+      // HAND-7 dw3 (DF-P18 fix pass, review blocker): the route is the source
+      // of truth for a moved source — it reads the documents as the service
+      // role, which this browser (under a document ACL, or before the
+      // banner's read lands) may not. A 409 source_drift_unacknowledged names
+      // the moved sheets; the approver is asked from those and the action is
+      // re-sent once with the acknowledgement (never a second time).
+      const askDriftAndResend = async (): Promise<'resent' | 'declined' | 'none'> => {
+        if (res.status !== 409 || driftAckRef.current === action.action) return 'none';
+        const moved = sourceDriftRefusalLabels(await res.clone().json().catch(() => null));
+        if (!moved) return 'none';
+        if (!(await appConfirm({ title: 'The source revision has moved', message: sourceDriftConfirmation(moved), confirmLabel: 'Acknowledge and continue' }))) return 'declined';
+        driftAckRef.current = action.action;
+        res = await send();
+        return 'resent';
+      };
+      if ((await askDriftAndResend()) === 'declined') { setActionLoading(null); return; }
       if (res.status === 409 && !holdResolution) {
         const j = await res.clone().json().catch(() => ({})) as { code?: string; holds?: Array<{ reason: string }> };
         if (j.code === 'holds_open') {
@@ -2112,6 +2178,9 @@ export default function TicketDetailView() {
             holdResolution = { action: 'keep', reason };
           }
           res = await send();
+          // (DF-P18 fix pass) a close that met the hold first may meet the
+          // moved source next — asked once, the same way.
+          if ((await askDriftAndResend()) === 'declined') { setActionLoading(null); return; }
         }
       }
 
@@ -2143,6 +2212,8 @@ export default function TicketDetailView() {
       if (action.action === 'save_progress') {
         showToast({ type: "success", title: "Progress saved", message: "Files staged. The request stays in Drafting until you submit." });
       }
+      // FRIC-5 (DF-P18): the at-submit choice is for one submission.
+      if (action.action === 'submit_draft') setIssueReadyAtSubmit(false);
       // PERS-7 (DF-P9): the redline's audit row follows the action that
       // attached it — written only once the route accepted the request with
       // the redline on it (never an 'unknown' stand-in), and a refused row is
@@ -2338,16 +2409,29 @@ export default function TicketDetailView() {
 
   // SESS-6: no role known (activeRole null) offers no action at all — the
   // engine is asked only with a real role.
+  // DF-P18: the workspace's own class lists (empty = no select, no flag).
+  const workClassOptions = reviewClassOptions(draftingCfg, 'workClasses');
+  const codeClassOptions = reviewClassOptions(draftingCfg, 'codeClasses');
+  const driftLabelsForEngine = sourceDriftLabels(sourceDrifts);
   const availableActions = activeRole === null ? [] : WorkflowEngine.getActions(ticketAsDeclarationChecked(ticket, declarationCheck), activeRole, uid ?? undefined, capPolicy, {
     reviewRouted, // TIER-5 (DF-P5 fix pass 3): a routed review with no roster
     reviewRoutedReason,
     userRoles: roles,
     activeMemberCount,
+    // HAND-7 dw3 (DF-P18): the moved sources SourceDriftBanner read — the
+    // issuing approvals then say so and carry requiresSourceDriftAck, as the
+    // route computes them.
+    ...(driftLabelsForEngine.length > 0 ? { sourceDrift: driftLabelsForEngine } : {}),
     ...(engineerPickAvailable === undefined ? {} : { engineerPickAvailable }), // DF-P6 fix pass (issues 1 and 2)
     engineeringFirstTypes,
     closeWithoutReviewTypes,
     requesterRoles,
   });
+  // TIER-7 (DF-P18): on a request of the workspace's minor-correction class
+  // the minor-correction approval is named as taken under that class (said
+  // beside the buttons; the route records it). null for no class / an
+  // unflagged class — today's page (DEC-90 ruling (3) for DF-P18).
+  const minorClass = minorCorrectionClassOf(draftingCfg, ticket.workClass);
   // AUTHZ-15: an unreadable policy → the route refuses every action (503
   // policy_unreadable), so none is offered; the header says why.
   const liveActions = policyFault ? [] : availableActions;
@@ -2385,6 +2469,25 @@ export default function TicketDetailView() {
   // FRIC-5 (DF-P5 fix pass 2): a marked draft waiting on a serial approval
   // says so to everyone who opens it (a routed review says it on its panel).
   const asIsBanner = issueAsIsBanner(ticket);
+  // FRIC-5 (DF-P18): the at-submit issue-as-is choice — offered where the
+  // ticket's own toggle is (the assigned drafter), beside an offered Submit.
+  const issueReadyOffered = issueReadyAtSubmitOffered(ticket, uid, liveActions);
+  // GAP-312 (DF-P18): may this viewer add or correct the request's equipment?
+  // The route's own rule (lib/ticketEquipment.ts): the participants and the
+  // assignment queue, on a request that is not closed or archived.
+  const canEditEquipment = !!uid && !ticket.archivedAt && !EQUIPMENT_CLOSED_STATUSES.has(String(ticket.status))
+    && (isTicketParticipant(ticket, uid) || (!policyFault && !!capPolicy && activeRole !== null && policyAllows(capPolicy, 'ticket.assign', activeRole, roles, uid, ticketResource(ticket))));
+  // TIER-6 (DF-P18): the hand-back asks for the MOC number when the request's
+  // work class needs one (null for no class / an unflagged class: today).
+  const classNeedingMoc = workClassNeedingMoc(draftingCfg, ticket.workClass);
+  // GAP-113 acceptance 1 (DF-P18): the history shows a consent window that
+  // was not opened (read from the notice record; never written to the ticket).
+  // The roster as recorded on the request, open or closed (its slot labels).
+  const rosterRecord = ((ticket.metadata as Record<string, unknown> | undefined)?.review_roster ?? null) as NonNullable<ReturnType<typeof currentRoster>> | null;
+  const historyShown = consentBlockRows.length === 0
+    ? (ticket.history ?? [])
+    : [...(ticket.history ?? []), ...consentBlockHistoryEntries(consentBlockRows, (slot) => (rosterRecord && Array.isArray(rosterRecord.slots) ? rosterRecord.slots.find((x) => x.kind === slot)?.label ?? null : null), rosterRecord, ticket.status)]
+        .sort((a, b) => toDate(a.date).getTime() - toDate(b.date).getTime());
   const unitShown = ticketUnitDisplay(ticket.unit, ticket.metadata);
   const customSections = customCategorySections(ticket.metadata, customCategoryConfig);
   const sourceFiles = ticket.attachments?.filter(a => a.type === 'Source' || a.type === 'Reference') || [];
@@ -2452,6 +2555,7 @@ export default function TicketDetailView() {
           presetMocOrigin={handback.mocOrigin ? { ...handback.mocOrigin, label: handback.label } : null}
           presetChangeLog={handback.changeLog}
           relatedTicketId={handback.ticketId}
+          classMoc={classNeedingMoc ? { label: classNeedingMoc.label } : null}
           onSuccess={() => { /* onDirectPublished / onReviewSubmitted record the outcome */ }}
           onDirectPublished={(v) => { setShowHandback(false); if (v.id) void recordHandback(v.id, v.revisionLabel); }}
           onReviewSubmitted={(d) => { setShowHandback(false); void recordHandback(d.versionId, d.revisionLabel); }}
@@ -2571,6 +2675,8 @@ export default function TicketDetailView() {
         unitOptions={unitOptions}
         unitListState={unitListState}
         activeMemberCount={activeMemberCount}
+        workClassOptions={workClassOptions}
+        codeClassOptions={codeClassOptions}
       />
       <UploadIFCModal isOpen={showUploadIFC} onClose={() => setShowUploadIFC(false)} onSubmit={handleIFCUpload} isLoading={!!actionLoading} />
 
@@ -2606,16 +2712,26 @@ export default function TicketDetailView() {
               ? "e.g. Please confirm orifice plate sizing on FE-201 is correct for the new flow conditions."
               : "What specifically should they look at?"
           }
+          extra={pendingAction.action === 'request_eng_review' ? (
+            // GAP-101 / TIER-4 (DF-P18): a scope review at triage may carry
+            // the class too (nothing renders for an unconfigured workspace).
+            <TriageClassSelects offered={triageClassSelects(ticket, workClassOptions, codeClassOptions)} workOptions={workClassOptions} codeOptions={codeClassOptions} current={{ workClass: ticket.workClass, codeClass: ticket.codeClass }} value={engClassChoice} onChange={setEngClassChoice} />
+          ) : undefined}
           onSubmit={async ({ engineerId, engineerName, engineerEmail, comment }) => {
             if (!pendingAction) return;
+            const classTriage = pendingAction.action === 'request_eng_review'
+              ? classTriagePayload(engClassChoice, triageClassSelects(ticket, workClassOptions, codeClassOptions))
+              : {};
             await executeWorkflowAction(
               pendingAction,
               comment,
               undefined,
               undefined,
               undefined,
-              { id: engineerId, name: engineerName, email: engineerEmail }
+              { id: engineerId, name: engineerName, email: engineerEmail },
+              Object.keys(classTriage).length > 0 ? classTriage : undefined,
             );
+            setEngClassChoice({ workClass: '', codeClass: '' });
           }}
         />
       )}
@@ -2835,6 +2951,18 @@ export default function TicketDetailView() {
                 </button>
                 )
               ))}
+              {minorClass && buttonActions.some((a) => a.action === 'approve_minor_correction' && !a.disabledReason) && (
+                <p data-testid="minor-correction-class" className="text-[11px] text-[var(--color-text-muted)] max-w-xs">{minorCorrectionClassNote(minorClass)}</p>
+              )}
+              {issueReadyOffered && (
+                // FRIC-5 (DF-P18): the at-submit choice, default off — shown
+                // only where the ticket's own "Issue As-Is When Approved"
+                // toggle is (the assigned drafter), beside the Submit.
+                <label data-testid="issue-ready-at-submit" title="When this draft is approved with no corrections, it is issued as the final package — you will not need to upload it again. A correction still returns it to you." className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--color-border)] text-xs font-medium text-[var(--color-text-muted)]">
+                  <input type="checkbox" checked={issueReadyAtSubmit} onChange={(e) => setIssueReadyAtSubmit(e.target.checked)} />
+                  Issue as-is when approved
+                </label>
+              )}
               </>
             )}
           </div>
@@ -2871,9 +2999,10 @@ export default function TicketDetailView() {
         </div>
       )}
 
-      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><DeclarationCard ticket={ticket} onDeclarationCheck={setDeclarationCheck} /></div>
-      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><TicketRosterPanel ticket={ticketAsDeclarationChecked(ticket, declarationCheck)} orgId={activeOrgId} uid={uid} userName={(member?.displayName ?? '').trim() || (userEmail?.split('@')[0] ?? '').trim() || null} capPolicy={capPolicy} activeMemberCount={activeMemberCount} requesterRoles={requesterRoles} reviewRouted={reviewRouted} reviewRoutedReason={reviewRoutedReason} /></div>
+      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><DeclarationCard ticket={ticket} onDeclarationCheck={setDeclarationCheck} canEditEquipment={canEditEquipment} /></div>
+      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><TicketRosterPanel ticket={ticketAsDeclarationChecked(ticket, declarationCheck)} orgId={activeOrgId} uid={uid} userName={(member?.displayName ?? '').trim() || (userEmail?.split('@')[0] ?? '').trim() || null} capPolicy={capPolicy} activeMemberCount={activeMemberCount} requesterRoles={requesterRoles} sourceDrift={driftLabelsForEngine} reviewRouted={reviewRouted} reviewRoutedReason={reviewRoutedReason} /></div>
       {consentWindowMarker(ticket) && <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6"><ConsentWindowCard ticket={ticket} uid={uid} /></div>}
+      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><ConsentBlockNotice ticketId={ticket.id} roster={rosterRecord && Array.isArray(rosterRecord.slots) ? rosterRecord : null} ticketStatus={ticket.status} onRows={setConsentBlockRows} /></div>
 
       {ticket.status === 'REVISION_REQ' && latestRevision && (
         <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">
@@ -3053,7 +3182,7 @@ export default function TicketDetailView() {
              <div className="p-4 bg-slate-50/50 border-b border-[var(--color-border)] order-1">
                <h3 className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase tracking-widest mb-3">Incoming Assets (Source)</h3>
                {/* HAND-7 / HAND-3 (DF-P2's component): the source revision has moved. */}
-               <div className="mb-3"><SourceDriftBanner metadata={ticket.metadata} orgId={ticket.orgId} /></div>
+               <div className="mb-3"><SourceDriftBanner metadata={ticket.metadata} orgId={ticket.orgId} onDrift={setSourceDrifts} /></div>
                {sourceRef && (
                  <div className="mb-3 bg-[var(--color-surface)] p-3 rounded-lg border border-[var(--color-border)] shadow-sm">
                    <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -3473,9 +3602,9 @@ export default function TicketDetailView() {
             )}
             {activeTab === 'audit' && (
               <div className="space-y-6 pl-2">
-                 {ticket.history?.map((event, idx) => (
+                 {historyShown.map((event, idx) => (
                    <div key={`history-${idx}`} className="flex gap-4 relative animate-in fade-in slide-in-from-left-2">
-                     {idx !== (ticket.history?.length || 0) - 1 && <div className="absolute left-[11px] top-8 bottom-[-24px] w-0.5 bg-slate-200" />}
+                     {idx !== historyShown.length - 1 && <div className="absolute left-[11px] top-8 bottom-[-24px] w-0.5 bg-slate-200" />}
                      <div className="relative z-10"><div className="w-6 h-6 rounded-full bg-[var(--color-surface)] border-2 border-[var(--color-border)] flex items-center justify-center"><div className="w-2 h-2 rounded-full bg-slate-400" /></div></div>
                      <div className="flex-1 pb-1">
                        <div className="flex items-center justify-between"><span className="text-xs font-bold text-[var(--color-text)]">{event.action.replace(/_/g, ' ')}</span><span className="text-[10px] text-[var(--color-text-faint)] font-mono">{toDate(event.date).toLocaleDateString()}</span></div>
@@ -3484,7 +3613,7 @@ export default function TicketDetailView() {
                      </div>
                    </div>
                  ))}
-                 {(!ticket.history || ticket.history.length === 0) && <div className="text-center py-8 text-[var(--color-text-faint)] text-xs italic">No history recorded yet.</div>}
+                 {historyShown.length === 0 && <div className="text-center py-8 text-[var(--color-text-faint)] text-xs italic">No history recorded yet.</div>}
               </div>
             )}
           </div>
