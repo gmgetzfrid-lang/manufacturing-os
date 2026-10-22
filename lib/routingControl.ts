@@ -105,6 +105,18 @@ export interface RoutingSlot {
    *  waiting like a sign-off (lib/consentWindow.ts planConsentWindow). Kept
    *  only on a consent-window slot. */
   consent_confirmed?: true;
+  /** GAP-102 (DF-P20 fix pass 2): the controller's explicit opt-in — this
+   *  BLOCKING slot is an assurance check, and its reviewer records what they
+   *  examined with the sign-off or the revision request it backs
+   *  (lib/assuranceExamination.ts isAssuranceSlot). Absent = the slot
+   *  behaves and renders exactly as before (no slot is made one by
+   *  inference). Kept only where examinationOptInAllowed says it can ride:
+   *  dropped (never refused — merge-time fix pass) on a notify-only or
+   *  consent-window slot (no sign-off to record it on), on a slot only the
+   *  requester fills (their own acceptance is not an assurance check) and on
+   *  a slot filled by an engineering capability (the engineering approval
+   *  records its own sign-off); the editor refuses a save that writes one. */
+  records_examination?: true;
 }
 
 export interface RoutingControl {
@@ -122,6 +134,21 @@ export type EffectiveRouting =
 const KIND_RE = /^[A-Za-z0-9][A-Za-z0-9 _.-]{0,59}$/;
 const strList = (v: unknown): string[] | null =>
   Array.isArray(v) && v.every((x) => typeof x === "string") ? (v as string[]).map((s) => s.trim()).filter(Boolean) : null;
+
+/** GAP-102 (DF-P20 merge-time fix pass): the slots the assurance opt-in
+ *  (`records_examination`) can ride — a BLOCKING slot that is not filled by
+ *  the requester alone (their own acceptance is not an assurance check) and
+ *  not filled by an engineering capability (the engineering approval records
+ *  its own sign-off; lib/assuranceExamination.ts isAssuranceSlot never treats
+ *  it as one). CONSENT_REFUSED_CAPABILITIES is lib/ticketRoster.ts
+ *  ENGINEERING_CAPABILITIES (pinned equal by a test). Pure. */
+export function examinationOptInAllowed(slot: Pick<RoutingSlot, "mode" | "fill">): boolean {
+  if (slot.mode !== "blocking") return false;
+  const f = slot.fill ?? {};
+  if (f.identity === "requester" && !f.roles?.length && !f.users?.length && !f.capability) return false;
+  if (f.capability && CONSENT_REFUSED_CAPABILITIES.includes(f.capability)) return false;
+  return true;
+}
 
 /** A declared level is any non-null value (NULL = inherit). */
 export const isRoutingDeclared = (v: unknown): v is Record<string, unknown> => v !== null && v !== undefined;
@@ -209,6 +236,14 @@ export function parseRoutingControl(raw: unknown): { ok: true; control: RoutingC
     // Fix pass 3: the opt-in rides only a consent-window slot (a slot
     // switched to another mode simply drops it).
     if (o.consent_confirmed === true && slot.mode === "consent_window") slot.consent_confirmed = true;
+    // GAP-102 (DF-P20 fix pass 2): the assurance opt-in — a blocking slot a
+    // reviewer other than the requester signs. Never inferred. Merge-time
+    // fix pass (DEC-90, no regression): read exactly like consent_confirmed —
+    // kept only when it is `true` on a slot that can carry it, dropped
+    // silently otherwise. A stored value in the wrong place never makes the
+    // table invalid (that would refuse every submission and routed approval
+    // in the library); the editor refuses one at save (validateRoutingDraft).
+    if (o.records_examination === true && examinationOptInAllowed(slot)) slot.records_examination = true;
     slots.push(slot);
   }
   // independent_of may name a party or another slot of THIS table.
@@ -302,6 +337,13 @@ export async function effectiveRoutingForTicket(ticket: {
     throw new Error(`Couldn't read this request's routing: ${(e as { message?: string })?.message ?? "unknown error"}`);
   }
 }
+
+/** The workflow route's `warning` when a transition landed but the roster's
+ *  ledger (20261242) could not be written (GAP-103). Here, beside
+ *  isMissingRosterLedger, so the request page can recognise it (DF-P20
+ *  merge-time fix pass: an assurance sign-off's record then reads "could
+ *  not be read yet", never "not recorded"). */
+export const ROSTER_LEDGER_NOT_WRITTEN = "Done — but the review roster's record could not be written; the request carries it and it will be reconciled.";
 
 /** True when the error means the 20261242 ledger is not there yet. (Here,
  *  not only in lib/ticketRoster.ts, because the request page asks too and
@@ -471,6 +513,24 @@ export function validateRoutingDraft(control: RoutingControl | null, stored?: un
   if (control === null) return null;
   const p = parseRoutingControl(control);
   if (p && !p.ok) return p.error;
+  // GAP-102 (DF-P20 merge-time fix pass): the parser drops a misplaced
+  // assurance opt-in silently (a stored table is never refused for it); a
+  // save that writes one is refused with the reason instead, so it is never
+  // stored. The editor's own draft never carries one (draftToControl).
+  const misplaced = control.slots.find((s) => {
+    const v = (s as { records_examination?: unknown }).records_examination;
+    return v !== undefined && v !== null && v !== false && (v !== true || !examinationOptInAllowed(s));
+  });
+  if (misplaced) {
+    const v = (misplaced as { records_examination?: unknown }).records_examination;
+    return v !== true
+      ? `slot "${misplaced.kind}": the assurance check is on or off (records_examination is true or absent)`
+      : misplaced.mode !== "blocking"
+        ? `slot "${misplaced.kind}": only a "must sign off" slot can be an assurance check — a notice or a consent window has no sign-off to record it on`
+        : misplaced.fill?.capability && CONSENT_REFUSED_CAPABILITIES.includes(misplaced.fill.capability)
+          ? `slot "${misplaced.kind}": the engineering approval records its own sign-off — it cannot be an assurance check`
+          : `slot "${misplaced.kind}": the requester's own acceptance is not an assurance check`;
+  }
   // GAP-109 / DEC-90 ruling (1) for DF-P7: silence never stands in for the
   // engineering sign-off — the highest class of review — so a table that
   // puts a consent window on a slot filled by an engineering capability is

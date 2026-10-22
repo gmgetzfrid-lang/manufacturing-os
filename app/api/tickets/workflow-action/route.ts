@@ -5,7 +5,7 @@ import { notifyBatchWithReason } from "@/lib/inAppNotifications";
 import { WorkflowEngine, ticketResource, decisiveGrants, currentRoster, engineerPickQuestionApplies, slotSignPlan, engineeringGateRequired, ISSUING_APPROVALS, ISSUE_MARK_ACTIONS, ROSTERLESS_APPROVALS, ROUTED_NO_ROSTER_REASON, routedNoRosterReason, ISSUE_AS_IS_APPROVALS, issueReadyFor } from "@/lib/workflow";
 import { loadCapabilityPolicyStrict, policyAllows } from "@/lib/capabilityPolicy";
 import { engineerPickCap, engineerPickRefusal, engineerCandidates } from "@/lib/ticketPage";
-import { effectiveRoutingForTicket, ticketReviewRouting, routingForWorkClass } from "@/lib/routingControl";
+import { effectiveRoutingForTicket, ticketReviewRouting, routingForWorkClass, ROSTER_LEDGER_NOT_WRITTEN } from "@/lib/routingControl";
 import {
   hashStoredFilesBounded, draftsToHashOnApproval, HASH_LIMITS, filesUnderReview, openRoster, applySignPlan, rosterCompletion, rosterBinding,
   signatureRefusal, writeRosterLedger, isMissingRosterLedger, type FileHash, type SignatureRow,
@@ -40,6 +40,7 @@ import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
 import { planConsentWindow, CONSENT_REASON, issueAsIsMarkOf, isUnconfirmedConsentPlan } from "@/lib/consentWindow";
 import { afterRosterOpened, recordNoticeEvents, recordNotEmailed, emailPreferenceOf } from "@/lib/consentWindowScan";
 import { SLA_NOTICE_ACTIONS } from "@/lib/ticketSla";
+import { examinationForAct, examinationAuditFields, type ExaminationOnAct } from "@/lib/assuranceExamination";
 import { ticketReadScope } from "@/lib/ticketReadScope";
 import { offerableLibraries, libraryLabelForTicket, libraryChoiceFromRow, LIBRARY_CHOICE_COLUMNS, UNNAMED_TARGET_LIBRARY } from "@/lib/ticketLibrary";
 import { LIBRARY_RUNG_COLUMNS } from "@/lib/libraryAccess";
@@ -125,6 +126,13 @@ interface Body {
    *  absent = a page that does not ask yet (applied, recorded as not
    *  acknowledged). */
   sourceDriftAcknowledged?: boolean | null;
+  /** GAP-102 (DF-P20): what an assurance reviewer examined, with
+   *  `sign_slot` (its dry run too) or `request_revision` — the files under
+   *  review they examined (attachment ids / storage keys; absent = all) and
+   *  their note (a revision request's falls back to its comment). Read only
+   *  when the caller acts on an assurance slot (lib/assuranceExamination.ts);
+   *  ignored otherwise. */
+  examination?: { files?: string[] | null; note?: string | null } | null;
 }
 
 /** DCW-4 / HAND-3: the shape of a register row id (document_versions.id,
@@ -1100,6 +1108,9 @@ export async function POST(req: NextRequest) {
   const openRosterNow = currentRoster(ticket);
   let rosterOpen: TicketReviewRoster | null = null;
   let rosterSign: TransitionInput["rosterSign"] = null;
+  // GAP-102 (DF-P20): what the assurance reviewer examined, recorded on the
+  // event of each assurance slot this sign-off or veto acts on (null: none).
+  let examination: ExaminationOnAct | null = null;
   let rosterWarning: string | null = null;
   // GAP-109 / GAP-113 (DF-P7): what this submission's consent slot does, said
   // in the response (never in rosterWarning, which the audit row carries).
@@ -1245,6 +1256,13 @@ export async function POST(req: NextRequest) {
     if (!openRosterNow) return refuseSign(409, "This request has no review open.");
     const plan = slotSignPlan(openRosterNow, ticket, caller.id, sodActive, Date.now());
     if (plan.fillable.length === 0) return refuseSign(403, plan.blocked[0]?.reason ?? "There is no sign-off open to you on this request.");
+    // GAP-102 (DF-P20): a sign-off on an assurance slot carries what was
+    // examined (default: every file under review, no note), checked before
+    // the dry run answers so a signature is never minted for a record that
+    // would be refused. Any other sign-off is exactly as before.
+    const exam = examinationForAct(openRosterNow, ticket, plan.fillable, body.examination, { act: "sign_off" });
+    if (!exam.ok) return refuseSign(400, exam.error, "examination_invalid");
+    examination = exam.value;
     if (body.dryRun === true) {
       return NextResponse.json({ ok: true, dryRun: true, slots: plan.fillable.map((f) => f.slot.label || f.slot.kind), contentHash: openRosterNow.contentHash });
     }
@@ -1257,6 +1275,14 @@ export async function POST(req: NextRequest) {
     if (refusal) return refuseSign(403, refusal, "signature_invalid", sig as SignatureRow | null);
     const signed = applySignPlan(openRosterNow, plan, { uid: caller.id, name: memberName(member as { display_name?: unknown; email?: unknown }) }, sigId, new Date().toISOString());
     rosterSign = { roster: signed, complete: rosterCompletion(signed, { sodActive, drafterId: ticket.assignedDrafterId }).complete, labels: plan.fillable.map((f) => f.slot.label || f.slot.kind) };
+  }
+  // GAP-102 (DF-P20): a veto by an assurance slot's occupant records what
+  // they examined on that slot's "voided" event (lib/assuranceExamination.ts).
+  if (action.action === "request_revision" && openRosterNow) {
+    const occ = slotSignPlan(openRosterNow, ticket, caller.id, sodActive, Date.now());
+    const exam = examinationForAct(openRosterNow, ticket, [...occ.fillable, ...occ.blocked], body.examination, { act: "veto", comment: body.comment ?? null });
+    if (!exam.ok) return NextResponse.json({ error: exam.error, code: "examination_invalid" }, { status: 400 });
+    examination = exam.value;
   }
   // EVID-12 (DF-P5): the approved drafts and the issued Final are hashed
   // from their bytes (sha256) for the audit trail — on TODAY'S path, AFTER
@@ -1608,9 +1634,9 @@ export async function POST(req: NextRequest) {
       ...(rosterOpen
         ? { reviewRoster: { id: rosterOpen.id, event: "opened", level: rosterOpen.level, contentHash: rosterOpen.contentHash, files: rosterOpen.files, ...(rosterOpen.engineeringGateAdded ? { engineeringGateAdded: true } : {}), slots: rosterOpen.slots.map((x) => ({ kind: x.kind, label: x.label, mode: x.mode, occupants: x.primaries.length, fallback: x.fallback })) } }
         : rosterSign
-          ? { reviewRoster: { id: rosterSign.roster.id, event: "signed", contentHash: rosterSign.roster.contentHash, signatureId: body.signatureId ?? null, complete: rosterSign.complete, slots: rosterSign.roster.slots.filter((x) => x.signatureId === body.signatureId).map((x) => ({ kind: x.kind, label: x.label, via: x.via ?? null })) } }
+          ? { reviewRoster: { id: rosterSign.roster.id, event: "signed", contentHash: rosterSign.roster.contentHash, signatureId: body.signatureId ?? null, complete: rosterSign.complete, slots: rosterSign.roster.slots.filter((x) => x.signatureId === body.signatureId).map((x) => ({ kind: x.kind, label: x.label, via: x.via ?? null })), ...examinationAuditFields(examination) } }
           : openRosterNow && newStatus !== "PENDING_REVIEW"
-            ? { reviewRoster: { id: openRosterNow.id, event: "closed", reason: action.action } }
+            ? { reviewRoster: { id: openRosterNow.id, event: "closed", reason: action.action, ...examinationAuditFields(examination) } }
             : {}),
       ...(rosterWarning ? { reviewRosterNotOpened: rosterWarning } : {}),
       // DF-P6: the review model's facts this decision was made on — the
@@ -2005,18 +2031,21 @@ export async function POST(req: NextRequest) {
       ledgerErr = await writeRosterLedger(supabaseAdmin, { orgId: ticket.orgId, ticketId: body.ticketId, roster: rosterOpen, event: "opened", slots: rosterOpen.slots, actor: actorRef });
     } else if (rosterSign) {
       const touched = rosterSign.roster.slots.filter((x) => x.signatureId === body.signatureId && x.status === "satisfied");
-      ledgerErr = await writeRosterLedger(supabaseAdmin, { orgId: ticket.orgId, ticketId: body.ticketId, roster: rosterSign.roster, event: "satisfied", slots: touched, actor: actorRef });
+      ledgerErr = await writeRosterLedger(supabaseAdmin, { orgId: ticket.orgId, ticketId: body.ticketId, roster: rosterSign.roster, event: "satisfied", slots: touched, actor: actorRef, examination });
     } else if (openRosterNow && newStatus !== "PENDING_REVIEW") {
       const voided = openRosterNow.slots.filter((x) => x.status === "open").map((x) => ({ ...x, status: "void" as const }));
       if (voided.length > 0) {
         ledgerErr = await writeRosterLedger(supabaseAdmin, {
-          orgId: ticket.orgId, ticketId: body.ticketId, roster: { ...openRosterNow, closedReason: action.action }, event: "voided", slots: voided, actor: actorRef, reason: action.action,
+          orgId: ticket.orgId, ticketId: body.ticketId, roster: { ...openRosterNow, closedReason: action.action }, event: "voided", slots: voided, actor: actorRef, reason: action.action, examination,
         });
       }
     }
     if (ledgerErr) {
-      console.error(`[workflow-action] ${auditRow.action} (audit row ${auditRow.id}) on ticket ${body.ticketId} landed, but the review roster ledger was not written — reconcile from tickets.metadata.review_roster: ${ledgerErr}`);
-      rosterWarning = rosterWarning ?? "Done — but the review roster's record could not be written; the request carries it and it will be reconciled.";
+      // DF-P20 merge-time fix pass (GAP-102): the examination record lives
+      // only on this audit row until the ledger is reconciled — the line
+      // names it, so the reconciliation copies it into details.examination.
+      console.error(`[workflow-action] ${auditRow.action} (audit row ${auditRow.id}) on ticket ${body.ticketId} landed, but the review roster ledger was not written — reconcile from tickets.metadata.review_roster${examination ? `; the examination record for slot(s) ${examination.kinds.join(", ")} is on audit row ${auditRow.id} details.reviewRoster.examination — copy it into each of those slots' event details.examination` : ""}: ${ledgerErr}`);
+      rosterWarning = rosterWarning ?? ROSTER_LEDGER_NOT_WRITTEN;
     }
   }
 

@@ -892,7 +892,8 @@
         "drafting-flow PROJ-7 (pointer to intelligence WIRE-4 / WIRE-7): the request ↔ project edge in lib/orgGraph.ts now that tickets.project_id exists (intelligence's file — declare it under filesOutsidePlan)",
         "intelligence GAP-312 follow-up (hand-off from DF-P18, assigned at its merge, 2026-10-22, DEC-31): a unique index on ticket_equipment (ticket_id, normalized tag) closing the race between two simultaneous adds — inventory-first (count existing duplicates; never delete a row a person entered; refuse the paste and say the count while duplicates exist); the route's pre-insert check (already_listed) is unchanged",
         "drafting-flow GAP-101 acceptance 3, the deliverable limb (assigned at the DF-P19 merge, 2026-10-22, DEC-31; acceptances 1, 2, 4 and 5 and the ticket / audit-trail half of 3 have landed): the like-in-kind declaration rendered attributed on the issued deliverable (beside the request reference the deliverable stamp already carries, DF-P10), or recorded why it cannot be, with owner",
-        "drafting-flow DF-P19 follow-up (the final review's nit, assigned at the DF-P19 merge, 2026-10-22, DEC-31): Admin → Permissions confirm_rule sends the policy version it was read at, and the route answers 409 on a mismatch as save does, so a stale copy ordinal after another save reordered the copies cannot confirm a copy at a position the Admin did not click"
+        "drafting-flow DF-P19 follow-up (the final review's nit, assigned at the DF-P19 merge, 2026-10-22, DEC-31): Admin → Permissions confirm_rule sends the policy version it was read at, and the route answers 409 on a mismatch as save does, so a stale copy ordinal after another save reordered the copies cannot confirm a copy at a position the Admin did not click",
+        "drafting-flow DF-P20 follow-ups (assigned at the DF-P20 merge, 2026-10-22, DEC-31): (a) the roster-ledger reconciliation copies a lost examination record from the transition audit row's details.reviewRoster.examination into each slot event's details.examination; (b) the route returns the ledger-unwritten state as its own response flag so a hold or library warning cannot displace the panel's 'could not be read yet'; (c) RoutingControlSection assuranceOptInFor decides by examinationOptInAllowed alone, so a stored opt-in on a requester-identity slot with roles survives the editor's next save; (d) the workflow route answers 400, not 500, to a non-string comment (body.comment?.trim())"
       ],
       "files": [
         "app/api/tickets/workflow-action/route.ts",
@@ -910,6 +911,33 @@
       "sequencingNotes": [
         "Added by the integrator at the DF-P8 merge, 2026-10-21 (DEC-31). Serial with the other drafting-flow packages that hold the workflow route."
       ]
+    },
+    {
+     "name": "DF-P24 EXAMINATION SCOPE DATA AND ISSUE GATE — what each kind of work must have examined, said before review, and a package missing it refused at issue",
+     "findings": [
+      "drafting-flow GAP-102 acceptance 4 (assigned at the DF-P20 merge, 2026-10-22, DEC-31): examination-scope / governing-code data on the request, required per work class and per library from the workspace's own configured vocabulary (DEC-35: no facility word in code), filled by the drafter or engineer already in the flow, and an issue gate that refuses a package missing what its class requires — inventory-first, an unconfigured workspace unchanged (pin)",
+      "drafting-flow GAP-102 acceptance 1 (assigned at the DF-P20 merge): 'its examination data already specified by the engineer' — closes with acceptance 4's data model; the zero-added-touch half already holds (DF-P20, pinned)",
+      "drafting-flow GAP-102 ruling (2) notify-only limb (assigned at the DF-P20 merge): a notify-only assurance occupant's stop (a document hold) records what they examined on the hold it places; the routing parser's silent drop of records_examination on a notify-only slot becomes an accepted opt-in then; the editor hint never steers facilities toward blocking assurance slots (GAP-102 'Do not add a ... roster slot, or sign-off')",
+      "drafting-flow GAP-102 ruling (2) sheets limb (assigned at the DF-P20 merge): sheet data on the roster's files and an optional sheets list per file entry of the examination record"
+     ],
+     "files": [
+      "lib/assuranceExamination.ts",
+      "lib/routingControl.ts",
+      "components/documents/RoutingControlSection.tsx",
+      "lib/reviewModel.ts",
+      "app/api/tickets/workflow-action/route.ts (the issue gate only)",
+      "document-control's hold files (declare under filesOutsidePlan)",
+      "supabase/migrations/** (one DEC-30 file if a column is needed)",
+      "tests"
+     ],
+     "migrationsLikely": 1,
+     "dependsOn": [
+      "drafting-flow DF-P20 merged",
+      "drafting-flow DF-P23 merged (the workflow route's next holder)"
+     ],
+     "sequencingNotes": [
+      "Added by the integrator at the DF-P20 merge, 2026-10-22 (DEC-31): no package held GAP-102's examination-scope data model. Run after DF-P23."
+     ]
     }
   ],
   "crossAreaFileOverlaps": [
