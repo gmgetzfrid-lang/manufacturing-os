@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { notifyBatchWithReason } from "@/lib/inAppNotifications";
-import { extractMentionUids } from "@/lib/notifications";
+import { extractMentionUids, recordNotEmailedFor, type NotEmailedRecordClient } from "@/lib/notifications";
 import { rowToTicket, escapeHtml } from "@/lib/ticketTransitions";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { publicOrigin } from "@/lib/publicOrigin";
@@ -427,6 +427,41 @@ async function fanOut(params: {
   if (emailRows.length > 0) {
     const { error: mailErr } = await supabaseAdmin.from("email_notifications").insert(emailRows);
     if (mailErr) console.error("[ticket-comment] emails were not queued (comment committed):", mailErr.message);
+  }
+
+  // notifications DELIV-18 (N19; drafting-flow EVID-9 done-when 2): a member
+  // with an address whom THEIR OWN preference left out of the email above
+  // (wantsEmail false) gets the record queueEmail writes — one not_emailed
+  // row, the columns their email would have carried, which nothing ever
+  // sends (lib/notifications.ts recordNotEmailedFor; 20261258). Nobody else:
+  // a member with no address on record (or none read) was left out for
+  // another reason. Who is emailed and what is sent are exactly the rows
+  // above; the record is written after the response (next/server after()),
+  // so neither the queued emails nor the comment wait on it. Before 20261258
+  // the old status CHECK refuses it, said once — today's path.
+  const declined = audience.filter((uid) => emailByUid.has(uid) && !wantsEmail(uid));
+  if (declined.length > 0) {
+    const record = async () => {
+      const out = await recordNotEmailedFor(supabaseAdmin as unknown as NotEmailedRecordClient, declined.map((uid) => ({
+        orgId: ticket.orgId,
+        toUserId: uid,
+        toEmail: emailByUid.get(uid)!,
+        subject: mentionSet.has(uid) ? `You were mentioned: ${ticketLabel}` : `New comment on ${ticketLabel}`,
+        bodyText: composedText,
+        bodyHtml: composedHtml,
+        ...(body ? { rendered: body } : {}),
+        resourceType: "ticket" as const,
+        resourceId: ticketId,
+        eventType: mentionSet.has(uid) ? "comment_mention" : "watcher_activity",
+        metadata: { mention: mentionSet.has(uid), postedBy: actorUid, commentId: comment.id },
+      })), "[ticket-comment]");
+      if (typeof out === "object") console.warn("[ticket-comment] the not-emailed record was not written (comment, bell and email unaffected):", out.error);
+    };
+    try {
+      after(record);
+    } catch {
+      void record();
+    }
   }
 
   // OS-14 (notifications N17): the mention reaches the push channel — after

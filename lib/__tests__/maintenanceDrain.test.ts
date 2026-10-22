@@ -376,7 +376,8 @@ const member = (org: string, uid: string, status = "active", email: string | nul
 // notifications.id is a uuid (20260723): the digest records and filters ids only in that shape
 const notice = (org: string, uid: string, kind: string, title: string, created: string, over: Row = {}) =>
   ({ id: `00000000-0000-4000-a000-${String(++db.seq).padStart(12, "0")}`, org_id: org, user_id: uid, kind, title, link: "/documents/l?doc=d", created_at: created, read_at: null, metadata: null, ...over });
-const digests = () => rows("email_notifications").filter((e) => e.event_type === "compliance_digest");
+// the digests SENT (queued): a not_emailed record (notifications N19, DELIV-18) is no digest
+const digests = () => rows("email_notifications").filter((e) => e.event_type === "compliance_digest" && e.status !== "not_emailed");
 const digestFor = (uid: string) => digests().find((e) => e.to_user_id === uid);
 /** The calls of the query executing now (read from db.onExec; sequential reads only). */
 const queryNow = () => {
