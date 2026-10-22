@@ -102,6 +102,7 @@ import { heldRoles } from "@/lib/roleHeld";
 import { flaggedRequestTypes } from "@/lib/requestTypes";
 import { parseExaminationScopeConfig, applicableRequirements, scopeGateOutcome, type ScopeGateOutcome } from "@/lib/examinationScope";
 import { requestHoldStop } from "@/lib/requestHoldStop";
+import { issueExaminationNote } from "@/lib/issueNoticeExamination";
 import { resolveTicketRecipients, isRoutedStatus } from "@/lib/ticketRouting";
 import { wrapEmailBody } from "@/lib/emailRender";
 import { isPreferenceExempt } from "@/lib/notificationPrefs";
@@ -1268,12 +1269,19 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     const told = [...new Set([ticket.requesterId, ticket.assignedDrafterId, ...state.recipients, ...waiting, ...pool, ...escalate].filter((u): u is string => !!u))];
     const audience = told.filter((u) => activeUids.has(u));
     let bellLanded = false;
+    // DF-P26 (GAP-102 acceptance 2): an issuing close's notice names the
+    // request's recorded examination data, as the route's issue notice does
+    // (lib/issueNoticeExamination.ts — names and counts only; read only where
+    // such a record could exist; nothing recorded → today's notice).
+    const issueExamination = complete && audience.length > 0
+      ? await issueExaminationNote(sb, { ticket, ticketId, orgId: ticket.orgId, draftingCfg: ctx.draftingCfg ?? null, roster: advancedRoster })
+      : null;
     if (audience.length > 0) {
       const ticketLabel = `${ticket.ticketId || ""} ${ticket.title || ""}`.trim();
       const { error: bellErr } = await notifyBatchWithReason(audience.map((uid) => ({
         orgId: ticket.orgId, userId: uid, kind: "ticket_status" as const,
         title: `${held ? "Consent window closed" : "Advanced without objection"} · ${ticketLabel}`.slice(0, 200),
-        body: held ? `"${label}" still waits for a sign-off.${heldWhy}` : complete ? `Nobody objected to "${label}" — every sign-off is in; issued Rev ${String(updates.deliverable_rev ?? "")}.` : `Nobody objected to "${label}" — the review waits on the remaining sign-offs.`,
+        body: held ? `"${label}" still waits for a sign-off.${heldWhy}` : complete ? `Nobody objected to "${label}" — every sign-off is in; issued Rev ${String(updates.deliverable_rev ?? "")}.${issueExamination ? `\n\n${issueExamination}` : ""}` : `Nobody objected to "${label}" — the review waits on the remaining sign-offs.`,
         link: `/requests/${ticketId}`, resourceType: "ticket", resourceId: ticketId,
         actorName: "System",
         metadata: { action: "consent_window_advance", status: String(newStatus) },

@@ -48,6 +48,8 @@ import { issueScopeGate } from "@/lib/examinationScopeGate";
 import { workflowEngineContext, rosterlessRoutedRefusal, draftingTypeFlags, DECLARATION_DECIDES } from "@/lib/workflowAuthority";
 // GAP-116 (drafting-flow DF-P26): a notify-only hold that stops the request.
 import { issueHoldStopGate } from "@/lib/requestHoldStop";
+// GAP-102 acceptance 2 (drafting-flow DF-P26): the issue notice carries the examination data.
+import { issueExaminationNote } from "@/lib/issueNoticeExamination";
 import { ticketReadScope } from "@/lib/ticketReadScope";
 import { offerableLibraries, libraryLabelForTicket, libraryChoiceFromRow, LIBRARY_CHOICE_COLUMNS, UNNAMED_TARGET_LIBRARY } from "@/lib/ticketLibrary";
 import { LIBRARY_RUNG_COLUMNS } from "@/lib/libraryAccess";
@@ -2158,8 +2160,19 @@ export async function POST(req: NextRequest) {
   // server fallback to Vercel's production domain), else the origin this
   // request arrived on.
   const emailOrigin = publicOrigin() || new URL(req.url).origin;
+  // GAP-102 acceptance 2 (DF-P26; DEC-90 ruling (3)): an act that ISSUES the
+  // request (an issuing approval, or the sign-off that completes the review)
+  // tells its people what was recorded about the examination — the scope
+  // values, the assurance records, the notify-only holds — names and counts
+  // only, one line on the existing notice (lib/issueNoticeExamination.ts).
+  // Read only where such a record could exist, after the act has landed,
+  // bounded in time; anything unread leaves the notice exactly as today's.
+  let issueExamination: string | null = null;
+  if (ISSUING_APPROVALS.has(action.action) || (action.action === "sign_slot" && rosterSign?.complete === true)) {
+    issueExamination = await issueExaminationNote(supabaseAdmin, { ticket, ticketId: body.ticketId, orgId: ticket.orgId, draftingCfg: draftingCfgRead ? scopeDraftingCfg : null, roster: rosterSign?.roster ?? null });
+  }
   try {
-    await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, activity: isActivity, rosterCompleted: action.action === "sign_slot" && rosterSign?.complete === true, rosterPartial: action.action === "sign_slot" && rosterSign?.complete === false, rosterReleased: action.action === "sign_slot" && rosterSign && !rosterSign.complete ? rosterPartialReleased(rosterSign.roster, ticket, caller.id) : [], comment: fanOutComment, emailOrigin });
+    await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, activity: isActivity, rosterCompleted: action.action === "sign_slot" && rosterSign?.complete === true, rosterPartial: action.action === "sign_slot" && rosterSign?.complete === false, rosterReleased: action.action === "sign_slot" && rosterSign && !rosterSign.complete ? rosterPartialReleased(rosterSign.roster, ticket, caller.id) : [], comment: fanOutComment, emailOrigin, examinationNote: issueExamination });
     // Kick the email drain AFTER the response is sent (the daily cron is the
     // fallback, not the primary path — recipients should get email in seconds).
     // WF-19 done-when 3: CRON_SECRET ships blank, and a blank bearer is a
@@ -2469,8 +2482,12 @@ async function fanOut(params: {
    *  ticket waits on them no more, so their action alerts are retired with
    *  the signer's. */
   rosterReleased?: string[];
+  /** GAP-102 acceptance 2 (DF-P26): on an issuing act, the one line naming
+   *  the request's recorded examination data (null: today's notice). */
+  examinationNote?: string | null;
 }) {
   const { ticket, ticketId, action, newStatus, recipients, actorUid, actorEmail, comment, activity, emailOrigin } = params;
+  const examinationNote = params.examinationNote ?? null;
   // ROUTE-6 (DF-P3): thread activity with nobody to tell has nothing to do.
   // A TRANSITION always reaches the supersede step below, even when it tells
   // nobody (a Drafter picking up their own request): the queue's "needs a
@@ -2625,7 +2642,7 @@ async function fanOut(params: {
       userId: uid,
       kind: cls.inAppKind,
       title: cls.inAppTitle,
-      body: comment || `Status: ${ticketStatusLabel(newStatus)}`,
+      body: examinationNote ? `${comment || `Status: ${ticketStatusLabel(newStatus)}`}\n\n${examinationNote}` : comment || `Status: ${ticketStatusLabel(newStatus)}`,
       link,
       resourceType: "ticket",
       resourceId: ticketId,
@@ -2660,11 +2677,12 @@ async function fanOut(params: {
   // render layer adds the footer (lib/emailRender.ts — the drain then
   // attaches the one-click unsubscribe header).
   const note = comment ? plainMentions(comment) : null;
-  const composedText = `${actorEmail} performed: ${action.label}\n\nStatus is now: ${ticketStatusLabel(newStatus)}\n${note ? `\nNote: ${note}\n` : ""}\n${emailLink}`;
+  const composedText = `${actorEmail} performed: ${action.label}\n\nStatus is now: ${ticketStatusLabel(newStatus)}\n${note ? `\nNote: ${note}\n` : ""}${examinationNote ? `\n${examinationNote}\n` : ""}\n${emailLink}`;
   const composedHtml = `
         <p><b>${escapeHtml(actorEmail)}</b> performed <b>${escapeHtml(action.label)}</b> on <a href="${escapeHtml(emailLink)}">${escapeHtml(ticketLabel)}</a>.</p>
         <p>Status: <b>${escapeHtml(ticketStatusLabel(newStatus))}</b></p>
-        ${note ? `<blockquote style="border-left:3px solid #cbd5e1;padding-left:12px;color:#475569;white-space:pre-wrap">${escapeHtml(note)}</blockquote>` : ""}
+        ${note ? `<blockquote style="border-left:3px solid #cbd5e1;padding-left:12px;color:#475569;white-space:pre-wrap">${escapeHtml(note)}</blockquote>` : ""}${examinationNote ? `
+        <p>${escapeHtml(examinationNote)}</p>` : ""}
         <p><a href="${escapeHtml(emailLink)}">Open ticket</a></p>`;
   let body: { bodyText: string; bodyHtml: string } | null = null;
   try {

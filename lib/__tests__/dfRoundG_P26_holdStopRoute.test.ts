@@ -39,6 +39,7 @@ const state = vi.hoisted(() => ({
   errors: {} as Record<string, { code?: string; message: string }>,
   after: [] as Array<() => unknown>,
   noP26: false,
+  noNote: false,
 }));
 const pathGet = (r: Record<string, unknown>, key: string): unknown => {
   if (!key.includes("->")) return r[key];
@@ -64,7 +65,7 @@ function chain(table: string) {
       };
       return (...args: unknown[]) => {
         state.calls.push({ table, method: prop, args });
-        if (prop === "insert" && table === "ticket_review_slots" && !state.errors[table]) {
+        if (prop === "insert" && (table === "ticket_review_slots" || table === "ticket_review_slot_events") && !state.errors[table]) {
           state.rows[table] = [...(state.rows[table] ?? []), ...(Array.isArray(args[0]) ? args[0] : [args[0]]) as Array<Record<string, unknown>>];
         }
         if (prop === "select" && (args[1] as { head?: boolean } | undefined)?.head) head = true;
@@ -106,6 +107,12 @@ vi.mock("@/lib/requestHoldStop", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/requestHoldStop")>();
   return { ...real, issueHoldStopGate: (...a: Parameters<typeof real.issueHoldStopGate>) => (state.noP26 ? Promise.resolve({ kind: "none" as const }) : real.issueHoldStopGate(...a)) };
 });
+// GAP-102 acceptance 2 (DF-P26): arm B of the regression sweep also removes
+// the issue notice's examination line (the route without DF-P26 at all).
+vi.mock("@/lib/issueNoticeExamination", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/issueNoticeExamination")>();
+  return { ...real, issueExaminationNote: (...a: Parameters<typeof real.issueExaminationNote>) => (state.noNote ? Promise.resolve(null) : real.issueExaminationNote(...a)) };
+});
 import { POST as workflowAction } from "@/app/api/tickets/workflow-action/route";
 import { WorkflowEngine, ISSUING_APPROVALS } from "@/lib/workflow";
 import { rowToTicket } from "@/lib/ticketTransitions";
@@ -133,7 +140,7 @@ const ticketRow = (over: Record<string, unknown> = {}) => ({
 const reviewRow = (over: Record<string, unknown> = {}) => ticketRow({ status: "PENDING_REVIEW", deliverable_rev: "1A", draft_iteration: 1, attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }], ...over });
 const reset = () => {
   __resetCapabilityPolicyCache();
-  state.user = null; state.rows = {}; state.calls = []; state.errors = {}; state.after = []; state.noP26 = false;
+  state.user = null; state.rows = {}; state.calls = []; state.errors = {}; state.after = []; state.noP26 = false; state.noNote = false;
 };
 const seed = (routing: unknown = null) => {
   state.rows.org_members = MEMBERS.map((m) => ({ ...m }));
@@ -145,7 +152,7 @@ const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const ISO = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/g;
 const normal = (v: unknown): string => JSON.stringify(v, (_k, x) => (typeof x === "function" ? "[fn]" : x)).replace(UUID, "<uuid>").replace(ISO, "<ts>");
 /** The hold stop's own read (its filter on the record's ticket id). */
-const isStopRead = (c: { table: string; method: string; args: unknown[] }) => c.table === "document_holds" && c.method === "eq" && c.args[0] === "examination->>ticketId";
+const isStopRead = (c: { table: string; method: string; args: unknown[] }) => c.table === "document_holds" && c.method === "select" && c.args[0] === "id, reason, opened_by, opened_at, examination";
 const ticketUpdates = () => state.calls.filter((c) => c.table === "tickets" && c.method === "update");
 const writes = () => state.calls.filter((c) => c.method === "insert" || c.method === "update" || c.method === "upsert" || c.method === "delete");
 
@@ -167,10 +174,11 @@ const hold = (over: Record<string, unknown> = {}, rosterId?: string) => {
   return { id: "h-1", org_id: "o1", document_id: DOC, reason: "Other", opened_by: "q-2", opened_at: "2026-10-21T10:00:00.000Z", released_at: null, examination, ...over };
 };
 
-async function run(row: Record<string, unknown>, uid: string, body: Record<string, unknown>, noP26: boolean, routing: unknown = null, extra: (() => void) | null = null) {
+async function run(row: Record<string, unknown>, uid: string, body: Record<string, unknown>, noP26: boolean, routing: unknown = null, extra: (() => void) | null = null, noNote = false) {
   reset();
   seed(routing);
   state.noP26 = noP26;
+  state.noNote = noNote;
   state.rows.tickets = [row];
   state.rows.e_signatures = [{ id: SIG, org_id: "o1", resource_type: "ticket", resource_id: "t1", signer_user_id: uid, content_hash: (((row.metadata as { review_roster?: { contentHash?: string } }).review_roster)?.contentHash) ?? "h", intent: "Reviewed", signed_at: "2099-01-01T00:00:00Z" }];
   if (extra) extra();
@@ -193,7 +201,7 @@ describe("REGRESSION FIRST — where no record could exist, the route is today's
           for (const actionType of [...new Set([...offered, "sign_slot", "request_revision"])]) {
             const body = { actionType, comment: "a reason", signatureId: SIG, issueAsIsAcknowledged: true };
             const a = await run(row, m.uid, body, false);
-            const b = await run(row, m.uid, body, true);
+            const b = await run(row, m.uid, body, true, null, null, true);
             const where = `${JSON.stringify(metadata)} ${status} ${m.uid} ${actionType}`;
             expect(a.status, where).toBe(b.status);
             expect(a.json, where).toBe(b.json);
@@ -217,7 +225,7 @@ describe("REGRESSION FIRST — where no record could exist, the route is today's
       for (const dryRun of [true, false]) {
         const extra = () => { state.rows.document_holds = [hold({}, roster.id)]; };
         const a = await run(row, signer, { actionType: "sign_slot", signatureId: SIG, dryRun }, false, routing, extra);
-        const b = await run(row, signer, { actionType: "sign_slot", signatureId: SIG, dryRun }, true, routing, extra);
+        const b = await run(row, signer, { actionType: "sign_slot", signatureId: SIG, dryRun }, true, routing, extra, true);
         const where = `${JSON.stringify(routing).slice(0, 60)} ${JSON.stringify(metadata)} ${dryRun}`;
         expect(a.status, where).toBe(b.status);
         expect(a.json, where).toBe(b.json);
@@ -284,8 +292,8 @@ describe("GAP-116 — an open hold of the slot's people stops the request's comp
         expect(a.json, where).toBe(b.json);
         expect(a.writes, where).toBe(b.writes);
         // the only difference: the gate's one document_holds read (arm B makes none)
-        expect(a.callsNoStop, where).toBe(b.calls);
-        expect(b.calls, where).not.toMatch(/document_holds/);
+        expect(a.callsNoStop, where).toBe(b.callsNoStop);
+        expect(b.stopReads, where).toBe(0);
         expect(a.stopReads, where).toBe(1);
       }
     }
@@ -346,7 +354,9 @@ describe("GAP-116 — an issuing approval on a request whose roster on record ca
       expect(a.status).toBe(b.status);
       expect(a.json).toBe(b.json);
       expect(a.writes).toBe(b.writes);
-      expect(a.callsNoStop).toBe(b.calls);
+      expect(a.callsNoStop).toBe(b.callsNoStop);
+      expect(a.stopReads).toBe(1);
+      expect(b.stopReads).toBe(0);
     }
   });
 });
@@ -356,5 +366,76 @@ describe("the refusal sentence", () => {
     const h = { id: "h", reason: "Engineering review", openedBy: "u", openedAt: null, slotLabel: "QA", openerName: null };
     expect(requestHoldRefusal("P-100", [h])).toBe("P-100 is on hold (Engineering review), placed by a member of QA for QA with what they examined for this request. The hold stops this request: it cannot issue until the hold is released. The person who placed it, or anyone allowed to release holds, can release it on the document — then try again.");
     expect(requestHoldRefusal("P-100", [{ ...h, openerName: "Quinn" }, h])).toMatch(/placed by Quinn for QA with what they examined for this request \(and 1 more hold like it\)\./);
+  });
+});
+
+describe("GAP-102 acceptance 2 — the issue notice carries the recorded examination data (names and counts only)", () => {
+  const CFG = { requestTypes: { options: [] }, examinationScope: { fields: [{ key: "exam", label: "Examination scope", options: [{ value: "rt5", label: "5% RT" }] }], requirements: [] } };
+  function issuer(r: Record<string, unknown>): { uid: string; action: string } {
+    const t = rowToTicket(r as never) as Ticket;
+    for (const m of MEMBERS) {
+      const a = WorkflowEngine.getActions(t, m.role as Role, m.uid, undefined, { userRoles: m.roles as Role[], activeMemberCount: MEMBERS.length }).find((x) => ISSUING_APPROVALS.has(x.action) && !x.disabledReason && !x.requiresComment);
+      if (a) return { uid: m.uid, action: a.action };
+    }
+    throw new Error("no issuer in the harness");
+  }
+  const bells = () => state.calls.filter((c) => c.table === "notifications" && c.method === "insert").flatMap((c) => c.args[0] as Array<{ body: string; kind: string }>);
+  const mails = () => state.calls.filter((c) => c.table === "email_notifications" && c.method === "insert").flatMap((c) => c.args[0] as Array<{ body_text: string; body_html: string; event_type: string }>);
+  it("an issuing approval on a request with recorded scope values: every bell row and email of the existing kinds carries the one line; nothing else changes", async () => {
+    const row = reviewRow();
+    const who = issuer(row);
+    const withValues = () => {
+      state.rows.org_configurations = [{ org_id: "o1", key: "drafting", data: CFG }];
+      state.rows.ticket_examination_scopes = [{ ticket_id: "t1", org_id: "o1", field_values: { exam: { value: "rt5", by: "e-1", at: "2026-10-20T00:00:00Z" } }, waiver: null }];
+    };
+    const a = await run(row, who.uid, { actionType: who.action, issueAsIsAcknowledged: true }, false, null, withValues);
+    const aBells = bells(); const aMails = mails();
+    const b = await run(row, who.uid, { actionType: who.action, issueAsIsAcknowledged: true }, false, null, withValues, true);
+    const bBells = bells(); const bMails = mails();
+    expect(a.status).toBe(200);
+    expect(a.json).toBe(b.json);
+    const LINE = "Examination data: Examination scope: 5% RT.";
+    expect(aBells.length).toBeGreaterThan(0);
+    for (const [i, bell] of aBells.entries()) {
+      expect(bell.kind).toBe("ticket_status");
+      expect(bell.body).toBe(`${bBells[i].body}\n\n${LINE}`);
+    }
+    expect(aMails.length).toBeGreaterThan(0);
+    for (const [i, m] of aMails.entries()) {
+      expect(m.event_type).toBe("ticket_approved");
+      expect(m.body_text).toContain(`\n${LINE}\n`);
+      expect(m.body_text.replace(`\n${LINE}\n`, "")).toBe(bMails[i].body_text);
+      expect(m.body_html).toContain(`<p>${LINE}</p>`);
+    }
+    // every other write is the same
+    const strip = (w: string) => w.replace(/"body(_text|_html)?":"(\\.|[^"\\])*"/g, '"body":"-"');
+    expect(strip(a.writes)).toBe(strip(b.writes));
+  });
+  it("PIN: a request with none (fields configured but nothing recorded; or unconfigured) sends exactly today's notice", async () => {
+    const row = reviewRow();
+    const who = issuer(row);
+    for (const extra of [() => { state.rows.org_configurations = [{ org_id: "o1", key: "drafting", data: CFG }]; }, () => {}]) {
+      const a = await run(row, who.uid, { actionType: who.action, issueAsIsAcknowledged: true }, false, null, extra);
+      const b = await run(row, who.uid, { actionType: who.action, issueAsIsAcknowledged: true }, false, null, extra, true);
+      expect(a.status).toBe(200);
+      expect(a.json).toBe(b.json);
+      expect(a.writes).toBe(b.writes);
+    }
+  });
+  it("the sign-off that completes a review with an assurance slot: the notice names the slot and how many files were examined — never the note or file names", async () => {
+    const QA = { kind: "qa", label: "Quality", mode: "blocking", fill: { users: ["q-1"] }, records_examination: true, independent_of: ["drafter"] };
+    const roster = await openRoster({ slots: [QA] }, {});
+    const others = roster.slots.filter((s) => s.kind !== "qa");
+    const ready: TicketReviewRoster = { ...roster, slots: roster.slots.map((s) => (others.includes(s) ? { ...s, status: "satisfied" as const, satisfiedBy: "e-2", via: "primary" as const, signatureId: "x" } : s)) };
+    const row = reviewRow({ metadata: { review_roster: ready } });
+    const ledger = () => { state.rows.ticket_review_slots = ready.slots.map((x) => ({ org_id: "o1", ticket_id: "t1", roster_id: ready.id, slot_kind: x.kind, mode: x.mode, status: x.status })); };
+    const r = await run(row, "q-1", { actionType: "sign_slot", signatureId: SIG, examination: { note: "weld map checked privately" } }, false, { slots: [QA] }, ledger);
+    expect(r.raw.rosterLedgerNotWritten).toBeUndefined();
+    expect(r.status).toBe(200);
+    expect(r.raw.status).toBe("PENDING_IFC");
+    const body = bells().map((b) => b.body).join("\n");
+    // no file list sent: the record is "defaulted" and the notice says so (never "examined")
+    expect(body).toContain("Assurance records: Quality (files under review: 1 file, not narrowed).");
+    expect(body).not.toMatch(/weld map checked privately|iso_1A\.pdf/);
   });
 });

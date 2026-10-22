@@ -142,7 +142,23 @@ const seed = (cfg: Record<string, unknown> | null, routing: unknown = null) => {
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const ISO = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/g;
 const normal = (v: unknown): string => JSON.stringify(v, (_k, x) => (typeof x === "function" ? "[fn]" : x)).replace(UUID, "<uuid>").replace(ISO, "<ts>");
-const scopeReads = () => state.calls.filter((c) => c.table === "ticket_examination_scopes");
+// DF-P26 (GAP-102 acceptance 2): an issuing act also reads the request's
+// recorded values to name them on the issue notice (lib/issueNoticeExamination.ts
+// — select "field_values", only where fields are configured). That read is
+// DF-P26's, pinned in dfRoundG_P26_*; these pins are about the GATE, so its
+// calls are left out here (intent kept).
+const withoutNoticeRead = (calls: typeof state.calls) => {
+  const out: typeof state.calls = [];
+  let skipping = false;
+  for (const c of calls) {
+    if (c.table === "ticket_examination_scopes" && c.method === "select" && c.args[0] === "field_values") { skipping = true; continue; }
+    if (skipping && c.table === "ticket_examination_scopes") { if (c.method === "maybeSingle") skipping = false; continue; }
+    skipping = false;
+    out.push(c);
+  }
+  return out;
+};
+const scopeReads = () => withoutNoticeRead(state.calls).filter((c) => c.table === "ticket_examination_scopes");
 const auditRow = () => state.calls.find((c) => c.table === "audit_logs" && c.method === "insert" && /^TICKET_[A-Z_]+$/.test(String((c.args[0] as { action?: string }).action)) && !String((c.args[0] as { action?: string }).action).endsWith("_FILES_HASHED"))?.args[0] as { action: string; details: Record<string, unknown> } | undefined;
 const ticketUpdates = () => state.calls.filter((c) => c.table === "tickets" && c.method === "update");
 
@@ -170,7 +186,7 @@ async function run(cfg: Record<string, unknown> | null, row: Record<string, unkn
   const res = await post({ ticketId: "t1", ...body });
   const json = await res.json().catch(() => null);
   for (const fn of state.after.splice(0)) await fn();
-  return { status: res.status, json: normal(json), calls: normal(state.calls), reads: scopeReads().length };
+  return { status: res.status, json: normal(json), calls: normal(withoutNoticeRead(state.calls)), reads: scopeReads().length };
 }
 
 describe("REGRESSION FIRST — an unconfigured workspace (and a requirement on another class) is today's route, byte for byte", () => {

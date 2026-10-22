@@ -1307,7 +1307,10 @@ describe("DF-P24 fix pass: the examination-scope gate on an issuing close", () =
     db.tables.tickets[0].created_at = createdAt;
     if (cfg) db.tables.org_configurations = [{ org_id: "o1", key: "drafting", data: cfg }];
   };
-  const scopeReads = () => calls("ticket_examination_scopes", "select");
+  // DF-P26 (GAP-102 acceptance 2): an issuing close's notice also reads the
+  // recorded values to name them (select "field_values", only where fields
+  // are configured) — pinned in the DF-P26 block; these pins are the GATE's.
+  const scopeReads = () => calls("ticket_examination_scopes", "select").filter((c) => c.args[0] !== "field_values");
   it("required data missing (filed after the requirement, no waiver): HELD ('examination_scope_missing') — not issued, the history names the field", async () => {
     seedScope(scopeCfg([{ field: "gov", libraryId: LIB_ID, since: SCOPE_SINCE }]));
     db.tables.ticket_examination_scopes = [];
@@ -1457,5 +1460,33 @@ describe("DF-P26 (GAP-116): a notify-only hold stops the consent close that woul
     db.tables.document_holds = [hold()];
     expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 0 });
     expect(holdReads()).toEqual([]);
+  });
+});
+
+// drafting-flow DF-P26 (GAP-102 acceptance 2): an issuing close's notice names
+// the request's recorded examination data (names and counts only); a request
+// with none gets exactly today's notice.
+describe("DF-P26 (GAP-102 acceptance 2): the consent close's issue notice carries the examination data", () => {
+  const CFG = { examinationScope: { fields: [{ key: "gov", label: "Governing code", options: [{ value: "c1", label: "Code one" }] }], requirements: [] } };
+  const bellBodies = () => calls("notifications", "insert").flatMap((c) => c.args[0] as Array<{ body: string }>).map((b) => b.body);
+  it("values recorded: every bell row of the issue ends with the one line", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    db.tables.org_configurations = [{ org_id: "o1", key: "drafting", data: CFG }];
+    db.tables.ticket_examination_scopes = [{ ticket_id: "t1", org_id: "o1", field_values: { gov: { value: "c1", by: "d-1", at: "2026-10-20T00:00:00Z" } }, waiver: null }];
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+    const bodies = bellBodies();
+    expect(bodies.length).toBeGreaterThan(0);
+    for (const b of bodies) expect(b).toBe('Nobody objected to "Operations" — every sign-off is in; issued Rev 1.\n\nExamination data: Governing code: Code one.');
+  });
+  it("PIN: nothing recorded (fields configured, no row; or unconfigured) — today's notice, word for word", async () => {
+    for (const cfg of [CFG, null]) {
+      db.calls = [];
+      seedTicket({ warned: "2026-10-21T09:00:00Z" });
+      db.tables.org_configurations = cfg ? [{ org_id: "o1", key: "drafting", data: cfg }] : [];
+      db.tables.ticket_examination_scopes = [];
+      expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+      for (const b of bellBodies()) expect(b).toBe('Nobody objected to "Operations" — every sign-off is in; issued Rev 1.');
+      if (!cfg) expect(calls("ticket_examination_scopes", "select")).toEqual([]);
+    }
   });
 });
