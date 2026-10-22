@@ -682,7 +682,9 @@ describe("second fix pass (review major 2) — a code-class review requirement i
     expect(editor).toContain('data-testid="code-class-rules"');
     expect(editor).toContain('aria-label="Code class"');
     expect(editor).toContain('reviewClassOptions(cfg, "codeClasses")');
-    expect(editor).toContain('const takesEffect = hasAnyRole(["Admin"]) ? "in force once saved" : "adds people only until an Admin confirms it";');
+    // third fix pass: the wording moved into classRuleTakesEffect (and says
+    // "no effect" on the engineer-gate exemption) — pinned below.
+    expect(editor).toContain('const takesEffect = classRuleTakesEffect(d.id, hasAnyRole(["Admin"]));');
     expect(editor).toContain("commit(out.version, out.policy?.caps);");
   });
 });
@@ -736,4 +738,128 @@ describe("second fix pass (review minor 4) — the list, inbox and badge now rea
       expect(differs).toBeGreaterThan(0);
     });
   }
+});
+
+// ── third fix pass ──────────────────────────────────────────────────────────
+describe("third fix pass (review major 1) — a request's library and classes never decide a capability outside ticket.*", () => {
+  // A library-scoped rule stored for the DOCUMENT side (DEC-13 stage 2) on a
+  // non-ticket capability a routing slot can name.
+  const DOC_SIDE: CapabilityPolicy = {
+    caps: {
+      "transmittal.issue": [{ tokens: ["DocCtrl", "Admin"] }, { tokens: ["Admin"], when: { libraryId: [LIB] } }],
+      "holds.release": [{ tokens: ["DocCtrl", "Admin"] }, { tokens: ["Admin"], when: { libraryId: [LIB] } }],
+    },
+  };
+  const members = [
+    { uid: "dc", role: "DocCtrl", roles: ["DocCtrl"] },
+    { uid: "ad", role: "Admin", roles: ["Admin"] },
+    { uid: "mg", role: "Manager", roles: ["Manager"] },
+    { uid: "req", role: "Requester", roles: ["Requester"] },
+  ];
+  const control = { slots: [{ kind: "release", label: "Doc control release", mode: "blocking" as const, fill: { capability: "transmittal.issue" as CapabilityId }, waivable_by: { capability: "holds.release" as CapabilityId } }] };
+  const open = async (resource: ReturnType<typeof ticketResource> | { requestType: string | null; unit: string | null }) => {
+    const { openRoster } = await import("@/lib/ticketRoster");
+    const r = openRoster({ id: "r", control, level: "library", cycle: "1A", files: [], ctx: { members, policy: DOC_SIDE, resource, requesterId: "req" }, openedBy: "d", now: NOW });
+    if (!r.ok) throw new Error(r.error);
+    return r.roster.slots.find((s) => s.kind === "release")!;
+  };
+
+  it("the reviewer's case: the library-carrying request opens the same occupants as on 82f2ed6 (the pre-DF-P19 resource)", async () => {
+    const withLib = await open(ticketResource({ requestType: "ISO", unit: "U1", libraryId: LIB, workClass: "W", codeClass: "B313" }));
+    const before = await open({ requestType: "ISO", unit: "U1" });
+    expect(withLib.primaries).toEqual(["ad", "dc"]);
+    expect(withLib.primaries).toEqual(before.primaries);
+    expect(withLib.overriders).toEqual(before.overriders);
+    // the evaluator itself still reads the library for that capability (a document's resource)
+    expect(policyAllows(DOC_SIDE, "transmittal.issue", "DocCtrl", null, null, { libraryId: LIB })).toBe(false);
+  });
+
+  it("requestResourceFor: ticket.* sees the whole request resource; any other capability sees requestType and unit only", async () => {
+    const { requestResourceFor } = await import("@/lib/capabilityPolicy");
+    const res = ticketResource({ requestType: "ISO", unit: "U1", libraryId: LIB, workClass: "W", codeClass: "B313" });
+    expect(requestResourceFor("ticket.final_approve", res)).toEqual(res);
+    expect(requestResourceFor("transmittal.issue", res)).toEqual({ requestType: "ISO", unit: "U1" });
+    expect(requestResourceFor("holds.open", res)).toEqual({ requestType: "ISO", unit: "U1" });
+    expect(requestResourceFor("holds.open", null)).toBeNull();
+    expect(res.libraryId).toBe(LIB); // never mutated
+  });
+
+  it("a ticket.* slot fill still reads the library: a confirmed library rule on ticket.final_approve decides who fills the engineering slot", async () => {
+    const { openRoster } = await import("@/lib/ticketRoster");
+    const pol: CapabilityPolicy = { caps: { "ticket.final_approve": [{ tokens: ["Engineer"] }, { tokens: ["Engineer-3"], when: { libraryId: [LIB] }, confirmedAt: NOW, confirmedBy: "a" }] } };
+    const engs = [{ uid: "e1", role: "Engineer", roles: ["Engineer"] }, { uid: "e3", role: "Engineer-3", roles: ["Engineer-3"] }];
+    const r = openRoster({ id: "r", control: { slots: [{ kind: "eng", mode: "blocking", fill: { capability: "ticket.final_approve" } }] }, level: "library", cycle: "1A", files: [],
+      ctx: { members: engs, policy: pol, resource: ticketResource({ requestType: "ISO", unit: null, libraryId: LIB, workClass: null, codeClass: null }), requesterId: null }, openedBy: "d", now: NOW });
+    expect(r.ok && r.roster.slots[0].primaries).toEqual(["e3"]);
+  });
+
+  it("source pin: resolveFill evaluates the capability against requestResourceFor(capability, ctx.resource)", () => {
+    const src = read("lib/ticketRoster.ts");
+    expect(src).toContain("const resource = fill.capability ? requestResourceFor(fill.capability, ctx.resource) : null;");
+    expect(src).toContain("policyAllows(ctx.policy, fill.capability, held[0], held, uid, resource)");
+    expect(src).not.toContain("held, uid, ctx.resource)");
+  });
+});
+
+describe("third fix pass (review major 2) — an in-force library / class rule is Admin's to change or remove", () => {
+  const STAMP = { confirmedAt: NOW, confirmedBy: "a1" };
+  const stored: CapabilityPolicy = { caps: {
+    "ticket.final_approve": [{ tokens: ["Engineer"] }, { tokens: ["Engineer-3"], when: { codeClass: ["B313"] }, ...STAMP }, { tokens: ["Engineer-2"], when: { codeClass: ["B311"] } }],
+    "ticket.engineer_gate_exempt": [{ tokens: ["Admin", "Manager"] }, { tokens: ["Admin"], when: { codeClass: ["B313"] }, ...STAMP }],
+  } };
+
+  it("the reviewer's reproduction: what a DocCtrl's edit would have stored (unconfirmed) lets every Engineer approve — the reason the edit is refused", () => {
+    const edited = { ...stored.caps, "ticket.final_approve": [{ tokens: ["Engineer"] }, { tokens: ["Engineer-3", "Engineer-2"], when: { codeClass: ["B313"] } }] } as CapabilityPolicy["caps"];
+    const carried = carryTicketRuleConfirmation(edited, stored.caps, { at: NOW, by: "c1" }, false);
+    expect(tokensFor({ caps: carried.caps }, "ticket.final_approve", { codeClass: "B313" }).sort()).toEqual(["Engineer", "Engineer-2", "Engineer-3"]);
+  });
+
+  it("inForceTicketRulesDropped names an edited or removed in-force rule, never an unconfirmed one or one carried unchanged", async () => {
+    const { inForceTicketRulesDropped } = await import("@/lib/capabilityPolicy");
+    expect(inForceTicketRulesDropped(stored.caps, stored.caps)).toEqual([]);
+    // the stamp is not part of the rule: a save that carries it bare is unchanged
+    const bareCaps = { "ticket.final_approve": [{ tokens: ["Engineer"] }, { tokens: ["Engineer-3"], when: { codeClass: ["B313"] } }], "ticket.engineer_gate_exempt": [{ tokens: ["Admin", "Manager"] }, { tokens: ["Admin"], when: { codeClass: ["B313"] } }] } as CapabilityPolicy["caps"];
+    expect(inForceTicketRulesDropped(bareCaps, stored.caps)).toEqual([]);
+    const edited = { ...bareCaps, "ticket.final_approve": [{ tokens: ["Engineer"] }, { tokens: ["Engineer-3", "Engineer-2"], when: { codeClass: ["B313"] } }] } as CapabilityPolicy["caps"];
+    expect(inForceTicketRulesDropped(edited, stored.caps).map((d) => d.cap)).toEqual(["ticket.final_approve"]);
+    const removed = { ...bareCaps, "ticket.engineer_gate_exempt": [{ tokens: ["Admin", "Manager"] }] } as CapabilityPolicy["caps"];
+    expect(inForceTicketRulesDropped(removed, stored.caps).map((d) => d.cap)).toEqual(["ticket.engineer_gate_exempt"]);
+    // the unconfirmed B311 rule may be dropped by anyone (it only added)
+    expect(inForceTicketRulesDropped(bareCaps, stored.caps).some((d) => d.rule.when?.codeClass?.[0] === "B311")).toBe(false);
+    // a request-type rule is not a dimension rule: never listed
+    expect(inForceTicketRulesDropped({}, { "ticket.assign": [{ tokens: ["Admin"] }, { tokens: ["Admin"], when: { requestType: ["ISO"] } }] })).toEqual([]);
+  });
+
+  it("the editor: an in-force code-class row is locked for a non-Admin; the preview says what a non-Admin's rule does", async () => {
+    const { inForceClassRule, classRuleTakesEffect } = await import("@/components/permissions/CapabilityPolicyEditor");
+    expect(inForceClassRule(stored, "ticket.final_approve", "B313")).toBe(true);
+    expect(inForceClassRule(stored, "ticket.final_approve", "B311")).toBe(false);
+    expect(inForceClassRule(stored, "ticket.engineer_gate_exempt", "B313")).toBe(true);
+    expect(inForceClassRule(null, "ticket.final_approve", "B313")).toBe(false);
+    expect(classRuleTakesEffect("ticket.final_approve", true)).toBe("in force once saved");
+    expect(classRuleTakesEffect("ticket.final_approve", false)).toBe("adds people only until an Admin confirms it");
+    expect(classRuleTakesEffect("ticket.engineer_gate_exempt", false)).toBe("no effect at all until an Admin confirms it");
+    const src = read("components/permissions/CapabilityPolicyEditor.tsx");
+    expect(src).toContain("const dropped = inForceTicketRulesDropped(caps, storedPolicy?.caps);");
+    expect(src).toContain("const adminOnly = !mayConfirm && inForceClassRule(storedPolicy, def.id, row.codeClass);");
+    expect(src).toContain("in force — only an Admin may change or remove it");
+    expect(src).toContain("const takesEffect = classRuleTakesEffect(d.id, hasAnyRole([\"Admin\"]));");
+  });
+});
+
+describe("third fix pass (review minor 3) — the permissions explorer says what an unconfirmed library / class rule does", () => {
+  it("a not-yet-confirmed rule is noted as only adding (nothing on the engineer-gate exemption); a confirmed or request-type rule replaces the row", async () => {
+    const { capabilityRow } = await import("@/components/permissions/PermissionsExplorer");
+    const def = (id: CapabilityId) => CAPABILITY_DEFS.find((d) => d.id === id)!;
+    const pol: CapabilityPolicy = { caps: {
+      "ticket.final_approve": [{ tokens: ["Engineer"] }, { tokens: ["Engineer-3"], when: { codeClass: ["B313"] } }, { tokens: ["Engineer-2"], when: { requestType: ["ISO"] } }],
+      "ticket.engineer_gate_exempt": [{ tokens: ["Admin"] }, { tokens: ["Admin", "Manager"], when: { codeClass: ["B313"] } }],
+      "ticket.assign": [{ tokens: ["Admin"] }, { tokens: ["Manager"], when: { libraryId: [LIB] }, confirmedAt: NOW, confirmedBy: "a" }],
+    } };
+    const fa = capabilityRow(def("ticket.final_approve"), pol).note ?? "";
+    expect(fa).toContain("1 scoped rule replace this row where they match (requestType ∈ {ISO})");
+    expect(fa).toContain("1 library / class rule not yet in force — only add people where they match until an Admin confirms (codeClass ∈ {B313})");
+    expect(capabilityRow(def("ticket.engineer_gate_exempt"), pol).note).toContain("not yet in force — no effect until an Admin confirms");
+    expect(capabilityRow(def("ticket.assign"), pol).note).toContain("1 scoped rule replace this row where they match (libraryId ∈");
+  });
 });

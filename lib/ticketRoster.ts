@@ -27,7 +27,7 @@
 
 import { createHash } from "node:crypto";
 import { evaluateSlotCompletion, type SlotRow } from "@/lib/reviewControl";
-import { policyAllows, heldMatchesTokens, type CapabilityPolicy, type CapabilityResource } from "@/lib/capabilityPolicy";
+import { policyAllows, heldMatchesTokens, requestResourceFor, type CapabilityPolicy, type CapabilityResource } from "@/lib/capabilityPolicy";
 import { heldRoles } from "@/lib/roleHeld";
 import { slotBlocks, rosterLacksIndependentSignOff, type SlotSignPlan } from "@/lib/workflow";
 import type { RoutingControl, RoutingLevel, RoutingSlot } from "@/lib/routingControl";
@@ -271,9 +271,15 @@ export interface OccupantContext {
 
 const memberUid = (m: Record<string, unknown>): string => (typeof m.uid === "string" ? m.uid : "");
 
-/** The members a fill names (active members only; de-duplicated, sorted). */
+/** The members a fill names (active members only; de-duplicated, sorted).
+ *  DF-P19 third fix pass (review major 1): a capability outside `ticket.*`
+ *  (a slot filled or waived by `transmittal.issue`, `holds.*`, …) is
+ *  evaluated against the resource the request presented before DF-P19 —
+ *  its library and classes decide `ticket.*` capabilities only
+ *  (lib/capabilityPolicy.ts requestResourceFor). */
 export function resolveFill(fill: { roles?: string[]; users?: string[]; capability?: RoutingSlot["fill"]["capability"]; identity?: "requester" }, ctx: OccupantContext): string[] {
   const out = new Set<string>();
+  const resource = fill.capability ? requestResourceFor(fill.capability, ctx.resource) : null;
   const active = new Map(ctx.members.map((m) => [memberUid(m), m] as const).filter(([u]) => !!u));
   if (fill.identity === "requester" && ctx.requesterId && active.has(ctx.requesterId)) out.add(ctx.requesterId);
   for (const u of fill.users ?? []) if (active.has(u)) out.add(u);
@@ -282,7 +288,7 @@ export function resolveFill(fill: { roles?: string[]; users?: string[]; capabili
       const held = heldRoles(m as { role?: unknown; roles?: unknown });
       if (held.length === 0) continue;
       if (fill.roles?.length && heldMatchesTokens(fill.roles, held)) out.add(uid);
-      if (fill.capability && policyAllows(ctx.policy, fill.capability, held[0], held, uid, ctx.resource)) out.add(uid);
+      if (fill.capability && policyAllows(ctx.policy, fill.capability, held[0], held, uid, resource)) out.add(uid);
     }
   }
   return [...out].sort();

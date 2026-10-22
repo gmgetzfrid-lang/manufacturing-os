@@ -415,6 +415,24 @@ export function isTicketDimensionRule(cap: CapabilityId, rule: CapabilityRule | 
   return !!rule && isTicketResourceCap(cap) && TICKET_DIMENSION_KEYS.some((k) => (rule.when?.[k]?.length ?? 0) > 0);
 }
 
+/** DF-P19 third fix pass (review major 1): the resource a REQUEST presents
+ *  to `cap`. On a `ticket.*` capability, the whole request resource
+ *  (lib/workflow.ts ticketResource: its library and both classes too). On
+ *  any other capability (a routing slot filled or waived by
+ *  `transmittal.issue`, `holds.*`, … — lib/ticketRoster.ts resolveFill),
+ *  only what a request presented before DF-P19: the library and the classes
+ *  are dropped, so a library-scoped rule stored on that capability for the
+ *  DOCUMENT side (DEC-13 stage 2) never starts deciding a request's
+ *  routing — it was never inventoried for requests nor held for an Admin's
+ *  confirmation (ruleInForce reads `ticket.*` rules only). Pure. */
+export function requestResourceFor(cap: CapabilityId, resource: CapabilityResource | null | undefined): CapabilityResource | null {
+  if (!resource) return null;
+  if (isTicketResourceCap(cap)) return resource;
+  const out: CapabilityResource = { ...resource };
+  for (const k of TICKET_DIMENSION_KEYS) delete out[k];
+  return out;
+}
+
 /** Has the workspace confirmed this rule? Every rule that is not a request
  *  dimension rule is in force as stored (today's meaning). */
 export function ruleInForce(cap: CapabilityId, rule: CapabilityRule): boolean {
@@ -991,6 +1009,31 @@ export function carryTicketRuleConfirmation(
     });
   }
   return { caps: out, confirmed, unconfirmedNew };
+}
+
+/** DF-P19 third fix pass (review major 2): the request dimension rules
+ *  IN FORCE in `storedCaps` (Admin-confirmed — ruleInForce) that `caps`
+ *  no longer holds (the same rule — capabilityRuleKey — on the same
+ *  capability): removed, or edited (an edit is a new rule, which a
+ *  non-Admin's save stores unconfirmed, so it only adds — or, on
+ *  `ticket.engineer_gate_exempt`, does nothing — and the narrowing the
+ *  Admin confirmed would silently lapse, fail-open). The policy route
+ *  refuses such a save from anyone but an Admin; the editor locks those
+ *  rows for a non-Admin and runs the same check before it sends. Pure. */
+export function inForceTicketRulesDropped(
+  caps: CapabilityPolicy["caps"] | null | undefined,
+  storedCaps: CapabilityPolicy["caps"] | null | undefined,
+): Array<{ cap: CapabilityId; rule: CapabilityRule }> {
+  const out: Array<{ cap: CapabilityId; rule: CapabilityRule }> = [];
+  for (const [id, prior] of Object.entries(storedCaps ?? {}) as Array<[CapabilityId, CapabilityEntry]>) {
+    if (!isRuleArray(prior)) continue;
+    const next = caps?.[id];
+    const keys = new Set(isRuleArray(next) ? next.map(capabilityRuleKey) : []);
+    for (const r of prior) {
+      if (isTicketDimensionRule(id, r) && ruleInForce(id, r) && !keys.has(capabilityRuleKey(r))) out.push({ cap: id, rule: r });
+    }
+  }
+  return out;
 }
 
 /** An Admin's confirmation of ONE stored, not-yet-confirmed request

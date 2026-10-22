@@ -33,7 +33,7 @@ import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import {
   CAPABILITY_DEFS, policyAllows, grantActive, isRuleArray, ruleIsConditional, describeWhen, loadCapabilityPolicyEntry,
-  onCapabilityPolicyChanged,
+  onCapabilityPolicyChanged, isTicketDimensionRule, ruleInForce, GATE_EXEMPT_CAP,
   type CapabilityDef, type CapabilityId, type CapabilityPolicy, type CapabilityResource,
 } from "@/lib/capabilityPolicy";
 import { adminSurface } from "@/lib/adminSurfaces";
@@ -216,7 +216,17 @@ export function capabilityRow(def: CapabilityDef, policy: CapabilityPolicy, ctx:
   const scopedProjects = [...new Set(scopedGrants.map((g) => ctx.projectNames?.get(g.projectId as string) ?? (g.projectId as string)))];
   const notes: string[] = [];
   if (prePaste) notes.push(`Not decided by the database yet: ${QUALITY_SIGNOFF_PRE_PASTE}`);
-  if (scoped.length) notes.push(`${scoped.length} scoped rule${scoped.length > 1 ? "s" : ""} replace this row where they match (${scoped.map((r) => describeWhen(r.when)).join("; ")})`);
+  // drafting-flow DF-P19 third fix pass (review minor 3): a library- /
+  // class-scoped request rule an Admin has not confirmed does NOT replace
+  // the row — it only adds people where it matches (on
+  // ticket.engineer_gate_exempt it does nothing) until confirmed
+  // (lib/capabilityPolicy.ts effectiveTokens).
+  const pending = scoped.filter((r) => isTicketDimensionRule(def.id, r) && !ruleInForce(def.id, r));
+  const replacing = scoped.filter((r) => !pending.includes(r));
+  if (replacing.length) notes.push(`${replacing.length} scoped rule${replacing.length > 1 ? "s" : ""} replace this row where they match (${replacing.map((r) => describeWhen(r.when)).join("; ")})`);
+  if (pending.length) {
+    notes.push(`${pending.length} library / class rule${pending.length > 1 ? "s" : ""} not yet in force — ${def.id === GATE_EXEMPT_CAP ? "no effect" : "only add people where they match"} until an Admin confirms (${pending.map((r) => describeWhen(r.when)).join("; ")})`);
+  }
   if (grants) notes.push(`${grants} live personal grant${grants > 1 ? "s" : ""}`);
   if (scopedGrants.length) {
     notes.push(`${scopedGrants.length} personal grant${scopedGrants.length > 1 ? "s" : ""} on ${scopedProjects.length > 1 ? "projects" : "project"} ${scopedProjects.join(", ")} only`);

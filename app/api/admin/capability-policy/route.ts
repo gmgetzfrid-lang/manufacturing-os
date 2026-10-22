@@ -44,7 +44,8 @@
 // such rule is accepted and CONFIRMED by an Admin's save that writes it (the
 // server stamps it — carryTicketRuleConfirmation; a client never sends the
 // stamp; a DocCtrl's new rule is stored unconfirmed — second fix pass,
-// review minor 3); one already stored keeps its stamp or stays unconfirmed, and an
+// review minor 3; an IN-FORCE one is Admin's to change or remove — third fix
+// pass, review major 2); one already stored keeps its stamp or stays unconfirmed, and an
 // unconfirmed one only ADDS (lib/capabilityPolicy.ts effectiveTokens) until
 // an Admin confirms it here (`confirm_rule`, the rule named by
 // capabilityRuleKey), so a narrowing nobody chose since the request started
@@ -64,7 +65,7 @@ import {
   CAPABILITY_DEFS, baseTokensFor, grantActive, isRuleArray, normalizeCapabilityEntry,
   parseStoredCapabilityPolicy, ruleIsConditional, validateCapabilityPolicy, invalidateCapabilityPolicy,
   policyHasProjectScopedRule, samePolicyVersion, POLICY_CHANGED, PROJECT_SCOPED_CAPS, sameGrant,
-  RULE_KEYS, carryTicketRuleConfirmation, confirmTicketDimensionRule,
+  RULE_KEYS, carryTicketRuleConfirmation, confirmTicketDimensionRule, inForceTicketRulesDropped, describeWhen,
   type CapabilityId, type CapabilityPolicy, type UserGrant,
 } from "@/lib/capabilityPolicy";
 import { memberHoldsAny } from "@/lib/roleHeld";
@@ -222,6 +223,18 @@ export async function POST(req: NextRequest) {
     // Second fix pass (review minor 3): a DocCtrl's new rule is stored
     // unconfirmed (it only adds until an Admin confirms it), so deleting a
     // stored unconfirmed narrowing and re-adding it confirms nothing.
+    // Third fix pass (review major 2): an IN-FORCE (Admin-confirmed) library-
+    // / class-scoped request rule is Admin's to change or remove. Anyone
+    // else's edit would store an unconfirmed rule that only adds (on
+    // ticket.engineer_gate_exempt: nothing), so the confirmed narrowing would
+    // lapse without anyone choosing it — fail-open (DEC-90).
+    if (!isAdmin) {
+      const dropped = inForceTicketRulesDropped(caps, before.caps);
+      if (dropped.length > 0) {
+        const label = (id: CapabilityId) => CAPABILITY_DEFS.find((d) => d.id === id)?.label ?? id;
+        return bad(`Only an Admin may change or remove an in-force code-class / library rule (${dropped.map((d) => `${label(d.cap)} where ${describeWhen(d.rule.when)}`).join("; ")}) — nothing was saved.`, 403);
+      }
+    }
     const carried = carryTicketRuleConfirmation(caps, before.caps, { at: nowIso, by: caller.id }, isAdmin);
     after = { caps: carried.caps, grants: liveGrants };
     if (carried.confirmed.length > 0) grantDetail = { confirmedRules: carried.confirmed.map((c) => ({ cap: c.cap, rule: c.rule })) };

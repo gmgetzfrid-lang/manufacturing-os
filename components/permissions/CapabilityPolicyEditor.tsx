@@ -70,6 +70,12 @@
 //     until an Admin confirms it in the list below). A library- or
 //     work-class-scoped rule is still listed, preserved and confirmed here,
 //     not authored (not a TIER-4 done-when).
+//     DF-P19 third fix pass (review major 2): an IN-FORCE (Admin-confirmed)
+//     code-class rule is locked for anyone but an Admin (inForceClassRule) —
+//     an edit by a DocCtrl would be stored unconfirmed and only add, so the
+//     narrowing the Admin confirmed would silently lapse; the save checks
+//     the same thing first (inForceTicketRulesDropped) and the policy route
+//     refuses it (403).
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { SlidersHorizontal, Loader2, RotateCcw, Check, AlertTriangle, Plus, X } from "lucide-react";
@@ -81,6 +87,7 @@ import {
   validateCapabilityPolicy, invalidateCapabilityPolicy, isRuleArray, ruleIsConditional, describeWhen,
   CapabilityPolicyChangeError, POLICY_CHANGED, PROJECT_SCOPED_CAPS, announceCapabilityPolicyChanged,
   HOLD_OPENER_TOKEN, ticketDimensionRules, confirmCapabilityRule, capabilityRuleKey, GATE_EXEMPT_CAP, isTicketResourceCap,
+  isTicketDimensionRule, ruleInForce, inForceTicketRulesDropped,
   type CapabilityId, type CapabilityEntry, type CapabilityRule, type CapabilityPolicy, type TicketDimensionRuleState,
 } from "@/lib/capabilityPolicy";
 import { loadRequestTypeOptions, type RequestTypeOption } from "@/lib/requestTypes";
@@ -307,6 +314,25 @@ async function loadCodeClassOptions(orgId: string): Promise<{ options: Array<{ v
  *  written on (the evaluator reads `when.codeClass` on `ticket.*` only). */
 export const CODE_CLASS_RULE_CAPS: readonly CapabilityId[] = CAPABILITY_DEFS.filter((d) => isTicketResourceCap(d.id)).map((d) => d.id);
 
+/** DF-P19 third fix pass (review major 2): does the STORED policy hold an
+ *  in-force (Admin-confirmed) code-class rule on `cap` for `codeClass` —
+ *  the row only an Admin may change or remove? */
+export function inForceClassRule(stored: CapabilityPolicy | null | undefined, cap: CapabilityId, codeClass: string): boolean {
+  const entry = stored?.caps?.[cap];
+  return isRuleArray(entry) && entry.some((r) => editorRowKind(cap, r) === "codeClass" && r.when?.codeClass?.[0] === codeClass
+    && isTicketDimensionRule(cap, r) && ruleInForce(cap, r));
+}
+
+/** DF-P19 third fix pass: what a code-class rule saved by this person does
+ *  (the impact preview). An Admin's is in force at once; anyone else's is
+ *  stored unconfirmed — it only adds people, and on
+ *  `ticket.engineer_gate_exempt` it does nothing — until an Admin confirms
+ *  it (lib/capabilityPolicy.ts effectiveTokens). */
+export function classRuleTakesEffect(cap: CapabilityId, isAdmin: boolean): string {
+  if (isAdmin) return "in force once saved";
+  return cap === GATE_EXEMPT_CAP ? "no effect at all until an Admin confirms it" : "adds people only until an Admin confirms it";
+}
+
 export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }) {
   const { activeOrgId, uid, userEmail, hasAnyRole } = useRole();
   // DF-P19: the stored policy as loaded, for the request dimension rules.
@@ -493,6 +519,8 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
       const rows = [...(o[cap] ?? [])];
       const row = rows[idx];
       if (!row) return o;
+      // Third fix pass (review major 2): an in-force rule is Admin's to change.
+      if (!hasAnyRole(["Admin"]) && inForceClassRule(storedPolicy, cap, row.codeClass)) return o;
       rows[idx] = { ...row, tokens: row.tokens.includes(token) ? row.tokens.filter((t) => t !== token) : [...row.tokens, token] };
       return { ...o, [cap]: rows };
     });
@@ -501,6 +529,8 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
   };
   const removeClassOverride = (cap: CapabilityId, idx: number) => {
     if (!canEdit) return;
+    const row = (codeClassOverrides[cap] ?? [])[idx];
+    if (row && !hasAnyRole(["Admin"]) && inForceClassRule(storedPolicy, cap, row.codeClass)) return;
     setCodeClassOverrides((o) => ({ ...o, [cap]: (o[cap] ?? []).filter((_, i) => i !== idx) }));
     setDirty(true);
     setMsg(null);
@@ -511,6 +541,16 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
     const caps = joinPolicyFromEditor(policy, overrides, opaque, projectOverrides, storedPolicy, codeClassOverrides);
     const err = validateCapabilityPolicy({ caps });
     if (err) { setMsg({ tone: "err", text: err }); return; }
+    // DF-P19 third fix pass (review major 2): the route refuses a non-Admin's
+    // save that changes or removes an in-force library- / class-scoped rule —
+    // said here first, nothing sent.
+    if (!hasAnyRole(["Admin"])) {
+      const dropped = inForceTicketRulesDropped(caps, storedPolicy?.caps);
+      if (dropped.length > 0) {
+        setMsg({ tone: "err", text: `Only an Admin may change or remove an in-force code-class / library rule (${dropped.map((x) => `${CAPABILITY_DEFS.find((d) => d.id === x.cap)?.label ?? x.cap} where ${describeWhen(x.rule.when)}`).join("; ")}) — nothing was saved.` });
+        return;
+      }
+    }
     // IMPACT PREVIEW — spell out exactly what changes before it takes effect.
     const changes: string[] = [];
     for (const d of CAPABILITY_DEFS) {
@@ -546,7 +586,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
       // an Admin confirms it (the policy route decides — review minor 3).
       const wasCls = baselineCodeClassOverrides[d.id] ?? [];
       const nowCls = codeClassOverrides[d.id] ?? [];
-      const takesEffect = hasAnyRole(["Admin"]) ? "in force once saved" : "adds people only until an Admin confirms it";
+      const takesEffect = classRuleTakesEffect(d.id, hasAnyRole(["Admin"]));
       for (const r of nowCls) {
         const prev = wasCls.find((w) => w.codeClass === r.codeClass);
         if (!prev) changes.push(`${d.label} for code class ${classLabel(r.codeClass)}: ONLY ${r.tokens.join(", ") || "nobody"} (new code-class rule — ${takesEffect})`);
@@ -885,10 +925,11 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
                   <div className="flex items-center gap-1 flex-wrap">
                     {TOKENS.map((t) => {
                       const on = row.tokens.includes(t);
-                      const locked = !canEdit || (def.critical && t === "Admin" && on);
+                      const adminOnly = !mayConfirm && inForceClassRule(storedPolicy, def.id, row.codeClass);
+                      const locked = !canEdit || adminOnly || (def.critical && t === "Admin" && on);
                       return (
                         <button key={t} onClick={() => !locked && toggleClassOverride(def.id, idx, t)} disabled={locked}
-                          title={locked && on ? "Admin is locked on critical capabilities" : undefined}
+                          title={adminOnly ? "In force — only an Admin may change this rule" : locked && on ? "Admin is locked on critical capabilities" : undefined}
                           className={`px-1.5 py-0.5 rounded border text-[10px] ${on ? "bg-emerald-500 border-emerald-500 text-white" : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"} ${locked ? "opacity-70 cursor-not-allowed" : ""}`}>
                           {TOKEN_LABEL[t] ?? t}
                         </button>
@@ -897,7 +938,8 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
                   </div>
                   {row.tokens.length === 0 && <span className="text-[10px] font-bold text-rose-700 dark:text-rose-300">nobody by role — only personal grants and identity rights apply</span>}
                   {tokensOutsideGrid(row.tokens).length > 0 && <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300">also stored: {tokensOutsideGrid(row.tokens).join(", ")} — still live</span>}
-                  {canEdit && (
+                  {!mayConfirm && inForceClassRule(storedPolicy, def.id, row.codeClass) && <span data-class-rule-admin-only className="text-[10px] font-bold text-[var(--color-text-faint)]">in force — only an Admin may change or remove it</span>}
+                  {canEdit && (mayConfirm || !inForceClassRule(storedPolicy, def.id, row.codeClass)) && (
                     <button onClick={() => removeClassOverride(def.id, idx)} className="ml-auto text-[var(--color-text-faint)] hover:text-rose-600" title="Remove this code-class rule (the row above applies again)">
                       <X className="w-3.5 h-3.5" />
                     </button>
