@@ -115,7 +115,15 @@ export interface RoutingSlot {
    *  consent-window slot (no sign-off to record it on), on a slot only the
    *  requester fills (their own acceptance is not an assurance check) and on
    *  a slot filled by an engineering capability (the engineering approval
-   *  records its own sign-off); the editor refuses a save that writes one. */
+   *  records its own sign-off); the editor refuses a save that writes one.
+   *  drafting-flow DF-P25 (GAP-102 ruling (2), the notify-only limb): ALSO
+   *  kept on a NOTIFY-ONLY slot notifyExaminationOptInAllowed accepts — its
+   *  people are told, never waited on, and their stop is a document hold
+   *  that carries what they examined (document_holds.examination, written in
+   *  the hold's own insert — components/requests/NotifyHoldExamination.tsx).
+   *  It adds no sign-off and no wait; the slot is never an assurance
+   *  sign-off slot (lib/assuranceExamination.ts isAssuranceSlot stays
+   *  blocking-only). */
   records_examination?: true;
   /** GAP-109 mechanism 2 (drafting-flow DF-P22): the controller's explicit
    *  opt-in — this BLOCKING slot accepts a standing pre-authorization: an
@@ -155,6 +163,20 @@ const strList = (v: unknown): string[] | null =>
  *  ENGINEERING_CAPABILITIES (pinned equal by a test). Pure. */
 export function examinationOptInAllowed(slot: Pick<RoutingSlot, "mode" | "fill">): boolean {
   if (slot.mode !== "blocking") return false;
+  const f = slot.fill ?? {};
+  if (f.identity === "requester" && !f.roles?.length && !f.users?.length && !f.capability) return false;
+  if (f.capability && CONSENT_REFUSED_CAPABILITIES.includes(f.capability)) return false;
+  return true;
+}
+
+/** drafting-flow DF-P25 (GAP-102 ruling (2), the notify-only limb): the
+ *  NOTIFY-ONLY slots the examination opt-in can ride — told, never waited
+ *  on; their people may place a hold on the request's source document that
+ *  records what they examined (the hold stops work on the document, not the
+ *  request — DF-P25 review fix pass 5; GAP-116). The same exclusions as the blocking
+ *  opt-in: not the requester alone, not an engineering capability. Pure. */
+export function notifyExaminationOptInAllowed(slot: Pick<RoutingSlot, "mode" | "fill">): boolean {
+  if (slot.mode !== "notify_only") return false;
   const f = slot.fill ?? {};
   if (f.identity === "requester" && !f.roles?.length && !f.users?.length && !f.capability) return false;
   if (f.capability && CONSENT_REFUSED_CAPABILITIES.includes(f.capability)) return false;
@@ -264,7 +286,10 @@ export function parseRoutingControl(raw: unknown): { ok: true; control: RoutingC
     // silently otherwise. A stored value in the wrong place never makes the
     // table invalid (that would refuse every submission and routed approval
     // in the library); the editor refuses one at save (validateRoutingDraft).
-    if (o.records_examination === true && examinationOptInAllowed(slot)) slot.records_examination = true;
+    // DF-P25: a notify-only slot may carry it too (its stop is a hold with
+    // the record) — notifyExaminationOptInAllowed; every other placement is
+    // dropped silently, as before.
+    if (o.records_examination === true && (examinationOptInAllowed(slot) || notifyExaminationOptInAllowed(slot))) slot.records_examination = true;
     // GAP-109 mechanism 2 (DF-P22): the standing pre-authorization opt-in —
     // read exactly like the assurance opt-in: kept only when `true` on a
     // slot that can carry it, dropped silently otherwise (never refused).
@@ -544,14 +569,14 @@ export function validateRoutingDraft(control: RoutingControl | null, stored?: un
   // stored. The editor's own draft never carries one (draftToControl).
   const misplaced = control.slots.find((s) => {
     const v = (s as { records_examination?: unknown }).records_examination;
-    return v !== undefined && v !== null && v !== false && (v !== true || !examinationOptInAllowed(s));
+    return v !== undefined && v !== null && v !== false && (v !== true || !(examinationOptInAllowed(s) || notifyExaminationOptInAllowed(s)));
   });
   if (misplaced) {
     const v = (misplaced as { records_examination?: unknown }).records_examination;
     return v !== true
       ? `slot "${misplaced.kind}": the assurance check is on or off (records_examination is true or absent)`
-      : misplaced.mode !== "blocking"
-        ? `slot "${misplaced.kind}": only a "must sign off" slot can be an assurance check — a notice or a consent window has no sign-off to record it on`
+      : misplaced.mode === "consent_window"
+        ? `slot "${misplaced.kind}": a consent window has no sign-off to record what was examined on, and no stop of its own — make it "must sign off" or "told, no sign-off"`
         : misplaced.fill?.capability && CONSENT_REFUSED_CAPABILITIES.includes(misplaced.fill.capability)
           ? `slot "${misplaced.kind}": the engineering approval records its own sign-off — it cannot be an assurance check`
           : `slot "${misplaced.kind}": the requester's own acceptance is not an assurance check`;

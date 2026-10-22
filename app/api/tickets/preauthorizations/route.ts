@@ -6,7 +6,8 @@
 //                              workspace, each with its grantor's membership
 //                              since it was created (`grantorMembership`:
 //                              a record whose grantor's membership lapsed is
-//                              never used again — merge-time fix pass).
+//                              never used again — merge-time fix pass; only
+//                              a record in force carries it — DF-P25).
 //   POST   { orgId, id, libraryId?, requestType?, workClass?, expiresAt, signatureId }
 //                              record the CALLER's own pre-authorization. The
 //                              e-signature was minted by /api/signatures/sign
@@ -99,7 +100,14 @@ export async function GET(req: NextRequest) {
   // when that could not be checked).
   const memberships = await readGrantorMemberships(supabaseAdmin, orgId, records);
   if (!memberships.ok) return bad("Couldn't check the grantors' memberships — try again in a moment.", 503);
-  return NextResponse.json({ ok: true, admin, records: records.map((r) => ({ ...r, grantorMembership: memberships.byId.get(r.id) ?? "unproven" })) });
+  // DF-P25 (review fix pass 4): only a record in force is judged
+  // (readGrantorMemberships); a revoked or expired one carries no
+  // grantorMembership at all — never "unproven", which would say its
+  // grantor's membership was checked and could not be confirmed.
+  return NextResponse.json({ ok: true, admin, records: records.map((r) => {
+    const judged = memberships.byId.get(r.id);
+    return judged ? { ...r, grantorMembership: judged } : r;
+  }) });
 }
 
 export async function POST(req: NextRequest) {

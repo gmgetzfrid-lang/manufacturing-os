@@ -132,6 +132,7 @@ import {
 import {
   publicHoldReason, PUBLIC_HOLD_REASON_FALLBACK, PREDEFINED_HOLD_REASONS, holdControlsFor, holdPoolFromMembers,
   expectedReleaseIso, expectedReleaseDate, releaseHold, openHold, updateHoldExpectedRelease, scanStaleHolds, HOLD_AGING_DAYS,
+  isHoldExaminationShapeRefusal,
 } from "@/lib/holds";
 import { requestAcks } from "@/lib/distributionAcks";
 import { __resetCapabilityPolicyCache, type CapabilityPolicy } from "@/lib/capabilityPolicy";
@@ -898,5 +899,59 @@ describe("20261074 — held-document label rails (HLD-1 database half)", () => {
     const rev = src("lib/revisions.ts");
     expect(rev).toMatch(/\.from\("document_versions"\)\s*\n\s*\.update\(\{ revision_label: check\.label \}\)/);
     expect(rev).toMatch(/\.update\(\{ rev: check\.label, revision: check\.label, updated_at: new Date\(\)\.toISOString\(\), updated_by: actorUserId \}\)/);
+  });
+});
+
+// ─── drafting-flow DF-P25 — GAP-102 notify-only limb: the record rides the hold's own insert ───
+describe("DF-P25 — openHold writes what its opener examined in the hold's own insert", () => {
+  const REC = { v: 1, act: "veto", stop: "hold", ticketId: "t1", rosterId: "r-1", slotKind: "watch", contentHash: "h", cycle: "1A", files: [], ofFiles: 0, allFiles: true, note: "weld map wrong" };
+  it("REGRESSION: a hold placed without a record inserts exactly what it inserted before (no examination key) and returns no new key", async () => {
+    const out = await openHold({ orgId: "o1", documentId: DOC, reason: "Client Review", openedBy: "opener" });
+    const ins = state.calls.filter((c) => c.table === "document_holds" && c.method === "insert");
+    expect(ins).toHaveLength(1);
+    expect(Object.keys(ins[0].args[0] as object).sort()).toEqual(["document_id", "expected_release_at", "notes", "opened_by", "opened_by_name", "org_id", "reason"]);
+    expect(out).not.toHaveProperty("examination");
+    expect(out).not.toHaveProperty("examinationNotRecorded");
+  });
+  it("with a record: ONE insert carries it; the hold read back carries it", async () => {
+    const out = await openHold({ orgId: "o1", documentId: DOC, reason: "Client Review", openedBy: "opener", examination: REC });
+    const ins = state.calls.filter((c) => c.table === "document_holds" && c.method === "insert");
+    expect(ins).toHaveLength(1);
+    expect((ins[0].args[0] as Record<string, unknown>).examination).toEqual(REC);
+    expect(out.examination).toEqual(REC);
+    expect(out).not.toHaveProperty("examinationNotRecorded");
+  });
+  it("before 20261267 (PGRST204 on examination): the hold is still placed — without the record — and says so; never refused for its record", async () => {
+    state.writeError = (table, op, rows) => (table === "document_holds" && op === "insert" && rows.some((r) => "examination" in r)
+      ? { code: "PGRST204", message: "Could not find the 'examination' column of 'document_holds' in the schema cache" } : null);
+    const out = await openHold({ orgId: "o1", documentId: DOC, reason: "Client Review", openedBy: "opener", examination: REC });
+    expect(out.examinationNotRecorded).toBe(true);
+    expect(out).not.toHaveProperty("examination");
+    expect((state.rows.document_holds ?? []).length).toBe(1);
+  });
+  it("REVIEW FIX 4: the record refused by its size CHECK (23514 document_holds_examination_shape): the hold is still placed — without the record — and says why; never refused for its record", async () => {
+    state.writeError = (table, op, rows) => (table === "document_holds" && op === "insert" && rows.some((r) => "examination" in r)
+      ? { code: "23514", message: 'new row for relation "document_holds" violates check constraint "document_holds_examination_shape"' } : null);
+    const out = await openHold({ orgId: "o1", documentId: DOC, reason: "Client Review", openedBy: "opener", examination: REC });
+    expect(out.examinationNotRecorded).toBe(true);
+    expect(out.examinationTooLarge).toBe(true);
+    expect(out).not.toHaveProperty("examination");
+    expect((state.rows.document_holds ?? []).length).toBe(1);
+    const ins = state.calls.filter((c) => c.table === "document_holds" && c.method === "insert");
+    expect(ins).toHaveLength(2);
+    expect(ins[1].args[0]).not.toHaveProperty("examination");
+  });
+  it("REVIEW FIX 4: a 23514 naming ANOTHER check, or one on a hold without a record, is the hold's own refusal (thrown, as before)", async () => {
+    state.writeError = (table) => (table === "document_holds" ? { code: "23514", message: 'new row for relation "document_holds" violates check constraint "document_holds_reason_check"' } : null);
+    await expect(openHold({ orgId: "o1", documentId: DOC, reason: "Client Review", openedBy: "opener", examination: REC })).rejects.toThrow(/document_holds_reason_check/);
+    state.writeError = (table) => (table === "document_holds" ? { code: "23514", message: 'violates check constraint "document_holds_examination_shape"' } : null);
+    await expect(openHold({ orgId: "o1", documentId: DOC, reason: "Client Review", openedBy: "opener" })).rejects.toThrow(/document_holds_examination_shape/);
+    expect(isHoldExaminationShapeRefusal({ code: "23514", message: 'violates check constraint "document_holds_examination_shape"' })).toBe(true);
+    expect(isHoldExaminationShapeRefusal({ code: "23505", message: "document_holds_examination_shape" })).toBe(false);
+    expect(isHoldExaminationShapeRefusal(null)).toBe(false);
+  });
+  it("any other refusal of the insert is the hold's own (thrown, as before) — the record never hides it", async () => {
+    state.writeError = (table) => (table === "document_holds" ? { code: "23505", message: "duplicate key" } : null);
+    await expect(openHold({ orgId: "o1", documentId: DOC, reason: "Client Review", openedBy: "opener", examination: REC })).rejects.toThrow(/already open on this document/);
   });
 });

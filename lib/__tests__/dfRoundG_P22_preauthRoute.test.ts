@@ -202,3 +202,20 @@ describe("GET — the caller's own; an Admin sees the workspace's", () => {
     expect(((await res.json()) as { error?: string }).error).toMatch(/Couldn't check the grantors' memberships/);
   });
 });
+
+// ─── drafting-flow DF-P25 (review fix pass 4) ───
+describe("DF-P25 — only a record in force carries its grantor's membership", () => {
+  it("a revoked or an expired record carries NO grantorMembership (never 'unproven' — it was not judged); a record in force still does", async () => {
+    await POST(req("POST", body()));
+    const base = st.tables.ticket_preauthorizations[0];
+    st.tables.ticket_preauthorizations.push(
+      { ...base, id: "bbbbbbbb-0000-4000-8000-0000000000bb", revoked_at: "2026-10-22T13:00:00Z", revoked_by: QA },
+      { ...base, id: "bbbbbbbb-0000-4000-8000-0000000000cc", expires_at: "2026-10-01T00:00:00Z" },
+    );
+    const list = ((await (await GET(req("GET", undefined, "t-admin", `?orgId=${ORG}`))).json()) as { records: Array<Record<string, unknown>> }).records;
+    const byId = new Map(list.map((r) => [r.id as string, r]));
+    expect(byId.get(ID)?.grantorMembership).toBe("continuous");
+    expect(byId.get("bbbbbbbb-0000-4000-8000-0000000000bb")).not.toHaveProperty("grantorMembership");
+    expect(byId.get("bbbbbbbb-0000-4000-8000-0000000000cc")).not.toHaveProperty("grantorMembership");
+  });
+});

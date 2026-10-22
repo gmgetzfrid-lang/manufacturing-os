@@ -52,7 +52,7 @@ import { currentRoster, slotSignPlan, separationOfDutiesActive, engineeringGateR
 import { engineeringOverrideOf } from "@/lib/reviewModel";
 import { seededSlotsFor, MODE_LABEL, isMissingRosterLedger, ROSTER_LEDGER_NOT_WRITTEN } from "@/lib/routingControl";
 import {
-  isAssuranceSlot, rosterHasAssuranceSlot, rosterOnRecord, examinationFileKey, examinationOf, shortHash, examinedFilesText,
+  isAssuranceSlot, isNotifyExaminationSlot, rosterHasAssuranceSlot, rosterOnRecord, examinationFileKey, examinationOf, shortHash, examinedFilesText,
   EXAMINATION_NOT_RECORDED, EXAMINATION_NOT_READ_YET, EXAMINATION_NOTE_MAX, type ExaminationRecord,
 } from "@/lib/assuranceExamination";
 import { effectiveReviewControlForDocument, expandReviewers } from "@/lib/reviewControl";
@@ -60,6 +60,7 @@ import type { CapabilityPolicy } from "@/lib/capabilityPolicy";
 import type { Ticket, TicketReviewRoster, TicketReviewSlot } from "@/types/schema";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { sourceDriftRefusalLabels, sourceDriftConfirmation } from "@/lib/requestPageReview";
+import NotifyHoldExamination from "@/components/requests/NotifyHoldExamination";
 
 export interface TicketRosterPanelProps {
   ticket: Ticket;
@@ -68,6 +69,10 @@ export interface TicketRosterPanelProps {
   /** The viewer's display name for the signature statement. */
   userName?: string | null;
   capPolicy?: CapabilityPolicy | null;
+  /** The viewer's headline role and additive collection (useRole()) — the
+   *  notify-only hold form is offered only when they may place holds. */
+  role?: string | null;
+  roles?: readonly string[] | null;
   activeMemberCount?: number;
   /** The requester's current role collection (DEC-16), when known. */
   requesterRoles?: readonly string[] | null;
@@ -225,7 +230,7 @@ export async function postSignOffOnce(post: () => Promise<Response>): Promise<{ 
 }
 
 export default function TicketRosterPanel({
-  ticket, orgId, uid, userName, capPolicy, activeMemberCount, requesterRoles, onChanged, reviewRouted, reviewRoutedReason, sourceDrift,
+  ticket, orgId, uid, userName, capPolicy, role, roles, activeMemberCount, requesterRoles, onChanged, reviewRouted, reviewRoutedReason, sourceDrift,
 }: TicketRosterPanelProps) {
   // DF-P18 fix pass (review, blocker): the route reads the source documents
   // as the service role, so a move the page's own (RLS-limited) read could
@@ -493,7 +498,12 @@ export default function TicketRosterPanel({
   // forward instead.
   const routedNoRoster = !roster && inReview && reviewRouted === true;
   const showSeed = !roster && inReview && !routedNoRoster;
-  if (!roster && !showSeed && !routedNoRoster && !libraryReview && history.length === 0) return null;
+  // DF-P25: a closed round whose notify-only people could place a hold on
+  // its source document keeps the panel up for those holds' records (false
+  // on every roster without such a slot — the condition below is then
+  // exactly as before).
+  const notifyHoldsOnRecord = !!recordRoster && recordRoster.slots.some((s) => isNotifyExaminationSlot(s, ticket));
+  if (!roster && !showSeed && !routedNoRoster && !libraryReview && history.length === 0 && !notifyHoldsOnRecord) return null;
 
   return (
     <section data-testid="ticket-roster-panel" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
@@ -679,6 +689,11 @@ export default function TicketRosterPanel({
           </ul>
         </div>
       )}
+
+      {/* DF-P25 (GAP-102 notify-only limb): renders and reads nothing unless
+          the roster on record has a notify-only slot opted in to recording
+          what its people examined. */}
+      <NotifyHoldExamination ticket={ticket} orgId={orgId} uid={uid} userName={userName} role={role} roles={roles} />
 
       {error && <div role="alert" className="text-xs text-red-700">{error}</div>}
 

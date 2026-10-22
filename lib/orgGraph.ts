@@ -21,6 +21,13 @@
 //                         — 20261256's reference; the request is folded
 //                         into the project class, `req:<uuid>`, as a system
 //                         is into the unit class: no new node type, DEC-67)
+//   document ↔ request    tickets.metadata.source_document.id (drafting-flow
+//                         PROJ-7 edge limb, DF-P25 — DEC-90 / DEC-67): a
+//                         JSON reference, drawn ONLY where it names a
+//                         document of this workspace the reader can read
+//                         (the reader's own RLS read of `documents`, never
+//                         the JSON alone); keyset-paged and capped like
+//                         every link table, the cap said
 //   document ↔ document   document_related_resources (curated pins)
 //   document → document   document_supersessions (lineage — directional)
 //   document ↔ asset      entity_mentions (the text names it — with the quote)
@@ -288,6 +295,12 @@ export interface GraphRows {
    *  client entry only; archived requests are left out. Absent / empty: none
    *  read (before 20261256, or the server entry). */
   projectRequests?: Array<{ id: string; ticket_id: string | null; title: string | null; status: string | null; project_id: string }>;
+  /** drafting-flow PROJ-7 edge limb (DF-P25): drafting requests whose
+   *  metadata.source_document.id names a document of this workspace the
+   *  reader can read (checked by the reader's own read of `documents`) —
+   *  the client entry only; archived requests are left out. Absent / empty:
+   *  none (the map exactly as before). */
+  documentRequests?: Array<{ id: string; ticket_id: string | null; title: string | null; status: string | null; document_id: string }>;
   related: Array<{ document_id: string; target_document_id: string | null; kind: string }>;
   supersessions: Array<{ superseded_doc_id: string; replacement_doc_id: string }>;
   mentions: Array<{ asset_id: string; document_id: string | null; knowledge_document_id: string | null }>;
@@ -723,6 +736,7 @@ function withoutRefused(rows: GraphRows, refused: ReadonlySet<string>): GraphRow
     ...rows,
     docAssets: rows.docAssets.filter((r) => !out(r.document_id)),
     projectDocs: rows.projectDocs.filter((r) => !out(r.document_id)),
+    ...(rows.documentRequests ? { documentRequests: rows.documentRequests.filter((r) => !out(r.document_id)) } : {}),
     related: rows.related.filter((r) => !out(r.document_id) && !out(r.target_document_id)),
     supersessions: rows.supersessions.filter((r) => !out(r.superseded_doc_id) && !out(r.replacement_doc_id)),
     mentions: rows.mentions.filter((m) => !out(m.document_id)
@@ -778,6 +792,10 @@ async function readOrgRows(
   // read is not drawn) and only by the client entry: the server entry's gate
   // speaks for documents, never for a request's read scope.
   const projectRequests = gate === null ? await readProjectRequests(orgId, notes) : [];
+  // drafting-flow PROJ-7 edge limb (DF-P25): the document ↔ request edge,
+  // from the request's source-document reference — only where the reader can
+  // read that document (RLS), and only by the client entry, as above.
+  const documentRequests = gate === null ? await readDocumentRequests(orgId, notes) : [];
 
   // Documents and libraries are the core — a real error there is fatal.
   if (docsR.error) throw new Error(docsR.error.message);
@@ -838,6 +856,7 @@ async function readOrgRows(
       docAssets: docAssets.rows, projectDocs: projectDocs.rows, related: related.rows,
       supersessions: supersessions.rows, mentions: mentions.rows, mirrorOf, flows: flows.rows, docTags,
       projectRequests,
+      ...(documentRequests.length > 0 ? { documentRequests } : {}),
     }, gated.refused),
     mentions: { installed: !mentions.missing, capped: mentions.capped },
     refused: gated.refused,
@@ -861,6 +880,49 @@ async function readProjectRequests(orgId: string, notes: string[]): Promise<NonN
   return r.rows
     .filter((t) => !t.archived_at && typeof t.project_id === "string" && t.project_id)
     .map((t) => ({ id: t.id, ticket_id: t.ticket_id, title: t.title, status: t.status, project_id: String(t.project_id) }));
+}
+
+const SOURCE_DOC_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** drafting-flow PROJ-7 edge limb (DF-P25 — DEC-90 / DEC-67): the requests
+ *  that name a source document (tickets.metadata.source_document.id),
+ *  keyset-paged to EDGE_CAP like every link table, the cap said; archived
+ *  requests are left out. The JSON is never trusted alone: the named
+ *  documents are read back as the reader (RLS, this workspace —
+ *  pageIn("documents", …)), and only a request whose document came back is
+ *  kept, so a reference to another workspace's document, a deleted one, or
+ *  one outside the reader's access draws nothing and is not counted. A read
+ *  that fails is a note and draws nothing; a request naming no document, or
+ *  a malformed id, draws nothing. */
+async function readDocumentRequests(orgId: string, notes: string[]): Promise<NonNullable<GraphRows["documentRequests"]>> {
+  type Row = { id: string; ticket_id: string | null; title: string | null; status: string | null; archived_at: string | null; source_document_id: string | null };
+  const r = await pageRows<Row>("tickets", "id, ticket_id, title, status, archived_at, source_document_id:metadata->source_document->>id", orgId, EDGE_CAP,
+    (q) => q.not("metadata->source_document->>id", "is", null));
+  if (r.error) {
+    if (!isMissingColumn(r.error)) notes.push(`Drafting requests on documents could not be loaded (${r.error.message}) — the map is incomplete.`);
+    return [];
+  }
+  const live = r.rows
+    .map((t) => ({ ...t, source_document_id: typeof t.source_document_id === "string" ? t.source_document_id.trim() : "" }))
+    .filter((t) => !t.archived_at && SOURCE_DOC_UUID.test(t.source_document_id));
+  const n = cappedNote("Document request links", r);
+  if (n) notes.push(n);
+  if (live.length === 0) return [];
+  const docIds = [...new Set(live.map((t) => t.source_document_id.toLowerCase()))];
+  const readable = await pageIn<{ id: string }>("documents", "id", orgId, "id", docIds, docIds.length + 1);
+  if (readable.error || readable.missing) {
+    if (readable.error) notes.push(`The documents drafting requests name could not be checked (${readable.error.message}) — those links are not drawn.`);
+    return [];
+  }
+  // One map, built once (review fix pass 5): each readable id in lower case
+  // → the id as the database gave it, so a request is matched in O(1).
+  const byLower = new Map(readable.rows.map((d) => [String(d.id).toLowerCase(), d.id] as const));
+  const out: NonNullable<GraphRows["documentRequests"]> = [];
+  for (const t of live) {
+    const documentId = byLower.get(t.source_document_id.toLowerCase());
+    if (documentId !== undefined) out.push({ id: t.id, ticket_id: t.ticket_id, title: t.title, status: t.status, document_id: documentId });
+  }
+  return out;
 }
 
 // ─── Scoped reads (GAP-306) ─────────────────────────────────────────────────
@@ -1179,6 +1241,19 @@ export function assembleOrgGraph(rows: GraphRows, opts: AssembleOptions = {}): O
       sub: `Drafting request${t.status ? ` · ${ticketStatusLabel(t.status)}` : ""}`, href: `/requests/${t.id}`, degree: 0,
     });
   }
+  // drafting-flow PROJ-7 edge limb (DF-P25): a request that names a readable
+  // source document is the same project-class node (once, whichever list
+  // names it first) — drawn only when that document is on the map (a capped
+  // or narrowed read that left it off counts the edge as leading off the
+  // map, by addEdge, and never leaves the request as an unlinked node).
+  const docsOnMap = new Set(rows.documents.map((d) => String(d.id)));
+  for (const t of rows.documentRequests ?? []) {
+    if (nodes.has(`req:${t.id}`) || !docsOnMap.has(String(t.document_id))) continue;
+    put({
+      id: `req:${t.id}`, type: "project", label: [t.ticket_id, t.title].filter(Boolean).join(" · ") || "Drafting request",
+      sub: `Drafting request${t.status ? ` · ${ticketStatusLabel(t.status)}` : ""}`, href: `/requests/${t.id}`, degree: 0,
+    });
+  }
   for (const pp of rows.plotPlans) {
     put({ id: `plot:${pp.id}`, type: "plot", label: pp.name, href: `/plot-plans/${pp.id}`, degree: 0 });
   }
@@ -1293,6 +1368,7 @@ export function assembleOrgGraph(rows: GraphRows, opts: AssembleOptions = {}): O
   }
   for (const r of rows.projectDocs) addEdge(`proj:${r.project_id}`, `doc:${r.document_id}`, "project");
   for (const t of rows.projectRequests ?? []) addEdge(`proj:${t.project_id}`, `req:${t.id}`, "project", { note: "Drafting request on this project" });
+  for (const t of rows.documentRequests ?? []) addEdge(`doc:${t.document_id}`, `req:${t.id}`, "project", { note: "Drafting request on this document" });
   for (const r of rows.related) {
     if (r.kind === "document" && r.target_document_id) {
       addEdge(`doc:${r.document_id}`, `doc:${r.target_document_id}`, "related");

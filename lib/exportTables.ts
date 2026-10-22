@@ -111,9 +111,10 @@ export const ORG_SCOPED_TABLES = [
   "ticket_sla_escalations",
   "ticket_preauthorizations",
   // drafting-flow DF-P24 (20261266): a request's examination data (values
-  // picked from the workspace's own lists, and any waiver) — EXPORTED as
-  // evidence; never imported (the integrator at the DF-P24 merge, 2026-10-22,
-  // DEC-90).
+  // picked from the workspace's own lists, and any waiver) — EXPORTED (the
+  // integrator at the DF-P24 merge, 2026-10-22, DEC-90); since DF-P25 also
+  // RESTORED after tickets with the waiver cleared (lib/dataRestore.ts
+  // RESTORE_SERVICE_ROLE_WAIVERS, landRestoredRow; DEC-90 ruling (7)).
   "ticket_examination_scopes",
   // drafting-flow DF-P6 (20261251): the equipment a request names (the tag as
   // typed and the registry asset it resolved to) — part of the request,

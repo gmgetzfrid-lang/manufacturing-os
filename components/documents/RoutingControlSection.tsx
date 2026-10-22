@@ -30,7 +30,7 @@ import { Route, Plus, Trash2, Loader2 } from "lucide-react";
 import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import {
-  parseRoutingControl, readRoutingControlAt, setRoutingControl, validateRoutingDraft, reviewsInFlightUnder, MODE_LABEL, ROUTING_PARTIES, examinationOptInAllowed,
+  parseRoutingControl, readRoutingControlAt, setRoutingControl, validateRoutingDraft, reviewsInFlightUnder, MODE_LABEL, ROUTING_PARTIES, examinationOptInAllowed, notifyExaminationOptInAllowed,
   type RoutingControl, type RoutingLevel, type RoutingSlot, type RoutingSlotFill, type RoutingSlotMode,
 } from "@/lib/routingControl";
 import { CAPABILITY_DEFS, type CapabilityId } from "@/lib/capabilityPolicy";
@@ -114,6 +114,38 @@ export function assuranceOptInFor(d: DraftSlot): "offer" | "engineering" | "none
   return requesterAlone ? "none" : "engineering";
 }
 
+/** drafting-flow DF-P25 (GAP-102 ruling (2), the notify-only limb): how a
+ *  draft NOTIFY-ONLY slot offers the examination opt-in — "offer" where the
+ *  parser keeps it (lib/routingControl.ts notifyExaminationOptInAllowed),
+ *  "none" otherwise. It adds no sign-off and no wait: its people's stop is a
+ *  hold that records what they examined. Never offered on another mode
+ *  (assuranceOptInFor decides a blocking slot, unchanged). Pure; exported
+ *  for tests. */
+export function notifyExaminationOptInFor(d: DraftSlot): "offer" | "none" {
+  if (d.mode !== "notify_only") return "none";
+  return notifyExaminationOptInAllowed({ mode: d.mode, fill: draftFill(d) }) ? "offer" : "none";
+}
+
+/** DF-P25 (review fix pass 4): a slot's mode changed in the editor. The
+ *  examination opt-in means one thing on a "must sign off" slot (an
+ *  assurance sign-off that must record what was examined) and another on a
+ *  notify-only slot (a stop that is a hold with the record), so a mode
+ *  change drops it — the controller ticks it again under the new meaning,
+ *  never carried over unchosen. Pure; exported for tests. */
+export function withSlotMode(d: DraftSlot, mode: RoutingSlotMode): DraftSlot {
+  if (d.mode === mode) return d;
+  const next: DraftSlot = { ...d, mode };
+  delete next.recordsExamination;
+  return next;
+}
+
+/** DF-P25: what the notify-only opt-in does — never a suggestion to add a
+ *  sign-off (GAP-102: assurance as notice plus a stop). DF-P25 review fix
+ *  pass 5: and never a claim the hold stops the request — it stops work on
+ *  the source document only (GAP-116 owns a stop of the request). */
+export const NOTIFY_EXAMINATION_HINT =
+  "Its people are still only told — nobody waits on them and no sign-off is added. If one of them finds a problem, they can place a hold on the request's source document from the request page, and the hold records the files they examined and why. The hold stops work on the document (no new revision of it is published, and it is not transmitted or shared, until the hold is released — unless Document Control forces a publish past it); it does not stop the request — its review can still complete and its deliverable be issued. Its people need permission to place holds (Admin → Permissions → Action permissions, Place a hold).";
+
 /** GAP-109 mechanism 2 (DF-P22): may this slot accept a standing
  *  pre-authorization? Exactly where the assurance opt-in may ride
  *  (assuranceOptInFor "offer"), and not while the slot IS an assurance
@@ -166,7 +198,9 @@ export function draftToControl(slots: DraftSlot[]): RoutingControl {
         // DF-P20 fix pass 2: the assurance opt-in, on a blocking slot not
         // filled by the requester alone, nor (merge-time fix pass) by an
         // engineering capability — a slot switched away drops it.
-        ...(d.recordsExamination && assuranceOptInFor(d) === "offer" ? { records_examination: true as const } : {}),
+        // DF-P25: or on a notify-only slot the parser keeps it on (its stop
+        // is a hold with the record — no sign-off, no wait).
+        ...(d.recordsExamination && (assuranceOptInFor(d) === "offer" || notifyExaminationOptInFor(d) === "offer") ? { records_examination: true as const } : {}),
         // DF-P22 (GAP-109 mechanism 2): the standing pre-authorization
         // opt-in, on a slot that can carry it (never an assurance check) — a
         // slot switched away, or made an assurance check, drops it.
@@ -407,7 +441,7 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
                   <div className="flex flex-wrap gap-2 items-center">
                     <input aria-label="Slot key" className={`${inp} w-36`} value={s.kind} onChange={(e) => patch(i, { kind: e.target.value })} placeholder="key (your words)" />
                     <input aria-label="Slot label" className={`${inp} flex-1 min-w-[10rem]`} value={s.label} onChange={(e) => patch(i, { label: e.target.value })} placeholder="What your facility calls it" />
-                    <select aria-label="Mode" className={inp} value={s.mode} onChange={(e) => patch(i, { mode: e.target.value as RoutingSlotMode })}>
+                    <select aria-label="Mode" className={inp} value={s.mode} onChange={(e) => { const mode = e.target.value as RoutingSlotMode; setSlots((all) => all.map((x, j) => (j === i ? withSlotMode(x, mode) : x))); }}>
                       {(["blocking", "consent_window", "notify_only"] as RoutingSlotMode[]).map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}
                     </select>
                     <button type="button" aria-label="Remove slot" onClick={() => setSlots((all) => all.filter((_, j) => j !== i))} className="p-1 text-[var(--color-text-faint)] hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
@@ -492,6 +526,13 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
                       <input type="checkbox" checked={!!s.recordsExamination} onChange={(e) => patch(i, { recordsExamination: e.target.checked })} />
                       <span className="font-bold text-[var(--color-text-muted)]">Assurance check — its reviewer records what they examined</span>
                       <span className="text-[var(--color-text-faint)]">{ASSURANCE_OPT_IN_HINT}</span>
+                    </label>
+                  )}
+                  {notifyExaminationOptInFor(s) === "offer" && (
+                    <label className="flex flex-wrap items-center gap-1.5 text-[11px]" data-testid="routing-slot-records-examination-notify">
+                      <input type="checkbox" checked={!!s.recordsExamination} onChange={(e) => patch(i, { recordsExamination: e.target.checked })} />
+                      <span className="font-bold text-[var(--color-text-muted)]">Record what they examined when they place a hold</span>
+                      <span className="text-[var(--color-text-faint)]">{NOTIFY_EXAMINATION_HINT}</span>
                     </label>
                   )}
                   {preauthOptInFor(s) === "offer" && (

@@ -215,13 +215,18 @@ export function preauthStanding(p: Pick<Preauthorization, "createdAt" | "expires
  *     the record (a member removed and re-added has a new row: lapsed);
  *   * the membership audit rows (MEMBERSHIP_STATUS_AUDIT_ACTIONS) — any
  *     status change of theirs at or after the record's creation: lapsed.
- * org_members keeps no time of a status change, so a suspension followed by
- * a restore on the same row is seen only through those audit rows. Anything
- * that cannot be read as a time is `unproven` (not in force). Pure.
+ *   * DF-P25 (the DF-P22 follow-up (a)) — org_members `status_changed_at`
+ *     (20261267: stamped by a BEFORE UPDATE trigger on every status change,
+ *     whoever writes it — the API or SQL): a change at or after the record's
+ *     creation is lapsed, so a status flipped straight on the table and
+ *     flipped back (no audit row) is seen. NULL means "not changed since the
+ *     column existed" — before the paste nothing is known from it, and the
+ *     audit rows above remain the second source (they are always read).
+ * Anything that cannot be read as a time is `unproven` (not in force). Pure.
  */
 export function preauthGrantorMembership(
   p: Pick<Preauthorization, "grantorId" | "createdAt">,
-  member: { status?: unknown; created_at?: unknown } | null | undefined,
+  member: { status?: unknown; created_at?: unknown; status_changed_at?: unknown } | null | undefined,
   statusChanges: ReadonlyArray<{ resource_id?: unknown; timestamp?: unknown }>,
 ): GrantorMembership {
   if (!member || member.status !== "active") return "lapsed";
@@ -229,6 +234,11 @@ export function preauthGrantorMembership(
   const joined = Date.parse(String(member.created_at ?? ""));
   if (!Number.isFinite(made) || !Number.isFinite(joined)) return "unproven";
   if (joined > made) return "lapsed";
+  if (member.status_changed_at !== undefined && member.status_changed_at !== null) {
+    const changed = Date.parse(String(member.status_changed_at));
+    if (!Number.isFinite(changed)) return "unproven";
+    if (changed >= made) return "lapsed";
+  }
   for (const c of statusChanges) {
     if (String(c.resource_id ?? "") !== p.grantorId) continue;
     const at = Date.parse(String(c.timestamp ?? ""));
@@ -240,44 +250,88 @@ export function preauthGrantorMembership(
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type MembershipDb = { from: (t: string) => any };
-/** The most membership audit rows read at once; a read that fills it is
- *  treated as unreadable (a truncated history proves nothing). */
+/** The most membership audit rows read at once for a slice of grantors; a
+ *  read that fills it is NOT trusted (a truncated history proves nothing):
+ *  DF-P25 (the DF-P22 follow-up (d)) reads that slice again grantor by
+ *  grantor — only each one's latest status change in the window — so no
+ *  volume of history refuses the whole list. */
 const MEMBERSHIP_AUDIT_CAP = 500;
 /** Grantors per membership read. */
 const MEMBERSHIP_READ_SLICE = 100;
 
+/** True when the error says 20261267's org_members.status_changed_at is not
+ *  there yet (42703 / PGRST204 naming it) — today's read is taken. */
+export function isMissingStatusChangedAt(err: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  if (!err) return false;
+  const code = String(err.code ?? "");
+  return (code === "42703" || code === "PGRST204") && /status_changed_at/.test(String(err.message ?? ""));
+}
+
 /**
  * Each record's grantor membership (preauthGrantorMembership), read as the
- * service role: the grantors' org_members rows and their membership audit
- * rows since the oldest record. `{ error }` when either read fails (the
- * caller treats every record as not in force, or says it could not check).
+ * service role: the grantors' org_members rows (with `status_changed_at`
+ * from 20261267 — before the paste the read without it, today's) and their
+ * membership audit rows. `{ error }` when a read fails (the caller treats
+ * every record as not in force, or says it could not check).
+ *
+ * DF-P25 (the DF-P22 follow-up (d)): only records still IN FORCE at `now`
+ * (preauthStanding — not revoked, not expired) are judged — a revoked or
+ * expired record is not in force whatever its grantor did, and gets no
+ * entry (the Admin list shows it revoked / expired) — and the history
+ * window starts at the oldest of THOSE in each slice (at most 365 days
+ * back), never at the oldest record the workspace ever made. A slice whose
+ * window still holds more rows than one read is read again grantor by
+ * grantor, each one's latest change only (a change at or after a record's
+ * creation is all that matters), so a long-lived workspace's Admin list
+ * never fails on history volume.
  */
 export async function readGrantorMemberships(
-  db: MembershipDb, orgId: string, records: ReadonlyArray<Pick<Preauthorization, "id" | "grantorId" | "createdAt">>,
+  db: MembershipDb, orgId: string, records: ReadonlyArray<Pick<Preauthorization, "id" | "grantorId" | "createdAt" | "expiresAt" | "revokedAt">>,
+  now: number = Date.now(),
 ): Promise<{ ok: true; byId: Map<string, GrantorMembership> } | { ok: false; error: string }> {
   const byId = new Map<string, GrantorMembership>();
-  if (records.length === 0) return { ok: true, byId };
-  const grantors = [...new Set(records.map((r) => r.grantorId).filter(Boolean))];
-  const times = records.map((r) => Date.parse(r.createdAt)).filter(Number.isFinite);
-  const since = times.length === records.length ? new Date(Math.min(...times)).toISOString() : null;
-  const memberRows: Array<{ uid?: unknown; status?: unknown; created_at?: unknown }> = [];
+  const inForce = records.filter((r) => preauthStanding(r, now));
+  if (inForce.length === 0) return { ok: true, byId };
+  const grantors = [...new Set(inForce.map((r) => r.grantorId).filter(Boolean))];
+  const memberRows: Array<{ uid?: unknown; status?: unknown; created_at?: unknown; status_changed_at?: unknown }> = [];
   const changes: Array<{ resource_id?: unknown; timestamp?: unknown }> = [];
+  const windowOf = (uids: readonly string[]): string | null => {
+    const mine = inForce.filter((r) => uids.includes(r.grantorId));
+    const times = mine.map((r) => Date.parse(r.createdAt)).filter(Number.isFinite);
+    return times.length === mine.length && times.length > 0 ? new Date(Math.min(...times)).toISOString() : null;
+  };
+  let withChangedAt = true;
   // In slices, so an Admin's list of many grantors never builds one huge filter.
   for (let i = 0; i < grantors.length; i += MEMBERSHIP_READ_SLICE) {
     const slice = grantors.slice(i, i + MEMBERSHIP_READ_SLICE);
-    const { data: mRows, error: mErr } = await db.from("org_members").select("uid, status, created_at").eq("org_id", orgId).in("uid", slice);
+    const readMembers = (cols: string) => db.from("org_members").select(cols).eq("org_id", orgId).in("uid", slice);
+    let { data: mRows, error: mErr } = await readMembers(withChangedAt ? "uid, status, created_at, status_changed_at" : "uid, status, created_at");
+    if (mErr && withChangedAt && isMissingStatusChangedAt(mErr)) {
+      withChangedAt = false;
+      ({ data: mRows, error: mErr } = await readMembers("uid, status, created_at"));
+    }
     if (mErr) return { ok: false, error: `the grantors' memberships could not be read: ${mErr.message ?? mErr}` };
     memberRows.push(...((mRows as typeof memberRows | null) ?? []));
-    let aq = db.from("audit_logs").select("resource_id, action, timestamp").eq("org_id", orgId).in("resource_id", slice).in("action", [...MEMBERSHIP_STATUS_AUDIT_ACTIONS]);
-    if (since) aq = aq.gte("timestamp", since);
-    const { data: aRows, error: aErr } = await aq.limit(MEMBERSHIP_AUDIT_CAP);
+    const history = (uids: readonly string[]) => {
+      let aq = db.from("audit_logs").select("resource_id, action, timestamp").eq("org_id", orgId).in("resource_id", [...uids]).in("action", [...MEMBERSHIP_STATUS_AUDIT_ACTIONS]);
+      const since = windowOf(uids);
+      if (since) aq = aq.gte("timestamp", since);
+      return aq;
+    };
+    const { data: aRows, error: aErr } = await history(slice).limit(MEMBERSHIP_AUDIT_CAP);
     if (aErr) return { ok: false, error: `the grantors' membership history could not be read: ${aErr.message ?? aErr}` };
     const got = (aRows as typeof changes | null) ?? [];
-    if (got.length >= MEMBERSHIP_AUDIT_CAP) return { ok: false, error: "the grantors' membership history is longer than one read" };
-    changes.push(...got);
+    if (got.length < MEMBERSHIP_AUDIT_CAP) { changes.push(...got); continue; }
+    // More history in this slice's window than one read: each grantor's
+    // latest change only — all a record's continuity turns on.
+    for (const uid of slice) {
+      const { data: one, error: oneErr } = await history([uid]).order("timestamp", { ascending: false }).limit(1);
+      if (oneErr) return { ok: false, error: `the grantors' membership history could not be read: ${oneErr.message ?? oneErr}` };
+      changes.push(...((one as typeof changes | null) ?? []));
+    }
   }
   const members = new Map(memberRows.map((m) => [String(m.uid ?? ""), m] as const));
-  for (const r of records) byId.set(r.id, preauthGrantorMembership(r, members.get(r.grantorId), changes));
+  for (const r of inForce) byId.set(r.id, preauthGrantorMembership(r, members.get(r.grantorId), changes));
   return { ok: true, byId };
 }
 

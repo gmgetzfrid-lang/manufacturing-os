@@ -967,6 +967,31 @@
      "sequencingNotes": [
       "Added by the integrator at the DF-P22 merge, 2026-10-22 (DEC-31). Run after DF-P23; may run beside DF-P24 only if their route hunks do not overlap — otherwise after it."
      ]
+    },
+    {
+     "name": "DF-P26 ISSUING-PATH STOPS — exception-only review and a notify-only hold that stops the request, both on the issuing path",
+     "findings": [
+      "drafting-flow GAP-115 (opened at DF-P25, owned here; assigned at the DF-P25 merge, 2026-10-22, DEC-31): GAP-109 mechanism 3, exception-only review — a slot opt-in satisfied by a recorded system act naming the rule when no recorded exception exists, AND the re-open limb (an exception recorded later re-opens the slot before anything issues: the workflow route's issuing approvals and completing sign-off, the consent window's close in lib/consentWindowScan.ts and lib/workflow.ts changed together, a 'reopened' ledger event, the satisfied_via / shape / event CHECKs re-created from their NEWEST bodies, the DEC-12 floor exclusion in every place it is computed); never on the engineered lane; default off, an unconfigured workspace byte-identical (A/B sweep); both limbs land in one merge or neither does",
+      "drafting-flow GAP-116 (opened at DF-P25, owned here): a notify-only assurance occupant's hold carrying this request's examination record and a slot opener stops the request — a 409 on ISSUING_APPROVALS, a completing sign_slot and the consent close while such an open hold exists; without such a hold every outcome byte-identical (A/B sweep); Document Control's forced publish past a hold is unchanged",
+      "drafting-flow GAP-102 acceptance 2 (assigned at the DF-P25 merge, 2026-10-22, DEC-31; earlier proposed for the notifications area, which has no package holding the issue notice): the issue notice carries the request's recorded examination data (the scope values and any assurance / hold examination record, names and counts only) through the existing notification kind; a request with none sends exactly today's notice (pin); declare the notice producer's files (lib/notifications.ts / the library watchers' fan-out) under filesOutsidePlan"
+     ],
+     "files": [
+      "app/api/tickets/workflow-action/route.ts (the issuing path only)",
+      "lib/workflow.ts",
+      "lib/consentWindowScan.ts",
+      "lib/consentWindow.ts",
+      "lib/routingControl.ts",
+      "lib/ticketRoster.ts",
+      "supabase/migrations/** (one DEC-30 file)",
+      "tests"
+     ],
+     "migrationsLikely": 1,
+     "dependsOn": [
+      "drafting-flow DF-P25 merged"
+     ],
+     "sequencingNotes": [
+      "Added by the integrator at the DF-P25 merge, 2026-10-22 (DEC-31). The workflow route's sole holder while it runs."
+     ]
     }
   ],
   "crossAreaFileOverlaps": [

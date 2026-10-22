@@ -399,7 +399,9 @@ export function openRoster(input: {
       ...(s.mode === "consent_window" && s.consent_confirmed === true ? { ...windowConfigOf(s), consentConfirmed: true } : {}),
       // GAP-102 (DF-P20 fix pass 2): the controller's assurance opt-in, frozen
       // with the roster; absent, the slot is stored exactly as before.
-      ...(s.mode === "blocking" && s.records_examination === true ? { recordsExamination: true as const } : {}),
+      // DF-P25: a notify-only slot's opt-in rides too (its stop is a hold with
+      // the record — never a sign-off; isAssuranceSlot stays blocking-only).
+      ...((s.mode === "blocking" || s.mode === "notify_only") && s.records_examination === true ? { recordsExamination: true as const } : {}),
       // GAP-109 mechanism 2 (DF-P22): the controller's standing
       // pre-authorization opt-in, frozen with the roster (never on an
       // assurance slot — parseRoutingControl drops it there); absent, the
