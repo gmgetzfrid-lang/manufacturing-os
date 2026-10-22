@@ -84,6 +84,17 @@
 //     match decides, so behind them it never bound for a request type with a
 //     row of its own), and a stored code-class row that sits behind such
 //     rules says which of them decide first (rulesDecidingBeforeClassRule).
+//     Merge-time fix pass (review minor 1): not ahead of EVERY other rule —
+//     a new code-class row goes after every stored rule that can match a
+//     request of its class (a library rule, a rule naming that class, a
+//     multi-key rule that does not exclude it), so it never cancels one, and
+//     ahead of the request-type / unit rules; where such a stored rule sits
+//     behind a request-type / unit rule, the new row goes right after it and
+//     the row note and the save preview name the rules that decide first.
+//     Only IN-FORCE rules ahead are named as deciding first; an unconfirmed
+//     one ahead is described by what it does — it adds its roles, and on the
+//     engineer-gate exemption nothing until confirmed (classRuleAheadNote,
+//     review minor 2).
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { SlidersHorizontal, Loader2, RotateCcw, Check, AlertTriangle, Plus, X } from "lucide-react";
@@ -95,7 +106,8 @@ import {
   validateCapabilityPolicy, invalidateCapabilityPolicy, isRuleArray, ruleIsConditional, describeWhen,
   CapabilityPolicyChangeError, POLICY_CHANGED, PROJECT_SCOPED_CAPS, announceCapabilityPolicyChanged,
   HOLD_OPENER_TOKEN, ticketDimensionRules, confirmCapabilityRule, capabilityRuleKey, GATE_EXEMPT_CAP, isTicketResourceCap,
-  isTicketDimensionRule, ruleInForce, inForceTicketRulesDropped, inForceTicketRulesShadowed,
+  isTicketDimensionRule, ruleInForce, inForceTicketRulesDropped, inForceTicketRulesShadowed, inForceTicketRulesShadowedRefusal,
+  rulesCanOverlap, RULE_KEYS,
   type CapabilityId, type CapabilityEntry, type CapabilityRule, type CapabilityPolicy, type TicketDimensionRuleState,
 } from "@/lib/capabilityPolicy";
 import { loadRequestTypeOptions, type RequestTypeOption } from "@/lib/requestTypes";
@@ -215,12 +227,15 @@ export function holdsReleaseOnOldDefault(tokens: readonly string[] | undefined):
  *  where no stored rule matches first. With nothing stored as a rule list,
  *  the order is the one the grid always wrote.
  *  DF-P19 fifth fix pass (review major 1): except a NEW code-class row,
- *  which goes AHEAD of the first request-type / project / preserved rule
- *  (after any code-class rows already leading) — "final approval on this
- *  code's requests only by Engineer-3" must decide before a request type's
- *  own override, or it never binds for that type. A stored code-class row
- *  keeps its place (a save never reorders stored rules); the console says
- *  which rules decide before it (rulesDecidingBeforeClassRule). */
+ *  which goes AHEAD of the request-type / unit rules — "final approval on
+ *  this code's requests only by Engineer-3" must decide before a request
+ *  type's own override, or it never binds for that type. A stored
+ *  code-class row keeps its place (a save never reorders stored rules); the
+ *  console says which rules decide before it (classRuleAheadNote).
+ *  Merge-time fix pass (review minor 1): and AFTER every stored rule that
+ *  can match a request of its class (classRuleSlot) — written ahead of a
+ *  confirmed library rule, or of a stored {class, request type} rule, it
+ *  would silently cancel that rule for the overlap. */
 function conditionalRulesInStoredOrder(
   cap: CapabilityId,
   storedEntry: CapabilityEntry | undefined,
@@ -264,32 +279,106 @@ function conditionalRulesInStoredOrder(
       if (k) out.push(k);
     }
   }
-  // Fifth fix pass: new code-class rows go before the first rule of any
-  // other kind (after the code-class rows already leading).
-  let at = out.findIndex((r) => editorRowKind(cap, r) !== "codeClass");
-  if (at < 0) at = out.length;
-  return [...out.slice(0, at), ...classLeft.map(classRule), ...out.slice(at), ...rowsLeft.map(typeRule), ...projectLeft.map(projectRule), ...keepLeft];
+  // Fifth fix pass / merge-time fix pass (review minor 1): each new
+  // code-class row goes where classRuleSlot puts it among the stored rules.
+  for (const o of classLeft) {
+    const r = classRule(o);
+    out.splice(classRuleSlot(out, r), 0, r);
+  }
+  return [...out, ...rowsLeft.map(typeRule), ...projectLeft.map(projectRule), ...keepLeft];
 }
 
-/** DF-P19 fifth fix pass (review major 1): the conditional rules that sit
- *  AHEAD of the code-class rule for `codeClass` in `entry` and can match a
- *  request of that class (every rule that does not name only other code
- *  classes) — for those requests they decide first, so the code-class rule
- *  does not apply to them. Empty when the code-class rule leads (every new
- *  one is written so — conditionalRulesInStoredOrder) or is not in `entry`.
- *  Pure. */
-export function rulesDecidingBeforeClassRule(cap: CapabilityId, entry: CapabilityEntry | undefined, codeClass: string): CapabilityRule[] {
+/** Does this rule name only keys a request presented before DF-P19 — its
+ *  request type and / or its unit (a request-type row, a unit rule)? */
+function isTypeOrUnitRule(r: CapabilityRule): boolean {
+  const keys = RULE_KEYS.filter((k) => (r.when?.[k]?.length ?? 0) > 0);
+  return keys.length > 0 && keys.every((k) => k === "requestType" || k === "unit");
+}
+
+/** DF-P19 merge-time fix pass (review minor 1): where a NEW code-class rule
+ *  `rule` goes in the conditional rules `rules` (stored order): AFTER every
+ *  rule there that can match a request of its class (rulesCanOverlap — a
+ *  library rule, a rule naming that class, a multi-key rule whose `when`
+ *  does not exclude it; a request-type / unit rule aside) — so it never
+ *  cancels one of them for the overlap — and AHEAD of every request-type /
+ *  unit rule, so it binds whatever the request type. It is written just
+ *  ahead of the first request-type / unit rule: the rules between the last
+ *  one that can match and that slot cannot match a request of its class,
+ *  so every request is decided as at the earliest such slot, and the stored
+ *  rules ahead keep their order. Where a rule that can match sits BEHIND a
+ *  request-type / unit rule, no slot is both; it then goes right after the
+ *  last rule that can match, and classRuleAheadNote names the rules that
+ *  decide first for it (the row note and the save preview). Pure. */
+export function classRuleSlot(rules: readonly CapabilityRule[], rule: CapabilityRule): number {
+  let lastMatch = -1;
+  let firstTypeOrUnit = rules.length;
+  rules.forEach((r, i) => {
+    if (isTypeOrUnitRule(r)) { if (i < firstTypeOrUnit) firstTypeOrUnit = i; return; }
+    if (ruleIsConditional(r) && rulesCanOverlap(r, rule)) lastMatch = i;
+  });
+  return lastMatch < firstTypeOrUnit ? firstTypeOrUnit : lastMatch + 1;
+}
+
+/** The conditional rules AHEAD of the code-class rule for `codeClass` in
+ *  `entry` that can match a request of that class (rulesCanOverlap: every
+ *  rule that does not exclude the class). Empty when the code-class rule is
+ *  not in `entry`. */
+function rulesAheadOfClassRule(cap: CapabilityId, entry: CapabilityEntry | undefined, codeClass: string): CapabilityRule[] {
   if (!isRuleArray(entry)) return [];
   const at = entry.findIndex((r) => editorRowKind(cap, r) === "codeClass" && r.when?.codeClass?.[0] === codeClass);
   if (at < 0) return [];
-  return entry.slice(0, at).filter((r) => ruleIsConditional(r) && !((r.when?.codeClass?.length ?? 0) > 0 && !r.when!.codeClass!.includes(codeClass)));
+  const probe: CapabilityRule = { tokens: [], when: { codeClass: [codeClass] } };
+  return entry.slice(0, at).filter((r) => ruleIsConditional(r) && rulesCanOverlap(r, probe));
+}
+
+/** DF-P19 fifth fix pass (review major 1): the rules that sit AHEAD of the
+ *  code-class rule for `codeClass` in `entry`, can match a request of that
+ *  class, and are IN FORCE (ruleInForce) — for the requests they match they
+ *  decide first, so the code-class rule does not apply to them. Merge-time
+ *  fix pass (review minor 2): an unconfirmed rule ahead is not one of them —
+ *  the evaluator scans past it (effectiveTokens): it adds its roles to the
+ *  answer, or on `ticket.engineer_gate_exempt` does nothing
+ *  (unconfirmedRulesBeforeClassRule). Empty when nothing in force that can
+ *  match sits ahead, or the rule is not in `entry`. Pure. */
+export function rulesDecidingBeforeClassRule(cap: CapabilityId, entry: CapabilityEntry | undefined, codeClass: string): CapabilityRule[] {
+  return rulesAheadOfClassRule(cap, entry, codeClass).filter((r) => ruleInForce(cap, r));
+}
+
+/** DF-P19 merge-time fix pass (review minor 2): the NOT-yet-confirmed
+ *  request dimension rules ahead of the code-class rule for `codeClass`
+ *  that can match a request of that class. Pure. */
+export function unconfirmedRulesBeforeClassRule(cap: CapabilityId, entry: CapabilityEntry | undefined, codeClass: string): CapabilityRule[] {
+  return rulesAheadOfClassRule(cap, entry, codeClass).filter((r) => !ruleInForce(cap, r));
+}
+
+/** DF-P19 merge-time fix pass (review minors 1 and 2): what the row note
+ *  and the save preview say about the rules ahead of the code-class rule
+ *  for `codeClass` — what the evaluator does with each (effectiveTokens):
+ *  an in-force rule that can match decides first where it matches; an
+ *  unconfirmed one adds its roles to the answer (on
+ *  `ticket.engineer_gate_exempt` it does nothing) until an Admin confirms
+ *  it, and then decides first. "" when nothing ahead can match. Pure. */
+export function classRuleAheadNote(cap: CapabilityId, entry: CapabilityEntry | undefined, codeClass: string): string {
+  const deciding = rulesDecidingBeforeClassRule(cap, entry, codeClass);
+  const unconfirmed = unconfirmedRulesBeforeClassRule(cap, entry, codeClass);
+  const parts: string[] = [];
+  if (deciding.length > 0) {
+    parts.push(`does not apply where ${deciding.map((x) => describeWhen(x.when)).join(" / ")} — ${deciding.length > 1 ? "those rules sit ahead and decide" : "that rule sits ahead and decides"} first`);
+  }
+  for (const r of unconfirmed) {
+    parts.push(cap === GATE_EXEMPT_CAP
+      ? `where ${describeWhen(r.when)} a rule not yet confirmed sits ahead — it does nothing until an Admin confirms it, and then it decides first`
+      : `where ${describeWhen(r.when)} a rule not yet confirmed sits ahead — it adds ${r.tokens.join(", ") || "nobody"} to this rule's answer until an Admin confirms it, and then it decides first`);
+  }
+  return parts.join("; ");
 }
 
 /** Recombine for saving: a capability with no override keeps the bare-list
  *  shape (byte-compatible with what it stored before); one with overrides
  *  becomes a rule list — base first, then one rule per code-class row
  *  (DF-P19 second fix pass; ahead of the others since the fifth fix pass,
- *  review major 1 — the first match decides), then one rule per
+ *  review major 1 — the first match decides; with a stored rule list, see
+ *  classRuleSlot), then one rule per
  *  request-type row, then one rule per project row (QUAL-14), then any
  *  preserved rules.
  *  DF-P19 fix pass (review minor 4): given the `stored` policy the grid was
@@ -587,9 +676,10 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
       }
       // Fourth fix pass (review major 1): nor a rule ahead of one (the first
       // match decides) — the route refuses that too.
+      // Merge-time fix pass (review nit 4): one wording with the route's.
       const shadowed = inForceTicketRulesShadowed(caps, storedPolicy?.caps);
       if (shadowed.length > 0) {
-        setMsg({ tone: "err", text: `Only an Admin may add, change, remove or reorder a rule ahead of an in-force code-class / library rule (${shadowed.map((x) => `${CAPABILITY_DEFS.find((d) => d.id === x.cap)?.label ?? x.cap} where ${describeWhen(x.rule.when)}`).join("; ")}) — a new request-type rule goes after it, but a new code-class rule is written ahead of the request-type / unit rules, so where one sits behind them an Admin adds it. Nothing was saved.` });
+        setMsg({ tone: "err", text: inForceTicketRulesShadowedRefusal(shadowed, capLabel) });
         return;
       }
     }
@@ -631,9 +721,11 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
       const takesEffect = classRuleTakesEffect(d.id, hasAnyRole(["Admin"]));
       for (const r of nowCls) {
         const prev = wasCls.find((w) => w.codeClass === r.codeClass);
-        // Fifth fix pass (review major 1): name the rules that decide first.
-        const ahead = rulesDecidingBeforeClassRule(d.id, caps[d.id], r.codeClass);
-        const except = ahead.length > 0 ? `; except where ${ahead.map((x) => describeWhen(x.when)).join(" / ")} — that rule sits ahead and decides first` : "";
+        // Fifth fix pass (review major 1): name the rules that decide first;
+        // merge-time fix pass (review minor 2): only in-force ones, and an
+        // unconfirmed one ahead by what it does.
+        const ahead = classRuleAheadNote(d.id, caps[d.id], r.codeClass);
+        const except = ahead ? `; ${ahead}` : "";
         if (!prev) changes.push(`${d.label} for code class ${classLabel(r.codeClass)}: ONLY ${r.tokens.join(", ") || "nobody"} (new code-class rule — ${takesEffect}${except})`);
         else if (!sameTokens(prev.tokens, r.tokens)) changes.push(`${d.label} for code class ${classLabel(r.codeClass)}: ONLY ${r.tokens.join(", ") || "nobody"} (was ${prev.tokens.join(", ") || "nobody"} — ${takesEffect}${except})`);
       }
@@ -944,7 +1036,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
         <div className="mt-3 pt-3 border-t border-[var(--color-border)]" data-testid="code-class-rules">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs font-black text-[var(--color-text)]">Code-class rules</span>
-            <span className="text-[10px] text-[var(--color-text-faint)]">for requests of one code class (set at triage), the rule&apos;s list REPLACES the row above &mdash; &ldquo;final approval on this code&apos;s requests only by Engineer-3&rdquo;. The first matching rule decides: a new code-class rule is written ahead of the request-type and unit rules, so it applies whatever the request type; a rule that sits behind one of them says so, and for those requests that rule decides first. Enforced in the workflow route, the request page, the requests list, the inbox and the badge. An Admin&apos;s save puts a new rule in force; anyone else&apos;s only adds people until an Admin confirms it (listed below).</span>
+            <span className="text-[10px] text-[var(--color-text-faint)]">for requests of one code class (set at triage), the rule&apos;s list REPLACES the row above &mdash; &ldquo;final approval on this code&apos;s requests only by Engineer-3&rdquo;. The first matching rule decides: a new code-class rule is written after every stored rule that can match a request of its class (a library rule, a rule naming that class) and ahead of the request-type and unit rules, so it cancels none of those rules and applies whatever the request type. Where such a stored rule sits behind a request-type or unit rule, the new rule goes after it. A rule that has rules ahead of it says so: where one of them is in force, that rule decides first for the requests it matches. Enforced in the workflow route, the request page, the requests list, the inbox and the badge. An Admin&apos;s save puts a new rule in force; anyone else&apos;s only adds people until an Admin confirms it (listed below).</span>
           </div>
           {canEdit && (
             <div className="mt-2 flex items-center gap-2 flex-wrap">
@@ -986,9 +1078,9 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
                   </div>
                   {row.tokens.length === 0 && <span className="text-[10px] font-bold text-rose-700 dark:text-rose-300">nobody by role — only personal grants and identity rights apply</span>}
                   {tokensOutsideGrid(row.tokens).length > 0 && <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300">also stored: {tokensOutsideGrid(row.tokens).join(", ")} — still live</span>}
-                  {rulesDecidingBeforeClassRule(def.id, draftCaps[def.id], row.codeClass).length > 0 && (
+                  {classRuleAheadNote(def.id, draftCaps[def.id], row.codeClass) && (
                     <span data-class-rule-decided-first className="text-[10px] font-bold text-amber-700 dark:text-amber-300">
-                      does not apply where {rulesDecidingBeforeClassRule(def.id, draftCaps[def.id], row.codeClass).map((x) => describeWhen(x.when)).join(" / ")} &mdash; that rule sits ahead and decides first (to put this rule first, an Admin removes it, saves, and adds it again)
+                      {classRuleAheadNote(def.id, draftCaps[def.id], row.codeClass)}
                     </span>
                   )}
                   {!mayConfirm && inForceClassRule(storedPolicy, def.id, row.codeClass) && <span data-class-rule-admin-only className="text-[10px] font-bold text-[var(--color-text-faint)]">in force — only an Admin may change or remove it</span>}

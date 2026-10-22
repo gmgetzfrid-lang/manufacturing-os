@@ -1168,3 +1168,46 @@ describe("DF-P19 fourth fix pass (review major 1) — no rule ahead of an in-for
     expect(tokensFor(written, "ticket.final_approve", { requestType: "RFI", codeClass: "B313" })).toEqual(["Admin"]);
   });
 });
+
+// drafting-flow DF-P19 merge-time fix pass (review minor 3 / nit 4): a rule
+// that cannot match the same requests as an in-force one does not shadow it.
+// Stored [base, EWR rule, confirmed {Admin} for B313]: a DocCtrl's new B16
+// rule (as the console writes it, ahead of the EWR rule) is accepted; one
+// that can reach a B313 request ahead of it is still refused, with the
+// console's wording.
+describe("DF-P19 merge-time fix pass (review minor 3) — a rule that cannot match the same requests shadows nothing", () => {
+  const STAMP = { confirmedAt: "2026-10-20T00:00:00.000Z", confirmedBy: "a1" };
+  const B313_RULE = { tokens: ["Admin"], when: { codeClass: ["B313"] }, ...STAMP };
+  const EWR_RULE = { tokens: ["Engineer", "Admin"], when: { requestType: ["EWR"] } };
+  const BASE = { tokens: ["Engineer", "Admin"] };
+  const CONFIRMED: CapabilityPolicy = {
+    caps: { ...STORED.caps, "ticket.final_approve": [BASE, EWR_RULE, B313_RULE] },
+    grants: STORED.grants,
+  };
+  const bare = (r: Record<string, unknown>) => ({ tokens: r.tokens, when: r.when });
+  beforeEach(() => { seedPolicyOrg(); state.rows.org_configurations = [config(CONFIRMED)]; });
+
+  it("a DocCtrl's B16 rule written by the console is accepted (200), stored unconfirmed; B313 requests stay Admin's only", async () => {
+    const split = splitPolicyForEditor(CONFIRMED);
+    const caps = joinPolicyFromEditor(split.base, split.overrides, split.opaque, split.projectOverrides, CONFIRMED,
+      { "ticket.final_approve": [...(split.codeClassOverrides["ticket.final_approve"] ?? []), { codeClass: "B16", tokens: ["Engineer-2"] }] });
+    state.user = { id: "c1" };
+    expect((await policy({ op: "save", orgId: "o1", caps })).status).toBe(200);
+    const written = updates("org_configurations")[0].data as CapabilityPolicy;
+    expect(tokensFor(written, "ticket.final_approve", { requestType: "EWR", codeClass: "B313" })).toEqual(["Engineer", "Admin"]);
+    expect(tokensFor(written, "ticket.final_approve", { requestType: "DCN", codeClass: "B313" })).toEqual(["Admin"]);
+    expect((tokensFor(written, "ticket.final_approve", { requestType: "DCN", codeClass: "B16" }) as string[]).sort()).toEqual(["Engineer", "Engineer-2", "Admin"].sort());
+  });
+
+  it("a DocCtrl's rule ahead that can reach a B313 request is refused (403) with the console's wording, nothing written", async () => {
+    state.user = { id: "c1" };
+    const caps = { ...CONFIRMED.caps, "ticket.final_approve": [BASE, EWR_RULE, { tokens: ["Engineer"], when: { libraryId: ["1b000000-0000-4000-8000-000000000001"] } }, bare(B313_RULE)] };
+    const res = await policy({ op: "save", orgId: "o1", caps });
+    expect(res.status).toBe(403);
+    const error = (await res.json()).error as string;
+    expect(error).toMatch(/Only an Admin may add, change, remove or reorder a rule ahead of an in-force code-class \/ library rule \(Final engineering approval where codeClass ∈ \{B313\}\)/);
+    expect(error).toContain("a new code-class rule after every stored rule that can match its requests");
+    expect(error).not.toContain("a new rule goes after it");
+    expect(updates("org_configurations")).toHaveLength(0);
+  });
+});

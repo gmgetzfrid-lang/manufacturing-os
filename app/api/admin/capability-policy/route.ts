@@ -45,8 +45,9 @@
 // server stamps it — carryTicketRuleConfirmation; a client never sends the
 // stamp; a DocCtrl's new rule is stored unconfirmed — second fix pass,
 // review minor 3; an IN-FORCE one is Admin's to change or remove — third fix
-// pass, review major 2 — and so is any rule ahead of it, since the first
-// match decides: fourth fix pass, review major 1, inForceTicketRulesShadowed);
+// pass, review major 2 — and so is any rule ahead of it that can match the
+// same requests, since the first match decides: fourth fix pass, review
+// major 1, inForceTicketRulesShadowed; merge-time fix pass, review minor 3);
 // one already stored keeps its stamp or stays unconfirmed, and an
 // unconfirmed one only ADDS (lib/capabilityPolicy.ts effectiveTokens) until
 // an Admin confirms it here (`confirm_rule`, the rule named by
@@ -67,7 +68,7 @@ import {
   CAPABILITY_DEFS, baseTokensFor, grantActive, isRuleArray, normalizeCapabilityEntry,
   parseStoredCapabilityPolicy, ruleIsConditional, validateCapabilityPolicy, invalidateCapabilityPolicy,
   policyHasProjectScopedRule, samePolicyVersion, POLICY_CHANGED, PROJECT_SCOPED_CAPS, sameGrant,
-  RULE_KEYS, carryTicketRuleConfirmation, confirmTicketDimensionRule, inForceTicketRulesDropped, inForceTicketRulesShadowed, describeWhen,
+  RULE_KEYS, carryTicketRuleConfirmation, confirmTicketDimensionRule, inForceTicketRulesDropped, inForceTicketRulesShadowed, inForceTicketRulesShadowedRefusal, describeWhen,
   type CapabilityId, type CapabilityPolicy, type UserGrant,
 } from "@/lib/capabilityPolicy";
 import { memberHoldsAny } from "@/lib/roleHeld";
@@ -239,10 +240,13 @@ export async function POST(req: NextRequest) {
       // Fourth fix pass (review major 1): nor put a rule AHEAD of one — the
       // first matching rule decides, so a rule added, moved, edited or
       // removed in front of a confirmed narrowing cancels it while the
-      // narrowing itself stays stored (0 dropped above). New rules go after.
+      // narrowing itself stays stored (0 dropped above). Merge-time fix pass
+      // (review minor 3): only the rules ahead that can match the same
+      // requests count (a B16-only rule never reaches a B313 request). The
+      // wording is the console's (review nit 4).
       const shadowed = inForceTicketRulesShadowed(caps, before.caps);
       if (shadowed.length > 0) {
-        return bad(`Only an Admin may add, change, remove or reorder a rule ahead of an in-force code-class / library rule (${shadowed.map((d) => `${label(d.cap)} where ${describeWhen(d.rule.when)}`).join("; ")}) — a new rule goes after it. Nothing was saved.`, 403);
+        return bad(inForceTicketRulesShadowedRefusal(shadowed, label), 403);
       }
     }
     const carried = carryTicketRuleConfirmation(caps, before.caps, { at: nowIso, by: caller.id }, isAdmin);

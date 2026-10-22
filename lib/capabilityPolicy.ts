@@ -1003,7 +1003,14 @@ export function ticketDimensionRules(policy: CapabilityPolicy | null | undefined
  *  narrowing in one save and adding it back in the next can no longer
  *  confirm it. Any stamp on any other rule is dropped. Returns the caps to
  *  store, the rules this save confirmed and the new rules it stored
- *  unconfirmed (both for the audit row). */
+ *  unconfirmed (both for the audit row).
+ *  DF-P19 merge-time fix pass (with review nit 6): two stored rules may share
+ *  a key (the same tokens and `when`, one confirmed and one not); the n-th
+ *  rule with a key in `caps` carries the n-th stored one's stamp (or none),
+ *  so a save never moves a confirmation from one copy to the other — before,
+ *  every copy took the FIRST stored copy's, so an unconfirmed copy ahead
+ *  could strip the confirmed one behind it. A copy beyond the stored count
+ *  is new. Unchanged for a key stored once. */
 export function carryTicketRuleConfirmation(
   caps: CapabilityPolicy["caps"] | null | undefined,
   storedCaps: CapabilityPolicy["caps"] | null | undefined,
@@ -1020,12 +1027,16 @@ export function carryTicketRuleConfirmation(
   for (const [id, entry] of Object.entries(caps ?? {}) as Array<[CapabilityId, CapabilityEntry]>) {
     if (!isRuleArray(entry)) { out[id] = entry; continue; }
     const prior = storedCaps?.[id];
-    const stored = new Map<string, CapabilityRule>();
-    if (isRuleArray(prior)) for (const r of prior) if (!stored.has(capabilityRuleKey(r))) stored.set(capabilityRuleKey(r), r);
+    const stored = new Map<string, CapabilityRule[]>();
+    if (isRuleArray(prior)) for (const r of prior) { const k = capabilityRuleKey(r); stored.set(k, [...(stored.get(k) ?? []), r]); }
+    const seen = new Map<string, number>();
     out[id] = entry.map((r) => {
       const bare: CapabilityRule = r.when ? { tokens: r.tokens, when: r.when } : { tokens: r.tokens };
       if (!isTicketDimensionRule(id, bare)) return bare;
-      const was = stored.get(capabilityRuleKey(bare));
+      const k = capabilityRuleKey(bare);
+      const n = seen.get(k) ?? 0;
+      seen.set(k, n + 1);
+      const was = stored.get(k)?.[n];
       if (was) {
         return was.confirmedAt ? { ...bare, confirmedAt: was.confirmedAt, ...(was.confirmedBy ? { confirmedBy: was.confirmedBy } : {}) } : bare;
       }
@@ -1045,7 +1056,10 @@ export function carryTicketRuleConfirmation(
  *  `ticket.engineer_gate_exempt`, does nothing — and the narrowing the
  *  Admin confirmed would silently lapse, fail-open). The policy route
  *  refuses such a save from anyone but an Admin; the editor locks those
- *  rows for a non-Admin and runs the same check before it sends. Pure. */
+ *  rows for a non-Admin and runs the same check before it sends. Merge-time
+ *  fix pass: counted by occurrence, as carryTicketRuleConfirmation carries
+ *  stamps — the n-th stored copy of a key is kept only when `caps` holds at
+ *  least n copies. Pure. */
 export function inForceTicketRulesDropped(
   caps: CapabilityPolicy["caps"] | null | undefined,
   storedCaps: CapabilityPolicy["caps"] | null | undefined,
@@ -1054,9 +1068,14 @@ export function inForceTicketRulesDropped(
   for (const [id, prior] of Object.entries(storedCaps ?? {}) as Array<[CapabilityId, CapabilityEntry]>) {
     if (!isRuleArray(prior)) continue;
     const next = caps?.[id];
-    const keys = new Set(isRuleArray(next) ? next.map(capabilityRuleKey) : []);
+    const have = new Map<string, number>();
+    if (isRuleArray(next)) for (const r of next) { const k = capabilityRuleKey(r); have.set(k, (have.get(k) ?? 0) + 1); }
+    const seen = new Map<string, number>();
     for (const r of prior) {
-      if (isTicketDimensionRule(id, r) && ruleInForce(id, r) && !keys.has(capabilityRuleKey(r))) out.push({ cap: id, rule: r });
+      const k = capabilityRuleKey(r);
+      const n = seen.get(k) ?? 0;
+      seen.set(k, n + 1);
+      if (isTicketDimensionRule(id, r) && ruleInForce(id, r) && (have.get(k) ?? 0) <= n) out.push({ cap: id, rule: r });
     }
   }
   return out;
@@ -1069,15 +1088,31 @@ export function inForceTicketRulesDropped(
  *  (a resource has one value per key, so the pieces never both match). The
  *  permissions grid writes a stored multi-type rule back as one rule per
  *  type, so comparing the pieces keeps an unchanged grid save from reading
- *  as a reorder. Keys only (capabilityRuleKey). */
-function singleValuedRuleKeys(r: CapabilityRule): string[] {
+ *  as a reorder. Tokens and `when` only (no confirmation stamp). */
+function singleValuedRules(r: CapabilityRule): CapabilityRule[] {
   let combos: Array<Partial<Record<RuleKey, string[]>>> = [{}];
   for (const k of RULE_KEYS) {
     const vals = [...new Set((r.when?.[k] ?? []).map(String))];
     if (vals.length === 0) continue;
     combos = combos.flatMap((c) => vals.map((v) => ({ ...c, [k]: [v] })));
   }
-  return combos.map((when) => capabilityRuleKey({ tokens: r.tokens, when }));
+  return combos.map((when) => ({ tokens: r.tokens, when }));
+}
+
+/** DF-P19 merge-time fix pass (review minor 3): can ONE request match both
+ *  rules? Not when some key is named by both with no value in common — a
+ *  request presents one value per key, and a rule matches only where every
+ *  key it lists holds the request's value (ruleMatches), so no request can
+ *  match both. Anything else counts as overlapping (conservative: an
+ *  unconditional rule, keys the two do not share, or a shared value). Pure. */
+export function rulesCanOverlap(a: CapabilityRule, b: CapabilityRule): boolean {
+  for (const k of RULE_KEYS) {
+    const x = (a.when?.[k] ?? []).map(String);
+    const y = (b.when?.[k] ?? []).map(String);
+    if (x.length === 0 || y.length === 0) continue;
+    if (!x.some((v) => y.includes(v))) return false;
+  }
+  return true;
 }
 
 /** DF-P19 fourth fix pass (review major 1): the request dimension rules IN
@@ -1087,41 +1122,77 @@ function singleValuedRuleKeys(r: CapabilityRule): string[] {
  *  is not enough: a rule put in front of it answers first (an in-force
  *  request-type rule wholly; a new unconfirmed dimension rule by joining its
  *  roles to the confirmed rule's answer) and the narrowing silently lapses,
- *  with nothing reported dropped (inForceTicketRulesDropped). So, per
- *  capability holding an in-force dimension rule, the ordered conditional
- *  rules up to and including the LAST in-force dimension rule must be the
- *  stored ones (compared as single-valued pieces — singleValuedRuleKeys);
- *  a new rule may only go after it. Returns the in-force rules at or after
- *  the first difference. The policy route refuses such a save from anyone
- *  but an Admin; the editor runs the same check before it sends. Pure. */
+ *  with nothing reported dropped (inForceTicketRulesDropped).
+ *  DF-P19 merge-time fix pass (review minor 3): only a rule that can match
+ *  a request the in-force rule matches can change that request's answer, so
+ *  for each in-force dimension rule the ordered conditional rules AHEAD of
+ *  it that can overlap it (rulesCanOverlap — conservative: overlap is
+ *  assumed unless some key both name has no value in common) must be the
+ *  stored ones; the rules that cannot (a {codeClass: B16} rule ahead of a
+ *  {codeClass: B313} one; disjoint libraries, request types, units or work
+ *  classes where both name them) may change freely. Compared as
+ *  single-valued pieces (singleValuedRules), so the grid writing a stored
+ *  multi-type rule back one rule per type is not a change; the n-th stored
+ *  copy of a piece is matched to the n-th in `caps`, and an in-force rule
+ *  `caps` no longer holds counts as exposed. Returns the in-force rules
+ *  whose overlapping rules ahead changed. The policy route refuses such a
+ *  save from anyone but an Admin; the editor runs the same check before it
+ *  sends. Pure. */
 export function inForceTicketRulesShadowed(
   caps: CapabilityPolicy["caps"] | null | undefined,
   storedCaps: CapabilityPolicy["caps"] | null | undefined,
 ): Array<{ cap: CapabilityId; rule: CapabilityRule }> {
   const out: Array<{ cap: CapabilityId; rule: CapabilityRule }> = [];
+  type Piece = { key: string; rule: CapabilityRule; from: number };
+  const piecesOf = (rules: readonly CapabilityRule[]): Piece[] =>
+    rules.flatMap((r, i) => singleValuedRules(r).map((p) => ({ key: capabilityRuleKey(p), rule: p, from: i })));
   for (const [id, prior] of Object.entries(storedCaps ?? {}) as Array<[CapabilityId, CapabilityEntry]>) {
     if (!isRuleArray(prior)) continue;
     const storedCond = prior.filter((r) => ruleIsConditional(r));
-    let last = -1;
-    storedCond.forEach((r, i) => { if (isTicketDimensionRule(id, r) && ruleInForce(id, r)) last = i; });
-    if (last < 0) continue;
-    // The stored prefix as single-valued pieces, each tagged with the stored
-    // rule it came from.
-    const want: Array<{ key: string; from: number }> = [];
-    storedCond.slice(0, last + 1).forEach((r, i) => { for (const key of singleValuedRuleKeys(r)) want.push({ key, from: i }); });
+    if (!storedCond.some((r) => isTicketDimensionRule(id, r) && ruleInForce(id, r))) continue;
+    const want = piecesOf(storedCond);
     const next = caps?.[id];
-    const have = (isRuleArray(next) ? next.filter((r) => ruleIsConditional(r)) : []).flatMap(singleValuedRuleKeys);
-    const differs = want.findIndex((w, i) => have[i] !== w.key);
-    if (differs < 0) continue;
-    const from = want[differs].from;
-    storedCond.forEach((r, i) => { if (i >= from && isTicketDimensionRule(id, r) && ruleInForce(id, r)) out.push({ cap: id, rule: r }); });
+    const have = piecesOf(isRuleArray(next) ? next.filter((r) => ruleIsConditional(r)) : []);
+    const shadowed = new Set<number>();
+    want.forEach((w, j) => {
+      const r = storedCond[w.from];
+      if (shadowed.has(w.from) || !isTicketDimensionRule(id, r) || !ruleInForce(id, r)) return;
+      // Where this piece sits in `caps`: the same occurrence of its key.
+      const n = want.slice(0, j).filter((x) => x.key === w.key).length;
+      let at = -1;
+      for (let i = 0, seen = 0; i < have.length; i++) {
+        if (have[i].key !== w.key) continue;
+        if (seen++ === n) { at = i; break; }
+      }
+      const ahead = (list: Piece[], upTo: number) => list.slice(0, upTo).filter((x) => rulesCanOverlap(x.rule, w.rule)).map((x) => x.key);
+      const before = ahead(want, j);
+      const now = at < 0 ? null : ahead(have, at);
+      if (!now || now.length !== before.length || now.some((k, i) => k !== before[i])) shadowed.add(w.from);
+    });
+    storedCond.forEach((r, i) => { if (shadowed.has(i)) out.push({ cap: id, rule: r }); });
   }
   return out;
 }
 
+/** DF-P19 merge-time fix pass (review nit 4): the refusal for a save that
+ *  would shadow an in-force code-class / library rule — one wording, shared
+ *  by the policy route (403) and the permissions console (said before it
+ *  sends). `label` names a capability. */
+export function inForceTicketRulesShadowedRefusal(
+  shadowed: ReadonlyArray<{ cap: CapabilityId; rule: CapabilityRule }>,
+  label: (cap: CapabilityId) => string,
+): string {
+  return `Only an Admin may add, change, remove or reorder a rule ahead of an in-force code-class / library rule (${shadowed.map((x) => `${label(x.cap)} where ${describeWhen(x.rule.when)}`).join("; ")}) — the rules ahead of it that can match the same requests must stay as stored. The permissions console writes a new request-type rule last, and a new code-class rule after every stored rule that can match its requests, so neither lands ahead of it; this save edits, removes or reorders a rule ahead of it. Nothing was saved.`;
+}
+
 /** An Admin's confirmation of ONE stored, not-yet-confirmed request
  *  dimension rule (the policy route's `confirm_rule`). Returns the caps to
- *  store, or the reason it cannot. */
+ *  store, or the reason it cannot.
+ *  DF-P19 merge-time fix pass (review nit 6): with two stored rules sharing
+ *  the key, the FIRST UNCONFIRMED one is confirmed — before, the first one
+ *  was matched, so a confirmed copy ahead answered "already in force" for an
+ *  unconfirmed copy behind it. "Already in force" only when every copy is.
+ *  (The route writes it compare-and-set and answers 409 for either refusal.) */
 export function confirmTicketDimensionRule(
   caps: CapabilityPolicy["caps"] | null | undefined,
   cap: CapabilityId,
@@ -1129,9 +1200,10 @@ export function confirmTicketDimensionRule(
   stamp: { at: string; by: string | null },
 ): { ok: true; caps: NonNullable<CapabilityPolicy["caps"]>; rule: CapabilityRule } | { ok: false; error: string } {
   const entry = caps?.[cap];
-  const idx = isRuleArray(entry) ? entry.findIndex((r) => isTicketDimensionRule(cap, r) && capabilityRuleKey(r) === key) : -1;
-  if (!isRuleArray(entry) || idx < 0) return { ok: false, error: "That rule is not stored on this policy any more — reload the permissions page." };
-  if (ruleInForce(cap, entry[idx])) return { ok: false, error: "That rule is already in force." };
+  const named = (r: CapabilityRule) => isTicketDimensionRule(cap, r) && capabilityRuleKey(r) === key;
+  if (!isRuleArray(entry) || !entry.some(named)) return { ok: false, error: "That rule is not stored on this policy any more — reload the permissions page." };
+  const idx = entry.findIndex((r) => named(r) && !ruleInForce(cap, r));
+  if (idx < 0) return { ok: false, error: "That rule is already in force." };
   const rule: CapabilityRule = { ...entry[idx], confirmedAt: stamp.at, ...(stamp.by ? { confirmedBy: stamp.by } : {}) };
   const next = entry.map((r, i) => (i === idx ? rule : r));
   return { ok: true, caps: { ...(caps ?? {}), [cap]: next }, rule };
