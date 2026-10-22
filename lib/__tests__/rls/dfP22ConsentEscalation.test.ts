@@ -91,7 +91,7 @@ describe.skipIf(skip !== null)("DF-P22 — the escalation record, standing pre-a
     expect(asCaller(db, SERVICE, `DELETE FROM ticket_sla_escalations WHERE ticket_id = '${t}' AND period_index = 2`)).toEqual({ ok: true, rows: 1 });
   });
 
-  it("ticket_preauthorizations: scoped, an expiry required and at most 365 days; only ever revoked, once; never deleted; no client write; members read", () => {
+  it("ticket_preauthorizations: scoped, an expiry required and at most 365 days; only ever revoked, once; never deleted; no client write; read by its grantor or an Admin", () => {
     const id = randomUUID();
     expect(asCaller(db, SERVICE, preauth(id))).toEqual({ ok: true, rows: 1 });
     // no scope at all — refused
@@ -118,8 +118,12 @@ describe.skipIf(skip !== null)("DF-P22 — the escalation record, standing pre-a
     const del = asCaller(db, SERVICE, `DELETE FROM ticket_preauthorizations WHERE id = '${id}'`);
     expect(del.ok).toBe(false);
     if (!del.ok) expect(del.message).toMatch(/never deleted/);
-    // members read it; a member of another workspace does not
-    expect(selectAs(db, m.other.caller, `SELECT COUNT(*) FROM ticket_preauthorizations WHERE id = '${id}';`)).toContain("1");
+    // fix pass 2: its grantor and a workspace Admin read it; another member
+    // (a Viewer, a DraftingSupervisor) does not; nor does another workspace
+    expect(selectAs(db, m.qa.caller, `SELECT COUNT(*) FROM ticket_preauthorizations WHERE id = '${id}';`)).toContain("1");
+    expect(selectAs(db, m.admin.caller, `SELECT COUNT(*) FROM ticket_preauthorizations WHERE id = '${id}';`)).toContain("1");
+    expect(selectAs(db, m.other.caller, `SELECT COUNT(*) FROM ticket_preauthorizations WHERE id = '${id}';`)).toContain("0");
+    expect(selectAs(db, m.sup.caller, `SELECT COUNT(*) FROM ticket_preauthorizations WHERE id = '${id}';`)).toContain("0");
     const elsewhere = seedOrg(db, { outsider: { role: "Admin" } });
     expect(selectAs(db, elsewhere.m.outsider.caller, `SELECT COUNT(*) FROM ticket_preauthorizations WHERE id = '${id}';`)).toContain("0");
   });

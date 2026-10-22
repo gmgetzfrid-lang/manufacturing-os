@@ -69,7 +69,10 @@ describe("20261264 — DEC-30 one paste", () => {
       expect(S.match(new RegExp(`CREATE POLICY \\w+ ON ${t}`, "g"))).toHaveLength(1);
       expect(S).toContain(`REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ${t} FROM anon, authenticated;`);
     }
-    expect(S).toContain("USING (org_id IN (SELECT my_org_ids()));");
+    // fix pass 2: a pre-authorization is read by its own grantor or an Admin (the route's rule), not every member
+    expect(S).toContain("USING (org_id IN (SELECT my_org_ids()) AND (grantor_id = auth.uid() OR is_org_admin(org_id)));");
+    expect(S).not.toContain("USING (org_id IN (SELECT my_org_ids()));");
+    expect(S).toContain("AND qual LIKE '%my_org_ids()%' AND qual LIKE '%grantor_id = auth.uid()%' AND qual LIKE '%is_org_admin(org_id)%')");
     expect(S).toContain("USING (EXISTS (SELECT 1 FROM tickets t WHERE t.id = ticket_sla_escalations.ticket_id AND t.org_id = ticket_sla_escalations.org_id));");
   });
   it("a pre-authorization: scoped, required expiry of at most 365 days, revoker with every revocation; no foreign key on its library (a removed library never widens it)", () => {

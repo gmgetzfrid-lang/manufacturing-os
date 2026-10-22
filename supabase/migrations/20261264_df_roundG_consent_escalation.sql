@@ -25,8 +25,8 @@
 --       was recorded, and the e-signature it rests on (minted by
 --       /api/signatures/sign for this record's id, as the like-in-kind
 --       declaration's is). Written only by the service role
---       (/api/tickets/preauthorizations, after its checks); read by the
---       workspace's members. A record, never deleted while its workspace
+--       (/api/tickets/preauthorizations, after its checks); read by its own
+--       grantor or a workspace Admin. A record, never deleted while its workspace
 --       exists; the only change ever accepted is its revocation, once
 --       (ticket_preauthorizations_guard). Used only on a routing slot a
 --       workspace explicitly opted in (lib/routingControl.ts
@@ -64,7 +64,8 @@
 --     paste: the inventory below counts both (expected 0).
 --
 -- A WIDENING only in that the ledger accepts one more satisfied_via value
--- (service role only) and two tables become readable by members; no client
+-- (service role only) and two tables become readable (the escalation record
+-- as its ticket reads; a pre-authorization by its grantor or an Admin); no client
 -- gains a write (and clients lose the write of the one new key, which no
 -- workspace holds yet). The counts-only inventory is captured first (DEC-30).
 -- Re-runnable: CREATE TABLE IF NOT EXISTS, CREATE OR REPLACE, DROP … IF
@@ -214,9 +215,13 @@ FOR EACH ROW EXECUTE FUNCTION ticket_preauthorizations_guard();
 
 ALTER TABLE ticket_preauthorizations ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS ticket_preauthorizations_read ON ticket_preauthorizations;
+-- Read by its own grantor, or a workspace Admin — the route's rule
+-- (/api/tickets/preauthorizations GET narrows a non-Admin to their own). Not
+-- every member: a statement names its library, which a member outside that
+-- library's ACL (a Contractor-only member) may not read.
 CREATE POLICY ticket_preauthorizations_read ON ticket_preauthorizations
   FOR SELECT TO authenticated
-  USING (org_id IN (SELECT my_org_ids()));
+  USING (org_id IN (SELECT my_org_ids()) AND (grantor_id = auth.uid() OR is_org_admin(org_id)));
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ticket_preauthorizations FROM anon, authenticated;
 REVOKE ALL ON ticket_preauthorizations FROM anon;
 
@@ -284,9 +289,9 @@ SELECT 1, 4, 'ticket_preauthorizations: only ever revoked, once; never deleted w
               FROM pg_proc WHERE proname = 'ticket_preauthorizations_guard'),
        NULL
 UNION ALL
-SELECT 1, 5, 'ticket_preauthorizations: read by the workspace''s members; one SELECT policy; no write policy; no client write grant',
+SELECT 1, 5, 'ticket_preauthorizations: read by its own grantor or a workspace Admin; one SELECT policy; no write policy; no client write grant',
        (SELECT COUNT(*) = 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'ticket_preauthorizations' AND cmd = 'SELECT'
-         AND qual LIKE '%my_org_ids()%')
+         AND qual LIKE '%my_org_ids()%' AND qual LIKE '%grantor_id = auth.uid()%' AND qual LIKE '%is_org_admin(org_id)%')
        AND NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'ticket_preauthorizations' AND cmd <> 'SELECT')
        AND NOT has_table_privilege('authenticated', 'public.ticket_preauthorizations', 'INSERT')
        AND NOT has_table_privilege('authenticated', 'public.ticket_preauthorizations', 'UPDATE')

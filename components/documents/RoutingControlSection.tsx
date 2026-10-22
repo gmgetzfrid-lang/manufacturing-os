@@ -118,10 +118,12 @@ export const PREAUTH_OPT_IN_HINT =
 
 /** DF-P22 fix pass: said when the opt-in is set on a table with at most one
  *  "must sign off" slot — a pre-authorization never satisfies the last open
- *  sign-off, so on such a table it does nothing (unless a request's review
- *  gains another sign-off, such as an engineering one). */
+ *  sign-off, so on such a table it never acts. (Fix pass 2: an engineering
+ *  sign-off a review gains never makes room for it — the gate that adds that
+ *  slot makes the request engineered, and nothing applies on engineered
+ *  work; lib/ticketPreauthorizationApply.ts.) */
 export const PREAUTH_SINGLE_SLOT_NOTE =
-  "This table has only one \u201cmust sign off\u201d slot, so a standing pre-authorization will not act here: a review always waits on at least one live sign-off. It can act only when a request's review has another open sign-off (for example, an engineering sign-off it gains).";
+  "This table has only one \u201cmust sign off\u201d slot, so a standing pre-authorization will never act here: a review always waits on at least one live sign-off. It can act only on a table with two or more \u201cmust sign off\u201d slots, and never on engineered work.";
 
 export function preauthNeverActsNote(slots: readonly DraftSlot[]): string | null {
   if (slots.filter((d) => d.mode === "blocking").length > 1) return null;

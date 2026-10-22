@@ -550,11 +550,13 @@ export async function runTicketSlaScan(deps: SlaScanDeps): Promise<SlaScanReport
 //   * Only to the contact's people who may READ the request (AUTHZ-13 /
 //     DEC-89): a Contractor-only member is told only of a request in their
 //     narrowed read (lib/ticketReadScope.ts); a read that cannot be checked
-//     leaves them out for this run.
+//     sends and claims nothing for that request this run (retried next run).
 //   * Through an existing notification kind (`ticket_status`, category
 //     `sla` — the "SLA warnings" preference, bell + email through emit()):
 //     ONE notice per person per workspace per run — the request itself when
-//     it is the only one due for them, else a digest naming them — each
+//     it is the only one due for them, else a digest naming them (which no
+//     transition of the request it is filed under retires —
+//     slaNoticeSurvivesTransition) — each
 //     request still claimed on ticket_sla_escalations (20261264 — one row per
 //     breach per period; the unique key is the claim, so two runs never send
 //     twice) and recorded on its own audit row (TICKET_SLA_ESCALATED, the
@@ -587,9 +589,24 @@ export const SLA_ESCALATION_MIGRATION = "20261264";
  *  requests (20261166), so a role-wide escalation would name requests they
  *  may not see. */
 export const SLA_ESCALATION_REFUSED_ROLES: readonly string[] = ["Contractor"];
-/** The digest's metadata action. NOT one of SLA_NOTICE_ACTIONS: a digest
- *  names several requests, so one request leaving its stage never retires it. */
+/** The digest's metadata action. NOT one of SLA_NOTICE_ACTIONS (those are
+ *  retired when THEIR request exits): a digest names several requests, so no
+ *  one request's transition — an exit included — retires it. The workflow
+ *  route's supersede step asks slaNoticeSurvivesTransition, which keeps it. */
 export const SLA_ESCALATION_DIGEST_ACTION = "sla_escalation_digest";
+/**
+ * Whether the workflow route's supersede step (app/api/tickets/workflow-action
+ * — it reads every unread notice whose resource_id is the ticket) KEEPS an
+ * unread notice with this metadata.action. An SLA notice ("Due soon" /
+ * "Overdue" / the single-request escalation) says "this request is late",
+ * which only an exit (CLOSED / CANCELED) changes. The escalation digest is
+ * filed under the first request it names but speaks for all of them, so no
+ * transition of that one request retires it — its reader does. Pure.
+ */
+export function slaNoticeSurvivesTransition(action: string, exits: boolean): boolean {
+  if (action === SLA_ESCALATION_DIGEST_ACTION) return true;
+  return !exits && SLA_NOTICE_ACTIONS.has(action);
+}
 /** How many requests a digest names one by one (the rest are counted). */
 export const SLA_ESCALATION_DIGEST_NAMED = 10;
 /** Rows a run may read past the breaches already told, per breach it may
@@ -669,7 +686,9 @@ export function escalationRecipients(contact: SlaEscalationContact, members: Rea
  * DEC-89): everyone whose read is the workspace's, and a Contractor-only
  * member only when lib/ticketReadScope.ts places the request in their
  * narrowed read. `unknown` counts the people whose read could not be checked
- * (the mention lookup failed) — they are left out for this run.
+ * (the mention lookup failed) — runSlaEscalationScan then sends and claims
+ * nothing for that request this run (retried), so nobody is told on a guess
+ * and nobody misses a period because of a failed lookup.
  */
 export async function escalationAudienceFor(
   client: RoutingClient,
@@ -733,8 +752,9 @@ export interface SlaEscalationReport {
   escalated: number;
   /** Escalations due whose notice reached nobody (claim released; retried). */
   unreached: number;
-  /** Escalations due that none of the contact's people may read (nothing
-   *  claimed or sent; said). */
+  /** Escalations due that none of the contact's people may read, or whose
+   *  readers could not all be checked (nothing claimed or sent; said — the
+   *  latter retried next run). */
   outOfScope: number;
   truncated: boolean;
   errors: string[];
@@ -881,10 +901,18 @@ export async function runSlaEscalationScan(deps: SlaScanDeps): Promise<SlaEscala
         id: t.id, requesterId: t.requesterId ?? null, assignedDrafterId: t.assignedDrafterId ?? null,
         assignedEngineerId: t.assignedEngineerId ?? null, watchers: Array.isArray(c.r.watchers) ? c.r.watchers : null,
       });
-      if (aud.unknown > 0) say(`ticket ${t.id}: whether ${aud.unknown} of the escalation contact's people may read it could not be checked — they are not told of it this run`);
+      // Fix pass 2: a person whose read could not be checked is never told
+      // on a guess — and the period is never marked told over their head
+      // either: nothing is claimed or sent for this request this run, so the
+      // next run (the lookup answering) tells everyone it should, once.
+      if (aud.unknown > 0) {
+        report.outOfScope += 1;
+        say(`ticket ${t.id}: whether ${aud.unknown} of the escalation contact's people may read it could not be checked — nobody was told of it and nothing was claimed; it is retried on the next run`);
+        continue;
+      }
       if (aud.uids.length === 0) {
         report.outOfScope += 1;
-        if (aud.unknown === 0) say(`ticket ${t.id}: none of the escalation contact's people may read this request (a Contractor-only member reads only their own requests) — nobody was told of it`);
+        say(`ticket ${t.id}: none of the escalation contact's people may read this request (a Contractor-only member reads only their own requests) — nobody was told of it`);
         continue;
       }
       // Claim first: the unique (ticket, breach, period) key means one run

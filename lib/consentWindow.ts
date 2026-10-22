@@ -483,7 +483,9 @@ export function consentFloorHolds(
   const drafter = floor.drafterId ?? null;
   if (!asked.some((u) => !!u && u !== drafter)) return true;
   if (!floor.sodActive || !drafter) return false;
-  const signed = roster.slots.filter((s) => s.mode !== "notify_only" && s.status === "satisfied" && s.via !== "consent" && !!s.satisfiedBy);
+  // DF-P22: a standing pre-authorization is no more a second person than
+  // silence is (lib/workflow.ts rosterLacksIndependentSignOff, the same rule).
+  const signed = roster.slots.filter((s) => s.mode !== "notify_only" && s.status === "satisfied" && s.via !== "consent" && s.via !== "preauthorization" && !!s.satisfiedBy);
   if (signed.length > 0 && signed.every((s) => s.satisfiedBy === drafter)) return true;
   // Fix pass 2 — the two floors agree: a slot only the drafter can sign
   // would be refused for good after a silent close (slotSignPlan's floor,

@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   parseSlaEscalation, escalationPeriodIndex, breachUncleared, escalationRecipients, slaEscalationNotice, runSlaEscalationScan,
-  SLA_ACTION, SLA_NOTICE_ACTIONS, SLA_ESCALATION_ACTOR, SLA_ESCALATION_AUDIT_ACTION, SLA_ESCALATION_DEFAULT_DAYS,
+  SLA_ACTION, SLA_NOTICE_ACTIONS, slaNoticeSurvivesTransition, SLA_ESCALATION_ACTOR, SLA_ESCALATION_AUDIT_ACTION, SLA_ESCALATION_DEFAULT_DAYS,
   SLA_ESCALATION_KEY, SLA_ESCALATION_DIGEST_ACTION, escalationOrgOrder, slaEscalationDigest, escalationAudienceFor,
   type SlaEmitInput,
 } from "@/lib/ticketSla";
@@ -372,6 +372,31 @@ describe("DF-P22 fix pass — only the contact's people who may READ the request
   });
 });
 
+describe("DF-P22 fix pass 2 — a read that cannot be checked never marks the period told", () => {
+  beforeEach(() => { db.tables.org_members.push(member(CONTRACTOR, "Contractor")); db.tables.ticket_comments = []; });
+  it("nothing is claimed for that request while a contact person's read is unknown; the next run (the lookup answering) tells them, once", async () => {
+    configure({ contact: { kind: "member", uid: CONTRACTOR }, periodDays: 2 });
+    db.tables.tickets = [breachedTicket({ id: "t-ment" })];
+    db.tables.ticket_comments = [{ id: "c1", ticket_id: "t-ment", mentioned_uids: [CONTRACTOR], deleted_at: null }];
+    db.errors.ticket_comments = { message: "timeout" };
+    const first = await runSlaEscalationScan({ client, emit, now: NOW });
+    expect(emitted).toEqual([]);
+    expect(db.tables.ticket_sla_escalations).toEqual([]);
+    expect(db.tables.audit_logs).toEqual([]);
+    expect(first).toMatchObject({ escalated: 0, outOfScope: 1 });
+    expect(first.errors.join(" ")).toMatch(/could not be checked — nobody was told of it and nothing was claimed; it is retried on the next run/);
+    // the lookup answers: the same period is told now — it was never marked told
+    delete db.errors.ticket_comments;
+    const second = await runSlaEscalationScan({ client, emit, now: NOW + 60_000 });
+    expect(second).toMatchObject({ escalated: 1, outOfScope: 0 });
+    expect(emitted.map((e) => e.audience)).toEqual([{ involved: [CONTRACTOR] }]);
+    expect(db.tables.ticket_sla_escalations.map((x) => x.ticket_id)).toEqual(["t-ment"]);
+    // …and only once
+    await runSlaEscalationScan({ client, emit, now: NOW + 120_000 });
+    expect(emitted).toHaveLength(1);
+  });
+});
+
 describe("DF-P22 fix pass — one notice per person per workspace per run (a digest), each request still claimed and audited", () => {
   it("three due breaches → ONE notice to the contact naming all three; three claims, three audit rows", async () => {
     configure({ contact: { kind: "member", uid: ADMIN }, periodDays: 2 });
@@ -388,11 +413,19 @@ describe("DF-P22 fix pass — one notice per person per workspace per run (a dig
     expect(db.tables.audit_logs).toHaveLength(3);
     expect(db.tables.audit_logs.every((a) => (a.details as Row).digest === true)).toBe(true);
   });
-  it("the digest names ten and counts the rest; its action is never retired by one request leaving its stage", () => {
+  it("the digest names ten and counts the rest; no transition of one request retires it (an exit included), unlike the SLA notices", () => {
     const items = Array.from({ length: 12 }, (_, i) => ({ t: { id: `t${i}`, orgId: ORG, ticketId: `REQ-${i}`, title: "G", status: "DRAFTING" }, breachedAt: "2026-10-15T03:00:00Z" }));
     const d = slaEscalationDigest(items, 2, "UTC");
     expect(d.body).toMatch(/; and 2 more\./);
-    expect(SLA_NOTICE_ACTIONS.has(SLA_ESCALATION_DIGEST_ACTION)).toBe(false);
+    // the supersede step's rule (the route asks this; dfRoundG_P22_digestSupersede drives the route)
+    expect(slaNoticeSurvivesTransition(SLA_ESCALATION_DIGEST_ACTION, false)).toBe(true);
+    expect(slaNoticeSurvivesTransition(SLA_ESCALATION_DIGEST_ACTION, true)).toBe(true);
+    for (const a of SLA_NOTICE_ACTIONS) {
+      expect(slaNoticeSurvivesTransition(a, false), a).toBe(true);
+      expect(slaNoticeSurvivesTransition(a, true), a).toBe(false);
+    }
+    expect(slaNoticeSurvivesTransition("assign", false)).toBe(false);
+    expect(slaNoticeSurvivesTransition("", false)).toBe(false);
   });
   it("a digest that reached nobody releases every claim it carried (retried next run), no audit row", async () => {
     configure({ contact: { kind: "member", uid: ADMIN }, periodDays: 2 });

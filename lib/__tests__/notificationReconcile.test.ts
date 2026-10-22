@@ -502,7 +502,9 @@ describe("retireStaleAlerts — the server re-checks, then marks only the gone o
     const { readFileSync } = await import("node:fs");
     expect(readFileSync("hooks/useTicketNotifications.ts", "utf8")).toMatch(/workflowAlertGone\(r\.metadata, statusById\.get\(r\.resourceId as string\), SLA_NOTICE_ACTIONS\)/);
     expect(readFileSync("lib/notificationReconcileServer.ts", "utf8")).toMatch(/workflowAlertGone\(r\.metadata, status\.get\(r\.resource_id\), SLA_NOTICE_ACTIONS\)/);
-    expect(readFileSync("app/api/tickets/workflow-action/route.ts", "utf8")).toMatch(/if \(!exits && SLA_NOTICE_ACTIONS\.has\(/);
+    // DF-P22: the route asks lib/ticketSla.ts slaNoticeSurvivesTransition, which reads the same set
+    expect(readFileSync("app/api/tickets/workflow-action/route.ts", "utf8")).toMatch(/if \(slaNoticeSurvivesTransition\(String\(row\.metadata\?\.action \?\? ""\), exits\)\) continue;/);
+    expect(readFileSync("lib/ticketSla.ts", "utf8")).toMatch(/return !exits && SLA_NOTICE_ACTIONS\.has\(action\);/);
   });
 
   it("isReconcileMark (RT-8): exactly the reconcile's own superseded_at mark, nothing else", async () => {

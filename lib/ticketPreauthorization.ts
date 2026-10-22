@@ -33,6 +33,13 @@
 //     last open "must sign off" slot of a review — at least one stays for a
 //     person's live act, whose sign-off then completes the review as it
 //     always did (the issue path is the route's, unchanged).
+//   * IT IS NEVER THE SECOND PERSON (fix pass 2): the DEC-12 producer floor
+//     (lib/workflow.ts rosterLacksIndependentSignOff, lib/consentWindow.ts
+//     consentFloorHolds) does not count a slot it satisfied, so the drafter's
+//     own sign-off can never complete a review whose only other sign-offs are
+//     pre-authorizations; and it is never applied where only the drafter
+//     could then act (preauthLeavesNoSecondPerson), so the review never
+//     deadlocks on that floor.
 //   * DEFAULT OFF: no opted-in slot, or no table (before 20261264), or any
 //     read that fails → nothing is read further / nothing applied: today's
 //     review, byte for byte. Applying it is bookkeeping after the person's
@@ -40,7 +47,7 @@
 //     submission that opened the review.
 
 import type { TicketReviewRoster, TicketReviewSlot } from "@/types/schema";
-import { slotSignPlan } from "@/lib/workflow";
+import { slotSignPlan, slotBlocks } from "@/lib/workflow";
 import { DECLARATION_SIGNATURE_INTENT } from "@/lib/reviewModel";
 
 /** The migration that carries ticket_preauthorizations. */
@@ -229,6 +236,10 @@ export interface PreauthApplication { slot: TicketReviewSlot; preauth: Preauthor
  *     an active alternate — or at all, overrides included) when someone
  *     could before is skipped, and the next person's record, or the next
  *     slot, is tried.
+ *   * Never one after which only the drafter could act (DF-P22 fix pass 2 —
+ *     preauthLeavesNoSecondPerson): a pre-authorization is never the second
+ *     person of the DEC-12 producer floor, so a live sign-off by someone
+ *     other than the drafter must stay possible.
  */
 export function planPreauthorizations(input: {
   roster: TicketReviewRoster;
@@ -262,6 +273,7 @@ export function planPreauthorizations(input: {
       if (!plan.fillable.some((f) => f.slot.kind === slot.kind && (f.via === "primary" || f.via === "alternate"))) return false;
       const tentative = applyPreauthorizations(roster, [{ slot, preauth: p }], new Date(input.now).toISOString(), () => p.grantorName ?? "");
       if (preauthLeavesSlotStranded(roster, tentative, slot.kind, parties, input.sodActive, input.now)) return false;
+      if (preauthLeavesNoSecondPerson(tentative, parties, input.sodActive, input.now)) return false;
       next = tentative;
       return true;
     });
@@ -307,6 +319,37 @@ export function preauthLeavesSlotStranded(
     if ((was.regular && !is.regular) || (was.any && !is.any)) return true;
   }
   return false;
+}
+
+/**
+ * DEC-12 producer floor, looked ahead (DF-P22 fix pass 2). A slot a
+ * pre-authorization satisfied is never the "someone else" the floor asks for
+ * (lib/workflow.ts rosterLacksIndependentSignOff ignores via
+ * "preauthorization"), so after an application the review must still be
+ * able to get a LIVE sign-off from someone other than the drafter: a
+ * blocking slot already satisfied by such a person, or an open blocking slot
+ * a non-drafter occupant may sign now (slotSignPlan on `after`, every
+ * DEC-37 leg applied). Otherwise only the drafter could act on what is left,
+ * and the floor would refuse them for good — the review would sit with every
+ * way forward refused — so the application is skipped and the slot waits for
+ * its live sign-off, as today. Only above the threshold with a drafter
+ * assigned (below it the floor does not apply). Pure.
+ */
+export function preauthLeavesNoSecondPerson(
+  after: TicketReviewRoster, parties: { requesterId: string; assignedDrafterId?: string }, sodActive: boolean, now: number,
+): boolean {
+  const drafter = parties.assignedDrafterId;
+  if (!sodActive || !drafter) return false;
+  const blocking = after.slots.filter((s) => slotBlocks(s) && s.status !== "void");
+  if (blocking.some((s) => s.status === "satisfied" && !!s.satisfiedBy && s.satisfiedBy !== drafter && s.via !== "preauthorization")) return false;
+  for (const s of blocking) {
+    if (s.status !== "open") continue;
+    for (const uid of new Set([...s.primaries, ...s.alternates, ...s.overriders])) {
+      if (!uid || uid === drafter) continue;
+      if (slotSignPlan(after, parties, uid, sodActive, now).fillable.some((f) => f.slot.kind === s.kind)) return false;
+    }
+  }
+  return true;
 }
 
 /** The roster with each application's slot satisfied by its record. Pure. */

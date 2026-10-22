@@ -42,7 +42,7 @@ import { afterRosterOpened, recordNoticeEvents, recordNotEmailed, emailPreferenc
 // GAP-109 mechanism 2 (drafting-flow DF-P22): standing pre-authorization.
 import { preauthEligibleSlots } from "@/lib/ticketPreauthorization";
 import { applyStandingPreauthorizations } from "@/lib/ticketPreauthorizationApply";
-import { SLA_NOTICE_ACTIONS } from "@/lib/ticketSla";
+import { slaNoticeSurvivesTransition } from "@/lib/ticketSla";
 import { examinationForAct, examinationAuditFields, type ExaminationOnAct } from "@/lib/assuranceExamination";
 import { ticketReadScope } from "@/lib/ticketReadScope";
 import { offerableLibraries, libraryLabelForTicket, libraryChoiceFromRow, LIBRARY_CHOICE_COLUMNS, UNNAMED_TARGET_LIBRARY } from "@/lib/ticketLibrary";
@@ -2577,6 +2577,10 @@ async function fanOut(params: {
   //    request is late", which an open-to-open transition (save progress, a
   //    reassignment) does not change; only an exit (CLOSED / CANCELED) clears
   //    it, so only an exit retires them.
+  //    DF-P22: the escalation digest (metadata.action sla_escalation_digest)
+  //    is filed under the first request it names but speaks for several, so
+  //    no transition of this one request retires it, an exit included
+  //    (lib/ticketSla.ts slaNoticeSurvivesTransition).
   //    DF-P5 fix pass 3 (TIER-5 / FRIC-2): a PARTIAL roster sign-off moves
   //    nothing for the reviewers still waited on — only the signer's own
   //    alerts are retired (their part is done); the others keep theirs.
@@ -2600,7 +2604,7 @@ async function fanOut(params: {
     if (params.rosterPartial === true) staleQuery = staleQuery.in("user_id", [...partialRetire, ...partialRenotified]);
     const { data: stale } = await staleQuery;
     for (const row of (stale ?? []) as Array<{ id: string; user_id?: string | null; metadata: Record<string, unknown> | null }>) {
-      if (!exits && SLA_NOTICE_ACTIONS.has(String(row.metadata?.action ?? ""))) continue;
+      if (slaNoticeSurvivesTransition(String(row.metadata?.action ?? ""), exits)) continue;
       if (params.rosterPartial === true && !partialRetire.has(String(row.user_id ?? "")) && row.metadata?.action !== "sign_slot") continue;
       await supabaseAdmin.from("notifications")
         .update({ metadata: { ...(row.metadata ?? {}), superseded_at: supersededAt, superseded_by: action.type } })

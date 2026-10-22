@@ -12,11 +12,13 @@ import { join } from "node:path";
 import {
   preauthorizationStatement, preauthDraftRefusal, preauthStanding, preauthCovers, preauthSignatureRefusal, preauthSignatureStands,
   preauthEligibleSlots, planPreauthorizations, applyPreauthorizations, preauthHistoryEntry, preauthLatestDay, preauthExpiryFromDay,
-  isMissingPreauthTable, preauthLeavesSlotStranded, slotSignability, PREAUTH_SIGNATURE_INTENT, PREAUTH_SIGNATURE_RESOURCE, PREAUTH_ACTOR, PREAUTH_AUDIT, PREAUTH_MAX_DAYS, type Preauthorization,
+  isMissingPreauthTable, preauthLeavesSlotStranded, preauthLeavesNoSecondPerson, slotSignability, PREAUTH_SIGNATURE_INTENT, PREAUTH_SIGNATURE_RESOURCE, PREAUTH_ACTOR, PREAUTH_AUDIT, PREAUTH_MAX_DAYS, type Preauthorization,
 } from "@/lib/ticketPreauthorization";
 import { applyStandingPreauthorizations } from "@/lib/ticketPreauthorizationApply";
 import { parseRoutingControl, validateRoutingDraft, preauthorizationOptInAllowed } from "@/lib/routingControl";
 import { openRoster, rosterCompletion } from "@/lib/ticketRoster";
+import { slotSignPlan, rosterLacksIndependentSignOff, PRODUCER_FLOOR_REASON } from "@/lib/workflow";
+import { consentFloorHolds } from "@/lib/consentWindow";
 import { draftToControl, controlToDraft, preauthOptInFor, preauthNeverActsNote, PREAUTH_SINGLE_SLOT_NOTE } from "@/components/documents/RoutingControlSection";
 import type { TicketReviewRoster, TicketReviewSlot } from "@/types/schema";
 
@@ -150,6 +152,53 @@ describe("where it acts — only an opted-in, blocking, non-engineering, non-ass
     // Below the separation threshold the leg does not bind: applied.
     expect(plan(r, { sodActive: false }).map((a) => a.slot.kind)).toEqual(["A"]);
   });
+  it("DF-P22 fix pass 2 — DEC-12 floor: a pre-authorization is never the second person; the drafter's own sign-off never completes a review whose other sign-offs are pre-authorizations (A/B)", () => {
+    const parties = { requesterId: "req", assignedDrafterId: "d-1" };
+    const at = new Date(NOW).toISOString();
+    const floor = { sodActive: true, drafterId: "d-1" };
+    const check = (over: Partial<TicketReviewSlot> = {}) => slot({ kind: "check", label: "Check", primaries: ["d-1"], ...over });
+    // A — QA (Quinn's record) + Check whose only signer is the drafter: NOT
+    // applied (only the drafter could then act, and the floor refuses them).
+    const r = roster([qa(), check()]);
+    expect(plan(r)).toEqual([]);
+    const forced = applyPreauthorizations(r, [{ slot: qa(), preauth: pa() }], at, () => "Quinn");
+    expect(preauthLeavesNoSecondPerson(forced, parties, true, NOW)).toBe(true);
+    // B — had it been applied (the bug): the floor no longer counts it, so
+    // the drafter may not complete Check, and a roster the drafter completed
+    // over it is NOT complete.
+    expect(rosterLacksIndependentSignOff(forced, "d-1", ["check"])).toBe(true);
+    const dPlan = slotSignPlan(forced, parties, "d-1", true, NOW);
+    expect(dPlan.fillable).toEqual([]);
+    expect(dPlan.blocked.map((b) => b.reason)).toEqual([PRODUCER_FLOOR_REASON]);
+    const drafterDone = { ...forced, slots: forced.slots.map((x) => x.kind === "check" ? { ...x, status: "satisfied" as const, satisfiedBy: "d-1", signatureId: "s-d", via: "primary" as const } : x) };
+    expect(rosterCompletion(drafterDone).complete).toBe(true);
+    expect(rosterCompletion(drafterDone, floor)).toEqual({ complete: false, unsatisfied: ["independent of the drafter"] });
+    // …while a LIVE sign-off by someone else still counts, exactly as before.
+    const liveQa = { ...drafterDone, slots: drafterDone.slots.map((x) => x.kind === "qa" ? { ...x, via: "primary" as const, preauthorizationId: undefined } : x) };
+    expect(rosterCompletion(liveQa, floor).complete).toBe(true);
+    // Check with a second occupant: applied — the drafter is held on it, E signs it and completes.
+    const r2 = roster([qa(), check({ primaries: ["d-1", "e-1"] })]);
+    expect(plan(r2).map((a) => a.slot.kind)).toEqual(["qa"]);
+    const next2 = applyPreauthorizations(r2, plan(r2), at, () => "Quinn");
+    expect(slotSignPlan(next2, parties, "d-1", true, NOW).blocked.map((b) => b.reason)).toEqual([PRODUCER_FLOOR_REASON]);
+    expect(slotSignPlan(next2, parties, "e-1", true, NOW).fillable.map((f) => f.slot.kind)).toEqual(["check"]);
+    const eDone = { ...next2, slots: next2.slots.map((x) => x.kind === "check" ? { ...x, status: "satisfied" as const, satisfiedBy: "e-1", signatureId: "s-e", via: "primary" as const } : x) };
+    expect(rosterCompletion(eDone, floor).complete).toBe(true);
+    // A live sign-off by someone else already on the roster: applied, and the drafter may then complete.
+    const r3 = roster([accept({ status: "satisfied", satisfiedBy: "req", signatureId: "s-r", via: "primary" }), qa(), check()]);
+    expect(plan(r3).map((a) => a.slot.kind)).toEqual(["qa"]);
+    expect(slotSignPlan(applyPreauthorizations(r3, plan(r3), at, () => "Quinn"), parties, "d-1", true, NOW).fillable.map((f) => f.slot.kind)).toEqual(["check"]);
+    // Below the separation threshold the floor does not bind: applied, as before.
+    expect(plan(r, { sodActive: false }).map((a) => a.slot.kind)).toEqual(["qa"]);
+    // The consent window's floor reads it the same way: the drafter's
+    // sign-off + a pre-authorization + silence is held.
+    const consentClosed = roster([qa({ status: "satisfied", satisfiedBy: "q-1", signatureId: SIG1, via: "preauthorization", preauthorizationId: P1 }),
+      check({ status: "satisfied", satisfiedBy: "d-1", signatureId: "s-d", via: "primary" }),
+      slot({ kind: "third", primaries: ["z"], status: "satisfied", satisfiedBy: null, signatureId: null, via: "consent" })]);
+    expect(consentFloorHolds(consentClosed, floor, ["z"])).toBe(true);
+    const consentLive = { ...consentClosed, slots: consentClosed.slots.map((x) => x.kind === "qa" ? { ...x, via: "primary" as const } : x) };
+    expect(consentFloorHolds(consentLive, floor, ["z"])).toBe(false);
+  });
   it("a record that is revoked, expired, unsigned, out of scope, or whose person left is never used", () => {
     const r = roster([accept(), qa()]);
     expect(plan(r, { preauths: [pa({ revokedAt: "2026-10-21T00:00:00Z" })] })).toEqual([]);
@@ -210,7 +259,10 @@ describe("the routing opt-in — explicit, never inferred, dropped where it cann
   it("DF-P22 fix pass: on a table with one \"must sign off\" slot the editor says the opt-in will not act (a review always waits on one live sign-off)", () => {
     const one = controlToDraft({ slots: [{ kind: "qa", mode: "blocking", fill: { roles: ["QA"] }, accepts_preauthorization: true }, { kind: "ops", mode: "consent_window", fill: { roles: ["Ops"] } }] });
     expect(preauthNeverActsNote(one)).toBe(PREAUTH_SINGLE_SLOT_NOTE);
-    expect(PREAUTH_SINGLE_SLOT_NOTE).toMatch(/will not act here/);
+    expect(PREAUTH_SINGLE_SLOT_NOTE).toMatch(/will never act here/);
+    // fix pass 2: no "an engineering sign-off it gains" example — the gate that adds that slot makes the request engineered, where nothing applies
+    expect(PREAUTH_SINGLE_SLOT_NOTE).not.toMatch(/gains|for example/);
+    expect(PREAUTH_SINGLE_SLOT_NOTE).toMatch(/two or more \u201cmust sign off\u201d slots, and never on engineered work\.$/);
     const two = controlToDraft({ slots: [{ kind: "qa", mode: "blocking", fill: { roles: ["QA"] }, accepts_preauthorization: true }, { kind: "acc", mode: "blocking", fill: { identity: "requester" } }] });
     expect(preauthNeverActsNote(two)).toBeNull();
     const off = controlToDraft({ slots: [{ kind: "qa", mode: "blocking", fill: { roles: ["QA"] } }] });
