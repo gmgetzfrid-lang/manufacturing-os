@@ -99,3 +99,73 @@ export function findRunningKey(pages: Array<{ page: number; text: string }>): Ru
   }
   return { template: best.tpl, coverage: best.hits.length / pages.length, ranges };
 }
+
+/** Books with no header line: the section's code is repeated in the page
+ *  BODY, in parentheses after each table's heading — "Gate Valve (AAAA1)",
+ *  "Fitting (AAAA1)", "Flanges (AAAC2H)". A code qualifies when it holds
+ *  for one run of consecutive pages (a note like "(NACE)" or "(PWHT)"
+ *  recurs all over the book and is ruled out), and the book has several. */
+export function findParenKeys(pages: Array<{ page: number; text: string }>): RunningKey | null {
+  if (pages.length < 4) return null;
+  const re = /\(([A-Z0-9][A-Z0-9.-]{2,11})\)/g;
+  const perPage = new Map<number, Map<string, number>>();
+  const pagesOf = new Map<string, number[]>();
+  let example: string | null = null;
+  for (const { page, text } of pages) {
+    const m = new Map<string, number>();
+    for (const x of text.matchAll(re)) {
+      const k = x[1];
+      if (!/[A-Z]/.test(k) || (!/\d/.test(k) && k.length < 4)) continue;
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    perPage.set(page, m);
+    for (const k of m.keys()) pagesOf.set(k, [...(pagesOf.get(k) ?? []), page]);
+  }
+  // A section key sits on one run of pages (gaps of a page or two allowed).
+  const contiguous = new Set<string>();
+  for (const [k, ps] of pagesOf) {
+    ps.sort((a, b) => a - b);
+    let runs = 1;
+    for (let i = 1; i < ps.length; i++) if (ps[i] - ps[i - 1] > 2) runs++;
+    // One run of pages, and not most of the book (a constant would be).
+    if (runs <= 2 && ps.length / pages.length < 0.6) contiguous.add(k);
+  }
+  const hits: Array<{ page: number; value: string }> = [];
+  for (const { page } of pages) {
+    const m = perPage.get(page)!;
+    let best: string | null = null;
+    for (const [k, n] of m) if (contiguous.has(k) && (!best || n > m.get(best)!)) best = k;
+    if (best) hits.push({ page, value: best });
+  }
+  const distinct = new Set(hits.map((h) => h.value));
+  if (hits.length / pages.length < 0.4 || distinct.size < 3) return null;
+  for (const { text } of pages) {
+    const k = hits[0]?.value;
+    const at = k ? text.match(new RegExp(`([A-Z][A-Za-z]+(?: [A-Z][A-Za-z]+)?) \\(${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`)) : null;
+    if (at) { example = `${at[1]} (${KEY_SLOT})`; break; }
+  }
+  const valueOf = new Map(hits.map((h) => [h.page, h.value]));
+  // A page with no code that sits right before a new section is that
+  // section's opening page (a service line before the first table) — it
+  // belongs to what follows, not to what came before.
+  const sorted = [...pages].sort((a, b) => a.page - b.page);
+  for (let i = sorted.length - 2; i >= 0; i--) {
+    const here = sorted[i].page, next = valueOf.get(sorted[i + 1].page);
+    const prev = i > 0 ? valueOf.get(sorted[i - 1].page) : undefined;
+    if (!valueOf.has(here) && next && next !== prev) valueOf.set(here, next);
+  }
+  const ranges: SectionRange[] = [];
+  for (const { page } of sorted) {
+    const v = valueOf.get(page);
+    const cur = ranges[ranges.length - 1];
+    if (v && (!cur || cur.key !== v)) ranges.push({ key: v, first: page, last: page });
+    else if (cur) cur.last = page;
+  }
+  return { template: example ?? `… (${KEY_SLOT})`, coverage: hits.length / pages.length, ranges };
+}
+
+/** A book's sections: from a running header if it has one, else from the
+ *  codes repeated in its table headings. */
+export function findSections(pages: Array<{ page: number; text: string }>): RunningKey | null {
+  return findRunningKey(pages) ?? findParenKeys(pages);
+}

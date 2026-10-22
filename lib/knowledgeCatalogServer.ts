@@ -22,7 +22,8 @@ import { fetchBytes } from "@/lib/r2Bytes";
 import { renderPdfPages } from "@/lib/knowledgePageRender";
 import { questionWords, leadsFor } from "@/lib/searchLeads";
 import { fetchAllRows } from "@/lib/fetchAllRows";
-import { findRunningKey } from "@/lib/sectionTemplate";
+import { findRunningKey, findParenKeys } from "@/lib/sectionTemplate";
+import { classMentions } from "@/lib/pressureClass";
 import { inSlices } from "@/lib/inSlices";
 import {
   normalizeProfile, normalizePipeClasses, parseProfile, parseModelJson,
@@ -172,73 +173,73 @@ const PIPE_SYSTEM =
 /** A page likely holds a pipe-class table: material specs and size/class words. */
 const PIPE_PAGE_RE = /\b(A\s?\d{2,3}|B16\.\d+|API\s?(5L|6D|600|602)|SCH(EDULE)?|SMLS|SEAMLESS|CLASS\s*\d{3,4}|RATING)\b/i;
 
-const SECTION_SYSTEM =
-  "You read the OPENING PAGE(S) of ONE section of a piping material specification book — one piping class " +
-  "(also called line class, pipe spec or material class). Its identifier is given. Reply with ONLY JSON:\n" +
-  '{"classes": [{"code": "...", "rating": "...", "service": "...", "material": "...", "corrosionAllowance": "...", ' +
-  '"notes": ["..."], "rows": [{"component": "...", "size": "...", "spec": "...", "details": "...", "notes": "..."}]}]}\n' +
-  "- rating: the pressure class / flange rating as printed (\"150#\", \"Class 300\", \"ANSI 600\"); null if not printed.\n" +
-  "- service: the fluids or services the class is for, as printed (\"Sour hydrocarbon, wet H2S\", \"Steam 150 psig\").\n" +
-  "- material: the base material (\"Carbon steel\", \"316L SS\", \"1-1/4Cr-1/2Mo\").\n" +
-  "- corrosionAllowance: as printed; notes: class-level notes, quoted (NACE, PWHT, hardness, limits).\n" +
-  "- rows: the component rows printed on these pages, if any (pipe, fittings, flanges, gaskets, bolting, valves).\n" +
-  "Copy exactly; never infer a value that isn't printed.";
-
-/** Spec books with a running header: find each section (class) from the
- *  header — whatever the company's format — and read only its opening
- *  page(s), as TEXT. One small call per class instead of image-reading every
- *  page. Returns null when the book has no running header to go by. */
+/** Spec books whose sections can be found from their own text — a running
+ *  header, or the code repeated in each table heading ("Fitting (AAAA1)")
+ *  — are mapped class by class from the TEXT, with no AI: each class's
+ *  code, pages, opening line (its service description) and rating (the
+ *  class most written on its pages). Fast and free, so a 2,000-page book
+ *  is mapped in one pass. Returns null when no sections can be found. */
 async function extractPipeClassesFromText(
-  admin: SupabaseClient, conn: CatalogConn, doc: DocRow, profile: DocProfile, deadlineMs: number,
+  admin: SupabaseClient, _conn: CatalogConn, doc: DocRow, profile: DocProfile, _deadlineMs: number,
 ): Promise<number | null> {
-  // The top of every page (first chunk) is where a running header lives.
-  const { rows: tops } = await fetchAllRows<{ page: number; content: string }>((from, to) => admin
-    .from("knowledge_chunks").select("page, content").eq("document_id", doc.id).eq("seq", 0)
-    .order("page", { ascending: true }).range(from, to), 20_000);
-  const found = findRunningKey(tops.map((t) => ({ page: t.page, text: t.content })));
+  // The first two chunks of every page: where a header, a service line and
+  // the first table headings are.
+  const { rows } = await fetchAllRows<{ page: number; seq: number; content: string }>((from, to) => admin
+    .from("knowledge_chunks").select("page, seq, content").eq("document_id", doc.id).lte("seq", 1)
+    .order("page", { ascending: true }).order("seq", { ascending: true }).range(from, to), 20_000);
+  const byPage = new Map<number, string[]>();
+  for (const r of rows) byPage.set(r.page, [...(byPage.get(r.page) ?? []), r.content]);
+  const tops = [...byPage].map(([page, parts]) => ({ page, text: parts[0] ?? "" }));
+  const full = [...byPage].map(([page, parts]) => ({ page, text: parts.join("\n") }));
+  const found = findRunningKey(tops) ?? findParenKeys(full);
   if (!found || found.ranges.length < 2) return null;
 
-  const state = profile.pipeSpec ?? { pagesDone: 0, pageCount: doc.page_count ?? 0, classes: 0, done: false };
-  const todo = found.ranges.filter((r) => r.first > state.pagesDone);
-  let processed = 0;
-  for (const r of todo) {
-    if (Date.now() > deadlineMs - 20_000) break;
-    const lastRead = Math.min(r.last, r.first + 1);
-    const { data: chunks } = await admin.from("knowledge_chunks").select("page, seq, content")
-      .eq("document_id", doc.id).gte("page", r.first).lte("page", lastRead)
-      .order("page", { ascending: true }).order("seq", { ascending: true }).limit(60);
-    const text = ((chunks ?? []) as Array<{ page: number; content: string }>)
-      .map((c) => c.content).join("\n").slice(0, 14_000);
-    if (text.trim()) {
-      const out = await callFast(conn, {
-        system: SECTION_SYSTEM,
-        user: `Section identifier: ${r.key} — pages ${r.first}–${r.last} of "${doc.name}". Its opening page(s):\n\n${text}`,
-        maxTokens: 3000,
-        timeoutMs: Math.max(10_000, deadlineMs - Date.now() - 5_000),
-      });
-      const parsed = parseModelJson(out);
-      const list = Array.isArray(parsed?.classes) ? parsed!.classes as Array<Record<string, unknown>> : [];
-      // The header's key is authoritative for the code.
-      const [rec] = normalizePipeClasses({ classes: [{ ...(list[0] ?? {}), code: r.key }] }, { allowEmptyRows: true });
-      if (rec) {
-        rec.notes = [...(rec.notes ?? []), `Pages ${r.first}–${r.last}`].slice(0, 12);
-        await admin.from("knowledge_page_entities").delete()
-          .eq("document_id", doc.id).eq("kind", "pipe_class").eq("tag", rec.code);
-        await admin.from("knowledge_page_entities").insert({
-          org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
-          page: r.first, kind: "pipe_class", tag: rec.code, raw: JSON.stringify(rec),
-        });
-        state.classes += 1;
-      }
-    }
-    state.pagesDone = r.first;
-    processed += r.last - r.first + 1;
+  const records = sectionRecords(found.ranges, byPage);
+  await admin.from("knowledge_page_entities").delete().eq("document_id", doc.id).eq("kind", "pipe_class");
+  for (let i = 0; i < records.length; i += 300) {
+    await admin.from("knowledge_page_entities").insert(records.slice(i, i + 300).map((rec) => ({
+      org_id: doc.org_id, library_id: doc.library_id, document_id: doc.id,
+      page: rec.page, kind: "pipe_class", tag: rec.code, raw: JSON.stringify(rec.record),
+    })));
   }
-  state.pageCount = doc.page_count ?? state.pageCount;
-  state.done = found.ranges.every((r) => r.first <= state.pagesDone);
-  profile.pipeSpec = state;
+  const pageCount = doc.page_count ?? full.length;
+  profile.pipeSpec = { pagesDone: pageCount, pageCount, classes: records.length, done: true, method: "text-v2" };
   await writeProfile(admin, doc, profile);
-  return processed;
+  return pageCount;
+}
+
+/** One record per section: code, first page, opening line, dominant rating. */
+export function sectionRecords(ranges: Array<{ key: string; first: number; last: number }>, byPage: Map<number, string[]>) {
+  const seen = new Set<string>();
+  const out: Array<{ code: string; page: number; record: PipeClassRecord }> = [];
+  for (const r of ranges) {
+    const code = r.key.toUpperCase().slice(0, 30);
+    if (seen.has(`${code}:${r.first}`)) continue;
+    seen.add(`${code}:${r.first}`);
+    const firstText = (byPage.get(r.first) ?? [])[0] ?? "";
+    // The opening line: the text before the first table heading, or the
+    // first sentence — in most books, the class's service description.
+    const opening = firstText.replace(/\s+/g, " ").trim()
+      .split(/\s(?=[A-Z][A-Za-z]+(?: [A-Z][A-Za-z]+)? \([A-Z0-9][A-Z0-9.-]{2,11}\))|(?<=[.;])\s/)[0]
+      .slice(0, 240);
+    let text = "";
+    for (let p = r.first; p <= r.last; p++) text += " " + (byPage.get(p) ?? []).join(" ");
+    const mentions = classMentions(text);
+    out.push({
+      code, page: r.first,
+      record: {
+        code,
+        ...(opening ? { service: opening.replace(/^services?\s*:\s*/i, "") } : {}),
+        ...(mentions[0] ? { rating: `Class ${mentions[0][0]}` } : {}),
+        rows: [],
+        notes: [
+          `Pages ${r.first}–${r.last}`,
+          ...(mentions.length ? [`Classes written on its pages: ${mentions.slice(0, 4).map(([n, k]) => `${n} ×${k}`).join(", ")}`] : []),
+        ],
+      },
+    });
+  }
+  return out;
 }
 
 /** Extract the next pages' pipe classes. Returns pages processed this call. */
@@ -366,7 +367,9 @@ export async function drainPipeSpecs(admin: SupabaseClient, opts: {
   for (const d of docList) {
     const p = profiles.get(d.id);
     if (p?.type === "pipe_spec") books.push(d);
-    else if (!p && (d.page_count ?? 0) >= 30) unprofiled.push(d);
+    // Unprofiled, or profiled as something else but book-sized: the text
+    // decides. A spec book filed as a "standard" was never read before.
+    else if ((!p && (d.page_count ?? 0) >= 30) || (p && (d.page_count ?? 0) >= 100)) unprofiled.push(d);
   }
   // Big, unprofiled documents: read the tops of their first pages and keep
   // the ones that read like a spec book.
@@ -376,12 +379,27 @@ export async function drainPipeSpecs(admin: SupabaseClient, opts: {
       .eq("document_id", d.id).eq("seq", 0).order("page", { ascending: true }).limit(40);
     const tops = ((data ?? []) as Array<{ content: string }>).map((r) => r.content);
     const dense = tops.filter((t) => (t.match(new RegExp(PIPE_PAGE_RE.source, "gi")) ?? []).length >= 3).length;
+    const before = profiles.get(d.id);
+    // A document already filed as something else becomes a spec book only
+    // when its sections can be found from its text — never on word counts
+    // alone (a materials standard is dense with ASTM numbers too).
+    if (before && tops.length >= 10 && dense / tops.length >= 0.3) {
+      const { data: head } = await admin.from("knowledge_chunks").select("page, seq, content")
+        .eq("document_id", d.id).lte("seq", 1).lte("page", 80).order("page").order("seq").limit(200);
+      const pages = new Map<number, string[]>();
+      for (const r of (head ?? []) as Array<{ page: number; content: string }>) pages.set(r.page, [...(pages.get(r.page) ?? []), r.content]);
+      const tp = [...pages].map(([page, parts]) => ({ page, text: parts[0] ?? "" }));
+      const fp = [...pages].map(([page, parts]) => ({ page, text: parts.join("\n") }));
+      if (!(findRunningKey(tp) ?? findParenKeys(fp))) return;
+    }
     if (tops.length >= 10 && dense / tops.length >= 0.3) {
-      const profile: DocProfile = {
-        v: 1, type: "pipe_spec", designation: null, title: d.name.replace(/\.pdf$/i, ""),
-        purpose: "Piping material specifications — one piping class per section",
-        covers: [], references: [], profiledAt: new Date().toISOString(),
-      };
+      const profile: DocProfile = before
+        ? { ...before, type: "pipe_spec" }
+        : {
+          v: 1, type: "pipe_spec", designation: null, title: d.name.replace(/\.pdf$/i, ""),
+          purpose: "Piping material specifications — one piping class per section",
+          covers: [], references: [], profiledAt: new Date().toISOString(),
+        };
       await writeProfile(admin, d, profile);
       profiles.set(d.id, profile);
       books.push(d);
@@ -391,7 +409,10 @@ export async function drainPipeSpecs(admin: SupabaseClient, opts: {
   for (const d of books) {
     if (Date.now() > opts.deadlineMs - 25_000) break;
     const p = profiles.get(d.id)!;
-    if (p.pipeSpec?.done) continue;
+    // Done — unless an earlier reader finished with nothing recorded, or
+    // read it before books were mapped from their text.
+    if (p.pipeSpec?.done && p.pipeSpec.classes > 0) continue;
+    if (p.pipeSpec?.done) p.pipeSpec = undefined;
     try { pipePages += await extractPipeClassesStep(admin, opts.conn, d, p, opts.deadlineMs); } catch { /* next call retries */ }
   }
   const remaining = books.filter((d) => !profiles.get(d.id)?.pipeSpec?.done).length;

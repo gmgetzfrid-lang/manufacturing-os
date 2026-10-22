@@ -79,7 +79,9 @@ export interface DocProfile {
   /** What a checklist is used for ("hydrotest", "flange joint assembly"). */
   checklistFor?: string;
   /** Pipe-class extraction progress for piping specs. */
-  pipeSpec?: { pagesDone: number; pageCount: number; classes: number; done: boolean };
+  pipeSpec?: { pagesDone: number; pageCount: number; classes: number; done: boolean;
+    /** How it was read: "text-v2" = mapped class by class from the text. */
+    method?: string };
   profiledAt: string;
 }
 

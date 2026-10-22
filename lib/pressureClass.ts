@@ -70,3 +70,15 @@ export function pressureClassNote(rating: string | null, all: string[] = rating 
     "numbered notes saying when that row is used (e.g. against equipment nozzles, control valves). Such a " +
     "row and its note ARE the rule for this question: quote the row, its rating, and the note's text.";
 }
+
+/** How often each pressure class is written in a text, in any notation,
+ *  most frequent first — "what classes is this page written for". */
+export function classMentions(text: string): Array<[string, number]> {
+  const out: Array<[string, number]> = [];
+  for (const n of CLASSES) {
+    const re = new RegExp(`(?:class|cl\\.?|ansi|asme)\\s*#?\\s*${n}(?![0-9])|(?<![0-9.])${n}\\s*(?:#|lbs?\\b|pound|class\\b)|#\\s*${n}(?![0-9])`, "gi");
+    const k = (text.match(re) ?? []).length;
+    if (k > 0) out.push([n, k]);
+  }
+  return out.sort((a, b) => b[1] - a[1]);
+}
