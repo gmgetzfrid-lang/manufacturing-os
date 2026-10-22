@@ -14,6 +14,11 @@
 // collapsible items, and dense tables — one line per step, grouped under
 // its equipment — instead of a card per equipment.
 //
+// Copying: each agenda item also describes itself as data, written out as
+// plain text or as an email (inline-styled tables Outlook keeps) — the same
+// report as an update for management, minus the meeting's prompts and
+// sign-off lines.
+//
 // Printing: the same agendas render a second time into a portal at the
 // document root (hidden on screen) in a compact print layout: small type,
 // one-line header, tables that may break across pages between rows (never
@@ -25,6 +30,7 @@ import { createPortal } from "react-dom";
 import {
   Printer, ChevronLeft, ChevronRight, ChevronDown, Sun, Moon, AlertTriangle, CheckCircle2, Flag, FastForward,
   TrendingUp, TrendingDown, Minus, Zap, Presentation, X, Settings2, Rocket, ArrowLeftRight, Trophy,
+  Copy, Mail, FileText, Check,
 } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
@@ -37,6 +43,7 @@ import { buildKickoff, buildCloseout, defaultMeeting, type MeetingKind, type Pla
 import { clockLabel, fmtInTz, tzAbbrev } from "@/lib/scheduleTz";
 import { completionNote } from "@/lib/scheduleRules";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
+import { toPlainText, toEmailHtml, type ExportBlock, type ExportDoc, type ExportStepRow } from "@/lib/reportExport";
 
 interface Props {
   milestones: Milestone[];
@@ -132,6 +139,30 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
+  // The report as data — for Copy (text / email).
+  const exportDoc = (): ExportDoc => {
+    const { overall, shift: sh, next } = report;
+    const kind = meeting === "kickoff" ? "Kick-off meeting" : meeting === "closeout" ? "Close-out meeting" : "Shift turnover";
+    const when = meeting === "turnover"
+      ? `${shiftName(sh)} ${ctx.D(sh.start)} ${ctx.win(sh)} → ${shiftName(next)} ${ctx.D(next.start)} ${ctx.win(next)}`
+      : meeting === "kickoff"
+        ? (kickoff.start != null ? `Job starts ${ctx.DL(kickoff.start)} ${ctx.T(kickoff.start)} · ${kickoff.daysTotal} days` : "No dated work yet")
+        : (closeout.finish != null ? `Planned finish ${ctx.DT(closeout.finish)}` : "");
+    const status: ExportDoc["status"] = meeting === "kickoff" ? undefined
+      : meeting === "closeout"
+        ? (closeout.done >= closeout.steps ? { label: "COMPLETE", tone: "emerald" } : { label: `${closeout.steps - closeout.done} OPEN`, tone: "amber" })
+        : { label: overall.standing === "ahead" ? "AHEAD" : overall.standing === "behind" ? "BEHIND" : "ON TRACK",
+          tone: overall.standing === "ahead" ? "emerald" : overall.standing === "behind" ? "rose" : "slate",
+          detail: `${overall.actualPct}% vs ${overall.plannedPct}% plan` };
+    return {
+      kind, project: projectName ?? "Schedule", when,
+      asOf: `${ctx.DT(meeting === "turnover" ? asOf : now)} ${tzAbbrev(ctx.tz, now)}`,
+      status,
+      sections: sections.filter((x) => x.data).map((x) => ({ title: x.title, sub: x.sub, flag: x.flag ?? null, blocks: x.data!() })),
+      footer: `${meeting === "turnover" ? "Plan % = work the schedule expected done by now, hour-weighted; actual % = progress entered. " : ""}Critical = on the chain that drives the finish date. Hours are planned work-hours.`,
+    };
+  };
+
   const head = (print: boolean) => (
     <Masthead meeting={meeting} report={report} kickoff={kickoff} closeout={closeout} ctx={ctx} asOf={asOf} now={now}
       rehearsal={rehearsal} projectName={projectName} print={print} />
@@ -202,6 +233,7 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
             title="Run the meeting one agenda item at a time (← → keys, Esc to leave)">
             {presenting != null ? <><X className="w-3.5 h-3.5" /> Leave present</> : <><Presentation className="w-3.5 h-3.5" /> Present</>}
           </button>
+          <CopyMenu doc={exportDoc} />
           <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-3 py-1.5 rounded-lg shadow-sm">
             <Printer className="w-3.5 h-3.5" /> Print
           </button>
@@ -281,6 +313,114 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
   );
 }
 
+// ─── Copy ────────────────────────────────────────────────────────────
+
+/** Rich copy: HTML for an email body, plain text alongside for anything
+ *  that can't take HTML. Falls back to copying a selection where the
+ *  clipboard API can't write HTML. */
+async function copyRich(html: string, text: string): Promise<boolean> {
+  try {
+    if (typeof ClipboardItem !== "undefined" && navigator.clipboard?.write) {
+      await navigator.clipboard.write([new ClipboardItem({
+        "text/html": new Blob([html], { type: "text/html" }),
+        "text/plain": new Blob([text], { type: "text/plain" }),
+      })]);
+      return true;
+    }
+  } catch { /* fall through */ }
+  const el = document.createElement("div");
+  el.innerHTML = html;
+  el.style.cssText = "position:fixed;left:-10000px;top:0;";
+  document.body.appendChild(el);
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const sel = window.getSelection();
+  sel?.removeAllRanges(); sel?.addRange(range);
+  const ok = document.execCommand("copy");
+  sel?.removeAllRanges(); el.remove();
+  return ok;
+}
+
+async function copyText(text: string): Promise<boolean> {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* fall through */ }
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.cssText = "position:fixed;left:-10000px;top:0;";
+  document.body.appendChild(ta); ta.select();
+  const ok = document.execCommand("copy");
+  ta.remove();
+  return ok;
+}
+
+/** Copy ▾ — the report for an email (tables and colors kept; paste into
+ *  Outlook, Gmail…) or as plain text (Teams, a text message). */
+function CopyMenu({ doc }: { doc: () => ExportDoc }) {
+  const [open, setOpen] = useState(false);
+  const [done, setDone] = useState<{ what: "email" | "text"; ok: boolean; subject: string } | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", close); document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc); };
+  }, [open]);
+  useEffect(() => {
+    if (!done) return;
+    const t = setTimeout(() => setDone(null), 8000);
+    return () => clearTimeout(t);
+  }, [done]);
+
+  const run = async (what: "email" | "text") => {
+    setOpen(false);
+    const d = doc();
+    const text = toPlainText(d);
+    const ok = what === "email" ? await copyRich(toEmailHtml(d), text) : await copyText(text);
+    setDone({ what, ok, subject: `${d.project} — ${d.kind} — ${d.when.split(" → ").pop()}` });
+  };
+
+  return (
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open}
+        className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border ${done?.ok ? "border-emerald-400 text-emerald-700 dark:text-emerald-300" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}
+        title="Copy this report to paste into an email or a message">
+        {done?.ok ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />} {done?.ok ? "Copied" : "Copy"} <ChevronDown className="w-3 h-3 opacity-70" />
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 top-full mt-1 z-30 w-72 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-1">
+          <button role="menuitem" onClick={() => void run("email")} className="w-full text-left flex items-start gap-2 rounded-md px-2.5 py-2 hover:bg-[var(--color-surface-2)]">
+            <Mail className="w-4 h-4 mt-0.5 shrink-0 text-[var(--color-accent)]" />
+            <span>
+              <span className="block text-[12px] font-bold text-[var(--color-text)]">Copy for email</span>
+              <span className="block text-[11px] text-[var(--color-text-muted)]">Paste into Outlook, Gmail or any email — keeps the tables and colors.</span>
+            </span>
+          </button>
+          <button role="menuitem" onClick={() => void run("text")} className="w-full text-left flex items-start gap-2 rounded-md px-2.5 py-2 hover:bg-[var(--color-surface-2)]">
+            <FileText className="w-4 h-4 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
+            <span>
+              <span className="block text-[12px] font-bold text-[var(--color-text)]">Copy as plain text</span>
+              <span className="block text-[11px] text-[var(--color-text-muted)]">For Teams, a text message, or a plain-text email.</span>
+            </span>
+          </button>
+        </div>
+      )}
+      {done && !open && (
+        <div role="status" className={`absolute right-0 top-full mt-1 z-30 w-72 rounded-lg border shadow-lg px-3 py-2 text-[11px] ${done.ok ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-100 dark:border-emerald-900" : "border-rose-300 bg-rose-50 text-rose-900"}`}>
+          {done.ok ? (
+            <>
+              <div className="font-bold">{done.what === "email" ? "Copied — paste it into your email (Ctrl+V)." : "Copied as text — paste it anywhere (Ctrl+V)."}</div>
+              {done.what === "email" && (
+                <a href={`mailto:?subject=${encodeURIComponent(done.subject)}`} className="mt-0.5 inline-flex items-center gap-1 font-bold underline">
+                  <Mail className="w-3 h-3" /> Start a new email with the subject filled in
+                </a>
+              )}
+            </>
+          ) : <div className="font-bold">Your browser blocked the copy. Try again, or use Print.</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Formatting context ──────────────────────────────────────────────
 
 interface Ctx {
@@ -336,7 +476,22 @@ interface Sec {
   count?: number;
   flag?: Flag;
   body: (print: boolean) => React.ReactNode;
+  /** The item as data for a copied report (text / email). Absent for the
+   *  talk-track items — prompts and sign-off — which an update leaves out. */
+  data?: () => ExportBlock[];
 }
+
+/** Table rows as export rows: same text, tags without the null slots. */
+function exportRows(rows: TRow[]): ExportStepRow[] {
+  return rows.map((r) => ({
+    group: r.group.title ? { title: r.group.title, crumbs: r.group.crumbs || undefined, meta: r.group.meta || undefined } : undefined,
+    n: r.n?.num, when: r.when, name: r.name,
+    tags: (r.tags ?? []).filter((t): t is TagT => !!t).map((t) => ({ t: t.t, tone: t.tone })),
+    who: r.who, wo: r.wo, right: r.right, note: r.note,
+  }));
+}
+const stepsBlock = (rows: TRow[], rightHead: string, whenHead = "When", flat?: boolean): ExportBlock =>
+  ({ k: "steps", rows: exportRows(rows), rightHead, whenHead, flat });
 
 const shiftName = (w: ShiftWindow) => (w.kind === "day" ? "Day shift" : "Night shift");
 
@@ -399,6 +554,59 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       : { t: `waits on ${r.waitingOn[0].name}${r.waitingOn.length > 1 ? ` +${r.waitingOn.length - 1}` : ""}`, tone: "amber" };
   };
   const waiting = goals.all.filter((r) => r.waitingOn.length > 0);
+  const waitingMsg = waiting.length > 0
+    ? `${waiting.length} step${waiting.length === 1 ? "" : "s"} (${waiting.map((r) => `#${priorityOf.get(r.leaf.id ?? "") ?? "?"}`).join(", ")}) can't start until the steps before ${waiting.length === 1 ? "it are" : "them are"} done — ${waiting.length === 1 ? "it" : "they"} will run late unless those are cleared first.`
+    : null;
+
+  const lastRows = didNotFinish.map((r) => rowFromShift(r, c, {
+    when: r.offSchedule ? `due ${c.DTs(r.finish)}` : rowTime(r, shift),
+    n: undefined,
+    right: r.percent > 0 ? `${r.percent}%` : "not started",
+    extraTags: [
+      r.status === "blocked" ? { t: "blocked", tone: "rose" } : r.status === "on_hold" ? { t: "on hold", tone: "amber" } : null,
+      r.overdue ? { t: "overdue", tone: "amber" } : r.lateStart ? { t: "late start", tone: "amber" } : null,
+    ],
+  }));
+  const doneItems = review.done.map((r) => ({
+    id: r.leaf.id ?? r.leaf.name,
+    text: `${r.parentName ? `${r.parentName} › ` : ""}${r.leaf.name}`,
+    note: [r.offSchedule ? `planned ${c.D(r.start)}` : rowTime(r, shift), completionNote(r.leaf.actualAt, r.finish, c.tz)].filter(Boolean).join(" · "),
+  }));
+  const decideRows = blocked.map((r) => rowFromShift(r, c, {
+    when: `${r.percent}%`,
+    right: c.DTs(r.finish),
+    extraTags: [r.status === "blocked" ? { t: "blocked", tone: "rose" } : { t: "on hold", tone: "amber" }],
+    note: r.reason ? `Reason: ${r.reason}` : "No reason recorded — ask the crew lead.",
+  }));
+  const nextRows = goals.all.map((r) => rowFromShift(r, c, {
+    when: r.carryOver ? `due ${c.DTs(r.finish)}` : rowTime(r, next),
+    n: { num: priorityOf.get(r.leaf.id ?? "") ?? 0, tone: r.critical ? "rose" : r.carryOver ? "amber" : "slate" },
+    right: `${r.percent > 0 ? `${r.percent}% · ` : ""}${c.hrs(r.hoursLeft)}`,
+    extraTags: [
+      r.carryOver ? { t: "carry-over", tone: "amber" } : null,
+      !r.carryOver && r.lateStart ? { t: "late start", tone: "amber" } : null,
+      waitTag(r),
+      !r.carryOver && r.start < next.start ? { t: `since ${c.D(r.start)}`, tone: "muted" } : null,
+      r.finish > next.end ? { t: `to ${c.D(r.finish)}`, tone: "muted" } : null,
+    ],
+  }));
+  const stretchRows = goals.stretch.map((r, i) => {
+    const closes = goals.backOnTrackAt != null && i + 1 <= goals.backOnTrackAt;
+    return rowFromShift(r, c, {
+      when: `planned ${c.DTs(r.start)}`,
+      n: { num: i + 1, tone: closes ? "amber" : "slate" },
+      right: c.hrs(r.hoursLeft),
+      extraTags: [closes ? { t: "back on track", tone: "amber" } : null],
+    });
+  });
+  const standStats = [
+    { label: "Actual", value: `${overall.actualPct}%`, tone: (overall.standing === "behind" ? "rose" : overall.standing === "ahead" ? "emerald" : "slate") as "rose" | "emerald" | "slate" },
+    { label: "Plan by now", value: `${overall.plannedPct}%`, tone: "slate" as const },
+    { label: "Gap", value: gap > 0.5 ? `−${c.hrs(gap)}` : gap < -0.5 ? `+${c.hrs(-gap)}` : "even", tone: (gap > 0.5 ? "rose" : gap < -0.5 ? "emerald" : "slate") as "rose" | "emerald" | "slate" },
+    { label: "Steps done", value: `${overall.stepsDone}/${overall.stepsTotal}`, tone: "slate" as const },
+    { label: "Carry-over", value: `${review.carryOver.length}`, tone: (review.carryOver.length ? "amber" : "emerald") as "amber" | "emerald" },
+  ];
+  const nothingLast = review.scheduled.length === 0 && review.done.length === 0 && didNotFinish.length === 0;
 
   return [
     {
@@ -408,13 +616,10 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       flag: overall.standing === "behind" ? "rose" : null,
       body: () => (
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 keep">
-          <Stat label="Actual" value={`${overall.actualPct}%`} tone={overall.standing === "behind" ? "rose" : overall.standing === "ahead" ? "emerald" : "slate"} />
-          <Stat label="Plan by now" value={`${overall.plannedPct}%`} tone="slate" />
-          <Stat label="Gap" value={gap > 0.5 ? `−${c.hrs(gap)}` : gap < -0.5 ? `+${c.hrs(-gap)}` : "even"} tone={gap > 0.5 ? "rose" : gap < -0.5 ? "emerald" : "slate"} />
-          <Stat label="Steps done" value={`${overall.stepsDone}/${overall.stepsTotal}`} tone="slate" />
-          <Stat label="Carry-over" value={`${review.carryOver.length}`} tone={review.carryOver.length ? "amber" : "emerald"} />
+          {standStats.map((x) => <Stat key={x.label} label={x.label} value={x.value} tone={x.tone} />)}
         </div>
       ),
+      data: () => [{ k: "stats", items: standStats }],
     },
     {
       id: "safety", title: "Safety & people", short: "Safety",
@@ -430,7 +635,13 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       id: "last", title: `Last shift — ${shiftName(shift)} ${c.D(shift.start)} ${c.win(shift)}`, short: "Last shift",
       sub: `${review.scheduled.length} planned · ${review.done.length} done · ${didNotFinish.length} did not finish`,
       count: didNotFinish.length, flag: didNotFinish.some((r) => r.critical) ? "rose" : didNotFinish.length ? "amber" : null,
-      body: (print) => review.scheduled.length === 0 && review.done.length === 0 && didNotFinish.length === 0 ? (
+      data: () => nothingLast ? [{ k: "empty", text: "Nothing was planned for this shift." }] : [
+        { k: "sub", title: "Did not finish — carries over", count: didNotFinish.length, tone: "amber" },
+        didNotFinish.length === 0 ? { k: "empty", text: "Everything planned for this shift is done." } : stepsBlock(lastRows, "Done"),
+        { k: "sub", title: "Completed", count: review.done.length, tone: "emerald" },
+        review.done.length === 0 ? { k: "empty", text: "Nothing was completed on this shift." } : { k: "list", items: doneItems },
+      ],
+      body: (print) => nothingLast ? (
         <Empty>
           Nothing was planned for this shift.
           {o.onJump && o.jumpTarget && !print && (
@@ -443,23 +654,11 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         <div className="space-y-2">
           <Sub tone="amber" icon={<AlertTriangle className="w-3.5 h-3.5" />} title="Did not finish — carries over" count={didNotFinish.length} />
           {didNotFinish.length === 0 ? <Empty>Everything planned for this shift is done.</Empty> : (
-            <StepTable print={print} rightHead="Done" rows={didNotFinish.map((r) => rowFromShift(r, c, {
-              when: r.offSchedule ? `due ${c.DTs(r.finish)}` : rowTime(r, shift),
-              n: undefined,
-              right: r.percent > 0 ? `${r.percent}%` : "not started",
-              extraTags: [
-                r.status === "blocked" ? { t: "blocked", tone: "rose" } : r.status === "on_hold" ? { t: "on hold", tone: "amber" } : null,
-                r.overdue ? { t: "overdue", tone: "amber" } : r.lateStart ? { t: "late start", tone: "amber" } : null,
-              ],
-            }))} />
+            <StepTable print={print} rightHead="Done" rows={lastRows} />
           )}
           <Sub tone="emerald" icon={<CheckCircle2 className="w-3.5 h-3.5" />} title="Completed" count={review.done.length} />
           {review.done.length === 0 ? <Empty>Nothing was completed on this shift.</Empty> : (
-            <DoneList print={print} items={review.done.map((r) => ({
-              id: r.leaf.id ?? r.leaf.name,
-              text: `${r.parentName ? `${r.parentName} › ` : ""}${r.leaf.name}`,
-              note: [r.offSchedule ? `planned ${c.D(r.start)}` : rowTime(r, shift), completionNote(r.leaf.actualAt, r.finish, c.tz)].filter(Boolean).join(" · "),
-            }))} />
+            <DoneList print={print} items={doneItems} />
           )}
         </div>
       ),
@@ -469,13 +668,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       sub: blocked.length === 0 ? "No blocked or on-hold work." : `${blocked.length} blocked or on hold — name an owner for each`,
       count: blocked.length, flag: blocked.some((r) => r.status === "blocked") ? "rose" : blocked.length ? "amber" : null,
       body: (print) => blocked.length === 0 ? <Empty>Nothing is blocked or on hold.</Empty> : (
-        <StepTable print={print} rightHead="Due" ownerLine rows={blocked.map((r) => rowFromShift(r, c, {
-          when: `${r.percent}%`,
-          right: c.DTs(r.finish),
-          extraTags: [r.status === "blocked" ? { t: "blocked", tone: "rose" } : { t: "on hold", tone: "amber" }],
-          note: r.reason ? `Reason: ${r.reason}` : "No reason recorded — ask the crew lead.",
-        }))} whenHead="Done" />
+        <StepTable print={print} rightHead="Due" ownerLine rows={decideRows} whenHead="Done" />
       ),
+      data: () => [blocked.length === 0 ? { k: "empty", text: "Nothing is blocked or on hold." } : stepsBlock(decideRows, "Due", "Done")],
     },
     {
       id: "next", title: `Next shift — ${shiftName(next)} ${c.D(next.start)} ${c.win(next)}`, short: "Next shift",
@@ -484,46 +679,47 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       body: (print) => (
         <div className="space-y-2">
           <Sub tone="slate" icon={<Flag className="w-3.5 h-3.5" />} title="Must do — in this order" count={goals.all.length} />
-          {waiting.length > 0 && (
-            <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300 keep">
-              {waiting.length} step{waiting.length === 1 ? "" : "s"} ({waiting.map((r) => `#${priorityOf.get(r.leaf.id ?? "") ?? "?"}`).join(", ")}) can&apos;t start until the steps before {waiting.length === 1 ? "it are" : "them are"} done — {waiting.length === 1 ? "it" : "they"} will run late unless those are cleared first.
-            </div>
-          )}
+          {waitingMsg && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300 keep">{waitingMsg}</div>}
           {goals.all.length === 0 ? <Empty>Nothing is scheduled for the next shift.</Empty> : (
-            <StepTable print={print} box rightHead="Left" rows={goals.all.map((r) => rowFromShift(r, c, {
-              when: r.carryOver ? `due ${c.DTs(r.finish)}` : rowTime(r, next),
-              n: { num: priorityOf.get(r.leaf.id ?? "") ?? 0, tone: r.critical ? "rose" : r.carryOver ? "amber" : "slate" },
-              right: `${r.percent > 0 ? `${r.percent}% · ` : ""}${c.hrs(r.hoursLeft)}`,
-              extraTags: [
-                r.carryOver ? { t: "carry-over", tone: "amber" } : null,
-                !r.carryOver && r.lateStart ? { t: "late start", tone: "amber" } : null,
-                waitTag(r),
-                !r.carryOver && r.start < next.start ? { t: `since ${c.D(r.start)}`, tone: "muted" } : null,
-                r.finish > next.end ? { t: `to ${c.D(r.finish)}`, tone: "muted" } : null,
-              ],
-            }))} />
+            <StepTable print={print} box rightHead="Left" rows={nextRows} />
           )}
           <Sub tone={gap > 0.5 ? "amber" : "emerald"} icon={<Zap className="w-3.5 h-3.5" />} title="Stretch — if you have the hands" count={goals.stretch.length} />
           <div className={`text-[11.5px] font-semibold ${gap > 0.5 ? "text-amber-800 dark:text-amber-300" : "text-emerald-800 dark:text-emerald-300"}`}>{stretchMsg}</div>
-          {goals.stretch.length > 0 && (
-            <StepTable print={print} box rightHead="Left" rows={goals.stretch.map((r, i) => {
-              const closes = goals.backOnTrackAt != null && i + 1 <= goals.backOnTrackAt;
-              return rowFromShift(r, c, {
-                when: `planned ${c.DTs(r.start)}`,
-                n: { num: i + 1, tone: closes ? "amber" : "slate" },
-                right: c.hrs(r.hoursLeft),
-                extraTags: [closes ? { t: "back on track", tone: "amber" } : null],
-              });
-            })} />
-          )}
+          {goals.stretch.length > 0 && <StepTable print={print} box rightHead="Left" rows={stretchRows} />}
         </div>
       ),
+      data: () => [
+        { k: "sub", title: "Must do — in this order", count: goals.all.length, tone: "slate" },
+        ...(waitingMsg ? [{ k: "note", text: waitingMsg, tone: "amber" } as ExportBlock] : []),
+        goals.all.length === 0 ? { k: "empty", text: "Nothing is scheduled for the next shift." } : stepsBlock(nextRows, "Left"),
+        { k: "sub", title: "Stretch — if you have the hands", count: goals.stretch.length, tone: gap > 0.5 ? "amber" : "emerald" },
+        { k: "note", text: stretchMsg, tone: gap > 0.5 ? "amber" : "emerald" },
+        ...(goals.stretch.length > 0 ? [stepsBlock(stretchRows, "Left")] : []),
+      ],
     },
     closeSection("Close", ["Outgoing supervisor", "Incoming supervisor", "Crew lead"]),
   ];
 }
 
 function kickoffSections(k: ReturnType<typeof buildKickoff>, c: Ctx): Sec[] {
+  const jobStats = [
+    { label: "Days", value: `${k.daysTotal}`, tone: "slate" as const },
+    { label: "Steps", value: `${k.steps}`, tone: "slate" as const },
+    { label: "Work-hours", value: c.hrs(k.hours), tone: "slate" as const },
+    { label: "Equipment / areas", value: `${k.groups.length}`, tone: "slate" as const },
+    { label: "On critical path", value: `${k.critical.length}`, tone: (k.critical.length ? "rose" : "slate") as "rose" | "slate" },
+  ];
+  const unscheduledMsg = k.unscheduled > 0 ? `${k.unscheduled} step${k.unscheduled === 1 ? " has" : "s have"} no planned dates yet — not in the numbers above.` : null;
+  const notReadyRows = k.notReady.map((r) => rowFromPlan(r, c, {
+    extraTags: [r.leaf.status === "blocked" ? { t: "blocked", tone: "rose" } : { t: "on hold", tone: "amber" }],
+    note: r.leaf.statusReason ? `Reason: ${r.leaf.statusReason}` : "No reason recorded.",
+  }));
+  const critRows = k.critical.map((r, i) => rowFromPlan(r, c, { n: { num: i + 1, tone: "rose" }, noCriticalTag: true }));
+  const shiftRowsOf = (s: (typeof k.firstShifts)[number]) => s.rows.map((r, j) => rowFromShift(r, c, {
+    when: (() => { const a = r.start >= s.window.start ? c.T(r.start) : "…"; const b = r.finish <= s.window.end ? c.T(r.finish) : "…"; return `${a}–${b}`; })(),
+    n: { num: j + 1, tone: r.critical ? "rose" : "slate" }, right: c.hrs(r.hoursLeft),
+    extraTags: [r.finish > s.window.end ? { t: `to ${c.D(r.finish)}`, tone: "muted" } : null],
+  }));
   const secs: Sec[] = [
     {
       id: "job", title: "The job at a glance", short: "The job",
@@ -532,15 +728,12 @@ function kickoffSections(k: ReturnType<typeof buildKickoff>, c: Ctx): Sec[] {
       body: () => (
         <div className="space-y-1.5">
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 keep">
-            <Stat label="Days" value={`${k.daysTotal}`} tone="slate" />
-            <Stat label="Steps" value={`${k.steps}`} tone="slate" />
-            <Stat label="Work-hours" value={c.hrs(k.hours)} tone="slate" />
-            <Stat label="Equipment / areas" value={`${k.groups.length}`} tone="slate" />
-            <Stat label="On critical path" value={`${k.critical.length}`} tone={k.critical.length ? "rose" : "slate"} />
+            {jobStats.map((x) => <Stat key={x.label} label={x.label} value={x.value} tone={x.tone} />)}
           </div>
-          {k.unscheduled > 0 && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{k.unscheduled} step{k.unscheduled === 1 ? " has" : "s have"} no planned dates yet — not in the numbers above.</div>}
+          {unscheduledMsg && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{unscheduledMsg}</div>}
         </div>
       ),
+      data: () => [{ k: "stats", items: jobStats }, ...(unscheduledMsg ? [{ k: "note", text: unscheduledMsg, tone: "amber" } as ExportBlock] : [])],
     },
     {
       id: "ready", title: "Safety & readiness", short: "Readiness",
@@ -554,14 +747,10 @@ function kickoffSections(k: ReturnType<typeof buildKickoff>, c: Ctx): Sec[] {
             "Materials, tools, cranes and scaffold on site or dated",
             "Contacts — operations, safety, QA/QC, each contractor's lead",
           ]} />
-          {k.notReady.length > 0 && (
-            <StepTable print={print} rightHead="Hours" ownerLine rows={k.notReady.map((r) => rowFromPlan(r, c, {
-              extraTags: [r.leaf.status === "blocked" ? { t: "blocked", tone: "rose" } : { t: "on hold", tone: "amber" }],
-              note: r.leaf.statusReason ? `Reason: ${r.leaf.statusReason}` : "No reason recorded.",
-            }))} />
-          )}
+          {k.notReady.length > 0 && <StepTable print={print} rightHead="Hours" ownerLine rows={notReadyRows} />}
         </div>
       ),
+      data: () => [k.notReady.length ? stepsBlock(notReadyRows, "Hours") : { k: "empty", text: "Nothing blocked or on hold before day one." }],
     },
     {
       id: "equip", title: "Equipment & windows", short: "Equipment",
@@ -577,14 +766,19 @@ function kickoffSections(k: ReturnType<typeof buildKickoff>, c: Ctx): Sec[] {
             ],
           }))} />
       ),
+      data: () => [k.groups.length === 0 ? { k: "empty", text: "No dated work yet." } : {
+        k: "table", head: ["Equipment / area", "Window", "Steps", "Hours", "Who"],
+        rows: k.groups.map((g) => [`${g.name}${g.critical ? ` (${g.critical} critical)` : ""}`, c.span(g.start, g.finish), `${g.steps}`, c.hrs(g.hours), g.who.join(", ") || "—"]),
+      }],
     },
     {
       id: "crit", title: "Critical path — what drives the finish date", short: "Critical path",
       sub: k.critical.length ? `${k.critical.length} steps · any slip here moves the end date` : "No critical chain computed",
       count: k.critical.length,
       body: (print) => k.critical.length === 0 ? <Empty>No critical chain — check the step links.</Empty> : (
-        <StepTable print={print} flat rightHead="Hours" rows={k.critical.map((r, i) => rowFromPlan(r, c, { n: { num: i + 1, tone: "rose" }, noCriticalTag: true }))} />
+        <StepTable print={print} flat rightHead="Hours" rows={critRows} />
       ),
+      data: () => [k.critical.length === 0 ? { k: "empty", text: "No critical chain computed." } : stepsBlock(critRows, "Hours", "When", true)],
     },
     {
       id: "who", title: "Who's who", short: "Who's who",
@@ -594,6 +788,10 @@ function kickoffSections(k: ReturnType<typeof buildKickoff>, c: Ctx): Sec[] {
         <SimpleTable print={print} head={["Crew / company", "Steps", "Hours", "First on the job", "Contact"]}
           rows={k.people.map((p) => ({ id: p.name, cells: [<b key="n">{p.name}</b>, `${p.steps}`, c.hrs(p.hours), c.DT(p.first), <Blank key="b" print={print} />] }))} />
       ),
+      data: () => [k.people.length === 0 ? { k: "empty", text: "No responsible parties on the schedule." } : {
+        k: "table", head: ["Crew / company", "Steps", "Hours", "First on the job"],
+        rows: k.people.map((p) => [p.name, `${p.steps}`, c.hrs(p.hours), c.DT(p.first)]),
+      }],
     },
     ...k.firstShifts.map((s, i): Sec => ({
       id: `first${i}`, title: `${i === 0 ? "First" : "Then"}: ${shiftName(s.window)} ${c.D(s.window.start)} ${c.win(s.window)}`,
@@ -601,12 +799,9 @@ function kickoffSections(k: ReturnType<typeof buildKickoff>, c: Ctx): Sec[] {
       sub: `${s.rows.length} steps · ${c.hrs(s.hours)}`,
       count: s.rows.length,
       body: (print) => s.rows.length === 0 ? <Empty>Nothing scheduled on this shift.</Empty> : (
-        <StepTable print={print} box rightHead="Hours" rows={s.rows.map((r, j) => rowFromShift(r, c, {
-          when: (() => { const a = r.start >= s.window.start ? c.T(r.start) : "…"; const b = r.finish <= s.window.end ? c.T(r.finish) : "…"; return `${a}–${b}`; })(),
-          n: { num: j + 1, tone: r.critical ? "rose" : "slate" }, right: c.hrs(r.hoursLeft),
-          extraTags: [r.finish > s.window.end ? { t: `to ${c.D(r.finish)}`, tone: "muted" } : null],
-        }))} />
+        <StepTable print={print} box rightHead="Hours" rows={shiftRowsOf(s)} />
       ),
+      data: () => [s.rows.length === 0 ? { k: "empty", text: "Nothing scheduled on this shift." } : stepsBlock(shiftRowsOf(s), "Hours")],
     })),
     closeSection("Close", ["Project / turnaround lead", "Operations", "Safety", "Each contractor lead"], "Attendance and sign-off"),
   ];
@@ -614,6 +809,19 @@ function kickoffSections(k: ReturnType<typeof buildKickoff>, c: Ctx): Sec[] {
 }
 
 function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftReport, c: Ctx): Sec[] {
+  const finalStats = [
+    { label: "Complete", value: `${co.actualPct}%`, tone: (co.actualPct >= 100 ? "emerald" : "amber") as "emerald" | "amber" },
+    { label: "Steps done", value: `${co.done}/${co.steps}`, tone: "slate" as const },
+    { label: "On time", value: `${co.onTime}`, tone: "emerald" as const },
+    { label: "Late", value: `${co.late}`, tone: (co.late ? "amber" : "slate") as "amber" | "slate" },
+    { label: "vs plan", value: `${report.overall.variancePct > 0 ? "+" : ""}${report.overall.variancePct} pts`, tone: (report.overall.standing === "behind" ? "rose" : "slate") as "rose" | "slate" },
+  ];
+  const openRows = co.open.map((r) => rowFromPlan(r, c, { right: `${r.percent}%` }));
+  const blockedRows = co.blocked.map((r) => rowFromPlan(r, c, {
+    right: `${r.percent}%`,
+    extraTags: [r.leaf.status === "blocked" ? { t: "blocked", tone: "rose" } : { t: "on hold", tone: "amber" }],
+    note: r.leaf.statusReason ? `Reason: ${r.leaf.statusReason}` : undefined,
+  }));
   return [
     {
       id: "final", title: "Final standing", short: "Standing",
@@ -621,30 +829,25 @@ function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftRep
       flag: co.done < co.steps ? "amber" : null,
       body: () => (
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 keep">
-          <Stat label="Complete" value={`${co.actualPct}%`} tone={co.actualPct >= 100 ? "emerald" : "amber"} />
-          <Stat label="Steps done" value={`${co.done}/${co.steps}`} tone="slate" />
-          <Stat label="On time" value={`${co.onTime}`} tone="emerald" />
-          <Stat label="Late" value={`${co.late}`} tone={co.late ? "amber" : "slate"} />
-          <Stat label="vs plan" value={`${report.overall.variancePct > 0 ? "+" : ""}${report.overall.variancePct} pts`} tone={report.overall.standing === "behind" ? "rose" : "slate"} />
+          {finalStats.map((x) => <Stat key={x.label} label={x.label} value={x.value} tone={x.tone} />)}
         </div>
       ),
+      data: () => [{ k: "stats", items: finalStats }],
     },
     {
       id: "open", title: "Still open", short: "Open work", count: co.open.length, flag: co.open.some((r) => r.critical) ? "rose" : co.open.length ? "amber" : null,
       sub: co.open.length ? "Finish, hand over to operations, or move to the punch list" : "Every step is done",
       body: (print) => co.open.length === 0 ? <Empty>Nothing open.</Empty> : (
-        <StepTable print={print} box ownerLine rightHead="Done" rows={co.open.map((r) => rowFromPlan(r, c, { right: `${r.percent}%` }))} />
+        <StepTable print={print} box ownerLine rightHead="Done" rows={openRows} />
       ),
+      data: () => [co.open.length === 0 ? { k: "empty", text: "Nothing open." } : stepsBlock(openRows, "Done")],
     },
     {
       id: "blocked", title: "Blocked / on hold", short: "Blocked", count: co.blocked.length, flag: co.blocked.length ? "rose" : null,
       body: (print) => co.blocked.length === 0 ? <Empty>Nothing blocked or on hold.</Empty> : (
-        <StepTable print={print} ownerLine rightHead="Done" rows={co.blocked.map((r) => rowFromPlan(r, c, {
-          right: `${r.percent}%`,
-          extraTags: [r.leaf.status === "blocked" ? { t: "blocked", tone: "rose" } : { t: "on hold", tone: "amber" }],
-          note: r.leaf.statusReason ? `Reason: ${r.leaf.statusReason}` : undefined,
-        }))} />
+        <StepTable print={print} ownerLine rightHead="Done" rows={blockedRows} />
       ),
+      data: () => [co.blocked.length === 0 ? { k: "empty", text: "Nothing blocked or on hold." } : stepsBlock(blockedRows, "Done")],
     },
     {
       id: "lessons", title: "Hand-back & lessons", short: "Lessons",
