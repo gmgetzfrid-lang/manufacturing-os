@@ -30,7 +30,7 @@ import { Route, Plus, Trash2, Loader2 } from "lucide-react";
 import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import {
-  parseRoutingControl, readRoutingControlAt, setRoutingControl, validateRoutingDraft, reviewsInFlightUnder, MODE_LABEL, ROUTING_PARTIES, examinationOptInAllowed,
+  parseRoutingControl, readRoutingControlAt, setRoutingControl, validateRoutingDraft, reviewsInFlightUnder, MODE_LABEL, ROUTING_PARTIES, examinationOptInAllowed, notifyExaminationOptInAllowed,
   type RoutingControl, type RoutingLevel, type RoutingSlot, type RoutingSlotFill, type RoutingSlotMode,
 } from "@/lib/routingControl";
 import { CAPABILITY_DEFS, type CapabilityId } from "@/lib/capabilityPolicy";
@@ -114,6 +114,23 @@ export function assuranceOptInFor(d: DraftSlot): "offer" | "engineering" | "none
   return requesterAlone ? "none" : "engineering";
 }
 
+/** drafting-flow DF-P25 (GAP-102 ruling (2), the notify-only limb): how a
+ *  draft NOTIFY-ONLY slot offers the examination opt-in — "offer" where the
+ *  parser keeps it (lib/routingControl.ts notifyExaminationOptInAllowed),
+ *  "none" otherwise. It adds no sign-off and no wait: its people's stop is a
+ *  hold that records what they examined. Never offered on another mode
+ *  (assuranceOptInFor decides a blocking slot, unchanged). Pure; exported
+ *  for tests. */
+export function notifyExaminationOptInFor(d: DraftSlot): "offer" | "none" {
+  if (d.mode !== "notify_only") return "none";
+  return notifyExaminationOptInAllowed({ mode: d.mode, fill: draftFill(d) }) ? "offer" : "none";
+}
+
+/** DF-P25: what the notify-only opt-in does — never a suggestion to add a
+ *  sign-off (GAP-102: assurance as notice plus a stop). */
+export const NOTIFY_EXAMINATION_HINT =
+  "Its people are still only told — nobody waits on them and no sign-off is added. If one of them stops the request, they place a hold on its source document from the request page, and the hold records the files they examined and why.";
+
 /** GAP-109 mechanism 2 (DF-P22): may this slot accept a standing
  *  pre-authorization? Exactly where the assurance opt-in may ride
  *  (assuranceOptInFor "offer"), and not while the slot IS an assurance
@@ -166,7 +183,9 @@ export function draftToControl(slots: DraftSlot[]): RoutingControl {
         // DF-P20 fix pass 2: the assurance opt-in, on a blocking slot not
         // filled by the requester alone, nor (merge-time fix pass) by an
         // engineering capability — a slot switched away drops it.
-        ...(d.recordsExamination && assuranceOptInFor(d) === "offer" ? { records_examination: true as const } : {}),
+        // DF-P25: or on a notify-only slot the parser keeps it on (its stop
+        // is a hold with the record — no sign-off, no wait).
+        ...(d.recordsExamination && (assuranceOptInFor(d) === "offer" || notifyExaminationOptInFor(d) === "offer") ? { records_examination: true as const } : {}),
         // DF-P22 (GAP-109 mechanism 2): the standing pre-authorization
         // opt-in, on a slot that can carry it (never an assurance check) — a
         // slot switched away, or made an assurance check, drops it.
@@ -492,6 +511,13 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
                       <input type="checkbox" checked={!!s.recordsExamination} onChange={(e) => patch(i, { recordsExamination: e.target.checked })} />
                       <span className="font-bold text-[var(--color-text-muted)]">Assurance check — its reviewer records what they examined</span>
                       <span className="text-[var(--color-text-faint)]">{ASSURANCE_OPT_IN_HINT}</span>
+                    </label>
+                  )}
+                  {notifyExaminationOptInFor(s) === "offer" && (
+                    <label className="flex flex-wrap items-center gap-1.5 text-[11px]" data-testid="routing-slot-records-examination-notify">
+                      <input type="checkbox" checked={!!s.recordsExamination} onChange={(e) => patch(i, { recordsExamination: e.target.checked })} />
+                      <span className="font-bold text-[var(--color-text-muted)]">Record what they examined when they stop it</span>
+                      <span className="text-[var(--color-text-faint)]">{NOTIFY_EXAMINATION_HINT}</span>
                     </label>
                   )}
                   {preauthOptInFor(s) === "offer" && (

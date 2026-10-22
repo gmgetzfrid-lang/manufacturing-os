@@ -900,3 +900,36 @@ describe("20261074 — held-document label rails (HLD-1 database half)", () => {
     expect(rev).toMatch(/\.update\(\{ rev: check\.label, revision: check\.label, updated_at: new Date\(\)\.toISOString\(\), updated_by: actorUserId \}\)/);
   });
 });
+
+// ─── drafting-flow DF-P25 — GAP-102 notify-only limb: the record rides the hold's own insert ───
+describe("DF-P25 — openHold writes what its opener examined in the hold's own insert", () => {
+  const REC = { v: 1, act: "veto", stop: "hold", ticketId: "t1", rosterId: "r-1", slotKind: "watch", contentHash: "h", cycle: "1A", files: [], ofFiles: 0, allFiles: true, note: "weld map wrong" };
+  it("REGRESSION: a hold placed without a record inserts exactly what it inserted before (no examination key) and returns no new key", async () => {
+    const out = await openHold({ orgId: "o1", documentId: DOC, reason: "Client Review", openedBy: "opener" });
+    const ins = state.calls.filter((c) => c.table === "document_holds" && c.method === "insert");
+    expect(ins).toHaveLength(1);
+    expect(Object.keys(ins[0].args[0] as object).sort()).toEqual(["document_id", "expected_release_at", "notes", "opened_by", "opened_by_name", "org_id", "reason"]);
+    expect(out).not.toHaveProperty("examination");
+    expect(out).not.toHaveProperty("examinationNotRecorded");
+  });
+  it("with a record: ONE insert carries it; the hold read back carries it", async () => {
+    const out = await openHold({ orgId: "o1", documentId: DOC, reason: "Client Review", openedBy: "opener", examination: REC });
+    const ins = state.calls.filter((c) => c.table === "document_holds" && c.method === "insert");
+    expect(ins).toHaveLength(1);
+    expect((ins[0].args[0] as Record<string, unknown>).examination).toEqual(REC);
+    expect(out.examination).toEqual(REC);
+    expect(out).not.toHaveProperty("examinationNotRecorded");
+  });
+  it("before 20261267 (PGRST204 on examination): the hold is still placed — without the record — and says so; never refused for its record", async () => {
+    state.writeError = (table, op, rows) => (table === "document_holds" && op === "insert" && rows.some((r) => "examination" in r)
+      ? { code: "PGRST204", message: "Could not find the 'examination' column of 'document_holds' in the schema cache" } : null);
+    const out = await openHold({ orgId: "o1", documentId: DOC, reason: "Client Review", openedBy: "opener", examination: REC });
+    expect(out.examinationNotRecorded).toBe(true);
+    expect(out).not.toHaveProperty("examination");
+    expect((state.rows.document_holds ?? []).length).toBe(1);
+  });
+  it("any other refusal of the insert is the hold's own (thrown, as before) — the record never hides it", async () => {
+    state.writeError = (table) => (table === "document_holds" ? { code: "23505", message: "duplicate key" } : null);
+    await expect(openHold({ orgId: "o1", documentId: DOC, reason: "Client Review", openedBy: "opener", examination: REC })).rejects.toThrow(/already open on this document/);
+  });
+});

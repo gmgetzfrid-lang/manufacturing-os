@@ -560,8 +560,12 @@ describe("DF-P20 fix pass 2 (review major) — an assurance slot is the controll
     for (const v of [false, null, undefined]) expect("records_examination" in (assureOf(base({ records_examination: v })) as object)).toBe(false);
   });
   it("merge-time fix pass (DEC-90, no regression): a stored value in the wrong place is DROPPED silently, never a reason to refuse the table — notify-only, consent-window, requester-only, an engineering capability, \"yes\", 1", () => {
+    // DF-P25 (GAP-102 ruling (2), the notify-only limb): a notify-only slot
+    // now KEEPS it (its stop is a hold that records what was examined —
+    // never a sign-off; pinned in dfRoundG_P25_notifyHold.test.ts); every
+    // other misplaced value below is still dropped silently.
+    expect(assureOf(base({ mode: "notify_only", records_examination: true }))).toMatchObject({ mode: "notify_only", records_examination: true });
     const dropped = [
-      base({ mode: "notify_only", records_examination: true }),
       base({ mode: "consent_window", records_examination: true }),
       base({ fill: { identity: "requester" }, records_examination: true }),
       base({ fill: { capability: "ticket.final_approve" }, records_examination: true }),
@@ -585,7 +589,9 @@ describe("DF-P20 fix pass 2 (review major) — an assurance slot is the controll
     expect(assureOf(base({ fill: { capability: "ticket.direct_approve" }, records_examination: true }))).toMatchObject({ records_examination: true });
   });
   it("merge-time fix pass: the editor's save still refuses a misplaced opt-in with a visible reason (validateRoutingDraft) — it is never stored", () => {
-    expect(validateRoutingDraft(base({ mode: "notify_only", records_examination: true }) as RoutingControl)).toMatch(/only a "must sign off" slot can be an assurance check/);
+    // DF-P25: a notify-only slot may carry it (accepted); a consent window still may not
+    expect(validateRoutingDraft(base({ mode: "notify_only", records_examination: true }) as RoutingControl)).toBeNull();
+    expect(validateRoutingDraft(base({ mode: "consent_window", records_examination: true }) as RoutingControl)).toMatch(/a consent window has no sign-off to record what was examined on/);
     expect(validateRoutingDraft(base({ fill: { capability: "ticket.final_approve" }, records_examination: true }) as RoutingControl)).toMatch(/engineering approval records its own sign-off/);
     expect(validateRoutingDraft(base({ fill: { identity: "requester" }, records_examination: true }) as RoutingControl)).toMatch(/requester's own acceptance is not an assurance check/);
     expect(validateRoutingDraft(base({ records_examination: "yes" }) as unknown as RoutingControl)).toMatch(/true or absent/);
@@ -599,7 +605,9 @@ describe("DF-P20 fix pass 2 (review major) — an assurance slot is the controll
     ]) {
       const table = { slots: [...PLAIN.slots.map((x) => (x.kind === "check" ? { ...x, records_examination: true } : x)), bad] };
       const roster = await submitRouted(table);
-      expect(roster.slots.some((x) => "recordsExamination" in x)).toBe(false);
+      // DF-P25: a notify-only slot now carries the opt-in (its stop is a hold
+      // with the record); no SIGN-OFF slot ever does from a misplaced value
+      expect(roster.slots.filter((x) => "recordsExamination" in x).map((x) => x.mode)).toEqual(bad.mode === "notify_only" ? ["notify_only"] : []);
       actOn(roster, "e-1", SIG);
       expect((await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG, examination: { files: ["a-d"] } })).status).toBe(200);
       expect(events().every((e) => !("examination" in e.details))).toBe(true);
@@ -613,8 +621,9 @@ describe("DF-P20 fix pass 2 (review major) — an assurance slot is the controll
     const drafts = controlToDraft(stored);
     expect(drafts.map((d) => d.recordsExamination ?? false)).toEqual([false, true]);
     expect(draftToControl(drafts)).toEqual(stored);
-    // switched to notify-only, to the requester, or to an engineering capability: dropped (a value the parser would drop is never written)
-    expect("records_examination" in draftToControl([{ ...drafts[1], mode: "notify_only" }]).slots[0]).toBe(false);
+    // switched to the requester, or to an engineering capability: dropped (a value the parser would drop is never written);
+    // DF-P25: switched to notify-only it is KEPT (the notify-only limb — the parser keeps it there too)
+    expect(draftToControl([{ ...drafts[1], mode: "notify_only" }]).slots[0]).toMatchObject({ mode: "notify_only", records_examination: true });
     expect("records_examination" in draftToControl([{ ...drafts[1], fillKind: "requester" }]).slots[0]).toBe(false);
     expect("records_examination" in draftToControl([{ ...drafts[1], fillKind: "capability", capability: "ticket.final_approve" }]).slots[0]).toBe(false);
     // a slot the editor never opted in writes nothing new (a pre-DF-P20 table saves byte-identical)

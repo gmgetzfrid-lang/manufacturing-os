@@ -113,6 +113,10 @@ interface HoldRow {
   /** HLD-5 (20261073): set by the guard when IT wrote the HOLD_RELEASED audit
    *  row; absent (undefined) on a pre-migration database. */
   release_recorded_at?: string | null;
+  /** drafting-flow DF-P25 (GAP-102 notify-only limb, 20261267): what the
+   *  opener examined, written in the hold's own insert; NULL / absent for
+   *  every other hold. */
+  examination?: Record<string, unknown> | null;
 }
 
 /** A hold as this module returns it: the schema's DocumentHold plus the
@@ -121,6 +125,14 @@ interface HoldRow {
 export interface HoldRecord extends DocumentHold {
   heldRevLabel: string | null;
   heldVersionId: string | null;
+  /** drafting-flow DF-P25 (GAP-102 notify-only limb): the record of what the
+   *  opener examined — present only on a hold placed with one (every other
+   *  hold's record is exactly as before: no key). */
+  examination?: Record<string, unknown>;
+  /** DF-P25: the hold was asked to carry a record, and was placed WITHOUT it
+   *  because the database does not have the column yet (before 20261267) —
+   *  the stop itself is never refused for its record. */
+  examinationNotRecorded?: true;
 }
 
 function rowToHold(r: HoldRow): HoldRecord {
@@ -141,7 +153,16 @@ function rowToHold(r: HoldRow): HoldRecord {
     originTicketId: r.origin_ticket_id ?? null,
     heldRevLabel: r.held_rev_label ?? null,
     heldVersionId: r.held_version_id ?? null,
+    ...(r.examination && typeof r.examination === "object" && !Array.isArray(r.examination) ? { examination: r.examination } : {}),
   };
+}
+
+/** DF-P25: the hold insert's refusal is 20261267's column not being there
+ *  yet (42703 / PGRST204 naming `examination`). */
+export function isMissingHoldExaminationColumn(err: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  if (!err) return false;
+  const code = String(err.code ?? "");
+  return (code === "42703" || code === "PGRST204") && /\bexamination\b/.test(String(err.message ?? ""));
 }
 
 // ─── Authority (HLD-8) ──────────────────────────────────────────
@@ -211,6 +232,13 @@ export interface OpenHoldInput {
   /** LIFE-6 / DEC-25: the ticket this hold originates from (a check-in's
    *  "Field Verification Needed" offer) — the close gate finds it here. */
   originTicketId?: string | null;
+  /** drafting-flow DF-P25 (GAP-102 notify-only limb, 20261267): what the
+   *  person placing the hold examined (lib/assuranceExamination.ts
+   *  holdExaminationRecord) — written in THIS insert, so the record and the
+   *  stop cannot disagree. Absent: the insert is exactly as before. Before
+   *  the column exists the hold is placed without it and the result says
+   *  `examinationNotRecorded` (the stop is never refused for its record). */
+  examination?: Record<string, unknown> | null;
 }
 
 /** HLD-14: the picker's expected-release date (a YYYY-MM-DD from a date
@@ -347,20 +375,29 @@ export async function openHold(input: OpenHoldInput): Promise<HoldRecord> {
   // HLD-7: held_rev_label / held_version_id are NOT sent from here — the
   // 20261073 INSERT guard derives them from the document, and a
   // pre-migration database has no such columns to receive.
-  const { data, error } = await supabase
+  const baseRow = {
+    org_id: input.orgId,
+    document_id: input.documentId,
+    reason: input.reason.trim(),
+    notes: input.notes?.trim() || null,
+    expected_release_at: input.expectedReleaseAt ?? null,
+    opened_by: input.openedBy,
+    opened_by_name: input.openedByName ?? null,
+    ...(input.originTicketId ? { origin_ticket_id: input.originTicketId } : {}),
+  };
+  const withRecord = !!input.examination && typeof input.examination === "object";
+  let examinationNotRecorded = false;
+  let { data, error } = await supabase
     .from("document_holds")
-    .insert({
-      org_id: input.orgId,
-      document_id: input.documentId,
-      reason: input.reason.trim(),
-      notes: input.notes?.trim() || null,
-      expected_release_at: input.expectedReleaseAt ?? null,
-      opened_by: input.openedBy,
-      opened_by_name: input.openedByName ?? null,
-      ...(input.originTicketId ? { origin_ticket_id: input.originTicketId } : {}),
-    })
+    .insert(withRecord ? ({ ...baseRow, examination: input.examination } as typeof baseRow) : baseRow)
     .select("*")
     .single();
+  // DF-P25: before 20261267 the record has no column to land in — the hold
+  // (a person's stop) is placed without it, and the result says so.
+  if (error && withRecord && isMissingHoldExaminationColumn(error)) {
+    examinationNotRecorded = true;
+    ({ data, error } = await supabase.from("document_holds").insert(baseRow).select("*").single());
+  }
 
   if (error) {
     // The partial unique index surfaces as a 23505 here when a hold
@@ -399,7 +436,8 @@ export async function openHold(input: OpenHoldInput): Promise<HoldRecord> {
     actorName: input.openedByName,
   });
 
-  return rowToHold(row);
+  const hold = rowToHold(row);
+  return examinationNotRecorded ? { ...hold, examinationNotRecorded: true } : hold;
 }
 
 /** AUTHZ-7 (review fix): the hold's org, read CHECKED — the capability gate

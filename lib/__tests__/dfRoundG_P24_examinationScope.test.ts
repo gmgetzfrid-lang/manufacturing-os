@@ -235,14 +235,14 @@ describe("fix pass — ruling (2): never newly block a request already in flight
   });
 });
 
-describe("ruling (4) — the notify-only limb is NOT built; nothing about it changed", () => {
-  it("the parser still drops records_examination on a notify-only slot (never refuses the table)", () => {
+describe("ruling (4) — the notify-only limb (NOT built by DF-P24; built by DF-P25 — dfRoundG_P25_notifyHold.test.ts)", () => {
+  it("DF-P25: the parser now KEEPS records_examination on a notify-only slot (its stop is a hold with the record), and never refuses the table", () => {
     const p = parseRoutingControl({ slots: [
       { kind: "sign", mode: "blocking", fill: { roles: ["Viewer"] } },
       { kind: "told", mode: "notify_only", fill: { users: ["q-1"] }, records_examination: true },
     ] });
     expect(p && p.ok).toBe(true);
-    expect((p as unknown as { ok: true; control: { slots: Array<Record<string, unknown>> } }).control.slots[1]).not.toHaveProperty("records_examination");
+    expect((p as unknown as { ok: true; control: { slots: Array<Record<string, unknown>> } }).control.slots[1]).toHaveProperty("records_examination", true);
   });
   it("the editor's hint never steers a facility toward a blocking assurance slot", () => {
     expect(ASSURANCE_OPT_IN_HINT).toMatch(/adds no sign-off/);
