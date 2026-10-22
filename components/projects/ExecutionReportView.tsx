@@ -7,7 +7,8 @@
 // reasons), and planned-vs-actual performer. Print-friendly so it
 // doubles as an end-of-job report.
 
-import React, { useMemo } from "react";
+import React, { useMemo, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { fmtInTz } from "@/lib/scheduleTz";
 import {
@@ -39,9 +40,24 @@ export default function ExecutionReportView({ milestones }: { milestones: Milest
 
   const ahead = r.paceDelta >= 0;
   return (
+    <>
+      <style>{PRINT_CSS}</style>
+      {body(false)}
+      <PrintCopy>{body(true)}</PrintCopy>
+    </>
+  );
+
+  function body(print: boolean) {
+  return (
     <div className="space-y-3">
+      {print && (
+        <div className="pb-1 mb-1 border-b-2 border-slate-900 flex items-baseline justify-between gap-3">
+          <span className="text-[13pt] font-black">Schedule report</span>
+          <span className="text-[9pt] text-slate-600">Printed {fmtInTz(new Date().toISOString(), tz, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+        </div>
+      )}
       {/* Headline */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className={`grid gap-3 ${print ? "grid-cols-4" : "grid-cols-2 lg:grid-cols-4"}`}>
         <Card>
           <Label>Complete</Label>
           <div className="flex items-baseline gap-1">
@@ -223,6 +239,35 @@ export default function ExecutionReportView({ milestones }: { milestones: Milest
       </div>
     </div>
   );
+  }
+}
+
+/** Printing prints only the report — not the app around it — in a compact
+ *  layout: the same content rendered into a portal at the document root,
+ *  with screen padding, shadows and big type tightened for paper. */
+const PRINT_CSS = `
+  [data-exec-print-root] { display: none; }
+  @media print {
+    @page { size: auto; margin: 10mm; }
+    body > *:not([data-exec-print-root]) { display: none !important; }
+    [data-exec-print-root] { display: block !important; font-size: 9pt; line-height: 1.3; color: #0f172a; background: #fff; }
+    [data-exec-print-root] * { box-shadow: none !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    [data-exec-print-root] .space-y-3 > * + * { margin-top: 6px !important; }
+    [data-exec-print-root] .rounded-2xl { border-radius: 6px !important; }
+    [data-exec-print-root] .px-4 { padding-left: 8px !important; padding-right: 8px !important; }
+    [data-exec-print-root] .py-3, [data-exec-print-root] .py-2\.5 { padding-top: 4px !important; padding-bottom: 4px !important; }
+    [data-exec-print-root] .text-3xl { font-size: 18pt !important; }
+    [data-exec-print-root] .text-2xl { font-size: 15pt !important; }
+    [data-exec-print-root] li, [data-exec-print-root] .divide-y > div { break-inside: avoid; }
+  }
+`;
+
+const noSubscribe = () => () => undefined;
+
+function PrintCopy({ children }: { children: React.ReactNode }) {
+  // True only in the browser (the portal needs document.body).
+  const mounted = useSyncExternalStore(noSubscribe, () => true, () => false);
+  return mounted ? createPortal(<div data-exec-print-root>{children}</div>, document.body) : null;
 }
 
 function Card({ children }: { children: React.ReactNode }) {

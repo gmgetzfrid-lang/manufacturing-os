@@ -1,26 +1,31 @@
 "use client";
 
-// ShiftReportView — the shift-change MEETING, as a page you run top to
-// bottom and hand out. Sections are numbered in the order a supervisor
-// runs the hand-over:
-//   1  Where we stand        — ahead/behind, actual vs plan, day X of N
-//   2  Last shift: results   — completed, then did-not-finish (carry-over)
-//   3  Needs a decision      — blocked / on hold, with the reason
-//   4  Next shift: the plan  — MUST DO (hold the plan) and STRETCH (pull
-//                              forward), with the hours gap spelled out
-//   5  Close                 — notes and sign-off
-// Every block says its full date; attention items are red (critical
-// path, blocked) or amber (carry-over, on hold) with an icon; every step
-// sits under its equipment with the equipment's window and progress.
+// ShiftReportView — the job's MEETINGS, as agendas you run live and hand out.
 //
-// Printing: the same body is rendered a second time into a portal at the
-// document root (hidden on screen), so the paper copy is not offset by
-// the app's sidebar or clipped by its scroll containers, and it uses a
-// light masthead instead of the dark screen one.
+//   Kick-off   before / on day one — the job, readiness, equipment windows,
+//              the critical chain, who's who, the first day and night shifts.
+//   Turnover   every shift change — where we stand, safety & people, last
+//              shift's results, decisions, the next shift's plan, close.
+//   Close-out  at the end — final standing, what's open, lessons, sign-off.
+//
+// Built for running a meeting from it: a numbered agenda bar that stays on
+// screen and jumps to each item (with its count and a red/amber flag when
+// it needs attention), Present mode that shows one item at a time (← → keys),
+// collapsible items, and dense tables — one line per step, grouped under
+// its equipment — instead of a card per equipment.
+//
+// Printing: the same agendas render a second time into a portal at the
+// document root (hidden on screen) in a compact print layout: small type,
+// one-line header, tables that may break across pages between rows (never
+// mid-row), so a turnover fits on one or two sheets instead of leaving half
+// pages blank.
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Printer, ChevronLeft, ChevronRight, Sun, Moon, AlertTriangle, CheckCircle2, Flag, FastForward, ArrowRight, Ban, PauseCircle, TrendingUp, TrendingDown, Minus, Zap } from "lucide-react";
+import {
+  Printer, ChevronLeft, ChevronRight, ChevronDown, Sun, Moon, AlertTriangle, CheckCircle2, Flag, FastForward,
+  TrendingUp, TrendingDown, Minus, Zap, Presentation, X, Settings2, Rocket, ArrowLeftRight, Trophy,
+} from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
@@ -28,6 +33,7 @@ import {
   buildShiftReport, shiftWindow, nextShift, previousShift, defaultReviewShift, nextShiftWithWork,
   DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftRow, type ShiftWindow, type ShiftReport,
 } from "@/lib/shiftReport";
+import { buildKickoff, buildCloseout, defaultMeeting, type MeetingKind, type PlanRow } from "@/lib/meetingPlan";
 import { clockLabel, fmtInTz, tzAbbrev } from "@/lib/scheduleTz";
 import { completionNote } from "@/lib/scheduleRules";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
@@ -48,6 +54,12 @@ function loadTimes(projectId: string): ShiftTimes {
   return DEFAULT_SHIFT_TIMES;
 }
 
+const MEETINGS: Array<{ id: MeetingKind; label: string; Icon: typeof Rocket }> = [
+  { id: "kickoff", label: "Kick-off", Icon: Rocket },
+  { id: "turnover", label: "Shift turnover", Icon: ArrowLeftRight },
+  { id: "closeout", label: "Close-out", Icon: Trophy },
+];
+
 export default function ShiftReportView({ milestones, progress, criticalIds, projectId, projectName }: Props) {
   const tz = useScheduleTz();
   const [times, setTimes] = useState<ShiftTimes>(DEFAULT_SHIFT_TIMES);
@@ -56,11 +68,16 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
     setTimes(t);
     try { localStorage.setItem(`shiftTimes:${projectId}`, JSON.stringify(t)); } catch { /* ignore */ }
   };
+  const [showTimes, setShowTimes] = useState(false);
 
   // Re-evaluated every minute so a tab left open rolls over a shift
   // boundary (and "as of now" stays current) without a reload.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const id = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(id); }, []);
+
+  const [meetingPick, setMeetingPick] = useState<MeetingKind | null>(null);
+  const meeting = meetingPick ?? defaultMeeting(milestones, now, progress);
+
   const [sel, setSel] = useState<{ dayKey: string; kind: "day" | "night" } | null>(null);
   const shift: ShiftWindow = useMemo(
     () => (sel ? shiftWindow(sel.dayKey, sel.kind, tz, times) : defaultReviewShift(milestones, now, tz, times)),
@@ -69,489 +86,856 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
   const pick = (w: ShiftWindow) => setSel({ dayKey: w.dayKey, kind: w.kind });
 
   // "As of": now while the shift is under way; the shift's end once it is
-  // over, and ALSO for a shift in the future so the page can be rehearsed
-  // before the outage with the plan measured at that shift's end.
+  // over, and ALSO for a shift in the future so the page can be rehearsed.
   const asOf = now >= shift.start && now < shift.end ? now : shift.end;
   const report = useMemo(
     () => buildShiftReport({ milestones, progress, criticalIds, tz, times, shift, now: asOf }),
     [milestones, progress, criticalIds, tz, times, shift, asOf],
   );
+  const kickoff = useMemo(() => buildKickoff({ milestones, progress, criticalIds, tz, times }), [milestones, progress, criticalIds, tz, times]);
+  const closeout = useMemo(() => buildCloseout({ milestones, progress, criticalIds }), [milestones, progress, criticalIds]);
   const rehearsal = now < shift.start;
   const jumpTarget = useMemo(() => (report.review.scheduled.length === 0 ? nextShiftWithWork(milestones, shift, tz, times) : null), [report.review.scheduled.length, milestones, shift, tz, times]);
   const byId = useMemo(() => { const m = new Map<string, Milestone>(); for (const x of milestones) if (x.id) m.set(x.id, x); return m; }, [milestones]);
 
-  // Portal target for the print copy (client only).
+  const ctx = useMemo(() => makeCtx(tz, byId, progress), [tz, byId, progress]);
+  const sections = useMemo(() => meeting === "kickoff"
+    ? kickoffSections(kickoff, ctx)
+    : meeting === "closeout"
+      ? closeoutSections(closeout, report, ctx)
+      : turnoverSections(report, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget }),
+  [meeting, kickoff, closeout, report, ctx, jumpTarget]);
+
+  // ── live-meeting navigation ──
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [presenting, setPresenting] = useState<number | null>(null);
+  const refs = useRef(new Map<string, HTMLElement>());
+  const goTo = useCallback((id: string) => {
+    if (presenting != null) { setPresenting(Math.max(0, sections.findIndex((s) => s.id === id))); return; }
+    setCollapsed((c) => { const n = new Set(c); n.delete(id); return n; });
+    requestAnimationFrame(() => refs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }, [presenting, sections]);
+  useEffect(() => { setPresenting((p) => (p == null ? null : Math.min(p, sections.length - 1))); }, [sections.length]);
+  useEffect(() => {
+    if (presenting == null) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+      if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") { e.preventDefault(); setPresenting((p) => Math.min(sections.length - 1, (p ?? 0) + 1)); }
+      if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); setPresenting((p) => Math.max(0, (p ?? 0) - 1)); }
+      if (e.key === "Escape") setPresenting(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [presenting, sections.length]);
+
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
-  const body = (print: boolean) => (
-    <ReportBody
-      report={report} tz={tz} now={now} asOf={asOf} rehearsal={rehearsal} projectName={projectName}
-      byId={byId} progress={progress} print={print}
-      onJump={jumpTarget ? () => pick(jumpTarget) : undefined} jumpTarget={jumpTarget}
-    />
+  const head = (print: boolean) => (
+    <Masthead meeting={meeting} report={report} kickoff={kickoff} closeout={closeout} ctx={ctx} asOf={asOf} now={now}
+      rehearsal={rehearsal} projectName={projectName} print={print} />
   );
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden">
+    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03]">
       <style>{`
         [data-shift-print-root] { display: none; }
         @media print {
-          @page { size: auto; margin: 12mm; }
+          @page { size: auto; margin: 9mm; }
           body > *:not([data-shift-print-root]) { display: none !important; }
-          [data-shift-print-root] { display: block !important; width: 100%; max-width: 100%; margin: 0 auto; font-size: 11pt; color: #0f172a; background: #fff; }
-          [data-shift-print-root] section, [data-shift-print-root] .equip { break-inside: avoid; }
+          [data-shift-print-root] { display: block !important; width: 100%; max-width: 100%; margin: 0; font-size: 9pt; line-height: 1.3; color: #0f172a; background: #fff; }
           [data-shift-print-root] * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+          [data-shift-print-root] .sec-head { break-after: avoid; }
+          [data-shift-print-root] tr, [data-shift-print-root] .keep { break-inside: avoid; }
+          [data-shift-print-root] thead { display: table-header-group; }
           [data-shift-print-root] .no-print { display: none !important; }
         }
       `}</style>
 
-      {/* ── Toolbar (screen only) ─────────────────────────────────── */}
-      <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap bg-gradient-to-b from-white to-slate-50/40">
-        <button onClick={() => pick(previousShift(shift, tz, times))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Previous shift"><ChevronLeft className="w-4 h-4" /></button>
-        <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-md p-0.5 gap-0.5">
-          {(["day", "night"] as const).map((k) => (
-            <button key={k} onClick={() => setSel({ dayKey: shift.dayKey, kind: k })} className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-bold transition-colors ${shift.kind === k ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
-              {k === "day" ? <Sun className="w-3 h-3" /> : <Moon className="w-3 h-3" />} {k === "day" ? "Day" : "Night"}
+      {/* ── Toolbar ─────────────────────────────────────────────────── */}
+      <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap rounded-t-2xl bg-gradient-to-b from-white to-slate-50/40 dark:from-transparent dark:to-transparent">
+        <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-lg p-0.5 gap-0.5" role="tablist" aria-label="Meeting">
+          {MEETINGS.map(({ id, label, Icon }) => (
+            <button key={id} role="tab" aria-selected={meeting === id} onClick={() => { setMeetingPick(id); setPresenting(null); }}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${meeting === id ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+              <Icon className="w-3 h-3" /> {label}
             </button>
           ))}
         </div>
-        <input type="date" value={shift.dayKey} onChange={(e) => { if (e.target.value) setSel({ dayKey: e.target.value, kind: shift.kind }); }}
-          className="h-7 text-[11px] border border-[var(--color-border-strong)] rounded px-2 bg-[var(--color-surface)]" title="Which day's shift to close" />
-        <button onClick={() => pick(nextShift(shift, tz, times))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Next shift"><ChevronRight className="w-4 h-4" /></button>
-        <button onClick={() => setSel(null)} className="text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)] border border-[var(--color-border)]">Current shift</button>
-        <span className="mx-1 w-px h-4 bg-[var(--color-border)]" />
-        <label className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]"><Sun className="w-3 h-3" /> day starts
-          <input type="time" value={times.dayStart} onChange={(e) => saveTimes({ ...times, dayStart: e.target.value || DEFAULT_SHIFT_TIMES.dayStart })} className="h-7 text-[11px] border border-[var(--color-border-strong)] rounded px-1 bg-[var(--color-surface)]" />
-        </label>
-        <label className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]"><Moon className="w-3 h-3" /> night starts
-          <input type="time" value={times.nightStart} onChange={(e) => saveTimes({ ...times, nightStart: e.target.value || DEFAULT_SHIFT_TIMES.nightStart })} className="h-7 text-[11px] border border-[var(--color-border-strong)] rounded px-1 bg-[var(--color-surface)]" />
-        </label>
-        <button onClick={() => window.print()} className="ml-auto inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-3 py-1.5 rounded-lg shadow-sm">
-          <Printer className="w-3.5 h-3.5" /> Print agenda
-        </button>
+
+        {meeting === "turnover" && (
+          <>
+            <span className="mx-0.5 w-px h-4 bg-[var(--color-border)]" />
+            <button onClick={() => pick(previousShift(shift, tz, times))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Previous shift"><ChevronLeft className="w-4 h-4" /></button>
+            <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-md p-0.5 gap-0.5">
+              {(["day", "night"] as const).map((k) => (
+                <button key={k} onClick={() => setSel({ dayKey: shift.dayKey, kind: k })} className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold ${shift.kind === k ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                  {k === "day" ? <Sun className="w-3 h-3" /> : <Moon className="w-3 h-3" />} {k === "day" ? "Day" : "Night"}
+                </button>
+              ))}
+            </div>
+            <input type="date" value={shift.dayKey} onChange={(e) => { if (e.target.value) setSel({ dayKey: e.target.value, kind: shift.kind }); }}
+              className="h-7 text-[11px] border border-[var(--color-border-strong)] rounded px-2 bg-[var(--color-surface)]" title="Which day's shift to close" />
+            <button onClick={() => pick(nextShift(shift, tz, times))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Next shift"><ChevronRight className="w-4 h-4" /></button>
+            <button onClick={() => setSel(null)} className="text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)]">Current shift</button>
+          </>
+        )}
+
+        <div className="ml-auto flex items-center gap-1.5">
+          <div className="relative">
+            <button onClick={() => setShowTimes((v) => !v)} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Shift times" aria-expanded={showTimes}><Settings2 className="w-4 h-4" /></button>
+            {showTimes && (
+              <div className="absolute right-0 top-full mt-1 z-30 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-2.5 space-y-1.5 text-[11px] w-52">
+                <div className="font-bold text-[var(--color-text)]">Shift change times (plant time)</div>
+                <label className="flex items-center justify-between gap-2 text-[var(--color-text-muted)]"><span className="inline-flex items-center gap-1"><Sun className="w-3 h-3" /> Day starts</span>
+                  <input type="time" value={times.dayStart} onChange={(e) => saveTimes({ ...times, dayStart: e.target.value || DEFAULT_SHIFT_TIMES.dayStart })} className="h-7 border border-[var(--color-border-strong)] rounded px-1 bg-[var(--color-surface)]" />
+                </label>
+                <label className="flex items-center justify-between gap-2 text-[var(--color-text-muted)]"><span className="inline-flex items-center gap-1"><Moon className="w-3 h-3" /> Night starts</span>
+                  <input type="time" value={times.nightStart} onChange={(e) => saveTimes({ ...times, nightStart: e.target.value || DEFAULT_SHIFT_TIMES.nightStart })} className="h-7 border border-[var(--color-border-strong)] rounded px-1 bg-[var(--color-surface)]" />
+                </label>
+              </div>
+            )}
+          </div>
+          <button onClick={() => setPresenting(presenting == null ? 0 : null)}
+            className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border ${presenting != null ? "bg-slate-900 text-white border-slate-900" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}
+            title="Run the meeting one agenda item at a time (← → keys, Esc to leave)">
+            {presenting != null ? <><X className="w-3.5 h-3.5" /> Leave present</> : <><Presentation className="w-3.5 h-3.5" /> Present</>}
+          </button>
+          <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-3 py-1.5 rounded-lg shadow-sm">
+            <Printer className="w-3.5 h-3.5" /> Print
+          </button>
+        </div>
       </div>
 
-      {/* Screen copy */}
-      {body(false)}
+      {head(false)}
+
+      {/* ── Agenda bar: stays on screen, jumps to each item ───────────── */}
+      <nav className="sticky top-0 z-20 px-3 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur flex items-center gap-1 overflow-x-auto" aria-label="Agenda">
+        {sections.map((s, i) => {
+          const active = presenting === i;
+          const tone = s.flag === "rose" ? "border-rose-300 bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200 dark:border-rose-900"
+            : s.flag === "amber" ? "border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900"
+              : "border-[var(--color-border)] text-[var(--color-text)]";
+          return (
+            <button key={s.id} onClick={() => goTo(s.id)}
+              className={`shrink-0 inline-flex items-center gap-1.5 rounded-full border pl-1 pr-2.5 py-0.5 text-[11px] font-bold hover:brightness-95 ${tone} ${active ? "ring-2 ring-[var(--color-accent)]" : ""}`}>
+              <span className="w-[18px] h-[18px] rounded-full bg-slate-900 text-white text-[10px] font-black flex items-center justify-center">{i + 1}</span>
+              {s.short}
+              {s.count != null && <span className="font-mono font-bold opacity-70">{s.count}</span>}
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* ── Screen body ─────────────────────────────────────────────── */}
+      {presenting != null && sections[presenting] ? (
+        <div className="px-6 py-5 min-h-[420px] text-[14px]">
+          <SectionHead n={presenting + 1} s={sections[presenting]} big />
+          <div className="mt-3">{sections[presenting].body(false)}</div>
+          <div className="mt-6 flex items-center justify-between no-print">
+            <button disabled={presenting === 0} onClick={() => setPresenting(presenting - 1)} className="inline-flex items-center gap-1 rounded-lg border border-[var(--color-border-strong)] px-3 py-2 text-[12px] font-bold disabled:opacity-30">
+              <ChevronLeft className="w-4 h-4" /> {presenting > 0 ? sections[presenting - 1].short : "Back"}
+            </button>
+            <span className="text-[11px] text-[var(--color-text-muted)]">{presenting + 1} of {sections.length} · ← → to move · Esc to leave</span>
+            <button disabled={presenting === sections.length - 1} onClick={() => setPresenting(presenting + 1)} className="inline-flex items-center gap-1 rounded-lg bg-slate-900 text-white px-3 py-2 text-[12px] font-bold disabled:opacity-30">
+              {presenting < sections.length - 1 ? sections[presenting + 1].short : "Done"} <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="px-4 sm:px-5 py-3 space-y-3 text-[12.5px] text-[var(--color-text)]">
+          {sections.map((s, i) => {
+            const isCollapsed = collapsed.has(s.id);
+            return (
+              <section key={s.id} ref={(el) => { if (el) refs.current.set(s.id, el); else refs.current.delete(s.id); }} className="scroll-mt-12">
+                <button className="w-full text-left" onClick={() => setCollapsed((c) => { const n = new Set(c); if (n.has(s.id)) n.delete(s.id); else n.add(s.id); return n; })} aria-expanded={!isCollapsed}>
+                  <SectionHead n={i + 1} s={s} collapsed={isCollapsed} />
+                </button>
+                {!isCollapsed && <div className="mt-2">{s.body(false)}</div>}
+              </section>
+            );
+          })}
+          <Footnote meeting={meeting} ctx={ctx} asOf={asOf} now={now} projectName={projectName} />
+        </div>
+      )}
 
       {/* Print copy — a direct child of <body>, so the page layout never
           offsets or clips it. Hidden on screen by the style above. */}
-      {mounted && createPortal(<div data-shift-print-root>{body(true)}</div>, document.body)}
+      {mounted && createPortal(
+        <div data-shift-print-root>
+          {head(true)}
+          <div style={{ padding: "4px 0" }}>
+            {sections.map((s, i) => (
+              <section key={s.id} style={{ marginTop: 8 }}>
+                <div className="sec-head"><SectionHead n={i + 1} s={s} print /></div>
+                <div style={{ marginTop: 3 }}>{s.body(true)}</div>
+              </section>
+            ))}
+            <Footnote meeting={meeting} ctx={ctx} asOf={asOf} now={now} projectName={projectName} />
+          </div>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }
 
-// ─── The report body (shared by screen and print) ───────────────────
+// ─── Formatting context ──────────────────────────────────────────────
 
-function ReportBody({ report, tz, now, asOf, rehearsal, projectName, byId, progress, print, onJump, jumpTarget }: {
-  report: ShiftReport; tz: string; now: number; asOf: number; rehearsal: boolean; projectName?: string;
-  byId: Map<string, Milestone>; progress?: Map<string, ProgressInfo>; print: boolean;
-  onJump?: () => void; jumpTarget: ShiftWindow | null;
-}) {
-  const { overall, review, goals, blocked, shift, next } = report;
+interface Ctx {
+  tz: string;
+  D: (ms: number) => string;
+  DL: (ms: number) => string;
+  T: (ms: number) => string;
+  DT: (ms: number) => string;
+  /** Short date + time for table cells: "Oct 22 7:30". */
+  DTs: (ms: number) => string;
+  hrs: (h: number) => string;
+  win: (w: ShiftWindow) => string;
+  span: (a: number, b: number) => string;
+  group: (parentId: string | null, parentName: string | null, crumbs: string[], fallback: string) => TGroup;
+}
 
-  // ── formatting helpers (plant time) ──
+function makeCtx(tz: string, byId: Map<string, Milestone>, progress?: Map<string, ProgressInfo>): Ctx {
   const D = (ms: number) => fmtInTz(ms, tz, { weekday: "short", month: "short", day: "numeric" });
   const DL = (ms: number) => fmtInTz(ms, tz, { weekday: "long", month: "long", day: "numeric" });
   const T = (ms: number) => clockLabel(ms, tz) || "0:00";
   const DT = (ms: number) => `${D(ms)} ${T(ms)}`;
-  const sameDay = (a: number, b: number) => fmtInTz(a, tz, { year: "numeric", month: "numeric", day: "numeric" }) === fmtInTz(b, tz, { year: "numeric", month: "numeric", day: "numeric" });
-  const win = (w: ShiftWindow) => `${T(w.start)} – ${T(w.end)}${sameDay(w.start, w.end) ? "" : ` (${D(w.end)})`}`;
-  const rowTime = (r: ShiftRow, w: ShiftWindow) => {
-    const s = r.start >= w.start && r.start < w.end ? T(r.start) : null;
-    const f = r.finish > w.start && r.finish <= w.end ? T(r.finish) : null;
-    if (!s && !f) return "all shift";
-    return `${s ?? "…"} – ${f ?? "…"}`;
+  const day = (ms: number) => fmtInTz(ms, tz, { year: "numeric", month: "numeric", day: "numeric" });
+  const DS = (ms: number) => fmtInTz(ms, tz, { month: "short", day: "numeric" });
+  const DTs = (ms: number) => `${DS(ms)} ${T(ms)}`;
+  const span = (a: number, b: number) => (!Number.isFinite(a) || !Number.isFinite(b) ? "—" : day(a) === day(b) ? `${DS(a)} ${T(a)}–${T(b)}` : `${DTs(a)} → ${DTs(b)}`);
+  return {
+    tz, D, DL, T, DT, DTs, span,
+    hrs: (h: number) => `${Math.round(h * 10) / 10} h`,
+    win: (w) => `${T(w.start)}–${T(w.end)}${day(w.start) === day(w.end) ? "" : ` (${D(w.end)})`}`,
+    group: (parentId, parentName, crumbs, fallback) => {
+      const parent = parentId ? byId.get(parentId) : undefined;
+      const info = parentId ? progress?.get(parentId) : undefined;
+      const ps = parent ? startMsOf(parent) : NaN, pf = parent ? finishMsOf(parent) : NaN;
+      return {
+        key: parentId ?? `solo:${fallback}`,
+        title: parentName ?? "",
+        crumbs: crumbs.join(" › "),
+        meta: [Number.isFinite(ps) && Number.isFinite(pf) ? span(ps, pf) : null, info ? `${info.leafDone}/${info.leafTotal} steps · ${info.percent}%` : null].filter(Boolean).join(" · "),
+      };
+    },
   };
-  const hrs = (h: number) => `${Math.round(h * 10) / 10} h`;
+}
 
-  // "Did not finish" on the closing shift = everything open that was due,
-  // plus this shift's planned steps that were not started.
-  const didNotFinish = useMemo(() => {
-    const seen = new Set<string>();
-    const out: ShiftRow[] = [];
-    for (const r of [...review.carryOver, ...review.inProgress, ...review.notStarted]) {
-      if (!r.leaf.id || seen.has(r.leaf.id)) continue;
-      seen.add(r.leaf.id); out.push(r);
-    }
-    return out.sort((a, b) => Number(b.critical) - Number(a.critical) || Number(b.carryOver) - Number(a.carryOver) || a.start - b.start);
-  }, [review]);
+// ─── Agenda items ────────────────────────────────────────────────────
 
-  // Priority number per must-do goal, in the order the plan lists them.
-  const priorityOf = useMemo(() => {
-    const m = new Map<string, number>();
-    goals.all.forEach((r, i) => { if (r.leaf.id) m.set(r.leaf.id, i + 1); });
-    return m;
-  }, [goals.all]);
+type Flag = "rose" | "amber" | null;
+interface Sec {
+  id: string;
+  title: string;
+  /** Short label for the agenda bar. */
+  short: string;
+  sub?: string;
+  count?: number;
+  flag?: Flag;
+  body: (print: boolean) => React.ReactNode;
+}
 
-  const standing = overall.standing;
-  const standingUi = standing === "ahead"
-    ? { label: "AHEAD OF PLAN", cls: print ? "border-2 border-emerald-700 text-emerald-800 bg-emerald-50" : "bg-emerald-600 text-white", Icon: TrendingUp }
-    : standing === "behind"
-      ? { label: "BEHIND PLAN", cls: print ? "border-2 border-rose-700 text-rose-800 bg-rose-50" : "bg-rose-600 text-white", Icon: TrendingDown }
-      : { label: "ON TRACK", cls: print ? "border-2 border-slate-700 text-slate-800 bg-slate-50" : "bg-slate-700 text-white", Icon: Minus };
+const shiftName = (w: ShiftWindow) => (w.kind === "day" ? "Day shift" : "Night shift");
 
-  // The stretch banner: what the extra work buys, in the job's own numbers.
+function rowFromShift(r: ShiftRow, c: Ctx, o: { when: string; n?: { num: number; tone: NumTone }; box?: boolean; right: string; done?: boolean; extraTags?: Array<TagT | null>; note?: string }): TRow {
+  return {
+    id: r.leaf.id ?? r.leaf.name,
+    group: c.group(r.parentId, r.parentName, r.path.slice(0, -1), r.leaf.name),
+    n: o.n, box: o.box, when: o.when, name: r.leaf.name, done: o.done,
+    tags: [r.critical ? { t: "critical", tone: "rose" } : null, ...(o.extraTags ?? [])],
+    who: r.leaf.responsibleParty ?? undefined, wo: r.leaf.workOrderRef ?? undefined,
+    right: o.right, note: o.note,
+  };
+}
+
+function rowFromPlan(r: PlanRow, c: Ctx, o: { when?: string; right?: string; n?: { num: number; tone: NumTone }; note?: string; extraTags?: Array<TagT | null>; noCriticalTag?: boolean }): TRow {
+  return {
+    id: r.leaf.id ?? r.leaf.name,
+    group: c.group(r.parentId, r.parentName, r.crumbs, r.leaf.name),
+    n: o.n, when: o.when ?? c.span(r.start, r.finish), name: r.leaf.name,
+    tags: [r.critical && !o.noCriticalTag ? { t: "critical", tone: "rose" } : null, ...(o.extraTags ?? [])],
+    who: r.who ?? undefined, wo: r.leaf.workOrderRef ?? undefined,
+    right: o.right ?? c.hrs(r.hours), note: o.note,
+  };
+}
+
+function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void; jumpTarget: ShiftWindow | null }): Sec[] {
+  const { overall, review, goals, blocked, shift, next } = report;
+  const rowTime = (r: ShiftRow, w: ShiftWindow) => {
+    const s = r.start >= w.start && r.start < w.end ? c.T(r.start) : null;
+    const f = r.finish > w.start && r.finish <= w.end ? c.T(r.finish) : null;
+    if (!s && !f) return "all shift";
+    return `${s ?? "…"}–${f ?? "…"}`;
+  };
+  const seen = new Set<string>();
+  const didNotFinish: ShiftRow[] = [];
+  for (const r of [...review.carryOver, ...review.inProgress, ...review.notStarted]) {
+    if (!r.leaf.id || seen.has(r.leaf.id)) continue;
+    seen.add(r.leaf.id); didNotFinish.push(r);
+  }
+  didNotFinish.sort((a, b) => Number(b.critical) - Number(a.critical) || Number(b.carryOver) - Number(a.carryOver) || a.start - b.start);
+  const priorityOf = new Map<string, number>();
+  goals.all.forEach((r, i) => { if (r.leaf.id) priorityOf.set(r.leaf.id, i + 1); });
   const gap = goals.gapHours;
   const stretchHours = goals.stretch.reduce((a, r) => a + r.hoursLeft, 0);
   const stretchMsg = gap > 0.5
     ? (goals.backOnTrackAt
-      ? `You're about ${hrs(gap)} of work behind the plan. Must-do holds the line; adding stretch items 1–${goals.backOnTrackAt} (${hrs(goals.stretch.slice(0, goals.backOnTrackAt).reduce((a, r) => a + r.hoursLeft, 0))}) gets you back on plan.`
+      ? `About ${c.hrs(gap)} behind plan. Must-do holds the line; stretch 1–${goals.backOnTrackAt} (${c.hrs(goals.stretch.slice(0, goals.backOnTrackAt).reduce((a, r) => a + r.hoursLeft, 0))}) gets you back on plan.`
       : goals.stretch.length
-        ? `You're about ${hrs(gap)} of work behind the plan. Every stretch item done closes the gap; all ${goals.stretch.length} here are ${hrs(stretchHours)}.`
-        : `You're about ${hrs(gap)} of work behind the plan. Nothing further is ready to pull forward yet — clearing the must-do list is the whole job this shift.`)
-    : gap < -0.5
-      ? `You're about ${hrs(-gap)} ahead of the plan. Anything here banks more time.`
-      : `You're on the plan. Anything here puts you ahead.`;
+        ? `About ${c.hrs(gap)} behind plan. Every stretch item closes the gap; all ${goals.stretch.length} are ${c.hrs(stretchHours)}.`
+        : `About ${c.hrs(gap)} behind plan. Nothing else is ready to pull forward — clearing must-do is the whole job.`)
+    : gap < -0.5 ? `About ${c.hrs(-gap)} ahead of plan. Anything here banks more time.` : "On plan. Anything here puts you ahead.";
+  const critCarry = goals.carryOver.filter((r) => r.critical).length;
 
-  const mast = print ? "px-6 py-4 border-b-4 border-slate-900 text-slate-900" : "px-6 py-4 bg-slate-900 text-white";
-  const mastSub = print ? "text-slate-600" : "text-slate-300";
+  return [
+    {
+      id: "stand", title: "Where we stand", short: "Status",
+      sub: [overall.plannedFinish ? `Day ${overall.daysElapsed} of ${overall.daysTotal} · planned finish ${c.DT(overall.plannedFinish)}` : null,
+        overall.planBasis === "baseline" ? `vs baseline${overall.baselineSetAt ? ` of ${c.D(Date.parse(overall.baselineSetAt))}` : ""}` : "vs live dates (no baseline)"].filter(Boolean).join(" · "),
+      flag: overall.standing === "behind" ? "rose" : null,
+      body: () => (
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 keep">
+          <Stat label="Actual" value={`${overall.actualPct}%`} tone={overall.standing === "behind" ? "rose" : overall.standing === "ahead" ? "emerald" : "slate"} />
+          <Stat label="Plan by now" value={`${overall.plannedPct}%`} tone="slate" />
+          <Stat label="Gap" value={gap > 0.5 ? `−${c.hrs(gap)}` : gap < -0.5 ? `+${c.hrs(-gap)}` : "even"} tone={gap > 0.5 ? "rose" : gap < -0.5 ? "emerald" : "slate"} />
+          <Stat label="Steps done" value={`${overall.stepsDone}/${overall.stepsTotal}`} tone="slate" />
+          <Stat label="Carry-over" value={`${review.carryOver.length}`} tone={review.carryOver.length ? "amber" : "emerald"} />
+        </div>
+      ),
+    },
+    {
+      id: "safety", title: "Safety & people", short: "Safety",
+      sub: "Open every turnover here — then the work.",
+      body: (print) => <Prompts print={print} items={[
+        "Safety moment — incidents, near misses, first aid since last turnover",
+        "Permits, isolations and lock-outs that stay open across the change",
+        "Manpower and equipment — who is short, what is down, what arrives",
+        "Hazards on the next shift's work (lifts, confined space, hot work, line breaks)",
+      ]} />,
+    },
+    {
+      id: "last", title: `Last shift — ${shiftName(shift)} ${c.D(shift.start)} ${c.win(shift)}`, short: "Last shift",
+      sub: `${review.scheduled.length} planned · ${review.done.length} done · ${didNotFinish.length} did not finish`,
+      count: didNotFinish.length, flag: didNotFinish.some((r) => r.critical) ? "rose" : didNotFinish.length ? "amber" : null,
+      body: (print) => review.scheduled.length === 0 && review.done.length === 0 && didNotFinish.length === 0 ? (
+        <Empty>
+          Nothing was planned for this shift.
+          {o.onJump && o.jumpTarget && !print && (
+            <button onClick={o.onJump} className="ml-2 inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline">
+              <FastForward className="w-3.5 h-3.5" /> Jump to {o.jumpTarget.kind} shift, {c.D(o.jumpTarget.start)}
+            </button>
+          )}
+        </Empty>
+      ) : (
+        <div className="space-y-2">
+          <Sub tone="amber" icon={<AlertTriangle className="w-3.5 h-3.5" />} title="Did not finish — carries over" count={didNotFinish.length} />
+          {didNotFinish.length === 0 ? <Empty>Everything planned for this shift is done.</Empty> : (
+            <StepTable print={print} rightHead="Done" rows={didNotFinish.map((r) => rowFromShift(r, c, {
+              when: r.offSchedule ? `due ${c.DTs(r.finish)}` : rowTime(r, shift),
+              n: undefined,
+              right: r.percent > 0 ? `${r.percent}%` : "not started",
+              extraTags: [
+                r.status === "blocked" ? { t: "blocked", tone: "rose" } : r.status === "on_hold" ? { t: "on hold", tone: "amber" } : null,
+                r.carryOver && !r.offSchedule ? { t: "overdue", tone: "amber" } : null,
+              ],
+            }))} />
+          )}
+          <Sub tone="emerald" icon={<CheckCircle2 className="w-3.5 h-3.5" />} title="Completed" count={review.done.length} />
+          {review.done.length === 0 ? <Empty>Nothing was completed on this shift.</Empty> : (
+            <DoneList print={print} items={review.done.map((r) => ({
+              id: r.leaf.id ?? r.leaf.name,
+              text: `${r.parentName ? `${r.parentName} › ` : ""}${r.leaf.name}`,
+              note: [r.offSchedule ? `planned ${c.D(r.start)}` : rowTime(r, shift), completionNote(r.leaf.actualAt, r.finish, c.tz)].filter(Boolean).join(" · "),
+            }))} />
+          )}
+        </div>
+      ),
+    },
+    {
+      id: "decide", title: "Needs a decision", short: "Decisions",
+      sub: blocked.length === 0 ? "No blocked or on-hold work." : `${blocked.length} blocked or on hold — name an owner for each`,
+      count: blocked.length, flag: blocked.some((r) => r.status === "blocked") ? "rose" : blocked.length ? "amber" : null,
+      body: (print) => blocked.length === 0 ? <Empty>Nothing is blocked or on hold.</Empty> : (
+        <StepTable print={print} rightHead="Due" ownerLine rows={blocked.map((r) => rowFromShift(r, c, {
+          when: `${r.percent}%`,
+          right: c.DTs(r.finish),
+          extraTags: [r.status === "blocked" ? { t: "blocked", tone: "rose" } : { t: "on hold", tone: "amber" }],
+          note: r.reason ? `Reason: ${r.reason}` : "No reason recorded — ask the crew lead.",
+        }))} whenHead="Done" />
+      ),
+    },
+    {
+      id: "next", title: `Next shift — ${shiftName(next)} ${c.D(next.start)} ${c.win(next)}`, short: "Next shift",
+      sub: `Must do: ${goals.all.length} steps · ${c.hrs(goals.mustDoHours)} · ${goals.carryOver.length} carried over · ${goals.critical.length} critical`,
+      count: goals.all.length, flag: critCarry ? "rose" : goals.carryOver.length ? "amber" : null,
+      body: (print) => (
+        <div className="space-y-2">
+          <Sub tone="slate" icon={<Flag className="w-3.5 h-3.5" />} title="Must do — in this order" count={goals.all.length} />
+          {goals.all.length === 0 ? <Empty>Nothing is scheduled for the next shift.</Empty> : (
+            <StepTable print={print} box rightHead="Left" rows={goals.all.map((r) => rowFromShift(r, c, {
+              when: r.carryOver ? `due ${c.DTs(r.finish)}` : rowTime(r, next),
+              n: { num: priorityOf.get(r.leaf.id ?? "") ?? 0, tone: r.critical ? "rose" : r.carryOver ? "amber" : "slate" },
+              right: `${r.percent > 0 ? `${r.percent}% · ` : ""}${c.hrs(r.hoursLeft)}`,
+              extraTags: [
+                r.carryOver ? { t: "carry-over", tone: "amber" } : null,
+                !r.carryOver && r.start < next.start ? { t: `since ${c.D(r.start)}`, tone: "muted" } : null,
+                r.finish > next.end ? { t: `to ${c.D(r.finish)}`, tone: "muted" } : null,
+              ],
+            }))} />
+          )}
+          <Sub tone={gap > 0.5 ? "amber" : "emerald"} icon={<Zap className="w-3.5 h-3.5" />} title="Stretch — if you have the hands" count={goals.stretch.length} />
+          <div className={`text-[11.5px] font-semibold ${gap > 0.5 ? "text-amber-800 dark:text-amber-300" : "text-emerald-800 dark:text-emerald-300"}`}>{stretchMsg}</div>
+          {goals.stretch.length > 0 && (
+            <StepTable print={print} box rightHead="Left" rows={goals.stretch.map((r, i) => {
+              const closes = goals.backOnTrackAt != null && i + 1 <= goals.backOnTrackAt;
+              return rowFromShift(r, c, {
+                when: `planned ${c.DTs(r.start)}`,
+                n: { num: i + 1, tone: closes ? "amber" : "slate" },
+                right: c.hrs(r.hoursLeft),
+                extraTags: [closes ? { t: "back on track", tone: "amber" } : null],
+              });
+            })} />
+          )}
+        </div>
+      ),
+    },
+    closeSection("Close", ["Outgoing supervisor", "Incoming supervisor", "Crew lead"]),
+  ];
+}
 
-  return (
-    <div className="text-[12.5px] text-[var(--color-text)]">
-      {/* Masthead: which meeting this is. */}
-      <header className={mast}>
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div className="min-w-0">
-            <div className={`text-[10px] font-black uppercase tracking-[0.2em] ${mastSub}`}>Shift change meeting</div>
-            <h2 className="text-xl font-black leading-tight truncate">{projectName ?? "Schedule"}</h2>
-            <div className={`text-[11px] mt-0.5 ${mastSub}`}>
-              {DL(asOf)} · as of <b className={print ? "text-slate-900" : "text-white"}>{T(asOf)}</b> plant time ({tzAbbrev(tz, asOf)})
-              {rehearsal && !print && <span className="ml-2 px-1.5 py-0.5 rounded bg-amber-400 text-slate-900 text-[10px] font-black uppercase">Rehearsal — shift not started yet</span>}
-            </div>
+function kickoffSections(k: ReturnType<typeof buildKickoff>, c: Ctx): Sec[] {
+  const secs: Sec[] = [
+    {
+      id: "job", title: "The job at a glance", short: "The job",
+      sub: k.start != null && k.finish != null ? `${c.DT(k.start)} → ${c.DT(k.finish)}` : "No dated steps yet",
+      flag: k.unscheduled > 0 ? "amber" : null,
+      body: () => (
+        <div className="space-y-1.5">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 keep">
+            <Stat label="Days" value={`${k.daysTotal}`} tone="slate" />
+            <Stat label="Steps" value={`${k.steps}`} tone="slate" />
+            <Stat label="Work-hours" value={c.hrs(k.hours)} tone="slate" />
+            <Stat label="Equipment / areas" value={`${k.groups.length}`} tone="slate" />
+            <Stat label="On critical path" value={`${k.critical.length}`} tone={k.critical.length ? "rose" : "slate"} />
           </div>
-          <div className={`rounded-xl px-4 py-2 text-right shrink-0 ${standingUi.cls}`}>
-            <div className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest opacity-90"><standingUi.Icon className="w-3.5 h-3.5" /> Overall</div>
-            <div className="text-xl font-black leading-none">{standingUi.label}</div>
-            <div className="text-[11px] font-bold opacity-90">{overall.variancePct > 0 ? "+" : ""}{overall.variancePct} points · {gap > 0 ? `${hrs(gap)} behind` : gap < 0 ? `${hrs(-gap)} ahead` : "even"}</div>
+          {k.unscheduled > 0 && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{k.unscheduled} step{k.unscheduled === 1 ? " has" : "s have"} no planned dates yet — not in the numbers above.</div>}
+        </div>
+      ),
+    },
+    {
+      id: "ready", title: "Safety & readiness", short: "Readiness",
+      sub: k.notReady.length ? `${k.notReady.length} step${k.notReady.length === 1 ? "" : "s"} blocked or on hold before day one` : "Nothing blocked or on hold",
+      count: k.notReady.length || undefined, flag: k.notReady.length ? "rose" : null,
+      body: (print) => (
+        <div className="space-y-2">
+          <Prompts print={print} items={[
+            "Job safety plan reviewed — hazards, permits, rescue plans, emergency muster",
+            "Isolations, blinds and lock-out list agreed with operations",
+            "Materials, tools, cranes and scaffold on site or dated",
+            "Contacts — operations, safety, QA/QC, each contractor's lead",
+          ]} />
+          {k.notReady.length > 0 && (
+            <StepTable print={print} rightHead="Hours" ownerLine rows={k.notReady.map((r) => rowFromPlan(r, c, {
+              extraTags: [r.leaf.status === "blocked" ? { t: "blocked", tone: "rose" } : { t: "on hold", tone: "amber" }],
+              note: r.leaf.statusReason ? `Reason: ${r.leaf.statusReason}` : "No reason recorded.",
+            }))} />
+          )}
+        </div>
+      ),
+    },
+    {
+      id: "equip", title: "Equipment & windows", short: "Equipment",
+      sub: "Each piece of work, its window, and who does it — in start order",
+      count: k.groups.length,
+      body: (print) => k.groups.length === 0 ? <Empty>No dated work yet.</Empty> : (
+        <SimpleTable print={print} head={["Equipment / area", "Window", "Steps", "Hours", "Who"]}
+          rows={k.groups.map((g) => ({
+            id: g.id,
+            cells: [
+              <span key="n"><b>{g.name}</b>{g.crumbs.length ? <span className="text-[var(--color-text-faint)]"> · {g.crumbs.join(" › ")}</span> : null}{g.critical ? <> <TagChip t={`${g.critical} critical`} tone="rose" /></> : null}</span>,
+              c.span(g.start, g.finish), `${g.steps}`, c.hrs(g.hours), g.who.join(", ") || "—",
+            ],
+          }))} />
+      ),
+    },
+    {
+      id: "crit", title: "Critical path — what drives the finish date", short: "Critical path",
+      sub: k.critical.length ? `${k.critical.length} steps · any slip here moves the end date` : "No critical chain computed",
+      count: k.critical.length,
+      body: (print) => k.critical.length === 0 ? <Empty>No critical chain — check the step links.</Empty> : (
+        <StepTable print={print} flat rightHead="Hours" rows={k.critical.map((r, i) => rowFromPlan(r, c, { n: { num: i + 1, tone: "rose" }, noCriticalTag: true }))} />
+      ),
+    },
+    {
+      id: "who", title: "Who's who", short: "Who's who",
+      sub: k.people.length ? `${k.people.length} crews / companies named on the schedule` : "No responsible parties on the schedule",
+      count: k.people.length,
+      body: (print) => k.people.length === 0 ? <Empty>Add a responsible party to steps to see who does what.</Empty> : (
+        <SimpleTable print={print} head={["Crew / company", "Steps", "Hours", "First on the job", "Contact"]}
+          rows={k.people.map((p) => ({ id: p.name, cells: [<b key="n">{p.name}</b>, `${p.steps}`, c.hrs(p.hours), c.DT(p.first), <Blank key="b" print={print} />] }))} />
+      ),
+    },
+    ...k.firstShifts.map((s, i): Sec => ({
+      id: `first${i}`, title: `${i === 0 ? "First" : "Then"}: ${shiftName(s.window)} ${c.D(s.window.start)} ${c.win(s.window)}`,
+      short: i === 0 ? `Day 1 ${s.window.kind}` : `${s.window.kind === "day" ? "Day" : "Night"} ${c.D(s.window.start).split(",")[0]}`,
+      sub: `${s.rows.length} steps · ${c.hrs(s.hours)}`,
+      count: s.rows.length,
+      body: (print) => s.rows.length === 0 ? <Empty>Nothing scheduled on this shift.</Empty> : (
+        <StepTable print={print} box rightHead="Hours" rows={s.rows.map((r, j) => rowFromShift(r, c, {
+          when: (() => { const a = r.start >= s.window.start ? c.T(r.start) : "…"; const b = r.finish <= s.window.end ? c.T(r.finish) : "…"; return `${a}–${b}`; })(),
+          n: { num: j + 1, tone: r.critical ? "rose" : "slate" }, right: c.hrs(r.hoursLeft),
+          extraTags: [r.finish > s.window.end ? { t: `to ${c.D(r.finish)}`, tone: "muted" } : null],
+        }))} />
+      ),
+    })),
+    closeSection("Close", ["Project / turnaround lead", "Operations", "Safety", "Each contractor lead"], "Attendance and sign-off"),
+  ];
+  return secs;
+}
+
+function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftReport, c: Ctx): Sec[] {
+  return [
+    {
+      id: "final", title: "Final standing", short: "Standing",
+      sub: co.finish != null ? `Planned finish ${c.DT(co.finish)}${co.lastActual ? ` · last step completed ${c.DT(co.lastActual)}` : ""}` : undefined,
+      flag: co.done < co.steps ? "amber" : null,
+      body: () => (
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 keep">
+          <Stat label="Complete" value={`${co.actualPct}%`} tone={co.actualPct >= 100 ? "emerald" : "amber"} />
+          <Stat label="Steps done" value={`${co.done}/${co.steps}`} tone="slate" />
+          <Stat label="On time" value={`${co.onTime}`} tone="emerald" />
+          <Stat label="Late" value={`${co.late}`} tone={co.late ? "amber" : "slate"} />
+          <Stat label="vs plan" value={`${report.overall.variancePct > 0 ? "+" : ""}${report.overall.variancePct} pts`} tone={report.overall.standing === "behind" ? "rose" : "slate"} />
+        </div>
+      ),
+    },
+    {
+      id: "open", title: "Still open", short: "Open work", count: co.open.length, flag: co.open.some((r) => r.critical) ? "rose" : co.open.length ? "amber" : null,
+      sub: co.open.length ? "Finish, hand over to operations, or move to the punch list" : "Every step is done",
+      body: (print) => co.open.length === 0 ? <Empty>Nothing open.</Empty> : (
+        <StepTable print={print} box ownerLine rightHead="Done" rows={co.open.map((r) => rowFromPlan(r, c, { right: `${r.percent}%` }))} />
+      ),
+    },
+    {
+      id: "blocked", title: "Blocked / on hold", short: "Blocked", count: co.blocked.length, flag: co.blocked.length ? "rose" : null,
+      body: (print) => co.blocked.length === 0 ? <Empty>Nothing blocked or on hold.</Empty> : (
+        <StepTable print={print} ownerLine rightHead="Done" rows={co.blocked.map((r) => rowFromPlan(r, c, {
+          right: `${r.percent}%`,
+          extraTags: [r.leaf.status === "blocked" ? { t: "blocked", tone: "rose" } : { t: "on hold", tone: "amber" }],
+          note: r.leaf.statusReason ? `Reason: ${r.leaf.statusReason}` : undefined,
+        }))} />
+      ),
+    },
+    {
+      id: "lessons", title: "Hand-back & lessons", short: "Lessons",
+      body: (print) => <Prompts print={print} lines={2} items={[
+        "Equipment handed back to operations — isolations removed, blinds out, permits closed",
+        "Punch list and turnover documents — what's outstanding and who owns it",
+        "What went well — keep doing",
+        "What didn't — change next time",
+      ]} />,
+    },
+    closeSection("Sign-off", ["Project / turnaround lead", "Operations", "Safety"]),
+  ];
+}
+
+function closeSection(title: string, signers: string[], sub = "Notes, actions and sign-off"): Sec {
+  return {
+    id: "close", title, short: title, sub,
+    body: (print) => (
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 keep">
+        <div className="rounded-md border border-[var(--color-border)] px-2.5 py-1.5">
+          <div className="text-[9px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Notes & actions</div>
+          {Array.from({ length: print ? 4 : 3 }).map((_, i) => <div key={i} className="h-5 border-b border-dotted border-[var(--color-border-strong)]" />)}
+        </div>
+        <div className="rounded-md border border-[var(--color-border)] px-2.5 py-1.5 space-y-2">
+          <div className="text-[9px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Sign-off</div>
+          {signers.map((who) => (
+            <div key={who} className="flex items-end gap-2 text-[11px] text-[var(--color-text-muted)]">
+              <span className="w-40 shrink-0">{who}</span>
+              <span className="flex-1 border-b border-[var(--color-border-strong)]" />
+              <span className="w-12 border-b border-[var(--color-border-strong)] text-center text-[9px]">time</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    ),
+  };
+}
+
+// ─── Masthead & footnote ─────────────────────────────────────────────
+
+function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehearsal, projectName, print }: {
+  meeting: MeetingKind; report: ShiftReport; kickoff: ReturnType<typeof buildKickoff>; closeout: ReturnType<typeof buildCloseout>;
+  ctx: Ctx; asOf: number; now: number; rehearsal: boolean; projectName?: string; print: boolean;
+}) {
+  const { overall, shift, next } = report;
+  const standing = overall.standing;
+  const pill = meeting === "kickoff" ? null
+    : meeting === "closeout"
+      ? { label: closeout.done >= closeout.steps ? "COMPLETE" : `${closeout.steps - closeout.done} OPEN`, cls: closeout.done >= closeout.steps ? "emerald" : "amber", Icon: CheckCircle2 }
+      : standing === "ahead" ? { label: "AHEAD", cls: "emerald", Icon: TrendingUp }
+        : standing === "behind" ? { label: "BEHIND", cls: "rose", Icon: TrendingDown } : { label: "ON TRACK", cls: "slate", Icon: Minus };
+  const pillCls = !pill ? "" : print
+    ? `border-2 ${pill.cls === "emerald" ? "border-emerald-700 text-emerald-800" : pill.cls === "rose" ? "border-rose-700 text-rose-800" : pill.cls === "amber" ? "border-amber-700 text-amber-800" : "border-slate-700 text-slate-800"}`
+    : pill.cls === "emerald" ? "bg-emerald-600 text-white" : pill.cls === "rose" ? "bg-rose-600 text-white" : pill.cls === "amber" ? "bg-amber-500 text-white" : "bg-slate-700 text-white";
+  const title = meeting === "kickoff" ? "Kick-off meeting" : meeting === "closeout" ? "Close-out meeting" : "Shift turnover";
+  const when = meeting === "turnover"
+    ? <>{shiftName(shift)} {c.D(shift.start)} {c.win(shift)} <span className="opacity-60">→</span> <b>{shiftName(next)} {c.D(next.start)} {c.win(next)}</b></>
+    : meeting === "kickoff"
+      ? <>{kickoff.start != null ? <>Job starts <b>{c.DL(kickoff.start)} {c.T(kickoff.start)}</b> · {kickoff.daysTotal} days</> : "No dated work yet"}</>
+      : <>{closeout.finish != null ? <>Planned finish <b>{c.DT(closeout.finish)}</b></> : null}</>;
+  return (
+    <header className={print ? "pb-1.5 border-b-2 border-slate-900" : "px-4 sm:px-5 py-2.5 bg-slate-900 text-white"}>
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <span className={`text-[10px] font-black uppercase tracking-[0.18em] ${print ? "text-slate-500" : "text-slate-400"}`}>{title}</span>
+            <h2 className={`${print ? "text-[13pt]" : "text-[17px]"} font-black leading-tight truncate`}>{projectName ?? "Schedule"}</h2>
+          </div>
+          <div className={`text-[11px] ${print ? "text-slate-700" : "text-slate-300"}`}>
+            {when} · as of {c.T(meeting === "turnover" ? asOf : now)} {tzAbbrev(c.tz, now)}
+            {rehearsal && meeting === "turnover" && !print && <span className="ml-2 px-1.5 py-0.5 rounded bg-amber-400 text-slate-900 text-[10px] font-black uppercase">Rehearsal — shift not started</span>}
           </div>
         </div>
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] gap-2 items-stretch">
-          <ShiftCard label="Closing" kind={shift.kind} date={DL(shift.start)} window={win(shift)} print={print} />
-          <div className={`hidden sm:flex items-center justify-center ${print ? "text-slate-400" : "text-slate-500"}`}><ArrowRight className="w-5 h-5" /></div>
-          <ShiftCard label="Opening" kind={next.kind} date={DL(next.start)} window={win(next)} emphasis print={print} />
-        </div>
-      </header>
-
-      <div className="px-6 py-5 space-y-7">
-
-        {/* 1 ── Where we stand */}
-        <section>
-          <Agenda n={1} title="Where we stand" sub={[
-            overall.plannedFinish ? `Schedule day ${overall.daysElapsed} of ${overall.daysTotal} · planned finish ${DT(overall.plannedFinish)}` : null,
-            overall.planBasis === "baseline"
-              ? `Measured against the plan as of ${overall.baselineSetAt ? DT(Date.parse(overall.baselineSetAt)) : "the baseline"}`
-              : "Measured against the live dates — no baseline yet (Reset progress or a replace-import sets one)",
-          ].filter(Boolean).join(" · ") || undefined} />
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <Stat label="Actual complete" value={`${overall.actualPct}%`} tone={standing === "behind" ? "rose" : standing === "ahead" ? "emerald" : "slate"} />
-            <Stat label="Plan said by now" value={`${overall.plannedPct}%`} tone="slate" />
-            <Stat label="Steps done" value={`${overall.stepsDone}`} sub={`of ${overall.stepsTotal}`} tone="slate" />
-            <Stat label="Carry-over" value={`${review.carryOver.length}`} sub={review.carryOver.length ? "steps overdue" : "nothing overdue"} tone={review.carryOver.length ? "amber" : "emerald"} />
+        {pill && (
+          <div className={`rounded-lg px-2.5 py-1 text-right shrink-0 ${pillCls}`}>
+            <div className="inline-flex items-center gap-1 text-[13px] font-black leading-none"><pill.Icon className="w-3.5 h-3.5" /> {pill.label}</div>
+            {meeting === "turnover" && <div className="text-[10px] font-bold opacity-90">{overall.actualPct}% vs {overall.plannedPct}% plan</div>}
           </div>
-          <div className="mt-2 space-y-1">
-            <Bar label="Actual" pct={overall.actualPct} cls={standing === "behind" ? "bg-rose-500" : "bg-emerald-500"} />
-            <Bar label="Plan" pct={overall.plannedPct} cls="bg-slate-400" />
-          </div>
-        </section>
-
-        {/* 2 ── Last shift: results */}
-        <section>
-          <Agenda n={2} title="Last shift: results" sub={`${shift.kind === "day" ? "Day" : "Night"} shift · ${D(shift.start)} · ${win(shift)} · ${review.scheduled.length} step${review.scheduled.length === 1 ? "" : "s"} planned`} />
-          {review.scheduled.length === 0 && review.done.length === 0 && didNotFinish.length === 0 ? (
-            <EmptyRow>
-              Nothing was planned for this shift.
-              {onJump && jumpTarget && (
-                <button onClick={onJump} className="no-print ml-2 inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline">
-                  <FastForward className="w-3.5 h-3.5" /> Jump to {jumpTarget.kind} shift, {D(jumpTarget.start)}
-                </button>
-              )}
-            </EmptyRow>
-          ) : (
-            <div className="space-y-4">
-              <Block tone="emerald" icon={<CheckCircle2 className="w-4 h-4" />} title="Completed" count={review.done.length} empty="Nothing was completed on this shift.">
-                <Equipment rows={review.done} byId={byId} progress={progress} D={D} T={T} render={(r) => (
-                  <Line marker={<CheckCircle2 className="w-4 h-4 text-emerald-600" />} time={r.offSchedule ? "early" : rowTime(r, shift)} name={r.leaf.name} done
-                    tags={[
-                      r.offSchedule ? { t: `planned ${DT(r.start)}`, tone: "muted" as const } : null,
-                      (() => { const n = completionNote(r.leaf.actualAt, r.finish, tz); return n ? { t: n, tone: (n.endsWith("late") ? "amber" : "muted") as TagTone } : null; })(),
-                    ]} right="Done" />
-                )} />
-              </Block>
-              <Block tone="amber" icon={<AlertTriangle className="w-4 h-4" />} title="Did not finish — carries over" count={didNotFinish.length} empty="Everything planned for this shift is done.">
-                <Equipment rows={didNotFinish} byId={byId} progress={progress} D={D} T={T} render={(r) => (
-                  <Line marker={r.critical ? <Flag className="w-4 h-4 text-rose-600" /> : <Box />} time={r.offSchedule ? `due ${DT(r.finish)}` : rowTime(r, shift)} name={r.leaf.name}
-                    tags={[
-                      r.critical ? { t: "critical path", tone: "rose" as const } : null,
-                      r.status === "blocked" ? { t: "blocked", tone: "rose" as const } : r.status === "on_hold" ? { t: "on hold", tone: "amber" as const } : null,
-                      r.carryOver && !r.offSchedule ? { t: "overdue", tone: "amber" as const } : null,
-                      r.offSchedule ? { t: `planned ${D(r.start)}`, tone: "muted" as const } : null,
-                    ]}
-                    right={r.percent > 0 ? `${r.percent}%` : "not started"} />
-                )} />
-              </Block>
-            </div>
-          )}
-        </section>
-
-        {/* 3 ── Needs a decision */}
-        <section>
-          <Agenda n={3} title="Needs a decision" sub={blocked.length === 0 ? "No blocked or on-hold work." : `${blocked.length} step${blocked.length === 1 ? "" : "s"} blocked or on hold`} />
-          {blocked.length > 0 && (
-            <Equipment rows={blocked} byId={byId} progress={progress} D={D} T={T} render={(r) => (
-              <div className="px-3 py-2">
-                <div className="flex items-center gap-2">
-                  {r.status === "blocked" ? <Ban className="w-4 h-4 text-rose-600 shrink-0" /> : <PauseCircle className="w-4 h-4 text-amber-600 shrink-0" />}
-                  <span className="font-bold">{r.leaf.name}</span>
-                  <Tag t={r.status === "blocked" ? "blocked" : "on hold"} tone={r.status === "blocked" ? "rose" : "amber"} />
-                  {r.critical && <Tag t="critical path" tone="rose" />}
-                  <span className="ml-auto text-[11px] font-mono text-[var(--color-text-muted)]">due {DT(r.finish)} · {r.percent}%</span>
-                </div>
-                <div className={`mt-1 ml-6 text-[12px] ${r.reason ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)] italic"}`}>
-                  {r.reason ? <>Reason: {r.reason}</> : "No reason recorded — ask the crew lead."}
-                </div>
-                <div className="mt-1 ml-6 text-[11px] text-[var(--color-text-faint)]">Decision / owner: <span className="inline-block w-56 border-b border-dotted border-[var(--color-border-strong)] align-baseline" /></div>
-              </div>
-            )} />
-          )}
-        </section>
-
-        {/* 4 ── Next shift: the plan */}
-        <section>
-          <Agenda n={4} title="Next shift: the plan" sub={`${next.kind === "day" ? "Day" : "Night"} shift · ${D(next.start)} · ${win(next)}`} />
-
-          {/* Must do */}
-          <div className="rounded-xl border-2 border-slate-900 overflow-hidden">
-            <div className="px-3 py-2 bg-slate-900 text-white flex items-center gap-3 flex-wrap">
-              <span className="text-[12px] font-black uppercase tracking-wide">Must do — holds the plan</span>
-              <span className="text-[11px] text-slate-300">{goals.all.length} step{goals.all.length === 1 ? "" : "s"} · {hrs(goals.mustDoHours)} of work left · {goals.carryOver.length} carried over · {goals.critical.length} on the critical path</span>
-            </div>
-            <div className="p-3 space-y-4">
-              {goals.all.length === 0 ? <EmptyRow>Nothing is scheduled for the next shift.</EmptyRow> : (
-                <>
-                  {goals.carryOver.length > 0 && (
-                    <Block tone="rose" icon={<Flag className="w-4 h-4" />} title="Clear these first — carried over" count={goals.carryOver.length} empty="">
-                      <Equipment rows={goals.carryOver} byId={byId} progress={progress} D={D} T={T} render={(r) => (
-                        <Line marker={<Num n={priorityOf.get(r.leaf.id ?? "") ?? 0} tone={r.critical ? "rose" : "amber"} />} time={`due ${DT(r.finish)}`} name={r.leaf.name}
-                          tags={[r.critical ? { t: "critical path", tone: "rose" as const } : null, { t: "carry-over", tone: "amber" as const }]}
-                          who={[r.leaf.responsibleParty, r.leaf.workOrderRef ? `WO ${r.leaf.workOrderRef}` : null].filter(Boolean).join(" · ")}
-                          right={`${r.percent}% · ${hrs(r.hoursLeft)}`} box />
-                      )} />
-                    </Block>
-                  )}
-                  <Block tone="slate" icon={<ArrowRight className="w-4 h-4" />} title="Scheduled this shift" count={goals.planned.length} empty="No new work starts on this shift.">
-                    <Equipment rows={goals.planned} byId={byId} progress={progress} D={D} T={T} render={(r) => (
-                      <Line marker={<Num n={priorityOf.get(r.leaf.id ?? "") ?? 0} tone={r.critical ? "rose" : "slate"} />} time={rowTime(r, next)} name={r.leaf.name}
-                        tags={[r.critical ? { t: "critical path", tone: "rose" as const } : null, r.start < next.start ? { t: `started ${D(r.start)}`, tone: "muted" as const } : null, r.finish > next.end ? { t: `runs to ${D(r.finish)}`, tone: "muted" as const } : null]}
-                        who={[r.leaf.responsibleParty, r.leaf.workOrderRef ? `WO ${r.leaf.workOrderRef}` : null].filter(Boolean).join(" · ")}
-                        right={`${r.percent > 0 ? `${r.percent}% · ` : ""}${hrs(r.hoursLeft)}`} box />
-                    )} />
-                  </Block>
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* Stretch */}
-          <div className={`mt-3 rounded-xl border-2 border-dashed overflow-hidden ${gap > 0.5 ? "border-amber-500" : "border-emerald-500"}`}>
-            <div className={`px-3 py-2 flex items-center gap-3 flex-wrap ${gap > 0.5 ? "bg-amber-50 text-amber-900" : "bg-emerald-50 text-emerald-900"}`}>
-              <span className="inline-flex items-center gap-1.5 text-[12px] font-black uppercase tracking-wide"><Zap className="w-4 h-4" /> Stretch — if you have the hands</span>
-              <span className="text-[11px]">{goals.stretch.length} step{goals.stretch.length === 1 ? "" : "s"} ready to pull forward · {hrs(stretchHours)}</span>
-            </div>
-            <div className={`px-3 py-2 text-[12px] font-semibold ${gap > 0.5 ? "text-amber-900" : "text-emerald-900"}`}>{stretchMsg}</div>
-            {goals.stretch.length > 0 && (
-              <div className="px-3 pb-3">
-                <Equipment rows={goals.stretch} byId={byId} progress={progress} D={D} T={T} render={(r) => {
-                  const idx = goals.stretch.findIndex((x) => x.leaf.id === r.leaf.id) + 1;
-                  const closes = goals.backOnTrackAt != null && idx <= goals.backOnTrackAt;
-                  return (
-                    <Line marker={<Num n={idx} tone={closes ? "amber" : "slate"} />} time={`planned ${DT(r.start)}`} name={r.leaf.name}
-                      tags={[r.critical ? { t: "critical path", tone: "rose" as const } : null, closes ? { t: "back on track", tone: "amber" as const } : { t: "banks time", tone: "muted" as const }]}
-                      who={[r.leaf.responsibleParty, r.leaf.workOrderRef ? `WO ${r.leaf.workOrderRef}` : null].filter(Boolean).join(" · ")}
-                      right={hrs(r.hoursLeft)} box />
-                  );
-                }} />
-              </div>
-            )}
-          </div>
-          <div className="mt-1 text-[10px] text-[var(--color-text-faint)]">Flag = on the chain that drives the finish date. Stretch items are ready: their predecessors are done or on tonight&apos;s must-do list. Hours are planned work-hours left.</div>
-        </section>
-
-        {/* 5 ── Close */}
-        <section>
-          <Agenda n={5} title="Close" sub="Notes, safety items, resource asks — and who owns the sheet." />
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="rounded-lg border border-[var(--color-border)] p-3">
-              <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-2">Notes</div>
-              {[0, 1, 2, 3, 4].map((i) => <div key={i} className="h-5 border-b border-dotted border-[var(--color-border-strong)]" />)}
-            </div>
-            <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-3">
-              <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Sign-off</div>
-              {["Outgoing supervisor", "Incoming supervisor", "Crew lead"].map((who) => (
-                <div key={who} className="flex items-end gap-2 text-[11px] text-[var(--color-text-muted)]">
-                  <span className="w-36 shrink-0">{who}</span>
-                  <span className="flex-1 border-b border-[var(--color-border-strong)]" />
-                  <span className="w-16 border-b border-[var(--color-border-strong)] text-center text-[9px]">time</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <footer className="pt-3 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-faint)] flex justify-between gap-4 flex-wrap">
-          <span>Plan % = work the schedule expected complete by {DT(asOf)}, hour-weighted. Actual % = progress entered, hour-weighted. Behind/ahead hours = that difference in planned work-hours.</span>
-          <span className="shrink-0">Printed {DT(now)} · {projectName ?? ""}</span>
-        </footer>
+        )}
       </div>
-    </div>
+    </header>
   );
 }
 
-// ─── building blocks ───────────────────────────────────────────────
-
-function ShiftCard({ label, kind, date, window, emphasis, print }: { label: string; kind: "day" | "night"; date: string; window: string; emphasis?: boolean; print: boolean }) {
-  const Icon = kind === "day" ? Sun : Moon;
-  const cls = print
-    ? (emphasis ? "bg-white text-slate-900 border-2 border-slate-900" : "bg-slate-100 text-slate-900 border border-slate-300")
-    : (emphasis ? "bg-white text-slate-900 border-white" : "bg-slate-800 text-white border-slate-700");
-  const labelCls = emphasis ? "text-[var(--color-accent)]" : print ? "text-slate-500" : "text-slate-400";
-  const winCls = print ? "text-slate-600" : emphasis ? "text-slate-600" : "text-slate-300";
+function Footnote({ meeting, ctx: c, asOf, now, projectName }: { meeting: MeetingKind; ctx: Ctx; asOf: number; now: number; projectName?: string }) {
   return (
-    <div className={`rounded-xl px-4 py-2.5 border ${cls}`}>
-      <div className={`text-[10px] font-black uppercase tracking-[0.18em] ${labelCls}`}>{label}</div>
-      <div className="flex items-center gap-2 mt-0.5">
-        <Icon className="w-4 h-4 shrink-0" />
-        <span className="text-[15px] font-black">{kind === "day" ? "Day shift" : "Night shift"}</span>
-      </div>
-      <div className="text-[12px] font-semibold">{date}</div>
-      <div className={`text-[11px] font-mono ${winCls}`}>{window}</div>
-    </div>
+    <footer className="pt-2 mt-2 border-t border-[var(--color-border)] text-[9.5px] text-[var(--color-text-faint)] flex justify-between gap-3 flex-wrap">
+      <span>
+        {meeting === "turnover" ? `Plan % = work the schedule expected done by ${c.DT(asOf)}, hour-weighted; actual % = progress entered. Gap = the difference in planned work-hours. ` : ""}
+        Critical = on the chain that drives the finish date. Hours are planned work-hours.
+      </span>
+      <span className="shrink-0">Printed {c.DT(now)}{projectName ? ` · ${projectName}` : ""}</span>
+    </footer>
   );
 }
 
-function Agenda({ n, title, sub }: { n: number; title: string; sub?: string }) {
+// ─── Building blocks ─────────────────────────────────────────────────
+
+function SectionHead({ n, s, collapsed, big, print }: { n: number; s: Sec; collapsed?: boolean; big?: boolean; print?: boolean }) {
+  const ring = s.flag === "rose" ? "bg-rose-600" : s.flag === "amber" ? "bg-amber-500" : "bg-slate-900";
   return (
-    <div className="flex items-start gap-3 mb-3 pb-2 border-b-2 border-slate-900">
-      <span className="w-7 h-7 rounded-full bg-slate-900 text-white font-black text-[13px] flex items-center justify-center shrink-0">{n}</span>
-      <div className="min-w-0">
-        <div className="text-[15px] font-black uppercase tracking-wide leading-7">{title}</div>
-        {sub && <div className="text-[11px] text-[var(--color-text-muted)] -mt-0.5">{sub}</div>}
-      </div>
+    <div className={`flex items-center gap-2 ${print ? "pb-0.5 border-b border-slate-900" : "pb-1 border-b-2 border-slate-900 dark:border-slate-500"}`}>
+      <span className={`${big ? "w-7 h-7 text-[13px]" : "w-5 h-5 text-[10.5px]"} rounded-full ${ring} text-white font-black flex items-center justify-center shrink-0`}>{n}</span>
+      <span className={`${big ? "text-[18px]" : print ? "text-[10.5pt]" : "text-[13.5px]"} font-black uppercase tracking-wide`}>{s.title}</span>
+      {s.sub && <span className={`min-w-0 truncate ${big ? "text-[12px]" : "text-[11px]"} text-[var(--color-text-muted)]`}>— {s.sub}</span>}
+      {!print && !big && <ChevronDown className={`ml-auto w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${collapsed ? "-rotate-90" : ""}`} />}
     </div>
   );
 }
 
-function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone: "emerald" | "rose" | "amber" | "slate" }) {
-  const t = tone === "emerald" ? "border-emerald-300 bg-emerald-50 text-emerald-900" : tone === "rose" ? "border-rose-300 bg-rose-50 text-rose-900" : tone === "amber" ? "border-amber-300 bg-amber-50 text-amber-900" : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]";
+function Stat({ label, value, tone }: { label: string; value: string; tone: "emerald" | "rose" | "amber" | "slate" }) {
+  const t = tone === "emerald" ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200 dark:border-emerald-900"
+    : tone === "rose" ? "border-rose-300 bg-rose-50 text-rose-900 dark:bg-rose-950/30 dark:text-rose-200 dark:border-rose-900"
+      : tone === "amber" ? "border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200 dark:border-amber-900"
+        : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]";
   return (
-    <div className={`rounded-xl border px-3 py-2 ${t}`}>
-      <div className="text-[9px] font-black uppercase tracking-widest opacity-70">{label}</div>
-      <div className="text-2xl font-black leading-tight">{value}{sub && <span className="text-[11px] font-semibold opacity-70 ml-1">{sub}</span>}</div>
+    <div className={`rounded-md border px-2.5 py-1 ${t}`}>
+      <div className="text-[8.5px] font-black uppercase tracking-widest opacity-70">{label}</div>
+      <div className="text-[17px] font-black leading-tight tabular-nums">{value}</div>
     </div>
   );
 }
 
-function Bar({ label, pct, cls }: { label: string; pct: number; cls: string }) {
+function Sub({ tone, icon, title, count }: { tone: "emerald" | "amber" | "rose" | "slate"; icon: React.ReactNode; title: string; count: number }) {
+  const t = tone === "emerald" ? "text-emerald-700 dark:text-emerald-400" : tone === "amber" ? "text-amber-700 dark:text-amber-400" : tone === "rose" ? "text-rose-700 dark:text-rose-400" : "text-slate-700 dark:text-slate-300";
+  return <div className={`inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-wide ${t}`}>{icon} {title} <span className="font-mono opacity-80">({count})</span></div>;
+}
+
+function Empty({ children }: { children: React.ReactNode }) {
+  return <div className="py-1 text-[11.5px] text-[var(--color-text-muted)] italic">{children}</div>;
+}
+
+function Blank({ print }: { print: boolean }) {
+  return <span className={`inline-block ${print ? "w-28" : "w-24"} border-b border-dotted border-[var(--color-border-strong)]`}>&nbsp;</span>;
+}
+
+/** Talking points the meeting covers, with a box to tick. */
+function Prompts({ items, print, lines = 0 }: { items: string[]; print: boolean; lines?: number }) {
   return (
-    <div className="flex items-center gap-2 text-[11px]">
-      <span className="w-12 shrink-0 font-bold text-[var(--color-text-muted)]">{label}</span>
-      <span className="flex-1 h-2.5 rounded-full bg-slate-200 overflow-hidden"><span className={`block h-full ${cls}`} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></span>
-      <span className="w-10 text-right font-mono font-bold">{pct}%</span>
-    </div>
+    <ul className={`grid ${lines ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2"} gap-x-4 gap-y-1 keep`}>
+      {items.map((t) => (
+        <li key={t} className="text-[11.5px]">
+          <label className="flex items-start gap-1.5">
+            {print ? <Box /> : <input type="checkbox" className="mt-0.5 shrink-0" />}
+            <span>{t}</span>
+          </label>
+          {Array.from({ length: lines }).map((_, i) => <div key={i} className="ml-5 h-4 border-b border-dotted border-[var(--color-border-strong)]" />)}
+        </li>
+      ))}
+    </ul>
   );
 }
 
-function Block({ tone, icon, title, count, empty, children }: { tone: "emerald" | "amber" | "rose" | "slate"; icon: React.ReactNode; title: string; count: number; empty: string; children: React.ReactNode }) {
-  const t = tone === "emerald" ? "text-emerald-700" : tone === "amber" ? "text-amber-700" : tone === "rose" ? "text-rose-700" : "text-slate-700";
+/** Completed work as a compact multi-column list — read, not worked. */
+function DoneList({ items, print }: { items: Array<{ id: string; text: string; note: string }>; print: boolean }) {
+  const [all, setAll] = useState(false);
+  const shown = print || all ? items : items.slice(0, 8);
   return (
     <div>
-      <div className={`inline-flex items-center gap-1.5 text-[12px] font-black uppercase tracking-wide ${t}`}>{icon} {title} <span className="font-mono font-bold opacity-80">({count})</span></div>
-      {count === 0 ? (empty ? <div className="text-[11px] text-[var(--color-text-faint)] italic mt-0.5">{empty}</div> : null) : <div className="mt-1.5 space-y-2">{children}</div>}
+      <ul className="columns-1 sm:columns-2 gap-6 text-[11.5px]">
+        {shown.map((i) => (
+          <li key={i.id} className="break-inside-avoid flex gap-1.5 py-px">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-px" />
+            <span className="min-w-0"><span className="text-[var(--color-text)]">{i.text}</span> <span className="text-[var(--color-text-faint)] font-mono text-[10.5px]">{i.note}</span></span>
+          </li>
+        ))}
+      </ul>
+      {!print && items.length > 8 && (
+        <button onClick={() => setAll((v) => !v)} className="mt-0.5 text-[11px] font-bold text-[var(--color-accent)] hover:underline">
+          {all ? "Show fewer" : `Show all ${items.length}`}
+        </button>
+      )}
     </div>
-  );
-}
-
-/** Rows grouped under their equipment (immediate parent), in row order. */
-function byEquipment(rows: ShiftRow[]): Array<{ key: string; parentId: string | null; title: string; crumbs: string; rows: ShiftRow[] }> {
-  const out = new Map<string, { key: string; parentId: string | null; title: string; crumbs: string; rows: ShiftRow[] }>();
-  for (const r of rows) {
-    const title = r.parentName ?? r.leaf.name;
-    const key = r.parentId ?? `leaf:${r.leaf.id}`;
-    let g = out.get(key);
-    if (!g) { g = { key, parentId: r.parentId, title, crumbs: r.path.slice(0, -1).join(" › "), rows: [] }; out.set(key, g); }
-    g.rows.push(r);
-  }
-  return Array.from(out.values());
-}
-
-/** Steps grouped under their equipment: a card per equipment with its own
- *  planned window and overall progress, so each line has its context. */
-function Equipment({ rows, byId, progress, D, T, render }: {
-  rows: ShiftRow[]; byId: Map<string, Milestone>; progress?: Map<string, ProgressInfo>;
-  D: (ms: number) => string; T: (ms: number) => string; render: (r: ShiftRow) => React.ReactNode;
-}) {
-  return (
-    <>
-      {byEquipment(rows).map((g) => {
-        const parent = g.parentId ? byId.get(g.parentId) : undefined;
-        const info = g.parentId ? progress?.get(g.parentId) : undefined;
-        const ps = parent ? startMsOf(parent) : NaN, pf = parent ? finishMsOf(parent) : NaN;
-        return (
-          <div key={g.key} className="equip rounded-lg border border-slate-300 overflow-hidden">
-            <div className="px-3 py-1.5 bg-slate-100 border-b border-slate-300 flex items-center gap-3">
-              <div className="min-w-0 flex-1">
-                {g.crumbs && <div className="text-[9px] font-bold uppercase tracking-wider text-slate-500 truncate">{g.crumbs}</div>}
-                <div className="text-[13px] font-black truncate">{g.title}</div>
-              </div>
-              {parent && Number.isFinite(ps) && Number.isFinite(pf) && (
-                <div className="text-right shrink-0">
-                  <div className="text-[10px] font-mono text-slate-600">{D(ps)} {T(ps)} → {D(pf)} {T(pf)}</div>
-                  {info && <div className="text-[10px] font-bold text-slate-600">{info.leafDone}/{info.leafTotal} steps · {info.percent}% overall</div>}
-                </div>
-              )}
-            </div>
-            <ul className="divide-y divide-slate-200">
-              {g.rows.map((r) => <li key={r.leaf.id}>{render(r)}</li>)}
-            </ul>
-          </div>
-        );
-      })}
-    </>
   );
 }
 
 type TagTone = "rose" | "amber" | "muted";
-function Tag({ t, tone }: { t: string; tone: TagTone }) {
-  const cls = tone === "rose" ? "bg-rose-100 text-rose-800 border-rose-300" : tone === "amber" ? "bg-amber-100 text-amber-800 border-amber-300" : "bg-slate-100 text-slate-600 border-slate-300";
-  return <span className={`shrink-0 px-1.5 py-px rounded border text-[9px] font-black uppercase tracking-wider ${cls}`}>{t}</span>;
+interface TagT { t: string; tone: TagTone }
+function TagChip({ t, tone }: TagT) {
+  const cls = tone === "rose" ? "bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/40 dark:text-rose-200 dark:border-rose-900"
+    : tone === "amber" ? "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900"
+      : "bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
+  return <span className={`inline-block whitespace-nowrap px-1 py-px rounded border text-[8.5px] font-black uppercase tracking-wider align-middle ${cls}`}>{t}</span>;
 }
 
-function Line({ marker, time, name, tags, who, right, done, box }: {
-  marker: React.ReactNode; time: string; name: string; tags?: Array<{ t: string; tone: TagTone } | null>; who?: string; right: string; done?: boolean; box?: boolean;
+type NumTone = "rose" | "amber" | "slate";
+function Num({ n, tone }: { n: number; tone: NumTone }) {
+  const cls = tone === "rose" ? "bg-rose-600 text-white" : tone === "amber" ? "bg-amber-500 text-white" : "bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-100";
+  return <span className={`inline-flex w-[18px] h-[18px] rounded-full text-[9.5px] font-black items-center justify-center ${cls}`}>{n}</span>;
+}
+
+function Box() {
+  return <span className="inline-block w-3 h-3 mt-0.5 rounded-[2px] border-[1.5px] border-slate-500 shrink-0" aria-hidden />;
+}
+
+interface TGroup { key: string; title: string; crumbs: string; meta: string }
+interface TRow {
+  id: string;
+  group: TGroup;
+  n?: { num: number; tone: NumTone };
+  box?: boolean;
+  when: string;
+  name: string;
+  done?: boolean;
+  tags?: Array<TagT | null>;
+  who?: string;
+  wo?: string;
+  right: string;
+  /** A second line under the step (a reason). */
+  note?: string;
+}
+
+/** One line per step, grouped under its equipment with the equipment's
+ *  window and progress on a thin header row. */
+function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerLine, flat }: {
+  rows: TRow[]; print: boolean; box?: boolean; rightHead?: string; whenHead?: string;
+  /** One list in the given order, the equipment named on each line (a
+   *  sequence — the critical chain — reads in order, not by equipment). */
+  flat?: boolean;
+  /** Adds a blank "owner / decision" line under each row (decisions). */
+  ownerLine?: boolean;
 }) {
+  // Group consecutive-by-first-appearance, keeping each group's rows in order.
+  const groups: Array<{ g: TGroup; rows: TRow[] }> = [];
+  const at = new Map<string, number>();
+  for (const r of rows) {
+    const k = r.group.title && !flat ? r.group.key : "__solo";
+    if (!at.has(k)) { at.set(k, groups.length); groups.push({ g: r.group.title && !flat ? r.group : { key: "__solo", title: "", crumbs: "", meta: "" }, rows: [] }); }
+    groups[at.get(k)!].rows.push(r);
+  }
+  const hasN = rows.some((r) => r.n);
+  const hasWho = rows.some((r) => r.who);
+  const hasWo = rows.some((r) => r.wo);
+  const cols = (box ? 1 : 0) + (hasN ? 1 : 0) + 3 + (hasWho ? 1 : 0) + (hasWo ? 1 : 0);
+  const one = "whitespace-nowrap overflow-hidden text-ellipsis";
+  const cell = print ? "px-1 py-[1px]" : "px-1.5 py-[3px]";
   return (
-    <div className="px-3 py-1.5 flex items-center gap-2.5">
-      {box && <Box />}
-      <span className="shrink-0 w-5 flex justify-center">{marker}</span>
-      <span className="shrink-0 w-[128px] font-mono text-[11px] font-bold tabular-nums text-slate-900">{time}</span>
-      <span className={`min-w-0 flex-1 truncate text-[12.5px] ${done ? "line-through text-slate-400" : "font-semibold"}`}>{name}</span>
-      {tags?.filter(Boolean).map((tg) => <Tag key={tg!.t} t={tg!.t} tone={tg!.tone} />)}
-      {who && <span className="shrink-0 text-[10px] text-slate-600 truncate max-w-[150px]">{who}</span>}
-      <span className="shrink-0 w-20 text-right font-mono text-[11px] font-bold text-slate-600">{right}</span>
+    <div className="rounded-md border border-slate-300 dark:border-slate-700 overflow-x-auto">
+      <table className={`w-full border-collapse table-fixed ${print ? "text-[8.5pt]" : "text-[12px]"}`}>
+        <thead>
+          <tr className="bg-slate-50 dark:bg-slate-800/60 text-[9px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 text-left">
+            {box && <th className={`${cell} w-5`} />}
+            {hasN && <th className={`${cell} w-6`}>#</th>}
+            <th className={`${cell} ${print ? "w-[104px]" : "w-[124px]"}`}>{whenHead}</th>
+            <th className={cell}>Step</th>
+            {hasWho && <th className={`${cell} hidden sm:table-cell print:table-cell w-[132px]`}>Who</th>}
+            {hasWo && <th className={`${cell} hidden md:table-cell print:table-cell w-[64px]`}>WO</th>}
+            <th className={`${cell} w-[78px] text-right`}>{rightHead}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map(({ g, rows: list }) => (
+            <React.Fragment key={g.key}>
+              {g.title && (
+                <tr className="bg-slate-100 dark:bg-slate-800 border-t border-slate-300 dark:border-slate-700">
+                  <td colSpan={cols} className={`${cell} text-[11px]`}>
+                    <b>{g.title}</b>
+                    {g.crumbs && <span className="text-slate-500 dark:text-slate-400"> · {g.crumbs}</span>}
+                    {g.meta && <span className="float-right font-mono text-[10px] text-slate-600 dark:text-slate-300">{g.meta}</span>}
+                  </td>
+                </tr>
+              )}
+              {list.map((r) => (
+                <React.Fragment key={r.id}>
+                  <tr className="border-t border-slate-200 dark:border-slate-700/60 align-top">
+                    {box && <td className={cell}><Box /></td>}
+                    {hasN && <td className={cell}>{r.n ? <Num n={r.n.num} tone={r.n.tone} /> : null}</td>}
+                    <td className={`${cell} font-mono tabular-nums font-bold text-[10.5px] break-words overflow-hidden`}>{r.when}</td>
+                    <td className={cell}>
+                      {flat && r.group.title && <span className="text-slate-500 dark:text-slate-400">{r.group.title} › </span>}
+                      <span className={r.done ? "line-through text-slate-400" : "font-semibold"}>{r.name}</span>
+                      {r.tags?.filter((t): t is TagT => !!t).map((t) => <span key={t.t} className="ml-1"><TagChip t={t.t} tone={t.tone} /></span>)}
+                      {r.note && <div className="text-[10.5px] text-slate-600 dark:text-slate-300">{r.note}</div>}
+                      {ownerLine && <div className="text-[10px] text-slate-500 mt-0.5">Owner / decision: <span className="inline-block w-44 border-b border-dotted border-slate-400 align-baseline">&nbsp;</span></div>}
+                    </td>
+                    {hasWho && <td className={`${cell} hidden sm:table-cell print:table-cell text-[10.5px] text-slate-600 dark:text-slate-300 max-w-[132px] ${one}`} title={r.who}>{r.who}</td>}
+                    {hasWo && <td className={`${cell} hidden md:table-cell print:table-cell font-mono text-[10px] text-slate-600 dark:text-slate-300 ${one}`}>{r.wo}</td>}
+                    <td className={`${cell} text-right font-mono font-bold text-[10.5px] text-slate-700 dark:text-slate-200 whitespace-nowrap`}>{r.right}</td>
+                  </tr>
+                </React.Fragment>
+              ))}
+            </React.Fragment>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
 
-function Num({ n, tone }: { n: number; tone: "rose" | "amber" | "slate" }) {
-  const cls = tone === "rose" ? "bg-rose-600 text-white" : tone === "amber" ? "bg-amber-500 text-white" : "bg-slate-200 text-slate-800";
-  return <span className={`w-5 h-5 rounded-full text-[10px] font-black flex items-center justify-center ${cls}`}>{n}</span>;
-}
-
-function Box() {
-  return <span className="inline-block w-3.5 h-3.5 rounded-[3px] border-2 border-slate-400 shrink-0" aria-hidden />;
-}
-
-function EmptyRow({ children }: { children: React.ReactNode }) {
-  return <div className="py-2 text-[12px] text-slate-600">{children}</div>;
+/** A plain table: header + rows of cells. */
+function SimpleTable({ head, rows, print }: { head: string[]; rows: Array<{ id: string; cells: React.ReactNode[] }>; print: boolean }) {
+  const cell = print ? "px-1 py-[1px]" : "px-1.5 py-[3px]";
+  return (
+    <div className="rounded-md border border-slate-300 dark:border-slate-700 overflow-x-auto">
+      <table className={`w-full border-collapse ${print ? "text-[8.5pt]" : "text-[12px]"}`}>
+        <thead>
+          <tr className="bg-slate-50 dark:bg-slate-800/60 text-[9px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 text-left">
+            {head.map((h) => <th key={h} className={cell}>{h}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.id} className="border-t border-slate-200 dark:border-slate-700/60 align-top">
+              {r.cells.map((c, i) => <td key={i} className={`${cell} ${i === 0 ? "" : "whitespace-nowrap font-mono text-[10.5px]"}`}>{c}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
