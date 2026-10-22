@@ -210,8 +210,6 @@ export const IMMUTABLE_TABLES: Record<string, string> = {
   // drafting-flow DF-P22 (20261264), by the integrator at the DF-P22 merge, 2026-10-22 (DEC-90).
   ticket_sla_escalations: "the SLA escalation record and claim — one row per breach per period told to the workspace's escalation contact, written only by the service role; it belongs to the source workspace's clock. The escalation setting (org_configurations) is not restored either, so nothing is told until an Admin names a contact in the restored workspace; from then the restored open breaches are escalated once each (a notice only — it never reassigns or changes a request)",
   ticket_preauthorizations: "a person's standing pre-authorization — signed over a server-composed statement, scoped, expiring, revoked never deleted; the e-signature it rests on is never restored, so a restored record could not stand and must not be re-created by a restore. A restored request's roster may still name the record it used (its history and the source audit row say what it was); nothing decides on that reference",
-  // drafting-flow DF-P24 (20261266), by the integrator at the DF-P24 merge, 2026-10-22 (DEC-90).
-  ticket_examination_scopes: "a request's examination data — values picked from the source workspace's own lists, and any waiver (a person's recorded decision to issue without it). The requirements that bind it (org_configurations) are never restored either, so a restored request is never held by them; restoring the values would also restore the waiver, a decision made in the source workspace, which a restore cannot re-make. The rows stay in the backup as evidence; importing the values with the waiver cleared is a recorded follow-up",
 };
 
 /** admin-and-org P1 (fix pass 4): contract tables that supabase/ makes
@@ -232,6 +230,10 @@ export const RESTORE_SERVICE_ROLE_WAIVERS: Readonly<Record<string, string>> = {
   // drafting-flow DF-P6 (20261251): INCLUDED and restored by the integrator at
   // the DF-P6 merge, 2026-10-21 (DEC-90).
   ticket_equipment: "the equipment a drafting request names — the tag as the requester typed it and the registry asset it resolved to (NULL = not found). Signed-in users cannot write it; the service role writes it (the create route). Bounded to this workspace's tickets and assets (RESTORE_PARENT_RULES — an asset not restored here is cleared, as the live database does when an asset is deleted, and the typed tag stays; the table's integrity trigger refuses any other workspace's ticket or asset); a row grants no access (members read it only while they can read the ticket) and no gate reads it as anyone's sign-off — it is the request's own content, lost with the ticket otherwise",
+  // drafting-flow DF-P25 (20261266's table; DEC-90 ruling (7) for DF-P25):
+  // INCLUDED and restored after tickets — moved out of IMMUTABLE_TABLES,
+  // where DF-P24's merge left it (exported, never imported).
+  ticket_examination_scopes: "a request's examination data — the values picked from the workspace's own lists for each field (with who recorded each and when). Signed-in users cannot write it; the service role writes it (/api/tickets/examination-scope). Bounded to this workspace's tickets (RESTORE_PARENT_RULES; the table's guard keeps each row in its request's workspace and on its request); the uids in it (updated_by, each value's `by`) are remapped like every user reference. The WAIVER is cleared on restore (landRestoredRow): it is a person's recorded decision, made in the source workspace, to issue without the data, which a restore cannot re-make — a restored request with data missing is decided again by the restored workspace's own requirements. A row grants no access and no gate reads it as anyone's sign-off — it is the request's own content, lost with the ticket otherwise",
   // public-surfaces PS-P9 (20261237): INCLUDED and restored by the integrator
   // at the PS-P9 merge, 2026-10-20 (DEC-90).
   print_sheet_tokens: "the per-print sheet tokens of printed packs — a one-way SHA-256 of each sheet's 192-bit token, the print, and the document + version that sheet printed (no scannable code). Bounded to this workspace's documents and versions (RESTORE_PARENT_RULES); a row grants no access and is no one's act: /api/verify computes the verdict from the live document, so a restored row only lets a sheet printed before the restore keep its verdict (a row naming a document of this workspace says no more than that document's own ?v= QR does); the guard keeps what a sheet printed immutable",
@@ -391,6 +393,8 @@ export const RESTORE_PARENT_RULES: Readonly<Record<string, ReadonlyArray<Restore
   // asset of this workspace (ON DELETE SET NULL live; the typed tag stays and
   // reads as not found); the ticket is required.
   ticket_equipment: fkRules("ticket_id>tickets asset_id>assets?"),
+  // drafting-flow DF-P25: one row per request — the request is required.
+  ticket_examination_scopes: fkRules("ticket_id>tickets"),
   // drafting-flow DF-P4 (GAP-105, 20261208): a ticket's library. CLEARED,
   // not refused, when it is not a library of this workspace — exactly what
   // the live database does when a library is deleted (ON DELETE SET NULL),
@@ -559,6 +563,11 @@ export function landRestoredRow(table: string, row: Record<string, unknown>): Re
     out = { ...row };
     for (const c of RESTORE_GENERATED_COLUMNS[table]) delete out[c];
   }
+  // drafting-flow DF-P25 (DEC-90 ruling (7)): a request's examination data
+  // lands with its WAIVER cleared — a person's decision in the source
+  // workspace, which a restore cannot re-make. Every other column, and every
+  // other table, as before.
+  if (table === "ticket_examination_scopes") return has(out, "waiver") && out.waiver !== null ? { ...out, waiver: null } : out;
   if (table !== "export_destinations") return out;
   out = { ...out, enabled: false, next_run_at: null };
   for (const c of redactedColumnsFor(table)) out[c] = null;
@@ -1028,6 +1037,8 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "ticket_comments",
   // drafting-flow DF-P6 (20261251): after tickets and assets, both above.
   "ticket_equipment",
+  // drafting-flow DF-P25: a request's examination data, after tickets.
+  "ticket_examination_scopes",
   // An episode before the sessions and messages that name it (episode_id).
   "checkout_episodes", "checkout_sessions", "checkout_messages",
   "markup_requests",
@@ -1078,6 +1089,8 @@ export const CONFLICT_TARGETS: Record<string, string> = {
   // lib/watches.ts watch() upserts on. A follow the person already
   // holds here is kept as it is (counted existing), never refused 23505.
   subscriptions: "user_id,resource_type,resource_id",
+  // drafting-flow DF-P25: one row per request, keyed by it (20261266's PRIMARY KEY).
+  ticket_examination_scopes: "ticket_id",
 };
 
 /** The ON CONFLICT target to use when additively restoring `table`. */
