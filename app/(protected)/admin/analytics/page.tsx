@@ -26,6 +26,8 @@ import { isTerminalTicketStatus } from '@/lib/ticketShed';
 import { ticketStatusLabel } from '@/lib/ticketStatusLabels';
 import { summarizeOutcomes } from '@/lib/ticketOutcome';
 import RequestOutcomes, { reasonBreakdown } from '@/components/requests/RequestOutcomes';
+import ReviewLaneReport from '@/components/requests/ReviewLaneReport';
+import { reviewModelFieldsFromRow } from '@/lib/reviewModel';
 import { parseOutcomeReasons, type OutcomeReason } from '@/lib/ticketOutcomeReasons';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import UserAvatar from '@/components/ui/UserAvatar';
@@ -139,6 +141,10 @@ export default function AnalyticsPage() {
           archivedAt: r.archived_at ?? null, metadata: r.metadata ?? null,
           // LEAK-9 / GAP-107: how the request ended (absent before 20261195).
           outcome: r.outcome ?? null,
+          // drafting-flow GAP-101 acceptance 5 (DF-P19): the lane, the
+          // declaration and the classes the Review Lanes report reads
+          // (undefined / null before 20261250).
+          ...reviewModelFieldsFromRow(r),
         } as Ticket)));
 
         setDocuments((docsData || []).map(r => ({
@@ -335,6 +341,10 @@ export default function AnalyticsPage() {
   // after a workspace switch the previous workspace's list is never applied —
   // until it lands the panel shows no breakdown.
   const [outcomeReasonList, setOutcomeReasonList] = useState<{ orgId: string; reasons: OutcomeReason[]; unread: boolean } | null>(null);
+  // DF-P19 (GAP-101 acceptance 5): the same 'drafting' row, for the Review
+  // Lanes report's class labels (null until read, or unreadable: the stored
+  // class values are shown as they are).
+  const [draftingConfig, setDraftingConfig] = useState<{ orgId: string; data: unknown } | null>(null);
   useEffect(() => {
     if (!activeOrgId) return;
     let alive = true;
@@ -349,6 +359,7 @@ export default function AnalyticsPage() {
         if (!alive) return;
         if (error) { setOutcomeReasonList({ orgId: activeOrgId, reasons: [], unread: true }); return; }
         setOutcomeReasonList({ orgId: activeOrgId, reasons: parseOutcomeReasons((data as { data?: unknown } | null)?.data), unread: false });
+        setDraftingConfig({ orgId: activeOrgId, data: (data as { data?: unknown } | null)?.data ?? null });
       } catch {
         if (alive) setOutcomeReasonList({ orgId: activeOrgId, reasons: [], unread: true });
       }
@@ -638,6 +649,11 @@ export default function AnalyticsPage() {
           (components/requests/RequestOutcomes.tsx — the rate is withheld, never
           shown as 0 %, while no cancel names a category; fix pass 3) */}
       <RequestOutcomes summary={outcomes} reasons={outcomeReasons} />
+
+      {/* REVIEW LANES (drafting-flow GAP-101 acceptance 5, DF-P19): requests by
+          review lane for any period, and every like-in-kind declaration with
+          its author, text and work / code class — read-only. */}
+      <ReviewLaneReport tickets={tickets} draftingConfig={draftingConfig && draftingConfig.orgId === activeOrgId ? draftingConfig.data : null} />
 
       {/* SECTION 2: CHARTS & LISTS */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
