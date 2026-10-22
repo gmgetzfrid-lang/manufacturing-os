@@ -24,6 +24,7 @@ import { questionWords, leadsFor } from "@/lib/searchLeads";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { findRunningKey, findParenKeys } from "@/lib/sectionTemplate";
 import { classMentions } from "@/lib/pressureClass";
+import { openingFields, labelCounts } from "@/lib/specSelect";
 import { inSlices } from "@/lib/inSlices";
 import {
   normalizeProfile, normalizePipeClasses, parseProfile, parseModelJson,
@@ -203,15 +204,22 @@ async function extractPipeClassesFromText(
     })));
   }
   const pageCount = doc.page_count ?? full.length;
-  profile.pipeSpec = { pagesDone: pageCount, pageCount, classes: records.length, done: true, method: "text-v2" };
+  profile.pipeSpec = { pagesDone: pageCount, pageCount, classes: records.length, done: true, method: TEXT_METHOD };
   await writeProfile(admin, doc, profile);
   return pageCount;
 }
+
+/** Which text mapper produced a book's classes — bumped when it learns to
+ *  read more, so mapped books are re-read (it costs nothing). */
+const TEXT_METHOD = "text-v3";
 
 /** One record per section: code, first page, opening line, dominant rating. */
 export function sectionRecords(ranges: Array<{ key: string; first: number; last: number }>, byPage: Map<number, string[]>) {
   const seen = new Set<string>();
   const out: Array<{ code: string; page: number; record: PipeClassRecord }> = [];
+  // Field labels are learned from the whole book: the wording that repeats
+  // on every class's opening page.
+  const counts = labelCounts(ranges.map((r) => (byPage.get(r.first) ?? []).join(" ")));
   for (const r of ranges) {
     const code = r.key.toUpperCase().slice(0, 30);
     if (seen.has(`${code}:${r.first}`)) continue;
@@ -225,12 +233,25 @@ export function sectionRecords(ranges: Array<{ key: string; first: number; last:
     let text = "";
     for (let p = r.first; p <= r.last; p++) text += " " + (byPage.get(p) ?? []).join(" ");
     const mentions = classMentions(text);
+    // Labelled fields printed on the opening page ("Rating: 150",
+    // "Corrosion Allowance: 0.125") — printed values beat counted ones.
+    // A value ends where the first table begins ("… Pipe (AAAC2H) Compcode …").
+    const cut = (v: string) => v.split(/\s(?=[A-Z][A-Za-z]+(?: [A-Z][A-Za-z]+)? \([A-Z0-9][A-Z0-9.-]{2,11}\))/)[0].trim();
+    const fields = Object.fromEntries(Object.entries(openingFields((byPage.get(r.first) ?? []).join(" "), counts))
+      .map(([k, v]) => [k, cut(v)] as const).filter(([, v]) => v));
+    const pick = (re: RegExp) => Object.entries(fields).find(([k]) => re.test(k))?.[1];
+    const service = pick(/^services?( description)?$/i) ?? opening.replace(/^services?\s*:\s*/i, "");
+    const printedRating = pick(/rating|pressure class|flange class/i);
+    const attrs = Object.fromEntries(Object.entries(fields).filter(([k]) => !/^services?( description)?$/i.test(k)).slice(0, 10));
     out.push({
       code, page: r.first,
       record: {
         code,
-        ...(opening ? { service: opening.replace(/^services?\s*:\s*/i, "") } : {}),
-        ...(mentions[0] ? { rating: `Class ${mentions[0][0]}` } : {}),
+        ...(service ? { service: service.slice(0, 240) } : {}),
+        ...(printedRating ? { rating: printedRating.slice(0, 40) } : mentions[0] ? { rating: `Class ${mentions[0][0]}` } : {}),
+        ...(pick(/material/i) ? { material: pick(/material/i)!.slice(0, 80) } : {}),
+        ...(pick(/corrosion/i) ? { corrosionAllowance: pick(/corrosion/i)!.slice(0, 30) } : {}),
+        ...(Object.keys(attrs).length ? { attrs } : {}),
         rows: [],
         notes: [
           `Pages ${r.first}–${r.last}`,
@@ -411,7 +432,10 @@ export async function drainPipeSpecs(admin: SupabaseClient, opts: {
     const p = profiles.get(d.id)!;
     // Done — unless an earlier reader finished with nothing recorded, or
     // read it before books were mapped from their text.
-    if (p.pipeSpec?.done && p.pipeSpec.classes > 0) continue;
+    // Done — unless it finished with nothing recorded, or was mapped from
+    // its text by an older reader (re-mapping is free and picks up fields).
+    const stale = p.pipeSpec?.method?.startsWith("text-") && p.pipeSpec.method !== TEXT_METHOD;
+    if (p.pipeSpec?.done && p.pipeSpec.classes > 0 && !stale) continue;
     if (p.pipeSpec?.done) p.pipeSpec = undefined;
     try { pipePages += await extractPipeClassesStep(admin, opts.conn, d, p, opts.deadlineMs); } catch { /* next call retries */ }
   }

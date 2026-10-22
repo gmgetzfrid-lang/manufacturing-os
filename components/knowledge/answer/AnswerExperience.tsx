@@ -29,6 +29,7 @@ import FormFillModal from "@/components/knowledge/answer/FormFillModal";
 import { copyText } from "@/lib/clipboard";
 import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
 import AnswerTestEditor from "@/components/knowledge/AnswerTestEditor";
+import CandidateTablePanel from "@/components/knowledge/answer/CandidateTablePanel";
 import { Modal } from "@/components/ui/Modal";
 
 export type DocLink = NonNullable<KnowledgeAnswer["mentionedDocs"]>[number];
@@ -1582,6 +1583,12 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
           "show me all equipment". Every sheet chip rings the tag. */}
       {answer.equipmentTable && onOpenTag && (
         <EquipmentTablePanel table={answer.equipmentTable} onOpenTag={onOpenTag} />
+      )}
+
+      {/* The shortlist behind a selection answer: the catalog, filtered. */}
+      {answer.candidateTable && answer.candidateTable.rows.length > 0 && (
+        <CandidateTablePanel table={answer.candidateTable}
+          onOpen={onOpenDoc ? (r) => onOpenDoc({ id: r.documentId, name: r.documentName, fileKey: r.fileKey!, page: r.page, mention: r.code }) : undefined} />
       )}
 
       {/* You-need-this-book cards: referenced documents no library holds */}

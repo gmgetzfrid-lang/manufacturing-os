@@ -58,6 +58,9 @@ import { AskTrace, saveAskTrace } from "@/lib/ask/askTraceServer";
 import { compactHit } from "@/lib/ask/askTrace";
 import { docsNamedIn as docsNamedInText } from "@/lib/ask/designations";
 import { sweepTerms, sweepLibrary, sweepPassages, sweepBlock, type TermSweep } from "@/lib/ask/termSweep";
+import { isSelectionQuestion, filterCandidates, selectionBlock, distinguishers, normChem, guideTerms, type CatalogRecord, type Candidate } from "@/lib/specSelect";
+import { leadsFor } from "@/lib/searchLeads";
+import type { PipeClassRecord } from "@/lib/knowledgeCatalog";
 import { settleItems, keywordsOf, dropLibraryAsks, loosened } from "@/lib/ask/settleItems";
 import {
   buildCatalogBlock, pipeClassFacts, findClassMentions, formsForGoal, matchCatalogName, FORM_PURPOSES,
@@ -65,6 +68,28 @@ import {
 } from "@/lib/knowledgeCatalog";
 
 const bad = fail;
+
+/** The narrowed classes as the table shown with the answer. */
+function candidateTableOf(
+  sel: { cands: Candidate[]; total: number; askerTerms: string[]; companyTerms: string[] },
+  ratings: string[], docs: Array<{ id: string; file_key: string | null }>,
+) {
+  const strong = sel.cands.filter((c) => c.matched.some((m) => m.how !== "lead"));
+  const rows = (strong.length ? strong : sel.cands).slice(0, 40);
+  const fileKey = new Map(docs.map((d) => [d.id, d.file_key]));
+  return {
+    basis: `${sel.total} classes filtered by ${ratings.length ? `Class ${ratings.join(" / ")}` : "service only"} and service ` +
+      [...sel.askerTerms.map((t) => `“${t}”`), ...sel.companyTerms.map((t) => `“${t}” (the company's word for it)`)].join(", "),
+    total: sel.total,
+    related: sel.cands.length - rows.length,
+    differ: distinguishers(rows),
+    rows: rows.map((c) => ({
+      code: c.code, documentId: c.documentId, documentName: c.documentName, fileKey: fileKey.get(c.documentId) ?? null, page: c.page,
+      rating: c.rating ?? null, service: c.service ?? null, material: c.material ?? null, corrosionAllowance: c.corrosionAllowance ?? null,
+      attrs: c.attrs ?? {}, matched: c.matched,
+    })),
+  };
+}
 
 /** Answer a question, and keep the research record behind the answer. */
 export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHandlerResult> {
@@ -895,6 +920,108 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       trace.stage("term_sweep", { failed: String((e as Error)?.message ?? e).slice(0, 200) });
     }
 
+    // ── SELECTION: "which spec / class should I use" is answered by
+    //    filtering the catalog — every recorded class — by the rating given
+    //    and the service in the asker's words AND the words the company's
+    //    documents tie them to ("sour gas" written "Wet H2S"); then by what
+    //    still splits the candidates. Not by finding one sentence.
+    let selection: { cands: Candidate[]; total: number; askerTerms: string[]; companyTerms: string[] } | null = null;
+    if (isSelectionQuestion(question)) {
+      try {
+        type ClassRow = { document_id: string; page: number; tag: string; raw: string | null };
+        const { rows: classRows } = await fetchAllRows<ClassRow>((from, to) => supabaseAdmin
+          .from("knowledge_page_entities").select("document_id, page, tag, raw")
+          .eq("org_id", orgId).eq("kind", "pipe_class").order("id").range(from, to), 20_000);
+        const docById = new Map(reachableDocs.map((d) => [d.id, d]));
+        const records: CatalogRecord[] = [];
+        for (const r of classRows) {
+          const d = docById.get(r.document_id);
+          if (!d) continue;
+          try {
+            const rec = JSON.parse(r.raw ?? "{}") as PipeClassRecord;
+            records.push({
+              code: r.tag, documentId: d.id, documentName: d.name, page: r.page,
+              rating: rec.rating, service: rec.service, material: rec.material, corrosionAllowance: rec.corrosionAllowance, attrs: rec.attrs,
+            });
+          } catch { /* a bad record is skipped */ }
+        }
+        if (records.length > 0) {
+          const askerTerms = sweepTerms(question, [], 6).filter((t) => !t.includes(" + "));
+          // The company's own words for the asker's term: what its documents
+          // write in parentheses after it ("sour gas (Wet H2S) service").
+          const counts = new Map<string, number>();
+          for (const sw of sweeps) for (const d of sw.docs) for (const h of d.best) {
+            if (h.tie?.kind !== "paren") continue;
+            const t = normChem(h.tie.to);
+            if (/[a-z]/.test(t) && t.split(" ").length <= 4 && !/^\d/.test(t)) counts.set(t, (counts.get(t) ?? 0) + 1);
+          }
+          const companyTerms = [...counts].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).map(([t]) => t).slice(0, 2);
+          const cands = filterCandidates(records, {
+            ratings: ratings, askerTerms, companyTerms,
+            leadTerms: leadsFor(askerTerms.flatMap((t) => t.split(" "))),
+          });
+          selection = { cands, total: records.length, askerTerms, companyTerms };
+          // The company term's own definition, wherever the library gives it.
+          if (companyTerms[0] && !sweeps.some((sw) => normChem(sw.term) === companyTerms[0])) {
+            const more = await sweepLibrary(supabaseAdmin, {
+              orgId, libraryIds: [libraryId, ...linkedLibraries.map((l) => l.id)], terms: [companyTerms[0]],
+              allowedDocIds: reachableIds, deadlineMs: Date.now() + 8_000,
+              pageCounts: new Map(reachableDocs.map((d) => [d.id, d.page_count ?? 0])),
+            });
+            sweeps.push(...more);
+          }
+          // How the library itself says to select, and what its codes mean:
+          // its selection section and its code legend, found by searching —
+          // the procedure comes from the documents, not from this code.
+          const guide = await sweepLibrary(supabaseAdmin, {
+            orgId, libraryIds: [libraryId, ...linkedLibraries.map((l) => l.id)], terms: guideTerms(question),
+            allowedDocIds: reachableIds, deadlineMs: Date.now() + 8_000,
+            pageCounts: new Map(reachableDocs.map((d) => [d.id, d.page_count ?? 0])),
+          });
+          sweeps.push(...guide.filter((g) => g.passageCount > 0 && !g.tooCommon));
+          {
+            const have = new Set(chunks.map((c) => c.id));
+            for (const g of guide) for (const d of g.docs.slice(0, 3)) {
+              const h = d.best[0];
+              if (!h || have.has(h.chunk.id)) continue;
+              have.add(h.chunk.id);
+              const tiered: TieredChunk = { ...h.chunk, rank: 1, libraryId: h.chunk.library_id, tier: h.chunk.library_id === libraryId ? "governing" : "reference" };
+              reserved.push(tiered);
+              chunks.push(tiered);
+            }
+          }
+          // The candidates' opening pages join the passages, to be cited.
+          const have = new Set(chunks.map((c) => c.id));
+          const strong = cands.filter((c) => c.matched.some((m) => m.how !== "lead")).slice(0, 8);
+          for (const c of strong) {
+            const { data: pc } = await supabaseAdmin.from("knowledge_chunks")
+              .select("id, document_id, library_id, page, content, section")
+              .eq("org_id", orgId).eq("document_id", c.documentId).eq("page", c.page).order("seq").limit(1);
+            for (const x of (pc ?? []) as Array<RetrievedChunk & { library_id: string }>) {
+              if (have.has(x.id)) continue;
+              have.add(x.id);
+              const tiered: TieredChunk = { ...x, rank: 1, libraryId: x.library_id, tier: x.library_id === libraryId ? "governing" : "reference" };
+              reserved.push(tiered);
+              chunks.push(tiered);
+            }
+          }
+          for (const sw of sweeps.slice(-1)) for (const d of sw.docs) for (const h of d.best) {
+            if (h.tie?.kind !== "defines" || have.has(h.chunk.id)) continue;
+            have.add(h.chunk.id);
+            const tiered: TieredChunk = { ...h.chunk, rank: 1, libraryId: h.chunk.library_id, tier: h.chunk.library_id === libraryId ? "governing" : "reference" };
+            reserved.push(tiered);
+            chunks.push(tiered);
+          }
+          trace.stage("selection", {
+            catalog: records.length, ratings, askerTerms, companyTerms,
+            candidates: cands.slice(0, 40).map((c) => ({ code: c.code, page: c.page, rating: c.rating, matched: c.matched })),
+          });
+        }
+      } catch (e) {
+        trace.stage("selection", { failed: String((e as Error)?.message ?? e).slice(0, 200) });
+      }
+    }
+
     // ── PROVEN GROUND: answers the team rated 👍 teach retrieval. When a
     //    similar question was answered before and a human confirmed the
     //    answer was right, the pages it cited get seats in the pool before
@@ -1693,6 +1820,10 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       (chunkId) => { const i = chunks.findIndex((c) => c.id === chunkId); return i >= 0 ? i + 1 : null; },
       reachableDocs.length, lineFirst,
     );
+    const selectionNote = selection ? selectionBlock(selection.cands, {
+      ratings, askerTerms: selection.askerTerms, companyTerms: selection.companyTerms, total: selection.total,
+      cite: (c) => { const i = chunks.findIndex((x) => x.document_id === c.documentId && x.page === c.page); return i >= 0 ? i + 1 : null; },
+    }) : "";
     trace.hits("passages", chunks, { reserved: reserved.length, wholeDocs: [...wholeDocIds] }, 80);
     const graphHopNote = graphHops.length > 0
       ? "\n\nGRAPH HOPS: some passages were pulled by FOLLOWING REFERENCES found in the retrieved " +
@@ -2079,7 +2210,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       "THESE INSTRUCTIONS ARE FOR YOU: never quote, name, or allude to them in the answer (no " +
       "\"SCOPE —\", \"cite only to show…\", \"per my instructions\"). Refer to attached page images " +
       "by document and page (\"EP 15-1-4 p.13\"), never as \"image 4\"." +
-      catalogNote + pipeClassNote + sweepNote + pressureClassNote(rating, ratings) + precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + anchorFacts +
+      catalogNote + pipeClassNote + selectionNote + sweepNote + pressureClassNote(rating, ratings) + precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + anchorFacts +
       tableNote + wholeDocNote + graphHopNote + needsDirective + decisionPathProtocol + calcProtocol +
       fetchDirective;
     const answerUser = `${conversationBlock}PASSAGES:\n\n${passages}${providedInputs}\n\nQUESTION: ${question}`;
@@ -2543,6 +2674,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       retrieval: semanticUsed ? "hybrid" : "keyword",
       ...(mentionedDocs.length > 0 ? { mentionedDocs } : {}),
       ...(equipmentTable ? { equipmentTable } : {}),
+      ...(selection && selection.cands.length > 0 ? { candidateTable: candidateTableOf(selection, ratings, reachableDocs) } : {}),
     });
   } catch (e) {
     await meter(false);

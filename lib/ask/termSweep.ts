@@ -86,7 +86,7 @@ export function partRegex(part: string): RegExp {
     const n = cls[1];
     return new RegExp(`(?:class|cl\\.?|ansi|asme|rating)\\s*#?\\s*${n}(?![0-9])|(?<![0-9.])${n}\\s*(?:#|lbs?\\b|pound|class\\b)|#\\s*${n}(?![0-9])`, "i");
   }
-  return new RegExp(`(^|[^a-z0-9])${esc(part)}(?:s|es|ed|ing)?(?![a-z0-9])`, "i");
+  return new RegExp(`(^|[^a-z0-9])${esc(part)}(?:s|es|ed|ing|ion|ions)?(?![a-z0-9])`, "i");
 }
 
 /** The sentences of a passage that use a term — every part of it, in the

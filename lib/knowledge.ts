@@ -121,6 +121,22 @@ export interface KnowledgeCitation {
 
 export type AskMode = "library" | "internet";
 
+export interface CandidateTable {
+  /** How the shortlist was made, in words. */
+  basis: string;
+  total: number;
+  /** Classes matched only on a related word, left off the table. */
+  related: number;
+  /** Fields on which the shortlist differs — what would narrow it. */
+  differ: Array<{ field: string; values: string[] }>;
+  rows: Array<{
+    code: string; documentId: string; documentName: string; fileKey: string | null; page: number;
+    rating: string | null; service: string | null; material: string | null; corrosionAllowance: string | null;
+    attrs: Record<string, string>;
+    matched: Array<{ term: string; how: "asker" | "company" | "lead" }>;
+  }>;
+}
+
 export interface KnowledgeAnswer {
   answer: string;
   citations: KnowledgeCitation[];
@@ -175,6 +191,8 @@ export interface KnowledgeAnswer {
    *  asks for equipment lists/tables. Deterministic data, never model
    *  output; every sheet reference opens the drawing with the tag ringed. */
   equipmentTable?: EquipmentTable;
+  /** "Which spec should I use": the catalog filtered to a shortlist. */
+  candidateTable?: CandidateTable;
 }
 
 export interface EquipmentTable {

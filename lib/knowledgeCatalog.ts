@@ -99,6 +99,8 @@ export interface PipeClassRecord {
   rating?: string;
   material?: string;
   corrosionAllowance?: string;
+  /** Other labelled fields printed on the class's opening page. */
+  attrs?: Record<string, string>;
   rows: PipeClassRow[];
   notes?: string[];
 }

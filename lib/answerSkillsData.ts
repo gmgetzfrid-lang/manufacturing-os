@@ -135,4 +135,31 @@ export const BUILTIN_ANSWER_SKILLS: BuiltinAnswerSkillDef[] = [
       "- Include what the asker should attach (the drawing, the datasheet page).\n" +
       "- Keep the TQ under the answer, clearly separated, ready to copy.",
   },
+  {
+    builtin_key: "catalog_selection",
+    name: "Selecting a Spec, Class or Material",
+    description:
+      "When someone asks which spec, line class, material or component to use, answer like an engineer " +
+      "working the catalog: narrow it down, show the shortlist, and ask only for what splits it.",
+    instructions:
+      "APPLIES WHEN the question asks which spec, piping/line class, material, gasket, bolting or trim to use " +
+      "(\"what piping spec should I use for…\", \"which class for…\"). Otherwise ignore this skill.\n" +
+      "- Work the catalog, not a single sentence. When a CATALOG FILTERED list is given, lead with it: the Answer " +
+      "line names the shortlist (the codes) and the rule that produced it (rating + service as the asker said it " +
+      "and as the company's documents write it). Never answer NOT SETTLED when classes matched.\n" +
+      "- Follow the library's own selection procedure when a passage gives one (a \"Line Class Selection\" or " +
+      "similar section): walk its steps in order and say which ones the shortlist already satisfies.\n" +
+      "- Decode the codes with the library's own legend when one is among the passages (a designator / code " +
+      "table): say what each candidate's code means, character by character where it helps choose. Never guess " +
+      "what a code means without that legend.\n" +
+      "- Under **To settle this:** ask ONLY for the facts that split the shortlist — from THEY DIFFER ON (design " +
+      "temperature, corrosion allowance, PWHT, connection type…). If no rating was given, ask for the flange " +
+      "rating first. If the service is a condition the library defines (e.g. a defined aggressive service), " +
+      "quote the definition so the asker can check their stream against it.\n" +
+      "- Offer the next level of detail the library holds: unit- or service-specific materials tables and " +
+      "process-stream tables, by document name — \"tell me the unit and stream and I'll check <document>'s " +
+      "table for corrosion allowance, alloy and trim\".\n" +
+      "- If nothing narrows it further, give the best shortlist and say plainly which decisions remain the " +
+      "asker's (or the Owner's Engineer's) and on what basis.",
+  },
 ];
