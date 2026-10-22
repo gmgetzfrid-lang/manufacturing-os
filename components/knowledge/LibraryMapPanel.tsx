@@ -45,13 +45,13 @@ export default function LibraryMapPanel({ orgId, libraryId }: { orgId: string; l
 
   // Piping specs only: finds the spec books by their content and reads them
   // class by class from their text — no need to map the whole library.
-  const [specRun, setSpecRun] = useState<{ books: number; classes: number; pipePages: number; remaining: number; done?: boolean } | null>(null);
+  const [specRun, setSpecRun] = useState<{ books: number; classes: number; pipePages: number; remaining: number; done?: boolean; report?: Array<{ name: string; classes: number; how: string }>; checked?: number } | null>(null);
   const runSpecs = useCallback(async () => {
     setSpecRun({ books: 0, classes: 0, pipePages: 0, remaining: 1 });
     setError(null);
     try {
       const r = await indexPipeSpecs(orgId, libraryId, (p) => setSpecRun(p));
-      setSpecRun({ books: r.books, classes: r.classes, pipePages: 0, remaining: 0, done: true });
+      setSpecRun({ books: r.books, classes: r.classes, pipePages: 0, remaining: 0, done: true, report: r.report, checked: r.checked });
     } catch (e) { setError((e as Error).message); setSpecRun(null); }
     finally { void load(); }
   }, [orgId, libraryId, load]);
@@ -112,8 +112,8 @@ export default function LibraryMapPanel({ orgId, libraryId }: { orgId: string; l
           {specRun.done ? <Table2 className="w-4 h-4 text-violet-600" /> : <Loader2 className="w-4 h-4 animate-spin text-violet-600" />}
           {specRun.done
             ? (specRun.books === 0
-              ? "No piping-spec book found in this library (looked for documents whose pages read like spec tables)."
-              : `${specRun.classes} piping class${specRun.classes === 1 ? "" : "es"} indexed from ${specRun.books} spec book${specRun.books === 1 ? "" : "s"} — questions like "which spec for 150 class sour gas" now look them up.`)
+              ? `No piping-spec book found in this library or the libraries linked to it — checked ${specRun.checked ?? 0} large document${specRun.checked === 1 ? "" : "s"} for pages that read like spec tables.`
+              : <span>{specRun.classes} piping class{specRun.classes === 1 ? "" : "es"} indexed — {(specRun.report ?? []).map((b) => `${b.name}: ${b.classes} class${b.classes === 1 ? "" : "es"} (${b.how})`).join("; ")}. Questions like &ldquo;which spec for 150 class sour gas&rdquo; now look them up.</span>)
             : `Indexing piping specs — ${specRun.books ? `${specRun.books} spec book${specRun.books === 1 ? "" : "s"} found, ` : "looking for spec books, "}${specRun.classes} class${specRun.classes === 1 ? "" : "es"} so far. You can keep working.`}
         </div>
       )}

@@ -181,7 +181,7 @@ const PIPE_PAGE_RE = /\b(A\s?\d{2,3}|B16\.\d+|API\s?(5L|6D|600|602)|SCH(EDULE)?|
  *  class most written on its pages). Fast and free, so a 2,000-page book
  *  is mapped in one pass. Returns null when no sections can be found. */
 async function extractPipeClassesFromText(
-  admin: SupabaseClient, _conn: CatalogConn, doc: DocRow, profile: DocProfile, _deadlineMs: number,
+  admin: SupabaseClient, _conn: CatalogConn | null, doc: DocRow, profile: DocProfile, _deadlineMs: number,
 ): Promise<number | null> {
   // The first two chunks of every page: where a header, a service line and
   // the first table headings are.
@@ -265,13 +265,15 @@ export function sectionRecords(ranges: Array<{ key: string; first: number; last:
 
 /** Extract the next pages' pipe classes. Returns pages processed this call. */
 export async function extractPipeClassesStep(
-  admin: SupabaseClient, conn: CatalogConn, doc: DocRow, profile: DocProfile, deadlineMs: number,
+  admin: SupabaseClient, conn: CatalogConn | null, doc: DocRow, profile: DocProfile, deadlineMs: number,
 ): Promise<number> {
   if (!doc.file_key) return 0;
   // Text first: a spec book with a running header is read class by class
   // from its text. Image reading is the fallback for books without one.
   const viaText = await extractPipeClassesFromText(admin, conn, doc, profile, deadlineMs);
   if (viaText !== null) return viaText;
+  // Image reading needs an AI connection (the nightly job has none).
+  if (!conn) return 0;
   const state = profile.pipeSpec ?? { pagesDone: 0, pageCount: doc.page_count ?? 0, classes: 0, done: false };
   // Candidate pages from the indexed text: cheap, and skips cover pages,
   // revision logs and prose sections.
@@ -375,12 +377,17 @@ export async function drainCatalog(admin: SupabaseClient, opts: {
  *  mapping every document. A spec book is recognised by its CONTENT (pages
  *  dense with material specs, schedules, ratings), not its name, so any
  *  company's books are found however they're titled. Resumable. */
+export interface SpecBookReport { name: string; classes: number; how: string }
 export async function drainPipeSpecs(admin: SupabaseClient, opts: {
-  orgId: string; libraryId: string; conn: CatalogConn; deadlineMs: number;
-}): Promise<{ pipePages: number; remaining: number; books: number; classes: number }> {
+  orgId: string; libraryId: string; conn: CatalogConn | null; deadlineMs: number;
+}): Promise<{ pipePages: number; remaining: number; books: number; classes: number; report: SpecBookReport[]; checked: number }> {
+  // The library and the libraries linked to it: a spec book often lives in a
+  // library of its own that the engineering practices link to.
+  const { data: links } = await admin.from("knowledge_library_links").select("linked_library_id").eq("library_id", opts.libraryId);
+  const libIds = [opts.libraryId, ...((links ?? []) as Array<{ linked_library_id: string }>).map((l) => l.linked_library_id)];
   const { rows: docList } = await fetchAllRows<DocRow>((from, to) => admin
     .from("knowledge_documents").select("id, org_id, library_id, name, file_key, page_count")
-    .eq("org_id", opts.orgId).eq("library_id", opts.libraryId).eq("status", "ready")
+    .eq("org_id", opts.orgId).in("library_id", libIds).neq("status", "retired")
     .gte("page_count", 10).order("id").range(from, to));
   const profiles = await profilesFor(admin, docList.map((d) => d.id));
   const books: DocRow[] = [];
@@ -393,9 +400,13 @@ export async function drainPipeSpecs(admin: SupabaseClient, opts: {
     else if ((!p && (d.page_count ?? 0) >= 30) || (p && (d.page_count ?? 0) >= 100)) unprofiled.push(d);
   }
   // Big, unprofiled documents: read the tops of their first pages and keep
-  // the ones that read like a spec book.
+  // the ones that read like a spec book. Biggest first — a spec book is
+  // usually the largest document there is — and any left unchecked when
+  // time runs out are counted as remaining, never reported as "none".
+  unprofiled.sort((a, b) => (b.page_count ?? 0) - (a.page_count ?? 0));
+  let unchecked = 0;
   await inSlices(unprofiled, 1, 6, async ([d]) => {
-    if (Date.now() > opts.deadlineMs - 30_000) return;
+    if (Date.now() > opts.deadlineMs - 30_000) { unchecked++; return; }
     const { data } = await admin.from("knowledge_chunks").select("content")
       .eq("document_id", d.id).eq("seq", 0).order("page", { ascending: true }).limit(40);
     const tops = ((data ?? []) as Array<{ content: string }>).map((r) => r.content);
@@ -430,8 +441,6 @@ export async function drainPipeSpecs(admin: SupabaseClient, opts: {
   for (const d of books) {
     if (Date.now() > opts.deadlineMs - 25_000) break;
     const p = profiles.get(d.id)!;
-    // Done — unless an earlier reader finished with nothing recorded, or
-    // read it before books were mapped from their text.
     // Done — unless it finished with nothing recorded, or was mapped from
     // its text by an older reader (re-mapping is free and picks up fields).
     const stale = p.pipeSpec?.method?.startsWith("text-") && p.pipeSpec.method !== TEXT_METHOD;
@@ -439,9 +448,17 @@ export async function drainPipeSpecs(admin: SupabaseClient, opts: {
     if (p.pipeSpec?.done) p.pipeSpec = undefined;
     try { pipePages += await extractPipeClassesStep(admin, opts.conn, d, p, opts.deadlineMs); } catch { /* next call retries */ }
   }
-  const remaining = books.filter((d) => !profiles.get(d.id)?.pipeSpec?.done).length;
+  const remaining = books.filter((d) => !profiles.get(d.id)?.pipeSpec?.done).length + unchecked;
   const classes = books.reduce((n, d) => n + (profiles.get(d.id)?.pipeSpec?.classes ?? 0), 0);
-  return { pipePages, remaining, books: books.length, classes };
+  // What was found, per book, so the button can say it in plain words.
+  const report: SpecBookReport[] = books.map((d) => {
+    const ps = profiles.get(d.id)?.pipeSpec;
+    return {
+      name: d.name.replace(/\.pdf$/i, ""), classes: ps?.classes ?? 0,
+      how: ps?.method?.startsWith("text-") ? "mapped from its text" : ps?.done ? "read from page images" : "in progress",
+    };
+  });
+  return { pipePages, remaining, books: books.length, classes, report, checked: unprofiled.length - unchecked + books.length };
 }
 
 /** Profiles for a set of documents, keyed by document id. */

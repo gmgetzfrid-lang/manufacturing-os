@@ -1224,15 +1224,22 @@ export async function mapLibraryCatalog(
 
 /** Index only the library's piping-spec books (found by content), class by
  *  class. Repeats bounded server rounds until every book is done. */
+export interface SpecIndexResult {
+  books: number; classes: number;
+  /** Per spec book: its name, classes recorded, and how it was read. */
+  report: Array<{ name: string; classes: number; how: string }>;
+  /** Large documents checked for being a spec book. */
+  checked: number;
+}
 export async function indexPipeSpecs(
   orgId: string, libraryId: string,
   onProgress?: (p: { books: number; classes: number; pipePages: number; remaining: number }) => void,
-): Promise<{ books: number; classes: number }> {
+): Promise<SpecIndexResult> {
   let stalls = 0;
   let pages = 0;
-  let last = { books: 0, classes: 0 };
+  let last: SpecIndexResult = { books: 0, classes: 0, report: [], checked: 0 };
   for (let i = 0; i < 200; i++) {
-    let out: { pipePages: number; remaining: number; books: number; classes: number };
+    let out: { pipePages: number; remaining: number; books: number; classes: number; report?: SpecIndexResult["report"]; checked?: number };
     try {
       out = await apiPost("/api/knowledge/catalog", { orgId, libraryId, action: "pipeSpecs" });
     } catch (e) {
@@ -1241,11 +1248,11 @@ export async function indexPipeSpecs(
       continue;
     }
     pages += out.pipePages;
-    last = { books: out.books, classes: out.classes };
+    last = { books: out.books, classes: out.classes, report: out.report ?? [], checked: out.checked ?? 0 };
     onProgress?.({ books: out.books, classes: out.classes, pipePages: pages, remaining: out.remaining });
     if (out.remaining === 0) return last;
     if (out.pipePages === 0 && ++stalls >= 3) {
-      throw new Error(`Spec indexing stopped with ${out.remaining} book(s) left. Try again, or check your AI key and monthly budget.`);
+      throw new Error(`Spec indexing stopped with ${out.remaining} document(s) still to check. Press it again to continue.`);
     } else if (out.pipePages > 0) stalls = 0;
   }
   return last;
