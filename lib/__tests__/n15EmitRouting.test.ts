@@ -123,6 +123,14 @@ describe("DELIV-7 dw1 (N15) — scanDistributionAcks: a dead-lettered nudge is n
       { org_id: ORG, user_id: "a", kind: "ack_requested", resource_id: "d-1", metadata: { ackRequest: true, autoNag: true }, created_at: new Date().toISOString() },
       { org_id: ORG, user_id: "actor", kind: "ack_overdue", resource_id: "d-1", metadata: { ackEscalation: true }, created_at: new Date().toISOString() },
     ];
+    // document-control P39 (DIST-20 — declared to notifications): once the
+    // document notice record is in place the nag's cooldown reads it ONLY;
+    // the landed nudge and escalation are rows there too (P38 writes them
+    // beside the bell rows), and b's dead-lettered nudge is in neither
+    h.state.tables.document_notice_events = [
+      { id: "e-a", org_id: ORG, document_id: "d-1", source: "distribution_ack", kind: "reminded", recipient: "a", noticed_at: new Date().toISOString() },
+      { id: "e-x", org_id: ORG, document_id: "d-1", source: "distribution_ack", kind: "escalated", recipient: "actor", noticed_at: new Date().toISOString() },
+    ];
     h.compliance.length = 0;
     await scanDistributionAcks(ORG);
     expect(h.compliance.map((c) => `${c.input.kind}:${c.input.userId}`)).toEqual(["ack_requested:b"]);

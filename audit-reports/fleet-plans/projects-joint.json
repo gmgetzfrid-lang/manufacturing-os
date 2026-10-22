@@ -1246,7 +1246,8 @@
     "drafting-flow PROJ-3 (Partial at DF-P8; dw1 / dw3 by pointer to PM-8 / SEC-17, 20261102): dw2 \u2014 a server-side audit_logs row for every project_documents attach and detach",
     "drafting-flow PROJ-5 (Partial at DF-P8): source='intake' on project_documents (a CHECK widening, inventory-first) and the project timeline entry",
     "drafting-flow PROJ-10 (Partial at DF-P8; dw1 built): dw2 \u2014 wire or drop milestones.linked_ticket_id (record the choice; no regression either way)",
-    "drafting-flow GAP-114 (built by DF-P8 except the review-completion reference, PROJ-1): close the gap by record once PROJ-1 lands"
+    "drafting-flow GAP-114 (built by DF-P8 except the review-completion reference, PROJ-1): close the gap by record once PROJ-1 lands",
+    "drafting-flow EVID-8 done-when 3 (assigned at the document-control P39 merge, 2026-10-22, DEC-31): the timeout alternate activation's audit row is written verified (checked write, retried, dead-lettered on failure) rather than best-effort \u2014 lib/reviewControl.ts activateAlternate; who is activated and when is unchanged (pin)"
    ],
    "files": [
     "lib/reviewControl.ts (the review-completion reference only)",

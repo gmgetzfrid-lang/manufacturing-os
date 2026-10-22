@@ -25,9 +25,11 @@
     },
     "by_status": {
       "RESOLVED": 170,
-      "OPEN": 14,
+      "OPEN": 12,
       "RESOLVED (as split under `DEC-31`; ruled by the integrator at the P27 merge, 2026-10-20 (`DEC-90`) — the access-control door, a member reading `portal_token` over REST, stays open until `DIST-18` lands)": 1,
       "RESOLVED (2026-10-21, the integrator's fix pass at the P28 merge — ruled by the integrator at the P28 merge, 2026-10-21 (`DEC-90`): done-when 2 landed; the restore hooks beyond the brief's ruling (4) ratified)": 1,
+      "RESOLVED by record (pending migrations — `20261257`, `20261259` pasted AFTER `20261219`, and `20261160` for `nudgeAcknowledgment`'s browser re-send — DEC-30)": 1,
+      "RESOLVED (pending migrations — `20261259_dc_roundG_notice_deferred_read.sql`, pasted AFTER `20261219`; and `20261160` for `nudgeAcknowledgment`'s browser re-send — DEC-30)": 1,
       "RESOLVED (2026-10-21, document-control Round G P37 DOOR B GUARD final fix pass — every done-when holds as written or as ratified by the integrator at the P37 merge (`DEC-90`): the `DOC_SPLIT` / `DOC_MERGED` evidence acceptance confirmed; the `REV_HOLD_OVERRIDDEN` rows written before `20261254`'s paste accepted as a recorded residual, looked over by the operator at the paste)": 1
     }
   },
@@ -2483,7 +2485,7 @@
       "id": "DIST-19",
       "title": "Non-response on a document is not recorded on the record — every review / acknowledgment reminder overwrites one `notified_at`, distribution acks carry no nag columns, and the only evidence of chasing is purgeable notification rows (the document half of drafting-flow `EVID-8`)",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED by record (pending migrations — `20261257`, `20261259` pasted AFTER `20261219`, and `20261160` for `nudgeAcknowledgment`'s browser re-send — DEC-30)",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED by reading the code at `c22c90a` (drafting-flow Round G, DF-P7 CONSENT); no runtime reproduction was added, because the files are document-control's.",
       "blast_radius": null,
@@ -2508,7 +2510,7 @@
       "id": "DIST-20",
       "title": "The document notice record misses every request and manual reminder — `requestAcks`, the roster openers, `nudgeAcknowledgment`, `renudgeUnacked` and a manual alternate activation leave no `document_notice_events` row, so the distribution nag must still read purgeable `notifications` rows",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED (pending migrations — `20261259_dc_roundG_notice_deferred_read.sql`, pasted AFTER `20261219`; and `20261160` for `nudgeAcknowledgment`'s browser re-send — DEC-30)",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED by reading the code on `fleet/DC-P38-document-notice-record` (document-control Round G, P38 fix pass): only `scanReviews`, `scanAndNotifyAcks` and `scanDistributionAcks` call `noticeRecorder().record`.",
       "blast_radius": null,

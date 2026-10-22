@@ -23,7 +23,11 @@
 //     (and shown to one it grants, and to a controller); another workspace's
 //     member reads 0; a not_emailed row is read by its own person and by no
 //     other member; anon is refused outright (42501 — 20261257 revokes every
-//     privilege from anon).
+//     privilege from anon);
+//   · P39 (DIST-20, 20261259): the residual pin flipped — a deferred audit
+//     row about the restricted document is hidden from the member the ACL
+//     denies, as the record is (lib/__tests__/rls/dcP39NoticeDeferredRead.test.ts
+//     pins every other action unchanged).
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "node:fs";
@@ -157,12 +161,14 @@ describe.skipIf(skip !== null)("DIST-19 (P38): the deferred notice rows are the 
       for (const k of ["viewer", "engineer", "docctrl"]) expect(count(r[k], rows.notEmailed), k).toBe("0");
     });
 
-    it("RESIDUAL, pinned as it is: a system DOCUMENT_NOTICE_RECORD_DEFERRED row about the restricted document is read by a member the ACL denies (audit_logs_org_access) — why the recorder keeps only ids, kind and numbers in it", () => {
+    it("the residual, CLOSED by 20261259 (P39, DIST-20 — this pin flipped): a system DOCUMENT_NOTICE_RECORD_DEFERRED row about the restricted document is hidden from a member the ACL denies, as the record is; the Engineer the ACL grants and a controller read it", () => {
       const o = admin(db, `SELECT org_id FROM documents WHERE id = '${restricted}'`);
       const audit = randomUUID();
       admin(db, `INSERT INTO audit_logs (id, org_id, action, resource_type, resource_id, user_id, user_role, details) VALUES ('${audit}', '${o}', 'DOCUMENT_NOTICE_RECORD_DEFERRED', 'document', '${restricted}', NULL, 'system', jsonb_build_object('source', 'acknowledgment', 'rows', jsonb_build_array(jsonb_build_object('id', '${randomUUID()}', 'document_id', '${restricted}', 'kind', 'reminded', 'recipient', '${r.engineer.uid}'))));`);
       expect(count(r.viewer, rows.restricted)).toBe("0");                                     // the record: hidden
-      expect(selectAs(db, r.viewer.caller, `SELECT count(*) FROM audit_logs WHERE id = '${audit}'`)).toEqual(["1"]);   // the deferred row: not
+      expect(selectAs(db, r.viewer.caller, `SELECT count(*) FROM audit_logs WHERE id = '${audit}'`)).toEqual(["0"]);   // the deferred row: hidden too
+      expect(selectAs(db, r.engineer.caller, `SELECT count(*) FROM audit_logs WHERE id = '${audit}'`)).toEqual(["1"]);
+      expect(selectAs(db, r.docctrl.caller, `SELECT count(*) FROM audit_logs WHERE id = '${audit}'`)).toEqual(["1"]);
       expect(selectAs(db, outsider.caller, `SELECT count(*) FROM audit_logs WHERE id = '${audit}'`)).toEqual(["0"]);
     });
 

@@ -1242,3 +1242,60 @@ migration, `20261257_dc_roundG_document_notice_record.sql` (`DIST-19`):
   `DIST-20` (assigned at the P38 merge to **P39 NOTICE RECORD REQUESTS**, `DEC-31`; at most one migration, for the deferred audit row's read rule — `DEC-90`).
 
 - *At the intelligence I-34 merge (2026-10-22): Read narrowed by intelligence I-34 / `20261261`: a row is readable only while both its documents are; see intelligence DACL-11. The DRLS-13 record's 'document_supersessions_select keeps member-wide read' and 'SELECT stays member-wide' no longer describe the database once `20261261` is pasted, and `20261261` refuses while any cross-workspace legacy row exists, so DRLS-13's reconciliation of those rows comes first (see DACL-11's residual). Do not re-run `20261131` after `20261261`: its policy-count probe (line 519) counts every policy and would read false on a correct database (the integrator at the I-34 merge, 2026-10-22, DEC-90).*
+
+⚠ **Paste order — P39 NOTICE RECORD REQUESTS (2026-10-21).** One one-paste
+migration, `20261259_dc_roundG_notice_deferred_read.sql` (`DIST-20`, the
+done-when the integrator added at the P38 merge):
+1. **No deploy order; recommended: deploy the P39 app first, then paste.** It
+   creates one RESTRICTIVE SELECT policy on `audit_logs`
+   (`audit_logs_notice_deferred_readers`): a `DOCUMENT_NOTICE_RECORD_DEFERRED`
+   row is read only by someone who can read the document it names; every
+   other action reads exactly as before. Re-creates nothing; no function, no
+   trigger. The app never reads these rows through a member's session (the
+   scans' replay is the service role's), so either order is safe.
+2. **Paste AFTER `20261219`** (admin-and-org P13, row 172 — still
+   PENDING) — and so after the `20261142` / `20261157` → `20261219`
+   sequence (rows 107 / 128 / 172). `20261219` counts the RESTRICTIVE
+   SELECT policies on `audit_logs` and expects one; ANY paste of `20261219`
+   after `20261259` — its FIRST paste as much as a re-paste — reads that one
+   probe ("… and ONE restrictive overlay …") false. That is expected: it
+   leaves `audit_logs_notice_deferred_readers` in force and every other
+   probe reads true — the row must say so for any sitting that pastes
+   `20261219` after this file. Otherwise the file needs only `audit_logs`
+   and `documents` (`schema.sql`); before or after `20261257` (before it, no
+   such audit row exists and nothing changes for anyone). Re-runnable.
+   *(Corrected at the P39 fix pass, 2026-10-21: the first version said
+   "independent of every other pending paste" and spoke only of a "later
+   re-paste" of `20261219`, which is wrong while `20261219` is unpasted.)*
+- **The P39 app before `20261257` is pasted:** every request and manual
+  reminder path behaves exactly as today; `POST /api/documents/notice-record`
+  answers `missing`; the distribution nag counts its cooldown from the bell
+  rows alone.
+- **The result set:** four probes (all true) and four counts — deferred rows
+  on file, of those about a document under an access list, about a gone or
+  unnamed document, and the restrictive SELECT policies before the paste (1
+  on a first paste, 2 on a re-run).
+- **For the integrator at merge, not edited by P39:** the `20261259` row in
+  `MIGRATION-PASTE-ORDER.md`; no `lib/schemaExpectations.ts` row (no new
+  table); no export decision (no new table); no notification kind; no new
+  audit action. New route `app/api/documents/notice-record/route.ts`.
+  `lib/inAppNotifications.ts` (notifications') gained the additive
+  `NotificationInput.id` / `notifyCheckedId`.
+- **Merge-time fix (2026-10-22; no SQL changed, so no paste fact changes).**
+  The browser's record post is started, never awaited (DEC-90: bookkeeping
+  never delays a user's action); `setAckPolicy` posts once per save (the
+  route takes a `{ batch }` body); the intake door's server write runs after
+  its response (`lib/noticeRecordAfterResponse.ts`, threaded through
+  `lib/postPublish.ts` — declared under `filesOutsidePlan`). The retry's
+  read-back in `lib/complianceNotify.ts` (notifications', additive,
+  `filesOutsidePlan`) matches a writer-chosen bell id. `DIST-20` RESOLVED
+  and `DIST-19` RESOLVED by record (pending `20261257`, `20261259` after
+  `20261219`, and `20261160` for `nudgeAcknowledgment`'s browser re-send);
+  drafting-flow `EVID-8` dw1 / dw2 superseded by the record (DEC-90 ruling
+  (e)), dw3 owned by projects-joint J21.
+- **Review of the merge-time fix (2026-10-22; no SQL changed).** A
+  browser's id notice to another member settles its last attempt with a
+  probe insert under the same id (landed on success or `23505`; refused at a
+  `20261160` rate cap → dead-lettered as unknown, stated); the batch route
+  skips and counts an entry whose document the caller cannot read (403 only
+  when none is readable); an ambiguous batch body is a 400.

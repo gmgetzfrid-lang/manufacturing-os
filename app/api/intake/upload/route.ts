@@ -133,6 +133,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { afterResponsePush } from "@/lib/push/afterResponsePush";
+import { afterResponseNoticeRecord } from "@/lib/noticeRecordAfterResponse";
 import { PutObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
@@ -1947,6 +1948,11 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
           // waits on a push service; the bell rows and emails are unchanged,
           // and a push that fails, or cannot be scheduled, is logged only.
           serverPush: afterResponsePush(link.created_by ? String(link.created_by) : null, "intake/upload"),
+          // DIST-20 merge-time fix (DEC-90: bookkeeping never delays a
+          // user's action): the roster's document notice record write runs
+          // after the response (next/server after(), the service-role
+          // binding carried with it), so the uploader never waits on it.
+          serverRecord: afterResponseNoticeRecord("intake/upload"),
         });
       });
     } catch (e) {

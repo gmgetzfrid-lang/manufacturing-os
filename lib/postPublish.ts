@@ -41,6 +41,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { emit, type PushSender } from "@/lib/notify/dispatch";
+import type { NoticeRecordScheduler } from "@/lib/documentNoticeRecord";
 import { onDocumentIssued } from "@/lib/reviewCycles";
 import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { recomputeRetention } from "@/lib/retention";
@@ -149,6 +150,13 @@ export interface PostPublishInput {
    *  (its leg is POST /api/push/notify); the maintenance cron never runs
    *  this. Never imported here: this module is bundled for the browser. */
   serverPush?: PushSender;
+  /** DIST-20 merge-time fix (DEC-90: bookkeeping never delays a user's
+   *  action): a SERVER caller's scheduler for the document notice record
+   *  write of the read-&-understood roster this publish opens — the intake
+   *  door passes lib/noticeRecordAfterResponse.ts (next/server after()), so
+   *  its response never waits on the record. A browser caller leaves it out
+   *  (its record post is started, never awaited). */
+  serverRecord?: NoticeRecordScheduler;
 }
 
 /**
@@ -269,6 +277,7 @@ export async function runPostPublishSideEffects(input: PostPublishInput): Promis
         orgId: input.orgId, documentId: input.documentId, actorId: input.actorUserId, actorName: input.actorEmail ?? input.actorName,
         ...(input.notifyPush === false ? { notifyPush: false } : {}),
         ...(input.serverPush ? { serverPush: input.serverPush } : {}),
+        ...(input.serverRecord ? { serverRecord: input.serverRecord } : {}),
       });
     } catch { /* best-effort */ }
     try { await recomputeRetention(input.documentId); } catch { /* best-effort */ }

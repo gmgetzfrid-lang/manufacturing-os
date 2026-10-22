@@ -98,6 +98,26 @@ export interface NotificationInput {
   actorUserId?: string;
   actorName?: string;
   metadata?: Record<string, unknown>;
+  /** document-control DIST-20 (P39): the row's id, chosen by the writer
+   *  (newNotificationId) so it knows which bell row its notice landed as —
+   *  the notice record names it (document_notice_events.notification_id).
+   *  Optional and additive: a writer that leaves it out gets the column's
+   *  default, exactly as before. A retry of the same input never writes a
+   *  second copy: the primary key refuses it, and that refusal is the row
+   *  already there (notifyWithReason). */
+  id?: string;
+}
+
+/** A fresh id for a bell row (DIST-20): a v4 UUID from the platform's
+ *  crypto (Node 18+ and every browser), from Math.random only where none is
+ *  present. */
+export function newNotificationId(): string {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (ch) => {
+    const r = (Math.random() * 16) | 0;
+    return (ch === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
 }
 
 /**
@@ -128,14 +148,42 @@ export async function notifyChecked(input: NotificationInput, client?: NotifyCli
   return (await notifyWithReason(input, client)).ok;
 }
 
+/**
+ * document-control DIST-20 (P39): notifyChecked(), answering the id of the
+ * bell row that landed (null when it did not) — the row is written under
+ * `input.id`, or under a fresh id (newNotificationId) when the input names
+ * none. Additive: notifyChecked() and every caller of it are unchanged.
+ */
+export async function notifyCheckedId(input: NotificationInput, client?: NotifyClient): Promise<string | null> {
+  const r = await notifyWithReason({ ...input, id: input.id ?? newNotificationId() }, client);
+  return r.ok ? r.id ?? null : null;
+}
+
 /** notifyChecked(), answering the refusal's reason as well — for a server
- *  writer that logs it (the transmittal portal's issuer notice, TRX-15). */
-export async function notifyWithReason(input: NotificationInput, client?: NotifyClient): Promise<{ ok: boolean; error?: string }> {
+ *  writer that logs it (the transmittal portal's issuer notice, TRX-15).
+ *  DIST-20 (P39): when the input names its row's `id`, a landed answer
+ *  carries it back (`id`), and a primary-key refusal of THAT id
+ *  (23505 on notifications_pkey) is the row an earlier attempt already
+ *  wrote — answered as landed, never a second copy. Exactly: 20261160's
+ *  BEFORE INSERT rail runs before the primary-key check, so where the
+ *  writer is already at one of its rate caps (counted over the writer's own
+ *  rows, the landed one included — 60 of the same kind and resource to that
+ *  person a minute, 600 to that person a minute, 1200 an hour, 3000 from
+ *  the writer a minute) a repeat of a landed id is refused ("rate limit")
+ *  instead of answering 23505 — still never a second copy, but then not
+ *  known to have landed, and a caller that gives up dead-letters it as
+ *  unknown. Without an `id` nothing differs from before. */
+export async function notifyWithReason(input: NotificationInput, client?: NotifyClient): Promise<{ ok: boolean; error?: string; id?: string }> {
   try {
     const db: NotifyClient = client ?? supabase;
     const { error } = await db.from("notifications").insert(notificationRow(input));
-    if (error) { console.warn("[notify] insert failed", error.message); return { ok: false, error: error.message }; }
-    return { ok: true };
+    if (error) {
+      const code = String((error as { code?: unknown }).code ?? "");
+      if (input.id && code === "23505" && /notifications_pkey/.test(String(error.message ?? ""))) return { ok: true, id: input.id };
+      console.warn("[notify] insert failed", error.message);
+      return { ok: false, error: error.message };
+    }
+    return input.id ? { ok: true, id: input.id } : { ok: true };
   } catch (e) {
     console.warn("[notify] insert threw", e);
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -156,6 +204,8 @@ function notificationRow(input: NotificationInput): Record<string, unknown> {
     actor_user_id: input.actorUserId ?? null,
     actor_name: input.actorName ?? null,
     metadata: input.metadata ?? null,
+    // DIST-20 (P39): the writer's own id for the row, only when it names one
+    ...(input.id ? { id: input.id } : {}),
   };
 }
 

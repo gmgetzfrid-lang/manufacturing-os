@@ -29,7 +29,9 @@ import type { AckPolicy } from "@/types/schema";
 import { heldRoles, roleFilter } from "@/lib/roleHeld";
 // DIST-19 (document-control P38): each reminder and escalation the daily
 // scan lands is a row on the append-only notice record.
-import { noticeRecorder, noticeRow, replayDeferredNotices } from "@/lib/documentNoticeRecord";
+// DIST-20 (document-control P39): the roster's requests and the manual
+// re-send are on the record too, naming the bell row each landed as.
+import { noticeRecorder, noticeRow, newBellId, recordRequestNoticeBatch, recordRequestNotices, replayDeferredNotices, type NoticeRecordScheduler, type RequestNoticeInput } from "@/lib/documentNoticeRecord";
 
 /** The push leg never touches the roster's own outcome (DEC-90: a push
  *  failure never fails the action or its bell rows). `serverPush`: the
@@ -361,10 +363,19 @@ interface DocForAck {
  *  OS-16 (the integrator at the N17 merge, R4): `serverPush` — a SERVER
  *  caller's sender (the intake door's auto-publish passes sendPushSafe with
  *  its actor as the writer), threaded to pushAfterBellRows; without it a
- *  server recompute pushes nothing (the maintenance cron passes none). */
+ *  server recompute pushes nothing (the maintenance cron passes none).
+ *  DIST-20 merge-time fix (DEC-90: bookkeeping never delays a user's
+ *  action): `noticeSink` — a caller that recomputes MANY documents in one
+ *  action (setAckPolicy) gathers each document's notices there and puts
+ *  them on the record once, at the end; without it the notices go to
+ *  recordRequestNotices here (in the browser started, never awaited).
+ *  `serverRecord` — a SERVER route a person waits on (the intake door)
+ *  hands its after-response scheduler, so the record write never delays
+ *  its response; without it a server recompute awaits it (the cron). */
 export async function recomputeDocumentAck(input: {
   orgId: string; documentId: string; actorId?: string | null; actorName?: string | null; notifyNew?: boolean;
   writeErrors?: string[]; notifyPush?: boolean; serverPush?: PushSender;
+  noticeSink?: RequestNoticeInput[]; serverRecord?: NoticeRecordScheduler;
 }): Promise<void> {
   const { data: docRow } = await supabase
     .from("documents")
@@ -431,8 +442,11 @@ export async function recomputeDocumentAck(input: {
     } else {
       if (input.notifyNew !== false) {
         const asked = fresh.filter((a) => a.uid !== input.actorId);
-        const landed = await Promise.all(asked.map((a) =>
+        // DIST-20: each request's bell row under an id this writer chose
+        const bellIds = asked.map(() => newBellId());
+        const landed = await Promise.all(asked.map((a, i) =>
           notify({
+            id: bellIds[i],
             orgId: input.orgId, userId: a.uid, kind: "ack_requested",
             title: `Please read & acknowledge: ${label}${revLabel ? ` Rev ${revLabel}` : ""}`,
             body: "Open the document and confirm you've read and understood this revision.",
@@ -445,6 +459,17 @@ export async function recomputeDocumentAck(input: {
         if (input.notifyPush !== false) {
           await pushLandedRows({ orgId: input.orgId, kind: "ack_requested", resourceId: doc.id, recipients: asked.filter((_, i) => landed[i] === true).map((a) => a.uid) }, input.serverPush);
         }
+        // DIST-20 (P39): each request that landed is a delivered row on the
+        // notice record — after the bell rows and the push, unchanged; never
+        // fails the roster (a record failure is deferred, said, never thrown)
+        // and never delays it (merge-time fix: in the browser the post is
+        // started, not awaited; a many-document save gathers into noticeSink)
+        const requests: RequestNoticeInput = {
+          orgId: input.orgId, documentId: doc.id, source: "acknowledgment", versionId,
+          notices: asked.flatMap((a, i) => (landed[i] === true ? [{ kind: "delivered" as const, recipient: a.uid, notificationId: bellIds[i] }] : [])),
+        };
+        if (input.noticeSink) input.noticeSink.push(requests);
+        else await recordRequestNotices(requests, { actorId: input.actorId ?? null, actorName: input.actorName ?? null, ...(input.serverRecord ? { schedule: input.serverRecord } : {}) });
       }
       await logAuditAction({
         action: "ACK_REQUESTED", resourceType: "document", resourceId: doc.id,
@@ -479,16 +504,18 @@ export async function recomputeDocumentAck(input: {
  *  (which this function still swallows); without it the behaviour is
  *  unchanged (logged only).
  *  `notifyPush` / `serverPush`: passed to recomputeDocumentAck as given
- *  (the N17 merge's R2 / R4 — see there). */
+ *  (the N17 merge's R2 / R4 — see there); `serverRecord` likewise (DIST-20
+ *  merge-time fix — see there). */
 export async function onDocumentIssuedAck(input: {
   orgId: string; documentId: string; actorId?: string | null; actorName?: string | null;
-  writeErrors?: string[]; notifyPush?: boolean; serverPush?: PushSender;
+  writeErrors?: string[]; notifyPush?: boolean; serverPush?: PushSender; serverRecord?: NoticeRecordScheduler;
 }): Promise<void> {
   try {
     await recomputeDocumentAck({
       orgId: input.orgId, documentId: input.documentId, actorId: input.actorId, actorName: input.actorName, writeErrors: input.writeErrors,
       ...(input.notifyPush === false ? { notifyPush: false } : {}),
       ...(input.serverPush ? { serverPush: input.serverPush } : {}),
+      ...(input.serverRecord ? { serverRecord: input.serverRecord } : {}),
     });
   } catch (e) {
     console.warn("[ack] onDocumentIssued failed", e);
@@ -592,7 +619,9 @@ export async function nudgeAcknowledgment(input: { orgId: string; rosterId: stri
   const { data: doc } = await supabase.from("documents").select("library_id, document_number, title, name").eq("id", r.document_id as string).maybeSingle();
   const label = (doc?.document_number as string) || (doc?.title as string) || (doc?.name as string) || "Document";
   const rev = (r.revision_label as string) || "";
+  const bellId = newBellId();   // DIST-20: the record names the bell row
   const landed = await notify({
+    id: bellId,
     orgId: input.orgId, userId: r.assignee_user_id as string, kind: "ack_requested",
     title: `Reminder — acknowledge ${label}${rev ? ` Rev ${rev}` : ""}`,
     body: "Please confirm you've read and understood this revision.",
@@ -602,6 +631,15 @@ export async function nudgeAcknowledgment(input: { orgId: string; rosterId: stri
   // OS-14: the re-sent request is pushed once its bell row landed
   if (landed === true) await pushLandedRows({ orgId: input.orgId, kind: "ack_requested", resourceId: r.document_id as string, recipients: [r.assignee_user_id as string] });
   await supabase.from("document_acknowledgments").update({ notified_at: new Date().toISOString() }).eq("id", input.rosterId);
+  // DIST-20 (P39): the manual re-send, once it landed, is a reminded row
+  // (details.manual) on the notice record — the overwritten notified_at above
+  // is no longer the only trace; after it, never failing the re-send
+  if (landed === true) {
+    await recordRequestNotices({
+      orgId: input.orgId, documentId: r.document_id as string, source: "acknowledgment",
+      notices: [{ kind: "reminded", recipient: r.assignee_user_id as string, sourceId: input.rosterId, notificationId: bellId, details: { manual: true } }],
+    });
+  }
 }
 
 // ── Policy set (doc / folder / library) ──────────────────────────────────────
@@ -653,45 +691,55 @@ export async function setAckPolicy(input: {
     orgId: input.orgId, userId: input.actorId ?? "", details: { policy: input.policy },
   }).catch(() => {});
 
-  if (input.level === "document") {
-    try {
-      await recomputeDocumentAck({ orgId: input.orgId, documentId: input.id, actorId: input.actorId, actorName: input.actorName });
-    } catch (e) {
-      throw new AckRosterRecomputeError({ level: "document", failedDocumentIds: [input.id], total: 1, reason: errorText(e) });
-    }
-    return;
-  }
-  // Library / folder: recompute every Issued document it covers, in batches.
-  // PKG-9 (P14 final review): a recompute can now THROW (an unreadable
-  // inherited policy — effectiveAckPolicyForDocument), and Promise.all
-  // abandoned every later batch at the first one. Each batch is settled
-  // whole, every batch runs, and the documents that were not recomputed are
-  // reported once, after the last — the policy itself is already saved.
-  // OS-14 (N17 review): no push leg here (`notifyPush: false`) — a policy
-  // saved over a whole library or folder would otherwise send one
-  // fire-and-forget push request per issued document; the bell rows and
-  // emails are unchanged.
-  const col = input.level === "library" ? "library_id" : "collection_id";
-  const { data, error: listErr } = await supabase.from("documents").select("id").eq(col, input.id).eq("status", "Issued");
-  if (listErr) {
-    throw new AckRosterRecomputeError({ level: input.level, failedDocumentIds: [], total: null, reason: listErr.message });
-  }
-  const ids = ((data ?? []) as Array<Record<string, unknown>>).map((r) => r.id as string);
-  const failed: string[] = [];
-  let firstReason: string | null = null;
-  for (let i = 0; i < ids.length; i += 20) {
-    const batch = ids.slice(i, i + 20);
-    const settled = await Promise.allSettled(batch.map((id) =>
-      recomputeDocumentAck({ orgId: input.orgId, documentId: id, actorId: input.actorId, actorName: input.actorName, notifyPush: false })));
-    settled.forEach((r, k) => {
-      if (r.status === "rejected") {
-        failed.push(batch[k]);
-        firstReason ??= errorText(r.reason);
+  // DIST-20 merge-time fix (DEC-90: bookkeeping never delays a user's
+  // action): every recomputed document's landed requests are gathered here
+  // and put on the notice record ONCE, after the last recompute — in the
+  // browser one post, started and never awaited — whether or not a
+  // recompute failed (the notices that landed are recorded either way).
+  const noticeSink: RequestNoticeInput[] = [];
+  try {
+    if (input.level === "document") {
+      try {
+        await recomputeDocumentAck({ orgId: input.orgId, documentId: input.id, actorId: input.actorId, actorName: input.actorName, noticeSink });
+      } catch (e) {
+        throw new AckRosterRecomputeError({ level: "document", failedDocumentIds: [input.id], total: 1, reason: errorText(e) });
       }
-    });
-  }
-  if (failed.length > 0) {
-    throw new AckRosterRecomputeError({ level: input.level, failedDocumentIds: failed, total: ids.length, reason: firstReason ?? "unknown error" });
+      return;
+    }
+    // Library / folder: recompute every Issued document it covers, in batches.
+    // PKG-9 (P14 final review): a recompute can now THROW (an unreadable
+    // inherited policy — effectiveAckPolicyForDocument), and Promise.all
+    // abandoned every later batch at the first one. Each batch is settled
+    // whole, every batch runs, and the documents that were not recomputed are
+    // reported once, after the last — the policy itself is already saved.
+    // OS-14 (N17 review): no push leg here (`notifyPush: false`) — a policy
+    // saved over a whole library or folder would otherwise send one
+    // fire-and-forget push request per issued document; the bell rows and
+    // emails are unchanged.
+    const col = input.level === "library" ? "library_id" : "collection_id";
+    const { data, error: listErr } = await supabase.from("documents").select("id").eq(col, input.id).eq("status", "Issued");
+    if (listErr) {
+      throw new AckRosterRecomputeError({ level: input.level, failedDocumentIds: [], total: null, reason: listErr.message });
+    }
+    const ids = ((data ?? []) as Array<Record<string, unknown>>).map((r) => r.id as string);
+    const failed: string[] = [];
+    let firstReason: string | null = null;
+    for (let i = 0; i < ids.length; i += 20) {
+      const batch = ids.slice(i, i + 20);
+      const settled = await Promise.allSettled(batch.map((id) =>
+        recomputeDocumentAck({ orgId: input.orgId, documentId: id, actorId: input.actorId, actorName: input.actorName, notifyPush: false, noticeSink })));
+      settled.forEach((r, k) => {
+        if (r.status === "rejected") {
+          failed.push(batch[k]);
+          firstReason ??= errorText(r.reason);
+        }
+      });
+    }
+    if (failed.length > 0) {
+      throw new AckRosterRecomputeError({ level: input.level, failedDocumentIds: failed, total: ids.length, reason: firstReason ?? "unknown error" });
+    }
+  } finally {
+    await recordRequestNoticeBatch(noticeSink, { actorId: input.actorId ?? null, actorName: input.actorName ?? null });
   }
 }
 
@@ -747,17 +795,20 @@ export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: n
     const wants = plan.only(retryKey, r.notified_at as string | null);
     const landed: boolean[] = [];
     // DIST-19: each notice and whether it landed — only a landed one is recorded
-    const sent: Array<{ kind: "reminded" | "escalated"; to: string; ok: boolean }> = [];
+    // DIST-20 (P39): with the bell row's id each landed as
+    const sent: Array<{ kind: "reminded" | "escalated"; to: string; ok: boolean; bellId: string }> = [];
 
     if (wants("ack_requested", r.assignee_user_id as string)) {
+      const bellId = newBellId();
       const ok = await notify({
+        id: bellId,
         orgId, userId: r.assignee_user_id as string, kind: "ack_requested",
         title: `Reminder — acknowledge ${label}${rev ? ` Rev ${rev}` : ""}`,
         body: "You still need to confirm you've read and understood this revision.",
         link, resourceType: "document", resourceId: r.document_id as string,
       }, { retryKey });
       landed.push(ok);
-      sent.push({ kind: "reminded", to: r.assignee_user_id as string, ok });
+      sent.push({ kind: "reminded", to: r.assignee_user_id as string, ok, bellId });
     }
 
     const overdueDays = Math.floor((now - new Date(r.assigned_at as string).getTime()) / 86_400_000);
@@ -771,8 +822,10 @@ export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: n
       );
       const escalateTo = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]).filter((u) => u !== (r.assignee_user_id as string));
       const targets = escalateTo.filter((uid) => wants("ack_overdue", uid));
-      const oks = await Promise.all(targets.map((uid) =>
+      const bellIds = targets.map(() => newBellId());
+      const oks = await Promise.all(targets.map((uid, i) =>
         notify({
+          id: bellIds[i],
           orgId, userId: uid, kind: "ack_overdue",
           title: `Acknowledgment overdue: ${label}`,
           body: `${(r.assignee_name as string) || "Someone assigned"} hasn't acknowledged ${label}${rev ? ` Rev ${rev}` : ""} — ${overdueDays} days outstanding.`,
@@ -780,7 +833,7 @@ export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: n
         }, { retryKey })
       ));
       landed.push(...oks);
-      targets.forEach((uid, i) => sent.push({ kind: "escalated", to: uid, ok: oks[i] }));
+      targets.forEach((uid, i) => sent.push({ kind: "escalated", to: uid, ok: oks[i], bellId: bellIds[i] }));
     }
 
     // DELIV-7 dw1: the cooldown is stamped only when every notice landed —
@@ -795,7 +848,7 @@ export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: n
       org_id: orgId, document_id: r.document_id as string, version_id: (r.document_version_id as string | null) ?? null,
       revision_label: (r.revision_label as string | null) ?? null, source: "acknowledgment", source_id: r.id as string,
       kind: x.kind, recipient: x.to, subject_user_id: r.assignee_user_id as string,
-      details: x.kind === "escalated" ? { overdueDays, graceDays } : { overdueDays },
+      details: x.kind === "escalated" ? { overdueDays, graceDays } : { overdueDays }, notificationId: x.bellId,
     })));
     n++;
   }

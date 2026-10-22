@@ -46,6 +46,64 @@
 //     column) nothing is written and nothing is deferred: today's behaviour,
 //     said once per run in the scan's line.
 //
+// document-control Round G — P39 NOTICE RECORD REQUESTS (DIST-20; DEC-90
+// rulings (1)–(5) for P39). The request paths and the manual reminders are
+// on the record too: requestAcks (a distribution request — `delivered` — and
+// its reminder to a recipient already asked — `reminded`), openReviewRoster
+// and recomputeDocumentAck (the roster requests — `delivered`),
+// nudgeAcknowledgment and renudgeUnacked (a controller's manual re-send —
+// `reminded`, details.manual) and the manual activateAlternate
+// (`alternate_activated`, details.manual) each append one row per person
+// once its bell row LANDED, through recordRequestNotices:
+//   · the row is built from the BELL ROW ITSELF (verifiedRequestRows): the
+//     notification it names is read on the server (the service role) and
+//     must be this document's, that person's, of the notice's kind, written
+//     by the acting member (by its id when the writer chose one —
+//     lib/inAppNotifications.ts newNotificationId — or, for an emit() fan-out
+//     that answers no ids, the newest such row since the action began, at
+//     most NOTICE_VERIFY_WINDOW_MS ago); noticed_at is the bell row's own
+//     created_at and notification_id its id; the row's id is derived from
+//     the bell row's id (requestNoticeId), so a repeat records nothing twice.
+//     A notice whose bell row is not found (refused, dead-lettered) leaves no
+//     row — "once its notice landed";
+//   · P39 second fix pass: the obligation row's own state must support the
+//     notice (obligationSupports — an unsigned active sign-off on the draft
+//     under review, an activated alternate slot for an activation, a pending
+//     roster row, an unacknowledged distribution row), and a row's actor_name
+//     is the verified writer's (the route's caller), never the bell row's
+//     free-text actor_name;
+//   · in the BROWSER the record cannot be written by the member (20261257
+//     grants no client write), so the rows go through POST
+//     /api/documents/notice-record, which verifies the caller (an active
+//     member who can read the document) and builds the rows as above with the
+//     service role; on the SERVER (the maintenance cron, a route bound to the
+//     service role) they are built and written directly;
+//   · merge-time fix (DEC-90: bookkeeping never delays a user's action):
+//     in the browser the post is STARTED, never awaited — the action returns
+//     as soon as its bell rows landed, exactly as before P39; the post goes
+//     with fetch keepalive in bodies within its limit, and setAckPolicy
+//     gathers a save's notices and posts once at the end
+//     (recordRequestNoticeBatch). A server route a person waits on (the
+//     intake door's auto-publish roster) hands a scheduler and the write runs
+//     after its response (lib/noticeRecordAfterResponse.ts);
+//   · a record failure never fails the action and never changes who is
+//     notified: the bell rows, emails, pushes, notified_at stamps and audit
+//     rows are written exactly as before, first; the record write is retried
+//     and deferred to the audit log exactly as P38's (noticeRecorder), and
+//     the source's daily scan replays it. An unreachable route, or a page
+//     closed before a body was in flight (only the body in flight at close
+//     outlives it — the first starts after getSession, each later one after
+//     the one before answered; NOTICE_KEEPALIVE_MAX_BODY), is said in the
+//     console (when there still is one) and the notice is not on the record — the bell row
+//     landed and the person was notified; a member cannot write the deferral
+//     row (the accepted residual, DIST-20 ruling (d));
+//   · the distribution nag's cooldown (scanDistributionAcks) reads the record
+//     ONLY once 20261257 is in place and the read completes
+//     (recentDistributionNotices `complete`): a manual request or re-nudge is
+//     a delivered / reminded row, so it still holds the robot's nudge for one
+//     cooldown; before the paste (or on a refused / capped read) the bell rows
+//     count, exactly as today.
+//
 // Never throws.
 
 import { supabase } from "@/lib/supabase";
@@ -98,7 +156,9 @@ export interface DocumentNoticeRow {
   /** the person whose response is awaited (the reviewer / assignee / recipient) */
   subject_user_id: string | null;
   notification_id: string | null;
-  actor_name: string;
+  /** "System" for a scan's notice; the acting member's name for a request
+   *  path's (DIST-20), or null where it was not kept (a replayed member row) */
+  actor_name: string | null;
   details: Record<string, unknown>;
   /** when the notice landed (the app's clock) — kept by a replay */
   noticed_at: string;
@@ -114,13 +174,28 @@ const newId = (): string => {
   });
 };
 
-/** Build a row (a fresh id, noticed now, the System as actor). */
+/** DIST-20 (P39): a fresh id for a bell row its writer will name on the
+ *  record (the row is written under it — lib/inAppNotifications.ts
+ *  NotificationInput.id). A v4 UUID, like every bell row's. */
+export function newBellId(): string {
+  return newId();
+}
+
+/** A run's line, best-effort: never lets the saying of a line throw. */
+function say(note: string): void {
+  try { noteComplianceScan(note); } catch { /* the line is best-effort */ }
+}
+
+/** Build a row (a fresh id, noticed now, the System as actor). DIST-20
+ *  (P39): `notificationId`, when the writer knows the bell row its notice
+ *  landed as (lib/inAppNotifications.ts newNotificationId) — none otherwise,
+ *  exactly as before. */
 export function noticeRow(input: Omit<DocumentNoticeRow, "id" | "notification_id" | "actor_name" | "noticed_at" | "details"> & {
-  details?: Record<string, unknown>; noticedAt?: string;
+  details?: Record<string, unknown>; noticedAt?: string; notificationId?: string | null;
 }): DocumentNoticeRow {
-  const { details, noticedAt, ...rest } = input;
+  const { details, noticedAt, notificationId, ...rest } = input;
   return {
-    id: newId(), ...rest, notification_id: null, actor_name: "System",
+    id: newId(), ...rest, notification_id: notificationId ?? null, actor_name: "System",
     details: details ?? {}, noticed_at: noticedAt ?? new Date().toISOString(),
   };
 }
@@ -282,7 +357,12 @@ export function deferredNoticeRow(v: unknown, orgId: string, source: DocumentNot
     id: r.id, org_id: orgId, document_id: r.document_id, version_id,
     revision_label: (r.revision_label as string | null | undefined) ?? null,
     source, source_id, kind: r.kind as DocumentNoticeKind, recipient: r.recipient, subject_user_id, notification_id,
-    actor_name: typeof r.actor_name === "string" ? r.actor_name : "System",
+    // DIST-20 (P39): a member's notice (details.byMember) or a manual one
+    // (details.manual) was not the System's; the deferred payload keeps no
+    // name, so the replay says none
+    actor_name: typeof r.actor_name === "string" ? r.actor_name
+      : (r.details && typeof r.details === "object"
+          && ((r.details as Record<string, unknown>).byMember === true || (r.details as Record<string, unknown>).manual === true) ? null : "System"),
     details: deferrableDetails(r.kind, r.details),
     noticed_at: new Date(Number.isFinite(at) ? Math.min(at, kept) : kept).toISOString(),
   };
@@ -414,18 +494,31 @@ export async function replayDeferredNotices(orgId: string, source: DocumentNotic
 }
 
 /** The record's own cooldown read for the distribution-ack nag: who was
- *  reminded / escalated for which document since `sinceIso` (never a notice
- *  dated in the future). Keyset-paged newest first on (noticed_at, id), so
- *  PostgREST's max-rows never truncates it silently (merge-time fix pass);
- *  it stops after COOLDOWN_NOTICE_PAGES pages and says so in the run's line
- *  — the older notices of the window are then counted from the
- *  notifications rows alone, as before (the caller's union only ever
- *  withholds more). null when the record cannot be read (missing or
- *  refused, on any page) — the caller then counts from the notifications
- *  rows alone, exactly as before. */
-export async function recentDistributionNotices(orgId: string, sinceIso: string): Promise<{ reminded: Set<string>; escalated: Set<string> } | null> {
+ *  asked / reminded / escalated for which document since `sinceIso` (never
+ *  a notice dated in the future). Keyset-paged newest first on
+ *  (noticed_at, id), so PostgREST's max-rows never truncates it silently
+ *  (merge-time fix pass); it stops after COOLDOWN_NOTICE_PAGES pages and
+ *  says so in the run's line — `complete` is then false and the caller
+ *  counts the window from the notifications rows as well, as before (the
+ *  union only ever withholds more). null when the record cannot be read
+ *  (missing or refused, on any page) — the caller then counts from the
+ *  notifications rows alone, exactly as before.
+ *  DIST-20 (P39): a request (`delivered`) counts with the reminders — a
+ *  manual request or re-nudge is on the record now, and holds the robot's
+ *  nudge for one cooldown as its bell row did; with `complete` true the
+ *  caller reads the record and, for the transition only, the bell rows
+ *  dated before `cutover`.
+ *  `cutover` (P39 fix pass): when this workspace's first notice that names
+ *  its bell row (notification_id — written only by the P39 app, the scans'
+ *  and the request paths' alike) landed; null when there is none yet. A
+ *  bell row dated before it may be a notice the record never got (a manual
+ *  nudge sent from the app before P39), so the caller counts those as well,
+ *  for one cooldown — after which no bell row is read again. */
+export async function recentDistributionNotices(orgId: string, sinceIso: string): Promise<{ reminded: Set<string>; escalated: Set<string>; complete: boolean; cutover: string | null } | null> {
   const reminded = new Set<string>();
   const escalated = new Set<string>();
+  let complete = true;
+  let cutover: string | null = null;
   try {
     // a notice dated in the future never holds a nudge (P38 fix pass)
     const nowIso = new Date().toISOString();
@@ -434,12 +527,13 @@ export async function recentDistributionNotices(orgId: string, sinceIso: string)
     for (let page = 0; ; page += 1) {
       if (page >= COOLDOWN_NOTICE_PAGES) {
         noteComplianceScan(`the distribution nag's cooldown read of the document notice record stopped at ${read} rows (${COOLDOWN_NOTICE_PAGES} pages) — the window's older notices were counted from the bell rows alone, as before`);
+        complete = false;
         break;
       }
       let q = db().from("document_notice_events")
         .select("id, recipient, document_id, kind, noticed_at")
         .eq("org_id", orgId).eq("source", "distribution_ack")
-        .in("kind", ["reminded", "escalated"])
+        .in("kind", ["delivered", "reminded", "escalated"])
         .gte("noticed_at", sinceIso)
         .lte("noticed_at", nowIso);
       if (cursor) q = q.or(beforeCursor(cursor, "noticed_at"));
@@ -452,15 +546,611 @@ export async function recentDistributionNotices(orgId: string, sinceIso: string)
       read += list.length;
       for (const r of list) {
         const key = `${String(r.recipient)}:${String(r.document_id)}`;
-        if (r.kind === "reminded") reminded.add(key);
+        if (r.kind === "reminded" || r.kind === "delivered") reminded.add(key);
         else if (r.kind === "escalated") escalated.add(key);
       }
       const last = list[list.length - 1];
       if (!last?.noticed_at || !last?.id) break;
       cursor = { at: last.noticed_at, id: last.id };
     }
-    return { reminded, escalated };
+    const { data: first, error: firstError } = await db().from("document_notice_events")
+      .select("noticed_at")
+      .eq("org_id", orgId).eq("source", "distribution_ack")
+      .not("notification_id", "is", null)
+      .order("noticed_at", { ascending: true }).limit(1);
+    if (firstError) return null;
+    const at = ((first ?? []) as Array<{ noticed_at?: unknown }>)[0]?.noticed_at;
+    cutover = typeof at === "string" && at ? at : null;
+    return { reminded, escalated, complete, cutover };
   } catch {
     return null;
   }
+}
+
+// ── DIST-20 (P39): the request paths and the manual reminders ───────────────
+
+/** The kinds a request path writes (delivered: a request; reminded: a manual
+ *  re-send; alternate_activated: a manual activation). */
+export type RequestNoticeKind = "delivered" | "reminded" | "alternate_activated";
+export const REQUEST_NOTICE_KINDS: readonly RequestNoticeKind[] = ["delivered", "reminded", "alternate_activated"];
+/** How long ago a bell row may date and still be taken for a notice just sent. */
+export const NOTICE_VERIFY_WINDOW_MS = 15 * 60_000;
+/** A bell row dated past the server's clock by more than this is never taken. */
+export const NOTICE_FUTURE_SKEW_MS = 60_000;
+/** A bell row named by no id is searched for from this long before the
+ *  action began (`since`) — and only when `since` is not later than the
+ *  server's own clock: `since` is the writer's clock (the browser's), so a
+ *  later one (a clock running fast) is never trusted and the whole
+ *  NOTICE_VERIFY_WINDOW_MS is searched instead (P39 fix pass). */
+export const NOTICE_SINCE_MARGIN_MS = 5 * 60_000;
+/** Notices one request to the route carries at most (the browser splits a
+ *  larger set; one request stays under the 64 kB a keepalive fetch may send). */
+export const REQUEST_NOTICE_MAX = 200;
+/** The browser's door into the record (the member cannot write it). */
+export const NOTICE_RECORD_ROUTE = "/api/documents/notice-record";
+/** One request to the route is given up after this long (its one repeat
+ *  gets as long again). The action NEVER waits on it (merge-time fix,
+ *  DEC-90: bookkeeping never delays a user's action) — the post runs after
+ *  the action has returned; this only bounds the background request. */
+export const NOTICE_RECORD_TIMEOUT_MS = 8_000;
+/** The browser splits the notices so that every request body is at most
+ *  this long and goes with `keepalive` (the browser's in-flight keepalive
+ *  bodies share one 64 KiB quota). Exactly what outlives a page closed right
+ *  after the click: only a request already IN FLIGHT. The first body starts
+ *  after the session is read (supabase.auth.getSession, awaited in the
+ *  background post); each later body starts only after the one before it has
+ *  answered, so at close at most that one body is in flight — a close before
+ *  getSession answered sends nothing, and the bodies not yet started are
+ *  never sent. A request the browser refuses (the quota) or that cannot
+ *  reach the route is repeated once without keepalive (that repeat does not
+ *  outlive a close). */
+export const NOTICE_KEEPALIVE_MAX_BODY = 8_000;
+/** Entries one batched request (`{ batch: [...] }` — several documents'
+ *  notices, setAckPolicy's one post per save) carries at most. */
+export const REQUEST_BATCH_MAX = 50;
+/** The route refuses a body larger than this (413). */
+export const NOTICE_RECORD_MAX_BODY = 64_000;
+
+/** One person's notice on a request path. */
+export interface RequestNotice {
+  kind: RequestNoticeKind;
+  /** who was told */
+  recipient: string;
+  /** whose response is awaited (the recipient when omitted) */
+  subject?: string | null;
+  /** the bell row's id, when the writer chose it (newNotificationId) */
+  notificationId?: string | null;
+  /** the obligation's own row, when the writer knows it */
+  sourceId?: string | null;
+  /** numbers and booleans only (deferrableDetails) — e.g. { manual: true } */
+  details?: Record<string, unknown>;
+}
+
+/** What a request path asks the record to hold. */
+export interface RequestNoticeInput {
+  orgId: string;
+  documentId: string;
+  source: DocumentNoticeSource;
+  /** the revision the obligations are on (resolves a notice that names no sourceId) */
+  versionId?: string | null;
+  /** when the action began (ISO, the writer's clock): a bell row named by
+   *  no id is searched for from NOTICE_SINCE_MARGIN_MS before it — never
+   *  earlier than NOTICE_VERIFY_WINDOW_MS ago; a `since` later than the
+   *  server's clock is ignored (the whole window is searched) */
+  since?: string | null;
+  notices: RequestNotice[];
+}
+
+/** Who wrote the bell rows: the acting member (the route's verified caller,
+ *  or a server path's actor), or null for a server notice with no actor. */
+export interface NoticeWriter { uid: string | null; name: string | null }
+
+/** The bell kinds a request path's notice may be (the kinds those paths
+ *  write today — lib/distributionAcks.ts, lib/acknowledgments.ts,
+ *  lib/reviewControl.ts). Pure. */
+export function bellKindsFor(source: DocumentNoticeSource, kind: RequestNoticeKind): string[] {
+  if (source === "review_signoff") return kind === "alternate_activated" ? ["review_alternate_activated"] : ["review_requested"];
+  if (kind === "alternate_activated") return [];
+  return ["ack_requested"];
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The record row's id for a notice that landed as bell row `bellId`: the
+ *  bell row's own UUID with its version nibble set to 8 (every bell id is a
+ *  v4 — gen_random_uuid or newNotificationId — so no two bell rows map to
+ *  one record id, and no scan row's random v4 id is ever one). A repeated
+ *  request for the same bell row is the same record row (ON CONFLICT (id)
+ *  DO NOTHING). Pure. */
+export function requestNoticeId(bellId: string): string {
+  const id = bellId.toLowerCase();
+  return `${id.slice(0, 14)}8${id.slice(15)}`;
+}
+
+/** Where each source's obligation row keeps its person, revision and label,
+ *  and the columns its state is read from (obligationSupports — P39 second
+ *  fix pass). */
+const OBLIGATION: Record<DocumentNoticeSource, { table: string; person: string; version: string; label: string; state: string }> = {
+  review_signoff: { table: "document_review_signoffs", person: "reviewer_user_id", version: "document_version_id", label: "revision_label", state: "status, activated, slot" },
+  acknowledgment: { table: "document_acknowledgments", person: "assignee_user_id", version: "document_version_id", label: "revision_label", state: "status" },
+  distribution_ack: { table: "distribution_acks", person: "recipient_user_id", version: "version_id", label: "rev_label", state: "acknowledged_at" },
+};
+
+/** Does the obligation row's own state support a notice of this kind (P39
+ *  second fix pass)? The record never says more than the obligation shows:
+ *  a review request (or reminder) only for an unsigned, active sign-off row
+ *  on the draft under review (`documents.pending_version_id` —
+ *  `pendingVersionId`); an alternate's activation only for such a row that
+ *  is an ALTERNATE slot already activated; a read-&-understood notice only
+ *  for a pending roster row; a distribution notice only for an
+ *  unacknowledged row. Pure. */
+export function obligationSupports(source: DocumentNoticeSource, kind: RequestNoticeKind, o: Record<string, unknown>, pendingVersionId: string | null): boolean {
+  if (source === "review_signoff") {
+    if (o.status !== "pending" || o.activated !== true) return false;
+    if (!pendingVersionId || o.document_version_id !== pendingVersionId) return false;
+    return kind === "alternate_activated" ? o.slot === "alternate" : true;
+  }
+  if (kind === "alternate_activated") return false;
+  if (source === "acknowledgment") return o.status === "pending";
+  return o.acknowledged_at == null;
+}
+
+type BellRow = { id?: unknown; user_id?: unknown; kind?: unknown; actor_user_id?: unknown; actor_name?: unknown; metadata?: unknown; created_at?: unknown };
+
+/**
+ * SERVER (the route's service role, or a server path's shared client bound
+ * to it): the record rows for a request path's notices, each built from the
+ * bell row that LANDED for it — read here, never taken from the caller:
+ * this workspace's row about this document, to that recipient, of a kind
+ * the notice may be (bellKindsFor), dated no later than now (plus
+ * NOTICE_FUTURE_SKEW_MS) and no earlier than NOTICE_VERIFY_WINDOW_MS ago; a
+ * distribution notice only a row carrying metadata.ackRequest (what
+ * requestAcks / renudgeUnacked write), a read-&-understood notice only one
+ * without it; ALWAYS one the writer wrote (its actor the writer — a row
+ * with no actor only for a server notice with no actor, never through the
+ * route, so a member can never name a scan's own bell row). Named by its id
+ * when the writer chose one; otherwise the newest such row the writer wrote
+ * since the action began (`since`, the writer's clock, trusted only when not
+ * later than the server's — NOTICE_SINCE_MARGIN_MS). Each bell row is taken
+ * once, and a bell row already on the record under another row (a scan's)
+ * is not taken again. What the caller claims is bounded too (P39 fix pass):
+ * the subject is the recipient (no request path names another), and the
+ * details are `manual` alone (on a reminder or an activation). The
+ * obligation row (source_id, revision, label) is read here too: the one
+ * named, or the person's row on the revision named — and only a row whose
+ * own STATE supports the notice (obligationSupports; P39 second fix pass):
+ * a member can never put on the record an activation the sign-off row does
+ * not show, a request on a completed revision, or a chase of a confirmation
+ * already given; an alternate's activation already on the record under
+ * another row (the timeout scan's, or another member's) is not recorded
+ * again. The row's actor_name is the VERIFIED writer's name whenever there
+ * is a writer (the route's caller) — never the bell row's own actor_name,
+ * which its writer chose freely; only a server notice with no writer takes
+ * the bell row's (P39 second fix pass). A notice with no landed bell row,
+ * or no obligation row that supports it, is not recorded (counted in
+ * `unmatched`). Throws on a refused read (the caller says it; nothing is
+ * written).
+ */
+export async function verifiedRequestRows(
+  client: Db, input: RequestNoticeInput, writer: NoticeWriter, nowMs: number = Date.now(),
+): Promise<{ rows: DocumentNoticeRow[]; unmatched: number }> {
+  const notices = input.notices
+    .filter((n) => n && REQUEST_NOTICE_KINDS.includes(n.kind) && isText(n.recipient) && (!n.subject || n.subject === n.recipient))
+    .slice(0, REQUEST_NOTICE_MAX);
+  let unmatched = input.notices.length - notices.length;
+  if (notices.length === 0) return { rows: [], unmatched };
+  const floor = nowMs - NOTICE_VERIFY_WINDOW_MS;
+  const began = input.since ? Date.parse(input.since) : NaN;
+  // `since` is the writer's clock: one later than the server's (a fast
+  // browser clock) is never trusted — the whole window is searched
+  const searchFrom = Number.isFinite(began) && began <= nowMs ? Math.max(floor, began - NOTICE_SINCE_MARGIN_MS) : floor;
+  const recipients = [...new Set(notices.map((n) => n.recipient))];
+  const kinds = [...new Set(notices.flatMap((n) => bellKindsFor(input.source, n.kind)))];
+  if (kinds.length === 0) return { rows: [], unmatched: unmatched + notices.length };
+
+  const { data: bellData, error: bellError } = await client.from("notifications")
+    .select("id, user_id, kind, actor_user_id, actor_name, metadata, created_at")
+    .eq("org_id", input.orgId).eq("resource_type", "document").eq("resource_id", input.documentId)
+    .in("user_id", recipients).in("kind", kinds)
+    .gte("created_at", new Date(floor).toISOString())
+    .order("created_at", { ascending: false }).limit(REQUEST_NOTICE_MAX * 4);
+  if (bellError) throw new Error(`the bell rows could not be read (${bellError.message ?? String(bellError)})`);
+  const bells = ((bellData ?? []) as BellRow[]).filter((b) => isText(b.id) && UUID_RE.test(b.id as string) && typeof b.created_at === "string");
+
+  const used = new Set<string>();
+  const matched: Array<{ n: RequestNotice; bell: BellRow; at: number }> = [];
+  for (const n of notices) {
+    const allowed = bellKindsFor(input.source, n.kind);
+    const fits = (b: BellRow): boolean => {
+      const at = Date.parse(String(b.created_at));
+      if (!Number.isFinite(at) || at < floor || at > nowMs + NOTICE_FUTURE_SKEW_MS) return false;
+      if (b.user_id !== n.recipient || !allowed.includes(String(b.kind)) || used.has(String(b.id))) return false;
+      const ackRequest = !!(b.metadata && typeof b.metadata === "object" && (b.metadata as Record<string, unknown>).ackRequest === true);
+      if (input.source === "distribution_ack" && !ackRequest) return false;
+      if (input.source === "acknowledgment" && ackRequest) return false;
+      return true;
+    };
+    // always the writer's own row (a row with no actor only when the writer
+    // is none — a server notice; the route's writer is always its caller)
+    const actor = (b: BellRow) => (typeof b.actor_user_id === "string" ? b.actor_user_id : null);
+    const bell = n.notificationId
+      ? bells.find((b) => b.id === n.notificationId && fits(b) && actor(b) === writer.uid)
+      : bells.find((b) => fits(b) && actor(b) === writer.uid && Date.parse(String(b.created_at)) >= searchFrom);
+    if (!bell) { unmatched += 1; continue; }
+    used.add(String(bell.id));
+    matched.push({ n, bell, at: Date.parse(String(bell.created_at)) });
+  }
+  if (matched.length === 0) return { rows: [], unmatched };
+
+  // a bell row already on the record under another row (a scan's own
+  // notice) is never recorded a second time; a repeat of this request is the
+  // same row (its id is the bell row's) and is left to ON CONFLICT
+  const { data: onFile, error: onFileError } = await client.from("document_notice_events")
+    .select("id, notification_id")
+    .eq("org_id", input.orgId).in("notification_id", matched.map((m) => String(m.bell.id)));
+  if (onFileError && !isMissingNoticeSchema(onFileError)) {
+    throw new Error(`the record could not be read (${onFileError.message ?? String(onFileError)})`);
+  }
+  const elsewhere = new Set(((onFileError ? [] : onFile ?? []) as Array<{ id?: unknown; notification_id?: unknown }>)
+    .filter((r) => isText(r.notification_id) && r.id !== requestNoticeId(String(r.notification_id)))
+    .map((r) => String(r.notification_id)));
+  if (elsewhere.size > 0) {
+    unmatched += matched.filter((m) => elsewhere.has(String(m.bell.id))).length;
+    matched.splice(0, matched.length, ...matched.filter((m) => !elsewhere.has(String(m.bell.id))));
+    if (matched.length === 0) return { rows: [], unmatched };
+  }
+
+  const ob = OBLIGATION[input.source];
+  const subjects = [...new Set(matched.map((m) => m.n.recipient))];
+  let q = client.from(ob.table).select(`id, ${ob.person}, ${ob.version}, ${ob.label}, ${ob.state}`)
+    .eq("org_id", input.orgId).eq("document_id", input.documentId).in(ob.person, subjects);
+  if (input.versionId) q = q.eq(ob.version, input.versionId);
+  const { data: obData, error: obError } = await q;
+  if (obError) throw new Error(`the obligation rows could not be read (${obError.message ?? String(obError)})`);
+  const obligations = (obData ?? []) as Array<Record<string, unknown>>;
+
+  // a review notice is only ever about the draft under review (P39 second fix pass)
+  let pendingVersionId: string | null = null;
+  if (input.source === "review_signoff") {
+    const { data: docRow, error: docError } = await client.from("documents").select("pending_version_id")
+      .eq("id", input.documentId).eq("org_id", input.orgId).maybeSingle();
+    if (docError) throw new Error(`the document could not be read (${docError.message ?? String(docError)})`);
+    const pv = (docRow as { pending_version_id?: unknown } | null)?.pending_version_id;
+    pendingVersionId = typeof pv === "string" && pv ? pv : null;
+  }
+
+  const rows: DocumentNoticeRow[] = [];
+  const picked: Array<{ row: DocumentNoticeRow; bellId: string }> = [];
+  for (const { n, bell, at } of matched) {
+    const subject = n.recipient;
+    const mine = obligations.filter((o) => o[ob.person] === subject && (!n.sourceId || o.id === n.sourceId)
+      && obligationSupports(input.source, n.kind, o, pendingVersionId));
+    if (mine.length !== 1 || !isText(mine[0].id)) { unmatched += 1; continue; }
+    const o = mine[0];
+    picked.push({ bellId: String(bell.id), row: {
+      id: requestNoticeId(String(bell.id)),
+      org_id: input.orgId, document_id: input.documentId,
+      version_id: typeof o[ob.version] === "string" ? (o[ob.version] as string) : null,
+      revision_label: typeof o[ob.label] === "string" ? (o[ob.label] as string) : null,
+      source: input.source, source_id: o.id as string, kind: n.kind,
+      recipient: n.recipient, subject_user_id: subject,
+      notification_id: String(bell.id),
+      // the verified writer is the row's only "who" (P39 second fix pass): the
+      // bell row's actor_name is free text its writer chose, so it names the
+      // sender only for a server notice with no writer
+      actor_name: writer.uid
+        ? (writer.name || null)
+        : ((typeof bell.actor_name === "string" && bell.actor_name) || "System"),
+      details: { ...requestNoticeDetails(n.kind, n.details), ...(writer.uid ? { byMember: true } : {}) },
+      noticed_at: new Date(Math.min(at, nowMs)).toISOString(),
+    } });
+  }
+
+  // an alternate is activated once: an activation already on the record for
+  // that sign-off row under another row (the timeout scan's, or another
+  // member's) is never recorded a second time (P39 second fix pass)
+  const activations = picked.filter((p) => p.row.kind === "alternate_activated");
+  let activatedElsewhere = new Set<string>();
+  if (activations.length > 0) {
+    const { data: actData, error: actError } = await client.from("document_notice_events")
+      .select("id, source_id")
+      .eq("org_id", input.orgId).eq("source", "review_signoff").eq("kind", "alternate_activated")
+      .in("source_id", [...new Set(activations.map((p) => p.row.source_id as string))]);
+    if (actError && !isMissingNoticeSchema(actError)) {
+      throw new Error(`the record could not be read (${actError.message ?? String(actError)})`);
+    }
+    activatedElsewhere = new Set(((actError ? [] : actData ?? []) as Array<{ id?: unknown; source_id?: unknown }>)
+      .filter((r) => isText(r.source_id) && !activations.some((p) => p.row.id === r.id))
+      .map((r) => String(r.source_id)));
+  }
+  for (const p of picked) {
+    if (p.row.kind === "alternate_activated") {
+      if (activatedElsewhere.has(p.row.source_id as string)) { unmatched += 1; continue; }
+      activatedElsewhere.add(p.row.source_id as string);   // one activation per sign-off row, in this request too
+    }
+    rows.push(p.row);
+  }
+  return { rows, unmatched };
+}
+
+/** The details a request path's row may carry: `manual: true` on a reminder
+ *  or an activation, nothing else (a request carries none) — the only
+ *  details the request paths send; anything else the caller adds is
+ *  dropped (P39 fix pass). Pure. */
+export function requestNoticeDetails(kind: RequestNoticeKind, details: unknown): Record<string, unknown> {
+  if (kind === "delivered" || !details || typeof details !== "object" || Array.isArray(details)) return {};
+  return (details as Record<string, unknown>).manual === true ? { manual: true } : {};
+}
+
+/** What a request path's record write came to: as noticeRecorder's, or
+ *  `queued` — in the browser the post to the route was started and the
+ *  action returns at once (it never waits on the record; merge-time fix,
+ *  DEC-90), or on a server path that hands a scheduler, the write is
+ *  scheduled after the route's response — or `failed` (said). */
+export type RequestRecordOutcome = NoticeWriteOutcome | "queued" | "sent" | "failed";
+
+/** A SERVER route's way of running the record write after its response
+ *  (lib/noticeRecordAfterResponse.ts — next/server after()), so a person
+ *  waiting on that route never waits on the record. */
+export type NoticeRecordScheduler = (job: () => Promise<unknown>) => void;
+
+/** Who acted, as a request path passes it. `schedule`: a server route's
+ *  scheduler (above) — without one a server path awaits the write, as
+ *  before (the cron, a test). */
+export interface RequestNoticeWriter { actorId?: string | null; actorName?: string | null; schedule?: NoticeRecordScheduler }
+
+/** The request bodies one browser post sends, in order: each at most
+ *  NOTICE_KEEPALIVE_MAX_BODY long (so it goes with keepalive) and at most
+ *  REQUEST_NOTICE_MAX notices / REQUEST_BATCH_MAX entries; a body holding one
+ *  document's notices is the single-input shape (as before), several are
+ *  `{ batch: [...] }`. An input larger than one body is split across bodies;
+ *  a body never mixes workspaces and is never empty. Pure. */
+export function noticeRecordBodies(inputs: RequestNoticeInput[]): string[] {
+  const bodies: string[] = [];
+  let cur: RequestNoticeInput[] = [];
+  let size = 12;            // `{"batch":[]}`
+  let count = 0;
+  const flush = () => {
+    const parts = cur.filter((p) => p.notices.length > 0);
+    if (parts.length === 1) bodies.push(JSON.stringify(parts[0]));
+    else if (parts.length > 1) bodies.push(JSON.stringify({ batch: parts }));
+    cur = []; size = 12; count = 0;
+  };
+  for (const input of inputs) {
+    if (!input || input.notices.length === 0) continue;
+    // one workspace a body (the route checks one membership and refuses a
+    // mixed batch): a new workspace starts a new body
+    if (count > 0 && cur.length > 0 && cur[0].orgId !== input.orgId) flush();
+    const head = { ...input, notices: [] as RequestNotice[] };
+    const headSize = JSON.stringify(head).length + 1;
+    let part: RequestNoticeInput | null = null;
+    for (const n of input.notices) {
+      const nSize = JSON.stringify(n).length + 1;
+      const extra = (part ? 0 : headSize) + nSize;
+      if (count > 0 && (size + extra > NOTICE_KEEPALIVE_MAX_BODY || count >= REQUEST_NOTICE_MAX || (!part && cur.length >= REQUEST_BATCH_MAX))) {
+        flush();
+        part = null;
+      }
+      if (!part) { part = { ...head, notices: [] }; cur.push(part); size += headSize; }
+      part.notices.push(n);
+      size += nSize;
+      count += 1;
+    }
+  }
+  flush();
+  return bodies;
+}
+
+/** One body to the route: with keepalive first (when it fits), repeated
+ *  once without it when the browser refused it or the route could not be
+ *  reached or answered 5xx — a repeat records nothing twice (the row id is
+ *  the bell row's). Each attempt is given up after NOTICE_RECORD_TIMEOUT_MS.
+ *  Answers why it was not taken, or "" when it was. Never throws. */
+async function postOneBody(body: string, token: string): Promise<string> {
+  let why = "";
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), NOTICE_RECORD_TIMEOUT_MS) : null;
+    try {
+      const res = await fetch(NOTICE_RECORD_ROUTE, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body,
+        keepalive: attempt === 1 && body.length <= NOTICE_KEEPALIVE_MAX_BODY,
+        ...(ctrl ? { signal: ctrl.signal } : {}),
+      });
+      if (res.ok) return "";
+      const said = await res.json().catch(() => null) as { error?: string } | null;
+      why = said?.error ?? `HTTP ${res.status}`;
+      if (res.status < 500) return why;                 // a refusal does not change on a repeat
+    } catch (e) {
+      why = `the record could not be reached: ${(e as Error)?.message ?? String(e)}`;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  return why;
+}
+
+/** BROWSER, in the background: hand the notices to POST
+ *  /api/documents/notice-record (the member's own session as the bearer),
+ *  the bodies of noticeRecordBodies one after another (one action never has
+ *  two keepalive bodies in flight). What the route did not take is said in
+ *  the console, not recorded — the bell rows landed and the person was
+ *  notified (the stated residual, DIST-20). Never throws. */
+async function postNoticeRecord(inputs: RequestNoticeInput[]): Promise<"sent" | "failed"> {
+  const total = inputs.reduce((s, i) => s + i.notices.length, 0);
+  let token: string | undefined;
+  try {
+    const { data } = await supabase.auth.getSession();
+    token = data?.session?.access_token;
+  } catch { token = undefined; }
+  if (!token) {
+    console.warn(`[notice-record] no signed-in session — ${total} notice(s) were sent, but are not on the document notice record`);
+    return "failed";
+  }
+  let failed = false;
+  for (const body of noticeRecordBodies(inputs)) {
+    const why = await postOneBody(body, token);
+    if (why) {
+      failed = true;
+      let count = 0;
+      try {
+        const b = JSON.parse(body) as { notices?: unknown[]; batch?: Array<{ notices?: unknown[] }> };
+        count = Array.isArray(b.batch) ? b.batch.reduce((s, x) => s + (x.notices?.length ?? 0), 0) : (b.notices?.length ?? 0);
+      } catch { /* the count is for the line only */ }
+      console.warn(`[notice-record] the document notice record did not take ${count} notice(s) (${why}) — they were sent as before`);
+    }
+  }
+  return failed ? "failed" : "sent";
+}
+
+/** The browser posts still running (a test awaits them through
+ *  __settleNoticeRecords; nothing in the app waits on them). */
+const inFlight = new Set<Promise<unknown>>();
+
+/** Start the background post and return at once (merge-time fix, DEC-90:
+ *  the action never waits on the record). */
+function startNoticeRecord(inputs: RequestNoticeInput[]): void {
+  const p: Promise<unknown> = postNoticeRecord(inputs)
+    .catch((e) => console.warn("[notice-record] the document notice record post failed — the notices were sent as before", e))
+    .finally(() => { inFlight.delete(p); });
+  inFlight.add(p);
+}
+
+/** Tests only: wait until every background post has settled. */
+export async function __settleNoticeRecords(): Promise<void> {
+  while (inFlight.size > 0) await Promise.allSettled([...inFlight]);
+}
+
+/** SERVER: build the rows from the bell rows that landed and write them. */
+async function recordOnServer(input: RequestNoticeInput, writer: RequestNoticeWriter | undefined): Promise<RequestRecordOutcome> {
+  try {
+    const { rows, unmatched } = await verifiedRequestRows(db(), input, { uid: writer?.actorId ?? null, name: writer?.actorName ?? null });
+    if (unmatched > 0) say(`${unmatched} ${input.source} notice(s) were not put on the document notice record — no landed bell row (or no obligation row) was found for them`);
+    return await noticeRecorder().record(rows);
+  } catch (e) {
+    say(`the ${input.source} notices could not be put on the document notice record (${(e as Error)?.message ?? String(e)}) — they were sent as before`);
+    return "failed";
+  }
+}
+
+/**
+ * DIST-20 (P39): put a request path's landed notices on the record — called
+ * by requestAcks, renudgeUnacked, recomputeDocumentAck, nudgeAcknowledgment,
+ * openReviewRoster and the manual activateAlternate AFTER everything they
+ * already do (the bell rows, the stamps, the audit rows are unchanged and
+ * come first).
+ *   · In the BROWSER the post to the route is STARTED and this returns at
+ *     once (`queued`) — the action never waits on the record (merge-time
+ *     fix, DEC-90: bookkeeping never delays a user's action); the post goes
+ *     with keepalive, in bodies within its limit (noticeRecordBodies), and
+ *     what it could not hand over is said in the console.
+ *   · On the SERVER the rows are built here (verifiedRequestRows, `writer` =
+ *     the action's actor, or none) and written by noticeRecorder (checked,
+ *     retried once, deferred to the audit log for the source's next scan;
+ *     before 20261257 — nothing written, said once). A route a person waits
+ *     on hands `writer.schedule` (the intake door — after its response), and
+ *     this answers `queued`; without one (the cron, a test) it is awaited.
+ * Never throws, never changes who is notified.
+ */
+export async function recordRequestNotices(input: RequestNoticeInput, writer?: RequestNoticeWriter): Promise<RequestRecordOutcome> {
+  return recordRequestNoticeBatch([input], writer);
+}
+
+/**
+ * recordRequestNotices for several documents' notices at once — the
+ * library / folder policy save (setAckPolicy) gathers every recomputed
+ * document's notices and calls this ONCE at the end: in the browser one
+ * background post (one request when the bodies fit — noticeRecordBodies);
+ * on the server each document's rows in turn (scheduled when the writer
+ * hands a scheduler). Never throws.
+ */
+export async function recordRequestNoticeBatch(inputs: RequestNoticeInput[], writer?: RequestNoticeWriter): Promise<RequestRecordOutcome> {
+  try {
+    const todo = inputs.filter((i) => i && i.notices.length > 0);
+    if (todo.length === 0) return "none";
+    if (typeof window !== "undefined") { startNoticeRecord(todo); return "queued"; }
+    const run = async (): Promise<RequestRecordOutcome> => {
+      let last: RequestRecordOutcome = "none";
+      for (const input of todo) {
+        const o = await recordOnServer(input, writer);
+        if (last === "none" || o !== "written") last = o;
+      }
+      return last;
+    };
+    if (writer?.schedule) {
+      writer.schedule(() => run());
+      return "queued";
+    }
+    return await run();
+  } catch (e) {
+    say(`the document notices could not be put on the document notice record (${(e as Error)?.message ?? String(e)}) — they were sent as before`);
+    return "failed";
+  }
+}
+
+/** The route's reading of a request body: the input, or why it is refused
+ *  (400). Bounded: REQUEST_NOTICE_MAX notices, known kinds and sources,
+ *  UUID ids, numbers / booleans in details. Pure. */
+export function parseRequestNoticeBody(body: unknown): RequestNoticeInput | { error: string } {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return { error: "The body must be a JSON object" };
+  const b = body as Record<string, unknown>;
+  const uuid = (v: unknown) => typeof v === "string" && UUID_RE.test(v);
+  const optUuid = (v: unknown) => v == null || uuid(v);
+  if (!uuid(b.orgId) || !uuid(b.documentId)) return { error: "orgId and documentId are required" };
+  if (typeof b.source !== "string" || !(DOCUMENT_NOTICE_SOURCES as readonly string[]).includes(b.source)) return { error: "source is not a document notice source" };
+  if (!optUuid(b.versionId)) return { error: "versionId is not an id" };
+  if (b.since != null && (typeof b.since !== "string" || !Number.isFinite(Date.parse(b.since)))) return { error: "since is not a time" };
+  if (!Array.isArray(b.notices) || b.notices.length === 0) return { error: "notices are required" };
+  if (b.notices.length > REQUEST_NOTICE_MAX) return { error: `at most ${REQUEST_NOTICE_MAX} notices a request` };
+  const notices: RequestNotice[] = [];
+  for (const raw of b.notices) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { error: "a notice must be an object" };
+    const n = raw as Record<string, unknown>;
+    if (typeof n.kind !== "string" || !(REQUEST_NOTICE_KINDS as readonly string[]).includes(n.kind)) return { error: "a notice's kind is not a request kind" };
+    if (!uuid(n.recipient) || !optUuid(n.subject) || !optUuid(n.notificationId) || !optUuid(n.sourceId)) return { error: "a notice's ids are not ids" };
+    notices.push({
+      kind: n.kind as RequestNoticeKind, recipient: n.recipient as string,
+      subject: (n.subject as string | null | undefined) ?? null,
+      notificationId: (n.notificationId as string | null | undefined) ?? null,
+      sourceId: (n.sourceId as string | null | undefined) ?? null,
+      details: deferrableDetails(n.kind, n.details),
+    });
+  }
+  return {
+    orgId: b.orgId as string, documentId: b.documentId as string, source: b.source as DocumentNoticeSource,
+    versionId: (b.versionId as string | null | undefined) ?? null, since: (b.since as string | null | undefined) ?? null, notices,
+  };
+}
+
+/** The route's reading of a body that may be one input (as before) or a
+ *  batch (`{ batch: [...] }` — several documents' notices in one request,
+ *  setAckPolicy's one post per save): each entry read by
+ *  parseRequestNoticeBody, at most REQUEST_BATCH_MAX entries and
+ *  REQUEST_NOTICE_MAX notices in all, every entry of ONE workspace (the
+ *  route checks one membership). Pure. */
+export function parseRequestNoticeBatch(body: unknown): RequestNoticeInput[] | { error: string } {
+  const b = body as { batch?: unknown } | null;
+  if (!b || typeof b !== "object" || Array.isArray(b) || !("batch" in b)) {
+    const one = parseRequestNoticeBody(body);
+    return "error" in one ? one : [one];
+  }
+  // a body that is both a batch and a single input is ambiguous — refused, so
+  // a single body is read exactly as before
+  const SINGLE_FIELDS = ["orgId", "documentId", "source", "versionId", "since", "notices"];
+  if (SINGLE_FIELDS.some((k) => k in b)) return { error: "a body is either one document's notices or a batch, not both" };
+  if (!Array.isArray(b.batch) || b.batch.length === 0) return { error: "batch must be a non-empty array" };
+  if (b.batch.length > REQUEST_BATCH_MAX) return { error: `at most ${REQUEST_BATCH_MAX} entries a batch` };
+  const out: RequestNoticeInput[] = [];
+  let notices = 0;
+  for (const entry of b.batch) {
+    const one = parseRequestNoticeBody(entry);
+    if ("error" in one) return one;
+    if (out.length > 0 && one.orgId !== out[0].orgId) return { error: "a batch names one workspace" };
+    notices += one.notices.length;
+    if (notices > REQUEST_NOTICE_MAX) return { error: `at most ${REQUEST_NOTICE_MAX} notices a request` };
+    out.push(one);
+  }
+  return out;
 }

@@ -32,8 +32,11 @@ import { emit } from "@/lib/notify/dispatch";
 import { assertNotOnHold } from "@/lib/holdGate";
 // DIST-19 (document-control P38): each nudge and escalation the daily nag
 // lands is a row on the append-only notice record, and the nag's cooldown
-// counts from that record (the notifications rows still count too).
-import { noticeRecorder, noticeRow, recentDistributionNotices, replayDeferredNotices } from "@/lib/documentNoticeRecord";
+// counts from that record.
+// DIST-20 (document-control P39): the request and the manual re-nudge are on
+// the record too (recordRequestNotices), so the nag's cooldown reads the
+// record only once 20261257 is in place.
+import { noticeRecorder, noticeRow, recentDistributionNotices, newBellId, recordRequestNotices, replayDeferredNotices } from "@/lib/documentNoticeRecord";
 
 export interface DistributionAck {
   id: string;
@@ -171,6 +174,8 @@ export async function requestAcks(input: {
     await assertNotOnHold(input.documentId, { action: "requesting confirmations" });
   }
   const now = new Date().toISOString();
+  // DIST-20: the record looks for the bell rows written from here on
+  const since = now;
   const uids = input.recipients.map((r) => r.uid);
   let existing = new Map<string, { acknowledged: boolean }>();
   try {
@@ -244,6 +249,18 @@ export async function requestAcks(input: {
       audience: { involved: pendingExisting.map((r) => r.uid) },
       metadata: { ackRequest: true, versionId: input.versionId },
     });
+  }
+  // DIST-20 (P39): each request and each reminder whose bell row landed is a
+  // row on the notice record (delivered / reminded, details.manual) — after
+  // everything above, which is unchanged; never fails the request.
+  if (input.notify !== false && fresh.length + pendingExisting.length > 0) {
+    await recordRequestNotices({
+      orgId: input.orgId, documentId: input.documentId, source: "distribution_ack", versionId: input.versionId, since,
+      notices: [
+        ...fresh.map((r) => ({ kind: "delivered" as const, recipient: r.uid })),
+        ...pendingExisting.map((r) => ({ kind: "reminded" as const, recipient: r.uid, details: { manual: true } })),
+      ],
+    }, { actorId: input.actorUserId, actorName: input.actorName });
   }
   return { requested: fresh.length, reminded: pendingExisting.length };
 }
@@ -442,30 +459,43 @@ export async function scanDistributionAcks(orgId: string, opts?: {
   const cooldownIso = new Date(Date.now() - nagEveryDays * 86_400_000).toISOString();
   const recentlyNagged = new Set<string>();
   const recentlyEscalated = new Set<string>();
-  try {
-    const { data: recent } = await supabase
-      .from("notifications")
-      .select("user_id, resource_id, metadata")
-      .eq("org_id", orgId)
-      .in("kind", ["ack_requested", "ack_overdue"])
-      .gte("created_at", cooldownIso);
-    for (const r of ((recent ?? []) as Array<Record<string, unknown>>)) {
-      const meta = (r.metadata as Record<string, unknown> | null) ?? {};
-      const key = `${r.user_id as string}:${r.resource_id as string}`;
-      if (meta.ackRequest) recentlyNagged.add(key);
-      if (meta.ackEscalation) recentlyEscalated.add(key);
-    }
-  } catch { /* dedupe is best-effort; worst case is one extra nudge */ }
-  // DIST-19 (P38): the nag's own nudges and escalations are counted from the
-  // notice record — durable, never purged — as well as from the rows above
-  // (which still carry the manual request / re-nudge, not on the record).
-  // Unreadable (20261257 not pasted, or refused): the rows above alone, as
-  // before. The union only ever withholds a nudge the record says landed
-  // inside the window: one nudge per cooldown, as today.
+  // DIST-20 (P39): the record holds every nudge, escalation, request and
+  // manual re-nudge now — read FIRST; when it answers in full (20261257 in
+  // place, read to the end) the cooldown is the record's ONLY, and a purged
+  // or dismissed bell row no longer re-opens it. Unreadable (not pasted, or
+  // refused): the bell rows below alone, exactly as before. Stopped at its
+  // page cap: the bell rows count as well (the union only ever withholds a
+  // nudge something says landed inside the window). The transition (P39
+  // fix pass): bell rows dated before the workspace's first P39 notice
+  // (`cutover`) still count — a manual re-nudge sent from the app before
+  // P39 is on no record, and still holds the robot's nudge for its one
+  // cooldown; once the window has moved past the cutover, no bell row is read.
   const recorded = await recentDistributionNotices(orgId, cooldownIso);
   if (recorded) {
     for (const k of recorded.reminded) recentlyNagged.add(k);
     for (const k of recorded.escalated) recentlyEscalated.add(k);
+  }
+  // the bell rows count: unread or incomplete record — all of them; a
+  // complete record — only those dated before its cutover (none once the
+  // window starts after it; all while no P39 notice has landed yet)
+  const bellsBefore = recorded?.complete && recorded.cutover ? recorded.cutover : null;
+  if (!recorded?.complete || !bellsBefore || bellsBefore > cooldownIso) {
+    try {
+      let bellQuery = supabase
+        .from("notifications")
+        .select("user_id, resource_id, metadata")
+        .eq("org_id", orgId)
+        .in("kind", ["ack_requested", "ack_overdue"])
+        .gte("created_at", cooldownIso);
+      if (bellsBefore) bellQuery = bellQuery.lt("created_at", bellsBefore);
+      const { data: recent } = await bellQuery;
+      for (const r of ((recent ?? []) as Array<Record<string, unknown>>)) {
+        const meta = (r.metadata as Record<string, unknown> | null) ?? {};
+        const key = `${r.user_id as string}:${r.resource_id as string}`;
+        if (meta.ackRequest) recentlyNagged.add(key);
+        if (meta.ackEscalation) recentlyEscalated.add(key);
+      }
+    } catch { /* dedupe is best-effort; worst case is one extra nudge */ }
   }
 
   // Escalate stale ones to the requester grouped per document so they get
@@ -496,7 +526,9 @@ export async function scanDistributionAcks(orgId: string, opts?: {
     const label = (doc?.document_number as string) || (doc?.title as string) || (doc?.name as string) || "Document";
     const link = doc?.library_id ? `/documents/${doc.library_id as string}?doc=${docId}` : undefined;
     if (!recentlyNagged.has(`${r.recipient_user_id as string}:${docId}`)) {
+      const bellId = newBellId();   // DIST-20: the record names the bell row
       sends.push(() => notify({
+        id: bellId,
         orgId,
         userId: r.recipient_user_id as string,
         kind: "ack_requested",
@@ -513,7 +545,7 @@ export async function scanDistributionAcks(orgId: string, opts?: {
           org_id: orgId, document_id: docId, version_id: (r.version_id as string | null) ?? null,
           revision_label: (r.rev_label as string | null) ?? null, source: "distribution_ack", source_id: r.id as string,
           kind: "reminded", recipient: r.recipient_user_id as string, subject_user_id: r.recipient_user_id as string,
-          details: { ageDays: Math.floor((Date.now() - Date.parse(r.requested_at as string)) / 86_400_000) },
+          details: { ageDays: Math.floor((Date.now() - Date.parse(r.requested_at as string)) / 86_400_000) }, notificationId: bellId,
         })]).then(() => ok)
         : ok));
       n += 1;
@@ -532,7 +564,9 @@ export async function scanDistributionAcks(orgId: string, opts?: {
     if (recentlyEscalated.has(`${e.requesterId}:${e.docId}`)) continue;
     const doc = docs.get(e.docId);
     const label = (doc?.document_number as string) || (doc?.title as string) || (doc?.name as string) || "Document";
+    const bellId = newBellId();     // DIST-20: the record names the bell row
     sends.push(() => notify({
+      id: bellId,
       orgId,
       userId: e.requesterId,
       kind: "ack_overdue",
@@ -549,7 +583,7 @@ export async function scanDistributionAcks(orgId: string, opts?: {
         org_id: orgId, document_id: e.docId, version_id: (a.version_id as string | null) ?? null,
         revision_label: (a.rev_label as string | null) ?? null, source: "distribution_ack", source_id: a.id as string,
         kind: "escalated", recipient: e.requesterId, subject_user_id: a.recipient_user_id as string,
-        details: { escalateAfterDays, silentRecipients: e.acks.length },
+        details: { escalateAfterDays, silentRecipients: e.acks.length }, notificationId: bellId,
       }))).then(() => ok)
       : ok));
     n += 1;
@@ -574,6 +608,7 @@ export async function renudgeUnacked(input: {
 }): Promise<number> {
   const pending = input.acks.filter((a) => !a.acknowledgedAt);
   if (pending.length === 0) return 0;
+  const since = new Date().toISOString();
   await emit({
     orgId: input.orgId,
     category: "assignment",
@@ -587,5 +622,12 @@ export async function renudgeUnacked(input: {
     audience: { involved: pending.map((a) => a.recipientUserId) },
     metadata: { ackRequest: true },
   });
+  // DIST-20 (P39): each re-nudge whose bell row landed is a reminded row
+  // (details.manual) on the record — it holds the robot's nudge for one
+  // cooldown, as its bell row did; never fails the re-nudge.
+  await recordRequestNotices({
+    orgId: input.orgId, documentId: input.documentId, source: "distribution_ack", since,
+    notices: pending.map((a) => ({ kind: "reminded" as const, recipient: a.recipientUserId, sourceId: a.id, details: { manual: true } })),
+  }, { actorId: input.actorUserId, actorName: input.actorName });
   return pending.length;
 }
