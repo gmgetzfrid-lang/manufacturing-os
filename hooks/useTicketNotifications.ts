@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useState, useEffect, useMemo, u
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import { Ticket } from '@/types/schema';
+import { reviewModelFieldsFromRow } from '@/lib/reviewModel';
 import {
   listMyNotifications, countUnread, listUnreadKindsBeyond, markRead, markAllRead,
   NOTIFICATION_PAGE_SIZE, type NotificationRow, type NotificationCursor, type UnreadBeyondRow,
@@ -121,9 +122,26 @@ const OPEN_TICKET_CAP = 500;
 const TICKET_SCAN_CEILING = 5000;
 /** The columns isActionRequired (lib/ticketAttention.ts → lib/workflow.ts)
  *  and the feed's rows read: identity, status, type, unit, the requester's
- *  role, and the attachments (a staged Draft offers "Submit Draft"). */
-export const TICKET_ATTENTION_COLUMNS =
+ *  role, and the attachments (a staged Draft offers "Submit Draft").
+ *  drafting-flow GAP-105 / TIER-4 (DF-P19): and what the request presents
+ *  to the capability policy and the engineering gate beside them — its
+ *  library (20261208), its work and code class and the review-model columns
+ *  (20261250) — the columns lib/reviewModel.ts reviewModelFieldsFromRow
+ *  reads, so the badge decides as the page and the route do. */
+export const TICKET_ATTENTION_BASE_COLUMNS =
   'id, org_id, ticket_id, title, status, unit, request_type, requester_id, requester_role, assigned_drafter_id, assigned_engineer_id, attachments, unread_by, created_at, last_modified';
+export const TICKET_ATTENTION_LIBRARY_COLUMNS = `${TICKET_ATTENTION_BASE_COLUMNS}, library_id`;
+export const TICKET_ATTENTION_COLUMNS =
+  `${TICKET_ATTENTION_LIBRARY_COLUMNS}, engineering_required, review_model_filed, like_in_kind_statement, like_in_kind_declared_by, like_in_kind_declared_at, like_in_kind_signature_id, work_class, code_class`;
+/** DF-P19: the column lists tried in order on a 42703 (a database without
+ *  20261250, then without 20261208 too), and '*' last — exactly as a read
+ *  without an attention column always fell back. The first list a database
+ *  answers is remembered for the session, so a database that has not had the
+ *  pastes costs no failed read after the first. */
+export const TICKET_ATTENTION_COLUMN_LADDER: readonly string[] = [TICKET_ATTENTION_COLUMNS, TICKET_ATTENTION_LIBRARY_COLUMNS, TICKET_ATTENTION_BASE_COLUMNS, '*'];
+let attentionColumnRung = 0;
+/** Tests only: forget the remembered rung. */
+export function __resetAttentionColumnRung(): void { attentionColumnRung = 0; }
 /** A burst of realtime events within this window is one refetch (RT-3 dw2). */
 export const FETCH_DEBOUNCE_MS = 400;
 /** The safety-net refetch while the tab is visible (RT-1 dw3). */
@@ -137,7 +155,9 @@ export const RECONCILE_KEEP_MS = 60_000;
  *  mark (lib/notificationReconcile.ts isReconcileMark). */
 export const RECONCILE_ECHO_MS = 30_000;
 
-function fromDbTicket(row: Record<string, unknown>): Ticket {
+/** DF-P19: exported so the mapper parity test runs the same row through it
+ *  and every other Ticket builder. */
+export function fromDbTicket(row: Record<string, unknown>): Ticket {
   return {
     id: row.id as string,
     orgId: row.org_id as string,
@@ -157,6 +177,9 @@ function fromDbTicket(row: Record<string, unknown>): Ticket {
     assignedEngineerId: row.assigned_engineer_id as string | null | undefined,
     assignedEngineerName: row.assigned_engineer_name as string | null | undefined,
     assignedEngineerEmail: row.assigned_engineer_email as string | null | undefined,
+    // DF-P19: the library, the classes and the review-model columns — the
+    // one mapper the route, the request page, the list and the inbox spread.
+    ...reviewModelFieldsFromRow(row),
     attachments: (row.attachments as Ticket['attachments']) ?? [],
     comments: (row.comments as Ticket['comments']) ?? [],
     history: (row.history as Ticket['history']) ?? [],
@@ -342,7 +365,9 @@ type TicketScopeBuild = (cols: string, counted: boolean, oldestFirst: boolean) =
 /** One ticket scope, read a page at a time (see OPEN_TICKET_CAP). `build`
  *  starts a fresh query each call (the select with its count, then the
  *  scope's filters and order). A database without one of the attention
- *  columns (42703) is read with '*', as it always was. `single`: one capped
+ *  columns (42703) is read with the next list of TICKET_ATTENTION_COLUMN_LADDER
+ *  (DF-P19: without the review-model columns, then without the library, then
+ *  '*', as it always was). `single`: one capped
  *  read, uncounted and never paged (a scope that holds closed tickets, read
  *  as it was before the paging — it is not "open requests").
  *
@@ -363,12 +388,15 @@ async function loadTicketScope(
   opts?: { single?: boolean },
 ): Promise<{ rows: Record<string, unknown>[]; total: number | null; failed: boolean; oldestFirst: boolean }> {
   const single = opts?.single === true;
-  let cols = TICKET_ATTENTION_COLUMNS;
+  let rung = attentionColumnRung;
+  let cols = TICKET_ATTENTION_COLUMN_LADDER[rung];
   let first = await build(cols, !single, false).limit(OPEN_TICKET_CAP);
-  if (first.error && first.error.code === '42703') {
-    cols = '*';
+  while (first.error && first.error.code === '42703' && rung < TICKET_ATTENTION_COLUMN_LADDER.length - 1) {
+    rung += 1;
+    cols = TICKET_ATTENTION_COLUMN_LADDER[rung];
     first = await build(cols, !single, false).limit(OPEN_TICKET_CAP);
   }
+  if (!first.error) attentionColumnRung = rung;
   if (first.error) return { rows: [], total: null, failed: true, oldestFirst: false };
   const total = !single && typeof first.count === 'number' ? first.count : null;
   const oldestFirst = total !== null && total > TICKET_SCAN_CEILING;

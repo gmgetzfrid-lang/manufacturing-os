@@ -48,6 +48,7 @@ import {
   isQueueViewer,
 } from '@/lib/ticketAttention';
 import { isEngineerRole } from '@/lib/workflow';
+import { reviewModelFieldsFromRow } from '@/lib/reviewModel';
 import { loadCapabilityPolicyEntry, type CapabilityPolicy } from '@/lib/capabilityPolicy';
 import { affordancePolicyFault } from '@/lib/checkoutAffordances';
 import { flaggedRequestTypes } from '@/lib/requestTypes';
@@ -574,6 +575,12 @@ export default function RequestPortal() {
       assignedDrafterName: r.assigned_drafter_name as string | null | undefined,
       assignedEngineerId: r.assigned_engineer_id as string | null | undefined,
       assignedEngineerName: r.assigned_engineer_name as string | null | undefined,
+      // drafting-flow GAP-105 / TIER-4 (DF-P19): the library, the work and
+      // code class and the review-model columns, from the one mapper the
+      // route's rowToTicket and the request page spread — so the list's
+      // attention marks read the same capability resource and engineering
+      // gate as the page and the route (undefined / null before the pastes).
+      ...reviewModelFieldsFromRow(r),
       watchers: (r.watchers as string[] | undefined) ?? [],
       targetCompletionAt: r.target_completion_at as string | null | undefined,
       attachments: (r.attachments as Ticket['attachments']) ?? [],

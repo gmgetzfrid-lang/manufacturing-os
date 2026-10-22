@@ -23,7 +23,7 @@ import { NextRequest } from "next/server";
 import {
   CAPABILITY_DEFS, policyAllows, tokensFor, loadCapabilityPolicy, loadCapabilityPolicyEntry, invalidateCapabilityPolicy,
   __resetCapabilityPolicyCache, SERVER_CACHE_TTL_MS, parseStoredCapabilityPolicy, normalizeCapabilityEntry, CAPABILITY_POLICY_ROUTE,
-  saveCapabilityPolicy, addUserGrant, revokeUserGrant,
+  saveCapabilityPolicy, addUserGrant, revokeUserGrant, capabilityRuleKey,
   type CapabilityPolicy,
 } from "@/lib/capabilityPolicy";
 import {
@@ -672,20 +672,58 @@ describe("DF-P6 (AUTHZ-6) — a stored library-scoped request rule never blocks 
     expect((updates("org_configurations")[0].data as CapabilityPolicy).caps?.["ticket.direct_approve"]).toEqual(WITH_DEAD.caps!["ticket.direct_approve"]);
   });
 
-  it("a NEW library / class-scoped request rule is still refused (400), nothing written — a changed stored rule counts as new", async () => {
+  // drafting-flow DF-P19 (GAP-105 acceptance 3 / TIER-4; DEC-90 ruling (2)):
+  // re-pinned — DF-P6's refusal of a NEW such rule is lifted (the request
+  // presents its library and classes now). A new one is accepted and
+  // CONFIRMED by the save (server-stamped); the stored one keeps its state
+  // (unconfirmed: it only adds until an Admin confirms it).
+  it("DF-P19: a NEW library / class-scoped request rule is accepted and confirmed by the save; the stored one stays unconfirmed; a changed stored rule counts as new", async () => {
     state.user = { id: "a1" };
     for (const rule of [
       { tokens: ["Admin"], when: { libraryId: ["lib-2"] } },
       { tokens: ["Admin"], when: { workClass: ["w"] } },
       { tokens: ["Admin", "Manager", "Viewer"], when: { libraryId: ["lib-1"] } },
     ]) {
+      seedPolicyOrg(); state.rows.org_configurations = [config(WITH_DEAD)]; state.user = { id: "a1" };
       const caps = { ...WITH_DEAD.caps, "ticket.direct_approve": [DEAD_RULE, rule, { tokens: ["Admin", "Manager", "Supervisor"] }] };
       const res = await policy({ op: "save", orgId: "o1", caps });
-      expect(res.status, JSON.stringify(rule)).toBe(400);
-      expect((await res.json()).error).toMatch(/request type or a unit only/);
+      expect(res.status, JSON.stringify(rule)).toBe(200);
+      const written = (updates("org_configurations")[0].data as CapabilityPolicy).caps?.["ticket.direct_approve"] as unknown as Array<Record<string, unknown>>;
+      expect(written[0]).toEqual(DEAD_RULE);                                  // stored: no stamp
+      expect(typeof written[1].confirmedAt).toBe("string");                   // new: confirmed by this save
+      expect(written[1].confirmedBy).toBe("a1");
+      const audit = inserts("audit_logs")[0] as { details: { confirmedRules?: unknown[] } };
+      expect(audit.details.confirmedRules).toHaveLength(1);
     }
+  });
+
+  it("DF-P19: a client cannot confirm a stored rule by sending a stamp — the server carries the stored state", async () => {
+    state.user = { id: "a1" };
+    const forged = { ...DEAD_RULE, confirmedAt: "2026-10-22T00:00:00.000Z", confirmedBy: "a1" };
+    const caps = { ...WITH_DEAD.caps, "ticket.direct_approve": [forged, { tokens: ["Admin", "Manager", "Supervisor"] }] };
+    expect((await policy({ op: "save", orgId: "o1", caps })).status).toBe(200);
+    const written = (updates("org_configurations")[0].data as CapabilityPolicy).caps?.["ticket.direct_approve"] as unknown as Array<Record<string, unknown>>;
+    expect(written[0]).toEqual(DEAD_RULE);
+  });
+
+  it("DF-P19: confirm_rule — an Admin confirms the stored rule (stamped, audited); a DocCtrl is refused (403); an unknown or already-confirmed rule is refused (409)", async () => {
+    const key = capabilityRuleKey(DEAD_RULE);
+    state.user = { id: "c1" };
+    expect((await policy({ op: "confirm_rule", orgId: "o1", cap: "ticket.direct_approve", key })).status).toBe(403);
     expect(updates("org_configurations")).toHaveLength(0);
-    expect(inserts("audit_logs")).toHaveLength(0);
+    state.user = { id: "a1" };
+    expect((await policy({ op: "confirm_rule", orgId: "o1", cap: "ticket.direct_approve", key: capabilityRuleKey({ tokens: ["X"], when: { libraryId: ["nope"] } }) })).status).toBe(409);
+    const res = await policy({ op: "confirm_rule", orgId: "o1", cap: "ticket.direct_approve", key });
+    expect(res.status).toBe(200);
+    const written = (updates("org_configurations")[0].data as CapabilityPolicy);
+    const rule = (written.caps?.["ticket.direct_approve"] as unknown as Array<Record<string, unknown>>)[0];
+    expect(rule).toMatchObject({ ...DEAD_RULE, confirmedBy: "a1" });
+    expect(typeof rule.confirmedAt).toBe("string");
+    expect(written.grants).toEqual([LIVE_V2]);   // grants preserved (the expired one pruned, as every write does)
+    expect((inserts("audit_logs")[0] as { details: { op: string } }).details.op).toBe("confirm_rule");
+    // once confirmed, confirming again is refused
+    state.rows.org_configurations = [config(written)];
+    expect((await policy({ op: "confirm_rule", orgId: "o1", cap: "ticket.direct_approve", key })).status).toBe(409);
   });
 });
 

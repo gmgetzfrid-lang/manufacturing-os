@@ -53,6 +53,13 @@
 //     the same page re-read instead of showing the pre-save policy; a
 //     projects read that failed is said to every viewer, and a stored rule's
 //     project is then "could not be listed", never "not visible to you".
+//   * drafting-flow GAP-105 / TIER-4 (DF-P19; DEC-90 ruling (2)) — a
+//     request presents its library, work class and code class to the policy
+//     now, so a request rule scoped to one of them applies. One stored
+//     before (no confirmation stamp) only ADDS until an Admin confirms it:
+//     it is listed here with its state ("not yet in force where it narrows —
+//     confirm to apply"), and Confirm posts `confirm_rule` to the policy
+//     route (Admin only, audited). The grid does not author such a rule.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { SlidersHorizontal, Loader2, RotateCcw, Check, AlertTriangle, Plus, X } from "lucide-react";
@@ -63,8 +70,8 @@ import {
   CAPABILITY_DEFS, defaultCapabilityPolicy, loadCapabilityPolicyEntry, saveCapabilityPolicy,
   validateCapabilityPolicy, invalidateCapabilityPolicy, isRuleArray, ruleIsConditional, describeWhen,
   CapabilityPolicyChangeError, POLICY_CHANGED, PROJECT_SCOPED_CAPS, announceCapabilityPolicyChanged,
-  HOLD_OPENER_TOKEN,
-  type CapabilityId, type CapabilityEntry, type CapabilityRule, type CapabilityPolicy,
+  HOLD_OPENER_TOKEN, ticketDimensionRules, confirmCapabilityRule,
+  type CapabilityId, type CapabilityEntry, type CapabilityRule, type CapabilityPolicy, type TicketDimensionRuleState,
 } from "@/lib/capabilityPolicy";
 import { loadRequestTypeOptions, type RequestTypeOption } from "@/lib/requestTypes";
 import { DORMANT_ROLES, POLICY_TOKENS } from "@/lib/roleCapabilities";
@@ -175,8 +182,19 @@ export function joinPolicyFromEditor(base: Base, overrides: Overrides, opaque: O
   return caps;
 }
 
+/** DF-P19: what the console says about one stored request rule scoped to a
+ *  library or a work / code class. */
+export function ticketDimensionRuleStatus(r: Pick<TicketDimensionRuleState, "inForce" | "effect">): string {
+  if (r.inForce) return "In force";
+  if (r.effect === "narrow") return "Not yet in force where it would take an action away — confirm to apply";
+  return "In force (it only adds people) — not yet confirmed";
+}
+
 export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }) {
-  const { activeOrgId, uid, userEmail } = useRole();
+  const { activeOrgId, uid, userEmail, hasAnyRole } = useRole();
+  // DF-P19: the stored policy as loaded, for the request dimension rules.
+  const [storedPolicy, setStoredPolicy] = useState<CapabilityPolicy | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
   const [policy, setPolicy] = useState<Base | null>(null);
   const [baseline, setBaseline] = useState<Base | null>(null);
   const [overrides, setOverrides] = useState<Overrides>({});
@@ -209,6 +227,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
     return loadCapabilityPolicyEntry(activeOrgId);
   }, [activeOrgId]);
   const apply = useCallback((stored: CapabilityPolicy, at: string | null) => {
+    setStoredPolicy(stored);
     const split = splitPolicyForEditor(stored);
     setPolicy(split.base);
     setBaseline(split.base);
@@ -418,6 +437,27 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
     } finally { setSaving(false); }
   };
 
+  /** DF-P19 (DEC-90 ruling (2)): an Admin confirms one stored request rule
+   *  scoped to a library or a class, so a narrowing it makes applies. */
+  const confirmRule = async (r: TicketDimensionRuleState) => {
+    if (!activeOrgId || !hasAnyRole(["Admin"])) return;
+    if (dirty) { setMsg({ tone: "err", text: "Save or reset your changes to the grid first — confirming a rule reloads the policy." }); return; }
+    const ok = await appConfirm({
+      message: `Confirm this rule? From now on it applies in full, including where it takes the action away from people who can do it today:\n\n${capLabel(r.cap)} when ${describeWhen(r.rule.when)} → ${r.rule.tokens.join(", ") || "nobody"}`,
+    });
+    if (!ok) return;
+    setConfirming(r.key);
+    try {
+      await confirmCapabilityRule({ orgId: activeOrgId, cap: r.cap, rule: r.rule });
+      invalidateCapabilityPolicy(activeOrgId);
+      announceCapabilityPolicyChanged(activeOrgId);
+      await load();
+      setMsg({ tone: "ok", text: "Rule confirmed — it now applies in full (audited on the server)." });
+    } catch (e) {
+      setMsg({ tone: "err", text: (e as Error).message });
+    } finally { setConfirming(null); }
+  };
+
   const resetDefaults = () => {
     setPolicy(defaultCapabilityPolicy());
     setOverrides({});
@@ -447,6 +487,8 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
   const projectRows = CAPABILITY_DEFS.flatMap((d) => (projectOverrides[d.id] ?? []).map((row, idx) => ({ def: d, row, idx })));
   const projectScopedDefs = CAPABILITY_DEFS.filter((d) => PROJECT_SCOPED_CAPS.has(d.id));
   const opaqueCount = Object.values(opaque).reduce((n, rs) => n + (rs?.length ?? 0), 0);
+  const dimensionRules = ticketDimensionRules(storedPolicy);
+  const mayConfirm = hasAnyRole(["Admin"]);
 
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] mb-5 overflow-hidden">
@@ -690,6 +732,25 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
             {opaqueCount} rule{opaqueCount > 1 ? "s" : ""} scoped by unit / library / discipline {opaqueCount > 1 ? "are" : "is"} stored on this policy and preserved on save (not editable here): {
               CAPABILITY_DEFS.flatMap((d) => (opaque[d.id] ?? []).map((r) => `${d.label} when ${describeWhen(r.when)} → ${r.tokens.join(", ") || "nobody"}`)).join("; ")
             }
+          </div>
+        )}
+        {dimensionRules.length > 0 && (
+          <div data-testid="ticket-dimension-rules" className="mt-2 rounded-lg border border-[var(--color-border)] px-2.5 py-2">
+            <div className="text-xs font-black text-[var(--color-text)]">Request rules scoped to a library or a work / code class</div>
+            <div className="text-[10px] text-[var(--color-text-faint)]">Requests present their library and classes to these rules. A rule stored before they did only adds people until an Admin confirms it: where it would take an action away from someone, that person keeps it until then.</div>
+            <ul className="mt-1 space-y-1">
+              {dimensionRules.map((r) => (
+                <li key={`${r.cap}:${r.key}`} data-dimension-rule={r.inForce ? "in-force" : r.effect} className="text-[11px] flex items-center gap-2 flex-wrap">
+                  <span className="text-[var(--color-text)]">{capLabel(r.cap)} when {describeWhen(r.rule.when)} → {r.rule.tokens.join(", ") || "nobody"}</span>
+                  <span className={r.inForce ? "text-[var(--color-text-faint)]" : r.effect === "narrow" ? "font-bold text-amber-700 dark:text-amber-300" : "text-[var(--color-text-faint)]"}>{ticketDimensionRuleStatus(r)}</span>
+                  {!r.inForce && mayConfirm && (
+                    <button type="button" disabled={confirming !== null} onClick={() => void confirmRule(r)} className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border)] text-[10px] font-bold disabled:opacity-50">
+                      {confirming === r.key ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Confirm
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
           </div>
         )}
       </div>

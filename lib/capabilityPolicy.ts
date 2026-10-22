@@ -273,12 +273,12 @@ export type ResourceKey = (typeof RESOURCE_KEYS)[number];
  *  org_capability_allows_for's key list — pinned to RESOURCE_KEYS — is not
  *  re-created for them. On any other capability a rule naming them is
  *  refused at save: the database's evaluator would read it as
- *  unconditional. DF-P6 fix pass 2 (review, major 3): on a `ticket.*`
- *  capability a NEW one is refused too, for now — the request does not
- *  present its classes to the policy yet (lib/workflow.ts ticketResource),
- *  so the rule would never apply; the refusal lifts when the mappers carry
- *  them. Fix pass 4: only a new one (newDeadTicketRuleRefusal, at the policy
- *  route) — a stored one never blocks another write. */
+ *  unconditional. DF-P6 fix pass 2 refused a NEW one on a `ticket.*`
+ *  capability while the request did not present its classes; DF-P19 lifts
+ *  that refusal — lib/workflow.ts ticketResource carries the library and
+ *  both classes, and every mapper that builds a request for the engine
+ *  spreads them — and a rule stored before then only ADDS until an Admin
+ *  confirms it (ruleInForce, effectiveTokens). */
 export const TICKET_RESOURCE_KEYS = ["workClass", "codeClass"] as const;
 export type TicketResourceKey = (typeof TICKET_RESOURCE_KEYS)[number];
 /** Every key a `when` clause may name (the SQL-mirrored ones first). */
@@ -317,6 +317,18 @@ export type CapabilityRuleWhen = Partial<Record<RuleKey, string[]>>;
 export interface CapabilityRule {
   tokens: string[];
   when?: CapabilityRuleWhen;
+  /** drafting-flow GAP-105 / TIER-4 (DF-P19): on a `ticket.*` capability, a
+   *  rule scoped to a library, a work class or a code class
+   *  (isTicketDimensionRule) is IN FORCE only once the workspace confirmed it
+   *  — the policy route stamps a rule it stores NEW (the save is the
+   *  confirmation) and a stored one an Admin confirms (op "confirm_rule").
+   *  Until then it only ever ADDS: where it would take an action away, the
+   *  answer the request had before it presented those keys stands
+   *  (effectiveTokens). Server-owned: the route carries the stamp over from
+   *  the stored rule and never takes it from the client. Ignored on any
+   *  other rule. */
+  confirmedAt?: string | null;
+  confirmedBy?: string | null;
 }
 
 /** A stored capability entry: the legacy bare token list, or a rule list. */
@@ -391,18 +403,64 @@ export function ruleMatches(rule: CapabilityRule, resource: CapabilityResource |
   return true;
 }
 
+/** drafting-flow GAP-105 / TIER-4 (DF-P19): the keys a request presents to
+ *  the policy since DF-P19 (lib/workflow.ts ticketResource) that it did not
+ *  present before — its library, work class and code class. */
+export const TICKET_DIMENSION_KEYS = ["libraryId", ...TICKET_RESOURCE_KEYS] as const;
+export type TicketDimensionKey = (typeof TICKET_DIMENSION_KEYS)[number];
+
+/** Is this a rule on a request capability scoped to a library, a work class
+ *  or a code class — one that could not match any request before DF-P19? */
+export function isTicketDimensionRule(cap: CapabilityId, rule: CapabilityRule | null | undefined): boolean {
+  return !!rule && isTicketResourceCap(cap) && TICKET_DIMENSION_KEYS.some((k) => (rule.when?.[k]?.length ?? 0) > 0);
+}
+
+/** Has the workspace confirmed this rule? Every rule that is not a request
+ *  dimension rule is in force as stored (today's meaning). */
+export function ruleInForce(cap: CapabilityId, rule: CapabilityRule): boolean {
+  if (!isTicketDimensionRule(cap, rule)) return true;
+  return typeof rule.confirmedAt === "string" && rule.confirmedAt.length > 0;
+}
+
+/** The resource as a request presented it before DF-P19 — without its
+ *  library and classes. No dimension rule can match it. */
+export function withoutTicketDimensions(resource: CapabilityResource): CapabilityResource {
+  return { ...resource, libraryId: null, workClass: null, codeClass: null };
+}
+
+/** One evaluation's token list and whether a scoped rule decided it.
+ *  DEC-90 ruling (2) for DF-P19 (fail-safe, no regression): the first
+ *  matching rule decides, exactly as before — except that a request
+ *  dimension rule the workspace has NOT confirmed (ruleInForce) only adds to
+ *  the answer the request had before it presented those keys: its tokens are
+ *  joined to that answer's, and "scoped" is that answer's. So such a rule
+ *  grants at once, and never takes an action away (nor makes the requester
+ *  "scoped out", nor narrows an engineer pick) until it is confirmed. */
+function effectiveTokens(
+  policy: CapabilityPolicy | null | undefined,
+  cap: CapabilityId,
+  resource: CapabilityResource | null | undefined,
+): { tokens: string[]; scoped: boolean } {
+  const entry = policy?.caps?.[cap];
+  const hit = isRuleArray(entry) && resource ? entry.find((r) => ruleMatches(r, resource)) : undefined;
+  if (!hit) return { tokens: baseTokensFor(policy, cap), scoped: false };
+  if (ruleInForce(cap, hit) || !resource) return { tokens: hit.tokens, scoped: true };
+  const before = effectiveTokens(policy, cap, withoutTicketDimensions(resource));
+  return { tokens: [...new Set([...hit.tokens, ...before.tokens])], scoped: before.scoped };
+}
+
 /** The tokens of the first conditional rule matching `resource`, or null when
  *  no rule is scoped to it — callers use null to mean "nothing type-specific
- *  is configured here" (the requester-identity path and pick validation). */
+ *  is configured here" (the requester-identity path and pick validation).
+ *  DF-P19: a request dimension rule not yet confirmed answers as described at
+ *  effectiveTokens. */
 export function scopedTokensFor(
   policy: CapabilityPolicy | null | undefined,
   cap: CapabilityId,
   resource: CapabilityResource | null | undefined,
 ): string[] | null {
-  const entry = policy?.caps?.[cap];
-  if (!isRuleArray(entry) || !resource) return null;
-  const hit = entry.find((r) => ruleMatches(r, resource));
-  return hit ? hit.tokens : null;
+  const e = effectiveTokens(policy, cap, resource);
+  return e.scoped ? e.tokens : null;
 }
 
 /** The unconditional tokens: the bare list, the first rule with no `when`,
@@ -424,7 +482,7 @@ export function tokensFor(
   cap: CapabilityId,
   resource?: CapabilityResource | null,
 ): string[] {
-  return scopedTokensFor(policy, cap, resource) ?? baseTokensFor(policy, cap);
+  return effectiveTokens(policy, cap, resource).tokens;
 }
 
 /** drafting-flow HAND-2 (DF-P11 fix pass 2): does the org's effective
@@ -518,7 +576,16 @@ export function normalizeCapabilityEntry(v: unknown): CapabilityEntry | undefine
         if (Array.isArray(list) && list.every((t) => typeof t === "string") && list.length > 0) when[k] = list as string[];
       }
     }
-    rules.push(Object.keys(when).length > 0 ? { tokens: tokens as string[], when } : { tokens: tokens as string[] });
+    const rule: CapabilityRule = Object.keys(when).length > 0 ? { tokens: tokens as string[], when } : { tokens: tokens as string[] };
+    // DF-P19: the confirmation stamp of a request dimension rule (server-
+    // owned; the policy route decides it — carryTicketRuleConfirmation).
+    const confirmedAt = (x as { confirmedAt?: unknown }).confirmedAt;
+    const confirmedBy = (x as { confirmedBy?: unknown }).confirmedBy;
+    if (typeof confirmedAt === "string" && confirmedAt.length > 0) {
+      rule.confirmedAt = confirmedAt;
+      if (typeof confirmedBy === "string" && confirmedBy.length > 0) rule.confirmedBy = confirmedBy;
+    }
+    rules.push(rule);
   }
   return rules.length > 0 ? rules : undefined;
 }
@@ -765,8 +832,10 @@ export function validateCapabilityPolicy(policy: CapabilityPolicy): string | nul
         // This rail runs on every write — a grant, a revoke, the editor's
         // save that preserves stored rules it cannot edit — and a rule that
         // was valid when stored (RESOURCE_KEYS has carried libraryId since
-        // DEC-13 stage 2) must never block an unrelated write. The policy
-        // route refuses only a NEW such rule: newDeadTicketRuleRefusal.
+        // DEC-13 stage 2) must never block an unrelated write. DF-P19: the
+        // request presents those keys now, so a new one is accepted and the
+        // policy route confirms it (carryTicketRuleConfirmation); one stored
+        // before acts only as a grant until an Admin confirms it.
         // QUAL-4: only a capability evaluated per project may be scoped to
         // one (PROJECT_SCOPED_CAPS). Anywhere else the rule never matches —
         // and the database's evaluator before 20261136 would read it as
@@ -797,15 +866,10 @@ export function validateCapabilityPolicy(policy: CapabilityPolicy): string | nul
   return null;
 }
 
-/** The `when` keys a request capability's rule can name today and still
- *  never match: a request presents only its type and its unit to the policy
- *  (lib/workflow.ts ticketResource — the requests list and the inbox build
- *  their Ticket without the library or the classes; 99-fix-sequencing
- *  "Hand-offs from DF-P6"). */
-export const DEAD_TICKET_RULE_KEYS = ["libraryId", ...TICKET_RESOURCE_KEYS] as const;
-
-/** One rule as a comparable string: token and `when` lists are sets. */
-function ruleKey(r: CapabilityRule): string {
+/** One rule as a comparable string: token and `when` lists are sets. The
+ *  confirmation stamp (DF-P19) is not part of it — a rule is the same rule
+ *  whether or not the workspace has confirmed it. */
+export function capabilityRuleKey(r: CapabilityRule): string {
   const asSet = (xs: readonly unknown[] | undefined) => [...new Set((xs ?? []).map(String))].sort();
   const when = Object.keys(r?.when ?? {}).sort()
     .filter((k) => (r.when?.[k as RuleKey]?.length ?? 0) > 0)
@@ -813,31 +877,102 @@ function ruleKey(r: CapabilityRule): string {
   return JSON.stringify({ tokens: asSet(r?.tokens), when });
 }
 
-/** DF-P6 (AUTHZ-6 / GAP-105; fix pass 4, review major 1): a rule on a
- *  `ticket.*` capability scoped to a library, a work class or a code class
- *  would never match — it looks like a narrowing and does nothing — so a NEW
- *  one is refused until the request carries those fields. A rule already
- *  STORED (`storedCaps`, the row the write starts from) rides along
- *  untouched: it was valid when it was written, it never applies, and a
- *  grant, a revoke or an unrelated save must not be refused because of it
- *  (20261250 inventory row 41 counts them). Returns the refusal, or null. */
-export function newDeadTicketRuleRefusal(
-  caps: CapabilityPolicy["caps"] | null | undefined,
-  storedCaps: CapabilityPolicy["caps"] | null | undefined,
-): string | null {
+/** What a request dimension rule does once it applies, against the answers
+ *  the requests it names had before (DEC-90 ruling (2) for DF-P19):
+ *  - "narrow": it would take an action away from someone — a token of the
+ *    capability's base list or of one of its in-force request-type / unit
+ *    rules is not on it (it REPLACES them where it matches), or it is on
+ *    `ticket.direct_approve`, where any scoped rule can scope a requester's
+ *    own approval out (lib/workflow.ts requesterScopedOut) — unless it
+ *    names every member ("*");
+ *  - "grant": it only adds roles to the base list;
+ *  - "same": it names exactly what already applies.
+ *  Mirrored by 20261263's counts-only inventory (the same three classes). */
+export type TicketRuleEffect = "narrow" | "grant" | "same";
+export function classifyTicketDimensionRule(
+  policy: CapabilityPolicy | null | undefined,
+  cap: CapabilityId,
+  rule: CapabilityRule,
+): TicketRuleEffect {
+  const tokens = new Set(rule.tokens);
+  const base = baseTokensFor(policy, cap);
+  if (!tokens.has("*")) {
+    if (cap === "ticket.direct_approve") return "narrow";
+    const entry = policy?.caps?.[cap];
+    const before: string[][] = [base, ...(isRuleArray(entry)
+      ? entry.filter((r) => ruleIsConditional(r) && !isTicketDimensionRule(cap, r)).map((r) => r.tokens)
+      : [])];
+    if (before.some((list) => list.some((t) => !tokens.has(t)))) return "narrow";
+  }
+  return rule.tokens.some((t) => !base.includes(t)) ? "grant" : "same";
+}
+
+/** A request dimension rule the policy stores and its state, for the
+ *  permissions console (and its tests): in force or not, and its effect. */
+export interface TicketDimensionRuleState { cap: CapabilityId; rule: CapabilityRule; key: string; inForce: boolean; effect: TicketRuleEffect }
+export function ticketDimensionRules(policy: CapabilityPolicy | null | undefined): TicketDimensionRuleState[] {
+  const out: TicketDimensionRuleState[] = [];
   for (const def of CAPABILITY_DEFS) {
-    if (!isTicketResourceCap(def.id)) continue;
-    const v = caps?.[def.id];
-    if (!isRuleArray(v)) continue;
-    const prior = storedCaps?.[def.id];
-    const stored = new Set(isRuleArray(prior) ? prior.map(ruleKey) : []);
-    for (const r of v) {
-      const dead = DEAD_TICKET_RULE_KEYS.filter((k) => (r?.when?.[k]?.length ?? 0) > 0);
-      if (dead.length === 0 || stored.has(ruleKey(r))) continue;
-      return `${def.label}: a rule on a drafting-request capability can be scoped to a request type or a unit only — requests do not yet present their ${dead.map((k) => (k === "libraryId" ? "library" : k === "workClass" ? "work class" : "code class")).join(" or ")} to the permission policy, so the rule would never apply.`;
+    const entry = policy?.caps?.[def.id];
+    if (!isRuleArray(entry)) continue;
+    for (const r of entry) {
+      if (!isTicketDimensionRule(def.id, r)) continue;
+      out.push({ cap: def.id, rule: r, key: capabilityRuleKey(r), inForce: ruleInForce(def.id, r), effect: classifyTicketDimensionRule(policy, def.id, r) });
     }
   }
-  return null;
+  return out;
+}
+
+/** The policy route's half of DF-P19's confirmation (server-owned, so a
+ *  client never confirms a rule by sending a stamp): every request dimension
+ *  rule in `caps` that is already STORED (the same rule — capabilityRuleKey —
+ *  on the same capability) keeps the stored stamp, or stays unconfirmed; one
+ *  that is NEW is confirmed by this save (`stamp`) — an Admin or controller
+ *  who writes a library- or class-scoped rule means it. Any stamp on any
+ *  other rule is dropped. Returns the caps to store and the rules this save
+ *  confirmed (for the audit row). */
+export function carryTicketRuleConfirmation(
+  caps: CapabilityPolicy["caps"] | null | undefined,
+  storedCaps: CapabilityPolicy["caps"] | null | undefined,
+  stamp: { at: string; by: string | null },
+): { caps: NonNullable<CapabilityPolicy["caps"]>; confirmed: Array<{ cap: CapabilityId; rule: CapabilityRule }> } {
+  const out: NonNullable<CapabilityPolicy["caps"]> = {};
+  const confirmed: Array<{ cap: CapabilityId; rule: CapabilityRule }> = [];
+  for (const [id, entry] of Object.entries(caps ?? {}) as Array<[CapabilityId, CapabilityEntry]>) {
+    if (!isRuleArray(entry)) { out[id] = entry; continue; }
+    const prior = storedCaps?.[id];
+    const stored = new Map<string, CapabilityRule>();
+    if (isRuleArray(prior)) for (const r of prior) if (!stored.has(capabilityRuleKey(r))) stored.set(capabilityRuleKey(r), r);
+    out[id] = entry.map((r) => {
+      const bare: CapabilityRule = r.when ? { tokens: r.tokens, when: r.when } : { tokens: r.tokens };
+      if (!isTicketDimensionRule(id, bare)) return bare;
+      const was = stored.get(capabilityRuleKey(bare));
+      if (was) {
+        return was.confirmedAt ? { ...bare, confirmedAt: was.confirmedAt, ...(was.confirmedBy ? { confirmedBy: was.confirmedBy } : {}) } : bare;
+      }
+      confirmed.push({ cap: id, rule: bare });
+      return { ...bare, confirmedAt: stamp.at, ...(stamp.by ? { confirmedBy: stamp.by } : {}) };
+    });
+  }
+  return { caps: out, confirmed };
+}
+
+/** An Admin's confirmation of ONE stored, not-yet-confirmed request
+ *  dimension rule (the policy route's `confirm_rule`). Returns the caps to
+ *  store, or the reason it cannot. */
+export function confirmTicketDimensionRule(
+  caps: CapabilityPolicy["caps"] | null | undefined,
+  cap: CapabilityId,
+  key: string,
+  stamp: { at: string; by: string | null },
+): { ok: true; caps: NonNullable<CapabilityPolicy["caps"]>; rule: CapabilityRule } | { ok: false; error: string } {
+  const entry = caps?.[cap];
+  const idx = isRuleArray(entry) ? entry.findIndex((r) => isTicketDimensionRule(cap, r) && capabilityRuleKey(r) === key) : -1;
+  if (!isRuleArray(entry) || idx < 0) return { ok: false, error: "That rule is not stored on this policy any more — reload the permissions page." };
+  if (ruleInForce(cap, entry[idx])) return { ok: false, error: "That rule is already in force." };
+  const rule: CapabilityRule = { ...entry[idx], confirmedAt: stamp.at, ...(stamp.by ? { confirmedBy: stamp.by } : {}) };
+  const next = entry.map((r, i) => (i === idx ? rule : r));
+  return { ok: true, caps: { ...(caps ?? {}), [cap]: next }, rule };
 }
 
 // WF-11: every write goes through POST /api/admin/capability-policy. The
@@ -864,7 +999,10 @@ export const CAPABILITY_POLICY_ROUTE = "/api/admin/capability-policy";
 export type CapabilityPolicyChange =
   | { op: "save"; orgId: string; caps: NonNullable<CapabilityPolicy["caps"]>; version?: string | null }
   | { op: "grant"; orgId: string; uid: string; cap: CapabilityId; expiresAt?: string | null; note?: string | null; projectId?: string | null }
-  | { op: "revoke"; orgId: string; uid: string; cap: CapabilityId; projectId?: string | null };
+  | { op: "revoke"; orgId: string; uid: string; cap: CapabilityId; projectId?: string | null }
+  // DF-P19: an Admin confirms one stored library- / class-scoped request rule
+  // (`key` = capabilityRuleKey of the rule), so a narrowing it makes applies.
+  | { op: "confirm_rule"; orgId: string; cap: CapabilityId; key: string };
 
 /** The route's 409 code when the stored policy moved on under a write. */
 export const POLICY_CHANGED = "policy_changed";
@@ -965,6 +1103,14 @@ export async function revokeUserGrant(input: {
     op: "revoke", orgId: input.orgId, uid: input.uid, cap: input.cap,
     ...(input.projectId ? { projectId: input.projectId } : {}),
   });
+}
+
+/** DF-P19 (DEC-90 ruling (2)): confirm one stored request rule scoped to a
+ *  library, a work class or a code class — until then it only adds (a
+ *  narrowing it makes is "not yet in force"). Admin only, audited, through
+ *  the policy route like every write. */
+export async function confirmCapabilityRule(input: { orgId: string; cap: CapabilityId; rule: CapabilityRule }): Promise<void> {
+  await postPolicyChange({ op: "confirm_rule", orgId: input.orgId, cap: input.cap, key: capabilityRuleKey(input.rule) });
 }
 
 /** All of one person's grants (live and expired — the UI labels expiry). */
