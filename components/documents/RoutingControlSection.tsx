@@ -140,9 +140,11 @@ export function withSlotMode(d: DraftSlot, mode: RoutingSlotMode): DraftSlot {
 }
 
 /** DF-P25: what the notify-only opt-in does — never a suggestion to add a
- *  sign-off (GAP-102: assurance as notice plus a stop). */
+ *  sign-off (GAP-102: assurance as notice plus a stop). DF-P25 review fix
+ *  pass 5: and never a claim the hold stops the request — it stops work on
+ *  the source document only (GAP-116 owns a stop of the request). */
 export const NOTIFY_EXAMINATION_HINT =
-  "Its people are still only told — nobody waits on them and no sign-off is added. If one of them stops the request, they place a hold on its source document from the request page, and the hold records the files they examined and why — so its people need permission to place holds (Admin → Permissions → Action permissions, Place a hold).";
+  "Its people are still only told — nobody waits on them and no sign-off is added. If one of them finds a problem, they can place a hold on the request's source document from the request page, and the hold records the files they examined and why. The hold stops work on the document (no new revision of it is published, and it is not transmitted or shared, until the hold is released); it does not stop the request — its review can still complete and its deliverable be issued. Its people need permission to place holds (Admin → Permissions → Action permissions, Place a hold).";
 
 /** GAP-109 mechanism 2 (DF-P22): may this slot accept a standing
  *  pre-authorization? Exactly where the assurance opt-in may ride
@@ -529,7 +531,7 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
                   {notifyExaminationOptInFor(s) === "offer" && (
                     <label className="flex flex-wrap items-center gap-1.5 text-[11px]" data-testid="routing-slot-records-examination-notify">
                       <input type="checkbox" checked={!!s.recordsExamination} onChange={(e) => patch(i, { recordsExamination: e.target.checked })} />
-                      <span className="font-bold text-[var(--color-text-muted)]">Record what they examined when they stop it</span>
+                      <span className="font-bold text-[var(--color-text-muted)]">Record what they examined when they place a hold</span>
                       <span className="text-[var(--color-text-faint)]">{NOTIFY_EXAMINATION_HINT}</span>
                     </label>
                   )}

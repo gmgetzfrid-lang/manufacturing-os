@@ -58,7 +58,7 @@ import { parseRoutingControl, validateRoutingDraft, notifyExaminationOptInAllowe
 import { controlToDraft, draftToControl, notifyExaminationOptInFor, preauthOptInFor, assuranceOptInFor, NOTIFY_EXAMINATION_HINT, withSlotMode } from "@/components/documents/RoutingControlSection";
 import { isAssuranceSlot, isNotifyExaminationSlot, holdExaminationRecord, holdExaminationOf, holdOpenerInSlot, rosterOccupancy, examinedFilesText, examinationOf, jsonbTextBytes, HOLD_EXAMINATION_BUDGET_BYTES, HOLD_EXAMINATION_MAX_BYTES } from "@/lib/assuranceExamination";
 import { preauthEligibleSlots } from "@/lib/ticketPreauthorization";
-import NotifyHoldExamination, { HOLD_RECORD_NOT_STORED, HOLD_RECORD_TOO_LARGE, HOLD_NOT_PERMITTED, NO_FILES_UNDER_REVIEW, holdPermissionUncheckedText, NO_SOURCE_TO_HOLD, NOTIFY_HOLD_READ_LIMIT, NOTIFY_HOLDS_MORE, notSlotHoldsText, uncheckedHoldsText, slotStopHolder } from "@/components/requests/NotifyHoldExamination";
+import NotifyHoldExamination, { HOLD_RECORD_NOT_STORED, HOLD_RECORD_TOO_LARGE, HOLD_NOT_PERMITTED, HOLD_DOES_NOT_STOP_REQUEST, notifyHoldFormIntro, NOTIFY_HOLDS_HEADING, NOTIFY_HOLD_BUTTON, NO_FILES_UNDER_REVIEW, holdPermissionUncheckedText, NO_SOURCE_TO_HOLD, NOTIFY_HOLD_READ_LIMIT, NOTIFY_HOLDS_MORE, notSlotHoldsText, uncheckedHoldsText, slotStopHolder } from "@/components/requests/NotifyHoldExamination";
 import TicketRosterPanel from "@/components/requests/TicketRosterPanel";
 
 const NOW = "2026-10-22T12:00:00.000Z";
@@ -112,6 +112,9 @@ describe("the opt-in on a notify-only slot — parser, editor, roster", () => {
     // REVIEW FIX 2: the controller is told the slot's people need permission to place holds
     expect(NOTIFY_EXAMINATION_HINT).toMatch(/need permission to place holds \(Admin → Permissions → Action permissions, Place a hold\)/);
     expect(NOTIFY_EXAMINATION_HINT).not.toMatch(/make it|switch|convert|must sign off/i);
+    // REVIEW FIX 5: the hint says what the hold stops (the document) and what it does not (the request)
+    expect(NOTIFY_EXAMINATION_HINT).toMatch(/does not stop the request — its review can still complete and its deliverable be issued/);
+    expect(NOTIFY_EXAMINATION_HINT).not.toMatch(/stops the request|stop the review/i);
     // REGRESSION: a notify-only slot never ticked writes nothing new
     const plain: RoutingControl = { slots: [{ kind: "watch", mode: "notify_only", fill: { users: ["q-2"] } }] };
     expect(draftToControl(controlToDraft(plain))).toEqual(plain);
@@ -384,6 +387,21 @@ describe("NotifyHoldExamination — with an opted-in notify-only slot", () => {
     expect(arg.examination).toMatchObject({ stop: "hold", ticketId: "t1", slotKind: "watch", allFiles: true, ofFiles: 2, note: "nozzle orientation differs from the datasheet" });
     expect(arg).not.toHaveProperty("originTicketId");
     expect(host.textContent).toContain("Hold placed, with what you examined.");
+  });
+  it("REVIEW FIX 5: the panel never calls the hold a stop of the request — it says the hold stops work on the document and that the request can still issue", async () => {
+    await renderHold(ticket(rosterOf([SIGN, WATCH])), "q-2");
+    expect(q("notify-hold-intro")!.textContent).toBe(notifyHoldFormIntro("Inspection notice", "P-100"));
+    expect(q("notify-hold-intro")!.textContent).toContain(HOLD_DOES_NOT_STOP_REQUEST);
+    expect(HOLD_DOES_NOT_STOP_REQUEST).toMatch(/It does not stop this request: its review can still complete and its deliverable be issued\. To stop the request itself, raise it with the assignment queue\./);
+    expect(HOLD_DOES_NOT_STOP_REQUEST).toMatch(/no new revision of it is published, and it is not transmitted or shared, until the hold is released/);
+    expect(q("notify-hold-place")!.textContent).toBe(NOTIFY_HOLD_BUTTON);
+    expect(NOTIFY_HOLD_BUTTON).toBe("Place a hold on the document");
+    expect(q("notify-hold-examination")!.textContent).toContain(NOTIFY_HOLDS_HEADING);
+    // no visible sentence promises a stop of the request or its review
+    const visible = host.textContent ?? "";
+    expect(visible).not.toMatch(/Stop it with a hold|To stop it, place|Stops by the people told|stop this review with a hold/);
+    expect(HOLD_NOT_PERMITTED).not.toMatch(/stop this review|stop it with a hold/i);
+    expect(HOLD_NOT_PERMITTED).toMatch(/To stop this request, raise it with the assignment queue\./);
   });
   it("a hold placed before 20261267 (no column): the hold stands and the panel says the record was not stored", async () => {
     holdsMock.openHold.mockResolvedValue({ id: "h-9", examinationNotRecorded: true });

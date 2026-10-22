@@ -498,9 +498,10 @@ export default function TicketRosterPanel({
   // forward instead.
   const routedNoRoster = !roster && inReview && reviewRouted === true;
   const showSeed = !roster && inReview && !routedNoRoster;
-  // DF-P25: a closed round whose notify-only people could stop it with a
-  // hold keeps the panel up for those holds' records (false on every roster
-  // without such a slot — the condition below is then exactly as before).
+  // DF-P25: a closed round whose notify-only people could place a hold on
+  // its source document keeps the panel up for those holds' records (false
+  // on every roster without such a slot — the condition below is then
+  // exactly as before).
   const notifyHoldsOnRecord = !!recordRoster && recordRoster.slots.some((s) => isNotifyExaminationSlot(s, ticket));
   if (!roster && !showSeed && !routedNoRoster && !libraryReview && history.length === 0 && !notifyHoldsOnRecord) return null;
 

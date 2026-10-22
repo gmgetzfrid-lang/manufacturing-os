@@ -13,13 +13,21 @@
 //   * shows each hold placed from this request with its record (read as the
 //     viewer reads holds — RLS), and
 //   * offers that slot's own people, while the review is open and the
-//     request names a source document, "Stop it with a hold" — the files
-//     they examined (every file under review by default), a note of what
-//     they found (required — a stop says why) and the hold's reason.
+//     request names a source document, "Place a hold on the document" — the
+//     files they examined (every file under review by default), a note of
+//     what they found (required — a stop says why) and the hold's reason.
+//     DF-P25 review fix pass 5: the hold stops work on the SOURCE DOCUMENT
+//     (lib/documentGuards.ts — no new revision published; lib/holdGate.ts —
+//     no transmittal, share or distribution while it is in force). It does
+//     NOT stop this request: nothing on the request's issuing path reads
+//     holds on its source document, so the review can still complete and
+//     the deliverable issue. Every sentence here says so
+//     (HOLD_DOES_NOT_STOP_REQUEST), and points at the assignment queue for
+//     stopping the request itself (the remainder is GAP-116).
 //     The form is offered only when the viewer may place holds (holds.open,
 //     judged by lib/holds.ts holdControlsFor — the same policy, additive
 //     roles and read-only subtraction openHold's capability check applies);
-//     otherwise the occupant is told plainly they cannot stop it with a hold
+//     otherwise the occupant is told plainly they cannot place a hold
 //     and where an Admin allows it. The policy is read for this (fail
 //     closed: until it is read, or when it cannot be, no form). A round with
 //     no files under review records the note alone.
@@ -79,12 +87,28 @@ export const NOTIFY_HOLDS_MORE =
   `Only the ${NOTIFY_HOLD_READ_LIMIT} newest holds placed from this request are shown — more exist on the source document.`;
 /** What the panel says of records it will not show as a slot's stop. */
 export const notSlotHoldsText = (n: number): string =>
-  `${n} hold${n === 1 ? "" : "s"} on the source document name${n === 1 ? "s" : ""} this request but ${n === 1 ? "was" : "were"} not placed by the people of the slot named — not shown as their stop.`;
+  `${n} hold${n === 1 ? "" : "s"} on the source document name${n === 1 ? "s" : ""} this request but ${n === 1 ? "was" : "were"} not placed by the people of the slot named — not shown as theirs.`;
 export const uncheckedHoldsText = (n: number): string =>
   `${n} hold${n === 1 ? "" : "s"} from an earlier review round could not be checked against that round's slot (its roster record could not be read) — not shown.`;
+/** DF-P25 review fix pass 5: what a hold placed here does NOT do. The
+ *  request's issuing path (the workflow route's issuing approvals and
+ *  completing sign-off, the consent window's close) never reads holds on its
+ *  source document, so the panel never calls the hold a stop of the request
+ *  or its review (GAP-116 owns making it one). */
+export const HOLD_DOES_NOT_STOP_REQUEST =
+  "A hold stops work on the document itself — no new revision of it is published, and it is not transmitted or shared, until the hold is released. It does not stop this request: its review can still complete and its deliverable be issued. To stop the request itself, raise it with the assignment queue.";
+/** The form's opening sentence (pure; exported for tests). */
+export function notifyHoldFormIntro(slotLabel: string, documentNumber?: string | null): string {
+  return `You are told of this review (${slotLabel}) and nobody waits on you. You can place a hold on its source document${documentNumber ? ` ${documentNumber}` : ""} — it records what you examined. ${HOLD_DOES_NOT_STOP_REQUEST}`;
+}
+/** What the panel heads the holds' records with — holds on the document,
+ *  never "stops" of the request. */
+export const NOTIFY_HOLDS_HEADING = "Holds on the source document by the people told, with what they examined";
+/** The form's button: what it does, a hold on the document. */
+export const NOTIFY_HOLD_BUTTON = "Place a hold on the document";
 /** What the panel says to an occupant whose role may not place holds. */
 export const HOLD_NOT_PERMITTED =
-  "Your role isn't allowed to place holds, so you cannot stop this review with a hold. An Admin can change this under Admin → Permissions → Action permissions (Place a hold). To stop it now, raise it with the assignment queue.";
+  "Your role isn't allowed to place holds, so you cannot place a hold on the source document from here. An Admin can change this under Admin → Permissions → Action permissions (Place a hold). To stop this request, raise it with the assignment queue.";
 /** What the panel says when whether the viewer may place holds could not be read. */
 export const holdPermissionUncheckedText = (why: string): string =>
   `Whether you may place a hold could not be checked just now (${why}).`;
@@ -259,7 +283,7 @@ export default function NotifyHoldExamination({ ticket, orgId, uid, userName, ro
   return (
     <div className="text-xs space-y-2" data-testid="notify-hold-examination">
       <div className="font-bold text-[var(--color-text)] flex items-center gap-1.5">
-        <ShieldAlert className="w-3.5 h-3.5" /> Stops by the people told, with what they examined
+        <ShieldAlert className="w-3.5 h-3.5" /> {NOTIFY_HOLDS_HEADING}
       </div>
       {holds === "not_migrated" && <p className="text-[var(--color-text-faint)]" data-testid="notify-hold-not-migrated">Hold records of what was examined are kept from the database update 20261267.</p>}
       {holds === "unreadable" && <p className="text-[var(--color-text-faint)]" data-testid="notify-hold-unreadable">The holds on the source document could not be read just now.</p>}
@@ -291,7 +315,7 @@ export default function NotifyHoldExamination({ ticket, orgId, uid, userName, ro
       {offerForm && policy && !mayPlace && <p className="text-[var(--color-text-muted)]" data-testid="notify-hold-not-permitted">{HOLD_NOT_PERMITTED}</p>}
       {offerForm && mayPlace && occupantSlot && (
         <div className="space-y-1.5 border border-[var(--color-border)] rounded-lg p-2" data-testid="notify-hold-form">
-          <div className="text-[var(--color-text-muted)]">You are told of this review ({occupantSlot.label || occupantSlot.kind}) and nobody waits on you. To stop it, place a hold on its source document{source?.documentNumber ? ` ${source.documentNumber}` : ""} — it records what you examined.</div>
+          <div className="text-[var(--color-text-muted)]" data-testid="notify-hold-intro">{notifyHoldFormIntro(occupantSlot.label || occupantSlot.kind, source?.documentNumber)}</div>
           {files.length === 0 && <div className="text-[var(--color-text-muted)]" data-testid="notify-hold-no-files">{NO_FILES_UNDER_REVIEW}</div>}
           {files.length > 0 && (
             <fieldset className="space-y-0.5">
@@ -322,7 +346,7 @@ export default function NotifyHoldExamination({ ticket, orgId, uid, userName, ro
             <input aria-label="Hold description" className="w-full border border-[var(--color-border)] rounded p-1" value={description} onChange={(e) => setDescription(e.target.value)} />
           </label>
           <button type="button" disabled={busy || (files.length > 0 && picked.length === 0)} onClick={() => void place()} className="text-xs font-bold text-rose-700 disabled:opacity-50" data-testid="notify-hold-place">
-            {busy ? "Placing…" : "Stop it with a hold"}
+            {busy ? "Placing…" : NOTIFY_HOLD_BUTTON}
           </button>
         </div>
       )}

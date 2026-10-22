@@ -914,10 +914,15 @@ async function readDocumentRequests(orgId: string, notes: string[]): Promise<Non
     if (readable.error) notes.push(`The documents drafting requests name could not be checked (${readable.error.message}) — those links are not drawn.`);
     return [];
   }
-  const can = new Set(readable.rows.map((d) => String(d.id).toLowerCase()));
-  return live
-    .filter((t) => can.has(t.source_document_id.toLowerCase()))
-    .map((t) => ({ id: t.id, ticket_id: t.ticket_id, title: t.title, status: t.status, document_id: readable.rows.find((d) => String(d.id).toLowerCase() === t.source_document_id.toLowerCase())!.id }));
+  // One map, built once (review fix pass 5): each readable id in lower case
+  // → the id as the database gave it, so a request is matched in O(1).
+  const byLower = new Map(readable.rows.map((d) => [String(d.id).toLowerCase(), d.id] as const));
+  const out: NonNullable<GraphRows["documentRequests"]> = [];
+  for (const t of live) {
+    const documentId = byLower.get(t.source_document_id.toLowerCase());
+    if (documentId !== undefined) out.push({ id: t.id, ticket_id: t.ticket_id, title: t.title, status: t.status, document_id: documentId });
+  }
+  return out;
 }
 
 // ─── Scoped reads (GAP-306) ─────────────────────────────────────────────────

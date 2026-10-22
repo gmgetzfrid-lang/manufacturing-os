@@ -159,6 +159,26 @@ describe("PROJ-7 edge limb (DF-P25) — the document ↔ request edge, from a re
     expect(JSON.stringify(withTicket)).toBe(JSON.stringify(without));
   });
 
+  it("REVIEW FIX 5: each request is matched to its document through one map built once — an id named in another case still draws the edge on the database's own id; many requests over many documents all drawn", async () => {
+    const DH = "abcdefab-cdef-4abc-8def-abcdefabcdef";
+    reset({ ...world([ticket("t-up", DH.toUpperCase()), ticket("t2", D2), ticket("t3", DH)]), documents: [doc(DH, "PID-H"), doc(D2, "PID-2")] });
+    const g = await buildOrgGraph(ORG);
+    expect(g.edges).toContainEqual(expect.objectContaining({ a: `doc:${DH}`, b: "req:t-up", type: "project" }));
+    expect(g.edges).toContainEqual(expect.objectContaining({ a: `doc:${D2}`, b: "req:t2", type: "project" }));
+    expect(g.edges).toContainEqual(expect.objectContaining({ a: `doc:${DH}`, b: "req:t3", type: "project" }));
+    expect(g.edges.some((e) => e.a === `doc:${DH.toUpperCase()}`)).toBe(false);
+    // scale: 600 documents, each named by one request — every edge drawn
+    const ids = Array.from({ length: 600 }, (_, i) => `${String(i).padStart(8, "0")}-aaaa-4aaa-8aaa-aaaaaaaaaaaa`);
+    reset({ ...world(ids.map((id, i) => ticket(`s${i}`, id))), documents: ids.map((id, i) => doc(id, `S-${i}`)) });
+    const big = await buildOrgGraph(ORG);
+    expect(big.edges.filter((e) => e.b.startsWith("req:s"))).toHaveLength(600);
+    // source pin: no per-request linear scan of the documents read back
+    const src = readFileSync(join(process.cwd(), "lib/orgGraph.ts"), "utf8");
+    const fn = src.slice(src.indexOf("async function readDocumentRequests"), src.indexOf("// ─── Scoped reads (GAP-306)"));
+    expect(fn).toContain("const byLower = new Map(readable.rows.map((d) => [String(d.id).toLowerCase(), d.id] as const));");
+    expect(fn).not.toContain("readable.rows.find(");
+  });
+
   it("the read is the client entry's only, keyset-paged and capped like every link table (source pins)", () => {
     const g = readFileSync(join(process.cwd(), "lib/orgGraph.ts"), "utf8");
     expect(g).toContain("const documentRequests = gate === null ? await readDocumentRequests(orgId, notes) : [];");
