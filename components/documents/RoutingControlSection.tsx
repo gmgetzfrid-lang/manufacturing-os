@@ -52,6 +52,11 @@ interface DraftSlot {
   independentOf: string[];
   timeoutDays: string;
   alternateRoles: string[];
+  /** GAP-102 (DF-P20 fix pass 2): the controller's assurance opt-in — the
+   *  slot's reviewer records what they examined (lib/routingControl.ts
+   *  records_examination). Written only on a blocking slot; never set by
+   *  default. */
+  recordsExamination?: boolean;
   /** DF-P5 fix pass: what a stored slot carries that this editor cannot show
    *  — a fill's other sources (a fill naming roles AND people), the
    *  override (`waivable_by`) and named alternate people. Carried through a
@@ -63,6 +68,11 @@ const emptySlot = (n: number): DraftSlot => ({
   kind: `slot-${n}`, label: "", mode: "blocking", fillKind: "roles", roles: [], users: [], capability: "",
   independentOf: ["drafter"], timeoutDays: "", alternateRoles: [],
 });
+
+/** GAP-102 (DF-P20 fix pass 2): what the assurance opt-in does, and the
+ *  slots it suits — the editor's suggestion; nothing is ticked for you. */
+export const ASSURANCE_OPT_IN_HINT =
+  "(the files and a note with each sign-off; a revision request must say why). Suited to a check that is neither the engineering approval nor the requester's own acceptance — those never record one.";
 
 /** Draft slots → the stored shape (pure; exported for tests). */
 export function draftToControl(slots: DraftSlot[]): RoutingControl {
@@ -92,6 +102,9 @@ export function draftToControl(slots: DraftSlot[]): RoutingControl {
         // (a slot switched to another mode drops it — only a consent slot has one).
         ...(d.mode === "consent_window" && d.kept?.windowDays !== undefined ? { window_days: d.kept.windowDays } : {}),
         ...(d.mode === "consent_window" && d.kept?.warnFraction !== undefined ? { warn_fraction: d.kept.warnFraction } : {}),
+        // DF-P20 fix pass 2: the assurance opt-in, on a blocking slot not
+        // filled by the requester alone (a slot switched away drops it).
+        ...(d.recordsExamination && d.mode === "blocking" && d.fillKind !== "requester" ? { records_examination: true as const } : {}),
       };
     }),
   };
@@ -117,6 +130,7 @@ export function controlToDraft(c: RoutingControl): DraftSlot[] {
       roles: s.fill.roles ?? [], users: (s.fill.users ?? []).map((uid) => ({ uid, name: null, email: uid } as unknown as OrgUser)),
       capability: s.fill.capability ?? "", independentOf: s.independent_of ?? [],
       timeoutDays: s.timeoutDays ? String(s.timeoutDays) : "", alternateRoles: s.alternates?.roles ?? [],
+      ...(s.records_examination === true ? { recordsExamination: true } : {}),
       ...(Object.keys(kept).length ? { kept } : {}),
     };
   });
@@ -402,6 +416,13 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
                         onChange={(e) => patchKept(i, windowFieldPatch("percent", e.target.value.replace(/[^0-9]/g, "")))} />
                       <span className="text-[var(--color-text-muted)]">% of it ({Math.round(CONSENT_WARN_FRACTION_MIN * 100)}–{Math.round(CONSENT_WARN_FRACTION_MAX * 100)}). Blank = the default.</span>
                     </div>
+                  )}
+                  {s.mode === "blocking" && s.fillKind !== "requester" && (
+                    <label className="flex flex-wrap items-center gap-1.5 text-[11px]" data-testid="routing-slot-records-examination">
+                      <input type="checkbox" checked={!!s.recordsExamination} onChange={(e) => patch(i, { recordsExamination: e.target.checked })} />
+                      <span className="font-bold text-[var(--color-text-muted)]">Assurance check — its reviewer records what they examined</span>
+                      <span className="text-[var(--color-text-faint)]">{ASSURANCE_OPT_IN_HINT}</span>
+                    </label>
                   )}
                   {keptNote(s, { workClasses: s.mode === "notify_only" && workClassOptions.length > 0, window: s.mode === "consent_window" }) && <p className="text-[11px] text-[var(--color-text-muted)]" data-testid="routing-slot-kept">{keptNote(s, { workClasses: s.mode === "notify_only" && workClassOptions.length > 0, window: s.mode === "consent_window" })}</p>}
                   <div className="flex flex-wrap gap-1 items-center text-[11px]">

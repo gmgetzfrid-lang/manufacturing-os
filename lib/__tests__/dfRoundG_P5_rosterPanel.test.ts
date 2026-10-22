@@ -157,7 +157,7 @@ describe("DF-P5 fix pass 3 — the signature is minted only for a sign-off the r
     // DF-P18 (HAND-7 dw3): the dry run carries the drift acknowledgement only when the panel asked for it
     // (fix pass: asked from the page's labels, or from the route's 409 and resent once).
     // (DF-P20: the same body also carries an assurance sign-off's examination record.)
-    expect(panel).toContain('body: JSON.stringify({ ticketId: ticket.id, actionType: "sign_slot", dryRun: true, ...(ack ? { sourceDriftAcknowledged: true } : {}), ...(signsAssurance ? { examination: examinationBody(examPick, examNote) } : {}) }),');
+    expect(panel).toContain('body: JSON.stringify({ ticketId: ticket.id, actionType: "sign_slot", dryRun: true, ...(ack ? { sourceDriftAcknowledged: true } : {}), ...(signsAssurance ? { examination: examinationBody(examPick, examNote, allFileKeys) } : {}) }),');
     expect(panel).toContain("const acked = !!driftNote && driftAck;");
     expect(panel).toContain("onClick={() => { void openCeremony(); }}");
     expect(panel).not.toContain("onClick={() => setSigning(true)}");

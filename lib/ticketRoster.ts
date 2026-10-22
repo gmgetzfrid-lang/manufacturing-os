@@ -397,6 +397,9 @@ export function openRoster(input: {
       // carries them — an unconfirmed one is stored exactly as today's
       // (no window, no flag), byte for byte.
       ...(s.mode === "consent_window" && s.consent_confirmed === true ? { ...windowConfigOf(s), consentConfirmed: true } : {}),
+      // GAP-102 (DF-P20 fix pass 2): the controller's assurance opt-in, frozen
+      // with the roster; absent, the slot is stored exactly as before.
+      ...(s.mode === "blocking" && s.records_examination === true ? { recordsExamination: true as const } : {}),
       fallback,
       ...((s.fill.capability && ENGINEERING_CAPABILITIES.includes(s.fill.capability)) || s.kind === gateKind ? { engineering: true } : {}),
       status: slotBlocks(s) ? "open" : "told",
@@ -567,8 +570,13 @@ export async function writeRosterLedger(client: LedgerClient, input: {
     update: (r: unknown) => { eq: (k: string, v: unknown) => { eq: (k: string, v: unknown) => { select: (c: string) => RowsThenable } } };
   };
   const eventsTable = () => client.from("ticket_review_slot_events") as { insert: (r: unknown) => Thenable };
-  const examinedOn = (kind: string): { examination?: ExaminationRecord } =>
-    input.event !== "opened" && input.examination && input.examination.kinds.includes(kind) ? { examination: input.examination.record } : {};
+  // DF-P20 fix pass 2: each slot's record names the slot as the roster
+  // labelled it, so an earlier round reads by its label once the roster that
+  // held it is gone.
+  const examinedOn = (slot: TicketReviewSlot): { examination?: ExaminationRecord } =>
+    input.event !== "opened" && input.examination && input.examination.kinds.includes(slot.kind)
+      ? { examination: { ...input.examination.record, ...(slot.label ? { slotLabel: slot.label } : {}) } }
+      : {};
   if (input.event === "opened") {
     const err = await once(() => slotsTable().insert(input.slots.map((s) => ({
       org_id: orgId, ticket_id: ticketId, roster_id: roster.id, cycle: roster.cycle,
@@ -594,7 +602,7 @@ export async function writeRosterLedger(client: LedgerClient, input: {
     content_hash: roster.contentHash,
     details: input.event === "opened"
       ? { primaries: s.primaries.length, alternates: s.alternates.length, fallback: s.fallback, level: roster.level }
-      : { ...(input.event === "satisfied" ? { via: s.via ?? null } : { reason: input.reason ?? roster.closedReason ?? null }), ...examinedOn(s.kind) },
+      : { ...(input.event === "satisfied" ? { via: s.via ?? null } : { reason: input.reason ?? roster.closedReason ?? null }), ...examinedOn(s) },
   }))));
 }
 

@@ -74,7 +74,8 @@ const HASH = "ab12cd34ef56".padEnd(64, "0");
 const slot = (over: Partial<TicketReviewSlot>): TicketReviewSlot => ({ id: "r-1:x", kind: "x", label: "X", mode: "blocking", primaries: [], alternates: [], overriders: [], independentOf: [], timeoutDays: null, fallback: false, status: "open", ...over });
 const ACCEPT = slot({ id: "r-1:accept", kind: "accept", label: "Requester acceptance", primaries: ["req-1"] });
 const CHECK = slot({ id: "r-1:check", kind: "check", label: "Engineering check", primaries: ["e-1"], engineering: true });
-const ASSURE = slot({ id: "r-1:assure", kind: "assure", label: "Inspection check", primaries: ["q-1"], independentOf: ["drafter"] });
+// DF-P20 fix pass 2: opted in by the routing table's controller (never inferred).
+const ASSURE = slot({ id: "r-1:assure", kind: "assure", label: "Inspection check", primaries: ["q-1"], independentOf: ["drafter"], recordsExamination: true });
 const WATCH = slot({ id: "r-1:watch", kind: "watch", label: "Inspection notice", mode: "notify_only", primaries: ["q-2"], status: "told" });
 const FILES = [
   { id: "a-d", name: "iso_1A.pdf", url: "k/a", sha256: "f".repeat(64) },
@@ -154,18 +155,17 @@ describe("the assurance reviewer is asked in place what they examined", () => {
     expect(page).toEqual([...REVISION_CATEGORIES]);
   });
 
-  it("the sign-off: the dry run and the post carry the record (every file → no list; blank note → null); the signed statement is exactly as before when nothing was narrowed", async () => {
+  it("the sign-off: the dry run and the post carry the record (every file left ticked → the full list, a chosen 'all' — fix pass 2; blank note → null); the signed statement is exactly as before when nothing was narrowed", async () => {
     const bodies = fetchBodies();
     await render(ticket(rosterOf([ACCEPT, CHECK, ASSURE])), "q-1");
     await act(async () => { button(/Sign off — Inspection check/).click(); });
     await flush();
-    expect(bodies[0]).toMatchObject({ actionType: "sign_slot", dryRun: true, examination: { note: null } });
-    expect("files" in (bodies[0].examination as object)).toBe(false);
+    expect(bodies[0]).toMatchObject({ actionType: "sign_slot", dryRun: true, examination: { files: ["a-d", "a-e"], note: null } });
     const ceremony = q("ceremony") as HTMLButtonElement;
     expect(ceremony.getAttribute("data-statement")).toBe(rosterSignStatement({ userName: null, ticketLabel: "REQ-1", roster: rosterOf([]), labels: ["Inspection check"], issueReady: false }));
     await act(async () => { ceremony.click(); });
     await flush();
-    expect(bodies[1]).toMatchObject({ actionType: "sign_slot", signatureId: "sig-1", examination: { note: null } });
+    expect(bodies[1]).toMatchObject({ actionType: "sign_slot", signatureId: "sig-1", examination: { files: ["a-d", "a-e"], note: null } });
   });
 
   it("narrowed: the signed statement says which files were examined", async () => {
@@ -175,6 +175,28 @@ describe("the assurance reviewer is asked in place what they examined", () => {
     await act(async () => { button(/Sign off — Inspection check/).click(); });
     await flush();
     expect(q("ceremony")!.getAttribute("data-statement")).toContain("(iso_1A.pdf, iso_1A_sh2.pdf), having examined iso_1A.pdf, and sign off as Inspection check");
+  });
+
+  it("fix pass 2 (review minor 5): an occupant whose assurance slot is blocked (separation of duties) gets only the revision request — no file checklist, no sign-off wording — and sends no file list", async () => {
+    const bodies = fetchBodies();
+    const mine = { ...ASSURE, primaries: ["d-1", "q-1"] };
+    await render(ticket(rosterOf([ACCEPT, CHECK, mine])), "d-1");
+    const form = q("examination-form")!;
+    expect(form.getAttribute("data-signs")).toBe("no");
+    expect(form.querySelector("legend")!.textContent).toBe("Request a revision");
+    expect(q("examination-files-pick")).toBeNull();
+    expect(form.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
+    expect(form.textContent).toContain("Note — required to request a revision");
+    expect(form.textContent).not.toMatch(/optional with a sign-off/);
+    expect([...host.querySelectorAll("button")].some((b) => /Sign off — Inspection check/.test(b.textContent ?? ""))).toBe(false);
+    const ta = q("examination-note-input") as HTMLTextAreaElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(ta, "tag wrong");
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { (q("examination-veto") as HTMLButtonElement).click(); });
+    await flush();
+    expect(bodies).toEqual([{ ticketId: "t1", actionType: "request_revision", comment: "tag wrong", category: "Drafting Error", examination: { note: "tag wrong" } }]);
   });
 
   it("unticking every file is refused in place, not sent", async () => {
@@ -255,9 +277,27 @@ describe("each assurance event shows its record (ruling (5)); one from before DF
     expect(hist.textContent).toContain("Note: dimension missing");
   });
 
-  it("examinationBody: every file → no list; a blank note → null", () => {
-    expect(examinationBody(null, "  ")).toEqual({ note: null });
-    expect(examinationBody(["a"], " n ")).toEqual({ files: ["a"], note: "n" });
+  it("examinationBody: every file → the full list (fix pass 2: chosen, not defaulted); a blank note → null", () => {
+    expect(examinationBody(null, "  ", ["a", "b"])).toEqual({ files: ["a", "b"], note: null });
+    expect(examinationBody(["a"], " n ", ["a", "b"])).toEqual({ files: ["a"], note: "n" });
+  });
+
+  it("fix pass 2 (review minor 1): a record made with no file list (the page's Request Revision) reads 'Files under review … the reviewer was not asked', never 'Examined'", async () => {
+    db.results.ticket_review_slot_events = { data: [ev({ id: "v1", event: "voided", details: { reason: "request_revision", examination: record({ act: "veto", note: "why", allFiles: true, defaulted: true, files: [{ id: "a-d", name: "iso_1A.pdf", sha256: null }, { id: "a-e", name: "iso_1A_sh2.pdf", sha256: null }] }) } })], error: null };
+    const closed = rosterOf([ACCEPT, CHECK, { ...ASSURE, status: "void" }], { closedAt: NOW, closedReason: "request_revision" });
+    await render(ticket(closed, "REVISION_REQ"), "d-1");
+    expect(q("examination-files")!.textContent).toBe("Files under review: all 2 (not narrowed — the reviewer was not asked): iso_1A.pdf, iso_1A_sh2.pdf");
+  });
+
+  it("fix pass 2 (review minor 4): an earlier round reads by the label the record carries once a new round's roster replaced it; a record without one falls back to the slot's key", async () => {
+    db.results.ticket_review_slot_events = { data: [
+      ev({ id: "v1", roster_id: "r-0", event: "voided", details: { reason: "request_revision", examination: record({ act: "veto", note: "dimension missing", slotLabel: "Inspection check" }) } }),
+      ev({ id: "v0", roster_id: "r-00", slot_kind: "older", event: "voided", details: { reason: "request_revision", examination: record({ act: "veto", note: "earlier" }) } }),
+    ], error: null };
+    // round 1B is under review: roster r-1, the 1A roster r-0 is gone
+    await render(ticket(rosterOf([ACCEPT, CHECK, ASSURE])), "x-9");
+    const items = [...q("examination-history")!.querySelectorAll("li")].map((li) => li.querySelector("span")!.textContent);
+    expect(items).toEqual(["Inspection check", "older"]);
   });
 });
 
@@ -277,6 +317,20 @@ describe("REGRESSION — no assurance slot: nothing new is read or shown, every 
       }
     }
   });
+  it("fix pass 2 (review major): a blocking check WITHOUT the controller's opt-in — the configured rosters at the deploy — reads nothing new and shows its occupant nothing new, signed or open", async () => {
+    const UNFLAGGED = { ...ASSURE, recordsExamination: undefined };
+    const LEAD = slot({ id: "r-1:lead", kind: "lead", label: "Lead check", primaries: ["q-1", "q-3"] });
+    const signed = { ...UNFLAGGED, status: "satisfied" as const, satisfiedBy: "q-1", satisfiedAt: NOW, signatureId: "s", via: "primary" as const };
+    for (const r of [rosterOf([ACCEPT, CHECK, UNFLAGGED, LEAD]), rosterOf([ACCEPT, CHECK, signed, LEAD])]) {
+      for (const uid of ["q-1", "q-3", "x-9"]) {
+        db.reads = [];
+        await render(ticket(r), uid);
+        expect(db.reads, uid).not.toContain("ticket_review_slot_events");
+        expect(host.innerHTML, uid).not.toMatch(/data-testid="examination-/);
+      }
+    }
+  });
+
   it("a viewer who holds no assurance slot on an assured roster sees the roster as before — no form, no 'Request revision' of the panel's", async () => {
     for (const uid of ["req-1", "e-1", "d-1", "x-9"]) {
       await render(ticket(rosterOf([ACCEPT, CHECK, ASSURE, WATCH])), uid);

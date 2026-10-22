@@ -102,7 +102,10 @@ import { writeRosterLedger } from "@/lib/ticketRoster";
 import {
   buildExaminationRecord, examinationOf, isAssuranceSlot, rosterHasAssuranceSlot, rosterOnRecord, shortHash, examinedFilesText,
   examinationFileKey, EXAMINATION_NOTE_MAX, EXAMINATION_NOT_RECORDED, type ExaminationRecord,
+  examinationForAct, examinationAuditFields,
 } from "@/lib/assuranceExamination";
+import { parseRoutingControl, type RoutingControl } from "@/lib/routingControl";
+import { draftToControl, controlToDraft, ASSURANCE_OPT_IN_HINT } from "@/components/documents/RoutingControlSection";
 
 const post = (body: unknown) => workflowAction(new NextRequest("http://x/api/tickets/workflow-action", {
   method: "POST", headers: { authorization: "Bearer t", "content-type": "application/json" }, body: JSON.stringify(body),
@@ -116,12 +119,23 @@ const PLAIN = { slots: [
   { kind: "accept", label: "Requester acceptance", mode: "blocking", fill: { identity: "requester" } },
   { kind: "check", label: "Engineering check", mode: "blocking", fill: { capability: "ticket.final_approve" }, independent_of: ["drafter"] },
 ] };
-// The same, plus a facility's own blocking check filled by a named person and
-// a notify-only slot — the two assurance shapes GAP-102 names.
+// The same, plus a facility's own blocking check filled by a named person —
+// opted in as an assurance check by the controller (DF-P20 fix pass 2:
+// `records_examination`, never inferred) — and a notify-only slot.
 const ASSURED = { slots: [
   ...PLAIN.slots,
-  { kind: "assure", label: "Inspection check", mode: "blocking", fill: { users: ["q-1"] }, independent_of: ["drafter"] },
+  { kind: "assure", label: "Inspection check", mode: "blocking", fill: { users: ["q-1"] }, independent_of: ["drafter"], records_examination: true },
   { kind: "watch", label: "Inspection notice", mode: "notify_only", fill: { users: ["q-2"] } },
+] };
+// DF-P20 fix pass 2 (review major): the configured rosters that exist at the
+// deploy — blocking checks that are neither engineering nor the requester's,
+// filled by a named person, by a role, by ticket.direct_approve — carry no
+// opt-in, so they record nothing and render as before.
+const UNFLAGGED = { slots: [
+  ...PLAIN.slots,
+  { kind: "assure", label: "Inspection check", mode: "blocking", fill: { users: ["q-1"] }, independent_of: ["drafter"] },
+  { kind: "lead", label: "Lead check", mode: "blocking", fill: { roles: ["Viewer"] } },
+  { kind: "direct", label: "Direct approval", mode: "blocking", fill: { capability: "ticket.direct_approve" } },
 ] };
 const ticketRow = (over: Record<string, unknown> = {}) => ({
   id: "t1", org_id: "o1", ticket_id: "REQ-1", title: "x", status: "DRAFTING", request_type: "ISO", unit: null,
@@ -181,15 +195,26 @@ describe("GAP-102 (DF-P20) — an assurance sign-off records what was examined o
     const record: ExaminationRecord = {
       v: 1, act: "sign_off", contentHash: roster.contentHash, cycle: "1A",
       files: [{ id: "a-d", name: "iso_1A.pdf", sha256: SHA }, { id: "a-e", name: "iso_1A_sh2.pdf", sha256: SHA }],
-      ofFiles: 2, allFiles: true, note: null,
+      ofFiles: 2, allFiles: true, note: null, defaulted: true,
     };
     expect(ev[0]).toMatchObject({ slot_kind: "assure", event: "satisfied", actor_id: "q-1", content_hash: roster.contentHash });
-    expect(ev[0].details).toEqual({ via: "primary", examination: record });
+    // the event's copy names the slot by its label (fix pass 2, review minor 4)
+    expect(ev[0].details).toEqual({ via: "primary", examination: { ...record, slotLabel: "Inspection check" } });
     // the record and the act agree: one insert, one hash
     expect((ev[0].details.examination as ExaminationRecord).contentHash).toBe(ev[0].content_hash);
     expect(state.r2.filter((x) => x.kind === "GetObjectCommand")).toEqual([]);
     const a = audits().find((x) => x.action === "TICKET_SIGN_SLOT")!;
     expect((a.details.reviewRoster as Record<string, unknown>).examination).toEqual({ slots: ["assure"], ...record });
+  });
+
+  it("fix pass 2 (review minor 1): the panel's sign-off with every file left ticked sends the list — a chosen 'all', not defaulted", async () => {
+    const roster = await submitRouted(ASSURED);
+    actOn(roster, "q-1", SIG);
+    expect((await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG, examination: { files: ["a-d", "a-e"], note: null } })).status).toBe(200);
+    const rec = events()[0].details.examination as ExaminationRecord;
+    expect(rec).toMatchObject({ allFiles: true, ofFiles: 2 });
+    expect("defaulted" in rec).toBe(false);
+    expect(examinedFilesText(rec)).toBe("Examined all 2 files: iso_1A.pdf, iso_1A_sh2.pdf");
   });
 
   it("the reviewer narrows the files and writes a note: the record names exactly those files (roster order) and the trimmed note; the dry run takes the same body", async () => {
@@ -225,7 +250,7 @@ describe("GAP-102 (DF-P20) — an assurance sign-off records what was examined o
     const roster = await submitRouted({ slots: [
       { kind: "accept", label: "Requester acceptance", mode: "blocking", fill: { identity: "requester" } },
       { kind: "check", label: "Engineering check", mode: "blocking", fill: { capability: "ticket.final_approve" } },
-      { kind: "assure", label: "Inspection check", mode: "blocking", fill: { users: ["q-1", "req-1"] } },
+      { kind: "assure", label: "Inspection check", mode: "blocking", fill: { users: ["q-1", "req-1"] }, records_examination: true },
     ] });
     actOn(roster, "req-1", SIG);
     expect((await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG })).status).toBe(200);
@@ -247,11 +272,13 @@ describe("GAP-102 (DF-P20) — a veto records what was examined, and must say wh
     expect(ev.map((e) => [e.slot_kind, e.event])).toEqual([["accept", "voided"], ["check", "voided"], ["assure", "voided"]]);
     expect(ev.find((e) => e.slot_kind === "accept")!.details).toEqual({ reason: "request_revision" });
     expect(ev.find((e) => e.slot_kind === "check")!.details).toEqual({ reason: "request_revision" });
+    // the page's Request Revision sends no file list: listed, never "examined"
     expect(ev.find((e) => e.slot_kind === "assure")!.details).toEqual({ reason: "request_revision", examination: {
       v: 1, act: "veto", contentHash: roster.contentHash, cycle: "1A",
       files: [{ id: "a-d", name: "iso_1A.pdf", sha256: SHA }, { id: "a-e", name: "iso_1A_sh2.pdf", sha256: SHA }],
-      ofFiles: 2, allFiles: true, note: "the weld map is missing",
+      ofFiles: 2, allFiles: true, note: "the weld map is missing", defaulted: true, slotLabel: "Inspection check",
     } });
+    expect(examinedFilesText(ev.find((e) => e.slot_kind === "assure")!.details.examination as ExaminationRecord)).toBe("Files under review: all 2 (not narrowed — the reviewer was not asked): iso_1A.pdf, iso_1A_sh2.pdf");
     const closed = audits().find((x) => x.action === "TICKET_REQUEST_REVISION")!.details.reviewRoster as Record<string, unknown>;
     expect(closed).toMatchObject({ id: roster.id, event: "closed", reason: "request_revision", examination: { slots: ["assure"], act: "veto", note: "the weld map is missing" } });
   });
@@ -261,7 +288,9 @@ describe("GAP-102 (DF-P20) — a veto records what was examined, and must say wh
     actOn(roster, "q-1");
     const res = await post({ ticketId: "t1", actionType: "request_revision", comment: "sheet 1 only — dimension missing", examination: { files: ["a-d"], note: "sheet 1 only — dimension missing" } });
     expect(res.status).toBe(200);
-    expect(events().find((e) => e.slot_kind === "assure")!.details.examination).toMatchObject({ act: "veto", files: [{ id: "a-d" }], allFiles: false, note: "sheet 1 only — dimension missing" });
+    const rec = events().find((e) => e.slot_kind === "assure")!.details.examination as ExaminationRecord;
+    expect(rec).toMatchObject({ act: "veto", files: [{ id: "a-d" }], allFiles: false, note: "sheet 1 only — dimension missing" });
+    expect("defaulted" in rec).toBe(false);
   });
 
   it("a veto with no reason is refused (the comment is required, trimmed) — nothing written", async () => {
@@ -283,7 +312,7 @@ describe("GAP-102 (DF-P20) — a veto records what was examined, and must say wh
     expect(res.status).toBe(200);
     const assure = events().find((e) => e.slot_kind === "assure")!;
     expect(assure.event).toBe("voided");
-    expect(assure.details.examination).toMatchObject({ act: "veto", allFiles: true, note: "w".repeat(EXAMINATION_NOTE_MAX), noteTruncated: true });
+    expect(assure.details.examination).toMatchObject({ act: "veto", allFiles: true, note: "w".repeat(EXAMINATION_NOTE_MAX), noteTruncated: true, defaulted: true });
     expect(JSON.stringify(updates())).toContain(comment);
     expect((audits().find((x) => x.action === "TICKET_REQUEST_REVISION")!.details.reviewRoster as { examination: { noteTruncated?: boolean } }).examination.noteTruncated).toBe(true);
   });
@@ -310,6 +339,26 @@ describe("GAP-102 (DF-P20) — a veto records what was examined, and must say wh
 });
 
 describe("REGRESSION (DF-P20 ruling (3)) — a slot that is not an assurance slot, and every request with none, is exactly as before", () => {
+  it("fix pass 2 (review major): a configured table with NO opt-in — a person-, role- or ticket.direct_approve-filled blocking check — records nothing on any sign-off or veto, and its roster carries no flag (exactly as before the deploy)", async () => {
+    const roster = await submitRouted(UNFLAGGED);
+    expect(roster.slots.some((x) => "recordsExamination" in x)).toBe(false);
+    actOn(roster, "q-1", SIG);
+    expect((await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG, examination: "garbage" })).status).toBe(200);
+    // q-1 fills the person-filled check and the role-filled one: { via } only on each
+    expect(events().map((e) => [e.slot_kind, e.details])).toEqual([["assure", { via: "primary" }], ["lead", { via: "primary" }]]);
+    expect("examination" in (audits().find((x) => x.action === "TICKET_SIGN_SLOT")!.details.reviewRoster as Record<string, unknown>)).toBe(false);
+    actOn(roster, "q-1");
+    expect((await post({ ticketId: "t1", actionType: "request_revision", comment: "fix it", examination: { files: ["gone"] } })).status).toBe(200);
+    expect(events().every((e) => !("examination" in e.details))).toBe(true);
+    expect("examination" in (audits().find((x) => x.action === "TICKET_REQUEST_REVISION")!.details.reviewRoster as Record<string, unknown>)).toBe(false);
+  });
+
+  it("fix pass 2: the opt-in is copied to the roster slot only where the routing slot carries it (blocking); every other slot is stored as before", async () => {
+    const roster = await submitRouted(ASSURED);
+    expect(roster.slots.filter((x) => x.recordsExamination === true).map((x) => x.kind)).toEqual(["assure"]);
+    expect(roster.slots.filter((x) => x.kind !== "assure").some((x) => "recordsExamination" in x)).toBe(false);
+  });
+
   it("the engineering sign-off on an assured roster: its event is { via } only, its audit row has no examination — even when a client sends one", async () => {
     const roster = await submitRouted(ASSURED);
     actOn(roster, "e-1", SIG);
@@ -377,12 +426,15 @@ describe("REGRESSION (DF-P20 ruling (3)) — a slot that is not an assurance slo
 });
 
 describe("lib/assuranceExamination.ts — the record, pure", () => {
-  const slot = (over: Partial<TicketReviewSlot>): TicketReviewSlot => ({ id: "r:x", kind: "x", label: "X", mode: "blocking", primaries: ["q-1"], alternates: [], overriders: [], independentOf: [], timeoutDays: null, fallback: false, status: "open", ...over });
+  const slot = (over: Partial<TicketReviewSlot>): TicketReviewSlot => ({ id: "r:x", kind: "x", label: "X", mode: "blocking", primaries: ["q-1"], alternates: [], overriders: [], independentOf: [], timeoutDays: null, fallback: false, status: "open", recordsExamination: true, ...over });
   const T = { requesterId: "req-1" } as Pick<Ticket, "requesterId">;
   const R = { contentHash: "c".repeat(64), cycle: "1A", files: [{ id: "a", name: "a.pdf", url: "k/a", sha256: "1".repeat(64) }, { id: null, name: "b.pdf", url: "k/b", sha256: null, unhashed: "too large to hash in a request" }] };
 
   it("an assurance slot is a property, not a name: a blocking slot, not the engineering approval, not the requester-only slot; a fallback slot is; notify-only and consent-window slots are not (fix pass)", () => {
     expect(isAssuranceSlot(slot({}), T)).toBe(true);
+    // fix pass 2 (review major): never inferred — no opt-in, no assurance slot
+    expect(isAssuranceSlot(slot({ recordsExamination: undefined }), T)).toBe(false);
+    expect(rosterHasAssuranceSlot({ slots: [slot({ recordsExamination: undefined }), slot({ recordsExamination: undefined, fallback: true })] }, T)).toBe(false);
     // notify-only: told, never signed — no act a record could ride
     expect(isAssuranceSlot(slot({ mode: "notify_only", status: "told" }), T)).toBe(false);
     // consent window: it can advance by silence (nobody examined anything)
@@ -398,10 +450,16 @@ describe("lib/assuranceExamination.ts — the record, pure", () => {
   });
   it("buildExaminationRecord: default all; a file bound by identity keeps a null sha256; keys are the attachment id, else the storage key", () => {
     const all = buildExaminationRecord(R, undefined, { act: "sign_off" });
-    expect(all).toEqual({ ok: true, record: { v: 1, act: "sign_off", contentHash: R.contentHash, cycle: "1A", files: [{ id: "a", name: "a.pdf", sha256: R.files[0].sha256 }, { id: null, name: "b.pdf", sha256: null }], ofFiles: 2, allFiles: true, note: null } });
+    expect(all).toEqual({ ok: true, record: { v: 1, act: "sign_off", contentHash: R.contentHash, cycle: "1A", files: [{ id: "a", name: "a.pdf", sha256: R.files[0].sha256 }, { id: null, name: "b.pdf", sha256: null }], ofFiles: 2, allFiles: true, note: null, defaulted: true } });
+    // a body with no file list is defaulted too; a full list is a choice
+    expect(buildExaminationRecord(R, { note: "n" }, { act: "sign_off" })).toMatchObject({ ok: true, record: { defaulted: true } });
+    const chosen = buildExaminationRecord(R, { files: ["a", "k/b"] }, { act: "sign_off" });
+    expect(chosen.ok && chosen.record.allFiles).toBe(true);
+    expect(chosen.ok && "defaulted" in chosen.record).toBe(false);
     expect(R.files.map(examinationFileKey)).toEqual(["a", "k/b"]);
     const one = buildExaminationRecord(R, { files: ["k/b", "k/b"], note: " n " }, { act: "sign_off" });
     expect(one.ok && one.record).toMatchObject({ files: [{ name: "b.pdf" }], allFiles: false, note: "n" });
+    expect(one.ok && "defaulted" in one.record).toBe(false);
   });
   it("a veto's note: the client's, else the comment (trimmed); neither → refused", () => {
     expect(buildExaminationRecord(R, null, { act: "veto", comment: "  why  " })).toMatchObject({ ok: true, record: { act: "veto", note: "why" } });
@@ -435,6 +493,13 @@ describe("lib/assuranceExamination.ts — the record, pure", () => {
     expect(shortHash("abc")).toBe("abc");
     expect(examinedFilesText({ files: [{ id: "a", name: "a.pdf", sha256: null }], ofFiles: 2, allFiles: false })).toBe("Examined 1 of 2 files: a.pdf");
     expect(examinedFilesText({ files: [{ id: "a", name: "a.pdf", sha256: null }], ofFiles: 1, allFiles: true })).toBe("Examined all 1 file: a.pdf");
+    // fix pass 2 (review minor 1): the reviewer was not asked — never "Examined"
+    expect(examinedFilesText({ files: [{ id: "a", name: "a.pdf", sha256: null }, { id: "b", name: "b.pdf", sha256: null }], ofFiles: 2, allFiles: true, defaulted: true })).toBe("Files under review: all 2 (not narrowed — the reviewer was not asked): a.pdf, b.pdf");
+  });
+  it("fix pass 2: examinationOf reads back the defaulted mark and the slot label; junk in either is dropped, never a throw", () => {
+    const base = { v: 1, act: "veto", contentHash: "c".repeat(64), cycle: null, files: [], ofFiles: 0, allFiles: true, note: "n" };
+    expect(examinationOf({ examination: { ...base, defaulted: true, slotLabel: "Inspection check" } })).toEqual({ ...base, defaulted: true, slotLabel: "Inspection check" });
+    expect(examinationOf({ examination: { ...base, defaulted: "yes", slotLabel: 4 } })).toEqual(base);
   });
   it("rosterOnRecord reads a closed roster too (the panel's history), and nothing that is not one", () => {
     const r = { v: 1, id: "r", slots: [], files: [], closedAt: "x" };
@@ -459,7 +524,7 @@ describe("lib/ticketRoster.ts writeRosterLedger — the record rides the event i
   it("only the named slots' rows carry it; without it every row is byte-identical to DF-P5's", async () => {
     expect(await writeRosterLedger(client, { orgId: "o1", ticketId: "t1", roster, event: "satisfied", slots: [s("a"), s("b")], actor: { uid: "q-1", name: "q" }, examination: { kinds: ["b"], record } })).toBeNull();
     const rows = inserts.find((i) => i.t === "ticket_review_slot_events")!.rows as Array<{ slot_kind: string; details: unknown }>;
-    expect(rows.map((r) => r.details)).toEqual([{ via: "primary" }, { via: "primary", examination: record }]);
+    expect(rows.map((r) => r.details)).toEqual([{ via: "primary" }, { via: "primary", examination: { ...record, slotLabel: "b" } }]);
     inserts.length = 0;
     await writeRosterLedger(client, { orgId: "o1", ticketId: "t1", roster, event: "satisfied", slots: [s("a")], actor: { uid: "q-1", name: "q" } });
     expect((inserts.find((i) => i.t === "ticket_review_slot_events")!.rows as Array<{ details: unknown }>)[0].details).toEqual({ via: "primary" });
@@ -474,7 +539,7 @@ describe("lib/ticketRoster.ts writeRosterLedger — the record rides the event i
 describe("DEC-35 / no migration — what DF-P20 wrote names no facility vocabulary and adds no table", () => {
   it("the census words (built from fragments, so this file adds no hit) appear in none of DF-P20's files", () => {
     const words = new RegExp([["QA", "QC"], ["QA/", "QC"], ["B", "31"], ["N", "DE"], ["radio", "graph"]].map((w) => w.join("")).join("|"));
-    for (const f of ["lib/assuranceExamination.ts", "lib/ticketRoster.ts", "components/requests/TicketRosterPanel.tsx", "lib/__tests__/dfRoundG_P20_assuranceExamination.test.ts", "lib/__tests__/dfRoundG_P20_assurancePanelRender.test.ts"]) {
+    for (const f of ["lib/assuranceExamination.ts", "lib/ticketRoster.ts", "components/requests/TicketRosterPanel.tsx", "lib/routingControl.ts", "components/documents/RoutingControlSection.tsx", "lib/__tests__/dfRoundG_P20_assuranceExamination.test.ts", "lib/__tests__/dfRoundG_P20_assurancePanelRender.test.ts"]) {
       expect(readFileSync(join(process.cwd(), f), "utf8"), f).not.toMatch(words);
     }
   });
@@ -482,5 +547,57 @@ describe("DEC-35 / no migration — what DF-P20 wrote names no facility vocabula
     const sql = readFileSync(join(process.cwd(), "supabase", "migrations", "20261242_df_roundG_ticket_roster.sql"), "utf8");
     expect(sql).toContain("details JSONB NOT NULL DEFAULT '{}'::jsonb,");
     expect(sql).toContain("event TEXT NOT NULL CHECK (event IN ('opened', 'told', 'satisfied', 'voided')),");
+  });
+});
+
+describe("DF-P20 fix pass 2 (review major) — an assurance slot is the controller's explicit opt-in, never inferred", () => {
+  const base = (over: Record<string, unknown>) => ({ slots: [{ kind: "eng", mode: "blocking", fill: { capability: "ticket.final_approve" } }, { kind: "assure", mode: "blocking", fill: { users: ["q-1"] }, ...over }] });
+  const assureOf = (raw: unknown) => { const p = parseRoutingControl(raw); return p && p.ok ? p.control.slots[1] : p; };
+  it("parseRoutingControl keeps records_examination: true on a blocking slot; false / null / absent store nothing", () => {
+    expect(assureOf(base({ records_examination: true }))).toMatchObject({ kind: "assure", records_examination: true });
+    for (const v of [false, null, undefined]) expect("records_examination" in (assureOf(base({ records_examination: v })) as object)).toBe(false);
+  });
+  it("refused on a notify-only or consent-window slot, on a slot only the requester fills, and as anything but true", () => {
+    expect(parseRoutingControl(base({ mode: "notify_only", records_examination: true }))).toMatchObject({ ok: false, error: expect.stringMatching(/only a blocking slot records what its reviewer examined/) });
+    expect(parseRoutingControl(base({ mode: "consent_window", records_examination: true }))).toMatchObject({ ok: false });
+    expect(parseRoutingControl(base({ fill: { identity: "requester" }, records_examination: true }))).toMatchObject({ ok: false, error: expect.stringMatching(/requester's own acceptance/) });
+    expect(parseRoutingControl(base({ records_examination: "yes" }))).toMatchObject({ ok: false, error: expect.stringMatching(/records_examination is true or absent/) });
+    // the requester AND others: the others' check may record
+    expect(assureOf(base({ fill: { identity: "requester", users: ["q-1"] }, records_examination: true }))).toMatchObject({ records_examination: true });
+  });
+  it("the routing editor: never ticked by default, round-trips a stored opt-in, writes it only on a blocking slot not filled by the requester alone", () => {
+    const stored: RoutingControl = { slots: [
+      { kind: "eng", mode: "blocking", fill: { capability: "ticket.final_approve" } },
+      { kind: "assure", label: "Inspection check", mode: "blocking", fill: { users: ["q-1"] }, records_examination: true },
+    ] };
+    const drafts = controlToDraft(stored);
+    expect(drafts.map((d) => d.recordsExamination ?? false)).toEqual([false, true]);
+    expect(draftToControl(drafts)).toEqual(stored);
+    // switched to notify-only, or to the requester: dropped (a stored value the parser would refuse is never written)
+    expect("records_examination" in draftToControl([{ ...drafts[1], mode: "notify_only" }]).slots[0]).toBe(false);
+    expect("records_examination" in draftToControl([{ ...drafts[1], fillKind: "requester" }]).slots[0]).toBe(false);
+    // a slot the editor never opted in writes nothing new (a pre-DF-P20 table saves byte-identical)
+    expect(draftToControl(controlToDraft({ slots: [stored.slots[0]] }))).toEqual({ slots: [stored.slots[0]] });
+    expect(ASSURANCE_OPT_IN_HINT).toMatch(/neither the engineering approval nor the requester's own acceptance/);
+    const src = readFileSync(join(process.cwd(), "components", "documents", "RoutingControlSection.tsx"), "utf8");
+    expect(src).toContain('{s.mode === "blocking" && s.fillKind !== "requester" && (');
+    expect(src).toContain('checked={!!s.recordsExamination}');
+  });
+  it("examinationForAct: nothing to record when no occupied slot is opted in (the body ignored, even junk); the audit copy is empty then", () => {
+    const R = { contentHash: "c".repeat(64), cycle: "1A", files: [{ id: "a", name: "a.pdf", url: "k/a", sha256: null }] };
+    const T = { requesterId: "req-1" };
+    const s = (over: Record<string, unknown>) => ({ slot: { kind: "x", mode: "blocking" as const, primaries: ["q-1"], ...over } });
+    expect(examinationForAct(R, T, [s({})], "junk", { act: "sign_off" })).toEqual({ ok: true, value: null });
+    expect(examinationAuditFields(null)).toEqual({});
+    const got = examinationForAct(R, T, [s({ recordsExamination: true }), s({ kind: "y" })], undefined, { act: "veto", comment: "why" });
+    expect(got).toMatchObject({ ok: true, value: { kinds: ["x"], record: { act: "veto", note: "why", defaulted: true } } });
+    expect(examinationForAct(R, T, [s({ recordsExamination: true })], "junk", { act: "sign_off" })).toMatchObject({ ok: false });
+  });
+  it("review minor 3: the workflow route carries one call per act (the computation lives in lib/assuranceExamination.ts)", () => {
+    const route = readFileSync(join(process.cwd(), "app", "api", "tickets", "workflow-action", "route.ts"), "utf8");
+    expect(route).toContain('const exam = examinationForAct(openRosterNow, ticket, plan.fillable, body.examination, { act: "sign_off" });');
+    expect(route).toContain('const exam = examinationForAct(openRosterNow, ticket, [...occ.fillable, ...occ.blocked], body.examination, { act: "veto", comment: body.comment ?? null });');
+    expect(route.match(/examinationAuditFields\(examination\)/g)).toHaveLength(2);
+    expect(route).not.toMatch(/isAssuranceSlot|buildExaminationRecord/);
   });
 });

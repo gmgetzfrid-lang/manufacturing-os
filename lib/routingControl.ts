@@ -105,6 +105,15 @@ export interface RoutingSlot {
    *  waiting like a sign-off (lib/consentWindow.ts planConsentWindow). Kept
    *  only on a consent-window slot. */
   consent_confirmed?: true;
+  /** GAP-102 (DF-P20 fix pass 2): the controller's explicit opt-in — this
+   *  BLOCKING slot is an assurance check, and its reviewer records what they
+   *  examined with the sign-off or the revision request it backs
+   *  (lib/assuranceExamination.ts isAssuranceSlot). Absent = the slot
+   *  behaves and renders exactly as before (no slot is made one by
+   *  inference). Refused on a notify-only or consent-window slot (no
+   *  sign-off to record it on) and on a slot only the requester fills (their
+   *  own acceptance is not an assurance check). */
+  records_examination?: true;
 }
 
 export interface RoutingControl {
@@ -209,6 +218,14 @@ export function parseRoutingControl(raw: unknown): { ok: true; control: RoutingC
     // Fix pass 3: the opt-in rides only a consent-window slot (a slot
     // switched to another mode simply drops it).
     if (o.consent_confirmed === true && slot.mode === "consent_window") slot.consent_confirmed = true;
+    // GAP-102 (DF-P20 fix pass 2): the assurance opt-in — a blocking slot a
+    // reviewer other than the requester signs. Never inferred.
+    if (o.records_examination !== undefined && o.records_examination !== null && o.records_examination !== false) {
+      if (o.records_examination !== true) return { ok: false, error: `slot "${kind}": records_examination is true or absent` };
+      if (slot.mode !== "blocking") return { ok: false, error: `slot "${kind}": only a blocking slot records what its reviewer examined — a notice or a consent window has no sign-off to record it on` };
+      if (fill.identity === "requester" && !fill.roles && !fill.users && !fill.capability) return { ok: false, error: `slot "${kind}": the requester's own acceptance does not record an examination — it is not an assurance check` };
+      slot.records_examination = true;
+    }
     slots.push(slot);
   }
   // independent_of may name a party or another slot of THIS table.

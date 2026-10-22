@@ -21,18 +21,18 @@
 //       assurance slot — behaves and renders exactly as before; an event
 //       written before this shipped renders "Examination not recorded".
 //
-// An ASSURANCE SLOT is a property of the slot, never of its name (DEC-35):
-// a BLOCKING roster slot — one a person signs, the act a record can ride —
-// that asks "is it correct?" of someone other than the requester, and is not
-// the request's engineering approval. So the engineering sign-off (a slot
-// filled by an engineering capability, or the gate the roster appended —
-// `engineering: true`), the requester's own acceptance (a slot only the
-// requester fills — the panel's "Is this what you asked for?"), a notify-only
-// slot (told, never signed: no act to record on) and a consent-window slot
-// (it can advance by silence, when nobody examined anything — DF-P7) are
-// not; a facility's other blocking checks are. DF-P20 fix pass: this derived
-// reading still reaches the existing non-engineering blocking slots of
-// configured rosters, so it is put to the integrator (DEC-44 (DF-P20) item 1).
+// An ASSURANCE SLOT is a property of the slot, never of its name (DEC-35),
+// and never inferred (DF-P20 fix pass 2): a BLOCKING roster slot whose
+// routing slot carries the controller's explicit opt-in
+// (lib/routingControl.ts `records_examination`, set in the routing editor;
+// copied to the roster slot as `recordsExamination` when the roster opens).
+// The opt-in is refused on a notify-only or consent-window slot and on a
+// slot only the requester fills; on top of it, the engineering sign-off (a
+// slot filled by ticket.final_approve / ticket.eng_review, or the gate the
+// roster appended — `engineering: true`) and a slot whose people resolved to
+// the requester alone never record one. So no existing roster changes when
+// this ships: a slot without the opt-in behaves and renders exactly as
+// before (ruling (3)), whatever its mode, fill or label.
 //
 // A veto's note that falls back to the revision request's own comment is
 // never a reason to refuse the revision request (bookkeeping never blocks a
@@ -77,6 +77,15 @@ export interface ExaminationRecord {
    *  longer revision comment (the comment is kept whole on the ticket).
    *  Absent otherwise. */
   noteTruncated?: true;
+  /** DF-P20 fix pass 2: true when the act carried no examination body (the
+   *  page's own Request Revision, an API caller): the files listed are every
+   *  file under review, but the reviewer was never asked which they examined
+   *  — it reads "Files under review", never "Examined". Absent otherwise. */
+  defaulted?: true;
+  /** DF-P20 fix pass 2: the slot's label as the roster named it, written per
+   *  slot on its event (lib/ticketRoster.ts writeRosterLedger), so an earlier
+   *  round reads by it once its roster is gone. Absent on the audit row. */
+  slotLabel?: string;
 }
 
 /** The slot only the requester fills — "Is this what you asked for?" (the
@@ -85,10 +94,11 @@ export function requesterOnlySlot(slot: Pick<TicketReviewSlot, "primaries">, tic
   return slot.primaries.length === 1 && slot.primaries[0] === ticket.requesterId;
 }
 
-/** True for an assurance slot (see the header): a blocking slot, not the
- *  engineering approval, not the requester's own acceptance. Pure. */
-export function isAssuranceSlot(slot: Pick<TicketReviewSlot, "primaries" | "engineering" | "mode">, ticket: Pick<Ticket, "requesterId">): boolean {
-  return slot.mode === "blocking" && slot.engineering !== true && !requesterOnlySlot(slot, ticket);
+/** True for an assurance slot (see the header): a blocking slot the
+ *  controller opted in (`recordsExamination`), not the engineering approval,
+ *  not the requester's own acceptance. Pure. */
+export function isAssuranceSlot(slot: Pick<TicketReviewSlot, "primaries" | "engineering" | "mode" | "recordsExamination">, ticket: Pick<Ticket, "requesterId">): boolean {
+  return slot.recordsExamination === true && slot.mode === "blocking" && slot.engineering !== true && !requesterOnlySlot(slot, ticket);
 }
 
 /** True when the roster carries at least one assurance slot. */
@@ -110,7 +120,9 @@ export const examinationFileKey = (f: { id?: string | null; url?: string | null 
 /**
  * Build the record a sign-off or a veto carries, from the roster under review
  * and what the client sent (`{ files?: string[]; note?: string }`, or nothing:
- * every file, no note). `files` names files by examinationFileKey; one that is
+ * every file, no note — marked `defaulted` whenever no file list was sent, so
+ * it never reads as the reviewer's choice). `files` names files by
+ * examinationFileKey; one that is
  * not under review, an empty list, or a malformed field is refused with the
  * reason (the client is stale or wrong — a record must never name files the
  * roster did not bind). A veto's note is the client's note, else the revision
@@ -154,6 +166,8 @@ export function buildExaminationRecord(
     if (note && note.length > EXAMINATION_NOTE_MAX) { note = note.slice(0, EXAMINATION_NOTE_MAX); noteTruncated = true; }
   }
   if (opts.act === "veto" && !note) return { ok: false, error: "A revision request must say why — add a note." };
+  // No file list sent: every file is listed, but nobody chose it.
+  const defaulted = o.files === undefined || o.files === null;
   return {
     ok: true,
     record: {
@@ -166,9 +180,39 @@ export function buildExaminationRecord(
       allFiles: picked.length === all.length,
       note,
       ...(noteTruncated ? { noteTruncated: true as const } : {}),
+      ...(defaulted ? { defaulted: true as const } : {}),
     },
   };
 }
+
+type Occupied = { slot: Pick<TicketReviewSlot, "kind" | "primaries" | "engineering" | "mode" | "recordsExamination"> };
+export type ExaminationOnAct = { kinds: string[]; record: ExaminationRecord };
+
+/**
+ * DF-P20 fix pass 2 — the workflow route's two calls, kept here so the
+ * route carries one line each. A sign-off: the assurance slots among the
+ * slots it fills (`fillable`) carry the record. A veto (a revision request):
+ * the assurance slots the caller occupies, open to them or blocked
+ * (`occupied`), carry it with the reason. `value` null: nothing to record
+ * (the act is exactly as before, the body ignored). Pure.
+ */
+export function examinationForAct(
+  roster: Pick<TicketReviewRoster, "contentHash" | "cycle" | "files">,
+  ticket: Pick<Ticket, "requesterId">,
+  occupied: readonly Occupied[],
+  raw: unknown,
+  opts: { act: "sign_off" | "veto"; comment?: string | null },
+): { ok: true; value: ExaminationOnAct | null } | { ok: false; error: string } {
+  const kinds = occupied.filter((x) => isAssuranceSlot(x.slot, ticket)).map((x) => x.slot.kind);
+  if (kinds.length === 0) return { ok: true, value: null };
+  const built = buildExaminationRecord(roster, raw, opts);
+  return built.ok ? { ok: true, value: { kinds, record: built.record } } : built;
+}
+
+/** The audit row's copy of the record (`reviewRoster.examination`), or
+ *  nothing. Pure. */
+export const examinationAuditFields = (e: ExaminationOnAct | null): { examination?: ExaminationRecord & { slots: string[] } } =>
+  e ? { examination: { slots: e.kinds, ...e.record } } : {};
 
 /** The record on a slot event's `details`, or null — an event written before
  *  DF-P20, or one that is not an assurance event. Tolerant of any shape: a
@@ -188,16 +232,21 @@ export function examinationOf(details: unknown): ExaminationRecord | null {
     allFiles: e.allFiles === true,
     note: typeof e.note === "string" && e.note.trim() ? e.note : null,
     ...(e.noteTruncated === true ? { noteTruncated: true as const } : {}),
+    ...(e.defaulted === true ? { defaulted: true as const } : {}),
+    ...(typeof e.slotLabel === "string" && e.slotLabel.trim() ? { slotLabel: e.slotLabel } : {}),
   };
 }
 
 /** A hash shortened for reading (the full value is copied, never shown cut). */
 export const shortHash = (h: string, n = 12): string => (h.length > n ? `${h.slice(0, n)}…` : h);
 
-/** "Examined all 3 files: a.pdf, b.pdf, c.pdf" / "Examined 1 of 3 files: a.pdf". */
-export function examinedFilesText(r: Pick<ExaminationRecord, "files" | "ofFiles" | "allFiles">): string {
+/** "Examined all 3 files: a.pdf, b.pdf, c.pdf" / "Examined 1 of 3 files: a.pdf".
+ *  A defaulted record (the reviewer was not asked) never says "Examined":
+ *  "Files under review: all 3 (not narrowed — the reviewer was not asked): …". */
+export function examinedFilesText(r: Pick<ExaminationRecord, "files" | "ofFiles" | "allFiles" | "defaulted">): string {
   const names = r.files.map((f) => f.name || "a file").join(", ");
   const n = r.ofFiles;
+  if (r.defaulted) return `Files under review: all ${n} (not narrowed — the reviewer was not asked)${names ? `: ${names}` : ""}`;
   const count = r.allFiles ? `all ${n} ${n === 1 ? "file" : "files"}` : `${r.files.length} of ${n} ${n === 1 ? "file" : "files"}`;
   return `Examined ${count}${names ? `: ${names}` : ""}`;
 }
