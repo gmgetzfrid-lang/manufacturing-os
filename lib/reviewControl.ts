@@ -25,6 +25,13 @@ import { loadScanRetryPlan } from "@/lib/complianceNotify";
 // reminders do not: the cron only prunes, DEC-108 §6).
 import { pushAfterBellRows, type PushSendInput } from "@/lib/notify/dispatch";
 import { logAuditAction } from "@/lib/audit";
+// drafting-flow EVID-8 done-when 3 (projects-joint J21): the timeout
+// activation's audit row is written verified — kept in the EVID-6 outbox
+// (DEC-109) when both attempts fail.
+import { deadLetterAuditRow, type DeadLetterRow } from "@/lib/auditOutbox";
+// drafting-flow PROJ-1 (projects-joint J21): a request's deliverable whose
+// document review completes here is referenced on the request's project.
+import { referenceReviewedRequestDeliverable } from "@/lib/reviewDeliverableReference";
 import { recordSignature, type SigningCredential } from "@/lib/eSignatures";
 import { effectiveOwnerForDocument, resolveEffectiveOwner, getOrgControllers, teamSupervisorMap, type LibraryOwnerCols, type TeamSupervisorLookup } from "@/lib/ownership";
 import { applyEffectiveDate } from "@/lib/effectiveDate";
@@ -868,6 +875,54 @@ async function libraryRequiresIndependentReviewer(documentId: string): Promise<b
 
 // ── Alternates ───────────────────────────────────────────────────────────────
 
+/** drafting-flow EVID-8 done-when 3 (projects-joint J21): how long the timeout
+ *  activation's audit write waits before its one retry. */
+export const ACTIVATION_AUDIT_RETRY_MS = 500;
+/** EVID-8 dw3: the machine that activates an alternate on silence, as its
+ *  audit row names it (DEC-87 §2: user_id NULL — never an invented uuid —
+ *  user_email `system:<channel>`, user_role `system`; DF-P7's consent
+ *  advance signs `system:consent-window` the same way). */
+export const REVIEW_TIMEOUT_MACHINE = "system:review-timeout";
+
+/** EVID-8 dw3: the TIMEOUT activation's audit row (a state change the system
+ *  made on silence) is written VERIFIED, never best-effort: the insert's
+ *  answer is read; a refusal or a thrown insert is retried once after
+ *  ACTIVATION_AUDIT_RETRY_MS under the SAME row id (a 23505 on the retry is
+ *  the first attempt, landed — never a second row); when both fail the row is
+ *  dead-lettered to the EVID-6 outbox (lib/auditOutbox.ts, DEC-109) and said
+ *  in the log, so the maintenance cron recovers it into the trail. The row is
+ *  the one logAuditAction wrote for the system actor (user_id NULL,
+ *  metadata.actor_kind "system"), signed as DEC-87 §2's machine row
+ *  (REVIEW_TIMEOUT_MACHINE, role system). Who is activated and when are decided
+ *  before this runs and never depend on it (DEC-90 ruling (5) for J21). */
+async function writeActivationAuditVerified(row: DeadLetterRow): Promise<{ recorded: boolean; deadLettered: boolean }> {
+  const id = typeof globalThis.crypto?.randomUUID === "function" ? globalThis.crypto.randomUUID() : null;
+  let message = "audit insert refused";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, ACTIVATION_AUDIT_RETRY_MS));
+    try {
+      const payload: Record<string, unknown> = id ? { id, ...row } : { ...row };
+      const { error } = await supabase.from("audit_logs").insert(payload);
+      if (!error) return { recorded: true, deadLettered: false };
+      if (attempt > 0 && id && String((error as { code?: string }).code ?? "") === "23505") return { recorded: true, deadLettered: false };
+      message = error.message || "audit insert refused";
+    } catch (e) {
+      message = (e as Error)?.message ?? String(e);
+    }
+  }
+  console.error(`Failed to write audit log (${row.action}) after a retry: ${message}`);
+  let kept = false;
+  try {
+    const r = await deadLetterAuditRow(row, message);
+    kept = r.kept;
+    if (r.kept) console.error(`Audit log (${row.action}): the refused row was kept in the audit dead-letter outbox; the maintenance cron recovers it into the audit trail`);
+    else console.error(`Audit log (${row.action}): the refused row was NOT kept in the audit dead-letter outbox (${r.why ?? "unknown"})`);
+  } catch (e) {
+    console.error(`Audit log (${row.action}): the refused row was NOT kept in the audit dead-letter outbox (${(e as Error)?.message ?? String(e)})`);
+  }
+  return { recorded: false, deadLettered: kept };
+}
+
 /** Manually activate an alternate (Admin/DocCtrl action when a primary is out).
  *  DIST-19 (P38): the daily scan's timeout activation passes `cause` — its
  *  audit row names the silence that caused it; the manual action passes none
@@ -881,7 +936,7 @@ async function libraryRequiresIndependentReviewer(documentId: string): Promise<b
 export async function activateAlternate(input: {
   orgId: string; documentId: string; libraryId: string; signoffId: string; actorId?: string | null;
   cause?: { reason: "review_timeout"; timeoutDays: number; ageDays: number; documentVersionId: string | null };
-}): Promise<{ reviewerUserId: string; revisionLabel: string | null; noticeLanded: boolean; notificationId: string | null } | null> {
+}): Promise<{ reviewerUserId: string; revisionLabel: string | null; noticeLanded: boolean; notificationId: string | null; auditRecorded: boolean } | null> {
   const { data } = await supabase.from("document_review_signoffs")
     .update({ activated: true, notified_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq("id", input.signoffId).select("reviewer_user_id, revision_label").maybeSingle();
@@ -895,14 +950,28 @@ export async function activateAlternate(input: {
     link: `/documents/${input.libraryId}?doc=${input.documentId}`, resourceType: "document", resourceId: input.documentId,
     actorUserId: input.actorId ?? undefined,
   });
-  await logAuditAction({ action: "REVIEW_ALTERNATE_ACTIVATED", resourceType: "document", resourceId: input.documentId, orgId: input.orgId, userId: input.actorId ?? "", details: input.cause ? { signoffId: input.signoffId, cause: input.cause } : { signoffId: input.signoffId } }).catch(() => {});
+  // EVID-8 dw3 (projects-joint J21): the TIMEOUT activation (`cause`, the
+  // system acting on silence) writes its row verified — checked, retried once,
+  // dead-lettered (writeActivationAuditVerified); the row is the one
+  // logAuditAction wrote for the system actor, signed as DEC-87 §2's machine
+  // row. The manual activation's row is written exactly as before.
+  let auditRecorded = true;
+  if (input.cause && !input.actorId) {
+    auditRecorded = (await writeActivationAuditVerified({
+      action: "REVIEW_ALTERNATE_ACTIVATED", resource_type: "document", resource_id: input.documentId, org_id: input.orgId,
+      user_id: null, user_email: REVIEW_TIMEOUT_MACHINE, user_role: "system",
+      details: { signoffId: input.signoffId, cause: input.cause }, metadata: { actor_kind: "system" },
+    })).recorded;
+  } else {
+    await logAuditAction({ action: "REVIEW_ALTERNATE_ACTIVATED", resourceType: "document", resourceId: input.documentId, orgId: input.orgId, userId: input.actorId ?? "", details: input.cause ? { signoffId: input.signoffId, cause: input.cause } : { signoffId: input.signoffId } }).catch(() => {});
+  }
   if (!input.cause && noticeLanded === true) {
     await recordRequestNotices({
       orgId: input.orgId, documentId: input.documentId, source: "review_signoff",
       notices: [{ kind: "alternate_activated", recipient: data.reviewer_user_id as string, sourceId: input.signoffId, notificationId: bellId, details: { manual: true } }],
     }, { actorId: input.actorId ?? null });
   }
-  return { reviewerUserId: data.reviewer_user_id as string, revisionLabel: (data.revision_label as string | null) ?? null, noticeLanded: noticeLanded === true, notificationId: noticeLanded === true ? bellId : null };
+  return { reviewerUserId: data.reviewer_user_id as string, revisionLabel: (data.revision_label as string | null) ?? null, noticeLanded: noticeLanded === true, notificationId: noticeLanded === true ? bellId : null, auditRecorded };
 }
 
 // ── Finalize (promote the approved draft to the controlled rev) ───────────────
@@ -991,6 +1060,11 @@ export async function finalizeReviewedRevision(input: {
   forceHold?: boolean;
   /** Recorded with the force (optional, as publish_revision's). */
   overrideReason?: string | null;
+  /** drafting-flow PROJ-1 (projects-joint J21): told — once it settles, never
+   *  awaited by the publish — when a request's deliverable this review
+   *  published could not be put on the request's project register. Without
+   *  it the note goes to the console (lib/reviewDeliverableReference.ts). */
+  onProjectReferenceNote?: (note: string) => void;
 }): Promise<{ published: boolean; reason?: string; evidenceSweep?: import("@/lib/checklists").ProjectSweepOutcome & { projects: number } }> {
   const { data: docRow } = await supabase.from("documents")
     .select("id, library_id, rev, status, current_version_id, pending_version_id, checked_out_by, checked_out_by_name").eq("id", input.documentId).maybeSingle();
@@ -1110,6 +1184,19 @@ export async function finalizeReviewedRevision(input: {
     action: "REVISION_PUBLISHED_AFTER_REVIEW", resourceType: "document", resourceId: input.documentId,
     orgId: input.orgId, userId: input.actorId ?? "", details: { rev: baseRev, versionId: pendingId },
   }).catch(() => {});
+  // drafting-flow PROJ-1 (projects-joint J21; DEC-40): the review completed and
+  // the reviewed version is now the controlled revision. When it is a drafting
+  // request's deliverable (document_versions.related_ticket_id) and the
+  // request belongs to a project, the server references the document on that
+  // project's register (POST /api/projects/deliverable-reference — DF-P8's
+  // register policy and lib/ticketProject.ts referenceDeliverableInProject).
+  // STARTED, NEVER AWAITED: the publish answers exactly as before whatever the
+  // reference does; a failure is retried once, recorded on the request's
+  // audit trail by the route, and said (onProjectReferenceNote, else the
+  // console). A version no request produced makes no call.
+  void referenceReviewedRequestDeliverable({
+    orgId: input.orgId, documentId: input.documentId, versionId: pendingId, onNote: input.onProjectReferenceNote,
+  });
   // The FULL post-publish pipeline — the review-gated promote must carry the
   // same protections as a direct publish: stale-copy signals to intent
   // holders, work-package pin-drift alerts, AND the compliance clocks
