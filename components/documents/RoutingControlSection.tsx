@@ -140,11 +140,11 @@ export function withSlotMode(d: DraftSlot, mode: RoutingSlotMode): DraftSlot {
 }
 
 /** DF-P25: what the notify-only opt-in does — never a suggestion to add a
- *  sign-off (GAP-102: assurance as notice plus a stop). DF-P25 review fix
- *  pass 5: and never a claim the hold stops the request — it stops work on
- *  the source document only (GAP-116 owns a stop of the request). */
+ *  sign-off (GAP-102: assurance as notice plus a stop). DF-P26 (GAP-116):
+ *  the hold now stops the request as well as work on the source document
+ *  (lib/requestHoldStop.ts on every issuing path), and the hint says so. */
 export const NOTIFY_EXAMINATION_HINT =
-  "Its people are still only told — nobody waits on them and no sign-off is added. If one of them finds a problem, they can place a hold on the request's source document from the request page, and the hold records the files they examined and why. The hold stops work on the document (no new revision of it is published, and it is not transmitted or shared, until the hold is released — unless Document Control forces a publish past it); it does not stop the request — its review can still complete and its deliverable be issued. Its people need permission to place holds (Admin → Permissions → Action permissions, Place a hold).";
+  "Its people are still only told — nobody waits on them and no sign-off is added. If one of them finds a problem, they can place a hold on the request's source document from the request page, and the hold records the files they examined and why. The hold stops work on the document (no new revision of it is published, and it is not transmitted or shared, until the hold is released — unless Document Control forces a publish past it), and it stops the request too: while it is in force the review cannot complete and the deliverable cannot be issued. Releasing the hold lets the request go on. Its people need permission to place holds (Admin → Permissions → Action permissions, Place a hold).";
 
 /** GAP-109 mechanism 2 (DF-P22): may this slot accept a standing
  *  pre-authorization? Exactly where the assurance opt-in may ride

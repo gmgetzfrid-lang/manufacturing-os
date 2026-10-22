@@ -58,7 +58,7 @@ import { parseRoutingControl, validateRoutingDraft, notifyExaminationOptInAllowe
 import { controlToDraft, draftToControl, notifyExaminationOptInFor, preauthOptInFor, assuranceOptInFor, NOTIFY_EXAMINATION_HINT, withSlotMode } from "@/components/documents/RoutingControlSection";
 import { isAssuranceSlot, isNotifyExaminationSlot, holdExaminationRecord, holdExaminationOf, holdOpenerInSlot, rosterOccupancy, examinedFilesText, examinationOf, jsonbTextBytes, HOLD_EXAMINATION_BUDGET_BYTES, HOLD_EXAMINATION_MAX_BYTES } from "@/lib/assuranceExamination";
 import { preauthEligibleSlots } from "@/lib/ticketPreauthorization";
-import NotifyHoldExamination, { HOLD_RECORD_NOT_STORED, HOLD_RECORD_TOO_LARGE, HOLD_NOT_PERMITTED, HOLD_DOES_NOT_STOP_REQUEST, notifyHoldFormIntro, NOTIFY_HOLDS_HEADING, NOTIFY_HOLD_BUTTON, NO_FILES_UNDER_REVIEW, holdPermissionUncheckedText, NO_SOURCE_TO_HOLD, NOTIFY_HOLD_READ_LIMIT, NOTIFY_HOLDS_MORE, notSlotHoldsText, uncheckedHoldsText, slotStopHolder } from "@/components/requests/NotifyHoldExamination";
+import NotifyHoldExamination, { HOLD_RECORD_NOT_STORED, HOLD_RECORD_TOO_LARGE, HOLD_NOT_PERMITTED, HOLD_STOPS_REQUEST, notifyHoldFormIntro, NOTIFY_HOLDS_HEADING, NOTIFY_HOLD_BUTTON, NO_FILES_UNDER_REVIEW, holdPermissionUncheckedText, NO_SOURCE_TO_HOLD, NOTIFY_HOLD_READ_LIMIT, NOTIFY_HOLDS_MORE, notSlotHoldsText, uncheckedHoldsText, slotStopHolder } from "@/components/requests/NotifyHoldExamination";
 import TicketRosterPanel from "@/components/requests/TicketRosterPanel";
 
 const NOW = "2026-10-22T12:00:00.000Z";
@@ -112,9 +112,10 @@ describe("the opt-in on a notify-only slot — parser, editor, roster", () => {
     // REVIEW FIX 2: the controller is told the slot's people need permission to place holds
     expect(NOTIFY_EXAMINATION_HINT).toMatch(/need permission to place holds \(Admin → Permissions → Action permissions, Place a hold\)/);
     expect(NOTIFY_EXAMINATION_HINT).not.toMatch(/make it|switch|convert|must sign off/i);
-    // REVIEW FIX 5: the hint says what the hold stops (the document) and what it does not (the request)
-    expect(NOTIFY_EXAMINATION_HINT).toMatch(/does not stop the request — its review can still complete and its deliverable be issued/);
-    expect(NOTIFY_EXAMINATION_HINT).not.toMatch(/stops the request|stop the review/i);
+    // REVIEW FIX 5, superseded by DF-P26 (GAP-116 — the hold now stops the request on every issuing path):
+    // the hint says what the hold stops — the document AND the request — and that releasing it lets the request go on
+    expect(NOTIFY_EXAMINATION_HINT).toMatch(/stops the request too: while it is in force the review cannot complete and the deliverable cannot be issued\. Releasing the hold lets the request go on\./);
+    expect(NOTIFY_EXAMINATION_HINT).not.toMatch(/does not stop the request|can still complete/i);
     // REGRESSION: a notify-only slot never ticked writes nothing new
     const plain: RoutingControl = { slots: [{ kind: "watch", mode: "notify_only", fill: { users: ["q-2"] } }] };
     expect(draftToControl(controlToDraft(plain))).toEqual(plain);
@@ -388,12 +389,13 @@ describe("NotifyHoldExamination — with an opted-in notify-only slot", () => {
     expect(arg).not.toHaveProperty("originTicketId");
     expect(host.textContent).toContain("Hold placed, with what you examined.");
   });
-  it("REVIEW FIX 5: the panel never calls the hold a stop of the request — it says the hold stops work on the document and that the request can still issue", async () => {
+  it("REVIEW FIX 5 as superseded by DF-P26 (GAP-116): the panel says the hold stops work on the document AND this request, until it is released", async () => {
     await renderHold(ticket(rosterOf([SIGN, WATCH])), "q-2");
     expect(q("notify-hold-intro")!.textContent).toBe(notifyHoldFormIntro("Inspection notice", "P-100"));
-    expect(q("notify-hold-intro")!.textContent).toContain(HOLD_DOES_NOT_STOP_REQUEST);
-    expect(HOLD_DOES_NOT_STOP_REQUEST).toMatch(/It does not stop this request: its review can still complete and its deliverable be issued\. To stop the request itself, raise it with the assignment queue\./);
-    expect(HOLD_DOES_NOT_STOP_REQUEST).toMatch(/no new revision of it is published, and it is not transmitted or shared, until the hold is released/);
+    expect(q("notify-hold-intro")!.textContent).toContain(HOLD_STOPS_REQUEST);
+    expect(HOLD_STOPS_REQUEST).toMatch(/It also stops this request: while it is in force the review cannot complete and the deliverable cannot be issued\. Releasing the hold lets the request go on\./);
+    expect(HOLD_STOPS_REQUEST).toMatch(/no new revision of it is published, and it is not transmitted or shared, until the hold is released/);
+    expect(q("notify-hold-intro")!.textContent).not.toMatch(/does not stop this request|can still complete/);
     expect(q("notify-hold-place")!.textContent).toBe(NOTIFY_HOLD_BUTTON);
     expect(NOTIFY_HOLD_BUTTON).toBe("Place a hold on the document");
     expect(q("notify-hold-examination")!.textContent).toContain(NOTIFY_HOLDS_HEADING);

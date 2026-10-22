@@ -82,6 +82,14 @@
 // before every requirement issues, as on the route. No requirement applies
 // → no read, the close is today's.
 //
+// DF-P26 (GAP-116): a close that would ISSUE the request is not made while
+// an open hold on its source document carries this request's examination
+// record and was placed by the people of the notify-only slot it names
+// (lib/requestHoldStop.ts — the route's issuing acts meet the same stop).
+// The window stays unclosed (nothing written) and is checked again each
+// run; releasing the hold lets it close. No such slot or no source
+// document → no read, the close is today's.
+//
 // ticket_notice_events (20261255) is the record that survives any bell
 // purge: append-only, written only by the service role.
 
@@ -93,6 +101,7 @@ import { isDeclaredLikeInKind, declarationSignatureStands, type DeclarationSigna
 import { heldRoles } from "@/lib/roleHeld";
 import { flaggedRequestTypes } from "@/lib/requestTypes";
 import { parseExaminationScopeConfig, applicableRequirements, scopeGateOutcome, type ScopeGateOutcome } from "@/lib/examinationScope";
+import { requestHoldStop } from "@/lib/requestHoldStop";
 import { resolveTicketRecipients, isRoutedStatus } from "@/lib/ticketRouting";
 import { wrapEmailBody } from "@/lib/emailRender";
 import { isPreferenceExempt } from "@/lib/notificationPrefs";
@@ -1091,6 +1100,27 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
       report.failed += 1;
       say(`ticket ${ticketId}: its examination data could not be read — the window was not closed (retried next run): ${scopeGate.error}`);
       return;
+    }
+    // DF-P26 (GAP-116; DEC-90 ruling (2) for DF-P26): a close that would
+    // issue meets the same hold stop as the route's issuing acts — an open
+    // hold on the source document carrying THIS request's examination record,
+    // placed by the people of the notify-only slot it names
+    // (lib/requestHoldStop.ts). While it is in force the window is NOT
+    // closed (nothing written; checked again every run), so releasing the
+    // hold lets the close proceed; a read that fails where a record could
+    // exist waits a run, as every other transient read here. Read only where
+    // such a record could exist — every other close is today's.
+    if (undelivered.length === 0 && !engineered && !floorHolds && !independenceHolds && !noLongerMember && wouldIssue && ledgerAgrees && drift.moved.length === 0 && !drift.unchecked && scopeGate?.kind !== "blocked") {
+      const holdStop = await requestHoldStop(sb, { ticket, ticketId, orgId: ticket.orgId });
+      if (holdStop.kind === "unreadable") {
+        report.failed += 1;
+        say(`ticket ${ticketId}: the holds on its source document could not be read — the window was not closed (retried next run): ${holdStop.error}`);
+        return;
+      }
+      if (holdStop.kind === "stopped") {
+        say(`ticket ${ticketId}: ${holdStop.documentLabel} is on hold by the people told of this review (${holdStop.holds.map((h) => h.slotLabel).join(", ")}), which stops this request — the window was not closed; it closes on a run after the hold is released`);
+        return;
+      }
     }
     const holdReason: ConsentHoldReason | null = undelivered.length > 0 ? "undelivered"
       : engineered ? "engineered"

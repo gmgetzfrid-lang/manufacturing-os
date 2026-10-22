@@ -172,8 +172,8 @@ export function examinationOptInAllowed(slot: Pick<RoutingSlot, "mode" | "fill">
 /** drafting-flow DF-P25 (GAP-102 ruling (2), the notify-only limb): the
  *  NOTIFY-ONLY slots the examination opt-in can ride — told, never waited
  *  on; their people may place a hold on the request's source document that
- *  records what they examined (the hold stops work on the document, not the
- *  request — DF-P25 review fix pass 5; GAP-116). The same exclusions as the blocking
+ *  records what they examined (the hold stops work on the document and —
+ *  DF-P26, GAP-116 — the request: lib/requestHoldStop.ts). The same exclusions as the blocking
  *  opt-in: not the requester alone, not an engineering capability. Pure. */
 export function notifyExaminationOptInAllowed(slot: Pick<RoutingSlot, "mode" | "fill">): boolean {
   if (slot.mode !== "notify_only") return false;

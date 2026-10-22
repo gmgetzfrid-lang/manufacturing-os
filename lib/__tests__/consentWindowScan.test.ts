@@ -1380,3 +1380,82 @@ describe("DF-P24 fix pass: the examination-scope gate on an issuing close", () =
     expect(scopeReads()).toEqual([]);
   });
 });
+
+// drafting-flow DF-P26 (GAP-116; DEC-90 ruling (2) for DF-P26): a consent
+// close that would ISSUE the request is not made while an open hold on its
+// source document carries THIS request's examination record and was placed
+// by the people of the notify-only slot it names (lib/requestHoldStop.ts).
+// The window stays unclosed (nothing written; checked again every run);
+// releasing the hold lets it close. Without such a slot or document the
+// close is today's, with no hold read.
+describe("DF-P26 (GAP-116): a notify-only hold stops the consent close that would issue", () => {
+  const DOC = "d0c00000-0000-4000-8000-000000000001";
+  const WATCH = () => slot({ kind: "watch", label: "Inspection notice", mode: "notify_only", primaries: ["q-2"], recordsExamination: true });
+  const hold = (over: Row = {}): Row => ({
+    id: "h-1", org_id: "o1", document_id: DOC, reason: "Other", opened_by: "q-2", opened_at: "2026-10-20T10:00:00Z", released_at: null,
+    examination: { stop: "hold", ticketId: "t1", rosterId: ROSTER_ID, slotKind: "watch", contentHash: "h", files: [], ofFiles: 0, note: "nozzle orientation" },
+    ...over,
+  });
+  const seedHeld = (opts: { watch?: boolean; source?: boolean } = {}) => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    const t = db.tables.tickets[0];
+    const meta = t.metadata as { review_roster: TicketReviewRoster } & Row;
+    if (opts.watch !== false) meta.review_roster = { ...meta.review_roster, slots: [...meta.review_roster.slots, WATCH()] };
+    if (opts.source !== false) meta.source_document = { id: DOC, document_number: "P-100" };
+    db.tables.org_members.push(member("q-2", "Viewer"));
+    db.tables.documents = [{ id: DOC, org_id: "o1", library_id: LIB_ID, collection_id: null, rev: null, current_version_id: null, document_number: "P-100", routing_control: null }];
+  };
+  const holdReads = () => calls("document_holds", "select");
+  it("an open hold of the slot's people naming this request: NOT closed (nothing written); released, the next run issues", async () => {
+    seedHeld();
+    db.tables.document_holds = [hold()];
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 0, held: 0, issued: 0 });
+    expect(r.errors.join("\n")).toMatch(/P-100 is on hold by the people told of this review \(Inspection notice\), which stops this request — the window was not closed; it closes on a run after the hold is released/);
+    expect(db.tables.tickets[0].status).toBe("PENDING_REVIEW");
+    expect(calls("tickets", "update")).toEqual([]);
+    expect(calls("audit_logs", "insert")).toEqual([]);
+    expect(ledgerOps().status).toBe("open");
+    // released: the next run closes it and issues
+    db.tables.document_holds[0].released_at = "2026-10-23T02:00:00Z";
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+    expect(db.tables.tickets[0].status).toBe("PENDING_IFC");
+  });
+  it("a hold naming this request but placed by someone who is not the slot's: the close issues as before", async () => {
+    seedHeld();
+    db.tables.document_holds = [hold({ opened_by: "o-1" })];
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+  });
+  it("the holds unreadable where a record could exist: not closed (retried next run, nothing written)", async () => {
+    seedHeld();
+    db.errors.document_holds = { code: "08006", message: "connection lost" };
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 0, held: 0, issued: 0, failed: 1 });
+    expect(r.errors.join("\n")).toMatch(/the holds on its source document could not be read — the window was not closed \(retried next run\): connection lost/);
+    expect(calls("tickets", "update")).toEqual([]);
+  });
+  it("before 20261267 (no examination column): no hold can carry a record — the close issues", async () => {
+    seedHeld();
+    db.errors.document_holds = { code: "42703", message: "column document_holds.examination does not exist" };
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+  });
+  it("REGRESSION: no opted-in notify-only slot, or no source document, or a close that does not issue — no hold read; today's close", async () => {
+    for (const opts of [{ watch: false }, { source: false }]) {
+      db.calls = [];
+      db.errors = {};
+      seedHeld(opts);
+      db.tables.document_holds = [hold()];
+      expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+      expect(holdReads()).toEqual([]);
+    }
+    db.calls = [];
+    seedHeld();
+    db.tables.tickets[0].metadata = { ...(db.tables.tickets[0].metadata as Row) };
+    const meta = db.tables.tickets[0].metadata as { review_roster: TicketReviewRoster };
+    meta.review_roster = { ...meta.review_roster, slots: meta.review_roster.slots.map((s) => (s.kind === "accept" ? { ...s, status: "open" as const, satisfiedBy: undefined, via: undefined, signatureId: undefined } : s)) };
+    db.tables.ticket_review_slots.find((r) => r.slot_kind === "accept")!.status = "open";
+    db.tables.document_holds = [hold()];
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 0 });
+    expect(holdReads()).toEqual([]);
+  });
+});

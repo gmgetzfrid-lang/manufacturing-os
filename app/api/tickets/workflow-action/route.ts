@@ -46,6 +46,8 @@ import { examinationForAct, examinationAuditFields, type ExaminationOnAct } from
 // GAP-102 acceptance 4 (drafting-flow DF-P24): the examination-scope issue gate.
 import { issueScopeGate } from "@/lib/examinationScopeGate";
 import { workflowEngineContext, rosterlessRoutedRefusal, draftingTypeFlags, DECLARATION_DECIDES } from "@/lib/workflowAuthority";
+// GAP-116 (drafting-flow DF-P26): a notify-only hold that stops the request.
+import { issueHoldStopGate } from "@/lib/requestHoldStop";
 import { ticketReadScope } from "@/lib/ticketReadScope";
 import { offerableLibraries, libraryLabelForTicket, libraryChoiceFromRow, LIBRARY_CHOICE_COLUMNS, UNNAMED_TARGET_LIBRARY } from "@/lib/ticketLibrary";
 import { LIBRARY_RUNG_COLUMNS } from "@/lib/libraryAccess";
@@ -1057,6 +1059,32 @@ export async function POST(req: NextRequest) {
   if (scopeDecision.kind === "pass") {
     examinationScopeAudit = scopeDecision.audit;
     examinationScopeWarningText = scopeDecision.warning;
+  }
+
+  // ── GAP-116 (DF-P26; DEC-90 ruling (2) for DF-P26): a hold that stops the request
+  // An issuing approval, or a roster sign-off that would complete the review
+  // (its dry run too), is refused (409 request_on_hold, nothing written)
+  // while an OPEN hold on the request's source document carries THIS
+  // request's examination record and was placed by one of the people of the
+  // notify-only slot the record names (DF-P25's hold — lib/requestHoldStop.ts).
+  // Releasing the hold lets it proceed. Read only where such a record could
+  // exist (a source document, and a roster on record with an opted-in
+  // notify-only slot); every other request reads nothing here. A read that
+  // fails where a record could exist is a 503 (try again) — never a pass.
+  const holdStop = await issueHoldStopGate(supabaseAdmin, { action: action.action, ticket, ticketId: body.ticketId, callerId: caller.id, sodActive });
+  if (holdStop.kind === "unreadable") {
+    console.error(`[workflow-action] holds on the source document unreadable for ticket ${body.ticketId}: ${holdStop.error}`);
+    const unreadable = "The holds on this request's source document could not be checked, so the approval was not applied. Try again in a moment.";
+    if (action.action === "sign_slot" && body.dryRun !== true) {
+      await recordRefusedSignOff({ signatureId: body.signatureId, ticketId: body.ticketId, orgId: ticket.orgId, caller: { id: caller.id, email: callerEmail, role: callerRole }, status: 503, reason: unreadable, code: "request_hold_unreadable", rosterId: currentRoster(ticket)?.id ?? null });
+    }
+    return NextResponse.json({ error: unreadable, code: "request_hold_unreadable" }, { status: 503 });
+  }
+  if (holdStop.kind === "stopped") {
+    if (action.action === "sign_slot" && body.dryRun !== true) {
+      await recordRefusedSignOff({ signatureId: body.signatureId, ticketId: body.ticketId, orgId: ticket.orgId, caller: { id: caller.id, email: callerEmail, role: callerRole }, status: 409, reason: holdStop.refusal, code: "request_on_hold", rosterId: currentRoster(ticket)?.id ?? null });
+    }
+    return NextResponse.json({ error: holdStop.refusal, code: "request_on_hold", holds: holdStop.holds.map((h) => ({ id: h.id, reason: h.reason, slot: h.slotLabel })) }, { status: 409 });
   }
 
   // ── GAP-103 / GAP-112 (DF-P5 ROSTER) ───────────────────────────────────
