@@ -6,7 +6,7 @@ import { heldRoles } from "@/lib/roleHeld";
 import { ticketResource } from "@/lib/workflow";
 import { tagKey } from "@/lib/codebook";
 import {
-  cleanEquipmentTag, equipmentEditAllowed, equipmentOutcomeLine, equipmentTagListed, isMissingEquipmentTable, isTicketParticipant,
+  cleanEquipmentTag, equipmentEditAllowed, equipmentListingKey, equipmentOutcomeLine, equipmentTagListed, isMissingEquipmentTable, isTicketParticipant,
   EQUIPMENT_CLOSED_STATUSES, EQUIPMENT_TAG_MAX,
 } from "@/lib/ticketEquipment";
 
@@ -241,28 +241,51 @@ export async function POST(req: NextRequest) {
   // DF-P23 (GAP-312 follow-up): a respelling of the same tag is one
   // transaction once 20261265 is pasted (the index would refuse the add
   // while the old row stands); before it, today's add-then-remove.
-  let replaced = false;
-  let replacedId: string | null = null;
-  if (previous && tagKey(previous.tag) === tagKey(tag) && tagKey(tag)) {
+  // DF-P23 fix pass: "the same tag" is decided by the key the index holds
+  // (equipmentListingKey — "насос" → "Насос" is a respelling too, where
+  // tagKey reads both as nothing), and a correction whose add the index
+  // still refuses (the database lowercased a letter the browser's rule did
+  // not) is tried once as a respelling before it is answered "already listed".
+  const notRecorded = async (reason: string, error?: string) => {
+    const followErr = await recordFollowUp(`${attemptAction}_NOT_APPLIED`, { attempt: auditId, tag, reason, ...(error ? { error } : {}) });
+    const trailNote = followErr ? ` The audit trail could not record that it was not applied (audit row ${auditId}) — tell an Admin.` : "";
+    return NextResponse.json({ error: `The equipment was not recorded — try again in a moment.${trailNote}`, applied: false, attempt: auditId, notAppliedRecorded: !followErr }, { status: 500 });
+  };
+  const listedAlready = async (error?: string) => {
+    const followErr = await recordFollowUp(`${attemptAction}_NOT_APPLIED`, { attempt: auditId, tag, reason: "already_listed", ...(error ? { error } : {}) });
+    const trailNote = followErr ? ` The audit trail could not record that it was not applied (audit row ${auditId}) — tell an Admin.` : "";
+    if (action === "add") return NextResponse.json({ ok: true, unchanged: true, message: `${tag} is already listed on this request.${trailNote}` });
+    return NextResponse.json({ error: `${tag} is already listed on this request — correcting this entry to it would list it twice.${trailNote}`, code: "already_listed" }, { status: 409 });
+  };
+  type Replaced = { kind: "replaced"; id: string } | { kind: "unavailable" } | { kind: "refused"; response: NextResponse };
+  const replaceInOneTransaction = async (prev: { id: string; tag: string }): Promise<Replaced> => {
     const { data: rid, error: rErr } = await supabaseAdmin.rpc(REPLACE_EQUIPMENT_RPC, {
-      p_row_id: previous.id, p_ticket_id: t.id, p_org_id: t.org_id, p_tag: tag, p_asset_id: assetId, p_created_by: caller.id,
+      p_row_id: prev.id, p_ticket_id: t.id, p_org_id: t.org_id, p_tag: tag, p_asset_id: assetId, p_created_by: caller.id,
     });
-    if (!rErr && typeof rid === "string") {
-      replaced = true;
-      replacedId = rid;
-    } else if (rErr && !/^(PGRST202|42883)$/.test(String((rErr as { code?: string }).code ?? ""))) {
-      console.error(`[ticket-equipment] the respelling of entry ${previous.id} on ticket ${t.id} was refused (audit ${auditId}): ${rErr.message}`);
-      const followErr = await recordFollowUp(`${attemptAction}_NOT_APPLIED`, { attempt: auditId, tag, reason: "write_failed", error: rErr.message });
+    if (!rErr && typeof rid === "string") return { kind: "replaced", id: rid };
+    const code = String((rErr as { code?: string } | null)?.code ?? "");
+    if (rErr && /^(PGRST202|42883)$/.test(code)) return { kind: "unavailable" };
+    if (rErr && code === "23505") return { kind: "refused", response: await listedAlready(rErr.message) };
+    if (rErr && code === "P0002") {
+      // the entry was removed after this request read it — nothing changed
+      const followErr = await recordFollowUp(`${attemptAction}_NOT_APPLIED`, { attempt: auditId, tag, reason: "entry_gone", error: rErr.message });
       const trailNote = followErr ? ` The audit trail could not record that it was not applied (audit row ${auditId}) — tell an Admin.` : "";
-      return NextResponse.json({ error: `The equipment was not recorded — try again in a moment.${trailNote}`, applied: false, attempt: auditId, notAppliedRecorded: !followErr }, { status: 500 });
-    } else if (!rErr) {
-      const followErr = await recordFollowUp(`${attemptAction}_NOT_APPLIED`, { attempt: auditId, tag, reason: "no_row_written" });
-      const trailNote = followErr ? ` The audit trail could not record that it was not applied (audit row ${auditId}) — tell an Admin.` : "";
-      return NextResponse.json({ error: `The equipment was not recorded — try again in a moment.${trailNote}`, applied: false, attempt: auditId, notAppliedRecorded: !followErr }, { status: 500 });
+      return { kind: "refused", response: NextResponse.json({ error: `That equipment entry is no longer on this request — reload it and try again.${trailNote}`, code: "entry_gone", applied: false }, { status: 409 }) };
     }
-  }
-  if (replaced) {
-    return NextResponse.json({ ok: true, id: replacedId, tag, assetId, resolution, message: equipmentOutcomeLine(tag, resolution) });
+    if (rErr) {
+      console.error(`[ticket-equipment] the respelling of entry ${prev.id} on ticket ${t.id} was refused (audit ${auditId}): ${rErr.message}`);
+      return { kind: "refused", response: await notRecorded("write_failed", rErr.message) };
+    }
+    return { kind: "refused", response: await notRecorded("no_row_written") };
+  };
+  const replacedAnswer = (id: string) => NextResponse.json({ ok: true, id, tag, assetId, resolution, message: equipmentOutcomeLine(tag, resolution) });
+
+  let triedReplace = false;
+  if (previous && equipmentListingKey(previous.tag) === equipmentListingKey(tag)) {
+    triedReplace = true;
+    const r = await replaceInOneTransaction(previous);
+    if (r.kind === "replaced") return replacedAnswer(r.id);
+    if (r.kind === "refused") return r.response;
   }
 
   const { data: inserted, error: insErr } = await supabaseAdmin
@@ -273,10 +296,12 @@ export async function POST(req: NextRequest) {
   // concurrent request listed after this one read the list — answered as the
   // sequential case is (the read-then-write check above), recorded not applied.
   if (insErr && (insErr as { code?: string }).code === "23505") {
-    const followErr = await recordFollowUp(`${attemptAction}_NOT_APPLIED`, { attempt: auditId, tag, reason: "already_listed", error: insErr.message });
-    const trailNote = followErr ? ` The audit trail could not record that it was not applied (audit row ${auditId}) — tell an Admin.` : "";
-    if (action === "add") return NextResponse.json({ ok: true, unchanged: true, message: `${tag} is already listed on this request.${trailNote}` });
-    return NextResponse.json({ error: `${tag} is already listed on this request — correcting this entry to it would list it twice.${trailNote}`, code: "already_listed" }, { status: 409 });
+    if (previous && !triedReplace) {
+      const r = await replaceInOneTransaction(previous);
+      if (r.kind === "replaced") return replacedAnswer(r.id);
+      if (r.kind === "refused") return r.response;
+    }
+    return listedAlready(insErr.message);
   }
   if (insErr || !Array.isArray(inserted) || inserted.length === 0) {
     const missing = !!insErr && isMissingEquipmentTable(insErr);

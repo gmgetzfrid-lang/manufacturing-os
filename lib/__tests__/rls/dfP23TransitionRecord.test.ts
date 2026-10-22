@@ -24,6 +24,7 @@ import { admin, asCaller, mosDb, seedOrg, skipReason, type SeededMember } from "
 import { REPLAY_DB } from "./replay";
 import { runPsql } from "./pgHarness";
 import { tagKey } from "@/lib/codebook";
+import { equipmentListingKey } from "@/lib/ticketEquipment";
 
 const skip = skipReason();
 const db = REPLAY_DB;
@@ -84,18 +85,28 @@ describe.skipIf(skip !== null)("DF-P23 — 20261265: the equipment tag index and
     expect(equip(t, "Клапан")).toEqual({ ok: true, rows: 1 });
   });
 
-  it("GAP-312: ticket_equipment_tag_key is the route's key (lib/ticketEquipment.ts keyOf: tagKey, else the trimmed lowercase tag) on every awkward input", () => {
-    const inputs = ["E-22", "E22", "e 22", " E-22 ", "E–22", "P-101A", "NORTH-FURNACE", "northfurnace", "the north furnace", "Насос", " насос ", "Клапан", "---", "a.b/c", "Tank 7 (east)"];
-    const js = (t: string) => tagKey(t) || t.trim().toLowerCase();
-    const sql = new Map(inputs.map((t) => [t, admin(db, `SELECT ticket_equipment_tag_key($q$${t}$q$)`)] as const));
-    // ASCII (every tag the registry's grammar reads): exactly the route's key
-    for (const t of inputs.filter((x) => /^[\x00-\x7f–]*$/.test(x))) expect(sql.get(t), t).toBe(js(t));
-    // never STRICTER than the route: two tags the index calls one, the route calls one too.
-    // (A database whose collation lowercases only ASCII — this scratch cluster's C locale —
-    // keeps "Насос" and "насос" apart, which the route's check still catches; the index
-    // then refuses less, never more.)
-    for (const a of inputs) for (const b of inputs) {
-      if (sql.get(a) === sql.get(b)) expect(js(a), `${a} / ${b}`).toBe(js(b));
+  it("GAP-312: ticket_equipment_tag_key is the route's key (lib/ticketEquipment.ts equipmentListingKey) on every awkward input — exactly, where the collation lowercases every script; never stricter, where it lowercases only ASCII", () => {
+    const inputs = ["E-22", "E22", "e 22", " E-22 ", "E–22", "E\u00a022", "P-101A", "NORTH-FURNACE", "northfurnace", "the north furnace",
+      "Насос", " насос ", "Клапан", "Насос-1", "Компрессор-1", "НАСОС-1", "ΟΔΟΣ", "οδος", "οδοσ", "İ1", "I1", "---", "a.b/c", "Tank 7 (east)", "😀1"];
+    const js = (t: string) => equipmentListingKey(t);
+    // the ASCII key is the registry's grammar (tagKey) as before
+    for (const t of inputs.filter((x) => /^[\x00-\x7f]*$/.test(x))) expect(js(t), t).toBe(tagKey(t) || t.trim().toLowerCase());
+    const keysUnder = (coll: string | null) => new Map(inputs.map((t) =>
+      [t, admin(db, `SELECT ticket_equipment_tag_key($q$${t}$q$${coll ? ` COLLATE "${coll}"` : ""})`)] as const));
+    const neverStricter = (sql: Map<string, string>, label: string) => {
+      for (const a of inputs) for (const b of inputs) if (sql.get(a) === sql.get(b)) expect(js(a), `${label}: ${a} / ${b}`).toBe(js(b));
+    };
+    // this scratch cluster's default collation (C: lower() folds ASCII only) — ASCII and the stripped
+    // dashes / spaces exactly; "Насос" and "насос" kept apart, which the route's check still catches
+    const dflt = keysUnder(null);
+    for (const t of inputs.filter((x) => /^[\x00-\x7f–\u00a0]*$/.test(x))) expect(dflt.get(t), t).toBe(js(t));
+    neverStricter(dflt, "default");
+    // a collation that lowercases every script (libc C.UTF-8, ICU — a Supabase database's kind): exactly the route's key
+    const have = admin(db, `SELECT string_agg(collname, ',') FROM pg_collation WHERE collname IN ('C.utf8', 'C.UTF-8', 'und-x-icu', 'en_US.utf8')`).split(",").filter(Boolean);
+    for (const coll of have) {
+      const sql = keysUnder(coll);
+      for (const t of inputs) expect(sql.get(t), `${coll}: ${t}`).toBe(js(t));
+      neverStricter(sql, coll);
     }
   });
 
@@ -109,6 +120,16 @@ describe.skipIf(skip !== null)("DF-P23 — 20261265: the equipment tag index and
     if (!member.ok) expect(member.code).toBe("42501");
     expect(asCaller(db, SERVICE, call).ok).toBe(true);
     expect(admin(db, `SELECT string_agg(tag, ',') FROM ticket_equipment WHERE ticket_id = '${t}'`)).toBe("E-22");
+    // DF-P23 fix pass: a case-only correction of a non-Latin tag is a respelling too
+    expect(equip(t, "насос")).toEqual({ ok: true, rows: 1 });
+    const cyr = admin(db, `SELECT id FROM ticket_equipment WHERE ticket_id = '${t}' AND tag = 'насос'`);
+    expect(asCaller(db, SERVICE, `SELECT replace_ticket_equipment('${cyr}', '${t}', '${orgId}', 'Насос', NULL, '${m.requester.uid}')`).ok).toBe(true);
+    expect(admin(db, `SELECT string_agg(tag, ',' ORDER BY tag) FROM ticket_equipment WHERE ticket_id = '${t}'`)).toBe("E-22,Насос");
+    admin(db, `DELETE FROM ticket_equipment WHERE ticket_id = '${t}' AND tag = 'Насос'`);
+    // two non-Latin tags that share their ASCII remainder are two tags (tagKey alone read both as "1")
+    expect(equip(t, "Насос-1")).toEqual({ ok: true, rows: 1 });
+    expect(equip(t, "Компрессор-1")).toEqual({ ok: true, rows: 1 });
+    admin(db, `DELETE FROM ticket_equipment WHERE ticket_id = '${t}' AND tag IN ('Насос-1', 'Компрессор-1')`);
     const missing = asCaller(db, SERVICE, `SELECT replace_ticket_equipment('${randomUUID()}', '${t}', '${orgId}', 'E-23', NULL, NULL)`);
     expect(missing.ok).toBe(false);
     expect(admin(db, `SELECT string_agg(tag, ',') FROM ticket_equipment WHERE ticket_id = '${t}'`)).toBe("E-22");

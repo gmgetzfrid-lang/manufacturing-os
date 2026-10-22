@@ -99,7 +99,8 @@ import { isSafeStorageKey } from "@/lib/storageKey";
 import { applyStampToPdfDoc } from "@/lib/stamping";
 import { configuredPublicOrigin, isUnreachableRecipientHost } from "@/lib/publicOrigin";
 import { ticketReadScope } from "@/lib/ticketReadScope";
-import { ticketCopyPlan, recordTicketCopy, type TicketCopyChannel } from "@/lib/ticketDeliverableCopy";
+import { ticketCopyPlan, recordTicketCopy, copyDeclarationFacts, type TicketCopyChannel } from "@/lib/ticketDeliverableCopy";
+import { declarationSignatureStands, type DeclarationSignatureRow } from "@/lib/reviewModel";
 import { TICKET_ATTACHMENT_ID_RE } from "@/lib/verifyTicketVerdict";
 import { isStagedKeyOf } from "@/lib/ticketCreate";
 import { ticketFolder, underFolder, restoredFromNumber, restoreRenumberingConfirmed } from "@/lib/ticketFilePrefix";
@@ -160,7 +161,7 @@ const TICKET_COLUMNS = "id, org_id, ticket_id, status, deliverable_rev, history,
 const GUARD_COLUMN = "history_guarded_from";
 /** GAP-101 acceptance 3 (drafting-flow DF-P23): the like-in-kind declaration
  *  (20261250) a deliverable's footer names, attributed to the requester. */
-const DECLARATION_COLUMNS = "requester_name, requester_email, like_in_kind_statement, like_in_kind_declared_by, like_in_kind_declared_at";
+const DECLARATION_COLUMNS = "requester_name, requester_email, like_in_kind_statement, like_in_kind_declared_by, like_in_kind_declared_at, like_in_kind_signature_id";
 
 interface Body {
   ticketId?: unknown;
@@ -177,6 +178,7 @@ type TicketRow = {
   history_guarded_from?: number | null;
   requester_name?: string | null; requester_email?: string | null;
   like_in_kind_statement?: string | null; like_in_kind_declared_by?: string | null; like_in_kind_declared_at?: string | null;
+  like_in_kind_signature_id?: string | null;
 };
 
 const json = (body: Record<string, unknown>, status: number) =>
@@ -329,6 +331,39 @@ export async function POST(req: NextRequest) {
     return json({ error: "That file is not stored under this request" }, 409);
   }
 
+  // GAP-101 acceptance 3 (DF-P23 fix pass, review minors): a combined read
+  // that failed for another reason is not evidence of a declaration — the
+  // declaration's columns are read once on their own, and only if that
+  // fails too does the copy say "not available" (a request with no
+  // declaration then prints nothing). A declaration's e-signature is
+  // checked as the workflow route checks it (declarationSignatureStands):
+  // known not to stand → the copy says it was not relied on; unreadable →
+  // printed with "e-signature not checked". Neither ever blocks the copy.
+  if (declarationRead === "unavailable") {
+    const { data: d, error: dErr } = await supabaseAdmin.from("tickets").select(DECLARATION_COLUMNS).eq("id", t.id).maybeSingle();
+    if (!dErr && d) {
+      Object.assign(t, d as Partial<TicketRow>);
+      declarationRead = "read";
+    } else if (dErr && isMissingDeclarationColumn(dErr)) {
+      declarationRead = "absent";
+    } else {
+      console.warn(`[tickets/copy] the like-in-kind declaration of ticket ${t.id} could not be read (twice): ${dErr?.message ?? "no row"} — the copy says it is not available`);
+    }
+  }
+  let signature: "verified" | "missing" | "unchecked" | null = null;
+  if (declarationRead === "read" && t.like_in_kind_declared_at && typeof t.like_in_kind_statement === "string" && t.like_in_kind_statement.trim()) {
+    const sigId = t.like_in_kind_signature_id ?? "";
+    const { data: dsig, error: dsigErr } = UUID_RE.test(sigId)
+      ? await supabaseAdmin.from("e_signatures").select("id, org_id, resource_type, resource_id, signer_user_id").eq("id", sigId).maybeSingle()
+      : { data: null, error: null };
+    if (dsigErr) {
+      signature = "unchecked";
+      console.warn(`[tickets/copy] the declaration signature of ticket ${t.id} could not be read: ${dsigErr.message} — printed as not checked`);
+    } else {
+      signature = declarationSignatureStands(dsig as DeclarationSignatureRow | null, { id: t.id, orgId: t.org_id, likeInKindDeclaredBy: t.like_in_kind_declared_by ?? null }) ? "verified" : "missing";
+    }
+  }
+
   // 3. What the copy says — the page's plan, with the ticket as it stands now.
   const plan = ticketCopyPlan({
     file,
@@ -341,14 +376,14 @@ export async function POST(req: NextRequest) {
       revisionCount: t.revision_count, historyGuardedFrom: t.history_guarded_from ?? null,
       // GAP-101 acceptance 3 (DF-P23): the declaration, attributed — only
       // when the request carries one (or "unavailable" when it could not be
-      // read; nothing before 20261250).
+      // read; nothing before 20261250), checked as above.
       declaration: declarationRead === "unavailable"
         ? "unavailable"
-        : declarationRead === "read" && t.like_in_kind_declared_at
-          ? {
-              by: (t.like_in_kind_declared_by && t.like_in_kind_declared_by === t.requester_id ? (t.requester_name || t.requester_email) : null) ?? null,
-              declaredAt: t.like_in_kind_declared_at, statement: t.like_in_kind_statement ?? null,
-            }
+        : declarationRead === "read"
+          ? copyDeclarationFacts({
+              declaredAt: t.like_in_kind_declared_at, statement: t.like_in_kind_statement, declaredBy: t.like_in_kind_declared_by,
+              requesterId: t.requester_id, requesterName: t.requester_name, requesterEmail: t.requester_email, signature,
+            })
           : null,
     },
   });

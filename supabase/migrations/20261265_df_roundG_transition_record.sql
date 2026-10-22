@@ -12,9 +12,17 @@
 --       adds that both read before either writes. The key is
 --       ticket_equipment_tag_key(tag) (new; IMMUTABLE, SECURITY INVOKER,
 --       search_path pinned) — the route's own comparison
---       (lib/ticketEquipment.ts equipmentTagListed: lib/codebook.ts tagKey,
---       else the trimmed lowercase tag), so "E-22", "E22" and "e 22" are one
---       tag and two tags the route tells apart are never refused here.
+--       (lib/ticketEquipment.ts equipmentListingKey: for an ASCII tag
+--       lib/codebook.ts tagKey; a non-Latin tag's letters are kept; else the
+--       trimmed lowercase tag), so "E-22", "E22" and "e 22" are one tag and
+--       "Насос-1" and "Компрессор-1" are two. Lowercasing is made
+--       context-free on both sides (a dotted capital I is "i", a final sigma
+--       the sigma), so where the database's lower() and the browser's agree
+--       letter by letter the index refuses nothing the route lets through; a
+--       letter they case differently (a Unicode-version difference) is met by
+--       the route's 23505 handling (an add: "already listed"; a correction:
+--       retried once as a one-transaction respelling; the create route: each
+--       entry written on its own).
 --       replace_ticket_equipment (new; SECURITY INVOKER, search_path pinned,
 --       EXECUTE for the service role only) replaces one entry with a
 --       respelling of the same tag in ONE transaction (delete, then insert),
@@ -81,9 +89,9 @@ DROP TABLE IF EXISTS df_round_g_265_before;
 CREATE TEMP TABLE df_round_g_265_before AS
 WITH keyed AS (
   SELECT ticket_id,
-         CASE WHEN regexp_replace(lower(COALESCE(tag, '')), '[^a-z0-9]+', '', 'g') = ''
+         CASE WHEN regexp_replace(translate(lower(translate(COALESCE(tag, ''), chr(304), 'i')), chr(962), chr(963)), '[^\u0080-\U0010ffffa-z0-9]|[\u00a0\u00ad\u2000-\u200b\u2010-\u2015\u2212\u202f\u3000\ufeff]', '', 'g') = ''
               THEN lower(regexp_replace(COALESCE(tag, ''), '^\s+|\s+$', '', 'g'))
-              ELSE regexp_replace(lower(COALESCE(tag, '')), '[^a-z0-9]+', '', 'g') END AS k
+              ELSE regexp_replace(translate(lower(translate(COALESCE(tag, ''), chr(304), 'i')), chr(962), chr(963)), '[^\u0080-\U0010ffffa-z0-9]|[\u00a0\u00ad\u2000-\u200b\u2010-\u2015\u2212\u202f\u3000\ufeff]', '', 'g') END AS k
     FROM ticket_equipment
 ), dup AS (
   SELECT ticket_id, k, COUNT(*) AS c FROM keyed GROUP BY ticket_id, k HAVING COUNT(*) > 1
@@ -113,13 +121,17 @@ BEGIN;
 SET LOCAL lock_timeout = '10s';
 
 -- ── 1. GAP-312 follow-up: one tag once per request ──────────────────────────
--- New function (no earlier body). The route's key (lib/codebook.ts tagKey:
--- lowercase, then everything but [a-z0-9] removed; else the trimmed
--- lowercase tag — lib/ticketEquipment.ts equipmentTagListed).
+-- New function (no earlier body). The route's key (lib/ticketEquipment.ts
+-- equipmentListingKey): a dotted capital I (chr(304)) read as "i", lowercase,
+-- a final sigma (chr(962)) read as the sigma (chr(963)), then removed: ASCII
+-- other than [a-z0-9] (for an ASCII tag exactly lib/codebook.ts tagKey) and
+-- the Unicode spaces and dashes a pasted tag carries; every other letter is
+-- KEPT ("Насос-1" and "Компрессор-1" are two tags). Nothing left: the trimmed
+-- lowercase tag.
 CREATE OR REPLACE FUNCTION ticket_equipment_tag_key(p_tag TEXT)
 RETURNS TEXT LANGUAGE sql IMMUTABLE PARALLEL SAFE SET search_path = public AS $$
   SELECT CASE WHEN k = '' THEN lower(regexp_replace(COALESCE(p_tag, ''), '^\s+|\s+$', '', 'g')) ELSE k END
-    FROM (SELECT regexp_replace(lower(COALESCE(p_tag, '')), '[^a-z0-9]+', '', 'g') AS k) s;
+    FROM (SELECT regexp_replace(translate(lower(translate(COALESCE(p_tag, ''), chr(304), 'i')), chr(962), chr(963)), '[^\u0080-\U0010ffffa-z0-9]|[\u00a0\u00ad\u2000-\u200b\u2010-\u2015\u2212\u202f\u3000\ufeff]', '', 'g') AS k) s;
 $$;
 
 DO $$
@@ -213,11 +225,13 @@ SELECT 1 AS sec, 1 AS ord,
                   AND pg_get_indexdef(i.indexrelid) LIKE '%(ticket_id, ticket_equipment_tag_key(tag))%') AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 1, 2, 'GAP-312: the key is the route''s — "E-22", "E22" and "e 22" are one tag; two different tags (and two tags with no letter or digit in a-z0-9) stay two',
+SELECT 1, 2, 'GAP-312: the key is the route''s — "E-22", "E22", "e 22" and "E–22" are one tag; two different tags (a non-Latin tag''s letters are kept: "Насос-1" and "Компрессор-1") stay two',
        ticket_equipment_tag_key('E-22') = ticket_equipment_tag_key('E22')
        AND ticket_equipment_tag_key('e 22') = 'e22'
        AND ticket_equipment_tag_key('P-101A') <> ticket_equipment_tag_key('P-101')
        AND ticket_equipment_tag_key('  Насос  ') = lower('Насос')
+       AND ticket_equipment_tag_key('E–22') = 'e22'
+       AND ticket_equipment_tag_key('Насос-1') <> ticket_equipment_tag_key('Компрессор-1')
        AND (SELECT provolatile FROM pg_proc WHERE oid = 'public.ticket_equipment_tag_key(text)'::regprocedure) = 'i'
        AND (SELECT proconfig @> ARRAY['search_path=public'] FROM pg_proc WHERE oid = 'public.ticket_equipment_tag_key(text)'::regprocedure),
        NULL

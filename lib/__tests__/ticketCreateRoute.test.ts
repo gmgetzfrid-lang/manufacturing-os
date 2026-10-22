@@ -2062,6 +2062,18 @@ describe("DF-P6 — GAP-110 / DEC-34: the like-in-kind declaration at filing; GA
     expect((s.tables.ticket_equipment ?? []).map((r) => r.tag)).toEqual(["P-101", "ZZ-1"]);
   });
 
+  it("drafting-flow DF-P23 fix pass: a batch the database's tag key refuses (23505 — it called two entries one tag) is written entry by entry; the colliding one is listed once and named, the rest land", async () => {
+    s.errors["ticket_equipment.insert"] = [{ code: "23505", message: 'duplicate key value violates unique constraint "ticket_equipment_ticket_tag_key_uniq"' }, null, { code: "23505", message: "duplicate key" }, null];
+    const res = await POST(req(portal({ attachments: [], equipment: [{ tag: "P-101" }, { tag: "XV-9" }, { tag: "ZZ-1" }] })));
+    expect(res.status).toBe(201);
+    expect((s.tables.ticket_equipment ?? []).map((r) => r.tag)).toEqual(["P-101", "ZZ-1"]);
+    const w = JSON.stringify((await res.json()).warnings);
+    expect(w).toMatch(/Listed once — the database reads each as equipment already named on this request: XV-9\./);
+    expect(w).toMatch(/Not found in the equipment registry, kept as typed: P-101, ZZ-1\./);
+    expect(w).not.toMatch(/could not be recorded/);
+    expect(tickets()).toHaveLength(1);
+  });
+
   it("equipment before 20261251 is pasted: the request is filed and the answer says the equipment was not recorded", async () => {
     s.errors["ticket_equipment.insert"] = [{ code: "42P01", message: 'relation "ticket_equipment" does not exist' }];
     const res = await POST(req(portal({ attachments: [], equipment: [{ tag: "P-101" }] })));

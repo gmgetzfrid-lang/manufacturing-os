@@ -103,8 +103,11 @@ export interface TicketCopyLiveFacts {
   /** GAP-101 acceptance 3 (DF-P23): the requester's like-in-kind
    *  declaration (20261250), to print attributed on a deliverable. Absent /
    *  null: no declaration (or none can exist yet) — nothing printed.
-   *  "unavailable": it could not be read — said on the copy. */
-  declaration?: TicketCopyDeclaration | "unavailable" | null;
+   *  "unavailable": it could not be read — said on the copy. "unsigned"
+   *  (DF-P23 fix pass): its e-signature is known not to stand, so the
+   *  workflow treated the request as undeclared — the copy says it was not
+   *  relied on, never attributes it. */
+  declaration?: TicketCopyDeclaration | "unavailable" | "unsigned" | null;
 }
 
 /** GAP-101 acceptance 3 (DF-P23): the declaration as a copy prints it. */
@@ -115,25 +118,73 @@ export interface TicketCopyDeclaration {
   declaredAt: string | null;
   /** The requester's own sentence. */
   statement: string | null;
+  /** DF-P23 fix pass: the declaration's e-signature could not be checked
+   *  (the read failed, or has not answered yet) — said beside it. */
+  signatureUnchecked?: boolean;
 }
 
 /** GAP-101 acceptance 3 (DF-P23): the longest part of the statement a footer
  *  prints (the request page and the audit trail carry it whole). */
 export const DECLARATION_FOOTER_MAX = 140;
 export const DECLARATION_NOT_AVAILABLE = "like-in-kind declaration not available";
+/** DF-P23 fix pass: a declaration whose e-signature does not stand. */
+export const DECLARATION_NOT_RELIED_ON = "like-in-kind declaration not relied on: its e-signature does not stand";
+export const DECLARATION_SIGNATURE_UNCHECKED = "e-signature not checked";
+
+/** DF-P23 fix pass (review, major): the stamper removes a scan instruction
+ *  from a copy that carries no QR (lib/stamping.ts withoutScanInstruction —
+ *  by sentence, then by dash clause), so the requester's words, printed
+ *  inside the footer's sentence, may never read as one: "scan" before "the
+ *  QR", "this code", "to verify" is bracketed ("[scan] the code" — the usual
+ *  mark of an altered quotation), and a spaced dash is a hyphen. Otherwise
+ *  the cut would fall inside the statement and take "not a controlled
+ *  document revision" with it. */
+const STATEMENT_SCAN = /\bscan(?=\s+(?:the\s+|this\s+)?(?:qr\b|code\b|to\s+verify\b))/gi;
+
+/** DF-P23 fix pass (review, minor): the declaration as a copy prints it,
+ *  from the request's own fields — one rule for the server copy route and
+ *  the request page. A declaration is a declared time AND a statement
+ *  (lib/reviewModel.ts isDeclaredLikeInKind); its e-signature, checked as
+ *  the workflow route checks it (declarationSignatureStands): "missing" →
+ *  "unsigned" (the workflow treated the request as undeclared), "unchecked"
+ *  or not yet known → printed with "e-signature not checked". Pure. */
+export function copyDeclarationFacts(input: {
+  declaredAt: string | number | Date | null | undefined;
+  statement: string | null | undefined;
+  declaredBy: string | null | undefined;
+  requesterId: string | null | undefined;
+  requesterName: string | null | undefined;
+  requesterEmail: string | null | undefined;
+  signature: "verified" | "missing" | "unchecked" | "pending" | null | undefined;
+}): TicketCopyDeclaration | "unsigned" | null {
+  const statement = typeof input.statement === "string" ? input.statement : null;
+  if (input.declaredAt === null || input.declaredAt === undefined || input.declaredAt === "" || !statement || !statement.trim()) return null;
+  if (input.signature === "missing") return "unsigned";
+  const at = new Date(input.declaredAt);
+  return {
+    by: (input.declaredBy && input.declaredBy === input.requesterId ? (input.requesterName || input.requesterEmail) : null) ?? null,
+    declaredAt: Number.isNaN(at.getTime()) ? null : at.toISOString(),
+    statement,
+    ...(input.signature === "verified" ? {} : { signatureUnchecked: true }),
+  };
+}
 
 /** GAP-101 acceptance 3 (DF-P23): the parenthesis printed beside the request
  *  reference on a deliverable — "" for no declaration. Pure. */
 export function declarationFooterClause(d: TicketCopyLiveFacts["declaration"]): string {
   if (d === undefined || d === null) return "";
   if (d === "unavailable") return ` (${DECLARATION_NOT_AVAILABLE})`;
+  if (d === "unsigned") return ` (${DECLARATION_NOT_RELIED_ON})`;
   const by = d.by && d.by.trim() ? d.by.trim() : "the requester";
   const date = d.declaredAt && !Number.isNaN(Date.parse(d.declaredAt)) ? new Date(d.declaredAt).toISOString().slice(0, 10) : null;
   // A dash clause in the sentence would read as one of the footer's own
-  // clauses (the stamper drops the scan clause by them), so it is a hyphen here.
-  const text = (d.statement ?? "").replace(/\s+/g, " ").replace(/ — /g, " - ").trim();
-  const quoted = text ? `: "${text.length > DECLARATION_FOOTER_MAX ? `${text.slice(0, DECLARATION_FOOTER_MAX - 1).trimEnd()}…` : text}"` : "";
-  return ` (declared like-in-kind by ${by}${date ? ` on ${date}` : ""}${quoted})`;
+  // clauses (the stamper drops the scan clause by them), so it is a hyphen
+  // here; and a scan instruction in it is bracketed (STATEMENT_SCAN).
+  const words = (d.statement ?? "").replace(/\s+/g, " ").trim();
+  const cut = words.length > DECLARATION_FOOTER_MAX ? `${words.slice(0, DECLARATION_FOOTER_MAX - 1).trimEnd()}…` : words;
+  const text = cut.replace(/ [—–] /g, " - ").replace(STATEMENT_SCAN, (w) => `[${w}]`);
+  const quoted = text ? `: "${text}"` : "";
+  return ` (declared like-in-kind by ${by}${date ? ` on ${date}` : ""}${quoted}${d.signatureUnchecked ? `; ${DECLARATION_SIGNATURE_UNCHECKED}` : ""})`;
 }
 
 /** Where an issued file stands against the ticket as the page holds it.

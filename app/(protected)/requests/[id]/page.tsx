@@ -66,7 +66,7 @@ import TicketCopyRecallPanel from '@/components/requests/TicketCopyRecallPanel';
 import TicketProjectActions from '@/components/requests/TicketProjectActions';
 import { canPutFirstRevisionInContainer } from '@/lib/revisions';
 import { publicOrigin } from '@/lib/publicOrigin';
-import { ticketCopyPlan, recordTicketCopy, type TicketCopyLiveFacts } from '@/lib/ticketDeliverableCopy';
+import { ticketCopyPlan, recordTicketCopy, copyDeclarationFacts, type TicketCopyLiveFacts } from '@/lib/ticketDeliverableCopy';
 import { ticketFileCopyPath, takeTicketCopy, serverUnavailableNotice, BROWSER_PATH_NOTE, NON_PDF_PRINT_NOTE, type TicketCopyContext, type TicketCopyRequestChannel } from '@/lib/ticketCopyRequest';
 import { logAuditAction } from '@/lib/audit';
 // Code-split: the redline editor pulls react-pdf/pdfjs + fabric + pdf-lib, none
@@ -2626,9 +2626,13 @@ export default function TicketDetailView() {
           status: ticket.status, deliverableRev: ticket.deliverableRev ?? null, history: ticket.history, revisionCount: ticket.revisionCount ?? null,
           // GAP-101 acceptance 3 (drafting-flow DF-P23): a deliverable copy
           // names the requester's like-in-kind declaration, attributed.
-          declaration: ticket.likeInKindDeclaredAt
-            ? { by: (ticket.likeInKindDeclaredBy && ticket.likeInKindDeclaredBy === ticket.requesterId ? (ticket.requesterName || ticket.requesterEmail) : null) ?? null, declaredAt: new Date(ticket.likeInKindDeclaredAt).toISOString(), statement: ticket.likeInKindStatement ?? null }
-            : null,
+          // DF-P23 fix pass: one rule with the server copy route — a
+          // declaration is a time AND a statement, and one whose e-signature
+          // the Declaration card found not to stand is not attributed.
+          declaration: copyDeclarationFacts({
+            declaredAt: ticket.likeInKindDeclaredAt ?? null, statement: ticket.likeInKindStatement, declaredBy: ticket.likeInKindDeclaredBy,
+            requesterId: ticket.requesterId, requesterName: ticket.requesterName, requesterEmail: ticket.requesterEmail, signature: declarationCheck,
+          }),
         } : null}
         copyContext={ticket ? { orgId: ticket.orgId, ticketNumber: ticket.ticketId, requesterId: ticket.requesterId, attachments: ticket.attachments, history: ticket.history } : null}
         onApprove={(() => {

@@ -42,7 +42,7 @@ import { POST, REPLACE_EQUIPMENT_RPC } from "@/app/api/tickets/equipment/route";
 import { resetState } from "./helpers/memoryDb";
 import { parseTicketCreateBody } from "@/lib/ticketCreate";
 import { tagKey } from "@/lib/codebook";
-import { equipmentTagListed } from "@/lib/ticketEquipment";
+import { equipmentListingKey, equipmentTagListed } from "@/lib/ticketEquipment";
 
 type Row = Record<string, unknown>;
 const ORG = "o-1";
@@ -139,6 +139,43 @@ describe("GAP-312 follow-up — a respelling of the same tag", () => {
     expect(equipment()).toEqual([expect.objectContaining({ id: ROW, tag: "e22" })]);
     expect(audits().find((a) => a.action === "TICKET_EQUIPMENT_CORRECTED_NOT_APPLIED")?.details).toMatchObject({ reason: "write_failed" });
   });
+  it("DF-P23 fix pass (review, major): a case-only correction of a non-Latin tag ('насос' → 'Насос') is a respelling — replaced in one call, never refused as listed twice", async () => {
+    installReplace();
+    h.admin.tables.ticket_equipment = [{ id: ROW, org_id: ORG, ticket_id: T, tag: "насос", asset_id: null, created_by: "u-req" }];
+    const res = await req({ ticketId: T, action: "correct", rowId: ROW, tag: "Насос" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, id: "eq-new", tag: "Насос" });
+    expect(equipment()).toEqual([expect.objectContaining({ id: "eq-new", tag: "Насос" })]);
+    expect(h.admin.calls.some((c) => c.table === `rpc:${REPLACE_EQUIPMENT_RPC}`)).toBe(true);
+    expect(audits().map((a) => a.action)).toEqual(["TICKET_EQUIPMENT_CORRECTED"]);
+  });
+  it("DF-P23 fix pass: a correction whose add the index refuses (the database lowercased a letter the browser did not) is tried once as a respelling, and lands", async () => {
+    installReplace();
+    h.admin.tables.ticket_equipment = [{ id: ROW, org_id: ORG, ticket_id: T, tag: "P-1O1", asset_id: null, created_by: "u-req" }];
+    h.admin.tableWriteError = { ticket_equipment: { code: "23505", message: "duplicate key" } };
+    const res = await req({ ticketId: T, action: "correct", rowId: ROW, tag: "P-101" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, id: "eq-new", tag: "P-101" });
+    expect(equipment()).toEqual([expect.objectContaining({ id: "eq-new", tag: "P-101" })]);
+    expect(audits().some((a) => a.action === "TICKET_EQUIPMENT_CORRECTED_NOT_APPLIED")).toBe(false);
+  });
+  it("DF-P23 fix pass: that retry refused too (23505 — another entry holds the tag) is the 409 already_listed, nothing changed; an entry removed meanwhile (P0002) is a 409 entry_gone", async () => {
+    h.admin.rpc = { [REPLACE_EQUIPMENT_RPC]: () => ({ data: null, error: { code: "23505", message: "duplicate key" } }) };
+    h.admin.tables.ticket_equipment = [{ id: ROW, org_id: ORG, ticket_id: T, tag: "P-1O1", asset_id: null, created_by: "u-req" }];
+    h.admin.tableWriteError = { ticket_equipment: { code: "23505", message: "duplicate key" } };
+    const res = await req({ ticketId: T, action: "correct", rowId: ROW, tag: "E-22" });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "already_listed" });
+    expect(equipment()).toEqual([expect.objectContaining({ id: ROW, tag: "P-1O1" })]);
+    expect(audits().filter((a) => a.action === "TICKET_EQUIPMENT_CORRECTED_NOT_APPLIED")).toHaveLength(1);
+    seed();
+    h.admin.rpc = { [REPLACE_EQUIPMENT_RPC]: () => ({ data: null, error: { code: "P0002", message: "replace_ticket_equipment: that entry is not on this request" } }) };
+    h.admin.tables.ticket_equipment = [{ id: ROW, org_id: ORG, ticket_id: T, tag: "e22", asset_id: null, created_by: "u-req" }];
+    const gone = await req({ ticketId: T, action: "correct", rowId: ROW, tag: "E-22" });
+    expect(gone.status).toBe(409);
+    expect(await gone.json()).toMatchObject({ code: "entry_gone", applied: false });
+    expect(audits().find((a) => a.action === "TICKET_EQUIPMENT_CORRECTED_NOT_APPLIED")?.details).toMatchObject({ reason: "entry_gone" });
+  });
   it("a correction to a DIFFERENT tag still adds then removes (no call), as before", async () => {
     installReplace();
     h.admin.tables.ticket_equipment = [{ id: ROW, org_id: ORG, ticket_id: T, tag: "P-1O1", asset_id: null, created_by: "u-req" }];
@@ -166,6 +203,39 @@ describe("GAP-312 follow-up — the create route lists one tag once, by the same
     if (!out.ok) return;
     expect(out.input.equipment?.map((e) => e.tag)).toEqual(["e-22", "P-101", "Насос", "Клапан"]);
     expect(out.warnings.join(" ")).not.toMatch(/same equipment/);
+  });
+});
+
+describe("GAP-312 follow-up (DF-P23 fix pass, review minor) — the listing key keeps a non-Latin tag's letters", () => {
+  const body = (tags: string[]) => ({
+    orgId: "0a000000-0000-4000-8000-000000000001", title: "T", description: "D", requestType: "ISO", origin: { kind: "portal" },
+    equipment: tags.map((tag) => ({ tag, assetId: null })),
+  });
+  it("ASCII: exactly tagKey (else the trimmed lowercase tag) — every tag the registry's grammar reads keys as before", () => {
+    for (const t of ["E-22", "E22", " e 22 ", "P-101A", "NORTH-FURNACE", "the north furnace", "a.b/c", "Tank 7 (east)", "---", "  -- "]) {
+      expect(equipmentListingKey(t), t).toBe(tagKey(t) || t.trim().toLowerCase());
+    }
+  });
+  it("pasted dashes and spaces are dropped as tagKey drops them; letters of other scripts are kept; lowercasing is context-free", () => {
+    expect(equipmentListingKey("E–22")).toBe("e22");
+    expect(equipmentListingKey("E\u00a022")).toBe("e22");
+    expect(equipmentListingKey("E\u221222")).toBe("e22");
+    expect(equipmentListingKey("Насос-1")).toBe("насос1");
+    expect(equipmentListingKey("Компрессор-1")).toBe("компрессор1");
+    expect(equipmentListingKey("насос")).toBe(equipmentListingKey("Насос"));
+    expect(new Set(["ΟΔΟΣ", "οδος", "οδοσ"].map(equipmentListingKey)).size).toBe(1);
+    expect(equipmentListingKey("İ-1")).toBe(equipmentListingKey("I-1"));
+  });
+  it("the create route keeps 'Насос-1' and 'Компрессор-1' both (tagKey alone read both as '1'); a repeat of one spelled in another case is still listed once", () => {
+    const out = parseTicketCreateBody(body(["Насос-1", "Компрессор-1", "НАСОС-1", "ΟΔΟΣ", "οδος"]));
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.input.equipment?.map((e) => e.tag)).toEqual(["Насос-1", "Компрессор-1", "ΟΔΟΣ"]);
+    expect(out.warnings.join(" ")).not.toMatch(/"Компрессор-1" names the same/);
+  });
+  it("the route's check: 'Компрессор-1' is not 'Насос-1'; 'Насос' is 'насос'", () => {
+    expect(equipmentTagListed([{ id: "x", tag: "Насос-1" }], "Компрессор-1")).toBeNull();
+    expect(equipmentTagListed([{ id: "x", tag: "насос" }], "Насос")).not.toBeNull();
   });
 });
 
@@ -224,22 +294,23 @@ describe("20261265 — DEC-30 one paste", () => {
     expect(c).toMatch(/GRANT EXECUTE ON FUNCTION replace_ticket_equipment\(UUID, UUID, UUID, TEXT, UUID, UUID\) TO service_role;/);
     expect(c).toMatch(/REVOKE ALL ON FUNCTION ticket_unit_code_derive\(\) FROM PUBLIC, anon, authenticated, service_role;/);
   });
-  it("the SQL key is the route's: the inventory and the function spell the same expression, and the JS key it mirrors agrees on the awkward cases", () => {
-    const fn = "regexp_replace(lower(COALESCE(p_tag, '')), '[^a-z0-9]+', '', 'g')";
-    const inv = "regexp_replace(lower(COALESCE(tag, '')), '[^a-z0-9]+', '', 'g')";
-    expect(SQL).toContain(fn);
-    expect(SQL).toContain(inv);
-    // the JS rule the SQL mirrors (lib/ticketEquipment.ts equipmentTagListed's keyOf)
+  it("the SQL key is the route's (equipmentListingKey): the inventory and the function spell the same expression, and a JS transcription of it agrees on the awkward cases", () => {
+    const strip = "'[^\\u0080-\\U0010ffffa-z0-9]|[\\u00a0\\u00ad\\u2000-\\u200b\\u2010-\\u2015\\u2212\\u202f\\u3000\\ufeff]'";
+    const keyOf = (col: string) => `regexp_replace(translate(lower(translate(COALESCE(${col}, ''), chr(304), 'i')), chr(962), chr(963)), ${strip}, '', 'g')`;
+    expect(SQL).toContain(keyOf("p_tag"));
+    expect(SQL.split(keyOf("tag")).length - 1).toBe(2);
+    // the SQL, transcribed (the database's lower() taken as the browser's)
     const sqlKey = (t: string) => {
-      const k = t.toLowerCase().replace(/[^a-z0-9]+/g, "");
+      const k = t.replace(/\u0130/g, "i").toLowerCase().replace(/\u03c2/g, "\u03c3")
+        .replace(/[^\u0080-\uffffa-z0-9]|[\u00a0\u00ad\u2000-\u200b\u2010-\u2015\u2212\u202f\u3000\ufeff]/g, "");
       return k === "" ? t.replace(/^\s+|\s+$/g, "").toLowerCase() : k;
     };
+    const inputs = ["E-22", "E22", "e 22", "E–22", " P-101A ", "p101a", "Насос", " насос ", "Насос-1", "Компрессор-1", "ΟΔΟΣ", "οδος", "İ1", "I1", "---", "a.b/c", "😀1"];
+    for (const t of inputs) expect(sqlKey(t), t).toBe(equipmentListingKey(t));
     for (const [a, b] of [["E-22", "E22"], ["e 22", "E–22"], [" P-101A ", "p101a"], ["Насос", " насос "]] as const) {
-      expect(sqlKey(a)).toBe(sqlKey(b));
       expect(equipmentTagListed([{ id: "x", tag: a }], b)).not.toBeNull();
     }
-    for (const [a, b] of [["P-101", "P-101A"], ["Насос", "Клапан"], ["E-22", "E-23"]] as const) {
-      expect(sqlKey(a)).not.toBe(sqlKey(b));
+    for (const [a, b] of [["P-101", "P-101A"], ["Насос", "Клапан"], ["E-22", "E-23"], ["Насос-1", "Компрессор-1"]] as const) {
       expect(equipmentTagListed([{ id: "x", tag: a }], b)).toBeNull();
     }
     expect(sqlKey("E-22")).toBe(tagKey("E-22"));

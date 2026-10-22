@@ -96,7 +96,7 @@
 import type { OrgDraftingSettings } from "@/types/schema";
 import { checkDeclarationStatement, DECLARATION_SIGNATURE_INTENT, DECLARATION_STATEMENT_PREFIX } from "@/lib/reviewModel";
 import type { SourceDocumentRefRow } from "@/lib/sourceDocRef";
-import { tagKey } from "@/lib/codebook";
+import { equipmentListingKey } from "@/lib/ticketEquipment";
 
 /** The explicit answer for a requester who does not know the unit. */
 export const UNIT_UNKNOWN_LABEL = "Unit unknown — triage assigns";
@@ -424,8 +424,10 @@ export function parseTicketCreateBody(raw: unknown): { ok: true; input: TicketCr
       // key the equipment route compares (lib/ticketEquipment.ts
       // equipmentTagListed) and 20261265's unique index holds. "E-22" and
       // "E22" are the same equipment: the first spelling is kept and the
-      // answer says so (before, the second was listed beside it).
-      const key = tagKey(tag) || tag.trim().toLowerCase();
+      // answer says so (before, the second was listed beside it). DF-P23
+      // fix pass: equipmentListingKey keeps a non-Latin tag's letters, so
+      // "Насос-1" and "Компрессор-1" stay two tags (tagKey keeps "1" of each).
+      const key = equipmentListingKey(tag);
       const first = seenTags.get(key);
       if (first !== undefined) {
         // (a repeat differing only in case was dropped silently before — still is)

@@ -256,6 +256,7 @@ describe("GAP-101 acceptance 3 — the like-in-kind declaration on the issued de
     expect(route).toContain('declarationRead = isMissingDeclarationColumn(rowErr) ? "absent" : "unavailable";');
     expect(route).toContain("({ data: row, error: rowErr } = await read(withGuard));");
     const page = src("app/(protected)/requests/[id]/page.tsx");
-    expect(page).toContain("declaration: ticket.likeInKindDeclaredAt");
+    // DF-P23 fix pass: the page passes the ticket's own through copyDeclarationFacts (dfRoundG_P23_copyDeclaration.test.ts)
+    expect(page).toContain("declaredAt: ticket.likeInKindDeclaredAt ?? null, statement: ticket.likeInKindStatement");
   });
 });
