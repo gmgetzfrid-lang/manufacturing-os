@@ -15,7 +15,7 @@
 
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { effectiveWeight, leafPercent, overallPercent, type ProgressInfo } from "@/lib/scheduleProgress";
-import { dayKey, dayKeyToMs, wallClock, wallClockToMs, addDays, dayDiff } from "@/lib/scheduleTz";
+import { dayKey, dayKeyToMs, wallClock, wallClockToMs, addDays, dayDiff, hasTimeOfDay } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
 
 export type ShiftKind = "day" | "night";
@@ -79,6 +79,131 @@ export function previousShift(w: ShiftWindow, tz: string, times: ShiftTimes = DE
   return shiftWindow(prevDay, "night", tz, times);
 }
 
+// ── Which shift does a task's work ───────────────────────────────────
+//
+// A turnaround runs day and night, but most work belongs to one crew: the
+// exchanger crew works days, the tower runs nights. The report must count a
+// task's planned hours only in the shifts that do it — a day task doesn't
+// fall "behind" overnight, and day work left unfinished isn't the night
+// crew's must-do. Read from the task's own times against the project's
+// shift-change times; a person can set it outright on the task.
+
+/** The project's shift-change times as set on the shift report (kept in
+ *  this browser), or the defaults. */
+export function readShiftTimes(projectId?: string | null): ShiftTimes {
+  try {
+    if (!projectId || typeof localStorage === "undefined") return DEFAULT_SHIFT_TIMES;
+    const raw = localStorage.getItem(`shiftTimes:${projectId}`);
+    return raw ? { ...DEFAULT_SHIFT_TIMES, ...(JSON.parse(raw) as Partial<ShiftTimes>) } : DEFAULT_SHIFT_TIMES;
+  } catch { return DEFAULT_SHIFT_TIMES; }
+}
+
+/** "day" / "night" — one crew; "both" — worked round the clock (stored as
+ *  "swing", the value the database already accepts for it). */
+export type WorkShift = "day" | "night" | "both";
+
+/** Every shift window touching [from, to), in order. */
+export function shiftWindowsBetween(from: number, to: number, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES, max = 2000): ShiftWindow[] {
+  const out: ShiftWindow[] = [];
+  if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return out;
+  let w = shiftAt(from, tz, times);
+  for (let i = 0; i < max && w.start < to; i++) { out.push(w); w = nextShift(w, tz, times); }
+  return out;
+}
+
+const overlapMs = (a0: number, a1: number, b0: number, b1: number) => Math.max(0, Math.min(a1, b1) - Math.max(a0, b0));
+
+/** A task's span as worked: timed tasks as written; a date-only task
+ *  (midnight to midnight) covers its days, inclusive. */
+export function workSpan(m: Milestone, tz: string): { start: number; finish: number; timed: boolean } {
+  const s = startMsOf(m), f = finishMsOf(m);
+  const timed = (Number.isFinite(s) && hasTimeOfDay(s, tz)) || (Number.isFinite(f) && hasTimeOfDay(f, tz));
+  if (timed || !Number.isFinite(f)) return { start: s, finish: f, timed: true };
+  const s0 = Number.isFinite(s) ? s : f;
+  return { start: s0, finish: addDays(Math.max(s0, f), 1, tz), timed: false };
+}
+
+/** Which shift does this task's work. See the note above. */
+export function workShiftOf(m: Milestone, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): WorkShift {
+  const set = m.shift as string | null | undefined;
+  if (set === "both" || set === "swing") return "both";
+  const { start, finish, timed } = workSpan(m, tz);
+  if (!timed) return set === "night" ? "night" : "day";
+  if (!Number.isFinite(start) || !Number.isFinite(finish) || finish <= start) {
+    return Number.isFinite(start) ? shiftAt(start, tz, times).kind : "day";
+  }
+  let dayMs = 0, nightMs = 0;
+  for (const w of shiftWindowsBetween(start, finish, tz, times)) {
+    const o = overlapMs(start, finish, w.start, w.end);
+    if (w.kind === "day") dayMs += o; else nightMs += o;
+  }
+  const total = dayMs + nightMs;
+  const slack = Math.max(20 * 60_000, total * 0.05);   // a step ending a few minutes past shift change is still that shift's
+  if (nightMs <= slack) return "day";
+  if (dayMs <= slack) return "night";
+  // Spans both. Its planned hours tell which: work that fits in the day
+  // hours (and is well short of the elapsed time) is the day crew's.
+  const dur = m.durationHours != null && m.durationHours > 0 ? m.durationHours * 3_600_000 : NaN;
+  if (Number.isFinite(dur)) {
+    if (dur >= total * 0.9) return "both";
+    const fitsDay = dur <= dayMs * 1.1, fitsNight = dur <= nightMs * 1.1;
+    if (fitsDay && !fitsNight) return "day";
+    if (fitsNight && !fitsDay) return "night";
+  }
+  // Starts and ends on the same crew's shift — that crew's job.
+  const a = shiftAt(start, tz, times).kind, b = shiftAt(finish - 1, tz, times).kind;
+  if (a === b) return a;
+  if (set === "day" || set === "night") return set;
+  return "both";
+}
+
+/** The stretches of time a task is worked: its span, cut to its shift. */
+export function workWindows(m: Milestone, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES, span?: { start: number; finish: number }): Array<[number, number]> {
+  const ws = workSpan(m, tz);
+  const start = span?.start ?? ws.start, finish = span?.finish ?? ws.finish;
+  if (!Number.isFinite(start) || !Number.isFinite(finish) || finish <= start) return [];
+  const kind = workShiftOf(m, tz, times);
+  if (kind === "both") return [[start, finish]];
+  const out: Array<[number, number]> = [];
+  for (const w of shiftWindowsBetween(start, finish, tz, times)) {
+    if (w.kind !== kind) continue;
+    const a = Math.max(start, w.start), b = Math.min(finish, w.end);
+    if (b > a) out.push([a, b]);
+  }
+  return out;
+}
+
+/** Does this task have work planned in this shift? */
+export function worksIn(m: Milestone, w: ShiftWindow, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): boolean {
+  const kind = workShiftOf(m, tz, times);
+  if (kind !== "both" && kind !== w.kind) return false;
+  const { start, finish } = workSpan(m, tz);
+  if (finish <= start) return start >= w.start && start < w.end;   // a zero-length milestone
+  return start < w.end && finish > w.start;
+}
+
+/** Share of a task's planned work the plan expects done by `now`: the
+ *  worked hours elapsed over the worked hours in total — so the clock
+ *  only runs while its crew is on shift. */
+export function plannedFraction(m: Milestone, now: number, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES, span?: { start: number; finish: number }): number {
+  const ws = workSpan(m, tz);
+  const s = span?.start ?? ws.start, f = span?.finish ?? ws.finish;
+  if (!(f > s)) return now >= f ? 1 : 0;
+  const win = workWindows(m, tz, times, { start: s, finish: f });
+  const total = win.reduce((a, [x, y]) => a + (y - x), 0);
+  if (total <= 0) return Math.max(0, Math.min(1, (now - s) / (f - s)));
+  const done = win.reduce((a, [x, y]) => a + overlapMs(x, y, -Infinity, now), 0);
+  return Math.max(0, Math.min(1, done / total));
+}
+
+/** Share of a step the plan expects done by `now`, against its baseline
+ *  when one was captured (moving work later must not erase a slip). */
+export function expectedFraction(m: Milestone, now: number, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): number {
+  const toMs = (v: unknown): number => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
+  const bs = toMs(m.baselineStartAt), bf = toMs(m.baselineFinishAt);
+  return plannedFraction(m, now, tz, times, Number.isFinite(bs) && Number.isFinite(bf) ? { start: bs, finish: bf } : undefined);
+}
+
 /** The shift to open on: the one ending now while the job is running;
  *  before the job starts, the first shift with scheduled work; after it
  *  ends, the last one. Never an empty page by default. */
@@ -106,7 +231,7 @@ export function nextShiftWithWork(milestones: Milestone[], from: ShiftWindow, tz
   const leaves = milestones.filter((m) => m.plannedAt && !(m.id && hasKids.has(m.id)));
   let w = nextShift(from, tz, times);
   for (let i = 0; i < maxShifts; i++) {
-    if (leaves.some((m) => startMsOf(m) < w.end && finishMsOf(m) > w.start)) return w;
+    if (leaves.some((m) => worksIn(m, w, tz, times))) return w;
     w = nextShift(w, tz, times);
   }
   return null;
@@ -146,6 +271,8 @@ export interface ShiftRow {
   /** Steps that must finish before it can start and aren't done — it
    *  cannot run on its planned time while these are open. */
   waitingOn: Array<{ id: string; name: string }>;
+  /** Which shift does its work: "day", "night" or round the clock. */
+  work: WorkShift;
 }
 
 /** Planned work-hours for a step: its duration when the schedule gives
@@ -202,6 +329,10 @@ export interface ShiftReport {
     critical: ShiftRow[];
     /** Work-hours still to do across the must-do list. */
     mustDoHours: number;
+    /** Unfinished work the next shift doesn't do (day work during a night
+     *  turnover): it waits for its own crew — listed, not counted as
+     *  this shift's must-do. */
+    otherShift: ShiftRow[];
     /** STRETCH — work planned for the following shifts that is ready to
      *  pull forward (its predecessors done or on the must-do list), in
      *  schedule order. Doing it banks time or claws back a deficit. */
@@ -297,12 +428,15 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       overdue: !finished && Number.isFinite(f) && f <= now,
       lateStart: !finished && percent <= 0 && m.status !== "in_progress" && Number.isFinite(s) && s < now,
       waitingOn: finished ? [] : predecessorsOf(m).filter((p) => !doneM(p)).map((p) => ({ id: p.id ?? p.name, name: p.name })),
+      work: workShiftOf(m, tz, times),
     };
   };
   const inWin = (ms: number, win: ShiftWindow) => Number.isFinite(ms) && ms >= win.start && ms < win.end;
 
   const leaves = milestones.filter((m) => isLeaf(m) && m.plannedAt && Number.isFinite(startMsOf(m)) && Number.isFinite(finishMsOf(m)));
-  const overlaps = (m: Milestone, win: ShiftWindow) => startMsOf(m) < win.end && finishMsOf(m) > win.start;
+  // Planned in a shift = its span covers the shift AND that shift's crew
+  // does it (a day task spanning three days is not night work).
+  const overlaps = (m: Milestone, win: ShiftWindow) => worksIn(m, win, tz, times);
   const cmp = (a: ShiftRow, b: ShiftRow) =>
     (a.start - b.start) || (a.finish - b.finish) || wbsCompare(a.leaf.wbs, b.leaf.wbs) || a.leaf.name.localeCompare(b.leaf.name);
 
@@ -323,8 +457,9 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       const setMs = toMs(m.baselineSetAt);
       if (Number.isFinite(setMs) && (!baselineSetAt || setMs > Date.parse(baselineSetAt))) baselineSetAt = new Date(setMs).toISOString();
     }
-    const ps = useBase ? bs : s, pf = useBase ? bf : f;
-    const frac = pf <= ps ? (now >= pf ? 1 : 0) : Math.max(0, Math.min(1, (now - ps) / (pf - ps)));
+    // The plan's clock runs only while the task's crew is on shift: a day
+    // task earns no planned progress overnight.
+    const frac = expectedFraction(m, now, tz, times);
     wsum += w; wplanned += w * frac; hsum += workHours(m);
     if (DONE({ status: m.status, percent: pctOf(m) })) stepsDone++;
   }
@@ -374,8 +509,11 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     .map((m) => rowFor(m, next))
     .filter((r) => !carryOver.some((c) => c.leaf.id === r.leaf.id))
     .sort((a, b) => Number(b.critical) - Number(a.critical) || cmp(a, b));
-  const goalsCarry = carryOver.map((r) => ({ ...rowFor(r.leaf, next), carryOver: true }))
+  const forNext = (r: ShiftRow) => r.work === "both" || r.work === next.kind;
+  const carriedAll = carryOver.map((r) => ({ ...rowFor(r.leaf, next), carryOver: true }))
     .sort((a, b) => Number(b.critical) - Number(a.critical) || cmp(a, b));
+  const goalsCarry = carriedAll.filter(forNext);
+  const otherShift = carriedAll.filter((r) => !forNext(r));
   const all = [...goalsCarry, ...planned];
   const critical = all.filter((r) => r.critical);
   const mustDoHours = Math.round(all.reduce((acc, r) => acc + r.hoursLeft, 0) * 10) / 10;
@@ -390,6 +528,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     .filter((m) => m.id && !mustIds.has(m.id) && !doneIds.has(m.id) && startMsOf(m) >= next.end && startMsOf(m) < horizonEnd)
     .filter((m) => (m.dependsOn ?? []).every((d) => !byId.has(d) || doneIds.has(d) || mustIds.has(d)))
     .map((m) => rowFor(m, next))
+    .filter(forNext)
     .sort((a, b) => Number(b.critical) - Number(a.critical) || cmp(a, b))
     .slice(0, 12);
   // Deficit in work-hours against the plan as of now.
@@ -415,7 +554,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       baselineSetAt: baselined > 0 ? baselineSetAt : null,
     },
     review: { scheduled, done, inProgress, notStarted, carryOver },
-    goals: { all, carryOver: goalsCarry, planned, critical, mustDoHours, stretch, gapHours, backOnTrackAt },
+    goals: { all, carryOver: goalsCarry, planned, critical, mustDoHours, otherShift, stretch, gapHours, backOnTrackAt },
     blocked,
   };
 }

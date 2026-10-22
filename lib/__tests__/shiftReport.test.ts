@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildShiftReport, shiftWindow, shiftAt, nextShift, previousShift, shiftLabel, defaultReviewShift, nextShiftWithWork } from "@/lib/shiftReport";
+import { buildShiftReport, shiftWindow, shiftAt, nextShift, previousShift, shiftLabel, defaultReviewShift, nextShiftWithWork, workShiftOf, plannedFraction, worksIn } from "@/lib/shiftReport";
 import { wallClock } from "@/lib/scheduleTz";
 import type { Milestone } from "@/types/schema";
 
@@ -64,12 +64,23 @@ describe("buildShiftReport", () => {
     expect(report.review.scheduled.find((r) => r.leaf.id === "a")!.path).toEqual(["E-12"]);
   });
 
-  it("plans the next shift: carry-overs first (critical on top), then planned work", () => {
+  it("plans the next shift: its own work; day work left over waits for the day crew", () => {
     expect(report.next).toMatchObject({ kind: "night", dayKey: "2026-10-26" });
-    expect(report.goals.all.map((r) => r.leaf.id)).toEqual(["c", "old", "b", "d"]);
-    expect(report.goals.carryOver.every((r) => r.carryOver)).toBe(true);
+    // Night is next: only "Inspect" (20:00 → 10:00, worked through) is night work.
+    expect(report.goals.all.map((r) => r.leaf.id)).toEqual(["d"]);
     expect(report.goals.planned.map((r) => r.leaf.id)).toEqual(["d"]);
-    expect(report.goals.critical.map((r) => r.leaf.id)).toEqual(["c"]);
+    // The day steps left unfinished are listed for the day shift — not the night's must-do.
+    expect(report.goals.otherShift.map((r) => r.leaf.id)).toEqual(["c", "old", "b"]);
+    expect(report.goals.otherShift.every((r) => r.carryOver && r.work === "day")).toBe(true);
+    expect(report.goals.carryOver).toEqual([]);
+  });
+
+  it("at the next day shift, the day carry-overs are its must-do, critical first", () => {
+    const night = shiftWindow("2026-10-26", "night", CHI);
+    const r = buildShiftReport({ milestones: all, criticalIds: new Set(["c"]), tz: CHI, shift: night, now: night.end });
+    expect(r.next.kind).toBe("day");
+    expect(r.goals.carryOver.map((x) => x.leaf.id)).toEqual(["c", "old", "b"]);
+    expect(r.goals.critical.map((x) => x.leaf.id)).toEqual(["c"]);
   });
 
   it("states the overall standing against the plan at that moment", () => {
@@ -135,18 +146,21 @@ describe("must-do vs stretch", () => {
   const shift = shiftWindow("2026-10-26", "day", CHI);
   const n1 = mk({ id: "n1", name: "Night step 1", plannedStartAt: at("2026-10-26", "18:00"), plannedAt: at("2026-10-26", "22:00"), durationHours: 4 });
   const n2 = mk({ id: "n2", name: "Night step 2", plannedStartAt: at("2026-10-26", "22:00"), plannedAt: at("2026-10-27", "02:00"), durationHours: 4, percentComplete: 50, status: "in_progress" });
-  const s1 = mk({ id: "s1", name: "Tomorrow A", plannedStartAt: at("2026-10-27", "06:00"), plannedAt: at("2026-10-27", "12:00"), durationHours: 6, dependsOn: ["n1"] });
-  const s2 = mk({ id: "s2", name: "Tomorrow B", plannedStartAt: at("2026-10-27", "12:00"), plannedAt: at("2026-10-27", "18:00"), durationHours: 6, dependsOn: ["x"] });
+  // Stretch candidates for a night crew: the FOLLOWING night's work.
+  const s1 = mk({ id: "s1", name: "Tomorrow night A", plannedStartAt: at("2026-10-27", "18:00"), plannedAt: at("2026-10-28", "00:00"), durationHours: 6, dependsOn: ["n1"] });
+  const s2 = mk({ id: "s2", name: "Tomorrow night B", plannedStartAt: at("2026-10-28", "00:00"), plannedAt: at("2026-10-28", "05:00"), durationHours: 5, dependsOn: ["x"] });
+  const dayWork = mk({ id: "dw", name: "Tomorrow day work", plannedStartAt: at("2026-10-27", "06:00"), plannedAt: at("2026-10-27", "12:00"), durationHours: 6 });
   const x = mk({ id: "x", name: "Unfinished predecessor", plannedStartAt: at("2026-10-28", "06:00"), plannedAt: at("2026-10-28", "10:00"), durationHours: 4 });
   // A big step planned earlier and far from done keeps the job "behind".
   const big = mk({ id: "big", name: "Big early step", plannedStartAt: at("2026-10-25", "06:00"), plannedAt: at("2026-10-26", "06:00"), durationHours: 24, percentComplete: 0 });
-  const r = buildShiftReport({ milestones: [n1, n2, s1, s2, x, big], tz: CHI, shift, now: shift.end });
+  const r = buildShiftReport({ milestones: [n1, n2, s1, s2, x, big, dayWork], tz: CHI, shift, now: shift.end });
   it("must-do carries the next shift's work plus overdue work, with hours left", () => {
     expect(r.goals.all.map((g) => g.leaf.id)).toEqual(["big", "n1", "n2"]);
     expect(r.goals.mustDoHours).toBe(24 + 4 + 2);
   });
   it("stretch lists later work whose predecessors are done or on the must-do list", () => {
-    expect(r.goals.stretch.map((g) => g.leaf.id)).toEqual(["s1"]); // s2 waits on x
+    // s2 waits on x; tomorrow's DAY work is not something a night crew pulls forward.
+    expect(r.goals.stretch.map((g) => g.leaf.id)).toEqual(["s1"]);
   });
   it("says how far behind in hours and where stretch closes the gap", () => {
     expect(r.goals.gapHours).toBeGreaterThan(0);
@@ -219,5 +233,65 @@ describe("a chain that hasn't started: everything late says so", () => {
   it("hours come from the planned window when the schedule has no durations", () => {
     expect(row("chem").hours).toBe(12);
     expect(row("rinse").hoursLeft).toBe(8);
+  });
+});
+
+describe("the plan runs on the crew's clock — day work doesn't fall behind overnight", () => {
+  // Exchanger: day-crew work Mon 06:00 → Wed 17:00, 33 h (three 11-hour days).
+  const exch = mk({ id: "ex", name: "E-606 retube", plannedStartAt: at("2026-10-26", "06:00"), plannedAt: at("2026-10-28", "17:00"), durationHours: 33 });
+  // Tower: night-crew work Mon 18:00 → Tue 05:00.
+  const tower = mk({ id: "tw", name: "T-605 tray work", plannedStartAt: at("2026-10-26", "18:00"), plannedAt: at("2026-10-27", "05:00"), durationHours: 11 });
+  // A reactor job planned round the clock: 48 h over 48 h.
+  const reactor = mk({ id: "rx", name: "R-1 catalyst", plannedStartAt: at("2026-10-26", "06:00"), plannedAt: at("2026-10-28", "06:00"), durationHours: 48 });
+
+  it("tells day, night and round-the-clock work apart from the times", () => {
+    expect(workShiftOf(exch, CHI)).toBe("day");
+    expect(workShiftOf(tower, CHI)).toBe("night");
+    expect(workShiftOf(reactor, CHI)).toBe("both");
+    // A step starting right at the 05:30 shift change is day work (the old import called it night).
+    expect(workShiftOf(mk({ id: "e", name: "Early", plannedStartAt: at("2026-10-26", "05:30"), plannedAt: at("2026-10-26", "09:00"), shift: "night" }), CHI)).toBe("day");
+    // A person can say a job runs round the clock.
+    expect(workShiftOf({ ...exch, shift: "both" as Milestone["shift"] }, CHI)).toBe("both");
+  });
+
+  it("the exchanger earns no planned progress during the night", () => {
+    const endOfDay = at("2026-10-26", "17:30"), endOfNight = at("2026-10-27", "05:30");
+    const a = plannedFraction(exch, endOfDay, CHI), b = plannedFraction(exch, endOfNight, CHI);
+    expect(b).toBeCloseTo(a, 5);              // nothing accrues overnight
+    expect(a).toBeGreaterThan(0.3);
+    expect(a).toBeLessThan(0.37);             // ~11.5 of ~34.5 worked hours
+  });
+
+  it("closing the night shift, a job on plan reads ON TRACK, not behind", () => {
+    const night = shiftWindow("2026-10-26", "night", CHI);
+    // Day crew did exactly a third of the exchanger; night crew finished the tower.
+    const r = buildShiftReport({
+      milestones: [{ ...exch, percentComplete: 34, status: "in_progress" }, { ...tower, percentComplete: 100, status: "completed" }],
+      tz: CHI, shift: night, now: night.end,
+    });
+    expect(r.overall.standing).toBe("on track");
+  });
+
+  it("the night shift's list is the tower, not the exchanger", () => {
+    const night = shiftWindow("2026-10-26", "night", CHI);
+    expect(worksIn(exch, night, CHI)).toBe(false);
+    expect(worksIn(tower, night, CHI)).toBe(true);
+    const day = shiftWindow("2026-10-26", "day", CHI);
+    const r = buildShiftReport({ milestones: [exch, tower], tz: CHI, shift: day, now: day.end });
+    expect(r.next.kind).toBe("night");
+    expect(r.goals.all.map((x) => x.leaf.id)).toEqual(["tw"]);
+  });
+});
+
+describe("one answer to 'are we on time' everywhere", () => {
+  it("the schedule's pace banner shows the shift report's plan by now", async () => {
+    const { computeExecutionReport } = await import("@/lib/executionReport");
+    const exch = mk({ id: "ex", name: "Exchanger", plannedStartAt: at("2026-10-26", "06:00"), plannedAt: at("2026-10-28", "17:00"), durationHours: 33, percentComplete: 34, status: "in_progress" });
+    const tower = mk({ id: "tw", name: "Tower", plannedStartAt: at("2026-10-26", "18:00"), plannedAt: at("2026-10-27", "05:00"), durationHours: 11, percentComplete: 100, status: "completed" });
+    const night = shiftWindow("2026-10-26", "night", CHI);
+    const shiftRep = buildShiftReport({ milestones: [exch, tower], tz: CHI, shift: night, now: night.end });
+    const pace = computeExecutionReport([exch, tower], { now: new Date(night.end), tz: CHI });
+    expect(pace.expectedPct).toBe(shiftRep.overall.plannedPct);
+    expect(Math.abs(pace.paceDelta)).toBeLessThan(3); // on track, not "behind pace"
   });
 });

@@ -21,7 +21,7 @@ import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
 import { reflowAllAncestors, type ReflowNode } from "@/lib/scheduleReflow";
 import { effectiveWeight, leafPercent } from "@/lib/scheduleProgress";
 import { mergeImportedProgress } from "@/lib/scheduleRules";
-import { DEFAULT_SCHEDULE_TZ, naiveToIso, normalizeTimeZone, shiftWallClock, wallClock } from "@/lib/scheduleTz";
+import { DEFAULT_SCHEDULE_TZ, naiveToIso, normalizeTimeZone, shiftWallClock } from "@/lib/scheduleTz";
 import type {
   Milestone, MilestoneStatus, MilestoneSource, MilestoneNote, MilestoneAttributes,
 } from "@/types/schema";
@@ -1008,13 +1008,6 @@ function coerceIsoMaybe(s: string | null | undefined, tz: string): string | null
 
 /** Heuristic shift assignment based on a planned start hour at the plant.
  *  6am-6pm → day, 6pm-6am → night. Null until plannedStartAt is known. */
-function shiftFromStart(plannedStartIso: string | null, tz: string): "day" | "night" | null {
-  if (!plannedStartIso) return null;
-  const ms = Date.parse(plannedStartIso);
-  if (isNaN(ms)) return null;
-  const h = wallClock(ms, tz).hour;
-  return (h >= 6 && h < 18) ? "day" : "night";
-}
 
 /** Set the hierarchy migration (20260703) has applied. Determined
  *  lazily on first INSERT failure caused by an unknown column —
@@ -1096,7 +1089,11 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
       baseFields.outline_level = r.outlineLevel ?? null;
       baseFields.wbs = r.wbs ?? null;
       baseFields.is_summary = !!r.isSummary;
-      baseFields.shift = shiftFromStart(plannedStartIso, tz);
+      // Which crew does a step is read from its times against the project's
+      // shift-change times when it's used (lib/shiftReport workShiftOf) — a
+      // guess stored here (from a fixed 6:00–18:00 day) went stale and
+      // mislabelled 5:30 starts as night work.
+      baseFields.shift = null;
       baseFields.work_order_ref = r.workOrderRef ?? null;
       baseFields.responsible_party = r.responsibleParty ?? null;
       baseFields.responsible_kind = r.responsibleKind ?? null;

@@ -527,7 +527,10 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   };
   const seen = new Set<string>();
   const didNotFinish: ShiftRow[] = [];
+  // This crew's unfinished work — another crew's leftovers are theirs.
+  const ownWork = (r: ShiftRow) => r.work === "both" || r.work === shift.kind;
   for (const r of [...review.carryOver, ...review.inProgress, ...review.notStarted]) {
+    if (!ownWork(r)) continue;
     if (!r.leaf.id || seen.has(r.leaf.id)) continue;
     seen.add(r.leaf.id); didNotFinish.push(r);
   }
@@ -590,6 +593,13 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       r.finish > next.end ? { t: `to ${c.D(r.finish)}`, tone: "muted" } : null,
     ],
   }));
+  const otherKind = next.kind === "day" ? "night" : "day";
+  const otherRows = goals.otherShift.map((r) => rowFromShift(r, c, {
+    when: `due ${c.DTs(r.finish)}`,
+    right: r.percent > 0 ? `${r.percent}% · ${c.hrs(r.hoursLeft)}` : c.hrs(r.hoursLeft),
+    extraTags: [r.status === "blocked" ? { t: "blocked", tone: "rose" } : r.status === "on_hold" ? { t: "on hold", tone: "amber" } : null],
+  }));
+  const otherTitle = `Waiting for the ${otherKind} shift — ${otherKind} work, not on this shift's list`;
   const stretchRows = goals.stretch.map((r, i) => {
     const closes = goals.backOnTrackAt != null && i + 1 <= goals.backOnTrackAt;
     return rowFromShift(r, c, {
@@ -686,6 +696,12 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           <Sub tone={gap > 0.5 ? "amber" : "emerald"} icon={<Zap className="w-3.5 h-3.5" />} title="Stretch — if you have the hands" count={goals.stretch.length} />
           <div className={`text-[11.5px] font-semibold ${gap > 0.5 ? "text-amber-800 dark:text-amber-300" : "text-emerald-800 dark:text-emerald-300"}`}>{stretchMsg}</div>
           {goals.stretch.length > 0 && <StepTable print={print} box rightHead="Left" rows={stretchRows} />}
+          {goals.otherShift.length > 0 && (
+            <>
+              <Sub tone="slate" icon={next.kind === "day" ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />} title={otherTitle} count={goals.otherShift.length} />
+              <StepTable print={print} rightHead="Left" rows={otherRows} />
+            </>
+          )}
         </div>
       ),
       data: () => [
@@ -695,6 +711,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         { k: "sub", title: "Stretch — if you have the hands", count: goals.stretch.length, tone: gap > 0.5 ? "amber" : "emerald" },
         { k: "note", text: stretchMsg, tone: gap > 0.5 ? "amber" : "emerald" },
         ...(goals.stretch.length > 0 ? [stepsBlock(stretchRows, "Left")] : []),
+        ...(goals.otherShift.length > 0 ? [{ k: "sub", title: otherTitle, count: goals.otherShift.length, tone: "slate" } as ExportBlock, stepsBlock(otherRows, "Left")] : []),
       ],
     },
     closeSection("Close", ["Outgoing supervisor", "Incoming supervisor", "Crew lead"]),

@@ -10,6 +10,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { spanLabel, startOf, finishOf } from "@/lib/scheduleTime";
+import { workShiftOf, readShiftTimes } from "@/lib/shiftReport";
 import { fmtInTz, fromDateTimeInput, hasTimeOfDay, toDateTimeInput, tzAbbrev } from "@/lib/scheduleTz";
 import {
   X as XIcon, Pencil, Trash2, Loader2, Save, Clock, MapPin, Hash,
@@ -268,11 +269,16 @@ export default function TaskDetailPanel({
                 {m.location && (
                   <Field icon={<MapPin className="w-3.5 h-3.5" />} label="Location">{m.location}</Field>
                 )}
-                {m.shift && (
-                  <Field icon={m.shift === "night" ? <Moon className="w-3.5 h-3.5" /> : m.shift === "swing" ? <Sunset className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />} label="Shift">
-                    <span className="capitalize">{m.shift}</span>
-                  </Field>
-                )}
+                {!isLeaf ? null : (() => {
+                  // Which crew does it — what the shift report counts it against.
+                  const w = workShiftOf(m, tz, readShiftTimes(m.projectId));
+                  const label = w === "both" ? "Round the clock" : w === "night" ? "Night shift" : "Day shift";
+                  return (
+                    <Field icon={w === "night" ? <Moon className="w-3.5 h-3.5" /> : w === "both" ? <Sunset className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />} label="Worked on">
+                      {label} <span className="text-[10px] text-[var(--color-text-faint)]">{m.shift === "swing" || ((m.shift === "day" || m.shift === "night") && w === m.shift) ? "· set on the task" : "· from its times"}</span>
+                    </Field>
+                  );
+                })()}
                 {m.description && (
                   <div className="text-xs text-[var(--color-text-muted)] whitespace-pre-wrap pt-1">{m.description}</div>
                 )}
@@ -540,11 +546,12 @@ function EditForm({
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <L label="Location"><input value={location} onChange={(e) => setLocation(e.target.value)} className={inp} /></L>
         <L label="Shift">
-          <select value={shift} onChange={(e) => setShift(e.target.value)} className={inp}>
-            <option value="">—</option>
-            <option value="day">Day</option>
-            <option value="night">Night</option>
-            <option value="swing">Swing</option>
+          <select value={shift} onChange={(e) => setShift(e.target.value)} className={inp}
+            title="Which crew does this work. The shift report counts its planned hours only on that shift.">
+            <option value="">Auto — from its times</option>
+            <option value="day">Day shift</option>
+            <option value="night">Night shift</option>
+            <option value="swing">Round the clock</option>
           </select>
         </L>
       </div>

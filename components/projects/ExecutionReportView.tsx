@@ -17,11 +17,12 @@ import {
 } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { computeExecutionReport } from "@/lib/executionReport";
+import type { ShiftTimes } from "@/lib/shiftReport";
 import { computeCriticalPathLite } from "@/lib/criticalPath";
 
-export default function ExecutionReportView({ milestones }: { milestones: Milestone[] }) {
+export default function ExecutionReportView({ milestones, shiftTimes }: { milestones: Milestone[]; shiftTimes?: ShiftTimes }) {
   const tz = useScheduleTz();
-  const r = useMemo(() => computeExecutionReport(milestones), [milestones]);
+  const r = useMemo(() => computeExecutionReport(milestones, { tz, shiftTimes }), [milestones, tz, shiftTimes]);
   const critical = useMemo(() => computeCriticalPathLite(milestones), [milestones]);
   const criticalNames = useMemo(
     () => milestones.filter((m) => m.id && critical.ids.has(m.id)).map((m) => m.name),

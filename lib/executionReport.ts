@@ -18,6 +18,8 @@
 
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { effectiveWeight, leafPercent } from "@/lib/scheduleProgress";
+import { startOf, finishOf } from "@/lib/scheduleTime";
+import { expectedFraction, DEFAULT_SHIFT_TIMES, type ShiftTimes } from "@/lib/shiftReport";
 
 export interface GroupRollup {
   id: string;
@@ -101,11 +103,17 @@ export interface BaselineDrift {
 
 const DAY = 86_400_000;
 
-const startMs = (m: Milestone) => Date.parse((m.plannedStartAt as string | undefined) ?? (m.plannedAt as string));
-const finishMs = (m: Milestone) => Date.parse(m.plannedAt as string);
+// Dates arrive as strings, Dates or epoch numbers — read them all.
+const startMs = (m: Milestone) => startOf(m);
+const finishMs = (m: Milestone) => finishOf(m);
 const hoursOf = (m: Milestone) => (typeof m.durationHours === "number" && m.durationHours > 0 ? m.durationHours : 0);
 
-export function computeExecutionReport(milestones: Milestone[], opts?: { now?: Date }): ExecutionReport {
+export function computeExecutionReport(milestones: Milestone[], opts?: {
+  now?: Date;
+  /** Plant zone and shift-change times: "expected by now" counts each step's
+   *  planned hours only on the shift that does it, as the shift report does. */
+  tz?: string; shiftTimes?: ShiftTimes;
+}): ExecutionReport {
   const now = (opts?.now ?? new Date()).getTime();
   const byId = new Map<string, Milestone>();
   for (const m of milestones) if (m.id) byId.set(m.id, m);
@@ -173,7 +181,14 @@ export function computeExecutionReport(milestones: Milestone[], opts?: { now?: D
   const totalDays = (Number.isFinite(envStart) && Number.isFinite(envFinish))
     ? Math.max(1, Math.round((envFinish - envStart) / DAY) + 1) : 0;
   const elapsedDays = Number.isFinite(envStart) ? Math.max(0, Math.round((now - envStart) / DAY)) : 0;
-  const expectedPct = totalDays > 0 ? Math.min(100, Math.round((elapsedDays / totalDays) * 100)) : 0;
+  // Where the plan says the job should be by now: each step's share of its
+  // own worked hours elapsed, weighted like % complete — the same number the
+  // shift report shows as "plan by now". (Days elapsed over days in the job
+  // said nothing about what work was due, and ran through nights for day work.)
+  const tz = opts?.tz ?? "UTC";
+  let wexp = 0;
+  for (const m of leaves) wexp += effectiveWeight(m) * expectedFraction(m, now, tz, opts?.shiftTimes ?? DEFAULT_SHIFT_TIMES);
+  const expectedPct = wsum > 0 ? Math.min(100, Math.round((wexp / wsum) * 100)) : 0;
   const paceDelta = pctComplete - expectedPct;
 
   // Naive forecast: extrapolate completion rate over elapsed time.

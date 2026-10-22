@@ -16,7 +16,7 @@
 // surfaces a group chip's subtask accordion.
 
 import React, { useCallback, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, Crosshair, Layers, Info, GripVertical, CheckSquare, X as XIcon, Moon, Sunset, ListChecks } from "lucide-react";
+import { ChevronLeft, ChevronRight, Crosshair, Layers, Info, GripVertical, CheckSquare, X as XIcon, ListChecks } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl from "@/components/projects/ProgressControl";
@@ -25,6 +25,8 @@ import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { splitPlacements, compareDayPlacements, compareBandPlacements, activeWindowOnDay, startMsOf, finishMsOf, type BandPlacement, type DayPlacement } from "@/lib/calendarPlacement";
 import { addDays as addDaysTz, addMonths as addMonthsTz, clockLabel, dayDiff as dayDiffTz, dayKey, dayKeyToMs, dayOfWeek, fmtInTz, hasTimeOfDay, tzAbbrev, startOfDay as startOfDayTz, startOfMonth as startOfMonthTz, wallClock } from "@/lib/scheduleTz";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
+import { DEFAULT_SHIFT_TIMES, workShiftOf, type ShiftTimes } from "@/lib/shiftReport";
+import ShiftMark from "@/components/projects/ShiftMark";
 import DayAgendaPanel from "@/components/projects/DayAgendaPanel";
 import { overdueOpenWork } from "@/lib/openWork";
 import { completionNote, completionNoteShort } from "@/lib/scheduleRules";
@@ -57,11 +59,13 @@ interface Props {
   detailOpen?: boolean;
   /** Add a note to a step's log (what got done, what's turned over). */
   onAddNote?: (id: string, body: string) => Promise<void> | void;
+  /** The project's shift-change times — which crew does each step. */
+  shiftTimes?: ShiftTimes;
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-export default function ScheduleCalendarTileView({ milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail, detailOpen, onAddNote }: Props) {
+export default function ScheduleCalendarTileView({ milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail, detailOpen, onAddNote, shiftTimes = DEFAULT_SHIFT_TIMES }: Props) {
   const tz = useScheduleTz();
   // Multi-select for bulk actions on the calendar (mirrors the timeline).
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -500,6 +504,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                         selected={!!p.ms.id && selected.has(p.ms.id)}
                         onToggleSelect={() => p.ms.id && toggleSelected(p.ms.id)}
                         dimmed={!!dragId && dragId === p.ms.id}
+                        shiftTimes={shiftTimes}
                       />
                     );
                   })}
@@ -630,6 +635,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
           onSetStatus={onSetStatus}
           onSetProgress={onSetProgress}
           onAddNote={onAddNote}
+          shiftTimes={shiftTimes}
           onOpenDetail={(m) => { onOpenDetail(m); }}
           onChangeDay={setAgendaDay}
           onClose={() => setAgendaDay(null)}
@@ -681,7 +687,7 @@ function Band({ band, color, onClick, full }: {
 
 function Chip({
   ms, dayIndex, spanDays, todayStart, todayEnd, idleToday, childrenByParent, ancestors, color, canEdit, draggable, onDragStart, onTouchDragStart, onClick,
-  onSetStatus, onSetProgress, progress, canExpand, isExpanded, onToggleExpand, selectable, selected, onToggleSelect, dimmed, full,
+  onSetStatus, onSetProgress, progress, canExpand, isExpanded, onToggleExpand, selectable, selected, onToggleSelect, dimmed, full, shiftTimes,
 }: {
   ms: Milestone; dayIndex: number; spanDays: number;
   /** This day's active window (see DayPlacement). */
@@ -697,6 +703,7 @@ function Chip({
   onSetStatus?: (id: string, status: MilestoneStatus, reason?: string) => void;
   onSetProgress?: (id: string, percent: number) => void;
   progress?: Map<string, ProgressInfo>;
+  shiftTimes?: ShiftTimes;
   canExpand?: boolean; isExpanded?: boolean; onToggleExpand?: (e: React.MouseEvent) => void;
   selectable?: boolean; selected?: boolean; onToggleSelect?: () => void;
   dimmed?: boolean; full?: boolean;
@@ -820,7 +827,7 @@ function Chip({
           </button>
         )}
         {hasSubs && !canExpand && <Layers className="w-2.5 h-2.5 shrink-0 opacity-70" />}
-        {ms.shift === "night" ? <Moon className="w-2.5 h-2.5 shrink-0 opacity-70" /> : ms.shift === "swing" ? <Sunset className="w-2.5 h-2.5 shrink-0 opacity-70" /> : null}
+        {!hasSubs && <ShiftMark work={workShiftOf(ms, tz, shiftTimes ?? DEFAULT_SHIFT_TIMES)} />}
         {clock && <span className="shrink-0 text-[9px] font-mono opacity-70 tabular-nums">{clock}</span>}
         <span className={`text-[10.5px] font-semibold leading-tight ${full ? "" : "truncate"} ${effStatus === "completed" ? "line-through opacity-70" : ""}`}>{ms.name}</span>
         {spanDays > 1 && (

@@ -14,16 +14,21 @@ import React, { useMemo } from "react";
 import { AlertTriangle, PauseCircle, TrendingDown, CalendarClock, CheckCircle2, ArrowRight } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { computeExecutionReport } from "@/lib/executionReport";
+import type { ShiftTimes } from "@/lib/shiftReport";
+import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 
 interface Props {
   milestones: Milestone[];
   /** Jump to a filtered view (the board applies it). */
   onShowOverdue: () => void;
   onShowBlocked: () => void;
+  /** Shift-change times — "expected by now" runs on each step's own shift. */
+  shiftTimes?: ShiftTimes;
 }
 
-export default function SchedulePulse({ milestones, onShowOverdue, onShowBlocked }: Props) {
-  const r = useMemo(() => computeExecutionReport(milestones), [milestones]);
+export default function SchedulePulse({ milestones, onShowOverdue, onShowBlocked, shiftTimes }: Props) {
+  const tz = useScheduleTz();
+  const r = useMemo(() => computeExecutionReport(milestones, { tz, shiftTimes }), [milestones, tz, shiftTimes]);
   if (r.totalLeaves === 0) return null;
 
   const items: React.ReactNode[] = [];

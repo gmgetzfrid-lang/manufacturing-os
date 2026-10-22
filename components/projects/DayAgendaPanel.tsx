@@ -27,6 +27,8 @@ import { clockLabel, dayKey, dayKeyToMs, fmtInTz, addDays, tzAbbrev } from "@/li
 import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
 import { overdueOpenWork, startedEarlyWork } from "@/lib/openWork";
 import { completionNote } from "@/lib/scheduleRules";
+import { DEFAULT_SHIFT_TIMES, workShiftOf, type ShiftTimes } from "@/lib/shiftReport";
+import ShiftMark from "@/components/projects/ShiftMark";
 
 interface Props {
   day: string; // "YYYY-MM-DD" in the plant zone
@@ -40,6 +42,8 @@ interface Props {
   onSetProgress?: (id: string, percent: number) => void;
   /** Add a note to the step's log. */
   onAddNote?: (id: string, body: string) => Promise<void> | void;
+  /** The project's shift-change times — which crew does each step. */
+  shiftTimes?: ShiftTimes;
   onOpenDetail: (m: Milestone) => void;
   onChangeDay: (day: string) => void;
   onClose: () => void;
@@ -68,7 +72,7 @@ interface EquipmentGroup {
 
 export default function DayAgendaPanel({
   day, tz, milestones, childrenByParent, ancestorsOf, progress, canEdit,
-  onSetStatus, onSetProgress, onAddNote, onOpenDetail, onChangeDay, onClose, colorOf,
+  onSetStatus, onSetProgress, onAddNote, onOpenDetail, onChangeDay, onClose, colorOf, shiftTimes = DEFAULT_SHIFT_TIMES,
 }: Props) {
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
@@ -242,7 +246,8 @@ export default function DayAgendaPanel({
                     return (
                       <li key={r.leaf.id} className={openId === r.leaf.id ? "bg-[var(--color-accent-soft)]/40" : ""}>
                       <div className={`px-4 py-2 flex items-center gap-3 ${openId === r.leaf.id ? "" : r.live === "overdue" ? "bg-rose-50" : r.live === "started-early" ? "bg-blue-50/60" : ""}`}>
-                        <span className={`w-[88px] shrink-0 text-[11px] font-mono tabular-nums ${r.live === "overdue" ? "font-black text-rose-700" : r.live === "started-early" ? "font-bold text-blue-700" : "text-[var(--color-text-muted)]"}`}>{windowOf(r)}</span>
+                        <ShiftMark work={workShiftOf(r.leaf, tz, shiftTimes)} />
+                        <span className={`w-[80px] shrink-0 text-[11px] font-mono tabular-nums ${r.live === "overdue" ? "font-black text-rose-700" : r.live === "started-early" ? "font-bold text-blue-700" : "text-[var(--color-text-muted)]"}`}>{windowOf(r)}</span>
                         <span className="shrink-0">
                           <StatusControl
                             status={r.leaf.status} size="sm" variant="dot" disabled={!canEdit || !onSetStatus || !r.leaf.id}

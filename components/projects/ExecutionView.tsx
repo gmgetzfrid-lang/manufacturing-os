@@ -47,7 +47,8 @@ import { addDays as addDaysTz, dayDiff as dayDiffTz, dayOfWeek, fmtInTz, startOf
 import { needsFutureConfirm } from "@/lib/scheduleRules";
 import { startMsOf as plannedStartMsOf } from "@/lib/calendarPlacement";
 import { effectiveSpans, byStart, spanLabel, barGeometry, xAt, hourStep, startOf as timedStart, finishOf as timedFinish } from "@/lib/scheduleTime";
-import { DEFAULT_SHIFT_TIMES, type ShiftTimes } from "@/lib/shiftReport";
+import { DEFAULT_SHIFT_TIMES, readShiftTimes, workShiftOf, type ShiftTimes, type WorkShift } from "@/lib/shiftReport";
+import ShiftMark from "@/components/projects/ShiftMark";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl from "@/components/projects/ProgressControl";
@@ -211,12 +212,8 @@ export default function ExecutionView({
   // Shift change times (set on the shift report) — the timeline marks day
   // and night shifts with them.
   const [shiftTimes, setShiftTimes] = useState<ShiftTimes>(DEFAULT_SHIFT_TIMES);
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(`shiftTimes:${projectId}`);
-      if (raw) setShiftTimes({ ...DEFAULT_SHIFT_TIMES, ...(JSON.parse(raw) as Partial<ShiftTimes>) });
-    } catch { /* private mode */ }
-  }, [projectId]);
+  // Re-read on every view switch: they're edited on the shift report.
+  useEffect(() => { setShiftTimes(readShiftTimes(projectId)); }, [projectId, layout]);
 
   // ── Search / filter ──────────────────────────────────────────
   const [filter, setFilter] = useState<ScheduleFilter>(EMPTY_FILTER);
@@ -756,6 +753,7 @@ export default function ExecutionView({
 
       <SchedulePulse
         milestones={items}
+        shiftTimes={shiftTimes}
         onShowOverdue={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, overdueOnly: true, query: f.query })); }}
         onShowBlocked={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, blockedOnly: true, query: f.query })); }}
       />
@@ -817,7 +815,7 @@ export default function ExecutionView({
       )}
 
       {layout === "report" ? (
-        <ExecutionReportView milestones={items} />
+        <ExecutionReportView milestones={items} shiftTimes={shiftTimes} />
       ) : layout === "shift" ? (
         <ShiftReportView milestones={items} progress={progressIndex} criticalIds={critical.ids} projectId={projectId} projectName={projectName} />
       ) : layout === "calendar" ? (
@@ -836,6 +834,7 @@ export default function ExecutionView({
           onBulkMove={(ids, d) => bulkMoveIds(ids, d)}
           onOpenDetail={(m) => m.id && setDetailId(m.id)}
           detailOpen={detailId != null}
+          shiftTimes={shiftTimes}
           onAddNote={async (id, body) => {
             const m = byId.get(id);
             await addMilestoneNote({ orgId, milestoneId: id, kind: "note", statusAt: m?.status ?? null, body, createdBy: userId, createdByName: userName });
@@ -881,6 +880,7 @@ export default function ExecutionView({
                   key={r.ms.id}
                   row={r}
                   span={spanOf(r.ms)}
+                  work={r.hasChildren ? null : workShiftOf(r.ms, tz, shiftTimes)}
                   color={colors.colorOf(r.ms)}
                   collapsed={!!r.ms.id && collapsed.has(r.ms.id)}
                   selected={!!r.ms.id && selectedIds.has(r.ms.id)}
@@ -1136,10 +1136,10 @@ function Toolbar({
 // ─── Outline row (left, frozen) ────────────────────────────────
 
 function OutlineRow({
-  row, span, color, collapsed, selected, focused, canEdit, busy,
+  row, span, work, color, collapsed, selected, focused, canEdit, busy,
   onToggleCollapse, onToggleSelected, onSetStatus, onSetProgress, onSetDuration, onOpenDetail, onViewOnly, onSequence,
 }: {
-  row: FlatRow; span: { start: number; finish: number }; color: GroupColor; collapsed: boolean; selected: boolean; focused?: boolean; canEdit: boolean; busy: boolean;
+  row: FlatRow; span: { start: number; finish: number }; work: WorkShift | null; color: GroupColor; collapsed: boolean; selected: boolean; focused?: boolean; canEdit: boolean; busy: boolean;
   onToggleCollapse: () => void; onToggleSelected: () => void;
   onSetStatus: (s: MilestoneStatus, reason?: string) => void; onSetProgress: (percent: number) => void;
   onSetDuration: () => void; onOpenDetail: () => void;
@@ -1198,6 +1198,7 @@ function OutlineRow({
           {ms.name}
         </div>
         <div className="flex items-center gap-1.5 text-[10px] text-[var(--color-text-faint)] font-mono leading-tight min-w-0">
+          {work && <ShiftMark work={work} />}
           {ms.wbs && <span className="text-[var(--color-text-faint)] shrink-0">{ms.wbs}</span>}
           <span className="truncate" title={spanLabel(span.start, span.finish, tz)}>{spanLabel(span.start, span.finish, tz)}</span>
           {(ms.dependsOn?.length ?? 0) > 0 && (
