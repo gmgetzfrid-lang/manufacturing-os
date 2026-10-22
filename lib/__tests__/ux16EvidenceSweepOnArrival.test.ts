@@ -136,7 +136,8 @@ describe("UX-16 — an approved revision sweeps the projects whose register cite
     // both callers pass the session email as actorEmail
     const { readFileSync } = await import("node:fs");
     expect(readFileSync("components/projects/IntakePanel.tsx", "utf8")).toContain('actorName: userEmail ?? "Reviewer", actorEmail: userEmail ?? null,');
-    expect(readFileSync("components/documents/ReviewGateSection.tsx", "utf8")).toContain("actorName: userEmail, actorEmail: userEmail ?? null });");
+    // (J21 merge-time fix: the PROJ-1 note handler follows the actor's email)
+    expect(readFileSync("components/documents/ReviewGateSection.tsx", "utf8")).toContain("actorName: userEmail, actorEmail: userEmail ?? null, onProjectReferenceNote });");
     expect(readFileSync("lib/reviewControl.ts", "utf8")).toContain("actor: { uid: input.actorId, email: input.actorEmail ?? null },");
   });
   it("a publish that did not land sweeps nothing", async () => {

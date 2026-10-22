@@ -2091,7 +2091,12 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
   if (createdDocId) {
     // SEC-22 (b): as the link's identity (intake_door_housekeep
     // 'reference', 20261214: a document it created; DO NOTHING on a repeat);
-    // before the paste, the service-role upsert, unchanged.
+    // before the paste, the service-role upsert, unchanged — except that it
+    // names itself as the door (drafting-flow PROJ-5, projects-joint J21,
+    // 20261262: the x-mos-intake-door-reference header, which PostgREST sets
+    // transaction-locally in request.headers, is the ONLY service-role write
+    // the register's intake-source trigger reads as the door's; every other
+    // writer keeps the source it sends. Before 20261262 nothing reads it).
     const viaDb = await housekeepVia(housekeeping, "reference", { doc: createdDocId, at: nowIso });
     let refErr: { message?: string } | null = null;
     if (viaDb.kind === "error") refErr = { message: `${viaDb.error.code ?? ""} ${viaDb.error.message ?? ""}`.trim() };
@@ -2099,7 +2104,7 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
       ({ error: refErr } = await supabaseAdmin.from("project_documents").upsert(
         { org_id: orgId, project_id: projectId, document_id: createdDocId, source: "manual", first_seen_at: nowIso, last_seen_at: nowIso },
         { onConflict: "project_id,document_id", ignoreDuplicates: true },
-      ));
+      ).setHeader("x-mos-intake-door-reference", "on"));
     }
     if (refErr) console.error(`[intake/upload] ref=${ref} project reference for ${createdDocId} not written: ${refErr.message}`);
     // GAP-314 (intelligence I-26): the unit decode at create time — the

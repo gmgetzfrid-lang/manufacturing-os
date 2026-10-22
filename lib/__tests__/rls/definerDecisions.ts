@@ -212,6 +212,8 @@ export const TRIGGER_FUNCTIONS: readonly string[] = [
   "prevent_last_admin_removal()",
   "project_checklists_completion_basis_rail()",
   "project_checklists_signoff_rail()",
+  "project_documents_intake_source()", // 20261262 (PROJ-5, projects-joint J21)
+  "project_documents_record_link_change()", // 20261262 (PROJ-3 dw2, projects-joint J21)
   "punch_items_void_rail()",
   "quality_records_delete_rail()",
   "quality_row_org_matches_project()",

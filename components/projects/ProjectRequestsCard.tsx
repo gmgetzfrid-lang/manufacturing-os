@@ -73,7 +73,7 @@ export default function ProjectRequestsCard({ orgId, projectId }: { orgId: strin
       const docs = new Map<string, Record<string, unknown>>();
       if (docIds.length > 0) {
         const { data: d, error: dErr } = await supabase.from("documents")
-          .select("id, document_number, rev, status, library_id, current_version_id, archived_at").in("id", docIds);
+          .select("id, document_number, rev, status, library_id, current_version_id, pending_version_id, archived_at").in("id", docIds);
         if (!alive) return;
         if (dErr) { setErr("The deliverables of the project's requests could not be read — try again in a moment."); return; }
         for (const r of (d ?? []) as Array<Record<string, unknown>>) docs.set(String(r.id), r);

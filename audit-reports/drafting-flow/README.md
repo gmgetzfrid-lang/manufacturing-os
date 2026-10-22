@@ -28,7 +28,7 @@ use it without being taught.
 
 ## Findings
 
-**157 findings** — 9 CRITICAL, 47 HIGH, 67 MEDIUM, 34 LOW — plus **14 gap specs**, all
+**158 findings** — 9 CRITICAL, 47 HIGH, 67 MEDIUM, 35 LOW — plus **14 gap specs**, all
 buildable.
 
 Two passes. **`01`–`05`** are the design read: review tiering, friction, wiring,
@@ -48,7 +48,7 @@ completeness critic, every finding put through an adversarial refutation pass.
 | 09 | [Authority surfaces](./09-authority-surfaces.md) | 15 | Every door into a ticket, including the public verify endpoint — `AUTHZ-15` (LOW) opened at the admin-and-org P9 second review fix, 2026-10-07 (the count was corrected at the integrator's P9 fix pass) |
 | 10 | [Audit & evidence](./10-audit-evidence.md) | 16 | What this system could prove to a PSM auditor, and what it could not; `EVID-15`, `EVID-16` (LOW) opened by DF-P10, 2026-10-13 |
 | 11 | [Document handoff](./11-document-handoff.md) | 13 | Where the request flow meets the controlled document, and the as-built path |
-| 12 | [Projects boundary](./12-projects-boundary.md) | 13 | The bidirectional-portal question, answered from the schema up |
+| 12 | [Projects boundary](./12-projects-boundary.md) | 14 | The bidirectional-portal question, answered from the schema up — `PROJ-14` (LOW) opened and resolved by projects-joint J21, 2026-10-22 |
 | 13 | [Edges & invariants](./13-edges-and-invariants.md) | 20 | The completeness critic, plus what is sound and must not break. **Verified by hand** — record at the top of the file; `EDGE-16` (MEDIUM) opened by DF-P4's fix pass, 2026-10-13 (counted at DF-P4's fourth fix pass); recounted at the DF-P17 merge, 2026-10-21 — the three findings opened after that count (`EDGE-18` to `EDGE-20`) had not been counted here |
 | 90 | [**Gap register**](./90-gap-register.md) | 14 specs | What has to be built. `GAP-101`+ so they never collide with the other area |
 | 99 | [**Execution order**](./99-fix-sequencing.md) | — | Binding. Read before claiming any file |

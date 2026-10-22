@@ -346,9 +346,16 @@ export function holdersFor(
  *  wait keeps counting from its last real step, not from the restore. */
 export const RESTORE_RENUMBERED_HISTORY_ACTION = "Renumbered on restore";
 
+/** The history line POST /api/projects/deliverable-reference appends when a
+ *  request's reviewed deliverable could not be put on its project register
+ *  (drafting-flow PROJ-1, projects-joint J21). Bookkeeping: it moves neither
+ *  the stage nor who holds it, so it is a NON_STEP line below. */
+export const DELIVERABLE_REFERENCE_MISS_HISTORY_ACTION = "Deliverable not put on project register";
+
 /** History lines that change neither the stage nor who holds it: a file, a
  *  saved draft, the triage details, the source link at creation, the
- *  register note written beside a close, the restore's renumbering note.
+ *  register note written beside a close, the restore's renumbering note,
+ *  the project-register miss note (J21).
  *  Every other line marks a step (a transition, a (re)assignment, a
  *  hand-back). A test pins this set against the engine's labels (an action
  *  that never moves the status must be named here; one named here must
@@ -361,6 +368,7 @@ export const NON_STEP_HISTORY_ACTIONS: readonly string[] = [
   "Source Linked",
   "Closed — deliverable not in the register",
   RESTORE_RENUMBERED_HISTORY_ACTION,
+  DELIVERABLE_REFERENCE_MISS_HISTORY_ACTION,
 ];
 
 /**

@@ -87,6 +87,8 @@ lib/projects.ts:832-839 —
 
 *Assigned (2026-10-21, the integrator at the DF-P8 merge, DEC-31):* done-when 3 (the actor uid on every history entry) → drafting-flow **DF-P23 TRANSITION RECORD AND RECONCILE**.
 
+*Recorded (2026-10-22, projects-joint J21 merge-time fix, DEC-90 ruling 5 — no status change):* one new writer of `tickets.history`. `POST /api/projects/deliverable-reference` (`app/api/projects/deliverable-reference/route.ts` `recordNotWritten`) appends ONE line — "Deliverable not put on project register" — when a request's reviewed deliverable could not be put on its project register, so the miss is on the request's Audit Log tab as well as its `TICKET_DELIVERABLE_REFERENCE_NOT_WRITTEN` audit row. It holds done-when 2's rule: written by the server (service role, after the caller is authenticated, a member, the promote's finalizer and inside the request's read scope), by compare-and-set on the `last_modified` it read, WITHOUT changing it (bookkeeping, DEC-90 ruling (4)'s precedent in `lib/consentWindowScan.ts` — nobody's own write turns into a 409; read again and tried once more on a conflict — never a blind overwrite of the array), never onto an ARCHIVED request (20260810; the audit row is still written), and never for a document already on the project's register (read first; unreadable → nothing recorded). It names its audit row as `attempt` only when that row was written (`historyAttempt: true` on the row, the SM-7 shape `/api/tickets/project-link` uses). Residual, accepted by the integrator's ruling: a concurrent whole-array `history` write by another route may drop the line; the audit row stays the durable record. The line is a NON_STEP line (`lib/ticketAttention.ts`), so the request's waiting clock is not reset. Like every other entry it carries the actor's email, not their uid — done-when 3, DF-P23's, which should cover this writer too. Tests: `lib/__tests__/prjRoundGJ21DeliverableReferenceRoute.test.ts` "merge-time fix (ruling 5) …".
+
 ---
 
 <a id="evid-2"></a>
@@ -537,7 +539,7 @@ lib/distributionAcks.ts:57-72 —
 ## EVID-8 · Non-response is not recorded on the record itself — reminder history is a single last-write-wins timestamp, and the durable evidence of nagging lives only in purgeable notification rows
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/reviewControl.ts:585`, `lib/distributionAcks.ts:220-240`, `lib/distributionAcks.ts:257-272`, `supabase/migrations/20260825_work_packages_acks.sql:99-116`, `lib/acknowledgments.ts:507`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct on every part. scanDistributionAcks writes nothing back to distribution_acks — nine nags leave nine notification rows and no trace on the record — and app/api/admin/purge/route.ts:40-44 lists `notifications` as a purge target ("Bell items the recipient has already read. Disposable once read and aged"), so the only evidence of the nagging is expressly disposable. No logAuditAction call exists on any of these reminder paths.
@@ -599,6 +601,24 @@ supabase/migrations/20260825_work_packages_acks.sql:110-113 (no nag/escalation c
 - ✓ 4 — THE ONE QUERY in `20261257`'s header (as above).
 
 Status stays OPEN for done-when 3 (owner projects-joint J21); the ticket half is DF-P7's Partial above.
+
+**Resolution (2026-10-22, projects-joint Round G).** J21, DEC-90 ruling (5) for J21: done-when 3, the last limb. Reproduced on `693239d`: `lib/reviewControl.ts` `activateAlternate` wrote the timeout activation's `REVIEW_ALTERNATE_ACTIVATED` row through `logAuditAction(...).catch(() => {})`, its answer never read (best-effort). What landed:
+- The TIMEOUT activation (the system acting on silence: a `cause`, no person) writes its row through the new `writeActivationAuditVerified` (`lib/reviewControl.ts:898`, called at `:959`). It is CHECKED: the insert's answer is read. It is RETRIED once after `ACTIVATION_AUDIT_RETRY_MS` (500 ms) under the same row id, so a 23505 on the retry is the first attempt landed, never a second row. When both attempts fail it is DEAD-LETTERED to the EVID-6 outbox (`lib/auditOutbox.ts` `deadLetterAuditRow`, DEC-109 — the maintenance cron recovers it as an `AUDIT_DEAD_LETTER` row) and said in the log.
+- The row is attributed to the machine by DEC-87 §2's convention, the corpus's reading of "a real system actor": `user_id` NULL (never an invented uuid), `user_email` `system:review-timeout` (`REVIEW_TIMEOUT_MACHINE`), `user_role` `system`, `metadata.actor_kind` `system`, and the cause in `details`. DF-P7's consent advance signs `system:consent-window` the same way.
+- `activateAlternate` answers `auditRecorded` (additive).
+- REGRESSION (pinned): who is activated and when — the sign-off update, its `notified_at`, the notice and its record row — are decided before the audit write and are identical whether the row lands, lands on the retry, or is dead-lettered. The ruling keeps them unchanged, so the activation is not made audit-first. The MANUAL activation's row goes through `logAuditAction` exactly as before.
+
+Tests: `lib/__tests__/prjRoundGJ21ReviewControl.test.ts` — lands first time (one insert, the row's shape); refused then landed on the retry (same id); a 23505 on the retry counts as landed; refused twice (dead-lettered as sent, said; the activation unchanged); the manual path unchanged; no row matched writes nothing; source pins. `lib/__tests__/dcRoundGP38DocumentNoticeRecord.test.ts`'s scan-driven case still holds (user_id NULL, actor_kind system, the cause).
+
+**Done-when.**
+- ✓ 1 — superseded by the append-only `document_notice_events` record (DEC-90 ruling (e) at the P39 merge, as recorded).
+- ✓ 2 — superseded by the same record (ruling (e), as recorded).
+- ✓ 3 — every state change driven by non-response writes an audit row attributed to a system actor (DEC-87 §2's machine row), verified rather than best-effort: the document side's timeout activation now (checked, retried, dead-lettered); the ticket side's consent advance since DF-P7 (audit row first, checked). The activation stays non-audit-first by DEC-90 ruling (5) for J21 — who is activated and when unchanged — and a row that cannot be written is kept in the outbox and recovered, never dropped.
+- ✓ 4 — THE ONE QUERY in `20261257`'s header (document side) and `ticket_notice_events` (ticket side), as recorded.
+
+**Scope / residual.** None in this finding. A dead-lettered activation row reaches the trail as an `AUDIT_DEAD_LETTER` row (the lost row labelled `asSent`), not as itself (DEC-109 §3). Before `20261219` is pasted the outbox is missing: the row is "not kept" and said in the log, as for every EVID-6 dead letter.
+
+**Pending migration:** none for this limb (`20261219` for the outbox, as recorded at EVID-6; `20261257` / `20261259` for the record, as recorded above).
 
 ---
 

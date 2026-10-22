@@ -291,7 +291,7 @@ export type DeliverableReference =
 
 export function deliverableReference(
   state: { state?: unknown; document_id?: unknown; version_id?: unknown; revision_label?: unknown; in_review?: unknown } | null,
-  doc: { id: string; document_number?: string | null; rev?: string | null; status?: string | null; library_id?: string | null; current_version_id?: string | null; archived_at?: string | null } | null,
+  doc: { id: string; document_number?: string | null; rev?: string | null; status?: string | null; library_id?: string | null; current_version_id?: string | null; pending_version_id?: string | null; archived_at?: string | null } | null,
   notCurrentStatuses: ReadonlySet<string>,
 ): DeliverableReference {
   if (!state || typeof state !== "object") return { kind: "none" };
@@ -310,8 +310,23 @@ export function deliverableReference(
   if (doc.archived_at || notCurrentStatuses.has(doc.status ?? "")) {
     return { kind: "published", canOpen: true, documentId: doc.id, libraryId: doc.library_id ?? null, label, current: false, note: `Not current — the document is ${doc.archived_at ? "archived" : (doc.status ?? "").toLowerCase()}.` };
   }
+  // drafting-flow PROJ-1 (projects-joint J21): a deliverable published INTO
+  // document review is not the controlled revision until its review
+  // completes — while it is the document's pending draft it reads "in
+  // document review" (never "superseded"); once the review promoted it, it is
+  // the current revision (the request's in_review flag is the hand-back's
+  // record of how it was published, not of where it is now); otherwise it is
+  // not current — its review closed without promoting it, or a later revision
+  // superseded it, which this card cannot tell apart, so it says both.
+  const reviewOpen = state.in_review === true && typeof state.version_id === "string" && doc.current_version_id !== state.version_id;
+  if (reviewOpen && (doc.pending_version_id === undefined || doc.pending_version_id === state.version_id)) {
+    return { kind: "published", canOpen: true, documentId: doc.id, libraryId: doc.library_id ?? null, label, current: false, note: `In document review — the register stays at Rev ${doc.rev ?? "—"} until the review completes.` };
+  }
+  if (reviewOpen) {
+    return { kind: "published", canOpen: true, documentId: doc.id, libraryId: doc.library_id ?? null, label, current: false, note: `Not current — the register is at Rev ${doc.rev ?? "—"} (its document review closed without publishing it, or a later revision superseded it).` };
+  }
   if (typeof state.version_id === "string" && doc.current_version_id && doc.current_version_id !== state.version_id) {
     return { kind: "published", canOpen: true, documentId: doc.id, libraryId: doc.library_id ?? null, label, current: false, note: `Superseded — the register is now at Rev ${doc.rev ?? "—"}.` };
   }
-  return { kind: "published", canOpen: true, documentId: doc.id, libraryId: doc.library_id ?? null, label, current: true, note: state.in_review === true ? "In document review." : "Current revision." };
+  return { kind: "published", canOpen: true, documentId: doc.id, libraryId: doc.library_id ?? null, label, current: true, note: "Current revision." };
 }

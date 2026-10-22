@@ -35,7 +35,18 @@ const SOURCE_BADGE: Record<string, { label: string; cls: string; hint: string }>
   checkout: { label: "via checkout", cls: "bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-500/30", hint: "Linked automatically when someone checked it out under this project" },
   manual: { label: "attached", cls: "bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-500/30", hint: "Attached by hand (or adopted from intake)" },
   intake: { label: "approved intake", cls: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30", hint: "Submitted through a contractor intake link and approved — still in the project's intake folder (adopt it from the Intake tab to file it)" },
+  // PROJ-5 (projects-joint J21, 20261262): a register reference the project's
+  // own intake door made (project_documents.source = 'intake').
+  intakeRef: { label: "from intake", cls: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30", hint: "Put on the register by the project's contractor intake link, which created the document (adopted or not — the next badge says when it is still in the intake folder)" },
 };
+
+/** PROJ-5 (projects-joint J21): the badge a row wears — a register row the
+ *  intake door made reads "from intake", an approved intake document not on
+ *  the register "approved intake", the rest by their source. Pure. */
+export function sourceBadgeKey(r: Pick<LinkedDoc, "linkId" | "source">): string {
+  if (!r.linkId) return "intake";
+  return r.source === "intake" ? "intakeRef" : r.source;
+}
 
 export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid, userEmail, onLoaded }: {
   orgId: string; projectId: string; canManage: boolean; uid: string; userEmail?: string | null;
@@ -221,7 +232,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
       ) : (
         <ul className="divide-y divide-[var(--color-border)]">
           {rows.map((r) => {
-            const badge = SOURCE_BADGE[r.source] ?? SOURCE_BADGE.manual;
+            const badge = SOURCE_BADGE[sourceBadgeKey(r)] ?? SOURCE_BADGE.manual;
             return (
               <li key={r.linkId ?? `intake:${r.docId}`} className="px-4 py-2.5 flex items-center gap-3 hover:bg-[var(--color-surface-2)]/40 transition-colors">
                 <div className="min-w-0 flex-1">

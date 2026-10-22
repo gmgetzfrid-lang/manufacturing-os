@@ -42,7 +42,7 @@
 // tab lists is never offered (Reject it there); an unreadable row is never
 // offered.
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { ShieldCheck, Loader2, PenLine, CheckCircle2, Clock, UserPlus, ArrowUpFromLine, FileText } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -106,6 +106,13 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   // SAF-19 (P23): what the contractor was told after an approval here.
   const [intakeNotice, setIntakeNotice] = useState<string | null>(null);
   useEffect(() => { setIntakeNotice(null); }, [doc.id]);
+  // drafting-flow PROJ-1 (projects-joint J21, merge-time fix): a request's
+  // deliverable this publish made current that could NOT be put on the
+  // request's project register — said here to the finalizer (it is also on
+  // the request's Audit Log). Arrives after the publish, never awaited by it.
+  const [projectRefNote, setProjectRefNote] = useState<string | null>(null);
+  const shownDocId = useRef(doc.id);
+  useEffect(() => { shownDocId.current = doc.id; setProjectRefNote(null); }, [doc.id]);
   // DCK-18 (c) (P37): a pending submission no Intake tab lists — read for Document Control only.
   const [stray, setStray] = useState<StraySubmission | null>(null);
 
@@ -242,11 +249,16 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
     // SAF-19 (P23): the version this approval promotes (the one on screen).
     const promoting = pendingVersionId;
     setIntakeNotice(null);
+    setProjectRefNote(null);
+    // PROJ-1: the project-reference miss for THIS document, shown when it settles.
+    const forDoc = doc.id;
+    const onProjectReferenceNote = (note: string) => { if (shownDocId.current === forDoc) setProjectRefNote(note); };
     try {
-      // The call without a force is exactly the call it always was.
+      // The call without a force is exactly the call it always was (plus the
+      // PROJ-1 note handler, which only listens).
       const res = forceHold
-        ? await finalizeReviewedRevision({ orgId, documentId: doc.id, actorId: uid, actorName: userEmail, actorEmail: userEmail ?? null, forceHold: true, overrideReason: holdReason.trim() || null })
-        : await finalizeReviewedRevision({ orgId, documentId: doc.id, actorId: uid, actorName: userEmail, actorEmail: userEmail ?? null });
+        ? await finalizeReviewedRevision({ orgId, documentId: doc.id, actorId: uid, actorName: userEmail, actorEmail: userEmail ?? null, forceHold: true, overrideReason: holdReason.trim() || null, onProjectReferenceNote })
+        : await finalizeReviewedRevision({ orgId, documentId: doc.id, actorId: uid, actorName: userEmail, actorEmail: userEmail ?? null, onProjectReferenceNote });
       if (!res.published) {
         // REV-20 (P14 final review): the hold refused a controller's promote —
         // offer the recorded force (nothing was changed); any other refusal,
@@ -311,9 +323,14 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
 
   // SAF-19 (P23): what the contractor was told — shown above whatever the
   // panel shows next (after the publish there is usually nothing in review).
-  const noticeEl = intakeNotice ? (
+  // PROJ-1 (J21): the project-reference miss, under it.
+  const intakeEl = intakeNotice ? (
     <div role="status" data-testid="review-intake-notice" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-[11px] text-emerald-800">{intakeNotice}</div>
   ) : null;
+  const projectRefEl = projectRefNote ? (
+    <div role="status" data-testid="review-project-reference-note" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-800">{projectRefNote}</div>
+  ) : null;
+  const noticeEl = intakeEl || projectRefEl ? <>{intakeEl}{projectRefEl}</> : null;
 
   // Nothing in review: show the effective mode (and stay quiet if none).
   if (!loading && !pendingVersionId) {

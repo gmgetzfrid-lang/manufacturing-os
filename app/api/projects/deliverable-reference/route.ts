@@ -1,0 +1,377 @@
+// POST /api/projects/deliverable-reference  { orgId, documentId, versionId }
+//
+// drafting-flow PROJ-1 (projects-joint J21; GAP-114; DEC-40 — reference, never
+// copy). A drafting request's deliverable published INTO document review
+// becomes the controlled revision when that review completes
+// (lib/reviewControl.ts finalizeReviewedRevision, in the finalizer's browser).
+// The finalizer's page then asks this route — started, never awaited by the
+// publish (lib/reviewDeliverableReference.ts) — to put the document on the
+// request's project register: the SAME project_documents reference, by the
+// SAME register policy, that DF-P8's /api/tickets/handback writes for a
+// deliverable published outside review (lib/ticketProject.ts
+// referenceDeliverableInProject). Nothing is trusted from the body beyond
+// the three ids:
+//   1. the caller is authenticated and an ACTIVE member of the version's
+//      workspace (else 401 / 403);
+//   2. the version is read as the service role: in that workspace, of that
+//      document, carrying a request (`related_ticket_id`, written by the
+//      publish path — 20261049 / DF-P15) — no request: nothing owed;
+//   3. the review COMPLETED: the document's current_version_id is this
+//      version (else nothing owed — a review still open, or rejected);
+//   4. the caller is the one who COMPLETED it, just now (J21 fix pass — the
+//      route is tied to the act, never to the revision's lasting state, so it
+//      is no standing, replayable door):
+//        a. the promote names the caller: documents.updated_by — written
+//           INSIDE the promote on both paths (finalize_reviewed_promote
+//           writes auth.uid(); the three-step path's guarded UPDATE the
+//           actor). Nothing else qualifies (merge-time fix, DEC-90): an
+//           audit row is not proof — audit_logs_insert admits a member's own
+//           row, so a REVISION_PUBLISHED_AFTER_REVIEW row could be forged.
+//           Not named: nothing owed ("not_finalizer"), nothing recorded;
+//        b. the promote's own release stamp (document_versions.released_at)
+//           is at most FINALIZER_WINDOW_MS old. On the three-step path that
+//           stamp comes from the finalizer's BROWSER clock (until 20261151 is
+//           pasted), so a finalizer the promote names whose stamp falls
+//           outside the window (or is missing) is NOT silently refused
+//           (merge-time fix, DEC-90): nothing is written to the register,
+//           the miss is RECORDED ("outside_window") and SAID in `warning`;
+//   5. the request is in the same workspace and names a project
+//      (tickets.project_id, 20261256) — none, or the column not pasted
+//      (42703 / PGRST204): nothing owed, today's path. The caller's read of
+//      the request is asked (AUTHZ-13's ticketReadScope, as
+//      /api/tickets/project-link asks it): a caller outside it gets an
+//      answer with no detail, and nothing is recorded on the request;
+//   5b. already on the register (J21 merge-time fix 2, DEC-29): the
+//      register is read for (project, document) BEFORE anything is recorded —
+//      a later revision of a drawing already on the register is common. On
+//      it: nothing owed ("already_referenced"), nothing recorded, no warning.
+//      A failed read is "unknown": the write path goes on (the upsert leaves
+//      a row there as it is) and the answer leaves `referenced` out; a path
+//      that would record a miss (outside the window, no authority) records
+//      NOTHING and says only that it could not be confirmed;
+//   6. a deliberate detach is never undone: a detach of this document from
+//      this project dated after the promote (the register record's
+//      PROJECT_DOCUMENT_DETACHED row, 20261262, or the Documents card's
+//      doc_removed feed row) → nothing owed ("detached_since");
+//   7. the register policy's own answer (DF-P8 fix pass 2 / 3; PM-8 /
+//      SEC-17, 20261102 project_documents_insert): the authority recorded
+//      when the request was put on THIS project
+//      (metadata.project_link.registerAuthority — recordedRegisterAuthority),
+//      else the FINALIZER's own (is_org_controller / can_manage_project,
+//      asked AS THE CALLER — callerHoldsRegisterAuthority). No: nothing is
+//      written; unknown: nothing is written;
+//   8. referenceDeliverableInProject as the service role: an
+//      ignoreDuplicates upsert (a document already on the register is left
+//      exactly as it is) and the feed row (doc_added only for an actor the
+//      feed's own rule admits — callerMayStampDocAdded — else
+//      request_deliverable_referenced).
+// A reference NOT written for a reason other than "nothing owed" is RECORDED
+// on the request's audit trail (TICKET_DELIVERABLE_REFERENCE_NOT_WRITTEN,
+// checked; its own failure is logged; user_role NULL — DEC-91: the route
+// admits by membership, so no role is the one acted under), put on the
+// request's OWN history as one line (its Audit Log tab reads tickets.history)
+// unless the request is ARCHIVED (an archived stub is immutable — 20260810;
+// the audit row is still written) — a bookkeeping append that does NOT
+// change last_modified (DEC-90 ruling (4)'s precedent, lib/consentWindowScan.ts:
+// compare-and-set on the last_modified read, read again and tried once more
+// on a conflict, so nobody's own write turns into a 409; residual: a
+// concurrent whole-array history write by another route may drop the line —
+// the audit row stays the durable record); one line per revision and reason;
+// its visible text names no project and no document number (every reader of
+// the request reads it; the stored entry carries projectId / documentId /
+// versionId); it names its audit row as `attempt` only when that row was
+// written — and SAID
+// in `warning` (DEC-90 ruling (1) for J21: record / retry, said — the page
+// shows it to the finalizer, components/documents/ReviewGateSection.tsx). A
+// refused write answers 503 so the page retries once; a refusal for want of
+// authority, or a promote outside the window, answers 200 (no retry can
+// change it). The review itself is never touched here.
+
+import { NextRequest, NextResponse } from "next/server";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { DELIVERABLE_REFERENCE_MISS_HISTORY_ACTION } from "@/lib/ticketAttention";
+import { callerScopedClient } from "@/lib/serverAuth";
+import { ticketReadScope } from "@/lib/ticketReadScope";
+import {
+  callerHoldsRegisterAuthority, callerMayStampDocAdded, isMissingProjectColumn, recordedRegisterAuthority,
+  referenceDeliverableInProject, PROJECT_REGISTER_MANAGERS_ONLY,
+} from "@/lib/ticketProject";
+
+export const runtime = "nodejs";
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const bad = (error: string, status: number) => NextResponse.json({ ok: false, error }, { status });
+const nothingOwed = (skipped: string) => NextResponse.json({ ok: true, referenced: false, skipped });
+/** The answer to a caller who cannot read the request: no detail (AUTHZ-13). */
+const opaque = () => NextResponse.json({ ok: true });
+
+/** Why a reference owed was not written — recorded on the request. */
+export type ReferenceMissReason = "no_register_authority" | "authority_unconfirmed" | "write_refused" | "outside_window";
+
+/** The request's history line for a miss (its Audit Log tab). It names no
+ *  project and no document (DF-P8 fix pass 2: ticket history is read by every
+ *  reader of the request, a private project is not theirs to read). Pure. */
+export function referenceMissHistoryEntry(p: {
+  reason: ReferenceMissReason; revisionLabel: string | null; email: string | null; now: string;
+  projectId: string; documentId: string; versionId: string;
+  /** The audit row's id — only when that row was written (DEC-29). */
+  attempt?: string | null;
+}): Record<string, unknown> {
+  const why = p.reason === "no_register_authority"
+    ? "the person who completed the review does not hold authority over the project's document register"
+    : p.reason === "authority_unconfirmed"
+      ? "the authority of the person who completed the review over the project's document register could not be confirmed"
+      : p.reason === "outside_window"
+        ? "the reference was asked for more than 10 minutes from the review's recorded release time (a device clock may be off)"
+        : "the register refused the write";
+  return {
+    action: DELIVERABLE_REFERENCE_MISS_HISTORY_ACTION,
+    user: p.email, role: null, date: p.now,
+    details: `The reviewed deliverable${p.revisionLabel ? ` (document revision ${p.revisionLabel})` : ""} became the controlled revision, but it was not put on this request's project document register: ${why}. A project manager can attach it from the project's Documents card.`,
+    projectId: p.projectId, documentId: p.documentId, versionId: p.versionId, reason: p.reason,
+    ...(p.attempt ? { attempt: p.attempt } : {}),
+  };
+}
+
+/** How long after the promote its finalizer's page may ask (step 4). The page
+ *  asks at once and retries once after 2 s; the window absorbs a slow network
+ *  and a browser clock that is off (the three-step path stamps released_at
+ *  from the browser). */
+export const FINALIZER_WINDOW_MS = 10 * 60 * 1000;
+
+/** The warning when the promote naming the finalizer is outside the window
+ *  (step 4b) — said, recorded, nothing written. */
+export const OUTSIDE_FINALIZER_WINDOW =
+  "The reviewed deliverable was not put on its request's project register: the review's recorded release time is more than 10 minutes from now (a device clock may be off), so the reference was not written automatically — a project manager can attach it from the project's Documents card.";
+
+/** The warning when a miss would be recorded but whether the document is
+ *  already on the register could not be read (step 5b) — nothing recorded. */
+export const REGISTER_PRESENCE_UNCONFIRMED =
+  "The reviewed deliverable may not be on its request's project register: whether it already is could not be confirmed — check the project's Documents card.";
+
+/** The warning when the finalizer's authority could not be confirmed. */
+export const REGISTER_AUTHORITY_UNCONFIRMED =
+  "The reviewed deliverable was not put on its request's project register: your authority over the register could not be confirmed — a project manager can attach it from the project's Documents card.";
+
+export async function POST(req: NextRequest) {
+  const authHeader = req.headers.get("authorization");
+  if (!authHeader?.startsWith("Bearer ")) return bad("Unauthorized", 401);
+  const { data: { user: caller }, error: authError } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
+  if (authError || !caller) return bad("Unauthorized", 401);
+
+  let body: { orgId?: unknown; documentId?: unknown; versionId?: unknown };
+  try { body = await req.json(); } catch { return bad("Invalid JSON body", 400); }
+  const documentId = typeof body.documentId === "string" ? body.documentId : "";
+  const versionId = typeof body.versionId === "string" ? body.versionId : "";
+  if (!UUID.test(documentId) || !UUID.test(versionId)) return bad("documentId and versionId are required", 400);
+
+  // 2. the version — the publish path's provenance, never the body's word
+  const { data: ver, error: verErr } = await supabaseAdmin.from("document_versions")
+    .select("id, org_id, record_id, revision_label, related_ticket_id, released_at").eq("id", versionId).maybeSingle();
+  if (verErr) return bad("The document register could not be read — try again in a moment", 503);
+  const v = ver as { id: string; org_id: string | null; record_id: string; revision_label: string | null; related_ticket_id: string | null; released_at?: string | null } | null;
+  if (!v || v.record_id !== documentId || !v.org_id) return bad("That revision was not found", 404);
+
+  // 1. an active member of the version's workspace
+  const { data: member, error: memErr } = await supabaseAdmin.from("org_members")
+    .select("uid, email, role, roles").eq("org_id", v.org_id).eq("uid", caller.id).eq("status", "active").maybeSingle();
+  if (memErr) return bad("Your membership could not be confirmed — try again in a moment", 503);
+  if (!member) return bad("Forbidden: not an active member of this workspace", 403);
+  const m = member as { uid: string; email: string | null; role: string | null; roles: string[] | null };
+  if (!v.related_ticket_id) return nothingOwed("not_from_request");
+
+  // 3. the review completed: this version is the controlled revision now
+  const { data: doc, error: docErr } = await supabaseAdmin.from("documents")
+    .select("id, org_id, current_version_id, updated_by").eq("id", documentId).maybeSingle();
+  if (docErr) return bad("The document could not be read — try again in a moment", 503);
+  const d = doc as { id: string; org_id: string | null; current_version_id: string | null; updated_by?: string | null } | null;
+  if (!d || d.org_id !== v.org_id) return bad("That revision was not found", 404);
+  if (d.current_version_id !== v.id) return nothingOwed("not_current");
+
+  // 4. the caller completed the review, just now — the act, not the state.
+  // a. the promote names the caller (documents.updated_by, written inside the
+  //    promote on both paths) — nothing else qualifies;
+  if (typeof d.updated_by !== "string" || d.updated_by !== caller.id) return nothingOwed("not_finalizer");
+  // b. ... within the window of the promote's release stamp — outside it (a
+  //    skewed browser clock on the three-step path), the miss is recorded and
+  //    said below, never silent.
+  const releasedMs = v.released_at ? Date.parse(v.released_at) : NaN;
+  const outsideWindow = !Number.isFinite(releasedMs) || Math.abs(Date.now() - releasedMs) > FINALIZER_WINDOW_MS;
+
+  // 5. the request, the caller's read of it, and its project
+  const { data: tk, error: tkErr } = await supabaseAdmin.from("tickets")
+    .select("id, org_id, ticket_id, project_id, metadata, history, last_modified, archived_at, requester_id, assigned_drafter_id, assigned_engineer_id, watchers").eq("id", v.related_ticket_id).maybeSingle();
+  if (tkErr) {
+    if (isMissingProjectColumn(tkErr)) return nothingOwed("not_migrated");
+    return bad("The drafting request could not be read — try again in a moment", 503);
+  }
+  const t = tk as {
+    id: string; org_id: string; ticket_id: string | null; project_id: string | null; metadata: Record<string, unknown> | null;
+    history?: unknown[] | null; last_modified?: string | null; archived_at?: string | null; requester_id: string | null; assigned_drafter_id: string | null; assigned_engineer_id: string | null; watchers: string[] | null;
+  } | null;
+  if (!t || t.org_id !== v.org_id) return nothingOwed("not_from_request");
+  const scope = await ticketReadScope(supabaseAdmin, m, caller.id, {
+    id: t.id, requesterId: t.requester_id, assignedDrafterId: t.assigned_drafter_id, assignedEngineerId: t.assigned_engineer_id, watchers: t.watchers,
+  });
+  if (scope === "unknown") return bad("Whether you can see the drafting request could not be confirmed — try again in a moment", 503);
+  const reads = scope === "in";
+  if (typeof t.project_id !== "string" || !t.project_id) return reads ? nothingOwed("no_project") : opaque();
+  const projectId = t.project_id;
+  const actorName = m.email || caller.email || null;
+
+  // 5b. already on the register? Read BEFORE anything is recorded (DEC-29).
+  const { data: before, error: beforeErr } = await supabaseAdmin.from("project_documents").select("id").eq("project_id", projectId).eq("document_id", documentId).maybeSingle();
+  // A failed read is "unknown", never "not there".
+  const wasThere: boolean | undefined = beforeErr ? undefined : !!before;
+  if (wasThere === true) return reads ? nothingOwed("already_referenced") : opaque();
+  /** A miss would be recorded, but the register could not be read: nothing
+   *  is recorded, only "could not be confirmed" is said. */
+  const presenceUnknown = (reason: ReferenceMissReason) => {
+    console.warn(`[deliverable-reference] ${t.id}: the reference was not written (${reason}), but whether the document is already on the project's register could not be read (${beforeErr?.message ?? "unknown"}) — nothing recorded`);
+    return reads ? NextResponse.json({ ok: true, warning: REGISTER_PRESENCE_UNCONFIRMED }) : opaque();
+  };
+
+  /** Recorded on the request's audit trail AND (unless the request is
+   *  archived) its history (the Audit Log tab) — only for a caller who can
+   *  read the request; each write checked, its own failure logged (the
+   *  warning is said whatever happens here). */
+  const recordNotWritten = async (reason: ReferenceMissReason, error?: string) => {
+    if (!reads) {
+      console.warn(`[deliverable-reference] ${t.id}: the reference was not written (${reason}); the finalizer cannot read the request, so nothing is recorded on it`);
+      return;
+    }
+    const isThisMiss = (h: unknown) => !!h && typeof h === "object"
+      && (h as Record<string, unknown>).action === DELIVERABLE_REFERENCE_MISS_HISTORY_ACTION
+      && (h as Record<string, unknown>).versionId === versionId && (h as Record<string, unknown>).reason === reason;
+    // An archived stub is immutable (20260810): its history is not written.
+    const archived = !!t.archived_at;
+    const lineThere = Array.isArray(t.history) && t.history.some(isThisMiss);
+    const willWriteLine = !archived && !lineThere;
+    // An outside-window replay: the miss already recorded is named, not
+    // recorded again (a failed read records it — never a silent skip).
+    let attempt: string | null = null;
+    if (reason === "outside_window") {
+      const { data: prior, error: priorErr } = await supabaseAdmin.from("audit_logs").select("id")
+        .eq("action", "TICKET_DELIVERABLE_REFERENCE_NOT_WRITTEN").eq("resource_type", "ticket").eq("resource_id", t.id)
+        .eq("details->>versionId", versionId).eq("details->>reason", reason).limit(1);
+      if (!priorErr && Array.isArray(prior) && prior.length > 0 && (prior[0] as { id?: unknown }).id) attempt = String((prior[0] as { id: unknown }).id);
+    }
+    if (!attempt) {
+      const id = crypto.randomUUID();
+      const { error: aErr } = await supabaseAdmin.from("audit_logs").insert({
+        id,
+        action: "TICKET_DELIVERABLE_REFERENCE_NOT_WRITTEN", resource_type: "ticket", resource_id: t.id, org_id: t.org_id,
+        user_id: caller.id, user_email: actorName, user_role: null,
+        details: {
+          documentId, versionId, projectId, reason, via: "review_completed",
+          ...(willWriteLine ? { historyAttempt: true } : {}),
+          ...(v.released_at ? { releasedAt: v.released_at } : {}), ...(error ? { error } : {}),
+        },
+      });
+      if (aErr) console.error(`[deliverable-reference] ${t.id}: the record that the reference was not written (${reason}) could not be written: ${aErr.message}`);
+      else attempt = id;
+    }
+    if (!willWriteLine) {
+      if (archived) console.warn(`[deliverable-reference] ${t.id}: the request is archived — the miss (${reason}) is on its audit trail only, not its history`);
+      return;
+    }
+    // The request's own history line: a bookkeeping append that does NOT
+    // change last_modified (compare-and-set on the value read; read again and
+    // tried once more on a conflict) — never a blind overwrite of the array,
+    // never a 409 for anyone else.
+    let hist: unknown[] = Array.isArray(t.history) ? t.history : [];
+    let lastModified: string | null = t.last_modified ?? null;
+    for (let tryNo = 0; tryNo < 2; tryNo++) {
+      const now = new Date().toISOString();
+      const entry = referenceMissHistoryEntry({ reason, revisionLabel: v.revision_label ?? null, email: actorName, now, projectId, documentId, versionId, attempt });
+      let cas = supabaseAdmin.from("tickets").update({ history: [...hist, entry] }).eq("id", t.id).is("archived_at", null);
+      cas = lastModified ? cas.eq("last_modified", lastModified) : cas.is("last_modified", null);
+      const { data: landed, error: hErr } = await cas.select("id");
+      if (!hErr && Array.isArray(landed) && landed.length > 0) return;
+      if (hErr) {
+        console.error(`[deliverable-reference] ${t.id}: the request's history line for the miss (${reason}) could not be written: ${hErr.message}`);
+        return;
+      }
+      const { data: again, error: againErr } = await supabaseAdmin.from("tickets").select("history, last_modified, archived_at").eq("id", t.id).maybeSingle();
+      if (againErr || !again) {
+        console.error(`[deliverable-reference] ${t.id}: the request's history line for the miss (${reason}) could not be written: the request changed and could not be read again${againErr ? ` (${againErr.message})` : ""}`);
+        return;
+      }
+      const a = again as { history?: unknown[] | null; last_modified?: string | null; archived_at?: string | null };
+      if (a.archived_at) {
+        console.warn(`[deliverable-reference] ${t.id}: the request was archived meanwhile — the miss (${reason}) is on its audit trail only`);
+        return;
+      }
+      hist = Array.isArray(a.history) ? a.history : [];
+      if (hist.some(isThisMiss)) return;
+      lastModified = a.last_modified ?? null;
+    }
+    console.error(`[deliverable-reference] ${t.id}: the request's history line for the miss (${reason}) could not be written: the request kept changing`);
+  };
+
+  // 4b. the promote names the caller but its release stamp is outside the
+  // window: nothing is written to the register; recorded and said.
+  if (outsideWindow) {
+    if (wasThere === undefined) return presenceUnknown("outside_window");
+    await recordNotWritten("outside_window");
+    console.warn(`[deliverable-reference] ${t.id}: ${OUTSIDE_FINALIZER_WINDOW} (released_at ${v.released_at ?? "missing"})`);
+    return reads ? NextResponse.json({ ok: true, referenced: false, warning: OUTSIDE_FINALIZER_WINDOW }) : opaque();
+  }
+  const sinceIso = new Date(releasedMs).toISOString();
+
+  // 6. a deliberate detach since the promote is never undone
+  const [detachRec, detachFeed] = await Promise.all([
+    supabaseAdmin.from("audit_logs").select("id")
+      .eq("action", "PROJECT_DOCUMENT_DETACHED").eq("resource_type", "project").eq("resource_id", projectId)
+      .eq("details->>documentId", documentId).gte("timestamp", sinceIso).limit(1),
+    supabaseAdmin.from("project_activity").select("id")
+      .eq("project_id", projectId).eq("type", "doc_removed").eq("metadata->>documentId", documentId).gte("created_at", sinceIso).limit(1),
+  ]);
+  if (detachRec.error || detachFeed.error) return bad("The project's register history could not be read — try again in a moment", 503);
+  if ((Array.isArray(detachRec.data) && detachRec.data.length > 0) || (Array.isArray(detachFeed.data) && detachFeed.data.length > 0)) {
+    return reads ? nothingOwed("detached_since") : opaque();
+  }
+
+  // 7. the register policy's own answer for the person behind it
+  const callerClient = callerScopedClient(req);
+  let may: boolean | null = recordedRegisterAuthority(t.metadata, projectId);
+  if (!may) may = "error" in callerClient ? null : await callerHoldsRegisterAuthority(callerClient, t.org_id, projectId);
+  if (may !== true) {
+    const reason: ReferenceMissReason = may === null ? "authority_unconfirmed" : "no_register_authority";
+    if (wasThere === undefined) return presenceUnknown(reason);
+    const warning = may === null ? REGISTER_AUTHORITY_UNCONFIRMED : PROJECT_REGISTER_MANAGERS_ONLY;
+    await recordNotWritten(reason);
+    console.warn(`[deliverable-reference] ${t.id}: ${warning}`);
+    return reads ? NextResponse.json({ ok: true, referenced: false, warning }) : opaque();
+  }
+
+  // 8. the reference (DEC-40) and its feed row
+  const stamp = "error" in callerClient ? false : await callerMayStampDocAdded(callerClient, t.org_id, projectId);
+  // (the register was read at 5b: absent, or unknown — then `referenced` is left out)
+  const refErr = await referenceDeliverableInProject(supabaseAdmin, {
+    orgId: t.org_id, projectId, documentId, ticketId: t.id, ticketNumber: t.ticket_id ?? null,
+    revisionLabel: v.revision_label ?? null, actorId: caller.id, actorName, actorMayStampDocAdded: stamp,
+  });
+  if (refErr) {
+    // Was the register row written and only its feed row refused?
+    const { data: after, error: afterErr } = await supabaseAdmin.from("project_documents").select("id").eq("project_id", projectId).eq("document_id", documentId).maybeSingle();
+    if (afterErr) {
+      // Unknown whether the row landed: said, never recorded as refused.
+      const warning = `Whether the reviewed deliverable is on its request's project register could not be confirmed (${refErr}) — check the project's Documents card.`;
+      console.warn(`[deliverable-reference] ${t.id}: ${warning} (re-read: ${afterErr.message})`);
+      return reads ? NextResponse.json({ ok: true, warning }) : opaque();
+    }
+    if (after) {
+      const warning = `The reviewed deliverable was put on its request's project register, but the project's feed was not told: ${refErr}`;
+      console.warn(`[deliverable-reference] ${t.id}: ${warning}`);
+      return reads ? NextResponse.json({ ok: true, ...(wasThere === undefined ? {} : { referenced: !wasThere }), warning }) : opaque();
+    }
+    await recordNotWritten("write_refused", refErr);
+    console.error(`[deliverable-reference] ${t.id}: the register reference was not written: ${refErr}`);
+    if (!reads) return NextResponse.json({ ok: false }, { status: 503 });
+    return NextResponse.json({ ok: false, referenced: false, error: refErr, warning: `The reviewed deliverable was not put on its request's project register: ${refErr} — a project manager can attach it from the project's Documents card.` }, { status: 503 });
+  }
+  if (!reads) return opaque();
+  if (wasThere === undefined) return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, referenced: true });
+}

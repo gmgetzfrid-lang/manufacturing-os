@@ -17,19 +17,19 @@
     "audit-reports/drafting-flow/13-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 157,
+    "findings": 158,
     "gaps": 14,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 47,
       "MEDIUM": 67,
-      "LOW": 34
+      "LOW": 35
     },
     "by_status": {
-      "RESOLVED": 116,
+      "RESOLVED": 122,
       "RESOLVED (2026-10-13, DF-P4 — PASTE pending: `20261208`, after `20261195` and after the DF-P2 app deploy; until it is pasted a member's hand-written PostgREST insert can still choose `requester_name`)": 1,
       "RESOLVED (2026-10-13 — done-when 2's `CLOSED` reading ratified by the integrator at DF-P10's review fix pass 6: \"a closed row with no issued label answers cannot confirm\"; the forged-line residual below is owned by drafting-flow DF-P12 DELIVERABLE FOLLOW-UPS)": 1,
-      "OPEN": 18,
+      "OPEN": 13,
       "RESOLVED (2026-10-13, by the integrator at the admin-and-org P8 merge — done-when 2 superseded by `DEC-103`; PASTE pending: `20261195`, paste guide row 153)": 1,
       "RESOLVED *(2026-10-14, admin-and-org Round G P13 — the dead-letter outbox and its drain, pending the `20261219` paste; see the Resolution at the end)*": 1,
       "RESOLVED (2026-10-21, by the integrator's ruling at the DF-P6 merge, `DEC-90` — the unconfigured seed's requester pick accepted as a documented exception; see the ruling at the end of this finding)": 1,
@@ -1323,7 +1323,7 @@
       "id": "PROJ-1",
       "title": "A request's approved deliverable never becomes a controlled document — the drafting flow writes no documents or document_versions rows at all",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1376,7 +1376,7 @@
       "id": "PROJ-3",
       "title": "project_documents RLS grants every active org member full ALL access — any member can silently delete a private project's document-register rows, bypassing the client-side canManage gate",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2151,7 +2151,7 @@
       "id": "EVID-8",
       "title": "Non-response is not recorded on the record itself — reminder history is a single last-write-wins timestamp, and the durable evidence of nagging lives only in purgeable notification rows",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3851,7 +3851,7 @@
       "id": "PROJ-5",
       "title": "Intake-uploaded documents never get a project_documents row, so the project has two disjoint definitions of \"its documents\"",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3959,7 +3959,7 @@
       "id": "PROJ-10",
       "title": "checkout_sessions.linked_ticket_id is a live FK to tickets that no code path ever writes, leaving the one transitive project->request route empty",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -4061,6 +4061,34 @@
       ],
       "refuted": false,
       "summary": "A PM reads the project header looking for the request this project came from, sees no chip, and concludes no request exists — when in fact the system simply has no way to record one. Worse, the column's presence in schema.sql and in the Project type makes reviewers believe the link is implemented.",
+      "area": "drafting-flow",
+      "report": "audit-reports/drafting-flow/12-projects-boundary.md"
+    },
+    {
+      "id": "PROJ-14",
+      "title": "A request deliverable's project reference that is not written when its review completes is never said on screen — the review panel does not pass the note handler",
+      "severity": "LOW",
+      "status": "RESOLVED",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading.",
+      "blast_radius": null,
+      "related": [
+        "PROJ-1",
+        "GAP-114",
+        "DEC-90"
+      ],
+      "locations": [
+        "components/documents/ReviewGateSection.tsx:248-249",
+        "lib/reviewControl.ts",
+        "lib/reviewDeliverableReference.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A reviewer who is not a project manager completes the review of a request deliverable whose request was linked by a requester without register authority. The route records noregisterauthority on the request's audit trail and answers the warning; the reviewer sees \"published\" and nothing else, and the project manager is not told. The reference is recoverable (the Documents card; or unlink and relin",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/12-projects-boundary.md"
     },
