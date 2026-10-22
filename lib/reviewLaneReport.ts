@@ -13,16 +13,25 @@
 // is counted, exactly as for the rest of the analytics page) and computes
 // the report in the browser. Nothing is written.
 //
-// The lanes are what the ticket records (DF-P6, 20261250), never a guess:
-//   - like_in_kind  — the requester declared it like-in-kind at filing
-//                     (lib/reviewModel.ts isDeclaredLikeInKind: a statement
-//                     and its time). The report does not re-check the
-//                     declaration's e-signature (the workflow route does,
-//                     and evaluates a declaration whose signature is not on
-//                     record as undeclared); it says so on the page.
+// The lanes are what the ticket records (DF-P6, 20261250), never a guess,
+// and they are decided exactly as the engine decides the gate
+// (lib/reviewModel.ts ticketEngineeringRequired — fix pass, review major 1:
+// engineering_required true always wins, a declaration counts only while it
+// is false):
 //   - engineered    — engineering review is required (engineering_required
 //                     true: the default for a request filed since the paste,
-//                     a class or the assigner's flag, or the backfill).
+//                     a class or the assigner's flag, or the backfill) —
+//                     INCLUDING a request declared like-in-kind and raised to
+//                     engineering review since (a class marked "Requires
+//                     engineering", or the assigner's flag; DF-P6 / DF-P18):
+//                     the engine reviews it as engineered.
+//   - like_in_kind  — the requester declared it like-in-kind at filing
+//                     (lib/reviewModel.ts isDeclaredLikeInKind: a statement
+//                     and its time) and engineering_required is false. The
+//                     report does not re-check the declaration's e-signature
+//                     (the workflow route does, and evaluates a declaration
+//                     whose signature is not on record as undeclared); it
+//                     says so on the page.
 //   - legacy_gate   — filed before the review model and left to today's
 //                     role-based gate, evaluated live (engineering_required
 //                     false, no declaration).
@@ -49,11 +58,12 @@ export type LaneTicket = Pick<Ticket,
   "id" | "ticketId" | "title" | "status" | "createdAt" | "requesterId" | "requesterName"
   | "engineeringRequired" | "likeInKindStatement" | "likeInKindDeclaredBy" | "likeInKindDeclaredAt" | "workClass" | "codeClass">;
 
-/** The lane a request is in, from what it records. */
+/** The lane a request is in, from what it records — in the engine's order
+ *  (ticketEngineeringRequired): engineering required first, then a
+ *  declaration, then the pre-review-model gate. */
 export function reviewLaneOf(t: Pick<LaneTicket, "engineeringRequired" | "likeInKindStatement" | "likeInKindDeclaredAt">): ReviewLane {
-  if (isDeclaredLikeInKind(t)) return "like_in_kind";
   if (t.engineeringRequired === true) return "engineered";
-  if (t.engineeringRequired === false) return "legacy_gate";
+  if (t.engineeringRequired === false) return isDeclaredLikeInKind(t) ? "like_in_kind" : "legacy_gate";
   return "not_recorded";
 }
 
@@ -102,13 +112,22 @@ export interface DeclarationLine {
   statement: string;
   workClass: string | null;
   codeClass: string | null;
+  /** The lane the request is in now. A declaration whose request was raised
+   *  to engineering review since (a class marked "Requires engineering", or
+   *  the assigner's flag) is still listed — the report lists EVERY
+   *  declaration — and is counted under "engineered". */
+  lane: ReviewLane;
+  /** True when engineering review is required despite the declaration (the
+   *  declaration was overridden). */
+  overridden: boolean;
 }
 
 export interface ReviewLaneSummary {
   period: ReviewLanePeriod;
   total: number;
   lanes: Record<ReviewLane, number>;
-  /** Every declaration filed in the period, oldest first. */
+  /** Every declaration filed in the period, oldest first — whatever lane
+   *  its request is in now (an overridden one says so). */
   declarations: DeclarationLine[];
   /** Requests in the period per work class / code class (null = none set). */
   byWorkClass: Array<{ value: string | null; count: number }>;
@@ -135,7 +154,7 @@ export function summarizeReviewLanes(rows: readonly LaneTicket[], period: Review
   for (const t of inPeriod) {
     const lane = reviewLaneOf(t);
     lanes[lane] += 1;
-    if (lane !== "like_in_kind") continue;
+    if (!isDeclaredLikeInKind(t)) continue;
     const by = typeof t.likeInKindDeclaredBy === "string" && t.likeInKindDeclaredBy ? t.likeInKindDeclaredBy : null;
     declarations.push({
       id: String(t.id ?? ""),
@@ -149,6 +168,8 @@ export function summarizeReviewLanes(rows: readonly LaneTicket[], period: Review
       statement: String(t.likeInKindStatement ?? "").trim(),
       workClass: t.workClass || null,
       codeClass: t.codeClass || null,
+      lane,
+      overridden: lane === "engineered",
     });
   }
   declarations.sort((a, b) => (a.declaredAt ?? "").localeCompare(b.declaredAt ?? "") || a.ticketId.localeCompare(b.ticketId));
@@ -160,6 +181,39 @@ export function summarizeReviewLanes(rows: readonly LaneTicket[], period: Review
     byWorkClass: classCounts(inPeriod, (t) => t.workClass),
     byCodeClass: classCounts(inPeriod, (t) => t.codeClass),
   };
+}
+
+/** DF-P19 fix pass (review minor 5): is the loaded set the whole of the
+ *  period? /api/admin/analytics reads the requests NEWEST FIRST
+ *  (created_at desc) with an exact count, so when the server's row limit
+ *  cut the read, the requests missing are exactly those filed before the
+ *  oldest one loaded. `total` is the count the route returned (null when
+ *  it did not come back: then nothing can be said about a cut).
+ *  - truncated: the load holds fewer requests than the workspace has
+ *    (null = unknown);
+ *  - oldestLoaded: the oldest filing date (UTC) in the load;
+ *  - periodComplete: the period starts strictly after that date (the
+ *    oldest loaded date itself may be only partly loaded), or nothing was
+ *    cut. */
+export interface ReviewLaneCoverage {
+  loaded: number;
+  total: number | null;
+  truncated: boolean | null;
+  oldestLoaded: string | null;
+  periodComplete: boolean;
+}
+export function reviewLaneCoverage(rows: readonly Pick<LaneTicket, "createdAt">[], total: number | null | undefined, period: ReviewLanePeriod): ReviewLaneCoverage {
+  const loaded = rows.length;
+  const tot = typeof total === "number" && Number.isFinite(total) ? total : null;
+  const truncated = tot === null ? null : tot > loaded;
+  let oldestLoaded: string | null = null;
+  for (const t of rows) {
+    const d = filingDate(t.createdAt);
+    if (d !== null && (oldestLoaded === null || d < oldestLoaded)) oldestLoaded = d;
+  }
+  const from = periodBound(period.from);
+  const periodComplete = truncated === false || (truncated === true && from !== null && oldestLoaded !== null && from > oldestLoaded);
+  return { loaded, total: tot, truncated, oldestLoaded, periodComplete };
 }
 
 /** The report as a CSV file (every cell through lib/csvSafe, PM-15): the lane
@@ -175,13 +229,14 @@ export function reviewLaneReportCsv(
   for (const l of REVIEW_LANES) lines.push(csvLine([REVIEW_LANE_LABEL[l], s.lanes[l]]));
   lines.push(csvLine(["Total", s.total]));
   lines.push("");
-  lines.push(csvLine(["Request", "Title", "Status", "Filed", "Declared at", "Declared by", "Statement", "Work class", "Code class"]));
+  lines.push(csvLine(["Request", "Title", "Status", "Filed", "Declared at", "Declared by", "Statement", "Work class", "Code class", "Engineering review required since (declaration overridden)"]));
   for (const d of s.declarations) {
     lines.push(csvLine([
       d.ticketId, d.title, d.status, d.filed ?? "", d.declaredAt ?? "",
       d.declaredByName ?? d.declaredBy ?? "", d.statement,
       d.workClass ? classLabel("workClasses", d.workClass) : "",
       d.codeClass ? classLabel("codeClasses", d.codeClass) : "",
+      d.overridden ? "Yes" : "No",
     ]));
   }
   return lines.join("\n");

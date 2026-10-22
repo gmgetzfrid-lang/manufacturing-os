@@ -70,7 +70,7 @@ import {
   CAPABILITY_DEFS, defaultCapabilityPolicy, loadCapabilityPolicyEntry, saveCapabilityPolicy,
   validateCapabilityPolicy, invalidateCapabilityPolicy, isRuleArray, ruleIsConditional, describeWhen,
   CapabilityPolicyChangeError, POLICY_CHANGED, PROJECT_SCOPED_CAPS, announceCapabilityPolicyChanged,
-  HOLD_OPENER_TOKEN, ticketDimensionRules, confirmCapabilityRule,
+  HOLD_OPENER_TOKEN, ticketDimensionRules, confirmCapabilityRule, capabilityRuleKey, GATE_EXEMPT_CAP,
   type CapabilityId, type CapabilityEntry, type CapabilityRule, type CapabilityPolicy, type TicketDimensionRuleState,
 } from "@/lib/capabilityPolicy";
 import { loadRequestTypeOptions, type RequestTypeOption } from "@/lib/requestTypes";
@@ -107,6 +107,16 @@ type ProjectOverrides = Partial<Record<CapabilityId, ProjectOverride[]>>;
  *  or multi-key clauses) — preserved verbatim so a save never drops them. */
 type Opaque = Partial<Record<CapabilityId, CapabilityRule[]>>;
 
+/** Which editor row a stored conditional rule is: a request-type row (the
+ *  rule names request types only), a project row (project only, on a
+ *  project-scoped capability), or a rule the editor preserves verbatim. */
+function editorRowKind(cap: CapabilityId, r: CapabilityRule): "type" | "project" | "opaque" {
+  const keys = Object.keys(r.when ?? {}).filter((k) => ((r.when as Record<string, string[] | undefined>)[k]?.length ?? 0) > 0);
+  if (keys.length === 1 && keys[0] === "requestType") return "type";
+  if (keys.length === 1 && keys[0] === "projectId" && PROJECT_SCOPED_CAPS.has(cap)) return "project";
+  return "opaque";
+}
+
 /** Split a stored policy into what the grid edits, what the override panels
  *  edit (request-type rows; QUAL-14: project rows on a project-scoped
  *  capability), and what must ride along untouched. */
@@ -123,12 +133,12 @@ export function splitPolicyForEditor(stored: CapabilityPolicy): { base: Base; ov
     if (unconditional) base[def.id] = unconditional.tokens;
     for (const r of entry) {
       if (!ruleIsConditional(r)) continue;
-      const keys = Object.keys(r.when ?? {}).filter((k) => ((r.when as Record<string, string[] | undefined>)[k]?.length ?? 0) > 0);
-      if (keys.length === 1 && keys[0] === "requestType") {
+      const kind = editorRowKind(def.id, r);
+      if (kind === "type") {
         for (const type of r.when?.requestType ?? []) {
           (overrides[def.id] ??= []).push({ type, tokens: [...r.tokens] });
         }
-      } else if (keys.length === 1 && keys[0] === "projectId" && PROJECT_SCOPED_CAPS.has(def.id)) {
+      } else if (kind === "project") {
         for (const projectId of r.when?.projectId ?? []) {
           (projectOverrides[def.id] ??= []).push({ projectId, tokens: [...r.tokens] });
         }
@@ -154,14 +164,68 @@ export function holdsReleaseOnOldDefault(tokens: readonly string[] | undefined):
   return !!tokens && sameTokens(tokens, ["*"]);
 }
 
+/** DF-P19 fix pass (review minor 4): the conditional rules of one
+ *  capability in the order the STORED entry has them — the first matching
+ *  rule decides, and since DF-P19 a preserved library- / class-scoped rule
+ *  binds, so a grid save must not move it behind a request-type row. Each
+ *  stored request-type / project rule is replaced in place by the editor's
+ *  current rows for its types / project (a removed row drops out), each
+ *  preserved rule stays where it was, and only rows that are new (no stored
+ *  rule names that type / project) go at the end — a new row decides only
+ *  where no stored rule matches first. With nothing stored as a rule list,
+ *  the order is the one the grid always wrote. */
+function conditionalRulesInStoredOrder(
+  cap: CapabilityId,
+  storedEntry: CapabilityEntry | undefined,
+  rows: readonly Override[],
+  projectRows: readonly ProjectOverride[],
+  keep: readonly CapabilityRule[],
+): CapabilityRule[] {
+  const typeRule = (o: Override): CapabilityRule => ({ tokens: o.tokens, when: { requestType: [o.type] } });
+  const projectRule = (o: ProjectOverride): CapabilityRule => ({ tokens: o.tokens, when: { projectId: [o.projectId] } });
+  if (!isRuleArray(storedEntry)) return [...rows.map(typeRule), ...projectRows.map(projectRule), ...keep];
+  const rowsLeft = [...rows];
+  const projectLeft = [...projectRows];
+  const keepLeft = [...keep];
+  const take = <T,>(list: T[], pred: (x: T) => boolean): T | undefined => {
+    const i = list.findIndex(pred);
+    return i < 0 ? undefined : list.splice(i, 1)[0];
+  };
+  const out: CapabilityRule[] = [];
+  for (const r of storedEntry) {
+    if (!ruleIsConditional(r)) continue;
+    const kind = editorRowKind(cap, r);
+    if (kind === "type") {
+      for (const type of r.when?.requestType ?? []) {
+        const o = take(rowsLeft, (x) => x.type === type);
+        if (o) out.push(typeRule(o));
+      }
+    } else if (kind === "project") {
+      for (const projectId of r.when?.projectId ?? []) {
+        const o = take(projectLeft, (x) => x.projectId === projectId);
+        if (o) out.push(projectRule(o));
+      }
+    } else {
+      const key = capabilityRuleKey(r);
+      const k = take(keepLeft, (x) => capabilityRuleKey(x) === key);
+      if (k) out.push(k);
+    }
+  }
+  return [...out, ...rowsLeft.map(typeRule), ...projectLeft.map(projectRule), ...keepLeft];
+}
+
 /** Recombine for saving: a capability with no override keeps the bare-list
  *  shape (byte-compatible with what it stored before); one with overrides
  *  becomes a rule list — base first, then one rule per request-type row,
  *  then one rule per project row (QUAL-14), then any preserved rules.
+ *  DF-P19 fix pass (review minor 4): given the `stored` policy the grid was
+ *  loaded from, the conditional rules keep the stored order instead
+ *  (conditionalRulesInStoredOrder) — a save never changes which stored rule
+ *  decides first.
  *  HAND-2 (fix pass 3): a capability with no override whose row equals its
  *  shipped default is left out — absent IS the default, and writing it out
  *  froze that default in the workspace. */
-export function joinPolicyFromEditor(base: Base, overrides: Overrides, opaque: Opaque, projectOverrides: ProjectOverrides = {}): Partial<Record<CapabilityId, CapabilityEntry>> {
+export function joinPolicyFromEditor(base: Base, overrides: Overrides, opaque: Opaque, projectOverrides: ProjectOverrides = {}, stored?: CapabilityPolicy | null): Partial<Record<CapabilityId, CapabilityEntry>> {
   const caps: Partial<Record<CapabilityId, CapabilityEntry>> = {};
   for (const def of CAPABILITY_DEFS) {
     const rows = overrides[def.id] ?? [];
@@ -174,9 +238,7 @@ export function joinPolicyFromEditor(base: Base, overrides: Overrides, opaque: O
     }
     caps[def.id] = [
       { tokens: base[def.id] ?? [] },
-      ...rows.map((o) => ({ tokens: o.tokens, when: { requestType: [o.type] } })),
-      ...projectRows.map((o) => ({ tokens: o.tokens, when: { projectId: [o.projectId] } })),
-      ...keep,
+      ...conditionalRulesInStoredOrder(def.id, stored?.caps?.[def.id], rows, projectRows, keep),
     ];
   }
   return caps;
@@ -184,8 +246,11 @@ export function joinPolicyFromEditor(base: Base, overrides: Overrides, opaque: O
 
 /** DF-P19: what the console says about one stored request rule scoped to a
  *  library or a work / code class. */
-export function ticketDimensionRuleStatus(r: Pick<TicketDimensionRuleState, "inForce" | "effect">): string {
+export function ticketDimensionRuleStatus(r: Pick<TicketDimensionRuleState, "inForce" | "effect"> & Partial<Pick<TicketDimensionRuleState, "cap">>): string {
   if (r.inForce) return "In force";
+  // fix pass (review major 2): on the engineer-gate exemption an unconfirmed
+  // rule does nothing at all (adding a role there removes a review).
+  if (r.cap === GATE_EXEMPT_CAP) return "Not in force until an Admin confirms it — it changes whose own requests skip engineer sign-off";
   if (r.effect === "narrow") return "Not yet in force where it would take an action away — confirm to apply";
   return "In force (it only adds people) — not yet confirmed";
 }
@@ -237,7 +302,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
     setBaselineProjectOverrides(split.projectOverrides);
     setOpaque(split.opaque);
     setVersion(at);
-    setBaselineCaps(JSON.stringify(joinPolicyFromEditor(split.base, split.overrides, split.opaque, split.projectOverrides)));
+    setBaselineCaps(JSON.stringify(joinPolicyFromEditor(split.base, split.overrides, split.opaque, split.projectOverrides, stored)));
     setDirty(false);
   }, []);
   const load = useCallback(async () => {
@@ -345,7 +410,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
 
   const save = async () => {
     if (!activeOrgId || !uid || !policy) return;
-    const caps = joinPolicyFromEditor(policy, overrides, opaque, projectOverrides);
+    const caps = joinPolicyFromEditor(policy, overrides, opaque, projectOverrides, storedPolicy);
     const err = validateCapabilityPolicy({ caps });
     if (err) { setMsg({ tone: "err", text: err }); return; }
     // IMPACT PREVIEW — spell out exactly what changes before it takes effect.
@@ -392,6 +457,8 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
       setBaselineProjectOverrides(projectOverrides);
       setVersion(written);
       setBaselineCaps(JSON.stringify(caps));
+      // DF-P19 fix pass: the order the next save keeps is the one just stored.
+      setStoredPolicy((p) => ({ ...(p ?? {}), caps }));
       setDirty(false);
       setMsg({ tone: "ok", text: "Saved — validated and audited on the server; enforced on the next action." });
       // ALOG-14 (fix pass 2): the other panels on this page re-read.
@@ -417,7 +484,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
         return;
       }
       const s2 = splitPolicyForEditor(fresh.policy);
-      const storedCaps = JSON.stringify(joinPolicyFromEditor(s2.base, s2.overrides, s2.opaque, s2.projectOverrides));
+      const storedCaps = JSON.stringify(joinPolicyFromEditor(s2.base, s2.overrides, s2.opaque, s2.projectOverrides, fresh.policy));
       if (storedCaps === baselineCaps) {
         // Only grants moved (a delegation, an expiry pruned): the grid this
         // edit started from is still the stored one — save it on the new version.
@@ -737,7 +804,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
         {dimensionRules.length > 0 && (
           <div data-testid="ticket-dimension-rules" className="mt-2 rounded-lg border border-[var(--color-border)] px-2.5 py-2">
             <div className="text-xs font-black text-[var(--color-text)]">Request rules scoped to a library or a work / code class</div>
-            <div className="text-[10px] text-[var(--color-text-faint)]">Requests present their library and classes to these rules. A rule stored before they did only adds people until an Admin confirms it: where it would take an action away from someone, that person keeps it until then.</div>
+            <div className="text-[10px] text-[var(--color-text-faint)]">Requests present their library and classes to these rules. A rule stored before they did only adds people until an Admin confirms it: where it would take an action away from someone, that person keeps it until then. On &ldquo;Approve own request without an engineer&rdquo; it does nothing at all until confirmed (adding a role there removes an engineer review).</div>
             <ul className="mt-1 space-y-1">
               {dimensionRules.map((r) => (
                 <li key={`${r.cap}:${r.key}`} data-dimension-rule={r.inForce ? "in-force" : r.effect} className="text-[11px] flex items-center gap-2 flex-wrap">

@@ -15,7 +15,7 @@ import { Download, Scale } from 'lucide-react';
 import type { OrgDraftingSettings, Ticket } from '@/types/schema';
 import { reviewClassOptions } from '@/lib/reviewModel';
 import {
-  summarizeReviewLanes, reviewLaneReportCsv, periodBound, REVIEW_LANES, REVIEW_LANE_LABEL, type LaneTicket,
+  summarizeReviewLanes, reviewLaneReportCsv, reviewLaneCoverage, periodBound, REVIEW_LANES, REVIEW_LANE_LABEL, type LaneTicket,
 } from '@/lib/reviewLaneReport';
 
 /** A class value as the workspace's list names it now (the value itself
@@ -25,13 +25,26 @@ export function classLabelFor(cfg: unknown, kind: 'workClasses' | 'codeClasses',
   return opt ? opt.label : value;
 }
 
-export default function ReviewLaneReport({ tickets, draftingConfig }: { tickets: readonly Ticket[]; draftingConfig?: unknown }) {
+/** DF-P19 fix pass (review minor 5): what the panel says about the load —
+ *  null when it holds every request of the period. */
+export function reviewLaneCoverageNotice(c: ReturnType<typeof reviewLaneCoverage>): string | null {
+  if (c.periodComplete) return null;
+  if (c.truncated === null) return `Showing the ${c.loaded} newest requests this page loaded; the server did not say how many there are in all, so requests filed before ${c.oldestLoaded ?? 'the oldest one shown'} may be missing from these counts.`;
+  return `Showing ${c.loaded} of ${c.total} requests (the newest; the server's row limit cut the rest) — requests filed before ${c.oldestLoaded ?? 'the oldest one shown'} are not counted. Narrow the period to start after ${c.oldestLoaded ?? 'that date'} for complete counts.`;
+}
+
+export default function ReviewLaneReport({ tickets, ticketsTotal = null, draftingConfig }: { tickets: readonly Ticket[]; ticketsTotal?: number | null; draftingConfig?: unknown }) {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const summary = useMemo(
     () => summarizeReviewLanes(tickets as readonly LaneTicket[], { from: periodBound(from), to: periodBound(to) }),
     [tickets, from, to],
   );
+  const coverage = useMemo(
+    () => reviewLaneCoverage(tickets as readonly LaneTicket[], ticketsTotal, { from: periodBound(from), to: periodBound(to) }),
+    [tickets, ticketsTotal, from, to],
+  );
+  const coverageNotice = reviewLaneCoverageNotice(coverage);
   const label = (kind: 'workClasses' | 'codeClasses', v: string) => classLabelFor(draftingConfig, kind, v);
   const download = () => {
     const csv = reviewLaneReportCsv(summary, label);
@@ -65,6 +78,9 @@ export default function ReviewLaneReport({ tickets, draftingConfig }: { tickets:
           </button>
         </div>
       </div>
+      {coverageNotice && (
+        <p role="status" data-testid="review-lanes-truncated" className="mb-3 rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">{coverageNotice}</p>
+      )}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         {REVIEW_LANES.map((l) => (
           <div key={l} data-testid={`review-lane-${l}`} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
@@ -86,7 +102,8 @@ export default function ReviewLaneReport({ tickets, draftingConfig }: { tickets:
                 <th className="py-1 pr-3 font-bold">By</th>
                 <th className="py-1 pr-3 font-bold">Statement</th>
                 <th className="py-1 pr-3 font-bold">Work class</th>
-                <th className="py-1 font-bold">Code class</th>
+                <th className="py-1 pr-3 font-bold">Code class</th>
+                <th className="py-1 font-bold">Lane now</th>
               </tr>
             </thead>
             <tbody>
@@ -97,7 +114,8 @@ export default function ReviewLaneReport({ tickets, draftingConfig }: { tickets:
                   <td className="py-1.5 pr-3 text-[var(--color-text-muted)]">{d.declaredByName ?? (d.declaredBy ? `${d.declaredBy.slice(0, 8)}…` : '—')}</td>
                   <td className="py-1.5 pr-3 text-[var(--color-text)] whitespace-pre-wrap">{d.statement}</td>
                   <td className="py-1.5 pr-3 text-[var(--color-text-muted)]">{d.workClass ? label('workClasses', d.workClass) : '—'}</td>
-                  <td className="py-1.5 text-[var(--color-text-muted)]">{d.codeClass ? label('codeClasses', d.codeClass) : '—'}</td>
+                  <td className="py-1.5 pr-3 text-[var(--color-text-muted)]">{d.codeClass ? label('codeClasses', d.codeClass) : '—'}</td>
+                  <td className="py-1.5 text-[var(--color-text-muted)]" data-overridden={d.overridden ? 'true' : 'false'}>{d.overridden ? 'Engineering review required since (declaration overridden)' : REVIEW_LANE_LABEL[d.lane]}</td>
                 </tr>
               ))}
             </tbody>
@@ -105,7 +123,7 @@ export default function ReviewLaneReport({ tickets, draftingConfig }: { tickets:
         </div>
       )}
       <p className="mt-3 text-xs text-[var(--color-text-muted)]">
-        Lanes are what each request records: declared like-in-kind by its requester at filing; engineering review required; filed before the review model and left to the role-based gate; or not recorded (this workspace&rsquo;s database does not have the review-model columns yet). The lane counts add up to the requests filed in the period ({summary.total}). The declaration&rsquo;s e-signature is checked when the request is approved, not here. A period is a range of filing dates (UTC). Every request this page loaded counts — the page loads at most the server&rsquo;s row limit, so a very large workspace&rsquo;s oldest requests may be missing.
+        Lanes are what each request records, decided as the approval gate decides them: engineering review required (including a request declared like-in-kind and raised to engineering review since — it is listed below as overridden); declared like-in-kind by its requester at filing; filed before the review model and left to the role-based gate; or not recorded (this workspace&rsquo;s database does not have the review-model columns yet). The lane counts add up to the requests filed in the period ({summary.total}). Every declaration filed in the period is listed, whatever its lane now. The declaration&rsquo;s e-signature is checked when the request is approved, not here. A period is a range of filing dates (UTC). The page loads requests newest first, up to the server&rsquo;s row limit; when that cuts the load, the oldest requests are the ones missing, and this panel says so above.
       </p>
     </section>
   );

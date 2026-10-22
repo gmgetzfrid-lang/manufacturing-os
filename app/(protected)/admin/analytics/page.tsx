@@ -100,6 +100,10 @@ export default function AnalyticsPage() {
   
   // STATE
   const [tickets, setTickets] = useState<Ticket[]>([]);
+  // DF-P19 fix pass (GAP-101 acceptance 5): how many requests the workspace
+  // holds as the caller sees them (null when the count did not come back) —
+  // the read is newest first and cut at the server's row limit.
+  const [ticketsTotal, setTicketsTotal] = useState<number | null>(null);
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   
   // CONTROLS
@@ -122,12 +126,13 @@ export default function AnalyticsPage() {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
         });
-        const body = (await res.json().catch(() => null)) as { tickets?: Record<string, unknown>[]; documents?: Record<string, unknown>[]; error?: string } | null;
+        const body = (await res.json().catch(() => null)) as { tickets?: Record<string, unknown>[]; ticketsTotal?: number | null; documents?: Record<string, unknown>[]; error?: string } | null;
         if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const ticketsData = (body?.tickets ?? []) as any[];
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const docsData = (body?.documents ?? []) as any[];
+        setTicketsTotal(typeof body?.ticketsTotal === "number" ? body.ticketsTotal : null);
         setTickets((ticketsData || []).map(r => ({
           id: r.id, orgId: r.org_id, ticketId: r.ticket_id,
           title: r.title, description: r.description, unit: r.unit,
@@ -653,7 +658,7 @@ export default function AnalyticsPage() {
       {/* REVIEW LANES (drafting-flow GAP-101 acceptance 5, DF-P19): requests by
           review lane for any period, and every like-in-kind declaration with
           its author, text and work / code class — read-only. */}
-      <ReviewLaneReport tickets={tickets} draftingConfig={draftingConfig && draftingConfig.orgId === activeOrgId ? draftingConfig.data : null} />
+      <ReviewLaneReport tickets={tickets} ticketsTotal={ticketsTotal} draftingConfig={draftingConfig && draftingConfig.orgId === activeOrgId ? draftingConfig.data : null} />
 
       {/* SECTION 2: CHARTS & LISTS */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

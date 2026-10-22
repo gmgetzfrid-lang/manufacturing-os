@@ -18,8 +18,15 @@
 --            request-type / unit rules is not on it (a matching rule
 --            REPLACES the list), or it is on ticket.direct_approve (any
 --            scoped rule there can scope a requester's own approval out) —
---            unless it names every member ("*");
---   GRANT  — it only adds roles to the base list;
+--            unless it names every member ("*"). On
+--            ticket.engineer_gate_exempt EVERY such rule is NARROW unless its
+--            roles are exactly the base list (DF-P19 fix pass, review major
+--            2): that list names whose OWN requests need no engineer
+--            sign-off, so a role ADDED there takes an engineering review
+--            away — never a harmless grant — and the app ignores the rule
+--            until an Admin confirms it;
+--   GRANT  — it only adds roles to the base list (never on
+--            ticket.engineer_gate_exempt);
 --   SAME   — it names exactly what already applies.
 -- lib/capabilityPolicy.ts classifyTicketDimensionRule is the same rule (a
 -- test runs both on the same fixtures on PostgreSQL 16).
@@ -28,7 +35,8 @@
 -- the deploy carries no confirmation stamp, and an unconfirmed one only ADDS
 -- (lib/capabilityPolicy.ts effectiveTokens): a GRANT takes effect at the
 -- deploy; a NARROW does not take a working action away from anyone until an
--- Admin confirms it (Admin → Permissions, "Request rules scoped to a library
+-- Admin confirms it (and one on ticket.engineer_gate_exempt does nothing at
+-- all until then) (Admin → Permissions, "Request rules scoped to a library
 -- or a work / code class" → Confirm, which the policy route audits). A rule
 -- saved through the policy route after the deploy is confirmed by that save.
 --
@@ -116,6 +124,11 @@ dims AS (
 classified AS (
   SELECT dm.*,
          CASE
+           -- ticket.engineer_gate_exempt: a widening removes an engineering
+           -- review, a narrowing adds one — NARROW (confirm first) unless
+           -- the roles are exactly the base list (jsonb containment both ways).
+           WHEN dm.cap = 'ticket.engineer_gate_exempt'
+             THEN CASE WHEN (dm.rule->'tokens') @> dm.base AND dm.base @> (dm.rule->'tokens') THEN 'same' ELSE 'narrow' END
            WHEN NOT (dm.rule->'tokens' ? '*')
                 AND (dm.cap = 'ticket.direct_approve'
                      OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(dm.base) bt(t) WHERE NOT (dm.rule->'tokens' ? bt.t))
@@ -152,10 +165,10 @@ SELECT 5, 'inventory (before apply): … of them scoped to a code class', (SELEC
 UNION ALL
 SELECT 6, 'inventory (before apply): … of them already confirmed (a policy-route save after the DF-P19 deploy; expect 0 before it)', (SELECT COUNT(*) FROM classified WHERE confirmed)::text
 UNION ALL
-SELECT 10, 'inventory (before apply): would newly NARROW someone''s access — NOT in force until an Admin confirms it (Admin → Permissions); until then the old answer stands for everyone it would take an action from',
+SELECT 10, 'inventory (before apply): would newly NARROW someone''s access, or change whose own requests skip engineer sign-off (any such rule on ticket.engineer_gate_exempt) — NOT in force until an Admin confirms it (Admin → Permissions); until then the old answer stands for everyone it would take an action from, and an engineer_gate_exempt rule does nothing',
        (SELECT COUNT(*) FROM classified WHERE effect = 'narrow')::text
 UNION ALL
-SELECT 11, 'inventory (before apply): would newly GRANT (only adds roles) — in force at the deploy',
+SELECT 11, 'inventory (before apply): would newly GRANT (only adds roles; never a ticket.engineer_gate_exempt rule) — in force at the deploy',
        (SELECT COUNT(*) FROM classified WHERE effect = 'grant')::text
 UNION ALL
 SELECT 12, 'inventory (before apply): name exactly what already applies (no effect)',

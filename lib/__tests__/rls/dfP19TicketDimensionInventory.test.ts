@@ -63,6 +63,13 @@ describe.skipIf(skip !== null)("DF-P19 — 20261263 counts and classifies stored
         "ticket.reopen": [{ tokens: ["Admin", "Manager", "Supervisor"], when: { codeClass: ["c-1"] } }],
         "ticket.self_assign": [{ tokens: ["DraftingSupervisor"], when: { codeClass: ["c-1"] }, confirmedAt: "2026-10-22T00:00:00.000Z" }, { tokens: ["Drafter"] }],
         "transmittal.issue": [{ tokens: ["Admin"], when: { libraryId: [lib] } }, { tokens: ["Admin", "DocCtrl"] }],
+        // fix pass (review major 2): on the engineer-gate exemption a widening (Viewers in the library skip
+        // engineer sign-off) is NARROW — never a GRANT; the exact base list (any order) is SAME.
+        "ticket.engineer_gate_exempt": [
+          { tokens: ["Admin", "Manager", "Supervisor", "Engineer", "DocCtrl", "Viewer"], when: { libraryId: [lib] } },
+          { tokens: ["DocCtrl", "Engineer", "Supervisor", "Manager", "Admin"], when: { codeClass: ["c-1"] } },
+          { tokens: ["Admin", "Manager", "Supervisor", "Engineer", "DocCtrl"] },
+        ],
       },
       grants: [],
     };
@@ -94,10 +101,10 @@ describe.skipIf(skip !== null)("DF-P19 — 20261263 counts and classifies stored
     const states = policies.flatMap((p) => ticketDimensionRules(p));
     const d = (prefix: string) => n(after, prefix) - n(before, prefix);
     expect(d("stored request (ticket.*) rules scoped")).toBe(states.length);
-    expect(states.length).toBe(5);
-    expect(d("… of them scoped to a library")).toBe(2);
+    expect(states.length).toBe(7);
+    expect(d("… of them scoped to a library")).toBe(3);
     expect(d("… of them scoped to a work class")).toBe(1);
-    expect(d("… of them scoped to a code class")).toBe(2);
+    expect(d("… of them scoped to a code class")).toBe(3);
     expect(d("… of them already confirmed")).toBe(states.filter((s) => s.inForce).length);
     expect(d("would newly NARROW")).toBe(states.filter((s) => s.effect === "narrow").length);
     expect(d("would newly GRANT")).toBe(states.filter((s) => s.effect === "grant").length);
@@ -106,6 +113,8 @@ describe.skipIf(skip !== null)("DF-P19 — 20261263 counts and classifies stored
       "ticket.assign:narrow",          // replaces the ISO rule's DocCtrl where both could match
       "ticket.direct_approve:grant",   // "*"
       "ticket.direct_approve:narrow",
+      "ticket.engineer_gate_exempt:narrow", // a widening there removes an engineering review
+      "ticket.engineer_gate_exempt:same",
       "ticket.reopen:same",
       "ticket.self_assign:narrow",
     ]);

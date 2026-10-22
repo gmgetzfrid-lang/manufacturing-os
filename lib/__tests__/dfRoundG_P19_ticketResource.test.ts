@@ -28,7 +28,7 @@ import ts from "typescript";
 vi.mock("@/lib/supabase", () => ({ supabase: { from: () => ({}), channel: () => ({}), auth: { getSession: async () => ({ data: { session: null } }) } } }));
 vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({}) }));
 
-import { WorkflowEngine, ticketResource, type WorkflowAction, type WorkflowContext } from "@/lib/workflow";
+import { WorkflowEngine, ticketResource, requiresEngineerApproval, engineerApprovalRequired, type WorkflowAction, type WorkflowContext } from "@/lib/workflow";
 import { rowToTicket as routeRowToTicket } from "@/lib/ticketTransitions";
 import { rowToTicket as inboxRowToTicket } from "@/lib/inbox";
 import { fromDbTicket as badgeFromDbTicket, TICKET_ATTENTION_COLUMNS, TICKET_ATTENTION_COLUMN_LADDER, TICKET_ATTENTION_BASE_COLUMNS, TICKET_ATTENTION_LIBRARY_COLUMNS } from "@/hooks/useTicketNotifications";
@@ -42,9 +42,10 @@ import {
 import { engineerPickRefusal } from "@/lib/ticketPage";
 import { ALL_ROLES, type Role, type Ticket, type TicketStatus } from "@/types/schema";
 import {
-  summarizeReviewLanes, reviewLaneOf, filedInPeriod, periodBound, reviewLaneReportCsv, REVIEW_LANES,
+  summarizeReviewLanes, reviewLaneOf, filedInPeriod, periodBound, reviewLaneReportCsv, reviewLaneCoverage, REVIEW_LANES,
 } from "@/lib/reviewLaneReport";
-import { ticketDimensionRuleStatus } from "@/components/permissions/CapabilityPolicyEditor";
+import { ticketDimensionRuleStatus, splitPolicyForEditor, joinPolicyFromEditor } from "@/components/permissions/CapabilityPolicyEditor";
+import { reviewLaneCoverageNotice } from "@/components/requests/ReviewLaneReport";
 
 const root = process.cwd();
 const read = (f: string) => readFileSync(join(root, f), "utf8");
@@ -278,6 +279,119 @@ describe("DEC-90 ruling (2) — an unconfirmed library / class rule only adds; a
   });
 });
 
+describe("fix pass (review major 2) — on ticket.engineer_gate_exempt an unconfirmed library / class rule does nothing", () => {
+  const EXEMPT_DEFAULTS = CAPABILITY_DEFS.find((d) => d.id === "ticket.engineer_gate_exempt")!.defaultRoles;
+  // a pre-DF-P6 widening: Viewers and Requesters filing in library L would skip engineer sign-off
+  const widen: CapabilityRule = { tokens: [...EXEMPT_DEFAULTS, "Viewer", "Requester"], when: { libraryId: [LIB] } };
+  const pending: CapabilityPolicy = { caps: { "ticket.engineer_gate_exempt": [widen, { tokens: [...EXEMPT_DEFAULTS] }] } };
+  const confirmed: CapabilityPolicy = { caps: { "ticket.engineer_gate_exempt": [{ ...widen, confirmedAt: NOW, confirmedBy: "admin" }, { tokens: [...EXEMPT_DEFAULTS] }] } };
+  // the legacy path: filed before the review model, so the role-based gate decides
+  const legacy = routeRowToTicket(baseRow({ ...DIM_ROW, engineering_required: false, review_model_filed: false }));
+  const res = ticketResource(legacy);
+
+  it("an unconfirmed widening changes no engineer-approval answer (requiresEngineerApproval / engineerApprovalRequired)", () => {
+    for (const role of ALL_ROLES) {
+      expect(requiresEngineerApproval(role, [role], pending, "req", res), role).toBe(requiresEngineerApproval(role, [role], undefined, "req", res));
+      expect(engineerApprovalRequired(role, [role], pending, "req", res), role).toBe(engineerApprovalRequired(role, [role], undefined, "req", res));
+    }
+    expect(requiresEngineerApproval("Viewer", ["Viewer"], pending, "req", res)).toBe(true);
+    expect(tokensFor(pending, "ticket.engineer_gate_exempt", res).sort()).toEqual([...EXEMPT_DEFAULTS].sort());
+    expect(scopedTokensFor(pending, "ticket.engineer_gate_exempt", res)).toBeNull();
+    // once an Admin confirms it, it applies
+    expect(requiresEngineerApproval("Viewer", ["Viewer"], confirmed, "req", res)).toBe(false);
+  });
+
+  it("every status × role × identity: the engine answers as without the rule (Viewer requester on the legacy path)", () => {
+    const before = matrix(legacy, undefined);
+    const after = matrix(legacy, pending);
+    for (const [k, acts] of before) expect(actionSet(after.get(k)!), k).toEqual(actionSet(acts));
+    // the fixture does reach the gate: the same rule CONFIRMED changes answers
+    const conf = matrix(legacy, confirmed);
+    expect([...before].some(([k, acts]) => JSON.stringify(actionSet(conf.get(k)!)) !== JSON.stringify(actionSet(acts)))).toBe(true);
+  });
+
+  it("an unconfirmed narrowing there does nothing either (no join), and a later in-force rule still decides", () => {
+    const narrow: CapabilityPolicy = { caps: { "ticket.engineer_gate_exempt": [{ tokens: ["Admin"], when: { libraryId: [LIB] } }, { tokens: ["DocCtrl"], when: { requestType: ["ISO"] } }, { tokens: [...EXEMPT_DEFAULTS] }] } };
+    expect(scopedTokensFor(narrow, "ticket.engineer_gate_exempt", res)).toEqual(["DocCtrl"]);
+  });
+
+  it("classification: any such rule is NARROW (confirm first) unless its roles are exactly the base list; the console says it is not in force", () => {
+    expect(classifyTicketDimensionRule(undefined, "ticket.engineer_gate_exempt", widen)).toBe("narrow");
+    expect(classifyTicketDimensionRule(undefined, "ticket.engineer_gate_exempt", { tokens: ["*"], when: { libraryId: [LIB] } })).toBe("narrow");
+    expect(classifyTicketDimensionRule(undefined, "ticket.engineer_gate_exempt", { tokens: ["Admin"], when: { codeClass: ["c"] } })).toBe("narrow");
+    expect(classifyTicketDimensionRule(undefined, "ticket.engineer_gate_exempt", { tokens: [...EXEMPT_DEFAULTS].reverse(), when: { workClass: ["w"] } })).toBe("same");
+    const [state] = ticketDimensionRules(pending);
+    expect(state).toMatchObject({ cap: "ticket.engineer_gate_exempt", inForce: false, effect: "narrow" });
+    expect(ticketDimensionRuleStatus(state)).toBe("Not in force until an Admin confirms it — it changes whose own requests skip engineer sign-off");
+  });
+});
+
+describe("fix pass (review minor 3) — an unconfirmed rule never shadows a later confirmed one", () => {
+  const dimTicket = routeRowToTicket(baseRow(DIM_ROW));
+  const res = ticketResource(dimTicket);
+  const policy: CapabilityPolicy = { caps: { "ticket.final_approve": [
+    { tokens: ["Engineer-3"], when: { libraryId: [LIB] } },                                   // unconfirmed (only adds)
+    { tokens: ["Engineer-4"], when: { codeClass: ["c-1"] }, confirmedAt: NOW, confirmedBy: "admin" }, // confirmed: "In force"
+    { tokens: ["Engineer"] },
+  ] } };
+  it("the scan goes on past the unconfirmed rule: the confirmed code-class rule decides, joined with the unconfirmed rule's tokens", () => {
+    expect(scopedTokensFor(policy, "ticket.final_approve", res)?.sort()).toEqual(["Engineer-3", "Engineer-4"]);
+    expect(policyAllows(policy, "ticket.final_approve", "Engineer-2", null, null, res)).toBe(false);
+    expect(policyAllows(policy, "ticket.final_approve", "Engineer-4", null, null, res)).toBe(true);
+    expect(policyAllows(policy, "ticket.final_approve", "Engineer-3", null, null, res)).toBe(true);
+    expect(engineerPickRefusal(["Engineer-2"], policy, "ticket.final_approve", "e2", res)).toMatch(/outside the group/);
+    // the console calls the confirmed rule "In force", and the evaluator agrees
+    expect(ticketDimensionRules(policy).map((s) => s.inForce)).toEqual([false, true]);
+    // where only the unconfirmed rule matches, the base answer (joined) still stands
+    const otherClass = { ...res, codeClass: "c-other" };
+    expect(policyAllows(policy, "ticket.final_approve", "Engineer-2", null, null, otherClass)).toBe(true);
+  });
+});
+
+describe("fix pass (review minor 4) — a grid save keeps the stored order of conditional rules", () => {
+  const stored: CapabilityPolicy = { caps: { "ticket.assign": [
+    { tokens: ["Admin", "Manager", "Supervisor", "DraftingSupervisor"] },
+    { tokens: ["DraftingSupervisor"], when: { libraryId: [LIB] }, confirmedAt: NOW, confirmedBy: "a1" },
+    { tokens: ["Manager"], when: { requestType: ["ISO", "MOC"] } },
+    { tokens: ["Admin"], when: { unit: ["U-100"] } },
+  ] } };
+  it("toggling an unrelated cell leaves the library rule ahead of the ISO rule (and its stamp on it)", () => {
+    const s = splitPolicyForEditor(stored);
+    const base = { ...s.base, "ticket.assign": ["Admin", "Manager"] };
+    const j = joinPolicyFromEditor(base, s.overrides, s.opaque, s.projectOverrides, stored);
+    expect(j["ticket.assign"]).toEqual([
+      { tokens: ["Admin", "Manager"] },
+      { tokens: ["DraftingSupervisor"], when: { libraryId: [LIB] }, confirmedAt: NOW, confirmedBy: "a1" },
+      { tokens: ["Manager"], when: { requestType: ["ISO"] } },
+      { tokens: ["Manager"], when: { requestType: ["MOC"] } },
+      { tokens: ["Admin"], when: { unit: ["U-100"] } },
+    ]);
+    // ISO requests in L are still assigned by the library rule's list
+    const res = { requestType: "ISO", unit: "U-1", libraryId: LIB, workClass: null, codeClass: null };
+    expect(tokensFor({ caps: j }, "ticket.assign", res)).toEqual(["DraftingSupervisor"]);
+    // without the stored order (the old layout) the ISO row would have moved ahead of it
+    const old = joinPolicyFromEditor(base, s.overrides, s.opaque, s.projectOverrides);
+    expect(tokensFor({ caps: old }, "ticket.assign", res)).toEqual(["Manager"]);
+  });
+  it("an edited row keeps its place, a removed one drops out, a new one goes last; a loaded-then-saved grid is the stored entry", () => {
+    const s = splitPolicyForEditor(stored);
+    const overrides = { ...s.overrides, "ticket.assign": [{ type: "MOC", tokens: ["Supervisor"] }, { type: "NEW", tokens: ["Admin"] }] };
+    const j = joinPolicyFromEditor(s.base, overrides, s.opaque, s.projectOverrides, stored);
+    expect((j["ticket.assign"] as CapabilityRule[]).map((r) => JSON.stringify(r.when ?? null))).toEqual([
+      "null", JSON.stringify({ libraryId: [LIB] }), JSON.stringify({ requestType: ["MOC"] }), JSON.stringify({ unit: ["U-100"] }), JSON.stringify({ requestType: ["NEW"] }),
+    ]);
+    const canonical = joinPolicyFromEditor(s.base, s.overrides, s.opaque, s.projectOverrides, stored);
+    const again = splitPolicyForEditor({ caps: canonical });
+    expect(joinPolicyFromEditor(again.base, again.overrides, again.opaque, again.projectOverrides, { caps: canonical })).toEqual(canonical);
+  });
+  it("the editor passes the stored policy on every join (load baseline, save, conflict re-read)", () => {
+    const editor = read("components/permissions/CapabilityPolicyEditor.tsx");
+    expect(editor).toContain("joinPolicyFromEditor(split.base, split.overrides, split.opaque, split.projectOverrides, stored)");
+    expect(editor).toContain("joinPolicyFromEditor(policy, overrides, opaque, projectOverrides, storedPolicy)");
+    expect(editor).toContain("joinPolicyFromEditor(s2.base, s2.overrides, s2.opaque, s2.projectOverrides, fresh.policy)");
+  });
+});
+
 describe("DF-P19 — the rule's state: classification, confirmation, the server-owned stamp", () => {
   const cap: CapabilityId = "ticket.assign";
   it("classify: narrow / grant / same against the base list and the request-type rules; direct approval narrows unless '*'", () => {
@@ -371,21 +485,35 @@ describe("GAP-101 acceptance 5 — the Review Lanes report (read-only, from what
     t({ id: "3", ticketId: "REQ-3", engineeringRequired: false }),
     t({ id: "4", ticketId: "REQ-4" }),
     t({ id: "5", ticketId: "REQ-5", createdAt: "2026-09-01T10:00:00.000Z", engineeringRequired: false, likeInKindStatement: "=HYPERLINK(\"x\")", likeInKindDeclaredBy: "someone-else", likeInKindDeclaredAt: "2026-09-01T10:00:00.000Z" }),
+    // fix pass (review major 1): declared like-in-kind, then raised to engineering review at triage
+    // (a class marked "Requires engineering", or flag_engineering) — the engine reviews it as engineered
+    t({ id: "6", ticketId: "REQ-6", engineeringRequired: true, likeInKindStatement: "Same valve", likeInKindDeclaredBy: "req", likeInKindDeclaredAt: "2026-10-05T11:00:00.000Z", workClass: "lik", codeClass: "c2" }),
   ];
-  it("lanes come from the recorded columns; they add up to the period's total", () => {
-    expect(rows.map(reviewLaneOf)).toEqual(["engineered", "like_in_kind", "legacy_gate", "not_recorded", "like_in_kind"]);
+  it("lanes come from the recorded columns, in the engine's order; they add up to the period's total", () => {
+    expect(rows.map(reviewLaneOf)).toEqual(["engineered", "like_in_kind", "legacy_gate", "not_recorded", "like_in_kind", "engineered"]);
     const all = summarizeReviewLanes(rows, { from: null, to: null });
-    expect(all.total).toBe(5);
-    expect(REVIEW_LANES.reduce((n, l) => n + all.lanes[l], 0)).toBe(5);
-    expect(all.declarations.map((d) => d.ticketId)).toEqual(["REQ-5", "REQ-2"]);
-    expect(all.declarations[1]).toMatchObject({ declaredBy: "req", declaredByName: "Rae Q", statement: "Same gasket", workClass: "lik", codeClass: "c1" });
+    expect(all.total).toBe(6);
+    expect(REVIEW_LANES.reduce((n, l) => n + all.lanes[l], 0)).toBe(6);
+    expect(all.lanes).toEqual({ engineered: 2, like_in_kind: 2, legacy_gate: 1, not_recorded: 1 });
+    // every declaration is listed, whatever its lane; the overridden one says so
+    expect(all.declarations.map((d) => d.ticketId)).toEqual(["REQ-5", "REQ-2", "REQ-6"]);
+    expect(all.declarations[1]).toMatchObject({ declaredBy: "req", declaredByName: "Rae Q", statement: "Same gasket", workClass: "lik", codeClass: "c1", lane: "like_in_kind", overridden: false });
+    expect(all.declarations[2]).toMatchObject({ statement: "Same valve", lane: "engineered", overridden: true });
     expect(all.declarations[0].declaredByName).toBeNull();
-    expect(all.byCodeClass).toEqual([{ value: "c1", count: 2 }, { value: null, count: 3 }]);
+    expect(all.byCodeClass).toEqual([{ value: "c1", count: 2 }, { value: "c2", count: 1 }, { value: null, count: 3 }]);
+  });
+  it("the lane is the engine's: engineering_required true wins over a declaration, exactly as ticketEngineeringRequired decides", async () => {
+    const { ticketEngineeringRequired } = await import("@/lib/reviewModel");
+    for (const r of rows) {
+      const lane = reviewLaneOf(r);
+      if (lane === "engineered") expect(ticketEngineeringRequired(r, () => false), r.ticketId).toBe(true);
+      if (lane === "like_in_kind") expect(ticketEngineeringRequired(r, () => true), r.ticketId).toBe(false);
+    }
   });
   it("any period: inclusive UTC filing dates, either end open; a bad bound is no bound", () => {
     const oct = summarizeReviewLanes(rows, { from: "2026-10-01", to: "2026-10-31" });
-    expect(oct.total).toBe(4);
-    expect(oct.lanes).toEqual({ engineered: 1, like_in_kind: 1, legacy_gate: 1, not_recorded: 1 });
+    expect(oct.total).toBe(5);
+    expect(oct.lanes).toEqual({ engineered: 2, like_in_kind: 1, legacy_gate: 1, not_recorded: 1 });
     expect(summarizeReviewLanes(rows, { from: "2026-10-06", to: null }).total).toBe(0);
     expect(summarizeReviewLanes(rows, { from: null, to: "2026-09-01" }).total).toBe(1);
     expect(periodBound("2026-13-45x")).toBeNull();
@@ -395,8 +523,34 @@ describe("GAP-101 acceptance 5 — the Review Lanes report (read-only, from what
   it("the CSV encodes every cell through lib/csvSafe (a formula-leading statement is text)", () => {
     const csv = reviewLaneReportCsv(summarizeReviewLanes(rows, { from: null, to: null }), (k, v) => `${k}:${v}`);
     expect(csv).toContain(`"'=HYPERLINK(""x"")"`);
-    expect(csv).toContain("REQ-2,T,CLOSED,2026-10-05,2026-10-05T10:00:00.000Z,Rae Q,Same gasket,workClasses:lik,codeClasses:c1");
+    expect(csv).toContain("REQ-2,T,CLOSED,2026-10-05,2026-10-05T10:00:00.000Z,Rae Q,Same gasket,workClasses:lik,codeClasses:c1,No");
+    expect(csv).toContain("REQ-6,T,CLOSED,2026-10-05,2026-10-05T11:00:00.000Z,Rae Q,Same valve,workClasses:lik,codeClasses:c2,Yes");
     expect(read("lib/reviewLaneReport.ts")).toContain('import { csvLine } from "@/lib/csvSafe";');
+  });
+  it("fix pass (review minor 5): the load is newest first with an exact count — a cut at the row limit is said, and a period after the oldest loaded date is complete", () => {
+    const loaded = [t({ createdAt: "2026-10-20T10:00:00.000Z" }), t({ createdAt: "2026-10-03T10:00:00.000Z" }), t({ createdAt: "2026-10-03T23:00:00.000Z" })];
+    // nothing cut
+    expect(reviewLaneCoverage(loaded, 3, { from: null, to: null })).toEqual({ loaded: 3, total: 3, truncated: false, oldestLoaded: "2026-10-03", periodComplete: true });
+    expect(reviewLaneCoverageNotice(reviewLaneCoverage(loaded, 3, { from: null, to: null }))).toBeNull();
+    // cut: all time is incomplete and the notice names N of M and the date
+    const cut = reviewLaneCoverage(loaded, 1500, { from: null, to: null });
+    expect(cut).toMatchObject({ truncated: true, periodComplete: false });
+    expect(reviewLaneCoverageNotice(cut)).toBe("Showing 3 of 1500 requests (the newest; the server's row limit cut the rest) — requests filed before 2026-10-03 are not counted. Narrow the period to start after 2026-10-03 for complete counts.");
+    // a period starting ON the oldest loaded date may be partly loaded; one starting after it is whole
+    expect(reviewLaneCoverage(loaded, 1500, { from: "2026-10-03", to: null }).periodComplete).toBe(false);
+    expect(reviewLaneCoverage(loaded, 1500, { from: "2026-10-04", to: null }).periodComplete).toBe(true);
+    // no count came back: unknown, and said so
+    const unknown = reviewLaneCoverage(loaded, null, { from: null, to: null });
+    expect(unknown).toMatchObject({ truncated: null, periodComplete: false });
+    expect(reviewLaneCoverageNotice(unknown)).toMatch(/did not say how many there are in all/);
+    // the route orders the read and returns the count; the page passes it to the panel
+    const route = read("app/api/admin/analytics/route.ts");
+    expect(route).toContain('asCaller.from("tickets").select("*", { count: "exact" }).eq("org_id", orgId).order("created_at", { ascending: false })');
+    expect(route).toContain('ticketsTotal: typeof ticketsTotal === "number" ? ticketsTotal : null');
+    expect(read("app/(protected)/admin/analytics/page.tsx")).toContain("<ReviewLaneReport tickets={tickets} ticketsTotal={ticketsTotal}");
+    const panel = read("components/requests/ReviewLaneReport.tsx");
+    expect(panel).toContain('data-testid="review-lanes-truncated"');
+    expect(panel).not.toContain("a very large workspace&rsquo;s oldest requests may be missing");
   });
   it("it is mounted on /admin/analytics beside How Requests Ended, and the page's mapper carries the recorded columns; nothing writes", () => {
     const page = read("app/(protected)/admin/analytics/page.tsx");
@@ -435,5 +589,10 @@ describe("20261263 — the counts-only inventory (DEC-30 shape)", () => {
     expect(sql).toMatch(/workspaces holding at least one such rule/);
     expect(sql).toMatch(/would newly NARROW/);
     expect(sql).toMatch(/would newly GRANT/);
+  });
+  it("fix pass (review major 2): an engineer_gate_exempt rule is NARROW unless its roles are exactly the base list — never a GRANT", () => {
+    expect(sql).toContain("WHEN dm.cap = 'ticket.engineer_gate_exempt'\n             THEN CASE WHEN (dm.rule->'tokens') @> dm.base AND dm.base @> (dm.rule->'tokens') THEN 'same' ELSE 'narrow' END");
+    expect(sql.indexOf("WHEN dm.cap = 'ticket.engineer_gate_exempt'")).toBeLessThan(sql.indexOf("WHEN NOT (dm.rule->'tokens' ? '*')"));
+    expect(sql).toMatch(/never a ticket\.engineer_gate_exempt rule\) — in force at the deploy/);
   });
 });

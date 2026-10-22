@@ -422,31 +422,46 @@ export function ruleInForce(cap: CapabilityId, rule: CapabilityRule): boolean {
   return typeof rule.confirmedAt === "string" && rule.confirmedAt.length > 0;
 }
 
-/** The resource as a request presented it before DF-P19 — without its
- *  library and classes. No dimension rule can match it. */
-export function withoutTicketDimensions(resource: CapabilityResource): CapabilityResource {
-  return { ...resource, libraryId: null, workClass: null, codeClass: null };
-}
+/** DF-P19 fix pass (review major 2): the request capability where ADDING a
+ *  role takes a review gate away — `ticket.engineer_gate_exempt` lists the
+ *  requester roles whose own requests need NO engineer sign-off
+ *  (lib/workflow.ts requiresEngineerApproval). On it an unconfirmed
+ *  dimension rule does not even add (a widening there is fail-open on a
+ *  compliance gate; 20261166's LEAK-10 inventory already treats a scoped
+ *  rule there as critical): it is ignored until an Admin confirms it. */
+export const GATE_EXEMPT_CAP: CapabilityId = "ticket.engineer_gate_exempt";
 
 /** One evaluation's token list and whether a scoped rule decided it.
  *  DEC-90 ruling (2) for DF-P19 (fail-safe, no regression): the first
  *  matching rule decides, exactly as before — except that a request
  *  dimension rule the workspace has NOT confirmed (ruleInForce) only adds to
- *  the answer the request had before it presented those keys: its tokens are
- *  joined to that answer's, and "scoped" is that answer's. So such a rule
- *  grants at once, and never takes an action away (nor makes the requester
- *  "scoped out", nor narrows an engineer pick) until it is confirmed. */
+ *  the answer the scan gives WITHOUT it: the scan goes on past it (so a
+ *  later rule — a confirmed dimension rule included — still decides where it
+ *  matches; fix pass, review minor 3), its tokens are joined to that
+ *  answer's, and "scoped" is that answer's. So such a rule grants at once,
+ *  and never takes an action away (nor makes the requester "scoped out", nor
+ *  narrows an engineer pick) until it is confirmed. On
+ *  `ticket.engineer_gate_exempt` (GATE_EXEMPT_CAP) it does not join at all:
+ *  the answer without it stands (fix pass, review major 2). */
 function effectiveTokens(
   policy: CapabilityPolicy | null | undefined,
   cap: CapabilityId,
   resource: CapabilityResource | null | undefined,
 ): { tokens: string[]; scoped: boolean } {
   const entry = policy?.caps?.[cap];
-  const hit = isRuleArray(entry) && resource ? entry.find((r) => ruleMatches(r, resource)) : undefined;
-  if (!hit) return { tokens: baseTokensFor(policy, cap), scoped: false };
-  if (ruleInForce(cap, hit) || !resource) return { tokens: hit.tokens, scoped: true };
-  const before = effectiveTokens(policy, cap, withoutTicketDimensions(resource));
-  return { tokens: [...new Set([...hit.tokens, ...before.tokens])], scoped: before.scoped };
+  if (!isRuleArray(entry) || !resource) return { tokens: baseTokensFor(policy, cap), scoped: false };
+  const scan = (from: number): { tokens: string[]; scoped: boolean } => {
+    for (let i = from; i < entry.length; i++) {
+      const r = entry[i];
+      if (!ruleMatches(r, resource)) continue;
+      if (ruleInForce(cap, r)) return { tokens: r.tokens, scoped: true };
+      const rest = scan(i + 1);
+      if (cap === GATE_EXEMPT_CAP) return rest;
+      return { tokens: [...new Set([...r.tokens, ...rest.tokens])], scoped: rest.scoped };
+    }
+    return { tokens: baseTokensFor(policy, cap), scoped: false };
+  };
+  return scan(0);
 }
 
 /** The tokens of the first conditional rule matching `resource`, or null when
@@ -879,6 +894,11 @@ export function capabilityRuleKey(r: CapabilityRule): string {
 
 /** What a request dimension rule does once it applies, against the answers
  *  the requests it names had before (DEC-90 ruling (2) for DF-P19):
+ *  - on `ticket.engineer_gate_exempt` (GATE_EXEMPT_CAP; fix pass, review
+ *    major 2) any such rule is "narrow" — it needs an Admin's confirmation,
+ *    and the evaluator ignores it until then — unless its tokens are exactly
+ *    the base list ("same"): a role added there takes an engineering-review
+ *    requirement away, a role removed adds one; neither is a harmless grant;
  *  - "narrow": it would take an action away from someone — a token of the
  *    capability's base list or of one of its in-force request-type / unit
  *    rules is not on it (it REPLACES them where it matches), or it is on
@@ -896,6 +916,10 @@ export function classifyTicketDimensionRule(
 ): TicketRuleEffect {
   const tokens = new Set(rule.tokens);
   const base = baseTokensFor(policy, cap);
+  if (cap === GATE_EXEMPT_CAP) {
+    const b = new Set(base);
+    return tokens.size === b.size && [...tokens].every((t) => b.has(t)) ? "same" : "narrow";
+  }
   if (!tokens.has("*")) {
     if (cap === "ticket.direct_approve") return "narrow";
     const entry = policy?.caps?.[cap];

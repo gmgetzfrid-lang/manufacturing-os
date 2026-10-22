@@ -422,7 +422,8 @@ describe("/api/admin/analytics — the dashboard's data sits behind the same gat
     state.actor = { userId: "m1", roles: ["Manager"] };
     const res = await analytics();
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ tickets: [{ id: "t1", org_id: "o1" }], documents: [{ id: "d", org_id: "o1", status: "Issued" }] });
+    // DF-P19 fix pass: ticketsTotal is the exact count (null when the read returned none — this mock returns none)
+    expect(await res.json()).toEqual({ tickets: [{ id: "t1", org_id: "o1" }], ticketsTotal: null, documents: [{ id: "d", org_id: "o1", status: "Issued" }] });
     expect(state.calls.some((c) => c.table === "tickets" && c.method === "eq" && c.args[1] === "o1")).toBe(true);
   });
   it("the rows are read AS THE CALLER (their own bearer, RLS applied) — the service client decides the gate and reads nothing else", async () => {
@@ -440,7 +441,8 @@ describe("/api/admin/analytics — the dashboard's data sits behind the same gat
     // the caller-scoped client is built from the request's own bearer, by the shared helper — pinned at the source
     const r = src("app/api/admin/analytics/route.ts");
     expect(r).toContain("const asCaller = callerScopedClient(req);");
-    expect(r).toMatch(/asCaller\.from\("tickets"\)\.select\("\*"\)\.eq\("org_id", orgId\),\s*\n\s*asCaller\.from\("documents"\)/);
+    // DF-P19 fix pass (GAP-101 acceptance 5): newest first, with an exact count
+    expect(r).toMatch(/asCaller\.from\("tickets"\)\.select\("\*", \{ count: "exact" \}\)\.eq\("org_id", orgId\)\.order\("created_at", \{ ascending: false \}\),\s*\n\s*asCaller\.from\("documents"\)/);
     expect(r).not.toMatch(/actor\.admin\.from|supabaseAdmin/);
   });
   it("callerScopedClient (the real helper): anon key + the request's bearer, persistSession off; 401 without a bearer", async () => {

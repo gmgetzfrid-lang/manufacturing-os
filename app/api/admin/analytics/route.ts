@@ -1,6 +1,12 @@
 // /api/admin/analytics — WF-20: the analytics page's data, behind the gate.
 //
-//   GET ?orgId=  → 200 { tickets: row[], documents: row[] }
+//   GET ?orgId=  → 200 { tickets: row[], ticketsTotal: number | null, documents: row[] }
+//
+// drafting-flow GAP-101 acceptance 5 (DF-P19 fix pass, review minor 5): the
+// tickets come NEWEST FIRST (created_at desc) with an exact count, so when
+// PostgREST's max-rows cuts the read, what is missing is the oldest requests
+// (never an arbitrary subset) and the page can say how many it holds of how
+// many (`ticketsTotal`; null when the count did not come back).
 //
 // The page used to read `tickets` and `documents` through the caller's own
 // PostgREST session, so narrowing `admin.analytics_view` hid a dashboard
@@ -29,12 +35,12 @@ export async function GET(req: NextRequest) {
   const asCaller = callerScopedClient(req);
   if ("error" in asCaller) return NextResponse.json({ error: asCaller.error }, { status: asCaller.status });
 
-  const [{ data: tickets, error: tErr }, { data: documents, error: dErr }] = await Promise.all([
-    asCaller.from("tickets").select("*").eq("org_id", orgId),
+  const [{ data: tickets, error: tErr, count: ticketsTotal }, { data: documents, error: dErr }] = await Promise.all([
+    asCaller.from("tickets").select("*", { count: "exact" }).eq("org_id", orgId).order("created_at", { ascending: false }),
     asCaller.from("documents").select("id, org_id, status, document_number, title").eq("org_id", orgId),
   ]);
   if (tErr || dErr) {
     return NextResponse.json({ error: tErr?.message || dErr?.message || "Analytics read failed" }, { status: 500 });
   }
-  return NextResponse.json({ tickets: tickets ?? [], documents: documents ?? [] });
+  return NextResponse.json({ tickets: tickets ?? [], ticketsTotal: typeof ticketsTotal === "number" ? ticketsTotal : null, documents: documents ?? [] });
 }
