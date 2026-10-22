@@ -18,7 +18,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import {
-  ticketCopyPlan, declarationFooterClause, declarationPartNotPrintable, stampPrintsWithoutSubstitute,
+  ticketCopyPlan, declarationFooterClause, declarationPartNotPrintable, stampPrintsWithoutSubstitute, foldForStamp,
   type TicketCopyDeclaration,
 } from "@/lib/ticketDeliverableCopy";
 import { stampText, withoutScanInstruction } from "@/lib/stamping";
@@ -84,6 +84,23 @@ describe("GAP-101 (DF-P23 merge-time fix pass, ruling 2) — a declaration part 
     expect(footerOf(latin)).toBe("This file is KE-1 (declared like-in-kind by José Müller on 2026-10-01: \"Like-for-like “spiral wound” gasket, 150# - ASME B16.20…\"; e-signature not checked) deliverable Rev 1 — not a controlled document revision — scan the QR to confirm it is still the latest.");
     // the clause reads the same with or without the request number when every part prints
     expect(declarationFooterClause(latin)).toBe(declarationFooterClause(latin, "KE-1"));
+  });
+  it("fix pass 2 (review nit): a Latin-script name or statement with a letter the font lacks is printed diacritic-folded — 'Łukasz Nowak', 'Dvořák' — never replaced whole; a Cyrillic name still takes the note", async () => {
+    expect(declarationFooterClause(decl("Łukasz Nowak", "Identical gasket"), "KE-1"))
+      .toBe(' (declared like-in-kind by Lukasz Nowak on 2026-10-01: "Identical gasket")');
+    // only the letters the font lacks are folded; "á" (a WinAnsi letter) is kept as typed
+    expect(declarationFooterClause(decl("Antonín Dvořák", "Same pump"), "KE-1"))
+      .toBe(' (declared like-in-kind by Antonín Dvorák on 2026-10-01: "Same pump")');
+    // decomposed input folds the same way
+    expect(foldForStamp("Dvor\u030Cák")).toBe("Dvorák");
+    expect(declarationFooterClause(decl("Pat", "Spare from Łódź, same ĐN-50 flange"), "KE-1"))
+      .toBe(' (declared like-in-kind by Pat on 2026-10-01: "Spare from Lódz, same DN-50 flange")');
+    expect(declarationFooterClause(decl("Иван Петров", "Same pump"), "KE-1"))
+      .toBe(' (declared like-in-kind by the requester [name not printable in this stamp - see request KE-1] on 2026-10-01: "Same pump")');
+    // a Latin name with a CJK part folds nothing useful: the note
+    expect(declarationFooterClause(decl("Łukasz 李", "Same pump"), "KE-1")).toContain("[name not printable in this stamp - see request KE-1]");
+    expect(foldForStamp("Øystein Straße")).toBe("Øystein Straße"); // WinAnsi letters, printed as typed
+    for (const d of [decl("Łukasz Nowak", "Identical gasket"), decl("Antonín Dvořák", "Same pump"), decl("Pat", "Spare from Łódź, same ĐN-50 flange")]) await drawsWithoutSubstitute(footerOf(d));
   });
   it("a character the stamper already prints in a plain form (a Unicode hyphen, a zero-width space) is not a '?' — that part is printed as before", () => {
     const d = decl("Pat", "Pump P‐101, same​model");

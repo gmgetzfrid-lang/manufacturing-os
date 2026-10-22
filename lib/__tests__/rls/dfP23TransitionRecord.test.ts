@@ -234,6 +234,27 @@ describe.skipIf(skip !== null)("DF-P23 — 20261265: the equipment tag index and
     admin(db, `DELETE FROM codebook_entries WHERE org_id = '${orgId}' AND code = '40'`);
   });
 
+  it("WIRE-7 (DF-P23 merge-time fix pass 2): a codebook unit deleted since — a re-paste clears the live request's code and row 7 answers t; an archived request's code is never written", () => {
+    admin(db, `INSERT INTO codebook_entries (org_id, kind, code, label) VALUES ('${orgId}', 'unit', '50', 'Tank farm east')`);
+    const live = ticket("50");
+    const archived = ticket("50", true);
+    expect(unitCodeOf(live)).toBe("50");
+    expect(unitCodeOf(archived)).toBe("50");
+    admin(db, `DELETE FROM codebook_entries WHERE org_id = '${orgId}' AND kind = 'unit' AND code = '50'`);
+    expect(unitCodeOf(live)).toBe("50"); // not chased when the codebook changes (stated)
+    const r = paste(F265);
+    expect(r.ok, r.error).toBe(true);
+    const row7 = r.probes.find((l) => l.includes("every live request's unit_code is the codebook unit its unit names"));
+    expect(row7, r.probes.join("\n")).toMatch(/\|t\|$/);
+    expect(r.probes.filter((l) => l.endsWith("|f|"))).toEqual([]);
+    expect(unitCodeOf(live)).toBe("<null>");
+    expect(admin(db, `SELECT unit FROM tickets WHERE id = '${live}'`)).toBe("50");
+    expect(unitCodeOf(archived)).toBe("50");
+    // leave nothing a later re-paste would have to clear on someone else's behalf
+    admin(db, `UPDATE tickets SET unit = NULL WHERE id = '${archived}'`);
+    expect(unitCodeOf(archived)).toBe("<null>");
+  });
+
   it("WIRE-7: the paste fills a live request's unit_code once; an archived request is left alone; a re-paste writes nothing new", () => {
     const live = ticket("20");
     const archived = ticket("20", true);

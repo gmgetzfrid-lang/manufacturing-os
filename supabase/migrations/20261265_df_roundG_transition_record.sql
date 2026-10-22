@@ -58,7 +58,9 @@
 --       against codebook_entries at the write), and a client that writes it
 --       gets the derived value back. The open requests'
 --       unit_code is filled once here (counted in the inventory first); a
---       request's unit and every other column are untouched.
+--       re-paste also clears a live request's code the codebook no longer
+--       holds for its unit (DF-P23 merge-time fix pass 2; never an archived
+--       request's); a request's unit and every other column are untouched.
 --
 -- WHY NOT THE TRANSITION-AND-AUDIT RPC (EVID-12 done-when 1). Not built by
 -- DF-P23 — recorded in EVID-12's Partial (DEC-90 ruling (1) for DF-P23): its
@@ -92,7 +94,8 @@
 -- one tag twice on a request restores its first entry; each later one is
 -- reported, never refused (lib/dataRestore.ts DUPLICATE_EQUIPMENT_TAG).
 -- Re-runnable: CREATE … IF NOT EXISTS, CREATE OR REPLACE, DROP TRIGGER IF
--- EXISTS; the fill writes only rows whose unit_code differs.
+-- EXISTS; the fill writes only live rows whose unit_code differs from the
+-- code the codebook holds for their unit (set, or cleared).
 -- Single paste: prerequisites → temp-table inventory (counts only) →
 -- BEGIN/DDL/COMMIT → one SELECT (check text, ok boolean, n text).
 -- ⚠ APPLIED BY HAND (DEC-30).
@@ -275,6 +278,16 @@ UPDATE tickets t
  WHERE ce.org_id = t.org_id AND ce.kind = 'unit' AND ce.code = t.unit
    AND t.archived_at IS NULL
    AND t.unit_code IS DISTINCT FROM ce.code;
+-- DF-P23 merge-time fix pass 2: and cleared where the codebook no longer
+-- holds the live request's unit (a unit deleted or recoded since an earlier
+-- paste) — so verification row 7 holds on a re-paste. Live requests only;
+-- an archived one is never written here. Nothing to clear on a first paste.
+UPDATE tickets t
+   SET unit_code = NULL
+ WHERE t.archived_at IS NULL
+   AND t.unit_code IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM codebook_entries ce
+                    WHERE ce.org_id = t.org_id AND ce.kind = 'unit' AND ce.code = t.unit);
 
 COMMIT;
 

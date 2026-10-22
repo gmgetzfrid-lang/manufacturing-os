@@ -107,6 +107,8 @@ Tests: `lib/__tests__/dfRoundG_P23_workflowFollowUps.test.ts` ("EVID-1 done-when
 
 **Scope / residual.** Done-when 3's signature / hash limb on the history line itself → the integrator (DEC-31): proposed a ruling that the binding lives on the audit row and the roster ledger (the append-only records) rather than the mutable history line — which would close done-when 3 — or, failing that, a package to copy a routed sign-off's `signatureId` and the roster's file hashes onto its history line (`computeTransition`'s `sign_slot` branch). Stays OPEN on that limb only.
 
+*Residual recorded at the DF-P23 merge-time fix pass 2 (2026-10-22, the independent review, DEC-29 / DEC-31) — the actor limb holds for every SERVER writer, not for a client's own append.* The tickets guard of `20261250` (`ticket_update_guard`, its history check at `:450`–`:458` — "a history entry you add must name you") lets a member append to their own request's history through PostgREST directly, and checks only the entry's `user` (their email or uid): an entry carrying their own `user` with any `actorId` is accepted, so a member can forge `actorId` on a line they append themselves. Nothing reads `actorId` today (the page renders `user` / `role` / `date`; no gate, viewer or export decides by it), and every server route takes it from the session (above). **Owner: drafting-flow DF-P25 EXCEPTION-ONLY REVIEW AND PRE-AUTHORIZATION FOLLOW-UPS** (it has a migration slot): on a client append, require `actorId` to be absent or equal to `auth.uid()`, in the guard's own history loop. `20261250` is not changed here (a re-created guard is that package's to prove).
+
 ---
 
 <a id="evid-2"></a>

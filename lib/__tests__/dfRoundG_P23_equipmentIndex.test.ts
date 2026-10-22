@@ -232,6 +232,14 @@ describe("GAP-312 follow-up — the create route lists one tag once, by the same
     expect(out.input.equipment?.map((e) => e.tag)).toEqual(["E-22", "P-101"]);
     expect(out.warnings.join(" ")).toMatch(/"E22" names the same equipment as "E-22"/);
   });
+  it("merge-time fix pass 2 (records made honest): the dedupe is the index key's, not uppercasing — 'Pump ß' and 'Pump SS' (one string once uppercased, before DF-P23) are now both kept, as the index keeps them", () => {
+    expect("Pump ß".toUpperCase()).toBe("Pump SS".toUpperCase());
+    expect(equipmentListingKey("Pump ß")).not.toBe(equipmentListingKey("Pump SS"));
+    const out = parseTicketCreateBody(body(["Pump ß", "Pump SS"]));
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.input.equipment?.map((e) => e.tag)).toEqual(["Pump ß", "Pump SS"]);
+  });
   it("REGRESSION: a repeat differing only in case is dropped silently, as before; distinct tags all kept", () => {
     const out = parseTicketCreateBody(body(["e-22", "E-22", "P-101", "Насос", "Клапан"]));
     expect(out.ok).toBe(true);

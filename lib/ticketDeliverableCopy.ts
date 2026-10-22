@@ -57,10 +57,13 @@
 //           sentence) is never printed as "?" runs: that part is replaced by
 //           a plain-ASCII note naming the request ("[statement not printable
 //           in this stamp - see request KE-1]"), each part on its own.
+//           (Fix pass 2) A Latin-script part first has the letters the font
+//           lacks folded ("Łukasz" → "Lukasz", "Dvořák" → "Dvorák"); only a
+//           part that still cannot be drawn takes the note.
 
 import type { TicketAttachment } from "@/types/schema";
 import { StandardFontEmbedder, StandardFonts } from "pdf-lib";
-import { stampText, stampWatermark, STAMP_PLACEHOLDER, type StampControlState } from "@/lib/stamping";
+import { stampFontPrints, stampText, stampWatermark, STAMP_PLACEHOLDER, type StampControlState } from "@/lib/stamping";
 import { ticketVerifyUrl, ticketVerdict, issueInForce, isIssuedTicketRev } from "@/lib/verifyTicketVerdict";
 
 export type TicketCopyChannel = "print" | "download";
@@ -216,6 +219,38 @@ export function stampPrintsWithoutSubstitute(text: string): boolean {
   }
 }
 
+/** DF-P23 merge-time fix pass 2 (review nit): letters canonical
+ *  decomposition (NFD) does not split into a base letter and a mark. Ø / ø
+ *  and ß are WinAnsi letters, so they are printed as typed and never reach
+ *  this map in practice; they are listed so the fold is the ruling's. */
+const FOLD_LETTERS: Readonly<Record<string, string>> = { "Ł": "L", "ł": "l", "Đ": "D", "đ": "d", "Ø": "O", "ø": "o" };
+
+/** DF-P23 merge-time fix pass 2 (review nit): a Latin-script part with a
+ *  letter the stamp's font lacks ("Łukasz Nowak", "Dvořák"), its diacritics
+ *  folded: each character the font cannot print is decomposed (NFD) and its
+ *  combining marks dropped, or taken from FOLD_LETTERS — "Lukasz Nowak",
+ *  "Dvorák". Characters the font prints are kept exactly as typed. A
+ *  character with no such form (Cyrillic, CJK) is left as it is, so the part
+ *  stays unprintable and is replaced by the bracketed note. Pure. */
+export function foldForStamp(text: string): string {
+  let out = "";
+  for (const ch of text.normalize("NFC")) {
+    if (stampFontPrints(ch.codePointAt(0) ?? 0)) { out += ch; continue; }
+    const folded = FOLD_LETTERS[ch] ?? ch.normalize("NFD").replace(/\p{M}/gu, "");
+    out += folded ? folded : ch;
+  }
+  return out;
+}
+
+/** DF-P23 merge-time fix pass 2: a part as the stamp prints it — as typed
+ *  when the font draws it (byte for byte as before), else its folded form
+ *  when that draws, else null (the caller prints the bracketed note). */
+function printablePart(text: string): string | null {
+  if (stampPrintsWithoutSubstitute(text)) return text;
+  const folded = foldForStamp(text);
+  return folded !== text && stampPrintsWithoutSubstitute(folded) ? folded : null;
+}
+
 /** DF-P23 merge-time fix pass: what a part of the declaration the stamp
  *  cannot print reads instead — plain ASCII, naming where the words are. */
 export function declarationPartNotPrintable(part: "name" | "statement", requestRef: string | null | undefined): string {
@@ -228,6 +263,7 @@ export function declarationPartNotPrintable(part: "name" | "statement", requestR
  *  request number the footer names) is cited by a part the stamp cannot
  *  print (DF-P23 merge-time fix pass): the name and the statement are each
  *  checked on their own, and a part the font cannot draw without a "?" is
+ *  printed diacritic-folded when that draws (foldForStamp, fix pass 2), else
  *  replaced by declarationPartNotPrintable — never printed as "?" runs, and
  *  a part it can draw is printed exactly as before. Pure. */
 export function declarationFooterClause(d: TicketCopyLiveFacts["declaration"], requestRef?: string | null): string {
@@ -235,7 +271,8 @@ export function declarationFooterClause(d: TicketCopyLiveFacts["declaration"], r
   if (d === "unavailable") return ` (${DECLARATION_NOT_AVAILABLE})`;
   if (d === "unsigned") return ` (${DECLARATION_NOT_RELIED_ON})`;
   const name = d.by && d.by.trim() ? d.by.trim() : null;
-  const by = name === null ? "the requester" : stampPrintsWithoutSubstitute(name) ? name : `the requester ${declarationPartNotPrintable("name", requestRef)}`;
+  const namePrinted = name === null ? null : printablePart(name);
+  const by = name === null ? "the requester" : namePrinted ?? `the requester ${declarationPartNotPrintable("name", requestRef)}`;
   const date = d.declaredAt && !Number.isNaN(Date.parse(d.declaredAt)) ? new Date(d.declaredAt).toISOString().slice(0, 10) : null;
   // A dash clause in the sentence would read as one of the footer's own
   // clauses (the stamper drops the scan clause by them), so it is a hyphen
@@ -243,7 +280,8 @@ export function declarationFooterClause(d: TicketCopyLiveFacts["declaration"], r
   const words = (d.statement ?? "").replace(/\s+/g, " ").trim();
   const cut = words.length > DECLARATION_FOOTER_MAX ? `${words.slice(0, DECLARATION_FOOTER_MAX - 1).trimEnd()}…` : words;
   const text = cut.replace(/ [—–] /g, " - ").replace(STATEMENT_SCAN, (w) => `[${w}]`);
-  const quoted = !text ? "" : stampPrintsWithoutSubstitute(text) ? `: "${text}"` : `: ${declarationPartNotPrintable("statement", requestRef)}`;
+  const statementPrinted = text ? printablePart(text) : null;
+  const quoted = !text ? "" : statementPrinted !== null ? `: "${statementPrinted}"` : `: ${declarationPartNotPrintable("statement", requestRef)}`;
   return ` (declared like-in-kind by ${by}${date ? ` on ${date}` : ""}${quoted}${d.signatureUnchecked ? `; ${DECLARATION_SIGNATURE_UNCHECKED}` : ""})`;
 }
 

@@ -37,7 +37,7 @@ vi.mock("@/lib/supabaseAdmin", async () => {
 });
 
 import { POST as policyPost } from "@/app/api/admin/capability-policy/route";
-import { capabilityRuleKey, POLICY_CHANGED, type CapabilityRule } from "@/lib/capabilityPolicy";
+import { capabilityRuleKey, capabilityRuleListDigest, parseStoredCapabilityPolicy, POLICY_CHANGED, type CapabilityRule } from "@/lib/capabilityPolicy";
 import { resetState } from "./helpers/memoryDb";
 import { assuranceOptInFor, controlToDraft, draftToControl, preauthOptInFor } from "@/components/documents/RoutingControlSection";
 import { parseRoutingControl } from "@/lib/routingControl";
@@ -87,11 +87,60 @@ describe("DF-P19 follow-up — confirm_rule carries the policy version it was re
     expect((await confirm({})).status).toBe(200);
     expect(storedRule()).toHaveProperty("confirmedAt");
   });
-  it("the console sends the version it read and reloads on policy_changed (source pins)", () => {
+  it("the console sends the version and the capability's rule list it read, and reloads on policy_changed (source pins)", () => {
     const editor = src("components/permissions/CapabilityPolicyEditor.tsx");
-    expect(editor).toContain("await confirmCapabilityRule({ orgId: activeOrgId, cap: r.cap, rule: r.rule, ordinal: r.ordinal, version });");
+    expect(editor).toContain("await confirmCapabilityRule({ orgId: activeOrgId, cap: r.cap, rule: r.rule, ordinal: r.ordinal, version, ruleDigest: capabilityRuleListDigest(storedPolicy?.caps, r.cap) });");
     expect(editor).toContain("if (e instanceof CapabilityPolicyChangeError && e.code === POLICY_CHANGED) {");
     expect(src("lib/capabilityPolicy.ts")).toContain("...(input.version !== undefined ? { version: input.version } : {}),");
+    expect(src("lib/capabilityPolicy.ts")).toContain(`...(typeof input.ruleDigest === "string" ? { ruleDigest: input.ruleDigest } : {}),`);
+  });
+
+  // DF-P23 merge-time fix pass 2 (review minor — a regression from 87f415e):
+  // a grant, a revoke, an expiry pruning or another capability's edit moves
+  // the row's updated_at; only a change to the TARGET capability's rules may
+  // refuse the confirmation.
+  const STALE = "2026-09-30T00:00:00.000Z";
+  const digestOf = (rules: CapabilityRule[]) => capabilityRuleListDigest(parseStoredCapabilityPolicy({ caps: { "ticket.final_approve": rules } }).caps, "ticket.final_approve");
+  it("a grant changed between load and confirm (the row's version moved, the capability's rules did not): the rule is still confirmed, compare-and-set on the FRESH row", async () => {
+    const read = digestOf([{ tokens: ["Admin", "Engineer"] }, LIB_RULE]);
+    // since the console loaded at STALE: someone granted a person a permission (grants + updated_at changed)
+    h.admin.tables.org_configurations[0].data = {
+      caps: { "ticket.final_approve": [{ tokens: ["Admin", "Engineer"] }, LIB_RULE] },
+      grants: [{ cap: "ticket.assign", uid: "u-x", expiresAt: null, note: null, grantedBy: "u-other", grantedAt: "2026-09-30T12:00:00.000Z" }],
+    };
+    const res = await confirm({ version: STALE, ruleDigest: read });
+    expect(res.status).toBe(200);
+    expect(storedRule()).toHaveProperty("confirmedAt");
+    // the grant made since is kept; the write was compare-and-set on the stamp read now
+    expect((h.admin.tables.org_configurations[0].data as { grants: unknown[] }).grants).toHaveLength(1);
+    const write = h.admin.writes.find((w) => w.table === "org_configurations")!;
+    expect(write.filters).toContainEqual(["updated_at", STORED_AT]);
+  });
+  it("a reorder of the target capability's copies since the load is still a 409 (the ordinal would name another copy) — nothing written", async () => {
+    const confirmed: CapabilityRule = { ...LIB_RULE, confirmedAt: "2026-09-01T00:00:00.000Z", confirmedBy: "u-admin" };
+    const read = digestOf([{ tokens: ["Admin", "Engineer"] }, confirmed, LIB_RULE]);
+    h.admin.tables.org_configurations[0].data = { caps: { "ticket.final_approve": [{ tokens: ["Admin", "Engineer"] }, LIB_RULE, confirmed] } };
+    const res = await confirm({ version: STALE, ruleDigest: read, ordinal: 1 });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: POLICY_CHANGED });
+    expect(h.admin.writes).toEqual([]);
+    // a stale version with no digest (a console from 099b945) keeps the 409
+    seedPolicy();
+    expect((await confirm({ version: STALE })).status).toBe(409);
+  });
+  it("a non-string version is still a 400 (with a digest too); a non-string digest is a 400", async () => {
+    expect((await confirm({ version: 7, ruleDigest: digestOf([LIB_RULE]) })).status).toBe(400);
+    expect((await confirm({ version: STORED_AT, ruleDigest: 7 })).status).toBe(400);
+    expect(h.admin.writes).toEqual([]);
+  });
+  it("capabilityRuleListDigest: same rules in the same order → same digest whatever the key order; another order, a confirmation, or a rule changed → another", () => {
+    const a: CapabilityRule = { tokens: ["Admin"], when: { libraryId: ["L1"] } };
+    const b: CapabilityRule = { when: { libraryId: ["L1"] }, tokens: ["Admin"] };
+    const d = (rules: CapabilityRule[]) => digestOf(rules);
+    expect(d([a, LIB_RULE])).toBe(d([b, LIB_RULE]));
+    expect(d([a, LIB_RULE])).not.toBe(d([LIB_RULE, a]));
+    expect(d([a])).not.toBe(d([{ ...a, confirmedAt: "2026-09-01T00:00:00.000Z" }]));
+    expect(d([a])).not.toBe(d([{ ...a, tokens: ["Admin", "DocCtrl"] }]));
   });
 });
 

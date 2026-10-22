@@ -1336,7 +1336,41 @@ export type CapabilityPolicyChange =
   // DF-P23 (the DF-P19 final review's nit): `version` — the policy version
   // the console read the rule at; the route answers 409 policy_changed on a
   // mismatch, as it does for a save.
-  | { op: "confirm_rule"; orgId: string; cap: CapabilityId; key: string; ordinal?: number; version?: string | null };
+  // DF-P23 merge-time fix pass 2 (review minor): `ruleDigest` — the
+  // capability's rule list as the console read it (capabilityRuleListDigest);
+  // a stale `version` is then refused only when THAT list changed (a grant,
+  // a revoke or another capability's edit moves the version, not the copy).
+  | { op: "confirm_rule"; orgId: string; cap: CapabilityId; key: string; ordinal?: number; version?: string | null; ruleDigest?: string };
+
+/** DF-P23 merge-time fix pass 2 (review minor): one capability's stored rule
+ *  list as a short digest — the same rules in the same order give the same
+ *  digest (so a copy's ordinal still names the same copy), any change to a
+ *  rule, its confirmation, or the order gives another. Computed on the
+ *  parsed policy (parseStoredCapabilityPolicy) by the console and the route
+ *  alike; keys sorted, so JSON key order never matters. Pure. */
+export function capabilityRuleListDigest(caps: CapabilityPolicy["caps"] | null | undefined, cap: CapabilityId): string {
+  const stable = (v: unknown): string => {
+    if (Array.isArray(v)) return `[${v.map(stable).join(",")}]`;
+    if (v && typeof v === "object") {
+      return `{${Object.keys(v as Record<string, unknown>).sort()
+        .filter((k) => (v as Record<string, unknown>)[k] !== undefined)
+        .map((k) => `${JSON.stringify(k)}:${stable((v as Record<string, unknown>)[k])}`).join(",")}}`;
+    }
+    return JSON.stringify(v ?? null);
+  };
+  const text = stable(caps?.[cap] ?? null);
+  // cyrb53 (public domain): 53 bits, plenty to tell one rule list from another
+  let h1 = 0xdeadbeef ^ text.length;
+  let h2 = 0x41c6ce57 ^ text.length;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return `r1:${(4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)}`;
+}
 
 /** The route's 409 code when the stored policy moved on under a write. */
 export const POLICY_CHANGED = "policy_changed";
@@ -1446,12 +1480,14 @@ export async function revokeUserGrant(input: {
  *  library, a work class or a code class — until then it only adds (a
  *  narrowing it makes is "not yet in force"). Admin only, audited, through
  *  the policy route like every write. */
-export async function confirmCapabilityRule(input: { orgId: string; cap: CapabilityId; rule: CapabilityRule; ordinal?: number; version?: string | null }): Promise<void> {
+export async function confirmCapabilityRule(input: { orgId: string; cap: CapabilityId; rule: CapabilityRule; ordinal?: number; version?: string | null; ruleDigest?: string }): Promise<void> {
   await postPolicyChange({
     op: "confirm_rule", orgId: input.orgId, cap: input.cap, key: capabilityRuleKey(input.rule),
     ...(typeof input.ordinal === "number" ? { ordinal: input.ordinal } : {}),
     // DF-P23: the version the rule was read at (ALOG-12's rule, as for a save).
     ...(input.version !== undefined ? { version: input.version } : {}),
+    // DF-P23 merge-time fix pass 2: the capability's rule list as read.
+    ...(typeof input.ruleDigest === "string" ? { ruleDigest: input.ruleDigest } : {}),
   });
 }
 
