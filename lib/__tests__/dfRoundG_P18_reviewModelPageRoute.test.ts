@@ -5,8 +5,10 @@
 //     correction", the minor-correction approval names its class in the
 //     audit row; nothing for no class / an unflagged class (DEC-90 ruling (3));
 //   * HAND-7 dw3: a roster sign-off over a moved source — its dry run and its
-//     post — needs the acknowledgement; a failed documents read refuses the
-//     dry run (503) with nothing recorded (DEC-90 ruling (2));
+//     post — needs the acknowledgement; a failed documents read (tried twice)
+//     never refuses a dry run, applies an unacknowledged post as the base did
+//     (recording sourceDriftUnchecked), and refuses (503) only a post whose
+//     client acknowledged a move (DEC-90 ruling (2), fix pass 2);
 //   * GAP-101: the class sent with assign at triage is recorded (the page's
 //     select), and refused off the list (REGRESSION of the DF-P6 route).
 
@@ -26,6 +28,8 @@ const state = vi.hoisted(() => ({
   errors: {} as Record<string, { code?: string; message: string }>,
   // DF-P6 fix pass 2 (major 2): an error for a head-count read only.
   countErrors: {} as Record<string, { code?: string; message: string }>,
+  // DF-P18 fix pass 2: an error answered to the NEXT read of a table only.
+  errorsOnce: {} as Record<string, { code?: string; message: string }>,
 }));
 function chain(table: string) {
   const filters: Array<[string, unknown, "eq" | "is" | "in"]> = [];
@@ -38,6 +42,7 @@ function chain(table: string) {
     get(_t, prop: string) {
       if (prop === "then") return (resolve: (v: unknown) => void) => {
         if (head && state.countErrors[table]) return resolve({ data: null, error: state.countErrors[table], count: null });
+        if (state.errorsOnce[table]) { const e = state.errorsOnce[table]; delete state.errorsOnce[table]; return resolve({ data: null, error: e }); }
         if (state.errors[table]) return resolve({ data: null, error: state.errors[table] });
         return resolve({ data: rows(), error: null, count: rows().length });
       };
@@ -98,7 +103,7 @@ const audits = () => state.calls.filter((c) => c.table === "audit_logs" && c.met
 
 beforeEach(() => {
   __resetCapabilityPolicyCache();
-  state.user = null; state.rows = {}; state.calls = []; state.errors = {}; state.countErrors = {};
+  state.user = null; state.rows = {}; state.calls = []; state.errors = {}; state.countErrors = {}; state.errorsOnce = {};
 });
 
 
@@ -167,15 +172,38 @@ describe("HAND-7 dw3 (DF-P18) — a roster sign-off over a moved source", () => 
     expect(audits().find((a) => a.action === "TICKET_SIGN_SLOT_NOT_APPLIED")!.details).toMatchObject({ signatureId: SIG, code: "source_drift_unacknowledged" });
     expect(updates()).toEqual([]);
   });
-  it("a failed documents read refuses the sign-off's dry run (503), nothing recorded", async () => {
+  it("DF-P18 fix pass 2 (review major; DEC-90 ruling (2) as written): a failed documents read never refuses the sign-off's dry run (the base read nothing there), with or without an acknowledgement; nothing recorded", async () => {
     seed("Manager");
     state.errors.documents = { code: "57014", message: "timeout" };
     state.user = { id: "e-1" };
     state.rows.tickets = [await rosterTicket(moved)];
-    const res = await post({ ticketId: "t1", actionType: "sign_slot", dryRun: true });
+    expect((await post({ ticketId: "t1", actionType: "sign_slot", dryRun: true })).status).toBe(200);
+    expect((await post({ ticketId: "t1", actionType: "sign_slot", dryRun: true, sourceDriftAcknowledged: true })).status).toBe(200);
+    expect(audits()).toEqual([]);
+    expect(updates()).toEqual([]);
+  });
+  it("DF-P18 fix pass 2: a failed documents read refuses (503) a sign-off post whose panel acknowledged a move — the route can neither confirm nor record it — and names the minted signature", async () => {
+    seed("Manager");
+    state.errors.documents = { code: "57014", message: "timeout" };
+    state.rows.e_signatures = [{ ...DECL_SIG }, { id: SIG, org_id: "o1", resource_type: "ticket", resource_id: "t1", signer_user_id: "e-1" }];
+    state.user = { id: "e-1" };
+    state.rows.tickets = [await rosterTicket(moved)];
+    const res = await post({ ticketId: "t1", actionType: "sign_slot", signatureId: SIG, sourceDriftAcknowledged: true });
     expect(res.status).toBe(503);
     expect((await res.json()).code).toBe("source_drift_unchecked");
-    expect(audits()).toEqual([]);
+    expect(audits().find((a) => a.action === "TICKET_SIGN_SLOT_NOT_APPLIED")!.details).toMatchObject({ signatureId: SIG, code: "source_drift_unchecked" });
+    expect(updates()).toEqual([]);
+  });
+  it("DF-P18 fix pass 2: a documents read that fails ONCE is tried again — the move it then finds is refused with its labels, as with no failure", async () => {
+    seed("Manager");
+    state.rows.documents = [{ id: DOC, org_id: "o1", rev: "4", current_version_id: V4, document_number: "P-101" }];
+    state.errorsOnce.documents = { code: "57014", message: "timeout" };
+    state.user = { id: "e-1" };
+    state.rows.tickets = [await rosterTicket(moved)];
+    const res = await post({ ticketId: "t1", actionType: "sign_slot", dryRun: true });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "source_drift_unacknowledged", moved: ["P-101 raised on Rev 3, now Rev 4"] });
+    expect(state.calls.filter((c) => c.table === "documents" && c.method === "select")).toHaveLength(2);
   });
   it("REGRESSION: an unmoved source — the dry run is answered with no acknowledgement, exactly as before", async () => {
     seed("Manager");
@@ -233,12 +261,24 @@ describe("HAND-7 dw3 (DF-P18 fix pass, review blocker) — the route is the sour
     expect(sourceDriftRefusalLabels(await refused.json())).toEqual([LABEL]);
     expect((await post({ ticketId: "t1", actionType: "sign_slot", dryRun: true, sourceDriftAcknowledged: true })).status).toBe(200);
   });
-  it("the dead `sourceDriftUnchecked` audit key is gone (a failed read refuses before any audit row)", async () => {
+  it("DF-P18 fix pass 2 (review major): the base's `sourceDriftUnchecked` audit key is back (an approval applied over an unread source says so); the 503 is limited to a non-dry-run post carrying the acknowledgement", async () => {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
     const src = readFileSync(join(process.cwd(), "app", "api", "tickets", "workflow-action", "route.ts"), "utf8");
-    expect(src).not.toContain("sourceDriftUnchecked: true }");
+    expect(src).toContain("...(sourceDriftUnchecked ? { sourceDriftUnchecked: true } : {}),");
+    expect(src).toContain("if (sourceDriftUnchecked && body.dryRun !== true && body.sourceDriftAcknowledged === true) {");
     expect(src).toContain('code: "source_drift_unacknowledged", moved: driftLabels');
+  });
+  it("DF-P18 fix pass 2: an issuing approval over an unreadable source with no acknowledgement applies exactly as on the base, its audit row recording sourceDriftUnchecked", async () => {
+    seed("Manager");
+    state.user = { id: "req-1" };
+    state.errors.documents = { code: "57014", message: "timeout" };
+    state.rows.tickets = [ticketRow({ metadata: moved })];
+    const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    expect(res.status).toBe(200);
+    expect(updates()).toHaveLength(1);
+    expect(audits()[0].details.sourceDriftUnchecked).toBe(true);
+    expect(audits()[0].details.sourceDrift).toBeUndefined();
   });
 });
 

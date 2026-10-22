@@ -140,9 +140,11 @@ export async function POST(req: NextRequest) {
   }
   // The request's listed tags (this request, this workspace) — read before
   // any audit row, so an unpasted table answers first, and (DF-P18 fix pass,
-  // review minor) a tag already listed is never written twice: an add of a
-  // listed tag (a double click, a retry) changes nothing; a correction to a
-  // tag listed on another entry is refused.
+  // review minor) a tag already listed is not written again: an add of a
+  // listed tag (a double click, a later retry) changes nothing; a correction
+  // to a tag listed on another entry is refused. This is a check, not a
+  // constraint (ticket_equipment has no unique key — DF-P18 fix pass 2): two
+  // requests that read before either writes can both insert the tag.
   const { data: listedRows, error: listErr } = await supabaseAdmin
     .from("ticket_equipment").select("id, tag")
     .eq("ticket_id", t.id).eq("org_id", t.org_id).limit(500);

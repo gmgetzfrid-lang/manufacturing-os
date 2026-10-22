@@ -67,7 +67,9 @@ export const EQUIPMENT_NOT_AVAILABLE = "The equipment list is not available yet 
  *  request? Compared through the registry's one tag grammar (tagKey — "P-101"
  *  and "p 101" are the same tag), skipping the row a correction replaces.
  *  ticket_equipment has no uniqueness constraint, so the route asks this
- *  before it writes anything (a double click or a retry lists nothing twice).
+ *  before it writes anything (a sequential double click or retry lists
+ *  nothing twice; two requests racing past the read can — a check, not a
+ *  constraint, DF-P18 fix pass 2).
  *  (pure) */
 export function equipmentTagListed<R extends { id?: string | null; tag: string }>(
   rows: readonly R[],

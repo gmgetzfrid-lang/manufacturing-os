@@ -167,6 +167,30 @@ describe("ConsentBlockNotice (GAP-113 acceptance 1, ruling (6))", () => {
     expect(src).toContain('if (rosterId) q = q.eq("roster_id", rosterId);');
     expect(src).toContain('.order("created_at", { ascending: false })');
   });
+  it("DF-P18 fix pass 2 (review major): once the consent slot is signed, or the roster has closed and the request moved on, the notice says nothing; the history marks why", async () => {
+    const blocked = { created_at: "2026-10-21T09:00:00Z", roster_id: "r1", slot_kind: "ops", actor_name: "x", details: { reason: "window_never_opened", why: "nobody may be asked" } };
+    db.results.ticket_notice_events = { data: [blocked], error: null };
+    const slot = { kind: "ops", label: "Operations", mode: "consent_window", status: "open" };
+    // Still waiting: said.
+    await render(el(ConsentBlockNotice, { ticketId: "t1", roster: { id: "r1", slots: [slot] } as never, ticketStatus: "PENDING_REVIEW" }));
+    expect(host.querySelector('[data-testid="consent-block-notice"]')?.textContent).toMatch(/never opened — nobody may be asked/);
+    // A reviewer signed the slot: nothing said.
+    await render(el(ConsentBlockNotice, { ticketId: "t1", roster: { id: "r1", slots: [{ ...slot, status: "satisfied" }] } as never, ticketStatus: "PENDING_REVIEW" }));
+    expect(host.innerHTML).toBe("");
+    // The roster completed and the request moved on: nothing said.
+    const closed = { id: "r1", slots: [{ ...slot, status: "satisfied" }], closedAt: "2026-10-22T00:00:00Z" };
+    await render(el(ConsentBlockNotice, { ticketId: "t1", roster: closed as never, ticketStatus: "FINAL_DRAFT" }));
+    expect(host.innerHTML).toBe("");
+    // A closed roster with the slot never signed (e.g. the request was sent back): nothing said either.
+    await render(el(ConsentBlockNotice, { ticketId: "t1", roster: { id: "r1", slots: [slot], closedAt: "2026-10-22T00:00:00Z" } as never, ticketStatus: "DRAFTING" }));
+    expect(host.innerHTML).toBe("");
+    const { consentBlockHistoryEntries } = await import("@/lib/requestPageReview");
+    expect(consentBlockHistoryEntries([blocked], () => "Operations", closed as never, "FINAL_DRAFT")[0].action).toBe("Consent window not opened (signed later)");
+    // The page passes the request's status to the notice and the history.
+    const page = (await import("node:fs")).readFileSync((await import("node:path")).join(process.cwd(), "app", "(protected)", "requests", "[id]", "page.tsx"), "utf8");
+    expect(page).toContain("ticketStatus={ticket.status} onRows={setConsentBlockRows}");
+    expect(page).toContain("rosterRecord, ticket.status)]");
+  });
   it("before 20261255 (no table) nothing is said", async () => {
     db.results.ticket_notice_events = { data: null, error: { code: "42P01", message: 'relation "ticket_notice_events" does not exist' } };
     await render(el(ConsentBlockNotice, { ticketId: "t1", roster: { id: "r1", slots: [{ kind: "ops", mode: "consent_window" }] } as never }));

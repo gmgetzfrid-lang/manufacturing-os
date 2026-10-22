@@ -545,7 +545,7 @@ Tests: `lib/__tests__/dfRoundG_P5_routing.test.ts` ("TIER-5 done-when 1…", "co
 ## TIER-6 · MOC is captured at check-in and re-typed at publish, with no link between them
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance / safety
 - **Locations:**
@@ -600,7 +600,7 @@ its own parallel rule.
 
 *Assigned (2026-10-21, the integrator at the DF-P6 merge, DEC-31):* → drafting-flow **DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS** (after its class select: a configured work class may carry "needs MOC", read by the check-in outcome and the hand-back).
 
-**Resolution (2026-10-21, drafting-flow Round G).** DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS — the "additionally" clause. Reproduced on the base: MOC applicability was two separate rules — `mocRequirementFor(docClass, outcome)` at check-in (`lib/checkinOutcomes.ts`) and `mocRequired = (docClass === "drawing" || docClassUnknown) && !isMinorLike` in `components/documents/RevUpModal.tsx` — and neither read the work class. Landed:
+**Partial (2026-10-21, drafting-flow Round G).** DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS — the "additionally" clause, hand-back limb. *(Recorded as a Resolution until the DF-P18 fix pass 2 — review minor, DEC-29: the brief's "read by the check-in outcome" limb does not hold, so the finding stays OPEN.)* Reproduced on the base: MOC applicability was two separate rules — `mocRequirementFor(docClass, outcome)` at check-in (`lib/checkinOutcomes.ts`) and `mocRequired = (docClass === "drawing" || docClassUnknown) && !isMinorLike` in `components/documents/RevUpModal.tsx` — and neither read the work class. Landed:
 - A configured WORK class may carry "Needs MOC" (`lib/reviewModel.ts` `ReviewClassFlags.moc`, edited on Admin → Request forms, `components/requests/ReviewClassesSection.tsx`; stored on the option in `org_configurations` `'drafting'`, no migration; a code class carries none).
 - One rule, in `lib/checkinOutcomes.ts`: `mocRequirementFor(docClass, outcome, classNeedsMoc)` (a real change for a request of a needs-MOC class needs an MOC position whatever the document's class; a correction card stays "none") and `publishMocRequired({ docClass, docClassUnknown, changeType, classNeedsMoc })` (the hand-back's publish asks for the MOC number whatever the change type). `RevUpModal` reads `publishMocRequired` (`RevUpModal.tsx:296`; new optional prop `classMoc`, its label in the field and the refusal), and the request page passes the class only when it needs MOC (`workClassNeedingMoc`, `page.tsx:2538`). `CheckInContext.classNeedsMoc` lets the check-in cards take the class, but no caller passes one yet (*corrected at the DF-P18 fix pass, DEC-29*).
 - DEC-90 ruling (3) for DF-P18: a request with no class, or of an unflagged class, gets exactly today's rule — pinned for every document class × outcome × change type, and the check-in cards deep-equal today's with the flag absent or false.
@@ -609,9 +609,10 @@ Tests: `lib/__tests__/dfRoundG_P18_reviewModelPage.test.ts` ("TIER-6 — MOC app
 
 **Done-when.**
 - ✓ See `LIFE-5` (as recorded).
-- ✓ "MOC applicability is expressed through the same work-class mechanism": the class the workspace configures and triage sets carries "Needs MOC". The hand-back is the binding reader (`RevUpModal` via `publishMocRequired`, given the class by the request page). The check-in cards' engine takes the class through the same rule (`mocRequirementFor(…, classNeedsMoc)`), but no caller passes it yet: `CheckInPanel` passes none, so today no check-in asks for an MOC position because of a class. That limb has an owner below (*corrected at the DF-P18 fix pass, DEC-29*).
+- ✓ (hand-back limb) "MOC applicability is expressed through the same work-class mechanism": the class the workspace configures and triage sets carries "Needs MOC", and the hand-back reads it (`RevUpModal` via `publishMocRequired`, given the class by the request page).
+- ✗ (check-in limb) "read by the check-in outcome" (the DF-P18 assignment): the check-in cards' engine takes the class through the same rule (`mocRequirementFor(…, classNeedsMoc)`), but no caller passes it: `components/documents/CheckInPanel.tsx` passes none, so no check-in asks for an MOC position because of a class. Not done here because `CheckInPanel` is document-control's file (DEC-31 / the fleet rule).
 
-**Scope / residual.** No check-in today has a classed request in its context: a check-in FILES the request, and triage classes it afterwards; the hand-back is where a classed request's MOC is asked. The check-in panel, `components/documents/CheckInPanel.tsx`, is not this package's file and passes no class; the engine takes one when a caller has it. **Owner (DEC-31), proposed:** wiring `CheckInPanel` to pass `classNeedsMoc` (for a check-in that resumes or names a request already classed) goes to **document-control, the holder of `components/documents/CheckInPanel.tsx`** (row in `99-fix-sequencing.md` "Hand-offs from DF-P18"). The integrator may instead close that limb by ruling, because a check-in files the request before triage classes it. No migration.
+**Scope / residual.** No check-in today has a classed request in its context: a check-in FILES the request, and triage classes it afterwards; the hand-back is where a classed request's MOC is asked. The check-in panel, `components/documents/CheckInPanel.tsx`, is not this package's file and passes no class; the engine takes one when a caller has it. **Open limb:** wiring `CheckInPanel` to pass `classNeedsMoc` (for a check-in that resumes or names a request already classed). **Owner: the integrator assigns it (DEC-31)** — the natural holder is document-control, which owns `components/documents/CheckInPanel.tsx` (row in `99-fix-sequencing.md` "Hand-offs from DF-P18"); or the integrator rules the limb closed (a check-in files the request before triage classes it), and this finding then closes against that ruling. Until one of the two, `TIER-6` stays OPEN. No migration.
 
 ---
 

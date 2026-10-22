@@ -400,7 +400,7 @@ describe("HAND-7 done-when 3 — an approval over a moved source", () => {
     expect((await res.json()).code).toBe("source_drift_unacknowledged");
     expect(updates()).toEqual([]);
   });
-  it("DF-P18 (DEC-90 ruling (2) for DF-P18; DEC-44 (DF-P6) reversal (2)): an approval the move flags is refused without the acknowledgement (409, nothing written); an unmoved source applies as before and records nothing; a failed read refuses (503) only an issuing approval of a request with source documents", async () => {
+  it("DF-P18 (DEC-90 ruling (2) for DF-P18; DEC-44 (DF-P6) reversal (2)): an approval the move flags is refused without the acknowledgement (409, nothing written); an unmoved source applies as before and records nothing; a failed read (tried twice) applies as the base did, recording sourceDriftUnchecked, and refuses (503) only a post whose client acknowledged a move", async () => {
     seed("Manager");
     state.user = { id: "req-1" };
     state.rows.tickets = [ticketRow(moved)];
@@ -416,8 +416,14 @@ describe("HAND-7 done-when 3 — an approval over a moved source", () => {
     state.calls = [];
     state.errors.documents = { code: "57014", message: "timeout" };
     const unchecked = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
-    expect(unchecked.status).toBe(503);
-    expect((await unchecked.json()).code).toBe("source_drift_unchecked");
+    expect(unchecked.status).toBe(200);
+    expect(state.calls.filter((c) => c.table === "documents" && c.method === "select")).toHaveLength(2);
+    expect(audits()[0].details.sourceDriftUnchecked).toBe(true);
+    expect(audits()[0].details.sourceDrift).toBeUndefined();
+    state.calls = [];
+    const ackedUnchecked = await post({ ticketId: "t1", actionType: "approve_draft_ifc", sourceDriftAcknowledged: true });
+    expect(ackedUnchecked.status).toBe(503);
+    expect((await ackedUnchecked.json()).code).toBe("source_drift_unchecked");
     expect(updates()).toEqual([]);
   });
   it("REGRESSION (DF-P18): a request with NO source documents reads no document and approves exactly as before, with or without the field", async () => {

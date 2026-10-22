@@ -142,39 +142,81 @@ export function consentWindowOpenedFor(
   return !!w && (slot === null || w.slot === slot);
 }
 
+/** DF-P18 fix pass 2 (review, major): why a recorded block no longer holds,
+ *  or null while it still does — the failed open the maintenance run later
+ *  opened (`opened_later`), the consent slot since signed (`signed`: its
+ *  status `satisfied`), or the review itself over (`closed`: the roster
+ *  closed, or the request is no longer in review — `ticketStatus` given and
+ *  not `PENDING_REVIEW`, where lib/workflow.ts currentRoster stops reading
+ *  it). Each block says "it waits for a sign-off" or that the window did not
+ *  run; none of that is true after any of these. (pure) */
+export type ConsentBlockSuperseded = "opened_later" | "signed" | "closed";
+export function consentBlockSupersededBy(
+  row: Pick<ConsentBlockRow, "slot_kind" | "details">,
+  roster: Pick<TicketReviewRoster, "consentPlan" | "consentWindow" | "slots" | "closedAt"> | null | undefined,
+  ticketStatus?: string | null,
+): ConsentBlockSuperseded | null {
+  if (row.details?.reason === "window_not_opened" && consentWindowOpenedFor(roster, row.slot_kind)) return "opened_later";
+  const slot = roster && Array.isArray(roster.slots) && row.slot_kind ? roster.slots.find((s) => s.kind === row.slot_kind) : undefined;
+  if (slot && slot.status === "satisfied") return "signed";
+  if ((roster && roster.closedAt) || (typeof ticketStatus === "string" && ticketStatus && ticketStatus !== "PENDING_REVIEW")) return "closed";
+  return null;
+}
+
 /** DF-P18 fix pass (review, major): the rows that still say something true
  *  about THIS roster — rows of an earlier roster (a resubmission opened a new
- *  one) are dropped, and a failed open (`window_not_opened`) the maintenance
- *  run later opened no longer stands. Oldest first. (pure) */
+ *  one) are dropped, and a block that no longer holds
+ *  (consentBlockSupersededBy: opened later, the slot signed, the review
+ *  closed — fix pass 2) does not stand. Oldest first. (pure) */
 export function currentConsentBlockRows(
   rows: readonly ConsentBlockRow[],
-  roster: Pick<TicketReviewRoster, "id" | "consentPlan" | "consentWindow"> | null | undefined,
+  roster: Pick<TicketReviewRoster, "id" | "consentPlan" | "consentWindow" | "slots" | "closedAt"> | null | undefined,
+  ticketStatus?: string | null,
 ): { rows: ConsentBlockRow[]; standing: ConsentBlockRow[] } {
   const rosterId = roster && typeof roster.id === "string" && roster.id ? roster.id : null;
   const mine = rows
     .filter((r) => !rosterId || r.roster_id === rosterId)
     .slice()
     .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
-  const standing = mine.filter((r) => !(r.details?.reason === "window_not_opened" && consentWindowOpenedFor(roster, r.slot_kind)));
+  const standing = mine.filter((r) => consentBlockSupersededBy(r, roster, ticketStatus) === null);
   return { rows: mine, standing };
 }
 
+/** DF-P18 fix pass 2 (review, minor): the Audit Log label for a recorded
+ *  block, by its reason — a `no_longer_member` row is a window that WAS
+ *  opened and ran to its close (lib/consentWindowScan.ts), never "not
+ *  opened". (pure) */
+export function consentBlockActionLabel(row: Pick<ConsentBlockRow, "details">): string {
+  return row.details?.reason === "no_longer_member"
+    ? "Consent window closed — nobody left who could object"
+    : "Consent window not opened";
+}
+
+const SUPERSEDED_MARK: Record<ConsentBlockSuperseded, { tag: string; sentence: string }> = {
+  opened_later: { tag: "opened later", sentence: "The maintenance run opened the window later; this no longer holds." },
+  signed: { tag: "signed later", sentence: "The slot was signed later; this no longer holds." },
+  closed: { tag: "review closed", sentence: "The review has closed; this no longer holds." },
+};
+
 /** The history entries the Audit Log tab shows for those rows (read-only;
  *  merged by date with the request's own history — never written to it).
- *  A failed open the maintenance run later opened says so (DF-P18 fix
- *  pass) — the block was true when recorded, and no longer holds. */
+ *  A block that no longer holds says so and why (DF-P18 fix passes:
+ *  opened later, signed later, review closed) — it was true when recorded.
+ *  Each entry is labelled by its reason (consentBlockActionLabel). */
 export function consentBlockHistoryEntries(
   rows: readonly ConsentBlockRow[],
   labelOf?: (slot: string | null) => string | null,
-  roster?: Pick<TicketReviewRoster, "consentPlan" | "consentWindow"> | null,
+  roster?: Pick<TicketReviewRoster, "consentPlan" | "consentWindow" | "slots" | "closedAt"> | null,
+  ticketStatus?: string | null,
 ): Array<{ action: string; user: string; date: string; details: string }> {
   return rows.map((r) => {
-    const openedLater = r.details?.reason === "window_not_opened" && consentWindowOpenedFor(roster, r.slot_kind);
+    const by = consentBlockSupersededBy(r, roster, ticketStatus);
+    const mark = by ? SUPERSEDED_MARK[by] : null;
     return {
-      action: openedLater ? "Consent window not opened (opened later)" : "Consent window not opened",
+      action: `${consentBlockActionLabel(r)}${mark ? ` (${mark.tag})` : ""}`,
       user: (typeof r.actor_name === "string" && r.actor_name.trim()) || "System",
       date: r.created_at,
-      details: `${consentBlockReason(r, labelOf?.(r.slot_kind) ?? null)}${openedLater ? " The maintenance run opened the window later; this no longer holds." : ""} (recorded ${recordMoment(r.created_at)})`,
+      details: `${consentBlockReason(r, labelOf?.(r.slot_kind) ?? null)}${mark ? ` ${mark.sentence}` : ""} (recorded ${recordMoment(r.created_at)})`,
     };
   });
 }

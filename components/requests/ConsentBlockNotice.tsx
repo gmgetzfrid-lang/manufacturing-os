@@ -22,7 +22,11 @@
 // earlier roster's blocks say nothing about the current review), newest
 // first before the cap (so the cap drops the oldest, never the newest), and a
 // failed open the maintenance run later opened is no longer said here (the
-// Audit Log tab keeps it, marked "opened later").
+// Audit Log tab keeps it, marked "opened later"). Fix pass 2 (review,
+// major): nor is a block whose consent slot has since been signed, or any
+// block once the review is over (the roster closed, or the request no longer
+// in review — `ticketStatus`); the Audit Log tab marks them "signed later" /
+// "review closed".
 
 import React, { useEffect, useState } from "react";
 import { AlertTriangle } from "lucide-react";
@@ -38,10 +42,12 @@ export function rosterHasConsent(roster: Pick<TicketReviewRoster, "consentPlan" 
 }
 
 export default function ConsentBlockNotice({
-  ticketId, roster, onRows,
+  ticketId, roster, ticketStatus, onRows,
 }: {
   ticketId: string | null | undefined;
   roster: TicketReviewRoster | null | undefined;
+  /** The request's status: outside PENDING_REVIEW no block stands. */
+  ticketStatus?: string | null;
   /** The rows read, for the page's history (Audit Log tab). */
   onRows?: (rows: ConsentBlockRow[]) => void;
 }) {
@@ -80,9 +86,10 @@ export default function ConsentBlockNotice({
 
   useEffect(() => { onRows?.(rows); }, [rows, onRows]);
 
-  // What still holds: a failed open the maintenance run later opened is not
-  // said (re-evaluated on every render, so it clears as the roster updates).
-  const standing = currentConsentBlockRows(rows, roster).standing;
+  // What still holds: a failed open the maintenance run later opened, a
+  // slot since signed, or a review that is over is not said (re-evaluated on
+  // every render, so it clears as the roster and the request update).
+  const standing = currentConsentBlockRows(rows, roster, ticketStatus).standing;
   if (!asks || (standing.length === 0 && !readError)) return null;
   const labelOf = (slot: string | null) => roster?.slots.find((s) => s.kind === slot)?.label ?? null;
   return (

@@ -2486,7 +2486,7 @@ export default function TicketDetailView() {
   const rosterRecord = ((ticket.metadata as Record<string, unknown> | undefined)?.review_roster ?? null) as NonNullable<ReturnType<typeof currentRoster>> | null;
   const historyShown = consentBlockRows.length === 0
     ? (ticket.history ?? [])
-    : [...(ticket.history ?? []), ...consentBlockHistoryEntries(consentBlockRows, (slot) => (rosterRecord && Array.isArray(rosterRecord.slots) ? rosterRecord.slots.find((x) => x.kind === slot)?.label ?? null : null), rosterRecord)]
+    : [...(ticket.history ?? []), ...consentBlockHistoryEntries(consentBlockRows, (slot) => (rosterRecord && Array.isArray(rosterRecord.slots) ? rosterRecord.slots.find((x) => x.kind === slot)?.label ?? null : null), rosterRecord, ticket.status)]
         .sort((a, b) => toDate(a.date).getTime() - toDate(b.date).getTime());
   const unitShown = ticketUnitDisplay(ticket.unit, ticket.metadata);
   const customSections = customCategorySections(ticket.metadata, customCategoryConfig);
@@ -3002,7 +3002,7 @@ export default function TicketDetailView() {
       <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><DeclarationCard ticket={ticket} onDeclarationCheck={setDeclarationCheck} canEditEquipment={canEditEquipment} /></div>
       <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><TicketRosterPanel ticket={ticketAsDeclarationChecked(ticket, declarationCheck)} orgId={activeOrgId} uid={uid} userName={(member?.displayName ?? '').trim() || (userEmail?.split('@')[0] ?? '').trim() || null} capPolicy={capPolicy} activeMemberCount={activeMemberCount} requesterRoles={requesterRoles} sourceDrift={driftLabelsForEngine} reviewRouted={reviewRouted} reviewRoutedReason={reviewRoutedReason} /></div>
       {consentWindowMarker(ticket) && <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6"><ConsentWindowCard ticket={ticket} uid={uid} /></div>}
-      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><ConsentBlockNotice ticketId={ticket.id} roster={rosterRecord && Array.isArray(rosterRecord.slots) ? rosterRecord : null} onRows={setConsentBlockRows} /></div>
+      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6 empty:hidden"><ConsentBlockNotice ticketId={ticket.id} roster={rosterRecord && Array.isArray(rosterRecord.slots) ? rosterRecord : null} ticketStatus={ticket.status} onRows={setConsentBlockRows} /></div>
 
       {ticket.status === 'REVISION_REQ' && latestRevision && (
         <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 pt-6">

@@ -21,6 +21,7 @@ import { mocRequirementFor, publishMocRequired, checkInCardsFor, type CheckInCon
 import {
   triageClassSelects, classTriagePayload, sourceDriftLabels, sourceDriftConfirmation, issueReadyAtSubmitOffered,
   consentBlockReason, consentBlockHistoryEntries, sourceDriftRefusalLabels, currentConsentBlockRows, consentWindowOpenedFor,
+  consentBlockSupersededBy, consentBlockActionLabel,
 } from "@/lib/requestPageReview";
 import { keptNote, workClassChoices, windowSettingsFromInput, draftToControl, controlToDraft } from "@/components/documents/RoutingControlSection";
 import { parseRoutingControl } from "@/lib/routingControl";
@@ -280,6 +281,39 @@ describe("GAP-113 acceptance 1 — DF-P18 fix pass (review major): only what sti
     expect(currentConsentBlockRows(rows, { id: "r1", consentWindow: { slot: "ops" } } as never).standing).toHaveLength(1);
     expect(consentWindowOpenedFor({ consentPlan: { kind: "opened", ...plan, slot: "other" } } as never, "ops")).toBe(false);
     expect(consentWindowOpenedFor(null, "ops")).toBe(false);
+  });
+  it("DF-P18 fix pass 2 (review major): a block whose consent slot has since been signed, or any block once the review is over (roster closed, or the request out of review), no longer stands", () => {
+    const rows = [row({ details: { reason: "window_never_opened", why: "x" } }), row({ created_at: "2026-10-21T09:30:00Z", details: { reason: "no consent window was opened" } })];
+    const slots = (status: string) => [{ kind: "ops", label: "Ops", mode: "consent_window", status }];
+    // Still open, in review: both stand (REGRESSION of fix pass 1).
+    expect(currentConsentBlockRows(rows, { id: "r1", slots: slots("open") } as never, "PENDING_REVIEW").standing).toHaveLength(2);
+    expect(currentConsentBlockRows(rows, { id: "r1", slots: slots("open") } as never).standing).toHaveLength(2);
+    // The slot signed: neither stands.
+    expect(currentConsentBlockRows(rows, { id: "r1", slots: slots("satisfied") } as never, "PENDING_REVIEW").standing).toHaveLength(0);
+    // The roster closed: neither stands.
+    expect(currentConsentBlockRows(rows, { id: "r1", slots: slots("open"), closedAt: "2026-10-22T00:00:00Z" } as never).standing).toHaveLength(0);
+    // The request moved on (out of review): neither stands.
+    expect(currentConsentBlockRows(rows, { id: "r1", slots: slots("open") } as never, "FINAL_DRAFT").standing).toHaveLength(0);
+    // Another slot signed: this slot's block still stands.
+    expect(consentBlockSupersededBy(rows[0], { slots: [{ kind: "other", status: "satisfied" }, ...slots("open")] } as never, "PENDING_REVIEW")).toBeNull();
+    expect(consentBlockSupersededBy(rows[0], { slots: slots("satisfied") } as never)).toBe("signed");
+    expect(consentBlockSupersededBy(rows[0], { slots: slots("open"), closedAt: "x" } as never)).toBe("closed");
+  });
+  it("DF-P18 fix pass 2: the Audit Log entry is labelled by its reason and marked by why it no longer holds", () => {
+    expect(consentBlockActionLabel({ details: { reason: "no_longer_member" } })).toBe("Consent window closed — nobody left who could object");
+    for (const reason of ["window_not_opened", "window_never_opened", "no consent window was opened"]) {
+      expect(consentBlockActionLabel({ details: { reason } })).toBe("Consent window not opened");
+    }
+    expect(consentBlockActionLabel({ details: null })).toBe("Consent window not opened");
+    const nlm = { created_at: "2026-10-21T09:00:00Z", roster_id: "r1", slot_kind: "ops", details: { reason: "no_longer_member" } };
+    const roster = { id: "r1", slots: [{ kind: "ops", label: "Ops", mode: "consent_window", status: "open" }] };
+    expect(consentBlockHistoryEntries([nlm], () => "Ops", roster as never, "PENDING_REVIEW")[0].action).toBe("Consent window closed — nobody left who could object");
+    const signed = consentBlockHistoryEntries([nlm], () => "Ops", { ...roster, slots: [{ ...roster.slots[0], status: "satisfied" }] } as never, "PENDING_REVIEW")[0];
+    expect(signed.action).toBe("Consent window closed — nobody left who could object (signed later)");
+    expect(signed.details).toMatch(/The slot was signed later; this no longer holds\./);
+    const closed = consentBlockHistoryEntries([row({ details: { reason: "window_never_opened", why: "x" } })], () => "Ops", roster as never, "CLOSED")[0];
+    expect(closed.action).toBe("Consent window not opened (review closed)");
+    expect(closed.details).toMatch(/The review has closed; this no longer holds\./);
   });
 });
 

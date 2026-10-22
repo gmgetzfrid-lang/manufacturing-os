@@ -584,15 +584,24 @@ export async function POST(req: NextRequest) {
   // context (`sourceDrift`), so exactly the actions the request page shows
   // with "approving asks you to acknowledge it" carry
   // `requiresSourceDriftAck` here too. Read only for those action types on a
-  // request with source documents — every other action reads nothing.
+  // request with source documents — every other action reads nothing. A
+  // failed read is tried once more (DF-P18 fix pass 2: a transient error
+  // should not decide anything) before the source counts as unchecked.
   const driftLabels: string[] = [];
   let sourceDriftUnchecked = false;
   const driftAsked = ISSUING_APPROVALS.has(body.actionType) || body.actionType === "sign_slot";
   const driftRefs = driftAsked ? parseSourceDocuments(ticket.metadata).filter((r) => UUID_RE.test(r.id)) : [];
   if (driftRefs.length > 0) {
-    const { data: liveDocs, error: liveErr } = await supabaseAdmin
-      .from("documents").select("id, rev, current_version_id, document_number")
-      .eq("org_id", ticket.orgId).in("id", driftRefs.slice(0, INTENT_BRIDGE_CHUNK).map((r) => r.id));
+    let liveDocs: unknown[] | null = null;
+    let liveErr: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const read = await supabaseAdmin
+        .from("documents").select("id, rev, current_version_id, document_number")
+        .eq("org_id", ticket.orgId).in("id", driftRefs.slice(0, INTENT_BRIDGE_CHUNK).map((r) => r.id));
+      liveDocs = (read.data ?? null) as unknown[] | null;
+      liveErr = read.error;
+      if (!liveErr) break;
+    }
     if (liveErr) {
       sourceDriftUnchecked = true;
     } else {
@@ -1036,18 +1045,22 @@ export async function POST(req: NextRequest) {
   // before getActions): without `sourceDriftAcknowledged: true` it is refused
   // (409 source_drift_unacknowledged), nothing written; with it, it applies
   // and the history line and the audit row record the move and the
-  // acknowledgement. A documents read that FAILED refuses only an action
-  // that would carry the flag on a move — an issuing approval or a sign-off
-  // on a request with source documents (503 source_drift_unchecked: a move
-  // can be neither shown nor ruled out); every other action, and every
-  // approval of a request with no source documents, works exactly as before.
-  // A refused roster sign-off names the e-signature the panel minted (DF-P5's
-  // rule; a dry run has none).
+  // acknowledgement. A refused roster sign-off names the e-signature the
+  // panel minted (DF-P5's rule; a dry run has none).
+  //
+  // A documents read that FAILED (twice — above) — DF-P18 fix pass 2 (review,
+  // major), held to the text of DEC-90 ruling (2): it refuses (503
+  // source_drift_unchecked) ONLY an action the client's own engine flagged,
+  // i.e. a post carrying `sourceDriftAcknowledged: true` (the client saw a
+  // move the route can now neither confirm nor record). Every other issuing
+  // approval or sign-off applies exactly as on the base, and its audit row
+  // records `sourceDriftUnchecked: true`; a dry-run sign-off is never refused
+  // by a failed read (on the base it read nothing).
   let sourceDrift: { labels: string[]; acknowledged: boolean | null } | null = null;
   if (ISSUING_APPROVALS.has(action.action) || action.action === "sign_slot") {
     const recordsSignature = action.action === "sign_slot" && body.dryRun !== true;
-    if (sourceDriftUnchecked) {
-      const uncheckedError = "The source documents this request was raised against could not be checked for a newer revision, so the approval was not applied (a moved source needs your acknowledgement). Try again in a moment.";
+    if (sourceDriftUnchecked && body.dryRun !== true && body.sourceDriftAcknowledged === true) {
+      const uncheckedError = "The source documents this request was raised against could not be checked for a newer revision, so the move you acknowledged could not be confirmed and the approval was not applied. Try again in a moment.";
       if (recordsSignature) {
         await recordRefusedSignOff({ signatureId: body.signatureId, ticketId: body.ticketId, orgId: ticket.orgId, caller: { id: caller.id, email: callerEmail, role: callerRole }, status: 503, reason: uncheckedError, code: "source_drift_unchecked", rosterId: currentRoster(ticket)?.id ?? null });
       }
@@ -1614,6 +1627,10 @@ export async function POST(req: NextRequest) {
         : {}),
       ...(reviewClass ? { reviewClass: { workClass: reviewClass.workClass?.value ?? null, codeClass: reviewClass.codeClass?.value ?? null } } : {}),
       ...(sourceDrift ? { sourceDrift: { moved: sourceDrift.labels, acknowledged: sourceDrift.acknowledged === true } } : {}),
+      // DF-P18 fix pass 2 (review, major): an approval applied over a source
+      // that could not be read says so (the base's key, restored).
+      // (Only an issuing approval or a sign-off ever reads the documents.)
+      ...(sourceDriftUnchecked ? { sourceDriftUnchecked: true } : {}),
       // DF-P6 fix pass (minor 11): a declaration whose e-signature is not on
       // record (or could not be read) was evaluated as undeclared.
       ...(declarationUnverified ? { declarationUnverified } : {}),
