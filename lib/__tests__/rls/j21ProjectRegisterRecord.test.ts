@@ -11,9 +11,13 @@
 //   the policy refused is still refused and writes nothing). A cascade from
 //   the project's / document's / workspace's own deletion writes nothing and
 //   the deletion succeeds. A repeat that changes nothing writes nothing.
-//   PROJ-5: a 'manual' reference into the project's own intake folder reads
-//   'intake'; the adoption's later 'manual' upsert keeps it; 'checkout' is
-//   never changed; the widened CHECK still refuses an unknown value.
+//   PROJ-5: the intake door's 'manual' reference (no member behind it) to a
+//   document the door CREATED (authored_by_link_id) in the project's own
+//   intake folder reads 'intake'; the adoption's later 'manual' upsert keeps
+//   it; a member's attach — even of a sheet filed by hand into the intake
+//   folder, or of the door's own sheet — stays 'manual' (J21 fix pass);
+//   'checkout' is never changed; the widened CHECK still refuses an unknown
+//   value.
 //   PROJ-10 dw2: milestones.linked_ticket_id is kept (no DDL drop).
 
 import { describe, it, expect, beforeAll } from "vitest";
@@ -40,11 +44,13 @@ describe.skipIf(skip !== null)("J21 — 20261262: the register's attach / detach
   let orgId = "";
   let m: Record<string, SeededMember> = {};
   let libId = "";
-  const doc = (collectionId: string | null = null, number = `P-${randomUUID().slice(0, 6)}`) => {
+  const doc = (collectionId: string | null = null, number = `P-${randomUUID().slice(0, 6)}`, authoredByLink: string | null = null) => {
     const id = randomUUID();
-    admin(db, `INSERT INTO documents (id, org_id, library_id, collection_id, title, document_number, status) VALUES ('${id}', '${orgId}', '${libId}', ${collectionId ? `'${collectionId}'` : "NULL"}, 'Sheet', '${number}', 'Draft')`);
+    admin(db, `INSERT INTO documents (id, org_id, library_id, collection_id, title, document_number, status${authoredByLink ? ", authored_by_link_id" : ""}) VALUES ('${id}', '${orgId}', '${libId}', ${collectionId ? `'${collectionId}'` : "NULL"}, 'Sheet', '${number}', 'Draft'${authoredByLink ? `, '${authoredByLink}'` : ""})`);
     return id;
   };
+  /** A sheet the intake door created (the stored intake-born fact, written by the door / service role). */
+  const doorDoc = (collectionId: string) => doc(collectionId, undefined, randomUUID());
   const project = (opts: { intake?: string | null } = {}) => {
     const id = randomUUID();
     admin(db, `INSERT INTO projects (id, org_id, name, owner_user_id, created_by${opts.intake ? ", intake_collection_id" : ""}) VALUES ('${id}', '${orgId}', 'Turnaround', '${m.owner.uid}', '${m.owner.uid}'${opts.intake ? `, '${opts.intake}'` : ""})`);
@@ -111,11 +117,11 @@ describe.skipIf(skip !== null)("J21 — 20261262: the register's attach / detach
     expect(audits(p)).toHaveLength(1);
   });
 
-  it("PROJ-5: the intake door's reference (service role, 'manual') to a document in the project's intake folder reads 'intake'; the adoption's later 'manual' upsert keeps it; a document outside the folder stays 'manual'", () => {
+  it("PROJ-5: the intake door's reference (service role, 'manual') to a document the door created in the project's intake folder reads 'intake'; the adoption's later 'manual' upsert keeps it; a document outside the folder stays 'manual'", () => {
     const intake = folder();
     const filed = folder();
     const p = project({ intake });
-    const d = doc(intake);
+    const d = doorDoc(intake);
     const other = doc(filed);
     expect(asCaller(db, SERVICE, `INSERT INTO project_documents (org_id, project_id, document_id, source) VALUES ('${orgId}', '${p}', '${d}', 'manual') ON CONFLICT (project_id, document_id) DO NOTHING`)).toEqual({ ok: true, rows: 1 });
     expect(sourceOf(p, d)).toBe("intake");
@@ -130,27 +136,43 @@ describe.skipIf(skip !== null)("J21 — 20261262: the register's attach / detach
     expect(sourceOf(p, other)).toBe("manual");
   });
 
-  it("PROJ-5: 'checkout' is never rewritten; the widened CHECK still refuses an unknown value (23514); a checkout row stays checkout when the card re-attaches it as manual (today's behaviour)", () => {
+  it("PROJ-5: the trigger never writes 'checkout' over or away by itself; the widened CHECK still refuses an unknown value (23514); the card's 'manual' re-attach over a checkout row turns it 'manual' exactly as today — a hand-filed sheet in the intake folder too", () => {
     const intake = folder();
     const p = project({ intake });
-    const d = doc(intake);
+    const d = doc(intake); // filed BY HAND into the intake folder (no authored_by_link_id)
     expect(asCaller(db, SERVICE, `INSERT INTO project_documents (org_id, project_id, document_id, source) VALUES ('${orgId}', '${p}', '${d}', 'checkout')`)).toEqual({ ok: true, rows: 1 });
     expect(sourceOf(p, d)).toBe("checkout");
     const bogus = asCaller(db, SERVICE, `INSERT INTO project_documents (org_id, project_id, document_id, source) VALUES ('${orgId}', '${p}', '${doc()}', 'bogus')`);
     expect(bogus.ok).toBe(false);
     if (!bogus.ok) expect(bogus.code).toBe("23514");
-    // the card's re-attach upserts 'manual' over a checkout row (today it becomes 'manual'):
-    // its proposed row is judged like any new manual reference, so a document in the intake
-    // folder reads 'intake' — the writer's own value never moves it back to 'checkout'.
+    // the card's re-attach upserts 'manual' over a checkout row: today it becomes 'manual', and
+    // it still does — a member is writing, and the door never created this sheet.
     expect(asCaller(db, m.owner.caller, `INSERT INTO project_documents (org_id, project_id, document_id, source) VALUES ('${orgId}', '${p}', '${d}', 'manual')
                                          ON CONFLICT (project_id, document_id) DO UPDATE SET source = EXCLUDED.source`)).toEqual({ ok: true, rows: 1 });
-    expect(sourceOf(p, d)).toBe("intake");
+    expect(sourceOf(p, d)).toBe("manual");
     // outside the intake folder the re-attach is exactly today's: checkout → manual
     const d3 = doc();
     admin(db, `INSERT INTO project_documents (org_id, project_id, document_id, source) VALUES ('${orgId}', '${p}', '${d3}', 'checkout')`);
     expect(asCaller(db, m.owner.caller, `INSERT INTO project_documents (org_id, project_id, document_id, source) VALUES ('${orgId}', '${p}', '${d3}', 'manual')
                                          ON CONFLICT (project_id, document_id) DO UPDATE SET source = EXCLUDED.source`)).toEqual({ ok: true, rows: 1 });
     expect(sourceOf(p, d3)).toBe("manual");
+  });
+
+  it("PROJ-5 (J21 fix pass, review major 2): a member's attach stays 'manual' — a sheet Document Control filed by hand into the intake folder, and even the door's own sheet attached by hand; its attach row says 'manual', never 'intake'", () => {
+    const intake = folder();
+    const p = project({ intake });
+    const handFiled = doc(intake);
+    expect(asCaller(db, m.owner.caller, `INSERT INTO project_documents (org_id, project_id, document_id, source) VALUES ('${orgId}', '${p}', '${handFiled}', 'manual')`)).toEqual({ ok: true, rows: 1 });
+    expect(sourceOf(p, handFiled)).toBe("manual");
+    expect(audits(p)).toEqual([`PROJECT_DOCUMENT_ATTACHED|${m.owner.uid}|member|${handFiled}|manual`]);
+    // the same hand-filed sheet written by the service role: not the door's sheet, so still 'manual'
+    const handFiled2 = doc(intake);
+    expect(asCaller(db, SERVICE, `INSERT INTO project_documents (org_id, project_id, document_id, source) VALUES ('${orgId}', '${p}', '${handFiled2}', 'manual')`)).toEqual({ ok: true, rows: 1 });
+    expect(sourceOf(p, handFiled2)).toBe("manual");
+    // the door's sheet, attached by a member from the card (e.g. after a detach): the member did it
+    const doors = doorDoc(intake);
+    expect(asCaller(db, m.owner.caller, `INSERT INTO project_documents (org_id, project_id, document_id, source) VALUES ('${orgId}', '${p}', '${doors}', 'manual')`)).toEqual({ ok: true, rows: 1 });
+    expect(sourceOf(p, doors)).toBe("manual");
   });
 
   it("PROJ-3 dw2: deleting a whole workspace (its projects, documents and register rows cascade) succeeds and leaves no detach row behind", () => {

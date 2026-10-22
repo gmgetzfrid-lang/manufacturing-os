@@ -93,6 +93,20 @@ describe("20261262 — DEC-30 one paste, DRLS-16, no destructive DDL", () => {
     expect(code).not.toMatch(/DROP\s+COLUMN/i);
     expect(code).toContain("COMMENT ON COLUMN milestones.linked_ticket_id IS\n  'UNUSED (drafting-flow PROJ-10");
   });
+  it("J21 fix pass: refuses to run, changing nothing, without documents.authored_by_link_id (20261104) — the guard runs before the inventory and the transaction", () => {
+    const guard = SQL.slice(0, SQL.indexOf("DROP TABLE IF EXISTS prj_round_g_262_before;"));
+    expect(guard).toMatch(/DO \$\$\nBEGIN\n  IF NOT EXISTS \(SELECT 1 FROM information_schema\.columns\n\s+WHERE table_schema = 'public' AND table_name = 'documents' AND column_name = 'authored_by_link_id'\) THEN\n\s+RAISE EXCEPTION 'Apply 20261104_prj_roundG_intake_links\.sql first/);
+  });
+  it("PROJ-5 (J21 fix pass, review major 2): 'intake' only for the door's reference — no active member behind the write, a document the door created (authored_by_link_id), in the project's own intake folder", () => {
+    const head = code.indexOf("CREATE OR REPLACE FUNCTION public.project_documents_intake_source()");
+    const fn = code.slice(head, code.indexOf("$$;", head));
+    const insertLimb = fn.slice(fn.indexOf("IF NEW.source = 'manual'"));
+    expect(insertLimb).toContain("AND NOT EXISTS (\n       SELECT 1\n         FROM org_members m\n        WHERE m.org_id = NEW.org_id AND m.uid = auth.uid() AND m.status = 'active')");
+    expect(insertLimb).toContain("AND d.collection_id = p.intake_collection_id\n          AND d.authored_by_link_id IS NOT NULL) THEN\n    NEW.source := 'intake';");
+    expect(fn).not.toMatch(/m\.role|roles/); // DB-7: the trigger reads no role
+    // the UPDATE limb is unchanged: an intake row keeps 'intake'; 'checkout' is never changed by the trigger
+    expect(fn).toContain("IF OLD.source = 'intake' AND NEW.source = 'manual' THEN\n      NEW.source := 'intake';");
+  });
   it("PROJ-5: the CHECK keeps checkout and manual and adds intake; existing rows are not rewritten (no UPDATE of project_documents)", () => {
     expect(code).toContain("CHECK (source IN ('checkout', 'manual', 'intake'))");
     expect(code).not.toMatch(/UPDATE\s+project_documents/i);

@@ -29,9 +29,10 @@ export const DELIVERABLE_REFERENCE_TIMEOUT_MS = 10_000;
 
 export type DeliverableReferenceAnswer = {
   ok: boolean;
-  /** true when this call put the document on the register. */
+  /** true when this call put the document on the register; absent when unknown. */
   referenced?: boolean;
-  /** Why nothing was owed: not_from_request / no_project / not_current / not_migrated / already_referenced. */
+  /** Why nothing was owed: not_from_request / no_project / not_current / not_finalizer / detached_since / not_migrated / already_referenced.
+   *  Absent (with `referenced`) for a caller who cannot read the request (AUTHZ-13), or when the register could not be re-read. */
   skipped?: string;
   warning?: string;
   error?: string;

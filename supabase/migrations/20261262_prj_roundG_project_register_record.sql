@@ -44,10 +44,19 @@
 --     rewrite would have touched). NEW BEFORE INSERT OR UPDATE OF source
 --     trigger trg_project_documents_intake_source →
 --     project_documents_intake_source() (SECURITY DEFINER, pinned, revoked):
---       * a 'manual' reference to a document that sits in THE PROJECT'S OWN
---         intake folder (projects.intake_collection_id = documents.
---         collection_id) is written 'intake' — the intake door's reference
---         at the moment it creates the document, whichever path wrote it;
+--       * a 'manual' reference written by THE INTAKE DOOR — the writer is
+--         not an active member of the row's workspace (the door's link
+--         identity, or the service role of its fallback) — to a document the
+--         door CREATED (documents.authored_by_link_id set: the stored
+--         intake-born fact, 20261104, which no signed-in session can stamp
+--         once 20261141 is in) that sits in THE PROJECT'S OWN intake folder
+--         (projects.intake_collection_id = documents.collection_id) is
+--         written 'intake' — the door's reference at the moment it creates
+--         the document, whichever of its paths wrote it. A member attaching
+--         by hand — even a sheet filed by hand into the intake folder, or one
+--         the door created — writes 'manual', exactly as today (J21 fix
+--         pass: the badge and the audit row never say the intake link did
+--         what a member did);
 --       * an 'intake' row keeps 'intake' when a later write would call it
 --         'manual' (the adoption's upsert, a re-attach from the card): the
 --         origin stays. A 'checkout' value is never changed.
@@ -70,9 +79,11 @@
 -- Paste / deploy order: deploy the app carrying J21 first, then paste (an
 -- app before J21 reads a source 'intake' row as "via checkout"). Either
 -- order is safe for every flow: before the paste nothing is recorded or
--- rewritten (today's path); the app never writes 'intake' itself. Independent
--- of every other migration (it needs only 20260609 project_documents,
--- 20260614 milestones, 20260902 projects.intake_collection_id). Re-runnable.
+-- rewritten (today's path); the app never writes 'intake' itself. It needs
+-- 20260609 project_documents, 20260614 milestones, 20260902
+-- projects.intake_collection_id and 20261104 documents.authored_by_link_id
+-- (J21 fix pass) — it REFUSES TO RUN, changing nothing, without that column;
+-- independent of every other migration. Re-runnable.
 --
 -- Reversal: DROP TRIGGER trg_project_documents_record_link ON
 -- project_documents; DROP TRIGGER trg_project_documents_intake_source ON
@@ -80,6 +91,16 @@
 -- DROP FUNCTION project_documents_intake_source(); then (only once no row
 -- reads 'intake') UPDATE project_documents SET source = 'manual' WHERE
 -- source = 'intake'; and re-add CHECK (source IN ('checkout','manual')).
+
+-- ── Prerequisite (refuse to run, changing nothing, without 20261104) ──────
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_schema = 'public' AND table_name = 'documents' AND column_name = 'authored_by_link_id') THEN
+    RAISE EXCEPTION 'Apply 20261104_prj_roundG_intake_links.sql first — this migration reads documents.authored_by_link_id (which document the intake door created). Nothing was changed.';
+  END IF;
+END;
+$$;
 
 DROP TABLE IF EXISTS prj_round_g_262_before;
 CREATE TEMP TABLE prj_round_g_262_before AS
@@ -95,11 +116,12 @@ UNION ALL
 SELECT 4, 'inventory (before apply): project_documents rows with any other source (0 before a first paste; on a re-paste, the ''intake'' rows)', COUNT(*)::text
   FROM project_documents WHERE source IS DISTINCT FROM 'checkout' AND source IS DISTINCT FROM 'manual'
 UNION ALL
-SELECT 5, 'inventory (before apply): ''manual'' rows whose document sits in its project''s intake folder — NOT rewritten (they read ''intake'' only if written again)', COUNT(*)::text
+SELECT 5, 'inventory (before apply): ''manual'' rows whose document the intake door created (authored_by_link_id set) and still sits in its project''s intake folder — NOT rewritten (they stay ''manual'')', COUNT(*)::text
   FROM project_documents pd
   JOIN projects p ON p.id = pd.project_id
   JOIN documents d ON d.id = pd.document_id
  WHERE pd.source = 'manual' AND p.intake_collection_id IS NOT NULL AND d.collection_id = p.intake_collection_id
+   AND d.authored_by_link_id IS NOT NULL
 UNION ALL
 SELECT 6, 'inventory (before apply): milestones whose linked_ticket_id is set (PROJ-10: no writer reaches it — expected 0; kept as is)', COUNT(*)::text
   FROM milestones WHERE linked_ticket_id IS NOT NULL;
@@ -136,15 +158,24 @@ BEGIN
     END IF;
     RETURN NEW;
   END IF;
-  -- A 'manual' reference to a document in the project's own intake folder is
-  -- the intake door's (or of a document still awaiting adoption there).
-  IF NEW.source = 'manual' AND EXISTS (
+  -- A 'manual' reference is the intake door's only when the door writes it
+  -- (no active member of the workspace behind it: the door's link identity,
+  -- or the service role) for a document the door CREATED
+  -- (authored_by_link_id) that sits in the project's own intake folder. A
+  -- member's attach stays 'manual', whatever the document.
+  IF NEW.source = 'manual'
+     AND NOT EXISTS (
+       SELECT 1
+         FROM org_members m
+        WHERE m.org_id = NEW.org_id AND m.uid = auth.uid() AND m.status = 'active')
+     AND EXISTS (
        SELECT 1
          FROM projects p
          JOIN documents d ON d.id = NEW.document_id
         WHERE p.id = NEW.project_id
           AND p.intake_collection_id IS NOT NULL
-          AND d.collection_id = p.intake_collection_id) THEN
+          AND d.collection_id = p.intake_collection_id
+          AND d.authored_by_link_id IS NOT NULL) THEN
     NEW.source := 'intake';
   END IF;
   RETURN NEW;
@@ -153,7 +184,7 @@ $$;
 REVOKE ALL ON FUNCTION public.project_documents_intake_source() FROM PUBLIC, anon, authenticated;
 
 COMMENT ON FUNCTION public.project_documents_intake_source() IS
-  'drafting-flow PROJ-5 (projects-joint J21, 20261262): a manual project_documents reference to a document in the project''s own intake folder is written source = ''intake''; an intake row keeps ''intake'' when a later write would call it ''manual''; ''checkout'' is never changed. Trigger only; SECURITY DEFINER (it reads projects / documents whatever the writer may see), search_path pinned, no client may EXECUTE it.';
+  'drafting-flow PROJ-5 (projects-joint J21, 20261262): a manual project_documents reference written by the intake door (no active member of the workspace behind it) to a document the door created (authored_by_link_id) in the project''s own intake folder is written source = ''intake''; a member''s attach stays ''manual''; an intake row keeps ''intake'' when a later write would call it ''manual''; ''checkout'' is never changed. Trigger only; SECURITY DEFINER (it reads projects / documents whatever the writer may see), search_path pinned, no client may EXECUTE it.';
 
 DROP TRIGGER IF EXISTS trg_project_documents_intake_source ON project_documents;
 CREATE TRIGGER trg_project_documents_intake_source
@@ -254,8 +285,8 @@ SELECT 1, 3, 'PROJ-5: trg_project_documents_intake_source runs BEFORE INSERT OR 
        AND NOT has_function_privilege('authenticated', 'public.project_documents_intake_source()', 'EXECUTE'),
        NULL
 UNION ALL
-SELECT 1, 4, 'PROJ-5: a manual reference into the project''s own intake folder reads intake; an intake row keeps intake against a later manual write',
-       (SELECT prosrc LIKE '%OLD.source = ''intake'' AND NEW.source = ''manual''%NEW.source := ''intake''%d.collection_id = p.intake_collection_id%'
+SELECT 1, 4, 'PROJ-5: only the intake door''s manual reference to a document it created (authored_by_link_id) in the project''s own intake folder reads intake — a member''s attach stays manual; an intake row keeps intake against a later manual write',
+       (SELECT prosrc LIKE '%OLD.source = ''intake'' AND NEW.source = ''manual''%NEW.source := ''intake''%FROM org_members m%m.uid = auth.uid()%d.collection_id = p.intake_collection_id%d.authored_by_link_id IS NOT NULL%NEW.source := ''intake''%'
           FROM pg_proc WHERE oid = 'public.project_documents_intake_source()'::regprocedure),
        NULL
 UNION ALL
