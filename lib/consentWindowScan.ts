@@ -486,6 +486,44 @@ export function emailPreferenceReason(p: Record<string, unknown> | undefined, ev
   return emailPreferenceOf(p, eventType).reason;
 }
 
+/** The machine actor the copy recall names on a consent issue (DF-P22). */
+export const CONSENT_RECALL_ACTOR = CONSENT_WINDOW_ACTOR;
+
+/**
+ * DF-P22 (public-surfaces PHYS-18 on a consent-completed issue — the DF-P7
+ * hand-off): the ticket arm of the stale-copy recall
+ * (lib/staleCopies.ts getTicketCopyRecall / nudgeStaleTicketHolders), run
+ * as the workflow route runs it after an issuing sign-off — bound to the
+ * service role for this call only (lib/serverClientScope.ts: the recall
+ * writes its audit row and its notices through the shared client) — but by
+ * the recorded system actor (`system:consent-window`, no uid). A record that
+ * could not be read is recorded as such and tells nobody (the recall's own
+ * `unavailable` rule). Never throws; null when it ran, else why not.
+ */
+export async function recallCopiesAfterConsentIssue(db: Db, input: {
+  ticket: { id: string; orgId: string; status: string; deliverableRev: string; history: unknown; revisionCount: number | null; historyGuardedFrom: number | null; attachments: unknown };
+  ticketNumber: string | null;
+}): Promise<string | null> {
+  try {
+    const [{ getTicketCopyRecall, nudgeStaleTicketHolders }, { runWithServerClient }] = await Promise.all([
+      import("@/lib/staleCopies"), import("@/lib/serverClientScope"),
+    ]);
+    await runWithServerClient(db as never, async () => {
+      const recall = await getTicketCopyRecall(input.ticket, db as unknown as Parameters<typeof getTicketCopyRecall>[1]);
+      if (!recall.unavailable && recall.holders.length === 0) return 0;
+      return nudgeStaleTicketHolders({
+        orgId: input.ticket.orgId, ticketId: input.ticket.id, ticketNumber: input.ticketNumber,
+        latestIssuedRev: recall.latestIssuedRev, holders: recall.holders,
+        actorUserId: null, systemActor: CONSENT_RECALL_ACTOR, actorName: CONSENT_RECALL_ACTOR,
+        source: "auto", unavailable: recall.unavailable,
+      });
+    });
+    return null;
+  } catch (e) {
+    return (e as Error)?.message ?? String(e);
+  }
+}
+
 // ─── The maintenance cron's step ────────────────────────────────────────────
 
 export interface ConsentScanReport {
@@ -705,6 +743,25 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
         await blockPlannedWindow(ticket, roster, plan, ctx, row, { reason: `${confirmed.why}, so no window was opened — it waits for a sign-off`, refusal: { code: "routing_unconfirmed", error: confirmed.why } });
         return;
       }
+      // DF-P22 (the DF-P7 final fix pass residual; DEC-90 ruling (3)): the
+      // retry re-reads the engineered lane exactly as the close does — the
+      // ticket's column, the requester's current roles under the current
+      // policy, the engineering-first types, and a like-in-kind
+      // declaration's e-signature (lib/reviewModel.ts
+      // declarationSignatureStands, as the route reads it at submission). A
+      // declaration known not to stand makes this engineered work: no window
+      // is opened, the plan becomes a sign-off (said), and nobody is asked
+      // to object to something silence could never advance. A read that
+      // fails proves nothing: not retried this run (a recorded line).
+      const lane = await engineeredLaneNow(ticket, ctx);
+      if (lane.state === "unreadable") { report.failed += 1; say(`ticket ${ticket.id}: ${lane.why} — the consent window was not retried (retried next run); "${plan.label}" waits for a sign-off`); return; }
+      if (lane.state === "engineered") {
+        await blockPlannedWindow(ticket, roster, plan, ctx, row, {
+          reason: CONSENT_REASON.engineered,
+          refusal: { code: lane.declarationMissing ? "declaration_unverified" : "engineered", error: lane.declarationMissing ? "the like-in-kind declaration's e-signature does not stand" : "the request is engineered work" },
+        }, { signOff: true });
+        return;
+      }
       // DEC-37 slot-to-slot (fix pass 2): nor anyone who signed, or can
       // still sign, a slot this one must be independent of — read from the
       // ledger (and the roster: either one names them). Only people still
@@ -769,7 +826,7 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     }
 
     // (3) The window closed with no objection.
-    await closeWindow(ticket, roster, state, slot.kind, label, ctx, nameOf);
+    await closeWindow(ticket, roster, state, slot.kind, label, ctx, nameOf, row);
   }
 
   /** A planned window nobody can be asked on any more (everyone it named
@@ -785,11 +842,18 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     row: Record<string, unknown>,
     /** Fix pass 3: a permanent refusal of open_consent_window, worded. */
     why?: { reason: string; refusal: { code: string; error: string } },
+    /** DF-P22: the request turned out to be engineered work — the plan
+     *  becomes an ordinary sign-off (as planConsentWindow plans one for
+     *  engineered work at submission): the assignment queue is not told,
+     *  because nothing is blocked; the slot simply waits for a sign-off. */
+    opts?: { signOff?: boolean },
   ): Promise<void> {
     const ticketId = ticket.id!;
     const nowIso = new Date(now).toISOString();
     const reason = why?.reason ?? CONSENT_REASON.noLongerAskable;
-    const blocked: TicketConsentPlan = { kind: "blocked", slot: plan.slot, label: plan.label, reason };
+    const blocked: TicketConsentPlan = opts?.signOff
+      ? { kind: "sign_off", slot: plan.slot, label: plan.label, reason }
+      : { kind: "blocked", slot: plan.slot, label: plan.label, reason };
     const meta = ((row.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>;
     let q = sb.from("tickets").update({ metadata: { ...meta, review_roster: { ...roster, consentPlan: blocked } }, last_modified: nowIso })
       .eq("id", ticketId).eq("status", "PENDING_REVIEW");
@@ -798,6 +862,17 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     if (error || !Array.isArray(landed) || landed.length === 0) {
       report.failed += 1;
       say(`ticket ${ticketId}: ${why ? `the consent window for "${plan.label}" was refused for good (${why.refusal.error})` : `nobody "${plan.label}" names may still be asked`}, and the block could not be recorded (${error ? error.message : "the request changed first"}) — retried next run; it waits for a sign-off`);
+      return;
+    }
+    if (opts?.signOff) {
+      // DF-P22: engineered work waits for a sign-off; nobody is escalated.
+      say(`ticket ${ticketId}: "${plan.label}" — ${reason}; no window is opened (${why?.refusal.error ?? "engineered work"})`);
+      const evErr = await recordNoticeEvents(sb, [{
+        org_id: ticket.orgId, ticket_id: ticketId, roster_id: roster.id, slot_kind: plan.slot, kind: "blocked",
+        recipient: null, actor_name: CONSENT_WINDOW_ACTOR,
+        details: { reason: "window_never_opened", why: reason, planned: plan.recipients, escalatedTo: [], ...(why ? { refusal: why.refusal } : {}) },
+      }]);
+      if (evErr && evErr !== "missing") say(`ticket ${ticketId}: the sign-off plan was not recorded on the notice record: ${evErr}`);
       return;
     }
     report.failed += 1;
@@ -849,6 +924,41 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     return { moved, unchecked: false };
   }
 
+  /**
+   * DEC-90 ruling (1) at the close (DF-P7 fix pass 3) and ruling (3) (final
+   * fix pass), shared by the close and — DF-P22 — the cron's retry of a
+   * planned open: is this request engineered work NOW? Read as the route
+   * reads it at submission: the ticket's column, the requester's CURRENT
+   * roles (DEC-16; a requester no longer active holds nothing), the org's
+   * current policy and engineering-first types, and — for a declared
+   * like-in-kind request — the declaration's e-signature, judged by
+   * lib/reviewModel.ts declarationSignatureStands (a signature known not to
+   * stand is UNDECLARED work: engineered). Types or a signature that cannot
+   * be read prove nothing ("unreadable"). An undeclared request never reads
+   * e_signatures.
+   */
+  async function engineeredLaneNow(ticket: ReturnType<typeof rowToTicket>, ctx: OrgCtx): Promise<{ state: "engineered" | "not_engineered"; declarationMissing: boolean } | { state: "unreadable"; why: string }> {
+    if (ctx.engineeringFirstTypes === null) {
+      return { state: "unreadable", why: "the workspace's request types could not be read, so whether this request is engineered work is unknown" };
+    }
+    let declarationMissing = false;
+    if (ticket.engineeringRequired === false && isDeclaredLikeInKind(ticket)) {
+      const sigId = ticket.likeInKindSignatureId ?? "";
+      let dsig: DeclarationSignatureRow | null = null;
+      if (UUID_RE.test(sigId)) {
+        const { data, error } = await sb.from("e_signatures").select("id, org_id, resource_type, resource_id, signer_user_id").eq("id", sigId).maybeSingle();
+        if (error) return { state: "unreadable", why: `the like-in-kind declaration's signature could not be read, so whether this request is engineered work is unknown: ${error.message}` };
+        dsig = (data as DeclarationSignatureRow | null) ?? null;
+      }
+      declarationMissing = !declarationSignatureStands(dsig, { id: ticket.id!, orgId: ticket.orgId, likeInKindDeclaredBy: ticket.likeInKindDeclaredBy });
+    }
+    const requesterMember = ticket.requesterId ? ctx.members.find((m) => m.uid === ticket.requesterId) ?? null : null;
+    const engineered = declarationMissing || ticket.engineeringRequired === true
+      || engineeringGateRequired(ticket, heldRoles(requesterMember as { role?: unknown; roles?: unknown } | null), ctx.policy)
+      || ctx.engineeringFirstTypes.includes(ticket.requestType);
+    return { state: engineered ? "engineered" : "not_engineered", declarationMissing };
+  }
+
   async function closeWindow(
     ticket: ReturnType<typeof rowToTicket>,
     roster: TicketReviewRoster,
@@ -857,6 +967,7 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     label: string,
     ctx: OrgCtx,
     nameOf: (uid: string) => string,
+    row: Record<string, unknown>,
   ): Promise<void> {
     const ticketId = ticket.id!;
     // The ledger first: the window's slot must be an open consent slot there
@@ -881,42 +992,18 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
       say(`ticket ${ticketId}: ${confirmed.why} — the window was not closed${confirmed.transient ? " (retried next run)" : ""}; "${label}" waits for a sign-off`);
       return;
     }
-    // DEC-90 ruling (1) at the close (fix pass 3): never on engineered work —
-    // re-read now, as the route reads it at submission: the ticket's column,
-    // the requester's CURRENT roles (DEC-16; a requester no longer active
-    // holds nothing), the org's current policy and engineering-first types.
-    // Types that cannot be read prove nothing: the close waits a run.
-    if (ctx.engineeringFirstTypes === null) {
+    // DEC-90 ruling (1) at the close (fix pass 3) and ruling (3) (final fix
+    // pass): never on engineered work — re-read now (engineeredLaneNow, the
+    // one rule the retry shares). A read that fails proves nothing: the
+    // close waits a run.
+    const lane = await engineeredLaneNow(ticket, ctx);
+    if (lane.state === "unreadable") {
       report.failed += 1;
-      say(`ticket ${ticketId}: the workspace's request types could not be read, so whether this request is engineered work is unknown — the window was not closed (retried next run)`);
+      say(`ticket ${ticketId}: ${lane.why} — the window was not closed (retried next run)`);
       return;
     }
-    // DEC-90 ruling (3) (DF-P7 final fix pass): a consent close is an issuing
-    // act, so a like-in-kind declaration stands only on its e-signature,
-    // read and judged exactly as the workflow route does before an issuing
-    // approval (lib/reviewModel.ts declarationSignatureStands): a signature
-    // known not to stand is UNDECLARED work — engineered, held, never
-    // closed on silence; a read that fails proves nothing — not closed this
-    // run (a recorded failure, retried).
-    let declarationMissing = false;
-    if (ticket.engineeringRequired === false && isDeclaredLikeInKind(ticket)) {
-      const sigId = ticket.likeInKindSignatureId ?? "";
-      let dsig: DeclarationSignatureRow | null = null;
-      if (UUID_RE.test(sigId)) {
-        const { data, error } = await sb.from("e_signatures").select("id, org_id, resource_type, resource_id, signer_user_id").eq("id", sigId).maybeSingle();
-        if (error) {
-          report.failed += 1;
-          say(`ticket ${ticketId}: the like-in-kind declaration's signature could not be read, so whether this request is engineered work is unknown — the window was not closed (retried next run): ${error.message}`);
-          return;
-        }
-        dsig = (data as DeclarationSignatureRow | null) ?? null;
-      }
-      declarationMissing = !declarationSignatureStands(dsig, { id: ticketId, orgId: ticket.orgId, likeInKindDeclaredBy: ticket.likeInKindDeclaredBy });
-    }
-    const requesterMember = ticket.requesterId ? ctx.members.find((m) => m.uid === ticket.requesterId) ?? null : null;
-    const engineered = declarationMissing || ticket.engineeringRequired === true
-      || engineeringGateRequired(ticket, heldRoles(requesterMember as { role?: unknown; roles?: unknown } | null), ctx.policy)
-      || ctx.engineeringFirstTypes.includes(ticket.requestType);
+    const declarationMissing = lane.declarationMissing;
+    const engineered = lane.state === "engineered";
     // The record of delivery: the "delivered" events open_consent_window wrote.
     const { data: evs, error: evErr } = await sb.from("ticket_notice_events")
       .select("recipient, notification_id").eq("ticket_id", ticketId).eq("roster_id", roster.id).eq("kind", "delivered");
@@ -1121,6 +1208,24 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
       })), sb as never);
       if (bellErr) say(`ticket ${ticketId}: the window closed but the bell rows were not written: ${bellErr}`);
       bellLanded = !bellErr;
+    }
+    // DF-P22 (PHYS-18 on a consent-completed issue — the DF-P7 hand-off;
+    // DEC-44 (DF-P7-consent) item 12(a)): an issuing close supersedes the
+    // copies people took of the earlier package, exactly as the route's
+    // issuing sign-off does (recallSupersededTicketCopies) — run by the
+    // recorded system actor (no person acted). Best-effort and after the
+    // advance: nothing here can undo or delay the issue.
+    if (complete && typeof updates.deliverable_rev === "string" && updates.deliverable_rev) {
+      const recallErr = await recallCopiesAfterConsentIssue(sb, {
+        ticket: {
+          id: ticketId, orgId: ticket.orgId, status: String(newStatus), deliverableRev: updates.deliverable_rev,
+          history: (updates.history as unknown) ?? ticket.history, revisionCount: ((updates.revision_count as number | undefined) ?? ticket.revisionCount) ?? null,
+          historyGuardedFrom: typeof row.history_guarded_from === "number" ? row.history_guarded_from : null,
+          attachments: (updates.attachments as unknown) ?? ticket.attachments,
+        },
+        ticketNumber: ticket.ticketId ?? null,
+      });
+      if (recallErr) say(`ticket ${ticketId}: the request issued (audit row ${auditId}), but the recall of superseded copies did not run: ${recallErr}`);
     }
     // DEC-90 ruling (1): the block's notice event is written after the bell
     // and names only the assignment-queue members whose bell row landed.

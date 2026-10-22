@@ -1553,28 +1553,41 @@ export async function getTicketCopyRecall(
  *  an outdated copy who has not since taken the current one (the document
  *  arm's rule), and put the recall on the ticket's audit trail (DIST-10's
  *  record — who was told, when, by whom). A recall that could not be
- *  evaluated (`unavailable`) is recorded as such and nudges nobody. */
+ *  evaluated (`unavailable`) is recorded as such and nudges nobody.
+ *
+ *  drafting-flow DF-P22 (PHYS-18 on a consent-completed issue — the DF-P7
+ *  hand-off): the actor may be a recorded SYSTEM actor instead of a person —
+ *  `actorUserId: null` with `systemActor` naming the machine (e.g.
+ *  `system:consent-window`). The audit row then carries no user id
+ *  (lib/audit.ts writes `actor_kind: "system"`), names the system actor as
+ *  its user_email and in `details.systemActor`, and the notice has no
+ *  person as its actor. A person's recall is exactly as before. */
 export async function nudgeStaleTicketHolders(input: {
   orgId: string;
   ticketId: string;
   ticketNumber: string | null;
   latestIssuedRev: string | null;
   holders: TicketCopyHolder[];
-  actorUserId: string;
+  actorUserId: string | null;
   actorName?: string | null;
+  /** DF-P22: the machine actor's name when `actorUserId` is null. */
+  systemActor?: string | null;
   source?: "manual" | "auto";
   unavailable?: boolean;
 }): Promise<number> {
   const label = input.ticketNumber || "this drafting request";
+  const systemActor = input.actorUserId ? null : (input.systemActor || "system");
   const record = async (recipients: TicketCopyHolder[], unavailable: boolean) => {
     const res = await logAuditAction({
       action: "DISTRIBUTION_RECALL",
       resourceType: "ticket",
       resourceId: input.ticketId,
       orgId: input.orgId,
-      userId: input.actorUserId,
-      userEmail: input.actorName ?? undefined,
+      userId: input.actorUserId ?? "system",
+      userEmail: (systemActor ?? input.actorName) ?? undefined,
+      ...(systemActor ? { userRole: "system" } : {}),
       details: {
+        ...(systemActor ? { systemActor } : {}),
         source: input.source ?? "manual",
         ticketNumber: input.ticketNumber,
         latestIssuedRev: input.latestIssuedRev,
@@ -1601,8 +1614,8 @@ export async function nudgeStaleTicketHolders(input: {
       : `A copy you took of this request's deliverable is not one to work from (the request was withdrawn, or it was a review draft). Stop any work based on it and destroy old prints.`,
     link: `/requests/${input.ticketId}`,
     resource: { type: "ticket", id: input.ticketId },
-    actorUserId: input.actorUserId,
-    actorName: input.actorName ?? undefined,
+    actorUserId: input.actorUserId ?? undefined,
+    actorName: (systemActor ? "System" : input.actorName) ?? undefined,
     audience: { involved: reachable.map((h) => h.userId) },
     metadata: { recall: true, ticketCopy: true },
   });

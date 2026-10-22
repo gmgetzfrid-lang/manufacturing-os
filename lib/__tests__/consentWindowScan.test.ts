@@ -7,7 +7,7 @@
 // Plus the DEC-38 holds: no delivery record → never consent; the producer
 // floor → never silence over the drafter's own sign-off.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { runConsentWindowScan, emailPreferenceReason, emailPreferenceOf, assignmentQueueOf, memberNameOf, CONSENT_EMAIL_EVENT, CONSENT_ISSUE_AS_IS_NOTE, afterRosterOpened, consentChannelNote, markConsentPlanOpened } from "@/lib/consentWindowScan";
 import { ISSUE_AS_IS_NOTE } from "@/lib/workflow";
 import { emailAllowedByPrefs, PREFERENCE_EXEMPT_EVENT_TYPES } from "@/lib/notificationPrefs";
@@ -1183,5 +1183,109 @@ describe("DEC-90 ruling (1) (merge-time fix pass) — the retry and the close re
     expect(r).toMatchObject({ opened: 0, failed: 1 });
     expect(calls("rpc:open_consent_window", "rpc")).toEqual([]);
     expect(((db.tables.tickets[0].metadata as { review_roster: TicketReviewRoster }).review_roster.consentPlan as { kind: string }).kind).toBe("open");
+  });
+});
+
+
+// ─── drafting-flow Round G, DF-P22 — the DF-P7 residuals ────────────────────
+// (b) the cron's retry of a planned open re-reads the declaration's
+//     e-signature (and the whole engineered lane) as the route and the close
+//     do; (c) the PHYS-18 copy recall runs on a consent-completed issue, by
+//     the recorded system actor.
+const recallSpy = vi.hoisted(() => ({ nudges: [] as Array<Record<string, unknown>>, reads: 0 }));
+vi.mock("@/lib/staleCopies", () => ({
+  getTicketCopyRecall: async () => {
+    recallSpy.reads += 1;
+    return { holders: [{ userId: "o-2", userEmail: "o-2@x.io", lastCopiedAt: "2026-10-01T00:00:00Z", copies: [], outdated: true, hasCurrent: false }], capped: false, unavailable: false, latestIssuedRev: "1" };
+  },
+  nudgeStaleTicketHolders: async (input: Record<string, unknown>) => { recallSpy.nudges.push(input); return 1; },
+}));
+
+describe("DF-P22 (b) — the retry re-reads the declaration's e-signature, as the route and the close do", () => {
+  const SIG = "5a000000-0000-4000-8000-0000000000aa";
+  const declare = () => Object.assign(db.tables.tickets[0], {
+    engineering_required: false, review_model_filed: true, like_in_kind_statement: "Like for like: same gasket, same rating",
+    like_in_kind_declared_at: "2026-10-18T09:00:00Z", like_in_kind_declared_by: "req", like_in_kind_signature_id: SIG,
+  });
+  const goodSig = { id: SIG, org_id: "o1", resource_type: "ticket", resource_id: "t1", signer_user_id: "req" };
+  it("REGRESSION: a declaration that stands — the retry opens the window exactly as before", async () => {
+    seedTicket({ window: false });
+    declare();
+    db.tables.e_signatures = [goodSig];
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r.opened).toBe(1);
+    expect(calls("rpc:open_consent_window", "rpc")).toHaveLength(1);
+  });
+  it("a declaration whose signature does not stand: no window — the plan becomes an ordinary sign-off (engineered), nobody escalated, the record says why", async () => {
+    for (const sigs of [[], [{ ...goodSig, signer_user_id: "o-1" }], [{ ...goodSig, resource_id: "t9" }]]) {
+      seedTicket({ window: false });
+      declare();
+      db.tables.e_signatures = sigs;
+      db.tables.ticket_notice_events = [];
+      db.calls = [];
+      const notesBefore = (db.tables.notifications ?? []).length;
+      const r = await runConsentWindowScan({ client, now: NOW });
+      expect(r.opened, JSON.stringify(sigs)).toBe(0);
+      expect(calls("rpc:open_consent_window", "rpc")).toEqual([]);
+      expect(rosterOf().consentPlan).toMatchObject({ kind: "sign_off", slot: "ops", reason: CONSENT_REASON.engineered });
+      // nothing is blocked, so the assignment queue is not belled
+      expect((db.tables.notifications ?? []).length).toBe(notesBefore);
+      const ev = db.tables.ticket_notice_events.find((e) => e.kind === "blocked")!;
+      expect(ev.details).toMatchObject({ reason: "window_never_opened", escalatedTo: [], refusal: { code: "declaration_unverified" } });
+      // and it is not read as "still to open" again
+      db.calls = [];
+      await runConsentWindowScan({ client, now: NOW + 60_000 });
+      expect(calls("rpc:open_consent_window", "rpc")).toEqual([]);
+    }
+  });
+  it("the signature cannot be read: not retried this run — a recorded line, nothing written; the next run opens it", async () => {
+    seedTicket({ window: false });
+    declare();
+    db.errors.e_signatures = { code: "57014", message: "timeout" };
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ opened: 0, failed: 1 });
+    expect(r.errors.join(" ")).toMatch(/declaration's signature could not be read.*consent window was not retried/);
+    expect(calls("tickets", "update")).toEqual([]);
+    expect(calls("rpc:open_consent_window", "rpc")).toEqual([]);
+    delete db.errors.e_signatures;
+    db.tables.e_signatures = [goodSig];
+    const again = await runConsentWindowScan({ client, now: NOW + 60_000 });
+    expect(again.opened).toBe(1);
+  });
+  it("REGRESSION: an undeclared request's retry never reads e_signatures", async () => {
+    seedTicket({ window: false });
+    db.errors.e_signatures = { code: "57014", message: "would fail if read" };
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r.opened).toBe(1);
+    expect(db.calls.some((c) => c.table === "e_signatures")).toBe(false);
+  });
+  it("the request's type became engineering-first: no window, the plan becomes a sign-off", async () => {
+    seedTicket({ window: false });
+    db.tables.org_configurations = [{ org_id: "o1", key: "drafting", data: { requestTypes: { options: [{ value: "ISO", label: "ISO", engineeringFirst: true }] } } }];
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r.opened).toBe(0);
+    expect(calls("rpc:open_consent_window", "rpc")).toEqual([]);
+    expect(rosterOf().consentPlan).toMatchObject({ kind: "sign_off", reason: CONSENT_REASON.engineered });
+  });
+});
+
+describe("DF-P22 (c) — the PHYS-18 copy recall on a consent-completed issue, by the recorded system actor", () => {
+  beforeEach(() => { recallSpy.nudges = []; recallSpy.reads = 0; });
+  it("an issuing close runs the recall once: no person as actor, the system actor named, source auto", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 1, issued: 1 });
+    expect(recallSpy.reads).toBe(1);
+    expect(recallSpy.nudges).toHaveLength(1);
+    expect(recallSpy.nudges[0]).toMatchObject({ orgId: "o1", ticketId: "t1", ticketNumber: "REQ-1", actorUserId: null, systemActor: "system:consent-window", source: "auto", latestIssuedRev: "1" });
+  });
+  it("a held close, or a close that leaves the review waiting on another sign-off, recalls nothing", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z", accept: "open" });
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r.issued).toBe(0);
+    expect(recallSpy.reads).toBe(0);
+    seedTicket({ warned: "2026-10-21T09:00:00Z", accept: "signed-by-drafter" });
+    await runConsentWindowScan({ client, now: NOW });
+    expect(recallSpy.reads).toBe(0);
   });
 });

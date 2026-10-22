@@ -177,6 +177,8 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "ticket_comments", migration: "20260726_ticket_comments.sql" },
   { table: "ticket_equipment", migration: "20261251_df_roundG_ticket_equipment.sql" },
   { table: "ticket_notice_events", migration: "20261255_df_roundG_consent_window.sql" },
+  { table: "ticket_sla_escalations", migration: "20261264_df_roundG_consent_escalation.sql" },
+  { table: "ticket_preauthorizations", migration: "20261264_df_roundG_consent_escalation.sql" },
   { table: "ticket_number_counters", migration: "20260724_ticket_numbering.sql" },
   { table: "ticket_review_slot_events", migration: "20261242_df_roundG_ticket_roster.sql" },
   { table: "ticket_review_slots", migration: "20261242_df_roundG_ticket_roster.sql" },
@@ -230,6 +232,8 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   { table: "tickets", column: "consent_window_opened_at", migration: "20261255_df_roundG_consent_window.sql", feature: "A routed review's consent window — when it opened (drafting-flow DF-P7, GAP-109 / GAP-113)" },
   { table: "tickets", column: "consent_window_recipients", migration: "20261255_df_roundG_consent_window.sql", feature: "A routed review's consent window — who was asked (drafting-flow DF-P7)" },
   { table: "tickets", column: "project_id", migration: "20261256_df_roundG_ticket_project.sql", feature: "A request's project, by reference (drafting-flow DF-P8, GAP-114 / DEC-40)" },
+  { table: "ticket_sla_escalations", column: "period_index", migration: "20261264_df_roundG_consent_escalation.sql", feature: "The SLA escalation tier — one notice to the escalation contact per breach per period (drafting-flow DF-P22, FRIC-1 / GAP-106)" },
+  { table: "ticket_preauthorizations", column: "expires_at", migration: "20261264_df_roundG_consent_escalation.sql", feature: "Standing pre-authorization — a person's signed, scoped, expiring pre-consent (drafting-flow DF-P22, GAP-109 mechanism 2)" },
   { table: "email_notifications", column: "provider_message_id", migration: "20261258_notif_roundG_delivery_record.sql", feature: "Email delivery record — the provider's message id kept beside 'sent', so a delivery report can name its row (notifications N18, drafting-flow EVID-9)" },
   { table: "email_notifications", column: "delivery_status", migration: "20261258_notif_roundG_delivery_record.sql", feature: "Email delivery record — the provider's delivery outcome (delayed / delivered / failed / bounced / complained) (notifications N18, drafting-flow EVID-9)" },
   { table: "email_notifications", column: "delivery_detail", migration: "20261258_notif_roundG_delivery_record.sql", feature: "Email delivery record — a refusal's reason as the provider reported it (notifications N18, drafting-flow EVID-9)" },
@@ -332,6 +336,19 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     probeArgs: { p_doc: "schema-health-probe", p_cost_account: "schema-health-probe", p_expected_total: 0 },
     migration: "20261157_prj_roundG_server_remainders.sql",
     feature: "Awarding a quote as one transaction (lib/costDocs.ts awardQuote; GAP-406)",
+  },
+  // drafting-flow DF-P22 (merge-time fix pass): a standing pre-authorization
+  // is applied only inside this one transaction (records and memberships
+  // locked, revoked / expiry / continuity re-checked, the ticket's CAS). The
+  // app applies nothing while it is missing (42883 / PGRST202 — every slot
+  // waits for its sign-off). The uuid argument refuses "schema-health-probe"
+  // (22P02), so the body never runs.
+  {
+    signature: "apply_ticket_preauthorizations(uuid, uuid, timestamptz, uuid[], jsonb, jsonb, timestamptz, uuid[])",
+    fn: "apply_ticket_preauthorizations",
+    probeArgs: { p_ticket_id: "schema-health-probe", p_org_id: "schema-health-probe", p_expected_last_modified: "2000-01-01T00:00:00Z", p_preauthorization_ids: [], p_metadata: {}, p_history: [], p_last_modified: "2000-01-01T00:00:00Z", p_unread_by: [] },
+    migration: "20261264_df_roundG_consent_escalation.sql",
+    feature: "Standing pre-authorization applied as one locked transaction (lib/ticketPreauthorizationApply.ts; GAP-109 mechanism 2)",
   },
   {
     signature: "apply_checklist_item_writes(uuid, jsonb)",

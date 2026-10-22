@@ -103,6 +103,13 @@ export const ORG_SCOPED_TABLES = [
   // ticket_notice_events (EXPORT_ROW_TRANSFORMS below); never imported (the
   // integrator at the P38 merge, 2026-10-21, DEC-90).
   "document_notice_events",
+  // drafting-flow DF-P22 (20261264): the SLA escalation record (one row per
+  // breach per period told to the workspace's escalation contact) and the
+  // standing pre-authorizations (signed, scoped, expiring, revoked never
+  // deleted) — EXPORTED as evidence; never imported (the integrator at the
+  // DF-P22 merge, 2026-10-22, DEC-90).
+  "ticket_sla_escalations",
+  "ticket_preauthorizations",
   // drafting-flow DF-P6 (20261251): the equipment a request names (the tag as
   // typed and the registry asset it resolved to) — part of the request,
   // exported and restored after tickets and assets (the integrator at the

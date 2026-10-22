@@ -117,6 +117,17 @@ export interface RoutingSlot {
    *  a slot filled by an engineering capability (the engineering approval
    *  records its own sign-off); the editor refuses a save that writes one. */
   records_examination?: true;
+  /** GAP-109 mechanism 2 (drafting-flow DF-P22): the controller's explicit
+   *  opt-in — this BLOCKING slot accepts a standing pre-authorization: an
+   *  occupant who recorded one whose scope matches the request has the slot
+   *  satisfied by it, recorded on the request's history and audit row
+   *  (lib/ticketPreauthorization.ts). Absent = the slot behaves exactly as
+   *  before. Kept only where preauthorizationOptInAllowed says it can ride —
+   *  never an engineering slot, never an assurance slot (records_examination
+   *  wins), never a notice or a consent window, never the requester's own
+   *  acceptance; dropped silently otherwise (a stored value never makes the
+   *  table invalid), and the editor refuses a save that writes one. */
+  accepts_preauthorization?: true;
 }
 
 export interface RoutingControl {
@@ -148,6 +159,16 @@ export function examinationOptInAllowed(slot: Pick<RoutingSlot, "mode" | "fill">
   if (f.identity === "requester" && !f.roles?.length && !f.users?.length && !f.capability) return false;
   if (f.capability && CONSENT_REFUSED_CAPABILITIES.includes(f.capability)) return false;
   return true;
+}
+
+/** GAP-109 mechanism 2 (drafting-flow DF-P22; DEC-90 ruling (2)): the slots
+ *  the standing pre-authorization opt-in (`accepts_preauthorization`) can
+ *  ride — exactly the slots the assurance opt-in can (a BLOCKING slot not
+ *  filled by the requester alone nor by an engineering capability), less an
+ *  assurance slot itself (its reviewer records what they examined on each
+ *  request; a standing consent examines nothing). Pure. */
+export function preauthorizationOptInAllowed(slot: Pick<RoutingSlot, "mode" | "fill" | "records_examination">): boolean {
+  return examinationOptInAllowed(slot) && slot.records_examination !== true;
 }
 
 /** A declared level is any non-null value (NULL = inherit). */
@@ -244,6 +265,10 @@ export function parseRoutingControl(raw: unknown): { ok: true; control: RoutingC
     // table invalid (that would refuse every submission and routed approval
     // in the library); the editor refuses one at save (validateRoutingDraft).
     if (o.records_examination === true && examinationOptInAllowed(slot)) slot.records_examination = true;
+    // GAP-109 mechanism 2 (DF-P22): the standing pre-authorization opt-in —
+    // read exactly like the assurance opt-in: kept only when `true` on a
+    // slot that can carry it, dropped silently otherwise (never refused).
+    if (o.accepts_preauthorization === true && preauthorizationOptInAllowed(slot)) slot.accepts_preauthorization = true;
     slots.push(slot);
   }
   // independent_of may name a party or another slot of THIS table.
@@ -530,6 +555,25 @@ export function validateRoutingDraft(control: RoutingControl | null, stored?: un
         : misplaced.fill?.capability && CONSENT_REFUSED_CAPABILITIES.includes(misplaced.fill.capability)
           ? `slot "${misplaced.kind}": the engineering approval records its own sign-off — it cannot be an assurance check`
           : `slot "${misplaced.kind}": the requester's own acceptance is not an assurance check`;
+  }
+  // GAP-109 mechanism 2 (DF-P22): a save that writes a misplaced standing
+  // pre-authorization opt-in is refused with the reason (the parser drops
+  // one silently from a stored table).
+  const misplacedPreauth = control.slots.find((s) => {
+    const v = (s as { accepts_preauthorization?: unknown }).accepts_preauthorization;
+    return v !== undefined && v !== null && v !== false && (v !== true || !preauthorizationOptInAllowed(s));
+  });
+  if (misplacedPreauth) {
+    const v = (misplacedPreauth as { accepts_preauthorization?: unknown }).accepts_preauthorization;
+    return v !== true
+      ? `slot "${misplacedPreauth.kind}": standing pre-authorization is on or off (accepts_preauthorization is true or absent)`
+      : misplacedPreauth.mode !== "blocking"
+        ? `slot "${misplacedPreauth.kind}": only a "must sign off" slot can accept a standing pre-authorization`
+        : misplacedPreauth.fill?.capability && CONSENT_REFUSED_CAPABILITIES.includes(misplacedPreauth.fill.capability)
+          ? `slot "${misplacedPreauth.kind}": a standing pre-authorization never stands in for the engineering sign-off`
+          : misplacedPreauth.records_examination === true
+            ? `slot "${misplacedPreauth.kind}": an assurance check records what its reviewer examined on each request — it cannot accept a standing pre-authorization`
+            : `slot "${misplacedPreauth.kind}": the requester's own acceptance cannot be pre-authorized`;
   }
   // GAP-109 / DEC-90 ruling (1) for DF-P7: silence never stands in for the
   // engineering sign-off — the highest class of review — so a table that

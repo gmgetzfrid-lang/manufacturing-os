@@ -893,7 +893,8 @@
         "intelligence GAP-312 follow-up (hand-off from DF-P18, assigned at its merge, 2026-10-22, DEC-31): a unique index on ticket_equipment (ticket_id, normalized tag) closing the race between two simultaneous adds — inventory-first (count existing duplicates; never delete a row a person entered; refuse the paste and say the count while duplicates exist); the route's pre-insert check (already_listed) is unchanged",
         "drafting-flow GAP-101 acceptance 3, the deliverable limb (assigned at the DF-P19 merge, 2026-10-22, DEC-31; acceptances 1, 2, 4 and 5 and the ticket / audit-trail half of 3 have landed): the like-in-kind declaration rendered attributed on the issued deliverable (beside the request reference the deliverable stamp already carries, DF-P10), or recorded why it cannot be, with owner",
         "drafting-flow DF-P19 follow-up (the final review's nit, assigned at the DF-P19 merge, 2026-10-22, DEC-31): Admin → Permissions confirm_rule sends the policy version it was read at, and the route answers 409 on a mismatch as save does, so a stale copy ordinal after another save reordered the copies cannot confirm a copy at a position the Admin did not click",
-        "drafting-flow DF-P20 follow-ups (assigned at the DF-P20 merge, 2026-10-22, DEC-31): (a) the roster-ledger reconciliation copies a lost examination record from the transition audit row's details.reviewRoster.examination into each slot event's details.examination; (b) the route returns the ledger-unwritten state as its own response flag so a hold or library warning cannot displace the panel's 'could not be read yet'; (c) RoutingControlSection assuranceOptInFor decides by examinationOptInAllowed alone, so a stored opt-in on a requester-identity slot with roles survives the editor's next save; (d) the workflow route answers 400, not 500, to a non-string comment (body.comment?.trim())"
+        "drafting-flow DF-P20 follow-ups (assigned at the DF-P20 merge, 2026-10-22, DEC-31): (a) the roster-ledger reconciliation copies a lost examination record from the transition audit row's details.reviewRoster.examination into each slot event's details.examination; (b) the route returns the ledger-unwritten state as its own response flag so a hold or library warning cannot displace the panel's 'could not be read yet'; (c) RoutingControlSection assuranceOptInFor decides by examinationOptInAllowed alone, so a stored opt-in on a requester-identity slot with roles survives the editor's next save; (d) the workflow route answers 400, not 500, to a non-string comment (body.comment?.trim())",
+        "drafting-flow DF-P22 follow-up (assigned at the DF-P22 merge, 2026-10-22, DEC-31): the submission's fan-out (computed before a standing pre-authorization applies) still tells the grantor whose record then signs off their slot; retire that one 'review opened' alert as rosterReleased does for a partial sign-off, so the bell is exact"
       ],
       "files": [
         "app/api/tickets/workflow-action/route.ts",
@@ -937,6 +938,30 @@
      ],
      "sequencingNotes": [
       "Added by the integrator at the DF-P20 merge, 2026-10-22 (DEC-31): no package held GAP-102's examination-scope data model. Run after DF-P23."
+     ]
+    },
+    {
+     "name": "DF-P25 EXCEPTION-ONLY REVIEW AND PRE-AUTHORIZATION FOLLOW-UPS — a configured slot asks its reviewer only when the request carries a recorded exception, re-opened before issue if one is recorded later",
+     "findings": [
+      "drafting-flow GAP-109 mechanism 3 (assigned at the DF-P22 merge, 2026-10-22, DEC-31): exception-only review — a slot opt-in (like accepts_preauthorization) satisfied by a recorded system act naming the rule when no recorded exception exists, AND a re-open limb: when an exception is recorded later (a source-drift acknowledgement, an override), the slot is re-opened for its reviewer before anything issues (the route's issuing path plus a ticket_review_slot_events 'reopened' event — 20261242's event CHECK, one DEC-30 migration). Never on the engineered lane; default off; unconfigured workspaces unchanged (pin)",
+      "drafting-flow DF-P22 follow-ups (the final review's nits and the merge-time residual, assigned at the DF-P22 merge, 2026-10-22, DEC-31): (a) a membership status changed directly on org_members with no audit row is not seen by a pre-authorization's continuity check — record every org_members status change (a trigger writing the MEMBER_* audit row, or a status_changed_at column) so continuity rests on a stored fact; (b) lib/ticketSla.ts the escalation claim row's recipients names resolved readers, not people told — record 'told' on a refused audit insert, or document the column; (c) the escalation pass logs when no bell row landed (inapp.sent === 0), as runTicketSlaScan does; (d) readGrantorMemberships computes its history window from records still in force (or per grantor), so a long-lived workspace's Admin list never 503s on history volume"
+     ],
+     "files": [
+      "lib/routingControl.ts",
+      "lib/ticketRoster.ts",
+      "app/api/tickets/workflow-action/route.ts (the issuing path only)",
+      "lib/ticketSla.ts",
+      "lib/ticketPreauthorization.ts",
+      "supabase/migrations/** (one DEC-30 file)",
+      "tests"
+     ],
+     "migrationsLikely": 1,
+     "dependsOn": [
+      "drafting-flow DF-P22 merged",
+      "drafting-flow DF-P23 merged (the workflow route's next holder)"
+     ],
+     "sequencingNotes": [
+      "Added by the integrator at the DF-P22 merge, 2026-10-22 (DEC-31). Run after DF-P23; may run beside DF-P24 only if their route hunks do not overlap — otherwise after it."
      ]
     }
   ],

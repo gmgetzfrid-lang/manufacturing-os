@@ -1172,6 +1172,14 @@ export interface TicketReviewSlot {
    *  only. Absent on every other slot, so a roster opened from a table
    *  without the opt-in is stored exactly as before. */
   recordsExamination?: true;
+  /** GAP-109 mechanism 2 (DF-P22): true when the routing slot carries the
+   *  controller's standing pre-authorization opt-in (lib/routingControl.ts
+   *  accepts_preauthorization) — copied when the roster opens, on a blocking
+   *  slot only. Absent on every other slot (today's roster, byte for byte). */
+  acceptsPreauthorization?: true;
+  /** DF-P22: set when the slot was satisfied by a standing
+   *  pre-authorization (`via: "preauthorization"`) — the record's id. */
+  preauthorizationId?: string | null;
   /** True when the slot's own fill resolved to nobody and the management
    *  tier was rostered instead (a stop never resolves to nobody). */
   fallback: boolean;
@@ -1188,7 +1196,7 @@ export interface TicketReviewSlot {
   signatureId?: string | null;
   /** "consent" (GAP-109, DF-P7): satisfied by a consent window that closed
    *  with no objection — a recorded system act, no signer, no signature. */
-  via?: "primary" | "alternate" | "override" | "consent" | null;
+  via?: "primary" | "alternate" | "override" | "consent" | "preauthorization" | null;
 }
 
 /** GAP-109 / GAP-113 (DF-P7): what the roster decided about its consent

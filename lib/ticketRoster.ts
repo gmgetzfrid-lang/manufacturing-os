@@ -400,6 +400,11 @@ export function openRoster(input: {
       // GAP-102 (DF-P20 fix pass 2): the controller's assurance opt-in, frozen
       // with the roster; absent, the slot is stored exactly as before.
       ...(s.mode === "blocking" && s.records_examination === true ? { recordsExamination: true as const } : {}),
+      // GAP-109 mechanism 2 (DF-P22): the controller's standing
+      // pre-authorization opt-in, frozen with the roster (never on an
+      // assurance slot — parseRoutingControl drops it there); absent, the
+      // slot is stored exactly as before.
+      ...(s.mode === "blocking" && s.accepts_preauthorization === true && s.records_examination !== true ? { acceptsPreauthorization: true as const } : {}),
       fallback,
       ...((s.fill.capability && ENGINEERING_CAPABILITIES.includes(s.fill.capability)) || s.kind === gateKind ? { engineering: true } : {}),
       status: slotBlocks(s) ? "open" : "told",
