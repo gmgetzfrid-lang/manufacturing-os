@@ -2,10 +2,10 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { notifyBatchWithReason } from "@/lib/inAppNotifications";
-import { WorkflowEngine, ticketResource, decisiveGrants, currentRoster, engineerPickQuestionApplies, slotSignPlan, engineeringGateRequired, ISSUING_APPROVALS, ISSUE_MARK_ACTIONS, ROSTERLESS_APPROVALS, ROUTED_NO_ROSTER_REASON, routedNoRosterReason, ISSUE_AS_IS_APPROVALS, issueReadyFor } from "@/lib/workflow";
+import { WorkflowEngine, ticketResource, decisiveGrants, currentRoster, slotSignPlan, engineeringGateRequired, ISSUING_APPROVALS, ISSUE_MARK_ACTIONS, ISSUE_AS_IS_APPROVALS, issueReadyFor } from "@/lib/workflow";
 import { loadCapabilityPolicyStrict, policyAllows } from "@/lib/capabilityPolicy";
-import { engineerPickCap, engineerPickRefusal, engineerCandidates } from "@/lib/ticketPage";
-import { effectiveRoutingForTicket, ticketReviewRouting, routingForWorkClass, ROSTER_LEDGER_NOT_WRITTEN } from "@/lib/routingControl";
+import { engineerPickCap, engineerPickRefusal } from "@/lib/ticketPage";
+import { effectiveRoutingForTicket, routingForWorkClass, ROSTER_LEDGER_NOT_WRITTEN } from "@/lib/routingControl";
 import {
   hashStoredFilesBounded, draftsToHashOnApproval, HASH_LIMITS, filesUnderReview, openRoster, applySignPlan, rosterCompletion, rosterBinding,
   signatureRefusal, writeRosterLedger, isMissingRosterLedger, type FileHash, type SignatureRow,
@@ -16,7 +16,6 @@ import { isSafeStorageKey } from "@/lib/storageKey";
 import { ticketFolder, underFolder, restoredFromNumber, restoreRenumberingConfirmed, renumberedRequestListsKey } from "@/lib/ticketFilePrefix";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { plainMentions, wrapEmailBody } from "@/lib/emailRender";
-import { flaggedRequestTypes } from "@/lib/requestTypes";
 import {
   computeTransition,
   classifyTransitionNotification,
@@ -28,8 +27,8 @@ import {
 } from "@/lib/ticketTransitions";
 import type { Role, TicketAttachment, TicketHistoryEntry, TicketOutcome, TicketReviewRoster } from "@/types/schema";
 import { TICKET_INTENT_TTL_MS } from "@/lib/intents";
-import { parseSourceDocument, parseSourceDocuments, revDrift } from "@/lib/sourceDocRef";
-import { reviewClassOptions, resolveReviewClass, withMinorCorrectionClass, minorCorrectionClassOf, hasReviewModelColumns, isDeclaredLikeInKind, engineerPickAvailable as pickAvailableFrom, declarationSignatureStands, type DeclarationSignatureRow } from "@/lib/reviewModel";
+import { parseSourceDocument, parseSourceDocuments } from "@/lib/sourceDocRef";
+import { reviewClassOptions, resolveReviewClass, withMinorCorrectionClass, minorCorrectionClassOf, hasReviewModelColumns } from "@/lib/reviewModel";
 import { unitOptionsFor, resolveUnit, unitListReadFailure } from "@/lib/ticketCreate";
 import { heldRoles } from "@/lib/roleHeld";
 import { noteDeliverableNotInRegister, noteDeliverableNotInLibrary, noteDeliverableNotInAnyRegister, deliverableStateOf, latestFinalAttachment } from "@/lib/ticketHandback";
@@ -44,6 +43,9 @@ import { preauthEligibleSlots } from "@/lib/ticketPreauthorization";
 import { applyStandingPreauthorizations } from "@/lib/ticketPreauthorizationApply";
 import { slaNoticeSurvivesTransition } from "@/lib/ticketSla";
 import { examinationForAct, examinationAuditFields, type ExaminationOnAct } from "@/lib/assuranceExamination";
+// GAP-102 acceptance 4 (drafting-flow DF-P24): the examination-scope issue gate.
+import { issueScopeGate } from "@/lib/examinationScopeGate";
+import { workflowEngineContext, rosterlessRoutedRefusal, draftingTypeFlags, DECLARATION_DECIDES } from "@/lib/workflowAuthority";
 import { ticketReadScope } from "@/lib/ticketReadScope";
 import { offerableLibraries, libraryLabelForTicket, libraryChoiceFromRow, LIBRARY_CHOICE_COLUMNS, UNNAMED_TARGET_LIBRARY } from "@/lib/ticketLibrary";
 import { LIBRARY_RUNG_COLUMNS } from "@/lib/libraryAccess";
@@ -152,13 +154,9 @@ const INTENT_BRIDGE_CHUNK = 100;
  *  names the drafts the approval was given on. */
 const APPROVING_ACTIONS: ReadonlySet<string> = new Set(["approve_draft_ifc", "engineer_approve_final", "approve_minor_correction", "override_engineer_final"]);
 
-/** DF-P6 fix pass 4 (review, minor 3): the actions a like-in-kind
- *  declaration decides — whether the request may issue without an
- *  engineer (the issuing approvals, and a roster sign-off that may complete
- *  the review), and whether a scope review or the late flag binds the
- *  requirement. With the declaration's signature unreadable they answer 503,
- *  never a guess. */
-const DECLARATION_DECIDES: ReadonlySet<string> = new Set([...ISSUING_APPROVALS, "sign_slot", "request_eng_review", "flag_engineering"]);
+/** DF-P6 fix pass 4 (review, minor 3): DECLARATION_DECIDES — the actions a
+ *  like-in-kind declaration decides — lives in lib/workflowAuthority.ts
+ *  (DF-P24 merge-time fix pass: shared with the waiver authority). */
 
 /** SM-12: a member's name as the app shows it — display name, else the
  *  local part of their email; null when the membership row carries neither. */
@@ -502,6 +500,13 @@ export async function POST(req: NextRequest) {
   // lists (seeded empty). null when it could not be read.
   let draftingCfg: Record<string, unknown> | null = null;
   let draftingCfgRead = false;
+  // DF-P24 merge-time fix pass 2: the examination-scope gate's copy of the
+  // row, taken BEFORE the request-type flags are computed — a malformed
+  // `requestTypes` (which makes that reading throw) no longer hides the
+  // workspace's examination-data requirements from the gate (the consent
+  // close reads the row the same way). Every other reader keeps
+  // `draftingCfg` exactly as before.
+  let scopeDraftingCfg: Record<string, unknown> | null = null;
   try {
     const { data: cfgRow, error: cfgRowErr } = await supabaseAdmin
       .from("org_configurations")
@@ -510,12 +515,12 @@ export async function POST(req: NextRequest) {
       .eq("key", "drafting")
       .maybeSingle();
     if (!cfgRowErr) draftingCfgRead = true;
-    const opts = ((cfgRow?.data as { requestTypes?: { options?: Array<{ value?: string; closeWithoutReview?: boolean }> } } | null)
-      ?.requestTypes?.options) ?? [];
-    const flagged = opts.filter((o) => o.closeWithoutReview === true).map((o) => String(o.value ?? "")).filter(Boolean);
-    if (flagged.length > 0) closeWithoutReviewTypes = flagged;
+    scopeDraftingCfg = (cfgRow?.data as Record<string, unknown> | null) ?? null;
     // DRAFT-2: "engineering first" is the same kind of type property.
-    engineeringFirstTypes = flaggedRequestTypes(cfgRow?.data, "engineeringFirst");
+    // (lib/workflowAuthority.ts draftingTypeFlags — shared with the waiver
+    // authority, DF-P24 merge-time fix pass; it throws where this reading
+    // always threw, so the defaults stand exactly as before.)
+    ({ closeWithoutReviewTypes, engineeringFirstTypes } = draftingTypeFlags(cfgRow?.data));
     draftingCfg = (cfgRow?.data as Record<string, unknown> | null) ?? null;
   } catch { /* default stands */ }
 
@@ -538,111 +543,30 @@ export async function POST(req: NextRequest) {
   }
   const capPolicy = loadedPolicy.policy;
   const policyVersion = loadedPolicy.version;
-  // DEC-16: the requester's CURRENT collection rides beside the snapshot, so
-  // a demotion after filing cannot leave the engineer gate bypassed. A
-  // requester who is no longer an active member is known to hold nothing.
-  let requesterRoles: string[] = [];
-  if (ticket.requesterId) {
-    const { data: reqMember } = await supabaseAdmin
-      .from("org_members").select("role, roles")
-      .eq("org_id", ticket.orgId).eq("uid", ticket.requesterId).eq("status", "active").maybeSingle();
-    requesterRoles = heldRoles(reqMember as { role?: unknown; roles?: unknown } | null);
-  }
-  // DF-P6 fix pass (review, minor 11): a declaration stands only on its
-  // e-signature. A row that says "declared" (engineering_required false) but
-  // whose signature is not on record — a restored or hand-written row; the
-  // insert guard exempts the service role and a backup carries no
-  // e_signatures — is evaluated as UNDECLARED: engineering is required.
-  // Read only for a declared ticket.
-  // DF-P6 fix pass 4 (review, minor 3): a read that FAILS is not evidence
-  // the signature is missing. It never changes what the engine and
-  // computeTransition see (an in-memory "required" would let a
-  // request_eng_review write engineering_required = true for good, losing
-  // the declaration over a read error); instead every action the
-  // declaration decides — an issuing approval, request_eng_review,
-  // flag_engineering — answers 503 "try again", nothing written. Only a
-  // signature KNOWN not to stand ("missing") is evaluated as undeclared.
-  let declarationUnverified: "missing" | "unchecked" | null = null;
-  if (ticket.engineeringRequired === false && isDeclaredLikeInKind(ticket)) {
-    const sigId = ticket.likeInKindSignatureId ?? "";
-    const { data: dsig, error: dsigErr } = UUID_RE.test(sigId)
-      ? await supabaseAdmin.from("e_signatures").select("id, org_id, resource_type, resource_id, signer_user_id").eq("id", sigId).maybeSingle()
-      : { data: null, error: null };
-    // The request page's card asks the same question (declarationSignatureStands).
-    if (dsigErr) declarationUnverified = "unchecked";
-    else if (!declarationSignatureStands(dsig as DeclarationSignatureRow | null, { id: body.ticketId, orgId: ticket.orgId, likeInKindDeclaredBy: ticket.likeInKindDeclaredBy })) declarationUnverified = "missing";
-    if (declarationUnverified === "missing") ticket.engineeringRequired = true;
-  }
-  if (declarationUnverified === "unchecked" && DECLARATION_DECIDES.has(body.actionType)) {
+  // DEC-16 (the requester's current roles), DF-P6 fix passes (the
+  // like-in-kind declaration's signature — a read that fails answers 503 for
+  // every action the declaration decides; the requester's engineer pick) and
+  // HAND-7 done-when 3 / DF-P18 (the source documents' drift, read for an
+  // issuing approval or a sign-off only, BEFORE getActions so the actions
+  // carry `requiresSourceDriftAck`): the engine's context — DF-P24
+  // merge-time fix pass: built by ONE shared helper
+  // (lib/workflowAuthority.ts workflowEngineContext, moved here verbatim:
+  // the same reads in the same order) that /api/tickets/examination-scope's
+  // waiver authority also uses, so the two always agree on who may issue.
+  const builtCtx = await workflowEngineContext(supabaseAdmin, {
+    ticket, ticketId: body.ticketId, callerId: caller.id, callerRole, callerRoles, capPolicy,
+    activeMemberCount, sodActive, engineeringFirstTypes, closeWithoutReviewTypes,
+    declarationDecides: DECLARATION_DECIDES.has(body.actionType),
+    readSourceDrift: ISSUING_APPROVALS.has(body.actionType) || body.actionType === "sign_slot",
+  });
+  if (builtCtx.kind === "declaration_unreadable") {
     console.error(`[workflow-action] declaration signature unreadable for ticket ${body.ticketId}`);
     return NextResponse.json(
       { error: "This request's like-in-kind declaration could not be checked, so the action was not applied (the declaration decides whether an engineer must sign). Try again in a moment.", code: "declaration_unreadable" },
       { status: 503 },
     );
   }
-  // DF-P6 fix pass (review, issues 1 and 2): can the requester pick an
-  // engineer at all? Read only where it decides something
-  // (engineerPickQuestionApplies — the caller is the requester and holds
-  // ticket.manage, the request requires engineering review, it is in serial
-  // review; the request page asks the same question). A read that fails
-  // leaves it unknown: the strict reading (someone can be picked).
-  let engineerPickAvailable: boolean | undefined;
-  if (engineerPickQuestionApplies(ticket, caller.id, callerRole, callerRoles, capPolicy, requesterRoles)) {
-    const read = await loadPickerMembers(ticket.orgId, supabaseAdmin);
-    if (read.ok) {
-      const cands = engineerCandidates(read.rows, capPolicy, "ticket.final_approve", ticketResource(ticket)).map((c) => c.uid);
-      engineerPickAvailable = pickAvailableFrom(cands, ticket, caller.id, sodActive);
-    }
-  }
-  // ── HAND-7 done-when 3 (DF-P6 seam; DF-P18 binds it) ─────────────────────
-  // An issuing approval (and a roster sign-off) reads each source document's
-  // live revision (service role, this org) and compares it with the version
-  // the request captured (lib/sourceDocRef.ts revDrift — version ids when
-  // both carry one), BEFORE getActions: the labels go into the engine's
-  // context (`sourceDrift`), so exactly the actions the request page shows
-  // with "approving asks you to acknowledge it" carry
-  // `requiresSourceDriftAck` here too. Read only for those action types on a
-  // request with source documents — every other action reads nothing. A
-  // failed read is tried once more (DF-P18 fix pass 2: a transient error
-  // should not decide anything) before the source counts as unchecked.
-  const driftLabels: string[] = [];
-  let sourceDriftUnchecked = false;
-  const driftAsked = ISSUING_APPROVALS.has(body.actionType) || body.actionType === "sign_slot";
-  const driftRefs = driftAsked ? parseSourceDocuments(ticket.metadata).filter((r) => UUID_RE.test(r.id)) : [];
-  if (driftRefs.length > 0) {
-    let liveDocs: unknown[] | null = null;
-    let liveErr: unknown = null;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const read = await supabaseAdmin
-        .from("documents").select("id, rev, current_version_id, document_number")
-        .eq("org_id", ticket.orgId).in("id", driftRefs.slice(0, INTENT_BRIDGE_CHUNK).map((r) => r.id));
-      liveDocs = (read.data ?? null) as unknown[] | null;
-      liveErr = read.error;
-      if (!liveErr) break;
-    }
-    if (liveErr) {
-      sourceDriftUnchecked = true;
-    } else {
-      const live = new Map(((liveDocs ?? []) as Array<{ id: string; rev: string | null; current_version_id: string | null; document_number: string | null }>).map((d) => [d.id, d]));
-      for (const ref of driftRefs) {
-        const d = live.get(ref.id);
-        if (!d) continue;
-        if (revDrift({ versionId: ref.versionId, rev: ref.rev }, { versionId: d.current_version_id, rev: d.rev }) === "drifted") {
-          driftLabels.push(`${ref.documentNumber || d.document_number || "a source document"}${ref.rev ? ` raised on Rev ${ref.rev}` : ""}, now Rev ${d.rev ?? "—"}`);
-        }
-      }
-    }
-  }
-  const engineCtx = {
-    ...(engineerPickAvailable === undefined ? {} : { engineerPickAvailable }),
-    ...(driftLabels.length > 0 ? { sourceDrift: driftLabels } : {}),
-    userRoles: callerRoles,
-    // (fix pass 2: already fail-closed above when the count could not be read)
-    activeMemberCount: activeMemberCount ?? 0,
-    engineeringFirstTypes,
-    closeWithoutReviewTypes,
-    requesterRoles,
-  };
+  const { engineCtx, requesterRoles, declarationUnverified, driftLabels, sourceDriftUnchecked } = builtCtx;
   const allowed = WorkflowEngine.getActions(ticket, callerRole, caller.id, capPolicy, engineCtx);
   // TIER-7 (DF-P18): on a request of a work class the workspace flags
   // "minor correction", the minor-correction approval names its class (the
@@ -680,25 +604,10 @@ export async function POST(req: NextRequest) {
   // (DEC-36: fail closed). Refused before anything is written; the way
   // forward is a revision, whose resubmission opens the roster. Read only
   // for these approvals on such a ticket; a read that fails is a 503.
-  if (ROSTERLESS_APPROVALS.has(action.action) && ticket.libraryId && !currentRoster(ticket)) {
-    let reviewRouting: Awaited<ReturnType<typeof ticketReviewRouting>>;
-    try {
-      const { runWithServerClient } = await import("@/lib/serverClientScope");
-      reviewRouting = await runWithServerClient(supabaseAdmin, () => ticketReviewRouting({
-        id: body.ticketId, orgId: ticket.orgId, libraryId: ticket.libraryId, sourceDocumentId: parseSourceDocument(ticket.metadata)?.id ?? null,
-      }));
-    } catch (e) {
-      console.error(`[workflow-action] routing unreadable for ticket ${body.ticketId}:`, (e as Error)?.message ?? e);
-      return NextResponse.json({ error: "This request's review routing could not be read, so the approval was not applied. Try again in a moment.", code: "routing_unreadable" }, { status: 503 });
-    }
-    if (reviewRouting.routed) {
-      // DF-P5 fix pass 4: a table that cannot be used is named — a revision
-      // would be refused too (routing_invalid), so the way forward differs.
-      return reviewRouting.routing.state === "invalid"
-        ? NextResponse.json({ error: routedNoRosterReason(reviewRouting.routing), code: "routing_invalid" }, { status: 409 })
-        : NextResponse.json({ error: ROUTED_NO_ROSTER_REASON, code: "routing_needs_roster" }, { status: 409 });
-    }
-  }
+  // (lib/workflowAuthority.ts rosterlessRoutedRefusal — shared with the
+  // waiver authority, DF-P24 merge-time fix pass.)
+  const routedRefusal = await rosterlessRoutedRefusal(supabaseAdmin, ticket, body.ticketId, action.action);
+  if (routedRefusal) return NextResponse.json({ error: routedRefusal.error, code: routedRefusal.code }, { status: routedRefusal.status });
   // FRIC-5 (DF-P5 fix pass 3): an approval that would issue the draft AS-IS
   // (the drafter's mark) is taken only from an approver who confirmed it —
   // the mark may have been made after their page loaded, and the confirm is
@@ -1102,6 +1011,52 @@ export async function POST(req: NextRequest) {
       }
       sourceDrift = { labels: driftLabels, acknowledged: true };
     }
+  }
+
+  // ── GAP-102 acceptance 4 (DF-P24): the examination-scope issue gate ──────
+  // An issuing approval, or a roster sign-off that would complete the review
+  // (computed here as the sign-off block below computes it), on a request a
+  // configured requirement applies to (its work class and/or its library —
+  // lib/examinationScope.ts) reads the request's examination data and refuses
+  // (409 examination_scope_missing, nothing written) when a value the
+  // requirement names is missing — only for a request filed at or after the
+  // requirement's `since` and not covered by a recorded waiver. A request
+  // filed before it issues with what is missing said (`examinationScopeWarning`).
+  // A workspace that configures nothing reads nothing and records nothing
+  // here; a configuration that could not be read is no configuration (today's
+  // path — DEC-90 ruling (6) for DF-P24) except that the issuing row then
+  // says `examinationScope: { configUnchecked: true }` (the route cannot
+  // tell whether that workspace configured anything), as is a database
+  // without 20261266. The row unreadable refuses (503) only where a
+  // requirement BINDS the request (lib/examinationScope.ts scopeGateOutcome)
+  // — a request filed before every requirement issues, the row saying it was
+  // unchecked. Second fix pass: the whole decision is one call
+  // (lib/examinationScopeGate.ts issueScopeGate), so the regression sweep
+  // can run the route without it.
+  let examinationScopeAudit: Record<string, unknown> | null = null;
+  let examinationScopeWarningText: string | null = null;
+  const scopeDecision = await issueScopeGate({
+    action: action.action, ticket, draftingCfg: scopeDraftingCfg, draftingCfgRead, callerId: caller.id, sodActive,
+    readRow: () => supabaseAdmin.from("ticket_examination_scopes").select("field_values, waiver").eq("ticket_id", body.ticketId).maybeSingle(),
+  });
+  if (scopeDecision.kind === "config_unchecked") examinationScopeAudit = { configUnchecked: true };
+  if (scopeDecision.kind === "unreadable") {
+    console.error(`[workflow-action] examination data unreadable for ticket ${body.ticketId}: ${scopeDecision.error}`);
+    const unreadable = "This request's examination data could not be checked, so the approval was not applied. Try again in a moment.";
+    if (action.action === "sign_slot" && body.dryRun !== true) {
+      await recordRefusedSignOff({ signatureId: body.signatureId, ticketId: body.ticketId, orgId: ticket.orgId, caller: { id: caller.id, email: callerEmail, role: callerRole }, status: 503, reason: unreadable, code: "examination_scope_unreadable", rosterId: currentRoster(ticket)?.id ?? null });
+    }
+    return NextResponse.json({ error: unreadable, code: "examination_scope_unreadable" }, { status: 503 });
+  }
+  if (scopeDecision.kind === "blocked") {
+    if (action.action === "sign_slot" && body.dryRun !== true) {
+      await recordRefusedSignOff({ signatureId: body.signatureId, ticketId: body.ticketId, orgId: ticket.orgId, caller: { id: caller.id, email: callerEmail, role: callerRole }, status: 409, reason: scopeDecision.refusal, code: "examination_scope_missing", rosterId: currentRoster(ticket)?.id ?? null });
+    }
+    return NextResponse.json({ error: scopeDecision.refusal, code: "examination_scope_missing", missing: scopeDecision.blocking.map((b) => ({ field: b.key, label: b.label })) }, { status: 409 });
+  }
+  if (scopeDecision.kind === "pass") {
+    examinationScopeAudit = scopeDecision.audit;
+    examinationScopeWarningText = scopeDecision.warning;
   }
 
   // ── GAP-103 / GAP-112 (DF-P5 ROSTER) ───────────────────────────────────
@@ -1677,6 +1632,9 @@ export async function POST(req: NextRequest) {
       // that could not be read says so (the base's key, restored).
       // (Only an issuing approval or a sign-off ever reads the documents.)
       ...(sourceDriftUnchecked ? { sourceDriftUnchecked: true } : {}),
+      // GAP-102 acceptance 4 (DF-P24): the examination data an issue was
+      // checked against (only where a requirement applies — no key otherwise).
+      ...(examinationScopeAudit ? { examinationScope: examinationScopeAudit } : {}),
       // DF-P6 fix pass (minor 11): a declaration whose e-signature is not on
       // record (or could not be read) was evaluated as undeclared.
       ...(declarationUnverified ? { declarationUnverified } : {}),
@@ -2413,6 +2371,7 @@ export async function POST(req: NextRequest) {
     ...(reviewClassNotStored && !holdOutcome && !libraryNotStored && !rosterWarning ? { warning: "The request moved on, but its work or code class could not be recorded yet (database update 20261250 is not applied)." } : {}),
     ...(consentWarning ? { consentWarning } : {}),
     ...(rosterLedgerNotWritten ? { rosterLedgerNotWritten: true } : {}),
+    ...(examinationScopeWarningText ? { examinationScopeWarning: examinationScopeWarningText } : {}),
     ...(consentWarning && !holdOutcome && !libraryNotStored && !rosterWarning && !reviewClassNotStored ? { warning: consentWarning } : {}),
   });
 }

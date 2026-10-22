@@ -38,6 +38,9 @@ import {
 } from '@/lib/slaDefaultsEditor';
 import { OUTCOME_LABEL } from '@/lib/ticketOutcome';
 import ReviewClassesSection from '@/components/requests/ReviewClassesSection';
+// GAP-102 acceptance 4 (drafting-flow DF-P24): the workspace's examination data and what requires it.
+import ExaminationScopeSection, { editorScopeProblems } from '@/components/requests/ExaminationScopeSection';
+import { examinationScopeHasRequirements, EXAMINATION_SCOPE_KEY } from '@/lib/examinationScope';
 // FRIC-1 / GAP-106 (drafting-flow DF-P22): the escalation tier above the queue.
 import SlaEscalationSection from '@/components/requests/SlaEscalationSection';
 import {
@@ -145,19 +148,47 @@ export default function DraftingConfigPage() {
 
   const handleSave = async () => {
     if (!activeOrgId || !settings) return;
+    // DF-P24 merge-time fix pass: examination data the parser would drop
+    // (a bad, blank or duplicate key; a requirement on such data) is never
+    // saved — the section shows each problem at its row. Settings without
+    // examination data have none (today's save).
+    const scopeProblems = editorScopeProblems(settings);
+    if (scopeProblems.length > 0) {
+      await appAlert({ message: `Not saved — fix the examination data first (${scopeProblems.length === 1 ? "one entry" : `${scopeProblems.length} entries`}, shown in the Examination Data section): ${scopeProblems[0].message}`, tone: "danger" });
+      return;
+    }
     setSaving(true);
     try {
       // GAP-13 / GAP-107 (DF-P14): the reasons for ending a request are
       // cleaned on the way out (a blank one dropped, a new one given its id);
       // settings without them are written exactly as before (the same object).
-      const data = withNormalizedOutcomeReasons(settings);
+      // DF-P24 (second fix pass): ONE save. When a requirement starts to bind
+      // (`since`) is decided by the database on that write (20261266's stamp
+      // trigger — an unchanged requirement keeps its stored time, any other
+      // gets the database's clock), never by this page; settings carrying a
+      // requirement are read back to show those times. Settings without one
+      // are written exactly as before (one upsert, nothing re-read).
+      let data = withNormalizedOutcomeReasons(settings);
       const { error } = await supabase
         .from('org_configurations')
         .upsert({ org_id: activeOrgId, key: 'drafting', data }, { onConflict: 'org_id,key' });
       if (error) throw error;
+      let unstamped = false;
+      if (examinationScopeHasRequirements(data)) {
+        const { data: stored, error: readErr } = await supabase
+          .from('org_configurations').select('data').eq('org_id', activeOrgId).eq('key', 'drafting').maybeSingle();
+        const storedScope = readErr ? undefined : ((stored?.data ?? null) as Record<string, unknown> | null)?.[EXAMINATION_SCOPE_KEY];
+        if (storedScope !== undefined) data = { ...data, [EXAMINATION_SCOPE_KEY]: storedScope } as typeof data;
+        // Before 20261266 is applied nothing stamps a requirement: it binds
+        // nothing (each request missing the data shows a warning) — said.
+        const reqs = (storedScope as { requirements?: Array<{ since?: unknown }> } | undefined)?.requirements;
+        unstamped = !readErr && Array.isArray(reqs) && reqs.some((r) => !r || typeof r.since !== 'string' || !r.since);
+      }
       if (data !== settings) { setSettings(data); setHiddenReasons(0); }
       setSavedRequestTypes(settings.requestTypes?.options ?? []);
-      await appAlert("Configuration saved successfully.");
+      await appAlert(unstamped
+        ? { message: "Configuration saved — but an examination-data requirement has no start time yet (database update 20261266 is not applied), so it refuses nothing: a request missing the data shows a warning.", tone: "danger" }
+        : "Configuration saved successfully.");
     } catch (e) {
       console.error("Save failed:", e);
       // AUTHZ-10: the database's own reason, never a generic line — a refusal
@@ -339,6 +370,9 @@ export default function DraftingConfigPage() {
 
           {/* SECTION: WORK / CODE CLASSES — the workspace's own review vocabulary (GAP-101 / TIER-4, DF-P6) */}
           <ReviewClassesSection settings={settings} onChange={(patch) => setSettings({ ...settings, ...patch })} />
+
+          {/* SECTION: EXAMINATION DATA — what a package must carry before it issues (GAP-102, DF-P24) */}
+          <ExaminationScopeSection settings={settings} orgId={activeOrgId} onChange={(patch) => setSettings({ ...settings, ...patch })} />
 
           {/* SECTION: WAYS A REQUEST ENDS — the workspace's own reasons (GAP-13 / GAP-107, DF-P14) */}
           <OutcomeReasonsSection

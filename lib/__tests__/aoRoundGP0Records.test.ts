@@ -230,6 +230,11 @@ describe("ALOG-1 done-when 2 — the record's census of the loaders' callers is 
     // asks whether a non-participant runs the assignment queue (ticket.assign);
     // an unreadable policy refuses (503)
     "app/api/tickets/equipment/route.ts",
+    // strict (drafting-flow DF-P24, GAP-102): the examination-data route asks
+    // whether a non-participant runs the assignment queue (ticket.assign) and
+    // whether a waiver's author holds the issue authority now; an unreadable
+    // policy refuses (503)
+    "app/api/tickets/examination-scope/route.ts",
   ]);
 
   it("every caller of loadCapabilityPolicy / …Entry / …Strict outside the module is one the record lists", () => {

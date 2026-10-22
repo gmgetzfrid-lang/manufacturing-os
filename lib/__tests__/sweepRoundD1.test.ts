@@ -41,10 +41,15 @@ describe("DEC-16 — engineerApprovalRequired fails closed on either value", () 
     expect(stillManager).toContain("approve_draft_ifc");
   });
   it("the route looks the requester's current collection up; the page passes it; the rule is documented", () => {
-    const r = src("app/api/tickets/workflow-action/route.ts");
+    // DF-P24 merge-time fix pass: the route's engine context is built by
+    // lib/workflowAuthority.ts workflowEngineContext (moved verbatim; shared
+    // with the examination-data waiver's authority) — the route evaluates
+    // with what it returns.
+    const r = src("lib/workflowAuthority.ts");
     expect(r).toContain('.eq("org_id", ticket.orgId).eq("uid", ticket.requesterId).eq("status", "active").maybeSingle();');
     expect(r).toContain("requesterRoles = heldRoles(reqMember as { role?: unknown; roles?: unknown } | null);");
-    expect(r).toMatch(/closeWithoutReviewTypes,\s*\n\s*requesterRoles,\s*\n\s*\};\s*\n\s*const allowed = WorkflowEngine\.getActions\(ticket, callerRole, caller\.id, capPolicy, engineCtx\);/);
+    expect(r).toMatch(/closeWithoutReviewTypes,\s*\n\s*requesterRoles,\s*\n\s*\};\s*\n\s*return \{ kind: "ok", engineCtx, requesterRoles,/);
+    expect(src("app/api/tickets/workflow-action/route.ts")).toMatch(/const \{ engineCtx, requesterRoles, declarationUnverified, driftLabels, sourceDriftUnchecked \} = builtCtx;\s*\n\s*const allowed = WorkflowEngine\.getActions\(ticket, callerRole, caller\.id, capPolicy, engineCtx\);/);
     const p = src("app/(protected)/requests/[id]/page.tsx");
     expect(p).toContain("const [requesterRoles, setRequesterRoles] = useState<string[] | null>(null);");
     expect(p).toMatch(/closeWithoutReviewTypes,\s*\n\s*requesterRoles,\s*\n\s*\}\);/);

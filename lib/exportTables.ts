@@ -110,6 +110,11 @@ export const ORG_SCOPED_TABLES = [
   // DF-P22 merge, 2026-10-22, DEC-90).
   "ticket_sla_escalations",
   "ticket_preauthorizations",
+  // drafting-flow DF-P24 (20261266): a request's examination data (values
+  // picked from the workspace's own lists, and any waiver) — EXPORTED as
+  // evidence; never imported (the integrator at the DF-P24 merge, 2026-10-22,
+  // DEC-90).
+  "ticket_examination_scopes",
   // drafting-flow DF-P6 (20261251): the equipment a request names (the tag as
   // typed and the registry asset it resolved to) — part of the request,
   // exported and restored after tickets and assets (the integrator at the
@@ -254,6 +259,7 @@ export const EXPORT_ORDER_KEYS: Record<string, readonly string[]> = {
   notification_preferences: ["user_id"],
   recently_viewed_docs: ["user_id", "document_id"],
   team_members: ["team_id", "uid"],
+  ticket_examination_scopes: ["ticket_id"],
   ticket_number_counters: ["org_id", "year"],
 };
 

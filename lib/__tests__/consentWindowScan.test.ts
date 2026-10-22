@@ -1289,3 +1289,94 @@ describe("DF-P22 (c) — the PHYS-18 copy recall on a consent-completed issue, b
     expect(recallSpy.reads).toBe(0);
   });
 });
+
+// DF-P24 fix pass (GAP-102 acceptance 4): a consent close that would ISSUE
+// the request meets the examination-scope gate the workflow route runs on an
+// issuing approval — missing enforced data (no waiver) HOLDS the close for a
+// sign-off; the data unreadable where a requirement binds is a transient read
+// (second fix pass: the window is not closed, it is retried next run — never
+// held for good); a request filed before every requirement issues; no
+// requirement → no read (today's close).
+describe("DF-P24 fix pass: the examination-scope gate on an issuing close", () => {
+  const SCOPE_SINCE = "2026-10-01T00:00:00.000Z";
+  const scopeCfg = (requirements: Array<Record<string, unknown>>) => ({
+    examinationScope: { fields: [{ key: "gov", label: "Governing code", options: [{ value: "c1", label: "Code one" }] }], requirements },
+  });
+  const seedScope = (cfg: Row | null, createdAt = "2026-10-05T00:00:00.000Z") => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    db.tables.tickets[0].created_at = createdAt;
+    if (cfg) db.tables.org_configurations = [{ org_id: "o1", key: "drafting", data: cfg }];
+  };
+  const scopeReads = () => calls("ticket_examination_scopes", "select");
+  it("required data missing (filed after the requirement, no waiver): HELD ('examination_scope_missing') — not issued, the history names the field", async () => {
+    seedScope(scopeCfg([{ field: "gov", libraryId: LIB_ID, since: SCOPE_SINCE }]));
+    db.tables.ticket_examination_scopes = [];
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 0, held: 1, issued: 0 });
+    expect(db.tables.tickets[0].status).toBe("PENDING_REVIEW");
+    expect(lastHistory().action).toMatch(/examination data this workspace requires is not recorded/);
+    expect(lastHistory().details).toMatch(/Governing code must be recorded before this request issues/);
+    expect(auditDetails()).toMatchObject({ holdReason: "examination_scope_missing", examinationScope: { missing: ["gov"] } });
+    expect(rosterOf().consentWindow).toMatchObject({ heldReason: "examination_scope_missing" });
+    expect(ledgerOps().status).toBe("open");
+  });
+  it("the data recorded, or a waiver for this revision: issued as before, the audit row naming what it was checked against", async () => {
+    seedScope(scopeCfg([{ field: "gov", libraryId: LIB_ID, since: SCOPE_SINCE }]));
+    db.tables.ticket_examination_scopes = [{ ticket_id: "t1", org_id: "o1", field_values: { gov: { value: "c1", by: "d-1", at: SCOPE_SINCE } }, waiver: null }];
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+    expect(db.tables.tickets[0].status).toBe("PENDING_IFC");
+    expect(auditDetails()).toMatchObject({ examinationScope: { required: [{ field: "gov", enforced: true, value: "c1" }] } });
+    db.calls = [];
+    seedScope(scopeCfg([{ field: "gov", libraryId: LIB_ID, since: SCOPE_SINCE }]));
+    db.tables.ticket_examination_scopes = [{ ticket_id: "t1", org_id: "o1", field_values: {}, waiver: { reason: "vendor data", by: "a-1", at: SCOPE_SINCE, fields: ["gov"], rev: "1A" } }];
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+    expect(auditDetails()).toMatchObject({ examinationScope: { missing: ["gov"], waiver: { reason: "vendor data", rev: "1A" } } });
+  });
+  it("a request filed BEFORE the requirement (in flight when it was configured) is never newly held — it issues, the row saying what was warned", async () => {
+    seedScope(scopeCfg([{ field: "gov", libraryId: LIB_ID, since: SCOPE_SINCE }]), "2026-09-01T00:00:00.000Z");
+    db.tables.ticket_examination_scopes = [];
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+    expect(auditDetails()).toMatchObject({ examinationScope: { warnedNotRefused: ["gov"] } });
+  });
+  it("second fix pass: the data unreadable where a requirement binds — NOT closed (retried next run, nothing written, never held for good); the next run with the data readable issues; for a request filed before it: issued, the row saying unchecked", async () => {
+    seedScope(scopeCfg([{ field: "gov", libraryId: LIB_ID, since: SCOPE_SINCE }]));
+    db.errors.ticket_examination_scopes = { code: "08006", message: "connection lost" };
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 0, held: 0, issued: 0, failed: 1 });
+    expect(r.errors.join("\n")).toMatch(/its examination data could not be read — the window was not closed \(retried next run\): connection lost/);
+    expect(db.tables.tickets[0].status).toBe("PENDING_REVIEW");
+    expect(calls("tickets", "update")).toEqual([]);
+    expect(calls("audit_logs", "insert")).toEqual([]);
+    expect(rosterOf().consentWindow?.heldReason ?? null).toBeNull();
+    // the blip passes: the next run closes it (the data is recorded)
+    delete db.errors.ticket_examination_scopes;
+    db.tables.ticket_examination_scopes = [{ ticket_id: "t1", org_id: "o1", field_values: { gov: { value: "c1", by: "d-1", at: SCOPE_SINCE } }, waiver: null }];
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+    db.calls = [];
+    db.errors.ticket_examination_scopes = { code: "08006", message: "connection lost" };
+    seedScope(scopeCfg([{ field: "gov", libraryId: LIB_ID, since: SCOPE_SINCE }]), "2026-09-01T00:00:00.000Z");
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+    expect(auditDetails()).toMatchObject({ examinationScope: { unchecked: true, required: ["gov"] } });
+  });
+  it("before 20261266 (42P01): issued — nothing could be recorded — and the row says so", async () => {
+    seedScope(scopeCfg([{ field: "gov", libraryId: LIB_ID, since: SCOPE_SINCE }]));
+    db.errors.ticket_examination_scopes = { code: "42P01", message: 'relation "ticket_examination_scopes" does not exist' };
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+    expect(auditDetails()).toMatchObject({ examinationScope: { notMigrated: true, required: ["gov"] } });
+  });
+  it("REGRESSION: no requirement applies (none configured, another library's, or a close that does not issue) — no read, no key; today's close", async () => {
+    for (const cfg of [null, { requestTypes: { options: [] } }, scopeCfg([{ field: "gov", libraryId: "lib-other", since: SCOPE_SINCE }])]) {
+      db.calls = [];
+      seedScope(cfg as Row | null);
+      expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+      expect(scopeReads()).toEqual([]);
+      expect(JSON.stringify(auditDetails())).not.toMatch(/examinationScope/);
+    }
+    db.calls = [];
+    seedTicket({ warned: "2026-10-21T09:00:00Z", accept: "open" });
+    db.tables.tickets[0].created_at = "2026-10-05T00:00:00.000Z";
+    db.tables.org_configurations = [{ org_id: "o1", key: "drafting", data: scopeCfg([{ field: "gov", libraryId: LIB_ID, since: SCOPE_SINCE }]) }];
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 0 });
+    expect(scopeReads()).toEqual([]);
+  });
+});

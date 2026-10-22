@@ -124,6 +124,8 @@ export function consentHeldAction(label: string, reason: ConsentHoldReason | nul
     case "independence": return `Consent window closed with no objection — "${label}" waits for a sign-off: everyone told also signs (or can sign) a sign-off it must be independent of, so their silence is not a second look`;
     case "no_longer_member": return `Consent window closed — "${label}" waits for a sign-off: nobody told who could have objected is still an active member, so silence is not consent`;
     case "engineered": return `Consent window closed — "${label}" waits for a sign-off: this request is now engineered work (an engineer's sign-off is required), and a consent window never applies to it`;
+    // DF-P24 fix pass (GAP-102 acceptance 4): the examination-scope gate.
+    case "examination_scope_missing": return `Consent window closed with no objection — "${label}" waits for a sign-off: examination data this workspace requires is not recorded, so it does not issue on silence`;
     default: return `Consent window closed with no objection — "${label}" still waits for a sign-off`;
   }
 }

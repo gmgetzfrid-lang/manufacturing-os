@@ -99,6 +99,8 @@ const ROW_AT_MERGE: Record<string, string> = {
   // drafting-flow Round G DF-P7 CONSENT's ticket_notice_events (20261255) is listed in EXPECTED_TABLES since its merge.
   // document-control Round G P38 DOCUMENT NOTICE RECORD's document_notice_events (20261257) is listed in EXPECTED_TABLES since its merge.
   // drafting-flow Round G DF-P22 CONSENT AND ESCALATION's ticket_sla_escalations and ticket_preauthorizations (20261264) are listed in EXPECTED_TABLES since its merge.
+  // drafting-flow Round G DF-P24 EXAMINATION SCOPE: a request's examination data — the integrator adds it to EXPECTED_TABLES at the merge.
+  // drafting-flow Round G DF-P24's ticket_examination_scopes (20261266) is listed in EXPECTED_TABLES since its merge.
 };
 
 const BASE = "schema.sql (base schema)";
