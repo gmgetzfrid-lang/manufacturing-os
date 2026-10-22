@@ -1240,3 +1240,5 @@ migration, `20261257_dc_roundG_document_notice_record.sql` (`DIST-19`):
   notification kind; one new audit action (`DOCUMENT_NOTICE_RECORD_DEFERRED`,
   registered in `lib/auditActions.ts`); `DIST-19` residual (a) opened as
   `DIST-20` (assigned at the P38 merge to **P39 NOTICE RECORD REQUESTS**, `DEC-31`; at most one migration, for the deferred audit row's read rule — `DEC-90`).
+
+- *At the intelligence I-34 merge (2026-10-22): Read narrowed by intelligence I-34 / `20261261`: a row is readable only while both its documents are; see intelligence DACL-11. The DRLS-13 record's 'document_supersessions_select keeps member-wide read' and 'SELECT stays member-wide' no longer describe the database once `20261261` is pasted, and `20261261` refuses while any cross-workspace legacy row exists, so DRLS-13's reconciliation of those rows comes first (see DACL-11's residual). Do not re-run `20261131` after `20261261`: its policy-count probe (line 519) counts every policy and would read false on a correct database (the integrator at the I-34 merge, 2026-10-22, DEC-90).*

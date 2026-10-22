@@ -637,6 +637,8 @@ schema.sql:1032 `RETURNS SETOF UUID LANGUAGE SQL SECURITY DEFINER AS $$` — 43 
 
 **Scope / residual.** Stays OPEN until `20261131` is applied — after `DRLS-15` and `DRLS-17` are deployed. **Pending migration:** `supabase/migrations/20261131_dc_roundF_documents_rails.sql` (DEC-30), **not pasteable yet**. A split / merge rolled back by a NON-controller owner cannot delete the lineage it wrote (DELETE is controller-only); the compensation reports those rows for Document Control rather than calling the rollback clean. `documents.superseded_at` / `superseded_by_user` / `supersession_reason` (the finding's chain reaction) remain governed by the publish guard's status rule — outside this finding's done-when.
 
+**Cross-reference (2026-10-22, at the intelligence I-34 merge).** Read narrowed by intelligence I-34 / `20261261`: a row is readable only while both its documents are; see intelligence DACL-11. The DRLS-13 record's 'document_supersessions_select keeps member-wide read' and 'SELECT stays member-wide' no longer describe the database once `20261261` is pasted, and `20261261` refuses while any cross-workspace legacy row exists, so DRLS-13's reconciliation of those rows comes first (see DACL-11's residual). Do not re-run `20261131` after `20261261`: its policy-count probe (line 519) counts every policy and would read false on a correct database (the integrator at the I-34 merge, 2026-10-22, DEC-90).
+
 ---
 
 <a id="drls-14"></a>
