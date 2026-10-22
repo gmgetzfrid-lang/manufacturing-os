@@ -1442,6 +1442,20 @@ describe("DF-P26 (GAP-116): a notify-only hold stops the consent close that woul
     db.errors.document_holds = { code: "42703", message: "column document_holds.examination does not exist" };
     expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
   });
+  it("DF-P26 fix pass 3: a roster that plans a consent window and carries the earlier-round mark (no opted-in slot of its own): a round-1 hold of that round's slot person holds the close; released, the next run issues", async () => {
+    const OLD = "0d000000-0000-4000-8000-000000000001";
+    seedHeld({ watch: false });
+    const meta = db.tables.tickets[0].metadata as { review_roster: TicketReviewRoster };
+    meta.review_roster = { ...meta.review_roster, notifyHoldRecordsEarlier: true };
+    db.tables.ticket_review_slots.push({ id: "lw", org_id: "o1", ticket_id: "t1", roster_id: OLD, slot_kind: "watch", label: "Inspection notice", mode: "notify_only", status: "open", primaries: ["q-2"], alternates: [], independent_of: [], fallback: false });
+    db.tables.document_holds = [hold({ examination: { ...(hold().examination as Row), rosterId: OLD } })];
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 0, issued: 0 });
+    expect(r.errors.join("\n")).toMatch(/P-100 is on hold by the people told of this review \(Inspection notice\), which stops this request/);
+    expect(calls("tickets", "update")).toEqual([]);
+    db.tables.document_holds[0].released_at = "2026-10-23T02:00:00Z";
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+  });
   it("REGRESSION: no opted-in notify-only slot, or no source document, or a close that does not issue — no hold read; today's close", async () => {
     for (const opts of [{ watch: false }, { source: false }]) {
       db.calls = [];

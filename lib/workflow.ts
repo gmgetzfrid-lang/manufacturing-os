@@ -474,6 +474,11 @@ export function slotSignPlan(
         if (conflict) reason = `Needs a second person: "${conflict.label || conflict.kind}", which you sign, must be independent of "${label}" (orgs of 3+).`;
       }
     }
+    // DF-P26 fix pass 3: an upgrade of the rule's satisfaction that this
+    // person cannot give (an independence reason) is simply not offered —
+    // the review does not wait on it, so it is never a disabled sign-off
+    // that badges them.
+    if (reason && ruleSatisfied) continue;
     if (reason) plan.blocked.push({ slot, reason });
     else plan.fillable.push({ slot, via });
   }

@@ -109,6 +109,26 @@ describe("readIssueExamination", () => {
     const s = await readIssueExamination(db, { ticket: t, ticketId: "t1", orgId: "o1", draftingCfg: null, roster: null });
     expect(s.holds).toEqual({ total: 1, open: 0 });
   });
+  it("DF-P26 fix pass 3: an earlier round's hold is judged against that round's ledger slots, as the stop judges it — counted; a failed ledger read leaves only it out", async () => {
+    const examination = { stop: "hold", ticketId: "t1", rosterId: "R0", slotKind: "watch", contentHash: "h", files: [], ofFiles: 0, note: "private" };
+    // round 2 carries no opted-in slot of its own, only the mark that an earlier round did
+    const t = ticket({ source_document: { id: DOC }, review_roster: { ...roster([CHECK]), notifyHoldRecordsEarlier: true } });
+    const holds = [
+      { org_id: "o1", document_id: DOC, opened_by: "q-2", released_at: "2026-10-21T00:00:00Z", examination },
+      { org_id: "o1", document_id: DOC, opened_by: "q-1", released_at: null, examination },
+    ];
+    const ledger = [{ org_id: "o1", ticket_id: "t1", roster_id: "R0", slot_kind: "watch", label: "Inspection notice", mode: "notify_only", primaries: ["q-2"], alternates: [] }];
+    const ok = fakeDb({ document_holds: holds, ticket_review_slots: ledger });
+    const s = await readIssueExamination(ok.db, { ticket: t, ticketId: "t1", orgId: "o1", draftingCfg: null, roster: null });
+    expect(s.holds).toEqual({ total: 1, open: 0 });
+    expect(ok.reads).toEqual(["document_holds", "ticket_review_slots"]);
+    const down = fakeDb({ document_holds: holds }, { ticket_review_slots: { message: "timeout" } });
+    expect((await readIssueExamination(down.db, { ticket: t, ticketId: "t1", orgId: "o1", draftingCfg: null, roster: null })).holds).toEqual({ total: 0, open: 0 });
+    // REGRESSION: a hold of the current round reads no ledger
+    const cur = fakeDb({ document_holds: [{ ...holds[0], examination: { ...examination, rosterId: "R1" } }] });
+    expect((await readIssueExamination(cur.db, { ticket: ticket({ source_document: { id: DOC }, review_roster: roster([CHECK, WATCH]) }), ticketId: "t1", orgId: "o1", draftingCfg: null, roster: null })).holds).toEqual({ total: 1, open: 0 });
+    expect(cur.reads).toEqual(["document_holds"]);
+  });
   it("a read that fails leaves its part out — never throws; a request with configured fields but nothing recorded has no line", async () => {
     const { db } = fakeDb({ ticket_review_slot_events: [{ ticket_id: "t1", roster_id: "R1", event: "satisfied", slot_kind: "qa", details: rec(1, 1) }] }, { ticket_examination_scopes: { message: "timeout" } });
     const s = await readIssueExamination(db, { ticket: ticket(), ticketId: "t1", orgId: "o1", draftingCfg: CFG, roster: roster([CHECK, QA]) });

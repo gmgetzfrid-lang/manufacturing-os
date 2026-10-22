@@ -354,6 +354,33 @@ describe("limb 2 — re-opened before anything issues", () => {
       expect(ticketUpdates()).toEqual([]);
     }
   });
+  it("DF-P26 fix pass 3 (DEC-90 rulings (1) and (4)): an unreadable waiver read never refuses a sign-off that does NOT complete the review — it is taken, nothing re-opened; the completing sign-off is still refused 503", async () => {
+    const LEAD2 = { kind: "lead2", label: "Second check", mode: "blocking", fill: { users: ["e-1"] }, independent_of: ["drafter"] };
+    const THREE = { slots: [LEAD, LEAD2, DOCCHK] };
+    const opened = await submit(THREE);
+    expect(opened.roster!.slots.find((x) => x.kind === "doc")).toMatchObject({ status: "satisfied", via: "rule" });
+    const row = reviewRow({ metadata: { source_document: { id: DOC, document_number: "P-100", rev: "2" }, review_roster: opened.roster } });
+    const down = () => { state.errors.ticket_examination_scopes = { code: "08006", message: "down" }; };
+    for (const dryRun of [true, false]) {
+      const partial = await run(row, "e-2", { actionType: "sign_slot", signatureId: SIG, dryRun }, THREE, { extra: down });
+      expect(partial.status, `${dryRun} ${JSON.stringify(partial.json)}`).toBe(200);
+      expect(partial.json.exceptionReopens).toBeUndefined();
+      expect(partial.json.exceptionReopened).toBeUndefined();
+    }
+    const taken = (ticketUpdates()[0].args[0] as { status?: string; metadata: { review_roster: TicketReviewRoster } });
+    expect(taken.status).toBeUndefined();
+    const after = taken.metadata.review_roster;
+    expect(after.slots.find((x) => x.kind === "lead")).toMatchObject({ status: "satisfied", satisfiedBy: "e-2" });
+    expect(after.slots.find((x) => x.kind === "doc")).toMatchObject({ status: "satisfied", via: "rule" });
+    // the sign-off that WOULD complete the review: refused 503, nothing written
+    const row2 = { ...row, metadata: { ...(row.metadata as object), review_roster: after } };
+    for (const dryRun of [true, false]) {
+      const done = await run(row2, "e-1", { actionType: "sign_slot", signatureId: SIG, dryRun }, THREE, { extra: down });
+      expect(done.status, `${dryRun}`).toBe(503);
+      expect(done.json.code).toBe("exception_review_unchecked");
+      expect(ticketUpdates()).toEqual([]);
+    }
+  });
   it("DF-P26 review fix: more source documents than one read takes (101): 503 exception_review_unchecked, nothing written — never only the first 100 read", async () => {
     const row = await ruledRow();
     const many = Array.from({ length: 101 }, (_, i) => ({ id: `d0c00000-0000-4000-8000-${String(i + 2).padStart(12, "0")}`, document_number: `P-${i + 2}`, rev: "1" }));

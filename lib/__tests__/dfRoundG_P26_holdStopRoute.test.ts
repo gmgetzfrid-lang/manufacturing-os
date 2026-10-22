@@ -399,6 +399,42 @@ describe("DF-P26 fix pass 2 — a hold placed in an earlier round keeps stopping
   });
 });
 
+describe("DF-P26 fix pass 3 — the earlier-round hold mark survives a round whose roster plans a consent window", () => {
+  const CONSENT_ROUTING = { slots: [CHECK, { kind: "ops", label: "Operations", mode: "consent_window", consent_confirmed: true, fill: { users: ["q-1"] } }] };
+  it("round 2 under a table with a confirmed consent slot (and no notify opt-in): the stored roster carries the plan AND the mark; the round-1 hold refuses the completing sign-off 409; released → it issues", async () => {
+    const round1 = await openRoster(WITH_WATCH);
+    const closed1 = { ...round1, closedAt: "2026-10-21T00:00:00.000Z", closedReason: "request_revision" };
+    // round 2 opens on a row that has the consent-window columns (after 20261255)
+    reset();
+    seed(CONSENT_ROUTING);
+    state.user = { id: "d-1" };
+    state.rows.tickets = [ticketRow({ metadata: { ...SOURCE, review_roster: closed1 }, consent_window_opened_at: null })];
+    const res = await post({ ticketId: "t1", actionType: "submit_draft" });
+    expect(res.status).toBe(200);
+    const round2 = (ticketUpdates()[0].args[0] as { metadata: { review_roster: TicketReviewRoster } }).metadata.review_roster;
+    expect(round2.id).not.toBe(round1.id);
+    expect(round2.consentPlan).toBeTruthy();
+    expect(round2.slots.some((x) => x.recordsExamination)).toBe(false);
+    expect(round2.notifyHoldRecordsEarlier).toBe(true);
+    expect(holdStopScope({ metadata: { ...SOURCE, review_roster: round2 }, requesterId: "req-1" } as never)).toMatchObject({ sourceId: DOC });
+    // the consent slot closed on silence; the check's sign-off would complete the review
+    const ready: TicketReviewRoster = { ...round2, slots: round2.slots.map((x) => (x.kind === "ops" ? { ...x, status: "satisfied" as const, satisfiedBy: null, via: "consent" as const, signatureId: null, satisfiedAt: "2026-10-22T07:00:00.000Z" } : x)) };
+    const row = reviewRow({ metadata: { ...SOURCE, review_roster: ready } });
+    const signer = ready.slots.find((x) => x.kind === "check")!.primaries[0];
+    const ledgerRow = { org_id: "o1", ticket_id: "t1", roster_id: round1.id, slot_kind: "watch", label: "Inspection notice", mode: "notify_only", primaries: ["q-2"], alternates: [] };
+    const extra = () => { state.rows.document_holds = [hold({}, round1.id)]; state.rows.ticket_review_slots = [ledgerRow]; };
+    for (const dryRun of [true, false]) {
+      const r = await run(row, signer, { actionType: "sign_slot", signatureId: SIG, dryRun }, false, CONSENT_ROUTING, extra);
+      expect(r.status, `${dryRun}`).toBe(409);
+      expect(r.raw.code).toBe("request_on_hold");
+      expect(ticketUpdates()).toEqual([]);
+    }
+    const released = await run(row, signer, { actionType: "sign_slot", signatureId: SIG }, false, CONSENT_ROUTING, () => { extra(); state.rows.document_holds = [hold({ released_at: "2026-10-22T07:30:00.000Z" }, round1.id)]; });
+    expect(released.status, JSON.stringify(released.raw)).toBe(200);
+    expect(released.raw.status).toBe("PENDING_IFC");
+  });
+});
+
 describe("the refusal sentence", () => {
   it("names the document, the reason, the opener (or the slot's people when unnamed) and who can release it; several holds are counted", () => {
     const h = { id: "h", reason: "Engineering review", openedBy: "u", openedAt: null, slotLabel: "QA", openerName: null };

@@ -316,6 +316,25 @@ describe("DF-P26 fix pass 2 — the rule's slot is never DEMANDED of the reviewe
     expect(acts(ruled, "l-1").find((x) => x.action === "sign_slot")!.optional).toBeUndefined();
     expect(required(ruled, "l-1")).toBe(true);
   });
+  it("DF-P26 fix pass 3: an upgrade an independence reason forbids is simply not offered — no disabled sign-off, no required revision, not action-required", () => {
+    // R is independent of A; c-1 signed A, so c-1 cannot sign R — and R was satisfied by the rule at open
+    const R = slot({ kind: "doc", primaries: ["c-1"], exceptionOnly: true, independentOf: ["a"] });
+    const A = slot({ kind: "a", primaries: ["c-1"], status: "satisfied", satisfiedBy: "c-1", signatureId: "s-a", via: "primary", satisfiedAt: "2026-10-22T07:30:00Z" });
+    const r = applyExceptionRule(roster([R, A, LIVE]), ["doc"], "2026-10-22T08:00:00.000Z");
+    expect(slotSignPlan(r, T, "c-1", true, NOW)).toEqual({ fillable: [], blocked: [] });
+    const a = acts(r, "c-1");
+    expect(a.some((x) => x.action === "sign_slot")).toBe(false);
+    expect(a.some((x) => x.action === "request_revision" && !x.optional)).toBe(false);
+    expect(required(r, "c-1")).toBe(false);
+    // the requester leg: the rule's slot independent of the requester, the requester among its people
+    const RQ = slot({ kind: "doc", primaries: ["req", "c-1"], exceptionOnly: true, independentOf: ["requester"] });
+    const rq = applyExceptionRule(roster([RQ, LIVE]), ["doc"], "2026-10-22T08:00:00.000Z");
+    expect(slotSignPlan(rq, T, "req", true, NOW)).toEqual({ fillable: [], blocked: [] });
+    // REGRESSION: an OPEN slot an independence reason blocks is still shown, disabled, with its reason
+    const open = roster([slot({ kind: "doc", primaries: ["c-1"], independentOf: ["a"] }), A, LIVE]);
+    expect(slotSignPlan(open, T, "c-1", true, NOW).blocked.map((b) => b.slot.kind)).toEqual(["doc"]);
+    expect(acts(open, "c-1").find((x) => x.action === "sign_slot")!.disabledReason).toMatch(/Needs a second person/);
+  });
   it("below the DEC-12 threshold the rule's slot is offered to nobody (the upgrade exists only for the floor)", () => {
     expect(slotSignPlan(ruled, T, "c-1", false, NOW).fillable).toEqual([]);
   });

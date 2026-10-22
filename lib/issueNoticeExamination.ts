@@ -34,7 +34,7 @@
 import type { Ticket, TicketReviewRoster } from "@/types/schema";
 import { parseExaminationScopeConfig, parseScopeValues, scopeValueOf } from "@/lib/examinationScope";
 import { isAssuranceSlot, rosterHasAssuranceSlot, examinationOf, holdExaminationOf, holdOpenerInSlot, rosterOccupancy } from "@/lib/assuranceExamination";
-import { holdStopScope } from "@/lib/requestHoldStop";
+import { holdStopScope, holdRecordOccupancy } from "@/lib/requestHoldStop";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = { from: (t: string) => any };
@@ -133,9 +133,15 @@ export async function readIssueExamination(db: Db, input: { ticket: Ticket; tick
       const { data, error } = await db.from("document_holds").select("opened_by, released_at, examination")
         .eq("org_id", orgId).eq("document_id", scope.sourceId).eq("examination->>ticketId", ticketId).limit(HOLD_COUNT_LIMIT);
       if (!error) {
-        const occupancy = rosterOccupancy(scope.roster);
-        for (const h of (data ?? []) as Array<{ opened_by?: string | null; released_at?: string | null; examination?: unknown }>) {
-          const rec = holdExaminationOf(h.examination, ticketId);
+        const rows = ((data ?? []) as Array<{ opened_by?: string | null; released_at?: string | null; examination?: unknown }>)
+          .map((h) => ({ h, rec: holdExaminationOf(h.examination, ticketId) }));
+        // DF-P26 fix pass 3: a hold recorded in an earlier round is judged
+        // against that round's slots (the roster ledger), as the stop judges
+        // it (lib/requestHoldStop.ts holdRecordOccupancy); a failed ledger
+        // read leaves the earlier rounds' holds out (bookkeeping).
+        const occ = await holdRecordOccupancy(db, { orgId, ticketId, roster: scope.roster, records: rows.flatMap((x) => (x.rec ? [x.rec] : [])) });
+        const occupancy = occ.ok ? occ.occupancy : rosterOccupancy(scope.roster);
+        for (const { h, rec } of rows) {
           if (!rec || holdOpenerInSlot(h.opened_by, rec, occupancy) !== "slot") continue;
           out.holds.total += 1;
           if (!h.released_at) out.holds.open += 1;

@@ -1251,7 +1251,9 @@ export async function POST(req: NextRequest) {
         // branch — no plan on the roster, no note, no warning blaming the
         // paste: the review is today's, byte for byte.
         if (isUnconfirmedConsentPlan(consentPlan)) { /* today's review, unchanged */ }
-        else if (consentPlan && consentColumns) rosterOpen = { ...opened.roster, consentPlan };
+        // (DF-P26 fix pass 3: built on the roster as it now stands, so the
+        // earlier-round hold mark carried above is kept.)
+        else if (consentPlan && consentColumns) rosterOpen = { ...rosterOpen, consentPlan };
         else if (consentPlan) consentWarning = `${consentPlan.label ? `"${consentPlan.label}"` : "The consent slot"} waits for a sign-off: ${CONSENT_REASON.notPasted}.`;
         consentMembers = members.rows;
         // GAP-115 (DF-P26; DEC-90 ruling (1)) limb 1: an exception-only slot
@@ -1326,19 +1328,29 @@ export async function POST(req: NextRequest) {
     let reopenWith: string[] | null = null;
     let reopenLabels: string[] = [];
     if (ruleSatisfiedSlots(openRosterNow).length > 0) {
+      const preview = applySignPlan(openRosterNow, plan, { uid: caller.id, name: null }, "exception-review-preview", new Date().toISOString());
       const waiver = await readWaiverOnRecord(supabaseAdmin, body.ticketId);
       const moved = await readSourceMoved(supabaseAdmin, ticket);
       if (!waiver.ok || !moved.ok || declarationUnverified === "unchecked") {
-        console.error(`[workflow-action] exception-only review unchecked for ticket ${body.ticketId}: ${!waiver.ok ? waiver.error : !moved.ok ? `the source documents could not be read (${moved.error})` : "the like-in-kind declaration's signature could not be read"}`);
-        return refuseSign(503, "Whether an exception is on record for this review (a moved source, a recorded waiver or the like-in-kind declaration's signature) could not be checked, so the sign-off was not taken. Try again in a moment.", "exception_review_unchecked");
+        const why = !waiver.ok ? waiver.error : !moved.ok ? `the source documents could not be read (${moved.error})` : "the like-in-kind declaration's signature could not be read";
+        // DF-P26 fix pass 3 (DEC-90 rulings (1) and (4)): the deliberate
+        // refusal is for an ISSUING act only. A sign-off that leaves the
+        // review open cannot issue, so an unreadable read never refuses it:
+        // it is taken, nothing is re-opened by it, and the sign-off that
+        // completes the review (or the consent close) checks again.
+        if (rosterCompletion(preview, { sodActive, drafterId: ticket.assignedDrafterId }).complete) {
+          console.error(`[workflow-action] exception-only review unchecked for ticket ${body.ticketId}: ${why}`);
+          return refuseSign(503, "Whether an exception is on record for this review (a moved source, a recorded waiver or the like-in-kind declaration's signature) could not be checked, so the sign-off was not taken. Try again in a moment.", "exception_review_unchecked");
+        }
+        console.warn(`[workflow-action] exception-only review unchecked for ticket ${body.ticketId} on a sign-off that does not complete the review (taken; the completing act checks again): ${why}`);
+      } else {
+        const engineeredNow = engineeringGateRequired(ticket, requesterRoles, capPolicy) || engineeringFirstTypes.includes(ticket.requestType);
+        const found = exceptionsOnRecord({ driftLabels: moved.labels, roster: preview, waiver: waiver.waiver, declarationUnverified, engineered: engineeredNow });
+        // (DF-P26 review fix: a sign-off that upgrades the last slot the rule
+        // satisfied leaves nothing to re-open.)
+        reopenLabels = ruleSatisfiedSlots(preview).map((x) => x.label || x.kind);
+        if (found.length > 0 && reopenLabels.length > 0) reopenWith = found.map((e) => e.text);
       }
-      const preview = applySignPlan(openRosterNow, plan, { uid: caller.id, name: null }, "exception-review-preview", new Date().toISOString());
-      const engineeredNow = engineeringGateRequired(ticket, requesterRoles, capPolicy) || engineeringFirstTypes.includes(ticket.requestType);
-      const found = exceptionsOnRecord({ driftLabels: moved.labels, roster: preview, waiver: waiver.waiver, declarationUnverified, engineered: engineeredNow });
-      // (DF-P26 review fix: a sign-off that upgrades the last slot the rule
-      // satisfied leaves nothing to re-open.)
-      reopenLabels = ruleSatisfiedSlots(preview).map((x) => x.label || x.kind);
-      if (found.length > 0 && reopenLabels.length > 0) reopenWith = found.map((e) => e.text);
     }
     if (body.dryRun === true) {
       return NextResponse.json({ ok: true, dryRun: true, slots: plan.fillable.map((f) => f.slot.label || f.slot.kind), contentHash: openRosterNow.contentHash, ...(reopenWith ? { exceptionReopens: reopenLabels, exceptionReopenReasons: reopenWith } : {}) });

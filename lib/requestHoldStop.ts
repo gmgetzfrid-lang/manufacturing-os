@@ -128,6 +128,35 @@ export function requestHoldRefusal(documentLabel: string, holds: readonly Stoppi
 }
 
 /**
+ * The slot occupancy a hold's record is judged against (holdOpenerInSlot):
+ * the roster on record's own slots, plus — for any record naming an earlier
+ * round — that round's slots from the roster ledger (ticket_review_slots).
+ * The ledger is read only when a record names an earlier round. Shared by
+ * the stop (where a failed read is "unreadable") and the issue notice
+ * (lib/issueNoticeExamination.ts — where it is left out). Never throws.
+ */
+export async function holdRecordOccupancy(
+  db: Db,
+  input: { orgId: string; ticketId: string; roster: TicketReviewRoster; records: ReadonlyArray<{ rosterId?: string | null }> },
+): Promise<{ ok: true; occupancy: SlotOccupancy[] } | { ok: false; error: string }> {
+  const current = rosterOccupancy(input.roster);
+  const earlier = [...new Set(input.records.map((r) => r.rosterId).filter((r): r is string => !!r && r !== input.roster.id))];
+  if (earlier.length === 0) return { ok: true, occupancy: current };
+  let slots: { data: unknown; error: { message?: string } | null };
+  try {
+    slots = await db.from("ticket_review_slots")
+      .select("roster_id, slot_kind, label, mode, primaries, alternates")
+      .eq("org_id", input.orgId).eq("ticket_id", input.ticketId).in("roster_id", earlier);
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message ?? String(e) };
+  }
+  if (slots.error) return { ok: false, error: slots.error.message || "the review ledger could not be read" };
+  const ledger: SlotOccupancy[] = ((slots.data ?? []) as Array<{ roster_id: string; slot_kind: string; label?: string | null; mode: string; primaries?: string[] | null; alternates?: string[] | null }>)
+    .map((r) => ({ rosterId: r.roster_id, kind: r.slot_kind, mode: r.mode, primaries: r.primaries ?? [], alternates: r.alternates ?? [], label: r.label ?? null }));
+  return { ok: true, occupancy: [...current, ...ledger] };
+}
+
+/**
  * Does an open hold of a notify-only slot's people stop this request? Reads
  * (as the caller's client — the service role on the route and the cron):
  * the open holds on the source document whose record names this request
@@ -155,22 +184,9 @@ export async function requestHoldStop(db: Db, input: { ticket: Ticket; ticketId:
   const rows = ((read.data ?? []) as Array<{ id: string; reason?: string | null; opened_by?: string | null; opened_at?: string | null; examination?: unknown }>);
   const records = rows.map((h) => ({ h, rec: holdExaminationOf(h.examination, ticketId) })).filter((x) => x.rec !== null) as Array<{ h: typeof rows[number]; rec: NonNullable<ReturnType<typeof holdExaminationOf>> }>;
   // An earlier round's slots come from the roster ledger.
-  const earlier = [...new Set(records.map((x) => x.rec.rosterId).filter((r): r is string => !!r && r !== scope.roster.id))];
-  let ledger: SlotOccupancy[] = [];
-  if (earlier.length > 0) {
-    let slots: { data: unknown; error: { message?: string } | null };
-    try {
-      slots = await db.from("ticket_review_slots")
-        .select("roster_id, slot_kind, label, mode, primaries, alternates")
-        .eq("org_id", orgId).eq("ticket_id", ticketId).in("roster_id", earlier);
-    } catch (e) {
-      return { kind: "unreadable", error: (e as Error)?.message ?? String(e) };
-    }
-    if (slots.error) return { kind: "unreadable", error: slots.error.message || "the review ledger could not be read" };
-    ledger = ((slots.data ?? []) as Array<{ roster_id: string; slot_kind: string; label?: string | null; mode: string; primaries?: string[] | null; alternates?: string[] | null }>)
-      .map((r) => ({ rosterId: r.roster_id, kind: r.slot_kind, mode: r.mode, primaries: r.primaries ?? [], alternates: r.alternates ?? [], label: r.label ?? null }));
-  }
-  const occupancy = [...rosterOccupancy(scope.roster), ...ledger];
+  const occ = await holdRecordOccupancy(db, { orgId, ticketId, roster: scope.roster, records: records.map((x) => x.rec) });
+  if (!occ.ok) return { kind: "unreadable", error: occ.error };
+  const occupancy = occ.occupancy;
   const stopping = records.filter((x) => holdOpenerInSlot(x.h.opened_by, x.rec, occupancy) === "slot");
   if (stopping.length === 0) {
     // Judged on a full page only: what was not read could hold a stop.
