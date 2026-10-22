@@ -23,11 +23,15 @@ export interface BuiltinAnswerSkillDef {
   description: string;
   /** The instruction pack injected into the answer prompt when enabled. */
   instructions: string;
+  /** What a question that this skill fits looks like (a regex source) — so
+   *  the prompt bar can say "this skill will apply" as you type. */
+  cue: string;
 }
 
 export const BUILTIN_ANSWER_SKILLS: BuiltinAnswerSkillDef[] = [
   {
     builtin_key: "basis_of_design",
+    cue: "\\bwhy\\b|basis (for|of)|reason (for|behind)",
     name: "Basis of Design",
     description:
       "When someone asks WHY a requirement exists, answer like an investigator: evidence before " +
@@ -47,6 +51,7 @@ export const BUILTIN_ANSWER_SKILLS: BuiltinAnswerSkillDef[] = [
   },
   {
     builtin_key: "change_impact",
+    cue: "\\b(chang|replac|re-?rat|revis|swap|substitut|upgrad|modif)",
     name: "Change Impact Review",
     description:
       "When a question is about changing something, sweep past the obvious: what else the change " +
@@ -66,6 +71,7 @@ export const BUILTIN_ANSWER_SKILLS: BuiltinAnswerSkillDef[] = [
   },
   {
     builtin_key: "troubleshooting_protocol",
+    cue: "\\b(broke|fail|leak|vibrat|trip|crack|corrod|noise|overheat|plugg|won.?t start|keeps)",
     name: "Troubleshooting Protocol",
     description:
       "When something is broken or misbehaving, run a discipline: symptoms, ranked hypotheses each " +
@@ -84,6 +90,7 @@ export const BUILTIN_ANSWER_SKILLS: BuiltinAnswerSkillDef[] = [
   },
   {
     builtin_key: "plain_language",
+    cue: "\\b(explain|plain (english|language)|simple terms|for the (field|crew)|in simple)",
     name: "Plain Language for the Field",
     description:
       "When the reader asks for it in plain words, re-pitch in ASD-STE100 style Simplified Technical " +
@@ -101,6 +108,7 @@ export const BUILTIN_ANSWER_SKILLS: BuiltinAnswerSkillDef[] = [
   },
   {
     builtin_key: "shift_handover",
+    cue: "\\b(hand-?over|turnover|next shift|shift (summary|notes|report))",
     name: "Shift Handover",
     description:
       "When someone needs to pass work to the next person or crew, produce a real handover: state, " +
@@ -119,6 +127,7 @@ export const BUILTIN_ANSWER_SKILLS: BuiltinAnswerSkillDef[] = [
   },
   {
     builtin_key: "technical_query",
+    cue: "\\b(tq|technical query|not covered|can.?t find|isn.?t (in|covered))",
     name: "Technical Query Builder",
     description:
       "When the documents can't answer, don't stop at 'not covered' — draft the formal technical " +
@@ -137,6 +146,7 @@ export const BUILTIN_ANSWER_SKILLS: BuiltinAnswerSkillDef[] = [
   },
   {
     builtin_key: "catalog_selection",
+    cue: "\\b(which|what)\\b[^?]{0,60}\\b(spec|specs|class|material|gasket|bolting|trim)\\b",
     name: "Selecting a Spec, Class or Material",
     description:
       "When someone asks which spec, line class, material or component to use, answer like an engineer " +
@@ -163,3 +173,19 @@ export const BUILTIN_ANSWER_SKILLS: BuiltinAnswerSkillDef[] = [
       "asker's (or the Owner's Engineer's) and on what basis.",
   },
 ];
+
+/** Does a skill fit this question? Built-ins carry a cue; a workspace's own
+ *  skill is matched on the examples quoted in its APPLIES WHEN line. A hint
+ *  for the prompt bar and the answer's "skills applied" — the skill itself
+ *  still decides, from its own APPLIES WHEN, inside the answer. */
+export function skillFits(skill: { builtin_key: string | null; instructions: string }, question: string): boolean {
+  const q = question.toLowerCase();
+  if (!q.trim()) return false;
+  const def = skill.builtin_key ? BUILTIN_ANSWER_SKILLS.find((b) => b.builtin_key === skill.builtin_key) : undefined;
+  if (def) return new RegExp(def.cue, "i").test(q);
+  const applies = skill.instructions.match(/APPLIES WHEN([^\n]*)/i)?.[1] ?? "";
+  const examples = [...applies.matchAll(/["“]([^"”]{3,60})["”]/g)].map((m) => m[1].toLowerCase().replace(/[…\.]+$/, "").trim());
+  if (examples.some((e) => e && q.includes(e.split(" ").slice(0, 3).join(" ")))) return true;
+  const words = new Set((applies.toLowerCase().match(/[a-z]{5,}/g) ?? []).filter((w) => !["question", "asks", "about", "something", "whether", "otherwise", "ignore", "skill"].includes(w)));
+  return [...words].filter((w) => q.includes(w)).length >= 2;
+}

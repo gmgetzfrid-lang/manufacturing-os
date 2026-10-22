@@ -13,21 +13,22 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import {
-  Sparkles, ArrowRight, Loader2, MessageSquare, BookOpen, FileText, CornerDownRight, RotateCcw, AlertTriangle,
+  Sparkles, ArrowRight, Loader2, MessageSquare, FileText, CornerDownRight, RotateCcw, AlertTriangle,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { askTurn, listThreads, type ChatThread } from "@/lib/chatClient";
-import { listKnowledgeLibraries, type KnowledgeAnswer, type KnowledgeCitation } from "@/lib/knowledge";
+import { listKnowledgeLibraries, type KnowledgeAnswer, type KnowledgeCitation, type KnowledgeLibrary } from "@/lib/knowledge";
+import { SourcesMenu, AnswerMenu, SkillHint, useAnswerSkills } from "@/components/chat/AskControls";
 import {
   parseAnswerBlocks, structureAnswer, splitVerdict, extractAnswerMeta, quoteWindow, docDesignation, clauseFor,
   type Verdict,
 } from "@/lib/knowledgeText";
-import { useWidget, useSetting, useSessionState, useWidgetData, Tabs, Empty, timeAgo, SCROLL } from "../kit";
+import { useWidget, useSetting, useSessionState, useWidgetData, Empty, timeAgo, SCROLL } from "../kit";
 
 const CitedPageViewer = dynamic(() => import("@/components/knowledge/CitedPageViewer"), { ssr: false });
 
-type Mode = "auto" | "answer" | "compliance" | "explore";
+type Mode = "auto" | "answer" | "compliance" | "explore" | "deviation";
 
 const VERDICT: Record<Verdict, { label: string; cls: string }> = {
   yes: { label: "Yes", cls: "bg-emerald-600 text-white" },
@@ -81,6 +82,10 @@ export default function AskKnowledgeBody() {
   const { expanded } = useWidget();
   const [libraryId, setLibraryId] = useSetting<string>("libraryId", "");
   const [mode, setMode] = useSetting<Mode>("mode", "auto");
+  // The same choices as the chat's prompt bar: skills and web.
+  const skills = useAnswerSkills(activeOrgId ?? null);
+  const [picked, setPicked] = useSetting<string[] | null>("skills", null);
+  const [web, setWeb] = useSetting<boolean>("web", false);
 
   const { data: libs } = useWidgetData(async (orgId) => {
     try { return (await listKnowledgeLibraries(orgId)).map((l) => ({ id: l.id, name: l.name })); }
@@ -124,6 +129,8 @@ export default function AskKnowledgeBody() {
       await askTurn({
         orgId: activeOrgId, scope: "library", libraryId: lib.id, threadId, question: text,
         ...(mode !== "auto" ? { answerMode: mode } : {}),
+        ...(web ? { useWeb: true } : {}),
+        ...(picked ? { skills: picked } : {}),
       }, (ev) => {
         if (ev.t === "thread") setThreadId(String((ev.thread as { id?: string }).id ?? "") || null);
         else if (ev.t === "status") setStatus(ev.text);
@@ -148,7 +155,7 @@ export default function AskKnowledgeBody() {
       setBusy(false);
       setStatus(null);
     }
-  }, [activeOrgId, lib, busy, threadId, mode, setThreadId, setTurns]);
+  }, [activeOrgId, lib, busy, threadId, mode, web, picked, setThreadId, setTurns]);
 
   // Resolve the cited documents' files once per answer, so a tap opens the
   // page straight away.
@@ -212,16 +219,15 @@ export default function AskKnowledgeBody() {
     <div className="mt-3 flex-1 min-h-0 flex flex-col gap-2">
       {/* Library + how to answer */}
       <div className="flex items-center gap-2 shrink-0 flex-wrap">
-        <label className="inline-flex items-center gap-1.5 min-w-0 max-w-full">
-          <BookOpen className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
-          <select value={lib?.id ?? ""} onChange={(e) => { setLibraryId(e.target.value); setThreadId(null); setTurns([]); }}
-            className="min-w-0 max-w-[14rem] truncate text-[11px] font-bold bg-transparent text-[var(--color-text)] border border-[var(--color-border)] rounded-lg px-1.5 py-1 hover:border-[var(--color-accent)]">
-            {(libs ?? []).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-          </select>
-        </label>
-        <Tabs<Mode> value={mode} onChange={setMode} className="ml-auto"
-          options={[{ value: "auto", label: "Auto" }, { value: "answer", label: "Answer" }, { value: "compliance", label: "Compliance" }, { value: "explore", label: "Explore" }]} />
+        <SourcesMenu scope="library" libraryId={lib?.id ?? null} librariesOnly down
+          libraries={(libs ?? []).map((l) => ({ ...l } as unknown as KnowledgeLibrary))}
+          onScopeChange={(_s, id) => { if (id) { setLibraryId(id); setThreadId(null); setTurns([]); } }}
+          webOn={web} onToggleWeb={() => setWeb(!web)} />
+        <span className="ml-auto" />
+        <AnswerMenu down answerMode={mode === "auto" ? null : mode} onAnswerMode={(m) => setMode((m ?? "auto") as Mode)}
+          skills={skills} picked={picked} onPick={setPicked} question={q} />
       </div>
+      <SkillHint skills={skills} picked={picked} question={q} answerMode={mode === "auto" ? null : mode} />
 
       {/* Ask */}
       <form onSubmit={(e) => { e.preventDefault(); void ask(q); }}

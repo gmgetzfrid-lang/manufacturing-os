@@ -30,7 +30,8 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
-import { loadAnswerSkillsBlock } from "@/lib/answerSkillsServer";
+import { loadAnswerSkillRows, buildAnswerSkillsBlock, skillsInPlay } from "@/lib/answerSkillsServer";
+import { skillFits } from "@/lib/answerSkillsData";
 import { VISION_MODEL } from "@/lib/knowledgeVision";
 import { callAiModel, AiCallError, type AiProviderId, type AiCallInput } from "@/lib/ai/providerCall";
 import {
@@ -117,6 +118,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
   const { user, emit } = input;
   const askStarted = Date.now();
   const evalMode = !!input.evalRun;
+  let skillsApplied: Array<{ id: string; name: string }> = [];
   const extraSystem = input.extraSystem ?? "";
   const userImages = input.userImages ?? [];
   const body = input.body as {
@@ -1990,9 +1992,18 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
     // ride with them — self-gating disciplines (Basis of Design, Change
     // Impact Review, …) the workspace switched on, plus the asker's own
     // private ones.
+    // Skills: the workspace's enabled ones, or exactly the ones the asker
+    // picked for this question in the prompt bar.
+    const pickedSkills = Array.isArray((body as { skills?: unknown }).skills)
+      ? ((body as { skills: unknown[] }).skills).filter((x): x is string => typeof x === "string" && /^[0-9a-f-]{36}$/i.test(x)).slice(0, 40)
+      : null;
+    const skillRows = await loadAnswerSkillRows(supabaseAdmin, orgId);
+    const inPlay = skillsInPlay(skillRows, user.id, pickedSkills);
+    skillsApplied = inPlay.filter((r) => skillFits(r, question)).map((r) => ({ id: r.id ?? "", name: r.name }));
+    trace.stage("skills", { picked: pickedSkills, inPlay: inPlay.map((r) => r.name), applied: skillsApplied.map((x) => x.name) });
     const orgInstructions =
       (await loadOrgInstructionsBlock(supabaseAdmin, orgId, "knowledge")) +
-      (await loadAnswerSkillsBlock(supabaseAdmin, orgId, user.id)) +
+      buildAnswerSkillsBlock(skillRows, user.id, pickedSkills) +
       extraSystem;
     const baseAnswerSystem =
       "You are the reference-library assistant for an industrial facility's document control system. Answer the " +
@@ -2675,6 +2686,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       ...(mentionedDocs.length > 0 ? { mentionedDocs } : {}),
       ...(equipmentTable ? { equipmentTable } : {}),
       ...(selection && selection.cands.length > 0 ? { candidateTable: candidateTableOf(selection, ratings, reachableDocs) } : {}),
+      ...(skillsApplied.length > 0 ? { skillsApplied } : {}),
     });
   } catch (e) {
     await meter(false);

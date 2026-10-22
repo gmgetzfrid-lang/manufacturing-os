@@ -394,6 +394,8 @@ export interface AskTurnInput {
   answerMode?: "answer" | "compliance" | "explore" | "deviation";
   /** Library scope: this question may also search the internet. */
   useWeb?: boolean;
+  /** Skills picked for this question (ids); unset = the workspace's defaults. */
+  skills?: string[];
 }
 
 /** Send one turn and read the stream. Resolves when the stream ends; every

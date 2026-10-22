@@ -1,18 +1,21 @@
 "use client";
 
-// Composer — the floating prompt card. Four controls at rest: attach, scope,
-// instructions, send. Enter sends, Shift+Enter breaks a line. Attachments
+// Composer — the floating prompt card. Controls at rest: attach, Sources
+// (where answers come from, web included), Answer (shape + Reasoning
+// Skills), send — the same controls as every other place to ask. Enter sends, Shift+Enter breaks a line. Attachments
 // ride as pills above the text; drop or paste an image and it lands there.
 // Grows to about eight lines, then scrolls inside, so the page never jumps.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Paperclip, Send, Square, SlidersHorizontal, ChevronDown, X, Image as ImageIcon, FileText, Loader2, Check, Globe,
+  Paperclip, Send, Square, SlidersHorizontal, X, Image as ImageIcon, FileText, Loader2, Check,
 } from "lucide-react";
+import { SourcesMenu, AnswerMenu, SkillHint } from "./AskControls";
+import type { AnswerSkill } from "@/lib/answerSkills";
 import type { ChatScope, ChatAttachment } from "@/lib/chatClient";
 import type { KnowledgeLibrary } from "@/lib/knowledge";
 import { SCOPE_META, fmtBytes } from "./shared";
-import { ANSWER_MODES, AUTO_MODE_HINT, type AnswerMode } from "@/lib/answerModes";
+import type { AnswerMode } from "@/lib/answerModes";
 
 export interface PendingAttachment {
   localId: string;
@@ -31,6 +34,7 @@ export default function Composer({
   attachments, onAddFiles, onRemoveAttachment,
   instructionsActive, instructionCount, onToggleInstructions,
   disabledReason, autoFocus, webOn = false, onToggleWeb, answerMode = null, onAnswerMode,
+  skills, pickedSkills, onPickSkills,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -58,14 +62,14 @@ export default function Composer({
   /** The answer's shape, picked before asking; null = Auto. */
   answerMode?: AnswerMode | null;
   onAnswerMode?: (m: AnswerMode | null) => void;
+  /** The workspace's Reasoning Skills, and the ones picked for this question. */
+  skills?: AnswerSkill[] | null;
+  pickedSkills?: string[] | null;
+  onPickSkills?: (ids: string[] | null) => void;
 }) {
-  const [modeMenu, setModeMenu] = useState(false);
-  const modeLabel = answerMode ? ANSWER_MODES.find((m) => m.id === answerMode)?.label ?? "Auto" : "Auto";
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
-  const [scopeMenu, setScopeMenu] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
 
   // Auto-grow: measure, cap at ~8 lines, then scroll inside.
   useEffect(() => {
@@ -77,12 +81,6 @@ export default function Composer({
     ta.style.overflowY = ta.scrollHeight > max ? "auto" : "hidden";
   }, [value]);
 
-  useEffect(() => {
-    if (!scopeMenu) return;
-    const onDoc = (e: MouseEvent) => { if (!menuRef.current?.contains(e.target as Node)) setScopeMenu(false); };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [scopeMenu]);
 
   const canSend = !busy && value.trim().length > 0 && !disabledReason && attachments.every((a) => a.att !== null || a.error);
 
@@ -105,8 +103,6 @@ export default function Composer({
   }, [onAddFiles]);
 
   const meta = SCOPE_META[scope];
-  const ScopeIcon = meta.icon;
-  const libraryName = scope !== "tools" ? (libraries.find((l) => l.id === libraryId)?.name ?? "Pick a library") : null;
 
   return (
     <div
@@ -161,6 +157,10 @@ export default function Composer({
         className="w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-[15px] leading-6 text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none disabled:opacity-60"
       />
 
+      {scope === "library" && (
+        <div className="px-4 pb-1"><SkillHint skills={skills ?? null} picked={pickedSkills ?? null} question={value} answerMode={answerMode} /></div>
+      )}
+
       <div className="flex items-center gap-1 px-2 pb-2">
         <input ref={fileRef} type="file" multiple hidden accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
           onChange={(e) => { onAddFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
@@ -169,96 +169,23 @@ export default function Composer({
           <Paperclip className="w-4 h-4" />
         </button>
 
-        <div ref={menuRef} className="relative">
-          <button onClick={() => setScopeMenu((m) => !m)}
-            title={scopeLocked ? "This conversation's source — pick another to start a new conversation" : "Where answers come from"}
-            className={`h-8 inline-flex items-center gap-1.5 pl-2 pr-1.5 rounded-lg text-[11px] font-black border transition-colors max-w-[260px] ${
-              scope === "internet"
-                ? "border-sky-300 dark:border-sky-800 text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/30"
-                : scope === "tools"
-                  ? "border-violet-300 dark:border-violet-800 text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/30"
-                  : "border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-300 bg-orange-50 dark:bg-orange-950/30"}`}>
-            <ScopeIcon className="w-3.5 h-3.5 shrink-0" />
-            <span className="truncate">{libraryName ? `${meta.label} · ${libraryName}` : meta.label}</span>
-            <ChevronDown className="w-3 h-3 shrink-0 opacity-70" />
-          </button>
-          {scopeMenu && (
-            <div className="absolute left-0 bottom-10 z-30 w-72 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-1.5 animate-pop">
-              {scopeLocked && (
-                <div className="px-2 py-1 text-[10px] font-bold text-[var(--color-text-muted)]">Choosing starts a new conversation</div>
-              )}
-              <div className="px-2 pt-1 pb-0.5 text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Library</div>
-              {libraries.length === 0 && (
-                <div className="px-2 py-1.5 text-[11px] text-[var(--color-text-muted)]">No knowledge libraries yet.</div>
-              )}
-              <div className="max-h-48 overflow-y-auto">
-                {libraries.map((l) => (
-                  <ScopeItem key={l.id} active={scope === "library" && libraryId === l.id}
-                    icon={SCOPE_META.library.icon} label={l.name}
-                    sub={`${l.documentCount ?? 0} document${(l.documentCount ?? 0) === 1 ? "" : "s"}`}
-                    onClick={() => { setScopeMenu(false); onScopeChange("library", l.id); }} />
-                ))}
-              </div>
-              <div className="my-1 h-px bg-[var(--color-border)]" />
-              <ScopeItem active={scope === "tools"} icon={SCOPE_META.tools.icon} label="System tools"
-                sub="Documents, equipment, audit history, P&ID traces"
-                onClick={() => { setScopeMenu(false); onScopeChange("tools", null); }} />
-              <ScopeItem active={scope === "internet"} icon={SCOPE_META.internet.icon} label="Internet"
-                sub={libraryName && scope !== "tools" ? `Logged under ${libraryName}` : "Web / general knowledge — not your documents"}
-                onClick={() => { setScopeMenu(false); onScopeChange("internet", libraryId ?? libraries[0]?.id ?? null); }} />
-            </div>
-          )}
-        </div>
-
-        {scope === "library" && onToggleWeb && (
-          <button onClick={onToggleWeb} aria-pressed={webOn}
-            title={webOn
-              ? "Web ON — your documents first and they govern; the answer may also search the internet, and every web statement links to the page it came from. Click to turn off."
-              : "Web OFF — answers come only from this library's documents. Click to also let this question search the internet."}
-            className={`h-8 inline-flex items-center gap-1.5 px-2.5 rounded-lg text-[11px] font-black border transition-colors ${webOn
-              ? "border-sky-400 dark:border-sky-700 text-white bg-sky-600 hover:bg-sky-700"
-              : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
-            <Globe className="w-3.5 h-3.5" /> Web {webOn ? "on" : "off"}
-          </button>
-        )}
+        <SourcesMenu scope={scope} libraryId={libraryId} libraries={libraries} onScopeChange={onScopeChange}
+          scopeLocked={scopeLocked} webOn={webOn} onToggleWeb={onToggleWeb ?? (() => undefined)} />
 
         {scope === "library" && onAnswerMode && (
-          <div className="relative">
-            <button onClick={() => setModeMenu((v) => !v)} aria-haspopup="menu" aria-expanded={modeMenu}
-              title={answerMode ? `${modeLabel} — ${ANSWER_MODES.find((m) => m.id === answerMode)?.hint}. Click to change.` : `Mode: Auto — ${AUTO_MODE_HINT}. Click to pick one before asking.`}
-              className={`h-8 inline-flex items-center gap-1.5 px-2.5 rounded-lg text-[11px] font-black border transition-colors ${answerMode
-                ? "border-orange-400 dark:border-orange-700 text-orange-800 dark:text-orange-200 bg-orange-50 dark:bg-orange-950/30"
-                : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
-              <SlidersHorizontal className="w-3.5 h-3.5" /> {modeLabel} <ChevronDown className="w-3 h-3" />
-            </button>
-            {modeMenu && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setModeMenu(false)} />
-                <div role="menu" className="absolute bottom-full mb-1 left-0 z-50 w-72 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl py-1">
-                  {[{ id: null as AnswerMode | null, label: "Auto", hint: AUTO_MODE_HINT }, ...ANSWER_MODES].map((m) => (
-                    <button key={m.id ?? "auto"} role="menuitemradio" aria-checked={answerMode === m.id} type="button"
-                      onClick={() => { onAnswerMode(m.id); setModeMenu(false); }}
-                      className={`w-full text-left px-3 py-2 hover:bg-[var(--color-surface-2)] ${answerMode === m.id ? "bg-orange-50/70 dark:bg-orange-950/20" : ""}`}>
-                      <div className="text-[12.5px] font-bold text-[var(--color-text)]">{answerMode === m.id ? "✓ " : ""}{m.label}</div>
-                      <div className="text-[11px] text-[var(--color-text-muted)]">{m.hint}</div>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
+          <AnswerMenu answerMode={answerMode} onAnswerMode={onAnswerMode} skills={skills ?? null}
+            picked={pickedSkills ?? null} onPick={onPickSkills ?? (() => undefined)} question={value}
+            instructionCount={instructionCount} onOpenInstructions={onToggleInstructions} />
         )}
 
         <span className="flex-1" />
 
-        <button onClick={onToggleInstructions}
-          title={instructionsActive ? "Instructions apply to this conversation" : "Instructions for this conversation and your profile"}
-          className={`h-8 inline-flex items-center gap-1.5 px-2 rounded-lg text-[11px] font-black border transition-colors ${instructionsActive
-            ? "border-violet-300 dark:border-violet-800 text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/30"
-            : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
-          <SlidersHorizontal className="w-3.5 h-3.5" />
-          {instructionCount > 0 && <span className="tabular-nums">{instructionCount}</span>}
-        </button>
+        {instructionsActive && (
+          <button onClick={onToggleInstructions} title="Instructions apply to this conversation"
+            className="h-8 inline-flex items-center gap-1 px-2 rounded-lg text-[11px] font-black border border-violet-300 dark:border-violet-800 text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/30">
+            <SlidersHorizontal className="w-3.5 h-3.5" /> {instructionCount}
+          </button>
+        )}
 
         {busy ? (
           <button onClick={onStop} title="Stop"
@@ -273,22 +200,5 @@ export default function Composer({
         )}
       </div>
     </div>
-  );
-}
-
-function ScopeItem({ active, icon: Icon, label, sub, onClick }: {
-  active: boolean; icon: React.ComponentType<{ className?: string }>; label: string; sub?: string; onClick: () => void;
-}) {
-  return (
-    <button onClick={onClick}
-      className={`w-full flex items-start gap-2 px-2 py-1.5 rounded-lg text-left transition-colors ${active
-        ? "bg-[var(--color-accent-soft)]"
-        : "hover:bg-[var(--color-surface-2)]"}`}>
-      <Icon className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${active ? "text-[var(--color-accent)]" : "text-[var(--color-text-muted)]"}`} />
-      <span className="min-w-0">
-        <span className="block text-xs font-bold text-[var(--color-text)] truncate">{label}</span>
-        {sub && <span className="block text-[10px] text-[var(--color-text-muted)] truncate">{sub}</span>}
-      </span>
-    </button>
   );
 }

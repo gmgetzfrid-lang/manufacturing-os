@@ -12,7 +12,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { BUILTIN_ANSWER_SKILLS } from "@/lib/answerSkillsData";
 
-interface SkillRow {
+export interface SkillRow {
+  id?: string;
   builtin_key: string | null;
   name: string;
   instructions: string;
@@ -26,9 +27,8 @@ interface SkillRow {
 const BLOCK_BUDGET_CHARS = 9000;
 
 /** Pure assembly, unit-testable: rows in, prompt block out. */
-export function buildAnswerSkillsBlock(rows: SkillRow[], askerId: string | null): string {
-  const applicable = rows.filter((r) =>
-    r.enabled && (r.visibility === "org" || (askerId !== null && r.created_by === askerId)));
+export function buildAnswerSkillsBlock(rows: SkillRow[], askerId: string | null, only?: string[] | null): string {
+  const applicable = skillsInPlay(rows, askerId, only);
   if (applicable.length === 0) return "";
   const parts: string[] = [];
   let used = 0;
@@ -47,18 +47,33 @@ export function buildAnswerSkillsBlock(rows: SkillRow[], askerId: string | null)
   );
 }
 
+/** The skills that ride on one question: the workspace's enabled ones the
+ *  asker may see — or, when the asker picked skills for this question
+ *  (`only`: skill ids), exactly those of the ones they may see. */
+export function skillsInPlay(rows: SkillRow[], askerId: string | null, only?: string[] | null): SkillRow[] {
+  const visible = rows.filter((r) => r.visibility === "org" || (askerId !== null && r.created_by === askerId));
+  if (only) return visible.filter((r) => !!r.id && only.includes(r.id));
+  return visible.filter((r) => r.enabled);
+}
+
 /** Load (seeding built-ins if absent) and assemble the block for one asker. */
 export async function loadAnswerSkillsBlock(
   admin: SupabaseClient,
   orgId: string,
   askerId: string | null,
+  only?: string[] | null,
 ): Promise<string> {
+  return buildAnswerSkillsBlock(await loadAnswerSkillRows(admin, orgId), askerId, only);
+}
+
+/** Every skill row in the workspace, built-ins seeded when missing. */
+export async function loadAnswerSkillRows(admin: SupabaseClient, orgId: string): Promise<SkillRow[]> {
   const res = await admin
     .from("answer_skills")
-    .select("builtin_key, name, instructions, enabled, visibility, created_by")
+    .select("id, builtin_key, name, instructions, enabled, visibility, created_by")
     .eq("org_id", orgId)
     .limit(200);
-  if (res.error) return ""; // pre-migration — degrade silently
+  if (res.error) return []; // pre-migration — degrade silently
   const rows = (res.data as SkillRow[]) ?? [];
 
   const have = new Set(rows.filter((r) => r.builtin_key).map((r) => r.builtin_key));
@@ -67,7 +82,7 @@ export async function loadAnswerSkillsBlock(
     // Plain insert: the unique (org_id, builtin_key) index is PARTIAL, which
     // ON CONFLICT can't infer through the API. A concurrent seeder turns
     // this into a duplicate-key error; either way the rows exist.
-    const { error } = await admin.from("answer_skills").insert(
+    const { data, error } = await admin.from("answer_skills").insert(
       toSeed.map((b) => ({
         org_id: orgId,
         builtin_key: b.builtin_key,
@@ -77,15 +92,8 @@ export async function loadAnswerSkillsBlock(
         enabled: true,
         visibility: "org",
       })),
-    );
-    if (!error) {
-      for (const b of toSeed) {
-        rows.push({
-          builtin_key: b.builtin_key, name: b.name, instructions: b.instructions,
-          enabled: true, visibility: "org", created_by: null,
-        });
-      }
-    }
+    ).select("id, builtin_key, name, instructions, enabled, visibility, created_by");
+    if (!error) rows.push(...((data as SkillRow[]) ?? []));
   }
-  return buildAnswerSkillsBlock(rows, askerId);
+  return rows;
 }

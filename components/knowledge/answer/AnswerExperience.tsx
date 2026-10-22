@@ -1429,6 +1429,14 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
                     <Globe className="w-3 h-3" /> Documents + web{webCitations.length > 0 ? ` · ${webCitations.length} web source${webCitations.length === 1 ? "" : "s"}` : " · web not needed"}
                   </span>
                 )}
+                {/* The Reasoning Skills this question fit — so their help is
+                    seen, and the Skill Library is one tap away. */}
+                {(answer.skillsApplied ?? []).map((sk) => (
+                  <a key={sk.id || sk.name} href="/intelligence/skills" title="A Reasoning Skill shaped this answer — open the Skill Library to see or change it"
+                    className="inline-flex items-center gap-1 text-[10.5px] font-bold px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-950/40 text-violet-800 dark:text-violet-300 hover:underline">
+                    <Sparkles className="w-3 h-3" /> {sk.name}
+                  </a>
+                ))}
               </span>
               <ExportButtons question={question} answer={answer} large />
             </div>

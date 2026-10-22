@@ -34,6 +34,8 @@ import DrawingIntelPanel from "@/components/knowledge/DrawingIntelPanel";
 import LibraryMapPanel from "@/components/knowledge/LibraryMapPanel";
 import HealthPanel from "@/components/knowledge/HealthPanel";
 import AnswerTestsPanel from "@/components/knowledge/AnswerTestsPanel";
+import { SourcesMenu, AnswerMenu, SkillHint, useAnswerSkills } from "@/components/chat/AskControls";
+import type { AnswerMode } from "@/lib/answerModes";
 import SemanticIndexPanel from "@/components/knowledge/SemanticIndexPanel";
 import { collectDroppedFiles, filesFromDirectoryInput } from "@/lib/folderUpload";
 
@@ -450,7 +452,7 @@ export default function KnowledgeLibraryPage() {
           library — one conversation model for every source. This card is
           the door: ask, or pick up a recent conversation. */}
       {activeOrgId && (
-        <AskEntry orgId={activeOrgId} libraryId={libraryId} readyDocs={readyDocs} docsTotal={docs.length} />
+        <AskEntry orgId={activeOrgId} libraryId={libraryId} libraryName={library.name} readyDocs={readyDocs} docsTotal={docs.length} />
       )}
 
       {/* Is the index a complete, current copy of what it's linked to? */}
@@ -745,8 +747,8 @@ export default function KnowledgeLibraryPage() {
 /** The door into the chat, scoped to this library: ask now, or pick up one
  *  of the recent conversations. The conversations rail in the shell has the
  *  full list, search, pin and settle. */
-function AskEntry({ orgId, libraryId, readyDocs, docsTotal }: {
-  orgId: string; libraryId: string; readyDocs: number; docsTotal: number;
+function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
+  orgId: string; libraryId: string; libraryName: string; readyDocs: number; docsTotal: number;
 }) {
   const [recent, setRecent] = useState<ChatThread[] | null>(null);
   const [instructionCount, setInstructionCount] = useState(0);
@@ -763,11 +765,21 @@ function AskEntry({ orgId, libraryId, readyDocs, docsTotal }: {
   const askHref = `/assistant?library=${libraryId}`;
   const router = useRouter();
   const [q, setQ] = useState("");
-  const ask = (e: React.FormEvent) => {
-    e.preventDefault();
+  // The same choices as the chat's prompt bar — they travel with the
+  // question into the chat, so asking here is never the lesser way to ask.
+  const skills = useAnswerSkills(orgId);
+  const [mode, setMode] = useState<AnswerMode | null>(null);
+  const [picked, setPicked] = useState<string[] | null>(null);
+  const [web, setWeb] = useState(false);
+  const ask = (e?: React.FormEvent) => {
+    e?.preventDefault();
     const text = q.trim();
     if (!text) return;
-    router.push(`/assistant?library=${libraryId}&ask=${encodeURIComponent(text.slice(0, 2000))}`);
+    const params = new URLSearchParams({ library: libraryId, ask: text.slice(0, 2000) });
+    if (mode) params.set("mode", mode);
+    if (web) params.set("web", "1");
+    if (picked) params.set("skills", picked.join(","));
+    router.push(`/assistant?${params.toString()}`);
   };
   return (
     <div className="rounded-2xl border-2 border-orange-300 dark:border-orange-800 bg-gradient-to-br from-orange-50/70 to-[var(--color-surface)] dark:from-orange-950/20 dark:to-[var(--color-surface)] p-5 mb-6">
@@ -793,14 +805,21 @@ function AskEntry({ orgId, libraryId, readyDocs, docsTotal }: {
       </div>
       {/* Ask right here — the question opens in the chat already running,
           instead of a door you have to walk through first. */}
-      <form onSubmit={ask} className="mt-4 flex items-center gap-2">
-        <input id="library-ask" value={q} onChange={(e) => setQ(e.target.value)} disabled={readyDocs === 0}
-          placeholder={readyDocs === 0 ? "Asking unlocks when the first document is indexed" : "Ask this library — e.g. \"Can I use seam-welded 304 pipe?\""}
-          className="flex-1 min-w-0 h-11 px-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-orange-400 disabled:opacity-60" />
-        <button type="submit" disabled={readyDocs === 0 || !q.trim()}
-          className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl bg-orange-600 text-white text-sm font-black hover:bg-orange-700 disabled:opacity-40 transition-colors">
-          Ask <ArrowRight className="w-4 h-4" />
-        </button>
+      <form onSubmit={ask} className="mt-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-orange-400">
+        <textarea id="library-ask" value={q} onChange={(e) => setQ(e.target.value)} disabled={readyDocs === 0} rows={2}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }}
+          placeholder={readyDocs === 0 ? "Asking unlocks when the first document is indexed" : "Ask this library — e.g. \"What piping spec should I use for 150 class sour gas?\""}
+          className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none disabled:opacity-60" />
+        <div className="px-4 pb-1"><SkillHint skills={skills} picked={picked} question={q} answerMode={mode} /></div>
+        <div className="flex items-center gap-1.5 px-2 pb-2">
+          <SourcesMenu scope="library" libraryId={libraryId} libraries={[]} fixedLibrary={libraryName} webOn={web} onToggleWeb={() => setWeb((v) => !v)} />
+          <AnswerMenu answerMode={mode} onAnswerMode={setMode} skills={skills} picked={picked} onPick={setPicked} question={q} />
+          <span className="flex-1" />
+          <button type="submit" disabled={readyDocs === 0 || !q.trim()}
+            className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-lg bg-orange-600 text-white text-xs font-black hover:bg-orange-700 disabled:opacity-40 transition-colors">
+            Ask <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </form>
       {readyDocs === 0 && (
         <p className="mt-3 text-[11px] text-amber-700 dark:text-amber-400 font-bold">

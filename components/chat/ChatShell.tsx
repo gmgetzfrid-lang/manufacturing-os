@@ -38,6 +38,7 @@ import { ANSWER_MODES, type AnswerMode } from "@/lib/answerModes";
 import type { DocLink } from "@/components/knowledge/answer/AnswerExperience";
 import ThreadRail from "./ThreadRail";
 import MessageStream, { type StreamingState } from "./MessageStream";
+import { useAnswerSkills } from "./AskControls";
 import Composer, { type PendingAttachment } from "./Composer";
 import MemoryStrip from "./MemoryStrip";
 import StatusChip from "./StatusChip";
@@ -320,10 +321,39 @@ export default function ChatShell() {
     try { if (m) window.localStorage.setItem("chat.answerMode", m); else window.localStorage.removeItem("chat.answerMode"); } catch { /* this tab only */ }
   }, []);
 
+  // ── Reasoning Skills: the workspace's, and any picked for this question
+  //    (null = the workspace's defaults). Remembered on this device.
+  const skills = useAnswerSkills(orgId ?? null);
+  const [pickedSkills, setPickedSkills] = useState<string[] | null>(null);
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      try {
+        const v = window.localStorage.getItem("chat.skills");
+        if (v) setPickedSkills(JSON.parse(v) as string[]);
+      } catch { /* nothing remembered */ }
+    });
+  }, []);
+  const pickSkills = useCallback((ids: string[] | null) => {
+    setPickedSkills(ids);
+    try { if (ids) window.localStorage.setItem("chat.skills", JSON.stringify(ids)); else window.localStorage.removeItem("chat.skills"); } catch { /* this tab only */ }
+  }, []);
+
+  // A question handed over from another place to ask (a library's page, the
+  // dashboard) brings its choices with it: ?mode=…&web=1&skills=a,b
+  useEffect(() => {
+    const m = searchParams.get("mode");
+    if (m && ANSWER_MODES.some((x) => x.id === m)) setPickedMode(m as AnswerMode);
+    if (searchParams.get("web") === "1") setUseWeb(true);
+    const sk = searchParams.get("skills");
+    if (sk !== null) setPickedSkills(sk ? sk.split(",").filter((x) => /^[0-9a-f-]{36}$/i.test(x)) : []);
+  }, [searchParams]);
+
   // ── The turn ──
   const send = useCallback(async (question: string, opts: {
     focus?: string[]; inputs?: string; approved?: string[]; retry?: boolean;
     answerMode?: "answer" | "compliance" | "explore" | "deviation";
+    /** Choices handed over with the question (from a library page). */
+    skills?: string[] | null; web?: boolean;
   } = {}) => {
     const q = question.trim();
     if (!orgId || !uid || !q || streaming) return;
@@ -364,7 +394,8 @@ export default function ChatShell() {
         orgId, scope, libraryId: scope === "tools" ? null : libraryId, threadId, question: q,
         focus: opts.focus, inputs: opts.inputs, approved: opts.approved, attachments: atts,
         ...((opts.answerMode ?? pickedMode) ? { answerMode: opts.answerMode ?? pickedMode ?? undefined } : {}),
-        ...(scope === "library" && useWeb ? { useWeb: true } : {}),
+        ...(scope === "library" && (opts.web ?? useWeb) ? { useWeb: true } : {}),
+        ...(scope === "library" && (opts.skills !== undefined ? opts.skills : pickedSkills) ? { skills: (opts.skills !== undefined ? opts.skills : pickedSkills)! } : {}),
       }, (ev) => {
         if (controller.signal.aborted) return;
         switch (ev.t) {
@@ -463,7 +494,7 @@ export default function ChatShell() {
       return;
     }
     overloadRetried.current = false;
-  }, [orgId, uid, scope, libraryId, streaming, attachments, active, draftInstructions, userName, showToast, threadParam, libraryFilterId, router, useWeb, pickedMode]);
+  }, [orgId, uid, scope, libraryId, streaming, attachments, active, draftInstructions, userName, showToast, threadParam, libraryFilterId, router, useWeb, pickedMode, pickedSkills]);
 
   // ── Asked from the library page: "?ask=" runs the question as soon as the
   //    library it was asked of is selected. Once — the URL is rewritten to
@@ -474,8 +505,14 @@ export default function ChatShell() {
     if (!askParam || askedRef.current === askParam) return;
     if (!orgId || !uid || streaming || active || !libraryFilterId || draftLibraryId !== libraryFilterId) return;
     askedRef.current = askParam;
-    void send(askParam);
-  }, [askParam, orgId, uid, streaming, active, libraryFilterId, draftLibraryId, send]);
+    const m = searchParams.get("mode");
+    const sk = searchParams.get("skills");
+    void send(askParam, {
+      ...(m && ANSWER_MODES.some((x) => x.id === m) ? { answerMode: m as AnswerMode } : {}),
+      ...(sk !== null ? { skills: sk ? sk.split(",").filter((x) => /^[0-9a-f-]{36}$/i.test(x)) : [] } : {}),
+      ...(searchParams.get("web") === "1" ? { web: true } : {}),
+    });
+  }, [askParam, orgId, uid, streaming, active, libraryFilterId, draftLibraryId, send, searchParams]);
 
   const stop = () => {
     abortRef.current?.abort();
@@ -679,6 +716,7 @@ export default function ChatShell() {
               autoFocus={!isMobile}
               webOn={useWeb} onToggleWeb={() => setUseWeb((v) => !v)}
               answerMode={pickedMode} onAnswerMode={pickMode}
+              skills={skills} pickedSkills={pickedSkills} onPickSkills={pickSkills}
             />
             <p className="mt-1.5 px-1 text-[10px] text-[var(--color-text-faint)] truncate">
               {scope === "library" && useWeb

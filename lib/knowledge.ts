@@ -193,6 +193,8 @@ export interface KnowledgeAnswer {
   equipmentTable?: EquipmentTable;
   /** "Which spec should I use": the catalog filtered to a shortlist. */
   candidateTable?: CandidateTable;
+  /** Reasoning Skills this question fit, shown on the answer. */
+  skillsApplied?: Array<{ id: string; name: string }>;
 }
 
 export interface EquipmentTable {
