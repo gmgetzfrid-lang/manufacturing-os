@@ -1211,3 +1211,57 @@ describe("DF-P19 merge-time fix pass (review minor 3) — a rule that cannot mat
     expect(updates("org_configurations")).toHaveLength(0);
   });
 });
+
+// drafting-flow DF-P19 merge-time fix pass 2: the reviewer's anchor repro
+// through the route (refused for a DocCtrl), confirm_rule by ordinal, and an
+// Admin's save that drops an in-force rule recorded in the audit row.
+describe("DF-P19 merge-time fix pass 2 — shadow anchor, confirm by ordinal, an Admin's drop recorded", () => {
+  const STAMP = { confirmedAt: "2026-10-20T00:00:00.000Z", confirmedBy: "a1" };
+  const L1 = "1b000000-0000-4000-8000-000000000001";
+  const L2 = "1b000000-0000-4000-8000-000000000002";
+  const BASE = { tokens: ["Admin", "Engineer", "Manager"] };
+  const S1 = { tokens: ["Admin"], when: { libraryId: [L1] } };
+  const M = { tokens: ["Admin"], when: { libraryId: [L1, L2] } };
+  const X = { tokens: ["Admin", "Engineer", "Manager"], when: { requestType: ["EWR"] } };
+  const seed = (caps: Record<string, unknown>) => { seedPolicyOrg(); state.rows.org_configurations = [config({ caps: { ...STORED.caps, ...caps }, grants: STORED.grants } as CapabilityPolicy)]; };
+
+  for (const cap of ["ticket.final_approve", "ticket.engineer_gate_exempt"]) {
+    it(`${cap}: a DocCtrl's new {L1, L2} rule ahead with the confirmed L1 rule moved behind the EWR rule → 403, nothing written`, async () => {
+      seed({ [cap]: [BASE, { ...S1, ...STAMP }, X] });
+      state.user = { id: "c1" };
+      const res = await policy({ op: "save", orgId: "o1", caps: { ...STORED.caps, [cap]: [BASE, M, X, S1] } });
+      expect(res.status).toBe(403);
+      expect((await res.json()).error).toMatch(/Only an Admin may add, change, remove or reorder a rule ahead of an in-force code-class \/ library rule/);
+      expect(updates("org_configurations")).toHaveLength(0);
+    });
+    it(`${cap}: the same with the {L1, L2} rule already stored unconfirmed → 403`, async () => {
+      seed({ [cap]: [BASE, { ...S1, ...STAMP }, X, M] });
+      state.user = { id: "c1" };
+      expect((await policy({ op: "save", orgId: "o1", caps: { ...STORED.caps, [cap]: [BASE, M, X, S1] } })).status).toBe(403);
+      expect(updates("org_configurations")).toHaveLength(0);
+    });
+  }
+
+  it("confirm_rule with an ordinal confirms that copy (200); that copy again → 409; a bad ordinal → 400", async () => {
+    seed({ "ticket.final_approve": [BASE, S1, S1] });
+    state.user = { id: "a1" };
+    const key = capabilityRuleKey(S1);
+    expect((await policy({ op: "confirm_rule", orgId: "o1", cap: "ticket.final_approve", key, ordinal: -1 })).status).toBe(400);
+    expect((await policy({ op: "confirm_rule", orgId: "o1", cap: "ticket.final_approve", key, ordinal: 1 })).status).toBe(200);
+    const written = updates("org_configurations")[0].data as CapabilityPolicy;
+    const rules = written.caps?.["ticket.final_approve"] as unknown as Array<Record<string, unknown>>;
+    expect(rules[1].confirmedAt).toBeUndefined();
+    expect(rules[2].confirmedBy).toBe("a1");
+    state.rows.org_configurations = [config(written)];
+    expect((await policy({ op: "confirm_rule", orgId: "o1", cap: "ticket.final_approve", key, ordinal: 1 })).status).toBe(409);
+  });
+
+  it("an Admin deleting the unconfirmed copy ahead of a confirmed duplicate is saved, and the audit row records the dropped in-force rule", async () => {
+    seed({ "ticket.final_approve": [BASE, S1, { ...S1, ...STAMP }] });
+    state.user = { id: "a1" };
+    expect((await policy({ op: "save", orgId: "o1", caps: { ...STORED.caps, "ticket.final_approve": [BASE, S1] } })).status).toBe(200);
+    const details = (inserts("audit_logs")[0] as { details: Record<string, unknown> }).details;
+    expect(details.droppedInForceRules).toEqual([{ cap: "ticket.final_approve", rule: { ...S1, ...STAMP }, remains: "unconfirmed-copy" }]);
+    expect(details.unconfirmedRules).toBeUndefined();
+  });
+});

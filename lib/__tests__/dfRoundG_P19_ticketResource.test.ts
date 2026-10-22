@@ -488,7 +488,7 @@ describe("DF-P19 — the rule's state: classification, confirmation, the server-
     const editor = read("components/permissions/CapabilityPolicyEditor.tsx");
     expect(editor).toContain('data-testid="ticket-dimension-rules"');
     expect(editor).toContain('hasAnyRole(["Admin"])');
-    expect(editor).toContain("await confirmCapabilityRule({ orgId: activeOrgId, cap: r.cap, rule: r.rule });");
+    expect(editor).toContain("await confirmCapabilityRule({ orgId: activeOrgId, cap: r.cap, rule: r.rule, ordinal: r.ordinal });");
   });
 
   it("the policy route no longer refuses a new library / class-scoped request rule; it carries the confirmation and offers confirm_rule (Admin only)", () => {
@@ -1247,5 +1247,113 @@ describe("merge-time fix pass (review nit 6) — two stored rules sharing a key"
     expect(carried.unconfirmedNew).toEqual([]);
     expect(inForceTicketRulesDropped({ [cap]: [R, R, BASE] } as CapabilityPolicy["caps"], stored)).toEqual([]);
     expect(inForceTicketRulesDropped({ [cap]: [R, BASE] } as CapabilityPolicy["caps"], stored)).toHaveLength(1);
+  });
+});
+
+// ── DF-P19 merge-time fix pass 2 ────────────────────────────────────────────
+describe("merge-time fix pass 2 (review major 1) — the shadow check finds the in-force rule where the save carries its stamp", () => {
+  const STAMP = { confirmedAt: NOW, confirmedBy: "a1" };
+  const BASE = { tokens: ["Admin", "Engineer", "Manager"] };
+  const S1 = { tokens: ["Admin"], when: { libraryId: [LIB] } };
+  const M = { tokens: ["Admin"], when: { libraryId: [LIB, OTHER_LIB] } };
+  const X = { tokens: ["Admin", "Engineer", "Manager"], when: { requestType: ["EWR"] } };
+  const EWR_L1 = { requestType: "EWR", libraryId: LIB };
+
+  for (const cap of ["ticket.final_approve", "ticket.engineer_gate_exempt"] as CapabilityId[]) {
+    it(`${cap}: the reviewer's repro — a new {L1, L2} rule ahead and the confirmed L1 rule moved behind the EWR rule is refused (it would have let the L1 narrowing lapse)`, async () => {
+      const { inForceTicketRulesShadowed, inForceTicketRulesDropped } = await import("@/lib/capabilityPolicy");
+      const stored = { [cap]: [BASE, { ...S1, ...STAMP }, X] } as CapabilityPolicy["caps"];
+      const sent = { [cap]: [BASE, M, X, S1] } as CapabilityPolicy["caps"];
+      expect(inForceTicketRulesDropped(sent, stored)).toEqual([]);
+      expect(inForceTicketRulesShadowed(sent, stored).map((x) => capabilityRuleKey(x.rule))).toEqual([capabilityRuleKey(S1)]);
+      // what it would have stored: the stamp stays on the L1 rule, now behind the EWR rule
+      const after = carryTicketRuleConfirmation(sent, stored, { at: NOW, by: "c1" }, false).caps;
+      expect(tokensFor({ caps: stored }, cap, EWR_L1)).toEqual(["Admin"]);
+      expect(tokensFor({ caps: after }, cap, EWR_L1)).toEqual(["Admin", "Engineer", "Manager"]);
+    });
+    it(`${cap}: the variant with the {L1, L2} rule already stored (unconfirmed) and moved ahead is refused too`, async () => {
+      const { inForceTicketRulesShadowed } = await import("@/lib/capabilityPolicy");
+      const stored = { [cap]: [BASE, { ...S1, ...STAMP }, X, M] } as CapabilityPolicy["caps"];
+      const sent = { [cap]: [BASE, M, X, S1] } as CapabilityPolicy["caps"];
+      expect(inForceTicketRulesShadowed(sent, stored)).toHaveLength(1);
+    });
+  }
+
+  it("still accepted: the B16-vs-B313 save, and unchanged console saves with duplicate copies (and a new class row added to them)", async () => {
+    const { inForceTicketRulesShadowed, inForceTicketRulesDropped } = await import("@/lib/capabilityPolicy");
+    const cap: CapabilityId = "ticket.final_approve";
+    const storedB = { [cap]: [{ tokens: ["Engineer", "Admin"] }, { tokens: ["Engineer", "Admin"], when: { requestType: ["EWR"] } }, { tokens: ["Admin"], when: { codeClass: ["B313"] }, ...STAMP }] } as CapabilityPolicy["caps"];
+    const sb = splitPolicyForEditor({ caps: storedB });
+    const withB16 = joinPolicyFromEditor(sb.base, sb.overrides, sb.opaque, sb.projectOverrides, { caps: storedB }, { [cap]: [...(sb.codeClassOverrides[cap] ?? []), { codeClass: "B16", tokens: ["Engineer-2"] }] });
+    expect(inForceTicketRulesShadowed(withB16, storedB)).toEqual([]);
+    for (const rules of [
+      [{ tokens: ["Admin", "Engineer"] }, { tokens: ["Admin"], when: { libraryId: [LIB] } }, { tokens: ["Admin"], when: { requestType: ["EWR"] } }, { tokens: ["Admin"], when: { libraryId: [LIB] }, ...STAMP }],
+      [{ tokens: ["Admin", "Engineer"] }, { tokens: ["Admin"], when: { codeClass: ["B1"] } }, { tokens: ["Admin"], when: { requestType: ["EWR"] } }, { tokens: ["Admin"], when: { codeClass: ["B1"] }, ...STAMP }],
+      [{ tokens: ["Admin", "Engineer"] }, { tokens: ["Admin"], when: { requestType: ["EWR", "DCN"] } }, { tokens: ["Admin"], when: { codeClass: ["B1"], requestType: ["EWR", "DCN"] }, ...STAMP }],
+    ] as CapabilityRule[][]) {
+      const stored: CapabilityPolicy = { caps: { [cap]: rules } as CapabilityPolicy["caps"] };
+      const s = splitPolicyForEditor(stored);
+      const same = joinPolicyFromEditor(s.base, s.overrides, s.opaque, s.projectOverrides, stored, s.codeClassOverrides);
+      expect(inForceTicketRulesDropped(same, stored.caps)).toEqual([]);
+      expect(inForceTicketRulesShadowed(same, stored.caps)).toEqual([]);
+      const plus = joinPolicyFromEditor(s.base, s.overrides, s.opaque, s.projectOverrides, stored, { [cap]: [...(s.codeClassOverrides[cap] ?? []), { codeClass: "B2", tokens: ["Engineer"] }] });
+      expect(inForceTicketRulesShadowed(plus, stored.caps)).toEqual([]);
+    }
+  });
+
+  it("the checks and the carry share one locator: the n-th copy of the WHOLE key among the dimension rules", async () => {
+    const { ticketRuleCarrySources } = await import("@/lib/capabilityPolicy");
+    const cap: CapabilityId = "ticket.final_approve";
+    const prior = [BASE, { ...S1, ...STAMP }, X, M, S1] as CapabilityRule[];
+    expect(ticketRuleCarrySources(cap, [BASE, M, X, S1, S1, S1], prior)).toEqual([-1, 3, -1, 1, 4, -1]);
+    const src = read("lib/capabilityPolicy.ts");
+    expect(src).toContain("const sources = ticketRuleCarrySources(id, bares, prior);");
+    expect(src).toContain("const carried = new Set(ticketRuleCarrySources(id, isRuleArray(next) ? next : [], prior).filter((i) => i >= 0));");
+    expect(src).toContain("const sources = ticketRuleCarrySources(id, nextRules, prior);");
+  });
+});
+
+describe("merge-time fix pass 2 (review nit 3) — confirm_rule confirms the copy the Admin clicked", () => {
+  const cap: CapabilityId = "ticket.final_approve";
+  const R = { tokens: ["Admin"], when: { libraryId: [LIB] } };
+  const BASE = { tokens: ["Admin", "Manager"] };
+  it("by ordinal among the rules with that key; absent → the first unconfirmed; a confirmed or missing copy is refused", () => {
+    const caps = { [cap]: [R, BASE, R] } as CapabilityPolicy["caps"];
+    const states = ticketDimensionRules({ caps });
+    expect(states.map((x) => x.ordinal)).toEqual([0, 1]);
+    const second = confirmTicketDimensionRule(caps, cap, capabilityRuleKey(R), { at: NOW, by: "a1" }, 1);
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect((second.caps[cap] as CapabilityRule[])[0]).toEqual(R);
+    expect((second.caps[cap] as CapabilityRule[])[2]).toEqual({ ...R, confirmedAt: NOW, confirmedBy: "a1" });
+    expect(confirmTicketDimensionRule(second.caps, cap, capabilityRuleKey(R), { at: NOW, by: "a1" }, 1)).toMatchObject({ ok: false, error: /already in force/ });
+    expect(confirmTicketDimensionRule(caps, cap, capabilityRuleKey(R), { at: NOW, by: "a1" }, 2)).toMatchObject({ ok: false, error: /not stored/ });
+    const first = confirmTicketDimensionRule(caps, cap, capabilityRuleKey(R), { at: NOW, by: "a1" });
+    expect(first.ok && (first.caps[cap] as CapabilityRule[])[0].confirmedBy).toBe("a1");
+    const editor = read("components/permissions/CapabilityPolicyEditor.tsx");
+    expect(editor).toContain("await confirmCapabilityRule({ orgId: activeOrgId, cap: r.cap, rule: r.rule, ordinal: r.ordinal });");
+  });
+});
+
+describe("merge-time fix pass 2 (review nit 4) — an Admin's save that drops an in-force rule is disclosed and recorded; only new rules are 'new'", () => {
+  const cap: CapabilityId = "ticket.final_approve";
+  const R = { tokens: ["Admin"], when: { libraryId: [LIB] } };
+  const BASE = { tokens: ["Admin", "Engineer"] };
+  it("deleting the unconfirmed copy ahead of a confirmed duplicate: the kept copy is unconfirmed — named 'unconfirmed-copy'; a removal is 'removed'", async () => {
+    const { describeDroppedInForceTicketRules } = await import("@/lib/capabilityPolicy");
+    const stored = { [cap]: [BASE, R, { ...R, confirmedAt: NOW, confirmedBy: "a1" }] } as CapabilityPolicy["caps"];
+    const out = carryTicketRuleConfirmation({ [cap]: [BASE, R] } as CapabilityPolicy["caps"], stored, { at: NOW, by: "admin" }, true);
+    expect(out.caps[cap]).toEqual([BASE, R]);
+    expect(describeDroppedInForceTicketRules({ [cap]: [BASE, R] } as CapabilityPolicy["caps"], stored).map((d) => d.remains)).toEqual(["unconfirmed-copy"]);
+    expect(describeDroppedInForceTicketRules({ [cap]: [BASE] } as CapabilityPolicy["caps"], stored).map((d) => d.remains)).toEqual(["removed"]);
+    const editor = read("components/permissions/CapabilityPolicyEditor.tsx");
+    expect(editor).toContain("for (const x of describeDroppedInForceTicketRules(caps, storedPolicy?.caps)) {");
+  });
+  it("unconfirmedNew lists only rules no stored rule matches; an extra copy of a stored rule is unconfirmedCopies", () => {
+    const stored = { [cap]: [BASE, { ...R, confirmedAt: NOW }] } as CapabilityPolicy["caps"];
+    const N = { tokens: ["Admin"], when: { libraryId: [OTHER_LIB] } };
+    const out = carryTicketRuleConfirmation({ [cap]: [BASE, R, R, N] } as CapabilityPolicy["caps"], stored, { at: NOW, by: "c1" }, false);
+    expect(out.unconfirmedNew).toEqual([{ cap, rule: N }]);
+    expect(out.unconfirmedCopies).toEqual([{ cap, rule: R }]);
   });
 });

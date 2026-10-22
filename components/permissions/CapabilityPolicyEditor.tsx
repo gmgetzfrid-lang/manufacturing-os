@@ -106,7 +106,7 @@ import {
   validateCapabilityPolicy, invalidateCapabilityPolicy, isRuleArray, ruleIsConditional, describeWhen,
   CapabilityPolicyChangeError, POLICY_CHANGED, PROJECT_SCOPED_CAPS, announceCapabilityPolicyChanged,
   HOLD_OPENER_TOKEN, ticketDimensionRules, confirmCapabilityRule, capabilityRuleKey, GATE_EXEMPT_CAP, isTicketResourceCap,
-  isTicketDimensionRule, ruleInForce, inForceTicketRulesDropped, inForceTicketRulesShadowed, inForceTicketRulesShadowedRefusal,
+  isTicketDimensionRule, ruleInForce, inForceTicketRulesDropped, inForceTicketRulesShadowed, inForceTicketRulesShadowedRefusal, describeDroppedInForceTicketRules,
   rulesCanOverlap, RULE_KEYS,
   type CapabilityId, type CapabilityEntry, type CapabilityRule, type CapabilityPolicy, type TicketDimensionRuleState,
 } from "@/lib/capabilityPolicy";
@@ -733,6 +733,16 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
         if (!nowCls.some((r) => r.codeClass === w.codeClass)) changes.push(`${d.label} for code class ${classLabel(w.codeClass)}: code-class rule removed — the row above applies again`);
       }
     }
+    // Merge-time fix pass 2 (review nit 4): an Admin's save may drop an
+    // in-force library / class rule (anyone else's was refused above) — said
+    // here, with what remains of it, and recorded by the route.
+    if (hasAnyRole(["Admin"])) {
+      for (const x of describeDroppedInForceTicketRules(caps, storedPolicy?.caps)) {
+        changes.push(`${capLabel(x.cap)} where ${describeWhen(x.rule.when)} → ${x.rule.tokens.join(", ") || "nobody"}: in force today; ${x.remains === "unconfirmed-copy"
+          ? "after this save the copy of this rule that is kept is an UNCONFIRMED one, so it only adds people until an Admin confirms it again"
+          : "this save removes it (an edited rule is saved as a new one)"}`);
+      }
+    }
     if (changes.length > 0) {
       const ok = await appConfirm({
         message: `This changes who can act, effective immediately:\n\n${changes.slice(0, 8).join("\n")}${changes.length > 8 ? `\n…and ${changes.length - 8} more` : ""}\n\nApply?`,
@@ -805,9 +815,9 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
       message: `Confirm this rule? From now on it applies in full, including where it takes the action away from people who can do it today:\n\n${capLabel(r.cap)} when ${describeWhen(r.rule.when)} → ${r.rule.tokens.join(", ") || "nobody"}`,
     });
     if (!ok) return;
-    setConfirming(r.key);
+    setConfirming(`${r.cap}:${r.key}#${r.ordinal}`);
     try {
-      await confirmCapabilityRule({ orgId: activeOrgId, cap: r.cap, rule: r.rule });
+      await confirmCapabilityRule({ orgId: activeOrgId, cap: r.cap, rule: r.rule, ordinal: r.ordinal });
       invalidateCapabilityPolicy(activeOrgId);
       announceCapabilityPolicyChanged(activeOrgId);
       await load();
@@ -1169,12 +1179,12 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
             <div className="text-[10px] text-[var(--color-text-faint)]">Requests present their library and classes to these rules. A rule no Admin has saved or confirmed (one stored before requests presented them, or added by a non-Admin) only adds people until an Admin confirms it: where it would take an action away from someone, that person keeps it until then. On &ldquo;Approve own request without an engineer&rdquo; it does nothing at all until confirmed (adding a role there removes an engineer review).</div>
             <ul className="mt-1 space-y-1">
               {dimensionRules.map((r) => (
-                <li key={`${r.cap}:${r.key}`} data-dimension-rule={r.inForce ? "in-force" : r.effect} className="text-[11px] flex items-center gap-2 flex-wrap">
+                <li key={`${r.cap}:${r.key}#${r.ordinal}`} data-dimension-rule={r.inForce ? "in-force" : r.effect} className="text-[11px] flex items-center gap-2 flex-wrap">
                   <span className="text-[var(--color-text)]">{capLabel(r.cap)} when {describeWhen(r.rule.when)} → {r.rule.tokens.join(", ") || "nobody"}</span>
                   <span className={r.inForce ? "text-[var(--color-text-faint)]" : r.effect === "narrow" ? "font-bold text-amber-700 dark:text-amber-300" : "text-[var(--color-text-faint)]"}>{ticketDimensionRuleStatus(r)}</span>
                   {!r.inForce && mayConfirm && (
                     <button type="button" disabled={confirming !== null} onClick={() => void confirmRule(r)} className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border)] text-[10px] font-bold disabled:opacity-50">
-                      {confirming === r.key ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Confirm
+                      {confirming === `${r.cap}:${r.key}#${r.ordinal}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Confirm
                     </button>
                   )}
                 </li>

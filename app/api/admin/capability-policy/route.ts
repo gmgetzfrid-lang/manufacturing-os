@@ -68,7 +68,7 @@ import {
   CAPABILITY_DEFS, baseTokensFor, grantActive, isRuleArray, normalizeCapabilityEntry,
   parseStoredCapabilityPolicy, ruleIsConditional, validateCapabilityPolicy, invalidateCapabilityPolicy,
   policyHasProjectScopedRule, samePolicyVersion, POLICY_CHANGED, PROJECT_SCOPED_CAPS, sameGrant,
-  RULE_KEYS, carryTicketRuleConfirmation, confirmTicketDimensionRule, inForceTicketRulesDropped, inForceTicketRulesShadowed, inForceTicketRulesShadowedRefusal, describeWhen,
+  RULE_KEYS, carryTicketRuleConfirmation, confirmTicketDimensionRule, inForceTicketRulesDropped, inForceTicketRulesShadowed, inForceTicketRulesShadowedRefusal, describeDroppedInForceTicketRules, describeWhen,
   type CapabilityId, type CapabilityPolicy, type UserGrant,
 } from "@/lib/capabilityPolicy";
 import { memberHoldsAny } from "@/lib/roleHeld";
@@ -85,7 +85,7 @@ const OPS = new Set(["save", "grant", "revoke", "confirm_rule"]);
 interface Body {
   op?: unknown; orgId?: unknown; caps?: unknown; version?: unknown;
   uid?: unknown; cap?: unknown; expiresAt?: unknown; note?: unknown; projectId?: unknown;
-  key?: unknown;
+  key?: unknown; ordinal?: unknown;
 }
 
 const bad = (error: string, status: number) => NextResponse.json({ error }, { status });
@@ -253,6 +253,16 @@ export async function POST(req: NextRequest) {
     after = { caps: carried.caps, grants: liveGrants };
     if (carried.confirmed.length > 0) grantDetail = { confirmedRules: carried.confirmed.map((c) => ({ cap: c.cap, rule: c.rule })) };
     if (carried.unconfirmedNew.length > 0) grantDetail = { ...grantDetail, unconfirmedRules: carried.unconfirmedNew.map((c) => ({ cap: c.cap, rule: c.rule })) };
+    // Merge-time fix pass 2 (review nit 4): an extra copy of a stored rule is
+    // not a new rule; it is recorded apart.
+    if (carried.unconfirmedCopies.length > 0) grantDetail = { ...grantDetail, unconfirmedRuleCopies: carried.unconfirmedCopies.map((c) => ({ cap: c.cap, rule: c.rule })) };
+    // Merge-time fix pass 2 (review nit 4): an Admin may drop an in-force
+    // library / class rule (a non-Admin was refused above) — recorded, with
+    // what remains of it (a copy left unconfirmed, or nothing).
+    if (isAdmin) {
+      const droppedInForce = describeDroppedInForceTicketRules(caps, before.caps);
+      if (droppedInForce.length > 0) grantDetail = { ...grantDetail, droppedInForceRules: droppedInForce.map((d) => ({ cap: d.cap, rule: d.rule, remains: d.remains })) };
+    }
     // WF-11 done-when 2: a critical capability's entry is Admin's to change —
     // a DocCtrl controller may edit the rest of the grid. "Change" is what
     // the evaluator would answer differently, not a different JSON shape.
@@ -270,7 +280,14 @@ export async function POST(req: NextRequest) {
     const cap = str(body.cap) as CapabilityId;
     const key = typeof body.key === "string" ? body.key : "";
     if (!CAPABILITY_DEFS.some((d) => d.id === cap) || !key) return bad("cap and key (the rule to confirm) are required", 400);
-    const res = confirmTicketDimensionRule(before.caps, cap, key, { at: nowIso, by: caller.id });
+    // Merge-time fix pass 2 (review nit 3): the copy the Admin clicked, by
+    // its place among the rules with that key; absent → the first
+    // unconfirmed copy.
+    const hasOrdinal = body.ordinal !== undefined && body.ordinal !== null;
+    if (hasOrdinal && !(typeof body.ordinal === "number" && Number.isInteger(body.ordinal) && body.ordinal >= 0)) {
+      return bad("ordinal must be the copy's place (0, 1, …) among the rules with that key", 400);
+    }
+    const res = confirmTicketDimensionRule(before.caps, cap, key, { at: nowIso, by: caller.id }, hasOrdinal ? (body.ordinal as number) : null);
     if (!res.ok) return bad(res.error, 409);
     after = { caps: res.caps, grants: liveGrants };
     grantDetail = { confirmedRules: [{ cap, rule: res.rule }] };
