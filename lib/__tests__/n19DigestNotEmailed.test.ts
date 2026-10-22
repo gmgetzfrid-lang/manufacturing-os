@@ -7,8 +7,13 @@
 //     or delivery "never" — the app's one rule, emailAllowedByPrefs) and who
 //     a visit reaches (active, with an address, holding unread compliance
 //     notices in the window) gets ONE not_emailed record a day — written
-//     after every digest is queued and the state recorded; a re-run the same
+//     after every digest is queued and the state recorded, and (the N19 fix
+//     pass) only after the cron's 6c drain has sent them; a re-run the same
 //     day records nobody twice;
+//   * the record is bookkeeping, bounded: a record read or insert that never
+//     answers delays no send and no later step (each is abandoned after its
+//     limit), and a run with no time left — before the record step, or after
+//     its first chunk — stops recording and says so;
 //   * the last-digest read ignores a not_emailed record: a record is never
 //     read as the digest sent (it would silence today's digest or start the
 //     next list after items never sent);
@@ -47,6 +52,9 @@ const db = vi.hoisted(() => {
     missingColumn: {} as Record<string, string>,
     /** before 20261258: the status CHECK refuses a not_emailed row (23514). */
     refuseNotEmailed: false as boolean | { code: string; message: string },
+    /** The record's calls that never answer ("read": today's records;
+     *  "insert": the record) — they settle only when their abort signal fires. */
+    hang: new Set<string>(),
   };
 });
 
@@ -69,6 +77,8 @@ function makeClient() {
     let payload: unknown = null;
     let onConflict: string | null = null;
     let ignoreDuplicates = false;
+    let recordRead = false;
+    let signal: AbortSignal | null = null;
     const named: string[] = [];
     const matching = () => (db.tables[table] ?? []).filter((r) => filters.every((f) => f(r)));
     const exec = (): { data: unknown; error: unknown; count?: number } => {
@@ -121,14 +131,26 @@ function makeClient() {
     const b: Record<string, unknown> = {};
     const p: ProxyHandler<Record<string, unknown>> = {
       get(_t, prop: string) {
-        if (prop === "then") return (res: (v: unknown) => void, rej?: (e: unknown) => void) => Promise.resolve(exec()).then(res, rej);
+        if (prop === "then") return (res: (v: unknown) => void, rej?: (e: unknown) => void) => {
+          const kind = op === "insert" && ((Array.isArray(payload) ? payload : [payload]) as Row[]).some((r) => r?.status === "not_emailed") ? "insert"
+            : op === "select" && recordRead ? "read" : null;
+          if (kind && db.hang.has(kind)) {
+            db.calls.push({ table, op: `hang:${kind}`, args: [] });
+            return new Promise((resolve) => {
+              const done = () => { db.calls.push({ table, op: `aborted:${kind}`, args: [] }); resolve({ data: null, error: { message: "AbortError: This operation was aborted" } }); };
+              if (signal?.aborted) done(); else signal?.addEventListener("abort", done);
+            }).then(res, rej);
+          }
+          return Promise.resolve(exec()).then(res, rej);
+        };
         return (...args: unknown[]) => {
           db.calls.push({ table, op: prop, args });
           switch (prop) {
             case "select": if (op === "select") head = !!(args[1] as { head?: boolean } | undefined)?.head; break;
             case "insert": case "update": case "delete": op = prop; payload = args[0]; break;
             case "upsert": op = "upsert"; payload = args[0]; onConflict = (args[1] as { onConflict?: string } | undefined)?.onConflict ?? null; ignoreDuplicates = !!(args[1] as { ignoreDuplicates?: boolean } | undefined)?.ignoreDuplicates; break;
-            case "eq": filters.push((r) => at(r, String(args[0])) === args[1]); break;
+            case "eq": if (args[0] === "status" && args[1] === "not_emailed") recordRead = true; filters.push((r) => at(r, String(args[0])) === args[1]); break;
+            case "abortSignal": signal = args[0] as AbortSignal; break;
             case "neq": filters.push((r) => at(r, String(args[0])) !== args[1]); break;
             case "in": { const s = new Set(args[1] as unknown[]); filters.push((r) => s.has(at(r, String(args[0])))); break; }
             case "is": named.push(String(args[0])); filters.push((r) => (args[1] === null ? at(r, String(args[0])) == null : at(r, String(args[0])) === args[1])); break;
@@ -245,6 +267,9 @@ let resendStatus: number[] = [];
 let drainTakesMs = 0;
 /** How many of the next send-queued batches never answer (settle only on abort). */
 let drainHangs = 0;
+/** Called on every send-queued call (the drain's batches), after it is logged in db.calls. */
+let onDrain: null | ((n: number) => void) = null;
+let drainCalls = 0;
 const savedFetch = globalThis.fetch;
 const savedEnv: Record<string, string | undefined> = {};
 
@@ -252,7 +277,7 @@ beforeEach(() => {
   db.tables = { orgs: [{ id: ORG_A, name: "Org A" }, { id: ORG_B, name: "Org B" }] };
   db.calls = []; db.readError = {}; db.writeError = {}; db.seq = 0; db.maxRows = null; db.onExec = null; db.rpcs = {}; db.folded = []; db.missingColumn = {}; db.refuseNotEmailed = false;
   resetDeliveryRecordLatches();
-  drainAnswers = []; resendBodies = []; resendStatus = []; drainTakesMs = 0; drainHangs = 0;
+  drainAnswers = []; resendBodies = []; resendStatus = []; drainTakesMs = 0; drainHangs = 0; onDrain = null; drainCalls = 0; db.hang = new Set();
   vi.mocked(emit).mockReset();
   vi.mocked(emit).mockImplementation(async () => ({ recipients: 0 }));
   for (const k of ["NEXT_PUBLIC_SITE_URL", "VERCEL_PROJECT_PRODUCTION_URL", "NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL", "RESEND_API_KEY", "EMAIL_UNSUBSCRIBE_SECRET"]) { savedEnv[k] = process.env[k]; delete process.env[k]; }
@@ -260,6 +285,8 @@ beforeEach(() => {
   globalThis.fetch = vi.fn(async (url: unknown, init?: RequestInit) => {
     const u = String(url);
     if (u.endsWith("/api/notifications/send-queued")) {
+      db.calls.push({ table: "fetch", op: "send-queued", args: [] });
+      onDrain?.(++drainCalls);
       if (drainHangs > 0) {
         drainHangs -= 1;
         const sig = init?.signal;
@@ -283,6 +310,7 @@ beforeEach(() => {
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
 });
 afterEach(() => {
+  vi.useRealTimers();
   globalThis.fetch = savedFetch;
   for (const [k, v] of Object.entries(savedEnv)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   vi.restoreAllMocks();
@@ -351,14 +379,22 @@ describe("DELIV-18 — the compliance digest records the members their own prefe
     expect(String(rec.body_text)).not.toContain("Due 2");   // nothing of what it would have listed
   });
 
-  it("written last: after every digest is queued and after the state is recorded — no send and no state waits on it", async () => {
+  it("written last: after every digest is queued, after the state is recorded, and after the 6c drain that sends this run's digests — no send and no state waits on it", async () => {
     seed();
     await runCron();
-    const writes = db.calls.filter((c) => (c.table === "email_notifications" && c.op === "insert") || (c.table === "platform_settings" && c.op === "upsert"));
-    const kinds = writes.map((c) => c.table === "platform_settings" ? "state" : ((Array.isArray(c.args[0]) ? c.args[0] : [c.args[0]]) as Row[])[0].status);
+    const writes = db.calls.filter((c) => (c.table === "email_notifications" && c.op === "insert") || (c.table === "platform_settings" && c.op === "upsert") || c.table === "fetch");
+    const kinds = writes.map((c) => c.table === "fetch" ? "drain" : c.table === "platform_settings" ? "state" : ((Array.isArray(c.args[0]) ? c.args[0] : [c.args[0]]) as Row[])[0].status);
     const firstRecord = kinds.indexOf("not_emailed");
     expect(firstRecord).toBeGreaterThan(kinds.lastIndexOf("queued"));
     expect(firstRecord).toBeGreaterThan(kinds.lastIndexOf("state"));
+    // the 6c drain (the batch after the digest's rows are queued) ran before any record was asked —
+    // neither today's records read nor the insert
+    const drainAfterDigest = kinds.indexOf("drain", kinds.lastIndexOf("queued"));
+    expect(drainAfterDigest).toBeGreaterThan(-1);
+    expect(firstRecord).toBeGreaterThan(drainAfterDigest);
+    const allIdx = (pred: (c: { table: string; op: string; args: unknown[] }) => boolean) => db.calls.findIndex(pred);
+    const lastDrain = db.calls.map((c) => c.table).lastIndexOf("fetch");
+    expect(allIdx((c) => c.table === "email_notifications" && c.op === "eq" && c.args[0] === "status" && c.args[1] === "not_emailed")).toBeGreaterThan(lastDrain);
   });
 
   it("a re-run the same day records nobody twice and mails nobody twice", async () => {
@@ -429,9 +465,69 @@ describe("DELIV-18 — the compliance digest records the members their own prefe
     expect(rows("platform_settings").length).toBe(1);
   });
 
-  it("past the run's deadline: not recorded, and said (the digests already queued are untouched)", async () => {
-    const route = readFileSync(join(process.cwd(), "app/api/cron/maintenance/route.ts"), "utf8");
-    expect(route).toContain("member(s) were not emailed today's digest by their own choice — not recorded: no time was left in this run");
-    expect(route).toMatch(/if \(declined\.length > 0 && !notEmailedRecordLatch\.held\(\)\) \{\n\s*if \(Date\.now\(\) >= opts\.deadlineAt\) \{/);
+  // Last but two: the abandoned insert spends the recorder's once-per-process line, which the
+  // before-20261258 case above reads.
+  it("a record read or insert that never answers delays no send: the 6c drain has sent this run's digests before either is asked; each is abandoned after its limit (aborted), said, and the run's later steps still run", async () => {
+    seed();
+    db.hang = new Set(["read", "insert"]);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const p = runCron();
+    await vi.waitFor(() => expect(db.calls.some((c) => c.op === "hang:read")).toBe(true));
+    // the run is now waiting on the record's read: the digest is queued and the 6c drain already asked to send it
+    const firstHang = db.calls.findIndex((c) => c.op === "hang:read");
+    const lastQueued = db.calls.map((c, i) => (c.table === "email_notifications" && c.op === "insert" ? i : -1)).filter((i) => i >= 0).pop()!;
+    expect(sent().map((e) => e.to_user_id)).toEqual([U(1)]);
+    expect(db.calls.findIndex((c, i) => i > lastQueued && c.table === "fetch")).toBeGreaterThan(lastQueued);
+    expect(db.calls.findIndex((c, i) => i > lastQueued && c.table === "fetch")).toBeLessThan(firstHang);
+    expect(db.calls.slice(firstHang).some((c) => c.table === "fetch")).toBe(false);
+    await vi.advanceTimersByTimeAsync(5_000);           // the read's limit
+    await vi.waitFor(() => expect(db.calls.some((c) => c.op === "hang:insert")).toBe(true));
+    await vi.advanceTimersByTimeAsync(5_000);           // the insert's limit
+    const r = await p;
+    expect(db.calls.some((c) => c.op === "aborted:read")).toBe(true);
+    expect(db.calls.some((c) => c.op === "aborted:insert")).toBe(true);
+    expect(records()).toEqual([]);
+    expect(sent().map((e) => e.to_user_id)).toEqual([U(1)]);
+    expect(r.errors).toContain(`compliance-digest: today's "not emailed by their choice" records could not be read — 3 member(s) recorded anyway (a re-run today may record them twice): no answer within 5 s — the request was abandoned`);
+    expect(r.errors).toContain("compliance-digest: the record that 3 member(s) were not emailed today's digest by their own choice was not written: timeout: no answer within 5 s — the request was abandoned (it may still land)");
+    expect(r.folderTrashPurged).toBe(0);                // the step after it ran
+  });
+
+  it("no time left when the record step starts (the 6c drain ran late): nothing recorded, nothing asked, and said — the digests already queued are untouched", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const T0 = Date.now();
+    vi.setSystemTime(T0);
+    seed();
+    // the 6c drain's batch (the second send-queued call) returns 5 s before the run's end (300 s less 10 s)
+    onDrain = (n) => { if (n === 2) vi.setSystemTime(T0 + 285_000); };
+    const r = await runCron();
+    expect(drainCalls).toBe(2);
+    expect(sent().map((e) => e.to_user_id)).toEqual([U(1)]);
+    expect(records()).toEqual([]);
+    expect(db.calls.some((c) => c.table === "email_notifications" && c.op === "eq" && c.args[0] === "status" && c.args[1] === "not_emailed")).toBe(false);
+    expect(r.errors).toContain("compliance-digest: 3 member(s) were not emailed today's digest by their own choice — not recorded: no time was left in this run");
+  });
+
+  it("the run's time runs out after the first chunk: the second chunk is not started — no insert after the deadline — and the members left are said", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const T0 = Date.now();
+    vi.setSystemTime(T0);
+    // one opted-in member and 151 opted-out ones: two record chunks (DIGEST_UID_CHUNK = 150)
+    const out = Array.from({ length: 151 }, (_v, k) => U(100 + k));
+    db.tables.org_members = [member(ORG_A, U(1)), ...out.map((u) => member(ORG_A, u))];
+    db.tables.notifications = [U(1), ...out].map((u) => notice(ORG_A, u, "review_due", `Due ${u.slice(-3)}`, minutesAgo(10)));
+    db.tables.notification_preferences = out.map((u) => ({ user_id: u, email_enabled: false }));
+    let drained = false;
+    onDrain = (n) => { if (n === 2) drained = true; };
+    // the first record insert lands at 285 s — 5 s before the run's end
+    let jumped = false;
+    db.onExec = (table, op) => { if (drained && !jumped && table === "email_notifications" && op === "insert") { jumped = true; vi.setSystemTime(T0 + 285_000); } };
+    const r = await runCron();
+    expect(sent().map((e) => e.to_user_id)).toEqual([U(1)]);
+    expect(records().length).toBe(150);
+    const recordInserts = db.calls.filter((c) => c.table === "email_notifications" && c.op === "insert"
+      && ((Array.isArray(c.args[0]) ? c.args[0] : [c.args[0]]) as Row[]).some((x) => x.status === "not_emailed"));
+    expect(recordInserts.length).toBe(1);
+    expect(r.errors).toContain("compliance-digest: 1 member(s) were not emailed today's digest by their own choice — not recorded: no time was left in this run");
   });
 });
