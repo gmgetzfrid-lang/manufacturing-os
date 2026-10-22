@@ -45,7 +45,9 @@
 // server stamps it — carryTicketRuleConfirmation; a client never sends the
 // stamp; a DocCtrl's new rule is stored unconfirmed — second fix pass,
 // review minor 3; an IN-FORCE one is Admin's to change or remove — third fix
-// pass, review major 2); one already stored keeps its stamp or stays unconfirmed, and an
+// pass, review major 2 — and so is any rule ahead of it, since the first
+// match decides: fourth fix pass, review major 1, inForceTicketRulesShadowed);
+// one already stored keeps its stamp or stays unconfirmed, and an
 // unconfirmed one only ADDS (lib/capabilityPolicy.ts effectiveTokens) until
 // an Admin confirms it here (`confirm_rule`, the rule named by
 // capabilityRuleKey), so a narrowing nobody chose since the request started
@@ -65,7 +67,7 @@ import {
   CAPABILITY_DEFS, baseTokensFor, grantActive, isRuleArray, normalizeCapabilityEntry,
   parseStoredCapabilityPolicy, ruleIsConditional, validateCapabilityPolicy, invalidateCapabilityPolicy,
   policyHasProjectScopedRule, samePolicyVersion, POLICY_CHANGED, PROJECT_SCOPED_CAPS, sameGrant,
-  RULE_KEYS, carryTicketRuleConfirmation, confirmTicketDimensionRule, inForceTicketRulesDropped, describeWhen,
+  RULE_KEYS, carryTicketRuleConfirmation, confirmTicketDimensionRule, inForceTicketRulesDropped, inForceTicketRulesShadowed, describeWhen,
   type CapabilityId, type CapabilityPolicy, type UserGrant,
 } from "@/lib/capabilityPolicy";
 import { memberHoldsAny } from "@/lib/roleHeld";
@@ -229,10 +231,18 @@ export async function POST(req: NextRequest) {
     // ticket.engineer_gate_exempt: nothing), so the confirmed narrowing would
     // lapse without anyone choosing it — fail-open (DEC-90).
     if (!isAdmin) {
+      const label = (id: CapabilityId) => CAPABILITY_DEFS.find((d) => d.id === id)?.label ?? id;
       const dropped = inForceTicketRulesDropped(caps, before.caps);
       if (dropped.length > 0) {
-        const label = (id: CapabilityId) => CAPABILITY_DEFS.find((d) => d.id === id)?.label ?? id;
         return bad(`Only an Admin may change or remove an in-force code-class / library rule (${dropped.map((d) => `${label(d.cap)} where ${describeWhen(d.rule.when)}`).join("; ")}) — nothing was saved.`, 403);
+      }
+      // Fourth fix pass (review major 1): nor put a rule AHEAD of one — the
+      // first matching rule decides, so a rule added, moved, edited or
+      // removed in front of a confirmed narrowing cancels it while the
+      // narrowing itself stays stored (0 dropped above). New rules go after.
+      const shadowed = inForceTicketRulesShadowed(caps, before.caps);
+      if (shadowed.length > 0) {
+        return bad(`Only an Admin may add, change, remove or reorder a rule ahead of an in-force code-class / library rule (${shadowed.map((d) => `${label(d.cap)} where ${describeWhen(d.rule.when)}`).join("; ")}) — a new rule goes after it. Nothing was saved.`, 403);
       }
     }
     const carried = carryTicketRuleConfirmation(caps, before.caps, { at: nowIso, by: caller.id }, isAdmin);

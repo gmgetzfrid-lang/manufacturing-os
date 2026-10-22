@@ -1082,3 +1082,89 @@ describe("DF-P19 third fix pass (review major 2) — an in-force code-class rule
     expect(policyAllows(written, "ticket.final_approve", "Engineer", null, null, B313)).toBe(false);
   });
 });
+
+// drafting-flow DF-P19 fourth fix pass (review major 1): the first matching
+// rule decides, so keeping an in-force code-class rule in the list is not
+// enough — a rule put AHEAD of it cancels it with nothing reported dropped.
+// The reviewer's two reproductions on a NON-critical capability
+// (ticket.final_approve, where canonicalEntry's critical check never runs):
+// (a) a new unconfirmed {codeClass: B313} rule first, (b) an in-force
+// request-type rule first. Both refused for a DocCtrl (403, nothing written);
+// an Admin may; a rule added AFTER it, or the grid's own unchanged save, is
+// fine.
+describe("DF-P19 fourth fix pass (review major 1) — no rule ahead of an in-force code-class rule but an Admin's", () => {
+  const STAMP = { confirmedAt: "2026-10-20T00:00:00.000Z", confirmedBy: "a1" };
+  const FA_RULE = { tokens: ["Admin"], when: { codeClass: ["B313"] }, ...STAMP };
+  const CONFIRMED: CapabilityPolicy = {
+    caps: { ...STORED.caps, "ticket.final_approve": [FA_RULE, { tokens: ["Engineer", "Admin"] }] },
+    grants: STORED.grants,
+  };
+  const B313_EWR = { requestType: "EWR", codeClass: "B313" };
+  const bare = (r: Record<string, unknown>) => ({ tokens: r.tokens, when: r.when });
+  beforeEach(() => { seedPolicyOrg(); state.rows.org_configurations = [config(CONFIRMED)]; });
+
+  it("the fixture: ticket.final_approve is not critical, and B313 requests are Admin's only", () => {
+    expect(CAPABILITY_DEFS.find((d) => d.id === "ticket.final_approve")?.critical).toBeFalsy();
+    expect(tokensFor(CONFIRMED, "ticket.final_approve", B313_EWR)).toEqual(["Admin"]);
+  });
+
+  const caseA = () => ({ ...CONFIRMED.caps, "ticket.final_approve": [{ tokens: ["Engineer"], when: { codeClass: ["B313"] } }, bare(FA_RULE), { tokens: ["Engineer", "Admin"] }] });
+  const caseB = () => ({ ...CONFIRMED.caps, "ticket.final_approve": [{ tokens: ["Engineer", "Admin"], when: { requestType: ["EWR"] } }, bare(FA_RULE), { tokens: ["Engineer", "Admin"] }] });
+
+  it("(a) a DocCtrl putting a new unconfirmed B313 rule FIRST is refused (403), nothing written — it would have let every Engineer final-approve B313 work", async () => {
+    // What it would have done had it been stored (the reviewer's reproduction).
+    const asStored: CapabilityPolicy = { caps: { ...CONFIRMED.caps, "ticket.final_approve": [{ tokens: ["Engineer"], when: { codeClass: ["B313"] } }, FA_RULE, { tokens: ["Engineer", "Admin"] }] } };
+    expect(tokensFor(asStored, "ticket.final_approve", B313_EWR)).toEqual(["Engineer", "Admin"]);
+    state.user = { id: "c1" };
+    const res = await policy({ op: "save", orgId: "o1", caps: caseA() });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toMatch(/Only an Admin may add, change, remove or reorder a rule ahead of an in-force code-class \/ library rule \(Final engineering approval where codeClass ∈ \{B313\}\)/);
+    expect(updates("org_configurations")).toHaveLength(0);
+    expect(inserts("audit_logs")).toHaveLength(0);
+  });
+
+  it("(b) a DocCtrl putting an in-force request-type rule FIRST is refused (403), nothing written", async () => {
+    const asStored: CapabilityPolicy = { caps: { ...CONFIRMED.caps, "ticket.final_approve": [{ tokens: ["Engineer", "Admin"], when: { requestType: ["EWR"] } }, FA_RULE, { tokens: ["Engineer", "Admin"] }] } };
+    expect(tokensFor(asStored, "ticket.final_approve", B313_EWR)).toEqual(["Engineer", "Admin"]);
+    state.user = { id: "c1" };
+    const res = await policy({ op: "save", orgId: "o1", caps: caseB() });
+    expect(res.status).toBe(403);
+    expect(updates("org_configurations")).toHaveLength(0);
+  });
+
+  it("an Admin may make either change (a: stamped and in force; b: stored as sent)", async () => {
+    state.user = { id: "a1" };
+    expect((await policy({ op: "save", orgId: "o1", caps: caseA() })).status).toBe(200);
+    const a = updates("org_configurations")[0].data as CapabilityPolicy;
+    expect((a.caps?.["ticket.final_approve"] as unknown as Array<Record<string, unknown>>)[0].confirmedBy).toBe("a1");
+    expect(tokensFor(a, "ticket.final_approve", B313_EWR)).toEqual(["Engineer"]);
+    seedPolicyOrg(); state.rows.org_configurations = [config(CONFIRMED)];
+    state.user = { id: "a1" };
+    expect((await policy({ op: "save", orgId: "o1", caps: caseB() })).status).toBe(200);
+  });
+
+  it("a DocCtrl may add a rule AFTER the in-force one (it cannot reach a B313 request) — stored unconfirmed, B313 still Admin's only", async () => {
+    state.user = { id: "c1" };
+    const caps = { ...CONFIRMED.caps, "ticket.final_approve": [bare(FA_RULE), { tokens: ["Engineer", "Admin", "DocCtrl"], when: { requestType: ["EWR"] } }, { tokens: ["Engineer", "Admin"] }] };
+    expect((await policy({ op: "save", orgId: "o1", caps })).status).toBe(200);
+    const written = updates("org_configurations")[0].data as CapabilityPolicy;
+    expect(tokensFor(written, "ticket.final_approve", B313_EWR)).toEqual(["Admin"]);
+    expect(tokensFor(written, "ticket.final_approve", { requestType: "EWR" })).toEqual(["Engineer", "Admin", "DocCtrl"]);
+  });
+
+  it("the grid's own unchanged save passes for a DocCtrl, even with a stored multi-type rule ahead (the grid writes it back one rule per type)", async () => {
+    const stored: CapabilityPolicy = {
+      caps: { ...STORED.caps, "ticket.final_approve": [{ tokens: ["Engineer", "Admin"], when: { requestType: ["EWR", "ISO"] } }, FA_RULE, { tokens: ["Engineer", "Admin"] }] },
+      grants: STORED.grants,
+    };
+    state.rows.org_configurations = [config(stored)];
+    const split = splitPolicyForEditor(stored);
+    const caps = joinPolicyFromEditor(split.base, split.overrides, split.opaque, split.projectOverrides, stored, split.codeClassOverrides);
+    expect((caps["ticket.final_approve"] as unknown as unknown[]).length).toBe(4); // EWR and ISO split
+    state.user = { id: "c1" };
+    expect((await policy({ op: "save", orgId: "o1", caps })).status).toBe(200);
+    const written = updates("org_configurations")[0].data as CapabilityPolicy;
+    expect(tokensFor(written, "ticket.final_approve", B313_EWR)).toEqual(["Engineer", "Admin"]); // the EWR rule was ahead before too
+    expect(tokensFor(written, "ticket.final_approve", { requestType: "RFI", codeClass: "B313" })).toEqual(["Admin"]);
+  });
+});

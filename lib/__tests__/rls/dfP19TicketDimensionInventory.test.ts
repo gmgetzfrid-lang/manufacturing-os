@@ -4,7 +4,9 @@
 //   - its counts of stored request rules scoped to a library / work class /
 //     code class, and its NARROW / GRANT / SAME classification, equal what
 //     lib/capabilityPolicy.ts classifyTicketDimensionRule says for the same
-//     stored policies (the console's and the evaluator's rule) — measured as
+//     stored policies (the console's and the evaluator's rule), and (fourth
+//     fix pass) row 13 — the NARROW rules whose added roles are in force at
+//     the deploy — equals narrowTicketRuleAddedRoles; measured as
 //     the change from a paste before the fixtures to a paste after them, so
 //     other suites' rows in the shared database do not matter;
 //   - it reads tickets.library_id / work_class / code_class through to_jsonb
@@ -17,7 +19,7 @@ import { randomUUID } from "node:crypto";
 import { admin, mosDb, seedOrg, skipReason } from "./dbKit";
 import { REPLAY_DB } from "./replay";
 import { runPsql } from "./pgHarness";
-import { parseStoredCapabilityPolicy, ticketDimensionRules, type CapabilityPolicy } from "@/lib/capabilityPolicy";
+import { parseStoredCapabilityPolicy, ticketDimensionRules, narrowTicketRuleAddedRoles, type CapabilityPolicy } from "@/lib/capabilityPolicy";
 
 const skip = skipReason();
 const db = REPLAY_DB;
@@ -118,6 +120,11 @@ describe.skipIf(skip !== null)("DF-P19 — 20261263 counts and classifies stored
       "ticket.reopen:same",
       "ticket.self_assign:narrow",
     ]);
+    // DF-P19 fourth fix pass (review minor 2): the NARROW rules whose added roles are in force at the deploy
+    // (unconfirmed, outside the engineer-gate exemption, naming a role not on the base list) — the app's rule.
+    const addsAtDeploy = policies.flatMap((p) => ticketDimensionRules(p).filter((s) => narrowTicketRuleAddedRoles(p, s.cap, s.rule).length > 0));
+    expect(d("… of the NARROW ones, unconfirmed and outside ticket.engineer_gate_exempt, that also name a role not on the base list")).toBe(addsAtDeploy.length);
+    expect(addsAtDeploy.map((s) => s.cap).sort()).toEqual(["ticket.assign", "ticket.direct_approve"]); // Drafter; Engineer-3 (by token)
     expect(d("workspaces holding at least one such rule")).toBe(2);
     expect(d("workspaces holding at least one that would NARROW")).toBe(1);
     expect(d("workspaces storing a capability policy")).toBe(3);

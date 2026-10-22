@@ -37,8 +37,14 @@
 -- deploy; a NARROW does not take a working action away from anyone until an
 -- Admin confirms it (and one on ticket.engineer_gate_exempt does nothing at
 -- all until then) (Admin → Permissions, "Request rules scoped to a library
--- or a work / code class" → Confirm, which the policy route audits). A rule
--- saved through the policy route after the deploy is confirmed by that save.
+-- or a work / code class" → Confirm, which the policy route audits). Only
+-- the narrowing half waits (DF-P19 fourth fix pass, review minor 2): the
+-- classes are exclusive, but a NARROW rule may also name a role that is not
+-- on the base list, and the app joins an unconfirmed rule's roles to the old
+-- answer — so that role HAS the action from the deploy. Row 13 counts those
+-- rules (lib/capabilityPolicy.ts narrowTicketRuleAddedRoles is the same
+-- rule). A rule saved through the policy route after the deploy is
+-- confirmed by that save when an Admin saves it.
 --
 -- PASTE / DEPLOY ORDER. Read-only, so the app is correct before and after
 -- the paste and either order is safe; paste it BEFORE the DF-P19 deploy so
@@ -165,7 +171,7 @@ SELECT 5, 'inventory (before apply): … of them scoped to a code class', (SELEC
 UNION ALL
 SELECT 6, 'inventory (before apply): … of them already confirmed (a policy-route save after the DF-P19 deploy; expect 0 before it)', (SELECT COUNT(*) FROM classified WHERE confirmed)::text
 UNION ALL
-SELECT 10, 'inventory (before apply): would newly NARROW someone''s access, or change whose own requests skip engineer sign-off (any such rule on ticket.engineer_gate_exempt) — NOT in force until an Admin confirms it (Admin → Permissions); until then the old answer stands for everyone it would take an action from, and an engineer_gate_exempt rule does nothing',
+SELECT 10, 'inventory (before apply): would newly NARROW someone''s access, or change whose own requests skip engineer sign-off (any such rule on ticket.engineer_gate_exempt) — its narrowing half is NOT in force until an Admin confirms it (Admin → Permissions): until then the old answer stands for everyone it would take an action from, and an engineer_gate_exempt rule does nothing; a role it names beyond the base list has the action at once (row 13)',
        (SELECT COUNT(*) FROM classified WHERE effect = 'narrow')::text
 UNION ALL
 SELECT 11, 'inventory (before apply): would newly GRANT (only adds roles; never a ticket.engineer_gate_exempt rule) — in force at the deploy',
@@ -173,6 +179,11 @@ SELECT 11, 'inventory (before apply): would newly GRANT (only adds roles; never 
 UNION ALL
 SELECT 12, 'inventory (before apply): name exactly what already applies (no effect)',
        (SELECT COUNT(*) FROM classified WHERE effect = 'same')::text
+UNION ALL
+SELECT 13, 'inventory (before apply): … of the NARROW ones, unconfirmed and outside ticket.engineer_gate_exempt, that also name a role not on the base list — their added roles are IN FORCE at the deploy; only the removal waits for an Admin''s confirmation',
+       (SELECT COUNT(*) FROM classified
+         WHERE effect = 'narrow' AND NOT confirmed AND cap <> 'ticket.engineer_gate_exempt'
+           AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(rule->'tokens') rt(t) WHERE NOT (base ? rt.t)))::text
 UNION ALL
 SELECT 20, 'inventory (before apply): workspaces holding at least one such rule', (SELECT COUNT(*) FROM per_org)::text
 UNION ALL

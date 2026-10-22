@@ -75,7 +75,10 @@
 //     an edit by a DocCtrl would be stored unconfirmed and only add, so the
 //     narrowing the Admin confirmed would silently lapse; the save checks
 //     the same thing first (inForceTicketRulesDropped) and the policy route
-//     refuses it (403).
+//     refuses it (403). Fourth fix pass (review major 1): the same holds for
+//     any rule AHEAD of an in-force one (inForceTicketRulesShadowed) — the
+//     first match decides; the grid keeps the stored order and adds new rows
+//     last, and the save checks it before sending.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { SlidersHorizontal, Loader2, RotateCcw, Check, AlertTriangle, Plus, X } from "lucide-react";
@@ -87,7 +90,7 @@ import {
   validateCapabilityPolicy, invalidateCapabilityPolicy, isRuleArray, ruleIsConditional, describeWhen,
   CapabilityPolicyChangeError, POLICY_CHANGED, PROJECT_SCOPED_CAPS, announceCapabilityPolicyChanged,
   HOLD_OPENER_TOKEN, ticketDimensionRules, confirmCapabilityRule, capabilityRuleKey, GATE_EXEMPT_CAP, isTicketResourceCap,
-  isTicketDimensionRule, ruleInForce, inForceTicketRulesDropped,
+  isTicketDimensionRule, ruleInForce, inForceTicketRulesDropped, inForceTicketRulesShadowed,
   type CapabilityId, type CapabilityEntry, type CapabilityRule, type CapabilityPolicy, type TicketDimensionRuleState,
 } from "@/lib/capabilityPolicy";
 import { loadRequestTypeOptions, type RequestTypeOption } from "@/lib/requestTypes";
@@ -548,6 +551,13 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
       const dropped = inForceTicketRulesDropped(caps, storedPolicy?.caps);
       if (dropped.length > 0) {
         setMsg({ tone: "err", text: `Only an Admin may change or remove an in-force code-class / library rule (${dropped.map((x) => `${CAPABILITY_DEFS.find((d) => d.id === x.cap)?.label ?? x.cap} where ${describeWhen(x.rule.when)}`).join("; ")}) — nothing was saved.` });
+        return;
+      }
+      // Fourth fix pass (review major 1): nor a rule ahead of one (the first
+      // match decides) — the route refuses that too.
+      const shadowed = inForceTicketRulesShadowed(caps, storedPolicy?.caps);
+      if (shadowed.length > 0) {
+        setMsg({ tone: "err", text: `Only an Admin may add, change, remove or reorder a rule ahead of an in-force code-class / library rule (${shadowed.map((x) => `${CAPABILITY_DEFS.find((d) => d.id === x.cap)?.label ?? x.cap} where ${describeWhen(x.rule.when)}`).join("; ")}) — a new rule goes after it. Nothing was saved.` });
         return;
       }
     }

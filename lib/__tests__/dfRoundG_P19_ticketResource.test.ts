@@ -863,3 +863,117 @@ describe("third fix pass (review minor 3) — the permissions explorer says what
     expect(capabilityRow(def("ticket.assign"), pol).note).toContain("1 scoped rule replace this row where they match (libraryId ∈");
   });
 });
+
+// ── DF-P19 fourth fix pass ──────────────────────────────────────────────────
+describe("fourth fix pass (review major 1) — no rule may be put ahead of an in-force library / class rule but by an Admin", () => {
+  const STAMP = { confirmedAt: NOW, confirmedBy: "a1" };
+  const C = { tokens: ["Admin"], when: { codeClass: ["B313"] }, ...STAMP };
+  const Cbare = { tokens: ["Admin"], when: { codeClass: ["B313"] } };
+  const BASE = { tokens: ["Engineer", "Admin"] };
+  const stored: CapabilityPolicy["caps"] = { "ticket.final_approve": [C, BASE] };
+
+  it("the reviewer's two reproductions are named; nothing is reported dropped for either (why the dropped check alone was not enough)", async () => {
+    const { inForceTicketRulesShadowed, inForceTicketRulesDropped } = await import("@/lib/capabilityPolicy");
+    const a = { "ticket.final_approve": [{ tokens: ["Engineer"], when: { codeClass: ["B313"] } }, Cbare, BASE] } as CapabilityPolicy["caps"];
+    const b = { "ticket.final_approve": [{ tokens: ["Engineer", "Admin"], when: { requestType: ["EWR"] } }, Cbare, BASE] } as CapabilityPolicy["caps"];
+    for (const caps of [a, b]) {
+      expect(inForceTicketRulesDropped(caps, stored)).toEqual([]);
+      expect(inForceTicketRulesShadowed(caps, stored).map((x) => [x.cap, capabilityRuleKey(x.rule)])).toEqual([["ticket.final_approve", capabilityRuleKey(C)]]);
+    }
+  });
+
+  it("an existing rule moved ahead, or a rule ahead edited or removed, is named too", async () => {
+    const { inForceTicketRulesShadowed } = await import("@/lib/capabilityPolicy");
+    const R = { tokens: ["Engineer"], when: { requestType: ["EWR"] } };
+    const s2 = { "ticket.final_approve": [R, C, BASE] } as CapabilityPolicy["caps"];
+    expect(inForceTicketRulesShadowed({ "ticket.final_approve": [R, Cbare, BASE] } as CapabilityPolicy["caps"], s2)).toEqual([]);
+    expect(inForceTicketRulesShadowed({ "ticket.final_approve": [{ ...R, tokens: ["Engineer", "Drafter"] }, Cbare, BASE] } as CapabilityPolicy["caps"], s2)).toHaveLength(1);
+    expect(inForceTicketRulesShadowed({ "ticket.final_approve": [Cbare, BASE] } as CapabilityPolicy["caps"], s2)).toHaveLength(1);
+    const moved = { "ticket.final_approve": [Cbare, R, BASE] } as CapabilityPolicy["caps"];
+    const s3 = { "ticket.final_approve": [C, R, BASE] } as CapabilityPolicy["caps"];
+    expect(inForceTicketRulesShadowed({ "ticket.final_approve": [R, Cbare, BASE] } as CapabilityPolicy["caps"], s3)).toHaveLength(1);
+    expect(inForceTicketRulesShadowed(moved, s3)).toEqual([]);
+  });
+
+  it("a rule after the last in-force one, the base moving, a multi-type rule written back one per type, or a capability with none in force — not named", async () => {
+    const { inForceTicketRulesShadowed } = await import("@/lib/capabilityPolicy");
+    expect(inForceTicketRulesShadowed({ "ticket.final_approve": [Cbare, { tokens: ["Drafter"], when: { codeClass: ["B313"] } }, BASE] } as CapabilityPolicy["caps"], stored)).toEqual([]);
+    expect(inForceTicketRulesShadowed({ "ticket.final_approve": [BASE, Cbare] } as CapabilityPolicy["caps"], stored)).toEqual([]);
+    const multi = { "ticket.final_approve": [{ tokens: ["Engineer"], when: { requestType: ["EWR", "ISO"] } }, C, BASE] } as CapabilityPolicy["caps"];
+    const split = { "ticket.final_approve": [{ tokens: ["Engineer"], when: { requestType: ["EWR"] } }, { tokens: ["Engineer"], when: { requestType: ["ISO"] } }, Cbare, BASE] } as CapabilityPolicy["caps"];
+    expect(inForceTicketRulesShadowed(split, multi)).toEqual([]);
+    // … but a split that changes a piece is still a change
+    const splitEdited = { "ticket.final_approve": [{ tokens: ["Engineer"], when: { requestType: ["EWR"] } }, { tokens: ["Drafter"], when: { requestType: ["ISO"] } }, Cbare, BASE] } as CapabilityPolicy["caps"];
+    expect(inForceTicketRulesShadowed(splitEdited, multi)).toHaveLength(1);
+    // no in-force dimension rule stored: any order is the grid's
+    const unconfirmed = { "ticket.final_approve": [Cbare, BASE] } as CapabilityPolicy["caps"];
+    expect(inForceTicketRulesShadowed({ "ticket.final_approve": [{ tokens: ["Engineer"], when: { requestType: ["EWR"] } }, Cbare, BASE] } as CapabilityPolicy["caps"], unconfirmed)).toEqual([]);
+    expect(inForceTicketRulesShadowed({}, { "ticket.assign": [{ tokens: ["Admin"] }, { tokens: ["Admin"], when: { requestType: ["ISO"] } }] })).toEqual([]);
+  });
+
+  it("the property the check stands for: with the prefix unchanged, a request the in-force rule matches gets the stored answer, whatever is added after", () => {
+    const after = { caps: { "ticket.final_approve": [C, { tokens: ["Engineer", "Drafter"], when: { codeClass: ["B313"] } }, { tokens: ["Drafter"], when: { requestType: ["EWR"] } }, BASE] } } as CapabilityPolicy;
+    for (const requestType of ["EWR", "ISO", "RFI"]) {
+      expect(tokensFor(after, "ticket.final_approve", { requestType, codeClass: "B313" })).toEqual(tokensFor({ caps: stored }, "ticket.final_approve", { requestType, codeClass: "B313" }));
+    }
+  });
+
+  it("the route and the editor run it for a non-Admin, after the dropped check", () => {
+    const route = read("app/api/admin/capability-policy/route.ts");
+    expect(route).toContain("const shadowed = inForceTicketRulesShadowed(caps, before.caps);");
+    expect(route.indexOf("const shadowed = inForceTicketRulesShadowed")).toBeGreaterThan(route.indexOf("const dropped = inForceTicketRulesDropped"));
+    expect(route.indexOf("const shadowed = inForceTicketRulesShadowed")).toBeLessThan(route.indexOf("const carried = carryTicketRuleConfirmation"));
+    const editor = read("components/permissions/CapabilityPolicyEditor.tsx");
+    expect(editor).toContain("const shadowed = inForceTicketRulesShadowed(caps, storedPolicy?.caps);");
+  });
+});
+
+describe("fourth fix pass (review minor 2) — a NARROW rule that also names new roles grants them at the deploy", () => {
+  it("narrowTicketRuleAddedRoles: the reviewer's case (Drafter on final approval, base Engineer) — Drafters have it at once, the removal waits", async () => {
+    const { narrowTicketRuleAddedRoles } = await import("@/lib/capabilityPolicy");
+    const pol: CapabilityPolicy = { caps: { "ticket.final_approve": [{ tokens: ["Engineer"] }, { tokens: ["Drafter"], when: { codeClass: ["X"] } }] } };
+    const rule = (pol.caps!["ticket.final_approve"] as CapabilityRule[])[1];
+    expect(classifyTicketDimensionRule(pol, "ticket.final_approve", rule)).toBe("narrow");
+    expect(narrowTicketRuleAddedRoles(pol, "ticket.final_approve", rule)).toEqual(["Drafter"]);
+    expect(tokensFor(pol, "ticket.final_approve", { codeClass: "X" }).sort()).toEqual(["Drafter", "Engineer"]);
+  });
+  it("none for a grant, a same, a narrowing that only removes, a confirmed rule, or any rule on ticket.engineer_gate_exempt", async () => {
+    const { narrowTicketRuleAddedRoles } = await import("@/lib/capabilityPolicy");
+    const pol: CapabilityPolicy = { caps: {
+      "ticket.final_approve": [{ tokens: ["Engineer", "Admin"] }],
+      "ticket.engineer_gate_exempt": [{ tokens: ["Admin", "Manager"] }],
+    } };
+    const r = (tokens: string[], extra: Partial<CapabilityRule> = {}): CapabilityRule => ({ tokens, when: { codeClass: ["X"] }, ...extra });
+    expect(narrowTicketRuleAddedRoles(pol, "ticket.final_approve", r(["Engineer", "Admin", "Drafter"]))).toEqual([]); // grant
+    expect(narrowTicketRuleAddedRoles(pol, "ticket.final_approve", r(["Admin", "Engineer"]))).toEqual([]);           // same
+    expect(narrowTicketRuleAddedRoles(pol, "ticket.final_approve", r(["Admin"]))).toEqual([]);                       // narrow, removes only
+    expect(narrowTicketRuleAddedRoles(pol, "ticket.final_approve", r(["Admin", "Drafter"], { confirmedAt: NOW }))).toEqual([]); // in force wholly
+    expect(narrowTicketRuleAddedRoles(pol, "ticket.engineer_gate_exempt", r(["Admin", "Viewer"]))).toEqual([]);      // ignored until confirmed
+    expect(narrowTicketRuleAddedRoles(pol, "ticket.final_approve", r(["Admin", "Drafter"]))).toEqual(["Drafter"]);
+  });
+  it("20261263 counts them in their own row (13) and rows 10 / 11 say which half waits", () => {
+    const sql = read("supabase/migrations/20261263_df_roundG_ticket_dimension_inventory.sql");
+    expect(sql).toMatch(/SELECT 13, 'inventory \(before apply\): … of the NARROW ones, unconfirmed and outside ticket\.engineer_gate_exempt, that also name a role not on the base list — their added roles are IN FORCE at the deploy; only the removal waits for an Admin''s confirmation'/);
+    expect(sql).toContain("WHERE effect = 'narrow' AND NOT confirmed AND cap <> 'ticket.engineer_gate_exempt'");
+    expect(sql).toMatch(/its narrowing half is NOT in force until an Admin confirms it/);
+  });
+});
+
+describe("fourth fix pass (review minor 4) — the Review Lanes panel reads the server only for a chosen period or on request", () => {
+  it("periodReadWanted: no loader → never; a bound → yes; no period → only after 'Count all time'", async () => {
+    const { periodReadWanted } = await import("@/components/requests/ReviewLaneReport");
+    const loader = async () => ({ rows: [], total: 0, complete: true });
+    expect(periodReadWanted(undefined, { from: "2026-01-01", to: null }, null)).toBe(false);
+    expect(periodReadWanted(loader, { from: null, to: null }, null)).toBe(false);
+    expect(periodReadWanted(loader, { from: "2026-01-01", to: null }, null)).toBe(true);
+    expect(periodReadWanted(loader, { from: null, to: "2026-02-01" }, null)).toBe(true);
+    expect(periodReadWanted(loader, { from: null, to: null }, "|")).toBe(true);
+  });
+  it("the panel: the read waits on periodReadWanted; with none wanted, the counts are the page's load with its coverage notice and a 'Count all time' button", () => {
+    const panel = read("components/requests/ReviewLaneReport.tsx");
+    expect(panel).toContain("const wanted = periodReadWanted(loadPeriod, { from: pFrom, to: pTo }, allTimeKey === periodKey ? periodKey : null);");
+    expect(panel).toContain("if (!loadPeriod || !wanted) return;");
+    expect(panel).toContain("const reading = wanted && current === null;");
+    expect(panel).toContain('data-testid="review-lanes-count-all"');
+  });
+});

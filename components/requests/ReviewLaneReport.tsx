@@ -14,6 +14,12 @@
 // the row limit), so the counts hold for any period. While it reads, no
 // count is shown; when the read fails it says so and falls back to the
 // requests the page loaded, with that load's coverage notice.
+//
+// DF-P19 fourth fix pass (review minor 4): the server read starts only once
+// a bound is chosen, or on "Count all time" (periodReadWanted) — opening
+// /admin/analytics no longer pages through every request of the workspace
+// for a panel nobody may look at. With no period chosen the counts are the
+// requests the page already loaded, with that load's coverage notice.
 
 'use client';
 
@@ -33,6 +39,19 @@ export type ReviewLanePeriodLoader = (period: ReviewLanePeriod) => Promise<Revie
 type PeriodState =
   | { key: string; loader: ReviewLanePeriodLoader; status: 'ok'; rows: LaneTicket[]; total: number | null; complete: boolean }
   | { key: string; loader: ReviewLanePeriodLoader; status: 'error'; error: string };
+
+/** DF-P19 fourth fix pass (review minor 4): read the period from the
+ *  server? Only with a loader, and then only for a chosen period (either
+ *  bound) or after "Count all time" for the open period (`allTime` — the
+ *  period key it was asked for, else null). */
+export function periodReadWanted(
+  loadPeriod: ReviewLanePeriodLoader | undefined,
+  period: ReviewLanePeriod,
+  allTime: string | null,
+): boolean {
+  if (!loadPeriod) return false;
+  return period.from !== null || period.to !== null || allTime !== null;
+}
 
 /** A class value as the workspace's list names it now (the value itself
  *  when the list no longer has it, or could not be read). */
@@ -56,16 +75,19 @@ export default function ReviewLaneReport({ tickets, ticketsTotal = null, draftin
   const pTo = periodBound(to);
   const periodKey = `${pFrom ?? ''}|${pTo ?? ''}`;
   const [periodRead, setPeriodRead] = useState<PeriodState | null>(null);
+  // "Count all time" asked for the open period (its key), else null.
+  const [allTimeKey, setAllTimeKey] = useState<string | null>(null);
+  const wanted = periodReadWanted(loadPeriod, { from: pFrom, to: pTo }, allTimeKey === periodKey ? periodKey : null);
   useEffect(() => {
-    if (!loadPeriod) return;
+    if (!loadPeriod || !wanted) return;
     let alive = true;
     loadPeriod({ from: pFrom, to: pTo })
       .then((r) => { if (alive) setPeriodRead({ key: periodKey, loader: loadPeriod, status: 'ok', rows: r.rows.map(laneTicketFromRow), total: r.total, complete: r.complete }); })
       .catch((e: unknown) => { if (alive) setPeriodRead({ key: periodKey, loader: loadPeriod, status: 'error', error: (e as Error)?.message || 'the read failed' }); });
     return () => { alive = false; };
-  }, [loadPeriod, periodKey, pFrom, pTo]);
-  const current = loadPeriod && periodRead && periodRead.key === periodKey && periodRead.loader === loadPeriod ? periodRead : null;
-  const reading = !!loadPeriod && current === null;
+  }, [loadPeriod, wanted, periodKey, pFrom, pTo]);
+  const current = wanted && periodRead && periodRead.key === periodKey && periodRead.loader === loadPeriod ? periodRead : null;
+  const reading = wanted && current === null;
   const whole = current && current.status === 'ok' ? current : null;
   // Whole period from the server; otherwise (no loader, or the read failed)
   // the requests the page loaded.
@@ -109,6 +131,11 @@ export default function ReviewLaneReport({ tickets, ticketsTotal = null, draftin
           <label className="flex flex-col gap-0.5 text-[var(--color-text-muted)]">to
             <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]" />
           </label>
+          {loadPeriod && !wanted && (
+            <button type="button" data-testid="review-lanes-count-all" onClick={() => setAllTimeKey(periodKey)} className="inline-flex items-center px-3 py-1.5 rounded-lg border border-[var(--color-border)] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              Count all time
+            </button>
+          )}
           <button type="button" onClick={download} disabled={reading} className="disabled:opacity-40 inline-flex items-center px-3 py-1.5 rounded-lg border border-[var(--color-border)] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
             <Download className="w-3.5 h-3.5 mr-1.5 text-[var(--color-text-faint)]" /> Export CSV
           </button>
@@ -165,7 +192,7 @@ export default function ReviewLaneReport({ tickets, ticketsTotal = null, draftin
         </div>
       )}
       <p className="mt-3 text-xs text-[var(--color-text-muted)]">
-        Lanes are what each request records, decided as the approval gate decides them: engineering review required (including a request declared like-in-kind and raised to engineering review since — it is listed below as overridden); declared like-in-kind by its requester at filing; filed before the review model and left to the role-based gate; or not recorded (this workspace&rsquo;s database does not have the review-model columns yet). The lane counts add up to the requests filed in the period ({summary.total}). Every declaration filed in the period is listed, whatever its lane now. The declaration&rsquo;s e-signature is checked when the request is approved, not here. A period is a range of filing dates (UTC); every request filed in it is read from the server, page by page past its row limit (a period holding more than one read returns is said above).
+        Lanes are what each request records, decided as the approval gate decides them: engineering review required (including a request declared like-in-kind and raised to engineering review since — it is listed below as overridden); declared like-in-kind by its requester at filing; filed before the review model and left to the role-based gate; or not recorded (this workspace&rsquo;s database does not have the review-model columns yet). The lane counts add up to the requests filed in the period ({summary.total}). Every declaration filed in the period is listed, whatever its lane now. The declaration&rsquo;s e-signature is checked when the request is approved, not here. A period is a range of filing dates (UTC); every request filed in it is read from the server, page by page past its row limit (a period holding more than one read returns is said above). With no period chosen the counts are the requests this page loaded until you choose one or press &ldquo;Count all time&rdquo;.
       </p>
     </section>
   );

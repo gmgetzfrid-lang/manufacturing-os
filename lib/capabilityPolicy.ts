@@ -925,7 +925,14 @@ export function capabilityRuleKey(r: CapabilityRule): string {
  *    names every member ("*");
  *  - "grant": it only adds roles to the base list;
  *  - "same": it names exactly what already applies.
- *  Mirrored by 20261263's counts-only inventory (the same three classes). */
+ *  Mirrored by 20261263's counts-only inventory (the same three classes).
+ *  DF-P19 fourth fix pass (review minor 2): the classes are exclusive, but a
+ *  "narrow" rule can ALSO add roles. Unconfirmed, only its narrowing half
+ *  waits for an Admin — effectiveTokens joins its roles to the old answer,
+ *  so a role it names beyond the base list has the action from the deploy
+ *  (outside `ticket.engineer_gate_exempt`, where an unconfirmed rule does
+ *  nothing). narrowTicketRuleAddedRoles names those roles; 20261263 counts
+ *  such rules in their own row. */
 export type TicketRuleEffect = "narrow" | "grant" | "same";
 export function classifyTicketDimensionRule(
   policy: CapabilityPolicy | null | undefined,
@@ -947,6 +954,25 @@ export function classifyTicketDimensionRule(
     if (before.some((list) => list.some((t) => !tokens.has(t)))) return "narrow";
   }
   return rule.tokens.some((t) => !base.includes(t)) ? "grant" : "same";
+}
+
+/** DF-P19 fourth fix pass (review minor 2): the roles a NOT-yet-confirmed
+ *  "narrow" request dimension rule grants at once — those on it that are
+ *  not on the capability's base list (by token, as the "grant" class reads
+ *  them). Its narrowing waits for an Admin's confirmation; these do not
+ *  (effectiveTokens joins them to the old answer). Empty for any other rule,
+ *  for a confirmed one (wholly in force), and on `ticket.engineer_gate_exempt`
+ *  (an unconfirmed rule there does nothing). 20261263 row 13 counts the rules
+ *  this names roles for. */
+export function narrowTicketRuleAddedRoles(
+  policy: CapabilityPolicy | null | undefined,
+  cap: CapabilityId,
+  rule: CapabilityRule,
+): string[] {
+  if (cap === GATE_EXEMPT_CAP || !isTicketDimensionRule(cap, rule) || ruleInForce(cap, rule)) return [];
+  if (classifyTicketDimensionRule(policy, cap, rule) !== "narrow") return [];
+  const base = baseTokensFor(policy, cap);
+  return [...new Set(rule.tokens.filter((t) => !base.includes(t)))];
 }
 
 /** A request dimension rule the policy stores and its state, for the
@@ -1032,6 +1058,63 @@ export function inForceTicketRulesDropped(
     for (const r of prior) {
       if (isTicketDimensionRule(id, r) && ruleInForce(id, r) && !keys.has(capabilityRuleKey(r))) out.push({ cap: id, rule: r });
     }
+  }
+  return out;
+}
+
+/** One conditional rule as the sequence of single-valued rules it is
+ *  equivalent to under the first-match scan (every combination of one value
+ *  per key it lists, in the stored value order): `{ requestType: [A, B] }`
+ *  decides exactly as `{ requestType: [A] }` then `{ requestType: [B] }`
+ *  (a resource has one value per key, so the pieces never both match). The
+ *  permissions grid writes a stored multi-type rule back as one rule per
+ *  type, so comparing the pieces keeps an unchanged grid save from reading
+ *  as a reorder. Keys only (capabilityRuleKey). */
+function singleValuedRuleKeys(r: CapabilityRule): string[] {
+  let combos: Array<Partial<Record<RuleKey, string[]>>> = [{}];
+  for (const k of RULE_KEYS) {
+    const vals = [...new Set((r.when?.[k] ?? []).map(String))];
+    if (vals.length === 0) continue;
+    combos = combos.flatMap((c) => vals.map((v) => ({ ...c, [k]: [v] })));
+  }
+  return combos.map((when) => capabilityRuleKey({ tokens: r.tokens, when }));
+}
+
+/** DF-P19 fourth fix pass (review major 1): the request dimension rules IN
+ *  FORCE in `storedCaps` that `caps` would SHADOW or expose — a rule newly
+ *  placed, moved, edited or removed AHEAD of one. The first matching rule
+ *  decides (effectiveTokens), so keeping a confirmed narrowing in the list
+ *  is not enough: a rule put in front of it answers first (an in-force
+ *  request-type rule wholly; a new unconfirmed dimension rule by joining its
+ *  roles to the confirmed rule's answer) and the narrowing silently lapses,
+ *  with nothing reported dropped (inForceTicketRulesDropped). So, per
+ *  capability holding an in-force dimension rule, the ordered conditional
+ *  rules up to and including the LAST in-force dimension rule must be the
+ *  stored ones (compared as single-valued pieces — singleValuedRuleKeys);
+ *  a new rule may only go after it. Returns the in-force rules at or after
+ *  the first difference. The policy route refuses such a save from anyone
+ *  but an Admin; the editor runs the same check before it sends. Pure. */
+export function inForceTicketRulesShadowed(
+  caps: CapabilityPolicy["caps"] | null | undefined,
+  storedCaps: CapabilityPolicy["caps"] | null | undefined,
+): Array<{ cap: CapabilityId; rule: CapabilityRule }> {
+  const out: Array<{ cap: CapabilityId; rule: CapabilityRule }> = [];
+  for (const [id, prior] of Object.entries(storedCaps ?? {}) as Array<[CapabilityId, CapabilityEntry]>) {
+    if (!isRuleArray(prior)) continue;
+    const storedCond = prior.filter((r) => ruleIsConditional(r));
+    let last = -1;
+    storedCond.forEach((r, i) => { if (isTicketDimensionRule(id, r) && ruleInForce(id, r)) last = i; });
+    if (last < 0) continue;
+    // The stored prefix as single-valued pieces, each tagged with the stored
+    // rule it came from.
+    const want: Array<{ key: string; from: number }> = [];
+    storedCond.slice(0, last + 1).forEach((r, i) => { for (const key of singleValuedRuleKeys(r)) want.push({ key, from: i }); });
+    const next = caps?.[id];
+    const have = (isRuleArray(next) ? next.filter((r) => ruleIsConditional(r)) : []).flatMap(singleValuedRuleKeys);
+    const differs = want.findIndex((w, i) => have[i] !== w.key);
+    if (differs < 0) continue;
+    const from = want[differs].from;
+    storedCond.forEach((r, i) => { if (i >= from && isTicketDimensionRule(id, r) && ruleInForce(id, r)) out.push({ cap: id, rule: r }); });
   }
   return out;
 }
