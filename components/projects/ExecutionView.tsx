@@ -32,7 +32,7 @@ import {
   ZoomIn, ZoomOut, ListTree, Crosshair, Info, Zap, Eye, ListOrdered, Link2,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
-import { groupTasksUnderParent, setTaskDuration } from "@/lib/milestones";
+import { groupTasksUnderParent, setTaskDuration, addMilestoneNote } from "@/lib/milestones";
 import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, cascadeDependents, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import { computeCriticalPathLite } from "@/lib/criticalPath";
 import { resolveVisibleDepIndex } from "@/lib/scheduleDeps";
@@ -815,6 +815,11 @@ export default function ExecutionView({
           onBulkStatus={(ids, s) => void bulkStatusIds(ids, s)}
           onBulkMove={(ids, d) => bulkMoveIds(ids, d)}
           onOpenDetail={(m) => m.id && setDetailId(m.id)}
+          detailOpen={detailId != null}
+          onAddNote={async (id, body) => {
+            const m = byId.get(id);
+            await addMilestoneNote({ orgId, milestoneId: id, kind: "note", statusAt: m?.status ?? null, body, createdBy: userId, createdByName: userName });
+          }}
         />
       ) : (
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden flex flex-col">

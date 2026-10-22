@@ -16,7 +16,7 @@
 // surfaces a group chip's subtask accordion.
 
 import React, { useCallback, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, CalendarDays, Crosshair, Layers, Info, GripVertical, CheckSquare, X as XIcon, Moon, Sunset } from "lucide-react";
+import { ChevronLeft, ChevronRight, Crosshair, Layers, Info, GripVertical, CheckSquare, X as XIcon, Moon, Sunset, ListChecks } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl from "@/components/projects/ProgressControl";
@@ -52,11 +52,16 @@ interface Props {
   /** Bulk move across a selection (routes through the confirmation). */
   onBulkMove?: (ids: string[], deltaDays: number) => void;
   onOpenDetail: (m: Milestone) => void;
+  /** The task detail panel is open. The day list steps aside while it is
+   *  and comes back when it closes, so you keep your place. */
+  detailOpen?: boolean;
+  /** Add a note to a step's log (what got done, what's turned over). */
+  onAddNote?: (id: string, body: string) => Promise<void> | void;
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-export default function ScheduleCalendarTileView({ milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail }: Props) {
+export default function ScheduleCalendarTileView({ milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail, detailOpen, onAddNote }: Props) {
   const tz = useScheduleTz();
   // Multi-select for bulk actions on the calendar (mirrors the timeline).
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -245,7 +250,6 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
   }, [cursor, tz]);
 
   const monthIdx = wallClock(cursor.getTime(), tz).month;
-  const [overflowDay, setOverflowDay] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   // Touch-drag state — HTML5 DnD doesn't fire on touch, so we run a parallel
   // pointer-based drag for phones/tablets. A floating ghost follows the finger;
@@ -328,6 +332,11 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
         <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title={`Days and times are shown in the plant's zone: ${tz}`}>{tzAbbrev(tz, cursor.getTime())}</span>
         <button onClick={() => setCursor(firstOfMonthUTC(new Date(), tz))} className="ml-1 inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] transition-colors">
           <Crosshair className="w-3.5 h-3.5 text-rose-500" /> Today
+        </button>
+        <button onClick={() => setAgendaDay(ymd(new Date(), tz))}
+          title="Every step for today in one list — enter % done, status, what's blocking it and notes, one after another"
+          className="inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-2.5 py-1 rounded-md shadow-sm transition-colors">
+          <ListChecks className="w-3.5 h-3.5" /> Update progress
         </button>
         {span && (
           <button onClick={() => setCursor(firstOfMonthUTC(span.earliest, tz))} className="text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)] transition-colors">
@@ -456,7 +465,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                     return <Band key={`band-${b.ms.id}-${b.dayIndex}`} band={b} color={color} onClick={() => onOpenDetail(b.ms)} />;
                   })}
                   {extraBands > 0 && (
-                    <button onClick={() => setOverflowDay(key)} className="text-[9px] font-bold text-[var(--color-text-faint)] hover:text-[var(--color-accent)] px-1 text-left transition-colors">+{extraBands} more group{extraBands === 1 ? "" : "s"}</button>
+                    <button onClick={() => setAgendaDay(key)} className="text-[9px] font-bold text-[var(--color-text-faint)] hover:text-[var(--color-accent)] px-1 text-left transition-colors">+{extraBands} more group{extraBands === 1 ? "" : "s"}</button>
                   )}
                   {shown.map((p) => {
                     const unit = topGroupOf(p.ms);
@@ -495,7 +504,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                     );
                   })}
                   {extra > 0 && (
-                    <button onClick={() => setOverflowDay(key)} className="text-[10px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-1 text-left transition-colors">+{extra} more</button>
+                    <button onClick={() => setAgendaDay(key)} title="Open the day — every step, with progress entry" className="text-[10px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-1 text-left transition-colors">+{extra} more</button>
                   )}
                 </div>
               );
@@ -503,49 +512,6 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
           </div>
         ))}
       </div>
-
-      {/* Overflow day popover */}
-      {overflowDay && (
-        <div className="fixed inset-0 z-[160] flex items-start sm:items-center justify-center overflow-y-auto p-4" onClick={() => setOverflowDay(null)}>
-          <div className="absolute inset-0 bg-slate-900/30" />
-          <div className="relative w-full max-w-sm bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden animate-in fade-in zoom-in-95 duration-150" onClick={(e) => e.stopPropagation()}>
-            <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
-              <CalendarDays className="w-4 h-4 text-[var(--color-accent)]" />
-              <div className="font-bold text-[var(--color-text)] text-sm">{fmtInTz(ymdToDate(overflowDay, tz), tz, { weekday: "long", month: "long", day: "numeric" })}</div>
-              <span className="ml-auto text-[11px] text-[var(--color-text-faint)]">{(byDay.get(overflowDay) ?? []).length} tasks · {(bandsByDay.get(overflowDay) ?? []).length} groups</span>
-            </div>
-            <div className="max-h-[60vh] overflow-y-auto p-2 space-y-1">
-              {/* Groups covering the day, root first, then the work in the
-                  same time-of-day order as the tile. */}
-              {(bandsByDay.get(overflowDay) ?? []).map((b) => {
-                const unit = topGroupOf(b.ms);
-                const color = GROUP_COLORS[(unit.id ? groupColorIndex.get(unit.id) : undefined) ?? 0];
-                return <Band key={`band-${b.ms.id}-${b.dayIndex}`} band={b} color={color} full onClick={() => { setOverflowDay(null); onOpenDetail(b.ms); }} />;
-              })}
-              {(byDay.get(overflowDay) ?? []).map((p) => {
-                const unit = topGroupOf(p.ms);
-                const color = GROUP_COLORS[(unit.id ? groupColorIndex.get(unit.id) : undefined) ?? 0];
-                return (
-                  <Chip
-                    key={`${p.ms.id}-${p.dayIndex}`}
-                    ms={p.ms} dayIndex={p.dayIndex} spanDays={p.spanDays}
-                    todayStart={p.todayStart} todayEnd={p.todayEnd} idleToday={p.idleToday}
-                    childrenByParent={childrenByParent}
-                    ancestors={ancestorsOf(p.ms)} color={color}
-                    canEdit={canEdit}
-                    draggable={false}
-                    onClick={() => { setOverflowDay(null); onOpenDetail(p.ms); }}
-                    onSetStatus={onSetStatus}
-                    onSetProgress={onSetProgress}
-                    progress={progress}
-                    full
-                  />
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Sub-items popover — opens at the chip's chevron on a specific day
           tile. Shows the steps scheduled on THAT day (status dot, time,
@@ -652,7 +618,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
       })()}
 
       {/* Day agenda — the work list for one day. */}
-      {agendaDay && (
+      {agendaDay && !detailOpen && (
         <DayAgendaPanel
           day={agendaDay}
           tz={tz}
@@ -663,6 +629,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
           canEdit={canEdit}
           onSetStatus={onSetStatus}
           onSetProgress={onSetProgress}
+          onAddNote={onAddNote}
           onOpenDetail={(m) => { onOpenDetail(m); }}
           onChangeDay={setAgendaDay}
           onClose={() => setAgendaDay(null)}
