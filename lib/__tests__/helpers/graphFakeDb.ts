@@ -47,6 +47,19 @@ export interface GraphFakeDb {
 /** PostgREST's default db-max-rows. */
 export const FAKE_MAX_ROWS = 1000;
 
+/** drafting-flow DF-P25: a PostgREST JSON path (`metadata->source_document->>id`)
+ *  read off a row — `->` keeps JSON, `->>` reads text; a plain column name is
+ *  the column, exactly as before. */
+function pathValue(r: Row, col: string): unknown {
+  if (!col.includes("->")) return r[col];
+  const parts = col.split(/->>?/);
+  let v: unknown = r[parts[0]];
+  for (const k of parts.slice(1)) v = v !== null && typeof v === "object" ? (v as Row)[k] : undefined;
+  const lastIsText = col.lastIndexOf("->>") !== -1 && col.lastIndexOf("->>") === col.lastIndexOf("->");
+  if (lastIsText && v !== null && v !== undefined && typeof v === "object") return JSON.stringify(v);
+  return v;
+}
+
 export function newGraphFakeDb(): GraphFakeDb {
   return {
     tables: {}, missingTables: new Set(), missingColumns: {}, readError: {}, hidden: {},
@@ -159,6 +172,17 @@ export function makeGraphFake(db: GraphFakeDb) {
       // must not see a column it did not name).
       const names = cols === "*" ? null : cols.split(",").map((c) => c.trim()).filter(Boolean);
       const project = (r: Row): Row => {
+        // DF-P25: a select naming a JSON path (`alias:col->a->>b`) answers
+        // just those fields, as PostgREST does; any other list as before.
+        if (names && names.some((n) => n.includes("->"))) {
+          const out: Row = {};
+          for (const n of names) {
+            const [alias, expr] = n.includes(":") ? [n.slice(0, n.indexOf(":")), n.slice(n.indexOf(":") + 1)] : [n.split(/->>?/).pop() as string, n];
+            const v = pathValue(r, expr);
+            out[alias] = v === undefined ? null : v;
+          }
+          return out;
+        }
         if (!names || names.some((n) => !/^[a-z_][a-z0-9_]*$/i.test(n))) return { ...r };
         const out: Row = {};
         for (const n of names) out[n] = r[n] ?? null;
@@ -200,7 +224,7 @@ export function makeGraphFake(db: GraphFakeDb) {
             }
             case "not": {
               const [k, o, v] = args as [string, string, unknown];
-              if (o === "is" && v === null) filters.push((r) => r[k] !== null && r[k] !== undefined);
+              if (o === "is" && v === null) filters.push((r) => pathValue(r, k) !== null && pathValue(r, k) !== undefined);
               // not(col, "eq", v): SQL `NOT col = v` — a NULL column is
               // excluded too; a JSON literal compares as JSON (jsonb).
               if (o === "eq") {

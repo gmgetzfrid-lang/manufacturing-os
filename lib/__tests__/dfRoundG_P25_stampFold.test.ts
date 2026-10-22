@@ -17,7 +17,7 @@ import { applyStampToPdfDoc, stampTextNote } from "@/lib/stamping";
 
 const at = "2026-10-01T09:00:00Z";
 const decl = (by: string | null, statement: string | null): TicketCopyDeclaration => ({ by, declaredAt: at, statement });
-const planOf = (d: TicketCopyDeclaration, type = "Final") => ticketCopyPlan({
+const planOf = (d: TicketCopyDeclaration, type: "Final" | "Draft" = "Final") => ticketCopyPlan({
   file: { type, rev: "1", id: "f1" }, ticketNumber: "KE-1", ticketRowId: "t1", origin: "https://plant.test", channel: "print",
   live: { status: "CLOSED", deliverableRev: "1", history: [], declaration: d },
 });
