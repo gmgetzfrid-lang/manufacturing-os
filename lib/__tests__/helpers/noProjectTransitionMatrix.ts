@@ -12,6 +12,11 @@
 // two maps, so any drift in what a no-project request writes fails.
 // (The workflow route's SM-7 `attempt` stamp is added by the route after
 // computeTransition — it is not part of these updates.)
+// (drafting-flow DF-P23, EVID-1 done-when 3: every history entry a
+// transition appends now carries the actor's uid, `actorId`. That one field
+// is taken out of each entry before the digest — so the base commit's
+// digests still pin everything else — and pinned on its own: every appended
+// entry names exactly the acting uid (`actorMismatches` is empty).)
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -76,6 +81,26 @@ export interface NoProjectMatrix {
   digests: Record<string, string>;
   /** every update key written anywhere in the matrix */
   keys: string[];
+  /** DF-P23: entries appended without the acting uid as `actorId` (expected none) */
+  actorMismatches: string[];
+  /** DF-P23: how many appended history entries carried the acting uid */
+  actorStamped: number;
+}
+
+/** DF-P23 (EVID-1 dw3): the updates with each history entry's `actorId`
+ *  removed, after checking it names the acting uid. */
+function withoutActorIds(updates: Record<string, unknown>, uid: string, key: string, out: { mismatches: string[]; stamped: number }): Record<string, unknown> {
+  if (!Array.isArray(updates.history)) return updates;
+  return {
+    ...updates,
+    history: (updates.history as Array<Record<string, unknown>>).map((h) => {
+      if (h.actorId !== uid) out.mismatches.push(`${key}: ${String(h.action)}`);
+      else out.stamped += 1;
+      const { actorId: _a, ...rest } = h;
+      void _a;
+      return rest;
+    }),
+  };
 }
 
 export function noProjectMatrix(): NoProjectMatrix {
@@ -85,6 +110,7 @@ export function noProjectMatrix(): NoProjectMatrix {
   const uuid = vi.spyOn(globalThis.crypto, "randomUUID").mockImplementation(() => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}` as `${string}-${string}-${string}-${string}-${string}`);
   const digests: Record<string, string> = {};
   const keys = new Set<string>();
+  const actor = { mismatches: [] as string[], stamped: 0 };
   try {
     for (const status of MATRIX_STATUSES) {
       for (const role of ALL_ROLES as Role[]) {
@@ -95,8 +121,9 @@ export function noProjectMatrix(): NoProjectMatrix {
             n = 0;
             const res = computeTransition(rowToTicket(noProjectRow(status)), inputFor(a, uid, role));
             for (const k of Object.keys(res.updates)) keys.add(k);
-            digests[`${status}|${role}|${uid}|${a.action}`] = createHash("sha256")
-              .update(stable({ newStatus: res.newStatus, updates: res.updates })).digest("hex").slice(0, 16);
+            const key = `${status}|${role}|${uid}|${a.action}`;
+            digests[key] = createHash("sha256")
+              .update(stable({ newStatus: res.newStatus, updates: withoutActorIds(res.updates, uid, key, actor) })).digest("hex").slice(0, 16);
           }
         }
       }
@@ -105,5 +132,5 @@ export function noProjectMatrix(): NoProjectMatrix {
     uuid.mockRestore();
     vi.useRealTimers();
   }
-  return { digests, keys: [...keys].sort() };
+  return { digests, keys: [...keys].sort(), actorMismatches: actor.mismatches, actorStamped: actor.stamped };
 }

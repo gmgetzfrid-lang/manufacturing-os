@@ -759,7 +759,9 @@ async function create(
     attachments,
     // The role the requester FILED under (the stamped one, as requester_role
     // says) — never their headline when they hold the one they chose.
-    history: openingHistory({ origin, email, role: requesterRole, now, primary }),
+    // EVID-1 done-when 3 (drafting-flow DF-P23): every opening line carries
+    // the filer's uid, from the session (openingHistory's `actorId`).
+    history: openingHistory({ origin, email, role: requesterRole, now, primary, actorId: caller.id }),
     comments: [],
     unread_by: [],
     // The requester follows their own request.
@@ -807,7 +809,7 @@ async function create(
     // ticket's history too (the requester's own words, signed).
     (row.history as Array<Record<string, unknown>>).push({
       action: "Declared like-in-kind (signed)", user: email, role: requesterRole, date: now,
-      details: declaration.statement,
+      details: declaration.statement, actorId: caller.id,
     });
   }
 

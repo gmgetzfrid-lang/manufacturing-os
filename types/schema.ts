@@ -1322,6 +1322,13 @@ export interface TicketHistoryEntry {
    *  that the transition landed (lib/ticketAuditDrain.ts). Absent on entries
    *  written before DF-P8 and on lines no transition writes. */
   attempt?: string;
+  /** EVID-1 done-when 3 (drafting-flow DF-P23): the uid of the person who
+   *  acted, beside `user` (their email) — written by the server from the
+   *  caller's session, never from a request body. Absent on entries written
+   *  before DF-P23 (they render exactly as before) and on lines no person
+   *  wrote (a recorded system act — the consent clock, a standing
+   *  pre-authorization, a restore — or an outside party at the intake door). */
+  actorId?: string;
 }
 
 export interface Ticket {

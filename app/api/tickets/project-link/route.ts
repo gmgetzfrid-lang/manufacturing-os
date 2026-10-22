@@ -212,6 +212,8 @@ export async function POST(req: NextRequest) {
       email: m.email ?? caller.email ?? null, role: m.role ?? null, now,
     }),
     attempt: auditId,
+    // EVID-1 done-when 3 (DF-P23): the actor's uid, from the session.
+    actorId: caller.id,
   };
   const audit = {
     id: auditId,

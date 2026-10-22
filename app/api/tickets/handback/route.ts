@@ -185,6 +185,8 @@ export async function POST(req: NextRequest) {
       : filedAsDraft ? "Deliverable filed in the register as a Draft" : "Deliverable published to the register",
     user: callerEmail,
     role: (member.role as TicketHistoryEntry["role"]) ?? undefined,
+    // EVID-1 done-when 3 (DF-P23): the actor's uid, from the session.
+    actorId: caller.id,
     date: now,
     details: inReview
       ? `Draft ${v.revision_label} of ${docLabel} opened for reviewer sign-off from this request's Final deliverable.`
