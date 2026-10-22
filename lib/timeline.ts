@@ -492,6 +492,12 @@ export const PROJECT_EVENT_VOCABULARY: Readonly<Record<string, ProjectEventClass
   PROJECT_REOPENED: "mirrored",
   PROJECT_OWNERSHIP_TRANSFERRED: "mirrored",
   PROJECT_MEMBER_REMOVED: "mirrored",
+  // drafting-flow PROJ-3 dw2 (projects-joint J21, 20261262): the database's
+  // own row for every register attach / detach — the doc_added / doc_removed
+  // feed row the Documents card writes already shows the fact; the audit
+  // row stays on the audit trail (a direct call with no feed row included).
+  PROJECT_DOCUMENT_ATTACHED: "mirrored",
+  PROJECT_DOCUMENT_DETACHED: "mirrored",
   PROJECT_LESSONS_SAVED: "milestone",
 };
 
@@ -667,6 +673,18 @@ export function summarizeAudit(r: Pick<AuditRow, "action" | "details">): string 
     case "SCHEDULE_BASELINED":  return "Schedule baselined";
     case "SCHEDULE_REBASED":    return "Schedule re-based";
     case "PROJECT_LESSONS_SAVED": return "Lessons learned saved";
+    // drafting-flow PROJ-5 (projects-joint J21): an intake document adopted
+    // into the controlled register (lib/transitionIn.ts adoptDocument /
+    // adopt_intake_document) — on the project timeline through its register
+    // reference, legible as what it is.
+    case "TRANSITION_IN": {
+      const after = d.after && typeof d.after === "object" ? (d.after as { number?: unknown }) : null;
+      return `Adopted from the project's intake into the controlled register${typeof after?.number === "string" && after.number ? ` as ${after.number}` : ""}`;
+    }
+    // drafting-flow PROJ-3 dw2 (projects-joint J21, 20261262): the database's
+    // row for a register attach / detach.
+    case "PROJECT_DOCUMENT_ATTACHED": return `Put on the project's document register${typeof d.documentNumber === "string" && d.documentNumber ? `: ${d.documentNumber}` : ""}${d.source === "checkout" ? " (by a checkout)" : d.source === "intake" ? " (by the intake link)" : ""}`;
+    case "PROJECT_DOCUMENT_DETACHED": return `Removed from the project's document register${typeof d.documentNumber === "string" && d.documentNumber ? `: ${d.documentNumber}` : ""}`;
     case "SUPERSEDE_DOC":return "Document superseded";
     case "ARCHIVE_DOC":  return d.action === "unarchive" ? "Restored from archive" : "Archived";
     // REV-32 (document-control P34): the metadata editor's save to Void

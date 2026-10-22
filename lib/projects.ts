@@ -855,6 +855,11 @@ export interface ProjectDocumentRow {
   rev: string | null;
   status: string | null;
   libraryId: string | null;
+  /** How the row is on the tab: "checkout" / "manual" register references,
+   *  and "intake" — with a linkId, a register reference the project's own
+   *  intake door made (project_documents.source = 'intake', drafting-flow
+   *  PROJ-5, 20261262); with no linkId, an approved intake document not yet
+   *  on the register. */
   source: "checkout" | "manual" | "intake";
   lastSeenAt: string | null;
   /** DEC-40: false for a superseded / voided / archived document — the tab
@@ -954,7 +959,9 @@ export async function listProjectDocuments(projectId: string): Promise<ProjectDo
     rev: d.rev ?? null,
     status: d.status ?? null,
     libraryId: d.library_id ?? null,
-    source: link ? (link.source === "manual" ? "manual" : "checkout") : "intake",
+    // PROJ-5 (projects-joint J21, 20261262): a reference the intake door made
+    // reads 'intake' (before the paste the door's rows read 'manual', as today).
+    source: link ? (link.source === "manual" ? "manual" : link.source === "intake" ? "intake" : "checkout") : "intake",
     lastSeenAt: link?.last_seen_at ?? null,
     isCurrent: !d.archived_at && !NOT_CURRENT_STATUSES.has(d.status ?? ""),
     // PROJ-5 (drafting-flow DF-P8): a register row whose document is still in
