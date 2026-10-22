@@ -36,6 +36,23 @@
 // Body: { op: "save", orgId, caps, version? }
 //     | { op: "grant", orgId, uid, cap, expiresAt?, note?, projectId? }
 //     | { op: "revoke", orgId, uid, cap, projectId? }
+//     | { op: "confirm_rule", orgId, cap, key }
+//
+// drafting-flow GAP-105 / TIER-4 (DF-P19; DEC-90 ruling (2) for DF-P19): a
+// request presents its library, work class and code class to the policy, so
+// a rule on a `ticket.*` capability scoped to one of them now applies. A NEW
+// such rule is accepted and CONFIRMED by an Admin's save that writes it (the
+// server stamps it — carryTicketRuleConfirmation; a client never sends the
+// stamp; a DocCtrl's new rule is stored unconfirmed — second fix pass,
+// review minor 3; an IN-FORCE one is Admin's to change or remove — third fix
+// pass, review major 2 — and so is any rule ahead of it that can match the
+// same requests, since the first match decides: fourth fix pass, review
+// major 1, inForceTicketRulesShadowed; merge-time fix pass, review minor 3);
+// one already stored keeps its stamp or stays unconfirmed, and an
+// unconfirmed one only ADDS (lib/capabilityPolicy.ts effectiveTokens) until
+// an Admin confirms it here (`confirm_rule`, the rule named by
+// capabilityRuleKey), so a narrowing nobody chose since the request started
+// presenting those keys never silently takes a working action away.
 //
 // projects-and-cost QUAL-14 done-when 2 (drafting-flow DF-P11): a grant of a
 // capability decided per project (PROJECT_SCOPED_CAPS — quality.sign_off)
@@ -48,10 +65,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
-  CAPABILITY_DEFS, RESOURCE_KEYS, baseTokensFor, grantActive, isRuleArray, normalizeCapabilityEntry,
+  CAPABILITY_DEFS, baseTokensFor, grantActive, isRuleArray, normalizeCapabilityEntry,
   parseStoredCapabilityPolicy, ruleIsConditional, validateCapabilityPolicy, invalidateCapabilityPolicy,
   policyHasProjectScopedRule, samePolicyVersion, POLICY_CHANGED, PROJECT_SCOPED_CAPS, sameGrant,
-  newDeadTicketRuleRefusal,
+  RULE_KEYS, carryTicketRuleConfirmation, confirmTicketDimensionRule, inForceTicketRulesDropped, inForceTicketRulesShadowed, inForceTicketRulesShadowedRefusal, describeDroppedInForceTicketRules, describeWhen,
   type CapabilityId, type CapabilityPolicy, type UserGrant,
 } from "@/lib/capabilityPolicy";
 import { memberHoldsAny } from "@/lib/roleHeld";
@@ -63,11 +80,12 @@ export const runtime = "nodejs";
 /** The controller tier — every role isControllerRole admits (ALOG-9: one
  *  declaration of the tier, never a literal here). */
 const CONTROLLER_ROLES = ALL_ROLES.filter((r) => isControllerRole(r));
-const OPS = new Set(["save", "grant", "revoke"]);
+const OPS = new Set(["save", "grant", "revoke", "confirm_rule"]);
 
 interface Body {
   op?: unknown; orgId?: unknown; caps?: unknown; version?: unknown;
   uid?: unknown; cap?: unknown; expiresAt?: unknown; note?: unknown; projectId?: unknown;
+  key?: unknown; ordinal?: unknown;
 }
 
 const bad = (error: string, status: number) => NextResponse.json({ error }, { status });
@@ -96,7 +114,9 @@ function canonicalEntry(policy: CapabilityPolicy, id: CapabilityId): string {
   const base = asSet(baseTokensFor(policy, id));
   if (!isRuleArray(entry)) return JSON.stringify({ base, rules: [] });
   const rules = entry.filter(ruleIsConditional).flatMap((r) => {
-    const keys = RESOURCE_KEYS.filter((k) => (r.when?.[k]?.length ?? 0) > 0);
+    // DF-P19: every key a rule may name (the work / code class too), so a
+    // change of a class-scoped rule on a critical capability is a change.
+    const keys = RULE_KEYS.filter((k) => (r.when?.[k]?.length ?? 0) > 0);
     const tokens = asSet(r.tokens);
     if (keys.length === 1) return (r.when?.[keys[0]] ?? []).map((v) => ({ tokens, when: { [keys[0]]: [v] } }));
     return [{ tokens, when: Object.fromEntries(keys.map((k) => [k, asSet(r.when?.[k] ?? [])])) }];
@@ -151,7 +171,7 @@ export async function POST(req: NextRequest) {
   try { body = (await req.json()) as Body; } catch { return bad("Invalid JSON body", 400); }
   const op = str(body.op);
   const orgId = str(body.orgId);
-  if (!OPS.has(op) || !orgId) return bad("op (save | grant | revoke) and orgId are required", 400);
+  if (!OPS.has(op) || !orgId) return bad("op (save | grant | revoke | confirm_rule) and orgId are required", 400);
 
   // Active membership + the controller tier, by the collection (ADD-1).
   const { data: member } = await supabaseAdmin
@@ -200,7 +220,49 @@ export async function POST(req: NextRequest) {
       if (entry === undefined) return bad(`${def.label}: invalid value`, 400);
       caps[def.id] = entry;
     }
-    after = { caps, grants: liveGrants };
+    // DF-P19: a library- / class-scoped request rule keeps the stored rule's
+    // confirmation; a new one is confirmed by this save (server-stamped) only
+    // when an Admin saves it — confirming is Admin's (confirm_rule below).
+    // Second fix pass (review minor 3): a DocCtrl's new rule is stored
+    // unconfirmed (it only adds until an Admin confirms it), so deleting a
+    // stored unconfirmed narrowing and re-adding it confirms nothing.
+    // Third fix pass (review major 2): an IN-FORCE (Admin-confirmed) library-
+    // / class-scoped request rule is Admin's to change or remove. Anyone
+    // else's edit would store an unconfirmed rule that only adds (on
+    // ticket.engineer_gate_exempt: nothing), so the confirmed narrowing would
+    // lapse without anyone choosing it — fail-open (DEC-90).
+    if (!isAdmin) {
+      const label = (id: CapabilityId) => CAPABILITY_DEFS.find((d) => d.id === id)?.label ?? id;
+      const dropped = inForceTicketRulesDropped(caps, before.caps);
+      if (dropped.length > 0) {
+        return bad(`Only an Admin may change or remove an in-force code-class / library rule (${dropped.map((d) => `${label(d.cap)} where ${describeWhen(d.rule.when)}`).join("; ")}) — nothing was saved.`, 403);
+      }
+      // Fourth fix pass (review major 1): nor put a rule AHEAD of one — the
+      // first matching rule decides, so a rule added, moved, edited or
+      // removed in front of a confirmed narrowing cancels it while the
+      // narrowing itself stays stored (0 dropped above). Merge-time fix pass
+      // (review minor 3): only the rules ahead that can match the same
+      // requests count (a B16-only rule never reaches a B313 request). The
+      // wording is the console's (review nit 4).
+      const shadowed = inForceTicketRulesShadowed(caps, before.caps);
+      if (shadowed.length > 0) {
+        return bad(inForceTicketRulesShadowedRefusal(shadowed, label), 403);
+      }
+    }
+    const carried = carryTicketRuleConfirmation(caps, before.caps, { at: nowIso, by: caller.id }, isAdmin);
+    after = { caps: carried.caps, grants: liveGrants };
+    if (carried.confirmed.length > 0) grantDetail = { confirmedRules: carried.confirmed.map((c) => ({ cap: c.cap, rule: c.rule })) };
+    if (carried.unconfirmedNew.length > 0) grantDetail = { ...grantDetail, unconfirmedRules: carried.unconfirmedNew.map((c) => ({ cap: c.cap, rule: c.rule })) };
+    // Merge-time fix pass 2 (review nit 4): an extra copy of a stored rule is
+    // not a new rule; it is recorded apart.
+    if (carried.unconfirmedCopies.length > 0) grantDetail = { ...grantDetail, unconfirmedRuleCopies: carried.unconfirmedCopies.map((c) => ({ cap: c.cap, rule: c.rule })) };
+    // Merge-time fix pass 2 (review nit 4): an Admin may drop an in-force
+    // library / class rule (a non-Admin was refused above) — recorded, with
+    // what remains of it (a copy left unconfirmed, or nothing).
+    if (isAdmin) {
+      const droppedInForce = describeDroppedInForceTicketRules(caps, before.caps);
+      if (droppedInForce.length > 0) grantDetail = { ...grantDetail, droppedInForceRules: droppedInForce.map((d) => ({ cap: d.cap, rule: d.rule, remains: d.remains })) };
+    }
     // WF-11 done-when 2: a critical capability's entry is Admin's to change —
     // a DocCtrl controller may edit the rest of the grid. "Change" is what
     // the evaluator would answer differently, not a different JSON shape.
@@ -210,6 +272,25 @@ export async function POST(req: NextRequest) {
     if (criticalChanged.length > 0 && !isAdmin) {
       return bad(`Only an Admin may change a critical capability (${criticalChanged.map((d) => d.label).join(", ")})`, 403);
     }
+  } else if (op === "confirm_rule") {
+    // DF-P19 (DEC-90 ruling (2)): an Admin confirms one stored request rule
+    // scoped to a library / class, so a narrowing it makes applies. Admin
+    // only — it can take an action away from people who have it today.
+    if (!isAdmin) return bad("Only an Admin may confirm a permission rule", 403);
+    const cap = str(body.cap) as CapabilityId;
+    const key = typeof body.key === "string" ? body.key : "";
+    if (!CAPABILITY_DEFS.some((d) => d.id === cap) || !key) return bad("cap and key (the rule to confirm) are required", 400);
+    // Merge-time fix pass 2 (review nit 3): the copy the Admin clicked, by
+    // its place among the rules with that key; absent → the first
+    // unconfirmed copy.
+    const hasOrdinal = body.ordinal !== undefined && body.ordinal !== null;
+    if (hasOrdinal && !(typeof body.ordinal === "number" && Number.isInteger(body.ordinal) && body.ordinal >= 0)) {
+      return bad("ordinal must be the copy's place (0, 1, …) among the rules with that key", 400);
+    }
+    const res = confirmTicketDimensionRule(before.caps, cap, key, { at: nowIso, by: caller.id }, hasOrdinal ? (body.ordinal as number) : null);
+    if (!res.ok) return bad(res.error, 409);
+    after = { caps: res.caps, grants: liveGrants };
+    grantDetail = { confirmedRules: [{ cap, rule: res.rule }] };
   } else {
     // grant / revoke — Admin only (WF-11 done-when 2/3: "for ANY grant").
     if (!isAdmin) return bad("Only an Admin may grant or revoke a personal permission", 403);
@@ -264,11 +345,9 @@ export async function POST(req: NextRequest) {
   // every policy and grant write.
   const invalid = validateCapabilityPolicy(after);
   if (invalid) return bad(invalid, 400);
-  // drafting-flow DF-P6 (AUTHZ-6): a NEW library / class-scoped rule on a
-  // request capability is refused (it would never match); one already
-  // stored rides along, so it never blocks a grant, a revoke or a save.
-  const deadRule = newDeadTicketRuleRefusal(after.caps, before.caps);
-  if (deadRule) return bad(deadRule, 400);
+  // drafting-flow DF-P6 (AUTHZ-6) refused a NEW library / class-scoped rule
+  // on a request capability here while it could never match; DF-P19 lifted
+  // the refusal (the request presents those keys) — see the save branch.
   // QUAL-4: a project-scoped rule is stored only once the live evaluator
   // reads projectId (20261136); before that it would read as unconditional.
   if (op === "save" && policyHasProjectScopedRule(after)) {

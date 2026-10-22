@@ -137,27 +137,31 @@ export const SELF_OVERRIDE_NOTE = "You asked for this work: say why in the comme
 export const NO_ENGINEER_TO_PICK_REASON = "Nobody in this workspace can be picked as the reviewing engineer (an Engineer role, and not the requester or the drafter in orgs of 3+). An Admin can add an Engineer role to someone in Admin → Users; until then a manager may issue it as a recorded override.";
 
 /** DEC-13 stage 2: the RESOURCE a ticket presents to the capability policy —
- *  its request type and unit. The route, the page and the simulator all
- *  build it from here, so a type-scoped rule reads the same fields
- *  everywhere. (`discipline` is not a ticket property. `libraryId` is —
- *  `tickets.library_id`, GAP-105 / DF-P4 — but it is deliberately NOT in the
- *  resource yet: the request page and the attention badge build their Ticket
- *  without it, so a `when.libraryId` rule would govern the route and not the
- *  screens, and a stored library rule on a ticket.* capability would start
- *  matching backfilled tickets with no inventory. DF-P5 adds it together with
- *  those mappers and that inventory — 99-fix-sequencing "Hand-offs from
- *  DF-P4".) */
-// DF-P6 fix pass (review, issue 6): the library, the work class and the code
-// class stay OUT of the resource for the reason above — the requests list
-// and lib/inbox.ts still build their Ticket without them (the attention
-// badge), so a rule scoped on any of them would govern the route and the
-// request page and not the badge. They join with those mappers
-// (99-fix-sequencing "Hand-offs from DF-P6": the mappers spread
-// lib/reviewModel.ts reviewModelFieldsFromRow). The evaluator already reads
-// workClass / codeClass (lib/capabilityPolicy.ts TICKET_RESOURCE_KEYS), and
-// 20261250's inventory counts any stored ticket.* rule scoped on them.
-export function ticketResource(ticket: Pick<Ticket, "requestType" | "unit">): CapabilityResource {
-  return { requestType: ticket.requestType || null, unit: ticket.unit || null };
+ *  its request type and unit, and (drafting-flow GAP-105 acceptance 3 /
+ *  TIER-4, DF-P19) its library (`tickets.library_id`, DF-P4) and its work
+ *  class and code class (`tickets.work_class` / `code_class`, DF-P6). The
+ *  route, the page and the simulator all build it from here, so a scoped
+ *  rule reads the same fields everywhere — and every mapper that builds a
+ *  Ticket for the engine (the workflow route's and the cron's rowToTicket,
+ *  the request page's and the requests list's fromRow, lib/inbox.ts, the
+ *  attention badge in hooks/useTicketNotifications.ts) spreads
+ *  lib/reviewModel.ts reviewModelFieldsFromRow, so the page, the list, the
+ *  inbox, the badge and the route decide alike (pinned by
+ *  lib/__tests__/dfRoundG_P19_ticketResource.test.ts, which runs one row
+ *  through every mapper). A request with no library and no class presents
+ *  exactly what it presented before (null keys never match a rule).
+ *  (`discipline` is not a ticket property.) A stored rule scoped to a
+ *  library or a class that the workspace has not confirmed only ADDS until
+ *  an Admin confirms it (lib/capabilityPolicy.ts effectiveTokens — DEC-90
+ *  ruling (2) for DF-P19). */
+export function ticketResource(ticket: Pick<Ticket, "requestType" | "unit" | "libraryId" | "workClass" | "codeClass">): CapabilityResource {
+  return {
+    requestType: ticket.requestType || null,
+    unit: ticket.unit || null,
+    libraryId: ticket.libraryId || null,
+    workClass: ticket.workClass || null,
+    codeClass: ticket.codeClass || null,
+  };
 }
 
 /** TIER-1 / DEC-33 (DF-P6): is engineering review required before THIS

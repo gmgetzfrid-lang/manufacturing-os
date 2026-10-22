@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
@@ -26,6 +26,9 @@ import { isTerminalTicketStatus } from '@/lib/ticketShed';
 import { ticketStatusLabel } from '@/lib/ticketStatusLabels';
 import { summarizeOutcomes } from '@/lib/ticketOutcome';
 import RequestOutcomes, { reasonBreakdown } from '@/components/requests/RequestOutcomes';
+import ReviewLaneReport from '@/components/requests/ReviewLaneReport';
+import type { ReviewLanePeriod, ReviewLanePeriodRead } from '@/lib/reviewLaneReport';
+import { reviewModelFieldsFromRow } from '@/lib/reviewModel';
 import { parseOutcomeReasons, type OutcomeReason } from '@/lib/ticketOutcomeReasons';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import UserAvatar from '@/components/ui/UserAvatar';
@@ -98,7 +101,26 @@ export default function AnalyticsPage() {
   
   // STATE
   const [tickets, setTickets] = useState<Ticket[]>([]);
+  // DF-P19 fix pass (GAP-101 acceptance 5): how many requests the workspace
+  // holds as the caller sees them (null when the count did not come back) —
+  // the read is newest first and cut at the server's row limit.
+  const [ticketsTotal, setTicketsTotal] = useState<number | null>(null);
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  // DF-P19 second fix pass (GAP-101 acceptance 5, review major 1): the
+  // Review Lanes panel reads its period WHOLE from the server (filtered on
+  // created_at, paged past the row limit), under the same gate as this page.
+  const loadReviewLanePeriod = useCallback(async (period: ReviewLanePeriod): Promise<ReviewLanePeriodRead> => {
+    if (!activeOrgId) throw new Error('No workspace selected');
+    const { data: sess } = await supabase.auth.getSession();
+    const token = sess.session?.access_token ?? '';
+    const qs = new URLSearchParams({ orgId: activeOrgId });
+    if (period.from) qs.set('from', period.from);
+    if (period.to) qs.set('to', period.to);
+    const res = await fetch(`/api/admin/analytics/review-lanes?${qs.toString()}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+    const body = (await res.json().catch(() => null)) as { tickets?: Record<string, unknown>[]; total?: number | null; complete?: boolean; error?: string } | null;
+    if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+    return { rows: body?.tickets ?? [], total: typeof body?.total === 'number' ? body.total : null, complete: body?.complete === true };
+  }, [activeOrgId]);
   
   // CONTROLS
   const [timeRange, setTimeRange] = useState<TimeRange>('6M');
@@ -120,12 +142,13 @@ export default function AnalyticsPage() {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
         });
-        const body = (await res.json().catch(() => null)) as { tickets?: Record<string, unknown>[]; documents?: Record<string, unknown>[]; error?: string } | null;
+        const body = (await res.json().catch(() => null)) as { tickets?: Record<string, unknown>[]; ticketsTotal?: number | null; documents?: Record<string, unknown>[]; error?: string } | null;
         if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const ticketsData = (body?.tickets ?? []) as any[];
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const docsData = (body?.documents ?? []) as any[];
+        setTicketsTotal(typeof body?.ticketsTotal === "number" ? body.ticketsTotal : null);
         setTickets((ticketsData || []).map(r => ({
           id: r.id, orgId: r.org_id, ticketId: r.ticket_id,
           title: r.title, description: r.description, unit: r.unit,
@@ -139,6 +162,10 @@ export default function AnalyticsPage() {
           archivedAt: r.archived_at ?? null, metadata: r.metadata ?? null,
           // LEAK-9 / GAP-107: how the request ended (absent before 20261195).
           outcome: r.outcome ?? null,
+          // drafting-flow GAP-101 acceptance 5 (DF-P19): the lane, the
+          // declaration and the classes the Review Lanes report reads
+          // (undefined / null before 20261250).
+          ...reviewModelFieldsFromRow(r),
         } as Ticket)));
 
         setDocuments((docsData || []).map(r => ({
@@ -335,6 +362,10 @@ export default function AnalyticsPage() {
   // after a workspace switch the previous workspace's list is never applied —
   // until it lands the panel shows no breakdown.
   const [outcomeReasonList, setOutcomeReasonList] = useState<{ orgId: string; reasons: OutcomeReason[]; unread: boolean } | null>(null);
+  // DF-P19 (GAP-101 acceptance 5): the same 'drafting' row, for the Review
+  // Lanes report's class labels (null until read, or unreadable: the stored
+  // class values are shown as they are).
+  const [draftingConfig, setDraftingConfig] = useState<{ orgId: string; data: unknown } | null>(null);
   useEffect(() => {
     if (!activeOrgId) return;
     let alive = true;
@@ -349,6 +380,7 @@ export default function AnalyticsPage() {
         if (!alive) return;
         if (error) { setOutcomeReasonList({ orgId: activeOrgId, reasons: [], unread: true }); return; }
         setOutcomeReasonList({ orgId: activeOrgId, reasons: parseOutcomeReasons((data as { data?: unknown } | null)?.data), unread: false });
+        setDraftingConfig({ orgId: activeOrgId, data: (data as { data?: unknown } | null)?.data ?? null });
       } catch {
         if (alive) setOutcomeReasonList({ orgId: activeOrgId, reasons: [], unread: true });
       }
@@ -638,6 +670,12 @@ export default function AnalyticsPage() {
           (components/requests/RequestOutcomes.tsx — the rate is withheld, never
           shown as 0 %, while no cancel names a category; fix pass 3) */}
       <RequestOutcomes summary={outcomes} reasons={outcomeReasons} />
+
+      {/* REVIEW LANES (drafting-flow GAP-101 acceptance 5, DF-P19): requests by
+          review lane for any period, and every like-in-kind declaration with
+          its author, text and work / code class — read-only; the period is
+          read whole from /api/admin/analytics/review-lanes (second fix pass). */}
+      <ReviewLaneReport tickets={tickets} ticketsTotal={ticketsTotal} loadPeriod={loadReviewLanePeriod} draftingConfig={draftingConfig && draftingConfig.orgId === activeOrgId ? draftingConfig.data : null} />
 
       {/* SECTION 2: CHARTS & LISTS */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

@@ -389,10 +389,15 @@ export const RESTORE_PARENT_RULES: Readonly<Record<string, ReadonlyArray<Restore
   // not refused, when it is not a library of this workspace — exactly what
   // the live database does when a library is deleted (ON DELETE SET NULL),
   // and a ticket with no library is a fully supported state (DEC-107
-  // item 2). The pointer confers no access and places the ticket under no
-  // ACL: the library is not in the ticket's capability resource
-  // (lib/workflow.ts ticketResource) — whoever adds it there (DF-P5) revisits
-  // this rule. Refusing would drop the whole ticket, with its history.
+  // item 2). Refusing would drop the whole ticket, with its history. The
+  // pointer confers no read access and places the ticket under no library
+  // ACL. Since DF-P19 the library IS in the request's capability resource
+  // for the `ticket.*` capabilities (lib/workflow.ts ticketResource), so a
+  // ticket restored with its library cleared is decided as a request with
+  // no library — a library-scoped request rule no longer matches it, the
+  // state the live database leaves a request in when its library is
+  // deleted. Its project (DF-P8, 20261256 — ON DELETE SET NULL live) is
+  // cleared the same way when it is not a project of this workspace.
   tickets: fkRules("library_id>libraries? project_id>projects?"),
   transmittals: fkRules("project_id>projects"),
   turnover_items: fkRules("project_id>projects party_id>project_parties document_id>documents"),

@@ -14,6 +14,7 @@ import { listMyPendingReviews } from "@/lib/reviewControl";
 import { listMyDueRecerts } from "@/lib/accessRecert";
 import { listMyDueReviews } from "@/lib/reviewCycles";
 import { listMyPendingDistributionAcks } from "@/lib/distributionAcks";
+import { reviewModelFieldsFromRow } from "@/lib/reviewModel";
 import type { CheckoutSession, DocumentHold, Milestone, Ticket } from "@/types/schema";
 
 export interface InboxSnapshot {
@@ -317,7 +318,9 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
 
 // ─── Row mappers ─────────────────────────────────────────────────────
 
-function rowToTicket(r: Record<string, unknown>): Ticket {
+/** drafting-flow GAP-105 / TIER-4 (DF-P19): exported so the mapper parity
+ *  test runs the same row through it and every other Ticket builder. */
+export function rowToTicket(r: Record<string, unknown>): Ticket {
   return {
     id: r.id as string,
     orgId: r.org_id as string,
@@ -336,6 +339,9 @@ function rowToTicket(r: Record<string, unknown>): Ticket {
     assignedDrafterName: r.assigned_drafter_name as string | undefined,
     assignedEngineerId: (r.assigned_engineer_id as string | undefined) ?? undefined,
     assignedEngineerName: (r.assigned_engineer_name as string | undefined) ?? undefined,
+    // DF-P19: the library, the classes and the review-model columns — the
+    // one mapper the route, the request page, the list and the badge spread.
+    ...reviewModelFieldsFromRow(r),
     attachments: (r.attachments as Ticket["attachments"]) ?? [],
     comments: (r.comments as Ticket["comments"]) ?? [],
     history: (r.history as Ticket["history"]) ?? [],

@@ -101,16 +101,25 @@ export async function POST(req: NextRequest) {
   if (!tag) return NextResponse.json({ error: `Enter an equipment tag (1 to ${EQUIPMENT_TAG_MAX} characters).`, field: "tag" }, { status: 400 });
   if (action === "correct" && !UUID_RE.test(rowId)) return NextResponse.json({ error: "Name the equipment entry to correct." }, { status: 400 });
 
-  const { data: row, error: loadErr } = await supabaseAdmin
-    .from("tickets")
-    .select("id, org_id, status, archived_at, request_type, unit, requester_id, assigned_drafter_id, assigned_engineer_id, watchers")
-    .eq("id", ticketId)
-    .maybeSingle();
+  // drafting-flow GAP-105 / TIER-4 (DF-P19): the queue check reads the
+  // request's library and classes too (lib/workflow.ts ticketResource), as
+  // the request page does — tried without the 20261250 columns, then
+  // without 20261208's library, on a database that lacks them (42703).
+  const TICKET_BASE_COLUMNS = "id, org_id, status, archived_at, request_type, unit, requester_id, assigned_drafter_id, assigned_engineer_id, watchers";
+  let row: Record<string, unknown> | null = null;
+  let loadErr: { code?: string } | null = null;
+  for (const cols of [`${TICKET_BASE_COLUMNS}, library_id, work_class, code_class`, `${TICKET_BASE_COLUMNS}, library_id`, TICKET_BASE_COLUMNS]) {
+    const read = await supabaseAdmin.from("tickets").select(cols).eq("id", ticketId).maybeSingle();
+    row = (read.data as Record<string, unknown> | null) ?? null;
+    loadErr = read.error;
+    if (!loadErr || loadErr.code !== "42703") break;
+  }
   if (loadErr) return NextResponse.json({ error: "Couldn't read the request — try again in a moment." }, { status: 503 });
   if (!row) return NextResponse.json({ error: "Request not found" }, { status: 404 });
-  const t = row as {
+  const t = row as unknown as {
     id: string; org_id: string; status: string | null; archived_at: string | null; request_type: string | null; unit: string | null;
     requester_id: string | null; assigned_drafter_id: string | null; assigned_engineer_id: string | null; watchers: string[] | null;
+    library_id?: string | null; work_class?: string | null; code_class?: string | null;
   };
 
   const { data: member, error: memErr } = await supabaseAdmin
@@ -135,7 +144,7 @@ export async function POST(req: NextRequest) {
   if (!participant) {
     const loaded = await loadCapabilityPolicyStrict(t.org_id, supabaseAdmin);
     if (!loaded.ok) return NextResponse.json({ error: "Couldn't read this workspace's permissions — try again in a moment." }, { status: 503 });
-    queue = policyAllows(loaded.policy, "ticket.assign", m.role, heldRoles(m), caller.id, ticketResource({ requestType: t.request_type ?? "", unit: t.unit }));
+    queue = policyAllows(loaded.policy, "ticket.assign", m.role, heldRoles(m), caller.id, ticketResource({ requestType: t.request_type ?? "", unit: t.unit, libraryId: t.library_id ?? null, workClass: t.work_class ?? null, codeClass: t.code_class ?? null }));
   }
   if (!equipmentEditAllowed({ participant, queue, status: t.status, archived: !!t.archived_at })) {
     return NextResponse.json({ error: "Only the request's requester, drafter or engineer, or whoever runs the assignment queue, can add or correct its equipment." }, { status: 403 });

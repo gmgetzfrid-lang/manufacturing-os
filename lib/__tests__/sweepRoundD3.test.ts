@@ -177,8 +177,9 @@ describe("getActions honours the resource — DEC-13 acceptance: ASBUILT may onl
     WorkflowEngine.getActions(t, role as Role, uid, policy, { userRoles: (extra ?? [role]) as Role[], activeMemberCount: 5 }).map((a) => a.action);
 
   it("ticketResource carries request type and unit", () => {
-    expect(ticketResource(asbuilt)).toEqual({ requestType: "ASBUILT", unit: "U-100" });
-    expect(ticketResource({ requestType: "", unit: "" })).toEqual({ requestType: null, unit: null });
+    // DF-P19: the library and the classes ride along (null when the ticket has none — no rule matches).
+    expect(ticketResource(asbuilt)).toEqual({ requestType: "ASBUILT", unit: "U-100", libraryId: null, workClass: null, codeClass: null });
+    expect(ticketResource({ requestType: "", unit: "" })).toEqual({ requestType: null, unit: null, libraryId: null, workClass: null, codeClass: null });
   });
   it("a co-reviewing engineer loses Approve on ASBUILT only; DocCtrl gains it there only; a Manager's override is scoped too", () => {
     expect(acts(iso, "Engineer-2", "e1", ASBUILT_DOCCTRL)).toContain("approve_draft_ifc");

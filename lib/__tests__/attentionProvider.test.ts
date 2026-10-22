@@ -120,6 +120,7 @@ vi.mock("@/lib/notificationReconcile", async (importOriginal) => ({
 import { AttentionProvider } from "@/components/providers/AttentionProvider";
 import {
   useTicketNotifications, useAttentionStatus, TICKET_ATTENTION_COLUMNS, FETCH_DEBOUNCE_MS,
+  TICKET_ATTENTION_LIBRARY_COLUMNS, TICKET_ATTENTION_BASE_COLUMNS, __resetAttentionColumnRung,
   type AttentionStatus,
 } from "@/hooks/useTicketNotifications";
 import { AttentionFeed } from "@/components/cockpit/AttentionFeed";
@@ -160,6 +161,7 @@ beforeEach(() => {
   fx.role = { roles: ["Viewer"], activeOrgId: "o1", uid: "u1", membershipState: "member" };
   fx.reconcileCalls = []; fx.retire = []; fx.onReconcile = null; fx.channels = [];
   fx.policyEntry = { policy: undefined, version: null }; fx.members = []; fx.memberReads = [];
+  __resetAttentionColumnRung();
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); });
 
@@ -205,6 +207,34 @@ describe("RT-3 / TRAIL-8 — one subscription and one fetch per tab", () => {
     act(() => companion!.cb({ eventType: "DELETE", old: { id: "t-held" } }));
     await wait(FETCH_DEBOUNCE_MS + 150);
     expect(ticketFetches()).toBe(2);
+  });
+});
+
+describe("drafting-flow DF-P19 — the badge reads the request's library and classes, and degrades a rung at a time on an older database", () => {
+  const selects = () => fx.calls.filter((c: Call) => c.table === "tickets" && c.method === "select").map((c) => c.args[0]);
+  it("a database without 20261250 (42703 on its columns) is read without them; without 20261208 too, without the library; the rung is remembered", async () => {
+    fx.ticketQuery = (own) => {
+      const cols = String(own.find((c) => c.method === "select")?.args[0] ?? "");
+      if (cols.includes("engineering_required") || cols.includes("library_id")) return { data: null, error: { code: "42703", message: "column tickets.engineering_required does not exist" } };
+      return { data: [{ id: "t1", status: "DRAFTING" }], error: null, count: 1 };
+    };
+    await mount(withProvider(1));
+    expect(selects().slice(0, 3)).toEqual([TICKET_ATTENTION_COLUMNS, TICKET_ATTENTION_LIBRARY_COLUMNS, TICKET_ATTENTION_BASE_COLUMNS]);
+    expect(selects()).not.toContain("*");
+    // the next read starts on the rung that answered — no failed read again
+    const tickets = fx.channels[0].ons.find((o) => o.cfg.table === "tickets" && o.cfg.filter)!;
+    const before = selects().length;
+    act(() => tickets.cb({}));
+    await wait(FETCH_DEBOUNCE_MS + 150);
+    expect(selects().slice(before)[0]).toBe(TICKET_ATTENTION_BASE_COLUMNS);
+  });
+  it("REGRESSION: an older database still falls back to '*' exactly as before when even the base list is refused", async () => {
+    fx.ticketQuery = (own) => {
+      const cols = String(own.find((c) => c.method === "select")?.args[0] ?? "");
+      return cols === "*" ? { data: [], error: null, count: 0 } : { data: null, error: { code: "42703", message: "column missing" } };
+    };
+    await mount(withProvider(1));
+    expect(selects().slice(0, 4)).toEqual([TICKET_ATTENTION_COLUMNS, TICKET_ATTENTION_LIBRARY_COLUMNS, TICKET_ATTENTION_BASE_COLUMNS, "*"]);
   });
 });
 

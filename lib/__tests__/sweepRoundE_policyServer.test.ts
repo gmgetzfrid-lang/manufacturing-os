@@ -23,7 +23,7 @@ import { NextRequest } from "next/server";
 import {
   CAPABILITY_DEFS, policyAllows, tokensFor, loadCapabilityPolicy, loadCapabilityPolicyEntry, invalidateCapabilityPolicy,
   __resetCapabilityPolicyCache, SERVER_CACHE_TTL_MS, parseStoredCapabilityPolicy, normalizeCapabilityEntry, CAPABILITY_POLICY_ROUTE,
-  saveCapabilityPolicy, addUserGrant, revokeUserGrant,
+  saveCapabilityPolicy, addUserGrant, revokeUserGrant, capabilityRuleKey,
   type CapabilityPolicy,
 } from "@/lib/capabilityPolicy";
 import {
@@ -672,20 +672,91 @@ describe("DF-P6 (AUTHZ-6) — a stored library-scoped request rule never blocks 
     expect((updates("org_configurations")[0].data as CapabilityPolicy).caps?.["ticket.direct_approve"]).toEqual(WITH_DEAD.caps!["ticket.direct_approve"]);
   });
 
-  it("a NEW library / class-scoped request rule is still refused (400), nothing written — a changed stored rule counts as new", async () => {
+  // drafting-flow DF-P19 (GAP-105 acceptance 3 / TIER-4; DEC-90 ruling (2)):
+  // re-pinned — DF-P6's refusal of a NEW such rule is lifted (the request
+  // presents its library and classes now). A new one is accepted and
+  // CONFIRMED by the save (server-stamped); the stored one keeps its state
+  // (unconfirmed: it only adds until an Admin confirms it).
+  it("DF-P19: a NEW library / class-scoped request rule is accepted and confirmed by the save; the stored one stays unconfirmed; a changed stored rule counts as new", async () => {
     state.user = { id: "a1" };
     for (const rule of [
       { tokens: ["Admin"], when: { libraryId: ["lib-2"] } },
       { tokens: ["Admin"], when: { workClass: ["w"] } },
       { tokens: ["Admin", "Manager", "Viewer"], when: { libraryId: ["lib-1"] } },
     ]) {
+      seedPolicyOrg(); state.rows.org_configurations = [config(WITH_DEAD)]; state.user = { id: "a1" };
       const caps = { ...WITH_DEAD.caps, "ticket.direct_approve": [DEAD_RULE, rule, { tokens: ["Admin", "Manager", "Supervisor"] }] };
       const res = await policy({ op: "save", orgId: "o1", caps });
-      expect(res.status, JSON.stringify(rule)).toBe(400);
-      expect((await res.json()).error).toMatch(/request type or a unit only/);
+      expect(res.status, JSON.stringify(rule)).toBe(200);
+      const written = (updates("org_configurations")[0].data as CapabilityPolicy).caps?.["ticket.direct_approve"] as unknown as Array<Record<string, unknown>>;
+      expect(written[0]).toEqual(DEAD_RULE);                                  // stored: no stamp
+      expect(typeof written[1].confirmedAt).toBe("string");                   // new: confirmed by this save
+      expect(written[1].confirmedBy).toBe("a1");
+      const audit = inserts("audit_logs")[0] as { details: { confirmedRules?: unknown[] } };
+      expect(audit.details.confirmedRules).toHaveLength(1);
     }
+  });
+
+  // DF-P19 second fix pass (review minor 3): confirming is Admin's — a
+  // DocCtrl's NEW rule is stored unconfirmed, so it only adds until an Admin
+  // confirms it, and removing a stored unconfirmed narrowing in one save and
+  // re-adding it in the next confirms nothing.
+  it("DF-P19 (review minor 3): a DocCtrl's single new rule is stored unconfirmed (audited as such)", async () => {
+    state.user = { id: "c1" };
+    const NEW_RULE = { tokens: ["Engineer-3"], when: { libraryId: ["lib-2"] } };
+    const caps = { ...WITH_DEAD.caps, "ticket.direct_approve": [DEAD_RULE, NEW_RULE, { tokens: ["Admin", "Manager", "Supervisor"] }] };
+    const res = await policy({ op: "save", orgId: "o1", caps });
+    expect(res.status).toBe(200);
+    const written = (updates("org_configurations")[0].data as CapabilityPolicy).caps?.["ticket.direct_approve"] as unknown as Array<Record<string, unknown>>;
+    expect(written[1]).toEqual(NEW_RULE);                                     // no stamp
+    const audit = inserts("audit_logs")[0] as { details: { confirmedRules?: unknown[]; unconfirmedRules?: unknown[] } };
+    expect(audit.details.confirmedRules).toBeUndefined();
+    expect(audit.details.unconfirmedRules).toEqual([{ cap: "ticket.direct_approve", rule: NEW_RULE }]);
+  });
+
+  it("DF-P19 (review minor 3): a DocCtrl cannot confirm a stored unconfirmed narrowing by deleting it in one save and re-adding it in the next", async () => {
+    state.user = { id: "c1" };
+    const without = { ...WITH_DEAD.caps, "ticket.direct_approve": [{ tokens: ["Admin", "Manager", "Supervisor"] }] };
+    expect((await policy({ op: "save", orgId: "o1", caps: without })).status).toBe(200);
+    const afterFirst = updates("org_configurations")[0].data as CapabilityPolicy;
+    expect(afterFirst.caps?.["ticket.direct_approve"]).toEqual([{ tokens: ["Admin", "Manager", "Supervisor"] }]);
+    state.rows.org_configurations = [{ ...config(afterFirst), updated_at: "2026-10-22T01:00:00.000Z" }];
+    const back = { ...WITH_DEAD.caps, "ticket.direct_approve": [DEAD_RULE, { tokens: ["Admin", "Manager", "Supervisor"] }] };
+    expect((await policy({ op: "save", orgId: "o1", caps: back })).status).toBe(200);
+    const afterSecond = updates("org_configurations").at(-1)!.data as CapabilityPolicy;
+    const rule = (afterSecond.caps?.["ticket.direct_approve"] as unknown as Array<Record<string, unknown>>)[0];
+    expect(rule).toEqual(DEAD_RULE);                                          // still unconfirmed
+    expect(rule.confirmedAt).toBeUndefined();
+    expect(policyAllows(afterSecond, "ticket.direct_approve", "Supervisor", null, null, { libraryId: "lib-1" })).toBe(true);   // the narrowing does not apply
+  });
+
+  it("DF-P19: a client cannot confirm a stored rule by sending a stamp — the server carries the stored state", async () => {
+    state.user = { id: "a1" };
+    const forged = { ...DEAD_RULE, confirmedAt: "2026-10-22T00:00:00.000Z", confirmedBy: "a1" };
+    const caps = { ...WITH_DEAD.caps, "ticket.direct_approve": [forged, { tokens: ["Admin", "Manager", "Supervisor"] }] };
+    expect((await policy({ op: "save", orgId: "o1", caps })).status).toBe(200);
+    const written = (updates("org_configurations")[0].data as CapabilityPolicy).caps?.["ticket.direct_approve"] as unknown as Array<Record<string, unknown>>;
+    expect(written[0]).toEqual(DEAD_RULE);
+  });
+
+  it("DF-P19: confirm_rule — an Admin confirms the stored rule (stamped, audited); a DocCtrl is refused (403); an unknown or already-confirmed rule is refused (409)", async () => {
+    const key = capabilityRuleKey(DEAD_RULE);
+    state.user = { id: "c1" };
+    expect((await policy({ op: "confirm_rule", orgId: "o1", cap: "ticket.direct_approve", key })).status).toBe(403);
     expect(updates("org_configurations")).toHaveLength(0);
-    expect(inserts("audit_logs")).toHaveLength(0);
+    state.user = { id: "a1" };
+    expect((await policy({ op: "confirm_rule", orgId: "o1", cap: "ticket.direct_approve", key: capabilityRuleKey({ tokens: ["X"], when: { libraryId: ["nope"] } }) })).status).toBe(409);
+    const res = await policy({ op: "confirm_rule", orgId: "o1", cap: "ticket.direct_approve", key });
+    expect(res.status).toBe(200);
+    const written = (updates("org_configurations")[0].data as CapabilityPolicy);
+    const rule = (written.caps?.["ticket.direct_approve"] as unknown as Array<Record<string, unknown>>)[0];
+    expect(rule).toMatchObject({ ...DEAD_RULE, confirmedBy: "a1" });
+    expect(typeof rule.confirmedAt).toBe("string");
+    expect(written.grants).toEqual([LIVE_V2]);   // grants preserved (the expired one pruned, as every write does)
+    expect((inserts("audit_logs")[0] as { details: { op: string } }).details.op).toBe("confirm_rule");
+    // once confirmed, confirming again is refused
+    state.rows.org_configurations = [config(written)];
+    expect((await policy({ op: "confirm_rule", orgId: "o1", cap: "ticket.direct_approve", key })).status).toBe(409);
   });
 });
 
@@ -936,5 +1007,261 @@ describe("WF-16 — grant use is audited on the workflow route", () => {
     const r = src("app/api/tickets/workflow-action/route.ts");
     expect(r).toContain("const usedGrants = decisiveGrants(ticket, callerRole, caller.id, capPolicy, engineCtx, action.action);");
     expect(r).toMatch(/details: \{\s*\n\s*from: ticket\.status, to: newStatus, label: action\.label, authority,/);
+  });
+});
+
+// drafting-flow DF-P19 third fix pass (review major 2): an IN-FORCE
+// (Admin-confirmed) library- / class-scoped request rule is Admin's to change
+// or remove. Before this, a DocCtrl's edit made it a NEW rule stored
+// unconfirmed — it only added (on ticket.engineer_gate_exempt: nothing), so
+// the confirmed narrowing lapsed silently (fail-open).
+describe("DF-P19 third fix pass (review major 2) — an in-force code-class rule is Admin's to change", () => {
+  const STAMP = { confirmedAt: "2026-10-20T00:00:00.000Z", confirmedBy: "a1" };
+  const FA_RULE = { tokens: ["Engineer-3"], when: { codeClass: ["B313"] }, ...STAMP };
+  const GX_BASE = ["Admin", "Manager", "Supervisor", "Engineer", "DocCtrl"];
+  const GX_RULE = { tokens: ["Admin"], when: { codeClass: ["B313"] }, ...STAMP };
+  const CONFIRMED: CapabilityPolicy = {
+    caps: {
+      ...STORED.caps,
+      "ticket.final_approve": [{ tokens: ["Engineer"] }, FA_RULE],
+      "ticket.engineer_gate_exempt": [{ tokens: GX_BASE }, GX_RULE],
+    },
+    grants: STORED.grants,
+  };
+  const B313 = { requestType: "ISO", codeClass: "B313" };
+  beforeEach(() => { seedPolicyOrg(); state.rows.org_configurations = [config(CONFIRMED)]; });
+  const bare = (r: Record<string, unknown>) => ({ tokens: r.tokens, when: r.when });
+
+  it("ticket.final_approve: a DocCtrl adding Engineer-2 to the confirmed B313 rule is refused (403), nothing written — the narrowing stands", async () => {
+    expect(tokensFor(CONFIRMED, "ticket.final_approve", B313)).toEqual(["Engineer-3"]);
+    state.user = { id: "c1" };
+    const caps = { ...CONFIRMED.caps, "ticket.final_approve": [{ tokens: ["Engineer"] }, { tokens: ["Engineer-3", "Engineer-2"], when: { codeClass: ["B313"] } }] };
+    const res = await policy({ op: "save", orgId: "o1", caps });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toMatch(/Only an Admin may change or remove an in-force code-class \/ library rule \(Final engineering approval where codeClass ∈ \{B313\}\)/);
+    expect(updates("org_configurations")).toHaveLength(0);
+    expect(inserts("audit_logs")).toHaveLength(0);
+  });
+
+  it("ticket.final_approve: a DocCtrl removing the confirmed rule is refused (403)", async () => {
+    state.user = { id: "c1" };
+    const caps = { ...CONFIRMED.caps, "ticket.final_approve": [{ tokens: ["Engineer"] }] };
+    expect((await policy({ op: "save", orgId: "o1", caps })).status).toBe(403);
+    expect(updates("org_configurations")).toHaveLength(0);
+  });
+
+  it("ticket.engineer_gate_exempt: a DocCtrl widening the confirmed B313 narrowing is refused (403) — engineer sign-off stays required for B313 requesters", async () => {
+    expect(tokensFor(CONFIRMED, "ticket.engineer_gate_exempt", B313)).toEqual(["Admin"]);
+    state.user = { id: "c1" };
+    const caps = { ...CONFIRMED.caps, "ticket.engineer_gate_exempt": [{ tokens: GX_BASE }, { tokens: ["Admin", "Manager"], when: { codeClass: ["B313"] } }] };
+    const res = await policy({ op: "save", orgId: "o1", caps });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toMatch(/Approve own request without an engineer where codeClass ∈ \{B313\}/);
+    expect(updates("org_configurations")).toHaveLength(0);
+  });
+
+  it("a DocCtrl's unrelated save that carries the confirmed rules unchanged is accepted; their stamps ride along", async () => {
+    state.user = { id: "c1" };
+    const caps = { ...CONFIRMED.caps, "ticket.assign": ["Admin", "Manager", "Supervisor", "DraftingSupervisor", "DocCtrl"],
+      "ticket.final_approve": [{ tokens: ["Engineer"] }, bare(FA_RULE)], "ticket.engineer_gate_exempt": [{ tokens: GX_BASE }, bare(GX_RULE)] };
+    expect((await policy({ op: "save", orgId: "o1", caps })).status).toBe(200);
+    const written = updates("org_configurations")[0].data as CapabilityPolicy;
+    expect(written.caps?.["ticket.final_approve"]).toEqual([{ tokens: ["Engineer"] }, FA_RULE]);
+    expect(written.caps?.["ticket.engineer_gate_exempt"]).toEqual([{ tokens: GX_BASE }, GX_RULE]);
+    expect(policyAllows(written, "ticket.final_approve", "Engineer", null, null, B313)).toBe(false);
+  });
+
+  it("an Admin may edit it: the edited rule is stamped by the save and in force at once", async () => {
+    state.user = { id: "a1" };
+    const caps = { ...CONFIRMED.caps, "ticket.final_approve": [{ tokens: ["Engineer"] }, { tokens: ["Engineer-3", "Engineer-2"], when: { codeClass: ["B313"] } }] };
+    expect((await policy({ op: "save", orgId: "o1", caps })).status).toBe(200);
+    const written = updates("org_configurations")[0].data as CapabilityPolicy;
+    const rule = (written.caps?.["ticket.final_approve"] as unknown as Array<Record<string, unknown>>)[1];
+    expect(rule.confirmedBy).toBe("a1");
+    expect(tokensFor(written, "ticket.final_approve", B313)).toEqual(["Engineer-3", "Engineer-2"]);
+    expect(policyAllows(written, "ticket.final_approve", "Engineer", null, null, B313)).toBe(false);
+  });
+});
+
+// drafting-flow DF-P19 fourth fix pass (review major 1): the first matching
+// rule decides, so keeping an in-force code-class rule in the list is not
+// enough — a rule put AHEAD of it cancels it with nothing reported dropped.
+// The reviewer's two reproductions on a NON-critical capability
+// (ticket.final_approve, where canonicalEntry's critical check never runs):
+// (a) a new unconfirmed {codeClass: B313} rule first, (b) an in-force
+// request-type rule first. Both refused for a DocCtrl (403, nothing written);
+// an Admin may; a rule added AFTER it, or the grid's own unchanged save, is
+// fine.
+describe("DF-P19 fourth fix pass (review major 1) — no rule ahead of an in-force code-class rule but an Admin's", () => {
+  const STAMP = { confirmedAt: "2026-10-20T00:00:00.000Z", confirmedBy: "a1" };
+  const FA_RULE = { tokens: ["Admin"], when: { codeClass: ["B313"] }, ...STAMP };
+  const CONFIRMED: CapabilityPolicy = {
+    caps: { ...STORED.caps, "ticket.final_approve": [FA_RULE, { tokens: ["Engineer", "Admin"] }] },
+    grants: STORED.grants,
+  };
+  const B313_EWR = { requestType: "EWR", codeClass: "B313" };
+  const bare = (r: Record<string, unknown>) => ({ tokens: r.tokens, when: r.when });
+  beforeEach(() => { seedPolicyOrg(); state.rows.org_configurations = [config(CONFIRMED)]; });
+
+  it("the fixture: ticket.final_approve is not critical, and B313 requests are Admin's only", () => {
+    expect(CAPABILITY_DEFS.find((d) => d.id === "ticket.final_approve")?.critical).toBeFalsy();
+    expect(tokensFor(CONFIRMED, "ticket.final_approve", B313_EWR)).toEqual(["Admin"]);
+  });
+
+  const caseA = () => ({ ...CONFIRMED.caps, "ticket.final_approve": [{ tokens: ["Engineer"], when: { codeClass: ["B313"] } }, bare(FA_RULE), { tokens: ["Engineer", "Admin"] }] });
+  const caseB = () => ({ ...CONFIRMED.caps, "ticket.final_approve": [{ tokens: ["Engineer", "Admin"], when: { requestType: ["EWR"] } }, bare(FA_RULE), { tokens: ["Engineer", "Admin"] }] });
+
+  it("(a) a DocCtrl putting a new unconfirmed B313 rule FIRST is refused (403), nothing written — it would have let every Engineer final-approve B313 work", async () => {
+    // What it would have done had it been stored (the reviewer's reproduction).
+    const asStored: CapabilityPolicy = { caps: { ...CONFIRMED.caps, "ticket.final_approve": [{ tokens: ["Engineer"], when: { codeClass: ["B313"] } }, FA_RULE, { tokens: ["Engineer", "Admin"] }] } };
+    expect(tokensFor(asStored, "ticket.final_approve", B313_EWR)).toEqual(["Engineer", "Admin"]);
+    state.user = { id: "c1" };
+    const res = await policy({ op: "save", orgId: "o1", caps: caseA() });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toMatch(/Only an Admin may add, change, remove or reorder a rule ahead of an in-force code-class \/ library rule \(Final engineering approval where codeClass ∈ \{B313\}\)/);
+    expect(updates("org_configurations")).toHaveLength(0);
+    expect(inserts("audit_logs")).toHaveLength(0);
+  });
+
+  it("(b) a DocCtrl putting an in-force request-type rule FIRST is refused (403), nothing written", async () => {
+    const asStored: CapabilityPolicy = { caps: { ...CONFIRMED.caps, "ticket.final_approve": [{ tokens: ["Engineer", "Admin"], when: { requestType: ["EWR"] } }, FA_RULE, { tokens: ["Engineer", "Admin"] }] } };
+    expect(tokensFor(asStored, "ticket.final_approve", B313_EWR)).toEqual(["Engineer", "Admin"]);
+    state.user = { id: "c1" };
+    const res = await policy({ op: "save", orgId: "o1", caps: caseB() });
+    expect(res.status).toBe(403);
+    expect(updates("org_configurations")).toHaveLength(0);
+  });
+
+  it("an Admin may make either change (a: stamped and in force; b: stored as sent)", async () => {
+    state.user = { id: "a1" };
+    expect((await policy({ op: "save", orgId: "o1", caps: caseA() })).status).toBe(200);
+    const a = updates("org_configurations")[0].data as CapabilityPolicy;
+    expect((a.caps?.["ticket.final_approve"] as unknown as Array<Record<string, unknown>>)[0].confirmedBy).toBe("a1");
+    expect(tokensFor(a, "ticket.final_approve", B313_EWR)).toEqual(["Engineer"]);
+    seedPolicyOrg(); state.rows.org_configurations = [config(CONFIRMED)];
+    state.user = { id: "a1" };
+    expect((await policy({ op: "save", orgId: "o1", caps: caseB() })).status).toBe(200);
+  });
+
+  it("a DocCtrl may add a rule AFTER the in-force one (it cannot reach a B313 request) — stored unconfirmed, B313 still Admin's only", async () => {
+    state.user = { id: "c1" };
+    const caps = { ...CONFIRMED.caps, "ticket.final_approve": [bare(FA_RULE), { tokens: ["Engineer", "Admin", "DocCtrl"], when: { requestType: ["EWR"] } }, { tokens: ["Engineer", "Admin"] }] };
+    expect((await policy({ op: "save", orgId: "o1", caps })).status).toBe(200);
+    const written = updates("org_configurations")[0].data as CapabilityPolicy;
+    expect(tokensFor(written, "ticket.final_approve", B313_EWR)).toEqual(["Admin"]);
+    expect(tokensFor(written, "ticket.final_approve", { requestType: "EWR" })).toEqual(["Engineer", "Admin", "DocCtrl"]);
+  });
+
+  it("the grid's own unchanged save passes for a DocCtrl, even with a stored multi-type rule ahead (the grid writes it back one rule per type)", async () => {
+    const stored: CapabilityPolicy = {
+      caps: { ...STORED.caps, "ticket.final_approve": [{ tokens: ["Engineer", "Admin"], when: { requestType: ["EWR", "ISO"] } }, FA_RULE, { tokens: ["Engineer", "Admin"] }] },
+      grants: STORED.grants,
+    };
+    state.rows.org_configurations = [config(stored)];
+    const split = splitPolicyForEditor(stored);
+    const caps = joinPolicyFromEditor(split.base, split.overrides, split.opaque, split.projectOverrides, stored, split.codeClassOverrides);
+    expect((caps["ticket.final_approve"] as unknown as unknown[]).length).toBe(4); // EWR and ISO split
+    state.user = { id: "c1" };
+    expect((await policy({ op: "save", orgId: "o1", caps })).status).toBe(200);
+    const written = updates("org_configurations")[0].data as CapabilityPolicy;
+    expect(tokensFor(written, "ticket.final_approve", B313_EWR)).toEqual(["Engineer", "Admin"]); // the EWR rule was ahead before too
+    expect(tokensFor(written, "ticket.final_approve", { requestType: "RFI", codeClass: "B313" })).toEqual(["Admin"]);
+  });
+});
+
+// drafting-flow DF-P19 merge-time fix pass (review minor 3 / nit 4): a rule
+// that cannot match the same requests as an in-force one does not shadow it.
+// Stored [base, EWR rule, confirmed {Admin} for B313]: a DocCtrl's new B16
+// rule (as the console writes it, ahead of the EWR rule) is accepted; one
+// that can reach a B313 request ahead of it is still refused, with the
+// console's wording.
+describe("DF-P19 merge-time fix pass (review minor 3) — a rule that cannot match the same requests shadows nothing", () => {
+  const STAMP = { confirmedAt: "2026-10-20T00:00:00.000Z", confirmedBy: "a1" };
+  const B313_RULE = { tokens: ["Admin"], when: { codeClass: ["B313"] }, ...STAMP };
+  const EWR_RULE = { tokens: ["Engineer", "Admin"], when: { requestType: ["EWR"] } };
+  const BASE = { tokens: ["Engineer", "Admin"] };
+  const CONFIRMED: CapabilityPolicy = {
+    caps: { ...STORED.caps, "ticket.final_approve": [BASE, EWR_RULE, B313_RULE] },
+    grants: STORED.grants,
+  };
+  const bare = (r: Record<string, unknown>) => ({ tokens: r.tokens, when: r.when });
+  beforeEach(() => { seedPolicyOrg(); state.rows.org_configurations = [config(CONFIRMED)]; });
+
+  it("a DocCtrl's B16 rule written by the console is accepted (200), stored unconfirmed; B313 requests stay Admin's only", async () => {
+    const split = splitPolicyForEditor(CONFIRMED);
+    const caps = joinPolicyFromEditor(split.base, split.overrides, split.opaque, split.projectOverrides, CONFIRMED,
+      { "ticket.final_approve": [...(split.codeClassOverrides["ticket.final_approve"] ?? []), { codeClass: "B16", tokens: ["Engineer-2"] }] });
+    state.user = { id: "c1" };
+    expect((await policy({ op: "save", orgId: "o1", caps })).status).toBe(200);
+    const written = updates("org_configurations")[0].data as CapabilityPolicy;
+    expect(tokensFor(written, "ticket.final_approve", { requestType: "EWR", codeClass: "B313" })).toEqual(["Engineer", "Admin"]);
+    expect(tokensFor(written, "ticket.final_approve", { requestType: "DCN", codeClass: "B313" })).toEqual(["Admin"]);
+    expect((tokensFor(written, "ticket.final_approve", { requestType: "DCN", codeClass: "B16" }) as string[]).sort()).toEqual(["Engineer", "Engineer-2", "Admin"].sort());
+  });
+
+  it("a DocCtrl's rule ahead that can reach a B313 request is refused (403) with the console's wording, nothing written", async () => {
+    state.user = { id: "c1" };
+    const caps = { ...CONFIRMED.caps, "ticket.final_approve": [BASE, EWR_RULE, { tokens: ["Engineer"], when: { libraryId: ["1b000000-0000-4000-8000-000000000001"] } }, bare(B313_RULE)] };
+    const res = await policy({ op: "save", orgId: "o1", caps });
+    expect(res.status).toBe(403);
+    const error = (await res.json()).error as string;
+    expect(error).toMatch(/Only an Admin may add, change, remove or reorder a rule ahead of an in-force code-class \/ library rule \(Final engineering approval where codeClass ∈ \{B313\}\)/);
+    expect(error).toContain("a new code-class rule after every stored rule that can match its requests");
+    expect(error).not.toContain("a new rule goes after it");
+    expect(updates("org_configurations")).toHaveLength(0);
+  });
+});
+
+// drafting-flow DF-P19 merge-time fix pass 2: the reviewer's anchor repro
+// through the route (refused for a DocCtrl), confirm_rule by ordinal, and an
+// Admin's save that drops an in-force rule recorded in the audit row.
+describe("DF-P19 merge-time fix pass 2 — shadow anchor, confirm by ordinal, an Admin's drop recorded", () => {
+  const STAMP = { confirmedAt: "2026-10-20T00:00:00.000Z", confirmedBy: "a1" };
+  const L1 = "1b000000-0000-4000-8000-000000000001";
+  const L2 = "1b000000-0000-4000-8000-000000000002";
+  const BASE = { tokens: ["Admin", "Engineer", "Manager"] };
+  const S1 = { tokens: ["Admin"], when: { libraryId: [L1] } };
+  const M = { tokens: ["Admin"], when: { libraryId: [L1, L2] } };
+  const X = { tokens: ["Admin", "Engineer", "Manager"], when: { requestType: ["EWR"] } };
+  const seed = (caps: Record<string, unknown>) => { seedPolicyOrg(); state.rows.org_configurations = [config({ caps: { ...STORED.caps, ...caps }, grants: STORED.grants } as CapabilityPolicy)]; };
+
+  for (const cap of ["ticket.final_approve", "ticket.engineer_gate_exempt"]) {
+    it(`${cap}: a DocCtrl's new {L1, L2} rule ahead with the confirmed L1 rule moved behind the EWR rule → 403, nothing written`, async () => {
+      seed({ [cap]: [BASE, { ...S1, ...STAMP }, X] });
+      state.user = { id: "c1" };
+      const res = await policy({ op: "save", orgId: "o1", caps: { ...STORED.caps, [cap]: [BASE, M, X, S1] } });
+      expect(res.status).toBe(403);
+      expect((await res.json()).error).toMatch(/Only an Admin may add, change, remove or reorder a rule ahead of an in-force code-class \/ library rule/);
+      expect(updates("org_configurations")).toHaveLength(0);
+    });
+    it(`${cap}: the same with the {L1, L2} rule already stored unconfirmed → 403`, async () => {
+      seed({ [cap]: [BASE, { ...S1, ...STAMP }, X, M] });
+      state.user = { id: "c1" };
+      expect((await policy({ op: "save", orgId: "o1", caps: { ...STORED.caps, [cap]: [BASE, M, X, S1] } })).status).toBe(403);
+      expect(updates("org_configurations")).toHaveLength(0);
+    });
+  }
+
+  it("confirm_rule with an ordinal confirms that copy (200); that copy again → 409; a bad ordinal → 400", async () => {
+    seed({ "ticket.final_approve": [BASE, S1, S1] });
+    state.user = { id: "a1" };
+    const key = capabilityRuleKey(S1);
+    expect((await policy({ op: "confirm_rule", orgId: "o1", cap: "ticket.final_approve", key, ordinal: -1 })).status).toBe(400);
+    expect((await policy({ op: "confirm_rule", orgId: "o1", cap: "ticket.final_approve", key, ordinal: 1 })).status).toBe(200);
+    const written = updates("org_configurations")[0].data as CapabilityPolicy;
+    const rules = written.caps?.["ticket.final_approve"] as unknown as Array<Record<string, unknown>>;
+    expect(rules[1].confirmedAt).toBeUndefined();
+    expect(rules[2].confirmedBy).toBe("a1");
+    state.rows.org_configurations = [config(written)];
+    expect((await policy({ op: "confirm_rule", orgId: "o1", cap: "ticket.final_approve", key, ordinal: 1 })).status).toBe(409);
+  });
+
+  it("an Admin deleting the unconfirmed copy ahead of a confirmed duplicate is saved, and the audit row records the dropped in-force rule", async () => {
+    seed({ "ticket.final_approve": [BASE, S1, { ...S1, ...STAMP }] });
+    state.user = { id: "a1" };
+    expect((await policy({ op: "save", orgId: "o1", caps: { ...STORED.caps, "ticket.final_approve": [BASE, S1] } })).status).toBe(200);
+    const details = (inserts("audit_logs")[0] as { details: Record<string, unknown> }).details;
+    expect(details.droppedInForceRules).toEqual([{ cap: "ticket.final_approve", rule: { ...S1, ...STAMP }, remains: "unconfirmed-copy" }]);
+    expect(details.unconfirmedRules).toBeUndefined();
   });
 });

@@ -470,7 +470,8 @@ describe("LEAK-9 / GAP-107 — how a request ended is a typed fact", () => {
     expect(block).toContain('(all time — not the Request Volume range)');
     expect(block).toContain('the page loads at most the server&rsquo;s row limit');
     expect(block).toContain('cancels that named no category; none of them is in the leak rate');
-    expect(src("app/api/admin/analytics/route.ts")).toContain('asCaller.from("tickets").select("*").eq("org_id", orgId)');
+    // DF-P19 fix pass: the same read, newest first with an exact count (so a cut at the row limit drops the oldest)
+    expect(src("app/api/admin/analytics/route.ts")).toContain('asCaller.from("tickets").select("*", { count: "exact" }).eq("org_id", orgId).order("created_at", { ascending: false })');
   });
 });
 

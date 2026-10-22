@@ -133,12 +133,12 @@ describe("PERS-5 / PERS-6 — rowToTicket has no cast, maps what the server read
   });
 });
 
-describe("GAP-105 (fix pass) — the library is NOT in the capability resource yet: the page and the badge build Tickets without it", () => {
-  it("ticketResource presents request type and unit only, whether or not the ticket has a library (DF-P5 adds it with the mappers)", () => {
-    const withLib = { requestType: "ISO", unit: "U", libraryId: LIB } as Pick<Ticket, "requestType" | "unit">;
-    expect(ticketResource(withLib)).toStrictEqual({ requestType: "ISO", unit: "U" });
-    expect(ticketResource({ requestType: "ISO", unit: "U" })).toStrictEqual({ requestType: "ISO", unit: "U" });
-    expect(readFileSync(join(process.cwd(), "lib", "workflow.ts"), "utf8")).toContain("return { requestType: ticket.requestType || null, unit: ticket.unit || null };");
+describe("GAP-105 acceptance 3 (DF-P19, re-pinned) — the library IS in the capability resource, now that every mapper carries it", () => {
+  it("ticketResource presents the library with the request type and unit; a ticket with none presents null (no rule can match it)", () => {
+    const withLib = { requestType: "ISO", unit: "U", libraryId: LIB };
+    expect(ticketResource(withLib)).toStrictEqual({ requestType: "ISO", unit: "U", libraryId: LIB, workClass: null, codeClass: null });
+    expect(ticketResource({ requestType: "ISO", unit: "U" })).toStrictEqual({ requestType: "ISO", unit: "U", libraryId: null, workClass: null, codeClass: null });
+    expect(readFileSync(join(process.cwd(), "lib", "workflow.ts"), "utf8")).toContain("    libraryId: ticket.libraryId || null,");
   });
   it("the restore clears a ticket's library that is not in the target workspace (ON DELETE SET NULL's answer), never refuses the ticket", async () => {
     const { restoreParentRulesFor } = await import("@/lib/dataRestore");

@@ -78,6 +78,8 @@ const VIA_BUILDER: Record<string, { builder: string; module: string }> = {
   "app/api/knowledge/drawing/route.ts": { builder: "equipmentRegisterCsv", module: "lib/drawingText.ts" },
   // admin-and-org ALOG-6 (P7): the audit export's file is built by lib/auditLogExport.ts.
   "app/(protected)/admin/audit/page.tsx": { builder: "buildAuditCsv", module: "lib/auditLogExport.ts" },
+  // drafting-flow GAP-101 acceptance 5 (DF-P19): the Review Lanes report's file is built by lib/reviewLaneReport.ts.
+  "components/requests/ReviewLaneReport.tsx": { builder: "reviewLaneReportCsv", module: "lib/reviewLaneReport.ts" },
 };
 
 describe("PM-15 census — a new text/csv producer must use lib/csvSafe", () => {
@@ -95,6 +97,7 @@ describe("PM-15 census — a new text/csv producer must use lib/csvSafe", () => 
       "app/(protected)/requests/page.tsx",
       "app/api/knowledge/drawing/route.ts",
       "components/cockpit/CommandDeck.tsx",
+      "components/requests/ReviewLaneReport.tsx",
       "lib/projectExport.ts",
     ]);
   });

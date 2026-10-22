@@ -31,7 +31,7 @@ import {
 } from "@/lib/reviewModel";
 import { seededSlotsFor } from "@/lib/routingControl";
 import { engineMatrix } from "./helpers/dfP6EngineMatrix";
-import { CAPABILITY_DEFS, policyAllows, validateCapabilityPolicy, newDeadTicketRuleRefusal, TICKET_RESOURCE_KEYS, RESOURCE_KEYS, type CapabilityPolicy } from "@/lib/capabilityPolicy";
+import { CAPABILITY_DEFS, policyAllows, validateCapabilityPolicy, carryTicketRuleConfirmation, TICKET_RESOURCE_KEYS, RESOURCE_KEYS, type CapabilityPolicy } from "@/lib/capabilityPolicy";
 import { parseRoutingControl, routingForWorkClass } from "@/lib/routingControl";
 import { parseTicketCreateBody } from "@/lib/ticketCreate";
 import { engineeringLine } from "@/components/requests/DeclarationCard";
@@ -501,25 +501,25 @@ describe("GAP-101 / TIER-4 / GAP-105 — classes and the resource", () => {
     expect(resolveReviewClass("", opts).kind).toBe("none");
     expect(editableClasses({ codeClasses: { options: [{ value: "c", label: "C", engineering: true }] } } as never, "codeClasses").options).toEqual([{ value: "c", label: "C", engineering: true }]);
   });
-  it("fix pass (review, issue 6): the resource stays request type and unit — the library and the classes join only with the requests list's and the inbox's mappers (99-fix-sequencing hand-off), so the route, the page and the badge evaluate one resource", () => {
-    expect(ticketResource({ requestType: "ISO", unit: "U" })).toStrictEqual({ requestType: "ISO", unit: "U" });
-    const full = { requestType: "ISO", unit: "U", libraryId: "L", workClass: "w", codeClass: "c" } as Pick<Ticket, "requestType" | "unit">;
-    expect(ticketResource(full)).toStrictEqual({ requestType: "ISO", unit: "U" });
+  it("DF-P19 (re-pinned from DF-P6's review fix pass, issue 6): the resource carries the library and both classes now that every mapper spreads them (lib/__tests__/dfRoundG_P19_ticketResource.test.ts runs one row through every mapper); a request with none presents null for them", () => {
+    expect(ticketResource({ requestType: "ISO", unit: "U" })).toStrictEqual({ requestType: "ISO", unit: "U", libraryId: null, workClass: null, codeClass: null });
+    const full = { requestType: "ISO", unit: "U", libraryId: "L", workClass: "w", codeClass: "c" };
+    expect(ticketResource(full)).toStrictEqual({ requestType: "ISO", unit: "U", libraryId: "L", workClass: "w", codeClass: "c" });
     // the shared mapper every Ticket builder can spread carries them
     expect(reviewModelFieldsFromRow({ library_id: "L", work_class: "w", code_class: "c", engineering_required: true })).toMatchObject({ libraryId: "L", workClass: "w", codeClass: "c", engineeringRequired: true });
     expect(reviewModelFieldsFromRow({}).engineeringRequired).toBeUndefined();
   });
-  it("the evaluator reads a code-class rule (TIER-4), but a NEW library / work-class / code-class rule on a request capability is refused until the request presents those fields (fix pass 2, major 3; fix pass 4: new only — newDeadTicketRuleRefusal); a work/code-class rule is refused on a capability the database evaluates", () => {
-    const policy: CapabilityPolicy = { caps: { "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { codeClass: ["c1"] } }, { tokens: ["Engineer"] }] } };
-    expect(newDeadTicketRuleRefusal(policy.caps, {})).toMatch(/request type or a unit only.*code class/);
-    expect(newDeadTicketRuleRefusal({ "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { workClass: ["w"] } }, { tokens: ["Engineer"] }] }, undefined)).toMatch(/work class/);
-    expect(newDeadTicketRuleRefusal({ "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { libraryId: ["L"] } }, { tokens: ["Engineer"] }] }, null)).toMatch(/library/);
+  it("the evaluator reads a code-class rule (TIER-4); DF-P19 lifts DF-P6's refusal of a NEW library / work-class / code-class rule on a request capability — the policy route confirms a new one (carryTicketRuleConfirmation) and a stored, unconfirmed one only adds; a work/code-class rule is refused on a capability the database evaluates", () => {
+    const policy: CapabilityPolicy = { caps: { "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { codeClass: ["c1"] }, confirmedAt: NOW }, { tokens: ["Engineer"] }] } };
+    const carried = carryTicketRuleConfirmation({ "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { workClass: ["w"] } }, { tokens: ["Engineer"] }] }, {}, { at: NOW, by: "admin" }, true);
+    expect(carried.confirmed).toHaveLength(1);
+    expect((carried.caps["ticket.direct_approve"] as Array<{ confirmedAt?: string }>)[0].confirmedAt).toBe(NOW);
     // fix pass 4: the rail every write runs (a grant, a revoke, the editor's save) never refuses them
     expect(validateCapabilityPolicy(policy)).toBeNull();
     expect(validateCapabilityPolicy({ caps: { "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { libraryId: ["L"] } }, { tokens: ["Engineer"] }] } })).toBeNull();
     // a request type / unit rule on a request capability is still accepted
     expect(validateCapabilityPolicy({ caps: { "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { requestType: ["ISO"] } }, { tokens: ["Engineer"] }] } })).toBeNull();
-    expect(newDeadTicketRuleRefusal({ "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { requestType: ["ISO"] } }, { tokens: ["Engineer"] }] }, {})).toBeNull();
+    expect(carryTicketRuleConfirmation({ "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { requestType: ["ISO"] } }, { tokens: ["Engineer"] }] }, {}, { at: NOW, by: null }, true).confirmed).toEqual([]);
     // a library rule on a capability that is evaluated per library is untouched
     expect(validateCapabilityPolicy({ caps: { "transmittal.issue": [{ tokens: ["Admin", "DocCtrl"] }, { tokens: ["Admin", "DocCtrl"], when: { libraryId: ["ifc"] } }] } })).toBeNull();
     // the AUTHZ-6 wording names only the keys that bind today
@@ -528,6 +528,10 @@ describe("GAP-101 / TIER-4 / GAP-105 — classes and the resource", () => {
     expect(policyAllows(policy, "ticket.direct_approve", "Engineer-2", null, null, { codeClass: "c1" })).toBe(false);
     expect(policyAllows(policy, "ticket.direct_approve", "Engineer-3", null, null, { codeClass: "c1" })).toBe(true);
     expect(policyAllows(policy, "ticket.direct_approve", "Engineer-2", null, null, { codeClass: "c2" })).toBe(true);
+    // DF-P19 (DEC-90 ruling (2)): the same rule NOT confirmed keeps the old answer where it would narrow
+    const unconfirmed: CapabilityPolicy = { caps: { "ticket.direct_approve": [{ tokens: ["Engineer-3"], when: { codeClass: ["c1"] } }, { tokens: ["Engineer"] }] } };
+    expect(policyAllows(unconfirmed, "ticket.direct_approve", "Engineer-2", null, null, { codeClass: "c1" })).toBe(true);
+    expect(policyAllows(unconfirmed, "ticket.direct_approve", "Engineer-3", null, null, { codeClass: "c1" })).toBe(true);
     expect(validateCapabilityPolicy({ caps: { "holds.release": [{ tokens: ["Admin"], when: { workClass: ["w"] } }, { tokens: ["Admin"] }] } })).toMatch(/drafting-request capability only/);
     // the SQL-mirrored key list is unchanged (org_capability_allows_for is not re-created)
     expect(RESOURCE_KEYS).toEqual(["requestType", "unit", "libraryId", "discipline", "projectId"]);
