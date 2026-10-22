@@ -1292,9 +1292,11 @@ describe("DF-P22 (c) — the PHYS-18 copy recall on a consent-completed issue, b
 
 // DF-P24 fix pass (GAP-102 acceptance 4): a consent close that would ISSUE
 // the request meets the examination-scope gate the workflow route runs on an
-// issuing approval — missing enforced data (no waiver) or the data unreadable
-// where a requirement binds HOLDS the close for a sign-off; a request filed
-// before every requirement issues; no requirement → no read (today's close).
+// issuing approval — missing enforced data (no waiver) HOLDS the close for a
+// sign-off; the data unreadable where a requirement binds is a transient read
+// (second fix pass: the window is not closed, it is retried next run — never
+// held for good); a request filed before every requirement issues; no
+// requirement → no read (today's close).
 describe("DF-P24 fix pass: the examination-scope gate on an issuing close", () => {
   const SCOPE_SINCE = "2026-10-01T00:00:00.000Z";
   const scopeCfg = (requirements: Array<Record<string, unknown>>) => ({
@@ -1336,12 +1338,22 @@ describe("DF-P24 fix pass: the examination-scope gate on an issuing close", () =
     expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
     expect(auditDetails()).toMatchObject({ examinationScope: { warnedNotRefused: ["gov"] } });
   });
-  it("the data unreadable where a requirement binds: HELD ('examination_scope_unchecked'); for a request filed before it: issued, the row saying unchecked", async () => {
+  it("second fix pass: the data unreadable where a requirement binds — NOT closed (retried next run, nothing written, never held for good); the next run with the data readable issues; for a request filed before it: issued, the row saying unchecked", async () => {
     seedScope(scopeCfg([{ field: "gov", libraryId: LIB_ID, since: SCOPE_SINCE }]));
     db.errors.ticket_examination_scopes = { code: "08006", message: "connection lost" };
-    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ held: 1, issued: 0 });
-    expect(auditDetails()).toMatchObject({ holdReason: "examination_scope_unchecked", examinationScope: { unreadable: true } });
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 0, held: 0, issued: 0, failed: 1 });
+    expect(r.errors.join("\n")).toMatch(/its examination data could not be read — the window was not closed \(retried next run\): connection lost/);
+    expect(db.tables.tickets[0].status).toBe("PENDING_REVIEW");
+    expect(calls("tickets", "update")).toEqual([]);
+    expect(calls("audit_logs", "insert")).toEqual([]);
+    expect(rosterOf().consentWindow?.heldReason ?? null).toBeNull();
+    // the blip passes: the next run closes it (the data is recorded)
+    delete db.errors.ticket_examination_scopes;
+    db.tables.ticket_examination_scopes = [{ ticket_id: "t1", org_id: "o1", field_values: { gov: { value: "c1", by: "d-1", at: SCOPE_SINCE } }, waiver: null }];
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
     db.calls = [];
+    db.errors.ticket_examination_scopes = { code: "08006", message: "connection lost" };
     seedScope(scopeCfg([{ field: "gov", libraryId: LIB_ID, since: SCOPE_SINCE }]), "2026-09-01T00:00:00.000Z");
     expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
     expect(auditDetails()).toMatchObject({ examinationScope: { unchecked: true, required: ["gov"] } });

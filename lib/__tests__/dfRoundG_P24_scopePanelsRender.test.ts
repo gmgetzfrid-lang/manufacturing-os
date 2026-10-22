@@ -8,7 +8,11 @@
 //     that nothing can be recorded yet;
 //   * ExaminationScopeSection (Admin → Request forms): edits the fields and
 //     requirements into the page's settings (the page's own Save stores
-//     them; a new requirement carries no time until that save stamps it);
+//     them; a new requirement carries no time until the database stamps it
+//     at that save — 20261266, second fix pass);
+//   * second fix pass: the requester picks values while the request is
+//     still with the drafter (GAP-102 acceptance 1), never once it is under
+//     review; an issued request's data is read-only (no list, no waiver);
 //   * both are mounted where the plan puts them (source pins).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -119,6 +123,22 @@ describe("ExaminationScopePanel — configured", () => {
     await render(panel({ ticket: T({ lastModified: "x" } as never), uid: "q-1", role: "Viewer", roles: ["Viewer"] }));
     expect(host.querySelector('[data-testid="examination-scope-waived"]')?.textContent).toMatch(/Issues without Examination scope — recorded by Ann/);
   });
+  it("second fix pass: the requester picks values while the request is with the drafter (a like-in-kind request's engineer records what they specified) — not once it is under review", async () => {
+    const lik = T({ status: "DRAFTING", engineeringRequired: false, assignedEngineerId: null } as never);
+    await render(panel({ ticket: lik, uid: "req-1", role: "Requester", roles: ["Requester"] }));
+    expect(host.querySelector('select[aria-label="Examination scope"]')).not.toBeNull();
+    await render(panel({ ticket: T({ status: "PENDING_REVIEW", engineeringRequired: false, assignedEngineerId: null } as never), uid: "req-1", role: "Requester", roles: ["Requester"] }));
+    expect(host.querySelector("select")).toBeNull();
+  });
+  it("second fix pass: an issued request's data is read-only — no list, no waiver, no 'needed before it can issue'", async () => {
+    for (const status of ["PENDING_IFC", "FINAL_DRAFT"] as TicketStatus[]) {
+      await render(panel({ ticket: T({ status }), issuing: true }));
+      expect(host.querySelector("select"), status).toBeNull();
+      expect(host.querySelector('[data-testid="examination-scope-blocking"]'), status).toBeNull();
+      expect(host.querySelector('[data-testid="examination-scope-issued"]')?.textContent, status).toMatch(/part of the issued record/);
+      expect([...host.querySelectorAll("button")].some((b) => /record why|Withdraw/i.test(b.textContent ?? "")), status).toBe(false);
+    }
+  });
   it("before 20261266: says nothing can be recorded yet (and nothing is required)", async () => {
     db.results["ticket_examination_scopes:single"] = { data: null, error: { code: "42P01", message: "relation does not exist" } };
     await render(panel());
@@ -152,13 +172,12 @@ describe("mounted where the plan puts them", () => {
   it("the request page mounts the panel only when the workspace configured examination data", () => {
     expect(src("app/(protected)/requests/[id]/page.tsx")).toMatch(/\{examinationScopeConfigured\(parseExaminationScopeConfig\(draftingCfg\)\) && <div [^>]*><ExaminationScopePanel ticket=\{ticket\} draftingCfg=\{draftingCfg\}/);
   });
-  it("Admin → Request forms mounts the section and stamps new requirements at its own Save — with the server's clock, after the unstamped save (fix pass)", () => {
+  it("Admin → Request forms mounts the section; its Save is ONE upsert and the page computes no time (the database stamps it — second fix pass)", () => {
     const page = src("app/(protected)/admin/requests/page.tsx");
     expect(page).toMatch(/<ExaminationScopeSection settings=\{settings\} orgId=\{activeOrgId\} onChange=/);
-    expect(page).toMatch(/let data = withNormalizedOutcomeReasons\(unstampNewlyFillable\(settings, storedSettings\)\);/);
-    const save = page.slice(page.indexOf("const handleSave"));
-    expect(save.indexOf(".upsert(")).toBeLessThan(save.indexOf("await readServerClock()"));
-    expect(save.indexOf("await readServerClock()")).toBeLessThan(save.indexOf("stampExaminationScope(data, new Date(serverMs).toISOString())"));
-    expect(save).not.toMatch(/stampExaminationScope\([^)]*new Date\(\)\.toISOString\(\)/);
+    expect(page).toMatch(/let data = withNormalizedOutcomeReasons\(settings\);/);
+    const save = page.slice(page.indexOf("const handleSave"), page.indexOf("setSaving(false)", page.indexOf("const handleSave")));
+    expect(save.match(/\.upsert\(/g)?.length).toBe(1);
+    expect(save).not.toMatch(/since:|readServerClock|toISOString\(\)|Date\.now\(\)|new Date\(/);
   });
 });

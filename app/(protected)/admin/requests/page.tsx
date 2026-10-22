@@ -40,7 +40,7 @@ import { OUTCOME_LABEL } from '@/lib/ticketOutcome';
 import ReviewClassesSection from '@/components/requests/ReviewClassesSection';
 // GAP-102 acceptance 4 (drafting-flow DF-P24): the workspace's examination data and what requires it.
 import ExaminationScopeSection from '@/components/requests/ExaminationScopeSection';
-import { stampExaminationScope, unstampNewlyFillable, examinationScopeNeedsStamp, readServerClock } from '@/lib/examinationScope';
+import { examinationScopeHasRequirements, EXAMINATION_SCOPE_KEY } from '@/lib/examinationScope';
 // FRIC-1 / GAP-106 (drafting-flow DF-P22): the escalation tier above the queue.
 import SlaEscalationSection from '@/components/requests/SlaEscalationSection';
 import {
@@ -97,10 +97,6 @@ export default function DraftingConfigPage() {
   // The request types as last loaded or saved (DF-P13): the due-date windows
   // are listed for these, never for an unsaved edit of the form above.
   const [savedRequestTypes, setSavedRequestTypes] = useState<SelectOption[]>([]);
-  // DF-P24 fix pass: the configuration as last loaded or saved — a
-  // requirement whose field was unfillable there is re-stamped by the save
-  // that makes it fillable (lib/examinationScope.ts unstampNewlyFillable).
-  const [storedSettings, setStoredSettings] = useState<OrgDraftingSettings | null>(null);
   // GAP-13 / GAP-107 (DF-P14 fix pass): stored reason entries the editor
   // cannot show (not a list, or an entry under no category it shows) — said
   // on the section, since Save Changes does not keep them.
@@ -139,7 +135,6 @@ export default function DraftingConfigPage() {
           loaded = { ...loaded, outcomeReasons: editable.reasons } as DraftingSettingsWithReasons;
         }
         setSettings(loaded);
-        setStoredSettings(data ? (data.data as OrgDraftingSettings) : null);
         setHiddenReasons(hidden);
         setSavedRequestTypes(loaded.requestTypes?.options ?? []);
       } catch (e) {
@@ -158,31 +153,32 @@ export default function DraftingConfigPage() {
       // GAP-13 / GAP-107 (DF-P14): the reasons for ending a request are
       // cleaned on the way out (a blank one dropped, a new one given its id);
       // settings without them are written exactly as before (the same object).
-      // DF-P24 (fix pass): a requirement added in this edit — or one whose
-      // field becomes fillable in it — is saved UNSTAMPED (it binds nothing
-      // yet), then stamped with the SERVER's time read after that save
-      // committed, in a second save: never earlier than the commit, never
-      // the browser's clock. Settings with nothing to stamp are the same
-      // object, written exactly as before (one save).
-      let data = withNormalizedOutcomeReasons(unstampNewlyFillable(settings, storedSettings));
+      // DF-P24 (second fix pass): ONE save. When a requirement starts to bind
+      // (`since`) is decided by the database on that write (20261266's stamp
+      // trigger — an unchanged requirement keeps its stored time, any other
+      // gets the database's clock), never by this page; settings carrying a
+      // requirement are read back to show those times. Settings without one
+      // are written exactly as before (one upsert, nothing re-read).
+      let data = withNormalizedOutcomeReasons(settings);
       const { error } = await supabase
         .from('org_configurations')
         .upsert({ org_id: activeOrgId, key: 'drafting', data }, { onConflict: 'org_id,key' });
       if (error) throw error;
       let unstamped = false;
-      if (examinationScopeNeedsStamp(data)) {
-        const serverMs = await readServerClock();
-        const stamped = serverMs === null ? null : stampExaminationScope(data, new Date(serverMs).toISOString());
-        const { error: stampErr } = stamped
-          ? await supabase.from('org_configurations').upsert({ org_id: activeOrgId, key: 'drafting', data: stamped }, { onConflict: 'org_id,key' })
-          : { error: null };
-        if (stamped && !stampErr) data = stamped; else unstamped = true;
+      if (examinationScopeHasRequirements(data)) {
+        const { data: stored, error: readErr } = await supabase
+          .from('org_configurations').select('data').eq('org_id', activeOrgId).eq('key', 'drafting').maybeSingle();
+        const storedScope = readErr ? undefined : ((stored?.data ?? null) as Record<string, unknown> | null)?.[EXAMINATION_SCOPE_KEY];
+        if (storedScope !== undefined) data = { ...data, [EXAMINATION_SCOPE_KEY]: storedScope } as typeof data;
+        // Before 20261266 is applied nothing stamps a requirement: it binds
+        // nothing (each request missing the data shows a warning) — said.
+        const reqs = (storedScope as { requirements?: Array<{ since?: unknown }> } | undefined)?.requirements;
+        unstamped = !readErr && Array.isArray(reqs) && reqs.some((r) => !r || typeof r.since !== 'string' || !r.since);
       }
       if (data !== settings) { setSettings(data); setHiddenReasons(0); }
-      setStoredSettings(data);
       setSavedRequestTypes(settings.requestTypes?.options ?? []);
       await appAlert(unstamped
-        ? { message: "Configuration saved — but the time a new examination-data requirement starts could not be recorded, so it refuses nothing yet (a request missing the data shows a warning). Save again to start it.", tone: "danger" }
+        ? { message: "Configuration saved — but an examination-data requirement has no start time yet (database update 20261266 is not applied), so it refuses nothing: a request missing the data shows a warning.", tone: "danger" }
         : "Configuration saved successfully.");
     } catch (e) {
       console.error("Save failed:", e);

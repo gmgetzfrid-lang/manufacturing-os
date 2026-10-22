@@ -15,15 +15,24 @@
 //     the list, never typed (GAP-102 "Do not make the completeness gate a
 //     free-text box");
 //   * requirements — "field F is required for requests of work class C
-//     and/or in library L", each stamped with when it was configured
-//     (`since`, set at the save that first stores it).
+//     and/or in library L", each stamped with when it starts to bind
+//     (`since` — written by the DATABASE on every save of the row, never by
+//     the writer: 20261266's stamp trigger, second fix pass).
 // A workspace that configures nothing is exactly today's: no field, no
-// read, no gate, no key on any record (pinned across every status and role).
+// read, no gate, no key on any record (pinned across every status and role)
+// — with one exception: an issue whose 'drafting' row could not be read at
+// all says so on its audit row (`examinationScope: { configUnchecked: true }`),
+// since the route cannot know whether that workspace configured anything.
 //
 // WHAT A REQUEST CARRIES. The values picked for it, one per field
 // (ticket_examination_scopes, 20261266 — written only by
 // /api/tickets/examination-scope, by the drafter or the engineer already in
-// the flow, or the assignment queue; never a new role, slot or stop).
+// the flow, the assignment queue, or — second fix pass — the requester
+// while the request is still with the drafter (an engineer who files a
+// like-in-kind request records what they already specified); never a new
+// role, slot or stop). Once the request has issued (PENDING_IFC /
+// FINAL_DRAFT) its data is the issued record and is not changed; it opens
+// again if the request is sent back.
 //
 // THE ISSUE GATE (ruling (2)). The issuing transitions (lib/workflow.ts
 // ISSUING_APPROVALS, a roster sign-off that completes the review, and — fix
@@ -50,13 +59,18 @@
 //     true }`, so an issue that bypassed the gate can be told apart);
 //   * the request's examination data that cannot be read refuses (503) only
 //     where a requirement BINDS the request (filed at or after its `since`);
-//     otherwise it issues, the audit row saying the data was unchecked;
-//   * a requirement's `since` is the server's time AFTER the save that
-//     stored it committed (the admin page saves it unstamped — binding
-//     nothing — reads the server's clock, then stamps; never the browser's
-//     clock), and a requirement whose field had no values to pick from (or
-//     did not exist) in the stored configuration is re-stamped by the save
-//     that makes it fillable — it binds only requests filed after THAT save.
+//     otherwise it issues, the audit row saying the data was unchecked; at
+//     the consent close it is a transient read like the others — the close
+//     waits a run (never held for good over a read);
+//   * a requirement's `since` is the database's: 20261266's trigger on
+//     org_configurations rewrites it on every write of the 'drafting' row —
+//     an unchanged requirement whose field was fillable in the stored row
+//     keeps its stored time, every other one (new, re-targeted, re-added, or
+//     whose field had nothing to pick from there) gets the database's clock
+//     plus a minute — so no writer (the admin page, a REST PATCH, a stale
+//     tab, a restore) can make a requirement bind a request already in
+//     flight. Before the paste nothing stamps it, and a requirement with no
+//     `since` binds nothing.
 //
 // Pure and browser-safe: the workflow route, the fill route, the request
 // page's panel and the admin editor share it.
@@ -408,26 +422,45 @@ export function applyScopeChanges(
   return { values, changed };
 }
 
+/** Second fix pass (GAP-102 acceptance 1): the statuses in which the
+ *  request is still with the drafter — not yet under review, not issued —
+ *  where its requester may record its examination data (the engineer who
+ *  files a like-in-kind request has usually specified it already). */
+export const SCOPE_REQUESTER_STATUSES: ReadonlySet<string> = new Set(["PENDING_ENG_TEAM", "PENDING_ASSIGNMENT", "DRAFTING", "REVISION_REQ"]);
+
 /** Who may record a request's examination data (ruling (1): the drafter or
  *  the engineer already in the flow — or the assignment queue that sets the
  *  class — never a new role): the assigned drafter, the assigned engineer, a
  *  person named on an engineering sign-off of the request's review roster,
- *  or (`queue`) a holder of the queue's capability for this request. Pure. */
+ *  (`queue`) a holder of the queue's capability for this request, or —
+ *  second fix pass — its requester while the request is still with the
+ *  drafter (SCOPE_REQUESTER_STATUSES; never once it is under review or
+ *  issued). Pure. */
 export function scopeEditorBasis(
-  ticket: Pick<Ticket, "assignedDrafterId" | "assignedEngineerId" | "metadata">,
+  ticket: Pick<Ticket, "assignedDrafterId" | "assignedEngineerId" | "metadata"> & Partial<Pick<Ticket, "requesterId" | "status">>,
   uid: string | null | undefined,
   queue: boolean,
-): "drafter" | "engineer" | "roster_engineer" | "assignment_queue" | null {
+): "drafter" | "engineer" | "roster_engineer" | "assignment_queue" | "requester" | null {
   if (!uid) return null;
   if (ticket.assignedDrafterId === uid) return "drafter";
   if (ticket.assignedEngineerId === uid) return "engineer";
   const roster = (ticket.metadata as Record<string, unknown> | undefined)?.review_roster as { slots?: Array<{ engineering?: boolean; primaries?: string[]; alternates?: string[] }> } | undefined;
   if (Array.isArray(roster?.slots) && roster!.slots!.some((s) => s?.engineering === true && ((s.primaries ?? []).includes(uid) || (s.alternates ?? []).includes(uid)))) return "roster_engineer";
-  return queue ? "assignment_queue" : null;
+  if (queue) return "assignment_queue";
+  if (ticket.requesterId === uid && SCOPE_REQUESTER_STATUSES.has(String(ticket.status ?? ""))) return "requester";
+  return null;
 }
 
 /** The statuses whose examination data is part of the closed record. */
 export const SCOPE_CLOSED_STATUSES: ReadonlySet<string> = new Set(["CLOSED", "CANCELED"]);
+
+/** Second fix pass: the statuses after an issue (lib/ticketTransitions.ts —
+ *  every issuing approval and a completing sign-off move the request to
+ *  PENDING_IFC, or FINAL_DRAFT when issued as-is). The data it issued with
+ *  is the issued record: neither values nor a waiver change here (no
+ *  issuing action is offered in these statuses — lib/workflow.ts — so
+ *  nothing here can be blocked by it); a request sent back opens again. */
+export const SCOPE_ISSUED_STATUSES: ReadonlySet<string> = new Set(["PENDING_IFC", "FINAL_DRAFT"]);
 
 /** True when the error means 20261266 is not applied (42P01 / PGRST205, or
  *  the table named as missing). */
@@ -441,83 +474,12 @@ export function isMissingScopeTable(err: { code?: string | null; message?: strin
 
 // ─── The editor (Admin → Request forms) ─────────────────────────────────
 
-/** The settings as the page saves them: every requirement the editor added
- *  (no `since` yet) is stamped with the given time, so a requirement binds
- *  only requests filed after it was stored (ruling (2)); an entry already
- *  stored keeps its time. Settings with nothing to stamp come back as the
- *  same object (the save is byte-for-byte today's). The page passes the
- *  SERVER's time read after the unstamped save committed (readServerClock),
- *  never the browser's clock. Pure. */
-export function stampExaminationScope<T extends object>(settings: T, nowIso: string): T {
-  const raw = (settings as Record<string, unknown>)[EXAMINATION_SCOPE_KEY] as Record<string, unknown> | undefined;
-  if (!raw || typeof raw !== "object" || !Array.isArray(raw.requirements)) return settings;
-  const reqs = raw.requirements as Array<Record<string, unknown>>;
-  if (!reqs.some((r) => r && typeof r === "object" && !Number.isFinite(at(str(r.since))))) return settings;
-  return {
-    ...settings,
-    [EXAMINATION_SCOPE_KEY]: {
-      ...raw,
-      requirements: reqs.map((r) => (r && typeof r === "object" && !Number.isFinite(at(str(r.since))) ? { ...r, since: nowIso } : r)),
-    },
-  } as T;
-}
-
-const fillableKeys = (cfg: unknown): Set<string> => {
-  const parsed = parseExaminationScopeConfig(cfg as Record<string, unknown> | null);
-  return new Set(parsed.fields.filter((f) => f.options.length > 0).map((f) => f.key));
-};
-
-/** Fix pass (ruling (2)): a requirement whose field had no values to pick
- *  from — or was not configured at all — in the STORED configuration
- *  (`previous`, as last loaded or saved) refused nothing there; the save
- *  that makes its field fillable must not revive its old `since` (requests
- *  filed in between would be newly blocked). Its `since` is dropped here, so
- *  the save stamps it afresh. A requirement whose field is still unfillable,
- *  or was already fillable, keeps its time. Settings with nothing to drop
- *  come back as the same object. Pure. */
-export function unstampNewlyFillable<T extends object>(settings: T, previous: unknown): T {
-  const raw = (settings as Record<string, unknown>)[EXAMINATION_SCOPE_KEY] as Record<string, unknown> | undefined;
-  if (!raw || typeof raw !== "object" || !Array.isArray(raw.requirements)) return settings;
-  const before = fillableKeys(previous);
-  const now = fillableKeys(settings);
-  const reqs = raw.requirements as Array<Record<string, unknown>>;
-  const revive = (r: Record<string, unknown>) => !!r && typeof r === "object" && Number.isFinite(at(str(r.since)))
-    && now.has(str(r.field)) && !before.has(str(r.field));
-  if (!reqs.some(revive)) return settings;
-  return {
-    ...settings,
-    [EXAMINATION_SCOPE_KEY]: {
-      ...raw,
-      requirements: reqs.map((r) => {
-        if (!revive(r)) return r;
-        const next = { ...r };
-        delete next.since;
-        return next;
-      }),
-    },
-  } as T;
-}
-
-/** True when the settings carry a requirement with no readable `since` (the
- *  save must stamp it). Pure. */
-export function examinationScopeNeedsStamp(settings: object): boolean {
-  const raw = (settings as Record<string, unknown>)[EXAMINATION_SCOPE_KEY] as Record<string, unknown> | undefined;
-  if (!raw || typeof raw !== "object" || !Array.isArray(raw.requirements)) return false;
-  return (raw.requirements as Array<Record<string, unknown>>).some((r) => !!r && typeof r === "object" && !Number.isFinite(at(str(r.since))));
-}
-
-/** The server's clock, read AFTER a save committed (fix pass, ruling (2)):
- *  the `Date` header of a no-store same-origin GET of /api/version (an
- *  existing route), rounded UP to the next second (the header is whole
- *  seconds), so the stamp is never earlier than the commit it follows.
- *  null when it cannot be read — the page then leaves the requirement
- *  unstamped (it binds nothing until a later save stamps it) and says so. */
-export async function readServerClock(fetcher: (input: string, init?: RequestInit) => Promise<Response> = (i, init) => fetch(i, init)): Promise<number | null> {
-  try {
-    const res = await fetcher("/api/version", { cache: "no-store" });
-    const ms = Date.parse(res.headers.get("date") ?? "");
-    return Number.isFinite(ms) ? ms + 1000 : null;
-  } catch {
-    return null;
-  }
+/** True when the settings carry at least one examination-data requirement —
+ *  the admin page then reads the row back after its save, to show the time
+ *  the database gave each requirement (20261266's stamp trigger). Settings
+ *  without one are saved exactly as before (one upsert, nothing re-read).
+ *  Pure. */
+export function examinationScopeHasRequirements(settings: object | null | undefined): boolean {
+  const raw = (settings as Record<string, unknown> | null | undefined)?.[EXAMINATION_SCOPE_KEY] as Record<string, unknown> | undefined;
+  return !!raw && typeof raw === "object" && Array.isArray(raw.requirements) && raw.requirements.length > 0;
 }

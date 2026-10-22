@@ -11,10 +11,10 @@
 // beside the work classes (org_configurations 'drafting', key
 // examinationScope) and is saved with the page's own Save Changes (the
 // 20261209 write rule decides who may). A requirement binds only requests
-// filed AFTER the save that stores it (the page stamps its time at save —
-// lib/examinationScope.ts stampExaminationScope); a request already in flight
-// is never newly blocked, it shows what is missing as a warning. Nothing
-// configured = exactly today.
+// filed AFTER the save that stores it: the database stamps its time on that
+// write (20261266's trigger — second fix pass; whatever `since` the page
+// sends is ignored); a request already in flight is never newly blocked, it
+// shows what is missing as a warning. Nothing configured = exactly today.
 
 import React, { useEffect, useState } from "react";
 import { Plus, Trash2, ClipboardCheck } from "lucide-react";
@@ -61,8 +61,9 @@ export function textToOptions(text: string): EditableOption[] {
 }
 
 /** A requirement edited to name another field, class or library is a NEW
- *  requirement: its time is dropped, so the save stamps it (it binds only
- *  requests filed after it). Pure; exported for tests. */
+ *  requirement: its time is dropped from the editor (the database stamps it
+ *  afresh at the save — it binds only requests filed after it). Pure;
+ *  exported for tests. */
 export function editRequirement(r: EditableRequirement, patch: Partial<Pick<EditableRequirement, "field" | "workClass" | "libraryId">>): EditableRequirement {
   const next: EditableRequirement = { ...r, ...patch };
   for (const k of ["workClass", "libraryId"] as const) if (!next[k]) delete next[k];

@@ -77,9 +77,10 @@
 // workspace's 'drafting' configuration this scan already reads): data a
 // binding requirement names that is missing and not waived holds the close
 // ("examination_scope_missing"); the request's data unreadable where a
-// requirement binds holds it ("examination_scope_unchecked"). A request
-// filed before every requirement issues, as on the route. No requirement
-// applies → no read, the close is today's.
+// requirement binds is a transient read like the others here (second fix
+// pass): the window is not closed, it is retried next run. A request filed
+// before every requirement issues, as on the route. No requirement applies
+// → no read, the close is today's.
 //
 // ticket_notice_events (20261255) is the record that survives any bell
 // purge: append-only, written only by the service role.
@@ -1083,6 +1084,14 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
         scopeGate = scopeGateOutcome(scopeConfig, ticket, { data: read.data, error: read.error }, ctx.draftingCfg ?? null);
       }
     }
+    // Second fix pass: an unreadable row (where a requirement binds) proves
+    // nothing — as every other transient read here, the window is not closed
+    // and is retried next run (never held for good over a read).
+    if (scopeGate?.kind === "unreadable") {
+      report.failed += 1;
+      say(`ticket ${ticketId}: its examination data could not be read — the window was not closed (retried next run): ${scopeGate.error}`);
+      return;
+    }
     const holdReason: ConsentHoldReason | null = undelivered.length > 0 ? "undelivered"
       : engineered ? "engineered"
       : floorHolds ? "producer_floor"
@@ -1092,7 +1101,6 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
       : drift.moved.length > 0 ? "source_moved"
       : drift.unchecked ? "source_unchecked"
       : scopeGate?.kind === "blocked" ? "examination_scope_missing"
-      : scopeGate?.kind === "unreadable" ? "examination_scope_unchecked"
       : null;
     const held = holdReason !== null;
     const finalRoster = held ? roster : advancedRoster;
@@ -1110,7 +1118,6 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
       : holdReason === "source_moved" ? ` The source revision has moved since this request was raised (${drift.moved.join("; ")}), and issuing over it needs a person's acknowledgement: "${label}" waits for a sign-off.`
       : holdReason === "source_unchecked" ? ` The source documents could not be checked for a newer revision, so the request is not issued on silence: "${label}" waits for a sign-off.`
       : holdReason === "examination_scope_missing" && scopeGate?.kind === "blocked" ? ` ${scopeGate.blocking.map((b) => b.label).join(", ")} must be recorded before this request issues, so it is not issued on silence: "${label}" waits for a sign-off.`
-      : holdReason === "examination_scope_unchecked" ? ` The request's examination data could not be checked, so it is not issued on silence: "${label}" waits for a sign-off.`
       : "";
 
     // FRIC-5 (fix pass 3): issue as-is only on a mark the opening notice
@@ -1164,7 +1171,6 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
         // where a requirement applies — no key otherwise).
         ...(scopeGate?.kind === "pass" ? { examinationScope: scopeGate.audit } : {}),
         ...(scopeGate?.kind === "blocked" ? { examinationScope: { missing: scopeGate.blocking.map((b) => b.key) } } : {}),
-        ...(scopeGate?.kind === "unreadable" ? { examinationScope: { unreadable: true } } : {}),
         deliverable_rev: (updates.deliverable_rev as string | undefined) ?? ticket.deliverableRev ?? null,
         recordedBeforeApply: true,
       },

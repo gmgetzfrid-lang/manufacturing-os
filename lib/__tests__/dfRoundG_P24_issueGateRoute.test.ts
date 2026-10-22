@@ -4,9 +4,15 @@
 //   * REGRESSION FIRST: a workspace that configures nothing — and one whose
 //     requirement names another class — runs every action the state machine
 //     offers across every status x every member of the harness, plus
-//     sign_slot / request_revision, byte-identical with the gate switched
-//     off (responses, every database call, every after-response task); no
-//     read of ticket_examination_scopes and no `examinationScope` key;
+//     sign_slot / request_revision, byte-identical with the WHOLE gate
+//     removed (second fix pass: the route's one issueScopeGate call answers
+//     "none" in arm B, so any read, preview or key the gate adds anywhere
+//     shows as a difference — responses, every database call, every
+//     after-response task); no read of ticket_examination_scopes and no
+//     `examinationScope` key. A workspace whose 'drafting' row cannot be
+//     read differs ONLY by `examinationScope: { configUnchecked: true }` on
+//     the audit row of an issuing approval or a completing sign-off (the
+//     stated exception — the route cannot know what was configured);
 //   * a configured requirement refuses an issuing approval (409
 //     examination_scope_missing, nothing written) for a request filed after
 //     it; data recorded → it issues with zero added touches (acceptance 1);
@@ -93,10 +99,11 @@ vi.mock("@/lib/r2", () => ({
   },
 }));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async () => ({ ok: true })) }));
-// A/B: with noP24 the gate finds no requirement — the route as it was before DF-P24.
-vi.mock("@/lib/examinationScope", async (importOriginal) => {
-  const real = await importOriginal<typeof import("@/lib/examinationScope")>();
-  return { ...real, applicableRequirements: (...a: Parameters<typeof real.applicableRequirements>) => (state.noP24 ? [] : real.applicableRequirements(...a)) };
+// A/B (second fix pass): with noP24 the route's single gate call decides
+// "none" without running anything — the route without DF-P24's gate.
+vi.mock("@/lib/examinationScopeGate", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/examinationScopeGate")>();
+  return { ...real, issueScopeGate: (...a: Parameters<typeof real.issueScopeGate>) => (state.noP24 ? Promise.resolve({ kind: "none" as const }) : real.issueScopeGate(...a)) };
 });
 import { POST as workflowAction } from "@/app/api/tickets/workflow-action/route";
 import { POST as scopeRoute } from "@/app/api/tickets/examination-scope/route";
@@ -152,10 +159,11 @@ function issuer(row: Record<string, unknown>): { uid: string; action: string } {
 beforeEach(() => { reset(); vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-10-22T08:00:00.000Z")); });
 afterEach(() => { vi.useRealTimers(); });
 
-async function run(cfg: Record<string, unknown> | null, row: Record<string, unknown>, uid: string, body: Record<string, unknown>, noP24: boolean, routing: unknown = null) {
+async function run(cfg: Record<string, unknown> | null, row: Record<string, unknown>, uid: string, body: Record<string, unknown>, noP24: boolean, routing: unknown = null, cfgError = false) {
   reset();
   seed(cfg, routing);
   state.noP24 = noP24;
+  state.draftingCfgError = cfgError;
   state.rows.tickets = [row];
   state.rows.e_signatures = [{ id: SIG, org_id: "o1", resource_type: "ticket", resource_id: "t1", signer_user_id: uid, content_hash: "h", intent: "Reviewed", signed_at: "2099-01-01T00:00:00Z" }];
   state.user = { id: uid };
@@ -191,6 +199,37 @@ describe("REGRESSION FIRST — an unconfigured workspace (and a requirement on a
       }
     }
     expect(combos).toBeGreaterThan(300);
+  }, 180_000);
+
+  it("second fix pass: a 'drafting' row that cannot be read differs ONLY by configUnchecked on an issuing act's audit row — no read, nothing else", async () => {
+    let combos = 0;
+    let unchecked = 0;
+    const KEY = /,"examinationScope":\{"configUnchecked":true\}/g;
+    for (const status of STATUSES) {
+      for (const m of MEMBERS) {
+        const row = status === "PENDING_REVIEW" || status === "PENDING_FINAL_APPROVAL" ? reviewRow({ status, assigned_engineer_id: status === "PENDING_FINAL_APPROVAL" ? "e-1" : null }) : ticketRow({ status });
+        const t = rowToTicket(row as never) as Ticket;
+        const offered = WorkflowEngine.getActions(t, m.role as Role, m.uid, undefined, { userRoles: m.roles as Role[] }).map((a) => a.action);
+        for (const actionType of [...new Set([...offered, "sign_slot", "request_revision"])]) {
+          const body = { actionType, comment: "a reason", signatureId: SIG, issueAsIsAcknowledged: true };
+          const a = await run(scopeCfg([{ field: "exam", libraryId: LIB, since: SINCE }]), row, m.uid, body, false, null, true);
+          const b = await run(scopeCfg([{ field: "exam", libraryId: LIB, since: SINCE }]), row, m.uid, body, true, null, true);
+          const where = `${status} ${m.uid} ${actionType}`;
+          expect(a.status, where).toBe(b.status);
+          expect(a.json, where).toBe(b.json);
+          expect(a.calls.replace(KEY, ""), where).toBe(b.calls);
+          expect(a.reads, where).toBe(0);
+          if (KEY.test(a.calls)) {
+            unchecked++;
+            expect(ISSUING_APPROVALS.has(actionType) || actionType === "sign_slot", where).toBe(true);
+          }
+          KEY.lastIndex = 0;
+          combos++;
+        }
+      }
+    }
+    expect(combos).toBeGreaterThan(100);
+    expect(unchecked).toBeGreaterThan(0);
   }, 180_000);
 });
 
@@ -370,6 +409,23 @@ describe("ruling (2) — a roster sign-off that completes the review", () => {
     const completing = await waive(roster);
     expect(completing.status).toBe(200);
     expect((await completing.json()).waiver).toMatchObject({ fields: ["exam"], by: signer });
+  });
+  it("REGRESSION (second fix pass): unconfigured, or a requirement elsewhere — a completing sign-off and its dry run are byte-identical with the whole gate removed (the sweep's rows carry no roster)", async () => {
+    const roster = await openRoster();
+    const signer = roster.slots[0].primaries[0];
+    const row = reviewRow({ metadata: { review_roster: roster } });
+    for (const cfg of [null, { requestTypes: { options: [] } }, scopeCfg([{ field: "exam", libraryId: LIB2, since: SINCE }])]) {
+      for (const dryRun of [true, false]) {
+        const body = { actionType: "sign_slot", signatureId: SIG, dryRun };
+        const a = await run(cfg, row, signer, body, false, ENGINEERING_ONLY);
+        const b = await run(cfg, row, signer, body, true, ENGINEERING_ONLY);
+        expect(a.status, `${dryRun}`).toBe(b.status);
+        expect(a.json).toBe(b.json);
+        expect(a.calls).toBe(b.calls);
+        expect(a.reads).toBe(0);
+        expect(a.calls + a.json).not.toMatch(/examinationScope|examination_scope/);
+      }
+    }
   });
   it("a sign-off that does NOT complete the review is never gated (no read)", async () => {
     const roster = await openRoster();

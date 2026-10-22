@@ -115,6 +115,36 @@ describe("recording values — the drafter or the engineer already in the flow",
       expect(writes()).toEqual([]);
     }
   });
+  it("second fix pass (GAP-102 acceptance 1): the requester of a like-in-kind request (no engineer, no engineering slot) records what they already specified while it is with the drafter — not once it is under review", async () => {
+    for (const status of ["PENDING_ASSIGNMENT", "DRAFTING", "REVISION_REQ"]) {
+      state.calls = [];
+      seed({ status, assigned_engineer_id: null, engineering_required: false, assigned_drafter_id: status === "PENDING_ASSIGNMENT" ? null : "d-1" });
+      state.user = { id: "req-1" };
+      const r = await post({ ticketId: T, values: { exam: "rt5" } });
+      expect(r.status, status).toBe(200);
+      expect(audits()[0].details.authority, status).toBe("requester");
+      expect(writes()[0].args[0], status).toMatchObject({ field_values: { exam: { value: "rt5", by: "req-1" } } });
+    }
+    state.calls = [];
+    seed({ status: "PENDING_REVIEW", assigned_engineer_id: null, engineering_required: false });
+    state.user = { id: "req-1" };
+    expect((await post({ ticketId: T, values: { exam: "rt5" } })).status).toBe(403);
+    expect(writes()).toEqual([]);
+  });
+  it("second fix pass: an issued request (PENDING_IFC / FINAL_DRAFT) keeps the data it issued with — values and a waiver refused (409), nothing written", async () => {
+    for (const status of ["PENDING_IFC", "FINAL_DRAFT"]) {
+      for (const [uid, body] of [["d-1", { values: { exam: "rt100" } }], ["a-1", { waiver: { reason: "after the fact" } }]] as const) {
+        state.calls = [];
+        seed({ status });
+        state.user = { id: uid };
+        const r = await post({ ticketId: T, ...body });
+        expect(r.status, `${status} ${uid}`).toBe(409);
+        expect((await r.json()).code).toBe("issued");
+        expect(audits()).toEqual([]);
+        expect(writes()).toEqual([]);
+      }
+    }
+  });
   it("the assignment queue (ticket.assign — an Admin by default) may", async () => {
     seed();
     state.user = { id: "a-1" };

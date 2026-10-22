@@ -3,8 +3,8 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { ticketReadScope } from "@/lib/ticketReadScope";
 import { loadCapabilityPolicyStrict, policyAllows } from "@/lib/capabilityPolicy";
 import { heldRoles } from "@/lib/roleHeld";
-import { WorkflowEngine, ISSUING_APPROVALS, ticketResource, currentRoster, slotSignPlan } from "@/lib/workflow";
-import { applySignPlan, rosterCompletion } from "@/lib/ticketRoster";
+import { WorkflowEngine, ISSUING_APPROVALS, ticketResource } from "@/lib/workflow";
+import { signOffWouldComplete } from "@/lib/examinationScopeGate";
 import { rowToTicket } from "@/lib/ticketTransitions";
 import { flaggedRequestTypes } from "@/lib/requestTypes";
 import { isDeclaredLikeInKind, declarationSignatureStands, type DeclarationSignatureRow } from "@/lib/reviewModel";
@@ -12,7 +12,7 @@ import { checkedWrite } from "@/lib/checkedWrite";
 import {
   parseExaminationScopeConfig, examinationScopeConfigured, examinationScopeStatus, parseScopeValues, parseScopeWaiver,
   checkScopeValuesInput, applyScopeChanges, scopeEditorBasis, isMissingScopeTable,
-  SCOPE_CLOSED_STATUSES, EXAMINATION_SCOPE_MIGRATION, EXAMINATION_WAIVER_REASON_MAX,
+  SCOPE_CLOSED_STATUSES, SCOPE_ISSUED_STATUSES, EXAMINATION_SCOPE_MIGRATION, EXAMINATION_WAIVER_REASON_MAX,
   type ExaminationScopeWaiver,
 } from "@/lib/examinationScope";
 import type { Role } from "@/types/schema";
@@ -28,12 +28,18 @@ import type { Role } from "@/types/schema";
 // (ticket_examination_scopes, 20261266 — no client holds a write):
 //   1. the caller is authenticated, an active member of the request's
 //      workspace, and can read the request (AUTHZ-13's read scope); an
-//      archived, closed or canceled request is not changed;
+//      archived, closed or canceled request is not changed, nor (second fix
+//      pass) one that has issued (PENDING_IFC / FINAL_DRAFT — the data it
+//      issued with is its record; a request sent back opens again);
 //   2. VALUES are recorded by the drafter or the engineer already in the flow
 //      — the assigned drafter, the assigned engineer, a person named on an
 //      engineering sign-off of the request's roster — or the assignment
 //      queue that sets the class (`ticket.assign` for the request, the policy
-//      read fail-closed, DEC-89 item 3); never a new role, slot or stop. Each
+//      read fail-closed, DEC-89 item 3), or (second fix pass, GAP-102
+//      acceptance 1) the requester while the request is still with the
+//      drafter (lib/examinationScope.ts SCOPE_REQUESTER_STATUSES — the
+//      engineer who files a like-in-kind request records what they already
+//      specified); never a new role, slot or stop. Each
 //      value is one of the field's own configured values (lib/
 //      examinationScope.ts checkScopeValuesInput — never free text);
 //   3. a WAIVER (why the request issues without the data its requirement
@@ -124,6 +130,9 @@ export async function POST(req: NextRequest) {
   if (SCOPE_CLOSED_STATUSES.has(String(ticket.status ?? ""))) {
     return NextResponse.json({ error: "This request is closed — its examination data is part of its record and is not changed." }, { status: 409 });
   }
+  if (SCOPE_ISSUED_STATUSES.has(String(ticket.status ?? ""))) {
+    return NextResponse.json({ error: "This request has issued — the examination data it issued with is part of its record and is not changed (it can be changed again if the request is sent back).", code: "issued" }, { status: 409 });
+  }
 
   const { data: cfgRow, error: cfgErr } = await supabaseAdmin
     .from("org_configurations").select("data").eq("org_id", ticket.orgId).eq("key", "drafting").maybeSingle();
@@ -145,7 +154,7 @@ export async function POST(req: NextRequest) {
     const queue = policyAllows(loaded.policy, "ticket.assign", m.role, roles, caller.id, ticketResource(ticket));
     const basis = scopeEditorBasis(ticket, caller.id, queue);
     if (!basis) {
-      return NextResponse.json({ error: "The request's drafter or engineer records its examination data (or whoever runs the assignment queue)." }, { status: 403 });
+      return NextResponse.json({ error: "The request's drafter or engineer records its examination data (or whoever runs the assignment queue; its requester, until it goes for review)." }, { status: 403 });
     }
     authority = basis;
   } else {
@@ -183,13 +192,7 @@ export async function POST(req: NextRequest) {
     // workflow route's gate computes) — a peer checker whose sign-off never
     // issues may not waive the requirement for the whole issue.
     const sodActive = (memberCount ?? 0) >= 3;
-    const signOffIssues = (): boolean => {
-      const r = currentRoster(ticket);
-      const p = r ? slotSignPlan(r, ticket, caller.id, sodActive, Date.now()) : null;
-      return !!r && !!p && p.fillable.length > 0
-        && rosterCompletion(applySignPlan(r, p, { uid: caller.id, name: null }, "examination-scope-preview", new Date().toISOString()), { sodActive, drafterId: ticket.assignedDrafterId }).complete;
-    };
-    const issuing = actions.filter((a) => !a.disabledReason && (ISSUING_APPROVALS.has(a.action) || (a.action === "sign_slot" && signOffIssues())));
+    const issuing = actions.filter((a) => !a.disabledReason && (ISSUING_APPROVALS.has(a.action) || (a.action === "sign_slot" && signOffWouldComplete(ticket, caller.id, sodActive))));
     if (issuing.length === 0) {
       return NextResponse.json({ error: "Only someone who can issue this request now may record why it issues without its examination data." }, { status: 403 });
     }

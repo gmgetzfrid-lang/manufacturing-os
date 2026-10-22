@@ -21,9 +21,10 @@ import { join } from "node:path";
 import {
   parseExaminationScopeConfig, examinationScopeConfigured, applicableRequirements, examinationScopeStatus, parseScopeValues, parseScopeWaiver,
   waiverCovers, examinationScopeRefusal, examinationScopeWarning, examinationScopeAuditFields, checkScopeValuesInput, applyScopeChanges,
-  scopeEditorBasis, isMissingScopeTable, stampExaminationScope, EXAMINATION_SCOPE_KEY,
-  hasBindingRequirement, scopeGateOutcome, unstampNewlyFillable, examinationScopeNeedsStamp, readServerClock,
+  scopeEditorBasis, isMissingScopeTable, EXAMINATION_SCOPE_KEY,
+  hasBindingRequirement, scopeGateOutcome, examinationScopeHasRequirements, SCOPE_REQUESTER_STATUSES, SCOPE_ISSUED_STATUSES,
 } from "@/lib/examinationScope";
+import { WorkflowEngine, ISSUING_APPROVALS } from "@/lib/workflow";
 import { consentHeldAction } from "@/lib/consentWindow";
 import { editableScope, optionsToText, textToOptions, editRequirement } from "@/components/requests/ExaminationScopeSection";
 import { parseRoutingControl } from "@/lib/routingControl";
@@ -133,8 +134,8 @@ describe("filling — picked from the list, never typed free", () => {
     expect(a.values.gov).toEqual({ value: "c1", by: "d-1", byName: "Dee", at: "2026-10-06T00:00:00.000Z" });
     expect(applyScopeChanges(a.values, { gov: null }, { uid: "d-1", name: null }, "x").values.gov).toBeUndefined();
   });
-  it("the drafter or engineer already in the flow (or the assignment queue) — never the requester as such", () => {
-    const t = { assignedDrafterId: "d-1", assignedEngineerId: "e-1", metadata: { review_roster: { slots: [{ engineering: true, primaries: ["e-2"], alternates: ["e-3"] }, { engineering: false, primaries: ["q-1"] }] } } } as unknown as Ticket;
+  it("the drafter or engineer already in the flow (or the assignment queue) — the requester only while it is with the drafter", () => {
+    const t = { assignedDrafterId: "d-1", assignedEngineerId: "e-1", requesterId: "req-1", status: "PENDING_REVIEW", metadata: { review_roster: { slots: [{ engineering: true, primaries: ["e-2"], alternates: ["e-3"] }, { engineering: false, primaries: ["q-1"] }] } } } as unknown as Ticket;
     expect(scopeEditorBasis(t, "d-1", false)).toBe("drafter");
     expect(scopeEditorBasis(t, "e-1", false)).toBe("engineer");
     expect(scopeEditorBasis(t, "e-2", false)).toBe("roster_engineer");
@@ -143,6 +144,28 @@ describe("filling — picked from the list, never typed free", () => {
     expect(scopeEditorBasis(t, "req-1", false)).toBeNull();
     expect(scopeEditorBasis(t, "sup-1", true)).toBe("assignment_queue");
     expect(scopeEditorBasis(t, null, true)).toBeNull();
+    // second fix pass (GAP-102 acceptance 1): the requester records what they
+    // already specified while the request is still with the drafter — never
+    // once it is under review, issued or closed
+    for (const status of ["PENDING_ENG_TEAM", "PENDING_ASSIGNMENT", "DRAFTING", "REVISION_REQ"]) {
+      expect(scopeEditorBasis({ ...t, status } as Ticket, "req-1", false), status).toBe("requester");
+    }
+    for (const status of ["PENDING_REVIEW", "PENDING_FINAL_APPROVAL", "PENDING_IFC", "FINAL_DRAFT", "CLOSED", "CANCELED"]) {
+      expect(scopeEditorBasis({ ...t, status } as Ticket, "req-1", false), status).toBeNull();
+    }
+    expect([...SCOPE_REQUESTER_STATUSES].sort()).toEqual(["DRAFTING", "PENDING_ASSIGNMENT", "PENDING_ENG_TEAM", "REVISION_REQ"]);
+    // an assigned role still reads as itself (the requester who also drafts)
+    expect(scopeEditorBasis({ ...t, status: "DRAFTING", assignedDrafterId: "req-1" } as Ticket, "req-1", false)).toBe("drafter");
+  });
+  it("second fix pass: the issued statuses offer no issuing action, so freezing the data there can never block an issue", () => {
+    expect([...SCOPE_ISSUED_STATUSES].sort()).toEqual(["FINAL_DRAFT", "PENDING_IFC"]);
+    for (const status of SCOPE_ISSUED_STATUSES) {
+      for (const role of ["Admin", "Manager", "Engineer-3", "Drafter", "Requester"]) {
+        const t = { id: "t1", orgId: "o1", status, requesterId: "u1", assignedDrafterId: "u1", assignedEngineerId: "u1", attachments: [], history: [], comments: [], watchers: [], metadata: {} } as unknown as Ticket;
+        const offered = WorkflowEngine.getActions(t, role as never, "u1", undefined, { userRoles: [role as never] }).map((a) => a.action);
+        expect(offered.filter((a) => ISSUING_APPROVALS.has(a) || a === "sign_slot"), `${status} ${role}`).toEqual([]);
+      }
+    }
   });
   it("the table not there yet reads as not migrated; anything else is a real error", () => {
     expect(isMissingScopeTable({ code: "42P01", message: "x" })).toBe(true);
@@ -153,17 +176,12 @@ describe("filling — picked from the list, never typed free", () => {
   });
 });
 
-describe("the editor — a requirement binds from the save that stores it", () => {
-  it("stampExaminationScope stamps only entries with no time; settings without one are the SAME object", () => {
-    const plain = { requestTypes: { options: [] } };
-    expect(stampExaminationScope(plain, "2026-10-22T00:00:00.000Z")).toBe(plain);
-    const stored = { [EXAMINATION_SCOPE_KEY]: { fields: [], requirements: [{ field: "a", workClass: "w", since: SINCE }] } };
-    expect(stampExaminationScope(stored, "2026-10-22T00:00:00.000Z")).toBe(stored);
-    const added = { other: 1, [EXAMINATION_SCOPE_KEY]: { fields: [], requirements: [{ field: "a", workClass: "w", since: SINCE }, { field: "b", libraryId: LIB }] } };
-    const out = stampExaminationScope(added, "2026-10-22T00:00:00.000Z") as typeof added;
-    expect(out).not.toBe(added);
-    expect(out.other).toBe(1);
-    expect(out[EXAMINATION_SCOPE_KEY].requirements).toEqual([{ field: "a", workClass: "w", since: SINCE }, { field: "b", libraryId: LIB, since: "2026-10-22T00:00:00.000Z" }]);
+describe("the editor — a requirement binds from the save that stores it (the database stamps it: 20261266)", () => {
+  it("examinationScopeHasRequirements: only settings carrying a requirement make the page read the row back", () => {
+    expect(examinationScopeHasRequirements({ requestTypes: { options: [] } })).toBe(false);
+    expect(examinationScopeHasRequirements(null)).toBe(false);
+    expect(examinationScopeHasRequirements({ [EXAMINATION_SCOPE_KEY]: { fields: [{ key: "a", options: [] }], requirements: [] } })).toBe(false);
+    expect(examinationScopeHasRequirements({ [EXAMINATION_SCOPE_KEY]: { fields: [], requirements: [{ field: "a", workClass: "w" }] } })).toBe(true);
   });
   it("editing a requirement to name another field, class or library makes it new (its time dropped)", () => {
     const r = { field: "a", workClass: "w", since: SINCE };
@@ -181,36 +199,10 @@ describe("the editor — a requirement binds from the save that stores it", () =
   });
 });
 
-describe("fix pass — ruling (2): never newly block a request already in flight", () => {
+describe("fix pass — ruling (2): never newly block a request already in flight (the since stamp itself: lib/__tests__/rls/dfP24ExaminationScope.test.ts)", () => {
   const req = (field: string, since?: string) => ({ field, workClass: "code", ...(since ? { since } : {}) });
   const cfgOf = (options: Array<{ value: string; label: string }> | null, requirements: Array<Record<string, unknown>>) => ({
     [EXAMINATION_SCOPE_KEY]: { fields: options === null ? [] : [{ key: "exam", label: "Exam", options }], requirements },
-  });
-  it("unstampNewlyFillable: a requirement whose field had NO CHOICES in the stored configuration loses its old since when choices are added", () => {
-    const stored = cfgOf([], [req("exam", SINCE)]);
-    const edited = cfgOf([{ value: "a", label: "A" }], [req("exam", SINCE)]);
-    const out = unstampNewlyFillable(edited, stored) as typeof edited;
-    expect(out[EXAMINATION_SCOPE_KEY].requirements[0]).toEqual({ field: "exam", workClass: "code" });
-    expect(examinationScopeNeedsStamp(out)).toBe(true);
-    // and the save's stamp is the new time, never the old one
-    expect((stampExaminationScope(out, "2026-10-22T10:00:01.000Z") as typeof edited)[EXAMINATION_SCOPE_KEY].requirements[0].since).toBe("2026-10-22T10:00:01.000Z");
-  });
-  it("unstampNewlyFillable: a requirement whose field was NOT CONFIGURED (removed, renamed, never added) loses its old since when the key is (re-)added", () => {
-    const stored = cfgOf(null, [req("exam", SINCE)]);
-    const edited = cfgOf([{ value: "a", label: "A" }], [req("exam", SINCE)]);
-    expect((unstampNewlyFillable(edited, stored) as typeof edited)[EXAMINATION_SCOPE_KEY].requirements[0]).not.toHaveProperty("since");
-    // no stored configuration at all reads as nothing fillable
-    expect((unstampNewlyFillable(edited, null) as typeof edited)[EXAMINATION_SCOPE_KEY].requirements[0]).not.toHaveProperty("since");
-  });
-  it("unstampNewlyFillable: already fillable, still unfillable, or nothing stamped — the SAME object (the save is today's)", () => {
-    const fillable = cfgOf([{ value: "a", label: "A" }], [req("exam", SINCE)]);
-    expect(unstampNewlyFillable(fillable, fillable)).toBe(fillable);
-    const unfillable = cfgOf([], [req("exam", SINCE)]);
-    expect(unstampNewlyFillable(unfillable, unfillable)).toBe(unfillable);
-    const plain = { requestTypes: { options: [] } };
-    expect(unstampNewlyFillable(plain, null)).toBe(plain);
-    expect(examinationScopeNeedsStamp(plain)).toBe(false);
-    expect(examinationScopeNeedsStamp(fillable)).toBe(false);
   });
   it("hasBindingRequirement: only a readable since at or before the filing binds; known before the row is read", () => {
     const config = parseExaminationScopeConfig(CFG);
@@ -230,18 +222,8 @@ describe("fix pass — ruling (2): never newly block a request already in flight
     const warned = scopeGateOutcome(config, ticket({ createdAt: "2026-09-01T00:00:00.000Z" }), { data: null, error: null });
     expect(warned).toMatchObject({ kind: "pass", warning: expect.stringMatching(/filed before the requirement/) });
   });
-  it("readServerClock: the Date header of /api/version rounded UP a second; unreadable → null", async () => {
-    const at = (headers: Record<string, string>) => async () => new Response("{}", { headers });
-    expect(await readServerClock(at({ date: "Thu, 22 Oct 2026 10:00:00 GMT" }))).toBe(Date.parse("2026-10-22T10:00:01.000Z"));
-    expect(await readServerClock(at({}))).toBeNull();
-    expect(await readServerClock(async () => { throw new Error("offline"); })).toBeNull();
-    const seen: Array<[string, RequestInit | undefined]> = [];
-    await readServerClock(async (i, init) => { seen.push([i, init]); return new Response("{}"); });
-    expect(seen).toEqual([["/api/version", { cache: "no-store" }]]);
-  });
   it("a consent close held by the gate says why in its history headline", () => {
     expect(consentHeldAction("Operations", "examination_scope_missing")).toMatch(/examination data this workspace requires is not recorded/);
-    expect(consentHeldAction("Operations", "examination_scope_unchecked")).toMatch(/examination data could not be checked/);
   });
 });
 

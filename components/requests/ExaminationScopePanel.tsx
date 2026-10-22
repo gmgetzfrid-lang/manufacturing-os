@@ -9,8 +9,10 @@
 // It lists the data this request carries and what its work class and/or
 // library requires:
 //   * the drafter or the engineer already in the flow (or the assignment
-//     queue) picks each value from the workspace's list — never typed free —
-//     through /api/tickets/examination-scope, which decides who may;
+//     queue; second fix pass: its requester while the request is still with
+//     the drafter) picks each value from the workspace's list — never typed
+//     free — through /api/tickets/examination-scope, which decides who may;
+//     once the request has issued the data is read-only (the issued record);
 //   * what an issue would be refused for is said here before anyone tries
 //     ("Needed before this request can issue"), so the person prompted is
 //     someone already working on it; a request filed before a requirement
@@ -27,7 +29,7 @@ import { ticketResource } from "@/lib/workflow";
 import type { OrgDraftingSettings, Ticket } from "@/types/schema";
 import {
   parseExaminationScopeConfig, examinationScopeConfigured, examinationScopeStatus, parseScopeValues, parseScopeWaiver,
-  waiverCovers, scopeEditorBasis, isMissingScopeTable, SCOPE_CLOSED_STATUSES, EXAMINATION_SCOPE_MIGRATION, EXAMINATION_WAIVER_REASON_MAX,
+  waiverCovers, scopeEditorBasis, isMissingScopeTable, SCOPE_CLOSED_STATUSES, SCOPE_ISSUED_STATUSES, EXAMINATION_SCOPE_MIGRATION, EXAMINATION_WAIVER_REASON_MAX,
   type ExaminationScopeValues, type ExaminationScopeWaiver,
 } from "@/lib/examinationScope";
 
@@ -82,7 +84,10 @@ export default function ExaminationScopePanel({
 
   if (!configured || !ticketId) return null;
 
-  const closed = SCOPE_CLOSED_STATUSES.has(String(ticket.status ?? ""));
+  // Second fix pass: an issued request's data is its issued record — shown,
+  // never changed here (the route refuses it too).
+  const closed = SCOPE_CLOSED_STATUSES.has(String(ticket.status ?? "")) || SCOPE_ISSUED_STATUSES.has(String(ticket.status ?? ""));
+  const issued = SCOPE_ISSUED_STATUSES.has(String(ticket.status ?? ""));
   const queue = policyAllows(capPolicy ?? undefined, "ticket.assign", role ?? null, [...roles], uid ?? null, ticketResource(ticket));
   const canEdit = !closed && !!scopeEditorBasis(ticket, uid, queue);
   const values = load.kind === "ok" ? load.values : {};
@@ -120,7 +125,10 @@ export default function ExaminationScopePanel({
       {load.kind === "error" && <p className="text-xs text-red-700">This request&apos;s examination data could not be read ({load.message}).</p>}
       {load.kind === "ok" && (
         <>
-          {status.blocking.length > 0 && !waived && (
+          {issued && (
+            <p data-testid="examination-scope-issued" className="text-xs text-[var(--color-text-muted)] mb-2">Issued with the data below — it is part of the issued record, and can be changed again only if the request is sent back.</p>
+          )}
+          {status.blocking.length > 0 && !waived && !issued && (
             <p data-testid="examination-scope-blocking" className="text-xs text-red-700 mb-2">
               Needed before this request can issue: {status.blocking.map((b) => b.label).join(", ")}. {canEdit ? "Pick each below." : "The drafter or the engineer records it here."}
             </p>
