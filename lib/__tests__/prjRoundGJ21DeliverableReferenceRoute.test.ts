@@ -45,6 +45,7 @@ const st = vi.hoisted(() => ({
   /** tickets updates that land as a conflict (0 rows) before landing. */
   ticketConflicts: 0,
   failTicketUpdate: null as null | string,
+  failAuditInsert: null as null | string,
 }));
 
 const UUID = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -77,6 +78,7 @@ function chain(table: string) {
     }
     if (op === "insert") {
       st.writes.push({ table, op, payload });
+      if (table === "audit_logs" && st.failAuditInsert) return { data: null, error: { code: "42501", message: st.failAuditInsert } };
       (st.rows[table] ??= []).push({ ...payload });
       return { data: null, error: null };
     }
@@ -128,7 +130,8 @@ vi.mock("@/lib/serverAuth", () => ({
 }));
 
 import { NextRequest } from "next/server";
-import { POST, FINALIZER_WINDOW_MS, REGISTER_AUTHORITY_UNCONFIRMED, OUTSIDE_FINALIZER_WINDOW, referenceMissHistoryEntry } from "@/app/api/projects/deliverable-reference/route";
+import { POST, FINALIZER_WINDOW_MS, REGISTER_AUTHORITY_UNCONFIRMED, OUTSIDE_FINALIZER_WINDOW, REGISTER_PRESENCE_UNCONFIRMED, referenceMissHistoryEntry } from "@/app/api/projects/deliverable-reference/route";
+import { DELIVERABLE_REFERENCE_MISS_HISTORY_ACTION, NON_STEP_HISTORY_ACTIONS, waitingSince } from "@/lib/ticketAttention";
 import { PROJECT_REGISTER_MANAGERS_ONLY, REQUEST_DELIVERABLE_REFERENCED } from "@/lib/ticketProject";
 
 const post = (body: unknown, auth = "Bearer tok") => POST(new NextRequest("http://x/api/projects/deliverable-reference", {
@@ -172,7 +175,7 @@ const missLines = () => ((st.rows.tickets[0].history as Row[]) ?? []).filter((h)
 beforeEach(() => {
   st.user = { id: "u-fin", email: "fin@x.test" };
   st.rpc = {}; st.rpcCalls = []; st.writes = []; st.ticketError = null; st.refuseRegister = null; st.failRead = {};
-  st.ticketConflicts = 0; st.failTicketUpdate = null;
+  st.ticketConflicts = 0; st.failTicketUpdate = null; st.failAuditInsert = null;
   seed();
 });
 
@@ -391,7 +394,9 @@ describe("merge-time fix (ruling 5): every miss stays on the request's OWN audit
     expect((st.rows.tickets[0].history as Row[])[0]).toEqual({ action: "Created", user: "req@x.test" });
     const upd = st.writes.filter((w) => w.table === "tickets" && w.op === "update");
     expect(upd).toHaveLength(1);
-    expect(Object.keys(upd[0].payload).sort()).toEqual(["history", "last_modified"]);
+    // review round (ruling 4): a bookkeeping append — last_modified is NOT changed (nobody's own write turns into a 409)
+    expect(Object.keys(upd[0].payload)).toEqual(["history"]);
+    expect(st.rows.tickets[0].last_modified).toBe("2026-10-22T08:00:00.000Z");
   });
   it("each reason reads plainly; none names the project or a document number", () => {
     for (const reason of ["no_register_authority", "authority_unconfirmed", "write_refused", "outside_window"] as const) {
@@ -435,5 +440,105 @@ describe("merge-time fix (ruling 5): every miss stays on the request's OWN audit
     seed({ projectId: null });
     await post(BODY);
     expect(st.writes.filter((w) => w.table === "tickets")).toEqual([]);
+  });
+});
+
+describe("J21 review round (DEC-90): the history writer — archived requests, a document already on the register, honest attempts, no reset clock", () => {
+  it("MAJOR 1: an ARCHIVED request gets no history line (an archived stub is immutable, 20260810) — the audit row is still written, without historyAttempt; the request is not touched", async () => {
+    seed({ ticket: { archived_at: "2026-10-01T00:00:00.000Z" } });
+    st.rpc = { is_org_controller: false, can_manage_project: false };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(await (await post(BODY)).json()).toEqual({ ok: true, referenced: false, warning: PROJECT_REGISTER_MANAGERS_ONLY });
+    expect(records()).toEqual([{ action: "TICKET_DELIVERABLE_REFERENCE_NOT_WRITTEN", reason: "no_register_authority", resource_id: TICKET }]);
+    expect((st.writes.find((w) => w.table === "audit_logs")!.payload.details as Row).historyAttempt).toBeUndefined();
+    expect(st.writes.filter((w) => w.table === "tickets")).toEqual([]);
+    expect(missLines()).toEqual([]);
+    warn.mockRestore();
+  });
+  it("MAJOR 1: a request archived while the line was being written is left alone (the write is guarded on archived_at IS NULL; the re-read sees the archive)", async () => {
+    st.rpc = { is_org_controller: false, can_manage_project: false };
+    st.ticketConflicts = 1;
+    const origConflict = st.rows.tickets[0];
+    // the conflict that the mock simulates also archives the request
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const realPush = st.writes.push.bind(st.writes);
+    st.writes.push = (...w: Array<{ table: string; op: string; payload: Row }>) => { if (w[0]?.table === "tickets" && w[0]?.op === "update") origConflict.archived_at = "2026-10-22T09:09:09.000Z"; return realPush(...w); };
+    await post(BODY);
+    st.writes.push = realPush;
+    expect(st.writes.filter((w) => w.table === "tickets" && w.op === "update")).toHaveLength(1);
+    expect(missLines()).toEqual([]);
+    warn.mockRestore();
+  });
+  it("MAJOR 2: outside the window, a document ALREADY on the request's project register is nothing owed — already_referenced, nothing recorded, no warning", async () => {
+    seed({ registerAuthority: true, releasedAgoMs: FINALIZER_WINDOW_MS + 60_000 });
+    st.rows.project_documents = [{ id: "pd-x", project_id: PROJ, document_id: DOC, source: "manual" }];
+    expect(await (await post(BODY)).json()).toEqual({ ok: true, referenced: false, skipped: "already_referenced" });
+    expect(st.writes).toEqual([]);
+  });
+  it("MAJOR 2: without register authority (or with it unconfirmed), a document ALREADY on the register is nothing owed — nothing recorded, no warning, no authority asked", async () => {
+    st.rows.project_documents = [{ id: "pd-x", project_id: PROJ, document_id: DOC, source: "checkout" }];
+    st.rpc = { is_org_controller: false, can_manage_project: false };
+    expect(await (await post(BODY)).json()).toEqual({ ok: true, referenced: false, skipped: "already_referenced" });
+    st.rpc = { is_org_controller: null, can_manage_project: false };
+    expect(await (await post(BODY)).json()).toEqual({ ok: true, referenced: false, skipped: "already_referenced" });
+    expect(st.writes).toEqual([]);
+    expect(st.rpcCalls).toEqual([]);
+  });
+  it("MAJOR 2: the register cannot be read — outside the window and without authority alike, 'could not be confirmed' is said and NO miss is recorded", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    seed({ releasedAgoMs: FINALIZER_WINDOW_MS + 60_000 });
+    st.failRead = { project_documents: "timeout" };
+    expect(await (await post(BODY)).json()).toEqual({ ok: true, warning: REGISTER_PRESENCE_UNCONFIRMED });
+    seed();
+    st.rpc = { is_org_controller: false, can_manage_project: false };
+    expect(await (await post(BODY)).json()).toEqual({ ok: true, warning: REGISTER_PRESENCE_UNCONFIRMED });
+    st.rpc = { is_org_controller: null, can_manage_project: false };
+    expect(await (await post(BODY)).json()).toEqual({ ok: true, warning: REGISTER_PRESENCE_UNCONFIRMED });
+    expect(st.writes).toEqual([]);
+    // a Contractor outside the request's scope still gets no detail
+    seed({ role: "Contractor" });
+    st.rpc = { is_org_controller: false, can_manage_project: false };
+    expect(await (await post(BODY)).json()).toEqual({ ok: true });
+    warn.mockRestore();
+  });
+  it("MINOR 5: an audit row that could not be written is never named — the line carries no `attempt`", async () => {
+    st.rpc = { is_org_controller: false, can_manage_project: false };
+    st.failAuditInsert = "permission denied";
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    await post(BODY);
+    expect(missLines()).toHaveLength(1);
+    expect(missLines()[0]).not.toHaveProperty("attempt");
+    err.mockRestore();
+  });
+  it("MINOR 5: a retry whose line is already there writes its audit row WITHOUT historyAttempt", async () => {
+    seed({ registerAuthority: true });
+    st.refuseRegister = "permission denied for table project_documents";
+    await post(BODY);
+    await post(BODY);
+    const rows = st.writes.filter((w) => w.table === "audit_logs").map((w) => (w.payload.details as Row).historyAttempt);
+    expect(rows).toEqual([true, undefined]);
+    expect(missLines()).toHaveLength(1);
+    expect(missLines()[0].attempt).toBe(st.writes.filter((w) => w.table === "audit_logs")[0].payload.id);
+  });
+  it("NIT 6: an outside-window replay records no second audit row — the miss already recorded is named", async () => {
+    seed({ releasedAgoMs: FINALIZER_WINDOW_MS + 60_000 });
+    await post(BODY);
+    expect(await (await post(BODY)).json()).toEqual({ ok: true, referenced: false, warning: OUTSIDE_FINALIZER_WINDOW });
+    expect(records()).toEqual([{ action: "TICKET_DELIVERABLE_REFERENCE_NOT_WRITTEN", reason: "outside_window", resource_id: TICKET }]);
+    expect(missLines()).toHaveLength(1);
+  });
+  it("NIT 6: a replay whose earlier audit row is there but whose line is missing writes the line naming THAT row (and no new row)", async () => {
+    seed({ releasedAgoMs: FINALIZER_WINDOW_MS + 60_000 });
+    st.rows.audit_logs.push({ id: "a-prior", action: "TICKET_DELIVERABLE_REFERENCE_NOT_WRITTEN", resource_type: "ticket", resource_id: TICKET, details: { versionId: VER, reason: "outside_window" } });
+    await post(BODY);
+    expect(records()).toEqual([]);
+    expect(missLines()[0].attempt).toBe("a-prior");
+  });
+  it("MINOR 3: the miss line is a NON_STEP line — the request's 'waiting since' clock is not reset by it; the route writes the shared constant", () => {
+    expect(NON_STEP_HISTORY_ACTIONS).toContain(DELIVERABLE_REFERENCE_MISS_HISTORY_ACTION);
+    const e = referenceMissHistoryEntry({ reason: "write_refused", revisionLabel: null, email: null, now: "2026-10-22T10:00:00.000Z", projectId: PROJ, documentId: DOC, versionId: VER });
+    expect(e.action).toBe(DELIVERABLE_REFERENCE_MISS_HISTORY_ACTION);
+    const since = waitingSince({ createdAt: "2026-10-01T00:00:00.000Z", history: [{ action: "Assigned Drafter", date: "2026-10-20T00:00:00.000Z" }, e] } as never);
+    expect(since?.toISOString()).toBe("2026-10-20T00:00:00.000Z");
   });
 });
