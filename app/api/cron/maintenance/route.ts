@@ -620,7 +620,8 @@ async function handler(req: NextRequest) {
   //     one org's volume cannot spend another org's digest.
   //     DELIV-18 (N19 fix pass): the "not emailed by their choice" records
   //     it owes are handed back (digestRecords) and written at 6d, after the
-  //     drain that sends this run's digests — never before it.
+  //     drain that sends this run's digests — never before it — and (the
+  //     merge-time fix) after the prunes 7b, 7c and 7d.
   const digestRecords: DigestRecordStep[] = [];
   try {
     result.complianceEmails = await queueComplianceDigests(sb, {
@@ -644,25 +645,6 @@ async function handler(req: NextRequest) {
       result.emailDrainAfterDigest = await drainEmailQueue(req.nextUrl.origin, 6, "notifications (after the compliance steps)", result.errors, runEnd);
     } catch (e) {
       result.errors.push(`notifications (after the compliance steps): ${(e as Error).message}`);
-    }
-  }
-
-  // 6d. DELIV-18 (notifications N19 fix pass; drafting-flow EVID-9 done-when
-  //     2): the digest's "not emailed by their choice" records, written only
-  //     now — after 6c has sent (or tried to send) this run's digests — so no
-  //     send waits on them (DEC-90 ruling (1)). Bookkeeping: its own budget,
-  //     DIGEST_RECORD_MS, never past the run's end; each read and insert is
-  //     waited for at most DIGEST_RECORD_CALL_MS (the request is aborted
-  //     then), and no chunk starts unless both could end by the step's limit.
-  //     What it has no time for is not recorded, and said.
-  if (digestRecords.length > 0) {
-    const recordBy = Math.min(runEnd, Date.now() + DIGEST_RECORD_MS);
-    for (const record of digestRecords) {
-      try {
-        await record(recordBy);
-      } catch (e) {
-        result.errors.push(`compliance-digest: the "not emailed by their choice" record: ${(e as Error).message}`);
-      }
     }
   }
 
@@ -727,6 +709,30 @@ async function handler(req: NextRequest) {
       result.auditOutbox = await drainAuditDeadLetters(sb, { stopBy: Math.min(runEnd, Date.now() + AUDIT_OUTBOX_MS), errors: result.errors });
     } catch (e) {
       result.errors.push(`audit-outbox: ${(e as Error).message}`);
+    }
+  }
+
+  // 6d. DELIV-18 (notifications N19 fix pass; drafting-flow EVID-9 done-when
+  //     2): the digest's "not emailed by their choice" records, written only
+  //     now — after 6c has sent (or tried to send) this run's digests — so no
+  //     send waits on them (DEC-90 ruling (1)). N19 merge-time fix: it runs
+  //     here, after the prunes (7b, 7c, 7d), not before them, so it never
+  //     spends the time AFTER_DIGEST_RESERVE_MS holds back for 6c's batch and
+  //     the prunes; they start right after 6c, as they did before this step
+  //     existed. Bookkeeping: its own budget, DIGEST_RECORD_MS, never past the
+  //     run's end (it takes what the prunes left, like the background steps
+  //     below); each read and insert is waited for at most
+  //     DIGEST_RECORD_CALL_MS (the request is aborted then), and no chunk
+  //     starts unless both could end by the step's limit. What it has no time
+  //     for is not recorded, and said.
+  if (digestRecords.length > 0) {
+    const recordBy = Math.min(runEnd, Date.now() + DIGEST_RECORD_MS);
+    for (const record of digestRecords) {
+      try {
+        await record(recordBy);
+      } catch (e) {
+        result.errors.push(`compliance-digest: the "not emailed by their choice" record: ${(e as Error).message}`);
+      }
     }
   }
 
@@ -1190,10 +1196,13 @@ const FIRST_DRAIN_BUDGET_MS = 120_000;
  *  however long the steps before it took — unless the run ends sooner. */
 const DIGEST_FLOOR_MS = 60_000;
 /** Kept back from the digest for the obligation step after it: the second
- *  drain (6c, one batch), which sends what the digest queued, and the two
- *  one-statement prunes. The background steps after them — knowledge sync,
- *  ingest, the storage walk, the embed drain — take what the run has left;
- *  no reservation for them is held ahead of the digest. */
+ *  drain (6c, one batch), which sends what the digest queued, and the prunes
+ *  (7b, 7c, 7d — each one statement or its own small budget). The digest's
+ *  "not emailed by their choice" record (6d, DELIV-18) is run after 7d, so it
+ *  spends none of this (N19 merge-time fix). It and the background steps
+ *  after it — knowledge sync, ingest, the storage walk, the embed drain —
+ *  take what the run has left; no reservation for them is held ahead of the
+ *  digest. */
 const AFTER_DIGEST_RESERVE_MS = DRAIN_BATCH_MS + 10_000;
 /** The background steps: the most each is given, cut to what the run has
  *  left; with less than it needs a step is not run, says so, and the next
@@ -1846,8 +1855,8 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
 }
 
 /** A step the digest hands back to the cron (DELIV-18, N19 fix pass): run
- *  at 6d, after the drain that sends this run's digests, with the latest
- *  time it may end by. */
+ *  at 6d, after the drain that sends this run's digests and (the merge-time
+ *  fix) after the prunes 7b-7d, with the latest time it may end by. */
 type DigestRecordStep = (stopBy: number) => Promise<void>;
 
 /** DELIV-18 (N19 fix pass): the digest records' own budget at step 6d, and

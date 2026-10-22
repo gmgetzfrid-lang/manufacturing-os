@@ -14,6 +14,9 @@
 //     answers delays no send and no later step (each is abandoned after its
 //     limit), and a run with no time left — before the record step, or after
 //     its first chunk — stops recording and says so;
+//   * (the N19 merge-time fix) the record step runs after the prunes 7b, 7c
+//     and 7d: with time short and the record hanging they still run, with
+//     their time; with ample time it records as before;
 //   * the last-digest read ignores a not_emailed record: a record is never
 //     read as the digest sent (it would silence today's digest or start the
 //     next list after items never sent);
@@ -490,7 +493,61 @@ describe("DELIV-18 — the compliance digest records the members their own prefe
     expect(sent().map((e) => e.to_user_id)).toEqual([U(1)]);
     expect(r.errors).toContain(`compliance-digest: today's "not emailed by their choice" records could not be read — 3 member(s) recorded anyway (a re-run today may record them twice): no answer within 5 s — the request was abandoned`);
     expect(r.errors).toContain("compliance-digest: the record that 3 member(s) were not emailed today's digest by their own choice was not written: timeout: no answer within 5 s — the request was abandoned (it may still land)");
-    expect(r.folderTrashPurged).toBe(0);                // the step after it ran
+    expect(r.folderTrashPurged).toBe(0);                // the prunes ran (before it — the merge-time fix)
+  });
+
+  // N19 merge-time fix (the final review's minor 1): step 6d runs after the prunes 7b, 7c and 7d,
+  // so it never spends the time AFTER_DIGEST_RESERVE_MS holds back for them.
+  const recordReadAt = () => db.calls.findIndex((c) => c.table === "email_notifications" && c.op === "eq" && c.args[0] === "status" && c.args[1] === "not_emailed");
+  const pruneCalls = () => ({
+    trash: db.calls.findIndex((c) => c.table === "collections" && c.op === "delete"),
+    push: db.calls.findIndex((c) => c.table === "push_subscriptions" && c.op.startsWith("exec:")),
+    outbox: db.calls.findIndex((c) => c.table === "audit_dead_letters" && c.op.startsWith("exec:")),
+  });
+
+  it("time short and the record step hanging: 7b, 7c and 7d still run — before it, with their time — and the record's abandoned calls are said", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const T0 = Date.now();
+    vi.setSystemTime(T0);
+    seed();
+    db.hang = new Set(["read", "insert"]);
+    // the 6c drain's batch (the second send-queued call) returns 10 s before the run's end (300 s less 10 s):
+    // a record step run first would spend all of it (a 5 s read, then a 5 s insert) and 7c / 7d would not run
+    onDrain = (n) => { if (n === 2) vi.setSystemTime(T0 + 280_000); };
+    const p = runCron();
+    await vi.waitFor(() => expect(db.calls.some((c) => c.op === "hang:read")).toBe(true));
+    const firstHang = db.calls.findIndex((c) => c.op === "hang:read");
+    const prunes = pruneCalls();
+    expect(prunes.trash).toBeGreaterThan(-1);
+    expect(prunes.push).toBeGreaterThan(-1);
+    expect(prunes.outbox).toBeGreaterThan(-1);
+    expect(Math.max(prunes.trash, prunes.push, prunes.outbox)).toBeLessThan(firstHang);
+    await vi.advanceTimersByTimeAsync(5_000);           // the read's limit
+    await vi.waitFor(() => expect(db.calls.some((c) => c.op === "hang:insert")).toBe(true));
+    await vi.advanceTimersByTimeAsync(5_000);           // the insert's limit
+    const r = await p;
+    expect(r.folderTrashPurged).toBe(0);
+    expect(r.pushSubscriptionsPruned).toBe(0);
+    expect(r.auditOutbox).toBeDefined();
+    expect(r.errors.filter((e) => /^(push-subscriptions|audit-outbox): not run/.test(e))).toEqual([]);
+    expect(sent().map((e) => e.to_user_id)).toEqual([U(1)]);
+    expect(records()).toEqual([]);
+    expect(r.errors).toContain(`compliance-digest: today's "not emailed by their choice" records could not be read — 3 member(s) recorded anyway (a re-run today may record them twice): no answer within 5 s — the request was abandoned`);
+    expect(r.errors).toContain("compliance-digest: the record that 3 member(s) were not emailed today's digest by their own choice was not written: timeout: no answer within 5 s — the request was abandoned (it may still land)");
+  });
+
+  it("ample time: the record step records every opted-out member as before, after the 6c drain and the prunes", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now());
+    seed();
+    const r = await runCron();
+    expect(sent().map((e) => e.to_user_id)).toEqual([U(1)]);
+    expect(records().map((e) => `${e.org_id}/${e.to_user_id}`).sort()).toEqual([`${ORG_A}/${U(2)}`, `${ORG_A}/${U(3)}`, `${ORG_B}/${U(2)}`].sort());
+    expect(r.errors.filter((e) => e.startsWith("compliance-digest:"))).toEqual([]);
+    const prunes = pruneCalls();
+    const lastDrain = db.calls.map((c) => c.table).lastIndexOf("fetch");
+    expect(recordReadAt()).toBeGreaterThan(Math.max(lastDrain, prunes.trash, prunes.push, prunes.outbox));
+    expect(r.errors.filter((e) => /^(push-subscriptions|audit-outbox): not run/.test(e))).toEqual([]);
   });
 
   it("no time left when the record step starts (the 6c drain ran late): nothing recorded, nothing asked, and said — the digests already queued are untouched", async () => {
