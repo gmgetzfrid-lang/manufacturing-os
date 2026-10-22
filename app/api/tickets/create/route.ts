@@ -759,7 +759,9 @@ async function create(
     attachments,
     // The role the requester FILED under (the stamped one, as requester_role
     // says) — never their headline when they hold the one they chose.
-    history: openingHistory({ origin, email, role: requesterRole, now, primary }),
+    // EVID-1 done-when 3 (drafting-flow DF-P23): every opening line carries
+    // the filer's uid, from the session (openingHistory's `actorId`).
+    history: openingHistory({ origin, email, role: requesterRole, now, primary, actorId: caller.id }),
     comments: [],
     unread_by: [],
     // The requester follows their own request.
@@ -807,7 +809,7 @@ async function create(
     // ticket's history too (the requester's own words, signed).
     (row.history as Array<Record<string, unknown>>).push({
       action: "Declared like-in-kind (signed)", user: email, role: requesterRole, date: now,
-      details: declaration.statement,
+      details: declaration.statement, actorId: caller.id,
     });
   }
 
@@ -1031,8 +1033,27 @@ async function recordEquipment(orgId: string, ticketId: string, uid: string, equ
     asset_id: e.assetId && known.has(e.assetId) ? e.assetId : null,
     created_by: uid,
   }));
+  let written = rows;
   const { error } = await supabaseAdmin.from("ticket_equipment").insert(rows);
-  if (error) {
+  if (error && String((error as { code?: string }).code ?? "") === "23505") {
+    // drafting-flow DF-P23 fix pass (intelligence GAP-312 follow-up): the
+    // database's tag key (20261265) called two of these one tag where the
+    // form's did not (its lowercasing can differ from the browser's on a
+    // non-Latin letter). One collision never drops the whole list: each
+    // entry is written on its own, the colliding one is listed once and the
+    // answer names it.
+    written = [];
+    const listedOnce: string[] = [];
+    const notWritten: string[] = [];
+    for (const r of rows) {
+      const { error: rowErr } = await supabaseAdmin.from("ticket_equipment").insert(r);
+      if (!rowErr) written.push(r);
+      else if (String((rowErr as { code?: string }).code ?? "") === "23505") listedOnce.push(r.tag);
+      else notWritten.push(r.tag);
+    }
+    if (listedOnce.length > 0) out.push(`Listed once — the database reads each as equipment already named on this request: ${listedOnce.join(", ")}.`);
+    if (notWritten.length > 0) out.push(`Could not be recorded — the request was filed without them; add them in a comment: ${notWritten.join(", ")}.`);
+  } else if (error) {
     out.push(isMissingSchemaError(error)
       ? "The equipment you named could not be recorded yet (database update 20261251 is not applied) — the request was filed without it."
       : "The equipment you named could not be recorded — the request was filed without it; add it in a comment.");
@@ -1041,8 +1062,8 @@ async function recordEquipment(orgId: string, ticketId: string, uid: string, equ
   // DF-P6 fix pass (minor 14): a tag the form could not look up is said as
   // such — never "not found" when nobody could ask.
   const unchecked = new Set(equipment.filter((e) => e.lookupFailed === true && !e.assetId).map((e) => e.tag));
-  const unresolved = rows.filter((r) => !r.asset_id && !unchecked.has(r.tag)).map((r) => r.tag);
-  const notLooked = rows.filter((r) => !r.asset_id && unchecked.has(r.tag)).map((r) => r.tag);
+  const unresolved = written.filter((r) => !r.asset_id && !unchecked.has(r.tag)).map((r) => r.tag);
+  const notLooked = written.filter((r) => !r.asset_id && unchecked.has(r.tag)).map((r) => r.tag);
   if (unresolved.length > 0) out.push(`Not found in the equipment registry, kept as typed: ${unresolved.join(", ")}.`);
   if (notLooked.length > 0) out.push(`Could not be checked against the equipment registry (the lookup failed), kept as typed: ${notLooked.join(", ")}.`);
   return out;

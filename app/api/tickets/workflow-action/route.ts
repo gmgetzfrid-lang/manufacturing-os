@@ -411,6 +411,13 @@ export async function POST(req: NextRequest) {
   if (!body.ticketId || !body.actionType) {
     return NextResponse.json({ error: "ticketId and actionType are required" }, { status: 400 });
   }
+  // DF-P23 (the DF-P20 follow-up (d), DEC-31): a comment that is not text is
+  // the caller's error — 400, nothing read or written — never the 500 a
+  // `body.comment?.trim()` TypeError gave. Absent and null keep today's
+  // meaning (no comment).
+  if (body.comment !== undefined && body.comment !== null && typeof body.comment !== "string") {
+    return NextResponse.json({ error: "comment must be text" }, { status: 400 });
+  }
 
   // Load the ticket (service role — RLS doesn't apply; we enforce explicitly).
   const { data: row, error: loadErr } = await supabaseAdmin
@@ -1115,6 +1122,11 @@ export async function POST(req: NextRequest) {
   // event of each assurance slot this sign-off or veto acts on (null: none).
   let examination: ExaminationOnAct | null = null;
   let rosterWarning: string | null = null;
+  // DF-P23 (the DF-P20 follow-up (b), DEC-31): the roster ledger was not
+  // written after the transition landed — returned as its own response flag
+  // (`rosterLedgerNotWritten`), so a hold or library warning that takes the
+  // one `warning` slot cannot hide it from the roster panel.
+  let rosterLedgerNotWritten = false;
   // GAP-109 / GAP-113 (DF-P7): what this submission's consent slot does, said
   // in the response (never in rosterWarning, which the audit row carries).
   let consentWarning: string | null = null;
@@ -1764,7 +1776,7 @@ export async function POST(req: NextRequest) {
             ? `Closed without a register revision: the recorded publication could not be matched to a revision of ${docLabel} in the register, which remains at Rev ${registerRev ?? "—"}. The deliverable is treated as not published.`
             : `Closed without a register revision: ${docLabel} remains at Rev ${registerRev ?? "—"}. The deliverable was not published as a revision.`;
           const history = Array.isArray(updates.history) ? (updates.history as Array<Record<string, unknown>>) : [...(ticket.history ?? [])];
-          updates.history = [...history, { action: "Closed — deliverable not in the register", user: callerEmail, role: callerRole, date: new Date().toISOString(), details: handbackNote }];
+          updates.history = [...history, { action: "Closed — deliverable not in the register", user: callerEmail, role: callerRole, date: new Date().toISOString(), details: handbackNote, actorId: caller.id }];
         }
       } else if (!src?.id && ticket.libraryId && (recorded?.state !== "published" || unbackedPublish)) {
         // DCW-4 (DF-P4): a request with no source document but a target
@@ -1797,7 +1809,7 @@ export async function POST(req: NextRequest) {
             ? `Closed without a register document: the recorded publication could not be matched to a document in ${libLabel}. The deliverable is treated as not published.`
             : `Closed without a register document: the deliverable was not published into ${libLabel}.`;
           const history = Array.isArray(updates.history) ? (updates.history as Array<Record<string, unknown>>) : [...(ticket.history ?? [])];
-          updates.history = [...history, { action: "Closed — deliverable not in the register", user: callerEmail, role: callerRole, date: new Date().toISOString(), details: handbackNote }];
+          updates.history = [...history, { action: "Closed — deliverable not in the register", user: callerEmail, role: callerRole, date: new Date().toISOString(), details: handbackNote, actorId: caller.id }];
         }
       } else if (!src?.id && !ticket.libraryId && recorded?.state === "published" && unbackedPublish) {
         // DCW-4 remainder (DEC-90 ruling at the DF-P15 merge): a library-less
@@ -1819,7 +1831,7 @@ export async function POST(req: NextRequest) {
         updates.metadata = typeof recordedLib === "string" && recordedLib ? (noteDeliverableNotInLibrary(base, { libraryId: recordedLib }) ?? base) : base;
         handbackNote = `Closed without a register document: the recorded publication could not be matched to a document in ${label}. The deliverable is treated as not published.`;
         const history = Array.isArray(updates.history) ? (updates.history as Array<Record<string, unknown>>) : [...(ticket.history ?? [])];
-        updates.history = [...history, { action: "Closed — deliverable not in the register", user: callerEmail, role: callerRole, date: new Date().toISOString(), details: handbackNote }];
+        updates.history = [...history, { action: "Closed — deliverable not in the register", user: callerEmail, role: callerRole, date: new Date().toISOString(), details: handbackNote, actorId: caller.id }];
       } else if (!src?.id && !ticket.libraryId && recorded?.state !== "published" && latestFinalAttachment(ticket.attachments)) {
         // DCW-4 remainder (DF-P8; DEC-90 ruling (5) for DF-P8): a request with
         // neither a source document nor a library (DEC-107) that closes with
@@ -1833,7 +1845,7 @@ export async function POST(req: NextRequest) {
           updates.metadata = merged;
           handbackNote = "Closed without a register document: the issued deliverable was not published into the register. This request names no library, so no register holds it — publish it as a new document to put it under control.";
           const history = Array.isArray(updates.history) ? (updates.history as Array<Record<string, unknown>>) : [...(ticket.history ?? [])];
-          updates.history = [...history, { action: "Closed — deliverable not in the register", user: callerEmail, role: callerRole, date: new Date().toISOString(), details: handbackNote }];
+          updates.history = [...history, { action: "Closed — deliverable not in the register", user: callerEmail, role: callerRole, date: new Date().toISOString(), details: handbackNote, actorId: caller.id }];
         }
       }
     } catch (e) {
@@ -2054,6 +2066,7 @@ export async function POST(req: NextRequest) {
       // names it, so the reconciliation copies it into details.examination.
       console.error(`[workflow-action] ${auditRow.action} (audit row ${auditRow.id}) on ticket ${body.ticketId} landed, but the review roster ledger was not written — reconcile from tickets.metadata.review_roster${examination ? `; the examination record for slot(s) ${examination.kinds.join(", ")} is on audit row ${auditRow.id} details.reviewRoster.examination — copy it into each of those slots' event details.examination` : ""}: ${ledgerErr}`);
       rosterWarning = rosterWarning ?? ROSTER_LEDGER_NOT_WRITTEN;
+      rosterLedgerNotWritten = true;
     }
   }
 
@@ -2399,6 +2412,7 @@ export async function POST(req: NextRequest) {
     ...(rosterWarning && !holdOutcome && !libraryNotStored ? { warning: rosterWarning } : {}),
     ...(reviewClassNotStored && !holdOutcome && !libraryNotStored && !rosterWarning ? { warning: "The request moved on, but its work or code class could not be recorded yet (database update 20261250 is not applied)." } : {}),
     ...(consentWarning ? { consentWarning } : {}),
+    ...(rosterLedgerNotWritten ? { rosterLedgerNotWritten: true } : {}),
     ...(consentWarning && !holdOutcome && !libraryNotStored && !rosterWarning && !reviewClassNotStored ? { warning: consentWarning } : {}),
   });
 }

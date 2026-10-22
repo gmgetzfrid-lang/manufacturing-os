@@ -16,7 +16,7 @@ import React from "react";
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import {
   RESTORE_ADDITIVE_NOTE, RESTORE_HELD_ELSEWHERE_NOTE, restoreRefusalLabel, isDanglingFlowRefusal, DANGLING_FLOW_CODE,
-  TICKET_RENUMBERED, TICKET_NUMBER_IN_USE, TICKET_NUMBER_UNSETTLED, DECLARATION_NOT_RESTORED,
+  TICKET_RENUMBERED, TICKET_NUMBER_IN_USE, TICKET_NUMBER_UNSETTLED, DECLARATION_NOT_RESTORED, DUPLICATE_EQUIPMENT_TAG_REASON,
   type ChunkedRestoreResult, type RestoreRenumbering, type RestoreRowRefusal,
 } from "@/lib/dataRestore";
 
@@ -304,8 +304,11 @@ export function RestoreResultPanel({ result }: { result: ChunkedRestoreResult })
         ))}
         {result.tables.filter((t) => (t.notApplied ?? []).length > 0).map((t) => (
           <div key={`not-applied-${t.name}`} data-testid="restore-not-applied">
-            <span className="font-mono">{t.name}</span>: {t.notApplied.length} backup decision(s) not applied — this workspace holds the same{" "}
-            {t.name === "entity_mentions" ? "link" : "row"} under its key, and the live row was kept exactly as it is.
+            {t.name === "ticket_equipment"
+              // DF-P23 merge-time fix pass: a backup listing one tag twice on a request (20261265's index allows one)
+              ? <><span className="font-mono">{t.name}</span>: {t.notApplied.length} equipment tag(s) not restored — {DUPLICATE_EQUIPMENT_TAG_REASON}; nothing else of the request changed.</>
+              : <><span className="font-mono">{t.name}</span>: {t.notApplied.length} backup decision(s) not applied — this workspace holds the same{" "}
+                {t.name === "entity_mentions" ? "link" : "row"} under its key, and the live row was kept exactly as it is.</>}
             {t.notApplied.slice(0, 5).map((r, i) => (
               <div key={`${t.name}-${r.id ?? i}`} className="ml-3">Backup row <span className="font-mono">{r.id ?? "(no id)"}</span>: {r.message}</div>
             ))}

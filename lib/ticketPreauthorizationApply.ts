@@ -40,6 +40,7 @@ import type { TicketReviewRoster } from "@/types/schema";
 import { currentRoster, separationOfDutiesActive } from "@/lib/workflow";
 import { writeRosterLedger } from "@/lib/ticketRoster";
 import { notifyBatchWithReason } from "@/lib/inAppNotifications";
+import { slaNoticeSurvivesTransition } from "@/lib/ticketSla";
 import {
   PREAUTH_ACTOR, PREAUTH_AUDIT, PREAUTH_MIGRATION, preauthEligibleSlots, preauthFromRow, preauthSignatureStands, planPreauthorizations,
   applyPreauthorizations, preauthHistoryEntry, isMissingPreauthTable, readGrantorMemberships, type Preauthorization, type PreauthSignatureRow,
@@ -202,6 +203,15 @@ export async function applyStandingPreauthorizations(db: Db, input: {
     const touched = next.slots.filter((s) => apps.some((a) => a.slot.kind === s.kind));
     const ledgerErr = await writeRosterLedger(db, { orgId: input.orgId, ticketId: input.ticketId, roster: next, event: "satisfied", slots: touched, actor: { uid: null, name: PREAUTH_ACTOR } });
     if (ledgerErr) notes.push(`the roster ledger was not written for the applied pre-authorization(s) (audit row ${auditId}) — reconcile from tickets.metadata.review_roster: ${ledgerErr}`);
+    // DF-P23 (the DF-P22 follow-up, DEC-31): the submission's fan-out was
+    // computed before this applied, so a person whose record signed off
+    // their slot (and whom the request no longer waits on) still holds its
+    // "review opened" alert. Retire it as rosterReleased does for a partial
+    // sign-off — MARKED superseded, read_at never touched (EVID-13), the SLA
+    // notices kept (slaNoticeSurvivesTransition: no exit here) — so the bell
+    // is exact. Best-effort: the sign-off has landed; a failure is a note.
+    const retireErr = await retireReleasedAlerts(db, { ticketId: input.ticketId, orgId: input.orgId, released: [...released], at: nowIso });
+    if (retireErr) notes.push(`the "review opened" alert of a person whose pre-authorization was used was not retired: ${retireErr}`);
     // Tell each person whose record was used (bell; best-effort).
     const { error: bellErr } = await notifyBatchWithReason(apps.map((a) => ({
       orgId: input.orgId, userId: a.preauth.grantorId, kind: "ticket_status" as const,
@@ -217,5 +227,46 @@ export async function applyStandingPreauthorizations(db: Db, input: {
     };
   } catch (e) {
     return { applied: [], note: `no standing pre-authorization was applied: ${(e as Error)?.message ?? String(e)}` };
+  }
+}
+
+/** The action a retired alert is marked superseded by (the bell row this
+ *  step writes next carries the same action). */
+export const PREAUTH_RELEASED_SUPERSEDED_BY = "preauthorization_applied";
+
+/**
+ * DF-P23 (the DF-P22 follow-up): retire the unread workflow alerts (rows
+ * carrying metadata.action, not yet superseded) of the people a standing
+ * pre-authorization released on this request — the "review opened" alert
+ * the submission's fan-out sent them before it applied. Marked superseded
+ * (metadata.superseded_at / superseded_by), never read_at (EVID-13); an SLA
+ * notice stays (the request has not exited). null when done (or nobody to
+ * retire); otherwise why not. Never throws.
+ */
+export async function retireReleasedAlerts(db: Db, input: { ticketId: string; orgId: string; released: readonly string[]; at: string }): Promise<string | null> {
+  if (input.released.length === 0) return null;
+  try {
+    const { data: stale, error: readErr } = await db.from("notifications")
+      .select("id, user_id, metadata")
+      .eq("resource_id", input.ticketId)
+      .eq("org_id", input.orgId)
+      .in("user_id", [...input.released])
+      .is("read_at", null)
+      .not("metadata->>action", "is", null)
+      .is("metadata->>superseded_at", null);
+    if (readErr) return String(readErr.message ?? "the alerts could not be read");
+    const failed: string[] = [];
+    for (const row of ((stale as Array<{ id: string; metadata: Record<string, unknown> | null }> | null) ?? [])) {
+      const action = String(row.metadata?.action ?? "");
+      if (slaNoticeSurvivesTransition(action, false)) continue;
+      const { error: updErr } = await db.from("notifications")
+        .update({ metadata: { ...(row.metadata ?? {}), superseded_at: input.at, superseded_by: PREAUTH_RELEASED_SUPERSEDED_BY } })
+        .eq("id", row.id)
+        .is("read_at", null);
+      if (updErr) failed.push(String(updErr.message ?? row.id));
+    }
+    return failed.length ? failed.join("; ") : null;
+  } catch (e) {
+    return (e as Error)?.message ?? String(e);
   }
 }

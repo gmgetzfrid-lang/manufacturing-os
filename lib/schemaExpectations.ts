@@ -232,6 +232,7 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   { table: "tickets", column: "consent_window_opened_at", migration: "20261255_df_roundG_consent_window.sql", feature: "A routed review's consent window — when it opened (drafting-flow DF-P7, GAP-109 / GAP-113)" },
   { table: "tickets", column: "consent_window_recipients", migration: "20261255_df_roundG_consent_window.sql", feature: "A routed review's consent window — who was asked (drafting-flow DF-P7)" },
   { table: "tickets", column: "project_id", migration: "20261256_df_roundG_ticket_project.sql", feature: "A request's project, by reference (drafting-flow DF-P8, GAP-114 / DEC-40)" },
+  { table: "tickets", column: "unit_code", migration: "20261265_df_roundG_transition_record.sql", feature: "A request's Site Codebook unit code, derived by trigger (drafting-flow DF-P23, intelligence WIRE-7)" },
   { table: "ticket_sla_escalations", column: "period_index", migration: "20261264_df_roundG_consent_escalation.sql", feature: "The SLA escalation tier — one notice to the escalation contact per breach per period (drafting-flow DF-P22, FRIC-1 / GAP-106)" },
   { table: "ticket_preauthorizations", column: "expires_at", migration: "20261264_df_roundG_consent_escalation.sql", feature: "Standing pre-authorization — a person's signed, scoped, expiring pre-consent (drafting-flow DF-P22, GAP-109 mechanism 2)" },
   { table: "email_notifications", column: "provider_message_id", migration: "20261258_notif_roundG_delivery_record.sql", feature: "Email delivery record — the provider's message id kept beside 'sent', so a delivery report can name its row (notifications N18, drafting-flow EVID-9)" },
@@ -349,6 +350,17 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     probeArgs: { p_ticket_id: "schema-health-probe", p_org_id: "schema-health-probe", p_expected_last_modified: "2000-01-01T00:00:00Z", p_preauthorization_ids: [], p_metadata: {}, p_history: [], p_last_modified: "2000-01-01T00:00:00Z", p_unread_by: [] },
     migration: "20261264_df_roundG_consent_escalation.sql",
     feature: "Standing pre-authorization applied as one locked transaction (lib/ticketPreauthorizationApply.ts; GAP-109 mechanism 2)",
+  },
+  // drafting-flow DF-P23: an equipment entry respelled in one transaction.
+  // The route falls back to add-then-remove while it is missing (42883 /
+  // PGRST202). The uuid arguments refuse "schema-health-probe" (22P02), so
+  // the body never runs.
+  {
+    signature: "replace_ticket_equipment(uuid, uuid, uuid, text, uuid, uuid)",
+    fn: "replace_ticket_equipment",
+    probeArgs: { p_row_id: "schema-health-probe", p_ticket_id: "schema-health-probe", p_org_id: "schema-health-probe", p_tag: "", p_asset_id: null, p_created_by: null },
+    migration: "20261265_df_roundG_transition_record.sql",
+    feature: "Correcting a request's equipment tag in one transaction (app/api/tickets/equipment; intelligence GAP-312)",
   },
   {
     signature: "apply_checklist_item_writes(uuid, jsonb)",

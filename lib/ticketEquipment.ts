@@ -13,7 +13,6 @@
 // says the list is not available and the route answers 503 `not_migrated`.
 
 import { isMissingSchemaError } from "@/lib/checkedWrite";
-import { tagKey } from "@/lib/codebook";
 
 /** The tag's length bound — ticket_equipment.tag's CHECK (20261251). */
 export const EQUIPMENT_TAG_MAX = 80;
@@ -63,9 +62,36 @@ export function equipmentOutcomeLine(tag: string, asset: "linked" | "not_found" 
 /** The control's sentence before 20261251 is pasted (GAP-312, ruling (4)). */
 export const EQUIPMENT_NOT_AVAILABLE = "The equipment list is not available yet (database update 20261251 is not applied) — equipment cannot be added here until it is.";
 
+/** The characters a listing key drops: ASCII other than [a-z0-9] (exactly
+ *  what lib/codebook.ts tagKey drops from an ASCII tag), and the Unicode
+ *  spaces and dashes a pasted tag carries ("E–22" from a word processor is
+ *  "E-22"). Every other character — a Cyrillic, Greek or CJK letter — is
+ *  KEPT, so "Насос-1" and "Компрессор-1" stay two tags (tagKey alone keeps
+ *  only "1" of each). 20261265's ticket_equipment_tag_key strips this same
+ *  set, code point for code point (pinned by the PG16 test). */
+const LISTING_KEY_STRIP = /[^\u0080-\uffffa-z0-9]|[\u00a0\u00ad\u2000-\u200b\u2010-\u2015\u2212\u202f\u3000\ufeff]/g;
+
+/** drafting-flow DF-P23 fix pass (intelligence GAP-312 follow-up): the key a
+ *  request's equipment list compares tags by — the route's check
+ *  (equipmentTagListed), its respelling rule, the create-time dedupe and
+ *  20261265's unique index (ticket_equipment_tag_key) all use it. For an
+ *  ASCII tag it IS tagKey ("P-101", "p 101" and "P101" are one tag); a tag
+ *  with nothing left falls back to the trimmed lowercase tag. Lowercasing is
+ *  made context-free so the database's per-character lower() is never
+ *  stricter than this: a dotted capital I (U+0130) is "i" before it, and a
+ *  final sigma is the sigma after it ("ΟΔΟΣ", "οδος" and "οδοσ" are one
+ *  tag). (pure) */
+export function equipmentListingKey(raw: string): string {
+  const s = String(raw ?? "");
+  const k = s.replace(/\u0130/g, "i").toLowerCase().replace(/\u03c2/g, "\u03c3").replace(LISTING_KEY_STRIP, "");
+  return k || s.trim().toLowerCase();
+}
+
 /** DF-P18 fix pass (review, minor): is this tag already listed on the
  *  request? Compared through the registry's one tag grammar (tagKey — "P-101"
  *  and "p 101" are the same tag), skipping the row a correction replaces.
+ *  DF-P23 fix pass: by equipmentListingKey — tagKey on an ASCII tag, and a
+ *  non-Latin tag's letters are kept rather than dropped.
  *  ticket_equipment has no uniqueness constraint, so the route asks this
  *  before it writes anything (a sequential double click or retry lists
  *  nothing twice; two requests racing past the read can — a check, not a
@@ -76,7 +102,6 @@ export function equipmentTagListed<R extends { id?: string | null; tag: string }
   tag: string,
   exceptRowId?: string | null,
 ): R | null {
-  const keyOf = (t: string) => tagKey(t) || t.trim().toLowerCase();
-  const key = keyOf(tag);
-  return rows.find((r) => (exceptRowId == null || r.id !== exceptRowId) && keyOf(String(r.tag ?? "")) === key) ?? null;
+  const key = equipmentListingKey(tag);
+  return rows.find((r) => (exceptRowId == null || r.id !== exceptRowId) && equipmentListingKey(String(r.tag ?? "")) === key) ?? null;
 }

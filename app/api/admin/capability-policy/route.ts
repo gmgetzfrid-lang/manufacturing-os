@@ -36,7 +36,7 @@
 // Body: { op: "save", orgId, caps, version? }
 //     | { op: "grant", orgId, uid, cap, expiresAt?, note?, projectId? }
 //     | { op: "revoke", orgId, uid, cap, projectId? }
-//     | { op: "confirm_rule", orgId, cap, key }
+//     | { op: "confirm_rule", orgId, cap, key, ordinal?, version?, ruleDigest? }
 //
 // drafting-flow GAP-105 / TIER-4 (DF-P19; DEC-90 ruling (2) for DF-P19): a
 // request presents its library, work class and code class to the policy, so
@@ -67,7 +67,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   CAPABILITY_DEFS, baseTokensFor, grantActive, isRuleArray, normalizeCapabilityEntry,
   parseStoredCapabilityPolicy, ruleIsConditional, validateCapabilityPolicy, invalidateCapabilityPolicy,
-  policyHasProjectScopedRule, samePolicyVersion, POLICY_CHANGED, PROJECT_SCOPED_CAPS, sameGrant,
+  policyHasProjectScopedRule, samePolicyVersion, POLICY_CHANGED, PROJECT_SCOPED_CAPS, sameGrant, capabilityRuleListDigest,
   RULE_KEYS, carryTicketRuleConfirmation, confirmTicketDimensionRule, inForceTicketRulesDropped, inForceTicketRulesShadowed, inForceTicketRulesShadowedRefusal, describeDroppedInForceTicketRules, describeWhen,
   type CapabilityId, type CapabilityPolicy, type UserGrant,
 } from "@/lib/capabilityPolicy";
@@ -85,7 +85,7 @@ const OPS = new Set(["save", "grant", "revoke", "confirm_rule"]);
 interface Body {
   op?: unknown; orgId?: unknown; caps?: unknown; version?: unknown;
   uid?: unknown; cap?: unknown; expiresAt?: unknown; note?: unknown; projectId?: unknown;
-  key?: unknown; ordinal?: unknown;
+  key?: unknown; ordinal?: unknown; ruleDigest?: unknown;
 }
 
 const bad = (error: string, status: number) => NextResponse.json({ error }, { status });
@@ -277,9 +277,32 @@ export async function POST(req: NextRequest) {
     // scoped to a library / class, so a narrowing it makes applies. Admin
     // only — it can take an action away from people who have it today.
     if (!isAdmin) return bad("Only an Admin may confirm a permission rule", 403);
+    // drafting-flow DF-P23 (the DF-P19 final review's nit, DEC-31): the
+    // confirmation carries the version the console read the rule at, and is
+    // refused (409 `policy_changed`) when the stored row has moved on since —
+    // as `save` is (ALOG-12). Another save may have reordered the copies, so
+    // a stale `ordinal` could otherwise confirm a copy at a place the Admin
+    // did not click. A body without the key (a console from before this
+    // change, mid-deploy) keeps today's answer.
+    // DF-P23 merge-time fix pass 2 (review minor — the version alone was a
+    // regression: a grant, a revoke, an expiry pruning or an edit to another
+    // capability rewrites the same row and its updated_at, and Confirm then
+    // answered 409 where it had worked): what matters is the TARGET
+    // capability's rule list. A stale version is refused only when that list,
+    // read fresh above, differs from the one the console read (ruleDigest —
+    // same rules, same order, so the ordinal still names the same copy);
+    // otherwise the confirmation proceeds on the fresh row, still
+    // compare-and-set on its stamp below.
+    const hasVersion = Object.prototype.hasOwnProperty.call(body, "version");
+    if (hasVersion && body.version !== null && typeof body.version !== "string") return bad("version must be the policy version the rule was read at, or null", 400);
+    if (body.ruleDigest !== undefined && typeof body.ruleDigest !== "string") return bad("ruleDigest must be the digest of the capability's rules as read", 400);
     const cap = str(body.cap) as CapabilityId;
     const key = typeof body.key === "string" ? body.key : "";
     if (!CAPABILITY_DEFS.some((d) => d.id === cap) || !key) return bad("cap and key (the rule to confirm) are required", 400);
+    if (hasVersion && !samePolicyVersion(body.version as string | null, storedVersion)
+        && (typeof body.ruleDigest !== "string" || body.ruleDigest !== capabilityRuleListDigest(before.caps, cap))) {
+      return changed("The action permissions were changed by someone else since you opened them — the page has the newer version now; confirm the rule again if it is still listed.");
+    }
     // Merge-time fix pass 2 (review nit 3): the copy the Admin clicked, by
     // its place among the rules with that key; absent → the first
     // unconfirmed copy.

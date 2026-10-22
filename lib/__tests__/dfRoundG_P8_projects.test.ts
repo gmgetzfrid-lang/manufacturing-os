@@ -598,6 +598,9 @@ describe("pure helpers", () => {
     expect(new Set(Object.keys(now.digests).map((k) => k.split("|")[0]))).toEqual(new Set(MATRIX_STATUSES.filter((st) => st !== "CANCELED")));
     const drift = Object.keys({ ...base.digests, ...now.digests }).filter((k) => base.digests[k] !== now.digests[k]);
     expect(drift).toEqual([]);
+    // DF-P23 (EVID-1 done-when 3): every appended history entry names the acting uid
+    expect(now.actorMismatches).toEqual([]);
+    expect(now.actorStamped).toBeGreaterThan(1000);
     expect(now.keys).toEqual(base.keys);
     expect(now.keys).not.toContain("project_id");
     expect(now.keys).not.toContain("archive_id");

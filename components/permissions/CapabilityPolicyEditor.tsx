@@ -107,7 +107,7 @@ import {
   CapabilityPolicyChangeError, POLICY_CHANGED, PROJECT_SCOPED_CAPS, announceCapabilityPolicyChanged,
   HOLD_OPENER_TOKEN, ticketDimensionRules, confirmCapabilityRule, capabilityRuleKey, GATE_EXEMPT_CAP, isTicketResourceCap,
   isTicketDimensionRule, ruleInForce, inForceTicketRulesDropped, inForceTicketRulesShadowed, inForceTicketRulesShadowedRefusal, describeDroppedInForceTicketRules,
-  rulesCanOverlap, RULE_KEYS,
+  rulesCanOverlap, RULE_KEYS, capabilityRuleListDigest,
   type CapabilityId, type CapabilityEntry, type CapabilityRule, type CapabilityPolicy, type TicketDimensionRuleState,
 } from "@/lib/capabilityPolicy";
 import { loadRequestTypeOptions, type RequestTypeOption } from "@/lib/requestTypes";
@@ -817,13 +817,26 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
     if (!ok) return;
     setConfirming(`${r.cap}:${r.key}#${r.ordinal}`);
     try {
-      await confirmCapabilityRule({ orgId: activeOrgId, cap: r.cap, rule: r.rule, ordinal: r.ordinal });
+      // DF-P23 (the DF-P19 final review's nit): the confirmation carries the
+      // version the rule was read at; a policy saved since is refused (409
+      // policy_changed), so a stale copy ordinal never confirms a copy at a
+      // place the Admin did not click. Merge-time fix pass 2: with the
+      // capability's rule list as read (ruleDigest), so a grant, a revoke or
+      // another capability's edit since does not refuse it — only a change
+      // to THIS capability's rules does.
+      await confirmCapabilityRule({ orgId: activeOrgId, cap: r.cap, rule: r.rule, ordinal: r.ordinal, version, ruleDigest: capabilityRuleListDigest(storedPolicy?.caps, r.cap) });
       invalidateCapabilityPolicy(activeOrgId);
       announceCapabilityPolicyChanged(activeOrgId);
       await load();
       setMsg({ tone: "ok", text: "Rule confirmed — it now applies in full (audited on the server)." });
     } catch (e) {
-      setMsg({ tone: "err", text: (e as Error).message });
+      if (e instanceof CapabilityPolicyChangeError && e.code === POLICY_CHANGED) {
+        invalidateCapabilityPolicy(activeOrgId);
+        await load();
+        setMsg({ tone: "err", text: "Another admin changed the action permissions since you opened this page — the list now shows their version and the rule was NOT confirmed. Confirm it again if it is still listed." });
+      } else {
+        setMsg({ tone: "err", text: (e as Error).message });
+      }
     } finally { setConfirming(null); }
   };
 

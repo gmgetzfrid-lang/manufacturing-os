@@ -214,9 +214,9 @@ export function slotStateText(slot: TicketReviewSlot, names: ReadonlyMap<string,
  * already recorded once (recordRefusedSignOff), and is returned as is — so a
  * refused signature is never refused (and recorded) twice.
  */
-export async function postSignOffOnce(post: () => Promise<Response>): Promise<{ res: Response; out: { error?: string; warning?: string; conflict?: boolean } }> {
+export async function postSignOffOnce(post: () => Promise<Response>): Promise<{ res: Response; out: { error?: string; warning?: string; conflict?: boolean; rosterLedgerNotWritten?: boolean } }> {
   let res = await post();
-  let out = (await res.json().catch(() => ({}))) as { error?: string; warning?: string; conflict?: boolean };
+  let out = (await res.json().catch(() => ({}))) as { error?: string; warning?: string; conflict?: boolean; rosterLedgerNotWritten?: boolean };
   if (res.status === 409 && out.conflict === true) {
     res = await post();
     out = (await res.json().catch(() => ({}))) as typeof out;
@@ -399,7 +399,10 @@ export default function TicketRosterPanel({
       if (out.warning) setError(out.warning);
       // DF-P20 merge-time fix pass: the ledger write failed — the record is
       // on the audit row until it is reconciled.
-      if (out.warning === ROSTER_LEDGER_NOT_WRITTEN && assuranceSignKinds) {
+      // DF-P23 (the DF-P20 follow-up (b)): the route's own flag, so a hold or
+      // library warning in `warning` cannot displace it (the text is kept
+      // for a route from before the flag).
+      if ((out.rosterLedgerNotWritten === true || out.warning === ROSTER_LEDGER_NOT_WRITTEN) && assuranceSignKinds) {
         setLedgerUnwritten({ rosterId: roster.id, kinds: assuranceSignKinds.split("\u0001") });
       }
       await onChanged?.();

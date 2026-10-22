@@ -101,8 +101,17 @@ function draftFill(d: DraftSlot): RoutingSlot["fill"] {
  *  (another mode, or the requester's own slot: hidden, as before). Pure;
  *  exported for tests. */
 export function assuranceOptInFor(d: DraftSlot): "offer" | "engineering" | "none" {
-  if (d.mode !== "blocking" || d.fillKind === "requester") return "none";
-  return examinationOptInAllowed({ mode: d.mode, fill: draftFill(d) }) ? "offer" : "engineering";
+  if (d.mode !== "blocking") return "none";
+  // DF-P23 (the DF-P20 follow-up (c), DEC-31): decided by the parser's own
+  // rule (examinationOptInAllowed) over the fill the editor writes back, not
+  // by the shown fill kind — a slot shown as the requester's that is ALSO
+  // filled by roles (or people, or a permission) keeps a stored opt-in
+  // through the editor's next save, as the parser keeps it. The requester's
+  // own slot alone still offers nothing.
+  const fill = draftFill(d);
+  if (examinationOptInAllowed({ mode: d.mode, fill })) return "offer";
+  const requesterAlone = fill.identity === "requester" && !fill.roles?.length && !fill.users?.length && !fill.capability;
+  return requesterAlone ? "none" : "engineering";
 }
 
 /** GAP-109 mechanism 2 (DF-P22): may this slot accept a standing

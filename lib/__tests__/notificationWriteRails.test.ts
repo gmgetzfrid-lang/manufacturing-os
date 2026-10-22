@@ -573,6 +573,10 @@ const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds
   "app/api/tickets/workflow-action/route.ts": [{ marks: '.is("metadata->>superseded_at", null)', none: "not a dedupe: the workflow route reads a ticket's unread workflow alerts (metadata.action set, not yet superseded) to mark them metadata.superseded_at on the service role (DF-P1 EVID-13); it decides no send" }],
   // drafting-flow DF-P2 third review fix (EDGE-8): the create route reads back whether the
   // creation notice reached a recipient's bell, because notify() swallows a refused insert.
+  // drafting-flow DF-P23 (the DF-P22 follow-up): after a standing pre-authorization applied,
+  // the apply step reads the released grantors' unread workflow alerts on this ticket only to
+  // mark them superseded (their "review opened" alert), on the service role.
+  "lib/ticketPreauthorizationApply.ts": [{ marks: '.is("metadata->>superseded_at", null)', none: "not a dedupe: after a standing pre-authorization signed off a slot (after the submission's response, service role), the apply step reads the unread, unsuperseded workflow alerts (metadata.action set) of the people it released on this ticket, only to mark them metadata.superseded_at / superseded_by — the 'review opened' alert the submission's fan-out sent before it applied (rosterReleased's rule for a partial sign-off). It decides no send, and a forged row could only ever be retired" }],
   "app/api/tickets/create/route.ts": [{ marks: '.eq("metadata->>action", "created").in("user_id", recipients.map((m) => m.uid))', none: "not a dedupe: after emit(), the create route reads whether a creation bell row (metadata.action 'created') for the new ticket is in a queue recipient's bell — notify() logs and swallows a refused insert — to answer notified: false and leave metadata.created_notice_at unstamped when none is. A row a browser wrote there is in a recipient's bell all the same, so it cannot make a notice nobody received read as received; the requester's own bell is not read" }],
   "app/api/transmittal/route.ts": [{ marks: '.eq("kind", UNSTAMPABLE_NOTICE_KIND)', kinds: ["transmittal_unstampable"] }],
   // notifications N14 integrator pass (re-review minor 3): before it retries a failed compliance
@@ -1875,6 +1879,8 @@ describe("REGRESSION census — every app write to notifications fits the read_a
     "lib/notificationReconcileServer.ts": { marks: "superseded_at: supersededAt } })", why: "service role (the reconcile route): retires the caller's own rows whose condition is gone (NEDGE-18, TRAIL-9, DEC-81 §2)" },
     // notifications N19 (NEDGE-24 limb 1): the access-request decision's mark, which replaced its read_at stamp
     "lib/accessRequestOutcome.ts": { marks: 'superseded_at: supersededAt, superseded_by: "access_request_decided"', why: "service role (the decide routes): retires a decided request's pool notices (NEDGE-24 limb 1)" },
+    // drafting-flow DF-P23 (the DF-P22 follow-up): a released grantor's "review opened" alert
+    "lib/ticketPreauthorizationApply.ts": { marks: "superseded_at: input.at, superseded_by: PREAUTH_RELEASED_SUPERSEDED_BY", why: "service role (after the submission's response): retires the alerts of the people a standing pre-authorization released (rosterReleased's rule)" },
   };
 
   it("NEDGE-18: the attention hook writes no notifications metadata from the browser — the reconcile pass is a server route", () => {

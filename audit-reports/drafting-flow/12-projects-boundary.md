@@ -416,6 +416,24 @@ Search: `grep -n "ticket" lib/orgGraph.ts` → no output.
 
 *Assigned (2026-10-21, the integrator at the DF-P8 merge, DEC-31):* the request ↔ project edge in `lib/orgGraph.ts` (unblocked by `tickets.project_id`) → drafting-flow **DF-P23 TRANSITION RECORD AND RECONCILE** (intelligence's file, declared).
 
+**Partial (2026-10-22, drafting-flow Round G).** DF-P23 TRANSITION RECORD AND RECONCILE — the request ↔ project edge assigned at the DF-P8 merge (`lib/orgGraph.ts`, intelligence's file, declared under the package's files outside its plan). Reproduced on `87f415e`: no read of `tickets` anywhere in `lib/orgGraph.ts`.
+
+Landed (`lib/orgGraph.ts`):
+- `readProjectRequests` (`:851`) reads the requests that belong to a project (`tickets.project_id`, `20261256`), keyset-paged to `EDGE_CAP` like every link table, archived requests left out, a cap said (`cappedNote("Project request links", …)`), a read that fails said as a note, and — before `20261256` (42703 / PGRST204) — nothing drawn, silently, as for any pre-migration table. It is read as the reader (RLS: a request they cannot read is not drawn) and only by the client entry (`:780`, `gate === null`): the server entry's gate speaks for documents, never for a request's read scope.
+- A request is folded into the PROJECT class (`req:<uuid>`, label "<number> · <title>", sub "Drafting request · <status>", link `/requests/<id>`, `:1178`) — no new node type, the same decision that folds a system into the unit class (DEC-67, provisional; intelligence `WIRE-4` is WONTFIX on new node types) — with a `project` edge from its project (`:1295`, note "Drafting request on this project"). A request whose project is not on the map draws no edge (`addEdge` counts it as a link that leaves the map) and its lone node is pruned like any unlinked project-class node.
+
+Tests: `lib/__tests__/dfRoundG_P23_followUps.test.ts` ("PROJ-7 — …": node, edge and link; the off-map request; REGRESSION — a map with no project requests is byte-identical; the read's shape pinned); the graph suites (`orgGraph.test.ts`, `graph*.test.ts`, `intelRoundGGraph*.test.ts`) unchanged and passing.
+
+**Done-when.**
+- ✗ (1) a ticket node TYPE and a document ↔ ticket edge from the source_document link — not done: DEC-67's plan default (no node type beyond the seven; `WIRE-4` WONTFIX) keeps the type closed, so DF-P23 folds requests into the project class, which is not a type of their own; and the document ↔ request link lives in `tickets.metadata.source_document` (JSON, not a relationship row — the module's header draws only rows).
+- ✓ (2) once a project reference exists (`tickets.project_id`), a project ↔ request edge is drawn from those real rows.
+- ✓ (3) for that edge source: capped at `EDGE_CAP`, the cap reported like every other edge source.
+
+**Scope / residual.** Done-when 1 → intelligence / the integrator (DEC-31): a ruling under DEC-67 on whether requests become a node type (or stay folded) and whether the document ↔ request link (a JSON reference, not a row) may be drawn; proposed: keep the fold and draw the document ↔ request edge from `metadata.source_document.id` once a requests-on-documents relation exists as rows (none today). **Pending migration:** none for this limb (it works before and after `20261256`). Stays OPEN on done-when 1.
+
+
+*Ruled and assigned (2026-10-22, the integrator at the DF-P23 merge, DEC-90 / DEC-31):* done-when 1's node limb — requests stay FOLDED into the project class (DEC-67's default; intelligence `WIRE-4` is WONTFIX on new node types), which this record accepts as the ticket node. Its edge limb — the document ↔ request edge — may be drawn from `tickets.metadata.source_document.id` only where that id names a document in the same workspace that the reader can read (RLS-read, never trusted from the JSON alone), capped and reported like every edge source → drafting-flow **DF-P25** (declares `lib/orgGraph.ts`). Stays OPEN until then.
+
 ---
 
 <a id="proj-8"></a>

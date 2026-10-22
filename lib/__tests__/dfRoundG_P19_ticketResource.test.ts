@@ -488,7 +488,7 @@ describe("DF-P19 — the rule's state: classification, confirmation, the server-
     const editor = read("components/permissions/CapabilityPolicyEditor.tsx");
     expect(editor).toContain('data-testid="ticket-dimension-rules"');
     expect(editor).toContain('hasAnyRole(["Admin"])');
-    expect(editor).toContain("await confirmCapabilityRule({ orgId: activeOrgId, cap: r.cap, rule: r.rule, ordinal: r.ordinal });");
+    expect(editor).toContain("await confirmCapabilityRule({ orgId: activeOrgId, cap: r.cap, rule: r.rule, ordinal: r.ordinal, version, ruleDigest: capabilityRuleListDigest(storedPolicy?.caps, r.cap) });");
   });
 
   it("the policy route no longer refuses a new library / class-scoped request rule; it carries the confirmation and offers confirm_rule (Admin only)", () => {
@@ -1331,7 +1331,7 @@ describe("merge-time fix pass 2 (review nit 3) — confirm_rule confirms the cop
     const first = confirmTicketDimensionRule(caps, cap, capabilityRuleKey(R), { at: NOW, by: "a1" });
     expect(first.ok && (first.caps[cap] as CapabilityRule[])[0].confirmedBy).toBe("a1");
     const editor = read("components/permissions/CapabilityPolicyEditor.tsx");
-    expect(editor).toContain("await confirmCapabilityRule({ orgId: activeOrgId, cap: r.cap, rule: r.rule, ordinal: r.ordinal });");
+    expect(editor).toContain("await confirmCapabilityRule({ orgId: activeOrgId, cap: r.cap, rule: r.rule, ordinal: r.ordinal, version, ruleDigest: capabilityRuleListDigest(storedPolicy?.caps, r.cap) });");
   });
 });
 

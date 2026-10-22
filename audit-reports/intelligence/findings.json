@@ -34,8 +34,8 @@
       "LOW": 57
     },
     "by_status": {
-      "RESOLVED": 249,
-      "OPEN": 19,
+      "RESOLVED": 250,
+      "OPEN": 18,
       "RESOLVED (2026-10-14, by the integrator's ruling at the I-17 integrator fix pass — done-when 3 met as narrowed under DEC-90; PASTE pending: `20261128`, unchanged — until it is pasted the live registry keeps 20261045's overlays and DELETE stays with the writer tier)": 1,
       "RESOLVED (pending migration) (2026-10-22, intelligence I-34, closed at the merge by the integrator's rulings under `DEC-90` — done-when 1's EXISTS shape accepted; PASTE pending: `20261261`, HOLD behind `20261131`, and only once no lineage row names a document in another workspace)": 1,
       "REFUTED": 2,
@@ -7324,7 +7324,7 @@
       "id": "WIRE-7",
       "title": "Ticket, hold, checkout, work package and milestone carry no reference to equipment or to an operating area at all",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

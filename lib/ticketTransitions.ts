@@ -368,6 +368,10 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
     user: input.actor.email || "Unknown",
     role: input.actor.role,
     date: now,
+    // EVID-1 done-when 3 (DF-P23): the actor's uid beside their email — the
+    // caller's session uid the route passes (never a body field). A recorded
+    // system act (the consent clock: uid null) names no person.
+    ...(actorUid ? { actorId: actorUid } : {}),
   } as TicketHistoryEntry;
 
   if (input.actionType === "reassign_drafter" && input.assignment) {
@@ -929,6 +933,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       user: input.actor.email || "Unknown",
       role: input.actor.role,
       date: now,
+      ...(actorUid ? { actorId: actorUid } : {}),
       details: `Sign-offs needed (any order): ${blocking.join(", ")}${told.length ? ` · Told: ${told.join(", ")}` : ""}${r.engineeringGateAdded ? " · Engineering sign-off added: this workspace requires an engineer for this request, and the routing table names none" : ""}${r.consentPlan ? ` · ${consentPlanNote(r.consentPlan)}` : ""}`,
     } as TicketHistoryEntry);
     const named = r.slots.flatMap((x) => x.primaries);
@@ -977,6 +982,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
         user: input.actor.email || "Unknown",
         role: input.actor.role,
         date: now,
+        ...(actorUid ? { actorId: actorUid } : {}),
         details: parts.join(" · "),
       } as TicketHistoryEntry);
     }
@@ -1008,6 +1014,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
         user: input.actor.email || "Unknown",
         role: input.actor.role,
         date: now,
+        ...(actorUid ? { actorId: actorUid } : {}),
         details: parts.join(" · "),
       } as TicketHistoryEntry);
     }

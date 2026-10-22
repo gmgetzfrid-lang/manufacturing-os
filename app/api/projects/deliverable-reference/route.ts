@@ -283,7 +283,9 @@ export async function POST(req: NextRequest) {
     let lastModified: string | null = t.last_modified ?? null;
     for (let tryNo = 0; tryNo < 2; tryNo++) {
       const now = new Date().toISOString();
-      const entry = referenceMissHistoryEntry({ reason, revisionLabel: v.revision_label ?? null, email: actorName, now, projectId, documentId, versionId, attempt });
+      // EVID-1 done-when 3 (drafting-flow DF-P23): the actor's uid beside
+      // their email, from the session (the finalizer checked above).
+      const entry = { ...referenceMissHistoryEntry({ reason, revisionLabel: v.revision_label ?? null, email: actorName, now, projectId, documentId, versionId, attempt }), actorId: caller.id };
       let cas = supabaseAdmin.from("tickets").update({ history: [...hist, entry] }).eq("id", t.id).is("archived_at", null);
       cas = lastModified ? cas.eq("last_modified", lastModified) : cas.is("last_modified", null);
       const { data: landed, error: hErr } = await cas.select("id");

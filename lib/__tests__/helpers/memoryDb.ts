@@ -25,6 +25,9 @@ export interface MemoryState {
   /** A write error for one table only (e.g. a table or column a pending
    *  migration has not created yet, while the rest of the schema is live). */
   tableWriteError?: Record<string, { message: string; code?: string }>;
+  /** A write error for one table AND method (e.g. a trigger that refuses an
+   *  update while inserts land) — checked after tableWriteError. */
+  methodWriteError?: Record<string, Partial<Record<"insert" | "update" | "delete", { message: string; code?: string }>>>;
   readError: Record<string, { message: string; code?: string }>;
   /** Called after each read of `table` resolves — a hook for "someone else
    *  changed the row between the read and the write". */
@@ -44,7 +47,7 @@ export const freshState = (): MemoryState => ({
 });
 
 export function resetState(s: MemoryState) {
-  s.tables = {}; s.calls = []; s.writes = []; s.refuse = false; s.writeError = null; s.tableWriteError = undefined; s.readError = {}; s.onRead = undefined; s.afterWrite = undefined; s.rpc = undefined; s.nextId = 1;
+  s.tables = {}; s.calls = []; s.writes = []; s.refuse = false; s.writeError = null; s.tableWriteError = undefined; s.methodWriteError = undefined; s.readError = {}; s.onRead = undefined; s.afterWrite = undefined; s.rpc = undefined; s.nextId = 1;
 }
 
 type Filter = [string, unknown];
@@ -77,7 +80,7 @@ export function makeSupabase(state: MemoryState) {
     const applyWrite = () => {
       const w = pending!;
       pending = null;
-      const writeError = state.writeError ?? state.tableWriteError?.[table] ?? null;
+      const writeError = state.writeError ?? state.tableWriteError?.[table] ?? state.methodWriteError?.[table]?.[w.method as "insert" | "update" | "delete"] ?? null;
       if (writeError) {
         state.writes.push({ table, method: w.method, payload: w.payload, filters: [...filters], matched: 0 });
         return { data: null, error: writeError };

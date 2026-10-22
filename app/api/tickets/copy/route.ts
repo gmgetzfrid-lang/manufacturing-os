@@ -99,7 +99,8 @@ import { isSafeStorageKey } from "@/lib/storageKey";
 import { applyStampToPdfDoc } from "@/lib/stamping";
 import { configuredPublicOrigin, isUnreachableRecipientHost } from "@/lib/publicOrigin";
 import { ticketReadScope } from "@/lib/ticketReadScope";
-import { ticketCopyPlan, recordTicketCopy, type TicketCopyChannel } from "@/lib/ticketDeliverableCopy";
+import { ticketCopyPlan, recordTicketCopy, copyDeclarationFacts, type TicketCopyChannel } from "@/lib/ticketDeliverableCopy";
+import { declarationSignatureStands, type DeclarationSignatureRow } from "@/lib/reviewModel";
 import { TICKET_ATTACHMENT_ID_RE } from "@/lib/verifyTicketVerdict";
 import { isStagedKeyOf } from "@/lib/ticketCreate";
 import { ticketFolder, underFolder, restoredFromNumber, restoreRenumberingConfirmed } from "@/lib/ticketFilePrefix";
@@ -158,6 +159,9 @@ async function openPeeked(stream: ReadableStream<Uint8Array>): Promise<{ head: U
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TICKET_COLUMNS = "id, org_id, ticket_id, status, deliverable_rev, history, revision_count, attachments, archived_at, requester_id, assigned_drafter_id, assigned_engineer_id, watchers";
 const GUARD_COLUMN = "history_guarded_from";
+/** GAP-101 acceptance 3 (drafting-flow DF-P23): the like-in-kind declaration
+ *  (20261250) a deliverable's footer names, attributed to the requester. */
+const DECLARATION_COLUMNS = "requester_name, requester_email, like_in_kind_statement, like_in_kind_declared_by, like_in_kind_declared_at, like_in_kind_signature_id";
 
 interface Body {
   ticketId?: unknown;
@@ -172,6 +176,9 @@ type TicketRow = {
   history: unknown; revision_count: number | null; attachments: unknown; archived_at: string | null;
   requester_id: string | null; assigned_drafter_id: string | null; assigned_engineer_id: string | null; watchers: string[] | null;
   history_guarded_from?: number | null;
+  requester_name?: string | null; requester_email?: string | null;
+  like_in_kind_statement?: string | null; like_in_kind_declared_by?: string | null; like_in_kind_declared_at?: string | null;
+  like_in_kind_signature_id?: string | null;
 };
 
 const json = (body: Record<string, unknown>, status: number) =>
@@ -182,6 +189,14 @@ function isMissingGuardColumn(error: { code?: string; message?: string } | null)
   if (!error) return false;
   const msg = error.message ?? "";
   return (error.code === "42703" || error.code === "PGRST204" || /does not exist|schema cache/i.test(msg)) && msg.includes(GUARD_COLUMN);
+}
+
+/** GAP-101 acceptance 3 (DF-P23): a declaration column is absent (before
+ *  20261250 — 42703 / PGRST204 naming one). */
+function isMissingDeclarationColumn(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  const msg = error.message ?? "";
+  return (error.code === "42703" || error.code === "PGRST204" || /does not exist|schema cache/i.test(msg)) && /like_in_kind_|requester_name|requester_email/.test(msg);
 }
 
 /** /api/share/file's origin rule (SHR-11, DEC-64 §1): configured, else the
@@ -238,13 +253,28 @@ export async function POST(req: NextRequest) {
   }
 
   // 1. The ticket, as the service role (RLS does not apply; the checks below do).
-  const read = (withGuard: boolean) => supabaseAdmin
+  const read = (withGuard: boolean, withDeclaration = false) => supabaseAdmin
     .from("tickets")
-    .select(withGuard ? `${TICKET_COLUMNS}, ${GUARD_COLUMN}` : TICKET_COLUMNS)
+    .select([TICKET_COLUMNS, ...(withGuard ? [GUARD_COLUMN] : []), ...(withDeclaration ? [DECLARATION_COLUMNS] : [])].join(", "))
     .eq("id", ticketId)
     .maybeSingle();
-  let { data: row, error: rowErr } = await read(true);
-  if (rowErr && isMissingGuardColumn(rowErr)) ({ data: row, error: rowErr } = await read(false));
+  // GAP-101 acceptance 3 (DF-P23): the declaration is read with the row;
+  // whatever stops that read (before 20261250: 42703 / PGRST204 — no
+  // declaration can exist, so nothing is printed; any other error: the
+  // footer says the declaration is not available) falls back to the read as
+  // before — it never blocks or delays the copy.
+  let declarationRead: "read" | "absent" | "unavailable" = "read";
+  let withGuard = true;
+  let { data: row, error: rowErr } = await read(true, true);
+  if (rowErr && isMissingGuardColumn(rowErr)) {
+    withGuard = false;
+    ({ data: row, error: rowErr } = await read(false, true));
+  }
+  if (rowErr) {
+    declarationRead = isMissingDeclarationColumn(rowErr) ? "absent" : "unavailable";
+    ({ data: row, error: rowErr } = await read(withGuard));
+    if (rowErr && withGuard && isMissingGuardColumn(rowErr)) ({ data: row, error: rowErr } = await read(false));
+  }
   if (rowErr) return json({ error: "The request could not be read right now — try again in a moment" }, 503);
   if (!row) return json({ error: "Request not found" }, 404);
   const t = row as unknown as TicketRow;
@@ -301,6 +331,39 @@ export async function POST(req: NextRequest) {
     return json({ error: "That file is not stored under this request" }, 409);
   }
 
+  // GAP-101 acceptance 3 (DF-P23 fix pass, review minors): a combined read
+  // that failed for another reason is not evidence of a declaration — the
+  // declaration's columns are read once on their own, and only if that
+  // fails too does the copy say "not available" (a request with no
+  // declaration then prints nothing). A declaration's e-signature is
+  // checked as the workflow route checks it (declarationSignatureStands):
+  // known not to stand → the copy says it was not relied on; unreadable →
+  // printed with "e-signature not checked". Neither ever blocks the copy.
+  if (declarationRead === "unavailable") {
+    const { data: d, error: dErr } = await supabaseAdmin.from("tickets").select(DECLARATION_COLUMNS).eq("id", t.id).maybeSingle();
+    if (!dErr && d) {
+      Object.assign(t, d as Partial<TicketRow>);
+      declarationRead = "read";
+    } else if (dErr && isMissingDeclarationColumn(dErr)) {
+      declarationRead = "absent";
+    } else {
+      console.warn(`[tickets/copy] the like-in-kind declaration of ticket ${t.id} could not be read (twice): ${dErr?.message ?? "no row"} — the copy says it is not available`);
+    }
+  }
+  let signature: "verified" | "missing" | "unchecked" | null = null;
+  if (declarationRead === "read" && t.like_in_kind_declared_at && typeof t.like_in_kind_statement === "string" && t.like_in_kind_statement.trim()) {
+    const sigId = t.like_in_kind_signature_id ?? "";
+    const { data: dsig, error: dsigErr } = UUID_RE.test(sigId)
+      ? await supabaseAdmin.from("e_signatures").select("id, org_id, resource_type, resource_id, signer_user_id").eq("id", sigId).maybeSingle()
+      : { data: null, error: null };
+    if (dsigErr) {
+      signature = "unchecked";
+      console.warn(`[tickets/copy] the declaration signature of ticket ${t.id} could not be read: ${dsigErr.message} — printed as not checked`);
+    } else {
+      signature = declarationSignatureStands(dsig as DeclarationSignatureRow | null, { id: t.id, orgId: t.org_id, likeInKindDeclaredBy: t.like_in_kind_declared_by ?? null }) ? "verified" : "missing";
+    }
+  }
+
   // 3. What the copy says — the page's plan, with the ticket as it stands now.
   const plan = ticketCopyPlan({
     file,
@@ -311,6 +374,17 @@ export async function POST(req: NextRequest) {
     live: {
       status: t.status, deliverableRev: t.deliverable_rev, history: t.history,
       revisionCount: t.revision_count, historyGuardedFrom: t.history_guarded_from ?? null,
+      // GAP-101 acceptance 3 (DF-P23): the declaration, attributed — only
+      // when the request carries one (or "unavailable" when it could not be
+      // read; nothing before 20261250), checked as above.
+      declaration: declarationRead === "unavailable"
+        ? "unavailable"
+        : declarationRead === "read"
+          ? copyDeclarationFacts({
+              declaredAt: t.like_in_kind_declared_at, statement: t.like_in_kind_statement, declaredBy: t.like_in_kind_declared_by,
+              requesterId: t.requester_id, requesterName: t.requester_name, requesterEmail: t.requester_email, signature,
+            })
+          : null,
     },
   });
   if (plan.confirmMessage && body.acknowledged !== true) {

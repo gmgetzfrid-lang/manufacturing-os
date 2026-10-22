@@ -96,6 +96,7 @@
 import type { OrgDraftingSettings } from "@/types/schema";
 import { checkDeclarationStatement, DECLARATION_SIGNATURE_INTENT, DECLARATION_STATEMENT_PREFIX } from "@/lib/reviewModel";
 import type { SourceDocumentRefRow } from "@/lib/sourceDocRef";
+import { equipmentListingKey } from "@/lib/ticketEquipment";
 
 /** The explicit answer for a requester who does not know the unit. */
 export const UNIT_UNKNOWN_LABEL = "Unit unknown — triage assigns";
@@ -413,14 +414,27 @@ export function parseTicketCreateBody(raw: unknown): { ok: true; input: TicketCr
   if (raw.equipment !== undefined && raw.equipment !== null) {
     if (!Array.isArray(raw.equipment)) return refuse("equipment", "The equipment list is not valid.");
     const equipment: TicketCreateEquipment[] = [];
-    const seenTags = new Set<string>();
+    const seenTags = new Map<string, string>();
     for (const e of raw.equipment) {
       if (!isObj(e)) continue;
       const tag = text(e.tag);
       if (!tag || tag.length > MAX_EQUIPMENT_TAG) continue;
-      const key = tag.toUpperCase();
-      if (seenTags.has(key)) continue;
-      seenTags.add(key);
+      // intelligence GAP-312 follow-up (drafting-flow DF-P23): one tag is
+      // listed once, compared through the registry's one tag grammar — the
+      // key the equipment route compares (lib/ticketEquipment.ts
+      // equipmentTagListed) and 20261265's unique index holds. "E-22" and
+      // "E22" are the same equipment: the first spelling is kept and the
+      // answer says so (before, the second was listed beside it). DF-P23
+      // fix pass: equipmentListingKey keeps a non-Latin tag's letters, so
+      // "Насос-1" and "Компрессор-1" stay two tags (tagKey keeps "1" of each).
+      const key = equipmentListingKey(tag);
+      const first = seenTags.get(key);
+      if (first !== undefined) {
+        // (a repeat differing only in case was dropped silently before — still is)
+        if (first.toUpperCase() !== tag.toUpperCase()) warnings.push(`"${tag}" names the same equipment as "${first}" — it is listed once, as "${first}".`);
+        continue;
+      }
+      seenTags.set(key, tag);
       const assetId = text(e.assetId);
       const id = assetId && UUID_RE.test(assetId) ? assetId : null;
       equipment.push({ tag, assetId: id, ...(!id && e.lookupFailed === true ? { lookupFailed: true } : {}) });
@@ -686,29 +700,33 @@ export function openingHistory(p: {
   role: string | null;
   now: string;
   primary: SourceDocumentRefRow | null;
+  /** EVID-1 done-when 3 (drafting-flow DF-P23): the filer's uid, from the
+   *  create route's session — on every line (absent: today's lines). */
+  actorId?: string | null;
 }): Array<Record<string, unknown>> {
   const { origin, email, role, now, primary } = p;
+  const by = p.actorId ? { actorId: p.actorId } : {};
   if (origin.kind === "checkin") {
     const docLabel = primary?.document_number || primary?.title || "Document";
     const mocLine = checkinMocLine(origin.moc);
     return [{
-      action: "Created via Check-in", user: email, role, date: now,
+      action: "Created via Check-in", user: email, role, date: now, ...by,
       details: `Source Document: ${docLabel} Rev ${primary?.rev || "?"}${mocLine ? ` · ${mocLine}` : ""}`,
     }];
   }
   if (origin.kind === "intake_collision") {
     return [{
       action: "Created from transition-in impact scan",
-      user: email, date: now,
+      user: email, date: now, ...by,
       details: `Project intake sheet: ${origin.sheetLabel}`,
     }];
   }
   const out: Array<Record<string, unknown>> = [
-    { action: "Created", user: email, role, date: now, details: "Ticket created via portal" },
+    { action: "Created", user: email, role, date: now, details: "Ticket created via portal", ...by },
   ];
   if (primary) {
     out.push({
-      action: "Source Linked", user: email, role, date: now,
+      action: "Source Linked", user: email, role, date: now, ...by,
       details: `Sent from document viewer · ${primary.document_number || primary.title || primary.id} Rev ${primary.rev || "?"}`,
     });
   }
