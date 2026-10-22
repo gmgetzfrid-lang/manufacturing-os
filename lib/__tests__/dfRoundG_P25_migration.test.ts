@@ -118,10 +118,13 @@ describe("20261267 — what it re-creates, and what it does NOT", () => {
       for (const f of files.filter((x) => x < F)) expect(strip(mig(f))).not.toContain(`FUNCTION ${fn}(`);
     }
   });
-  it("the actor guard checks only appended entries, only for a client role, and refuses with 42501", () => {
+  it("the actor guard checks appended AND in-place-rewritten entries (never an unchanged one), only for a client role, and refuses with 42501 (review fix pass 2)", () => {
     const g = fnBody(S, "ticket_history_actor_guard");
     expect(g).toContain("IF current_user NOT IN ('authenticated', 'anon') THEN RETURN NEW; END IF;");
-    expect(g).toContain("WHERE h.ordinality > v_old_len LOOP");
+    expect(g).toContain("WHERE h.ordinality > v_old_len\n                     OR h.value IS DISTINCT FROM (OLD.history -> (h.ordinality::int - 1)) LOOP");
+    expect(g).not.toContain("WHERE h.ordinality > v_old_len LOOP");
+    // the probe pins the same clause in the live function
+    expect(S).toContain("AND p.prosrc LIKE '%h.value IS DISTINCT FROM (OLD.history -> (h.ordinality::int - 1))%'");
     expect(g).toContain("USING ERRCODE = '42501'");
     expect(S).toContain("BEFORE UPDATE OF history ON tickets");
   });

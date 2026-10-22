@@ -253,6 +253,9 @@ export const shortHash = (h: string, n = 12): string => (h.length > n ? `${h.sli
 export function examinedFilesText(r: Pick<ExaminationRecord, "files" | "ofFiles" | "allFiles" | "defaulted">): string {
   const names = r.files.map((f) => f.name || "a file").join(", ");
   const n = r.ofFiles;
+  // DF-P25 (review fix pass 2): a round with no files under review (a hold's
+  // record of a review on its description) says so, not "all 0 files".
+  if (n === 0 && r.files.length === 0) return "No files were under review";
   if (r.defaulted) return `Files under review: all ${n} (not narrowed — the reviewer was not asked)${names ? `: ${names}` : ""}`;
   const count = r.allFiles ? `all ${n} ${n === 1 ? "file" : "files"}` : `${r.files.length} of ${n} ${n === 1 ? "file" : "files"}`;
   return `Examined ${count}${names ? `: ${names}` : ""}`;

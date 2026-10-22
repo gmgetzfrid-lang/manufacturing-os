@@ -213,6 +213,10 @@ describe("ALOG-1 done-when 2 — the record's census of the loaders' callers is 
     "components/documents/HoldStrip.tsx",
     "components/documents/InspectorPanel.tsx",
     "components/documents/CheckoutStatusCell.tsx",
+    // drafting-flow DF-P25 review fix pass 2 (GAP-102): the notify-only hold
+    // form is offered only to an occupant who may place holds — read through
+    // the entry with affordancePolicyFault, fail closed, as HoldStrip does
+    "components/requests/NotifyHoldExamination.tsx",
     "hooks/useTicketNotifications.ts",
     // through the entry: drafting-flow AUTHZ-7
     "app/api/tickets/workflow-action/route.ts",

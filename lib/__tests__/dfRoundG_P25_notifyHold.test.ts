@@ -47,6 +47,8 @@ vi.mock("@/lib/supabase", () => {
 });
 const holdsMock = vi.hoisted(() => ({ openHold: vi.fn() }));
 vi.mock("@/lib/holds", async (orig) => ({ ...(await orig<typeof import("@/lib/holds")>()), openHold: holdsMock.openHold }));
+const capMock = vi.hoisted(() => ({ load: vi.fn() }));
+vi.mock("@/lib/capabilityPolicy", async (orig) => ({ ...(await orig<typeof import("@/lib/capabilityPolicy")>()), loadCapabilityPolicyEntry: capMock.load }));
 vi.mock("@/components/providers/DialogProvider", () => ({ appConfirm: vi.fn(async () => true), appAlert: vi.fn(async () => {}), appPrompt: vi.fn(async () => null) }));
 vi.mock("@/lib/eSignatures", () => ({ recordSignature: vi.fn(async () => ({ id: "sig-1" })) }));
 vi.mock("@/lib/reviewControl", () => ({ effectiveReviewControlForDocument: vi.fn(async () => null), expandReviewers: vi.fn(async () => ({ primaries: [] })) }));
@@ -54,9 +56,9 @@ vi.mock("@/components/signatures/SignatureCeremony", () => ({ default: () => nul
 
 import { parseRoutingControl, validateRoutingDraft, notifyExaminationOptInAllowed, preauthorizationOptInAllowed, type RoutingControl } from "@/lib/routingControl";
 import { controlToDraft, draftToControl, notifyExaminationOptInFor, preauthOptInFor, assuranceOptInFor, NOTIFY_EXAMINATION_HINT } from "@/components/documents/RoutingControlSection";
-import { isAssuranceSlot, isNotifyExaminationSlot, holdExaminationRecord, holdExaminationOf, holdOpenerInSlot, rosterOccupancy } from "@/lib/assuranceExamination";
+import { isAssuranceSlot, isNotifyExaminationSlot, holdExaminationRecord, holdExaminationOf, holdOpenerInSlot, rosterOccupancy, examinedFilesText } from "@/lib/assuranceExamination";
 import { preauthEligibleSlots } from "@/lib/ticketPreauthorization";
-import NotifyHoldExamination, { HOLD_RECORD_NOT_STORED, NO_SOURCE_TO_HOLD, NOTIFY_HOLD_READ_LIMIT, NOTIFY_HOLDS_MORE, notSlotHoldsText, uncheckedHoldsText } from "@/components/requests/NotifyHoldExamination";
+import NotifyHoldExamination, { HOLD_RECORD_NOT_STORED, HOLD_NOT_PERMITTED, NO_FILES_UNDER_REVIEW, holdPermissionUncheckedText, NO_SOURCE_TO_HOLD, NOTIFY_HOLD_READ_LIMIT, NOTIFY_HOLDS_MORE, notSlotHoldsText, uncheckedHoldsText } from "@/components/requests/NotifyHoldExamination";
 import TicketRosterPanel from "@/components/requests/TicketRosterPanel";
 
 const NOW = "2026-10-22T12:00:00.000Z";
@@ -107,6 +109,8 @@ describe("the opt-in on a notify-only slot — parser, editor, roster", () => {
     expect(draftToControl(drafts).slots[0]).toMatchObject({ mode: "notify_only", records_examination: true });
     expect(validateRoutingDraft({ slots: [{ kind: "sign", mode: "blocking", fill: { roles: ["Viewer"] } }, ...draftToControl(drafts).slots] })).toBeNull();
     expect(NOTIFY_EXAMINATION_HINT).toMatch(/no sign-off is added/);
+    // REVIEW FIX 2: the controller is told the slot's people need permission to place holds
+    expect(NOTIFY_EXAMINATION_HINT).toMatch(/need permission to place holds \(Admin → Permissions → Action permissions, Place a hold\)/);
     expect(NOTIFY_EXAMINATION_HINT).not.toMatch(/make it|switch|convert|must sign off/i);
     // REGRESSION: a notify-only slot never ticked writes nothing new
     const plain: RoutingControl = { slots: [{ kind: "watch", mode: "notify_only", fill: { users: ["q-2"] } }] };
@@ -145,6 +149,8 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   db.results = {}; db.reads = []; db.calls = [];
   holdsMock.openHold.mockReset();
+  capMock.load.mockReset();
+  capMock.load.mockResolvedValue({ policy: {}, version: null });
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -152,7 +158,7 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); host.remove(); });
 const el = React.createElement as unknown as (t: unknown, p: Record<string, unknown>) => React.ReactElement;
 const flush = async () => { await act(async () => { await new Promise((r) => setTimeout(r, 0)); }); };
-const renderHold = async (t: Ticket, uid: string) => { await act(async () => { root.render(el(NotifyHoldExamination, { ticket: t, orgId: "o1", uid, userName: "Quinn" })); }); await flush(); };
+const renderHold = async (t: Ticket, uid: string, role: string = "Engineer", roles: string[] = []) => { await act(async () => { root.render(el(NotifyHoldExamination, { ticket: t, orgId: "o1", uid, userName: "Quinn", role, roles })); }); await flush(); };
 const q = (id: string) => host.querySelector(`[data-testid="${id}"]`);
 const holdRow = (over: Record<string, unknown> = {}) => ({
   id: "h-1", reason: "Other", notes: "weld map", opened_by: "q-2", opened_by_name: "Quinn", opened_at: NOW, released_at: null,
@@ -308,6 +314,73 @@ describe("NotifyHoldExamination — with an opted-in notify-only slot", () => {
     await renderHold(ticket(rosterOf([SIGN, WATCH]), { source: false }), "q-2");
     expect(q("notify-hold-no-source")!.textContent).toBe(NO_SOURCE_TO_HOLD);
     expect(db.reads).toEqual([]);
+  });
+  it("REVIEW FIX 2: an occupant whose role may not place holds (a read-only role, or holds.open narrowed away from them) gets no form — a plain note naming where an Admin allows it; nothing can be placed", async () => {
+    await renderHold(ticket(rosterOf([SIGN, WATCH])), "q-2", "Viewer");
+    expect(q("notify-hold-form")).toBeNull();
+    expect(q("notify-hold-place")).toBeNull();
+    expect(q("notify-hold-not-permitted")!.textContent).toBe(HOLD_NOT_PERMITTED);
+    expect(HOLD_NOT_PERMITTED).toMatch(/Admin → Permissions → Action permissions \(Place a hold\)/);
+    act(() => root.unmount());
+    root = createRoot(host);
+    capMock.load.mockResolvedValue({ policy: { caps: { "holds.open": ["Admin"] } }, version: "v2" });
+    await renderHold(ticket(rosterOf([SIGN, WATCH])), "q-2", "Engineer");
+    expect(q("notify-hold-form")).toBeNull();
+    expect(q("notify-hold-not-permitted")!.textContent).toBe(HOLD_NOT_PERMITTED);
+    // a per-person grant of holds.open lights the form, as openHold's check would let it through
+    act(() => root.unmount());
+    root = createRoot(host);
+    capMock.load.mockResolvedValue({ policy: { caps: { "holds.open": ["Admin"] }, grants: [{ uid: "q-2", cap: "holds.open" }] }, version: "v3" });
+    await renderHold(ticket(rosterOf([SIGN, WATCH])), "q-2", "Engineer");
+    expect(q("notify-hold-not-permitted")).toBeNull();
+    expect(q("notify-hold-form")).not.toBeNull();
+  });
+  it("REVIEW FIX 2: when whether the occupant may place holds cannot be read, no form (fail closed) — the reason and Try again, which re-reads", async () => {
+    capMock.load.mockResolvedValueOnce({ policy: {}, version: null, unreadable: "the permissions could not be read" });
+    await renderHold(ticket(rosterOf([SIGN, WATCH])), "q-2");
+    expect(q("notify-hold-form")).toBeNull();
+    expect(q("notify-hold-permission-unchecked")!.textContent).toContain(holdPermissionUncheckedText("the permissions could not be read"));
+    await act(async () => { (q("notify-hold-permission-unchecked")!.querySelector("button") as HTMLButtonElement).click(); });
+    await flush();
+    expect(capMock.load).toHaveBeenCalledTimes(2);
+    expect(q("notify-hold-form")).not.toBeNull();
+  });
+  it("REVIEW FIX 2: the roster panel forwards the viewer's role and collection — a read-only viewer gets the note, the same occupant as an Engineer gets the form", async () => {
+    await act(async () => { root.render(el(TicketRosterPanel, { ticket: ticket(rosterOf([SIGN, WATCH])), orgId: "o1", uid: "q-2", role: "Engineer", roles: ["Engineer", "Viewer"], activeMemberCount: 5 })); });
+    await flush();
+    expect(q("notify-hold-form")).toBeNull();
+    expect(q("notify-hold-not-permitted")).not.toBeNull();
+    act(() => root.unmount());
+    root = createRoot(host);
+    await act(async () => { root.render(el(TicketRosterPanel, { ticket: ticket(rosterOf([SIGN, WATCH])), orgId: "o1", uid: "q-2", role: "Engineer", roles: ["Engineer"], activeMemberCount: 5 })); });
+    await flush();
+    expect(q("notify-hold-not-permitted")).toBeNull();
+    expect(q("notify-hold-form")).not.toBeNull();
+  });
+  it("REVIEW FIX 2: the permission is read only for an occupant who would be offered the form — never for someone outside the slot", async () => {
+    db.results.document_holds = { data: [holdRow()], error: null };
+    await renderHold(ticket(rosterOf([SIGN, WATCH])), "s-1");
+    expect(capMock.load).not.toHaveBeenCalled();
+    expect(q("notify-hold-not-permitted")).toBeNull();
+  });
+  it("REVIEW FIX 2: a round with no files under review says so and the hold can still be placed — the note alone is the record", async () => {
+    holdsMock.openHold.mockResolvedValue({ id: "h-9" });
+    await renderHold(ticket(rosterOf([SIGN, WATCH], { files: [] })), "q-2");
+    expect(q("notify-hold-no-files")!.textContent).toBe(NO_FILES_UNDER_REVIEW);
+    const btn = q("notify-hold-place") as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+    const ta = host.querySelector('textarea[aria-label="What you found"]') as HTMLTextAreaElement;
+    const desc = host.querySelector('input[aria-label="Hold description"]') as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(ta, "described scope is wrong"); ta.dispatchEvent(new Event("input", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(desc, "scope"); desc.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { btn.click(); });
+    await flush();
+    expect(holdsMock.openHold).toHaveBeenCalledTimes(1);
+    const rec = holdsMock.openHold.mock.calls[0][0].examination;
+    expect(rec).toMatchObject({ stop: "hold", files: [], ofFiles: 0, note: "described scope is wrong" });
+    expect(examinedFilesText(rec)).toBe("No files were under review");
   });
   it("before 20261267 the read names the column (42703): the panel says records are kept from that update — never an error", async () => {
     db.results.document_holds = { data: null, error: { code: "42703", message: "column document_holds.examination does not exist" } };

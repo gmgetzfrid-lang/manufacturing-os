@@ -11,8 +11,11 @@
 //     flipped back with NO audit row — the gap DF-P22 recorded;
 //   * (2) a client's appended history entry may carry no actorId (absent or
 //     null) or its own; another uid, a non-string or a forged actor is
-//     refused 42501; the service role and a SECURITY DEFINER path are
-//     untouched; entries already in the log are not re-checked;
+//     refused 42501; the same rule holds for an entry rewritten in place
+//     with only 20261038's guard live (trg_ticket_update_guard disabled for
+//     that case — production's state while 20261166 is a HOLD); the service
+//     role and a SECURITY DEFINER path are untouched; entries already in the
+//     log and left unchanged are not re-checked;
 //   * (3) the claim's recipients column says what it holds;
 //   * (4) document_holds.examination is written with the hold (a member's
 //     own insert), an object of bounded size or NULL, never changed after —
@@ -147,6 +150,34 @@ describe.skipIf(skip !== null)("DF-P25 — 20261267 (runtime)", () => {
         expect(r).toMatchObject({ ok: false, code: "42501" });
       }
       expect(len(t)).toBe(1);
+    });
+
+    it("with ticket_update_guard not stopping in-place edits (production's live 20261038 guard only refuses shrinking), an entry rewritten in place with another uid's actorId is refused 42501 by THIS guard; an unchanged prefix plus an own append lands", () => {
+      const t = newTicket();
+      expect(asCaller(db, SERVICE, append(t, { action: "Approved", user: "eng@plant.test", actorId: m.admin.uid }))).toEqual({ ok: true, rows: 1 });
+      admin(db, "ALTER TABLE tickets DISABLE TRIGGER trg_ticket_update_guard;");
+      try {
+        // the stored first entry rewritten to name the admin, plus a harmless own append (length grows, so no shrink rule applies)
+        const forged = `UPDATE tickets SET history = jsonb_build_array(
+            jsonb_build_object('action','Created','user','seed','actorId','${m.admin.uid}'),
+            history -> 1,
+            jsonb_build_object('action','Note','user','${m.requester.email}')) WHERE id = '${t}'`;
+        const r = asCaller(db, m.requester.caller, forged);
+        expect(r).toMatchObject({ ok: false, code: "42501" });
+        expect((r as { message: string }).message).toMatch(/may name only you as its actor/);
+        // the same move keeping someone else's existing actorId on a rewritten line is refused too
+        const kept = `UPDATE tickets SET history = jsonb_build_array(history -> 0,
+            jsonb_set(history -> 1, '{action}', '"Approved with changes"'),
+            jsonb_build_object('action','Note','user','${m.requester.email}')) WHERE id = '${t}'`;
+        expect(asCaller(db, m.requester.caller, kept)).toMatchObject({ ok: false, code: "42501" });
+        expect(len(t)).toBe(2);
+        expect(one(`SELECT COALESCE(history -> 0 ->> 'actorId', 'NULL') FROM tickets WHERE id = '${t}'`)).toBe("NULL");
+        // REGRESSION: the stored entries unchanged (one naming the admin) plus an own append lands
+        expect(asCaller(db, m.requester.caller, append(t, { action: "Note", user: m.requester.email, actorId: m.requester.uid }))).toEqual({ ok: true, rows: 1 });
+        expect(len(t)).toBe(3);
+      } finally {
+        admin(db, "ALTER TABLE tickets ENABLE TRIGGER trg_ticket_update_guard;");
+      }
     });
 
     it("the service role and a SECURITY DEFINER path are untouched; entries already in the log are never re-checked", () => {

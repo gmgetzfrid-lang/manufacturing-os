@@ -26,15 +26,20 @@
 --   (2) EVID-1 actorId (the DF-P23 follow-up (a)). A NEW, separate trigger
 --       on tickets — trg_ticket_history_actor_guard, BEFORE UPDATE OF history
 --       (ticket_history_actor_guard, SECURITY INVOKER, search_path pinned,
---       executable by no client role) — checks ONLY the entries a client
---       statement appends: each may carry no actorId (absent or JSON null)
---       or one equal to auth.uid(); anything else is refused 42501. A
+--       executable by no client role) — checks every entry a client
+--       statement appends OR rewrites in place (an entry that differs from
+--       the stored one at its position): each may carry no actorId (absent
+--       or JSON null) or one equal to auth.uid(); anything else is refused
+--       42501. Unchanged entries are never re-checked. A
 --       statement whose current_user is not a client role (authenticated /
 --       anon) passes untouched: the service role (every server route, which
 --       takes actorId from the session) and a SECURITY DEFINER path (its
 --       owner). ticket_update_guard is NOT re-created: its newest body
 --       (20261250) is pending as a HOLD (MIGRATION-PASTE-ORDER row 194), so
---       this paste never depends on it, and it works with or without it.
+--       this paste never depends on it, and it works with or without it:
+--       the live 20261038 guard only stops history shrinking, so the
+--       in-place check here is what refuses a rewritten entry's forged
+--       actorId until 20261166 (append-only) is pasted.
 --   (3) ticket_sla_escalations.recipients is DOCUMENTED (the DF-P22
 --       follow-up (b)): a COMMENT that it is the audience the contact
 --       resolved to who may read the request, written before the notice —
@@ -240,8 +245,12 @@ BEGIN
   IF current_user NOT IN ('authenticated', 'anon') THEN RETURN NEW; END IF;
   IF jsonb_typeof(NEW.history) IS DISTINCT FROM 'array' THEN RETURN NEW; END IF;
   v_old_len := CASE WHEN jsonb_typeof(OLD.history) = 'array' THEN jsonb_array_length(OLD.history) ELSE 0 END;
+  -- Every entry the statement adds OR changes in place is checked: with
+  -- only 20261038's guard live (history may not shrink, but an existing
+  -- entry may still be rewritten), an in-place rewrite is a write too.
   FOR v_entry IN SELECT h.value FROM jsonb_array_elements(NEW.history) WITH ORDINALITY AS h
-                  WHERE h.ordinality > v_old_len LOOP
+                  WHERE h.ordinality > v_old_len
+                     OR h.value IS DISTINCT FROM (OLD.history -> (h.ordinality::int - 1)) LOOP
     IF jsonb_typeof(v_entry) = 'object' AND v_entry ? 'actorId' AND jsonb_typeof(v_entry -> 'actorId') <> 'null' THEN
       v_actor := CASE WHEN jsonb_typeof(v_entry -> 'actorId') = 'string' THEN lower(v_entry ->> 'actorId') END;
       IF v_actor IS NULL OR auth.uid() IS NULL OR v_actor <> auth.uid()::text THEN
@@ -346,10 +355,11 @@ SELECT 1, 3, 'apply_ticket_preauthorizations re-checks the grantor''s stamped st
        AND NOT has_function_privilege('anon', 'public.apply_ticket_preauthorizations(uuid, uuid, timestamptz, uuid[], jsonb, jsonb, timestamptz, uuid[])', 'EXECUTE'),
        NULL
 UNION ALL
-SELECT 1, 4, 'EVID-1 (DF-P23 follow-up (a)): a client''s appended history entry names no actorId or its own (BEFORE UPDATE OF history trigger, enabled; SECURITY INVOKER, search_path pinned; no client EXECUTE); ticket_update_guard untouched',
+SELECT 1, 4, 'EVID-1 (DF-P23 follow-up (a)): a history entry a client appends or rewrites in place names no actorId or its own (BEFORE UPDATE OF history trigger, enabled; SECURITY INVOKER, search_path pinned; no client EXECUTE); ticket_update_guard untouched',
        EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_ticket_history_actor_guard' AND tgrelid = 'public.tickets'::regclass AND NOT tgisinternal AND tgenabled = 'O')
        AND COALESCE((SELECT NOT p.prosecdef AND p.proconfig @> ARRAY['search_path=public']
                        AND p.prosrc LIKE '%actorId%' AND p.prosrc LIKE '%current_user NOT IN (''authenticated'', ''anon'')%'
+                       AND p.prosrc LIKE '%h.value IS DISTINCT FROM (OLD.history -> (h.ordinality::int - 1))%'
                        FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
                       WHERE ns.nspname = 'public' AND p.proname = 'ticket_history_actor_guard'), false)
        AND NOT has_function_privilege('authenticated', 'public.ticket_history_actor_guard()', 'EXECUTE'),

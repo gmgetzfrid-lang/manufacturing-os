@@ -128,6 +128,27 @@ describe("PROJ-7 edge limb (DF-P25) — the document ↔ request edge, from a re
     expect(g.nodes.filter((x) => x.type === "project" && x.degree === 0 && x.id.startsWith("req:"))).toEqual([]);
   });
 
+  it("REVIEW FIX 2: where the closing prune does NOT apply (a scope keeps a member with a boundary stub), a request whose document is off the map is still never made — the edge is counted as leading off the map, not drawn as a stub on an orphan request", () => {
+    // A scope in which the request would be a member: without the docsOnMap
+    // guard the request node is made, its edge to the absent document becomes
+    // a boundary stub (outside = 1), and the prune keeps it — an orphan.
+    const scope = { ref: { kind: "unit", id: "u1" }, label: "Unit 1", complete: true, inScope: (id: string) => id.startsWith("req:"), keep: new Set<string>() };
+    const g = assembleOrgGraph(
+      { ...emptyGraphRows(), documents: [doc(D2, "PID-2")], documentRequests: [{ id: "t1", ticket_id: "KE-t1", title: "Request t1", status: "DRAFTING", document_id: D1 }] } as never,
+      { scope } as never,
+    );
+    expect(g.nodes.some((x) => x.id === "req:t1")).toBe(false);
+    expect(g.edges.some((e) => e.b === "req:t1")).toBe(false);
+    expect(g.truncations.join(" ")).not.toMatch(/lead.* out of Unit 1/);
+    expect(g.truncations.join(" ")).toMatch(/1 link leads to equipment, documents or units not on this map/);
+    // REGRESSION: the same request with its document on the map is drawn, edge and all
+    const on = assembleOrgGraph(
+      { ...emptyGraphRows(), documents: [doc(D1, "PID-1")], documentRequests: [{ id: "t1", ticket_id: "KE-t1", title: "Request t1", status: "DRAFTING", document_id: D1 }] } as never,
+    );
+    expect(on.nodes.some((x) => x.id === "req:t1")).toBe(true);
+    expect(on.edges).toContainEqual(expect.objectContaining({ a: `doc:${D1}`, b: "req:t1", type: "project" }));
+  });
+
   it("REGRESSION: a map with no such request is byte-identical (no rows key, no note) — assembled directly and end to end", async () => {
     const base = { ...emptyGraphRows(), documents: [doc(D1, "PID-1")] } as never;
     expect(JSON.stringify(assembleOrgGraph({ ...(base as object), documentRequests: [] } as never))).toBe(JSON.stringify(assembleOrgGraph(base)));

@@ -16,6 +16,13 @@
 //     request names a source document, "Stop it with a hold" — the files
 //     they examined (every file under review by default), a note of what
 //     they found (required — a stop says why) and the hold's reason.
+//     The form is offered only when the viewer may place holds (holds.open,
+//     judged by lib/holds.ts holdControlsFor — the same policy, additive
+//     roles and read-only subtraction openHold's capability check applies);
+//     otherwise the occupant is told plainly they cannot stop it with a hold
+//     and where an Admin allows it. The policy is read for this (fail
+//     closed: until it is read, or when it cannot be, no form). A round with
+//     no files under review records the note alone.
 // A record is shown as a slot's stop ONLY when the hold's opener (opened_by —
 // tied to the session for a record by 20261267's opener check) is one of
 // that notify-only slot's people in the round the record names (the roster
@@ -37,7 +44,9 @@ import {
   rosterOnRecord, isNotifyExaminationSlot, holdExaminationRecord, holdExaminationOf, examinationFileKey, examinedFilesText, shortHash,
   EXAMINATION_NOTE_MAX, rosterOccupancy, holdOpenerInSlot, type SlotOccupancy,
 } from "@/lib/assuranceExamination";
-import { openHold, isMissingHoldExaminationColumn, HOLD_REASON_CODES, OTHER_HOLD_REASON } from "@/lib/holds";
+import { openHold, isMissingHoldExaminationColumn, holdControlsFor, HOLD_REASON_CODES, OTHER_HOLD_REASON } from "@/lib/holds";
+import { loadCapabilityPolicyEntry, type CapabilityPolicy } from "@/lib/capabilityPolicy";
+import { affordancePolicyFault } from "@/lib/checkoutAffordances";
 import type { Ticket } from "@/types/schema";
 
 export interface NotifyHoldExaminationProps {
@@ -45,6 +54,10 @@ export interface NotifyHoldExaminationProps {
   orgId: string | null;
   uid: string | null;
   userName?: string | null;
+  /** The viewer's headline role and additive role collection (useRole()),
+   *  for the holds.open check that decides whether the form is offered. */
+  role?: string | null;
+  roles?: readonly string[] | null;
 }
 
 /** What the panel says when the hold landed but its record could not be
@@ -61,6 +74,15 @@ export const notSlotHoldsText = (n: number): string =>
   `${n} hold${n === 1 ? "" : "s"} on the source document name${n === 1 ? "s" : ""} this request but ${n === 1 ? "was" : "were"} not placed by the people of the slot named — not shown as their stop.`;
 export const uncheckedHoldsText = (n: number): string =>
   `${n} hold${n === 1 ? "" : "s"} from an earlier review round could not be checked against that round's slot (its roster record could not be read) — not shown.`;
+/** What the panel says to an occupant whose role may not place holds. */
+export const HOLD_NOT_PERMITTED =
+  "Your role isn't allowed to place holds, so you cannot stop this review with a hold. An Admin can change this under Admin → Permissions → Action permissions (Place a hold). To stop it now, raise it with the assignment queue.";
+/** What the panel says when whether the viewer may place holds could not be read. */
+export const holdPermissionUncheckedText = (why: string): string =>
+  `Whether you may place a hold could not be checked just now (${why}).`;
+/** What the panel says when the round has no files under review. */
+export const NO_FILES_UNDER_REVIEW =
+  "There are no files under review in this round — what you found is the record.";
 /** What the panel says to an occupant when the request names no document. */
 export const NO_SOURCE_TO_HOLD =
   "This request names no controlled document, so there is nothing to hold. To stop it, raise it with the assignment queue.";
@@ -76,7 +98,7 @@ interface HoldRow {
   examination: unknown;
 }
 
-export default function NotifyHoldExamination({ ticket, orgId, uid, userName }: NotifyHoldExaminationProps) {
+export default function NotifyHoldExamination({ ticket, orgId, uid, userName, role, roles }: NotifyHoldExaminationProps) {
   const ticketId = ticket.id ?? "";
   const recordRoster = useMemo(() => rosterOnRecord(ticket), [ticket]);
   const recordRosterId = recordRoster?.id ?? null;
@@ -99,6 +121,31 @@ export default function NotifyHoldExamination({ ticket, orgId, uid, userName }: 
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "ok" | "warn" | "error"; text: string } | null>(null);
+  const [policy, setPolicy] = useState<CapabilityPolicy | null>(null);
+  const [policyFault, setPolicyFault] = useState<string | null>(null);
+  const [policyTry, setPolicyTry] = useState(0);
+  const offerForm = !!occupantSlot && !!sourceId && !!orgId;
+
+  // Whether the occupant may place holds at all (holds.open), read only for
+  // an occupant who would be offered the form. Fail closed: no policy read,
+  // no form — the same rule as the hold strip (AUTHZ-15).
+  useEffect(() => {
+    if (!offerForm || !orgId) { setPolicy(null); setPolicyFault(null); return; }
+    let alive = true;
+    void loadCapabilityPolicyEntry(orgId)
+      .then((e) => {
+        if (!alive) return;
+        const fault = affordancePolicyFault(e);
+        if (fault) { setPolicy(null); setPolicyFault(fault); return; }
+        setPolicy(e.policy); setPolicyFault(null);
+      })
+      .catch((err: unknown) => {
+        if (!alive) return;
+        setPolicy(null); setPolicyFault((err as Error)?.message || "the capability policy could not be read");
+      });
+    return () => { alive = false; };
+  }, [offerForm, orgId, policyTry]);
+  const mayPlace = !!policy && holdControlsFor(policy, role ?? null, roles ?? null, uid).canOpen;
 
   useEffect(() => {
     if (!active || !sourceId || !orgId || !ticketId) { setHolds(null); return; }
@@ -142,7 +189,8 @@ export default function NotifyHoldExamination({ ticket, orgId, uid, userName }: 
   const place = useCallback(async () => {
     if (!openRoster || !occupantSlot || !sourceId || !orgId || !uid || !ticketId) return;
     setMessage(null);
-    const built = holdExaminationRecord(openRoster, ticketId, occupantSlot, { files: picked, note }, description);
+    // A round with no files under review: the note alone is the record.
+    const built = holdExaminationRecord(openRoster, ticketId, occupantSlot, { files: files.length > 0 ? picked : undefined, note }, description);
     if (!built.ok) { setMessage({ tone: "error", text: built.error }); return; }
     if (reason === OTHER_HOLD_REASON && !description.trim()) {
       setMessage({ tone: "error", text: `An "${OTHER_HOLD_REASON}" hold needs a description — say what the document is held for.` });
@@ -164,7 +212,7 @@ export default function NotifyHoldExamination({ ticket, orgId, uid, userName }: 
     } finally {
       setBusy(false);
     }
-  }, [openRoster, occupantSlot, sourceId, orgId, uid, ticketId, picked, note, description, reason, userName]);
+  }, [openRoster, occupantSlot, sourceId, orgId, uid, ticketId, files.length, picked, note, description, reason, userName]);
 
   if (!active) return null;
 
@@ -204,9 +252,17 @@ export default function NotifyHoldExamination({ ticket, orgId, uid, userName }: 
       {unchecked > 0 && <p className="text-[var(--color-text-faint)]" data-testid="notify-hold-unchecked">{uncheckedHoldsText(unchecked)}</p>}
       {more && <p className="text-[var(--color-text-faint)]" data-testid="notify-hold-more">{NOTIFY_HOLDS_MORE}</p>}
       {occupantSlot && !sourceId && <p className="text-[var(--color-text-muted)]" data-testid="notify-hold-no-source">{NO_SOURCE_TO_HOLD}</p>}
-      {occupantSlot && sourceId && (
+      {offerForm && !policy && policyFault && (
+        <p className="text-[var(--color-text-muted)]" data-testid="notify-hold-permission-unchecked">
+          {holdPermissionUncheckedText(policyFault)}{" "}
+          <button type="button" className="underline" onClick={() => setPolicyTry((n) => n + 1)}>Try again</button>
+        </p>
+      )}
+      {offerForm && policy && !mayPlace && <p className="text-[var(--color-text-muted)]" data-testid="notify-hold-not-permitted">{HOLD_NOT_PERMITTED}</p>}
+      {offerForm && mayPlace && occupantSlot && (
         <div className="space-y-1.5 border border-[var(--color-border)] rounded-lg p-2" data-testid="notify-hold-form">
           <div className="text-[var(--color-text-muted)]">You are told of this review ({occupantSlot.label || occupantSlot.kind}) and nobody waits on you. To stop it, place a hold on its source document{source?.documentNumber ? ` ${source.documentNumber}` : ""} — it records what you examined.</div>
+          {files.length === 0 && <div className="text-[var(--color-text-muted)]" data-testid="notify-hold-no-files">{NO_FILES_UNDER_REVIEW}</div>}
           {files.length > 0 && (
             <fieldset className="space-y-0.5">
               <legend className="font-bold text-[var(--color-text-muted)]">What you examined</legend>
@@ -235,7 +291,7 @@ export default function NotifyHoldExamination({ ticket, orgId, uid, userName }: 
             <span className="font-bold text-[var(--color-text-muted)]">Hold description{reason === OTHER_HOLD_REASON ? " (required)" : ""}</span>
             <input aria-label="Hold description" className="w-full border border-[var(--color-border)] rounded p-1" value={description} onChange={(e) => setDescription(e.target.value)} />
           </label>
-          <button type="button" disabled={busy || picked.length === 0} onClick={() => void place()} className="text-xs font-bold text-rose-700 disabled:opacity-50" data-testid="notify-hold-place">
+          <button type="button" disabled={busy || (files.length > 0 && picked.length === 0)} onClick={() => void place()} className="text-xs font-bold text-rose-700 disabled:opacity-50" data-testid="notify-hold-place">
             {busy ? "Placing…" : "Stop it with a hold"}
           </button>
         </div>
