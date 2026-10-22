@@ -283,14 +283,16 @@ function rosterHolders(ticket: RosterTicket, ctx?: HoldersContext): TicketHolder
   // not waited on. While another slot is open the review waits on that
   // slot's people alone; when the window's slot is the only one open, the
   // review waits on nobody's sign-off and the line says who may object until
-  // when (the window's card says the rest).
+  // when (the window's card says the rest). The name is worded to follow the
+  // request page's fixed "Waiting on" (DF-P22 fix pass): "Waiting on
+  // nobody's sign-off — "X" goes ahead unless someone objects".
   const waits = all.filter((w) => !w.window);
   if (waits.length === 0) {
     return all.map((w) => {
       const names = (w.window?.recipients ?? []).map((uid) => (ctx?.memberNames?.get(uid) ?? "").trim());
       const named = names.filter(Boolean);
       const who = named.length === names.length && named.length > 0 ? named.join(", ") : "the people it asked";
-      return { kind: "consent_window" as const, uid: null, name: `no sign-off ("${w.label}" goes ahead unless someone objects)`, part: `${who} may object until ${recordMoment(w.window?.closesAt)}` };
+      return { kind: "consent_window" as const, uid: null, name: `nobody's sign-off — "${w.label}" goes ahead unless someone objects`, part: `${who} may object until ${recordMoment(w.window?.closesAt)}` };
     });
   }
   const part = joinLabels(waits.map((w) => w.label));

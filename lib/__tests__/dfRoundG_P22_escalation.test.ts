@@ -13,6 +13,7 @@ import { join } from "node:path";
 import {
   parseSlaEscalation, escalationPeriodIndex, breachUncleared, escalationRecipients, slaEscalationNotice, runSlaEscalationScan,
   SLA_ACTION, SLA_NOTICE_ACTIONS, SLA_ESCALATION_ACTOR, SLA_ESCALATION_AUDIT_ACTION, SLA_ESCALATION_DEFAULT_DAYS,
+  SLA_ESCALATION_KEY, SLA_ESCALATION_DIGEST_ACTION, escalationOrgOrder, slaEscalationDigest, escalationAudienceFor,
   type SlaEmitInput,
 } from "@/lib/ticketSla";
 
@@ -34,8 +35,18 @@ function builder(table: string) {
   let op: "select" | "insert" | "delete" | "update" = "select";
   let payload: unknown = null;
   let limit = Infinity;
+  const orders: Array<{ k: string; asc: boolean }> = [];
   db.calls.push({ table, method: "from" });
-  const matched = () => (db.tables[table] ?? []).filter((r) => filters.every((f) => f(r)));
+  const matched = () => {
+    const rows = (db.tables[table] ?? []).filter((r) => filters.every((f) => f(r)));
+    return orders.length === 0 ? rows : [...rows].sort((a, b) => {
+      for (const o of orders) {
+        const x = String(pathGet(a, o.k) ?? ""), y = String(pathGet(b, o.k) ?? "");
+        if (x !== y) return (x < y ? -1 : 1) * (o.asc ? 1 : -1);
+      }
+      return 0;
+    });
+  };
   const b: Record<string, unknown> = {
     select: () => b,
     eq: (k: string, v: unknown) => { filters.push((r) => pathGet(r, k) === v); return b; },
@@ -47,7 +58,17 @@ function builder(table: string) {
     },
     in: (k: string, vs: unknown[]) => { filters.push((r) => vs.includes(pathGet(r, k))); return b; },
     lte: (k: string, v: string) => { filters.push((r) => String(pathGet(r, k)) <= v); return b; },
-    order: () => b,
+    gt: (k: string, v: string) => { filters.push((r) => String(pathGet(r, k)) > v); return b; },
+    contains: (k: string, vs: unknown[]) => { filters.push((r) => Array.isArray(pathGet(r, k)) && vs.every((v) => (pathGet(r, k) as unknown[]).includes(v))); return b; },
+    // The escalation pass's keyset: col.gt."X",and(col.eq."X",id.gt.Y).
+    or: (expr: string) => {
+      const m = /^(\w+)\.gt\."([^"]*)",and\(\1\.eq\."([^"]*)",id\.gt\.([^)]+)\)$/.exec(expr);
+      if (!m) throw new Error(`unexpected or(): ${expr}`);
+      const [, col, at, , id] = m;
+      filters.push((r) => String(pathGet(r, col)) > at || (String(pathGet(r, col)) === at && String(r.id) > id));
+      return b;
+    },
+    order: (k: string, o?: { ascending?: boolean }) => { orders.push({ k, asc: o?.ascending !== false }); return b; },
     limit: (n: number) => { limit = n; return b; },
     insert: (rows: unknown) => { op = "insert"; payload = rows; return b; },
     delete: () => { op = "delete"; return b; },
@@ -114,7 +135,8 @@ beforeEach(() => {
   emitted = [];
   reach = 1;
 });
-const configure = (esc: unknown) => { db.tables.org_configurations = [{ org_id: ORG, key: "drafting", data: { requestTypes: { options: [] }, slaEscalation: esc } }]; };
+// DF-P22 fix pass: the tier lives in its own key (Admin-only, server-written).
+const configure = (esc: unknown, org = ORG) => { db.tables.org_configurations = [...db.tables.org_configurations.filter((r) => r.org_id !== org), { org_id: org, key: "sla_escalation", data: esc }]; };
 
 describe("the escalation setting — parsed, never guessed", () => {
   it("absent or null → nothing configured (today's behaviour); a contact with no period → the default period", () => {
@@ -159,14 +181,14 @@ describe("no contact configured = exactly today's behaviour", () => {
       db.tables.tickets = [breachedTicket(state)];
       db.calls = [];
       const r = await runSlaEscalationScan({ client, emit, now: NOW });
-      expect(r).toEqual({ ready: false, configured: 0, scanned: 0, escalated: 0, unreached: 0, truncated: false, errors: [] });
+      expect(r).toEqual({ ready: false, configured: 0, scanned: 0, escalated: 0, unreached: 0, outOfScope: 0, truncated: false, errors: [] });
       expect(db.calls.map((c) => c.table)).toEqual(["org_configurations"]);
       expect(emitted).toEqual([]);
       expect(db.tables.audit_logs).toEqual([]);
     }
   });
-  it("a drafting configuration WITHOUT slaEscalation is not even returned by the read (the row filter), so it is today's step", async () => {
-    db.tables.org_configurations = [{ org_id: ORG, key: "drafting", data: { requestTypes: { options: [] } } }];
+  it("the request-form configuration is never read for it — even a stale drafting.slaEscalation is not a contact (the tier is its own key)", async () => {
+    db.tables.org_configurations = [{ org_id: ORG, key: "drafting", data: { requestTypes: { options: [] }, slaEscalation: { contact: { kind: "role", role: "Admin" } } } }];
     const r = await runSlaEscalationScan({ client, emit, now: NOW });
     expect(r.configured).toBe(0);
     expect(emitted).toEqual([]);
@@ -247,6 +269,142 @@ describe("a configured contact hears of an uncleared breach once per breach per 
     const second = runSlaEscalationScan({ client, emit, now: NOW });
     await Promise.all([first, second]);
     expect(emitted).toHaveLength(1);
+  });
+});
+
+// ─── DF-P22 fix pass ────────────────────────────────────────────────────────
+const CONTRACTOR = "33333333-3333-4333-8333-333333333333";
+const days = (n: number) => new Date(Date.parse("2026-10-15T03:00:00Z") - n * DAY).toISOString();
+const many = (n: number, prefix: string, org = ORG, over: Row = {}): Row[] =>
+  Array.from({ length: n }, (_, i) => breachedTicket({ id: `${prefix}${String(i).padStart(4, "0")}`, org_id: org, ticket_id: `REQ-${prefix}${i}`, sla_breached_at: days(n - i), ...over }));
+const alreadyTold = (rows: Row[], periodDays: number) => rows.map((r) => ({
+  ticket_id: r.id, breached_at: r.sla_breached_at, period_index: escalationPeriodIndex(String(r.sla_breached_at), NOW, periodDays),
+}));
+
+describe("DF-P22 fix pass — every due breach is reached (the read never starves on the ones already told)", () => {
+  it("more than maxTickets breaches already told for this period, plus one newly due: the new one is sent", async () => {
+    configure({ contact: { kind: "role", role: "Admin" }, periodDays: 2 });
+    const told = many(7, "a");
+    const fresh = breachedTicket({ id: "z-new", ticket_id: "REQ-NEW", sla_breached_at: "2026-10-16T03:00:00Z" });
+    db.tables.tickets = [...told, fresh];
+    db.tables.ticket_sla_escalations = alreadyTold(told, 2);
+    const r = await runSlaEscalationScan({ client, emit, now: NOW, maxTickets: 3, pageSize: 2 });
+    expect(r.escalated).toBe(1);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].link).toBe("/requests/z-new");
+    expect(r.scanned).toBe(8);
+  });
+  it("a backlog larger than the run's budget drains over runs: what one run told, the next reads past", async () => {
+    configure({ contact: { kind: "member", uid: ADMIN }, periodDays: 2 });
+    db.tables.tickets = many(5, "b");
+    const r1 = await runSlaEscalationScan({ client, emit, now: NOW, maxTickets: 2, pageSize: 10 });
+    expect(r1).toMatchObject({ escalated: 2, truncated: true });
+    const r2 = await runSlaEscalationScan({ client, emit, now: NOW + 60_000, maxTickets: 2, pageSize: 10 });
+    expect(r2.escalated).toBe(2);
+    const r3 = await runSlaEscalationScan({ client, emit, now: NOW + 120_000, maxTickets: 2, pageSize: 10 });
+    expect(r3.escalated).toBe(1);
+    expect(new Set(db.tables.ticket_sla_escalations.map((x) => x.ticket_id)).size).toBe(5);
+  });
+  it("a workspace configured after one with a large backlog still gets its share of the run", async () => {
+    const ORG2 = "o2";
+    db.tables.org_members.push({ ...member(LEAD, "Admin"), org_id: ORG2 });
+    configure({ contact: { kind: "role", role: "Admin" }, periodDays: 2 });
+    configure({ contact: { kind: "role", role: "Admin" }, periodDays: 2 }, ORG2);
+    db.tables.tickets = [...many(10, "c"), breachedTicket({ id: "o2-t", org_id: ORG2, ticket_id: "REQ-O2" })];
+    const r = await runSlaEscalationScan({ client, emit, now: NOW, maxTickets: 4 });
+    expect(db.tables.ticket_sla_escalations.some((x) => x.ticket_id === "o2-t")).toBe(true);
+    expect(r.truncated).toBe(true);
+  });
+  it("the first workspace rotates by the day, so none is always last", () => {
+    const cs = [{ orgId: "b" }, { orgId: "a" }, { orgId: "c" }];
+    const firsts = [0, 1, 2].map((d) => escalationOrgOrder(cs, NOW + d * DAY)[0].orgId);
+    expect(new Set(firsts).size).toBe(3);
+    expect(escalationOrgOrder(cs, NOW).map((c) => c.orgId).sort()).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("DF-P22 fix pass — only the contact's people who may READ the request are told (AUTHZ-13 / DEC-89)", () => {
+  beforeEach(() => { db.tables.org_members.push(member(CONTRACTOR, "Contractor")); db.tables.ticket_comments = []; });
+  it("a Contractor role can never be the contact (refused by the parser, so nothing is sent)", async () => {
+    expect(parseSlaEscalation({ contact: { kind: "role", role: "Contractor" } }).ok).toBe(false);
+    configure({ contact: { kind: "role", role: "Contractor" }, periodDays: 2 });
+    const r = await runSlaEscalationScan({ client, emit, now: NOW });
+    expect(r.configured).toBe(0);
+    expect(emitted).toEqual([]);
+  });
+  it("a Contractor-only member named as the contact hears nothing of a request outside their read; nothing is claimed", async () => {
+    configure({ contact: { kind: "member", uid: CONTRACTOR }, periodDays: 2 });
+    const r = await runSlaEscalationScan({ client, emit, now: NOW });
+    expect(r).toMatchObject({ escalated: 0, outOfScope: 1 });
+    expect(emitted).toEqual([]);
+    expect(db.tables.ticket_sla_escalations).toEqual([]);
+    expect(db.tables.audit_logs).toEqual([]);
+    expect(r.errors.join(" ")).toMatch(/none of the escalation contact's people may read this request/);
+  });
+  it("…and is told of one they requested, watch or were mentioned on", async () => {
+    configure({ contact: { kind: "member", uid: CONTRACTOR }, periodDays: 2 });
+    db.tables.tickets = [
+      breachedTicket({ id: "t-req", requester_id: CONTRACTOR }),
+      breachedTicket({ id: "t-watch", watchers: [CONTRACTOR] }),
+      breachedTicket({ id: "t-ment" }),
+      breachedTicket({ id: "t-out" }),
+    ];
+    db.tables.ticket_comments = [{ id: "c1", ticket_id: "t-ment", mentioned_uids: [CONTRACTOR], deleted_at: null }];
+    const r = await runSlaEscalationScan({ client, emit, now: NOW });
+    expect(r).toMatchObject({ escalated: 3, outOfScope: 1 });
+    expect(db.tables.ticket_sla_escalations.map((x) => x.ticket_id).sort()).toEqual(["t-ment", "t-req", "t-watch"]);
+  });
+  it("per request, the audience keeps everyone with the workspace read and drops a Contractor-only member outside their read", async () => {
+    const ms = [{ uid: ADMIN, role: "Admin", roles: ["Admin"] }, { uid: CONTRACTOR, role: "Contractor", roles: ["Contractor"] },
+      { uid: LEAD, role: "Contractor", roles: ["Contractor", "QAQC"] }];
+    const out = await escalationAudienceFor(client, ms, [ADMIN, CONTRACTOR, LEAD, "gone"], { id: "t1", requesterId: "req", watchers: [] });
+    expect(out).toEqual({ uids: [ADMIN, LEAD], out: 2, unknown: 0 });
+    const inScope = await escalationAudienceFor(client, ms, [CONTRACTOR], { id: "t1", assignedEngineerId: CONTRACTOR });
+    expect(inScope.uids).toEqual([CONTRACTOR]);
+  });
+  it("a read that cannot be checked leaves that person out for this run (never told on a guess)", async () => {
+    configure({ contact: { kind: "member", uid: CONTRACTOR }, periodDays: 2 });
+    db.errors.ticket_comments = { message: "timeout" };
+    const r = await runSlaEscalationScan({ client, emit, now: NOW });
+    expect(emitted).toEqual([]);
+    expect(r.outOfScope).toBe(1);
+    expect(r.errors.join(" ")).toMatch(/could not be checked/);
+  });
+});
+
+describe("DF-P22 fix pass — one notice per person per workspace per run (a digest), each request still claimed and audited", () => {
+  it("three due breaches → ONE notice to the contact naming all three; three claims, three audit rows", async () => {
+    configure({ contact: { kind: "member", uid: ADMIN }, periodDays: 2 });
+    db.tables.tickets = many(3, "d");
+    const r = await runSlaEscalationScan({ client, emit, now: NOW, zoneOf: async () => "UTC" });
+    expect(r.escalated).toBe(3);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({ audience: { involved: [ADMIN] }, link: "/requests", kind: "ticket_status", category: "sla",
+      metadata: { action: SLA_ESCALATION_DIGEST_ACTION, digest: true, periodDays: 2 } });
+    expect((emitted[0].metadata.tickets as unknown[]).length).toBe(3);
+    expect(emitted[0].title).toBe("Escalated: 3 requests still overdue");
+    expect(emitted[0].body).toMatch(/REQ-d0 Gasket.*REQ-d1 Gasket.*REQ-d2 Gasket/);
+    expect(db.tables.ticket_sla_escalations).toHaveLength(3);
+    expect(db.tables.audit_logs).toHaveLength(3);
+    expect(db.tables.audit_logs.every((a) => (a.details as Row).digest === true)).toBe(true);
+  });
+  it("the digest names ten and counts the rest; its action is never retired by one request leaving its stage", () => {
+    const items = Array.from({ length: 12 }, (_, i) => ({ t: { id: `t${i}`, orgId: ORG, ticketId: `REQ-${i}`, title: "G", status: "DRAFTING" }, breachedAt: "2026-10-15T03:00:00Z" }));
+    const d = slaEscalationDigest(items, 2, "UTC");
+    expect(d.body).toMatch(/; and 2 more\./);
+    expect(SLA_NOTICE_ACTIONS.has(SLA_ESCALATION_DIGEST_ACTION)).toBe(false);
+  });
+  it("a digest that reached nobody releases every claim it carried (retried next run), no audit row", async () => {
+    configure({ contact: { kind: "member", uid: ADMIN }, periodDays: 2 });
+    db.tables.tickets = many(2, "e");
+    reach = 0;
+    const r = await runSlaEscalationScan({ client, emit, now: NOW });
+    expect(r.unreached).toBe(2);
+    expect(db.tables.ticket_sla_escalations).toEqual([]);
+    expect(db.tables.audit_logs).toEqual([]);
+  });
+  it("the configuration key is its own (sla_escalation), not the request-form configuration", () => {
+    expect(SLA_ESCALATION_KEY).toBe("sla_escalation");
   });
 });
 

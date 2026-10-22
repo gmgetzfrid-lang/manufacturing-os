@@ -51,6 +51,9 @@ import {
 import { formatRecordDate } from "@/lib/recordTime";
 import { ticketStatusLabel } from "@/lib/ticketStatusLabels";
 import { SLA_DEFAULT_DAYS_MAX, boundedSlaDays } from "@/lib/notifications";
+// DF-P22 fix pass (AUTHZ-13 / DEC-89): an escalation names a request only to
+// the contact's people who may read it.
+import { isContractorOnly, ticketReadScope, type ScopedTicket } from "@/lib/ticketReadScope";
 
 /** GAP-106: the fraction of the SLA window at which the owner is warned. */
 export const SLA_WARN_FRACTION = 0.75;
@@ -238,6 +241,9 @@ export interface SlaScanDeps {
   maxTickets?: number;
   /** Stop starting new tickets past this time (ms epoch). */
   deadlineAt?: number;
+  /** DF-P22 escalation pass only: the most breach rows one run reads (the
+   *  ones already told included); default maxTickets × SLA_ESCALATION_SCAN_FACTOR. */
+  maxScanned?: number;
 }
 
 export interface SlaScanReport {
@@ -527,20 +533,37 @@ export async function runTicketSlaScan(deps: SlaScanDeps): Promise<SlaScanReport
 // DEC-90 ruling (1) for DF-P22 (fail-safe, no regression):
 //   * A workspace MAY configure an escalation contact — a named member or a
 //     role — and a period (whole days, 1 to SLA_ESCALATION_MAX_DAYS; default
-//     SLA_ESCALATION_DEFAULT_DAYS). It lives in the request-form
-//     configuration (org_configurations key 'drafting', `slaEscalation`),
-//     so exactly the request-form editors may set it (20261209's write rule).
+//     SLA_ESCALATION_DEFAULT_DAYS). It lives in its own configuration key
+//     (org_configurations key SLA_ESCALATION_KEY), written ONLY by
+//     /api/admin/sla-escalation for an Admin (by the held collection), with
+//     an audit row for every change; 20261264 refuses every client write of
+//     that key. The queue owners it sits above (the DraftingSupervisor
+//     holders who edit the request forms) cannot switch it off or point it
+//     at themselves (DF-P22 fix pass — the escalated party never controls
+//     the escalation).
 //   * A breach (sla_breached_at) the queue owners have not cleared — the
 //     request is still open, not archived, and still past its target — for a
 //     whole period tells the contact ONCE per breach per period: at breach +
 //     1 period, again at breach + 2 periods while it stays uncleared, and so
 //     on. A run that missed some periods sends one notice for the period it
 //     is in, never one per missed period.
+//   * Only to the contact's people who may READ the request (AUTHZ-13 /
+//     DEC-89): a Contractor-only member is told only of a request in their
+//     narrowed read (lib/ticketReadScope.ts); a read that cannot be checked
+//     leaves them out for this run.
 //   * Through an existing notification kind (`ticket_status`, category
-//     `sla` — the "SLA warnings" preference, bell + email through emit()),
-//     each recorded on an audit row (TICKET_SLA_ESCALATED, the system actor)
-//     and claimed on ticket_sla_escalations (20261264 — one row per breach
-//     per period; the unique key is the claim, so two runs never send twice).
+//     `sla` — the "SLA warnings" preference, bell + email through emit()):
+//     ONE notice per person per workspace per run — the request itself when
+//     it is the only one due for them, else a digest naming them — each
+//     request still claimed on ticket_sla_escalations (20261264 — one row per
+//     breach per period; the unique key is the claim, so two runs never send
+//     twice) and recorded on its own audit row (TICKET_SLA_ESCALATED, the
+//     system actor).
+//   * Every due breach is reached: a run reads, per workspace, past the
+//     breaches already told for their current period (keyset pages on
+//     (sla_breached_at, id)) until it has its share of breaches to tell; the
+//     budget is shared fairly among the configured workspaces, and the
+//     workspace that goes first rotates daily.
 //   * Escalation only TELLS: it never reassigns, never changes a status,
 //     never blocks anyone, and writes nothing on the ticket.
 //   * No contact configured (no key, or a value this parser cannot use) =
@@ -551,12 +574,27 @@ export async function runTicketSlaScan(deps: SlaScanDeps): Promise<SlaScanReport
 /** The machine actor the escalation's audit row names (DEC-87 §2). */
 export const SLA_ESCALATION_ACTOR = "system:sla-clock";
 export const SLA_ESCALATION_AUDIT_ACTION = "TICKET_SLA_ESCALATED";
-/** The configuration key inside org_configurations 'drafting'. */
-export const SLA_ESCALATION_KEY = "slaEscalation";
+/** The audit row an Admin's change of the tier writes (/api/admin/sla-escalation;
+ *  the TICKET_ family, with its _NOT_APPLIED follow-up). */
+export const SLA_ESCALATION_SET_AUDIT = "TICKET_SLA_ESCALATION_SET";
+/** The org_configurations key that holds the tier (Admin-only, server-written). */
+export const SLA_ESCALATION_KEY = "sla_escalation";
 export const SLA_ESCALATION_DEFAULT_DAYS = 2;
 export const SLA_ESCALATION_MAX_DAYS = 30;
-/** The migration that carries the claim table. */
+/** The migration that carries the claim table and the key's write rule. */
 export const SLA_ESCALATION_MIGRATION = "20261264";
+/** A role that can never be the contact: its holders read only their own
+ *  requests (20261166), so a role-wide escalation would name requests they
+ *  may not see. */
+export const SLA_ESCALATION_REFUSED_ROLES: readonly string[] = ["Contractor"];
+/** The digest's metadata action. NOT one of SLA_NOTICE_ACTIONS: a digest
+ *  names several requests, so one request leaving its stage never retires it. */
+export const SLA_ESCALATION_DIGEST_ACTION = "sla_escalation_digest";
+/** How many requests a digest names one by one (the rest are counted). */
+export const SLA_ESCALATION_DIGEST_NAMED = 10;
+/** Rows a run may read past the breaches already told, per breach it may
+ *  tell (a bound when no deadline is given; the cron passes its deadline). */
+export const SLA_ESCALATION_SCAN_FACTOR = 50;
 
 export type SlaEscalationContact = { kind: "member"; uid: string } | { kind: "role"; role: string };
 export interface SlaEscalationConfig { contact: SlaEscalationContact; periodDays: number }
@@ -585,6 +623,7 @@ export function parseSlaEscalation(raw: unknown): { ok: true; config: SlaEscalat
   } else if (c.kind === "role") {
     const role = typeof c.role === "string" ? c.role.trim() : "";
     if (!role) return { ok: false, error: "the escalation contact names no role" };
+    if (SLA_ESCALATION_REFUSED_ROLES.includes(role)) return { ok: false, error: `the role ${role} cannot be the escalation contact (its holders read only their own requests)` };
     contact = { kind: "role", role };
   } else {
     return { ok: false, error: "the escalation contact is neither a member nor a role" };
@@ -618,10 +657,39 @@ export function breachUncleared(t: Pick<SlaTicket, "status" | "slaBreachedAt" | 
 
 /** The members the contact names now: the named member while they are an
  *  active member, or every active member HOLDING the role (the additive
- *  collection — ADD-1, never the headline alone). Sorted. Pure. */
+ *  collection — ADD-1, never the headline alone). Sorted. Pure. Who of them
+ *  may read a given request is decided per request (escalationAudienceFor). */
 export function escalationRecipients(contact: SlaEscalationContact, members: ReadonlyArray<{ uid: string; roles: readonly string[] }>): string[] {
   if (contact.kind === "member") return members.some((m) => m.uid === contact.uid) ? [contact.uid] : [];
   return [...new Set(members.filter((m) => m.roles.includes(contact.role)).map((m) => m.uid))].sort();
+}
+
+/**
+ * Of the contact's people, those who may READ this request (AUTHZ-13 /
+ * DEC-89): everyone whose read is the workspace's, and a Contractor-only
+ * member only when lib/ticketReadScope.ts places the request in their
+ * narrowed read. `unknown` counts the people whose read could not be checked
+ * (the mention lookup failed) — they are left out for this run.
+ */
+export async function escalationAudienceFor(
+  client: RoutingClient,
+  members: ReadonlyArray<{ uid: string; role?: unknown; roles?: unknown }>,
+  recipients: readonly string[],
+  ticket: ScopedTicket,
+): Promise<{ uids: string[]; out: number; unknown: number }> {
+  const uids: string[] = [];
+  let out = 0;
+  let unknown = 0;
+  for (const uid of recipients) {
+    const member = members.find((m) => m.uid === uid);
+    if (!member) { out += 1; continue; }
+    if (!isContractorOnly(member)) { uids.push(uid); continue; }
+    const scope = await ticketReadScope(client as never, member, uid, ticket);
+    if (scope === "in") uids.push(uid);
+    else if (scope === "unknown") unknown += 1;
+    else out += 1;
+  }
+  return { uids, out, unknown };
 }
 
 /** The escalation notice's words. It tells; it asks nobody to do anything
@@ -639,15 +707,35 @@ export function slaEscalationNotice(
   };
 }
 
+/** The digest's words: one notice naming every request due for one person
+ *  in one run (the first SLA_ESCALATION_DIGEST_NAMED by name). Pure. */
+export function slaEscalationDigest(
+  items: ReadonlyArray<{ t: SlaTicket; breachedAt: string }>, periodDays: number, timeZone?: string | null,
+): { title: string; body: string } {
+  const named = items.slice(0, SLA_ESCALATION_DIGEST_NAMED).map(({ t, breachedAt }) => {
+    const label = `${t.ticketId ?? ""} ${t.title ?? ""}`.trim() || "a drafting request";
+    return `${label} (overdue since ${formatRecordDate(breachedAt, timeZone ?? null)}, at the “${ticketStatusLabel(String(t.status))}” stage)`;
+  });
+  const rest = items.length - named.length;
+  return {
+    title: `Escalated: ${items.length} requests still overdue`,
+    body: `${items.length} requests are still overdue ${periodDays} day${periodDays === 1 ? "" : "s"} or more after their queues were told: ${named.join("; ")}${rest > 0 ? `; and ${rest} more` : ""}. You are this workspace's escalation contact; nothing was reassigned or changed.`,
+  };
+}
+
 export interface SlaEscalationReport {
   /** False until 20261264 is pasted (nothing is sent; said). */
   ready: boolean;
   /** Workspaces with a usable escalation contact. */
   configured: number;
+  /** Breaches read (including those already told for their period). */
   scanned: number;
   escalated: number;
   /** Escalations due whose notice reached nobody (claim released; retried). */
   unreached: number;
+  /** Escalations due that none of the contact's people may read (nothing
+   *  claimed or sent; said). */
+  outOfScope: number;
   truncated: boolean;
   errors: string[];
 }
@@ -656,6 +744,7 @@ interface EscRow {
   id: string; org_id: string; ticket_id: string | null; title: string | null; status: string; request_type: string | null;
   requester_id: string | null; assigned_drafter_id: string | null; assigned_engineer_id: string | null;
   created_at: string | null; target_completion_at: string | null; sla_breach_warned_at: string | null; sla_breached_at: string | null; archived_at: string | null;
+  watchers?: string[] | null;
 }
 
 /** True when the error says 20261264's claim table is not there yet. */
@@ -663,6 +752,15 @@ export function isMissingEscalationTable(err: { code?: string | null; message?: 
   if (!err) return false;
   const code = String(err.code ?? "");
   return (code === "42P01" || code === "PGRST205" || code === "PGRST204" || code === "42703") && /ticket_sla_escalations/.test(String(err.message ?? ""));
+}
+
+/** The configured workspaces in run order: by id, rotated by the day, so no
+ *  workspace is always the last to share the run's budget. Pure. */
+export function escalationOrgOrder<T extends { orgId: string }>(configs: readonly T[], now: number): T[] {
+  const sorted = [...configs].sort((a, b) => (a.orgId < b.orgId ? -1 : a.orgId > b.orgId ? 1 : 0));
+  if (sorted.length === 0) return sorted;
+  const start = Math.floor(now / DAY_MS) % sorted.length;
+  return [...sorted.slice(start), ...sorted.slice(0, start)];
 }
 
 /**
@@ -675,19 +773,21 @@ export async function runSlaEscalationScan(deps: SlaScanDeps): Promise<SlaEscala
   const sb = deps.client;
   const now = deps.now ?? Date.now();
   const nowIso = new Date(now).toISOString();
-  const maxTickets = deps.maxTickets ?? 500;
-  const report: SlaEscalationReport = { ready: false, configured: 0, scanned: 0, escalated: 0, unreached: 0, truncated: false, errors: [] };
+  const maxTickets = Math.max(1, deps.maxTickets ?? 500);
+  const pageSize = Math.max(1, deps.pageSize ?? 200);
+  const maxScanned = Math.max(1, deps.maxScanned ?? maxTickets * SLA_ESCALATION_SCAN_FACTOR);
+  const report: SlaEscalationReport = { ready: false, configured: 0, scanned: 0, escalated: 0, unreached: 0, outOfScope: 0, truncated: false, errors: [] };
   const say = (line: string) => report.errors.push(`ticket-sla-escalation: ${line}`);
   const pastDeadline = () => deps.deadlineAt !== undefined && Date.now() >= deps.deadlineAt;
 
   // (0) Who configured a contact? No row → today's behaviour, nothing else read.
   const { data: cfgRows, error: cfgErr } = await sb.from("org_configurations")
-    .select("org_id, data").eq("key", "drafting").not(`data->${SLA_ESCALATION_KEY}`, "is", null);
+    .select("org_id, data").eq("key", SLA_ESCALATION_KEY);
   if (cfgErr) { say(`the escalation settings could not be read — nobody was escalated to: ${cfgErr.message}`); return report; }
   const configs: Array<{ orgId: string; config: SlaEscalationConfig }> = [];
-  for (const r of ((cfgRows as Array<{ org_id: string; data: Record<string, unknown> | null }> | null) ?? [])) {
-    const parsed = parseSlaEscalation(r.data?.[SLA_ESCALATION_KEY]);
-    if (!parsed.ok) { say(`org ${r.org_id}: ${parsed.error} — nobody is escalated to until it is corrected (Admin → Request forms)`); continue; }
+  for (const r of ((cfgRows as Array<{ org_id: string; data: unknown }> | null) ?? [])) {
+    const parsed = parseSlaEscalation(r.data);
+    if (!parsed.ok) { say(`org ${r.org_id}: ${parsed.error} — nobody is escalated to until an Admin corrects it (Admin → Request forms)`); continue; }
     if (parsed.config) configs.push({ orgId: r.org_id, config: parsed.config });
   }
   report.configured = configs.length;
@@ -702,91 +802,153 @@ export async function runSlaEscalationScan(deps: SlaScanDeps): Promise<SlaEscala
   }
   report.ready = true;
 
-  let read = 0;
-  for (const { orgId, config } of configs) {
+  const ordered = escalationOrgOrder(configs, now);
+  let sendLeft = maxTickets;
+  let readLeft = maxScanned;
+  for (let i = 0; i < ordered.length; i++) {
+    const { orgId, config } = ordered[i];
     if (pastDeadline()) { report.truncated = true; break; }
-    if (read >= maxTickets) { report.truncated = true; break; }
+    // A fair share of what is left, for this workspace and each after it.
+    const orgsLeft = ordered.length - i;
+    const share = Math.ceil(sendLeft / orgsLeft);
+    const readShare = Math.ceil(readLeft / orgsLeft);
+    if (share <= 0 || readShare <= 0) { report.truncated = true; break; }
     let ctx: Awaited<ReturnType<typeof loadRoutingContext>>;
     try { ctx = await loadRoutingContext(orgId, sb); } catch (e) { ctx = { ok: false, error: (e as Error)?.message ?? String(e) }; }
     if (!ctx.ok) { say(`org ${orgId}: its members could not be read — nobody was escalated to: ${ctx.error}`); continue; }
-    const recipients = escalationRecipients(config.contact, ctx.members);
+    const members = ctx.members;
+    const recipients = escalationRecipients(config.contact, members);
     if (recipients.length === 0) {
       say(`org ${orgId}: its escalation contact (${config.contact.kind === "member" ? "a member who is no longer active" : `the role ${config.contact.role}, which no active member holds`}) names nobody — nobody was escalated to`);
       continue;
     }
-    // Breaches at least one whole period old, oldest first.
+
+    // (2) The breaches due now and not yet told for the period they are in:
+    // at least one whole period old, oldest first, keyset-paged on
+    // (sla_breached_at, id) PAST the ones already told — so a backlog told
+    // for this period never stands in front of a breach that is due.
     const due = new Date(now - config.periodDays * DAY_MS).toISOString();
-    const want = maxTickets - read;
-    const { data, error } = await sb.from("tickets")
-      .select(`${SLA_COLUMNS}, archived_at`)
-      .eq("org_id", orgId)
-      .not("status", "in", "(CLOSED,CANCELED)")
-      .is("archived_at", null)
-      .not("sla_breached_at", "is", null)
-      .lte("sla_breached_at", due)
-      .order("sla_breached_at", { ascending: true }).order("id", { ascending: true })
-      .limit(want + 1);
-    if (error) { say(`org ${orgId}: its overdue requests could not be read — nobody was escalated to: ${error.message}`); continue; }
-    let rows = (data as EscRow[] | null) ?? [];
-    if (rows.length > want) { rows = rows.slice(0, want); report.truncated = true; }
-    read += rows.length;
-    if (rows.length === 0) continue;
-    // What was already sent for these breaches.
-    const { data: sent, error: sentErr } = await sb.from("ticket_sla_escalations")
-      .select("ticket_id, breached_at, period_index").in("ticket_id", rows.map((r) => r.id));
-    if (sentErr) { say(`org ${orgId}: the escalations already sent could not be read — nobody was escalated to: ${sentErr.message}`); continue; }
-    const done = new Set(((sent as Array<{ ticket_id: string; breached_at: string; period_index: number }> | null) ?? [])
-      .map((x) => `${x.ticket_id}|${ms(x.breached_at)}|${x.period_index}`));
+    const candidates: Array<{ t: SlaTicket; r: EscRow; periodIndex: number }> = [];
+    let cursor: { at: string; id: string } | null = null;
+    let orgRead = 0;
+    for (;;) {
+      if (candidates.length >= share) break;
+      if (pastDeadline() || orgRead >= readShare) { report.truncated = true; break; }
+      const want = Math.min(pageSize, readShare - orgRead);
+      let q = sb.from("tickets")
+        .select(`${SLA_COLUMNS}, archived_at, watchers`)
+        .eq("org_id", orgId)
+        .not("status", "in", "(CLOSED,CANCELED)")
+        .is("archived_at", null)
+        .not("sla_breached_at", "is", null)
+        .lte("sla_breached_at", due);
+      if (cursor) q = q.or(`sla_breached_at.gt.${pgq(cursor.at)},and(sla_breached_at.eq.${pgq(cursor.at)},id.gt.${cursor.id})`);
+      const { data, error } = await q.order("sla_breached_at", { ascending: true }).order("id", { ascending: true }).limit(want);
+      if (error) { say(`org ${orgId}: its overdue requests could not be read${candidates.length ? " past the first ones found" : ""} — the rest wait for the next run: ${error.message}`); break; }
+      const rows = (data as EscRow[] | null) ?? [];
+      orgRead += rows.length;
+      report.scanned += rows.length;
+      if (rows.length === 0) break;
+      const last = rows[rows.length - 1];
+      cursor = { at: String(last.sla_breached_at), id: last.id };
+      // What was already sent for these breaches.
+      const { data: sent, error: sentErr } = await sb.from("ticket_sla_escalations")
+        .select("ticket_id, breached_at, period_index").in("ticket_id", rows.map((r) => r.id));
+      if (sentErr) { say(`org ${orgId}: the escalations already sent could not be read — none of these was told (retried next run): ${sentErr.message}`); break; }
+      const done = new Set(((sent as Array<{ ticket_id: string; breached_at: string; period_index: number }> | null) ?? [])
+        .map((x) => `${x.ticket_id}|${ms(x.breached_at)}|${x.period_index}`));
+      for (const r of rows) {
+        const t = toTicket(r);
+        if (!breachUncleared({ ...t, archivedAt: r.archived_at }, now)) continue;
+        const periodIndex = escalationPeriodIndex(t.slaBreachedAt, now, config.periodDays);
+        if (periodIndex < 1 || done.has(`${t.id}|${ms(t.slaBreachedAt)}|${periodIndex}`)) continue;
+        if (candidates.length >= share) { report.truncated = true; break; }
+        candidates.push({ t, r, periodIndex });
+      }
+      if (rows.length < want) break;
+    }
+    readLeft -= orgRead;
+    sendLeft -= candidates.length;
+    if (candidates.length === 0) continue;
     const zone = deps.zoneOf ? await deps.zoneOf(orgId).catch(() => null) : null;
 
-    for (const r of rows) {
-      if (pastDeadline()) { report.truncated = true; return report; }
-      report.scanned += 1;
-      const t = toTicket(r);
-      if (!breachUncleared({ ...t, archivedAt: r.archived_at }, now)) continue;
-      const periodIndex = escalationPeriodIndex(t.slaBreachedAt, now, config.periodDays);
-      if (periodIndex < 1 || done.has(`${t.id}|${ms(t.slaBreachedAt)}|${periodIndex}`)) continue;
+    // (3) Per request: the contact's people who may read it, then the claim.
+    const claimed: Array<{ t: SlaTicket; periodIndex: number; claimId: string; auditId: string; to: string[] }> = [];
+    for (const c of candidates) {
+      if (pastDeadline()) { report.truncated = true; break; }
+      const t = c.t;
+      const aud = await escalationAudienceFor(sb, members, recipients, {
+        id: t.id, requesterId: t.requesterId ?? null, assignedDrafterId: t.assignedDrafterId ?? null,
+        assignedEngineerId: t.assignedEngineerId ?? null, watchers: Array.isArray(c.r.watchers) ? c.r.watchers : null,
+      });
+      if (aud.unknown > 0) say(`ticket ${t.id}: whether ${aud.unknown} of the escalation contact's people may read it could not be checked — they are not told of it this run`);
+      if (aud.uids.length === 0) {
+        report.outOfScope += 1;
+        if (aud.unknown === 0) say(`ticket ${t.id}: none of the escalation contact's people may read this request (a Contractor-only member reads only their own requests) — nobody was told of it`);
+        continue;
+      }
       // Claim first: the unique (ticket, breach, period) key means one run
       // sends it. 23505 = another run got there first.
       const claimId = crypto.randomUUID();
       const auditId = crypto.randomUUID();
       const { error: claimErr } = await sb.from("ticket_sla_escalations").insert({
-        id: claimId, org_id: orgId, ticket_id: t.id, breached_at: t.slaBreachedAt, period_index: periodIndex, period_days: config.periodDays,
-        contact: config.contact, recipients, audit_id: auditId, status_at: String(t.status), escalated_at: nowIso,
+        id: claimId, org_id: orgId, ticket_id: t.id, breached_at: t.slaBreachedAt, period_index: c.periodIndex, period_days: config.periodDays,
+        contact: config.contact, recipients: aud.uids, audit_id: auditId, status_at: String(t.status), escalated_at: nowIso,
       });
       if (claimErr) {
         if ((claimErr as { code?: string }).code !== "23505") say(`ticket ${t.id}: the escalation could not be claimed — nothing was sent (retried next run): ${claimErr.message}`);
         continue;
       }
-      const notice = slaEscalationNotice(t, { breachedAt: t.slaBreachedAt!, periodDays: config.periodDays, periodIndex }, zone);
-      let resolved = 0;
+      claimed.push({ t, periodIndex: c.periodIndex, claimId, auditId, to: aud.uids });
+    }
+
+    // (4) ONE notice per person: the request itself when it is the only one
+    // due for them, else a digest naming them all.
+    const byUid = new Map<string, typeof claimed>();
+    for (const k of claimed) for (const u of k.to) byUid.set(u, [...(byUid.get(u) ?? []), k]);
+    const reachedBy = new Map<string, string[]>();
+    for (const [uid, items] of byUid) {
+      const one = items.length === 1;
+      const first = items[0];
+      const notice = one
+        ? slaEscalationNotice(first.t, { breachedAt: first.t.slaBreachedAt!, periodDays: config.periodDays, periodIndex: first.periodIndex }, zone)
+        : slaEscalationDigest(items.map((k) => ({ t: k.t, breachedAt: k.t.slaBreachedAt! })), config.periodDays, zone);
       try {
         const res = await deps.emit({
-          orgId, category: "sla", kind: "ticket_status", title: notice.title, body: notice.body, link: `/requests/${t.id}`,
-          resource: { type: "ticket", id: t.id }, actorName: "System", audience: { involved: recipients },
-          metadata: { action: SLA_ACTION.escalation, status: t.status, sla: "escalation", breachedAt: t.slaBreachedAt, periodIndex, periodDays: config.periodDays },
+          orgId, category: "sla", kind: "ticket_status", title: notice.title, body: notice.body,
+          link: one ? `/requests/${first.t.id}` : "/requests",
+          resource: { type: "ticket", id: first.t.id }, actorName: "System", audience: { involved: [uid] },
+          metadata: one
+            ? { action: SLA_ACTION.escalation, status: first.t.status, sla: "escalation", breachedAt: first.t.slaBreachedAt, periodIndex: first.periodIndex, periodDays: config.periodDays }
+            : { action: SLA_ESCALATION_DIGEST_ACTION, sla: "escalation", digest: true, periodDays: config.periodDays,
+                tickets: items.map((k) => ({ id: k.t.id, breachedAt: k.t.slaBreachedAt, periodIndex: k.periodIndex })) },
         });
-        resolved = res.recipients;
+        if (res.recipients > 0) for (const k of items) reachedBy.set(k.claimId, [...(reachedBy.get(k.claimId) ?? []), uid]);
       } catch (e) {
-        say(`ticket ${t.id}: the escalation notice failed: ${(e as Error)?.message ?? String(e)}`);
+        say(`org ${orgId}: an escalation notice failed: ${(e as Error)?.message ?? String(e)}`);
       }
-      if (resolved === 0) {
-        // Nobody was told: release the claim so the next run tries again.
+    }
+
+    // (5) Per request: nobody reached → the claim is released (retried next
+    // run); else its own audit row, after the notice — it never names a
+    // notice that did not go out (DEC-90). A refused row is said; the claim
+    // row stays the record of the escalation.
+    for (const k of claimed) {
+      const told = (reachedBy.get(k.claimId) ?? []).sort();
+      if (told.length === 0) {
         report.unreached += 1;
-        const { error: relErr } = await sb.from("ticket_sla_escalations").delete().eq("id", claimId);
-        say(`ticket ${t.id}: the escalation reached nobody (${recipients.length} contact(s) resolved) — ${relErr ? `its claim could not be released (${relErr.message}), so it is not retried` : "it is retried on the next run"}`);
+        const { error: relErr } = await sb.from("ticket_sla_escalations").delete().eq("id", k.claimId);
+        say(`ticket ${k.t.id}: the escalation reached nobody (${k.to.length} contact(s) resolved) — ${relErr ? `its claim could not be released (${relErr.message}), so it is not retried` : "it is retried on the next run"}`);
         continue;
       }
       report.escalated += 1;
-      // The record of what was sent (the audit trail's), after the notice:
-      // it never names a notice that did not go out (DEC-90). A refused row
-      // is said; the claim row stays the record of the escalation.
+      const digest = told.some((u) => (byUid.get(u)?.length ?? 0) > 1);
       const { error: aErr } = await sb.from("audit_logs").insert({
-        id: auditId, action: SLA_ESCALATION_AUDIT_ACTION, resource_type: "ticket", resource_id: t.id, org_id: orgId,
+        id: k.auditId, action: SLA_ESCALATION_AUDIT_ACTION, resource_type: "ticket", resource_id: k.t.id, org_id: orgId,
         user_id: null, user_email: SLA_ESCALATION_ACTOR, user_role: "system",
-        details: { status: t.status, breachedAt: t.slaBreachedAt, target: t.targetCompletionAt ?? null, periodIndex, periodDays: config.periodDays, contact: config.contact, recipients, escalation: claimId },
+        details: { status: k.t.status, breachedAt: k.t.slaBreachedAt, target: k.t.targetCompletionAt ?? null, periodIndex: k.periodIndex, periodDays: config.periodDays, contact: config.contact, recipients: told, escalation: k.claimId, ...(digest ? { digest: true } : {}) },
       });
-      if (aErr) say(`ticket ${t.id}: the escalation went out, but its audit row was not written (ticket_sla_escalations row ${claimId} records it): ${aErr.message}`);
+      if (aErr) say(`ticket ${k.t.id}: the escalation went out, but its audit row was not written (ticket_sla_escalations row ${k.claimId} records it): ${aErr.message}`);
     }
   }
   return report;

@@ -116,6 +116,18 @@ export function preauthOptInFor(d: DraftSlot): "offer" | "none" {
 export const PREAUTH_OPT_IN_HINT =
   "A person this slot names who recorded a standing pre-authorization covering the request (their own, signed, with an expiry) has it signed off for them — never on engineered work, and never for the last sign-off a review waits on.";
 
+/** DF-P22 fix pass: said when the opt-in is set on a table with at most one
+ *  "must sign off" slot — a pre-authorization never satisfies the last open
+ *  sign-off, so on such a table it does nothing (unless a request's review
+ *  gains another sign-off, such as an engineering one). */
+export const PREAUTH_SINGLE_SLOT_NOTE =
+  "This table has only one \u201cmust sign off\u201d slot, so a standing pre-authorization will not act here: a review always waits on at least one live sign-off. It can act only when a request's review has another open sign-off (for example, an engineering sign-off it gains).";
+
+export function preauthNeverActsNote(slots: readonly DraftSlot[]): string | null {
+  if (slots.filter((d) => d.mode === "blocking").length > 1) return null;
+  return slots.some((d) => d.acceptsPreauthorization && preauthOptInFor(d) === "offer") ? PREAUTH_SINGLE_SLOT_NOTE : null;
+}
+
 /** Draft slots → the stored shape (pure; exported for tests). */
 export function draftToControl(slots: DraftSlot[]): RoutingControl {
   return {
@@ -477,6 +489,9 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
                       <span className="font-bold text-[var(--color-text-muted)]">Accepts a standing pre-authorization</span>
                       <span className="text-[var(--color-text-faint)]">{PREAUTH_OPT_IN_HINT}</span>
                     </label>
+                  )}
+                  {s.acceptsPreauthorization && preauthOptInFor(s) === "offer" && preauthNeverActsNote(slots) && (
+                    <p className="text-[11px] text-amber-700" data-testid="routing-slot-preauthorization-inert">{preauthNeverActsNote(slots)}</p>
                   )}
                   {keptNote(s, { workClasses: s.mode === "notify_only" && workClassOptions.length > 0, window: s.mode === "consent_window" }) && <p className="text-[11px] text-[var(--color-text-muted)]" data-testid="routing-slot-kept">{keptNote(s, { workClasses: s.mode === "notify_only" && workClassOptions.length > 0, window: s.mode === "consent_window" })}</p>}
                   <div className="flex flex-wrap gap-1 items-center text-[11px]">

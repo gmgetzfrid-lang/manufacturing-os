@@ -12,12 +12,12 @@ import { join } from "node:path";
 import {
   preauthorizationStatement, preauthDraftRefusal, preauthStanding, preauthCovers, preauthSignatureRefusal, preauthSignatureStands,
   preauthEligibleSlots, planPreauthorizations, applyPreauthorizations, preauthHistoryEntry, preauthLatestDay, preauthExpiryFromDay,
-  isMissingPreauthTable, PREAUTH_SIGNATURE_INTENT, PREAUTH_SIGNATURE_RESOURCE, PREAUTH_ACTOR, PREAUTH_AUDIT, PREAUTH_MAX_DAYS, type Preauthorization,
+  isMissingPreauthTable, preauthLeavesSlotStranded, slotSignability, PREAUTH_SIGNATURE_INTENT, PREAUTH_SIGNATURE_RESOURCE, PREAUTH_ACTOR, PREAUTH_AUDIT, PREAUTH_MAX_DAYS, type Preauthorization,
 } from "@/lib/ticketPreauthorization";
 import { applyStandingPreauthorizations } from "@/lib/ticketPreauthorizationApply";
 import { parseRoutingControl, validateRoutingDraft, preauthorizationOptInAllowed } from "@/lib/routingControl";
 import { openRoster, rosterCompletion } from "@/lib/ticketRoster";
-import { draftToControl, controlToDraft, preauthOptInFor } from "@/components/documents/RoutingControlSection";
+import { draftToControl, controlToDraft, preauthOptInFor, preauthNeverActsNote, PREAUTH_SINGLE_SLOT_NOTE } from "@/components/documents/RoutingControlSection";
 import type { TicketReviewRoster, TicketReviewSlot } from "@/types/schema";
 
 const DAY = 86_400_000;
@@ -128,6 +128,28 @@ describe("where it acts — only an opted-in, blocking, non-engineering, non-ass
     const signedOther = roster([slot({ kind: "other", primaries: ["q-1"], status: "satisfied", satisfiedBy: "q-1", signatureId: "s" }), accept(), qa({ independentOf: ["other"] })]);
     expect(plan(signedOther)).toEqual([]);
   });
+  it("DF-P22 fix pass — DEC-37 looked ahead: never leaves another open sign-off with nobody able to sign it (A opted in, primaries X and Y; B independent of A, sole primary X)", () => {
+    // X = q-1 holds the record; Y = q-2 does not. Applying X to A would leave
+    // B (independent of A) with X as its only primary, now refused — skipped.
+    const A = qa({ kind: "A", label: "A", primaries: ["q-1", "q-2"] });
+    const B = slot({ kind: "B", label: "B", primaries: ["q-1"], independentOf: ["A"] });
+    const r = roster([A, B]);
+    expect(plan(r)).toEqual([]);
+    expect(preauthLeavesSlotStranded(r, applyPreauthorizations(r, [{ slot: A, preauth: pa() }], new Date(NOW).toISOString(), () => "Quinn"), "A",
+      { requesterId: "req", assignedDrafterId: "d-1" }, true, NOW)).toBe(true);
+    // Before the record: B could be signed by X (Y signs A first) — the normal path stays open.
+    expect(slotSignability(r, "B", { requesterId: "req", assignedDrafterId: "d-1" }, true, NOW)).toEqual({ regular: true, any: true });
+    // Y's record instead is fine: A by Y, B still X's.
+    const byY = plan(r, { preauths: [pa({ id: P2, grantorId: "q-2", signatureId: SIG2 })] });
+    expect(byY.map((a) => [a.slot.kind, a.preauth.grantorId])).toEqual([["A", "q-2"]]);
+    // Both hold records: X (the older) is skipped, Y's is used.
+    const both = plan(r, { preauths: [pa(), pa({ id: P2, grantorId: "q-2", signatureId: SIG2, createdAt: "2026-10-05T00:00:00Z" })] });
+    expect(both.map((a) => a.preauth.grantorId)).toEqual(["q-2"]);
+    // B with a second primary keeps a signer — X's record applies.
+    expect(plan(roster([A, slot({ kind: "B", label: "B", primaries: ["q-1", "z"], independentOf: ["A"] })])).map((a) => a.slot.kind)).toEqual(["A"]);
+    // Below the separation threshold the leg does not bind: applied.
+    expect(plan(r, { sodActive: false }).map((a) => a.slot.kind)).toEqual(["A"]);
+  });
   it("a record that is revoked, expired, unsigned, out of scope, or whose person left is never used", () => {
     const r = roster([accept(), qa()]);
     expect(plan(r, { preauths: [pa({ revokedAt: "2026-10-21T00:00:00Z" })] })).toEqual([]);
@@ -184,6 +206,17 @@ describe("the routing opt-in — explicit, never inferred, dropped where it cann
     // REGRESSION: a slot that never had it gains nothing
     const plain = controlToDraft({ slots: [{ kind: "qa", mode: "blocking", fill: { roles: ["QA"] } }] });
     expect(draftToControl(plain).slots[0]).not.toHaveProperty("accepts_preauthorization");
+  });
+  it("DF-P22 fix pass: on a table with one \"must sign off\" slot the editor says the opt-in will not act (a review always waits on one live sign-off)", () => {
+    const one = controlToDraft({ slots: [{ kind: "qa", mode: "blocking", fill: { roles: ["QA"] }, accepts_preauthorization: true }, { kind: "ops", mode: "consent_window", fill: { roles: ["Ops"] } }] });
+    expect(preauthNeverActsNote(one)).toBe(PREAUTH_SINGLE_SLOT_NOTE);
+    expect(PREAUTH_SINGLE_SLOT_NOTE).toMatch(/will not act here/);
+    const two = controlToDraft({ slots: [{ kind: "qa", mode: "blocking", fill: { roles: ["QA"] }, accepts_preauthorization: true }, { kind: "acc", mode: "blocking", fill: { identity: "requester" } }] });
+    expect(preauthNeverActsNote(two)).toBeNull();
+    const off = controlToDraft({ slots: [{ kind: "qa", mode: "blocking", fill: { roles: ["QA"] } }] });
+    expect(preauthNeverActsNote(off)).toBeNull();
+    // planPreauthorizations agrees: one blocking slot, nothing applied
+    expect(plan(roster([qa(), slot({ kind: "ops", mode: "consent_window", primaries: ["o-1"] })]))).toEqual([]);
   });
   it("openRoster freezes the opt-in on the roster slot; a slot without it is stored exactly as before", () => {
     const opened = openRoster({
@@ -283,6 +316,29 @@ describe("applying it after the submission landed — audit first, then the comp
     expect(((db.tables.tickets[0].metadata as { review_roster: TicketReviewRoster }).review_roster).slots.find((s) => s.kind === "qa")!.status).toBe("open");
     expect(db.tables.notifications).toEqual([]);
   });
+  it("DF-P22 fix pass: a revocation that lands after the records were read, before the request's write, is honoured — _NOT_APPLIED (revoked), the request untouched", async () => {
+    const r = roster([accept(), qa()]);
+    const realFrom = client.from;
+    // the grantor revokes as the audit row is written (between the first read and the CAS)
+    const racing = { from: (t: string) => { const b = realFrom(t) as Record<string, unknown>; if (t === "audit_logs") { const ins = b.insert as (x: unknown) => unknown; b.insert = (x: unknown) => { db.tables.ticket_preauthorizations[0].revoked_at = "2026-10-22T12:00:00Z"; db.tables.ticket_preauthorizations[0].revoked_by = "q-1"; return ins(x); }; } return b; } };
+    const out = await applyStandingPreauthorizations(racing, { ticketId: "t1", orgId: "o1", roster: r, engineered: false, members, ticketLabel: "x", now: NOW });
+    expect(out.applied).toEqual([]);
+    expect(out.note).toMatch(/revoked \(or expired\) since it was read/);
+    expect(db.tables.audit_logs.map((a) => a.action)).toEqual([PREAUTH_AUDIT.applied, `${PREAUTH_AUDIT.applied}_NOT_APPLIED`]);
+    expect((db.tables.audit_logs[1].details as Row)).toMatchObject({ reason: "revoked", gone: [P1] });
+    expect(db.calls.some((c) => c.table === "tickets" && c.method === "update")).toBe(false);
+    expect(db.tables.notifications).toEqual([]);
+  });
+  it("…and a re-read that fails applies nothing either", async () => {
+    const r = roster([accept(), qa()]);
+    let n = 0;
+    const realFrom = client.from;
+    const flaky = { from: (t: string) => { const b = realFrom(t) as Record<string, unknown>; if (t === "ticket_preauthorizations" && ++n === 2) { b.then = (resolve: (v: unknown) => void) => resolve({ data: null, error: { message: "timeout" } }); } return b; } };
+    const out = await applyStandingPreauthorizations(flaky, { ticketId: "t1", orgId: "o1", roster: r, engineered: false, members, ticketLabel: "x", now: NOW });
+    expect(out.applied).toEqual([]);
+    expect(out.note).toMatch(/could not be re-read before the write/);
+    expect(db.calls.some((c) => c.table === "tickets" && c.method === "update")).toBe(false);
+  });
   it("before 20261264 (the table is missing): nothing applied, no note — today's review", async () => {
     db.errors.ticket_preauthorizations = { code: "42P01", message: 'relation "public.ticket_preauthorizations" does not exist' };
     expect(await apply(roster([accept(), qa()]))).toEqual({ applied: [], note: null });
@@ -308,6 +364,10 @@ describe("the workflow route's hunk (minimal, after the submission landed) — s
     expect(route.match(/applyStandingPreauthorizations\(/g)).toHaveLength(1);
     expect(route).toContain("if (rosterOpen && newStatus === \"PENDING_REVIEW\" && preauthEligibleSlots(rosterOpen).length > 0) {");
     expect(route.indexOf("consentWarning = await afterRosterOpened(")).toBeLessThan(route.indexOf("const pa = await applyStandingPreauthorizations("));
+    // DF-P22 fix pass (DEC-90 ruling (5)): AFTER the response, never awaited by it.
+    const i = route.indexOf("const pa = await applyStandingPreauthorizations(supabaseAdmin, preauthInput);");
+    expect(i).toBeGreaterThan(0);
+    expect(route.slice(i - 120, i)).toContain("after(async () => {");
     expect(route).toContain("let rosterEngineered = true;");
     expect(route).toContain("rosterEngineered = engineeringGate.required || declarationUnverified !== null;");
     expect(route).toContain("engineered: rosterEngineered,");

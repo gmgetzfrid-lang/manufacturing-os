@@ -14,6 +14,11 @@
 //   * ticket_review_slots: a slot satisfied 'preauthorization' names its
 //     signer and its signature; 'preauthorization' with no signature is
 //     still refused; an unknown via is still refused.
+//   * DF-P22 fix pass: no client writes org_configurations key
+//     'sla_escalation' (an Admin and a DraftingSupervisor are both refused;
+//     the DraftingSupervisor still saves the 'drafting' key; the service role
+//     writes it); a workspace holding a standing pre-authorization (and an
+//     escalation record) can still be deleted — the orgs cascade removes them.
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { join } from "node:path";
@@ -53,14 +58,14 @@ describe.skipIf(skip !== null)("DF-P22 — the escalation record, standing pre-a
      VALUES ('${id}', '${orgId}', '${m.qa.uid}', 'QA', ${over.scope === "none" ? "NULL" : "'Revision'"}, 'I give my standing pre-authorization', '${randomUUID()}', ${over.expires ?? "now() + interval '30 days'"})`;
 
   beforeAll(() => {
-    const s = seedOrg(db, { requester: { role: "Manager" }, qa: { role: "Viewer" }, admin: { role: "Admin" }, other: { role: "Viewer" } });
+    const s = seedOrg(db, { requester: { role: "Manager" }, qa: { role: "Viewer" }, admin: { role: "Admin" }, other: { role: "Viewer" }, sup: { role: "DraftingSupervisor" } });
     orgId = s.orgId;
     m = s.m;
   });
 
   it("re-pastes cleanly (DEC-30 one paste); every probe answers true; the inventory rows carry counts", () => {
     const { probes, inventory } = paste(F264);
-    expect(probes.length).toBe(7);
+    expect(probes.length).toBe(8);
     expect(probes.filter((l) => l.endsWith("|f|"))).toEqual([]);
     expect(inventory.length).toBe(6);
   });
@@ -132,5 +137,38 @@ describe.skipIf(skip !== null)("DF-P22 — the escalation record, standing pre-a
     expect(noSig.ok).toBe(false);
     const unknown = asCaller(db, SERVICE, `UPDATE ticket_review_slots SET status = 'satisfied', satisfied_by = '${m.qa.uid}', satisfied_at = now(), satisfied_via = 'standing', signature_id = '${randomUUID()}' WHERE roster_id = '${roster}' AND slot_kind = 'qa3'`);
     expect(unknown.ok).toBe(false);
+  });
+
+  it("DF-P22 fix pass: no client writes the escalation setting — not an Admin, not a drafting supervisor; the supervisor still saves the request forms; the service role writes it", () => {
+    const esc = `'{"contact":{"kind":"role","role":"Admin"},"periodDays":2}'::jsonb`;
+    const ins = (who: typeof SERVICE | SeededMember["caller"]) => asCaller(db, who, `INSERT INTO org_configurations (org_id, key, data) VALUES ('${orgId}', 'sla_escalation', ${esc})`);
+    expect(ins(m.admin.caller).ok).toBe(false);
+    expect(ins(m.sup.caller).ok).toBe(false);
+    expect(asCaller(db, m.sup.caller, `INSERT INTO org_configurations (org_id, key, data) VALUES ('${orgId}', 'drafting', '{}'::jsonb)
+      ON CONFLICT (org_id, key) DO UPDATE SET data = EXCLUDED.data`)).toEqual({ ok: true, rows: 1 });
+    expect(ins(SERVICE)).toEqual({ ok: true, rows: 1 });
+    for (const who of [m.admin.caller, m.sup.caller]) {
+      const upd = asCaller(db, who, `UPDATE org_configurations SET data = 'null'::jsonb WHERE org_id = '${orgId}' AND key = 'sla_escalation'`);
+      expect(upd.ok === false || (upd.ok && upd.rows === 0)).toBe(true);
+      const del = asCaller(db, who, `DELETE FROM org_configurations WHERE org_id = '${orgId}' AND key = 'sla_escalation'`);
+      expect(del.ok === false || (del.ok && del.rows === 0)).toBe(true);
+    }
+    expect(count(`SELECT COUNT(*) FROM org_configurations WHERE org_id = '${orgId}' AND key = 'sla_escalation' AND data->>'periodDays' = '2'`)).toBe(1);
+  });
+
+  it("DF-P22 fix pass: a workspace holding a standing pre-authorization (and an escalation record) can still be deleted; the cascade removes them", () => {
+    const s2 = seedOrg(db, { r: { role: "Admin" } });
+    const pid = randomUUID();
+    const t2 = randomUUID();
+    admin(db, `INSERT INTO tickets (id, org_id, ticket_id, title, request_type, status, requester_id, history)
+               VALUES ('${t2}', '${s2.orgId}', 'KE-P22D-${t2.slice(0, 6)}', 'Gasket', 'Revision', 'DRAFTING', '${s2.m.r.uid}', '[]'::jsonb)`);
+    expect(asCaller(db, SERVICE, `INSERT INTO ticket_preauthorizations (id, org_id, grantor_id, grantor_name, request_type, statement, signature_id, expires_at)
+      VALUES ('${pid}', '${s2.orgId}', '${s2.m.r.uid}', 'R', 'Revision', 'I give my standing pre-authorization', '${randomUUID()}', now() + interval '30 days')`)).toEqual({ ok: true, rows: 1 });
+    expect(asCaller(db, SERVICE, `INSERT INTO ticket_sla_escalations (org_id, ticket_id, breached_at, period_index, period_days, contact, recipients)
+      VALUES ('${s2.orgId}', '${t2}', '2026-10-01T03:00:00Z', 1, 2, '{"kind":"role","role":"Admin"}'::jsonb, ARRAY['${s2.m.r.uid}']::uuid[])`)).toEqual({ ok: true, rows: 1 });
+    const del = admin(db, `SELECT harness.try_sql(${"$q$"}DELETE FROM orgs WHERE id = '${s2.orgId}'${"$q$"})`);
+    expect(del).toBe("ok:1");
+    expect(count(`SELECT COUNT(*) FROM ticket_preauthorizations WHERE id = '${pid}'`)).toBe(0);
+    expect(count(`SELECT COUNT(*) FROM ticket_sla_escalations WHERE ticket_id = '${t2}'`)).toBe(0);
   });
 });

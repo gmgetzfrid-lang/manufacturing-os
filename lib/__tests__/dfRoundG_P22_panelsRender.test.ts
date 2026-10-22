@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 // drafting-flow Round G, DF-P22 — the two screens:
-//   * SlaEscalationSection (Admin → Request forms): off by default (nothing
-//     written unless an editor touches it); choosing a role / member / period
-//     hands the page a value its own Save writes; "Nobody (off)" removes it.
+//   * SlaEscalationSection (Admin → Request forms): DF-P22 fix pass — only an
+//     Admin edits it, through its own Save (/api/admin/sla-escalation, PUT);
+//     everyone else the page admits sees it read-only; it is never part of
+//     the page's Save; a Contractor role is never offered.
 //   * PreauthorizationPanel (profile): lists the viewer's own records, signs
 //     exactly the statement the route checks, posts the record, revokes;
 //     before 20261264 it says it is not available and records nothing.
@@ -46,14 +47,17 @@ let host: HTMLDivElement;
 let root: Root;
 const fetches: Array<{ url: string; method: string; body: unknown }> = [];
 let listAnswer: { status: number; body: unknown } = { status: 200, body: { ok: true, admin: false, records: [] } };
+let escAnswer: { status: number; body: unknown } = { status: 200, body: { config: null, error: null, canEdit: true } };
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   db.results = {};
   fetches.length = 0;
   sig.calls.length = 0;
   listAnswer = { status: 200, body: { ok: true, admin: false, records: [] } };
+  escAnswer = { status: 200, body: { config: null, error: null, canEdit: true } };
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
     fetches.push({ url, method: init?.method ?? "GET", body: init?.body ? JSON.parse(init.body) : null });
+    if ((init?.method ?? "GET") === "GET" && url.startsWith("/api/admin/sla-escalation")) return { ok: escAnswer.status < 400, status: escAnswer.status, json: async () => escAnswer.body };
     if ((init?.method ?? "GET") === "GET") return { ok: listAnswer.status < 400, status: listAnswer.status, json: async () => listAnswer.body };
     return { ok: true, status: 200, json: async () => ({ ok: true }) };
   }));
@@ -74,27 +78,54 @@ const select = async (label: string, value: string) => {
 };
 
 describe("SlaEscalationSection", () => {
-  it("off by default — nothing handed to the page until an editor chooses; a role, a period, then off again", async () => {
-    const changes: unknown[] = [];
-    let value: unknown = undefined;
-    const draw = async () => { await act(async () => { root.render(el(SlaEscalationSection, { orgId: "o-1", value, onChange: (v: unknown) => { changes.push(v); value = v; } })); }); await flush(); };
+  const draw = async () => { await act(async () => { root.render(el(SlaEscalationSection, { orgId: "o-1" })); }); await flush(); };
+  const saveBtn = () => [...host.querySelectorAll("button")].find((b) => /Save escalation/.test(b.textContent ?? "")) as HTMLButtonElement | undefined;
+  it("an Admin: off by default, nothing sent until they choose and press its own Save; a role, a period, then off again", async () => {
     await draw();
     expect((host.querySelector('[aria-label="Escalation contact kind"]') as HTMLSelectElement).value).toBe("none");
-    expect(changes).toEqual([]);
+    expect(saveBtn()!.disabled).toBe(true);
     await select("Escalation contact kind", "role");
-    expect(changes.at(-1)).toEqual({ contact: { kind: "role", role: "Admin" }, periodDays: 2 });
-    await draw();
     await select("Escalation role", "DraftingSupervisor");
-    await draw();
     await select("Escalation period days", "5");
-    expect(changes.at(-1)).toEqual({ contact: { kind: "role", role: "DraftingSupervisor" }, periodDays: 5 });
-    await draw();
+    expect(fetches.filter((f) => f.method === "PUT")).toEqual([]);
+    expect(saveBtn()!.disabled).toBe(false);
+    await act(async () => { saveBtn()!.click(); });
+    await flush();
+    expect(fetches.filter((f) => f.method === "PUT").at(-1)).toMatchObject({ url: "/api/admin/sla-escalation", body: { orgId: "o-1", config: { contact: { kind: "role", role: "DraftingSupervisor" }, periodDays: 5 } } });
+    expect(host.textContent).toMatch(/on the audit trail/);
     await select("Escalation contact kind", "none");
-    expect(changes.at(-1)).toBeUndefined();
+    await act(async () => { saveBtn()!.click(); });
+    await flush();
+    expect(fetches.filter((f) => f.method === "PUT").at(-1)!.body).toEqual({ orgId: "o-1", config: null });
+  });
+  it("a Contractor role is never offered", async () => {
+    escAnswer = { status: 200, body: { config: { contact: { kind: "role", role: "Admin" }, periodDays: 2 }, error: null, canEdit: true } };
+    await draw();
+    const opts = [...(host.querySelector('[aria-label="Escalation role"]') as HTMLSelectElement).options].map((o) => o.value);
+    expect(opts).toContain("Admin");
+    expect(opts).not.toContain("Contractor");
+  });
+  it("anyone else the page admits (a drafting supervisor) sees it read-only — no control, no Save", async () => {
+    escAnswer = { status: 200, body: { config: { contact: { kind: "role", role: "Admin" }, periodDays: 2 }, error: null, canEdit: false } };
+    await draw();
+    expect(host.querySelector('[aria-label="Escalation contact kind"]')).toBeNull();
+    expect(saveBtn()).toBeUndefined();
+    expect(host.querySelector('[data-testid="sla-escalation-readonly"]')!.textContent).toMatch(/everyone holding Admin, after 2 day\(s\).*Only an Admin can change this/);
   });
   it("a stored value it cannot use says so (nobody escalated)", async () => {
-    await act(async () => { root.render(el(SlaEscalationSection, { orgId: "o-1", value: { contact: { kind: "role", role: "Admin" }, periodDays: 99 }, onChange: () => {} })); });
+    escAnswer = { status: 200, body: { config: null, error: "the escalation period is a whole number of days from 1 to 30", canEdit: true } };
+    await draw();
     expect(host.textContent).toMatch(/can.t be used/);
+  });
+  it("a refused save shows the route's reason", async () => {
+    await draw();
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { method?: string }) => (init?.method === "PUT"
+      ? { ok: false, status: 403, json: async () => ({ error: "Only an Admin can change who hears about overdue requests" }) }
+      : { ok: true, status: 200, json: async () => escAnswer.body })));
+    await select("Escalation contact kind", "role");
+    await act(async () => { saveBtn()!.click(); });
+    await flush();
+    expect(host.textContent).toMatch(/Only an Admin can change who hears/);
   });
 });
 
@@ -145,11 +176,11 @@ describe("PreauthorizationPanel", () => {
 });
 
 describe("where they are mounted", () => {
-  it("the profile page mounts the panel; Admin → Request forms mounts the escalation section, saved with the page", () => {
+  it("the profile page mounts the panel; Admin → Request forms mounts the escalation section with its own Save, never the page's", () => {
     const profile = readFileSync(join(process.cwd(), "app/(protected)/profile/page.tsx"), "utf8");
     expect(profile).toContain("<PreauthorizationPanel />");
     const admin = readFileSync(join(process.cwd(), "app/(protected)/admin/requests/page.tsx"), "utf8");
-    expect(admin).toContain("<SlaEscalationSection");
-    expect(admin).toContain("delete rest.slaEscalation;");
+    expect(admin).toContain("<SlaEscalationSection orgId={activeOrgId} />");
+    expect(admin).not.toMatch(/slaEscalation/);
   });
 });

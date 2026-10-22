@@ -2085,15 +2085,24 @@ export async function POST(req: NextRequest) {
   // standing record of a person who would otherwise sign it — never on
   // engineered work, never the engineering or an assurance slot, never the
   // last open sign-off (lib/ticketPreauthorization.ts). Only when the roster
-  // has such a slot is anything read; after the submission landed, so it
-  // never refuses or delays it — a failure leaves the slot waiting for its
+  // has such a slot is anything read; AFTER the response (next/server
+  // after(), as the copy recall is — DEC-90 ruling (5): bookkeeping never
+  // refuses or delays a person's act), keeping its own audit-first and
+  // compare-and-set rails — a failure leaves the slot waiting for its
   // sign-off, logged.
   if (rosterOpen && newStatus === "PENDING_REVIEW" && preauthEligibleSlots(rosterOpen).length > 0) {
-    const pa = await applyStandingPreauthorizations(supabaseAdmin, {
+    const preauthInput = {
       ticketId: body.ticketId, orgId: ticket.orgId, roster: rosterOpen, engineered: rosterEngineered, members: consentMembers,
       ticketLabel: `${ticket.ticketId || ""} ${ticket.title}`.trim(),
-    });
-    if (pa.note) console.error(`[workflow-action] ticket ${body.ticketId}: standing pre-authorization — ${pa.note}`);
+    };
+    try {
+      after(async () => {
+        const pa = await applyStandingPreauthorizations(supabaseAdmin, preauthInput);
+        if (pa.note) console.error(`[workflow-action] ticket ${body.ticketId}: standing pre-authorization — ${pa.note}`);
+      });
+    } catch (e) {
+      console.warn(`[workflow-action] the standing pre-authorization step for ticket ${body.ticketId} could not be scheduled (the slots wait for their sign-offs):`, e);
+    }
   }
   // The objection's durable record (it survives any bell purge); the
   // ticket's own history and columns already carry it.

@@ -6,6 +6,8 @@
 //       the PHYS-18 copy recall can run on a consent-completed issue — a
 //       person's recall is exactly as before.
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { holdersFor, rosterHolderUids, explainNoActions } from "@/lib/ticketAttention";
 import type { Ticket, TicketReviewRoster, TicketReviewSlot } from "@/types/schema";
@@ -36,7 +38,13 @@ const ops = (over: Partial<TicketReviewSlot> = {}) => slot({ kind: "ops", label:
 describe("DF-P22 (a) — holdersFor: a running window's people are told, not waited on", () => {
   it("the window's slot is the only one open: the review waits on nobody's sign-off, and the line says who may object until when", () => {
     const h = holdersFor(ticket(roster([slot({ kind: "accept", status: "satisfied", satisfiedBy: "req", primaries: ["req"] }), ops()], {})), { memberNames: names });
-    expect(h).toEqual([{ kind: "consent_window", uid: null, name: 'no sign-off ("Operations" goes ahead unless someone objects)', part: "Olga, Omar may object until 2026-10-22 09:00 UTC" }]);
+    expect(h).toEqual([{ kind: "consent_window", uid: null, name: 'nobody\'s sign-off — "Operations" goes ahead unless someone objects', part: "Olga, Omar may object until 2026-10-22 09:00 UTC" }]);
+    // DF-P22 fix pass: the line the request page renders reads correctly after its fixed "Waiting on".
+    const page = readFileSync(join(process.cwd(), "app/(protected)/requests/[id]/page.tsx"), "utf8");
+    expect(page).toContain("Waiting on {holders.map((h) => h.name).join(', ') || 'nobody'}");
+    expect(page).toContain("{holders[0] && <span className=\"text-[var(--color-text-muted)]\"> ({holders[0].part})</span>}");
+    expect(`Waiting on ${h.map((x) => x.name).join(", ")} (${h[0].part})`)
+      .toBe('Waiting on nobody\'s sign-off — "Operations" goes ahead unless someone objects (Olga, Omar may object until 2026-10-22 09:00 UTC)');
     // nobody asked is named as waited on
     expect(h.some((x) => x.uid === "o-1" || x.uid === "o-2")).toBe(false);
   });

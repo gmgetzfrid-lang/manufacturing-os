@@ -221,6 +221,14 @@ export interface PreauthApplication { slot: TicketReviewSlot; preauth: Preauthor
  *     signed, and covers the request.
  *   * Never the last open "must sign off" slot: at least one stays open for
  *     a person's live act (a pre-authorization never issues a request).
+ *   * Never one that leaves another open "must sign off" slot worse off
+ *     (DF-P22 fix pass — DEC-37 looked ahead): satisfying a slot by a
+ *     person's record makes that person its signer, and a slot independent
+ *     of it may then refuse them; an application that would leave any other
+ *     open blocking slot with no one who could still sign it (as a primary or
+ *     an active alternate — or at all, overrides included) when someone
+ *     could before is skipped, and the next person's record, or the next
+ *     slot, is tried.
  */
 export function planPreauthorizations(input: {
   roster: TicketReviewRoster;
@@ -247,15 +255,58 @@ export function planPreauthorizations(input: {
     // At least one open "must sign off" slot is left for a person's live act.
     const openBlocking = roster.slots.filter((s) => s.status === "open" && s.mode === "blocking");
     if (openBlocking.length <= 1) break;
+    const parties = { requesterId: input.ticket.requesterId ?? "", assignedDrafterId: input.ticket.assignedDrafterId ?? undefined };
+    let next: TicketReviewRoster | null = null;
     const pick = usable.find((p) => {
-      const plan = slotSignPlan(roster, { requesterId: input.ticket.requesterId ?? "", assignedDrafterId: input.ticket.assignedDrafterId ?? undefined }, p.grantorId, input.sodActive, input.now);
-      return plan.fillable.some((f) => f.slot.kind === slot.kind && (f.via === "primary" || f.via === "alternate"));
+      const plan = slotSignPlan(roster, parties, p.grantorId, input.sodActive, input.now);
+      if (!plan.fillable.some((f) => f.slot.kind === slot.kind && (f.via === "primary" || f.via === "alternate"))) return false;
+      const tentative = applyPreauthorizations(roster, [{ slot, preauth: p }], new Date(input.now).toISOString(), () => p.grantorName ?? "");
+      if (preauthLeavesSlotStranded(roster, tentative, slot.kind, parties, input.sodActive, input.now)) return false;
+      next = tentative;
+      return true;
     });
-    if (!pick) continue;
+    if (!pick || !next) continue;
     out.push({ slot, preauth: pick });
-    roster = applyPreauthorizations(roster, [{ slot, preauth: pick }], new Date(input.now).toISOString(), () => pick.grantorName ?? "");
+    roster = next;
   }
   return out;
+}
+
+/** Who could still sign one open blocking slot, judged on its own (the
+ *  slots already satisfied count; the other open ones do not — someone else
+ *  may sign those first): `regular` when a primary or an active alternate
+ *  could, `any` when anyone could, overrides included. Pure. */
+export function slotSignability(
+  roster: TicketReviewRoster, kind: string, parties: { requesterId: string; assignedDrafterId?: string }, sodActive: boolean, now: number,
+): { regular: boolean; any: boolean } {
+  const slot = roster.slots.find((s) => s.kind === kind);
+  if (!slot) return { regular: false, any: false };
+  const view: TicketReviewRoster = { ...roster, slots: roster.slots.filter((s) => s.kind === kind || s.status !== "open") };
+  let regular = false;
+  let any = false;
+  for (const uid of new Set([...slot.primaries, ...slot.alternates, ...slot.overriders])) {
+    const f = slotSignPlan(view, parties, uid, sodActive, now).fillable.find((x) => x.slot.kind === kind);
+    if (!f) continue;
+    any = true;
+    if (f.via === "primary" || f.via === "alternate") { regular = true; break; }
+  }
+  return { regular, any };
+}
+
+/** Would applying a record to `appliedKind` (before → after) leave another
+ *  open blocking slot with no one who could sign it, when someone could
+ *  before? (DEC-37 slot-to-slot independence, looked ahead.) Pure. */
+export function preauthLeavesSlotStranded(
+  before: TicketReviewRoster, after: TicketReviewRoster, appliedKind: string,
+  parties: { requesterId: string; assignedDrafterId?: string }, sodActive: boolean, now: number,
+): boolean {
+  for (const s of after.slots) {
+    if (s.kind === appliedKind || s.status !== "open" || s.mode !== "blocking") continue;
+    const was = slotSignability(before, s.kind, parties, sodActive, now);
+    const is = slotSignability(after, s.kind, parties, sodActive, now);
+    if ((was.regular && !is.regular) || (was.any && !is.any)) return true;
+  }
+  return false;
 }
 
 /** The roster with each application's slot satisfied by its record. Pure. */

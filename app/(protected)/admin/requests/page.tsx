@@ -301,16 +301,9 @@ export default function DraftingConfigPage() {
           {/* SECTION: DUE-DATE WINDOWS (sla_defaults — drafting-flow DF-P13) */}
           <SlaDefaultsSection orgId={activeOrgId} requestTypes={savedRequestTypes} requestTypesUnsaved={requestTypesUnsaved} />
 
-          {/* SECTION: ESCALATION ABOVE THE QUEUE (drafting-flow DF-P22) — saved with this page */}
-          <SlaEscalationSection
-            orgId={activeOrgId}
-            value={(settings as unknown as Record<string, unknown>).slaEscalation}
-            onChange={(next) => {
-              const rest = { ...(settings as unknown as Record<string, unknown>) };
-              delete rest.slaEscalation;
-              setSettings((next ? { ...rest, slaEscalation: next } : rest) as unknown as typeof settings);
-            }}
-          />
+          {/* SECTION: ESCALATION ABOVE THE QUEUE (drafting-flow DF-P22) — its own
+              Save, Admin only (/api/admin/sla-escalation); never part of this page's Save */}
+          <SlaEscalationSection orgId={activeOrgId} />
 
           {/* SECTION: UNITS */}
           <ConfigSection 

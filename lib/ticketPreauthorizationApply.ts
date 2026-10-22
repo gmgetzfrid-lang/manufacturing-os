@@ -14,16 +14,20 @@
 //     read that fails, or the table missing (before 20261264), applies
 //     nothing (today's review: the slot waits for its sign-off);
 //   * the audit row FIRST (TICKET_PREAUTHORIZATION_APPLIED, the system actor,
-//     naming each record), then the compare-and-set on (status,
+//     naming each record), then — DF-P22 fix pass — the records used are
+//     re-read (still not revoked, not expired) right before the request's
+//     write, so a revocation that landed since the first read is honoured
+//     (a _NOT_APPLIED row, reason "revoked"); then the compare-and-set on (status,
 //     last_modified, the roster still the one read) writing the roster's
 //     satisfied slot(s), the history line naming each record and
 //     last_modified; a miss writes the _NOT_APPLIED row and nothing else;
 //   * then the roster ledger (satisfied via 'preauthorization', the record's
 //     signature) and a bell row to each person whose record was used.
 //
-// Never throws. It runs after the submission landed (DEC-90 ruling (5):
-// bookkeeping never blocks or delays a person's act) and its answer is a
-// note for the logs, never a refusal.
+// Never throws. It runs after the submission's response (the workflow route
+// schedules it with next/server after() — DEC-90 ruling (5): bookkeeping
+// never blocks or delays a person's act) and its answer is a note for the
+// logs, never a refusal.
 
 import type { TicketReviewRoster } from "@/types/schema";
 import { currentRoster, separationOfDutiesActive } from "@/lib/workflow";
@@ -140,6 +144,23 @@ export async function applyStandingPreauthorizations(db: Db, input: {
     };
     const { error: aErr } = await db.from("audit_logs").insert(auditRow);
     if (aErr) return { applied: [], note: `the audit row could not be written, so no standing pre-authorization was applied (the slots wait for their sign-offs): ${aErr.message}` };
+
+    // DF-P22 fix pass: a revocation (or an expiry) that landed since the
+    // records were read is honoured — the records used are re-read right
+    // before the request's write. (One committing in the moment between this
+    // read and the write can still be used once; the request's history and
+    // this audit row then name it, with its revocation time on the record.)
+    const usedIds = [...new Set(apps.map((a) => a.preauth.id))];
+    const { data: stillRows, error: stillErr } = await db.from("ticket_preauthorizations")
+      .select("id").in("id", usedIds).is("revoked_at", null).gt("expires_at", nowIso);
+    const still = new Set(((stillRows as Array<{ id: string }> | null) ?? []).map((x) => x.id));
+    if (stillErr || usedIds.some((id) => !still.has(id))) {
+      const { error: naErr } = await db.from("audit_logs").insert({
+        ...auditRow, id: crypto.randomUUID(), action: `${PREAUTH_AUDIT.applied}_NOT_APPLIED`,
+        details: { attempt: auditId, reason: stillErr ? "recheck_failed" : "revoked", ...(stillErr ? { error: stillErr.message } : { gone: usedIds.filter((id) => !still.has(id)) }) },
+      });
+      return { applied: [], note: `no standing pre-authorization was applied — ${stillErr ? `the records could not be re-read before the write (${stillErr.message})` : "a record it would use was revoked (or expired) since it was read"}; the slots wait for their sign-offs${naErr ? ` (and the not-applied record was refused: ${naErr.message})` : ""}` };
+    }
 
     const history = Array.isArray(row.history) ? row.history : [];
     const update: Record<string, unknown> = {

@@ -3,7 +3,8 @@
 --
 -- drafting-flow Round G — DF-P22 CONSENT AND ESCALATION FOLLOW-UPS (DEC-90
 -- rulings (1) and (2) for DF-P22: industry best practice, fail-safe, no
--- regression). Three additions, nothing renamed, no function re-created:
+-- regression). Four additions, nothing renamed, no function re-created, no
+-- existing policy re-created:
 --
 --   (1) ticket_sla_escalations (new) — FRIC-1 done-when 2 / GAP-106: the
 --       escalation tier above the queue owners. One row per breach per
@@ -39,6 +40,15 @@
 --       CHECK (20261255) already requires both and is NOT re-created. The
 --       satisfied_via CHECK widens by exactly that one value, re-created
 --       from its newest body (20261255) — pinned by a lineDiff test.
+--   (4) org_configurations key 'sla_escalation' (DF-P22 fix pass): the
+--       escalation tier's setting lives in its own key, written ONLY by
+--       /api/admin/sla-escalation as the service role after an Admin check
+--       (with an audit row for every change). Three NEW RESTRICTIVE policies
+--       refuse every client INSERT / UPDATE / DELETE of that one key, so the
+--       queue owners the tier sits above (the DraftingSupervisor holders who
+--       may write the 'drafting' key, 20261209) can never switch it off or
+--       point it at themselves. They are AND-ed with 20261209's per-key
+--       policies, which are not touched; every other key is unchanged.
 --
 -- PASTE / DEPLOY ORDER. Paste AFTER 20261255 (the first statement refuses
 -- otherwise, changing nothing). Either order with the DF-P22 deploy is safe;
@@ -55,7 +65,8 @@
 --
 -- A WIDENING only in that the ledger accepts one more satisfied_via value
 -- (service role only) and two tables become readable by members; no client
--- gains a write. The counts-only inventory is captured first (DEC-30).
+-- gains a write (and clients lose the write of the one new key, which no
+-- workspace holds yet). The counts-only inventory is captured first (DEC-30).
 -- Re-runnable: CREATE TABLE IF NOT EXISTS, CREATE OR REPLACE, DROP … IF
 -- EXISTS, the CHECK dropped and re-added.
 -- Single paste: prerequisite check → temp-table inventory (counts only) →
@@ -82,10 +93,10 @@ $$;
 -- ── Pre-apply inventory (aggregate counts only; captured BEFORE the DDL) ────
 DROP TABLE IF EXISTS df_round_g_264_before;
 CREATE TEMP TABLE df_round_g_264_before AS
-SELECT 1 AS ord, 'inventory (before apply): workspaces whose request-form configuration names an escalation contact (org_configurations drafting.slaEscalation — expected 0; none means today''s SLA clock exactly)' AS inventory,
+SELECT 1 AS ord, 'inventory (before apply): workspaces with an escalation setting (org_configurations key sla_escalation — expected 0; none means today''s SLA clock exactly)' AS inventory,
        COUNT(*)::text AS n
   FROM org_configurations
- WHERE key = 'drafting' AND jsonb_typeof(data) = 'object' AND data ? 'slaEscalation' AND data->'slaEscalation' <> 'null'::jsonb
+ WHERE key = 'sla_escalation'
 UNION ALL
 SELECT 2, 'inventory (before apply): open requests whose SLA breach is on record (sla_breached_at set) — a workspace that later names a contact has these told to it once per period while they stay overdue',
        COUNT(*)::text
@@ -215,10 +226,29 @@ ALTER TABLE ticket_review_slots DROP CONSTRAINT IF EXISTS ticket_review_slots_sa
 ALTER TABLE ticket_review_slots ADD CONSTRAINT ticket_review_slots_satisfied_via_check
   CHECK (satisfied_via IS NULL OR satisfied_via IN ('primary', 'alternate', 'override', 'consent', 'preauthorization'));
 
+-- ── 4. the escalation setting: no client writes it (Admin-only, server-side) ─
+-- New RESTRICTIVE policies, AND-ed with the per-key ones (20261209, not
+-- re-created): a client's INSERT / UPDATE / DELETE of the key is refused for
+-- every role; the service role (the route, after its Admin check and audit
+-- row) is not subject to row security.
+DROP POLICY IF EXISTS org_config_sla_escalation_no_client_ins ON org_configurations;
+CREATE POLICY org_config_sla_escalation_no_client_ins ON org_configurations
+  AS RESTRICTIVE FOR INSERT
+  WITH CHECK (key <> 'sla_escalation');
+DROP POLICY IF EXISTS org_config_sla_escalation_no_client_upd ON org_configurations;
+CREATE POLICY org_config_sla_escalation_no_client_upd ON org_configurations
+  AS RESTRICTIVE FOR UPDATE
+  USING (key <> 'sla_escalation')
+  WITH CHECK (key <> 'sla_escalation');
+DROP POLICY IF EXISTS org_config_sla_escalation_no_client_del ON org_configurations;
+CREATE POLICY org_config_sla_escalation_no_client_del ON org_configurations
+  AS RESTRICTIVE FOR DELETE
+  USING (key <> 'sla_escalation');
+
 COMMIT;
 
 -- ── Verification + inventory — ONE result set ───────────────────────────────
--- Probes: ok = true × 7 on a correct paste. Inventory rows: n = the count.
+-- Probes: ok = true × 8 on a correct paste. Inventory rows: n = the count.
 SELECT "check", ok, n FROM (
 SELECT 1 AS sec, 1 AS ord, 'FRIC-1 / GAP-106: ticket_sla_escalations exists, row security on, one claim per breach per period (UNIQUE), never rewritten (BEFORE UPDATE trigger, enabled)' AS check,
        (SELECT c.relrowsecurity FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
@@ -273,6 +303,17 @@ SELECT 1, 6, 'the roster ledger takes a slot satisfied by a standing pre-authori
 UNION ALL
 SELECT 1, 7, 'the escalation and the pre-authorization notices are of a declared kind (notification_kinds() lists ticket_status — or the registry is absent and the rail with it)',
        COALESCE((SELECT bool_or(prosrc LIKE '%(''ticket_status'',%') FROM pg_proc WHERE proname = 'notification_kinds'), true),
+       NULL
+UNION ALL
+SELECT 1, 8, 'DF-P22 fix pass: no client writes the escalation setting (org_configurations key sla_escalation) — three RESTRICTIVE policies refuse INSERT, UPDATE and DELETE of it; the per-key policies of 20261209 are untouched',
+       (SELECT COUNT(*) = 3 FROM pg_policies
+         WHERE schemaname = 'public' AND tablename = 'org_configurations' AND permissive = 'RESTRICTIVE'
+           AND policyname IN ('org_config_sla_escalation_no_client_ins', 'org_config_sla_escalation_no_client_upd', 'org_config_sla_escalation_no_client_del')
+           AND COALESCE(qual, with_check) LIKE '%<> ''sla_escalation''%')
+       AND (SELECT with_check LIKE '%<> ''sla_escalation''%' FROM pg_policies
+             WHERE schemaname = 'public' AND tablename = 'org_configurations' AND policyname = 'org_config_sla_escalation_no_client_upd')
+       AND EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'org_configurations'
+                     AND policyname = 'org_config_key_writes_upd' AND qual LIKE '%''drafting''%'),
        NULL
 UNION ALL
 SELECT 2, ord, inventory, NULL, n FROM df_round_g_264_before
