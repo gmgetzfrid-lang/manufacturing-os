@@ -607,7 +607,7 @@ Status stays OPEN for done-when 3 (owner projects-joint J21); the ticket half is
 ## EVID-9 · Notification delivery evidence stops at 'handed to Resend', and a recipient with email preferences off produces no row at all
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:628-648`, `app/api/notifications/send-queued/route.ts:140`, `app/api/tickets/workflow-action/route.ts:363-383`, `app/api/tickets/workflow-action/route.ts:401-403`, `app/api/admin/purge/route.ts:40-44`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified: there is no Resend webhook or delivery-event handler anywhere under app/api (the only Resend reference in the repo is the send call itself), so nothing ever downgrades a 'sent' row on a later bounce, and a recipient with email_enabled=false leaves no evidentiary row at all — the 'suppressed' status value is unused.
@@ -686,6 +686,19 @@ app/api/admin/purge/route.ts:41-44 —
 4. ✓ `noticeTrailFor` answers, per recipient per item, queued / sent / delivered / bounced / not emailed by choice / never attempted (`summary.emailNeverAttempted`). *Fix pass:* a consent window's notice is counted once in `summary.toldInApp` (its bell row and the `ticket_notice_events` `delivered` event that names that row — `notification_id`, now read — were counted twice), and a request-record `not_emailed` row that was not their choice (no address on record) no longer reads as an attempted email (`emailNeverAttempted` stays true); both pinned in `lib/__tests__/n18NoticeTrail.test.ts`. *Merge-time fix:* `summary.emailed` counted dead-lettered, retrying, provider-failed and bounced emails, and `neverResponded` rested on it. So an email that never reached the person could read "told, never opened". It is now two counts. `emailAttempted` is the old set. `emailReached` counts sent, delivered, delayed and complained. `neverResponded` rests on `toldInApp > 0 || emailReached > 0` (pinned: a dead-letter-only item and a bounce-only item).
 
 **Scope / residual.** Status stays OPEN on done-when 2's remainder, `DELIV-18` (the two producers above; owners named there); when it closes, this finding closes with it. Emails sent before the deploy carry no provider id: their reports answer 200 "no row" once old. The trail has an API route and no screen yet (no done-when asks for one). New columns (no new table) — the probe rows are listed for the integrator in the package report.
+
+**Resolution (2026-10-22, notifications Round G).** Closed by record (DEC-29) under the integrator's ruling (3) for package N19 NOTICE RECORD REMAINDERS (DEC-90, 2026-10-22): done-when 2's remainder was notifications `DELIV-18`, now RESOLVED (`audit-reports/notifications/02-delivery-integrity.md`, `DELIV-18`'s Resolution). Re-verified on branch `fleet/N19-notice-record-remainders` (base `693239d`):
+- the ticket comment fan-out (`app/api/tickets/comment/route.ts:442-465`) records each member with an address whom their own preference left out of its email — one `not_emailed` row each, written after the response — and nobody left out for another reason;
+- the compliance digest (`app/api/cron/maintenance/route.ts:1517`, `:1816`, `recordDeclined` `:1831`) records each opted-out member a visit reaches, once a day, after every digest is queued; its last-digest read ignores `not_emailed` rows (`:1544`);
+- both through N18's recorder (`lib/notifications.ts` `recordNotEmailedFor`, the row `queueEmail` writes, behind the same latch); who is emailed is pinned per producer before and after 20261258 (`lib/__tests__/n19CommentNotEmailed.test.ts`, `lib/__tests__/n19DigestNotEmailed.test.ts`).
+
+**Done-when.**
+1. ✓ (N18) The signed delivery webhook ingests delivered / bounced / complained (and delayed / failed) onto the row; `sent` and `delivered` are distinct facts — the Partial above.
+2. ✓ (as ruled, DEC-90 ruling (2) for N18) A preference-suppressed recipient gets a row naming the reason, for every producer: `emit()` and its producers, the access-request door and the transmittal receipt (N18, through `queueEmail`); the ticket transition route (DF-P7, `ticket_notice_events`); and now the ticket comment fan-out and the compliance digest (N19). The row's status is `not_emailed`, not the named `suppressed` (which the drain re-queues — DF-P7's finding); the reason is "their preference" and names no switch.
+3. ✓ (N18) `sent` and `not_emailed` rows keep the notice-record retention, never a 7-day floor — the Partial above.
+4. ✓ (N18) `noticeTrailFor` answers queued / sent / delivered / bounced / not emailed by choice / never attempted per recipient per item — the Partial above.
+
+**Scope / residual.** Each fact is recorded once 20261258 is pasted (before it, nothing is recorded and that is said — N18's latch). The trail has an API route and no screen (no done-when asks for one). The digest's record names the day and window, not the items it would have listed (`DELIV-18`'s scope).
 
 
 ---
@@ -933,7 +946,7 @@ Tests: `lib/__tests__/dfRoundG_P5_rosterRoute.test.ts` ("approve_draft_ifc: the 
 ## EVID-13 · Workflow transitions mass-stamp read_at on other users' unread notifications, destroying the only 'who saw it' evidence and making the rows immediately purge-eligible
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/tickets/workflow-action/route.ts:324-332`, `supabase/migrations/20260621_in_app_notifications.sql:26`, `app/api/admin/purge/route.ts:9-11`, `app/api/admin/purge/route.ts:34-38`, `app/api/admin/purge/route.ts:24`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanism is real — the supersede UPDATE stamps read_at across every recipient's row, and a stamped row becomes purge-eligible. Two parts of the claim overstate it: rows are not 'immediately' purge-eligible (the purge also requires created_at older than the ≥7-day cutoff, plus Admin/DocCtrl auth and confirm:true), and read_at is nowhere consumed as evidence — a repo-wide grep shows it is read only by lib/inAppNotifications.ts / lib/inbox.ts to drive the unread bell badge, never by the evidence pack or any receipt surface. The cross-user stamping is also deliberate and documented in the code comment at 317-324 ('retire the old rows for everyone'). Real but low-impact: LOW.
@@ -1016,6 +1029,19 @@ app/api/admin/purge/route.ts:24 — const MIN_DAYS = 7;
 4. ✓ `noticeTrailFor` gives created, delivered, seen, acted-on and never-responded per recipient per notice, each in its own field.
 
 **Scope / residual.** Status stays OPEN on done-whens 2 and 3's remainder, `NEDGE-24` (both limbs); when it closes, this finding closes with it. The hand-offs DF-P1 named (`lib/inAppNotifications.ts`'s and `lib/inbox.ts`'s `.is("metadata->>superseded_at", null)` legs) are untouched here and still owed by their holders.
+
+**Resolution (2026-10-22, notifications Round G).** Closed by record (DEC-29) under the integrator's ruling (3) for package N19 NOTICE RECORD REMAINDERS (DEC-90, 2026-10-22): done-whens 2 and 3's remainder was notifications `NEDGE-24`, now RESOLVED (`audit-reports/notifications/08-edges-and-invariants.md`, `NEDGE-24`'s Resolution; migration `20261260`, PENDING). Re-verified on branch `fleet/N19-notice-record-remainders` (base `693239d`):
+- no system path writes `read_at` on another person's row any more. The access-request decision marks the pool's notices (`lib/accessRequestOutcome.ts` `clearAccessRequestNotices`, `metadata.superseded_at` / `superseded_by`). `clear_resolved_branch_alerts` is re-created by `20261260` from its newest body (`20261181`) to mark every other recipient's `branch_open` row; the resolver's own row is retired with the same mark by the reconcile pass (`lib/branches.ts` `retireOwnBranchAlerts`), because 20261161's rail refuses a definer's metadata write on the caller's own row;
+- `lib/__tests__/n18NoticeRetention.test.ts`'s censuses name only the recipient's own session as a `read_at` writer (four app sites; no SQL function; no `.rpc()` caller); `20261181`'s one-off backlog stays named as history;
+- the purge's plain read line keeps `access_request_pending` and `branch_open` (`app/api/admin/purge/route.ts` `PURGE_KEEPS_SYSTEM_STAMPED_KINDS`), so a row either stamp marked read is never purged as read.
+
+**Done-when.**
+1. ✓ (DF-P1) Superseding writes `metadata.superseded_at` and never touches `read_at` — for the workflow route, the attention feed's reconcile pass, and now the access-request decision and the branch resolution too.
+2. ✓ (as ruled) `read_at` is only ever written by the recipient's own session on their own row (20261161's rail; the censuses, app code and database, find no other writer). "The writer is recorded" holds by that construction: `read_at`'s writer is the row's `user_id`. The integrator's ruling (3) for N19 (DEC-90, 2026-10-22) accepts this inference; no stored writer column was added.
+3. ✓ The purge predicate excludes system-stamped rows: the only kinds a system path ever stamped (`access_request_pending`, `branch_open`, plus the pre-DF-P1 workflow alerts, which carry `metadata.action` and fall in the record line) are kept by the plain read line; approval-, acknowledgment- and workflow-tied notices keep the notice-record retention (N18).
+4. ✓ (N18) `noticeTrailFor` gives created, delivered, seen, acted-on and never-responded per recipient per notice, each in its own field.
+
+**Scope / residual.** PENDING paste `20261260` (after `20261181` and `20261161`; deploy first, recommended). Until it is pasted, resolving a branch still stamps `read_at` (today's path). The rows stamped before N19 keep their `read_at` (they cannot be told from opened rows), so the trail still reports those old rows as seen. Nothing in the database stops the SQL editor or a future service-role path from writing `read_at`; the censuses refuse a new writer in code.
 
 
 ---
