@@ -36,6 +36,8 @@ type Row = Record<string, unknown>;
 const db = vi.hoisted(() => ({
   tables: {} as Record<string, Row[] | undefined>,
   failBellFor: new Set<string>(),
+  /** the next N bell inserts fail with a transient error (a statement timeout) */
+  transientBellFailures: 0,
   noticeError: null as null | { code?: string; message: string },
   /** reads of each table so far */
   reads: {} as Record<string, number>,
@@ -82,6 +84,10 @@ function chain(table: string) {
   const run = (): { data: unknown; error: unknown; count?: number } => {
     if (insert) {
       const rows = insert;
+      if (table === "notifications" && db.transientBellFailures > 0) {
+        db.transientBellFailures -= 1;
+        return { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } };
+      }
       if (table === "notifications" && rows.some((r) => db.failBellFor.has(String(r.user_id)))) {
         return { data: null, error: { code: "42501", message: "permission denied for table notifications" } };
       }
@@ -187,16 +193,17 @@ vi.mock("@/lib/serverAuth", () => ({
 vi.mock("@/lib/serverClientScope", () => ({ runWithServerClient: (_c: unknown, fn: () => Promise<unknown>) => fn() }));
 
 import { NextRequest } from "next/server";
-import { __setComplianceRetrySleep, __resetComplianceBreaker } from "@/lib/complianceNotify";
+import { __setComplianceRetrySleep, __resetComplianceBreaker, notifyCompliance } from "@/lib/complianceNotify";
+import { afterResponseNoticeRecord } from "@/lib/noticeRecordAfterResponse";
 import { runComplianceScan } from "@/lib/complianceNotifyScope";
 import { notifyChecked, notifyCheckedId, notifyWithReason, newNotificationId } from "@/lib/inAppNotifications";
-import { recomputeDocumentAck, nudgeAcknowledgment, scanAndNotifyAcks } from "@/lib/acknowledgments";
+import { recomputeDocumentAck, nudgeAcknowledgment, scanAndNotifyAcks, setAckPolicy } from "@/lib/acknowledgments";
 import { openReviewRoster, activateAlternate, scanReviews } from "@/lib/reviewControl";
 import { requestAcks, renudgeUnacked, scanDistributionAcks, type DistributionAck } from "@/lib/distributionAcks";
 import {
-  COOLDOWN_NOTICE_PAGES, COOLDOWN_NOTICE_ROWS, DOCUMENT_NOTICE_RECORD_DEFERRED, NOTICE_KEEPALIVE_MAX_BODY, NOTICE_RECORD_ROUTE, NOTICE_RECORD_TIMEOUT_MS,
-  NOTICE_SINCE_MARGIN_MS, NOTICE_VERIFY_WINDOW_MS, REQUEST_NOTICE_MAX,
-  bellKindsFor, deferredNoticeRow, noticeRow, parseRequestNoticeBody, recentDistributionNotices, recordRequestNotices, requestNoticeDetails, requestNoticeId, verifiedRequestRows,
+  COOLDOWN_NOTICE_PAGES, COOLDOWN_NOTICE_ROWS, DOCUMENT_NOTICE_RECORD_DEFERRED, NOTICE_KEEPALIVE_MAX_BODY, NOTICE_RECORD_ROUTE,
+  NOTICE_SINCE_MARGIN_MS, NOTICE_VERIFY_WINDOW_MS, REQUEST_BATCH_MAX, REQUEST_NOTICE_MAX, __settleNoticeRecords,
+  bellKindsFor, deferredNoticeRow, noticeRecordBodies, noticeRow, parseRequestNoticeBatch, parseRequestNoticeBody, recentDistributionNotices, recordRequestNotices, requestNoticeDetails, requestNoticeId, verifiedRequestRows,
 } from "@/lib/documentNoticeRecord";
 import { POST } from "@/app/api/documents/notice-record/route";
 
@@ -231,6 +238,7 @@ beforeEach(() => {
   db.reads = {};
   db.refuseReadOf = new Set();
   db.failBellFor = new Set();
+  db.transientBellFailures = 0;
   db.session = null;
   db.stampActor = null;
   auth.actor = null;
@@ -291,6 +299,37 @@ describe("lib/inAppNotifications — the bell row's id, additively", () => {
     expect(bells()).toHaveLength(1);
     db.failBellFor.add(ASG);
     expect(await notifyCheckedId(input)).toBeNull();
+  });
+
+  it("merge-time fix — notification_id never names a bell row that did not land: the first insert fails and a same-title sibling exists — the read-back matches the writer's id, so the sibling is not taken for it (refused for good: not landed; a transient failure: retried under the same id, which lands)", async () => {
+    // a sibling: same person, kind, title, resource and (no) actor, written since the attempt began
+    const sibling = { id: U(6100), org_id: ORG, user_id: ASG, kind: "ack_requested", title: "T", resource_type: "document", resource_id: DOC, actor_user_id: null, created_at: iso(T0) };
+    db.tables.notifications = [{ ...sibling }];
+    db.failBellFor.add(ASG);
+    const id = newNotificationId();
+    expect(await notifyCompliance({ ...input, id })).toBe(false);          // before the fix: true, by the sibling
+    expect(bells().map((b) => b.id)).toEqual([sibling.id]);
+    // a transient failure: the retry under the same id lands — the id names a real row
+    db.failBellFor.clear();
+    db.transientBellFailures = 1;
+    const id2 = newNotificationId();
+    expect(await notifyCompliance({ ...input, id: id2 })).toBe(true);
+    expect(bells().map((b) => b.id)).toEqual([sibling.id, id2]);
+    // without an id: exactly as before (the sibling settles it)
+    db.transientBellFailures = 1;
+    expect(await notifyCompliance(input)).toBe(true);
+    expect(bells()).toHaveLength(2);
+  });
+
+  it("merge-time fix — the scan writes no record row naming a bell row that never landed: its reminder refused, a same-title sibling present", async () => {
+    db.tables.document_acknowledgments = [{ id: U(901), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: ASG, status: "pending", notified_at: daysBefore(9), assigned_at: daysBefore(9) }];
+    db.tables.notifications = [{ id: U(6101), org_id: ORG, user_id: ASG, kind: "ack_requested", title: "Reminder — acknowledge P-1 Rev C", resource_type: "document", resource_id: DOC, actor_user_id: null, created_at: iso(T0) }];
+    db.failBellFor.add(ASG);
+    await runComplianceScan(`read-understood@${ORG}`, () => scanAndNotifyAcks(ORG), [], null);
+    expect(events("reminded")).toEqual([]);                                // not "landed" by the sibling
+    const ids = new Set(bells().map((b) => b.id));
+    for (const e of events()) expect(e.notification_id == null || ids.has(e.notification_id)).toBe(true);
+    expect(events().map((e) => e.notification_id)).not.toContain(U(6101));
   });
 });
 
@@ -639,75 +678,206 @@ describe("DIST-20 — in the browser the notices go to POST /api/documents/notic
   };
   const body = (notices: Array<Record<string, unknown>>, over: Row = {}) => ({ orgId: ORG, documentId: DOC, source: "acknowledgment", versionId: VER, notices, ...over });
 
-  it("the browser posts the notices (its own session as the bearer) and never throws: a refusal or an unreachable route is said, and the action stands", async () => {
-    vi.stubGlobal("window", {});
-    db.session = { access_token: "tok", user: { id: CTRL } };
-    const calls: Array<{ url: string; init: RequestInit }> = [];
-    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => { calls.push({ url, init }); return new Response(JSON.stringify({ ok: true }), { status: 201 }); }));
-    const input = { orgId: ORG, documentId: DOC, source: "acknowledgment" as const, versionId: VER, notices: [{ kind: "delivered" as const, recipient: ASG, notificationId: U(42) }] };
-    expect(await recordRequestNotices(input)).toBe("sent");
-    expect(calls[0].url).toBe(NOTICE_RECORD_ROUTE);
-    expect((calls[0].init.headers as Record<string, string>).Authorization).toBe("Bearer tok");
-    expect(JSON.parse(String(calls[0].init.body))).toEqual(input);
-    expect(events()).toEqual([]);                                          // the browser never writes the record
-    const refused = vi.fn(async () => new Response(JSON.stringify({ error: "nope" }), { status: 403 }));
-    vi.stubGlobal("fetch", refused);
-    expect(await recordRequestNotices(input)).toBe("failed");
-    expect(refused).toHaveBeenCalledTimes(1);                              // a refusal is not repeated
-    const offline = vi.fn(async () => { throw new Error("offline"); });
-    vi.stubGlobal("fetch", offline);
-    expect(await recordRequestNotices(input)).toBe("failed");
-    expect(offline).toHaveBeenCalledTimes(2);                              // unreachable: sent once more, then said
-    let n = 0;
-    vi.stubGlobal("fetch", vi.fn(async () => (++n === 1 ? new Response("{}", { status: 503 }) : new Response("{}", { status: 201 }))));
-    expect(await recordRequestNotices(input)).toBe("sent");                // a 5xx then a landing: taken
-    db.session = null;
-    expect(await recordRequestNotices(input)).toBe("failed");
-  });
-
-  it("a large set is split: at most REQUEST_NOTICE_MAX notices a request", async () => {
-    vi.stubGlobal("window", {});
-    db.session = { access_token: "tok", user: { id: CTRL } };
-    const sizes: number[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (_u: string, init: RequestInit) => { sizes.push(JSON.parse(String(init.body)).notices.length); return new Response("{}", { status: 201 }); }));
-    const notices = Array.from({ length: REQUEST_NOTICE_MAX + 5 }, (_, i) => ({ kind: "delivered" as const, recipient: U(2000 + i) }));
-    expect(await recordRequestNotices({ orgId: ORG, documentId: DOC, source: "distribution_ack", notices })).toBe("sent");
-    expect(sizes).toEqual([REQUEST_NOTICE_MAX, 5]);
-  });
-
-  it("P39 fix pass: keepalive only on a first attempt with a small body; a refused keepalive (the browser's shared quota) is repeated without it", async () => {
-    vi.stubGlobal("window", {});
-    db.session = { access_token: "tok", user: { id: CTRL } };
-    const seen: Array<{ keepalive: boolean | undefined; size: number }> = [];
-    vi.stubGlobal("fetch", vi.fn(async (_u: string, init: RequestInit) => {
-      seen.push({ keepalive: init.keepalive, size: String(init.body).length });
-      if (init.keepalive) throw new TypeError("Failed to fetch (keepalive quota)");
-      return new Response("{}", { status: 201 });
-    }));
-    const small = { orgId: ORG, documentId: DOC, source: "distribution_ack" as const, notices: [{ kind: "delivered" as const, recipient: ASG }] };
-    expect(await recordRequestNotices(small)).toBe("sent");
-    expect(seen.map((x) => x.keepalive)).toEqual([true, false]);
-    seen.length = 0;
-    const large = { ...small, notices: Array.from({ length: REQUEST_NOTICE_MAX }, (_, i) => ({ kind: "delivered" as const, recipient: U(3000 + i) })) };
-    expect(await recordRequestNotices(large)).toBe("sent");
-    expect(seen).toHaveLength(1);
-    expect(seen[0].size).toBeGreaterThan(NOTICE_KEEPALIVE_MAX_BODY);
-    expect(seen[0].keepalive).toBe(false);
-  });
-
-  it("P39 fix pass: every chunk and repeat of one action shares ONE deadline — once it has passed nothing more is sent, and the action returns (said, not recorded)", async () => {
+  it("the browser STARTS the post (its own session as the bearer) and returns at once (queued) — it never throws: a refusal or an unreachable route is said, and the action stands", async () => {
     vi.stubGlobal("window", {});
     db.session = { access_token: "tok", user: { id: CTRL } };
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const slow = vi.fn(async () => {
-      vi.setSystemTime(Date.now() + NOTICE_RECORD_TIMEOUT_MS + 1);   // the route took the whole allowance
-      throw new Error("aborted");
-    });
-    vi.stubGlobal("fetch", slow);
-    const notices = Array.from({ length: REQUEST_NOTICE_MAX + 5 }, (_, i) => ({ kind: "delivered" as const, recipient: U(4000 + i) }));
-    expect(await recordRequestNotices({ orgId: ORG, documentId: DOC, source: "distribution_ack", notices })).toBe("failed");
-    expect(slow).toHaveBeenCalledTimes(1);                                 // no repeat, no second chunk past the deadline
-    expect(warn.mock.calls.map((c) => String(c[0])).join(" ")).toMatch(/did not take 5 notice\(s\) \(the action's 8 s for the record had passed\)/);
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => { calls.push({ url, init }); return new Response(JSON.stringify({ ok: true }), { status: 201 }); }));
+    const input = { orgId: ORG, documentId: DOC, source: "acknowledgment" as const, versionId: VER, notices: [{ kind: "delivered" as const, recipient: ASG, notificationId: U(42) }] };
+    expect(await recordRequestNotices(input)).toBe("queued");
+    await __settleNoticeRecords();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe(NOTICE_RECORD_ROUTE);
+    expect((calls[0].init.headers as Record<string, string>).Authorization).toBe("Bearer tok");
+    expect(calls[0].init.keepalive).toBe(true);                            // it outlives a page closed after the click
+    expect(JSON.parse(String(calls[0].init.body))).toEqual(input);         // one document: the single-input shape, as before
+    expect(events()).toEqual([]);                                          // the browser never writes the record
+    const refused = vi.fn(async () => new Response(JSON.stringify({ error: "nope" }), { status: 403 }));
+    vi.stubGlobal("fetch", refused);
+    expect(await recordRequestNotices(input)).toBe("queued");
+    await __settleNoticeRecords();
+    expect(refused).toHaveBeenCalledTimes(1);                              // a refusal is not repeated
+    expect(warn.mock.calls.map((c) => String(c[0])).join(" ")).toMatch(/did not take 1 notice\(s\) \(nope\)/);
+    const offline = vi.fn(async () => { throw new Error("offline"); });
+    vi.stubGlobal("fetch", offline);
+    await expect(recordRequestNotices(input)).resolves.toBe("queued");
+    await __settleNoticeRecords();
+    expect(offline).toHaveBeenCalledTimes(2);                              // unreachable: sent once more, then said
+    let n = 0;
+    const flaky = vi.fn(async (_u: string, init: RequestInit) => { void init; return ++n === 1 ? new Response("{}", { status: 503 }) : new Response("{}", { status: 201 }); });
+    vi.stubGlobal("fetch", flaky);
+    await recordRequestNotices(input);
+    await __settleNoticeRecords();
+    expect(flaky).toHaveBeenCalledTimes(2);                                // a 5xx then a landing: taken
+    expect((flaky.mock.calls[1][1] as RequestInit).keepalive).toBe(false); // the repeat goes without keepalive
+    db.session = null;
+    warn.mockClear();
+    await recordRequestNotices(input);
+    await __settleNoticeRecords();
+    expect(warn.mock.calls.map((c) => String(c[0])).join(" ")).toMatch(/no signed-in session/);
+  });
+
+  it("merge-time fix: a large set is split into bodies within keepalive's limit — every body at most NOTICE_KEEPALIVE_MAX_BODY and REQUEST_NOTICE_MAX notices, sent with keepalive one after another; nothing lost", async () => {
+    vi.stubGlobal("window", {});
+    db.session = { access_token: "tok", user: { id: CTRL } };
+    const seen: Array<{ keepalive: boolean | undefined; size: number; notices: number }> = [];
+    let inFlightNow = 0;
+    let maxInFlight = 0;
+    vi.stubGlobal("fetch", vi.fn(async (_u: string, init: RequestInit) => {
+      inFlightNow += 1; maxInFlight = Math.max(maxInFlight, inFlightNow);
+      await Promise.resolve();
+      inFlightNow -= 1;
+      seen.push({ keepalive: init.keepalive, size: String(init.body).length, notices: JSON.parse(String(init.body)).notices.length });
+      return new Response("{}", { status: 201 });
+    }));
+    const notices = Array.from({ length: REQUEST_NOTICE_MAX + 5 }, (_, i) => ({ kind: "delivered" as const, recipient: U(2000 + i), notificationId: U(9000 + i) }));
+    await recordRequestNotices({ orgId: ORG, documentId: DOC, source: "distribution_ack", notices });
+    await __settleNoticeRecords();
+    expect(seen.length).toBeGreaterThan(1);
+    expect(seen.every((s) => s.keepalive === true && s.size <= NOTICE_KEEPALIVE_MAX_BODY && s.notices <= REQUEST_NOTICE_MAX)).toBe(true);
+    expect(seen.reduce((s, x) => s + x.notices, 0)).toBe(REQUEST_NOTICE_MAX + 5);
+    expect(maxInFlight).toBe(1);                                           // one keepalive body of an action in flight at a time
+  });
+
+  it("noticeRecordBodies: one document is the single-input shape, several are one { batch } body when they fit; a body is never empty and never past the limits", () => {
+    const one = { orgId: ORG, documentId: DOC, source: "acknowledgment" as const, versionId: VER, notices: [{ kind: "delivered" as const, recipient: ASG }] };
+    expect(noticeRecordBodies([one]).map((b) => JSON.parse(b))).toEqual([one]);
+    const two = { ...one, documentId: U(77), notices: [{ kind: "delivered" as const, recipient: REV }] };
+    expect(noticeRecordBodies([one, { ...one, notices: [] }, two]).map((b) => JSON.parse(b))).toEqual([{ batch: [one, two] }]);
+    const many = Array.from({ length: REQUEST_BATCH_MAX + 3 }, (_, i) => ({ ...one, documentId: U(5000 + i) }));
+    const bodies = noticeRecordBodies(many).map((b) => JSON.parse(b) as { batch?: unknown[] });
+    expect(bodies.every((b) => !b.batch || (b.batch.length > 0 && b.batch.length <= REQUEST_BATCH_MAX))).toBe(true);
+    expect(bodies.reduce((s, b) => s + (b.batch ? b.batch.length : 1), 0)).toBe(REQUEST_BATCH_MAX + 3);
+    expect(noticeRecordBodies([])).toEqual([]);
+  });
+
+  it("the route takes a { batch } body: every document's rows from its own bell rows; a document the caller cannot read refuses the whole request (403); mixed workspaces or too many notices are a 400", async () => {
+    auth.actor = { userId: CTRL, email: "cal@x.test" };
+    const DOC2 = U(77);
+    db.tables.documents!.push({ ...db.tables.documents![0], id: DOC2 });
+    db.tables.document_acknowledgments = [
+      { id: U(901), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: ASG, status: "pending" },
+      { id: U(902), org_id: ORG, document_id: DOC2, document_version_id: VER, revision_label: "C", assignee_user_id: ASG, status: "pending" },
+    ];
+    const b1 = seedBell();
+    const b2 = seedBell({ resource_id: DOC2 });
+    const batch = { batch: [body([{ kind: "delivered", recipient: ASG, notificationId: b1.id }]), body([{ kind: "delivered", recipient: ASG, notificationId: b2.id }], { documentId: DOC2 })] };
+    auth.unreadable.add(DOC2);
+    expect((await POST(req(batch))).status).toBe(403);
+    expect(events()).toEqual([]);
+    auth.unreadable.clear();
+    const res = await POST(req(batch));
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ ok: true, rows: 2, unmatched: 0, outcome: "written" });
+    expect(events().map((e) => `${e.document_id}:${e.notification_id}`).sort()).toEqual([`${DOC}:${b1.id}`, `${DOC2}:${b2.id}`].sort());
+    expect((await POST(req({ batch: [body([{ kind: "delivered", recipient: ASG }]), body([{ kind: "delivered", recipient: ASG }], { orgId: U(88) })] }))).status).toBe(400);
+    expect((await POST(req({ batch: [] }))).status).toBe(400);
+    expect(parseRequestNoticeBatch({ batch: Array.from({ length: 2 }, () => body(Array.from({ length: REQUEST_NOTICE_MAX }, () => ({ kind: "delivered", recipient: ASG })))) }))
+      .toEqual({ error: `at most ${REQUEST_NOTICE_MAX} notices a request` });
+  });
+
+  it("merge-time fix — REGRESSION (DEC-90: bookkeeping never delays a user's action): requestAcks, renudgeUnacked, recomputeDocumentAck, nudgeAcknowledgment, openReviewRoster and the manual activateAlternate each resolve before a never-answering record route; the record still lands when the route answers", async () => {
+    vi.stubGlobal("window", {});
+    db.session = { access_token: "tok", user: { id: CTRL } };
+    auth.actor = { userId: CTRL, email: "cal@x.test" };
+    db.stampActor = CTRL;                                                  // 20261160 pasted (the nudge's re-send names its writer)
+    db.tables.documents![0].pending_version_id = VER;
+    let open: () => void = () => undefined;
+    let gate = new Promise<void>((r) => { open = r; });
+    const posts: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      if (url !== NOTICE_RECORD_ROUTE) return new Response("{}", { status: 200 });
+      posts.push(String(init.body));
+      await gate;                                                          // the route does not answer until opened
+      return POST(new NextRequest(`http://localhost${url}`, { method: "POST", headers: init.headers as Record<string, string>, body: String(init.body) }));
+    }));
+    const returnsFirst = async (action: () => Promise<unknown>) => Promise.race([
+      action().then(() => "returned"),
+      new Promise((r) => setTimeout(() => r("waited on the record"), 2_000)),
+    ]);
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    const landsWhenAnswered = async (label: string, action: () => Promise<unknown>, expectRows: number) => {
+      db.tables.document_notice_events = [];
+      posts.length = 0;
+      gate = new Promise<void>((r) => { open = r; });
+      expect(await returnsFirst(action), label).toBe("returned");
+      await tick(); await tick();
+      expect(posts.length, label).toBe(1);                                 // the post was started …
+      expect(events(), label).toEqual([]);                                 // … and is still unanswered
+      open();
+      await __settleNoticeRecords();
+      expect(events(), label).toHaveLength(expectRows);                    // the record lands once the route answers
+    };
+
+    await landsWhenAnswered("recomputeDocumentAck", () => recomputeDocumentAck({ orgId: ORG, documentId: DOC, actorId: CTRL, actorName: "Cal" }), 2);
+    db.tables.document_acknowledgments = [{ id: U(901), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: ASG, status: "pending", notified_at: daysBefore(9) }];
+    await landsWhenAnswered("nudgeAcknowledgment", () => nudgeAcknowledgment({ orgId: ORG, rosterId: U(901) }), 1);
+    db.tables.distribution_acks = [{ id: U(800), org_id: ORG, document_id: DOC, version_id: VER, rev_label: "C", recipient_user_id: REV, requested_by: CTRL, requested_at: daysBefore(5), acknowledged_at: null }];
+    await landsWhenAnswered("requestAcks", () => requestAcks({ orgId: ORG, documentId: DOC, libraryId: LIB, docLabel: "P-1", versionId: VER, revLabel: "C", recipients: [{ uid: ASG }, { uid: REV }], actorUserId: CTRL, actorName: "Cal" }), 2);
+    vi.setSystemTime(T0 + 60_000);                                          // a later click: its own bell rows
+    const acks: DistributionAck[] = db.tables.distribution_acks.map((a) => ({ id: String(a.id), documentId: DOC, versionId: VER, revLabel: "C", recipientUserId: String(a.recipient_user_id), recipientEmail: null, requestedByName: null, requestedAt: daysBefore(5), acknowledgedAt: null }));
+    await landsWhenAnswered("renudgeUnacked", () => renudgeUnacked({ orgId: ORG, documentId: DOC, libraryId: LIB, docLabel: "P-1", revLabel: "C", acks, actorUserId: CTRL, actorName: "Cal" }), 2);
+    await landsWhenAnswered("openReviewRoster", () => openReviewRoster({
+      orgId: ORG, documentId: DOC, libraryId: LIB, versionId: VER, revisionLabel: "2A", contentHash: "h",
+      control: { mode: "require", reviewerIds: [REV], alternateIds: [ALT], alternateBacks: { [ALT]: `person:${REV}` } } as never,
+      actorId: CTRL, actorName: "Cal",
+    }), 1);
+    const altRow = db.tables.document_review_signoffs!.find((s) => s.reviewer_user_id === ALT)!;
+    await landsWhenAnswered("activateAlternate", () => activateAlternate({ orgId: ORG, documentId: DOC, libraryId: LIB, signoffId: String(altRow.id), actorId: CTRL }), 1);
+    expect(events()[0]).toMatchObject({ kind: "alternate_activated", details: { manual: true, byMember: true } });
+  });
+
+  it("merge-time fix: setAckPolicy gathers the save's notices and posts ONCE, after the last recompute and without waiting on it — the record still lands for every document", async () => {
+    vi.stubGlobal("window", {});
+    db.session = { access_token: "tok", user: { id: CTRL } };
+    auth.actor = { userId: CTRL, email: "cal@x.test" };
+    const DOC2 = U(77);
+    const VER2 = U(78);
+    db.tables.documents!.push({ ...db.tables.documents![0], id: DOC2, current_version_id: VER2, document_number: "P-2", ack_policy: null });
+    db.tables.documents![0].ack_policy = null;
+    db.tables.document_versions!.push({ id: VER2, document_id: DOC2, version_label: "A", rev_label: "A", content_hash: "h2", created_by: OWN });
+    let open: () => void = () => undefined;
+    const gate = new Promise<void>((r) => { open = r; });
+    const posts: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      if (url !== NOTICE_RECORD_ROUTE) return new Response("{}", { status: 200 });
+      posts.push(String(init.body));
+      await gate;
+      return POST(new NextRequest(`http://localhost${url}`, { method: "POST", headers: init.headers as Record<string, string>, body: String(init.body) }));
+    }));
+    await setAckPolicy({ level: "library", id: LIB, orgId: ORG, policy: { enabled: true, assigneeIds: [ASG, REV] } as never, actorId: CTRL, actorName: "Cal" });
+    expect(bells("ack_requested")).toHaveLength(4);                       // the bell rows exactly as before: two documents, two people
+    await new Promise((r) => setTimeout(r, 0));
+    expect(posts).toHaveLength(1);                                         // ONE post for the whole save
+    expect((JSON.parse(posts[0]) as { batch: Array<{ documentId: string }> }).batch.map((b) => b.documentId).sort()).toEqual([DOC, DOC2].sort());
+    expect(events()).toEqual([]);
+    open();
+    await __settleNoticeRecords();
+    expect(posts).toHaveLength(1);
+    expect(events().map((e) => `${e.document_id}:${e.recipient}`).sort()).toEqual([`${DOC}:${ASG}`, `${DOC}:${REV}`, `${DOC2}:${ASG}`, `${DOC2}:${REV}`].sort());
+  });
+
+  it("merge-time fix: a SERVER route a person waits on (the intake door) hands a scheduler — recomputeDocumentAck returns before the record write runs, and the write lands when the scheduler runs it; without one a server caller awaits it, as before", async () => {
+    const jobs: Array<() => Promise<unknown>> = [];
+    await recomputeDocumentAck({ orgId: ORG, documentId: DOC, actorId: null, actorName: null, serverRecord: (job) => { jobs.push(job); } });
+    expect(bells("ack_requested")).toHaveLength(2);
+    expect(jobs).toHaveLength(1);
+    expect(events()).toEqual([]);                                          // nothing waited on the record
+    await jobs[0]();
+    expect(events()).toHaveLength(2);
+    // the intake door's wiring: postPublish carries the scheduler to the roster
+    const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
+    expect(read("app/api/intake/upload/route.ts")).toContain('serverRecord: afterResponseNoticeRecord("intake/upload"),');
+    expect(read("lib/postPublish.ts")).toContain("...(input.serverRecord ? { serverRecord: input.serverRecord } : {}),");
+    expect(read("lib/acknowledgments.ts")).toContain("...(input.serverRecord ? { serverRecord: input.serverRecord } : {}),");
+  });
+
+  it("afterResponseNoticeRecord: outside a request (after() cannot schedule) the job is started without being awaited, and never throws", async () => {
+    const ran = vi.fn(async () => { throw new Error("boom"); });
+    expect(() => afterResponseNoticeRecord("test")(ran)).not.toThrow();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(ran).toHaveBeenCalledTimes(1);
   });
 
   it("the route: a signed-in member who can read the document gets the rows the bell rows prove — a landed request is recorded, dated when it landed", async () => {
@@ -811,6 +981,7 @@ describe("DIST-20 — in the browser the notices go to POST /api/documents/notic
     db.tables.document_acknowledgments = [{ id: U(901), org_id: ORG, document_id: DOC, document_version_id: VER, revision_label: "C", assignee_user_id: ASG, status: "pending", notified_at: daysBefore(9) }];
     // before 20261160: the bell row lands with no actor; the route takes only the caller's own rows
     await nudgeAcknowledgment({ orgId: ORG, rosterId: U(901) });
+    await __settleNoticeRecords();
     expect(bellsTo(ASG, "ack_requested")).toHaveLength(1);
     expect(bellsTo(ASG, "ack_requested")[0].actor_user_id ?? null).toBeNull();
     expect(db.tables.document_acknowledgments[0].notified_at).toBe(iso(T0));   // the re-send itself exactly as before
@@ -818,6 +989,7 @@ describe("DIST-20 — in the browser the notices go to POST /api/documents/notic
     // once 20261160 is pasted the rail stamps the writer as the actor: the same call is recorded, no code change
     db.stampActor = CTRL;
     await nudgeAcknowledgment({ orgId: ORG, rosterId: U(901) });
+    await __settleNoticeRecords();
     expect(events()).toEqual([expect.objectContaining({
       kind: "reminded", source: "acknowledgment", source_id: U(901), recipient: ASG, actor_name: "cal@x.test",
       notification_id: bellsTo(ASG, "ack_requested")[1].id, details: { manual: true, byMember: true },

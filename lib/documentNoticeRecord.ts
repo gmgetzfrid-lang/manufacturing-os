@@ -78,12 +78,23 @@
 //     member who can read the document) and builds the rows as above with the
 //     service role; on the SERVER (the maintenance cron, a route bound to the
 //     service role) they are built and written directly;
+//   · merge-time fix (DEC-90: bookkeeping never delays a user's action):
+//     in the browser the post is STARTED, never awaited — the action returns
+//     as soon as its bell rows landed, exactly as before P39; the post goes
+//     with fetch keepalive in bodies within its limit, and setAckPolicy
+//     gathers a save's notices and posts once at the end
+//     (recordRequestNoticeBatch). A server route a person waits on (the
+//     intake door's auto-publish roster) hands a scheduler and the write runs
+//     after its response (lib/noticeRecordAfterResponse.ts);
 //   · a record failure never fails the action and never changes who is
 //     notified: the bell rows, emails, pushes, notified_at stamps and audit
 //     rows are written exactly as before, first; the record write is retried
 //     and deferred to the audit log exactly as P38's (noticeRecorder), and
-//     the source's daily scan replays it. An unreachable route is said in the
-//     console and the notice is not on the record (residual, DIST-20);
+//     the source's daily scan replays it. An unreachable route, or a page
+//     closed before the keepalive post left, is said in the console (when
+//     there still is one) and the notice is not on the record — the bell row
+//     landed and the person was notified; a member cannot write the deferral
+//     row (the accepted residual, DIST-20 ruling (d));
 //   · the distribution nag's cooldown (scanDistributionAcks) reads the record
 //     ONLY once 20261257 is in place and the read completes
 //     (recentDistributionNotices `complete`): a manual request or re-nudge is
@@ -575,14 +586,21 @@ export const NOTICE_SINCE_MARGIN_MS = 5 * 60_000;
 export const REQUEST_NOTICE_MAX = 200;
 /** The browser's door into the record (the member cannot write it). */
 export const NOTICE_RECORD_ROUTE = "/api/documents/notice-record";
-/** The browser waits at most this long for the route — one request, and
- *  every chunk and repeat of an action together (one deadline, P39 fix
- *  pass): the action is never delayed past it. */
+/** One request to the route is given up after this long (its one repeat
+ *  gets as long again). The action NEVER waits on it (merge-time fix,
+ *  DEC-90: bookkeeping never delays a user's action) — the post runs after
+ *  the action has returned; this only bounds the background request. */
 export const NOTICE_RECORD_TIMEOUT_MS = 8_000;
-/** A request body above this is sent without `keepalive` (the browser's
- *  in-flight keepalive bodies share one 64 KiB quota; a refused keepalive
- *  request is repeated once without it). */
+/** The browser splits the notices so that every request body is at most
+ *  this long and goes with `keepalive` (it outlives a page closed right
+ *  after the click; the browser's in-flight keepalive bodies share one 64
+ *  KiB quota, and one action's requests go one at a time). A request the
+ *  browser refuses (the quota) or that cannot reach the route is repeated
+ *  once without it. */
 export const NOTICE_KEEPALIVE_MAX_BODY = 8_000;
+/** Entries one batched request (`{ batch: [...] }` — several documents'
+ *  notices, setAckPolicy's one post per save) carries at most. */
+export const REQUEST_BATCH_MAX = 50;
 /** The route refuses a body larger than this (413). */
 export const NOTICE_RECORD_MAX_BODY = 64_000;
 
@@ -857,61 +875,154 @@ export function requestNoticeDetails(kind: RequestNoticeKind, details: unknown):
   return (details as Record<string, unknown>).manual === true ? { manual: true } : {};
 }
 
-/** What a request path's record write came to: as noticeRecorder's, or, in
- *  the browser, `sent` (the route took every chunk) / `failed` (said). */
-export type RequestRecordOutcome = NoticeWriteOutcome | "sent" | "failed";
+/** What a request path's record write came to: as noticeRecorder's, or
+ *  `queued` — in the browser the post to the route was started and the
+ *  action returns at once (it never waits on the record; merge-time fix,
+ *  DEC-90), or on a server path that hands a scheduler, the write is
+ *  scheduled after the route's response — or `failed` (said). */
+export type RequestRecordOutcome = NoticeWriteOutcome | "queued" | "sent" | "failed";
 
-/** BROWSER: hand the notices to POST /api/documents/notice-record (the
- *  member's own session as the bearer), REQUEST_NOTICE_MAX a request; a
- *  request the route could not take (unreachable, a refused keepalive, or a
- *  5xx) is sent once more, without keepalive — a repeat records nothing
- *  twice (the row id is the bell row's). Every request, chunk and repeat
- *  of one action shares ONE deadline (NOTICE_RECORD_TIMEOUT_MS), so the
- *  action is never delayed past it; what the deadline cut off is said, not
- *  recorded. keepalive (the request outlives a closed page) only on a first
- *  attempt whose body is at most NOTICE_KEEPALIVE_MAX_BODY. Never throws. */
-async function postNoticeRecord(input: RequestNoticeInput): Promise<RequestRecordOutcome> {
-  const { data } = await supabase.auth.getSession();
-  const token = data?.session?.access_token;
+/** A SERVER route's way of running the record write after its response
+ *  (lib/noticeRecordAfterResponse.ts — next/server after()), so a person
+ *  waiting on that route never waits on the record. */
+export type NoticeRecordScheduler = (job: () => Promise<unknown>) => void;
+
+/** Who acted, as a request path passes it. `schedule`: a server route's
+ *  scheduler (above) — without one a server path awaits the write, as
+ *  before (the cron, a test). */
+export interface RequestNoticeWriter { actorId?: string | null; actorName?: string | null; schedule?: NoticeRecordScheduler }
+
+/** The request bodies one browser post sends, in order: each at most
+ *  NOTICE_KEEPALIVE_MAX_BODY long (so it goes with keepalive) and at most
+ *  REQUEST_NOTICE_MAX notices / REQUEST_BATCH_MAX entries; a body holding one
+ *  document's notices is the single-input shape (as before), several are
+ *  `{ batch: [...] }`. An input larger than one body is split across bodies;
+ *  a body is never empty. Pure. */
+export function noticeRecordBodies(inputs: RequestNoticeInput[]): string[] {
+  const bodies: string[] = [];
+  let cur: RequestNoticeInput[] = [];
+  let size = 12;            // `{"batch":[]}`
+  let count = 0;
+  const flush = () => {
+    const parts = cur.filter((p) => p.notices.length > 0);
+    if (parts.length === 1) bodies.push(JSON.stringify(parts[0]));
+    else if (parts.length > 1) bodies.push(JSON.stringify({ batch: parts }));
+    cur = []; size = 12; count = 0;
+  };
+  for (const input of inputs) {
+    if (!input || input.notices.length === 0) continue;
+    const head = { ...input, notices: [] as RequestNotice[] };
+    const headSize = JSON.stringify(head).length + 1;
+    let part: RequestNoticeInput | null = null;
+    for (const n of input.notices) {
+      const nSize = JSON.stringify(n).length + 1;
+      const extra = (part ? 0 : headSize) + nSize;
+      if (count > 0 && (size + extra > NOTICE_KEEPALIVE_MAX_BODY || count >= REQUEST_NOTICE_MAX || (!part && cur.length >= REQUEST_BATCH_MAX))) {
+        flush();
+        part = null;
+      }
+      if (!part) { part = { ...head, notices: [] }; cur.push(part); size += headSize; }
+      part.notices.push(n);
+      size += nSize;
+      count += 1;
+    }
+  }
+  flush();
+  return bodies;
+}
+
+/** One body to the route: with keepalive first (when it fits), repeated
+ *  once without it when the browser refused it or the route could not be
+ *  reached or answered 5xx — a repeat records nothing twice (the row id is
+ *  the bell row's). Each attempt is given up after NOTICE_RECORD_TIMEOUT_MS.
+ *  Answers why it was not taken, or "" when it was. Never throws. */
+async function postOneBody(body: string, token: string): Promise<string> {
+  let why = "";
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), NOTICE_RECORD_TIMEOUT_MS) : null;
+    try {
+      const res = await fetch(NOTICE_RECORD_ROUTE, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body,
+        keepalive: attempt === 1 && body.length <= NOTICE_KEEPALIVE_MAX_BODY,
+        ...(ctrl ? { signal: ctrl.signal } : {}),
+      });
+      if (res.ok) return "";
+      const said = await res.json().catch(() => null) as { error?: string } | null;
+      why = said?.error ?? `HTTP ${res.status}`;
+      if (res.status < 500) return why;                 // a refusal does not change on a repeat
+    } catch (e) {
+      why = `the record could not be reached: ${(e as Error)?.message ?? String(e)}`;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  return why;
+}
+
+/** BROWSER, in the background: hand the notices to POST
+ *  /api/documents/notice-record (the member's own session as the bearer),
+ *  the bodies of noticeRecordBodies one after another (one action never has
+ *  two keepalive bodies in flight). What the route did not take is said in
+ *  the console, not recorded — the bell rows landed and the person was
+ *  notified (the stated residual, DIST-20). Never throws. */
+async function postNoticeRecord(inputs: RequestNoticeInput[]): Promise<"sent" | "failed"> {
+  const total = inputs.reduce((s, i) => s + i.notices.length, 0);
+  let token: string | undefined;
+  try {
+    const { data } = await supabase.auth.getSession();
+    token = data?.session?.access_token;
+  } catch { token = undefined; }
   if (!token) {
-    console.warn("[notice-record] no signed-in session — the notices were sent, but are not on the document notice record");
+    console.warn(`[notice-record] no signed-in session — ${total} notice(s) were sent, but are not on the document notice record`);
     return "failed";
   }
   let failed = false;
-  const deadline = Date.now() + NOTICE_RECORD_TIMEOUT_MS;
-  for (let i = 0; i < input.notices.length; i += REQUEST_NOTICE_MAX) {
-    const body = JSON.stringify({ ...input, notices: input.notices.slice(i, i + REQUEST_NOTICE_MAX) });
-    const count = Math.min(REQUEST_NOTICE_MAX, input.notices.length - i);
-    let why = "";
-    for (let attempt = 1; attempt <= 2; attempt += 1) {
-      const left = deadline - Date.now();
-      if (left <= 0) { why = why || `the action's ${NOTICE_RECORD_TIMEOUT_MS / 1000} s for the record had passed`; break; }
-      const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
-      const timer = ctrl ? setTimeout(() => ctrl.abort(), left) : null;
-      try {
-        const res = await fetch(NOTICE_RECORD_ROUTE, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body,
-          keepalive: attempt === 1 && body.length <= NOTICE_KEEPALIVE_MAX_BODY,
-          ...(ctrl ? { signal: ctrl.signal } : {}),
-        });
-        if (res.ok) { why = ""; break; }
-        const said = await res.json().catch(() => null) as { error?: string } | null;
-        why = said?.error ?? `HTTP ${res.status}`;
-        if (res.status < 500) break;                   // a refusal does not change on a repeat
-      } catch (e) {
-        why = `the record could not be reached: ${(e as Error)?.message ?? String(e)}`;
-      } finally {
-        if (timer) clearTimeout(timer);
-      }
-    }
+  for (const body of noticeRecordBodies(inputs)) {
+    const why = await postOneBody(body, token);
     if (why) {
       failed = true;
+      let count = 0;
+      try {
+        const b = JSON.parse(body) as { notices?: unknown[]; batch?: Array<{ notices?: unknown[] }> };
+        count = Array.isArray(b.batch) ? b.batch.reduce((s, x) => s + (x.notices?.length ?? 0), 0) : (b.notices?.length ?? 0);
+      } catch { /* the count is for the line only */ }
       console.warn(`[notice-record] the document notice record did not take ${count} notice(s) (${why}) — they were sent as before`);
     }
   }
   return failed ? "failed" : "sent";
+}
+
+/** The browser posts still running (a test awaits them through
+ *  __settleNoticeRecords; nothing in the app waits on them). */
+const inFlight = new Set<Promise<unknown>>();
+
+/** Start the background post and return at once (merge-time fix, DEC-90:
+ *  the action never waits on the record). */
+function startNoticeRecord(inputs: RequestNoticeInput[]): void {
+  const p: Promise<unknown> = postNoticeRecord(inputs)
+    .catch((e) => console.warn("[notice-record] the document notice record post failed — the notices were sent as before", e))
+    .finally(() => { inFlight.delete(p); });
+  inFlight.add(p);
+}
+
+/** Tests only: wait until every background post has settled. */
+export async function __settleNoticeRecords(): Promise<void> {
+  while (inFlight.size > 0) await Promise.allSettled([...inFlight]);
+}
+
+/** SERVER: build the rows from the bell rows that landed and write them. */
+async function recordOnServer(input: RequestNoticeInput, writer: RequestNoticeWriter | undefined): Promise<RequestRecordOutcome> {
+  try {
+    const { rows, unmatched } = await verifiedRequestRows(db(), input, { uid: writer?.actorId ?? null, name: writer?.actorName ?? null });
+    if (unmatched > 0) say(`${unmatched} ${input.source} notice(s) were not put on the document notice record — no landed bell row (or no obligation row) was found for them`);
+    return await noticeRecorder().record(rows);
+  } catch (e) {
+    say(`the ${input.source} notices could not be put on the document notice record (${(e as Error)?.message ?? String(e)}) — they were sent as before`);
+    return "failed";
+  }
 }
 
 /**
@@ -919,23 +1030,52 @@ async function postNoticeRecord(input: RequestNoticeInput): Promise<RequestRecor
  * by requestAcks, renudgeUnacked, recomputeDocumentAck, nudgeAcknowledgment,
  * openReviewRoster and the manual activateAlternate AFTER everything they
  * already do (the bell rows, the stamps, the audit rows are unchanged and
- * come first). In the browser the route builds and writes the rows; on the
- * server they are built here (verifiedRequestRows, `writer` = the action's
- * actor, or none) and written by noticeRecorder (checked, retried once,
- * deferred to the audit log for the source's next scan; before 20261257 —
- * nothing written, said once). Never throws, never changes who is notified.
+ * come first).
+ *   · In the BROWSER the post to the route is STARTED and this returns at
+ *     once (`queued`) — the action never waits on the record (merge-time
+ *     fix, DEC-90: bookkeeping never delays a user's action); the post goes
+ *     with keepalive, in bodies within its limit (noticeRecordBodies), and
+ *     what it could not hand over is said in the console.
+ *   · On the SERVER the rows are built here (verifiedRequestRows, `writer` =
+ *     the action's actor, or none) and written by noticeRecorder (checked,
+ *     retried once, deferred to the audit log for the source's next scan;
+ *     before 20261257 — nothing written, said once). A route a person waits
+ *     on hands `writer.schedule` (the intake door — after its response), and
+ *     this answers `queued`; without one (the cron, a test) it is awaited.
+ * Never throws, never changes who is notified.
  */
-export async function recordRequestNotices(
-  input: RequestNoticeInput, writer?: { actorId?: string | null; actorName?: string | null },
-): Promise<RequestRecordOutcome> {
+export async function recordRequestNotices(input: RequestNoticeInput, writer?: RequestNoticeWriter): Promise<RequestRecordOutcome> {
+  return recordRequestNoticeBatch([input], writer);
+}
+
+/**
+ * recordRequestNotices for several documents' notices at once — the
+ * library / folder policy save (setAckPolicy) gathers every recomputed
+ * document's notices and calls this ONCE at the end: in the browser one
+ * background post (one request when the bodies fit — noticeRecordBodies);
+ * on the server each document's rows in turn (scheduled when the writer
+ * hands a scheduler). Never throws.
+ */
+export async function recordRequestNoticeBatch(inputs: RequestNoticeInput[], writer?: RequestNoticeWriter): Promise<RequestRecordOutcome> {
   try {
-    if (input.notices.length === 0) return "none";
-    if (typeof window !== "undefined") return await postNoticeRecord(input);
-    const { rows, unmatched } = await verifiedRequestRows(db(), input, { uid: writer?.actorId ?? null, name: writer?.actorName ?? null });
-    if (unmatched > 0) say(`${unmatched} ${input.source} notice(s) were not put on the document notice record — no landed bell row (or no obligation row) was found for them`);
-    return await noticeRecorder().record(rows);
+    const todo = inputs.filter((i) => i && i.notices.length > 0);
+    if (todo.length === 0) return "none";
+    if (typeof window !== "undefined") { startNoticeRecord(todo); return "queued"; }
+    const run = async (): Promise<RequestRecordOutcome> => {
+      let last: RequestRecordOutcome = "none";
+      for (const input of todo) {
+        const o = await recordOnServer(input, writer);
+        if (last === "none" || o !== "written") last = o;
+      }
+      return last;
+    };
+    if (writer?.schedule) {
+      writer.schedule(() => run());
+      return "queued";
+    }
+    return await run();
   } catch (e) {
-    say(`the ${input.source} notices could not be put on the document notice record (${(e as Error)?.message ?? String(e)}) — they were sent as before`);
+    say(`the document notices could not be put on the document notice record (${(e as Error)?.message ?? String(e)}) — they were sent as before`);
     return "failed";
   }
 }
@@ -972,4 +1112,31 @@ export function parseRequestNoticeBody(body: unknown): RequestNoticeInput | { er
     orgId: b.orgId as string, documentId: b.documentId as string, source: b.source as DocumentNoticeSource,
     versionId: (b.versionId as string | null | undefined) ?? null, since: (b.since as string | null | undefined) ?? null, notices,
   };
+}
+
+/** The route's reading of a body that may be one input (as before) or a
+ *  batch (`{ batch: [...] }` — several documents' notices in one request,
+ *  setAckPolicy's one post per save): each entry read by
+ *  parseRequestNoticeBody, at most REQUEST_BATCH_MAX entries and
+ *  REQUEST_NOTICE_MAX notices in all, every entry of ONE workspace (the
+ *  route checks one membership). Pure. */
+export function parseRequestNoticeBatch(body: unknown): RequestNoticeInput[] | { error: string } {
+  const b = body as { batch?: unknown } | null;
+  if (!b || typeof b !== "object" || Array.isArray(b) || !("batch" in b)) {
+    const one = parseRequestNoticeBody(body);
+    return "error" in one ? one : [one];
+  }
+  if (!Array.isArray(b.batch) || b.batch.length === 0) return { error: "batch must be a non-empty array" };
+  if (b.batch.length > REQUEST_BATCH_MAX) return { error: `at most ${REQUEST_BATCH_MAX} entries a batch` };
+  const out: RequestNoticeInput[] = [];
+  let notices = 0;
+  for (const entry of b.batch) {
+    const one = parseRequestNoticeBody(entry);
+    if ("error" in one) return one;
+    if (out.length > 0 && one.orgId !== out[0].orgId) return { error: "a batch names one workspace" };
+    notices += one.notices.length;
+    if (notices > REQUEST_NOTICE_MAX) return { error: `at most ${REQUEST_NOTICE_MAX} notices a request` };
+    out.push(one);
+  }
+  return out;
 }

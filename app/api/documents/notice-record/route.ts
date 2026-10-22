@@ -37,12 +37,20 @@
 // actor) that the source's next daily scan replays — exactly as the scans'
 // own rows (P38). Before 20261257 is pasted the record is missing: 200 with
 // outcome "missing" — nothing written, the caller keeps today's path.
+//
+// Merge-time fix (DEC-90: bookkeeping never delays a user's action): the
+// browser never waits on this route — it starts the post (fetch keepalive,
+// bodies within its limit) and the action has already returned. A body may
+// be one document's notices (as before) or `{ batch: [...] }` — several
+// documents' (setAckPolicy gathers a save's notices and posts once):
+// parseRequestNoticeBatch, one workspace, REQUEST_NOTICE_MAX notices in all;
+// the caller must read EVERY document named, or nothing is written (403).
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole, callerScopedClient } from "@/lib/serverAuth";
 import { runWithServerClient } from "@/lib/serverClientScope";
 import { ALL_ROLES } from "@/types/schema";
-import { NOTICE_RECORD_MAX_BODY, noticeRecorder, parseRequestNoticeBody, verifiedRequestRows } from "@/lib/documentNoticeRecord";
+import { NOTICE_RECORD_MAX_BODY, noticeRecorder, parseRequestNoticeBatch, verifiedRequestRows, type NoticeWriteOutcome } from "@/lib/documentNoticeRecord";
 
 export const runtime = "nodejs";
 
@@ -51,26 +59,39 @@ export async function POST(req: NextRequest) {
   if (raw.length > NOTICE_RECORD_MAX_BODY) return NextResponse.json({ error: "Notice record request too large" }, { status: 413 });
   let parsed: unknown;
   try { parsed = JSON.parse(raw || "{}"); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
-  const input = parseRequestNoticeBody(parsed);
-  if ("error" in input) return NextResponse.json({ error: input.error }, { status: 400 });
+  const inputs = parseRequestNoticeBatch(parsed);
+  if ("error" in inputs) return NextResponse.json({ error: inputs.error }, { status: 400 });
+  const orgId = inputs[0].orgId;      // a batch names one workspace (parseRequestNoticeBatch)
 
-  const actor = await authorizeOrgRole(req, input.orgId, ALL_ROLES as string[]);
+  const actor = await authorizeOrgRole(req, orgId, ALL_ROLES as string[]);
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
 
-  // the caller reads the document as their own session would (ACL included)
+  // the caller reads every document named as their own session would (ACL included)
   const mine = callerScopedClient(req);
   if ("error" in mine) return NextResponse.json({ error: mine.error }, { status: mine.status });
-  const { data: doc, error: docError } = await mine.from("documents").select("id, org_id").eq("id", input.documentId).maybeSingle();
-  if (docError) return NextResponse.json({ error: `the document could not be read: ${docError.message}` }, { status: 500 });
-  if (!doc || (doc as { org_id?: string }).org_id !== input.orgId) {
-    return NextResponse.json({ error: "You can't read this document in this workspace" }, { status: 403 });
+  for (const documentId of [...new Set(inputs.map((i) => i.documentId))]) {
+    const { data: doc, error: docError } = await mine.from("documents").select("id, org_id").eq("id", documentId).maybeSingle();
+    if (docError) return NextResponse.json({ error: `the document could not be read: ${docError.message}` }, { status: 500 });
+    if (!doc || (doc as { org_id?: string }).org_id !== orgId) {
+      return NextResponse.json({ error: "You can't read this document in this workspace" }, { status: 403 });
+    }
   }
 
   try {
     const result = await runWithServerClient(actor.admin, async () => {
-      const { rows, unmatched } = await verifiedRequestRows(actor.admin, input, { uid: actor.userId, name: actor.email || null });
-      const outcome = await noticeRecorder().record(rows);
-      return { rows: rows.length, unmatched, outcome };
+      const recorder = noticeRecorder();
+      let rows = 0;
+      let unmatched = 0;
+      const outcomes: NoticeWriteOutcome[] = [];
+      for (const input of inputs) {
+        const built = await verifiedRequestRows(actor.admin, input, { uid: actor.userId, name: actor.email || null });
+        rows += built.rows.length;
+        unmatched += built.unmatched;
+        outcomes.push(await recorder.record(built.rows));
+      }
+      // the worst of the entries' outcomes (one entry: its own, as before)
+      const outcome: NoticeWriteOutcome = (["lost", "deferred", "written", "missing"] as const).find((o) => outcomes.includes(o)) ?? "none";
+      return { rows, unmatched, outcome };
     });
     if (result.outcome === "lost") {
       return NextResponse.json({ error: "the notices could not be written to the record, nor kept for the next run", ...result }, { status: 500 });

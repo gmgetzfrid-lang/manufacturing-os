@@ -296,7 +296,10 @@ describe("OS-16 / R4 — the intake link's auto-publish pushes its read-and-unde
     expect(asks().map((a) => a.userId).sort()).toEqual(["fitter1", "fitter2"]);
     // nothing pushed before the response: the push is an after() callback
     expect(pushes()).toEqual([]);
-    expect(db.afterCbs).toHaveLength(1);
+    // two after() callbacks: the push and (document-control P39 merge-time
+    // fix, DEC-90) the roster's document notice record write — neither is
+    // waited on before the response
+    expect(db.afterCbs).toHaveLength(2);
     await afterRun();
     expect(pushes()).toHaveLength(1);
     expect(pushes()[0]).toEqual({ orgId: "o1", kind: "ack_requested", resourceId: D1, recipients: expect.arrayContaining(["fitter1", "fitter2"]), writerUid: "creator1" });

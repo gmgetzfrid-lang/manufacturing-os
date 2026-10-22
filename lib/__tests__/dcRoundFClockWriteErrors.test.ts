@@ -196,8 +196,9 @@ describe("REV-15 — every other caller of the two helpers passes no sink, so it
     const pp = src("lib/postPublish.ts");
     expect(pp).toMatch(/try \{\s*\n\s*await onDocumentIssued\(\{ orgId: input\.orgId, documentId: input\.documentId, userId: input\.actorUserId, userName: input\.actorEmail \?\? input\.actorName \}\);\s*\n\s*\} catch \{ \/\* best-effort \*\/ \}/);
     // notifications N17 merge (DEC-90, R2 / R4): the call also relays the
-    // caller's notifyPush / serverPush — still no writeErrors sink
-    expect(pp).toMatch(/try \{\s*\n\s*await onDocumentIssuedAck\(\{\s*orgId: input\.orgId, documentId: input\.documentId, actorId: input\.actorUserId, actorName: input\.actorEmail \?\? input\.actorName,\s*\n\s*\.\.\.\(input\.notifyPush === false \? \{ notifyPush: false \} : \{\}\),\s*\n\s*\.\.\.\(input\.serverPush \? \{ serverPush: input\.serverPush \} : \{\}\),\s*\n\s*\}\);\s*\n\s*\} catch \{ \/\* best-effort \*\/ \}/);
+    // caller's notifyPush / serverPush — and (document-control P39
+    // merge-time fix) serverRecord — still no writeErrors sink
+    expect(pp).toMatch(/try \{\s*\n\s*await onDocumentIssuedAck\(\{\s*orgId: input\.orgId, documentId: input\.documentId, actorId: input\.actorUserId, actorName: input\.actorEmail \?\? input\.actorName,\s*\n\s*\.\.\.\(input\.notifyPush === false \? \{ notifyPush: false \} : \{\}\),\s*\n\s*\.\.\.\(input\.serverPush \? \{ serverPush: input\.serverPush \} : \{\}\),\s*\n\s*\.\.\.\(input\.serverRecord \? \{ serverRecord: input\.serverRecord \} : \{\}\),\s*\n\s*\}\);\s*\n\s*\} catch \{ \/\* best-effort \*\/ \}/);
     expect(pp).not.toMatch(/writeErrors/);
   });
   it("the helpers' other internal callers (markReviewed, setReviewPolicy, setAckPolicy) pass no sink either", () => {
@@ -215,7 +216,7 @@ describe("REV-15 — every other caller of the two helpers passes no sink, so it
     const recomputes = ack.match(/await recomputeDocumentAck\(\{[\s\S]*?\}\);|recomputeDocumentAck\(\{ orgId: input\.orgId, documentId: id[^}]*\}\)/g) ?? [];
     const withSink = recomputes.filter((c) => /writeErrors/.test(c)).map((c) => c.replace(/\s+/g, " "));
     expect(withSink).toHaveLength(1);
-    expect(withSink[0]).toMatch(/^await recomputeDocumentAck\(\{ orgId: input\.orgId, documentId: input\.documentId, actorId: input\.actorId, actorName: input\.actorName, writeErrors: input\.writeErrors, \.\.\.\(input\.notifyPush === false \? \{ notifyPush: false \} : \{\}\), \.\.\.\(input\.serverPush \? \{ serverPush: input\.serverPush \} : \{\}\), \}\);$/);
+    expect(withSink[0]).toMatch(/^await recomputeDocumentAck\(\{ orgId: input\.orgId, documentId: input\.documentId, actorId: input\.actorId, actorName: input\.actorName, writeErrors: input\.writeErrors, \.\.\.\(input\.notifyPush === false \? \{ notifyPush: false \} : \{\}\), \.\.\.\(input\.serverPush \? \{ serverPush: input\.serverPush \} : \{\}\), \.\.\.\(input\.serverRecord \? \{ serverRecord: input\.serverRecord \} : \{\}\), \}\);$/);
     expect(recomputes.length).toBeGreaterThanOrEqual(3);
   });
 });

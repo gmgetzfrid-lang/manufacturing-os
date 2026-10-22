@@ -1279,3 +1279,15 @@ done-when the integrator added at the P38 merge):
   audit action. New route `app/api/documents/notice-record/route.ts`.
   `lib/inAppNotifications.ts` (notifications') gained the additive
   `NotificationInput.id` / `notifyCheckedId`.
+- **Merge-time fix (2026-10-22; no SQL changed, so no paste fact changes).**
+  The browser's record post is started, never awaited (DEC-90: bookkeeping
+  never delays a user's action); `setAckPolicy` posts once per save (the
+  route takes a `{ batch }` body); the intake door's server write runs after
+  its response (`lib/noticeRecordAfterResponse.ts`, threaded through
+  `lib/postPublish.ts` — declared under `filesOutsidePlan`). The retry's
+  read-back in `lib/complianceNotify.ts` (notifications', additive,
+  `filesOutsidePlan`) matches a writer-chosen bell id. `DIST-20` RESOLVED
+  and `DIST-19` RESOLVED by record (pending `20261257`, `20261259` after
+  `20261219`, and `20261160` for `nudgeAcknowledgment`'s browser re-send);
+  drafting-flow `EVID-8` dw1 / dw2 superseded by the record (DEC-90 ruling
+  (e)), dw3 owned by projects-joint J21.

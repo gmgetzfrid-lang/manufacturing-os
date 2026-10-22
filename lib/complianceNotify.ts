@@ -220,8 +220,35 @@ async function readBackActor(input: NotificationInput, scope: ComplianceScope | 
 }
 
 /** Has this notice's row landed since `sinceIso`? true / false, or null when
- *  the read failed (a landed row cannot be ruled out). */
+ *  the read failed (a landed row cannot be ruled out).
+ *  document-control P39 merge-time fix (DIST-20; additive — declared to
+ *  notifications under filesOutsidePlan): when the writer CHOSE the row's id
+ *  (NotificationInput.id — the document notice record names it as
+ *  notification_id), only THAT row settles the notice: the read also
+ *  matches the id, so a sibling with the same title / kind / person /
+ *  resource / actor written since the attempt began is never taken for it
+ *  (the record would name a bell row that never landed). notification_i_wrote
+ *  (20261206) takes no id, so the id case reads the table directly even
+ *  where the RPC would be asked — a browser writing another member's row
+ *  then reads nothing (notifications_own_select) and retries, which is safe:
+ *  a retry of the same id is the row already there (23505 on
+ *  notifications_pkey, answered as landed by notifyWithReason), never a
+ *  second copy. Without an id: exactly as before. */
 async function landedSince(input: NotificationInput, sinceIso: string, rb: ReadBack): Promise<boolean | null> {
+  if (input.id) {
+    try {
+      let q = db().from("notifications").select("id")
+        .eq("id", input.id)
+        .eq("org_id", input.orgId).eq("user_id", input.userId).eq("kind", input.kind).eq("title", input.title);
+      if (rb.via === "table") q = rb.actor ? q.eq("actor_user_id", rb.actor) : q.is("actor_user_id", null);
+      q = input.resourceId ? q.eq("resource_id", input.resourceId) : q.is("resource_id", null);
+      const { data, error } = await q.gte("created_at", sinceIso).limit(1);
+      if (error) return null;
+      return Array.isArray(data) && data.length > 0;
+    } catch {
+      return null;
+    }
+  }
   if (rb.via === "rpc") {
     try {
       const { data, error } = await (supabase as unknown as {
