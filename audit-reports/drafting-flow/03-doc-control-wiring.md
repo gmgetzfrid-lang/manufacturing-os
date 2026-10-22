@@ -435,6 +435,9 @@ Tests: `lib/__tests__/dfRoundG_P5_rosterPanel.test.ts` ("DCW-6 (source pin …)"
 
 *Note (2026-10-21, drafting-flow Round G, DF-P6 REVIEW-MODEL): the hand-off named above — the capability resource does not carry `libraryId` — is still OPEN. Corrected at the DF-P6 review fix pass (DEC-29): DF-P6 first added `libraryId` (and `workClass` / `codeClass`) to `lib/workflow.ts` `ticketResource` and called this hand-off closed, but its precondition was not met — the requests list's `fromRow` (`app/(protected)/requests/page.tsx`) and `lib/inbox.ts` `rowToTicket` build the attention badge's Ticket without `library_id`, so a library-scoped `ticket.*` rule would have governed the route and the request page and not the badge. `ticketResource` is back to request type and unit (`lib/__tests__/dfRoundG_P4_library.test.ts` restored to its base pin). The mappers' half is handed on in 99-fix-sequencing "Hand-offs from DF-P6" (spread `lib/reviewModel.ts` `reviewModelFieldsFromRow`, which the route and the request page now share); `20261250`'s inventory still counts stored library-scoped `ticket.*` rules (expected 0).*
 
+
+*Note (2026-10-22, drafting-flow Round G, DF-P19 TICKET RESOURCE LIBRARY AND CLASS DIMENSION): the hand-off named above is closed — the capability resource carries `libraryId` (`lib/workflow.ts` `ticketResource`), with the requests list's `fromRow`, `lib/inbox.ts` `rowToTicket` and the attention badge's `fromDbTicket` carrying it (and the classes) through `lib/reviewModel.ts` `reviewModelFieldsFromRow`, so a library-scoped `ticket.*` rule governs the route, the request page, the list, the inbox and the badge alike; one stored before DF-P19 only adds until an Admin confirms it (DEC-90 ruling (2)). See `GAP-105` acceptance 3, `TIER-4`. DCW-6 stays RESOLVED (its done-when was met by DF-P5).*
+
 ---
 
 ## DCW-7 · `unit` is the only locator, and it is free text

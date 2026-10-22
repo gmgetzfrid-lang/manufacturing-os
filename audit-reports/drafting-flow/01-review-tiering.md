@@ -368,7 +368,7 @@ Tests: `lib/__tests__/dfRoundG_P18_reviewModelPage.test.ts` ("TIER-3 dw1 and the
 ## TIER-4 · No code-governed review dimension — B31.3 and its equivalents are unrepresentable
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance
 - **Locations:**
@@ -433,6 +433,24 @@ Tests: `lib/__tests__/reviewModel.test.ts` "a rule scoped to a code class narrow
 - ✓ 3. A ticket in a code-governed service surfaces its code to the reviewer before they sign — the class is set at triage from a screen and the approval's description and the request page say it.
 
 **Scope / residual.** → drafting-flow **DF-P19 TICKET RESOURCE LIBRARY AND CLASS DIMENSION** (the resource carrying `workClass` / `codeClass` / `libraryId`, as assigned). Stays OPEN for that limb only.
+
+
+**Resolution (2026-10-22, drafting-flow Round G).** DF-P19 TICKET RESOURCE LIBRARY AND CLASS DIMENSION — the resource limb (the DF-P18 Partial's only ✗), under the integrator's rulings (1)–(3) and (5) for DF-P19 (DEC-90). Reproduced on the base `82f2ed6`: `lib/workflow.ts` `ticketResource` returned `{ requestType, unit }` only, so a capability rule scoped to a code class (or a work class, or a library) matched no request; the requests list's `fromRow`, `lib/inbox.ts` `rowToTicket` and the attention badge (`hooks/useTicketNotifications.ts` `fromDbTicket` and its column list) built their Ticket without the classes, which is why DF-P6 had reverted the resource.
+
+Landed:
+- **The resource carries the classes and the library** — `lib/workflow.ts:157` `ticketResource` returns `libraryId`, `workClass`, `codeClass` beside type and unit (null when the request has none, so no rule matches it).
+- **Every mapper that builds a request for the engine spreads them** (ruling (1)): `lib/reviewModel.ts` `reviewModelFieldsFromRow` is now spread by the requests list (`app/(protected)/requests/page.tsx:583`), the inbox (`lib/inbox.ts:344`, the mapper only) and the badge (`hooks/useTicketNotifications.ts:160` `fromDbTicket`; its column list gains the library and the review-model columns, tried in order on a 42703 — `TICKET_ATTENTION_COLUMN_LADDER`, line 141: without 20261250's columns, then without 20261208's library, then `'*'` as before; the rung that answers is remembered), as the workflow route / cron (`lib/ticketTransitions.ts` `rowToTicket`) and the request page already did. The equipment route's queue check presents the same fields (`app/api/tickets/equipment/route.ts:147`, with the same 42703 ladder on its read).
+- **A stored rule that never applied cannot silently take an action away** (ruling (2); the mechanism is recorded in `DEC-44 (DF-P19-ticket-resource-dimensions)`): on a `ticket.*` capability a rule scoped to a library / work class / code class is IN FORCE only once confirmed (`lib/capabilityPolicy.ts:420` `ruleInForce`; the rule's `confirmedAt`, server-owned). Until then it only ADDS (`effectiveTokens`, line 439): its tokens are joined to the answer the request had before it presented those keys, and "scoped" keeps that answer's state — so a grant takes effect, a narrowing never removes a working action, never scopes a requester's own approval out and never narrows an engineer pick. The policy route confirms a rule it stores NEW (`app/api/admin/capability-policy/route.ts:220`, `carryTicketRuleConfirmation` — the save is the confirmation; a client never sends the stamp) and lifts DF-P6's refusal of a new one; a stored one is confirmed by an Admin (`op: "confirm_rule"`, line 232, audited). The permissions console lists every such rule with its state ("Not yet in force where it would take an action away — confirm to apply") and a Confirm button for an Admin (`components/permissions/CapabilityPolicyEditor.tsx:738`, `confirmRule` line 442). `canonicalEntry` now reads every rule key, so a class-scoped rule's change on a critical capability is Admin's.
+- **The inventory before the keys match**: `supabase/migrations/20261263_df_roundG_ticket_dimension_inventory.sql` (counts only, per workspace, read-only; NARROW / GRANT / SAME by the same rule as `classifyTicketDimensionRule`, line 892). The live counts are the paste's (the integrator's report row); the app is safe whatever they are.
+
+Tests: `lib/__tests__/dfRoundG_P19_ticketResource.test.ts` (one row through all five mappers → one resource and one engine answer over every status × role × identity; ruling (3) over every status × role × identity under policies with and without such rules, confirmed and not; ruling (2): no enabled action lost to an unconfirmed narrowing, lost to a confirmed one where it matches only, an unconfirmed grant takes effect, the requester's own approval and the engineer pick; classification, carry, confirm, the console's words); `lib/__tests__/sweepRoundE_policyServer.test.ts` (the route: a new rule confirmed by the save, a forged stamp ignored, `confirm_rule` Admin-only / 409s); `lib/__tests__/attentionProvider.test.ts` (the badge's ladder); `reviewModel.test.ts`, `dfRoundG_P4_library.test.ts`, `sweepRoundD3.test.ts` re-pinned to the carried resource; PostgreSQL 16: `lib/__tests__/rls/dfP19TicketDimensionInventory.test.ts` (4 cases) plus a bare-cluster run without the 20261208 / 20261250 columns.
+
+**Done-when.**
+- ✓ 1. An org declares governing codes (code classes) and attaches a review requirement to one — "Requires engineering" (DF-P6 / DF-P18), and now a capability rule scoped to a code class binds the request carrying that class (a rule saved through the policy route is in force; one stored before DF-P19 binds where it adds people, and in full once an Admin confirms it — DEC-90 ruling (2)).
+- ✓ 2. As recorded (org-configurable data; DEC-35 — no code names in the files this package wrote).
+- ✓ 3. As recorded (DF-P18).
+
+**Scope / residual.** None against the done-whens. Observation for the integrator (not a done-when, so not a remainder under DEC-31): the permissions grid authors request-type and project rows but not a library- or class-scoped row — it preserves, lists and confirms one, and a new one is written through the policy route (where the save confirms it). A grid row for them would follow the request-type row's pattern; proposed for the next package that holds `components/permissions/CapabilityPolicyEditor.tsx`, should the integrator want it.
 
 ---
 
