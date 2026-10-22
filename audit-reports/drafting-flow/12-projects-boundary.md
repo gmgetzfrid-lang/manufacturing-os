@@ -17,7 +17,7 @@ Direct answer to the bidirectional-portal question, from the schema up.
 ## PROJ-1 · A request's approved deliverable never becomes a controlled document — the drafting flow writes no documents or document_versions rows at all
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/storage.ts:452`, `lib/storage.ts:462`, `app/(protected)/requests/[id]/page.tsx:1078`, `app/(protected)/requests/[id]/page.tsx:1360`, `types/schema.ts:1038`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The absence claim holds under repo-wide search: no drafting-flow path writes documents or document_versions, so the approved Final PDF gets no document number, revision chain, supersession or hold coverage — while requests/[id]/page.tsx:647 stamps that very download 'CONTROLLED COPY'. Slight overstatement in the summary: the portal does keep an autonomous deliverable rev chain (20260827_ticket_deliverable_rev.sql), a /verify-ticket QR (:636-651) and download_audits rows (:675-683), so 'no distribution record' is too strong; the controlled-document gap itself is real.
@@ -83,6 +83,23 @@ With this, done-when 2's sentence holds for every path: the service role writes 
 
 *Assigned (2026-10-21, the integrator at the DF-P8 merge, DEC-31):* what remains (the deliverable referenced when its review completes, and the reading of done-when 1) → projects-joint **J21 DRAFTING-REQUEST PROJECT REMAINDERS** (after document-control P39, which holds `lib/reviewControl.ts`).
 
+**Resolution (2026-10-22, projects-joint Round G).** J21 DRAFTING-REQUEST PROJECT REMAINDERS, under DEC-90's rulings (1) and (6) for J21. Reproduced on `693239d` first: `lib/reviewControl.ts` `finalizeReviewedRevision` promoted a request's reviewed deliverable and never touched the request's project (no `project_documents` write, no call into `lib/ticketProject.ts`), and the project's requests card read such a deliverable as "Superseded — the register is now at Rev …" while it was in review and "In document review." once its review had promoted it (`lib/ticketProject.ts` `deliverableReference`, the in-review flag read before the pointer). What landed:
+- **The review completion references it.** `finalizeReviewedRevision` (`lib/reviewControl.ts:1197`), after the publish's own audit row, STARTS — never awaits — `referenceReviewedRequestDeliverable` (new `lib/reviewDeliverableReference.ts`). It reads the promoted version's `related_ticket_id` as the finalizer; no request, no call. Otherwise it asks the new `POST /api/projects/deliverable-reference` (`app/api/projects/deliverable-reference/route.ts`), which trusts only the ids. The route checks five things: the caller is an active member of the version's workspace; the version carries a request; the review COMPLETED (`documents.current_version_id` is this version); the request names a project (`tickets.project_id`; a 42703 / PGRST204 is "not pasted", nothing owed); and DF-P8's register policy answers yes — the authority recorded on the link (`recordedRegisterAuthority`), else the finalizer's own (`callerHoldsRegisterAuthority`, asked as the caller). Then it calls DF-P8's `referenceDeliverableInProject` as the service role: an `ignoreDuplicates` upsert, so a document already on the register is left as it is, plus the feed row (`doc_added` only for a controller / owner, else `request_deliverable_referenced`).
+- **Fail-safe (ruling (1)).** The publish's answer and every write before it are unchanged. A transport failure or a 5xx is retried once. A reference not written for want of authority, an unconfirmable check or a refused write is RECORDED on the request's audit trail (`TICKET_DELIVERABLE_REFERENCE_NOT_WRITTEN`, checked; the `TICKET_` family) and SAID — to the new optional `onProjectReferenceNote` of `finalizeReviewedRevision`, else the console. A request with no project, or a document no request produced, completes exactly as today (pinned).
+- **The project's requests card reads it truthfully** (`lib/ticketProject.ts` `deliverableReference`; `components/projects/ProjectRequestsCard.tsx` reads `pending_version_id`). While the deliverable is the document's pending draft it reads "In document review — the register stays at Rev X until the review completes" (not current). Once promoted it reads "Current revision". Neither pending nor current reads "Not current — … (its document review closed without publishing it, or a later revision superseded it)". A deliverable published outside review reads exactly as before.
+- **Done-when 1's wording — the integrator's reading, recorded (ruling (1)):** "the same path intake submissions use" means the same `project_documents` reference and the same register policy, NOT the intake upload route itself. Under that reading the promotion runs through the register's own publish contract for every request shape: `publish_revision`, the review gate and the supersession of the prior revision (DF-P4 / DF-P15, `DCW-4`). The project reference is the one row "attach to project" writes, by DF-P8's policy, on every path: the hand-back outside review, a later link, and now the review's completion.
+
+Tests: `lib/__tests__/prjRoundGJ21ReviewControl.test.ts` covers the REGRESSION pins: a version no request produced publishes as before and never calls the route; the publish answers before a never-answering route, which is then asked with the document and promoted version; a warning is said to `onProjectReferenceNote`; the call is `void`, after the publish's audit row; and the helper's retry, unreachable-twice and no-session cases. `lib/__tests__/prjRoundGJ21DeliverableReferenceRoute.test.ts` covers 401 / 403 / 400 / 404; nothing owed for not_from_request, not_current, no_project and not_migrated; the recorded authority, the finalizer's authority with `doc_added`, no authority (recorded and said), an unconfirmable check, a document already on the register, and a refused write (503, recorded). `lib/__tests__/prjRoundGJ21ProjectRegister.test.ts` covers the card's three readings and the REGRESSION of the outside-review readings.
+
+**Done-when.**
+- ✓ An approved Final can be promoted into the controlled register: through the publish contract, the review gate and supersession for every request shape (DF-P4 / DF-P15), and "the same path intake submissions use" read as the same `project_documents` reference and register policy (the integrator's ruling, DEC-90 ruling (1) for J21).
+- ✓ The promotion puts a `project_documents` reference on the request's project when the request carries one: on the hand-back, on a later link, and now when a review completes. Each is written only where the register's own policy admits the person behind it (DF-P8 fix passes 2 / 3, the ruled behaviour); otherwise nothing is written, and the miss is recorded and said.
+- ✓ The promoted version records its request (`document_versions.related_ticket_id`, as recorded).
+
+**Scope / residual.** (1) `components/documents/ReviewGateSection.tsx` (document-control's) does not yet pass `onProjectReferenceNote`, so a reference not written after a review completes is said in the browser console and recorded on the request's audit trail, not shown on screen. One additive prop at the two `finalizeReviewedRevision` calls closes it. Owner (DEC-31): the next document-control package holding `ReviewGateSection.tsx` — the integrator assigns. (2) If the route is unreachable twice, or the page closes before the background call settles, that one reference is lost: nothing on the server can record a request it never received. The request page's re-link writes it again, and a project manager can attach it from the Documents card. This is the P39 precedent for a lost browser post (DEC-90 ruling (d) at the P39 merge). (3) The request's `metadata.deliverable.in_review` flag is the hand-back's record and is not rewritten at the review's completion (the card reads the pointers instead; the ticket is workflow-owned).
+
+**Pending migration:** `20261256` only (a request has no project before it — then nothing is owed, today's path). J21's `20261262` is not needed for this limb.
+
 ---
 
 <a id="proj-2"></a>
@@ -122,7 +139,7 @@ supabase/schema.sql:397-445 — `CREATE TABLE IF NOT EXISTS tickets ( id UUID PR
 ## PROJ-3 · project_documents RLS grants every active org member full ALL access — any member can silently delete a private project's document-register rows, bypassing the client-side canManage gate
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260609_phase1_normalization.sql:192`, `supabase/migrations/20260609_phase1_normalization.sql:194`, `components/projects/ProjectDocumentsCard.tsx:138`, `app/(protected)/projects/[id]/page.tsx:134`, `supabase/migrations/20260906_projects_hardening.sql:122`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: no later migration, RESTRICTIVE policy, or trigger constrains project_documents (the only trigger on it is checkouts_resync_project_documents, an INSERT/UPDATE resync), so any active org member — including a Viewer and a non-member of a private project — can SELECT, INSERT and DELETE its rows. Partial mitigation worth recording: rows with source='checkout' are re-created the next time a checkout row for that project/document is inserted or updated, so only manual attachments are permanently lost.
@@ -161,6 +178,24 @@ Searches for a later override: `grep -rn "ON project_documents" supabase/` (inde
 **Pending migration:** none for this limb (it works before and after `20261256`).
 
 *Assigned (2026-10-21, the integrator at the DF-P8 merge, DEC-31):* done-when 2 (a server-side audit row for every attach / detach) → projects-joint **J21 DRAFTING-REQUEST PROJECT REMAINDERS**.
+
+**Resolution (2026-10-22, projects-joint Round G).** J21, DEC-90 ruling (2). Reproduced on `693239d`: no `audit_logs` row on any attach or detach. The Documents card (`components/projects/ProjectDocumentsCard.tsx`) writes only the `doc_added` / `doc_removed` feed row. The checkout resync, the intake door, adoption and DF-P8's routes write none, and a direct API call writes nothing at all. What landed: `supabase/migrations/20261262_prj_roundG_project_register_record.sql` §(1) adds a NEW AFTER INSERT OR DELETE trigger `trg_project_documents_record_link` → `project_documents_record_link_change()` (SECURITY DEFINER, `search_path` pinned, EXECUTE revoked from PUBLIC / anon / authenticated — DRLS-16; a `trigger-only` row in `lib/__tests__/rls/definerDecisions.ts`):
+- Every attach writes `PROJECT_DOCUMENT_ATTACHED`, and every detach `PROJECT_DOCUMENT_DETACHED`, whichever door made it. The row is `resource_type 'project'`, `resource_id` the project, so it is read under 20261142's project rule. `details` holds `projectId`, `documentId`, `documentNumber`, `linkId`, `source` and `recordedBy: 'database'`.
+- The actor is the signed-in caller when they are an active member of the row's workspace (20261201's stamp names them). Otherwise `user_id` is NULL: the service role is `system`, and a non-member caller's uid (the intake door's link identity) goes in `details.actorUid`.
+- The row is written in the attach / detach's OWN transaction (checked: no attach without its row). Every attach and detach that lands today still lands, and what the policy refused is still refused, with nothing written.
+- A repeat that changes nothing (ON CONFLICT DO NOTHING / DO UPDATE) writes nothing. A cascade from the workspace's, project's or document's own deletion writes nothing, and the deletion still succeeds.
+- `lib/timeline.ts` classifies both actions `mirrored` (the card's feed row already shows the fact on the project timeline) and gives them readable summaries; both fall in `lib/auditActions.ts`'s `PROJECT_` family.
+
+Exercised on PostgreSQL 16 (`lib/__tests__/rls/j21ProjectRegisterRecord.test.ts`, the full replay plus the file pasted again): the owner's attach / detach through the card, one row each, naming the owner as `member`. A viewer's refused insert (42501) records nothing. The service role's row is `system`; a DO NOTHING repeat adds none. A checkout under the project links as before, with one row naming the member and `source checkout`, and a re-checkout adds none. Deleting a document, the project or a whole workspace cascades as before with no detach row. The definer census and the fresh replay are green.
+
+**Done-when.**
+- ✓ SELECT honours project visibility; INSERT / DELETE narrowed (`20261102:378-423`, by pointer to `PM-8` / `SEC-17`, as recorded).
+- ✓ Attach / detach writes an `audit_logs` row server-side — by the database, for every door, a direct API call included — not only a client-written feed row (`20261262` §(1); pending paste).
+- ✓ The checkout trigger's inserts still succeed under the narrowed policy (as recorded; re-proved with the new trigger in place).
+
+**Scope / residual.** None in this finding. A restore that re-inserts register rows writes attach rows dated at the restore (truthful — the rows were re-created then).
+
+**Pending migration:** `20261262` (DEC-30 one paste; deploy the J21 app first, then paste — either order is safe for every flow: before the paste nothing is recorded, today's path).
 
 ---
 
@@ -215,7 +250,7 @@ components/documents/CheckoutFlowModal.tsx:322 — `project_id: projectId,`
 ## PROJ-5 · Intake-uploaded documents never get a project_documents row, so the project has two disjoint definitions of "its documents"
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/intake/upload/route.ts:225`, `app/api/intake/upload/route.ts:239`, `lib/transitionIn.ts:221`, `lib/timeline.ts:423`, `lib/projectExport.ts:42`, `components/projects/ProjectDocumentsCard.tsx:52`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The title's "never" is false: adoptDocument() does create the project_documents row when an intake sheet is transitioned into the controlled register. Also, submissions are not invisible on the project page — components/projects/IntakePanel.tsx renders a "Submissions awaiting review" queue for them. The real, narrower defect (an un-adopted intake document is absent from project_documents, hence from ProjectDocumentsCard, getProjectTimeline's linked-doc pull at timeline.ts:423-426, and loadProjectBundle at projectExport.ts:41) stands, but it is a register/export completeness gap, not a lost document — LOW.
@@ -253,6 +288,22 @@ lib/projectExport.ts:42 — `supabase.from("project_documents").select("*").eq("
 **Pending migration:** none for this limb (it works before and after `20261256`).
 
 *Assigned (2026-10-21, the integrator at the DF-P8 merge, DEC-31):* the source='intake' value and the timeline → projects-joint **J21 DRAFTING-REQUEST PROJECT REMAINDERS**.
+
+**Resolution (2026-10-22, projects-joint Round G).** J21, DEC-90 ruling (3). Reproduced on `693239d`: the intake door's reference is written `source 'manual'` on both of its paths (`intake_door_housekeep` 'reference', `20261214:639`, and the service-role fallback, `app/api/intake/upload/route.ts:2099`), because the column's CHECK admits only `checkout` / `manual` (`20260609:73`). What landed:
+- `supabase/migrations/20261262_prj_roundG_project_register_record.sql` §(2) widens the CHECK to `('checkout', 'manual', 'intake')` — inventory first, counts only; existing values kept, no row rewritten. A NEW BEFORE INSERT OR UPDATE OF source trigger `trg_project_documents_intake_source` → `project_documents_intake_source()` (SECURITY DEFINER, pinned, revoked) writes `'intake'` for a `'manual'` reference to a document in THE PROJECT'S OWN intake folder (`projects.intake_collection_id`). That covers the door's reference at the moment it creates the document, whichever path wrote it — with no edit to the door's files. An `'intake'` row keeps `'intake'` when the adoption's later `'manual'` upsert (or a re-attach) would rewrite it, and `'checkout'` is never changed.
+- `lib/projects.ts` `listProjectDocuments` reads a linked `'intake'` row as `source: "intake"` with its link (it would have read "checkout"). `components/projects/ProjectDocumentsCard.tsx` (`sourceBadgeKey`) badges it "from intake", beside the existing "in intake — not adopted" folder badge; an unlinked approved intake document keeps "approved intake".
+- The project timeline: an intake document's version events reach it through its register reference (J1). Its adoption — the `TRANSITION_IN` row `adoptDocument` / `adopt_intake_document` write on the document — now reads "Adopted from the project's intake into the controlled register as <number>" (`lib/timeline.ts` `summarizeAudit`; it read "transition in").
+
+Exercised on PostgreSQL 16 (`lib/__tests__/rls/j21ProjectRegisterRecord.test.ts`): the door-shaped write reads `intake`; the adoption's upsert after the move keeps `intake`, with no second attach row; a document outside the folder stays `manual`; `checkout` stays `checkout`; an unknown value is refused (23514); a card re-attach outside the folder is exactly today's (checkout → manual). Unit: `lib/__tests__/prjRoundGJ21ProjectRegister.test.ts`.
+
+**Done-when.**
+- ✓ The door upserts a `project_documents` row at creation (J1), and it now reads `source = 'intake'`, distinct from checkout / manual (`20261262` §(2); pending paste).
+- ✓ The Documents card badges intake rows distinctly: "from intake" by source, and "in intake — not adopted" by folder, so a PM tells adopted from not-yet-adopted.
+- ✓ The project timeline and the CSV export include them: CSV as register rows (as recorded); the timeline through the reference — version events plus the adoption entry.
+
+**Scope / residual.** Rows written before the paste keep `'manual'` (the inventory counts how many sit in an intake folder). They read `'intake'` only if written again; a backfill was not ruled. Before the paste, the J21 app reads exactly as today. Deploy first: an app older than J21 would read an `'intake'` row as "via checkout".
+
+**Pending migration:** `20261262` (DEC-30 one paste; deploy the J21 app first, then paste).
 
 ---
 
@@ -444,7 +495,7 @@ Searches: `grep -rn "href=" 'app/(protected)/requests/[id]/page.tsx'` → no hit
 ## PROJ-10 · checkout_sessions.linked_ticket_id is a live FK to tickets that no code path ever writes, leaving the one transitive project->request route empty
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:840`, `lib/projects.ts:354`, `components/documents/CheckoutFlowModal.tsx:318`, `lib/projects.ts:965`, `lib/checkoutEpisodes.ts:715`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Both halves check out: nothing writes checkout_sessions.linked_ticket_id, and milestones.linked_ticket_id has a writer (milestones.ts:171) whose only caller, components/projects/ScheduleTab.tsx, never passes linkedTicketId (grep finds no such property anywhere under components/). Severity lowered: this is an unwired column with no incorrect behavior — no data is lost or corrupted, a query simply returns nothing.
@@ -485,6 +536,16 @@ Searches: `grep -rn "linked_ticket_id" lib/ app/ components/` (7 hits, all mappi
 **Pending migration:** `20261256` (DEC-30 one paste; deploy first, then paste — either order is safe: before the paste the app takes today's path — a request with no project, and no checkout session stamped with its request (the stamp waits for the paste: DEC-90 fix pass at the DF-P8 merge, `PROJ-10`); independent of every other migration).
 
 *Assigned (2026-10-21, the integrator at the DF-P8 merge, DEC-31):* done-when 2 (wire or drop `milestones.linked_ticket_id`) → projects-joint **J21 DRAFTING-REQUEST PROJECT REMAINDERS**.
+
+**Resolution (2026-10-22, projects-joint Round G).** J21, DEC-90 ruling (4): `milestones.linked_ticket_id` is **DROP-AS-UNUSED by record**, not wired. Re-verified on `693239d`: no screen shows it — `components/projects/ScheduleTab.tsx`, `TaskDetailPanel.tsx` and every other caller render no milestone→request link, and `createMilestone`'s only caller passes none (`lib/milestones.ts:339` maps it). Wiring it would need a new picker and a new display, a second stored request↔project link beside `tickets.project_id` — which GAP-114 forbids ("Do not add the reverse link as a second source of truth. One foreign key on the ticket."). The ruling prefers WIRE only when a screen will show it; none does. No destructive DDL: the column, its key (`ON DELETE SET NULL`, `20260614`) and its mappings stay. `20261262` §(3) only marks the column `COMMENT … 'UNUSED (drafting-flow PROJ-10 …)'`, so the schema stops advertising it as live. PostgreSQL 16 case: the column is still there, with the comment.
+
+**Done-when.**
+- ✓ A checkout raised to service a drafting request stamps `linked_ticket_id` — once `20261256` is applied (as recorded).
+- ✓ The same decision is made for `milestones.linked_ticket_id`: drop-as-unused, kept and marked unused (`20261262` §(3)); the request's project is `tickets.project_id`, one reference.
+
+**Scope / residual.** None. Removing the column and its mappings later is a destructive change for its own package and paste, if ever wanted.
+
+**Pending migration:** `20261256` (done-when 1, as recorded); `20261262` (the column comment only).
 
 ---
 

@@ -1668,6 +1668,10 @@ everywhere it appears.
 
 **Built (2026-10-21, drafting-flow DF-P8 PROJECTS).** The request ↔ project link by reference (DEC-40): `tickets.project_id` with an org-equality rail (20261256, PASTE row 200), settable only through `/api/tickets/project-link` and the create route; the check-in and collision paths carry it; the project page lists its requests and warns at closeout about open ones; the published deliverable is referenced on the project register by the hand-back and the link route. *Remaining:* the reference when a deliverable's document review completes (`PROJ-1`) → projects-joint **J21** (the integrator at the DF-P8 merge, DEC-31); this gap closes with it.
 
+**Resolution (2026-10-22, projects-joint Round G).** Closed by record (DEC-90 ruling (6) for J21): `PROJ-1` landed. When a document review completes on a version a request published into review, `lib/reviewControl.ts` `finalizeReviewedRevision` starts — never awaits — the reference on the request's project. It goes through `POST /api/projects/deliverable-reference`: DF-P8's register policy and `referenceDeliverableInProject` (a `project_documents` reference, no bytes moved — DEC-40). The project's requests card reads a deliverable in review as "In document review" and, once promoted, as the current revision. With it, the deliverable reaches the project's documents by reference on every path: the hand-back outside review, a later link, and a review's completion.
+
+**Acceptance.** 1–6 ✓ as built by DF-P8 (above), with acceptance 2 now holding through a document review too (the card reads the pointers: pending, current, or not current). Nothing remains in this gap. The record that the reference was not written, and its screen note in `ReviewGateSection.tsx`, are `PROJ-1`'s stated residuals (owner named there).
+
 ---
 
 ## Already built — do not build these twice
