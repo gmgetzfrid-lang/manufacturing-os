@@ -81,6 +81,7 @@ export async function GET(req: NextRequest) {
           userId: m.uid,
           name: m.display_name || m.email || "Member",
           spentUsd: u?.spentUsd ?? 0,
+          backgroundUsd: u?.backgroundUsd ?? 0,
           asks: u?.asks ?? 0,
           inputTokens: u?.inputTokens ?? 0,
           outputTokens: u?.outputTokens ?? 0,

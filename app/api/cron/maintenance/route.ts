@@ -328,6 +328,18 @@ async function handler(req: NextRequest) {
     result.errors.push(`estate-registry: ${(e as Error).message}`);
   }
 
+  // 13. RESEARCH RECORDS age out after 90 days — they're for diagnosing an
+  //     answer, not an archive. Records behind a test result are kept with
+  //     it (eval_run_id set). No-op before the answer-tests migration.
+  try {
+    const cutoff = new Date(Date.now() - 90 * 86_400_000).toISOString();
+    const { data, error } = await sb.from("knowledge_ask_traces").delete()
+      .lt("created_at", cutoff).is("eval_run_id", null).select("id");
+    if (!error) (result as Record<string, unknown>).prunedAskTraces = ((data as unknown[]) ?? []).length;
+  } catch (e) {
+    result.errors.push(`ask-trace-prune: ${(e as Error).message}`);
+  }
+
 return NextResponse.json(result);
 }
 

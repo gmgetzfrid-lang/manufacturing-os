@@ -35,6 +35,11 @@ export interface AskHandlerInput {
   /** Prior turns of the conversation, oldest first. Library asks already
    *  take `history` in the body; the controller takes them here. */
   priorTurns?: Array<{ question: string; answer: string }>;
+  /** Set only by the server's answer-test runner — never from a request
+   *  body. The ask runs clean: no conversation, no 👍 pages from earlier
+   *  answers (or a test would grade itself), and no entry in the library's
+   *  question log. */
+  evalRun?: { runId: string; caseId: string };
 }
 
 export interface AskHandlerResult {

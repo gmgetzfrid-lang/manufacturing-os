@@ -33,6 +33,7 @@ import SourcesPanel from "@/components/knowledge/SourcesPanel";
 import DrawingIntelPanel from "@/components/knowledge/DrawingIntelPanel";
 import LibraryMapPanel from "@/components/knowledge/LibraryMapPanel";
 import HealthPanel from "@/components/knowledge/HealthPanel";
+import AnswerTestsPanel from "@/components/knowledge/AnswerTestsPanel";
 import SemanticIndexPanel from "@/components/knowledge/SemanticIndexPanel";
 import { collectDroppedFiles, filesFromDirectoryInput } from "@/lib/folderUpload";
 
@@ -459,6 +460,9 @@ export default function KnowledgeLibraryPage() {
 
       {/* What the assistant knows is in here — forms, checklists, specs. */}
       {activeOrgId && readyDocs > 0 && <LibraryMapPanel orgId={activeOrgId} libraryId={libraryId} />}
+
+      {/* Proof the answers hold up: real questions, re-asked and scored. */}
+      {activeOrgId && isController && readyDocs > 0 && <AnswerTestsPanel orgId={activeOrgId} libraryId={libraryId} />}
 
       <div>
         {/* ── Documents ──────────────────────────────────────────────────── */}

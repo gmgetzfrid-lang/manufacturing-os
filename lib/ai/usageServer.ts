@@ -11,6 +11,7 @@
 
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { estimateCostUsd, type AiUsage } from "@/lib/ai/pricing";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 
 export const DEFAULT_MONTHLY_CAP_USD = 10;
 
@@ -20,7 +21,12 @@ export function monthStartIso(now = new Date()): string {
 }
 
 export interface MonthUsage {
+  /** Everything this user's key-sponsored AI work cost this month — asks,
+   *  indexing, drawing reading, drafting. The cap is checked against this. */
   spentUsd: number;
+  /** The part of spentUsd that wasn't a question asked (indexing, reading
+   *  drawings, building catalogs…), shown so the total isn't a mystery. */
+  backgroundUsd: number;
   inputTokens: number;
   outputTokens: number;
   asks: number;
@@ -28,7 +34,7 @@ export interface MonthUsage {
 }
 
 const EMPTY_USAGE: MonthUsage = {
-  spentUsd: 0, inputTokens: 0, outputTokens: 0, asks: 0, avgPromptTokens: 0,
+  spentUsd: 0, backgroundUsd: 0, inputTokens: 0, outputTokens: 0, asks: 0, avgPromptTokens: 0,
 };
 
 type UsageRow = {
@@ -37,46 +43,58 @@ type UsageRow = {
   output_tokens: number | null;
   est_cost_usd: number | string | null;
   ok: boolean | null;
+  op?: string | null;
 };
+
+/** The ask meter. Token averages and the ask count describe questions only —
+ *  the per-ask estimate must not be skewed by embedding batches. */
+const ASK_OP = "knowledgeAsk";
 
 function rollup(rows: UsageRow[]): MonthUsage {
   const out = { ...EMPTY_USAGE };
   for (const r of rows) {
-    out.spentUsd += Number(r.est_cost_usd ?? 0) || 0;
+    const cost = Number(r.est_cost_usd ?? 0) || 0;
+    out.spentUsd += cost;
+    if ((r.op ?? ASK_OP) !== ASK_OP) { out.backgroundUsd += cost; continue; }
     out.inputTokens += r.input_tokens ?? 0;
     out.outputTokens += r.output_tokens ?? 0;
     if (r.ok !== false) out.asks += 1;
   }
   out.avgPromptTokens = out.asks > 0 ? Math.round(out.inputTokens / out.asks) : 0;
   out.spentUsd = Math.round(out.spentUsd * 10000) / 10000;
+  out.backgroundUsd = Math.round(out.backgroundUsd * 10000) / 10000;
   return out;
 }
 
 /** One user's current-month usage. Missing token columns (pre-migration DB)
  *  degrade to a zero ledger rather than erroring. */
 export async function getMonthUsage(orgId: string, userId: string): Promise<MonthUsage> {
-  const { data, error } = await supabaseAdmin
+  // Background work writes a row per batch, so a busy month runs past one
+  // page of results — read them all, or the cap undercounts.
+  const since = monthStartIso();
+  const { rows, error } = await fetchAllRows<UsageRow>((from, to) => supabaseAdmin
     .from("ai_usage_events")
-    .select("user_id, input_tokens, output_tokens, est_cost_usd, ok")
+    .select("id, user_id, op, input_tokens, output_tokens, est_cost_usd, ok")
     .eq("org_id", orgId)
     .eq("user_id", userId)
-    .eq("op", "knowledgeAsk")
-    .gte("created_at", monthStartIso());
-  if (error) return EMPTY_USAGE;
-  return rollup((data ?? []) as UsageRow[]);
+    .gte("created_at", since)
+    .order("id").range(from, to), 50_000);
+  if (error && rows.length === 0) return EMPTY_USAGE;
+  return rollup(rows);
 }
 
 /** Whole-org current-month usage, keyed by user_id (controllers' team view). */
 export async function getMonthUsageByUser(orgId: string): Promise<Map<string, MonthUsage>> {
-  const { data, error } = await supabaseAdmin
+  const since = monthStartIso();
+  const { rows, error } = await fetchAllRows<UsageRow>((from, to) => supabaseAdmin
     .from("ai_usage_events")
-    .select("user_id, input_tokens, output_tokens, est_cost_usd, ok")
+    .select("id, user_id, op, input_tokens, output_tokens, est_cost_usd, ok")
     .eq("org_id", orgId)
-    .eq("op", "knowledgeAsk")
-    .gte("created_at", monthStartIso());
-  if (error) return new Map();
+    .gte("created_at", since)
+    .order("id").range(from, to), 100_000);
+  if (error && rows.length === 0) return new Map();
   const byUser = new Map<string, UsageRow[]>();
-  for (const r of (data ?? []) as UsageRow[]) {
+  for (const r of rows) {
     if (!r.user_id) continue;
     const list = byUser.get(r.user_id) ?? [];
     list.push(r);

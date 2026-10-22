@@ -565,8 +565,8 @@ async function ingestLoop(
 
 /** Thumbs-up/down on an answer. 1 = useful (its cited pages will seed
  *  retrieval for similar future questions), -1 = wrong/missed, 0 = clear. */
-export async function rateKnowledgeAnswer(questionId: string, rating: 1 | -1 | 0): Promise<void> {
-  await apiPost("/api/knowledge/feedback", { questionId, rating });
+export async function rateKnowledgeAnswer(questionId: string, rating: 1 | -1 | 0, why?: { reasons: string[]; note?: string }): Promise<void> {
+  await apiPost("/api/knowledge/feedback", { questionId, rating, ...(why ? { reasons: why.reasons, note: why.note } : {}) });
 }
 
 export async function deleteKnowledgeDocuments(orgId: string, libraryId: string, ids: string[],
@@ -739,6 +739,8 @@ export async function removeAiConnection(orgId: string, scope: "org" | "personal
 
 export interface AiUsageSummary {
   spentUsd: number;
+  /** Part of spentUsd from indexing and other background work, not questions. */
+  backgroundUsd?: number;
   capUsd: number;
   percent: number;
   inputTokens: number;
@@ -1286,4 +1288,98 @@ export async function repairLibrary(orgId: string, libraryId: string): Promise<i
 
 export async function fixLinkedDocumentNames(orgId: string, libraryId: string, exclude: string[] = []): Promise<import("@/lib/knowledgeHealthServer").NameRepairResponse> {
   return apiPost("/api/knowledge/health", { orgId, libraryId, action: "fixNames", exclude });
+}
+
+// ── Answer tests ──────────────────────────────────────────────────────────
+// Questions an engineer marked with what a right answer must do, asked
+// again on demand and scored by fixed checks (lib/eval/checks.ts).
+
+export interface AnswerTestExpect {
+  mustCite?: Array<{ document: string; page: number; tolerance?: number }>;
+  mustContain?: string[];
+  mustNot?: string[];
+  askedClass?: string;
+  termRules?: Array<{ term: string; mustNotEquate: string[] }>;
+  skip?: string[];
+}
+export interface AnswerTestCase {
+  id: string; library_id: string; question: string; expect: AnswerTestExpect;
+  tags: string[]; status: "draft" | "active" | "archived"; notes: string | null;
+  source_question_id: string | null; created_by_name: string | null; created_at: string;
+}
+export interface AnswerTestCheck { code: string; pass: boolean; detail: string }
+export interface AnswerTestRun {
+  id: string; engine_version: string | null; scope: string; status: "running" | "done" | "stopped";
+  stop_reason: string | null; started_by_name: string | null; cost_cap_usd: number; cost_usd: number;
+  total: number; passed: number; failed: number; is_baseline: boolean; created_at: string; finished_at: string | null;
+}
+export interface AnswerTestResult {
+  run_id: string; case_id: string; answer: string | null; checks: AnswerTestCheck[];
+  pass: boolean | null; cost_usd: number | null; error: string | null; trace_id: string | null;
+  citations: Array<{ n: number; documentName: string; page: number }> | null;
+}
+export interface AnswerTestsState {
+  cases: AnswerTestCase[]; runs: AnswerTestRun[]; results: AnswerTestResult[]; runId: string | null;
+  baseline: { runId: string; results: Array<{ case_id: string; pass: boolean | null }> } | null;
+}
+
+export async function loadAnswerTests(orgId: string, libraryId: string, runId?: string): Promise<AnswerTestsState> {
+  return apiGet(`/api/knowledge/eval?orgId=${encodeURIComponent(orgId)}&libraryId=${encodeURIComponent(libraryId)}${runId ? `&runId=${encodeURIComponent(runId)}` : ""}`);
+}
+
+export async function saveAnswerTest(orgId: string, libraryId: string | null, c: {
+  id?: string; question: string; expect: AnswerTestExpect; tags?: string[]; status?: "draft" | "active";
+  notes?: string; sourceQuestionId?: string | null;
+}): Promise<AnswerTestCase> {
+  const out = await apiPost<{ case: AnswerTestCase }>("/api/knowledge/eval", { action: "saveCase", orgId, libraryId, ...c });
+  return out.case;
+}
+
+export async function archiveAnswerTest(orgId: string, id: string): Promise<void> {
+  await apiPost("/api/knowledge/eval", { action: "deleteCase", orgId, id });
+}
+
+export async function setAnswerTestBaseline(orgId: string, runId: string): Promise<void> {
+  await apiPost("/api/knowledge/eval", { action: "setBaseline", orgId, runId });
+}
+
+export async function stopAnswerTests(orgId: string, runId: string): Promise<void> {
+  await apiPost("/api/knowledge/eval", { action: "stopRun", orgId, runId });
+}
+
+/** Run test cases: each is a full question on your key, two at a time. The
+ *  run stops at its dollar limit, on Stop, or when every case is scored. */
+export async function runAnswerTests(orgId: string, libraryId: string, opts: {
+  caseIds?: string[]; tag?: string; costCapUsd?: number;
+  onProgress?: (p: { run: AnswerTestRun; done: number; total: number; lastCase?: string; lastPass?: boolean }) => void;
+  signal?: { stopped: boolean };
+}): Promise<AnswerTestRun> {
+  const { run, caseIds } = await apiPost<{ run: AnswerTestRun; caseIds: string[] }>("/api/knowledge/eval", {
+    action: "startRun", orgId, libraryId, caseIds: opts.caseIds, tag: opts.tag, costCapUsd: opts.costCapUsd ?? 5,
+  });
+  let current = run;
+  let done = 0;
+  opts.onProgress?.({ run: current, done, total: caseIds.length });
+  const queue = [...caseIds];
+  const worker = async () => {
+    while (queue.length > 0 && !opts.signal?.stopped && current.status === "running") {
+      const caseId = queue.shift()!;
+      let out: { pass: boolean; run: AnswerTestRun; skipped?: boolean } | null = null;
+      for (let attempt = 0; attempt < 2 && !out; attempt++) {
+        try {
+          out = await apiPost("/api/knowledge/eval", { action: "runCase", orgId, runId: run.id, caseId });
+        } catch (e) {
+          // A timed-out case is retried once; a second failure is recorded
+          // by the server as an error result only if the ask itself failed.
+          if (!(e as { transient?: boolean }).transient || attempt === 1) break;
+        }
+      }
+      done++;
+      if (out?.run) current = out.run;
+      opts.onProgress?.({ run: current, done, total: caseIds.length, lastCase: caseId, lastPass: out?.pass });
+    }
+  };
+  await Promise.all([worker(), worker()]);
+  if (opts.signal?.stopped && current.status === "running") await stopAnswerTests(orgId, run.id).catch(() => undefined);
+  return current;
 }

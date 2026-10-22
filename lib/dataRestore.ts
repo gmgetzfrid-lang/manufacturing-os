@@ -290,6 +290,7 @@ export const RESTORE_TABLE_ORDER: string[] = [
   // both already restored above. Connection Skills only reference the org,
   // so anywhere works; they ride with their consumers.
   "asset_aliases", "proposed_links", "link_rules", "answer_skills",
+  "knowledge_eval_cases", "knowledge_eval_runs", "knowledge_eval_results",
   // File finder: aliases and drive listings reference only the org.
   "finder_aliases", "finder_listings",
   // Estate edges reference nodes by string id; restore last among org data.

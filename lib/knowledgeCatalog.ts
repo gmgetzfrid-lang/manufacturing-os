@@ -326,15 +326,20 @@ export function findClassMentions(text: string, codes: string[]): string[] {
 
 /** Pipe-class records as trusted facts for the answer prompt. */
 export function pipeClassFacts(
-  records: Array<PipeClassRecord & { documentName: string; page: number }>,
+  records: Array<PipeClassRecord & { documentName: string; page: number; matched?: { literal: string[]; leads: string[] } }>,
 ): string {
   if (records.length === 0) return "";
   return records.map((r) => {
     const head = `PIPE CLASS ${r.code} — ${r.documentName} p.${r.page}` +
       [r.service && `service: ${r.service}`, r.rating && `rating: ${r.rating}`, r.material && `material: ${r.material}`,
         r.corrosionAllowance && `CA: ${r.corrosionAllowance}`].filter(Boolean).map((x) => `; ${x}`).join("");
+    const m = r.matched;
+    const why = !m ? []
+      : m.literal.length > 0 ? [`  found because: its printed service/notes use the asker's words (${m.literal.join(", ")})`]
+      : m.leads.length > 0 ? [`  found because: it mentions a RELATED term (${m.leads.join(", ")}) — a lead only. Do not treat it as the asker's service unless a passage ties the two together.`]
+      : [`  found because: it has the asked rating; its printed service does not name the asker's service`];
     const rows = r.rows.map((x) => `  - ${x.component}${x.size ? ` [${x.size}]` : ""}: ${x.spec}${x.details ? ` (${x.details})` : ""}${x.notes ? ` — ${x.notes}` : ""}`);
     const notes = (r.notes ?? []).map((n) => `  note: ${n}`);
-    return [head, ...rows, ...notes].join("\n");
+    return [head, ...why, ...rows, ...notes].join("\n");
   }).join("\n\n");
 }

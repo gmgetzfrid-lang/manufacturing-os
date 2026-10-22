@@ -223,7 +223,8 @@ export function AssistantTurn({
         onRethink={question && !replayed ? (mode) => onRethink(question, mode) : undefined}
         onAttach={onAttach} />
       {answer.questionId && !replayed && (
-        <RatedFeedback questionId={answer.questionId} onRated={onRated} />
+        <RatedFeedback questionId={answer.questionId} onRated={onRated} question={question}
+          citations={answer.citations.flatMap((c) => c.documentName && typeof c.page === "number" ? [{ documentName: c.documentName, page: c.page }] : [])} />
       )}
     </div>
   );
@@ -231,8 +232,11 @@ export function AssistantTurn({
 
 /** Thumbs — the same AnswerFeedback, with the verdict surfaced so the shell
  *  can settle a conversation on a thumbs-up. */
-function RatedFeedback({ questionId, onRated }: { questionId: string; onRated: (r: 1 | -1 | 0) => void }) {
-  return <AnswerFeedback key={questionId} questionId={questionId} onRated={onRated} />;
+function RatedFeedback({ questionId, onRated, question, citations }: {
+  questionId: string; onRated: (r: 1 | -1 | 0) => void;
+  question?: string; citations?: Array<{ documentName: string; page: number }>;
+}) {
+  return <AnswerFeedback key={questionId} questionId={questionId} onRated={onRated} question={question} citations={citations} />;
 }
 
 function ToolsTurn({ m, payload, actions, onConfirm }: {

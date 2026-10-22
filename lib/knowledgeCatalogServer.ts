@@ -20,6 +20,7 @@ import type { AiUsage } from "@/lib/ai/pricing";
 import { VISION_MODEL } from "@/lib/knowledgeVision";
 import { fetchBytes } from "@/lib/r2Bytes";
 import { renderPdfPages } from "@/lib/knowledgePageRender";
+import { questionWords, leadsFor } from "@/lib/searchLeads";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { findRunningKey } from "@/lib/sectionTemplate";
 import { inSlices } from "@/lib/inSlices";
@@ -459,22 +460,29 @@ export async function loadCatalog(admin: SupabaseClient, opts: {
   }
 }
 
-/** Classes whose rating is exactly `rating` (150 is not 1500), best match
- *  to the question's service words first. Sour service reads H2S, wet H2S,
- *  NACE and the other way round. */
-export function rankByRatingAndService<T extends { raw: string | null }>(rows: T[], rating: string, question: string): T[] {
-  const SYN: Record<string, string[]> = { sour: ["sour", "h2s", "nace", "wet h2s", "mr0103", "mr0175"], h2s: ["h2s", "sour", "nace"] };
-  const STOP = new Set(["what", "which", "piping", "spec", "class", "should", "use", "for", "the", "and", "with", "line", "stream", "service", "pipe"]);
-  const words = question.toLowerCase().match(/[a-z0-9]{3,}/g)?.filter((w) => !STOP.has(w) && !/^\d+$/.test(w)) ?? [];
-  const terms = [...new Set(words.flatMap((w) => SYN[w] ?? [w]))];
+/** How a class's printed service matched the question: on the asker's own
+ *  words, or only through a related term (a lead, not proof). */
+export interface ServiceMatch { literal: string[]; leads: string[] }
+
+const CLASS_STOP = new Set(["what", "which", "piping", "spec", "specs", "class", "classes", "should", "use", "for", "the", "and", "with", "line", "lines", "stream", "service", "pipe", "is", "a", "an", "of", "in", "to", "do", "we", "i", "my", "our", "rating", "lb"]);
+
+/** Classes whose rating is exactly `rating` (150 is not 1500). The asker's
+ *  own words decide the order; a class found only through a related term
+ *  ("wet H2S" for "sour") is kept, after them, and marked as a lead — the
+ *  answer must find a passage before treating the two as the same. */
+export function rankByRatingAndService<T extends { raw: string | null }>(rows: T[], rating: string, question: string): Array<T & { matched: ServiceMatch }> {
+  const words = questionWords(question, CLASS_STOP);
+  const leads = leadsFor(words);
+  const has = (hay: string, t: string) => new RegExp(`(^|[^a-z0-9])${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`).test(hay);
   const exact = new RegExp(`(^|[^0-9])${rating}([^0-9]|$)`);
-  const scored: Array<{ r: T; score: number }> = [];
+  const scored: Array<{ r: T & { matched: ServiceMatch }; score: number }> = [];
   for (const r of rows) {
     let rec: PipeClassRecord;
     try { rec = JSON.parse(r.raw ?? "") as PipeClassRecord; } catch { continue; }
     if (!rec?.rating || !exact.test(rec.rating)) continue;
     const hay = [rec.service, rec.material, ...(rec.notes ?? [])].join(" ").toLowerCase();
-    scored.push({ r, score: terms.reduce((n, t) => n + (hay.includes(t) ? 1 : 0), 0) });
+    const matched = { literal: words.filter((w) => has(hay, w)), leads: leads.filter((t) => has(hay, t)) };
+    scored.push({ r: { ...r, matched }, score: matched.literal.length * 10 + matched.leads.length });
   }
   return scored.sort((a, b) => b.score - a.score).map((x) => x.r);
 }
@@ -487,14 +495,17 @@ export async function loadPipeClasses(admin: SupabaseClient, opts: {
   /** The pressure class the question is about ("150"): with no class code
    *  named, the classes OF that rating are looked up, best service first. */
   rating?: string | null;
-}): Promise<Array<PipeClassRecord & { documentId: string; documentName: string; page: number }>> {
+  /** The question alone — classes are ranked on the asker's own words, not
+   *  words an earlier answer used. */
+  question?: string;
+}): Promise<Array<PipeClassRecord & { documentId: string; documentName: string; page: number; matched?: ServiceMatch }>> {
   try {
     const { rows: tagRows } = await fetchAllRows<{ tag: string }>((from, to) => admin
       .from("knowledge_page_entities").select("tag")
       .eq("org_id", opts.orgId).eq("kind", "pipe_class").order("id").range(from, to), 50_000);
     const codes = [...new Set(tagRows.map((r) => r.tag))];
     const wanted = opts.match(opts.text, codes);
-    type Row = { document_id: string; library_id: string; page: number; tag: string; raw: string | null };
+    type Row = { document_id: string; library_id: string; page: number; tag: string; raw: string | null; matched?: ServiceMatch };
     let recs: Row[] = [];
     if (wanted.length > 0) {
       const { data: rows } = await admin
@@ -508,7 +519,14 @@ export async function loadPipeClasses(admin: SupabaseClient, opts: {
       const { rows } = await fetchAllRows<Row>((from, to) => admin
         .from("knowledge_page_entities").select("document_id, library_id, page, tag, raw")
         .eq("org_id", opts.orgId).eq("kind", "pipe_class").ilike("raw", `%${opts.rating}%`).order("id").range(from, to), 20_000);
-      recs = rankByRatingAndService(rows, opts.rating, opts.text).slice(0, 8);
+      // Every class whose printed service carries the asker's words; then a
+      // few found only through a related term, marked as leads; and when
+      // nothing matches at all, a handful of the rating's classes so the
+      // answer can say plainly that none names that service.
+      const ranked = rankByRatingAndService(rows, opts.rating, opts.question ?? opts.text);
+      const literal = ranked.filter((r) => r.matched.literal.length > 0);
+      const leadOnly = ranked.filter((r) => r.matched.literal.length === 0 && r.matched.leads.length > 0);
+      recs = literal.length + leadOnly.length > 0 ? [...literal.slice(0, 10), ...leadOnly.slice(0, 4)] : ranked.slice(0, 6);
     }
     if (recs.length === 0) return [];
     const { data: docRows } = await admin
@@ -516,18 +534,23 @@ export async function loadPipeClasses(admin: SupabaseClient, opts: {
       .in("id", [...new Set(recs.map((r) => r.document_id))]).neq("status", "retired");
     const docs = new Map(((docRows ?? []) as Array<{ id: string; name: string; library_id: string; source_document_id: string | null }>).map((d) => [d.id, d]));
     const inScope = new Set(opts.libraryIds);
-    const out: Array<PipeClassRecord & { documentId: string; documentName: string; page: number }> = [];
+    const out: Array<PipeClassRecord & { documentId: string; documentName: string; page: number; matched?: ServiceMatch; order: number }> = [];
     for (const r of recs) {
       const d = docs.get(r.document_id);
       if (!d || opts.excludedDocIds.has(d.id)) continue;
       if (!inScope.has(d.library_id) && d.source_document_id) continue;
       try {
         const rec = JSON.parse(r.raw ?? "") as PipeClassRecord;
-        if (rec && Array.isArray(rec.rows)) out.push({ ...rec, documentId: d.id, documentName: d.name.replace(/\.pdf$/i, ""), page: r.page });
+        if (rec && Array.isArray(rec.rows)) out.push({ ...rec, documentId: d.id, documentName: d.name.replace(/\.pdf$/i, ""), page: r.page, matched: r.matched, order: out.length });
       } catch { /* skip a bad row */ }
     }
-    // A class split across pages: keep its pages in order.
-    return out.sort((a, b) => a.code.localeCompare(b.code) || a.page - b.page).slice(0, 12);
+    // Best match first; a class split across pages keeps its pages together.
+    const first = new Map<string, number>();
+    for (const r of out) if (!first.has(r.code)) first.set(r.code, r.order);
+    return out
+      .sort((a, b) => first.get(a.code)! - first.get(b.code)! || a.page - b.page)
+      .slice(0, 14)
+      .map(({ order: _order, ...r }) => r);
   } catch {
     return [];
   }

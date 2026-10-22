@@ -54,6 +54,9 @@ import { renderKnowledgePages, MAX_DEEP_READ_PAGES } from "@/lib/knowledgePageRe
 import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
 import { loadCatalog, loadPipeClasses } from "@/lib/knowledgeCatalogServer";
 import { pressureClassOf, pressureClassNote } from "@/lib/pressureClass";
+import { AskTrace, saveAskTrace } from "@/lib/ask/askTraceServer";
+import { compactHit } from "@/lib/ask/askTrace";
+import { docsNamedIn as docsNamedInText } from "@/lib/ask/designations";
 import { settleItems, keywordsOf, dropLibraryAsks, loosened } from "@/lib/ask/settleItems";
 import {
   buildCatalogBlock, pipeClassFacts, findClassMentions, formsForGoal, matchCatalogName, FORM_PURPOSES,
@@ -62,9 +65,32 @@ import {
 
 const bad = fail;
 
+/** Answer a question, and keep the research record behind the answer. */
 export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHandlerResult> {
+  const trace = new AskTrace();
+  let result: AskHandlerResult;
+  try {
+    result = await runKnowledgeAsk(input, trace);
+  } catch (e) {
+    trace.stage("crashed", { error: String((e as Error)?.message ?? e).slice(0, 300) });
+    await saveAskTrace(input, trace, fail("crashed", 500)).catch(() => undefined);
+    throw e;
+  }
+  // Saved on every path — the "nothing found" answers are the ones most
+  // worth reading back. A record that fails to save never fails an answer.
+  const traceId = await saveAskTrace(input, trace, result).catch(() => null);
+  if (input.evalRun) {
+    // The test runner scores the answer against where its pages came from.
+    const costUsd = trace.calls.reduce((n, c) => n + estimateCostUsd(c.model, { inputTokens: c.inputTokens, outputTokens: c.outputTokens }), 0);
+    result = { ...result, json: { ...result.json, traceId, evalTrace: trace.toJSON(), costUsd } };
+  }
+  return result;
+}
+
+async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise<AskHandlerResult> {
   const { user, emit } = input;
   const askStarted = Date.now();
+  const evalMode = !!input.evalRun;
   const extraSystem = input.extraSystem ?? "";
   const userImages = input.userImages ?? [];
   const body = input.body as {
@@ -99,7 +125,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
   // Prior turns of THIS conversation — what makes "what about 1 inch?"
   // answerable. Capped hard: 4 turns, answers truncated, because the
   // passages must stay the star of the context window.
-  const history = (Array.isArray(body.history) ? body.history : [])
+  const history = (Array.isArray(body.history) && !evalMode ? body.history : [])
     .filter((t): t is { question: string; answer: string } =>
       !!t && typeof (t as { question?: unknown }).question === "string"
       && typeof (t as { answer?: unknown }).answer === "string")
@@ -111,7 +137,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
   // They ride along as evidence on every follow-up — an answer must never
   // call a passage "not loaded" that it quoted one turn ago. Every pin is
   // re-checked against the asker's reachable documents before use.
-  const pinned = (Array.isArray((body as { pinned?: unknown }).pinned) ? (body as { pinned: unknown[] }).pinned : [])
+  const pinned = (Array.isArray((body as { pinned?: unknown }).pinned) && !evalMode ? (body as { pinned: unknown[] }).pinned : [])
     .filter((p): p is { documentId: string; page: number } =>
       !!p && typeof (p as { documentId?: unknown }).documentId === "string"
       && /^[0-9a-f-]{36}$/i.test((p as { documentId: string }).documentId)
@@ -307,6 +333,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     const out = await callAiModel({ provider, model, apiKey, ...input });
     askUsage.inputTokens += out.usage.inputTokens;
     askUsage.outputTokens += out.usage.outputTokens;
+    trace.call("main", model, out.usage);
     return out;
   };
   // Planning calls (search queries, the refine round) are short JSON jobs
@@ -321,6 +348,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       const out = await callAiModel({ provider, model: fast, apiKey, ...input });
       askUsage.inputTokens += out.usage.inputTokens;
       askUsage.outputTokens += out.usage.outputTokens;
+      trace.call("fast", fast, out.usage);
       return out;
     } catch {
       return call(input);
@@ -466,6 +494,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     if (rating && !queries.some((q) => q.toLowerCase().includes(`"class ${rating}"`))) {
       queries.push(`"class ${rating}"`);
     }
+    trace.stage("queries", { queries, rating, answerMode, focus, historyTurns: history.length, pinned: pinned.length });
     emit({ t: "status", text: `Searching the library — ${queries.length} quer${queries.length === 1 ? "y" : "ies"}` });
 
     // ── ALIAS RESOLUTION: the graph's nickname layer feeds retrieval ─────
@@ -682,6 +711,8 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     ]);
     semanticUsed = semantic.length > 0;
     const keywordMerged = mergeTiered(batches);
+    trace.stage("keyword", { perQuery: queries.map((q, i) => ({ q, hits: ((batches as TieredChunk[][])[i] ?? []).slice(0, 12).map(compactHit) })) });
+    trace.hits("meaning", semantic, { ran: semantic.length > 0 });
     let chunks = [
       ...fuseTier(
         keywordMerged.filter((c) => c.tier !== "reference"),
@@ -694,6 +725,8 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         8,
       ),
     ];
+
+    trace.hits("round1", chunks);
 
     // One roster of every reachable document — reused by proven-ground,
     // pull-by-name, whole-document mode, and the graph hop, so designation
@@ -769,6 +802,11 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       text: [question, ...history.slice(-3).map((t) => `${t.question}\n${t.answer.slice(0, 600)}`), inputs].join("\n"),
       match: findClassMentions,
       rating: pressureClassOf(question),
+      question,
+    });
+    trace.stage("pipe_classes", {
+      rating: pressureClassOf(question),
+      classes: pipeClasses.map((r) => ({ code: r.code, documentId: r.documentId, page: r.page, rating: r.rating, service: r.service?.slice(0, 120), matched: r.matched })),
     });
     if (pipeClasses.length > 0) {
       const have = new Set(chunks.map((c) => c.id));
@@ -795,6 +833,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     {
       const defDocs = reachableDocs.filter((d) => /\b(definitions?|glossary|terminology|abbreviations)\b/i.test(d.name)).slice(0, 2);
       const termQueries = [...new Set(queries.filter((q) => q.includes('"')).map((q) => (q.match(/"[^"]+"/g) ?? []).join(" ")).filter(Boolean))].slice(0, 3);
+      const defStart = reserved.length;
       if (defDocs.length > 0 && termQueries.length > 0) {
         const have = new Set(chunks.map((c) => c.id));
         for (const d of defDocs) {
@@ -810,13 +849,15 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
           }
         }
       }
+      trace.hits("definitions", reserved.slice(defStart), { documents: defDocs.map((d) => d.id), terms: termQueries });
     }
 
     // ── PROVEN GROUND: answers the team rated 👍 teach retrieval. When a
     //    similar question was answered before and a human confirmed the
     //    answer was right, the pages it cited get seats in the pool before
     //    any ranking — the closest thing RAG has to learning from use.
-    try {
+    if (!evalMode) try {
+      const provenStart = reserved.length;
       const { data: proven } = await supabaseAdmin
         .from("knowledge_questions")
         .select("citations")
@@ -848,6 +889,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
           }
         }
       }
+      trace.hits("proven_ground", reserved.slice(provenStart));
     } catch { /* pre-20261013 DB (no rating column) — retrieval unchanged */ }
 
     // ── Reference-chasing round: the model reviews what came back and can
@@ -904,6 +946,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       const plan = refineOut
         ? parseFollowupPlan(refineOut.text)
         : { queries: [], missingDocs: [], clarify: null };
+      trace.stage("refine", { queries: plan.queries, missingDocs: plan.missingDocs, clarify: !!plan.clarify, failed: !refineOut });
       // ── Clarify round (opt-in per library): the answer spans several
       //    distinct aspects — ask WHICH before answering, instead of burying
       //    the asker in mostly-irrelevant material. Returns before the big
@@ -945,6 +988,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         for (const c of reserved) {
           if (!have.has(c.id)) { chunks.push(c); have.add(c.id); }
         }
+        trace.hits("round2", chunks, { semantic: semantic2.length });
       }
       // ── PULL BY NAME: chunk search finds text INSIDE pages, so a document
       //    whose pages don't repeat its own designation is unfindable by
@@ -1015,6 +1059,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         for (const c of targeted.slice(0, 10)) {
           if (!have.has(c.id)) { chunks.push(c); have.add(c.id); }
         }
+        trace.hits("pull_by_name", targeted.slice(0, 10), { designations: [...designations], matched: [...matchedDesignations], documents: targets.map((t) => t.doc.id) });
       }
       // Documents the QUESTION itself names, as opposed to ones the model's
       // plan brought up — "Table 1" resolves to theirs first.
@@ -1044,7 +1089,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
           sqRef.includes(squashName(d)) || squashName(d).includes(sqRef))) continue;
         const probes = await runSearches([docRef]);
         const flat = probes.flat();
-        if (flat.length < 2) { missingDocs.push(docRef); continue; }
+        if (flat.length < 2) { missingDocs.push(docRef); trace.stage("missing_doc", { docRef, probeHits: flat.length }); continue; }
         const have = new Set(chunks.map((c) => c.id));
         for (const c of flat.slice(0, 3)) {
           if (!have.has(c.id)) { chunks.push(c); have.add(c.id); }
@@ -1098,6 +1143,8 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         } catch { /* snippets still cover this doc */ }
       }
     }
+
+    if (wholeDocIds.size > 0) trace.stage("whole_document", { documents: [...wholeDocIds], namedDocs: namedDocs.map((d) => d.id) });
 
     // ── GRAPH HOP: follow the reference edges the index already knows ────
     // The knowledge graph records, at ingest time, that document X page P
@@ -1166,6 +1213,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
         for (const c of pulled.flat().slice(0, 9)) {
           if (!have.has(c.id)) { chunks.push(c); have.add(c.id); }
         }
+        trace.hits("graph_hop", pulled.flat().slice(0, 9), { hops: graphHops, candidates: [...refCandidates.values()].slice(0, 20).map((c) => c.via) });
       }
     } catch { /* the graph hop is a bonus — retrieval stands without it */ }
 
@@ -1427,7 +1475,8 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
           "terminology — try rephrasing with the exact terms the standard would use." +
           (missingDocs.length > 0 ? `\n! The answer likely lives in: ${missingDocs.join(", ")} — not in your libraries.` : "") +
           (partialDocs.length > 0 ? `\n! Indexing gap: ${partialDocs.join("; ")}.` : "");
-      await supabaseAdmin.from("knowledge_questions").insert({
+      trace.stage("answer", { citations: [], nothingFound: true, anyIndexed: (anyChunks ?? 0) > 0, missingDocs, partialDocs });
+      if (!evalMode) await supabaseAdmin.from("knowledge_questions").insert({
         org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
         question, answer, citations: [], provider, model,
       });
@@ -1577,6 +1626,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       }
       if (targets.length > 0) emit({ t: "status", text: `Reading ${Math.min(targets.length, MAX_DEEP_READ_PAGES)} printed page${Math.min(targets.length, MAX_DEEP_READ_PAGES) === 1 ? "" : "s"} as images` });
       pageImages = await renderTargets(targets, MAX_DEEP_READ_PAGES);
+      trace.stage("deep_read", { targets: targets.slice(0, 12), rendered: pageImages.length });
     }
 
     // ── Step 2: passages → cited answer ──────────────────────────────────
@@ -1594,6 +1644,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
           return `[${i + 1}] (${pinTag}${wholeTag}${tierLabel}${docName.get(c.document_id) ?? "Document"}${sec}, page ${c.page})\n${c.content}`;
         }).join("\n\n");
     const passages = buildPassages(chunks);
+    trace.hits("passages", chunks, { reserved: reserved.length, wholeDocs: [...wholeDocIds] }, 80);
     const graphHopNote = graphHops.length > 0
       ? "\n\nGRAPH HOPS: some passages were pulled by FOLLOWING REFERENCES found in the retrieved " +
         "pages — the document graph resolved these edges automatically:\n" +
@@ -2010,6 +2061,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
           : `\n\nFETCH RESULT: no pages matched "${rawTerms}". Answer with what you have and state ` +
             "plainly which value could not be read and exactly where it lives (document, table).";
         if (fetched.length > 0) pageImages = [...pageImages, ...fetched];
+        trace.stage("fetch", { terms: rawTerms, hits, rendered: fetched.length });
         emit({ t: "reset" });
         emit({ t: "status", text: fetched.length > 0
           ? `Reading ${fetched.length} fetched page${fetched.length === 1 ? "" : "s"} and answering again`
@@ -2032,25 +2084,13 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
     //    are pulled too. Then the answer is written once more, and it may ask
     //    only for what the search genuinely did not find. One round, only
     //    with time to spare.
-    const desRe = (des: string) => new RegExp(`(^|[^A-Z0-9])${des.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean).join("[^A-Z0-9]*")}(?![0-9])`);
-    const docsNamedIn = (text: string, limit: number): ReachableDoc[] => {
-      const out: ReachableDoc[] = [];
-      for (const m of text.matchAll(/\b[A-Za-z]{1,8}[- ]?\d+(?:[-.]\d+)*[A-Za-z]?\b/g)) {
-        const sq = squashDes(m[0]);
-        if (sq.length < 4 || !/\d/.test(sq) || !/[A-Z]/.test(sq)) continue;
-        const re = desRe(m[0]);
-        for (const d of reachableDocs) {
-          if (out.length >= limit) return out;
-          if (!out.some((w) => w.id === d.id) && re.test(d.name.toUpperCase())) out.push(d);
-        }
-      }
-      return out;
-    };
+    const docsNamedIn = (text: string, limit: number): ReachableDoc[] => docsNamedInText(text, reachableDocs, limit);
     let chased: string[] = [];
     if (Date.now() - askStarted < 55_000 && reachableDocs.length > 0) {
       const used = new Set(chunks.map((c) => c.document_id));
       const unread = docsNamedIn(answerOut.text, 6).filter((d) => !used.has(d.id)).slice(0, 3);
       const items = settleItems(answerOut.text);
+      trace.stage("draft", { settleItems: items, unreadNamed: unread.map((d) => d.id), citations: extractCitationNumbers(answerOut.text).length });
       if (unread.length > 0 || items.length > 0) {
         emit({ t: "status", text: items.length > 0
           ? `Looking up what the answer needs — ${items.length} item${items.length === 1 ? "" : "s"} — in the library instead of asking you`
@@ -2105,6 +2145,7 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
             const { data: nm } = await supabaseAdmin.from("knowledge_documents").select("id, name").in("id", missingNames);
             for (const r of (nm ?? []) as Array<{ id: string; name: string }>) docName.set(r.id, r.name);
           }
+          trace.hits("chase", chunks.slice(firstNew - 1), { looked: chased });
           const chaseNote = `\n\nSEARCHED FOR WHAT YOUR DRAFT ASKED THE USER FOR: ${chased.map((c) => `"${c}"`).join("; ")}. ` +
             `The library's best passages for those are now attached as [${firstNew}]–[${chunks.length}]. Use them. ` +
             "Under **To settle this:** never name a document that is in these libraries or among the passages — the system " +
@@ -2393,10 +2434,19 @@ export async function handleKnowledgeAsk(input: AskHandlerInput): Promise<AskHan
       }
     } catch { /* link decoration must never break an answer */ }
 
+    trace.stage("answer", {
+      citations: citations.map((c) => ({ n: c.n, documentId: c.documentId, page: c.page, role: c.role ?? null, verified: !!c.highlight })),
+      evidenceSpans: evidence.spans.length,
+      settleItems: settleItems(answer),
+      missingDocs, partialDocs, chased,
+      answeringFor: meta.answeringFor,
+    });
+
     // The row id comes back so the client can attach a thumbs-up/down to
-    // THIS answer (the feedback that trains future retrieval).
+    // THIS answer (the feedback that trains future retrieval). Test runs
+    // stay out of the library's question log.
     let questionId: string | null = null;
-    {
+    if (!evalMode) {
       const r = await supabaseAdmin.from("knowledge_questions").insert({
         org_id: orgId, library_id: libraryId, user_id: user.id, user_name: userName,
         question, answer, citations, provider, model, mode: "library",

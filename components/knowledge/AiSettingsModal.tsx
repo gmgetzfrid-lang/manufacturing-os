@@ -462,8 +462,11 @@ export function UsagePanel({ orgId }: { orgId: string }) {
   const totalTokens = usage.inputTokens + usage.outputTokens;
   // "20k of ~200k": extrapolate the month's token budget from what the
   // spend so far actually bought at the models really being used.
-  const estTokenBudget = usage.spentUsd > 0.0001 && usage.capUsd > 0
-    ? Math.round(totalTokens * (usage.capUsd / usage.spentUsd))
+  // Tokens are counted for questions only, so scale by what questions cost.
+  const background = usage.backgroundUsd ?? 0;
+  const askSpend = usage.spentUsd - background;
+  const estTokenBudget = askSpend > 0.0001 && usage.capUsd > 0
+    ? Math.round(totalTokens * (usage.capUsd / askSpend))
     : null;
   const hot = usage.percent >= 80;
   const capped = usage.percent >= 100;
@@ -526,10 +529,14 @@ export function UsagePanel({ orgId }: { orgId: string }) {
         {usage.asks > 0 && (
           <span>avg <b className="text-[var(--color-text)]">{fmtTok(usage.avgPromptTokens)}</b> prompt tokens / question</span>
         )}
+        {background > 0.005 && (
+          <span><b className="text-[var(--color-text)]">{fmtUsd(background)}</b> on indexing and reading documents</span>
+        )}
       </div>
       <p className="text-[10px] text-[var(--color-text-muted)]">
-        These numbers are YOURS alone: every question you ask writes one metering row under your user
-        id with the token counts your provider reported for that call — nobody else&apos;s asks are mixed in.
+        These numbers are YOURS alone: every question you ask, and every indexing or drawing-reading run
+        your key pays for, writes a metering row under your user id with the token counts your provider
+        reported — nobody else&apos;s work is mixed in. All of it counts toward the cap.
       </p>
       {capped ? (
         <p className="text-[11px] font-bold text-rose-600">

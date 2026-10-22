@@ -39,6 +39,11 @@ export const ORG_SCOPED_TABLES = [
   // human knowledge (names, patterns, packs, sharing); not re-derivable.
   "link_rules",
   "answer_skills",
+  // Answer tests — questions an engineer marked with what a right answer
+  // must do, and the runs that checked them. Human judgment; keep it.
+  "knowledge_eval_cases",
+  "knowledge_eval_runs",
+  "knowledge_eval_results",
   // The plant's flow topology — human-confirmed edges; not re-derivable.
   "process_flows",
   // Mentions are mostly re-derivable by re-running the indexer, but not all
@@ -183,6 +188,7 @@ export const USER_SCOPED_FOR_ORG_TABLES = ["notification_preferences", "push_sub
 /** Tables that exist in the schema but are DELIBERATELY not exported.
  *  Each needs a reason — the coverage tripwire enforces the decision. */
 export const EXPORT_EXCLUDED_TABLES: Record<string, string> = {
+  knowledge_ask_traces: "Diagnostic research records (ids, pages, snippets) behind answers; pruned after 90 days and meaningless without the index they point into.",
   users: "global auth identity — never copied; members re-link by email on restore",
   ai_connections:
     "holds live AI provider API keys — secrets never leave the database; reconnect providers after a restore",

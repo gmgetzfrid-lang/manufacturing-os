@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
   const { data: { user }, error } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
   if (error || !user) return bad("Unauthorized", 401);
 
-  let body: { questionId?: string; rating?: number };
+  let body: { questionId?: string; rating?: number; reasons?: unknown; note?: unknown };
   try { body = await req.json(); } catch { return bad("Expected JSON body"); }
   const questionId = String(body.questionId ?? "").trim();
   const rating = Number(body.rating);
@@ -37,10 +37,19 @@ export async function POST(req: NextRequest) {
   if (!row) return bad("Answer not found", 404);
   if (row.user_id !== user.id) return bad("You can only rate your own answers", 403);
 
-  const { error: upErr } = await supabaseAdmin
-    .from("knowledge_questions")
-    .update({ rating: rating === 0 ? null : rating, rated_at: rating === 0 ? null : new Date().toISOString() })
-    .eq("id", questionId);
+  // What went wrong, in the same terms the answer tests check — so a
+  // thumbs-down says where to look, not just that something did.
+  const reasons = Array.isArray(body.reasons)
+    ? body.reasons.filter((r): r is string => typeof r === "string" && /^[a-z_]{3,30}$/.test(r)).slice(0, 8) : null;
+  const note = typeof body.note === "string" ? body.note.trim().slice(0, 1000) : null;
+  const update: Record<string, unknown> = { rating: rating === 0 ? null : rating, rated_at: rating === 0 ? null : new Date().toISOString() };
+  if (reasons !== null || note !== null) { update.feedback_reasons = reasons; update.feedback_note = note || null; }
+  let { error: upErr } = await supabaseAdmin.from("knowledge_questions").update(update).eq("id", questionId);
+  if (upErr && /feedback_/i.test(upErr.message)) {
+    // Reasons need the newer migration; the rating itself still saves.
+    ({ error: upErr } = await supabaseAdmin.from("knowledge_questions")
+      .update({ rating: update.rating, rated_at: update.rated_at }).eq("id", questionId));
+  }
   if (upErr) {
     if (/rating|rated_at|column/i.test(upErr.message)) {
       return bad("Feedback requires migration 20261013_answer_feedback.sql — run it in Supabase.", 409);

@@ -35,5 +35,31 @@ describe("rankByRatingAndService", () => {
       row("A1S", "Class 150", "Sour hydrocarbon gas, wet H2S, NACE MR0103"),
     ], "150", "What piping spec should i use for 150 class sour gas stream");
     expect(out.map((r) => r.tag)).toEqual(["A1S", "A1A"]);
+    expect(out[0].matched.literal).toContain("sour");
+  });
+  it("a class found only through a related term is kept, after, and marked as a lead", async () => {
+    const { rankByRatingAndService } = await import("@/lib/knowledgeCatalogServer");
+    const row = (code: string, rating: string, service: string) => ({ tag: code, raw: JSON.stringify({ code, rating, service, rows: [] }) });
+    const out = rankByRatingAndService([
+      row("WET1", "150#", "Wet H2S per EP 10-2-1 (200 BHN max)"),
+      row("SOUR1", "150#", "Sour gas"),
+      row("CW1", "150#", "Cooling water"),
+    ], "150", "150 class sour gas");
+    expect(out.map((r) => r.tag)).toEqual(["SOUR1", "WET1", "CW1"]);
+    expect(out[1].matched).toEqual({ literal: [], leads: ["h2s", "wet h2s"] });
+    expect(out[2].matched).toEqual({ literal: [], leads: [] });
+  });
+  it("whole words only: 'gas' does not match 'gasket'", async () => {
+    const { rankByRatingAndService } = await import("@/lib/knowledgeCatalogServer");
+    const out = rankByRatingAndService([{ tag: "G", raw: JSON.stringify({ code: "G", rating: "150", service: "Gasket test", rows: [] }) }], "150", "150 gas");
+    expect(out[0].matched.literal).toEqual([]);
+  });
+});
+
+describe("pipeClassFacts says why each class was found", () => {
+  it("labels a related-term match as a lead", async () => {
+    const { pipeClassFacts } = await import("@/lib/knowledgeCatalog");
+    const text = pipeClassFacts([{ code: "WET1", rating: "150", service: "Wet H2S", rows: [], documentName: "Spec", page: 3, matched: { literal: [], leads: ["wet h2s"] } }]);
+    expect(text).toMatch(/RELATED term \(wet h2s\) — a lead only/);
   });
 });

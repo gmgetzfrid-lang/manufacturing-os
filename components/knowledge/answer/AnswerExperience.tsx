@@ -12,7 +12,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   BookOpen, Sparkles, Send, FileText, CheckCircle2, AlertTriangle, ExternalLink, History, Globe,
   ChevronRight, ChevronDown, Copy, Check, Search, ScanSearch, PenLine, Quote, Eye,
-  ThumbsUp, ThumbsDown, X, Waypoints, Loader2, Printer, Upload, RefreshCw, ShieldCheck,
+  ThumbsUp, ThumbsDown, FlaskConical, X, Waypoints, Loader2, Printer, Upload, RefreshCw, ShieldCheck,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { Button } from "@/components/ui/Button";
@@ -28,6 +28,8 @@ import { ANSWER_MODES } from "@/lib/answerModes";
 import FormFillModal from "@/components/knowledge/answer/FormFillModal";
 import { copyText } from "@/lib/clipboard";
 import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
+import AnswerTestEditor from "@/components/knowledge/AnswerTestEditor";
+import { Modal } from "@/components/ui/Modal";
 
 export type DocLink = NonNullable<KnowledgeAnswer["mentionedDocs"]>[number];
 const DocLinkContext = React.createContext<{ links: DocLink[]; open: ((d: DocLink) => void) | null }>({ links: [], open: null });
@@ -1605,39 +1607,107 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
   );
 }
 
+/** What went wrong, in the same terms the answer tests check. */
+const WRONG_REASONS: Array<{ code: string; label: string }> = [
+  { code: "missed_page", label: "Missed the right page" },
+  { code: "asks_for_held", label: "Asked for a document we have" },
+  { code: "unproven_link", label: "Assumed two things are the same" },
+  { code: "class_mixup", label: "Wrong rating / class" },
+  { code: "missing_fact", label: "Left out something that matters" },
+  { code: "misread", label: "Misread the document" },
+  { code: "off_topic", label: "Answered a different question" },
+];
+
 /** Thumbs on an answer — the loop that makes retrieval smarter with use.
  *  A 👍 stores the verdict on the answer's history row; future similar
- *  questions pull that answer's cited pages into the passage pool first. */
-export function AnswerFeedback({ questionId, onRated }: {
+ *  questions pull that answer's cited pages into the passage pool first.
+ *  A 👎 asks, in one tap, what went wrong. Document controllers can turn
+ *  any answer into a test case that every future version must pass. */
+export function AnswerFeedback({ questionId, onRated, question, citations }: {
   questionId: string;
   /** Called with the verdict after it is stored (0 = cleared). */
   onRated?: (rating: 1 | -1 | 0) => void;
+  /** For "Make this a test case": the question and what the answer cited. */
+  question?: string;
+  citations?: Array<{ documentName: string; page: number }>;
 }) {
+  const { activeOrgId, activeRole } = useRole();
+  const canTest = !!question && (activeRole === "Admin" || activeRole === "DocCtrl");
   const [state, setState] = useState<1 | -1 | 0>(0);
+  const [reasons, setReasons] = useState<string[]>([]);
+  const [reasonsSent, setReasonsSent] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testSaved, setTestSaved] = useState(false);
   const rate = async (r: 1 | -1) => {
     const next = state === r ? 0 : r;    // clicking again clears the rating
     setState(next);
+    setReasons([]); setReasonsSent(false);
     onRated?.(next);
     try {
       const { rateKnowledgeAnswer } = await import("@/lib/knowledge");
       await rateKnowledgeAnswer(questionId, next);
     } catch { /* best-effort — never interrupt reading the answer */ }
   };
+  const sendReasons = async (list: string[]) => {
+    setReasons(list);
+    try {
+      const { rateKnowledgeAnswer } = await import("@/lib/knowledge");
+      await rateKnowledgeAnswer(questionId, -1, { reasons: list });
+      setReasonsSent(true);
+    } catch { /* best-effort */ }
+  };
   const btn = (active: boolean) =>
     `p-1.5 rounded-lg border transition-colors ${active
       ? "border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary)]/10"
       : "border-[var(--color-border)] text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`;
   return (
-    <div className="mt-2 flex items-center justify-end gap-2 text-[11px] text-[var(--color-text-muted)]">
-      {state === 1 && <span className="font-bold text-emerald-600 dark:text-emerald-400">Saved — similar questions will start from these pages.</span>}
-      {state === -1 && <span className="font-bold">Noted — this answer will not guide future retrieval.</span>}
-      {state === 0 && <span className="font-bold">Did this answer it?</span>}
-      <button onClick={() => void rate(1)} className={btn(state === 1)} title="Right answer — teach retrieval these pages">
-        <ThumbsUp className="w-3.5 h-3.5" />
-      </button>
-      <button onClick={() => void rate(-1)} className={btn(state === -1)} title="Wrong or missed the point">
-        <ThumbsDown className="w-3.5 h-3.5" />
-      </button>
+    <div className="mt-2">
+      <div className="flex items-center justify-end gap-2 text-[11px] text-[var(--color-text-muted)] flex-wrap">
+        {canTest && !testSaved && (
+          <button onClick={() => setTesting(true)} className="mr-auto inline-flex items-center gap-1 font-bold text-indigo-600 hover:underline" title="Mark what a right answer must do — every future version is checked against it">
+            <FlaskConical className="w-3.5 h-3.5" /> Make this a test case
+          </button>
+        )}
+        {testSaved && <span className="mr-auto font-bold text-indigo-600">Saved as a test case — see Answer tests on the library page.</span>}
+        {state === 1 && <span className="font-bold text-emerald-600 dark:text-emerald-400">Saved — similar questions will start from these pages.</span>}
+        {state === -1 && <span className="font-bold">{reasonsSent ? "Thanks — that tells us where to look." : "What went wrong?"}</span>}
+        {state === 0 && <span className="font-bold">Did this answer it?</span>}
+        <button onClick={() => void rate(1)} className={btn(state === 1)} title="Right answer — teach retrieval these pages">
+          <ThumbsUp className="w-3.5 h-3.5" />
+        </button>
+        <button onClick={() => void rate(-1)} className={btn(state === -1)} title="Wrong or missed the point">
+          <ThumbsDown className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      {state === -1 && (
+        <div className="mt-1.5 flex flex-wrap justify-end gap-1">
+          {WRONG_REASONS.map((r) => {
+            const on = reasons.includes(r.code);
+            return (
+              <button key={r.code} onClick={() => void sendReasons(on ? reasons.filter((x) => x !== r.code) : [...reasons, r.code])}
+                className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${on ? "border-rose-400 bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                {r.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {testing && activeOrgId && question && (
+        <Modal onClose={() => setTesting(false)} size="lg">
+          <div className="p-5">
+            <AnswerTestEditor
+              initial={{ question, expect: {}, tags: [], sourceQuestionId: questionId }}
+              citations={citations ?? []}
+              onCancel={() => setTesting(false)}
+              onSave={async (d) => {
+                const { saveAnswerTest } = await import("@/lib/knowledge");
+                await saveAnswerTest(activeOrgId, null, { question: d.question, expect: d.expect, tags: d.tags, notes: d.notes, sourceQuestionId: questionId });
+                setTesting(false); setTestSaved(true);
+              }}
+            />
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
