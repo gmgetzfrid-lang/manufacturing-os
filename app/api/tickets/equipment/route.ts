@@ -52,6 +52,18 @@ import {
 //      that now stands beside the kept one, so the trail never reads a clean
 //      replacement and never hides the tag that was added. Each follow-up is
 //      retried once; one that still cannot be written is said in the answer.
+//   6. (drafting-flow DF-P23 — the GAP-312 follow-up; 20261265) the race
+//      the check above cannot close (two adds that both read before either
+//      writes) is closed by the unique index on (ticket_id, the tag's key):
+//      the second insert answers 23505, recorded as not applied (reason
+//      already_listed) and answered as the sequential case is — an add
+//      "already listed", unchanged; a correction 409 already_listed. A
+//      correction that respells the SAME tag ("e22" → "E-22", one key) would
+//      meet its own old row in that index, so it replaces it in ONE
+//      transaction (replace_ticket_equipment, service role only): the new
+//      row and the old row's removal land together or not at all. Before
+//      20261265 (42883 / PGRST202) it takes today's path — add, then remove
+//      — which, with no index yet, works as before.
 // Before 20261251 is pasted every read and write meets 42P01 / PGRST205:
 // the answer is 503 `not_migrated` and nothing is written (the request page
 // says the list is not available, as the card does today).
@@ -64,6 +76,8 @@ interface Body {
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** DF-P23 (GAP-312 follow-up): 20261265's one-transaction respelling. */
+export const REPLACE_EQUIPMENT_RPC = "replace_ticket_equipment";
 const NOT_MIGRATED = { error: "The equipment list is not available yet (database update 20261251 is not applied).", code: "not_migrated" };
 
 async function insertAuditRowOnce(row: { id: string } & Record<string, unknown>): Promise<string | null> {
@@ -224,10 +238,46 @@ export async function POST(req: NextRequest) {
     return err;
   };
 
+  // DF-P23 (GAP-312 follow-up): a respelling of the same tag is one
+  // transaction once 20261265 is pasted (the index would refuse the add
+  // while the old row stands); before it, today's add-then-remove.
+  let replaced = false;
+  let replacedId: string | null = null;
+  if (previous && tagKey(previous.tag) === tagKey(tag) && tagKey(tag)) {
+    const { data: rid, error: rErr } = await supabaseAdmin.rpc(REPLACE_EQUIPMENT_RPC, {
+      p_row_id: previous.id, p_ticket_id: t.id, p_org_id: t.org_id, p_tag: tag, p_asset_id: assetId, p_created_by: caller.id,
+    });
+    if (!rErr && typeof rid === "string") {
+      replaced = true;
+      replacedId = rid;
+    } else if (rErr && !/^(PGRST202|42883)$/.test(String((rErr as { code?: string }).code ?? ""))) {
+      console.error(`[ticket-equipment] the respelling of entry ${previous.id} on ticket ${t.id} was refused (audit ${auditId}): ${rErr.message}`);
+      const followErr = await recordFollowUp(`${attemptAction}_NOT_APPLIED`, { attempt: auditId, tag, reason: "write_failed", error: rErr.message });
+      const trailNote = followErr ? ` The audit trail could not record that it was not applied (audit row ${auditId}) — tell an Admin.` : "";
+      return NextResponse.json({ error: `The equipment was not recorded — try again in a moment.${trailNote}`, applied: false, attempt: auditId, notAppliedRecorded: !followErr }, { status: 500 });
+    } else if (!rErr) {
+      const followErr = await recordFollowUp(`${attemptAction}_NOT_APPLIED`, { attempt: auditId, tag, reason: "no_row_written" });
+      const trailNote = followErr ? ` The audit trail could not record that it was not applied (audit row ${auditId}) — tell an Admin.` : "";
+      return NextResponse.json({ error: `The equipment was not recorded — try again in a moment.${trailNote}`, applied: false, attempt: auditId, notAppliedRecorded: !followErr }, { status: 500 });
+    }
+  }
+  if (replaced) {
+    return NextResponse.json({ ok: true, id: replacedId, tag, assetId, resolution, message: equipmentOutcomeLine(tag, resolution) });
+  }
+
   const { data: inserted, error: insErr } = await supabaseAdmin
     .from("ticket_equipment")
     .insert({ org_id: t.org_id, ticket_id: t.id, tag, asset_id: assetId, created_by: caller.id })
     .select("id");
+  // DF-P23 (GAP-312 follow-up, 20261265): the unique index refused a tag a
+  // concurrent request listed after this one read the list — answered as the
+  // sequential case is (the read-then-write check above), recorded not applied.
+  if (insErr && (insErr as { code?: string }).code === "23505") {
+    const followErr = await recordFollowUp(`${attemptAction}_NOT_APPLIED`, { attempt: auditId, tag, reason: "already_listed", error: insErr.message });
+    const trailNote = followErr ? ` The audit trail could not record that it was not applied (audit row ${auditId}) — tell an Admin.` : "";
+    if (action === "add") return NextResponse.json({ ok: true, unchanged: true, message: `${tag} is already listed on this request.${trailNote}` });
+    return NextResponse.json({ error: `${tag} is already listed on this request — correcting this entry to it would list it twice.${trailNote}`, code: "already_listed" }, { status: 409 });
+  }
   if (insErr || !Array.isArray(inserted) || inserted.length === 0) {
     const missing = !!insErr && isMissingEquipmentTable(insErr);
     console.error(`[ticket-equipment] write refused for ticket ${t.id} (audit ${auditId}): ${insErr?.message ?? "no row written"}`);
