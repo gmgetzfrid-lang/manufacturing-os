@@ -115,7 +115,9 @@ describe("the roster ledger's satisfied_via CHECK — re-created from its NEWEST
     const definers = files.filter((f) => /ADD CONSTRAINT ticket_review_slots_satisfied_via_check\b/.test(strip(mig(f))) || /satisfied_via TEXT CHECK/.test(strip(mig(f))));
     const before = definers.filter((f) => f < F);
     expect(before.at(-1)).toBe("20261255_df_roundG_consent_window.sql");
-    expect(definers.filter((f) => f > F)).toEqual([]);
+    // drafting-flow DF-P26's 20261268 re-creates it from THIS file's body plus
+    // one value ('rule'), pinned byte for byte by dfRoundG_P26_exceptionMigration.test.ts.
+    expect(definers.filter((f) => f > F)).toEqual(["20261268_df_roundG_issuing_path_stops.sql"]);
   });
   it("lineDiff against 20261255: exactly the value list changes, by 'preauthorization' only; the shape CHECK is not touched", () => {
     const newest = viaCheck(strip(mig("20261255_df_roundG_consent_window.sql")));

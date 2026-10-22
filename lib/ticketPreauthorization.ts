@@ -518,7 +518,9 @@ export function preauthLeavesNoSecondPerson(
   const drafter = parties.assignedDrafterId;
   if (!sodActive || !drafter) return false;
   const blocking = after.slots.filter((s) => slotBlocks(s) && s.status !== "void");
-  if (blocking.some((s) => s.status === "satisfied" && !!s.satisfiedBy && s.satisfiedBy !== drafter && s.via !== "preauthorization")) return false;
+  // GAP-115 (DF-P26): a slot the exception-only rule satisfied is nobody's
+  // sign-off either (via "rule" — no signer).
+  if (blocking.some((s) => s.status === "satisfied" && !!s.satisfiedBy && s.satisfiedBy !== drafter && s.via !== "preauthorization" && s.via !== "rule")) return false;
   for (const s of blocking) {
     if (s.status !== "open") continue;
     for (const uid of new Set([...s.primaries, ...s.alternates, ...s.overriders])) {

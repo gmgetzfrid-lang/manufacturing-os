@@ -498,12 +498,14 @@ export const PRODUCER_FLOOR_REASON = "Needs a second person: you are this delive
  * standing pre-authorization satisfied (via "preauthorization", DF-P22) is
  * not anyone else's sign-off here: a consent recorded before the work
  * existed is not a second person looking at THIS revision (as a consent
- * window's silence is not — it carries no signer). Pure.
+ * window's silence is not — it carries no signer). GAP-115 (DF-P26): nor
+ * is a slot the exception-only rule satisfied (via "rule" — a rule is
+ * nobody's look at this revision). Pure.
  */
 export function rosterLacksIndependentSignOff(roster: TicketReviewRoster, uid: string, signing: readonly string[] = []): boolean {
   const blocking = roster.slots.filter((s) => slotBlocks(s) && s.status !== "void");
   const completes = blocking.every((s) => s.status === "satisfied" || signing.includes(s.kind));
-  const independent = blocking.some((s) => s.status === "satisfied" && !!s.satisfiedBy && s.satisfiedBy !== uid && s.via !== "preauthorization");
+  const independent = blocking.some((s) => s.status === "satisfied" && !!s.satisfiedBy && s.satisfiedBy !== uid && s.via !== "preauthorization" && s.via !== "rule");
   return completes && !independent;
 }
 

@@ -193,8 +193,22 @@ export function slotQuestion(slot: Pick<TicketReviewSlot, "kind" | "primaries">,
   return requesterOnly ? "Is this what you asked for?" : "Is it correct?";
 }
 
+/** GAP-115 (DF-P26): what a slot the exception-only rule satisfied says. */
+export const RULE_SATISFIED_TEXT = "Satisfied by rule — exception-only review, no exception on record (re-opened for its reviewer if one comes on record before the request issues)";
+/** GAP-115 (DF-P26): what a slot an exception re-opened says before who it waits on. */
+export const exceptionReopenedText = (exceptions: readonly string[]): string =>
+  `Re-opened for its reviewer: ${exceptions.join("; ")}.`;
+const waitingText = (slot: TicketReviewSlot): string => {
+  const n = slot.primaries.length;
+  return `Waiting on any one of ${n} ${n === 1 ? "person" : "people"}${slot.fallback ? " (the management tier — the routing named nobody active)" : ""}`;
+};
+
 /** The words for one slot's state. */
 export function slotStateText(slot: TicketReviewSlot, names: ReadonlyMap<string, string>, now: number = Date.now(), openedAt?: string): string {
+  // GAP-115 (DF-P26): a slot the exception-only rule satisfied names the
+  // rule, never a signer; one an exception re-opened says why it waits.
+  if (slot.status === "satisfied" && slot.via === "rule") return `${RULE_SATISFIED_TEXT}${slot.satisfiedAt ? ` · ${new Date(slot.satisfiedAt).toLocaleString()}` : ""}`;
+  if (slot.status === "open" && slot.exceptionReopened) return `${exceptionReopenedText(slot.exceptionReopened.exceptions)} ${waitingText(slot)}`;
   if (slot.status === "satisfied") {
     const who = (slot.satisfiedBy && names.get(slot.satisfiedBy)) || slot.satisfiedByName || "someone";
     const how = slot.via === "alternate" ? " (as alternate)" : slot.via === "override" ? " (as an override)" : "";

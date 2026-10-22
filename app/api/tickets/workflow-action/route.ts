@@ -8,7 +8,7 @@ import { engineerPickCap, engineerPickRefusal } from "@/lib/ticketPage";
 import { effectiveRoutingForTicket, routingForWorkClass, ROSTER_LEDGER_NOT_WRITTEN } from "@/lib/routingControl";
 import {
   hashStoredFilesBounded, draftsToHashOnApproval, HASH_LIMITS, filesUnderReview, openRoster, applySignPlan, rosterCompletion, rosterBinding,
-  signatureRefusal, writeRosterLedger, isMissingRosterLedger, type FileHash, type SignatureRow,
+  signatureRefusal, writeRosterLedger, writeRosterReopen, isMissingRosterLedger, type FileHash, type SignatureRow,
 } from "@/lib/ticketRoster";
 import { loadPickerMembers } from "@/lib/ticketPickerMembers";
 import { r2, R2_BUCKET } from "@/lib/r2";
@@ -25,7 +25,7 @@ import {
   rosterPartialReleased,
   type TransitionInput,
 } from "@/lib/ticketTransitions";
-import type { Role, TicketAttachment, TicketHistoryEntry, TicketOutcome, TicketReviewRoster } from "@/types/schema";
+import type { Role, TicketAttachment, TicketHistoryEntry, TicketOutcome, TicketReviewRoster, TicketReviewSlot } from "@/types/schema";
 import { TICKET_INTENT_TTL_MS } from "@/lib/intents";
 import { parseSourceDocument, parseSourceDocuments } from "@/lib/sourceDocRef";
 import { reviewClassOptions, resolveReviewClass, withMinorCorrectionClass, minorCorrectionClassOf, hasReviewModelColumns } from "@/lib/reviewModel";
@@ -50,6 +50,11 @@ import { workflowEngineContext, rosterlessRoutedRefusal, draftingTypeFlags, DECL
 import { issueHoldStopGate } from "@/lib/requestHoldStop";
 // GAP-102 acceptance 2 (drafting-flow DF-P26): the issue notice carries the examination data.
 import { issueExaminationNote } from "@/lib/issueNoticeExamination";
+// GAP-115 / GAP-109 mechanism 3 (drafting-flow DF-P26): exception-only review.
+import {
+  rosterHasExceptionOnlySlot, exceptionRuleAtOpen, ruleSatisfiedSlots, exceptionsOnRecord, reopenRuleSatisfied, readWaiverOnRecord,
+  ruleOpenNote, ruleReopenNote, EXCEPTION_RULE_ACTOR,
+} from "@/lib/exceptionOnlyReview";
 import { ticketReadScope } from "@/lib/ticketReadScope";
 import { offerableLibraries, libraryLabelForTicket, libraryChoiceFromRow, LIBRARY_CHOICE_COLUMNS, UNNAMED_TARGET_LIBRARY } from "@/lib/ticketLibrary";
 import { LIBRARY_RUNG_COLUMNS } from "@/lib/libraryAccess";
@@ -1120,6 +1125,13 @@ export async function POST(req: NextRequest) {
   // roster was opened under — a standing pre-authorization never acts on
   // engineered work (nor while the declaration could not be checked).
   let rosterEngineered = true;
+  // GAP-115 (DF-P26): what the exception-only rule did on this act — the
+  // audit row's `exceptionReview` (null: nothing — every roster without an
+  // exception-only slot), the labels it satisfied at open (history), and a
+  // re-open of the slots it had satisfied (history, ledger, response).
+  let exceptionReview: Record<string, unknown> | null = null;
+  let exceptionRuleOpenLabels: string[] = [];
+  let exceptionReopen: { slots: TicketReviewSlot[]; labels: string[]; exceptions: string[] } | null = null;
   // Only a SUBMISSION opens a roster. reopen_ticket takes today's path into
   // PENDING_REVIEW (DF-P5 fix pass): a reopened request may have no readable
   // Draft at all, and its previous Draft is the already-issued bytes — the
@@ -1237,8 +1249,34 @@ export async function POST(req: NextRequest) {
         else if (consentPlan && consentColumns) rosterOpen = { ...opened.roster, consentPlan };
         else if (consentPlan) consentWarning = `${consentPlan.label ? `"${consentPlan.label}"` : "The consent slot"} waits for a sign-off: ${CONSENT_REASON.notPasted}.`;
         consentMembers = members.rows;
+        // GAP-115 (DF-P26; DEC-90 ruling (1)) limb 1: an exception-only slot
+        // is satisfied by a recorded system act naming the rule — only when
+        // the request is not engineered work, no exception is on record (the
+        // source unmoved, no examination-data waiver), the review still waits
+        // on a live sign-off someone other than the drafter may give, and
+        // 20261268 is in place (lib/exceptionOnlyReview.ts). Otherwise the
+        // slot waits for its sign-off, as today. Read only for a roster that
+        // carries such a slot.
+        if (rosterOpen && rosterHasExceptionOnlySlot(rosterOpen, ticket)) {
+          const eo = await exceptionRuleAtOpen(supabaseAdmin, { roster: rosterOpen, ticket, ticketId: body.ticketId, sodActive, engineered: rosterEngineered, now: Date.now() });
+          rosterOpen = eo.roster;
+          if (eo.applied) {
+            exceptionRuleOpenLabels = eo.labels;
+            exceptionReview = { satisfiedByRule: eo.kinds, rule: "exception_only" };
+          } else {
+            exceptionReview = { ruleNotApplied: eo.reason, slots: eo.kinds };
+          }
+        }
       }
     }
+  }
+  // GAP-115 (DF-P26): a serial issuing approval is never offered on a
+  // request under a roster (the roster's sign-off is its only issuing act),
+  // so this never meets one — but should one ever arrive on a roster with a
+  // slot the exception-only rule satisfied, it is refused, nothing written:
+  // only a sign-off (which checks for exceptions first) may complete it.
+  if (ISSUING_APPROVALS.has(action.action) && ruleSatisfiedSlots(openRosterNow).length > 0) {
+    return NextResponse.json({ error: "This request is under a review roster, and one of its sign-offs was satisfied by the exception-only rule — it issues only through the roster's sign-offs.", code: "exception_review_roster" }, { status: 409 });
   }
   if (action.action === "sign_slot") {
     // DEC-37: one sign-off satisfies every slot the caller can fill; the
@@ -1268,8 +1306,28 @@ export async function POST(req: NextRequest) {
     const exam = examinationForAct(openRosterNow, ticket, plan.fillable, body.examination, { act: "sign_off" });
     if (!exam.ok) return refuseSign(400, exam.error, "examination_invalid");
     examination = exam.value;
+    // GAP-115 (DF-P26; DEC-90 ruling (1)) limb 2: on a roster with a slot
+    // the exception-only rule satisfied, an exception on record NOW — the
+    // source moved, an override sign-off (this one included), a waiver, a
+    // declaration that is not on record or could not be checked, the request
+    // become engineered work — re-opens that slot for its reviewer in this
+    // same compare-and-set: the sign-off is recorded, the request does not
+    // issue. What cannot be checked (the waiver row, the source documents)
+    // is a retry, never a pass. Read only for such a roster.
+    let reopenWith: string[] | null = null;
+    if (ruleSatisfiedSlots(openRosterNow).length > 0) {
+      const waiver = await readWaiverOnRecord(supabaseAdmin, body.ticketId);
+      if (!waiver.ok || sourceDriftUnchecked) {
+        console.error(`[workflow-action] exception-only review unchecked for ticket ${body.ticketId}: ${!waiver.ok ? waiver.error : "the source documents could not be read"}`);
+        return refuseSign(503, "Whether an exception is on record for this review (a moved source or a recorded waiver) could not be checked, so the sign-off was not taken. Try again in a moment.", "exception_review_unchecked");
+      }
+      const preview = applySignPlan(openRosterNow, plan, { uid: caller.id, name: null }, "exception-review-preview", new Date().toISOString());
+      const engineeredNow = engineeringGateRequired(ticket, requesterRoles, capPolicy) || engineeringFirstTypes.includes(ticket.requestType);
+      const found = exceptionsOnRecord({ driftLabels, roster: preview, waiver: waiver.waiver, declarationUnverified, engineered: engineeredNow });
+      if (found.length > 0) reopenWith = found.map((e) => e.text);
+    }
     if (body.dryRun === true) {
-      return NextResponse.json({ ok: true, dryRun: true, slots: plan.fillable.map((f) => f.slot.label || f.slot.kind), contentHash: openRosterNow.contentHash });
+      return NextResponse.json({ ok: true, dryRun: true, slots: plan.fillable.map((f) => f.slot.label || f.slot.kind), contentHash: openRosterNow.contentHash, ...(reopenWith ? { exceptionReopens: ruleSatisfiedSlots(openRosterNow).map((s) => s.label || s.kind) } : {}) });
     }
     if (!UUID_RE.test(sigId)) return NextResponse.json({ error: "A sign-off needs your e-signature.", code: "signature_required" }, { status: 400 });
     const { data: sig, error: sigErr } = await supabaseAdmin
@@ -1278,7 +1336,14 @@ export async function POST(req: NextRequest) {
     if (sigErr) return NextResponse.json({ error: "Your signature could not be checked — try again in a moment." }, { status: 503 });
     const refusal = signatureRefusal(sig as SignatureRow | null, { orgId: ticket.orgId, ticketId: body.ticketId, signerId: caller.id, roster: openRosterNow });
     if (refusal) return refuseSign(403, refusal, "signature_invalid", sig as SignatureRow | null);
-    const signed = applySignPlan(openRosterNow, plan, { uid: caller.id, name: memberName(member as { display_name?: unknown; email?: unknown }) }, sigId, new Date().toISOString());
+    const signedNow = new Date().toISOString();
+    let signed = applySignPlan(openRosterNow, plan, { uid: caller.id, name: memberName(member as { display_name?: unknown; email?: unknown }) }, sigId, signedNow);
+    if (reopenWith) {
+      const ruled = ruleSatisfiedSlots(signed);
+      signed = reopenRuleSatisfied(signed, reopenWith, signedNow);
+      exceptionReopen = { slots: signed.slots.filter((x) => ruled.some((r) => r.kind === x.kind)), labels: ruled.map((r) => r.label || r.kind), exceptions: reopenWith };
+      exceptionReview = { reopened: ruled.map((r) => r.kind), exceptions: reopenWith };
+    }
     rosterSign = { roster: signed, complete: rosterCompletion(signed, { sodActive, drafterId: ticket.assignedDrafterId }).complete, labels: plan.fillable.map((f) => f.slot.label || f.slot.kind) };
   }
   // GAP-102 (DF-P20): a veto by an assurance slot's occupant records what
@@ -1343,6 +1408,19 @@ export async function POST(req: NextRequest) {
     actor: { uid: caller.id, email: callerEmail, role: callerRole },
   };
   const { updates, newStatus, recipients: transitionRecipients, newComment, historyEntry: transitionHistoryEntry } = computeTransition(ticket, input);
+  // GAP-115 (DF-P26): the rule's recorded system act is named on the
+  // request's history — on the roster-opened line when it satisfied a slot,
+  // on this act's line when an exception re-opened one. (No other line moves.)
+  if (exceptionRuleOpenLabels.length > 0 && Array.isArray(updates.history)) {
+    const hist = updates.history as TicketHistoryEntry[];
+    for (let i = hist.length - 1; i >= 0; i--) {
+      if (hist[i]?.action === "Review roster opened") { hist[i].details = `${hist[i].details ? `${hist[i].details} · ` : ""}${ruleOpenNote(exceptionRuleOpenLabels)}`; break; }
+    }
+  }
+  if (exceptionReopen && transitionHistoryEntry) {
+    const note = ruleReopenNote(exceptionReopen.labels, exceptionReopen.exceptions);
+    transitionHistoryEntry.details = transitionHistoryEntry.details ? `${transitionHistoryEntry.details} [${note}]` : note;
+  }
   // FRIC-5 / EVID-12 (DF-P5 fix pass 2): the Finals an issue-as-is approval
   // recorded, for the audit row — on a roster with the sha256 the roster
   // bound the Draft (same bytes) to; on today's path the Draft's hash is in
@@ -1665,6 +1743,9 @@ export async function POST(req: NextRequest) {
       // GAP-102 acceptance 4 (DF-P24): the examination data an issue was
       // checked against (only where a requirement applies — no key otherwise).
       ...(examinationScopeAudit ? { examinationScope: examinationScopeAudit } : {}),
+      // GAP-115 (DF-P26): what the exception-only rule did (only on a roster
+      // with an exception-only slot — no key otherwise).
+      ...(exceptionReview ? { exceptionReview } : {}),
       // DF-P6 fix pass (minor 11): a declaration whose e-signature is not on
       // record (or could not be read) was evaluated as undeclared.
       ...(declarationUnverified ? { declarationUnverified } : {}),
@@ -2037,9 +2118,17 @@ export async function POST(req: NextRequest) {
     let ledgerErr: string | null = null;
     if (rosterOpen) {
       ledgerErr = await writeRosterLedger(supabaseAdmin, { orgId: ticket.orgId, ticketId: body.ticketId, roster: rosterOpen, event: "opened", slots: rosterOpen.slots, actor: actorRef });
+      // GAP-115 (DF-P26): the rule's satisfaction, its own event (via "rule").
+      if (!ledgerErr && exceptionRuleOpenLabels.length > 0) {
+        ledgerErr = await writeRosterLedger(supabaseAdmin, { orgId: ticket.orgId, ticketId: body.ticketId, roster: rosterOpen, event: "satisfied", slots: ruleSatisfiedSlots(rosterOpen), actor: { uid: null, name: EXCEPTION_RULE_ACTOR } });
+      }
     } else if (rosterSign) {
       const touched = rosterSign.roster.slots.filter((x) => x.signatureId === body.signatureId && x.status === "satisfied");
       ledgerErr = await writeRosterLedger(supabaseAdmin, { orgId: ticket.orgId, ticketId: body.ticketId, roster: rosterSign.roster, event: "satisfied", slots: touched, actor: actorRef, examination });
+      // GAP-115 (DF-P26): the re-open — each slot back to open, a "reopened" event.
+      if (!ledgerErr && exceptionReopen) {
+        ledgerErr = await writeRosterReopen(supabaseAdmin, { orgId: ticket.orgId, ticketId: body.ticketId, roster: rosterSign.roster, slots: exceptionReopen.slots, exceptions: exceptionReopen.exceptions, actor: { uid: null, name: EXCEPTION_RULE_ACTOR } });
+      }
     } else if (openRosterNow && newStatus !== "PENDING_REVIEW") {
       const voided = openRosterNow.slots.filter((x) => x.status === "open").map((x) => ({ ...x, status: "void" as const }));
       if (voided.length > 0) {
@@ -2172,7 +2261,7 @@ export async function POST(req: NextRequest) {
     issueExamination = await issueExaminationNote(supabaseAdmin, { ticket, ticketId: body.ticketId, orgId: ticket.orgId, draftingCfg: draftingCfgRead ? scopeDraftingCfg : null, roster: rosterSign?.roster ?? null });
   }
   try {
-    await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, activity: isActivity, rosterCompleted: action.action === "sign_slot" && rosterSign?.complete === true, rosterPartial: action.action === "sign_slot" && rosterSign?.complete === false, rosterReleased: action.action === "sign_slot" && rosterSign && !rosterSign.complete ? rosterPartialReleased(rosterSign.roster, ticket, caller.id) : [], comment: fanOutComment, emailOrigin, examinationNote: issueExamination });
+    await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, activity: isActivity, rosterCompleted: action.action === "sign_slot" && rosterSign?.complete === true, rosterPartial: action.action === "sign_slot" && rosterSign?.complete === false, rosterReleased: action.action === "sign_slot" && rosterSign && !rosterSign.complete ? rosterPartialReleased(rosterSign.roster, ticket, caller.id) : [], examinationNote: issueExamination, comment: fanOutComment, emailOrigin });
     // Kick the email drain AFTER the response is sent (the daily cron is the
     // fallback, not the primary path — recipients should get email in seconds).
     // WF-19 done-when 3: CRON_SECRET ships blank, and a blank bearer is a
@@ -2414,6 +2503,11 @@ export async function POST(req: NextRequest) {
     ...(rosterLedgerNotWritten ? { rosterLedgerNotWritten: true } : {}),
     ...(examinationScopeWarningText ? { examinationScopeWarning: examinationScopeWarningText } : {}),
     ...(consentWarning && !holdOutcome && !libraryNotStored && !rosterWarning && !reviewClassNotStored ? { warning: consentWarning } : {}),
+    // GAP-115 (DF-P26): the sign-off was recorded, and an exception on record
+    // re-opened a slot the exception-only rule had satisfied — the request
+    // waits on it instead of issuing.
+    ...(exceptionReopen ? { exceptionReopened: { slots: exceptionReopen.labels, exceptions: exceptionReopen.exceptions } } : {}),
+    ...(exceptionReopen && !holdOutcome && !libraryNotStored && !rosterWarning && !reviewClassNotStored && !consentWarning ? { warning: ruleReopenNote(exceptionReopen.labels, exceptionReopen.exceptions) } : {}),
   });
 }
 

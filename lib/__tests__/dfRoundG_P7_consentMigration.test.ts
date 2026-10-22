@@ -190,7 +190,11 @@ describe("the roster ledger's two CHECKs — 20261242's, with exactly the consen
     // satisfied_via CHECK from THIS file's body plus one value
     // ('preauthorization'), pinned byte for byte by
     // dfRoundG_P22_preauthMigration.test.ts (the shape CHECK it never touches).
-    expect(files.filter((f) => f > F && defines(strip(mig(f))))).toEqual(["20261264_df_roundG_consent_escalation.sql"]);
+    // drafting-flow DF-P26's 20261268 re-creates BOTH — the satisfied_via CHECK
+    // from 20261264's body and the shape CHECK from THIS file's body, each with
+    // the exception-only rule's one alternative — pinned byte for byte by
+    // dfRoundG_P26_exceptionMigration.test.ts.
+    expect(files.filter((f) => f > F && defines(strip(mig(f))))).toEqual(["20261264_df_roundG_consent_escalation.sql", "20261268_df_roundG_issuing_path_stops.sql"]);
   });
   it("satisfied_via: 20261242's list plus 'consent'", () => {
     expect(OLD).toContain("satisfied_via TEXT CHECK (satisfied_via IS NULL OR satisfied_via IN ('primary', 'alternate', 'override')),");

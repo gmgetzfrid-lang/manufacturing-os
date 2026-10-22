@@ -1490,3 +1490,50 @@ describe("DF-P26 (GAP-102 acceptance 2): the consent close's issue notice carrie
     }
   });
 });
+
+// drafting-flow DF-P26 (GAP-115 / GAP-109 mechanism 3, limb 2): a consent
+// close that would complete a review on which a slot stands satisfied by the
+// exception-only rule first looks for an exception on record. None: today's
+// issuing close. One (here a waiver of required examination data): the
+// window closes as a recorded system act, the rule's slot is RE-OPENED in the
+// same write (history, audit row, ledger "reopened"), and the request does
+// not issue. The waiver unreadable: not closed, retried next run.
+describe("DF-P26 (GAP-115): the consent close re-opens a slot satisfied by the exception-only rule when an exception is on record", () => {
+  const seedRuled = () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    const meta = db.tables.tickets[0].metadata as { review_roster: TicketReviewRoster };
+    meta.review_roster = { ...meta.review_roster, slots: [...meta.review_roster.slots, slot({ kind: "doc", label: "Document check", primaries: ["q-1"], exceptionOnly: true, status: "satisfied", via: "rule", satisfiedBy: null as unknown as string, signatureId: null as unknown as string, satisfiedAt: "2026-10-19T09:00:00Z" })] };
+    db.tables.ticket_review_slots.push({ id: "ld", ticket_id: "t1", roster_id: ROSTER_ID, slot_kind: "doc", mode: "blocking", status: "satisfied", primaries: ["q-1"], independent_of: [], fallback: false });
+    db.tables.org_members.push(member("q-1", "Viewer"));
+  };
+  const reopenedEvents = () => calls("ticket_review_slot_events", "insert").flatMap((c) => c.args[0] as Row[]).filter((e) => e.event === "reopened");
+  it("no exception on record: today's issuing close; the rule's slot stays satisfied; no 'reopened' event", async () => {
+    seedRuled();
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+    expect(db.tables.tickets[0].status).toBe("PENDING_IFC");
+    expect(rosterOf().slots.find((s) => s.kind === "doc")).toMatchObject({ status: "satisfied", via: "rule" });
+    expect(reopenedEvents()).toEqual([]);
+    expect(auditDetails().exceptionReview).toBeUndefined();
+  });
+  it("a waiver on record: the window closes, the rule's slot is re-opened in the same write, the request does NOT issue — history, audit row and ledger say so", async () => {
+    seedRuled();
+    db.tables.ticket_examination_scopes = [{ ticket_id: "t1", org_id: "o1", field_values: {}, waiver: { reason: "vendor data" } }];
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 0 });
+    expect(db.tables.tickets[0].status).toBe("PENDING_REVIEW");
+    const r = rosterOf();
+    expect(r.slots.find((s) => s.kind === "ops")!.status).toBe("satisfied");
+    expect(r.slots.find((s) => s.kind === "doc")).toMatchObject({ status: "open", exceptionReopened: { exceptions: ["a waiver of required examination data is recorded"] } });
+    expect(lastHistory().details).toContain("Re-opened for its reviewer: Document check — exception-only review no longer stands because a waiver of required examination data is recorded.");
+    expect(auditDetails().exceptionReview).toEqual({ reopened: ["doc"], exceptions: ["a waiver of required examination data is recorded"] });
+    expect(reopenedEvents()).toEqual([expect.objectContaining({ slot_kind: "doc", event: "reopened", actor_id: null, actor_name: "System — exception-only review", details: { via: "rule", exceptions: ["a waiver of required examination data is recorded"] } })]);
+    expect(db.tables.ticket_review_slots.find((x) => x.slot_kind === "doc")).toMatchObject({ status: "open", satisfied_via: null, satisfied_by: null });
+  });
+  it("the waiver unreadable: not closed (nothing written), retried next run", async () => {
+    seedRuled();
+    db.errors.ticket_examination_scopes = { code: "08006", message: "connection lost" };
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 0, issued: 0, failed: 1 });
+    expect(calls("tickets", "update")).toEqual([]);
+    expect(calls("audit_logs", "insert")).toEqual([]);
+  });
+});
