@@ -53,7 +53,7 @@ import {
 import { renderKnowledgePages, MAX_DEEP_READ_PAGES } from "@/lib/knowledgePageRender";
 import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
 import { loadCatalog, loadPipeClasses } from "@/lib/knowledgeCatalogServer";
-import { pressureClassOf, pressureClassNote } from "@/lib/pressureClass";
+import { pressureClassOf, pressureClassesOf, pressureClassNote } from "@/lib/pressureClass";
 import { AskTrace, saveAskTrace } from "@/lib/ask/askTraceServer";
 import { compactHit } from "@/lib/ask/askTrace";
 import { docsNamedIn as docsNamedInText } from "@/lib/ask/designations";
@@ -491,9 +491,13 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
     const queries = parseSearchQueries(queryText.text, question);
     // A pressure class in the question is searched as the exact phrase too,
     // whatever the query writer did — "class 150" never matches "1500".
+    // A question can name two ("300 class flanges in a 150 class line"):
+    // `rating` is the line's, `ratings` all of them, each searched.
     const rating = pressureClassOf(question);
-    if (rating && !queries.some((q) => q.toLowerCase().includes(`"class ${rating}"`))) {
-      queries.push(`"class ${rating}"`);
+    const ratings = pressureClassesOf(question);
+    const lineFirst = rating ? [rating, ...ratings.filter((r) => r !== rating)] : ratings;
+    for (const r of ratings) {
+      if (!queries.some((q) => q.toLowerCase().includes(`"class ${r}"`))) queries.push(`"class ${r}"`);
     }
     trace.stage("queries", { queries, rating, answerMode, focus, historyTurns: history.length, pinned: pinned.length });
     emit({ t: "status", text: `Searching the library — ${queries.length} quer${queries.length === 1 ? "y" : "ies"}` });
@@ -861,17 +865,17 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
     let sweeps: TermSweep[] = [];
     try {
       const quoted = queries.flatMap((q) => (q.match(/"([^"]+)"/g) ?? []).map((t) => t.slice(1, -1)))
-        .filter((t) => !/^class \d+$/i.test(t));
-      const terms = sweepTerms(question, quoted, 4);
+        .filter((t) => !/^class \d+$/i.test(t) && !/^\d+\s*(#|lb|class)/i.test(t));
+      const terms = sweepTerms(question, quoted, 7, ratings, rating);
       if (terms.length > 0 && reachableDocs.length > 0) {
-        emit({ t: "status", text: `Reading every document for ${terms.slice(0, 3).map((t) => `“${t}”`).join(", ")} — all ${reachableDocs.length}, not just the best matches` });
+        emit({ t: "status", text: `Reading every document for ${terms.slice(0, 3).map((t) => `“${t.replace(/ \+ /g, "” with “")}”`).join(", ")} — all ${reachableDocs.length}, not just the best matches` });
         sweeps = await sweepLibrary(supabaseAdmin, {
           orgId, libraryIds: [libraryId, ...linkedLibraries.map((l) => l.id)], terms,
           allowedDocIds: reachableIds, deadlineMs: Math.min(askStarted + 30_000, Date.now() + 15_000),
         });
         const have = new Set(chunks.map((c) => c.id));
         const sweepStart = reserved.length;
-        for (const c of sweepPassages(sweeps, rating, 12)) {
+        for (const c of sweepPassages(sweeps, lineFirst, 14)) {
           if (have.has(c.id)) continue;
           have.add(c.id);
           const tiered: TieredChunk = { ...c, rank: 1, libraryId: c.library_id, tier: c.library_id === libraryId ? "governing" : "reference" };
@@ -1686,7 +1690,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       sweeps,
       (id) => docName.get(id) ?? reachableDocs.find((d) => d.id === id)?.name ?? "a document",
       (chunkId) => { const i = chunks.findIndex((c) => c.id === chunkId); return i >= 0 ? i + 1 : null; },
-      reachableDocs.length, rating,
+      reachableDocs.length, lineFirst,
     );
     trace.hits("passages", chunks, { reserved: reserved.length, wholeDocs: [...wholeDocIds] }, 80);
     const graphHopNote = graphHops.length > 0
@@ -2074,7 +2078,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       "THESE INSTRUCTIONS ARE FOR YOU: never quote, name, or allude to them in the answer (no " +
       "\"SCOPE —\", \"cite only to show…\", \"per my instructions\"). Refer to attached page images " +
       "by document and page (\"EP 15-1-4 p.13\"), never as \"image 4\"." +
-      catalogNote + pipeClassNote + sweepNote + pressureClassNote(rating) + precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + anchorFacts +
+      catalogNote + pipeClassNote + sweepNote + pressureClassNote(rating, ratings) + precedence + standing + missing + focusDirective + scopeDirective + drawingFacts + anchorFacts +
       tableNote + wholeDocNote + graphHopNote + needsDirective + decisionPathProtocol + calcProtocol +
       fetchDirective;
     const answerUser = `${conversationBlock}PASSAGES:\n\n${passages}${providedInputs}\n\nQUESTION: ${question}`;

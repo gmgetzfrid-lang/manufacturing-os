@@ -36,7 +36,8 @@ describe("finding the sentences that tie terms together", () => {
     expect(tieIn("Sour gas – gas containing hydrogen sulfide above 50 ppm.", "sour gas", [])?.kind).toBe("defines");
   });
   it("whole words only", () => {
-    expect(sentencesWith("Soured crude was stored.", "sour")).toEqual([]);
+    expect(sentencesWith("Sourcing of crude was approved.", "sour")).toEqual([]);
+    expect(sentencesWith("Flanges per the nozzles schedule.", "nozzle")).toHaveLength(1);
   });
 });
 
@@ -64,7 +65,7 @@ describe("the sweep, as the answer reads it", () => {
     },
   ];
   it("attaches every tie, then the class that fits the asked rating — not the Class 1500 one", () => {
-    const ids = sweepPassages(sweeps, "150").map((c) => c.id);
+    const ids = sweepPassages(sweeps, ["150"]).map((c) => c.id);
     expect(ids.slice(0, 2)).toEqual(["v1", "p1"]);
     expect(ids).toContain("s1");
     expect(ids).not.toContain("s2");
@@ -72,17 +73,54 @@ describe("the sweep, as the answer reads it", () => {
   it("lists the whole map, with [n] for attached passages", () => {
     const names: Record<string, string> = { SPEC: "E2G Piping Specs (All).pdf", EP1283: "EP 12-8-3 - Control Valves", EP5116: "EP 5-11-6", EP10115: "EP 10-1-15" };
     const nOf: Record<string, number> = { v1: 23, s1: 30 };
-    const text = sweepBlock(sweeps, (id) => names[id], (c) => nOf[c] ?? null, 1312, "150");
+    const text = sweepBlock(sweeps, (id) => names[id], (c) => nOf[c] ?? null, 1312, ["150"]);
     expect(text).toMatch(/searching all 1312 reachable documents/);
     expect(text).toMatch(/EP 12-8-3 - Control Valves p\.14 \(7\.0 Materials\) \[23\]: "7\.6 Valves for use in sour gas \(Wet H2S\)/);
     expect(text).toMatch(/writes "sour gas" as "Wet H2S"/);
     expect(text).toMatch(/AAAC2H p\.812 · rating 150# \[30\]: "AAAC2H - Hydrocarbon and\/or Hydrogen Rich Service, Sour Service \(200 BHN MAX\)"/);
     expect(text).toMatch(/1 recorded as Class 150/);
+    expect(text).toMatch(/"sour gas": in 3 documents/);
     expect(text).toMatch(/EP 10-1-15 p\.7 \(not attached\)/);
   });
   it("a section is the last one starting at or before a page", () => {
     const secs = [{ key: "A", page: 1 }, { key: "B", page: 10 }, { key: "C", page: 20 }];
     expect(sectionAt(secs, 15)?.key).toBe("B");
     expect(sectionAt(secs, 20)?.key).toBe("C");
+  });
+});
+
+import { pressureClassesOf, lineClassOf, pressureClassNote } from "@/lib/pressureClass";
+import { partRegex } from "@/lib/ask/termSweep";
+
+describe("a part rated differently from its line", () => {
+  const q = "can i use 300 class flanges in a 150 class piping line if im bolting to a vessel nozzle";
+  it("reads both classes and knows which is the line's", () => {
+    expect(pressureClassesOf(q)).toEqual(["300", "150"]);
+    expect(lineClassOf(q)).toBe("150");
+    expect(lineClassOf("What piping spec for 150 class sour gas?")).toBe("150");
+  });
+  it("tells the answer both classes are the subject — not 'Class 300 doesn't answer it'", () => {
+    const note = pressureClassNote("150", ["300", "150"]);
+    expect(note).toMatch(/Class 300 components in a Class 150 line/);
+    expect(note).not.toMatch(/do NOT answer it/);
+    expect(pressureClassNote("150")).toMatch(/do NOT answer it/);
+  });
+  it("searches where Class 300 meets each subject — nozzle included — and drops filler", () => {
+    const t = sweepTerms(q, [], 7, ["300", "150"], "150");
+    expect(t.slice(0, 4)).toEqual(["class 300 + nozzle", "class 300 + vessel", "class 300 + bolting", "class 300 + flanges"]);
+    expect(t).toContain("vessel nozzle");
+    expect(t.join(" ")).not.toMatch(/\bim\b/);
+  });
+  it("finds the spec book's note: Class 300 with nozzle(s), in one sentence", () => {
+    const note = "Notes 106 Use against control valves and other Class 300 flanged equipment nozzles as required per design drawings. F127 Normalized.";
+    const [s] = sentencesWith(note, "class 300 + nozzle");
+    expect(s).toMatch(/Class 300 flanged equipment nozzles/);
+    expect(tieIn(s, "class 300 + nozzle", [])?.kind).toBe("together");
+    expect(sentencesWith("Class 300 flanges. Nozzles are per the vessel drawing.", "class 300 + nozzle")).toEqual([]);
+  });
+  it("a class part reads every notation, and never 3000", () => {
+    const re = partRegex("class 300");
+    expect(["Class 300", "300#", "300 lb", "CL300", "300 class"].every((x) => re.test(x))).toBe(true);
+    expect(re.test("Class 3000")).toBe(false);
   });
 });

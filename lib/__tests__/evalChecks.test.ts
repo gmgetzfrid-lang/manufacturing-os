@@ -94,3 +94,13 @@ describe("research record: where did the expected page drop out?", () => {
   it("given, not cited", () => expect(funnelFor([stage("passages", [{ documentId: "d1", page: 8 }])], want, names, [])).toBe("given_not_cited"));
   it("cited", () => expect(funnelFor([], want, names, [{ documentId: "d1", page: 7 }])).toBe("cited"));
 });
+
+describe("two classes named: a Class 300 part in a Class 150 line", () => {
+  it("naming Class 300 in the answer is not a mix-up; naming 1500 is", () => {
+    const q = "can I use 300 class flanges in a 150 class line bolting to a vessel nozzle";
+    const ok = runChecks({ question: q, answer: "**Answer:** YES, WITH CONDITIONS — the Class 150 line class carries Class 300 flanges for Class 300 equipment nozzles [1].", citations: [{ n: 1, documentName: "Spec", page: 3, quote: "Class 300 flanged equipment nozzles", role: "decides", highlight: "x" }], libraryDocNames: [] }, {});
+    expect(ok.find((r) => r.code === "class_mixup")?.pass).toBe(true);
+    const bad = runChecks({ question: q, answer: "**Answer:** Use the Class 1500 flange [1].", citations: [], libraryDocNames: [] }, {});
+    expect(bad.find((r) => r.code === "class_mixup")?.pass).toBe(false);
+  });
+});

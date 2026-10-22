@@ -26,28 +26,36 @@ import { inSlices } from "@/lib/inSlices";
 const STOP = new Set((
   "a an the and or of to in on for at by with from into about over under as is are was were be been being it its this that these those " +
   "what which who whom whose when where why how can could should would will shall may might must do does did done i we you they my our your " +
+  "im i'm ive i've id i'd dont don't cant can't wont won't its it's thats that's theres there's whats what's " +
   "need needs needed use used using uses get give find show tell me us there here any all some each every per than then so if not no yes " +
   "spec specs specification specifications piping pipe pipes class classes rating rated line lines stream streams service services system " +
   "required requirement requirements require allowed allow ok okay right best good new existing type types kind size sizes number " +
-  "lb lbs pound pounds psi psig asme ansi cl"
+  "lb lbs pound pounds psi psig asme ansi cl want trying going put install installing installed"
 ).split(/\s+/));
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** The asker's own terms worth sweeping: the query writer's quoted terms
- *  first, then the question's multi-word phrases, then its distinctive
- *  single words. At most `max`. */
-export function sweepTerms(question: string, quoted: string[] = [], max = 4): string[] {
+/** A sweep term is a phrase ("sour gas") or words that must appear
+ *  TOGETHER, written "class 300 + nozzle" — where a question's subjects
+ *  meet in one sentence is where its answer usually is. */
+export const partsOf = (term: string) => term.split(" + ").map((p) => p.trim()).filter(Boolean);
+
+/** The asker's own terms worth sweeping, most telling first: the query
+ *  writer's quoted terms; where a second pressure class meets each subject
+ *  word ("class 300 + nozzle" for a Class 300 part in a Class 150 line);
+ *  the question's phrases; its single subject words. At most `max`. */
+export function sweepTerms(question: string, quoted: string[] = [], max = 6, classes: string[] = [], lineClass: string | null = null): string[] {
   const out: string[] = [];
+  const clean = (t: string) => t.toLowerCase().replace(/[^a-z0-9 ./+-]/g, " ").replace(/\s+/g, " ").trim();
   const push = (t: string) => {
-    const v = t.toLowerCase().replace(/[^a-z0-9 ./-]/g, " ").replace(/\s+/g, " ").trim();
+    const v = clean(t);
     if (v.length < 3 || !/[a-z]/.test(v) || out.includes(v)) return;
-    if (v.split(" ").every((w) => STOP.has(w))) return;
+    if (v.split(/\s+\+?\s*/).every((w) => STOP.has(w) || w === "+")) return;
     out.push(v);
   };
   for (const q of quoted) push(q);
   // Runs of subject words, with numbers and class notation taken out.
-  const words = question.toLowerCase().replace(/#\s*\d+|\d+\s*#/g, " ").split(/[^a-z0-9/-]+/).filter(Boolean);
+  const words = question.toLowerCase().replace(/[’']/g, "").replace(/#\s*\d+|\d+\s*#/g, " ").split(/[^a-z0-9/-]+/).filter(Boolean);
   const runs: string[][] = [];
   let run: string[] = [];
   for (const w of words) {
@@ -55,24 +63,46 @@ export function sweepTerms(question: string, quoted: string[] = [], max = 4): st
     run.push(w);
   }
   if (run.length) runs.push(run);
+  const singles = [...new Set(runs.flat().filter((w) => w.length >= 4 || /\d/.test(w)))];
+  // A part rated differently from its line: that rating with each subject.
+  const others = classes.filter((c) => c !== lineClass);
+  for (const c of others) for (const w of [...singles].reverse()) push(`class ${c} + ${w}`);
   for (const r of runs) for (let i = 0; i + 1 < r.length; i++) push(`${r[i]} ${r[i + 1]}`);
-  for (const r of runs) for (const w of r) if (w.length >= 4 || /\d/.test(w)) push(w);
+  for (const w of singles) push(w);
   return out.slice(0, max);
 }
 
-/** The sentences of a passage that use a term (whole words, any case). */
+/** A regex for one part of a term: whole words, plurals and -ed/-ing
+ *  forms allowed; a pressure class in any of its notations. */
+export function partRegex(part: string): RegExp {
+  const cls = part.match(/^class (\d{3,4})$/);
+  if (cls) {
+    const n = cls[1];
+    return new RegExp(`(?:class|cl\\.?|ansi|asme|rating)\\s*#?\\s*${n}(?![0-9])|(?<![0-9.])${n}\\s*(?:#|lbs?\\b|pound|class\\b)|#\\s*${n}(?![0-9])`, "i");
+  }
+  return new RegExp(`(^|[^a-z0-9])${esc(part)}(?:s|es|ed|ing)?(?![a-z0-9])`, "i");
+}
+
+/** The sentences of a passage that use a term — every part of it, in the
+ *  same sentence. A long table row is cut around the first match. */
 export function sentencesWith(content: string, term: string): string[] {
-  const re = new RegExp(`(^|[^a-z0-9])${esc(term)}(?![a-z0-9])`, "i");
-  return content.replace(/\s+/g, " ").split(/(?<=[.;:!?])\s+(?=[A-Z0-9(])|\s{2,}|\n/)
-    .map((s) => s.trim()).filter((s) => s && re.test(s))
-    .map((s) => (s.length > 320 ? s.slice(0, 320) + "…" : s));
+  const res = partsOf(term).map(partRegex);
+  return content.replace(/\s+/g, " ").split(/(?<=[.;!?])\s+(?=[A-Z0-9(])/)
+    .map((x) => x.trim()).filter((x) => x && res.every((re) => re.test(x)))
+    .map((x) => {
+      if (x.length <= 320) return x;
+      const at = Math.max(0, (x.search(res[res.length - 1]) ?? 0) - 150);
+      return (at > 0 ? "…" : "") + x.slice(at, at + 320) + (at + 320 < x.length ? "…" : "");
+    });
 }
 
 /** Does this sentence tie the term to another term? Returns what it ties it
  *  to: a related term in the same sentence, or the words in a parenthesis
  *  right after it ("sour gas (Wet H2S)"), or a definition ("X means …"). */
-export function tieIn(sentence: string, term: string, leads: string[]): { kind: "paren" | "defines" | "related"; to: string } | null {
+export function tieIn(sentence: string, term: string, leads: string[]): { kind: "paren" | "defines" | "together" | "related"; to: string } | null {
   const s = sentence;
+  // Words searched together: the sentence holding all of them is the find.
+  if (partsOf(term).length > 1) return { kind: "together", to: partsOf(term).slice(1).join(", ") };
   const paren = s.match(new RegExp(`${esc(term)}\\s*\\(([^)]{2,40})\\)`, "i"));
   if (paren && !/^\s*\d+\s*$/.test(paren[1])) return { kind: "paren", to: paren[1].trim() };
   if (new RegExp(`${esc(term)}\\W{0,3}(\\s+(means|is defined as|refers to|shall mean|includes)\\b|\\s*[-–—:]\\s+[A-Z])`, "i").test(s)) {
@@ -89,7 +119,7 @@ export interface SweepChunk {
 export interface SweepHit {
   chunk: SweepChunk;
   sentence: string;
-  tie: { kind: "paren" | "defines" | "related"; to: string } | null;
+  tie: { kind: "paren" | "defines" | "together" | "related"; to: string } | null;
 }
 export interface SweepSection { key: string; page: number; rating: string | null; line: string; chunk: SweepChunk }
 export interface TermSweep {
@@ -105,7 +135,7 @@ export interface TermSweep {
 }
 
 /** Order a document's hits: ties first, then definitions, then the rest. */
-const tieRank = (h: SweepHit) => (h.tie?.kind === "paren" ? 0 : h.tie?.kind === "defines" ? 1 : h.tie ? 2 : 3);
+const tieRank = (h: SweepHit) => (h.tie?.kind === "paren" ? 0 : h.tie?.kind === "defines" || h.tie?.kind === "together" ? 1 : h.tie ? 2 : 3);
 
 /** Sections of a book document already mapped (piping classes, read class
  *  by class from the spec book): each section's key and first page. */
@@ -135,6 +165,14 @@ async function sectionRatings(admin: SupabaseClient, docId: string, keys: string
 /** A section code at the start of a line ("AAAC2H - Hydrocarbon…"). */
 const codeOf = (line: string) => line.match(/\b([A-Z0-9][A-Z0-9.-]{2,11})\s*[-–—:]\s/)?.[1] ?? null;
 
+/** The database search for a term: a phrase, or its parts all together
+ *  (a pressure class by its number — the sentence check pins the notation). */
+const searchOf = (term: string) => {
+  const parts = partsOf(term);
+  if (parts.length === 1) return term;
+  return parts.map((p) => p.match(/^class (\d{3,4})$/)?.[1] ?? `"${p}"`).join(" ");
+};
+
 /** A document this dense with the term is a book of sections (a spec
  *  database, a data-sheet book): its hits are listed section by section. */
 const BOOK_HITS = 30;
@@ -155,7 +193,7 @@ export async function sweepLibrary(admin: SupabaseClient, opts: {
     const { rows } = await fetchAllRows<Row>((from, to) => admin
       .from("knowledge_chunks").select("id, document_id, page")
       .eq("org_id", opts.orgId).in("library_id", opts.libraryIds)
-      .textSearch("tsv", term, { type: "phrase", config: "english" })
+      .textSearch("tsv", searchOf(term), { type: partsOf(term).length > 1 ? "websearch" : "phrase", config: "english" })
       .order("id").range(from, to), 6000);
     const hits = rows.filter((r) => opts.allowedDocIds.has(r.document_id));
     const byDoc = new Map<string, Row[]>();
@@ -199,6 +237,7 @@ export async function sweepLibrary(admin: SupabaseClient, opts: {
     });
 
     const leads = leadsFor(term.split(" "));
+    const combo = partsOf(term).length > 1;
     for (const [docId, list] of byDoc) {
       const chunks = list.map((r) => read.get(r.id)).filter((c): c is SweepChunk => !!c).sort((a, b) => a.page - b.page);
       if (list.length >= BOOK_HITS) {
@@ -207,6 +246,8 @@ export async function sweepLibrary(admin: SupabaseClient, opts: {
         const seen = new Set<string>();
         for (const c of chunks) {
           const line = sentencesWith(c.content, term)[0] ?? "";
+          // Words searched together must meet in one sentence, not just a page.
+          if (!line && combo) continue;
           const key = sectionAt(sections, c.page)?.key ?? codeOf(line) ?? `p${c.page}`;
           if (seen.has(key)) continue;
           seen.add(key);
@@ -226,7 +267,12 @@ export async function sweepLibrary(admin: SupabaseClient, opts: {
         }
       }
       best.sort((a, b) => tieRank(a) - tieRank(b) || a.chunk.page - b.chunk.page);
+      if (combo && best.length === 0) continue;
       sweep.docs.push({ documentId: docId, hits: list.length, best: best.slice(0, 3) });
+    }
+    if (combo) {
+      sweep.sections = sweep.sections.filter((g) => g.items.length > 0);
+      sweep.docCount = sweep.docs.length + sweep.sections.length;
     }
     // Documents with a tie first, then by how much they use the term.
     sweep.docs.sort((a, b) => (a.best[0] ? tieRank(a.best[0]) : 9) - (b.best[0] ? tieRank(b.best[0]) : 9) || b.hits - a.hits);
@@ -241,61 +287,81 @@ export function sectionAt<T extends { page: number }>(sections: T[], page: numbe
   return best;
 }
 
-/** The passages worth attaching: every tie and definition, then each
- *  document's best sentence, then sections whose rating fits. */
-export function sweepPassages(sweeps: TermSweep[], rating: string | null, max = 12): SweepChunk[] {
+/** The passages worth attaching: every tie, definition and words-together
+ *  find, then sections whose rating fits (the line's first), then each
+ *  document's best sentence. `ratings` lists the line's class first. */
+export function sweepPassages(sweeps: TermSweep[], ratings: string[], max = 12): SweepChunk[] {
   const picked: SweepChunk[] = [];
   const add = (c: SweepChunk) => { if (picked.length < max && !picked.some((p) => p.id === c.id)) picked.push(c); };
   for (const s of sweeps) for (const d of s.docs) for (const h of d.best) if (h.tie && h.tie.kind !== "related") add(h.chunk);
-  for (const s of sweeps) for (const d of s.docs) for (const h of d.best) if (h.tie) add(h.chunk);
   for (const s of sweeps) for (const g of s.sections) {
-    for (const it of g.items.filter((i) => rating && i.rating && sameRating(i.rating, rating)).slice(0, 4)) add(it.chunk);
+    const combo = partsOf(s.term).length > 1;
+    const items = orderByFit(g.items, ratings).filter((i) => combo || fits(i, ratings));
+    for (const it of items.slice(0, 4)) add(it.chunk);
   }
+  for (const s of sweeps) for (const d of s.docs) for (const h of d.best) if (h.tie) add(h.chunk);
   for (const s of sweeps) for (const d of s.docs.slice(0, 6)) if (d.best[0]) add(d.best[0].chunk);
   return picked;
 }
 
 export const sameRating = (recorded: string, asked: string) => new RegExp(`(^|[^0-9])${asked}([^0-9]|$)`).test(recorded);
+const fits = (i: SweepSection, ratings: string[]) => !!i.rating && ratings.some((r) => sameRating(i.rating!, r));
+/** Sections recorded with the line's rating first, then other asked
+ *  ratings, then unrecorded, then the rest. */
+function orderByFit(items: SweepSection[], ratings: string[]): SweepSection[] {
+  const rank = (i: SweepSection) => {
+    if (!i.rating) return ratings.length + 1;
+    const k = ratings.findIndex((r) => sameRating(i.rating!, r));
+    return k >= 0 ? k : ratings.length + 2;
+  };
+  return [...items].sort((a, b) => rank(a) - rank(b));
+}
 
-/** The sweep as the answer reads it. `n` gives a passage's [n] if attached. */
+/** How a term reads to the answer: "sour gas", or "Class 300" with "nozzle". */
+const shown = (term: string) => partsOf(term).map((p) => `"${p.replace(/^class (\d+)$/, "Class $1")}"`).join(" with ");
+
+/** The sweep as the answer reads it. `n` gives a passage's [n] if attached.
+ *  `ratings` lists the classes the question names, the line's first. */
 export function sweepBlock(sweeps: TermSweep[], docName: (id: string) => string, n: (chunkId: string) => number | null,
-  totalDocs: number, rating: string | null): string {
-  const live = sweeps.filter((s) => s.passageCount > 0);
-  if (live.length === 0 && sweeps.length === 0) return "";
+  totalDocs: number, ratings: string[]): string {
+  if (sweeps.length === 0) return "";
   const short = (name: string) => name.replace(/\.pdf$/i, "");
   const cite = (id: string) => { const k = n(id); return k ? ` [${k}]` : " (not attached)"; };
   const lines: string[] = [
-    `TERM SWEEP — every passage in these libraries that uses the asker's own words, found by searching all ${totalDocs} reachable documents (not a ranked sample):`,
+    `TERM SWEEP — every passage in these libraries that uses the asker's own words, found by searching all ${totalDocs} reachable documents (not a ranked sample). Words joined by "with" were searched TOGETHER — only sentences holding all of them count:`,
   ];
   for (const s of sweeps) {
-    if (s.passageCount === 0) { lines.push(`"${s.term}": used nowhere in the libraries.`); continue; }
-    if (s.tooCommon) { lines.push(`"${s.term}": used in ${s.docCount} documents — too common to list.`); continue; }
-    lines.push(`"${s.term}": used in ${s.docCount} document${s.docCount === 1 ? "" : "s"} (${s.passageCount} passage${s.passageCount === 1 ? "" : "s"}).`);
+    const label = shown(s.term);
+    if (s.passageCount === 0 || s.docCount === 0) { lines.push(`${label}: ${partsOf(s.term).length > 1 ? "never together in one sentence" : "used nowhere"} in the libraries.`); continue; }
+    if (s.tooCommon) { lines.push(`${label}: used in ${s.docCount} documents — too common to list.`); continue; }
+    lines.push(`${label}: in ${s.docCount} document${s.docCount === 1 ? "" : "s"}.`);
     for (const d of s.docs.slice(0, 14)) {
       const h = d.best[0];
       if (!h) continue;
-      const tie = h.tie ? (h.tie.kind === "paren" ? `  ← writes "${s.term}" as "${h.tie.to}"` : h.tie.kind === "defines" ? "  ← defines it" : `  ← same sentence as "${h.tie.to}"`) : "";
+      const tie = !h.tie ? "" : h.tie.kind === "paren" ? `  ← writes "${s.term}" as "${h.tie.to}"`
+        : h.tie.kind === "defines" ? "  ← defines it" : h.tie.kind === "together" ? "" : `  ← same sentence as "${h.tie.to}"`;
       lines.push(`  - ${short(docName(d.documentId))} p.${h.chunk.page}${h.chunk.section ? ` (${h.chunk.section.slice(0, 50)})` : ""}${cite(h.chunk.id)}: "${h.sentence}"${tie}`);
     }
     if (s.docs.length > 14) lines.push(`  - …and ${s.docs.length - 14} more documents.`);
     for (const g of s.sections) {
-      const fit = rating ? g.items.filter((i) => i.rating && sameRating(i.rating, rating)) : [];
+      const fit = g.items.filter((i) => fits(i, ratings));
       const unknown = g.items.filter((i) => !i.rating);
-      lines.push(`  Sections of ${short(docName(g.documentId))} whose own text uses "${s.term}": ${g.items.length}` +
-        (rating ? ` — ${fit.length} recorded as Class ${rating}${unknown.length ? `, ${unknown.length} with no rating recorded` : ""}` : "") + ":");
-      const show = [...fit, ...g.items.filter((i) => !fit.includes(i))].slice(0, 16);
-      for (const it of show) {
+      lines.push(`  Sections of ${short(docName(g.documentId))} whose own text has ${label}: ${g.items.length}` +
+        (ratings.length ? ` — ${fit.length} recorded as Class ${ratings.join("/")}${unknown.length ? `, ${unknown.length} with no rating recorded` : ""}` : "") + ":");
+      const list = orderByFit(g.items, ratings).slice(0, 16);
+      for (const it of list) {
         lines.push(`    - ${it.key} p.${it.page}${it.rating ? ` · rating ${it.rating}` : " · rating not recorded (read it on the page)"}${cite(it.chunk.id)}: "${it.line}"`);
       }
-      if (g.items.length > show.length) lines.push(`    - …and ${g.items.length - show.length} more sections.`);
+      if (g.items.length > list.length) lines.push(`    - …and ${g.items.length - list.length} more sections.`);
     }
   }
   lines.push(
     "READ THIS BEFORE ANSWERING: it is the complete list, not a sample. Before writing that the library doesn't use a term, " +
-    "doesn't tie two terms together, or has no class or rule for a service, check it. A sentence here that ties the asker's " +
-    "term to another (\"sour gas (Wet H2S) service\") IS textual basis — cite it and say whose words they are and what they " +
-    "govern (a valve practice's wording is evidence of how the company uses the term, not a piping rule). A section listed " +
-    "here whose rating fits is a candidate answer: name it. A passage marked (not attached) can be named but not quoted.",
+    "doesn't tie two terms together, or has no class, row or rule for the case asked, check it. A sentence here that ties the " +
+    "asker's term to another (\"sour gas (Wet H2S) service\") IS textual basis — cite it and say whose words they are and what " +
+    "they govern. In a spec book, a section's numbered NOTES say when one of its rows applies (\"use against … Class 300 " +
+    "flanged equipment nozzles\"): such a note is the rule — quote it with the section it belongs to. A section whose " +
+    "rating fits is a candidate answer: name it. A passage marked (not attached) can be named but not quoted.",
   );
   return "\n\n" + lines.join("\n");
 }

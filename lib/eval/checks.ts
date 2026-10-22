@@ -6,7 +6,7 @@
 // — any company's library — so a failing run reads as a diagnosis ("cited a
 // Class 1500 page for a Class 150 question"), not a number.
 
-import { pressureClassOf } from "@/lib/pressureClass";
+import { pressureClassesOf } from "@/lib/pressureClass";
 import { leadsFor, questionWords } from "@/lib/searchLeads";
 import { settleItems } from "@/lib/ask/settleItems";
 import { docsNamedIn } from "@/lib/ask/designations";
@@ -100,20 +100,24 @@ export function runChecks(a: AnswerUnderTest, expect: CaseExpect): CheckResult[]
   // Citations at all.
   add({ code: "no_citations", pass: nothingFound || a.citations.length > 0, detail: a.citations.length > 0 ? `${a.citations.length} cited` : "the answer cites no page" });
 
-  // Pressure class: the decision must be about the asked class only.
-  const asked = expect.askedClass ?? pressureClassOf(a.question);
-  if (asked) {
-    const inVerdict = [...classesIn(verdictOf(answer))].filter((c) => c !== asked);
+  // Pressure class: the decision must stay on the classes the question
+  // names — one ("150 class sour gas"), or two ("300 class flanges in a 150
+  // class line"). A class it never named (1500) is a mix-up.
+  const askedAll = expect.askedClass ? [expect.askedClass] : pressureClassesOf(a.question);
+  if (askedAll.length > 0) {
+    const named = new Set(askedAll);
+    const inVerdict = [...classesIn(verdictOf(answer))].filter((c) => !named.has(c));
     const decisive = a.citations.filter((c) => c.role === "decides" && c.quote);
     const wrongPages = decisive.filter((c) => {
       const seen = classesIn(c.quote ?? "");
-      return seen.size > 0 && !seen.has(asked);
+      return seen.size > 0 && ![...seen].some((x) => named.has(x));
     });
     const problems = [
       ...inVerdict.map((c) => `the answer line names Class ${c}`),
       ...wrongPages.map((c) => `decisive evidence ${c.documentName} p.${c.page} is about Class ${[...classesIn(c.quote ?? "")].join("/")}`),
     ];
-    add({ code: "class_mixup", pass: problems.length === 0, detail: problems.length ? `asked Class ${asked}; ${problems.join("; ")}` : `stayed on Class ${asked}` });
+    const asked = askedAll.map((c) => `Class ${c}`).join(" and ");
+    add({ code: "class_mixup", pass: problems.length === 0, detail: problems.length ? `asked ${asked}; ${problems.join("; ")}` : `stayed on ${asked}` });
   }
 
   // Unproven links: the question's own words vs related terms (and any the
