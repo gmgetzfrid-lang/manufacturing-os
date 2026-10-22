@@ -112,7 +112,7 @@ const DECISION_AT_MERGE: Record<string, string> = {
   // ticket_preauthorizations were decided at its merge (EXPORTED after ticket_notice_events;
   // never imported — IMMUTABLE_TABLES; DEC-90) and are no longer here.
   // drafting-flow Round G DF-P24 EXAMINATION SCOPE (20261266) — the integrator decides at the merge.
-  // drafting-flow Round G DF-P24's ticket_examination_scopes was decided at its merge (EXPORTED; never imported — IMMUTABLE_TABLES; DEC-90) and is no longer here.
+  // drafting-flow Round G DF-P24's ticket_examination_scopes was decided at its merge (EXPORTED; DEC-90) and is no longer here — DF-P25 (DEC-90 ruling (7)) now RESTORES it after tickets with the waiver cleared (RESTORE_SERVICE_ROLE_WAIVERS).
 };
 
 // EGR-7 / XEDGE-10: a column whose NAME says "credential". `_key` alone is

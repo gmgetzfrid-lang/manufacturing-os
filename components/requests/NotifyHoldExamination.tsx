@@ -68,6 +68,10 @@ export interface NotifyHoldExaminationProps {
  *  stored (the database has no column for it yet — before 20261267). */
 export const HOLD_RECORD_NOT_STORED =
   "The hold is placed. What you examined could not be stored with it yet (the database update 20261267 is not applied) — add it to the hold's description if it matters.";
+/** DF-P25 (review fix pass 4): what the panel says when the hold landed
+ *  but the database refused its record for size. */
+export const HOLD_RECORD_TOO_LARGE =
+  "The hold is placed. What you examined was too large to store with it — add what matters to the hold's description.";
 /** How many holds the panel reads for one request (a fuller page says more exist). */
 export const NOTIFY_HOLD_READ_LIMIT = 50;
 /** What the panel says when the read filled its page. */
@@ -228,7 +232,7 @@ export default function NotifyHoldExamination({ ticket, orgId, uid, userName, ro
         orgId, documentId: sourceId, reason, notes: description.trim() || undefined,
         openedBy: uid, openedByName: userName ?? undefined, examination: { ...built.record },
       });
-      setMessage(hold.examinationNotRecorded ? { tone: "warn", text: HOLD_RECORD_NOT_STORED } : { tone: "ok", text: "Hold placed, with what you examined." });
+      setMessage(hold.examinationNotRecorded ? { tone: "warn", text: hold.examinationTooLarge ? HOLD_RECORD_TOO_LARGE : HOLD_RECORD_NOT_STORED } : { tone: "ok", text: "Hold placed, with what you examined." });
       setNote("");
       setDescription("");
       setPick(null);

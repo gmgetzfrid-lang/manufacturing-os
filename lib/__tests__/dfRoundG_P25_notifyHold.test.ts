@@ -55,10 +55,10 @@ vi.mock("@/lib/reviewControl", () => ({ effectiveReviewControlForDocument: vi.fn
 vi.mock("@/components/signatures/SignatureCeremony", () => ({ default: () => null }));
 
 import { parseRoutingControl, validateRoutingDraft, notifyExaminationOptInAllowed, preauthorizationOptInAllowed, type RoutingControl } from "@/lib/routingControl";
-import { controlToDraft, draftToControl, notifyExaminationOptInFor, preauthOptInFor, assuranceOptInFor, NOTIFY_EXAMINATION_HINT } from "@/components/documents/RoutingControlSection";
-import { isAssuranceSlot, isNotifyExaminationSlot, holdExaminationRecord, holdExaminationOf, holdOpenerInSlot, rosterOccupancy, examinedFilesText } from "@/lib/assuranceExamination";
+import { controlToDraft, draftToControl, notifyExaminationOptInFor, preauthOptInFor, assuranceOptInFor, NOTIFY_EXAMINATION_HINT, withSlotMode } from "@/components/documents/RoutingControlSection";
+import { isAssuranceSlot, isNotifyExaminationSlot, holdExaminationRecord, holdExaminationOf, holdOpenerInSlot, rosterOccupancy, examinedFilesText, examinationOf, jsonbTextBytes, HOLD_EXAMINATION_BUDGET_BYTES, HOLD_EXAMINATION_MAX_BYTES } from "@/lib/assuranceExamination";
 import { preauthEligibleSlots } from "@/lib/ticketPreauthorization";
-import NotifyHoldExamination, { HOLD_RECORD_NOT_STORED, HOLD_NOT_PERMITTED, NO_FILES_UNDER_REVIEW, holdPermissionUncheckedText, NO_SOURCE_TO_HOLD, NOTIFY_HOLD_READ_LIMIT, NOTIFY_HOLDS_MORE, notSlotHoldsText, uncheckedHoldsText, slotStopHolder } from "@/components/requests/NotifyHoldExamination";
+import NotifyHoldExamination, { HOLD_RECORD_NOT_STORED, HOLD_RECORD_TOO_LARGE, HOLD_NOT_PERMITTED, NO_FILES_UNDER_REVIEW, holdPermissionUncheckedText, NO_SOURCE_TO_HOLD, NOTIFY_HOLD_READ_LIMIT, NOTIFY_HOLDS_MORE, notSlotHoldsText, uncheckedHoldsText, slotStopHolder } from "@/components/requests/NotifyHoldExamination";
 import TicketRosterPanel from "@/components/requests/TicketRosterPanel";
 
 const NOW = "2026-10-22T12:00:00.000Z";
@@ -116,6 +116,25 @@ describe("the opt-in on a notify-only slot — parser, editor, roster", () => {
     const plain: RoutingControl = { slots: [{ kind: "watch", mode: "notify_only", fill: { users: ["q-2"] } }] };
     expect(draftToControl(controlToDraft(plain))).toEqual(plain);
   });
+  it("REVIEW FIX 4: a mode change drops the opt-in — never carried between a notify-only stop and an assurance sign-off unchosen", () => {
+    const [watch] = controlToDraft({ slots: [{ kind: "qa", label: "Quality", mode: "notify_only", fill: { roles: ["Viewer"] }, records_examination: true }] });
+    expect(watch.recordsExamination).toBe(true);
+    // notify-only → must sign off: NOT an assurance slot unless ticked again
+    const blocking = withSlotMode(watch, "blocking");
+    expect(blocking.mode).toBe("blocking");
+    expect(blocking).not.toHaveProperty("recordsExamination");
+    expect(draftToControl([blocking]).slots[0]).not.toHaveProperty("records_examination");
+    expect(assuranceOptInFor(blocking)).toBe("offer"); // offered, unticked
+    // must sign off (assurance) → notify-only: NOT a hold-recording slot unless ticked again
+    const [sign] = controlToDraft({ slots: [{ kind: "qa", mode: "blocking", fill: { roles: ["Viewer"] }, records_examination: true }] });
+    const told = withSlotMode(sign, "notify_only");
+    expect(told).not.toHaveProperty("recordsExamination");
+    expect(draftToControl([told]).slots[0]).not.toHaveProperty("records_examination");
+    // the same mode: nothing changes (the very object)
+    expect(withSlotMode(watch, "notify_only")).toBe(watch);
+    // nothing else on the slot is touched
+    expect({ ...blocking, mode: watch.mode }).toEqual((({ recordsExamination: _r, ...rest }) => rest)(watch));
+  });
   it("such a slot is never an assurance sign-off slot, never eligible for a pre-authorization; a plain notify-only slot is not one either", () => {
     const t = ticket(rosterOf([SIGN, WATCH]));
     expect(isAssuranceSlot(WATCH, t)).toBe(false);
@@ -139,6 +158,58 @@ describe("the record a hold carries", () => {
     expect(holdExaminationOf(rec, "t1")).toMatchObject({ slotKind: "watch", note: "n" });
     expect(holdExaminationOf(rec, "t2")).toBeNull();
     for (const junk of [null, "x", [1], { note: "n" }]) expect(holdExaminationOf(junk, "t1")).toBeNull();
+  });
+});
+
+describe("REVIEW FIX 4 — a hold's record always fits its column (DEC-90 ruling (8): the bookkeeping never blocks the stop)", () => {
+  const many = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `att-${i}`, name: `PROJ-2026-UNIT-400-ISO-${String(i).padStart(4, "0")}-sheet-${i % 7}-of-7_rev1A.pdf`, url: `k/${i}`, sha256: (i % 16).toString(16).repeat(64) }));
+  const NOTE = "Nozzle N3 orientation differs from the vendor datasheet; weld map sheet numbering skips — ".repeat(20).slice(0, 2000).trim();
+  it("measures as Postgres prints a jsonb (a space after ':' and ','; UTF-8 bytes)", () => {
+    expect(jsonbTextBytes({ a: 1, b: [1, 2], c: null })).toBe('{"a": 1, "b": [1, 2], "c": null}'.length);
+    expect(jsonbTextBytes({ n: "é€😀" })).toBe('{"n": ""}'.length + 2 + 3 + 4);
+    expect(jsonbTextBytes({ s: "q\"\n" })).toBe(String.raw`{"s": "q\"\n"}`.length); // escaped as JSON escapes
+    expect(HOLD_EXAMINATION_BUDGET_BYTES).toBeLessThan(HOLD_EXAMINATION_MAX_BYTES);
+  });
+  it("REGRESSION: a record within the budget is exactly as before — every file named, no new keys", () => {
+    const r = holdExaminationRecord(rosterOf([WATCH], { files: many(20) }), "t1", WATCH, { note: "n" });
+    expect(r.ok).toBe(true);
+    const rec = (r as unknown as { ok: true; record: Record<string, unknown> }).record;
+    expect((rec.files as unknown[]).length).toBe(20);
+    expect(rec).not.toHaveProperty("filesTruncated");
+    expect(rec).not.toHaveProperty("examinedFiles");
+  });
+  it("a 320-file round with a 2000-character note (every file, the default selection): the record names the first files while they fit, says how many were examined, keeps the hash and the note — and fits the CHECK", () => {
+    const files = many(320);
+    const untrimmed = jsonbTextBytes({ files: files.map((f) => ({ id: f.id, name: f.name, sha256: f.sha256 })) });
+    expect(untrimmed).toBeGreaterThan(HOLD_EXAMINATION_MAX_BYTES); // the reviewer's scenario: the full list would be refused
+    const r = holdExaminationRecord(rosterOf([WATCH], { files }), "t1", WATCH, { files: files.map((f) => f.id), note: NOTE });
+    expect(r.ok).toBe(true);
+    const rec = (r as unknown as { ok: true; record: Parameters<typeof examinedFilesText>[0] & Record<string, unknown> }).record;
+    expect(jsonbTextBytes(rec)).toBeLessThanOrEqual(HOLD_EXAMINATION_BUDGET_BYTES);
+    expect(rec).toMatchObject({ filesTruncated: true, examinedFiles: 320, ofFiles: 320, allFiles: true, contentHash: HASH, note: NOTE, stop: "hold", ticketId: "t1" });
+    const named = (rec.files as Array<{ id: string }>);
+    expect(named.length).toBeGreaterThan(0);
+    expect(named.length).toBeLessThan(320);
+    expect(named.map((f) => f.id)).toEqual(files.slice(0, named.length).map((f) => f.id)); // the roster's order, from the first
+    // one more file would not have fit
+    expect(jsonbTextBytes({ ...rec, files: [...named, { id: files[named.length].id, name: files[named.length].name, sha256: files[named.length].sha256 }] })).toBeGreaterThan(HOLD_EXAMINATION_BUDGET_BYTES);
+    // read back and said honestly
+    const back = holdExaminationOf(rec, "t1")!;
+    expect(back).toMatchObject({ filesTruncated: true, examinedFiles: 320 });
+    expect(examinedFilesText(back)).toMatch(new RegExp(`^Examined all 320 files: .*\\(only the first ${named.length} named — the record's size is bounded\\)$`));
+  });
+  it("a narrowed pick over the budget says 'N of M' with N the files examined, not the files named", () => {
+    const files = many(400);
+    const pick = files.slice(0, 350).map((f) => f.id);
+    const rec = (holdExaminationRecord(rosterOf([WATCH], { files }), "t1", WATCH, { files: pick, note: "n" }) as { ok: true; record: Parameters<typeof examinedFilesText>[0] }).record;
+    expect(rec).toMatchObject({ filesTruncated: true, examinedFiles: 350, allFiles: false, ofFiles: 400 });
+    expect(examinedFilesText(rec)).toMatch(/^Examined 350 of 400 files: /);
+  });
+  it("a reader never trusts a marker that does not add up (no count, a count below the files named)", () => {
+    const base = { contentHash: "h", files: [{ id: "a", name: "a.pdf", sha256: null }], ofFiles: 3, allFiles: false };
+    expect(examinationOf({ examination: { ...base, filesTruncated: true } })).not.toHaveProperty("filesTruncated");
+    expect(examinationOf({ examination: { ...base, filesTruncated: true, examinedFiles: 0 } })).not.toHaveProperty("filesTruncated");
+    expect(examinedFilesText(examinationOf({ examination: base })!)).toBe("Examined 1 of 3 files: a.pdf");
   });
 });
 
@@ -326,6 +397,20 @@ describe("NotifyHoldExamination — with an opted-in notify-only slot", () => {
     await act(async () => { (q("notify-hold-place") as HTMLButtonElement).click(); });
     await flush();
     expect(host.textContent).toContain(HOLD_RECORD_NOT_STORED);
+  });
+  it("REVIEW FIX 4: a record the database refused for size: the hold stands and the panel says so (not the missing-update sentence)", async () => {
+    holdsMock.openHold.mockResolvedValue({ id: "h-9", examinationNotRecorded: true, examinationTooLarge: true });
+    await renderHold(ticket(rosterOf([SIGN, WATCH])), "q-2");
+    const ta = host.querySelector('textarea[aria-label="What you found"]') as HTMLTextAreaElement;
+    const desc = host.querySelector('input[aria-label="Hold description"]') as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(ta, "found it"); ta.dispatchEvent(new Event("input", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(desc, "d"); desc.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { (q("notify-hold-place") as HTMLButtonElement).click(); });
+    await flush();
+    expect(host.textContent).toContain(HOLD_RECORD_TOO_LARGE);
+    expect(host.textContent).not.toContain(HOLD_RECORD_NOT_STORED);
   });
   it("an empty note is refused in place — nothing placed", async () => {
     await renderHold(ticket(rosterOf([SIGN, WATCH])), "q-2");

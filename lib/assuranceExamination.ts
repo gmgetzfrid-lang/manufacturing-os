@@ -93,6 +93,12 @@ export interface ExaminationRecord {
    *  slot on its event (lib/ticketRoster.ts writeRosterLedger), so an earlier
    *  round reads by it once its roster is gone. Absent on the audit row. */
   slotLabel?: string;
+  /** DF-P25 (review fix pass 4): a hold's record keeps under the size its
+   *  column allows (HOLD_EXAMINATION_BUDGET_BYTES): `files` names only the
+   *  first of the files examined, and `examinedFiles` says how many were
+   *  examined in all. Absent otherwise (every file examined is named). */
+  filesTruncated?: true;
+  examinedFiles?: number;
 }
 
 /** The slot only the requester fills — "Is this what you asked for?" (the
@@ -241,6 +247,8 @@ export function examinationOf(details: unknown): ExaminationRecord | null {
     ...(e.noteTruncated === true ? { noteTruncated: true as const } : {}),
     ...(e.defaulted === true ? { defaulted: true as const } : {}),
     ...(typeof e.slotLabel === "string" && e.slotLabel.trim() ? { slotLabel: e.slotLabel } : {}),
+    ...(e.filesTruncated === true && typeof e.examinedFiles === "number" && Number.isInteger(e.examinedFiles) && e.examinedFiles >= files.length
+      ? { filesTruncated: true as const, examinedFiles: e.examinedFiles } : {}),
   };
 }
 
@@ -250,14 +258,19 @@ export const shortHash = (h: string, n = 12): string => (h.length > n ? `${h.sli
 /** "Examined all 3 files: a.pdf, b.pdf, c.pdf" / "Examined 1 of 3 files: a.pdf".
  *  A defaulted record (the reviewer was not asked) never says "Examined":
  *  "Files under review: all 3 (not narrowed — the reviewer was not asked): …". */
-export function examinedFilesText(r: Pick<ExaminationRecord, "files" | "ofFiles" | "allFiles" | "defaulted">): string {
-  const names = r.files.map((f) => f.name || "a file").join(", ");
+export function examinedFilesText(r: Pick<ExaminationRecord, "files" | "ofFiles" | "allFiles" | "defaulted" | "filesTruncated" | "examinedFiles">): string {
+  // DF-P25 (review fix pass 4): a hold's record bounded in size names only
+  // the first files examined, and says so.
+  const truncated = r.filesTruncated === true && typeof r.examinedFiles === "number" && r.examinedFiles > r.files.length;
+  const examined = truncated ? (r.examinedFiles as number) : r.files.length;
+  const listed = r.files.map((f) => f.name || "a file").join(", ");
+  const names = truncated ? `${listed}${listed ? " " : ""}(only the first ${r.files.length} named — the record's size is bounded)` : listed;
   const n = r.ofFiles;
   // DF-P25 (review fix pass 2): a round with no files under review (a hold's
   // record of a review on its description) says so, not "all 0 files".
-  if (n === 0 && r.files.length === 0) return "No files were under review";
+  if (n === 0 && examined === 0) return "No files were under review";
   if (r.defaulted) return `Files under review: all ${n} (not narrowed — the reviewer was not asked)${names ? `: ${names}` : ""}`;
-  const count = r.allFiles ? `all ${n} ${n === 1 ? "file" : "files"}` : `${r.files.length} of ${n} ${n === 1 ? "file" : "files"}`;
+  const count = r.allFiles ? `all ${n} ${n === 1 ? "file" : "files"}` : `${examined} of ${n} ${n === 1 ? "file" : "files"}`;
   return `Examined ${count}${names ? `: ${names}` : ""}`;
 }
 
@@ -285,10 +298,45 @@ export interface HoldExaminationRecord extends ExaminationRecord {
   slotKind: string;
 }
 
+/** The bound 20261267's CHECK document_holds_examination_shape puts on a
+ *  hold's record: octet_length(examination::text) <= this. */
+export const HOLD_EXAMINATION_MAX_BYTES = 32768;
+/** DF-P25 (review fix pass 4): what holdExaminationRecord keeps a record
+ *  within, as jsonbTextBytes measures it — well under the CHECK, so a large
+ *  roster never turns the person's stop into a refused insert (DEC-90
+ *  ruling (8): the bookkeeping never blocks the act). */
+export const HOLD_EXAMINATION_BUDGET_BYTES = 24576;
+
+/** A value as Postgres prints a jsonb (`{"k": v, "k2": [a, b]}` — a space
+ *  after every ':' and ','), for its size; strings are escaped as
+ *  JSON.stringify escapes them. */
+function jsonbText(v: unknown): string {
+  if (v === null || v === undefined) return "null";
+  if (Array.isArray(v)) return `[${v.map(jsonbText).join(", ")}]`;
+  if (typeof v === "object") {
+    return `{${Object.entries(v as Record<string, unknown>).filter(([, x]) => x !== undefined).map(([k, x]) => `${JSON.stringify(k)}: ${jsonbText(x)}`).join(", ")}}`;
+  }
+  return JSON.stringify(v) ?? "null";
+}
+
+/** The UTF-8 size of a value printed as a jsonb (what octet_length(x::text)
+ *  counts). Pure. */
+export function jsonbTextBytes(v: unknown): number {
+  let n = 0;
+  for (const ch of jsonbText(v)) {
+    const c = ch.codePointAt(0) ?? 0;
+    n += c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
+  }
+  return n;
+}
+
 /** Build the record a notify-only occupant's hold carries — the roster under
  *  review, the files they examined (by examinationFileKey; default every
  *  file), their note (else the hold's own description), the request, the
- *  round and the slot. The note is required (a stop says why). Pure. */
+ *  round and the slot. The note is required (a stop says why). A record
+ *  over HOLD_EXAMINATION_BUDGET_BYTES names only the first files examined
+ *  (`filesTruncated`, `examinedFiles` — the count, the content hash and the
+ *  note are kept), so it always fits the column. Pure. */
 export function holdExaminationRecord(
   roster: Pick<TicketReviewRoster, "id" | "contentHash" | "cycle" | "files">,
   ticketId: string,
@@ -298,17 +346,26 @@ export function holdExaminationRecord(
 ): { ok: true; record: HoldExaminationRecord } | { ok: false; error: string } {
   const built = buildExaminationRecord(roster, raw, { act: "veto", comment: holdNote ?? null });
   if (!built.ok) return { ok: false, error: built.error === "A revision request must say why — add a note." ? "A hold must say why — add a note of what you found." : built.error };
-  return {
-    ok: true,
-    record: {
-      ...built.record,
-      ...(slot.label ? { slotLabel: slot.label } : {}),
-      stop: "hold",
-      ticketId,
-      rosterId: roster.id,
-      slotKind: slot.kind,
-    },
+  const record: HoldExaminationRecord = {
+    ...built.record,
+    ...(slot.label ? { slotLabel: slot.label } : {}),
+    stop: "hold",
+    ticketId,
+    rosterId: roster.id,
+    slotKind: slot.kind,
   };
+  if (jsonbTextBytes(record) <= HOLD_EXAMINATION_BUDGET_BYTES) return { ok: true, record };
+  // Too large for the column: name the files examined while they fit.
+  const base: HoldExaminationRecord = { ...record, files: [], filesTruncated: true, examinedFiles: record.files.length };
+  let size = jsonbTextBytes(base);
+  const kept: HoldExaminationRecord["files"] = [];
+  for (const f of record.files) {
+    const add = jsonbTextBytes(f) + (kept.length > 0 ? 2 : 0);
+    if (size + add > HOLD_EXAMINATION_BUDGET_BYTES) break;
+    kept.push(f);
+    size += add;
+  }
+  return { ok: true, record: { ...base, files: kept } };
 }
 
 /** A hold's examination record read back for one request, or null — a hold

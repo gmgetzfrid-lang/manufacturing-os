@@ -126,6 +126,19 @@ export function notifyExaminationOptInFor(d: DraftSlot): "offer" | "none" {
   return notifyExaminationOptInAllowed({ mode: d.mode, fill: draftFill(d) }) ? "offer" : "none";
 }
 
+/** DF-P25 (review fix pass 4): a slot's mode changed in the editor. The
+ *  examination opt-in means one thing on a "must sign off" slot (an
+ *  assurance sign-off that must record what was examined) and another on a
+ *  notify-only slot (a stop that is a hold with the record), so a mode
+ *  change drops it — the controller ticks it again under the new meaning,
+ *  never carried over unchosen. Pure; exported for tests. */
+export function withSlotMode(d: DraftSlot, mode: RoutingSlotMode): DraftSlot {
+  if (d.mode === mode) return d;
+  const next: DraftSlot = { ...d, mode };
+  delete next.recordsExamination;
+  return next;
+}
+
 /** DF-P25: what the notify-only opt-in does — never a suggestion to add a
  *  sign-off (GAP-102: assurance as notice plus a stop). */
 export const NOTIFY_EXAMINATION_HINT =
@@ -426,7 +439,7 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
                   <div className="flex flex-wrap gap-2 items-center">
                     <input aria-label="Slot key" className={`${inp} w-36`} value={s.kind} onChange={(e) => patch(i, { kind: e.target.value })} placeholder="key (your words)" />
                     <input aria-label="Slot label" className={`${inp} flex-1 min-w-[10rem]`} value={s.label} onChange={(e) => patch(i, { label: e.target.value })} placeholder="What your facility calls it" />
-                    <select aria-label="Mode" className={inp} value={s.mode} onChange={(e) => patch(i, { mode: e.target.value as RoutingSlotMode })}>
+                    <select aria-label="Mode" className={inp} value={s.mode} onChange={(e) => { const mode = e.target.value as RoutingSlotMode; setSlots((all) => all.map((x, j) => (j === i ? withSlotMode(x, mode) : x))); }}>
                       {(["blocking", "consent_window", "notify_only"] as RoutingSlotMode[]).map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}
                     </select>
                     <button type="button" aria-label="Remove slot" onClick={() => setSlots((all) => all.filter((_, j) => j !== i))} className="p-1 text-[var(--color-text-faint)] hover:text-red-600"><Trash2 className="w-4 h-4" /></button>

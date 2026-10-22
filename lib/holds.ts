@@ -133,6 +133,11 @@ export interface HoldRecord extends DocumentHold {
    *  because the database does not have the column yet (before 20261267) —
    *  the stop itself is never refused for its record. */
   examinationNotRecorded?: true;
+  /** DF-P25 (review fix pass 4): with `examinationNotRecorded` — the column
+   *  is there, but the record was refused by its size bound (20261267's
+   *  CHECK document_holds_examination_shape), so the hold was placed
+   *  without it. */
+  examinationTooLarge?: true;
 }
 
 function rowToHold(r: HoldRow): HoldRecord {
@@ -163,6 +168,14 @@ export function isMissingHoldExaminationColumn(err: { code?: string | null; mess
   if (!err) return false;
   const code = String(err.code ?? "");
   return (code === "42703" || code === "PGRST204") && /\bexamination\b/.test(String(err.message ?? ""));
+}
+
+/** DF-P25 (review fix pass 4): the hold insert's refusal is the record's
+ *  own shape / size CHECK (23514 naming document_holds_examination_shape) —
+ *  the hold is placed without the record, never refused for it. */
+export function isHoldExaminationShapeRefusal(err: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  if (!err) return false;
+  return String(err.code ?? "") === "23514" && /\bdocument_holds_examination_shape\b/.test(String(err.message ?? ""));
 }
 
 // ─── Authority (HLD-8) ──────────────────────────────────────────
@@ -236,8 +249,9 @@ export interface OpenHoldInput {
    *  person placing the hold examined (lib/assuranceExamination.ts
    *  holdExaminationRecord) — written in THIS insert, so the record and the
    *  stop cannot disagree. Absent: the insert is exactly as before. Before
-   *  the column exists the hold is placed without it and the result says
-   *  `examinationNotRecorded` (the stop is never refused for its record). */
+   *  the column exists, or when its size CHECK refuses the record, the hold
+   *  is placed without it and the result says `examinationNotRecorded` (the
+   *  stop is never refused for its record). */
   examination?: Record<string, unknown> | null;
 }
 
@@ -387,15 +401,18 @@ export async function openHold(input: OpenHoldInput): Promise<HoldRecord> {
   };
   const withRecord = !!input.examination && typeof input.examination === "object";
   let examinationNotRecorded = false;
+  let examinationTooLarge = false;
   let { data, error } = await supabase
     .from("document_holds")
     .insert(withRecord ? ({ ...baseRow, examination: input.examination } as typeof baseRow) : baseRow)
     .select("*")
     .single();
-  // DF-P25: before 20261267 the record has no column to land in — the hold
-  // (a person's stop) is placed without it, and the result says so.
-  if (error && withRecord && isMissingHoldExaminationColumn(error)) {
+  // DF-P25: before 20261267 the record has no column to land in — and
+  // (review fix pass 4) a record its size CHECK refuses has no room — the
+  // hold (a person's stop) is placed without it, and the result says so.
+  if (error && withRecord && (isMissingHoldExaminationColumn(error) || isHoldExaminationShapeRefusal(error))) {
     examinationNotRecorded = true;
+    examinationTooLarge = isHoldExaminationShapeRefusal(error);
     ({ data, error } = await supabase.from("document_holds").insert(baseRow).select("*").single());
   }
 
@@ -437,7 +454,7 @@ export async function openHold(input: OpenHoldInput): Promise<HoldRecord> {
   });
 
   const hold = rowToHold(row);
-  return examinationNotRecorded ? { ...hold, examinationNotRecorded: true } : hold;
+  return examinationNotRecorded ? { ...hold, examinationNotRecorded: true, ...(examinationTooLarge ? { examinationTooLarge: true as const } : {}) } : hold;
 }
 
 /** AUTHZ-7 (review fix): the hold's org, read CHECKED — the capability gate

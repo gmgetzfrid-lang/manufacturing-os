@@ -25,7 +25,9 @@
 //     service role — a restore — is untouched), and a recorded hold's
 //     opener is pinned by this file for every role, even with 20261073's
 //     identity guard not live (trg_document_hold_guard disabled for that
-//     case — production while 20261073 is a PASTE).
+//     case — production while 20261073 is a PASTE). REVIEW FIX 4: a large
+//     round's record, as holdExaminationRecord bounds it, always lands; the
+//     unbounded one is the CHECK's 23514 that openHold falls back on.
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { join } from "node:path";
@@ -33,6 +35,8 @@ import { randomUUID } from "node:crypto";
 import { admin, asCaller, mosDb, seedOrg, selectAs, skipReason, type SeededMember } from "./dbKit";
 import { REPLAY_DB } from "./replay";
 import { runPsql } from "./pgHarness";
+import { holdExaminationRecord, jsonbTextBytes } from "@/lib/assuranceExamination";
+import { isHoldExaminationShapeRefusal } from "@/lib/holds";
 
 const skip = skipReason();
 const db = REPLAY_DB;
@@ -228,6 +232,25 @@ describe.skipIf(skip !== null)("DF-P25 — 20261267 (runtime)", () => {
       expect(place(m.qa, `'[1,2]'::jsonb`, "p25 bad")).toMatchObject({ ok: false, code: "23514" });
       expect(place(m.qa, `jsonb_build_object('note', repeat('x', 40000))`, "p25 big")).toMatchObject({ ok: false, code: "23514" });
       expect(Number(one(`SELECT COUNT(*) FROM document_holds WHERE notes IN ('p25 bad', 'p25 big')`))).toBe(0);
+    });
+    it("REVIEW FIX 4: a 320-file round's record, as holdExaminationRecord builds it, always lands (sized as Postgres counts it); the untrimmed record is the CHECK's refusal openHold falls back on", () => {
+      const files = Array.from({ length: 320 }, (_, i) => ({ id: `att-${i}`, name: `PROJ-2026-UNIT-400-ISO-${String(i).padStart(4, "0")}-sheet-${i % 7}-of-7_rev1A_é.pdf`, url: `k/${i}`, sha256: (i % 16).toString(16).repeat(64) }));
+      const roster = { id: "r-big", contentHash: "c".repeat(64), cycle: "1A", files } as unknown as Parameters<typeof holdExaminationRecord>[0];
+      const note = "Nozzle N3 orientation differs from the vendor datasheet — ".repeat(40).slice(0, 2000).trim();
+      const built = holdExaminationRecord(roster, "t-big", { kind: "qa", label: "Quality" }, { files: files.map((f) => f.id), note });
+      expect(built.ok).toBe(true);
+      const rec = (built as unknown as { ok: true; record: Record<string, unknown> }).record;
+      expect(rec).toMatchObject({ filesTruncated: true, examinedFiles: 320 });
+      const lit = (v: unknown) => `'${JSON.stringify(v).replace(/'/g, "''")}'::jsonb`;
+      expect(place(m.qa, lit(rec), "p25 big roster")).toEqual({ ok: true, rows: 1 });
+      // the measure the record is kept within is the very one the CHECK counts
+      expect(Number(one(`SELECT octet_length(examination::text) FROM document_holds WHERE notes = 'p25 big roster'`))).toBe(jsonbTextBytes(rec));
+      // the same record naming every file is over the bound: refused 23514 naming the CHECK — what openHold places the hold without
+      const full = { ...rec, files: files.map((f) => ({ id: f.id, name: f.name, sha256: f.sha256 })) };
+      const refused = place(m.qa, lit(full), "p25 big untrimmed");
+      expect(refused).toMatchObject({ ok: false, code: "23514" });
+      expect(isHoldExaminationShapeRefusal(refused as { code: string; message: string })).toBe(true);
+      expect(Number(one(`SELECT COUNT(*) FROM document_holds WHERE notes = 'p25 big untrimmed'`))).toBe(0);
     });
     it("the record is never changed — by the opener, an Admin, or the service role; releasing the hold still works (REGRESSION)", () => {
       const id = one(`SELECT id FROM document_holds WHERE notes = 'p25 exam'`);
