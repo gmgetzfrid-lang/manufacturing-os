@@ -51,10 +51,16 @@
 //           before 20261250, where none can exist) prints exactly what it
 //           printed before. A declaration the reader could not read is said
 //           ("like-in-kind declaration not available"), never guessed, and
-//           never blocks or delays the copy.
+//           never blocks or delays the copy. (DF-P23 merge-time fix pass) A
+//           part — the declarer's name, the statement — the stamp's font
+//           cannot draw without a "?" substitute (a Cyrillic or CJK name or
+//           sentence) is never printed as "?" runs: that part is replaced by
+//           a plain-ASCII note naming the request ("[statement not printable
+//           in this stamp - see request KE-1]"), each part on its own.
 
 import type { TicketAttachment } from "@/types/schema";
-import { stampWatermark, type StampControlState } from "@/lib/stamping";
+import { StandardFontEmbedder, StandardFonts } from "pdf-lib";
+import { stampText, stampWatermark, STAMP_PLACEHOLDER, type StampControlState } from "@/lib/stamping";
 import { ticketVerifyUrl, ticketVerdict, issueInForce, isIssuedTicketRev } from "@/lib/verifyTicketVerdict";
 
 export type TicketCopyChannel = "print" | "download";
@@ -169,13 +175,67 @@ export function copyDeclarationFacts(input: {
   };
 }
 
+/** DF-P23 merge-time fix pass: the font the stamper draws every footer in
+ *  (lib/stamping.ts applyStampToPdfDoc embeds StandardFonts.HelveticaBold —
+ *  pinned by a test). Its encoder is built once, on first use; null when it
+ *  could not be built (then stampText's own check decides — its character set
+ *  is pinned to this encoder code point by code point, lib/__tests__/
+ *  psP7StampText.test.ts — so a Latin name is never replaced for want of it). */
+let stampEncoder: StandardFontEmbedder | null | undefined;
+function stampFontEncoder(): StandardFontEmbedder | null {
+  if (stampEncoder === undefined) {
+    try {
+      // (pdf-lib's StandardFonts and the embedder's FontNames are one string enum, typed apart)
+      stampEncoder = StandardFontEmbedder.for(StandardFonts.HelveticaBold as unknown as Parameters<typeof StandardFontEmbedder.for>[0]);
+    } catch {
+      stampEncoder = null;
+    }
+  }
+  return stampEncoder;
+}
+
+/** DF-P23 merge-time fix pass (review minor): true when the stamp draws
+ *  `text` with no "?" substitute — every character printed as typed or in a
+ *  plain form the stamper already uses (a Unicode dash as "-", a format
+ *  character removed and named; lib/stamping.ts stampText), and what it
+ *  draws accepted by the font's own encoder (pdf-lib's WinAnsi encoding for
+ *  Helvetica-Bold). False for a Cyrillic or CJK name or sentence, which the
+ *  stamper would print as "?" runs. Pure. */
+export function stampPrintsWithoutSubstitute(text: string): boolean {
+  const { text: drawn, mapped } = stampText(text);
+  // a "?" the stamper drew for a character it has no form for (a compatibility
+  // form of the question mark itself is a question mark, not a substitute)
+  if (mapped.some((m) => m.printedAs === STAMP_PLACEHOLDER && m.char.normalize("NFKC") !== STAMP_PLACEHOLDER)) return false;
+  const encoder = stampFontEncoder();
+  if (!encoder) return true;
+  try {
+    encoder.encodeText(drawn);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** DF-P23 merge-time fix pass: what a part of the declaration the stamp
+ *  cannot print reads instead — plain ASCII, naming where the words are. */
+export function declarationPartNotPrintable(part: "name" | "statement", requestRef: string | null | undefined): string {
+  const ref = typeof requestRef === "string" && requestRef.trim() && stampPrintsWithoutSubstitute(requestRef.trim()) ? requestRef.trim() : null;
+  return `[${part} not printable in this stamp - ${ref ? `see request ${ref}` : "see the request"}]`;
+}
+
 /** GAP-101 acceptance 3 (DF-P23): the parenthesis printed beside the request
- *  reference on a deliverable — "" for no declaration. Pure. */
-export function declarationFooterClause(d: TicketCopyLiveFacts["declaration"]): string {
+ *  reference on a deliverable — "" for no declaration. `requestRef` (the
+ *  request number the footer names) is cited by a part the stamp cannot
+ *  print (DF-P23 merge-time fix pass): the name and the statement are each
+ *  checked on their own, and a part the font cannot draw without a "?" is
+ *  replaced by declarationPartNotPrintable — never printed as "?" runs, and
+ *  a part it can draw is printed exactly as before. Pure. */
+export function declarationFooterClause(d: TicketCopyLiveFacts["declaration"], requestRef?: string | null): string {
   if (d === undefined || d === null) return "";
   if (d === "unavailable") return ` (${DECLARATION_NOT_AVAILABLE})`;
   if (d === "unsigned") return ` (${DECLARATION_NOT_RELIED_ON})`;
-  const by = d.by && d.by.trim() ? d.by.trim() : "the requester";
+  const name = d.by && d.by.trim() ? d.by.trim() : null;
+  const by = name === null ? "the requester" : stampPrintsWithoutSubstitute(name) ? name : `the requester ${declarationPartNotPrintable("name", requestRef)}`;
   const date = d.declaredAt && !Number.isNaN(Date.parse(d.declaredAt)) ? new Date(d.declaredAt).toISOString().slice(0, 10) : null;
   // A dash clause in the sentence would read as one of the footer's own
   // clauses (the stamper drops the scan clause by them), so it is a hyphen
@@ -183,7 +243,7 @@ export function declarationFooterClause(d: TicketCopyLiveFacts["declaration"]): 
   const words = (d.statement ?? "").replace(/\s+/g, " ").trim();
   const cut = words.length > DECLARATION_FOOTER_MAX ? `${words.slice(0, DECLARATION_FOOTER_MAX - 1).trimEnd()}…` : words;
   const text = cut.replace(/ [—–] /g, " - ").replace(STATEMENT_SCAN, (w) => `[${w}]`);
-  const quoted = text ? `: "${text}"` : "";
+  const quoted = !text ? "" : stampPrintsWithoutSubstitute(text) ? `: "${text}"` : `: ${declarationPartNotPrintable("statement", requestRef)}`;
   return ` (declared like-in-kind by ${by}${date ? ` on ${date}` : ""}${quoted}${d.signatureUnchecked ? `; ${DECLARATION_SIGNATURE_UNCHECKED}` : ""})`;
 }
 
@@ -243,7 +303,7 @@ export function ticketCopyPlan(input: {
   // GAP-101 acceptance 3 (DF-P23): a deliverable names the request's
   // like-in-kind declaration beside the request reference ("" when none).
   const label = input.ticketNumber || "Ticket";
-  const ref = `${label}${input.file.type === "Draft" ? "" : declarationFooterClause(input.live?.declaration)}`;
+  const ref = `${label}${input.file.type === "Draft" ? "" : declarationFooterClause(input.live?.declaration, input.ticketNumber)}`;
   const when = input.channel === "print" ? "printing" : "download";
   const standing = ticketCopyStanding(rev, input.live);
   const what = input.file.type === "Draft" ? "review draft" : "deliverable";

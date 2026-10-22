@@ -16,6 +16,11 @@
 //   and the paste fills the live requests once.
 //   REGRESSION: a member's own permitted write (priority) still lands; a
 //   request with no codebook unit keeps its unit and gets NULL.
+//   DF-P23 merge-time fix pass: a request restored from the archive (or one
+//   whose unit the codebook gained since) gets its unit_code on its next
+//   write; the integrity trigger lets a tag be respelled in place within its
+//   key (the equipment route's fallback while PostgREST cannot yet see
+//   replace_ticket_equipment) and still refuses every other rewrite.
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { join } from "node:path";
@@ -173,6 +178,60 @@ describe.skipIf(skip !== null)("DF-P23 — 20261265: the equipment tag index and
     expect(asCaller(db, m.manager.caller, `UPDATE tickets SET priority = 1 WHERE id = '${coded}'`).ok).toBe(true);
     expect(unitCodeOf(coded)).toBe("20");
     expect(admin(db, `SELECT unit FROM tickets WHERE id = '${coded}'`)).toBe("20");
+  });
+
+  it("GAP-312 (DF-P23 merge-time fix pass): a tag respelled in place within its key passes the integrity trigger (same row, same id); another key, another column, a member — refused", () => {
+    const t = ticket();
+    expect(equip(t, "e22")).toEqual({ ok: true, rows: 1 });
+    const id = admin(db, `SELECT id FROM ticket_equipment WHERE ticket_id = '${t}'`);
+    // the equipment route's fallback: one UPDATE by row id, as read, service role
+    expect(asCaller(db, SERVICE, `UPDATE ticket_equipment SET tag = 'E-22', asset_id = NULL WHERE id = '${id}' AND ticket_id = '${t}' AND org_id = '${orgId}' AND tag = 'e22'`)).toEqual({ ok: true, rows: 1 });
+    expect(admin(db, `SELECT id || ':' || tag FROM ticket_equipment WHERE ticket_id = '${t}'`)).toBe(`${id}:E-22`);
+    // a Cyrillic case-only respelling: the trigger decides by the index's own key — within it where
+    // the column's collation lowercases Cyrillic (a Supabase database); under this scratch cluster's C
+    // collation the two keys differ, so it is refused exactly where the index lets both spellings stand
+    expect(equip(t, "насос")).toEqual({ ok: true, rows: 1 });
+    const sameKey = admin(db, `SELECT (ticket_equipment_tag_key('насос') = ticket_equipment_tag_key('Насос'))::text`) === "true";
+    const cyr = asCaller(db, SERVICE, `UPDATE ticket_equipment SET tag = 'Насос' WHERE ticket_id = '${t}' AND tag = 'насос'`);
+    expect(cyr.ok).toBe(sameKey);
+    if (!sameKey) admin(db, `DELETE FROM ticket_equipment WHERE ticket_id = '${t}' AND tag = 'насос'`);
+    if (!sameKey) expect(equip(t, "Насос")).toEqual({ ok: true, rows: 1 });
+    // still refused: a tag rewritten to another key, the request or the creator changed
+    for (const set of ["tag = 'P-1'", `ticket_id = '${ticket()}'`, "created_by = NULL"]) {
+      const r = asCaller(db, SERVICE, `UPDATE ticket_equipment SET ${set} WHERE id = '${id}'`);
+      expect(r.ok, set).toBe(false);
+      if (!r.ok) expect(r.message, set).toMatch(/a recorded tag is not rewritten/);
+    }
+    // a member has no write at all
+    expect(asCaller(db, m.manager.caller, `UPDATE ticket_equipment SET tag = 'E 22' WHERE id = '${id}'`)).not.toEqual({ ok: true, rows: 1 });
+    expect(admin(db, `SELECT string_agg(tag, ',' ORDER BY tag) FROM ticket_equipment WHERE ticket_id = '${t}'`)).toBe("E-22,Насос");
+    admin(db, `DELETE FROM ticket_equipment WHERE ticket_id = '${t}'`);
+  });
+
+  it("WIRE-7 (DF-P23 merge-time fix pass): a request restored from the archive gets its unit_code; a NULL code with a codebook unit is derived on the next write; REGRESSION: a member's write on a free-text unit still lands", () => {
+    const archived = ticket("20", true);
+    // archived before the paste: no code on record (the paste fills live requests only)
+    admin(db, `ALTER TABLE tickets DISABLE TRIGGER trg_ticket_unit_code`);
+    admin(db, `UPDATE tickets SET unit_code = NULL WHERE id = '${archived}'`);
+    admin(db, `ALTER TABLE tickets ENABLE TRIGGER trg_ticket_unit_code`);
+    expect(unitCodeOf(archived)).toBe("<null>");
+    // restored from the archive (the service role clears archived_at)
+    expect(asCaller(db, SERVICE, `UPDATE tickets SET archived_at = NULL WHERE id = '${archived}'`)).toEqual({ ok: true, rows: 1 });
+    expect(unitCodeOf(archived)).toBe("20");
+    expect(admin(db, `SELECT unit FROM tickets WHERE id = '${archived}'`)).toBe("20");
+    // a unit the codebook gains after filing: coded on the request's next write, whatever it changes
+    const later = ticket("40");
+    expect(unitCodeOf(later)).toBe("<null>");
+    admin(db, `INSERT INTO codebook_entries (org_id, kind, code, label) VALUES ('${orgId}', 'unit', '40', 'Flare')`);
+    expect(asCaller(db, SERVICE, `UPDATE tickets SET priority = 2 WHERE id = '${later}'`)).toEqual({ ok: true, rows: 1 });
+    expect(unitCodeOf(later)).toBe("40");
+    // REGRESSION: a member's own permitted write on a request whose unit the codebook does not hold
+    // (the derive now reads the codebook as that member) still lands, unit_code still NULL
+    const free = ticket("Tank farm");
+    expect(asCaller(db, m.manager.caller, `UPDATE tickets SET priority = 1 WHERE id = '${free}'`)).toEqual({ ok: true, rows: 1 });
+    expect(unitCodeOf(free)).toBe("<null>");
+    expect(admin(db, `SELECT priority::text FROM tickets WHERE id = '${free}'`)).toBe("1");
+    admin(db, `DELETE FROM codebook_entries WHERE org_id = '${orgId}' AND code = '40'`);
   });
 
   it("WIRE-7: the paste fills a live request's unit_code once; an archived request is left alone; a re-paste writes nothing new", () => {

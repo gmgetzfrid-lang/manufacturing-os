@@ -124,12 +124,47 @@ describe("GAP-312 follow-up — a respelling of the same tag", () => {
     const call = h.admin.calls.find((c) => c.table === `rpc:${REPLACE_EQUIPMENT_RPC}`)!;
     expect(call.args[0]).toMatchObject({ p_row_id: ROW, p_ticket_id: T, p_org_id: ORG, p_tag: "E-22", p_asset_id: null, p_created_by: "u-req" });
   });
-  it("before 20261265 (PGRST202): today's add-then-remove, exactly as before", async () => {
+  it("before 20261265 (PGRST202; 20261251's trigger refuses the in-place respelling): today's add-then-remove, exactly as before", async () => {
     h.admin.tables.ticket_equipment = [{ id: ROW, org_id: ORG, ticket_id: T, tag: "e22", asset_id: null, created_by: "u-req" }];
+    h.admin.methodWriteError = { ticket_equipment: { update: { code: "P0001", message: "ticket_equipment: a recorded tag is not rewritten (only its asset clears, when the asset is deleted)" } } };
     const res = await req({ ticketId: T, action: "correct", rowId: ROW, tag: "E-22" });
     expect(res.status).toBe(200);
     expect(equipment()).toEqual([expect.objectContaining({ tag: "E-22" })]);
+    expect(equipment()[0].id).not.toBe(ROW);
+    // the refused in-place attempt changed nothing; then the add and the removal, as before
+    expect(h.admin.writes.filter((w) => w.table === "ticket_equipment").map((w) => [w.method, w.matched])).toEqual([["update", 0], ["insert", 1], ["delete", 1]]);
+    expect(audits().map((a) => a.action)).toEqual(["TICKET_EQUIPMENT_CORRECTED"]);
+  });
+  it("DF-P23 merge-time fix pass: PGRST202 right after the paste (schema cache not reloaded) — a same-key respelling rewrites that row's tag in place: 200, the row updated, never 409", async () => {
+    h.admin.tables.ticket_equipment = [{ id: ROW, org_id: ORG, ticket_id: T, tag: "e22", asset_id: null, created_by: "u-drf" }];
+    // the index is there: an add beside the old row would be refused
+    h.admin.methodWriteError = { ticket_equipment: { insert: { code: "23505", message: 'duplicate key value violates unique constraint "ticket_equipment_ticket_tag_key_uniq"' } } };
+    const res = await req({ ticketId: T, action: "correct", rowId: ROW, tag: "E-22" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, id: ROW, tag: "E-22", resolution: "not_found" });
+    expect(equipment()).toEqual([expect.objectContaining({ id: ROW, tag: "E-22", asset_id: null, created_by: "u-drf" })]);
+    const writes = h.admin.writes.filter((w) => w.table === "ticket_equipment");
+    expect(writes.map((w) => [w.method, w.matched])).toEqual([["update", 1]]);
+    // one UPDATE by row id, as read (the tag it had), in this request and workspace
+    expect(writes[0].payload).toEqual({ tag: "E-22", asset_id: null });
+    expect(writes[0].filters).toEqual([["id", ROW], ["ticket_id", T], ["org_id", ORG], ["tag", "e22"]]);
+    expect(h.admin.calls.some((c) => c.table === `rpc:${REPLACE_EQUIPMENT_RPC}`)).toBe(true);
+    expect(audits().map((a) => a.action)).toEqual(["TICKET_EQUIPMENT_CORRECTED"]);
+    expect(audits()[0].details).toMatchObject({ tag: "E-22", replaces: { rowId: ROW, tag: "e22" } });
+  });
+  it("DF-P23 merge-time fix pass: PGRST202 with a DIFFERENT-key correction — unchanged: no in-place write, add then remove (and the index's 23505 is still the 409)", async () => {
+    h.admin.tables.ticket_equipment = [{ id: ROW, org_id: ORG, ticket_id: T, tag: "P-1O1", asset_id: null, created_by: "u-req" }];
+    expect((await req({ ticketId: T, action: "correct", rowId: ROW, tag: "P-101" })).status).toBe(200);
     expect(h.admin.writes.filter((w) => w.table === "ticket_equipment").map((w) => w.method)).toEqual(["insert", "delete"]);
+    expect(equipment()).toEqual([expect.objectContaining({ tag: "P-101" })]);
+    seed();
+    h.admin.tables.ticket_equipment = [{ id: ROW, org_id: ORG, ticket_id: T, tag: "P-1O1", asset_id: null, created_by: "u-req" }];
+    h.admin.methodWriteError = { ticket_equipment: { insert: { code: "23505", message: "duplicate key" } } };
+    const res = await req({ ticketId: T, action: "correct", rowId: ROW, tag: "E-22" });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "already_listed" });
+    expect(h.admin.writes.filter((w) => w.table === "ticket_equipment").map((w) => w.method)).toEqual(["insert"]);
+    expect(equipment()).toEqual([expect.objectContaining({ id: ROW, tag: "P-1O1" })]);
   });
   it("a refused replace changes nothing: 500, recorded not applied, the old entry stays", async () => {
     h.admin.rpc = { [REPLACE_EQUIPMENT_RPC]: () => ({ data: null, error: { code: "57014", message: "timeout" } }) };
@@ -278,7 +313,34 @@ describe("20261265 — DEC-30 one paste", () => {
     expect(c).not.toMatch(/DELETE FROM ticket_equipment\s+WHERE(?![^;]*p_row_id)/);
     expect(c).toMatch(/SET LOCAL lock_timeout = '10s';/);
   });
-  it("its functions are new — no earlier migration defines them, so nothing is re-created", () => {
+  it("DF-P23 merge-time fix pass: ticket_equipment_integrity is re-created as 20261251 wrote it, with ONE change — a tag respelled within its key passes", () => {
+    const body = (src: string) => {
+      const at = src.indexOf("CREATE OR REPLACE FUNCTION ticket_equipment_integrity()");
+      expect(at, "defined").toBeGreaterThan(-1);
+      return src.slice(at, src.indexOf("\n$$;", at));
+    };
+    const base = body(code(readFileSync(join(DIR, "20261251_df_roundG_ticket_equipment.sql"), "utf8")));
+    const now = body(code(SQL));
+    expect(now).toBe(base.replace(
+      "OR NEW.ticket_id IS DISTINCT FROM OLD.ticket_id OR NEW.tag IS DISTINCT FROM OLD.tag",
+      "OR NEW.ticket_id IS DISTINCT FROM OLD.ticket_id\n       OR (NEW.tag IS DISTINCT FROM OLD.tag AND ticket_equipment_tag_key(NEW.tag) IS DISTINCT FROM ticket_equipment_tag_key(OLD.tag))",
+    ));
+    expect(now).not.toBe(base);
+    // after the key function and the index; the trigger itself is not re-created
+    const c = code(SQL);
+    expect(c.indexOf("CREATE OR REPLACE FUNCTION ticket_equipment_integrity()")).toBeGreaterThan(c.indexOf("CREATE UNIQUE INDEX IF NOT EXISTS ticket_equipment_ticket_tag_key_uniq"));
+    expect(c).not.toMatch(/CREATE TRIGGER trg_ticket_equipment_integrity/);
+    expect(c).toMatch(/REVOKE ALL ON FUNCTION ticket_equipment_integrity\(\) FROM PUBLIC, anon, authenticated, service_role;/);
+  });
+  it("WIRE-7 (DF-P23 merge-time fix pass): the derive trigger also runs on an archived-flag change and on a NULL code with a unit set — one lookup on the codebook's unique key", () => {
+    const c = code(SQL);
+    const fn = c.slice(c.indexOf("CREATE OR REPLACE FUNCTION ticket_unit_code_derive()"), c.indexOf("DROP TRIGGER IF EXISTS trg_ticket_unit_code"));
+    expect(fn).toContain("AND (NEW.archived_at IS NULL) = (OLD.archived_at IS NULL)");
+    expect(fn).toContain("AND NOT (NEW.unit_code IS NULL AND NEW.unit IS NOT NULL) THEN");
+    expect(fn).toContain("WHERE ce.org_id = NEW.org_id AND ce.kind = 'unit' AND ce.code = NEW.unit");
+    expect(code(readFileSync(join(DIR, "20260928_site_codebook.sql"), "utf8"))).toMatch(/UNIQUE \(org_id, kind, code\)/);
+  });
+  it("its new functions are new — no earlier migration defines them (ticket_equipment_integrity, above, is the one re-created)", () => {
     for (const fn of ["ticket_equipment_tag_key", "replace_ticket_equipment", "ticket_unit_code_derive"]) {
       const re = new RegExp(`CREATE\\s+(OR\\s+REPLACE\\s+)?FUNCTION\\s+(public\\.)?${fn}\\s*\\(`);
       const earlier = FILES.filter((f) => f < F && re.test(code(readFileSync(join(DIR, f), "utf8"))));
@@ -289,7 +351,7 @@ describe("20261265 — DEC-30 one paste", () => {
   it("DRLS-16: no SECURITY DEFINER; every function pins search_path; the replace is the service role's only; the trigger function no client's", () => {
     const c = code(SQL);
     expect(c).not.toMatch(/SECURITY DEFINER/);
-    expect(c.match(/SET search_path = public/g)!.length).toBe(3);
+    expect(c.match(/SET search_path = public/g)!.length).toBe(4);
     expect(c).toMatch(/REVOKE ALL ON FUNCTION replace_ticket_equipment\(UUID, UUID, UUID, TEXT, UUID, UUID\) FROM PUBLIC, anon, authenticated;/);
     expect(c).toMatch(/GRANT EXECUTE ON FUNCTION replace_ticket_equipment\(UUID, UUID, UUID, TEXT, UUID, UUID\) TO service_role;/);
     expect(c).toMatch(/REVOKE ALL ON FUNCTION ticket_unit_code_derive\(\) FROM PUBLIC, anon, authenticated, service_role;/);

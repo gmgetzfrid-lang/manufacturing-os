@@ -5,6 +5,7 @@ import { loadCapabilityPolicyStrict, policyAllows } from "@/lib/capabilityPolicy
 import { heldRoles } from "@/lib/roleHeld";
 import { ticketResource } from "@/lib/workflow";
 import { tagKey } from "@/lib/codebook";
+import { checkedWrite } from "@/lib/checkedWrite";
 import {
   cleanEquipmentTag, equipmentEditAllowed, equipmentListingKey, equipmentOutcomeLine, equipmentTagListed, isMissingEquipmentTable, isTicketParticipant,
   EQUIPMENT_CLOSED_STATUSES, EQUIPMENT_TAG_MAX,
@@ -64,6 +65,15 @@ import {
 //      row and the old row's removal land together or not at all. Before
 //      20261265 (42883 / PGRST202) it takes today's path — add, then remove
 //      — which, with no index yet, works as before.
+//   7. (DF-P23 merge-time fix pass, review minor) PGRST202 also answers
+//      right after the paste, until PostgREST reloads its schema cache — the
+//      index is there, the function not yet visible. A same-key respelling
+//      then first rewrites that one row's tag text in place (one UPDATE by
+//      row id, as read, service role, checked write — 20261265 lets a
+//      recorded tag be respelled within its key and nothing else); the
+//      database refusing it (before the paste, 20261251's trigger keeps every
+//      tag as recorded) leaves today's add-then-remove, exactly as before. A
+//      different-key correction always adds then removes.
 // Before 20261251 is pasted every read and write meets 42P01 / PGRST205:
 // the answer is 503 `not_migrated` and nothing is written (the request page
 // says the list is not available, as the card does today).
@@ -286,6 +296,16 @@ export async function POST(req: NextRequest) {
     const r = await replaceInOneTransaction(previous);
     if (r.kind === "replaced") return replacedAnswer(r.id);
     if (r.kind === "refused") return r.response;
+    // DF-P23 merge-time fix pass: the function is not visible (PGRST202 —
+    // before the paste, or the schema cache not yet reloaded after it). The
+    // same row's tag respelled in place, by id and as read; refused (before
+    // the paste the integrity trigger keeps the tag) or matching nothing,
+    // today's add-then-remove below, exactly as before.
+    const inPlace = await checkedWrite(supabaseAdmin
+      .from("ticket_equipment").update({ tag, asset_id: assetId })
+      .eq("id", previous.id).eq("ticket_id", t.id).eq("org_id", t.org_id).eq("tag", previous.tag)
+      .select("id"));
+    if (inPlace.ok) return replacedAnswer(previous.id);
   }
 
   const { data: inserted, error: insErr } = await supabaseAdmin

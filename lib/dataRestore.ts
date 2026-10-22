@@ -26,6 +26,7 @@ import { formatTicketNumber, ticketNumberConfigFromRow } from "@/lib/ticketNumbe
 import { requestNumberYear } from "@/lib/ticketCreate";
 import { RESTORE_RENUMBERED_HISTORY_ACTION } from "@/lib/ticketAttention";
 import { declarationSignatureStands, isMissingReviewModelColumn, type DeclarationSignatureRow } from "@/lib/reviewModel";
+import { equipmentListingKey } from "@/lib/ticketEquipment";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Role } from "@/types/schema";
 
@@ -1167,6 +1168,27 @@ export function restoreBusinessKeyFor(table: string): RestoreBusinessKey | null 
   return has(RESTORE_BUSINESS_KEYS, table) ? RESTORE_BUSINESS_KEYS[table] : null;
 }
 
+/** drafting-flow DF-P23 merge-time fix pass (intelligence GAP-312 follow-up):
+ *  the code of a backup ticket_equipment row not written because its request
+ *  already lists the same tag — 20261265's unique index on (ticket_id,
+ *  ticket_equipment_tag_key(tag)) refuses a second entry, and a backup taken
+ *  before that paste can list one tag twice (the race, or the create route's
+ *  case-only dedupe before DF-P23). Reported in `notApplied` and counted in
+ *  `existing` (the request keeps the entry it already has), never refused. */
+export const DUPLICATE_EQUIPMENT_TAG = "duplicate_equipment_tag";
+export const DUPLICATE_EQUIPMENT_TAG_REASON = "duplicate equipment tag on this request — kept the first";
+/** The index whose refusal (23505) is a duplicate equipment tag. */
+const EQUIPMENT_TAG_INDEX = "ticket_equipment_ticket_tag_key_uniq";
+/** The tag key the equipment route, the create route and 20261265's index
+ *  share (lib/ticketEquipment.ts equipmentListingKey), per request. Used ONLY
+ *  once the database has refused a statement on that index — before the
+ *  paste nothing here runs and a restore writes exactly what it wrote. */
+const EQUIPMENT_TAG_KEY: RestoreBusinessKey = {
+  columns: ["ticket_id", "tag"],
+  narrowBy: () => ["ticket_id"],
+  keyOf: (r) => bkJoin([bkPart(r.ticket_id), typeof r.tag === "string" ? equipmentListingKey(r.tag) : null]),
+};
+
 /** Order a set of table names for safe insertion (known FK order first, any
  *  unknown tables appended alphabetically). Pure. */
 export function orderTablesForRestore(names: string[]): string[] {
@@ -1419,6 +1441,7 @@ export function restoreRefusalLabel(code: string): string {
     case TICKET_NUMBER_IN_USE: return "a request whose number another request here already carries, and for which no fresh number could be taken now — not restored (a restore never files two requests under one number; a re-run renumbers it)";
     case TICKET_NUMBER_UNSETTLED: return "a request whose number other rows of the same restore request carry, each of which the database refused, so it could not be judged — not restored (a restore never files two requests under one number; fix the refused rows and run the restore again)";
     case TICKET_RENUMBERED: return "a request whose number another request here already carries (a request of this workspace, or another request of the same backup restored first) — restored under a fresh number, never beside it; the number it was issued is kept in its metadata (restore_renumbered), in its history and in this chunk's RESTORE_CHUNK audit row";
+    case DUPLICATE_EQUIPMENT_TAG: return `${DUPLICATE_EQUIPMENT_TAG_REASON} (the backup listed this tag twice on one request, or this workspace already lists it there) — not restored, nothing changed`;
     case "23505": return "a unique key it carries is already in use";
     case "23503": return "references a row that is not there";
     case "23514": return "refused by a database check";
@@ -2448,7 +2471,55 @@ export async function applyRestoreChunk(
   // a row sent before it in this request with the same key (when that read
   // failed, a clear is reported only from a statement that wrote every row).
   const acceptedKeys = new Set<string>();
-  const write = async (rows: Array<Record<string, unknown>>): Promise<{ error: string; code: string } | null> => {
+  // DF-P23 merge-time fix pass (GAP-312 follow-up): a backup ticket_equipment
+  // row the 20261265 index refuses as a second entry of a tag its request
+  // already lists — counted existing (the request keeps the first entry) and
+  // reported in notApplied, never refused, never a failed chunk.
+  const duplicateTag = (r: Record<string, unknown>, held: Record<string, unknown> | null) => {
+    existing++;
+    const kept = held && typeof held.tag === "string" ? `this workspace lists "${held.tag}" on the request` : "the request already lists the same tag";
+    notApplied.push({
+      id: label(r), code: DUPLICATE_EQUIPMENT_TAG,
+      message: `${DUPLICATE_EQUIPMENT_TAG_REASON} (${kept}; the backup's "${String(r.tag ?? "")}" was not restored)`,
+    });
+  };
+  // A statement the index refused: its first row per (request, tag key) is
+  // written first, then every row whose key a row of this workspace now holds
+  // under another id is a duplicate; the rest is written on. A first row the
+  // database refuses for its own reason leaves its key free, so the backup's
+  // next spelling of that tag is written in its place — never both lost.
+  // done=false: nothing could be told apart (or the read failed) — the caller
+  // isolates rows as for any other refusal.
+  const settleEquipmentClash = async (rows: Array<Record<string, unknown>>): Promise<{ done: true; failed: { error: string; code: string } | null } | { done: false }> => {
+    const seen = new Set<string>();
+    const firsts: Array<Record<string, unknown>> = [];
+    const laters: Array<Record<string, unknown>> = [];
+    for (const r of rows) {
+      const k = EQUIPMENT_TAG_KEY.keyOf(r);
+      if (k !== null && seen.has(k)) laters.push(r);
+      else { if (k !== null) seen.add(k); firsts.push(r); }
+    }
+    if (laters.length) {
+      const failed = await write(firsts);
+      if (failed) return { done: true, failed };
+    }
+    const pending = laters.length ? laters : rows;
+    const live = await liveBusinessKeyRows(sb, table, orgId, pending, EQUIPMENT_TAG_KEY);
+    if (!live.ok) {
+      if (!laters.length) return { done: false };
+      return { done: true, failed: await write(laters, true) };
+    }
+    const rest = pending.filter((r) => {
+      const k = EQUIPMENT_TAG_KEY.keyOf(r);
+      const held = k === null ? undefined : live.rows.get(k);
+      if (!held || String(held.id) === String(r.id)) return true;
+      duplicateTag(r, held);
+      return false;
+    });
+    if (!laters.length && rest.length === rows.length) return { done: false };
+    return { done: true, failed: rest.length ? await write(rest, !laters.length) : null };
+  };
+  const write = async (rows: Array<Record<string, unknown>>, equipmentSettled = false): Promise<{ error: string; code: string } | null> => {
     const up = await sb.from(table).upsert(rows, { onConflict: conflictTargetFor(table), ignoreDuplicates: true, count: "exact" });
     if (!up.error) {
       // count: "exact" reports the rows the statement WROTE; ON CONFLICT DO
@@ -2487,9 +2558,15 @@ export async function applyRestoreChunk(
     // schema cache has not caught up (reviewModelSchemaCacheMessage).
     if (reviewModelColumnsFound && code === "PGRST204" && isMissingReviewModelColumn(up.error)) return { error: reviewModelSchemaCacheMessage(up.error.message), code };
     if (!ROW_LEVEL_SQLSTATES.has(code)) return { error: up.error.message, code };
+    const tagClash = table === "ticket_equipment" && code === "23505" && up.error.message.includes(EQUIPMENT_TAG_INDEX);
     if (rows.length === 1) {
+      if (tagClash) { duplicateTag(rows[0], null); return null; }
       refused.push({ id: label(rows[0]), code: restoreRefusalCode(table, code, up.error.message), message: up.error.message });
       return null;
+    }
+    if (tagClash && !equipmentSettled) {
+      const settled = await settleEquipmentClash(rows);
+      if (settled.done) return settled.failed;
     }
     if (bisectLeft < 2) {
       for (const r of rows) {
