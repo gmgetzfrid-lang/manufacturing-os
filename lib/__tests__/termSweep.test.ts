@@ -152,3 +152,11 @@ describe("the questions that failed on the real library", () => {
     expect(text.indexOf("AAAC2H")).toBeLessThan(text.indexOf("FAAA1G"));
   });
 });
+
+describe("contents lines are not passages", () => {
+  it("skips '7.0 LINE CLASS SELECTION ........ 4' and keeps the section text", () => {
+    const text = "6.0 DESIGN CONDITIONS .......... 4 7.0 LINE CLASS SELECTION ............ 4 8.0 PIPING CLASS DESCRIPTION ..... 5";
+    expect(sentencesWith(text, "class selection")).toEqual([]);
+    expect(sentencesWith("7.1 A summary of each pipe class is provided in the Piping Class Service Index. The class selection requires the actual class.", "class selection")).toHaveLength(1);
+  });
+});

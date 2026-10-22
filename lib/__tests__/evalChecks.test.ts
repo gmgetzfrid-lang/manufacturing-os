@@ -104,3 +104,12 @@ describe("two classes named: a Class 300 part in a Class 150 line", () => {
     expect(bad.find((r) => r.code === "class_mixup")?.pass).toBe(false);
   });
 });
+
+describe("documents named by title, not number", () => {
+  it("'E2G Piping Specs (All)' is recognised as a held document", async () => {
+    const { docsTitledIn } = await import("@/lib/ask/designations");
+    const held = [{ name: "E2G Piping Specs (All).pdf" }, { name: "Index.pdf" }];
+    expect(docsTitledIn("- **E2G Piping Specs (All)** — the Class 150 sections", held, 1).map((d) => d.name)).toEqual(["E2G Piping Specs (All).pdf"]);
+    expect(docsTitledIn("see the index of classes", held, 1)).toEqual([]);
+  });
+});

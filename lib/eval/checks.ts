@@ -9,7 +9,7 @@
 import { pressureClassesOf } from "@/lib/pressureClass";
 import { leadsFor, questionWords } from "@/lib/searchLeads";
 import { settleItems } from "@/lib/ask/settleItems";
-import { docsNamedIn } from "@/lib/ask/designations";
+import { docsNamedIn, docsTitledIn } from "@/lib/ask/designations";
 import type { Funnel } from "@/lib/ask/askTrace";
 
 export type CheckCode =
@@ -147,7 +147,7 @@ export function runChecks(a: AnswerUnderTest, expect: CaseExpect): CheckResult[]
   // Asking for what the library holds.
   const docs = a.libraryDocNames.map((name) => ({ name }));
   const asks = settleItems(answer).filter((l) => !/Searched the library/i.test(l));
-  const held = asks.flatMap((l) => docsNamedIn(l, docs, 1).map((d) => `asks for "${d.name}" — in the library`));
+  const held = asks.flatMap((l) => [...docsNamedIn(l, docs, 1), ...docsTitledIn(l, docs, 1)].slice(0, 1).map((d) => `asks for "${d.name}" — in the library`));
   add({ code: "asks_for_held", pass: held.length === 0, detail: held.length ? held.slice(0, 3).join("; ") : asks.length ? `${asks.length} ask(s), none for a held document` : "asks for nothing" });
 
   // Expected pages.

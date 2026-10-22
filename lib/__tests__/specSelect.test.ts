@@ -49,3 +49,16 @@ describe("selection: filter the catalog, then narrow", () => {
     expect(guideTerms("what piping spec should I use")).toEqual(["class selection", "first character", "designator"]);
   });
 });
+
+describe("fixes from the second real answer", () => {
+  it("a class with no recorded rating stays on the shortlist, after the rated ones", () => {
+    const recs = [
+      { ...catalog[1], rating: undefined },
+      catalog[0],
+      { ...catalog[5] },
+    ];
+    const c = filterCandidates(recs, { ratings: ["150"], askerTerms: ["sour"], companyTerms: ["wet h2s"], leadTerms: [] });
+    expect(c.map((x) => x.code)).toEqual(["AAAC2H", "AAAW2H"]);
+    expect(selectionBlock(c, { ratings: ["150"], askerTerms: ["sour"], companyTerms: [], total: 3, cite: () => null })).toMatch(/AAAW2H.*rating not recorded/);
+  });
+});

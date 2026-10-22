@@ -108,7 +108,9 @@ export function filterCandidates(records: CatalogRecord[], o: {
 }): Candidate[] {
   const out: Candidate[] = [];
   for (const r of records) {
-    if (o.ratings.length && !o.ratings.some((x) => sameRating(r.rating, x))) continue;
+    // A class whose rating wasn't recorded stays — marked — rather than
+    // vanishing from a shortlist because a field couldn't be read.
+    if (o.ratings.length && r.rating && !o.ratings.some((x) => sameRating(r.rating, x))) continue;
     const hay = normChem(`${r.service ?? ""} ${r.code}`);
     const matched: Candidate["matched"] = [
       ...o.askerTerms.filter((t) => has(hay, normChem(t))).map((term) => ({ term, how: "asker" as const })),
@@ -118,7 +120,8 @@ export function filterCandidates(records: CatalogRecord[], o: {
     if (matched.length === 0) continue;
     out.push({ ...r, matched });
   }
-  const rank = (c: Candidate) => (c.matched.some((m) => m.how === "asker") ? 0 : c.matched.some((m) => m.how === "company") ? 1 : 2);
+  const rank = (c: Candidate) => (c.matched.some((m) => m.how === "asker") ? 0 : c.matched.some((m) => m.how === "company") ? 1 : 2)
+    + (o.ratings.length && !c.rating ? 3 : 0);
   return out.sort((a, b) => rank(a) - rank(b) || a.code.localeCompare(b.code));
 }
 
@@ -159,7 +162,7 @@ export function selectionBlock(cands: Candidate[], o: {
   const shown = (strong.length ? strong : cands).slice(0, 24);
   const lines = shown.map((c) => {
     const why = c.matched.map((m) => (m.how === "asker" ? `"${m.term}" (asker's word)` : m.how === "company" ? `"${m.term}" (company's word for it)` : `"${m.term}" (related only)`)).join(", ");
-    const fields = [c.rating && `rating ${c.rating}`, c.material && `material ${c.material}`, c.corrosionAllowance && `CA ${c.corrosionAllowance}`,
+    const fields = [c.rating ? `rating ${c.rating}` : "rating not recorded — read it on the page or from the code's legend", c.material && `material ${c.material}`, c.corrosionAllowance && `CA ${c.corrosionAllowance}`,
       ...Object.entries(c.attrs ?? {}).filter(([k]) => !/^services?$/i.test(k)).slice(0, 4).map(([k, v]) => `${k} ${v}`)].filter(Boolean).join(" · ");
     const n = o.cite(c);
     return `- ${c.code}${n ? ` [${n}]` : ""} — ${c.documentName.replace(/\.pdf$/i, "")} p.${c.page} — service: "${(c.service ?? "").slice(0, 160)}"${fields ? ` — ${fields}` : ""} — matched ${why}`;

@@ -95,6 +95,9 @@ export function sentencesWith(content: string, term: string): string[] {
   const res = partsOf(term).map(partRegex);
   return content.replace(/\s+/g, " ").split(/(?<=[.;!?])\s+(?=[A-Z0-9(])/)
     .map((x) => x.trim()).filter((x) => x && res.every((re) => re.test(x)))
+    // A contents line ("7.0 LINE CLASS SELECTION ........ 4") points at the
+    // passage; it isn't the passage.
+    .filter((x) => !/\.{6,}|…{3,}/.test(x))
     .map((x) => {
       if (x.length <= 320) return x;
       const at = Math.max(0, (x.search(res[res.length - 1]) ?? 0) - 150);

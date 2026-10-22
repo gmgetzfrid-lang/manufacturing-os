@@ -36,3 +36,20 @@ export function docsNamedIn<T extends { name: string }>(text: string, docs: T[],
   }
   return out;
 }
+
+const titleOf = (name: string) => name.replace(/\.[a-z0-9]{2,4}$/i, "").toLowerCase().replace(/[^a-z0-9()]+/g, " ").trim();
+
+/** The documents a text names by TITLE — "E2G Piping Specs (All)" has no
+ *  number to match on. Only distinctive titles count (two words or more,
+ *  ten characters or more), so "Index" never matches everything. */
+export function docsTitledIn<T extends { name: string }>(text: string, docs: T[], limit: number): T[] {
+  const t = ` ${titleOf(text)} `;
+  const out: T[] = [];
+  for (const d of docs) {
+    if (out.length >= limit) break;
+    const title = titleOf(d.name);
+    if (title.length < 10 || title.split(" ").length < 2) continue;
+    if (t.includes(` ${title} `)) out.push(d);
+  }
+  return out;
+}

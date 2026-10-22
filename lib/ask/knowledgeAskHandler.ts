@@ -57,7 +57,7 @@ import { loadCatalog, loadPipeClasses } from "@/lib/knowledgeCatalogServer";
 import { pressureClassOf, pressureClassesOf, pressureClassNote } from "@/lib/pressureClass";
 import { AskTrace, saveAskTrace } from "@/lib/ask/askTraceServer";
 import { compactHit } from "@/lib/ask/askTrace";
-import { docsNamedIn as docsNamedInText } from "@/lib/ask/designations";
+import { docsNamedIn as docsNamedInText, docsTitledIn, designationsIn, designationMatcher } from "@/lib/ask/designations";
 import { sweepTerms, sweepLibrary, sweepPassages, sweepBlock, type TermSweep } from "@/lib/ask/termSweep";
 import { isSelectionQuestion, filterCandidates, selectionBlock, distinguishers, normChem, guideTerms, type CatalogRecord, type Candidate } from "@/lib/specSelect";
 import { leadsFor } from "@/lib/searchLeads";
@@ -1261,7 +1261,15 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
           sqRef.includes(squashName(d)) || squashName(d).includes(sqRef))) continue;
         const probes = await runSearches([docRef]);
         const flat = probes.flat();
-        if (flat.length < 2) { missingDocs.push(docRef); trace.stage("missing_doc", { docRef, probeHits: flat.length }); continue; }
+        if (flat.length < 2) {
+          // Only a document a passage actually points to is "needed" — not
+          // one the reviewing model thought of on its own.
+          const des = designationsIn(docRef)[0];
+          const referenced = des ? chunks.some((c) => designationMatcher(des).test(c.content.toUpperCase())) : false;
+          trace.stage("missing_doc", { docRef, probeHits: flat.length, referenced });
+          if (referenced) missingDocs.push(docRef);
+          continue;
+        }
         const have = new Set(chunks.map((c) => c.id));
         for (const c of flat.slice(0, 3)) {
           if (!have.has(c.id)) { chunks.push(c); have.add(c.id); }
@@ -2367,7 +2375,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
     // holds is not a request the asker should get — the search above already
     // looked there. It is dropped; what remains asks only for what isn't here.
     {
-      const filtered = dropLibraryAsks(answerOut.text, (line) => docsNamedIn(line, 1).length > 0);
+      const filtered = dropLibraryAsks(answerOut.text, (line) => docsNamedIn(line, 1).length > 0 || docsTitledIn(line, reachableDocs, 1).length > 0);
       if (filtered !== answerOut.text) answerOut = { ...answerOut, text: filtered };
     }
     // The Evidence block is machinery: it leaves the answer text and becomes

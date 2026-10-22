@@ -48,7 +48,7 @@ export default function CandidateTablePanel({ table, onOpen }: {
                     </button>
                   ) : <span className="font-mono font-bold">{r.code}</span>}
                 </td>
-                <td className="px-3 py-1.5 whitespace-nowrap font-mono">{r.rating ?? "—"}</td>
+                <td className="px-3 py-1.5 whitespace-nowrap font-mono">{r.rating ?? <span className="font-sans text-[10px] text-[var(--color-text-faint)]" title="Not read from the page — check it on the class sheet">not recorded</span>}</td>
                 <td className="px-3 py-1.5 min-w-[240px]">{r.service ?? "—"}</td>
                 {hasMaterial && <td className="px-3 py-1.5">{r.material ?? "—"}</td>}
                 {hasCa && <td className="px-3 py-1.5 whitespace-nowrap font-mono">{r.corrosionAllowance ?? "—"}</td>}
