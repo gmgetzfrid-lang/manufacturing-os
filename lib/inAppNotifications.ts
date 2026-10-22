@@ -164,8 +164,15 @@ export async function notifyCheckedId(input: NotificationInput, client?: NotifyC
  *  DIST-20 (P39): when the input names its row's `id`, a landed answer
  *  carries it back (`id`), and a primary-key refusal of THAT id
  *  (23505 on notifications_pkey) is the row an earlier attempt already
- *  wrote — answered as landed, never a second copy and never a false
- *  dead letter. Without an `id` nothing differs from before. */
+ *  wrote — answered as landed, never a second copy. Exactly: 20261160's
+ *  BEFORE INSERT rail runs before the primary-key check, so where the
+ *  writer is already at one of its rate caps (counted over the writer's own
+ *  rows, the landed one included — 60 of the same kind and resource to that
+ *  person a minute, 600 to that person a minute, 1200 an hour, 3000 from
+ *  the writer a minute) a repeat of a landed id is refused ("rate limit")
+ *  instead of answering 23505 — still never a second copy, but then not
+ *  known to have landed, and a caller that gives up dead-letters it as
+ *  unknown. Without an `id` nothing differs from before. */
 export async function notifyWithReason(input: NotificationInput, client?: NotifyClient): Promise<{ ok: boolean; error?: string; id?: string }> {
   try {
     const db: NotifyClient = client ?? supabase;

@@ -750,9 +750,12 @@ describe("DIST-20 — in the browser the notices go to POST /api/documents/notic
     expect(bodies.every((b) => !b.batch || (b.batch.length > 0 && b.batch.length <= REQUEST_BATCH_MAX))).toBe(true);
     expect(bodies.reduce((s, b) => s + (b.batch ? b.batch.length : 1), 0)).toBe(REQUEST_BATCH_MAX + 3);
     expect(noticeRecordBodies([])).toEqual([]);
+    // defensively one workspace a body: another workspace's entry starts a new body
+    const elsewhere = { ...two, orgId: U(88) };
+    expect(noticeRecordBodies([one, elsewhere, two]).map((b) => JSON.parse(b))).toEqual([one, elsewhere, two]);
   });
 
-  it("the route takes a { batch } body: every document's rows from its own bell rows; a document the caller cannot read refuses the whole request (403); mixed workspaces or too many notices are a 400", async () => {
+  it("the route takes a { batch } body: every document's rows from its own bell rows; an entry whose document the caller cannot read is skipped and counted (nothing written for it) and the rest written; no readable document at all is a 403; mixed workspaces or too many notices are a 400", async () => {
     auth.actor = { userId: CTRL, email: "cal@x.test" };
     const DOC2 = U(77);
     db.tables.documents!.push({ ...db.tables.documents![0], id: DOC2 });
@@ -764,8 +767,13 @@ describe("DIST-20 — in the browser the notices go to POST /api/documents/notic
     const b2 = seedBell({ resource_id: DOC2 });
     const batch = { batch: [body([{ kind: "delivered", recipient: ASG, notificationId: b1.id }]), body([{ kind: "delivered", recipient: ASG, notificationId: b2.id }], { documentId: DOC2 })] };
     auth.unreadable.add(DOC2);
-    expect((await POST(req(batch))).status).toBe(403);
-    expect(events()).toEqual([]);
+    const partial = await POST(req(batch));
+    expect(partial.status).toBe(201);
+    expect(await partial.json()).toMatchObject({ ok: true, rows: 1, unmatched: 0, outcome: "written", skippedEntries: 1, skippedNotices: 1 });
+    expect(events().map((e) => e.document_id)).toEqual([DOC]);           // never a row for the document the caller cannot read
+    auth.unreadable.add(DOC);
+    expect((await POST(req(batch))).status).toBe(403);                    // none readable: refused, as before
+    expect(events().map((e) => e.document_id)).toEqual([DOC]);
     auth.unreadable.clear();
     const res = await POST(req(batch));
     expect(res.status).toBe(201);
@@ -773,6 +781,11 @@ describe("DIST-20 — in the browser the notices go to POST /api/documents/notic
     expect(events().map((e) => `${e.document_id}:${e.notification_id}`).sort()).toEqual([`${DOC}:${b1.id}`, `${DOC2}:${b2.id}`].sort());
     expect((await POST(req({ batch: [body([{ kind: "delivered", recipient: ASG }]), body([{ kind: "delivered", recipient: ASG }], { orgId: U(88) })] }))).status).toBe(400);
     expect((await POST(req({ batch: [] }))).status).toBe(400);
+    // a body that is both a batch and a single input is ambiguous: refused, so a single body reads exactly as before
+    expect(parseRequestNoticeBatch({ ...body([{ kind: "delivered", recipient: ASG }]), batch: [body([{ kind: "delivered", recipient: ASG }])] }))
+      .toEqual({ error: "a body is either one document's notices or a batch, not both" });
+    expect((await POST(req({ orgId: ORG, batch: [body([{ kind: "delivered", recipient: ASG }])] }))).status).toBe(400);
+    expect(parseRequestNoticeBatch(body([{ kind: "delivered", recipient: ASG }]))).toEqual([parseRequestNoticeBody(body([{ kind: "delivered", recipient: ASG }]))]);
     expect(parseRequestNoticeBatch({ batch: Array.from({ length: 2 }, () => body(Array.from({ length: REQUEST_NOTICE_MAX }, () => ({ kind: "delivered", recipient: ASG })))) }))
       .toEqual({ error: `at most ${REQUEST_NOTICE_MAX} notices a request` });
   });

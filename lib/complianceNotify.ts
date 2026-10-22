@@ -34,6 +34,20 @@
 //     why (today's path). A server writer with no scan scope and no session
 //     (a route on the service role — the intake door) reads the table back
 //     directly, as the cron does;
+//   · a notice whose writer CHOSE its row's id (NotificationInput.id —
+//     document-control P39, the notice record names it) is settled by that
+//     id only, never by a same-title sibling: the read-back reads the table
+//     for the row under that id (with the person, kind, title, resource and,
+//     on the table path, actor). It is retried wherever that read answers,
+//     the browser writing another member's row included — a retry cannot
+//     write a second copy, since the same id answers 23505 on
+//     notifications_pkey (taken as landed) unless 20261160's BEFORE INSERT
+//     rail refuses it first at a rate cap. That browser cannot see the row
+//     (notifications_own_select), so its last attempt is settled by a probe
+//     insert under the same id instead of a read (landed on success or
+//     23505; any other answer — a rate cap among them — dead-letters it as
+//     unknown, the error saying so). A failed id read-back is not retried
+//     and the dead letter names that read;
 //   · a notice notify() answers `false` for, where it may be retried, is
 //     tried again AT ONCE through notifyWithReason (the same insert,
 //     answering the refusal's text — what notify() does not say). A refusal
@@ -233,7 +247,11 @@ async function readBackActor(input: NotificationInput, scope: ComplianceScope | 
  *  then reads nothing (notifications_own_select) and retries, which is safe:
  *  a retry of the same id is the row already there (23505 on
  *  notifications_pkey, answered as landed by notifyWithReason), never a
- *  second copy. Without an id: exactly as before. */
+ *  second copy — unless 20261160's BEFORE INSERT rail, which runs before the
+ *  primary-key check, refuses it first at a rate cap (counted over the
+ *  writer's own rows, the landed one included); then it is refused, not a
+ *  copy. Its LAST attempt is settled by a probe insert, not by this read
+ *  (notifyCompliance). Without an id: exactly as before. */
 async function landedSince(input: NotificationInput, sinceIso: string, rb: ReadBack): Promise<boolean | null> {
   if (input.id) {
     try {
@@ -321,7 +339,9 @@ export async function notifyCompliance(input: NotificationInput, opts?: Complian
       const seen = await landedSince(input, sinceIso, rb!);
       if (seen === true) return landed(input, scope);
       if (seen === null) {
-        error += rb!.via === "rpc"
+        error += input.id
+          ? " (not retried: the read-back of the row under the notice's own id (the notifications table) failed — whether an earlier attempt landed is unknown)"
+          : rb!.via === "rpc"
           ? " (not retried: this writer's read-back of its own rows (notification_i_wrote, 20261206) failed or is not deployed — a retry could write a second copy)"
           : " (not retried: the read-back that would rule out a landed row failed — a retry could write a second copy)";
         readable = false;
@@ -336,7 +356,32 @@ export async function notifyCompliance(input: NotificationInput, opts?: Complian
     }
   }
   // Before the dead letter: did the last attempt land after all?
-  if (readable && unsettled && (await landedSince(input, sinceIso, rb!)) === true) return landed(input, scope);
+  if (readable && unsettled) {
+    if (input.id && rb!.via === "rpc") {
+      // document-control P39 merge-time fix (review): a browser writing ANOTHER
+      // member's row under a chosen id cannot read it back
+      // (notifications_own_select), and notification_i_wrote takes no id (a
+      // same-title sibling would answer for it). So the last attempt is
+      // settled by a PROBE insert under the same id (notifyWithReason): it
+      // succeeds (the row was not there and now is — this notice, landed) or
+      // answers 23505 on notifications_pkey (a row under this fresh id
+      // exists: the lost answer committed) — landed either way, never a
+      // second copy. Any other answer settles nothing and the dead letter
+      // says the outcome is unknown. Caveat, exactly: 20261160's BEFORE
+      // INSERT rail runs before the primary-key check, so where the writer is
+      // already at a rate cap — counted over ITS OWN rows, the landed one
+      // included: 60 of the same kind and resource to that person in a
+      // minute, 600 to that person in a minute, 1200 to that person in an
+      // hour, or 3000 from the writer in a minute — the probe is refused
+      // ("rate limit") instead, and a notice that did land is dead-lettered
+      // as unknown, as it was before P39 whenever the read-back failed.
+      const probe = await notifyWithReason(input);
+      if (probe.ok) return landed(input, scope);
+      error += ` (the final check — a probe insert under the notice's own id — answered "${probe.error ?? "no answer"}", so whether the last attempt landed is unknown)`;
+    } else if ((await landedSince(input, sinceIso, rb!)) === true) {
+      return landed(input, scope);
+    }
+  }
 
   const t1 = now();
   const prev = breakers.get(input.orgId);

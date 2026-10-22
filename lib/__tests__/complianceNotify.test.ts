@@ -14,8 +14,9 @@ import { join } from "node:path";
 type Row = Record<string, unknown>;
 const db = vi.hoisted(() => ({
   rows: {} as Record<string, Row[]>,
-  /** the next N notifications inserts fail with these errors, in order */
-  failNotifications: [] as Array<{ code?: string; message: string }>,
+  /** the next N notifications inserts fail with these errors, in order
+   *  (null: that insert is not failed here) */
+  failNotifications: [] as Array<{ code?: string; message: string } | null>,
   failAudit: null as null | { message: string },
   inserts: [] as Array<{ table: string; row: Row }>,
   /** the browser's signed-in member (null: the service role — no session) */
@@ -36,10 +37,17 @@ vi.mock("@/lib/supabase", () => ({
     from: (table: string) => ({
       insert: async (row: Row) => {
         db.inserts.push({ table, row });
-        if (table === "notifications" && db.failNotifications.length > 0) return { error: db.failNotifications.shift() };
+        if (table === "notifications" && db.failNotifications.length > 0) {
+          const f = db.failNotifications.shift();
+          if (f) return { error: f };
+        }
         if (table === "audit_logs" && db.failAudit) return { error: db.failAudit };
         // the insert rail (20261160) stamps a signed-in writer as the row's actor
         if (table === "notifications" && db.sessionUid && row.actor_user_id == null) row = { ...row, actor_user_id: db.sessionUid };
+        // the primary key (after the rail — a queued failure above stands for a rail refusal)
+        if (table === "notifications" && row.id != null && (db.rows.notifications ?? []).some((r) => r.id === row.id)) {
+          return { error: { code: "23505", message: 'duplicate key value violates unique constraint "notifications_pkey"' } };
+        }
         (db.rows[table] ??= []).push(row);
         if (table === "notifications") db.createdAt.set(row, new Date(db.clockMs).toISOString());
         if (table === "notifications" && db.lostResponses.length > 0) return { error: db.lostResponses.shift() };
@@ -55,7 +63,9 @@ vi.mock("@/lib/supabase", () => ({
           limit: async (n: number) => {
             db.readBacks += 1;
             if (db.failReadBack) return { data: null, error: db.failReadBack };
-            return { data: (db.rows[table] ?? []).filter((r) => preds.every((p) => p(r))).slice(0, n).map(() => ({ id: "n" })), error: null };
+            // notifications_own_select: a signed-in browser reads only its own rows
+            const visible = (db.rows[table] ?? []).filter((r) => !(table === "notifications" && db.sessionUid) || r.user_id === db.sessionUid);
+            return { data: visible.filter((r) => preds.every((p) => p(r))).slice(0, n).map(() => ({ id: "n" })), error: null };
           },
         };
         return q;
@@ -270,6 +280,59 @@ describe("integrator fix pass (re-review minor 3) — a retry never writes a sec
     db.failNotifications = [{ message: "connection reset" }];
     expect(await inCron(() => notifyCompliance(NOTICE))).toBe(true);
     expect(db.rows.notifications).toHaveLength(2);              // the retry wrote the new one
+  });
+});
+
+describe("document-control P39 merge-time fix — a notice under a writer-chosen id is settled by that id only", () => {
+  const ID = "11111111-2222-4333-8444-555555555555";
+  const ROW_ID = { ...ROW, id: ID };
+
+  it("the cron: a same-title sibling written since the attempt began does not settle a failed insert (the read-back matches the id) — the retry under the id lands", async () => {
+    (db.rows.notifications ??= []).push({ ...ROW, actor_user_id: null, actor_name: null });
+    db.createdAt.set(db.rows.notifications[0], new Date(clock).toISOString());
+    db.failNotifications = [{ message: "connection reset" }];
+    expect(await inCron(() => notifyCompliance({ ...ACTORLESS, id: ID }))).toBe(true);
+    expect(db.rows.notifications.map((r) => r.id ?? null)).toEqual([null, ID]);
+  });
+
+  it("the cron: a failed id read-back is not retried, and the dead letter names THAT read", async () => {
+    db.failNotifications = [{ message: "connection reset" }];
+    db.failReadBack = { message: "statement timeout" };
+    expect(await inCron(() => notifyCompliance({ ...NOTICE, id: ID }))).toBe(false);
+    expect(deadLetters()[0].details).toMatchObject({ attempts: 1, error: expect.stringContaining("the read-back of the row under the notice's own id (the notifications table) failed") });
+  });
+
+  it("REGRESSION (review): the BROWSER writing ANOTHER member's row under an id — attempts 1 and 2 fail, attempt 3 COMMITS but its answer is lost: the final probe under the same id answers 23505, so it is landed, not dead-lettered, and there is one row", async () => {
+    db.sessionUid = "u-publisher";
+    db.failNotifications = [{ message: "connection reset" }, { message: "connection reset" }];
+    db.lostResponses = [{ message: "TypeError: Failed to fetch" }];
+    expect(await notifyCompliance({ ...NOTICE, id: ID })).toBe(true);
+    expect(db.rows.notifications).toEqual([ROW_ID]);           // one row: the probe wrote no copy
+    expect(bellAttempts()).toHaveLength(4);                    // three attempts and the probe
+    expect(deadLetters()).toEqual([]);
+  });
+
+  it("the same, the probe refused at a rate cap (20261160's rail runs before the primary key): dead-lettered, the error saying the outcome is unknown — never a second copy", async () => {
+    db.sessionUid = "u-publisher";
+    db.failNotifications = [{ message: "connection reset" }, { message: "connection reset" }, null, { message: "notifications: rate limit — 60 of the same notification to one person per minute" }];
+    db.lostResponses = [{ message: "TypeError: Failed to fetch" }];
+    expect(await notifyCompliance({ ...NOTICE, id: ID })).toBe(false);
+    expect(db.rows.notifications).toEqual([ROW_ID]);
+    expect(deadLetters()[0].details).toMatchObject({ error: expect.stringContaining("the final check — a probe insert under the notice's own id — answered \"notifications: rate limit") });
+    expect(String(deadLetters()[0].details && (deadLetters()[0].details as { error: string }).error)).toContain("whether the last attempt landed is unknown");
+  });
+
+  it("the BROWSER writing another member's row under an id is retried (it cannot read the row, and a retry cannot copy it): a transient failure lands on the retry; a row that never landed is dead-lettered after the probe lands nothing", async () => {
+    db.sessionUid = "u-publisher";
+    db.failNotifications = [{ message: "connection reset" }];
+    expect(await notifyCompliance({ ...NOTICE, id: ID })).toBe(true);
+    expect(db.rows.notifications).toEqual([ROW_ID]);
+    db.rows.notifications = [];
+    db.inserts = [];
+    db.failNotifications = [{ message: "connection reset" }, { message: "connection reset" }, { message: "connection reset" }, { message: "connection reset" }];
+    expect(await notifyCompliance({ ...NOTICE, id: ID })).toBe(false);
+    expect(db.rows.notifications ?? []).toEqual([]);
+    expect(bellAttempts()).toHaveLength(4);
   });
 });
 

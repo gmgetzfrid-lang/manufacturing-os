@@ -1291,3 +1291,9 @@ done-when the integrator added at the P38 merge):
   `20261219`, and `20261160` for `nudgeAcknowledgment`'s browser re-send);
   drafting-flow `EVID-8` dw1 / dw2 superseded by the record (DEC-90 ruling
   (e)), dw3 owned by projects-joint J21.
+- **Review of the merge-time fix (2026-10-22; no SQL changed).** A
+  browser's id notice to another member settles its last attempt with a
+  probe insert under the same id (landed on success or `23505`; refused at a
+  `20261160` rate cap → dead-lettered as unknown, stated); the batch route
+  skips and counts an entry whose document the caller cannot read (403 only
+  when none is readable); an ambiguous batch body is a 400.

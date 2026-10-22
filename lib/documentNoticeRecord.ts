@@ -91,8 +91,10 @@
 //     rows are written exactly as before, first; the record write is retried
 //     and deferred to the audit log exactly as P38's (noticeRecorder), and
 //     the source's daily scan replays it. An unreachable route, or a page
-//     closed before the keepalive post left, is said in the console (when
-//     there still is one) and the notice is not on the record — the bell row
+//     closed before a body was in flight (only the body in flight at close
+//     outlives it — the first starts after getSession, each later one after
+//     the one before answered; NOTICE_KEEPALIVE_MAX_BODY), is said in the
+//     console (when there still is one) and the notice is not on the record — the bell row
 //     landed and the person was notified; a member cannot write the deferral
 //     row (the accepted residual, DIST-20 ruling (d));
 //   · the distribution nag's cooldown (scanDistributionAcks) reads the record
@@ -592,11 +594,16 @@ export const NOTICE_RECORD_ROUTE = "/api/documents/notice-record";
  *  the action has returned; this only bounds the background request. */
 export const NOTICE_RECORD_TIMEOUT_MS = 8_000;
 /** The browser splits the notices so that every request body is at most
- *  this long and goes with `keepalive` (it outlives a page closed right
- *  after the click; the browser's in-flight keepalive bodies share one 64
- *  KiB quota, and one action's requests go one at a time). A request the
- *  browser refuses (the quota) or that cannot reach the route is repeated
- *  once without it. */
+ *  this long and goes with `keepalive` (the browser's in-flight keepalive
+ *  bodies share one 64 KiB quota). Exactly what outlives a page closed right
+ *  after the click: only a request already IN FLIGHT. The first body starts
+ *  after the session is read (supabase.auth.getSession, awaited in the
+ *  background post); each later body starts only after the one before it has
+ *  answered, so at close at most that one body is in flight — a close before
+ *  getSession answered sends nothing, and the bodies not yet started are
+ *  never sent. A request the browser refuses (the quota) or that cannot
+ *  reach the route is repeated once without keepalive (that repeat does not
+ *  outlive a close). */
 export const NOTICE_KEEPALIVE_MAX_BODY = 8_000;
 /** Entries one batched request (`{ batch: [...] }` — several documents'
  *  notices, setAckPolicy's one post per save) carries at most. */
@@ -897,7 +904,7 @@ export interface RequestNoticeWriter { actorId?: string | null; actorName?: stri
  *  REQUEST_NOTICE_MAX notices / REQUEST_BATCH_MAX entries; a body holding one
  *  document's notices is the single-input shape (as before), several are
  *  `{ batch: [...] }`. An input larger than one body is split across bodies;
- *  a body is never empty. Pure. */
+ *  a body never mixes workspaces and is never empty. Pure. */
 export function noticeRecordBodies(inputs: RequestNoticeInput[]): string[] {
   const bodies: string[] = [];
   let cur: RequestNoticeInput[] = [];
@@ -911,6 +918,9 @@ export function noticeRecordBodies(inputs: RequestNoticeInput[]): string[] {
   };
   for (const input of inputs) {
     if (!input || input.notices.length === 0) continue;
+    // one workspace a body (the route checks one membership and refuses a
+    // mixed batch): a new workspace starts a new body
+    if (count > 0 && cur.length > 0 && cur[0].orgId !== input.orgId) flush();
     const head = { ...input, notices: [] as RequestNotice[] };
     const headSize = JSON.stringify(head).length + 1;
     let part: RequestNoticeInput | null = null;
@@ -1126,6 +1136,10 @@ export function parseRequestNoticeBatch(body: unknown): RequestNoticeInput[] | {
     const one = parseRequestNoticeBody(body);
     return "error" in one ? one : [one];
   }
+  // a body that is both a batch and a single input is ambiguous — refused, so
+  // a single body is read exactly as before
+  const SINGLE_FIELDS = ["orgId", "documentId", "source", "versionId", "since", "notices"];
+  if (SINGLE_FIELDS.some((k) => k in b)) return { error: "a body is either one document's notices or a batch, not both" };
   if (!Array.isArray(b.batch) || b.batch.length === 0) return { error: "batch must be a non-empty array" };
   if (b.batch.length > REQUEST_BATCH_MAX) return { error: `at most ${REQUEST_BATCH_MAX} entries a batch` };
   const out: RequestNoticeInput[] = [];
