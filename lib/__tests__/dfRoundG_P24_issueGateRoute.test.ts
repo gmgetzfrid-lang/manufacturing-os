@@ -233,6 +233,51 @@ describe("REGRESSION FIRST — an unconfigured workspace (and a requirement on a
   }, 180_000);
 });
 
+describe("merge-time fix pass 2, item 3 — a malformed requestTypes no longer hides the examination-data configuration from the gate", () => {
+  const BAD = { options: "not a list" };
+  it("malformed requestTypes with no requirement here (none, or one on another library): every action x status x member byte-identical with the gate removed, no read; with a requirement here, only an issuing act is refused", async () => {
+    let combos = 0;
+    let gated = 0;
+    const cfgs: Array<[Record<string, unknown>, boolean]> = [
+      [{ requestTypes: BAD }, false],
+      [{ ...scopeCfg([{ field: "exam", libraryId: LIB2, since: SINCE }]), requestTypes: BAD }, false],
+      [{ ...scopeCfg([{ field: "exam", libraryId: LIB, since: SINCE }]), requestTypes: BAD }, true],
+    ];
+    for (const [cfg, applies] of cfgs) {
+      for (const status of STATUSES) {
+        for (const m of MEMBERS) {
+          const row = status === "PENDING_REVIEW" || status === "PENDING_FINAL_APPROVAL" ? reviewRow({ status, assigned_engineer_id: status === "PENDING_FINAL_APPROVAL" ? "e-1" : null }) : ticketRow({ status });
+          const t = rowToTicket(row as never) as Ticket;
+          const offered = WorkflowEngine.getActions(t, m.role as Role, m.uid, undefined, { userRoles: m.roles as Role[] }).map((a) => a.action);
+          for (const actionType of [...new Set([...offered, "sign_slot", "request_revision"])]) {
+            const body = { actionType, comment: "a reason", signatureId: SIG, issueAsIsAcknowledged: true };
+            const a = await run(cfg, row, m.uid, body, false);
+            const b = await run(cfg, row, m.uid, body, true);
+            const where = `${applies} ${status} ${m.uid} ${actionType}`;
+            if (!applies || a.json === b.json) {
+              expect(a.status, where).toBe(b.status);
+              expect(a.json, where).toBe(b.json);
+              if (!applies) {
+                expect(a.calls, where).toBe(b.calls);
+                expect(a.reads, where).toBe(0);
+              }
+            } else {
+              // the gate now reads this workspace's requirement: an issuing act is refused with it
+              expect(ISSUING_APPROVALS.has(actionType) || actionType === "sign_slot", where).toBe(true);
+              expect(a.status, where).toBe(409);
+              expect(JSON.parse(a.json).code, where).toBe("examination_scope_missing");
+              gated++;
+            }
+            combos++;
+          }
+        }
+      }
+    }
+    expect(combos).toBeGreaterThan(300);
+    expect(gated).toBeGreaterThan(0);
+  }, 180_000);
+});
+
 describe("ruling (2) — the gate on an issuing approval", () => {
   const cfg = scopeCfg([{ field: "exam", libraryId: LIB, since: SINCE }, { field: "gov", libraryId: LIB, since: SINCE }]);
   it("missing data for a request filed after the requirement: 409 with the sentence, nothing written", async () => {
@@ -355,6 +400,16 @@ describe("ruling (2) — the gate on an issuing approval", () => {
       expect(r.status, created).toBe(status);
       if (status === 200) expect(JSON.parse(r.json).examinationScopeWarning, created).toMatch(/filed before the requirement was set, so it can still issue/);
     }
+  });
+  it("merge-time fix pass 2: the refusal names who can act now — with an engineer of record, them or a revision, and the caller's waiver; never the drafter", async () => {
+    const one = scopeCfg([{ field: "exam", libraryId: LIB, since: SINCE }]);
+    const row = reviewRow({ status: "PENDING_FINAL_APPROVAL", assigned_engineer_id: "e-1" });
+    const who = issuer(row);
+    const r = await run(one, row, who.uid, { actionType: who.action, comment: "a reason" }, false);
+    expect(r.status).toBe(409);
+    expect(JSON.parse(r.json).error).toBe("This request can't issue yet: Examination scope must be recorded for it first (this workspace requires it for its library). Its engineer of record can record it on the request page, or the request can be sent back for revision; you can instead record why it issues without it.");
+    const none = await run(one, reviewRow(), issuer(reviewRow()).uid, { actionType: issuer(reviewRow()).action }, false);
+    expect(JSON.parse(none.json).error).toMatch(/It has no engineer of record, so you can record why it issues without it, or the request can be sent back for revision\.$/);
   });
   it("a requirement on the request's WORK CLASS binds the same way", async () => {
     const row = reviewRow({ work_class: "code" });

@@ -91,7 +91,8 @@ describe("ruling (2) — the gate's reading: filed after `since` refuses, in fli
     const s = examinationScopeStatus(c, ticket(), {}, CFG);
     expect(s.blocking.map((b) => b.key)).toEqual(["exam", "gov"]);
     expect(s.warnOnly).toEqual([]);
-    expect(examinationScopeRefusal(s.blocking)).toBe("This request can't issue yet: Examination scope and Governing code must be recorded for it first (this workspace requires them for work class \"Code piping\" and its library). The drafter or the engineer records them under \"Examination data\" on the request; someone who can issue it may instead record why it issues without them.");
+    // merge-time fix pass 2: worded by phase and fact (pinned in full below)
+    expect(examinationScopeRefusal(s.blocking, { ticket: { status: "PENDING_REVIEW", assignedEngineerId: "e-1" }, callerMayWaive: true })).toBe("This request can't issue yet: Examination scope and Governing code must be recorded for it first (this workspace requires them for work class \"Code piping\" and its library). Its engineer of record can record them on the request page, or the request can be sent back for revision; you can instead record why it issues without them.");
   });
   it("filed before the requirement (in flight when it was configured): warned, never refused", () => {
     const s = examinationScopeStatus(c, ticket({ createdAt: "2026-09-30T23:59:59.000Z" }), {}, CFG);
@@ -390,7 +391,7 @@ describe("merge-time fix pass, item 3 — the editor's check is the parser's own
   it("PARITY: over many generated configurations, no problem ⇔ the parser keeps every field and every requirement", () => {
     let seed = 7;
     const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
-    const keyPool = ["exam", "gov", " exam ", "_bad", "a b", "x".repeat(60), "y".repeat(61), "", "Z-9.q", "é"];
+    const keyPool = ["exam", "gov", " exam ", "_bad", "a b", "x".repeat(60), "y".repeat(61), "", "Z-9.q", "é", "constructor", "toString", "__proto__"];
     let clean = 0;
     for (let n = 0; n < 2000; n++) {
       const fields = Array.from({ length: Math.floor(rnd() * 4) }, () => ({ key: keyPool[Math.floor(rnd() * keyPool.length)], label: "L", options: [{ value: "a" }] }));
@@ -404,5 +405,67 @@ describe("merge-time fix pass, item 3 — the editor's check is the parser's own
       if (keptAll) clean++;
     }
     expect(clean).toBeGreaterThan(50);
+  });
+});
+
+describe("merge-time fix pass 2, item 1 — a field key named like an Object.prototype property", () => {
+  const PROTO = ["constructor", "toString", "valueOf", "hasOwnProperty", "isPrototypeOf", "__proto__"];
+  const SINCE_ = "2026-10-01T00:00:00Z";
+  const tk = { workClass: null, libraryId: "L", createdAt: "2026-10-05T00:00:00Z", deliverableRev: "1A", status: "PENDING_REVIEW", assignedEngineerId: "e-1" } as never;
+  it("(a) every value lookup is own-property only: such a field, missing, is enforced — the status and the gate block; the requester's fill of it is accepted", () => {
+    for (const key of PROTO.filter((k) => k !== "__proto__")) {
+      // built directly (the parser now drops the key — (b)): the lookups alone must not read an inherited function as a value
+      const cfg = { fields: [{ key, label: key, options: [{ value: "a", label: "A" }] }], requirements: [{ field: key, libraryId: "L", since: SINCE_ }] };
+      expect(examinationScopeStatus(cfg, tk, {}).blocking.map((b) => b.key), key).toEqual([key]);
+      expect(scopeGateOutcome(cfg, tk, { data: null, error: null }).kind, key).toBe("blocked");
+      expect(scopeGateOutcome(cfg, tk, { data: { field_values: {} }, error: null }).kind, key).toBe("blocked");
+      const w = checkScopeWrite({ status: "DRAFTING", requesterId: "r", assignedDrafterId: "d", assignedEngineerId: null, metadata: {} } as never, "r", false, cfg, {}, { [key]: "a" });
+      expect(w, key).toMatchObject({ ok: true, basis: "requester" });
+      const applied = applyScopeChanges({}, { [key]: "a" }, { uid: "r", name: null }, SINCE_);
+      expect(applied.changed, key).toEqual([key]);
+      expect(Object.hasOwn(applied.values, key), key).toBe(true);
+      expect(examinationScopeStatus(cfg, tk, applied.values).blocking, key).toEqual([]);
+    }
+  });
+  it("(a) recorded values arriving from the database under such names stay own data — never the prototype", () => {
+    const parsed = parseScopeValues(JSON.parse('{"__proto__":{"value":"x","by":"u","at":null},"constructor":{"value":"y","by":"u","at":null}}'));
+    expect(Object.getPrototypeOf(parsed)).toBe(Object.prototype);
+    expect(Object.keys(parsed).sort()).toEqual(["__proto__", "constructor"]);
+    expect(parsed.constructor).toMatchObject({ value: "y" });
+  });
+  it("(b) the parser drops such a key, and the editor's check names it (the same rule)", () => {
+    for (const key of PROTO) {
+      const raw = { [EXAMINATION_SCOPE_KEY]: { fields: [{ key, label: key, options: [{ value: "a", label: "A" }] }], requirements: [{ field: key, libraryId: "L", since: SINCE_ }] } };
+      expect(parseExaminationScopeConfig(raw).fields, key).toEqual([]);
+      const probs = examinationScopeProblems(raw);
+      expect(probs.map((p) => `${p.where}${p.index}`), key).toEqual(["field0", "requirement0"]);
+      if (key !== "__proto__") expect(probs[0].message, key).toMatch(/can't be used as a key/);
+    }
+    expect(parseExaminationScopeConfig({ [EXAMINATION_SCOPE_KEY]: { fields: [{ key: "Constructor", options: [{ value: "a" }] }] } }).fields.map((f) => f.key)).toEqual(["Constructor"]);
+  });
+});
+
+describe("merge-time fix pass 2, item 2 — the refusal names who can act now", () => {
+  const one = [{ key: "exam", label: "Examination scope", enforced: true, since: SINCE, basis: ["its library"], value: null, valueRetired: false }];
+  const two = [...one, { ...one[0], key: "gov", label: "Governing code" }];
+  const head1 = "This request can't issue yet: Examination scope must be recorded for it first (this workspace requires it for its library).";
+  it("in review with an engineer of record: the engineer of record or a revision — and the waiver when the caller may record one", () => {
+    expect(examinationScopeRefusal(one, { ticket: { status: "PENDING_REVIEW", assignedEngineerId: "e-1" }, callerMayWaive: true }))
+      .toBe(`${head1} Its engineer of record can record it on the request page, or the request can be sent back for revision; you can instead record why it issues without it.`);
+    expect(examinationScopeRefusal(two, { ticket: { status: "PENDING_FINAL_APPROVAL", assignedEngineerId: "e-1" } }))
+      .toBe("This request can't issue yet: Examination scope and Governing code must be recorded for it first (this workspace requires them for its library). Its engineer of record can record them on the request page, or the request can be sent back for revision.");
+  });
+  it("in review with no engineer of record: only the waiver and a revision", () => {
+    expect(examinationScopeRefusal(one, { ticket: { status: "PENDING_REVIEW", assignedEngineerId: null }, callerMayWaive: true }))
+      .toBe(`${head1} It has no engineer of record, so you can record why it issues without it, or the request can be sent back for revision.`);
+    expect(examinationScopeRefusal(one, { ticket: { status: "PENDING_REVIEW", assignedEngineerId: null } }))
+      .toBe(`${head1} It has no engineer of record, so someone who can issue it may record why it issues without it, or the request can be sent back for revision.`);
+  });
+  it("never tells the drafter to record it in review (where the drafter's write is refused)", () => {
+    for (const assignedEngineerId of ["e-1", null]) {
+      for (const callerMayWaive of [true, false]) {
+        expect(examinationScopeRefusal(one, { ticket: { status: "PENDING_REVIEW", assignedEngineerId }, callerMayWaive })).not.toMatch(/drafter/i);
+      }
+    }
   });
 });

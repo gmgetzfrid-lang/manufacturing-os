@@ -243,6 +243,15 @@ describe("ExaminationScopeSection — merge-time fix pass (ruling 3): the parser
     expect(problemOf(reqs[2])[0]).toMatch(/Pick a work class, a library, or both/);
     expect(host.querySelector('[data-testid="examination-scope-problems"]')?.textContent).toMatch(/6 entries below need fixing — Save Changes won.t save/);
   });
+  it("merge-time fix pass 2: a key named like an Object.prototype property is refused inline", async () => {
+    const opts = [{ value: "a", label: "a" }];
+    await render(React.createElement(ExaminationScopeSection, { settings: withScope([{ key: "constructor", label: "C", options: opts }, { key: "toString", label: "T", options: opts }], [{ field: "constructor", libraryId: LIB }]), orgId: null, onChange: () => {} } as never));
+    const rows = [...host.querySelectorAll('[data-testid="examination-scope-field"]')];
+    for (const [i, key] of [[0, "constructor"], [1, "toString"]] as const) {
+      expect(rows[i].querySelector('[data-testid="examination-scope-problem"]')?.textContent, key).toBe(`"${key}" can't be used as a key (it is a name the system reserves) — choose another.`);
+    }
+    expect(host.querySelector('[data-testid="examination-scope-requirement"] [data-testid="examination-scope-problem"]')?.textContent).toMatch(/is not data configured above/);
+  });
   it("nothing to fix: no problem shown (and none at all without the key)", async () => {
     await render(React.createElement(ExaminationScopeSection, { settings: CFG, orgId: null, onChange: () => {} } as never));
     expect(host.querySelector('[data-testid="examination-scope-problem"], [data-testid="examination-scope-problems"]')).toBeNull();

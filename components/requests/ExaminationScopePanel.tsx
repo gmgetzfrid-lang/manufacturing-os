@@ -37,7 +37,7 @@ import { ticketResource } from "@/lib/workflow";
 import type { OrgDraftingSettings, Ticket } from "@/types/schema";
 import {
   parseExaminationScopeConfig, examinationScopeConfigured, examinationScopeStatus, parseScopeValues, parseScopeWaiver,
-  waiverCovers, scopeFieldRight, scopePhase, isMissingScopeTable, SCOPE_CLOSED_STATUSES, SCOPE_ISSUED_STATUSES, EXAMINATION_SCOPE_MIGRATION, EXAMINATION_WAIVER_REASON_MAX,
+  waiverCovers, scopeFieldRight, scopePhase, scopeValueOf, isMissingScopeTable, SCOPE_CLOSED_STATUSES, SCOPE_ISSUED_STATUSES, EXAMINATION_SCOPE_MIGRATION, EXAMINATION_WAIVER_REASON_MAX,
   type ExaminationScopeValues, type ExaminationScopeWaiver,
 } from "@/lib/examinationScope";
 
@@ -126,8 +126,8 @@ export default function ExaminationScopePanel({
   const queue = policyAllows(capPolicy ?? undefined, "ticket.assign", role ?? null, [...roles], uid ?? null, ticketResource(ticket));
   const values = load.kind === "ok" ? load.values : {};
   // What this viewer may do to each field (the route decides the same way).
-  const rightOf = (key: string) => scopeFieldRight(ticket, uid, queue, values[key] ?? null);
-  const editable = (key: string) => { const r = rightOf(key); return values[key] ? r.change : r.fill; };
+  const rightOf = (key: string) => scopeFieldRight(ticket, uid, queue, scopeValueOf(values, key));
+  const editable = (key: string) => { const r = rightOf(key); return scopeValueOf(values, key) ? r.change : r.fill; };
   const waiver = load.kind === "ok" ? load.waiver : null;
   const status = examinationScopeStatus(config, ticket, values, draftingCfg);
   const waived = waiverCovers(waiver, status.blocking, ticket.deliverableRev);
@@ -153,7 +153,7 @@ export default function ExaminationScopePanel({
     }
   };
 
-  const changes = Object.fromEntries(Object.entries(draft).filter(([k, v]) => (values[k]?.value ?? "") !== v).map(([k, v]) => [k, v || null]));
+  const changes = Object.fromEntries(Object.entries(draft).filter(([k, v]) => (scopeValueOf(values, k)?.value ?? "") !== v).map(([k, v]) => [k, v || null]));
 
   return (
     <section data-testid="examination-scope-panel" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
@@ -188,7 +188,7 @@ export default function ExaminationScopePanel({
             <tbody>
               {shown.map((f) => {
                 const req = status.required.find((r) => r.key === f.key);
-                const v = values[f.key];
+                const v = scopeValueOf(values, f.key);
                 const label = v ? (f.options.find((o) => o.value === v.value)?.label ?? v.value) : null;
                 return (
                   <tr key={f.key} data-testid="examination-scope-row" className="border-t border-[var(--color-border)]">

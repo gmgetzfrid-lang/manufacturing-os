@@ -57,5 +57,10 @@ export async function issueScopeGate(input: {
   if (!config) return { kind: "config_unchecked" };
   if (entries.length === 0) return { kind: "none" };
   const read = await input.readRow();
-  return scopeGateOutcome(config, ticket, { data: read.data, error: read.error }, draftingCfg);
+  // The caller reached the gate past the route's own authority checks (the
+  // action offered and enabled, TIER-5, the member count, the declaration,
+  // a sign-off that completes the review) — the same acts
+  // lib/workflowAuthority.ts issueAuthorityNow accepts a waiver from — so the
+  // refusal tells them they may record one (merge-time fix pass 2).
+  return scopeGateOutcome(config, ticket, { data: read.data, error: read.error }, draftingCfg, { callerMayWaive: true });
 }

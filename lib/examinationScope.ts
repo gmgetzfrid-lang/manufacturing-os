@@ -102,6 +102,25 @@ export const EXAMINATION_WAIVER_REASON_MAX = 2000;
  *  saves is silently dropped by `parseExaminationScopeConfig`. */
 export const FIELD_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9 _.-]{0,59}$/;
 export const EXAMINATION_FIELD_KEY_MAX = 60;
+
+/** Merge-time fix pass 2: the names no field key may take — every property
+ *  of Object.prototype ("constructor", "toString", "valueOf",
+ *  "hasOwnProperty" …) and `__proto__`. A plain object answers such a name
+ *  with an inherited function, which a value lookup would read as a
+ *  recorded value (so the requirement would never be enforced). The parser
+ *  drops such a key and the editor refuses it (`examinationScopeProblems`);
+ *  every value lookup is also own-property only (`scopeValueOf`). */
+export const RESERVED_FIELD_KEYS: ReadonlySet<string> = new Set([...Object.getOwnPropertyNames(Object.prototype), "__proto__"]);
+
+/** The value recorded for `key` — an OWN property only (never one inherited
+ *  from Object.prototype). Pure. */
+export function scopeValueOf<V>(values: Readonly<Record<string, V>>, key: string): V | null {
+  return Object.hasOwn(values, key) ? values[key] ?? null : null;
+}
+/** Set an own property, whatever its name (never the prototype setter). */
+function setOwn<V>(o: Record<string, V>, key: string, value: NoInfer<V>): void {
+  Object.defineProperty(o, key, { value, enumerable: true, writable: true, configurable: true });
+}
 export const EXAMINATION_MAX_FIELDS = 50;
 export const EXAMINATION_MAX_OPTIONS = 200;
 export const EXAMINATION_MAX_REQUIREMENTS = 500;
@@ -155,7 +174,7 @@ export function parseExaminationScopeConfig(cfg: Partial<OrgDraftingSettings> | 
     if (!f || typeof f !== "object") continue;
     const o = f as Record<string, unknown>;
     const key = str(o.key);
-    if (!FIELD_KEY_RE.test(key) || keys.has(key)) continue;
+    if (!FIELD_KEY_RE.test(key) || RESERVED_FIELD_KEYS.has(key) || keys.has(key)) continue;
     keys.add(key);
     const options: ExaminationScopeOption[] = [];
     const seen = new Set<string>();
@@ -219,7 +238,7 @@ export function parseScopeValues(raw: unknown): ExaminationScopeValues {
     const o = v as Record<string, unknown>;
     const value = str(o.value);
     if (!value) continue;
-    out[k] = {
+    setOwn(out, k, {
       value,
       by: typeof o.by === "string" ? o.by : null,
       ...(typeof o.byName === "string" ? { byName: o.byName } : {}),
@@ -227,7 +246,7 @@ export function parseScopeValues(raw: unknown): ExaminationScopeValues {
       ...(o.afterIssue && typeof o.afterIssue === "object" && !Array.isArray(o.afterIssue)
         ? { afterIssue: { rev: typeof (o.afterIssue as { rev?: unknown }).rev === "string" ? (o.afterIssue as { rev: string }).rev : null } }
         : {}),
-    };
+    });
   }
   return out;
 }
@@ -241,7 +260,7 @@ export function scopeValuesAsIssued(values: ExaminationScopeValues, deliverableR
   const out: ExaminationScopeValues = {};
   for (const [k, v] of Object.entries(values)) {
     if (v.afterIssue && (v.afterIssue.rev ?? null) === (deliverableRev ?? null)) continue;
-    out[k] = v;
+    setOwn(out, k, v);
   }
   return out;
 }
@@ -327,7 +346,7 @@ export function examinationScopeStatus(
     const enforced = binds(since, filed);
     const basis = [e.workClass ? `work class "${classLabel(e.workClass)}"` : null, e.libraryId ? "its library" : null].filter((x): x is string => !!x).join(" in ");
     const cur = byField.get(field.key);
-    const value = values[field.key] ?? null;
+    const value = scopeValueOf(values, field.key);
     if (!cur) {
       byField.set(field.key, {
         key: field.key, label: field.label, enforced, since: Number.isFinite(since) ? e.since! : null, basis: [basis],
@@ -373,9 +392,13 @@ export type ScopeGateOutcome =
 
 export function scopeGateOutcome(
   config: ExaminationScopeConfig,
-  ticket: Pick<Ticket, "workClass" | "libraryId" | "createdAt" | "deliverableRev">,
+  ticket: Pick<Ticket, "workClass" | "libraryId" | "createdAt" | "deliverableRev"> & Partial<Pick<Ticket, "status" | "assignedEngineerId">>,
   read: { data: unknown; error: { code?: string | null; message?: string | null } | null },
   draftingCfg?: Partial<OrgDraftingSettings> | Record<string, unknown> | null,
+  /** Merge-time fix pass 2: the act's caller already holds the issue
+   *  authority (the workflow route's gate runs only after its own authority
+   *  checks), so the refusal may tell them they can record a waiver. */
+  opts: { callerMayWaive?: boolean } = {},
 ): ScopeGateOutcome {
   const required = [...new Set(applicableRequirements(config, ticket).map((e) => e.field))];
   if (read.error) {
@@ -390,7 +413,7 @@ export function scopeGateOutcome(
   const status = examinationScopeStatus(config, ticket, parseScopeValues(row?.field_values), draftingCfg);
   const waiver = parseScopeWaiver(row?.waiver);
   const waived = waiverCovers(waiver, status.blocking, ticket.deliverableRev);
-  if (status.blocking.length > 0 && !waived) return { kind: "blocked", blocking: status.blocking, refusal: examinationScopeRefusal(status.blocking) };
+  if (status.blocking.length > 0 && !waived) return { kind: "blocked", blocking: status.blocking, refusal: examinationScopeRefusal(status.blocking, { ticket, callerMayWaive: opts.callerMayWaive === true }) };
   return { kind: "pass", audit: examinationScopeAuditFields(status, waiver, waived), warning: status.warnOnly.length > 0 ? examinationScopeWarning(status.warnOnly) : null };
 }
 
@@ -409,11 +432,29 @@ export function waiverCovers(
 const list = (xs: readonly string[]): string => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
 
 /** The refusal sentence an issue meets (ruling (2): plain, names what is
- *  missing and who records it). */
-export function examinationScopeRefusal(blocking: readonly RequiredScopeField[]): string {
+ *  missing and who records it). Merge-time fix pass 2: worded by phase and
+ *  fact — in review (where every issuing act is) only the engineer of
+ *  record writes a value (`scopeFieldRight`), so the sentence names them
+ *  and a revision, and the waiver when the caller may record one; with no
+ *  engineer of record it names only the waiver and a revision. Before
+ *  review (no issuing act is offered there today) the drafter or the
+ *  engineer records it. */
+export function examinationScopeRefusal(
+  blocking: readonly RequiredScopeField[],
+  ctx: { ticket?: Partial<Pick<Ticket, "status" | "assignedEngineerId">> | null; callerMayWaive?: boolean } = {},
+): string {
   const names = list(blocking.map((b) => b.label));
   const bases = [...new Set(blocking.flatMap((b) => b.basis))];
-  return `This request can't issue yet: ${names} must be recorded for it first (this workspace requires ${blocking.length === 1 ? "it" : "them"} for ${list(bases)}). The drafter or the engineer records ${blocking.length === 1 ? "it" : "them"} under "Examination data" on the request; someone who can issue it may instead record why it issues without ${blocking.length === 1 ? "it" : "them"}.`;
+  const it = blocking.length === 1 ? "it" : "them";
+  const head = `This request can't issue yet: ${names} must be recorded for it first (this workspace requires ${it} for ${list(bases)}).`;
+  const waive = ctx.callerMayWaive ? "you can" : "someone who can issue it may";
+  if (scopePhase(ctx.ticket?.status) === "before_review") {
+    return `${head} The drafter or the engineer can record ${it} on the request page${ctx.callerMayWaive ? `, or you can record why it issues without ${it}` : ""}.`;
+  }
+  if (ctx.ticket?.assignedEngineerId) {
+    return `${head} Its engineer of record can record ${it} on the request page, or the request can be sent back for revision${ctx.callerMayWaive ? `; you can instead record why it issues without ${it}` : ""}.`;
+  }
+  return `${head} It has no engineer of record, so ${waive} record why it issues without ${it}, or the request can be sent back for revision.`;
 }
 
 /** The warning an in-flight request carries instead (never a refusal). */
@@ -450,11 +491,11 @@ export function checkScopeValuesInput(
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
     const field = config.fields.find((f) => f.key === k);
     if (!field) return { ok: false, error: `"${k}" is not examination data this workspace records — reload the request and try again.` };
-    if (v === null) { changes[k] = null; continue; }
+    if (v === null) { setOwn(changes, k, null); continue; }
     if (typeof v !== "string" || !field.options.some((o) => o.value === v)) {
       return { ok: false, error: `Pick ${field.label} from its list — that value is not one of its choices.` };
     }
-    changes[k] = v;
+    setOwn(changes, k, v);
   }
   if (Object.keys(changes).length === 0) return { ok: false, error: "Nothing to record." };
   return { ok: true, changes };
@@ -470,15 +511,16 @@ export function applyScopeChanges(
   /** Merge-time fix pass: a fill after issue carries `afterIssue`. */
   mark?: Pick<ExaminationScopeValue, "afterIssue">,
 ): { values: ExaminationScopeValues; changed: string[] } {
-  const values: ExaminationScopeValues = { ...current };
+  const values: ExaminationScopeValues = {};
+  for (const [k, v] of Object.entries(current)) setOwn(values, k, v);
   const changed: string[] = [];
   for (const [k, v] of Object.entries(changes)) {
     if (v === null) {
-      if (values[k]) { delete values[k]; changed.push(k); }
+      if (scopeValueOf(values, k)) { delete values[k]; changed.push(k); }
       continue;
     }
-    if (values[k]?.value === v) continue;
-    values[k] = { value: v, by: who.uid, ...(who.name ? { byName: who.name } : {}), at: nowIso, ...(mark?.afterIssue ? { afterIssue: mark.afterIssue } : {}) };
+    if (scopeValueOf(values, k)?.value === v) continue;
+    setOwn(values, k, { value: v, by: who.uid, ...(who.name ? { byName: who.name } : {}), at: nowIso, ...(mark?.afterIssue ? { afterIssue: mark.afterIssue } : {}) });
     changed.push(k);
   }
   return { values, changed };
@@ -607,7 +649,7 @@ export function checkScopeWrite(
       : "The request's drafter or engineer records its examination data (or whoever runs the assignment queue; its requester, until it goes for review)." };
   }
   for (const [k, v] of Object.entries(changes)) {
-    const cur = current[k] ?? null;
+    const cur = scopeValueOf(current, k);
     if (v !== null && cur?.value === v) continue;
     if (v === null && !cur) continue;
     const right = scopeFieldRight(ticket, uid, queue, cur);
@@ -703,6 +745,7 @@ export function examinationScopeProblems(settings: object | null | undefined): E
     if (!key) return bad("Give this data a key.");
     if (key.length > EXAMINATION_FIELD_KEY_MAX) return bad(`The key is longer than ${EXAMINATION_FIELD_KEY_MAX} characters.`);
     if (!FIELD_KEY_RE.test(key)) return bad("A key starts with a letter or a digit and uses only letters, digits, spaces, _ . and -.");
+    if (RESERVED_FIELD_KEYS.has(key)) return bad(`"${key}" can't be used as a key (it is a name the system reserves) — choose another.`);
     if (kept.has(key)) return bad(`Another piece of data already uses the key "${key}".`);
     kept.add(key);
     if (Array.isArray(o.options) && o.options.length > MAX_OPTIONS) bad(`Only the first ${MAX_OPTIONS} choices are kept — remove some.`);

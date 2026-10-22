@@ -500,6 +500,13 @@ export async function POST(req: NextRequest) {
   // lists (seeded empty). null when it could not be read.
   let draftingCfg: Record<string, unknown> | null = null;
   let draftingCfgRead = false;
+  // DF-P24 merge-time fix pass 2: the examination-scope gate's copy of the
+  // row, taken BEFORE the request-type flags are computed — a malformed
+  // `requestTypes` (which makes that reading throw) no longer hides the
+  // workspace's examination-data requirements from the gate (the consent
+  // close reads the row the same way). Every other reader keeps
+  // `draftingCfg` exactly as before.
+  let scopeDraftingCfg: Record<string, unknown> | null = null;
   try {
     const { data: cfgRow, error: cfgRowErr } = await supabaseAdmin
       .from("org_configurations")
@@ -508,6 +515,7 @@ export async function POST(req: NextRequest) {
       .eq("key", "drafting")
       .maybeSingle();
     if (!cfgRowErr) draftingCfgRead = true;
+    scopeDraftingCfg = (cfgRow?.data as Record<string, unknown> | null) ?? null;
     // DRAFT-2: "engineering first" is the same kind of type property.
     // (lib/workflowAuthority.ts draftingTypeFlags — shared with the waiver
     // authority, DF-P24 merge-time fix pass; it throws where this reading
@@ -1028,7 +1036,7 @@ export async function POST(req: NextRequest) {
   let examinationScopeAudit: Record<string, unknown> | null = null;
   let examinationScopeWarningText: string | null = null;
   const scopeDecision = await issueScopeGate({
-    action: action.action, ticket, draftingCfg, draftingCfgRead, callerId: caller.id, sodActive,
+    action: action.action, ticket, draftingCfg: scopeDraftingCfg, draftingCfgRead, callerId: caller.id, sodActive,
     readRow: () => supabaseAdmin.from("ticket_examination_scopes").select("field_values, waiver").eq("ticket_id", body.ticketId).maybeSingle(),
   });
   if (scopeDecision.kind === "config_unchecked") examinationScopeAudit = { configUnchecked: true };

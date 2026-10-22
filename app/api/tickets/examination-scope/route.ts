@@ -9,7 +9,7 @@ import { rowToTicket } from "@/lib/ticketTransitions";
 import { checkedWrite } from "@/lib/checkedWrite";
 import {
   parseExaminationScopeConfig, examinationScopeConfigured, examinationScopeStatus, parseScopeValues, parseScopeWaiver,
-  checkScopeValuesInput, applyScopeChanges, checkScopeWrite, scopePhase, isMissingScopeTable, examinationScopeHistoryEntry,
+  checkScopeValuesInput, applyScopeChanges, checkScopeWrite, scopePhase, scopeValueOf, isMissingScopeTable, examinationScopeHistoryEntry,
   SCOPE_CLOSED_STATUSES, SCOPE_ISSUED_STATUSES, EXAMINATION_SCOPE_MIGRATION, EXAMINATION_WAIVER_REASON_MAX,
   type ExaminationScopeConfig, type ExaminationScopeWaiver,
 } from "@/lib/examinationScope";
@@ -287,7 +287,7 @@ export async function POST(req: NextRequest) {
     if (applied.changed.length === 0) return NextResponse.json({ ok: true, unchanged: true, values, waiver });
     nextValues = applied.values;
     action = "TICKET_EXAMINATION_SCOPE_SET";
-    changedRows = applied.changed.map((k) => ({ field: k, from: values[k]?.value ?? null, to: nextValues[k]?.value ?? null }));
+    changedRows = applied.changed.map((k) => ({ field: k, from: scopeValueOf(values, k)?.value ?? null, to: scopeValueOf(nextValues, k)?.value ?? null }));
     details = {
       changed: changedRows,
       ...(phase === "in_review" ? { phase, historyLine: true } : {}),
