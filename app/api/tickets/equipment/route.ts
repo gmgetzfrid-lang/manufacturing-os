@@ -39,6 +39,19 @@ import {
 //      recorded tag immutable, so a correction is a replacement; the audit
 //      row names both); a removal that fails after the add is said, and the
 //      old row stays listed beside the new one.
+//   5. (DF-P18 fix pass 3, review major — EVID-12's pairing contract, as the
+//      workflow route keeps it.) The attempt row stands for a change that
+//      landed unless a later row says otherwise, so every outcome that is
+//      not the change it records gets a checked follow-up row naming it in
+//      details.attempt: an insert that fails writes
+//      TICKET_EQUIPMENT_ADDED_NOT_APPLIED / _CORRECTED_NOT_APPLIED (the
+//      viewers' pairTicketAttempts then reads the attempt "not applied"); a
+//      correction whose old entry could not be removed writes
+//      TICKET_EQUIPMENT_CORRECTED_NOT_APPLIED (the replacement did not land)
+//      AND a TICKET_EQUIPMENT_ADDED row recorded after the fact for the tag
+//      that now stands beside the kept one, so the trail never reads a clean
+//      replacement and never hides the tag that was added. Each follow-up is
+//      retried once; one that still cannot be written is said in the answer.
 // Before 20261251 is pasted every read and write meets 42P01 / PGRST205:
 // the answer is 503 `not_migrated` and nothing is written (the request page
 // says the list is not available, as the card does today).
@@ -192,31 +205,66 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "The change was not applied: its audit record could not be written. Try again in a moment.", code: "audit_unwritable", applied: false }, { status: 500 });
   }
 
+  const attemptAction = action === "add" ? "TICKET_EQUIPMENT_ADDED" : "TICKET_EQUIPMENT_CORRECTED";
+  const actor = { resource_id: t.id, resource_type: "ticket", org_id: t.org_id, user_id: caller.id, user_email: m.email ?? caller.email ?? null, user_role: m.role ?? null };
+  // A follow-up row (retried once, fixed id); null when it landed, else why
+  // not — logged with both ids so the trail can be reconciled.
+  const recordFollowUp = async (followAction: string, details: Record<string, unknown>): Promise<string | null> => {
+    const err = await insertAuditRowOnce({ id: crypto.randomUUID(), action: followAction, ...actor, details });
+    if (err) console.error(`[ticket-equipment] could not write ${followAction} for audit row ${auditId} on ticket ${t.id} — reconcile from ticket_equipment: ${err}`);
+    return err;
+  };
+
   const { data: inserted, error: insErr } = await supabaseAdmin
     .from("ticket_equipment")
     .insert({ org_id: t.org_id, ticket_id: t.id, tag, asset_id: assetId, created_by: caller.id })
     .select("id");
   if (insErr || !Array.isArray(inserted) || inserted.length === 0) {
-    if (insErr && isMissingEquipmentTable(insErr)) return NextResponse.json(NOT_MIGRATED, { status: 503 });
+    const missing = !!insErr && isMissingEquipmentTable(insErr);
     console.error(`[ticket-equipment] write refused for ticket ${t.id} (audit ${auditId}): ${insErr?.message ?? "no row written"}`);
-    return NextResponse.json({ error: "The equipment was not recorded — try again in a moment.", applied: false, attempt: auditId }, { status: 500 });
+    // The attempt row above did not land: say so, naming it (EVID-12).
+    const followErr = await recordFollowUp(`${attemptAction}_NOT_APPLIED`, {
+      attempt: auditId, tag, reason: missing ? "not_migrated" : insErr ? "write_failed" : "no_row_written",
+      ...(insErr?.message ? { error: insErr.message } : {}),
+    });
+    const trailNote = followErr
+      ? ` The audit trail could not record that it was not applied (audit row ${auditId}) — tell an Admin.`
+      : "";
+    if (missing) return NextResponse.json({ ...NOT_MIGRATED, error: NOT_MIGRATED.error + trailNote, applied: false, attempt: auditId, notAppliedRecorded: !followErr }, { status: 503 });
+    return NextResponse.json({ error: `The equipment was not recorded — try again in a moment.${trailNote}`, applied: false, attempt: auditId, notAppliedRecorded: !followErr }, { status: 500 });
   }
   const newId = (inserted[0] as { id: string }).id;
 
   let warning: string | null = null;
+  let partial = false;
   if (previous) {
     const { data: removed, error: delErr } = await supabaseAdmin
       .from("ticket_equipment").delete()
       .eq("id", previous.id).eq("ticket_id", t.id).eq("org_id", t.org_id)
       .select("id");
     if (delErr || !Array.isArray(removed) || removed.length === 0) {
+      partial = true;
       console.error(`[ticket-equipment] the corrected entry ${previous.id} on ticket ${t.id} was not removed (audit ${auditId}): ${delErr?.message ?? "no row matched"}`);
-      warning = `The corrected tag was recorded, but the old entry (${previous.tag}) could not be removed — it is still listed. Try the correction again, or tell an Admin.`;
+      // The replacement the CORRECTED row records did not land: the old entry
+      // stays and the corrected tag was added beside it. Two rows say exactly
+      // that — the correction not applied, and the add that did happen.
+      const kept = { rowId: previous.id, tag: previous.tag, assetId: previous.asset_id ?? null };
+      const notAppliedErr = await recordFollowUp("TICKET_EQUIPMENT_CORRECTED_NOT_APPLIED", {
+        attempt: auditId, reason: "old_entry_not_removed", kept, added: { rowId: newId, tag, assetId },
+        ...(delErr?.message ? { error: delErr.message } : {}),
+      });
+      const addedErr = await recordFollowUp("TICKET_EQUIPMENT_ADDED", {
+        tag, assetId, resolution, rowId: newId, besideKept: kept, fromCorrection: auditId,
+        authority: participant ? "participant" : "assignment_queue",
+      });
+      warning = `The corrected tag was recorded, but the old entry (${previous.tag}) could not be removed — it is still listed. Try the correction again, or tell an Admin.`
+        + (notAppliedErr || addedErr ? ` The audit trail could not record this outcome in full (audit row ${auditId}) — tell an Admin.` : "");
     }
   }
   return NextResponse.json({
     ok: true, id: newId, tag, assetId, resolution,
     message: equipmentOutcomeLine(tag, resolution),
     ...(warning ? { warning } : {}),
+    ...(partial ? { partial: true, attempt: auditId } : {}),
   });
 }

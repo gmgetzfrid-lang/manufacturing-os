@@ -185,6 +185,17 @@ export function windowSettingsFromInput(daysText: string, percentText: string): 
   return out;
 }
 
+/** DF-P18 fix pass 3 (review minor): the patch ONE window field's edit makes
+ *  — the days field sets only windowDays, the percent field only
+ *  warnFraction (the key is always present; undefined = blank = cleared).
+ *  The other stored setting is never re-derived from its displayed text, so
+ *  editing the days keeps a stored fraction that is not a whole percent
+ *  (0.333) exactly as stored. Pure. */
+export function windowFieldPatch(field: "days" | "percent", text: string): { windowDays: number | undefined } | { warnFraction: number | undefined } {
+  const v = field === "days" ? windowSettingsFromInput(text, "") : windowSettingsFromInput("", text);
+  return field === "days" ? { windowDays: v.windowDays } : { warnFraction: v.warnFraction };
+}
+
 export default function RoutingControlSection({ level, id, orgId }: { level: RoutingLevel; id: string; orgId: string }) {
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState<string | null>(null);
@@ -383,22 +394,12 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
                       <input aria-label="Consent window working days" className={`${inp} w-16`} inputMode="numeric"
                         value={s.kept?.windowDays !== undefined ? String(s.kept.windowDays) : ""}
                         placeholder={String(CONSENT_WINDOW_DEFAULT_DAYS)}
-                        onChange={(e) => {
-                          const days = e.target.value.replace(/[^0-9]/g, "");
-                          const percent = s.kept?.warnFraction !== undefined ? String(Math.round(s.kept.warnFraction * 100)) : "";
-                          const v = windowSettingsFromInput(days, percent);
-                          patchKept(i, { windowDays: v.windowDays, warnFraction: v.warnFraction });
-                        }} />
+                        onChange={(e) => patchKept(i, windowFieldPatch("days", e.target.value.replace(/[^0-9]/g, "")))} />
                       <span className="text-[var(--color-text-muted)]">working days ({CONSENT_WINDOW_MIN_DAYS}–{CONSENT_WINDOW_MAX_DAYS}); reminder at</span>
                       <input aria-label="Consent window reminder percent" className={`${inp} w-14`} inputMode="numeric"
                         value={s.kept?.warnFraction !== undefined ? String(Math.round(s.kept.warnFraction * 100)) : ""}
                         placeholder={String(Math.round(CONSENT_WINDOW_DEFAULT_WARN_FRACTION * 100))}
-                        onChange={(e) => {
-                          const percent = e.target.value.replace(/[^0-9]/g, "");
-                          const days = s.kept?.windowDays !== undefined ? String(s.kept.windowDays) : "";
-                          const v = windowSettingsFromInput(days, percent);
-                          patchKept(i, { windowDays: v.windowDays, warnFraction: v.warnFraction });
-                        }} />
+                        onChange={(e) => patchKept(i, windowFieldPatch("percent", e.target.value.replace(/[^0-9]/g, "")))} />
                       <span className="text-[var(--color-text-muted)]">% of it ({Math.round(CONSENT_WARN_FRACTION_MIN * 100)}–{Math.round(CONSENT_WARN_FRACTION_MAX * 100)}). Blank = the default.</span>
                     </div>
                   )}

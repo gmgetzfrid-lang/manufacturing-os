@@ -26,7 +26,9 @@
 // major): nor is a block whose consent slot has since been signed, or any
 // block once the review is over (the roster closed, or the request no longer
 // in review — `ticketStatus`); the Audit Log tab marks them "signed later" /
-// "review closed".
+// "review closed". Fix pass 3 (review minor): when the roster changes the
+// rows already read are cleared before anything else (and stay cleared for a
+// roster with no consent slot), so the page's history never carries them on.
 
 import React, { useEffect, useState } from "react";
 import { AlertTriangle } from "lucide-react";
@@ -57,6 +59,11 @@ export default function ConsentBlockNotice({
   const rosterId = roster && typeof roster.id === "string" && roster.id ? roster.id : null;
 
   useEffect(() => {
+    // DF-P18 fix pass 3 (review minor): the earlier roster's rows go first —
+    // a roster that asks nothing (or a re-read for a new roster) never keeps
+    // them in the page's history, judged against a roster they are not of.
+    setRows((prev) => (prev.length === 0 ? prev : []));
+    setReadError(false);
     if (!ticketId || !asks) return;
     let alive = true;
     void (async () => {

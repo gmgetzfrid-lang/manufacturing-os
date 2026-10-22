@@ -30,6 +30,7 @@ vi.mock("@/lib/capabilityPolicy", async (orig) => ({
 
 import { POST } from "@/app/api/tickets/equipment/route";
 import { resetState } from "./helpers/memoryDb";
+import { pairTicketAttempts, type AuditRowLike } from "@/lib/auditActions";
 
 type Row = Record<string, unknown>;
 const ORG = "o-1";
@@ -166,6 +167,84 @@ describe("what is written", () => {
     expect(res.status).toBe(500);
     expect((await res.json()).code).toBe("audit_unwritable");
     expect(equipment()).toEqual([]);
+  });
+  it("DF-P18 fix pass 3 (review major, EVID-12): an insert refused after the attempt row writes TICKET_EQUIPMENT_ADDED_NOT_APPLIED naming it — the viewers read the attempt 'not applied'", async () => {
+    h.admin.tableWriteError = { ticket_equipment: { code: "57014", message: "timeout" } };
+    const res = await req({ ticketId: T, action: "add", tag: "P-101" });
+    expect(res.status).toBe(500);
+    const out = await res.json();
+    expect(out).toMatchObject({ applied: false, notAppliedRecorded: true });
+    expect(equipment()).toEqual([]);
+    const attempt = audits().find((a) => a.action === "TICKET_EQUIPMENT_ADDED")!;
+    expect(out.attempt).toBe(attempt.id);
+    const follow = audits().find((a) => a.action === "TICKET_EQUIPMENT_ADDED_NOT_APPLIED")!;
+    expect(follow).toMatchObject({ resource_id: T, resource_type: "ticket", org_id: ORG, user_id: "u-req" });
+    expect(follow.details).toMatchObject({ attempt: attempt.id, reason: "write_failed", error: "timeout", tag: "P-101" });
+    const { attempts } = pairTicketAttempts(audits() as unknown as AuditRowLike[]);
+    expect(attempts.get(attempt.id as string)?.outcome).toBe("not_applied");
+  });
+  it("DF-P18 fix pass 3 (review major): a refused correction insert writes TICKET_EQUIPMENT_CORRECTED_NOT_APPLIED; the old entry stays, alone", async () => {
+    const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    h.admin.tables.ticket_equipment = [{ id: A, org_id: ORG, ticket_id: T, tag: "P-1O1", asset_id: null, created_by: "u-req" }];
+    h.admin.refuse = ["ticket_equipment"];
+    const res = await req({ ticketId: T, action: "correct", rowId: A, tag: "P-101" });
+    expect(res.status).toBe(500);
+    expect(equipment()).toHaveLength(1);
+    const attempt = audits().find((a) => a.action === "TICKET_EQUIPMENT_CORRECTED")!;
+    const follow = audits().find((a) => a.action === "TICKET_EQUIPMENT_CORRECTED_NOT_APPLIED")!;
+    expect(follow.details).toMatchObject({ attempt: attempt.id, reason: "no_row_written" });
+    expect(pairTicketAttempts(audits() as unknown as AuditRowLike[]).attempts.get(attempt.id as string)?.outcome).toBe("not_applied");
+  });
+  it("DF-P18 fix pass 3 (review major): when the not-applied row cannot be written either (twice), the 500 says so", async () => {
+    let auditWrites = 0;
+    h.admin.afterWrite = (table) => {
+      if (table === "audit_logs" && ++auditWrites === 1) h.admin.tableWriteError = { ticket_equipment: { code: "57014", message: "timeout" }, audit_logs: { code: "57014", message: "timeout" } };
+    };
+    const res = await req({ ticketId: T, action: "add", tag: "P-101" });
+    expect(res.status).toBe(500);
+    const out = await res.json();
+    expect(out).toMatchObject({ applied: false, notAppliedRecorded: false });
+    expect(out.error).toMatch(/could not record that it was not applied \(audit row [0-9a-f-]{36}\) — tell an Admin/);
+    expect(audits().map((a) => a.action)).toEqual(["TICKET_EQUIPMENT_ADDED"]);
+    expect(h.admin.writes.filter((w) => w.table === "audit_logs" && (w.payload as Row).action === "TICKET_EQUIPMENT_ADDED_NOT_APPLIED")).toHaveLength(2);
+  });
+  it("DF-P18 fix pass 3 (review major): a correction whose old entry cannot be removed — the trail never reads a clean replacement: CORRECTED_NOT_APPLIED names the attempt and the kept row, and an ADDED row records the tag that now stands beside it", async () => {
+    const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    h.admin.tables.ticket_equipment = [{ id: A, org_id: ORG, ticket_id: T, tag: "P-1O1", asset_id: null, created_by: "u-req" }];
+    h.admin.afterWrite = (table, method) => { if (table === "ticket_equipment" && method === "insert") h.admin.tableWriteError = { ticket_equipment: { code: "42501", message: "denied" } }; };
+    const res = await req({ ticketId: T, action: "correct", rowId: A, tag: "P-101" });
+    expect(res.status).toBe(200);
+    const out = await res.json();
+    expect(out).toMatchObject({ ok: true, partial: true, tag: "P-101" });
+    expect(out.warning).toMatch(/the old entry \(P-1O1\) could not be removed — it is still listed/);
+    expect(out.warning).not.toMatch(/audit trail could not record/);
+    expect(equipment().map((r) => r.tag).sort()).toEqual(["P-101", "P-1O1"]);
+    const newRow = equipment().find((r) => r.tag === "P-101")!;
+    const attempt = audits().find((a) => a.action === "TICKET_EQUIPMENT_CORRECTED")!;
+    expect(out.attempt).toBe(attempt.id);
+    const notApplied = audits().find((a) => a.action === "TICKET_EQUIPMENT_CORRECTED_NOT_APPLIED")!;
+    expect(notApplied.details).toMatchObject({
+      attempt: attempt.id, reason: "old_entry_not_removed", error: "denied",
+      kept: { rowId: A, tag: "P-1O1", assetId: null }, added: { rowId: newRow.id, tag: "P-101", assetId: ASSET },
+    });
+    const added = audits().find((a) => a.action === "TICKET_EQUIPMENT_ADDED")!;
+    expect(added.details).toMatchObject({ tag: "P-101", assetId: ASSET, rowId: newRow.id, besideKept: { rowId: A, tag: "P-1O1" }, fromCorrection: attempt.id, authority: "participant" });
+    expect((added.details as Row).recordedBeforeApply).toBeUndefined();
+    const { attempts } = pairTicketAttempts(audits() as unknown as AuditRowLike[]);
+    expect(attempts.get(attempt.id as string)?.outcome).toBe("not_applied");
+    expect(attempts.has(added.id as string)).toBe(false);
+    // Order: attempt, then the write, then the two follow-ups.
+    expect(audits().map((a) => a.action)).toEqual(["TICKET_EQUIPMENT_CORRECTED", "TICKET_EQUIPMENT_CORRECTED_NOT_APPLIED", "TICKET_EQUIPMENT_ADDED"]);
+  });
+  it("DF-P18 fix pass 3 (review major): a refused removal whose follow-up rows cannot be written says so in the warning", async () => {
+    const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    h.admin.tables.ticket_equipment = [{ id: A, org_id: ORG, ticket_id: T, tag: "P-1O1", asset_id: null, created_by: "u-req" }];
+    h.admin.afterWrite = (table, method) => {
+      if (table === "ticket_equipment" && method === "insert") h.admin.tableWriteError = { ticket_equipment: { code: "42501", message: "denied" }, audit_logs: { code: "57014", message: "timeout" } };
+    };
+    const out = await (await req({ ticketId: T, action: "correct", rowId: A, tag: "P-101" })).json();
+    expect(out).toMatchObject({ ok: true, partial: true });
+    expect(out.warning).toMatch(/The audit trail could not record this outcome in full \(audit row [0-9a-f-]{36}\) — tell an Admin\./);
   });
   it("before 20261251 (no table): 503 not_migrated, nothing written — not even the audit row", async () => {
     h.admin.readError.ticket_equipment = { code: "42P01", message: 'relation "ticket_equipment" does not exist' };

@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 //
 // drafting-flow Round G, DF-P18 — the new controls as RENDERED, each pinned
-// to DEC-90 ruling (1) for DF-P18: an unconfigured workspace sees exactly
-// today's screen (no select, no flag, no notice, no checkbox), and the
-// control appears only where configuration asks for it.
+// to DEC-90 ruling (1) for DF-P18: an unconfigured workspace sees today's
+// screen (no select, no flag, no notice), and the control appears only where
+// configuration asks for it — save the two exceptions later rulings ask for:
+// the equipment control (ruling (4), pinned below) and the at-submit
+// issue-as-is checkbox (ruling (5): every workspace, assigned drafter only,
+// default off — pinned in dfRoundG_P18_reviewModelPage.test.ts).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -190,6 +193,35 @@ describe("ConsentBlockNotice (GAP-113 acceptance 1, ruling (6))", () => {
     const page = (await import("node:fs")).readFileSync((await import("node:path")).join(process.cwd(), "app", "(protected)", "requests", "[id]", "page.tsx"), "utf8");
     expect(page).toContain("ticketStatus={ticket.status} onRows={setConsentBlockRows}");
     expect(page).toContain("rosterRecord, ticket.status)]");
+  });
+  it("DF-P18 fix pass 3 (review minor): the roster changes to one with no consent slot — the rows already handed to the page are cleared (onRows([])), nothing is read again", async () => {
+    const blocked = { created_at: "2026-10-21T09:00:00Z", roster_id: "r1", slot_kind: "ops", actor_name: "x", details: { reason: "window_never_opened", why: "nobody may be asked" } };
+    db.results.ticket_notice_events = { data: [blocked], error: null };
+    const onRows = vi.fn();
+    await render(el(ConsentBlockNotice, { ticketId: "t1", roster: { id: "r1", slots: [{ kind: "ops", label: "Operations", mode: "consent_window", status: "open" }] } as never, ticketStatus: "PENDING_REVIEW", onRows }));
+    expect(onRows).toHaveBeenLastCalledWith([expect.objectContaining({ roster_id: "r1" })]);
+    const readsBefore = db.reads.filter((t) => t === "ticket_notice_events").length;
+    // Resubmitted: the new roster asks nobody's consent.
+    await render(el(ConsentBlockNotice, { ticketId: "t1", roster: { id: "r2", slots: [{ kind: "check", mode: "blocking" }] } as never, ticketStatus: "PENDING_REVIEW", onRows }));
+    expect(onRows).toHaveBeenLastCalledWith([]);
+    expect(host.innerHTML).toBe("");
+    expect(db.reads.filter((t) => t === "ticket_notice_events").length).toBe(readsBefore);
+    // And no roster at all: still cleared.
+    onRows.mockClear();
+    await render(el(ConsentBlockNotice, { ticketId: "t1", roster: null, ticketStatus: "DRAFTING", onRows }));
+    expect(onRows.mock.calls.every((c) => Array.isArray(c[0]) && c[0].length === 0)).toBe(true);
+  });
+  it("DF-P18 fix pass 3 (review minor): a roster changing to another consent roster clears the earlier rows before the re-read answers", async () => {
+    const blocked = { created_at: "2026-10-21T09:00:00Z", roster_id: "r1", slot_kind: "ops", actor_name: "x", details: { reason: "window_never_opened", why: "nobody may be asked" } };
+    db.results.ticket_notice_events = { data: [blocked], error: null };
+    const onRows = vi.fn();
+    const slots = [{ kind: "ops", label: "Operations", mode: "consent_window", status: "open" }];
+    await render(el(ConsentBlockNotice, { ticketId: "t1", roster: { id: "r1", slots } as never, ticketStatus: "PENDING_REVIEW", onRows }));
+    expect(onRows).toHaveBeenLastCalledWith([expect.objectContaining({ roster_id: "r1" })]);
+    db.hang = ["ticket_notice_events"];
+    await render(el(ConsentBlockNotice, { ticketId: "t1", roster: { id: "r2", slots } as never, ticketStatus: "PENDING_REVIEW", onRows }));
+    expect(onRows).toHaveBeenLastCalledWith([]);
+    expect(host.innerHTML).toBe("");
   });
   it("before 20261255 (no table) nothing is said", async () => {
     db.results.ticket_notice_events = { data: null, error: { code: "42P01", message: 'relation "ticket_notice_events" does not exist' } };

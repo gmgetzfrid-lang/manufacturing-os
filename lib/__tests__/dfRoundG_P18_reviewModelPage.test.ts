@@ -1,7 +1,9 @@
 // drafting-flow Round G, DF-P18 REVIEW-MODEL REQUEST-PAGE FOLLOW-UPS — the
 // pure rules and the source pins (DEC-90 rulings (1)–(6) for DF-P18):
 //   (1) every new control appears ONLY where configuration asks for it — an
-//       unconfigured workspace sees today's screens and gets today's outcomes;
+//       unconfigured workspace sees today's screens (save the equipment
+//       control, ruling (4), and the at-submit checkbox, ruling (5)) and gets
+//       today's outcomes;
 //   (2) the source-drift acknowledgement only where an action carries
 //       requiresSourceDriftAck;
 //   (3) "needs MOC" and "minor correction" change nothing for a request with
@@ -23,7 +25,7 @@ import {
   consentBlockReason, consentBlockHistoryEntries, sourceDriftRefusalLabels, currentConsentBlockRows, consentWindowOpenedFor,
   consentBlockSupersededBy, consentBlockActionLabel,
 } from "@/lib/requestPageReview";
-import { keptNote, workClassChoices, windowSettingsFromInput, draftToControl, controlToDraft } from "@/components/documents/RoutingControlSection";
+import { keptNote, workClassChoices, windowSettingsFromInput, windowFieldPatch, draftToControl, controlToDraft } from "@/components/documents/RoutingControlSection";
 import { parseRoutingControl } from "@/lib/routingControl";
 import { rosterDriftNote } from "@/components/requests/TicketRosterPanel";
 import { rosterHasConsent } from "@/components/requests/ConsentBlockNotice";
@@ -329,6 +331,20 @@ describe("TIER-3 dw1 and the DF-P7 editor residual — the routing editor", () =
     expect(windowSettingsFromInput("", "")).toEqual({});
     expect(windowSettingsFromInput("5", "50")).toEqual({ windowDays: 5, warnFraction: 0.5 });
     expect(windowSettingsFromInput("0", "")).toEqual({ windowDays: 0 });
+  });
+  it("DF-P18 fix pass 3 (review minor): editing only the days keeps a stored reminder fraction that is not a whole percent (0.333) exactly; editing only the percent keeps the days; blank clears only its own field", () => {
+    const kept = { windowDays: 5, warnFraction: 0.333 };
+    expect(windowFieldPatch("days", "7")).toEqual({ windowDays: 7 });
+    expect({ ...kept, ...windowFieldPatch("days", "7") }).toEqual({ windowDays: 7, warnFraction: 0.333 });
+    expect({ ...kept, ...windowFieldPatch("days", "7") }.warnFraction).toBe(0.333);
+    expect({ ...kept, ...windowFieldPatch("percent", "40") }).toEqual({ windowDays: 5, warnFraction: 0.4 });
+    expect(windowFieldPatch("days", "")).toEqual({ windowDays: undefined });
+    expect("windowDays" in windowFieldPatch("days", "")).toBe(true);
+    expect(windowFieldPatch("percent", "")).toEqual({ warnFraction: undefined });
+    const src = readFileSync(join(process.cwd(), "components", "documents", "RoutingControlSection.tsx"), "utf8");
+    expect(src).toContain('patchKept(i, windowFieldPatch("days", e.target.value.replace(/[^0-9]/g, "")))');
+    expect(src).toContain('patchKept(i, windowFieldPatch("percent", e.target.value.replace(/[^0-9]/g, "")))');
+    expect(src).not.toContain("Math.round(s.kept.warnFraction * 100)) : \"\";");
   });
   it("a notify-only slot limited to classes and a consent slot with its window round-trip through the editor and parse", () => {
     const stored = { slots: [
