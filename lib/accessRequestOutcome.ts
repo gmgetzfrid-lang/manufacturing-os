@@ -21,7 +21,7 @@
 // carry (wellFormedAddress, noticeSafeName), the per-org notice cap
 // (ACCESS_REQUEST_NOTICES_PER_ORG_HOUR — the bell and the email legs both),
 // and the clearing of the pool's notices once a request is decided
-// (clearAccessRequestNotices).
+// (clearAccessRequestNotices — a mark, never a read: NEDGE-24, N19).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { configuredPublicOrigin } from "@/lib/publicOrigin";
@@ -216,33 +216,69 @@ export async function queueAccessRequestOutcome(
 }
 
 /** PROD-2 (N8 review fix): once a request is decided, the pool's
- *  access_request_pending rows about it are marked read for every recipient
- *  — the request is closed, so the notice waits on nobody (the PROD-3 rule
- *  for branch alerts). Keyed on the row's resource (resource_type
+ *  access_request_pending rows about it are retired for every recipient —
+ *  the request is closed, so the notice waits on nobody (the PROD-3 rule for
+ *  branch alerts). Keyed on the row's resource (resource_type
  *  'access_request', resource_id = the request id — what the request door
- *  writes, and the (org_id, resource_type, resource_id) index covers). The
- *  service role writes read_at only (20261161's read_at-only trigger passes a
- *  server write). Best-effort: answers how many rows were cleared, or null
- *  when the write failed (logged) — the decision is already recorded. */
+ *  writes, and the (org_id, resource_type, resource_id) index covers).
+ *  notifications NEDGE-24 limb 1 (N19; drafting-flow EVID-13, DEC-90 ruling
+ *  (5)): retired with a MARK, never a read — read_at is the recipient's own
+ *  act. Each still-unread, unmarked row gets metadata.superseded_at /
+ *  superseded_by: 'access_request_decided' (its other metadata kept),
+ *  conditional on read_at IS NULL and no mark yet, so a row the recipient
+ *  opened meanwhile is left alone — the workflow route's mark
+ *  (app/api/tickets/workflow-action/route.ts). The bell's unread list and
+ *  badge and the inbox count already leave a marked row out
+ *  (lib/inAppNotifications.ts, lib/inbox.ts), so what every Admin sees is
+ *  unchanged. The service role writes it (20261161's read_at-only trigger
+ *  binds only a signed-in recipient on their own row). Best-effort: answers
+ *  how many rows were retired, or null when the read failed or any mark was
+ *  refused (logged) — the decision is already recorded. */
 export async function clearAccessRequestNotices(sb: SupabaseClient, orgId: string, requestIds: string[]): Promise<number | null> {
   const ids = Array.from(new Set(requestIds.filter(Boolean)));
   if (!orgId || ids.length === 0) return 0;
   try {
-    const { data, error } = await sb.from("notifications")
-      .update({ read_at: new Date().toISOString() })
+    const { data: rows, error } = await sb.from("notifications")
+      .select("id, metadata")
       .eq("org_id", orgId)
       .eq("kind", "access_request_pending")
       .eq("resource_type", "access_request")
       .in("resource_id", ids)
       .is("read_at", null)
-      .select("id");
+      .is("metadata->>superseded_at", null);
     if (error) {
       console.warn(`[access-request] the pool's notices were not cleared: ${error.message}`);
       return null;
     }
-    return Array.isArray(data) ? data.length : 0;
+    const supersededAt = new Date().toISOString();
+    const list = (rows as Array<{ id: string; metadata: Record<string, unknown> | null }> | null) ?? [];
+    let retired = 0;
+    let refused = 0;
+    for (let i = 0; i < list.length; i += CLEAR_MARKS_AT_ONCE) {
+      const outcomes = await Promise.all(list.slice(i, i + CLEAR_MARKS_AT_ONCE).map(async (row) => {
+        const { data: hit, error: markErr } = await sb.from("notifications")
+          .update({ metadata: { ...(row.metadata ?? {}), superseded_at: supersededAt, superseded_by: "access_request_decided" } })
+          .eq("id", row.id)
+          .eq("org_id", orgId)
+          .is("read_at", null)
+          .is("metadata->>superseded_at", null)
+          .select("id");
+        if (markErr) return "refused" as const;
+        // zero rows: opened or retired meanwhile — nothing to retire
+        return Array.isArray(hit) && hit.length > 0 ? ("retired" as const) : ("gone" as const);
+      }));
+      for (const o of outcomes) { if (o === "retired") retired += 1; else if (o === "refused") refused += 1; }
+    }
+    if (refused > 0) {
+      console.warn(`[access-request] the pool's notices were not cleared: the mark was refused on ${refused} of ${list.length}`);
+      return null;
+    }
+    return retired;
   } catch (e) {
     console.warn(`[access-request] the pool's notices were not cleared: ${(e as Error).message}`);
     return null;
   }
 }
+
+/** How many pool rows clearAccessRequestNotices marks side by side. */
+const CLEAR_MARKS_AT_ONCE = 10;

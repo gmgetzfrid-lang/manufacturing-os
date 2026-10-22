@@ -117,6 +117,8 @@ import { KIND_META } from "@/lib/notificationKinds";
 import { isMissingSchemaError } from "@/lib/checkedWrite";
 import { PUSH_DEVICE_CAP, PUSH_FUTURE_SKEW_MS, pushEndpointAllowed } from "@/lib/push/endpoints";
 import { emailAllowedByPrefs } from "@/lib/notificationPrefs";
+import { recordNotEmailedFor, type NotEmailedRecordClient } from "@/lib/notifications";
+import { notEmailedRecordLatch } from "@/lib/deliveryRecordLatch";
 import { renderNotificationEmail } from "@/lib/emailRender";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { formatRecordDate, formatRecordTime, orgTimeZone } from "@/lib/recordTime";
@@ -616,12 +618,18 @@ async function handler(req: NextRequest) {
   //     next run resumes where it stopped (queueComplianceDigests). N6 fix
   //     pass 3: it visits org by org, each with its share of that time, so
   //     one org's volume cannot spend another org's digest.
+  //     DELIV-18 (N19 fix pass): the "not emailed by their choice" records
+  //     it owes are handed back (digestRecords) and written at 6d, after the
+  //     drain that sends this run's digests — never before it — and (the
+  //     merge-time fix) after the prunes 7b, 7c and 7d.
+  const digestRecords: DigestRecordStep[] = [];
   try {
     result.complianceEmails = await queueComplianceDigests(sb, {
       origin: publicOrigin() || req.nextUrl.origin,
       errors: result.errors,
       deadlineAt: digestDeadlineAt(runEnd, Date.now()),
       runStartedAt: startedAt,
+      afterDrain: digestRecords,
     });
   } catch (e) {
     result.errors.push(`compliance-digest: ${(e as Error).message}`);
@@ -701,6 +709,30 @@ async function handler(req: NextRequest) {
       result.auditOutbox = await drainAuditDeadLetters(sb, { stopBy: Math.min(runEnd, Date.now() + AUDIT_OUTBOX_MS), errors: result.errors });
     } catch (e) {
       result.errors.push(`audit-outbox: ${(e as Error).message}`);
+    }
+  }
+
+  // 6d. DELIV-18 (notifications N19 fix pass; drafting-flow EVID-9 done-when
+  //     2): the digest's "not emailed by their choice" records, written only
+  //     now — after 6c has sent (or tried to send) this run's digests — so no
+  //     send waits on them (DEC-90 ruling (1)). N19 merge-time fix: it runs
+  //     here, after the prunes (7b, 7c, 7d), not before them, so it never
+  //     spends the time AFTER_DIGEST_RESERVE_MS holds back for 6c's batch and
+  //     the prunes; they start right after 6c, as they did before this step
+  //     existed. Bookkeeping: its own budget, DIGEST_RECORD_MS, never past the
+  //     run's end (it takes what the prunes left, like the background steps
+  //     below); each read and insert is waited for at most
+  //     DIGEST_RECORD_CALL_MS (the request is aborted then), and no chunk
+  //     starts unless both could end by the step's limit. What it has no time
+  //     for is not recorded, and said.
+  if (digestRecords.length > 0) {
+    const recordBy = Math.min(runEnd, Date.now() + DIGEST_RECORD_MS);
+    for (const record of digestRecords) {
+      try {
+        await record(recordBy);
+      } catch (e) {
+        result.errors.push(`compliance-digest: the "not emailed by their choice" record: ${(e as Error).message}`);
+      }
     }
   }
 
@@ -1164,10 +1196,13 @@ const FIRST_DRAIN_BUDGET_MS = 120_000;
  *  however long the steps before it took — unless the run ends sooner. */
 const DIGEST_FLOOR_MS = 60_000;
 /** Kept back from the digest for the obligation step after it: the second
- *  drain (6c, one batch), which sends what the digest queued, and the two
- *  one-statement prunes. The background steps after them — knowledge sync,
- *  ingest, the storage walk, the embed drain — take what the run has left;
- *  no reservation for them is held ahead of the digest. */
+ *  drain (6c, one batch), which sends what the digest queued, and the prunes
+ *  (7b, 7c, 7d — each one statement or its own small budget). The digest's
+ *  "not emailed by their choice" record (6d, DELIV-18) is run after 7d, so it
+ *  spends none of this (N19 merge-time fix). It and the background steps
+ *  after it — knowledge sync, ingest, the storage walk, the embed drain —
+ *  take what the run has left; no reservation for them is held ahead of the
+ *  digest. */
 const AFTER_DIGEST_RESERVE_MS = DRAIN_BATCH_MS + 10_000;
 /** The background steps: the most each is given, cut to what the run has
  *  left; with less than it needs a step is not run, says so, and the next
@@ -1394,7 +1429,7 @@ function digestTail(row: { metadata?: unknown }): string[] {
  *     digestDeadlineAt); the run says which orgs it did not visit or finish.
  *   - DELIV-7: every read and write that fails is a line in `errors`. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: string; errors: string[]; deadlineAt: number; runStartedAt: number }): Promise<number> {
+async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: string; errors: string[]; deadlineAt: number; runStartedAt: number; afterDrain: DigestRecordStep[] }): Promise<number> {
   const now = Date.now();
   const asOf = new Date(now).toISOString();
   const dayKey = asOf.slice(0, 10);
@@ -1499,14 +1534,22 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
   };
 
   let queued = 0;
+  /** DELIV-18 (notifications N19): the members their own preferences left
+   *  out of this run's digest, recorded by the cron's step 6d, after the
+   *  drain that sends this run's digests (recordDeclined, below) — never
+   *  before a send. */
+  const declined: Array<{ m: Member; windowMs: number }> = [];
   /** NEDGE-20 (notifications N14): whether email_notifications.queued_by
    *  (20261183) can be read — false after the first 42703, for the run. */
   let queuedByKnown = true;
   /** Offer one member their digest. `owe(fromMs)`: what a later run's search
    *  for them must start from, when this one held something back. */
   const one = async (m: Member, windowMs: number, oldestMs: number, owe: (fromMs: number) => void) => {
-    // Declined by their preferences: offered, and nothing is owed.
-    if (!unverified.has(m.uid) && !emailAllowedByPrefs(prefs.get(m.uid) ?? null, "compliance_digest")) return;
+    // Declined by their preferences: offered, and nothing is owed. DELIV-18
+    // (N19): remembered for the "not emailed by their choice" record, which
+    // the cron writes at step 6d, after this run's digests are sent
+    // (recordDeclined).
+    if (!unverified.has(m.uid) && !emailAllowedByPrefs(prefs.get(m.uid) ?? null, "compliance_digest")) { declined.push({ m, windowMs }); return; }
     // Their last digest: today's means no second one today (the per-day
     // dedupe); otherwise their list starts where it stopped. A read that
     // fails sends anyway, from the window's start — a line listed twice is
@@ -1528,7 +1571,12 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
         .from("email_notifications").select("created_at, metadata")
         .eq("org_id", m.org_id)
         .eq("to_user_id", m.uid)
-        .eq("event_type", "compliance_digest");
+        .eq("event_type", "compliance_digest")
+        // DELIV-18 (N19): a "not emailed by their choice" record (20261258)
+        // is no digest sent — read as their last one, it would start their
+        // next list after items they were never sent. Before 20261258 no row
+        // has that status: the same rows as before.
+        .neq("status", "not_emailed");
       if (serverOnly) q = q.is("queued_by", null);
       return q.order("created_at", { ascending: false }).limit(DIGEST_LAST_ROWS);
     };
@@ -1787,7 +1835,109 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
       { key: DIGEST_STATE_KEY, value: next, updated_at: asOf }, { onConflict: "key" });
     if (saveErr) say(`where this run stopped could not be recorded — the next run starts from the state the last run recorded (nobody reached here is listed an item twice): ${saveErr.message}`);
   }
+
+  // DELIV-18 (notifications N19; drafting-flow EVID-9 done-when 2): each
+  // member their own preferences left out of today's digest — reached by a
+  // visit (an active member of the org, with an address, holding unread
+  // compliance notices in the visit's window) — gets ONE "not emailed by
+  // their choice" record a day (lib/notifications.ts recordNotEmailedFor:
+  // status 'not_emailed', which nothing ever sends; 20261258). Not written
+  // here: handed back to the cron, which writes it at step 6d, AFTER the 6c
+  // drain has sent this run's digests and after the state above is
+  // recorded — so no send and no state waits on it (the N19 fix pass); who
+  // is digested is exactly as before. A manual re-run the same day records
+  // nobody twice (today's records are read first, by metadata.day). Before
+  // 20261258 the old status CHECK refuses the record: said once by the
+  // recorder, and later runs in the process skip it (notEmailedRecordLatch)
+  // — today's path.
+  if (declined.length > 0) opts.afterDrain.push((stopBy) => recordDeclined(sb, declined, { dayKey, asOf, iso, say, stopBy }));
   return queued;
+}
+
+/** A step the digest hands back to the cron (DELIV-18, N19 fix pass): run
+ *  at 6d, after the drain that sends this run's digests and (the merge-time
+ *  fix) after the prunes 7b-7d, with the latest time it may end by. */
+type DigestRecordStep = (stopBy: number) => Promise<void>;
+
+/** DELIV-18 (N19 fix pass): the digest records' own budget at step 6d, and
+ *  the most any one of its reads or inserts is waited for (the request is
+ *  aborted then; a chunk is one of each, so none starts unless two calls'
+ *  worth of its limit is left). */
+const DIGEST_RECORD_MS = 20_000;
+const DIGEST_RECORD_CALL_MS = 5_000;
+
+/** One bookkeeping call, waited for at most `ms`: the request is aborted then
+ *  (`build` hands the signal to the PostgREST builder) and the wait ends
+ *  whether or not the client honours the abort, with `timedOut()` as the
+ *  answer. A call abandoned this way may still land. */
+async function withinMs<T>(build: (signal: AbortSignal) => PromiseLike<T>, ms: number, timedOut: () => T): Promise<T> {
+  const ctl = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<T>((resolve) => { timer = setTimeout(() => { ctl.abort(); resolve(timedOut()); }, ms); });
+  try {
+    return await Promise.race([Promise.resolve(build(ctl.signal)), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** DELIV-18 (N19): the digest's "not emailed by their choice" records, in
+ *  chunks of DIGEST_UID_CHUNK — one read of today's records (so a re-run
+ *  records nobody twice) and one insert per chunk. A read that fails records
+ *  anyway (a fact recorded twice is better than one lost) and says so. N19
+ *  fix pass: run by the cron at step 6d, after the 6c drain; each read and
+ *  insert is bounded (DIGEST_RECORD_CALL_MS, withinMs), and before every
+ *  chunk the time is checked against `stopBy` — a chunk that could end
+ *  after it is not started, and the members not recorded are said. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function recordDeclined(sb: SupabaseClient<any>, declined: Array<{ m: { uid: string; org_id: string; email: string | null }; windowMs: number }>, ctx: { dayKey: string; asOf: string; iso: (ms: number) => string; say: (line: string) => void; stopBy: number }): Promise<void> {
+  // before 20261258 (or this process has seen it missing): nothing to try
+  if (notEmailedRecordLatch.held()) return;
+  const noAnswer = `no answer within ${DIGEST_RECORD_CALL_MS / 1000} s — the request was abandoned`;
+  // The recorder's one insert (always email_notifications), bounded like the read.
+  const recordClient: NotEmailedRecordClient = {
+    from: () => ({
+      insert: (rows) => withinMs(
+        (signal) => sb.from("email_notifications").insert(rows as never).abortSignal(signal) as PromiseLike<{ error: { code?: string; message?: string } | null }>,
+        DIGEST_RECORD_CALL_MS,
+        () => ({ error: { code: "timeout", message: `${noAnswer} (it may still land)` } })),
+    }),
+  };
+  for (let i = 0; i < declined.length; i += DIGEST_UID_CHUNK) {
+    if (Date.now() + 2 * DIGEST_RECORD_CALL_MS > ctx.stopBy) {
+      const left = declined.slice(i).filter((d) => !!d.m.email).length;
+      if (left > 0) ctx.say(`${left} member(s) were not emailed today's digest by their own choice — not recorded: no time was left in this run`);
+      return;
+    }
+    const chunk = declined.slice(i, i + DIGEST_UID_CHUNK).filter((d) => !!d.m.email);
+    if (chunk.length === 0) continue;
+    const { data, error } = await withinMs<{ data: unknown; error: { message: string } | null }>(
+      (signal) => sb
+        .from("email_notifications").select("org_id, to_user_id")
+        .eq("event_type", "compliance_digest")
+        .eq("status", "not_emailed")
+        .eq("metadata->>day", ctx.dayKey)
+        .in("to_user_id", [...new Set(chunk.map((d) => d.m.uid))])
+        .abortSignal(signal),
+      DIGEST_RECORD_CALL_MS,
+      () => ({ data: null, error: { message: noAnswer } }));
+    if (error) ctx.say(`today's "not emailed by their choice" records could not be read — ${chunk.length} member(s) recorded anyway (a re-run today may record them twice): ${error.message}`);
+    const done = new Set(error ? [] : ((data as Array<{ org_id: unknown; to_user_id: unknown }> | null) ?? []).map((r) => `${String(r.org_id)}/${String(r.to_user_id)}`));
+    const todo = chunk.filter((d) => !done.has(`${d.m.org_id}/${d.m.uid}`));
+    if (todo.length === 0) continue;
+    const out = await recordNotEmailedFor(recordClient, todo.map((d) => ({
+      orgId: d.m.org_id,
+      toUserId: d.m.uid,
+      toEmail: d.m.email as string,
+      subject: "Compliance items need you",
+      bodyText: `Today's compliance digest (${ctx.dayKey}) was not emailed: this member's email preferences turn it off. They held unread compliance notices dated between ${ctx.iso(d.windowMs)} and ${ctx.asOf}.`,
+      eventType: "compliance_digest",
+      metadata: { day: ctx.dayKey, window: { from: ctx.iso(d.windowMs), to: ctx.asOf } },
+    })), "compliance-digest");
+    // before 20261258 (or this process has seen it missing): nothing more to try this run
+    if (out === "not_installed" || out === "skipped") return;
+    if (typeof out === "object") ctx.say(`the record that ${todo.length} member(s) were not emailed today's digest by their own choice was not written: ${out.error}`);
+  }
 }
 
 export async function POST(req: NextRequest) { return handler(req); }

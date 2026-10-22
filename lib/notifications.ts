@@ -302,36 +302,94 @@ let notEmailedUnrecordedLogged = false;
  *  repeat is accepted: the record exists); never throws. */
 async function recordNotEmailed(input: QueueEmailInput): Promise<boolean> {
   try {
-    const metadata: Record<string, unknown> = { ...(input.metadata ?? {}) };
-    if (input.link) metadata.link = input.link;
-    if (input.rendered) metadata.rendered = true;
-    metadata.not_emailed = { byTheirChoice: true, reason: "preference" };
-    const body = storedBody(input);
-    const { error } = await supabase.from("email_notifications").insert({
-      org_id: input.orgId,
-      to_user_id: input.toUserId,
-      to_email: input.toEmail,
-      subject: input.subject,
-      body_text: body.text,
-      body_html: body.html,
-      resource_type: input.resourceType || null,
-      resource_id: input.resourceId || null,
-      event_type: input.eventType,
-      metadata,
-      status: "not_emailed",
-    });
-    if (!error) { notEmailedRecordLatch.clear(); return true; }
-    const notPasted = isStatusCheckRefusal(error);
-    if (notPasted) notEmailedRecordLatch.set();
-    if (!notEmailedUnrecordedLogged) {
-      notEmailedUnrecordedLogged = true;
-      console.info(notPasted
-        ? "queueEmail: a recipient's preference turned an email off; the record of it needs migration 20261258 — not recorded (the email is not sent, as before)"
-        : `queueEmail: the record that a recipient's preference turned an email off was not written (${error.code ?? "?"}: ${error.message}) — the email is not sent, as before`);
-    }
-    return false;
+    return (await insertNotEmailed(supabase as unknown as NotEmailedRecordClient, notEmailedRow(input), "queueEmail")) === "recorded";
   } catch {
     return false;
+  }
+}
+
+/** The row recordNotEmailed writes: the columns a queued row carries, status
+ *  'not_emailed', metadata.not_emailed naming the cause (their preference). */
+function notEmailedRow(input: QueueEmailInput): Record<string, unknown> {
+  const metadata: Record<string, unknown> = { ...(input.metadata ?? {}) };
+  if (input.link) metadata.link = input.link;
+  if (input.rendered) metadata.rendered = true;
+  metadata.not_emailed = { byTheirChoice: true, reason: "preference" };
+  const body = storedBody(input);
+  return {
+    org_id: input.orgId,
+    to_user_id: input.toUserId,
+    to_email: input.toEmail,
+    subject: input.subject,
+    body_text: body.text,
+    body_html: body.html,
+    resource_type: input.resourceType || null,
+    resource_id: input.resourceId || null,
+    event_type: input.eventType,
+    metadata,
+    status: "not_emailed",
+  };
+}
+
+/** What a not_emailed insert came to: written (or merged as a repeat by
+ *  20261258's rail); refused because 20261258 is not pasted (the latch is
+ *  then set); refused for another reason (the message). */
+type NotEmailedInsertOutcome = "recorded" | "not_installed" | { error: string };
+
+/** The client a not_emailed insert goes through: the shared client
+ *  (queueEmail) or a server producer's service-role client. Structural —
+ *  only the one insert is used. */
+export type NotEmailedRecordClient = {
+  from: (table: string) => { insert: (rows: unknown) => PromiseLike<{ error: { code?: string; message?: string } | null }> };
+};
+
+/** One not_emailed insert (a row, or a producer's rows in ONE statement),
+ *  with the latch and the once-per-process line queueEmail has always had.
+ *  Throws only if the client does. */
+async function insertNotEmailed(client: NotEmailedRecordClient, payload: Record<string, unknown> | Record<string, unknown>[], who: string): Promise<NotEmailedInsertOutcome> {
+  const { error } = await client.from("email_notifications").insert(payload);
+  if (!error) { notEmailedRecordLatch.clear(); return "recorded"; }
+  const notPasted = isStatusCheckRefusal(error);
+  if (notPasted) notEmailedRecordLatch.set();
+  if (!notEmailedUnrecordedLogged) {
+    notEmailedUnrecordedLogged = true;
+    console.info(notPasted
+      ? `${who}: a recipient's preference turned an email off; the record of it needs migration 20261258 — not recorded (the email is not sent, as before)`
+      : `${who}: the record that a recipient's preference turned an email off was not written (${error.code ?? "?"}: ${error.message}) — the email is not sent, as before`);
+  }
+  return notPasted ? "not_installed" : { error: `${error.code ?? "?"}: ${error.message ?? ""}` };
+}
+
+/** What recordNotEmailedFor did: "recorded" — the rows are written (a
+ *  repeat merged by 20261258's rail counts as written); "skipped" — nothing
+ *  was asked (no rows, or this process has seen 20261258 missing within
+ *  DELIVERY_RECORD_REPROBE_MS — notEmailedRecordLatch); "not_installed" —
+ *  the old status CHECK refused them (20261258 not pasted; the latch is now
+ *  set); { error } — refused for another reason. Nothing is ever sent from
+ *  a not_emailed row, whatever the answer. */
+export type NotEmailedRecordOutcome = "recorded" | "skipped" | "not_installed" | { error: string };
+
+/** notifications DELIV-18 (N19; drafting-flow EVID-9 done-when 2): the
+ *  record queueEmail writes for a person whose OWN preference turned an
+ *  email off, for a server producer that decides "emailed or not" with its
+ *  own preference read and inserts its email rows itself — the ticket
+ *  comment fan-out and the compliance digest. The same row recordNotEmailed
+ *  writes (notEmailedRow: the columns a queued row carries, status
+ *  'not_emailed', metadata.not_emailed = { byTheirChoice: true, reason:
+ *  "preference" }), ONE insert for the producer's rows, through the
+ *  producer's own client (the service role, which 20261258's rail lets
+ *  through; its 60-second repeat merge applies to every writer), behind the
+ *  same latch and once-per-process line. The caller asks only for people its
+ *  own preference rule left out — never for one left out for another reason
+ *  (no address) — and only AFTER its emails are queued: who is emailed and
+ *  what is sent never depend on this, and no send waits on it (DEC-90:
+ *  bookkeeping never delays or blocks a send). Never throws. */
+export async function recordNotEmailedFor(client: NotEmailedRecordClient, inputs: QueueEmailInput[], who: string): Promise<NotEmailedRecordOutcome> {
+  if (inputs.length === 0 || notEmailedRecordLatch.held()) return "skipped";
+  try {
+    return await insertNotEmailed(client, inputs.map(notEmailedRow), who);
+  } catch (e) {
+    return { error: (e as Error)?.message ?? String(e) };
   }
 }
 

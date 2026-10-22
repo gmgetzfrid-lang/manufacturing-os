@@ -553,6 +553,9 @@ function fnRange(src: string, name: string): [number, number] {
  *  rows with no actor, which 20261160 never lets a signed-in writer leave (it
  *  stamps the writer as the actor). `none`: not a dedupe (says why). */
 const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds?: string[]; none?: string; actorNull?: string }>> = {
+  // notifications N19 (NEDGE-24 limb 1): the access-request decision reads the pool's still-unread,
+  // unmarked rows about the decided request, on the service role, only to MARK them superseded.
+  "lib/accessRequestOutcome.ts": [{ marks: '.eq("kind", "access_request_pending")', none: "not a dedupe: the decide routes (service role) read the pool's still-unread, unmarked access_request_pending rows about the request they just decided, only to retire each with the mark (metadata.superseded_at / superseded_by) — no write is withheld because a row exists, and a forged row could only ever be retired" }],
   // N8's review fix (PROD-2): past the per-org cap the request door tells each pool member
   // once that more requests are waiting — the read finds a member's open burst row
   "app/api/auth/request-access/route.ts": [{ marks: '.eq("resource_type", ACCESS_REQUEST_BURST_RESOURCE_TYPE)', actorNull: "the burst notice's dedupe matches only the server's own rows (actor_user_id IS NULL): a member's browser row is stamped with its writer, so it cannot silence the notice" }],
@@ -628,7 +631,10 @@ const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds
 // back the CALLER's own unread, unsuperseded rows by the ids the feed sent, to re-check their
 // condition before marking them superseded. Not a dedupe: no write is withheld because a row
 // exists, and a forged row could only ever be retired, never cause one.
-const BELL_READERS = ["components/dashboard/widgets.tsx", "components/documents/EditOverlapBanner.tsx", "lib/inAppNotifications.ts", "lib/inbox.ts", "lib/notificationReconcileServer.ts"];
+// lib/branches.ts (notifications N19 — NEDGE-24 limb 2): resolving a branch reads the CALLER's own
+// still-unread, unmarked branch_open rows about it (under RLS) to hand their ids to the reconcile
+// route, which marks them superseded. Not a dedupe: no write is withheld because a row exists.
+const BELL_READERS = ["components/dashboard/widgets.tsx", "components/documents/EditOverlapBanner.tsx", "lib/branches.ts", "lib/inAppNotifications.ts", "lib/inbox.ts", "lib/notificationReconcileServer.ts"];
 /** Who writes each server-only key / kind, and the function it is written in — called only by
  *  the maintenance cron on the service role (a route file is server-only by itself). */
 const SERVER_WRITERS: Record<string, { file: string; fn?: string }> = {
@@ -1857,7 +1863,7 @@ describe("REGRESSION census — every app write to notifications fits the read_a
     expect(writes.filter((w) => w.op === "update").length).toBeGreaterThanOrEqual(4);
   });
 
-  // The two updates that write metadata, not read_at (drafting-flow DF-P1, EVID-13; classified by
+  // The updates that write metadata, not read_at (drafting-flow DF-P1, EVID-13; classified by
   // the integrator at the DF-P1 merge). Both run on the service role, which 20261161's read_at-only
   // trigger lets through. The route's retires a ticket's moot workflow alerts as it transitions;
   // the reconcile pass's (notifications N4 — NEDGE-18) retires the caller's own rows whose
@@ -1867,6 +1873,8 @@ describe("REGRESSION census — every app write to notifications fits the read_a
   const METADATA_UPDATES: Record<string, { marks: string; why: string }> = {
     "app/api/tickets/workflow-action/route.ts": { marks: "superseded_at: supersededAt, superseded_by: action.type", why: "service role: retires a ticket's moot workflow alerts (EVID-13)" },
     "lib/notificationReconcileServer.ts": { marks: "superseded_at: supersededAt } })", why: "service role (the reconcile route): retires the caller's own rows whose condition is gone (NEDGE-18, TRAIL-9, DEC-81 §2)" },
+    // notifications N19 (NEDGE-24 limb 1): the access-request decision's mark, which replaced its read_at stamp
+    "lib/accessRequestOutcome.ts": { marks: 'superseded_at: supersededAt, superseded_by: "access_request_decided"', why: "service role (the decide routes): retires a decided request's pool notices (NEDGE-24 limb 1)" },
   };
 
   it("NEDGE-18: the attention hook writes no notifications metadata from the browser — the reconcile pass is a server route", () => {
@@ -1875,7 +1883,7 @@ describe("REGRESSION census — every app write to notifications fits the read_a
     expect(readFileSync(join(ROOT, "app/api/notifications/reconcile/route.ts"), "utf8")).toContain("retireStaleAlerts(supabaseAdmin, { orgId, uid: user.id, ids })");
   });
 
-  it("every UPDATE writes read_at and nothing else (mark one / many / all read, the ticket page's clear) — but the two classified metadata marks", () => {
+  it("every UPDATE writes read_at and nothing else (mark one / many / all read, the ticket page's clear) — but the three classified metadata marks", () => {
     const readAtOnly = (t: string) => /^\s*\.update\(\{\s*read_at: new Date\(\)\.toISOString\(\)\s*\}\)/.test(t);
     const bad = writes.filter((w) => w.op === "update" && !readAtOnly(w.text) && !(METADATA_UPDATES[w.file] && w.text.includes(METADATA_UPDATES[w.file].marks)));
     expect(bad.map((w) => `${w.file}: ${w.text.slice(0, 80)}`)).toEqual([]);
