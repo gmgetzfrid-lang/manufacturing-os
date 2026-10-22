@@ -13,14 +13,21 @@
 //     the records and their signatures are read as the service role; any
 //     read that fails, or the table missing (before 20261264), applies
 //     nothing (today's review: the slot waits for its sign-off);
+//   * each record's grantor must have been an ACTIVE member continuously
+//     since the record was created (readGrantorMemberships — merge-time fix
+//     pass); a membership read that fails applies nothing;
 //   * the audit row FIRST (TICKET_PREAUTHORIZATION_APPLIED, the system actor,
-//     naming each record), then — DF-P22 fix pass — the records used are
-//     re-read (still not revoked, not expired) right before the request's
-//     write, so a revocation that landed since the first read is honoured
-//     (a _NOT_APPLIED row, reason "revoked"); then the compare-and-set on (status,
-//     last_modified, the roster still the one read) writing the roster's
-//     satisfied slot(s), the history line naming each record and
-//     last_modified; a miss writes the _NOT_APPLIED row and nothing else;
+//     naming each record), then ONE database call (20261264's
+//     apply_ticket_preauthorizations — merge-time fix pass) that locks the
+//     grantors' membership rows and the records, re-checks in that same
+//     transaction that each record is not revoked, not expired and its
+//     grantor's membership continuous, and only then compare-and-sets the
+//     request on (status, last_modified) writing the roster's satisfied
+//     slot(s), the history line naming each record and last_modified. A
+//     revocation (or a suspension) that commits before that call is seen and
+//     nothing is applied (a _NOT_APPLIED row, reason "not_in_force"); one
+//     that comes after waits for it and then governs every later use. Any
+//     miss writes the _NOT_APPLIED row and nothing else;
 //   * then the roster ledger (satisfied via 'preauthorization', the record's
 //     signature) and a bell row to each person whose record was used.
 //
@@ -34,12 +41,15 @@ import { currentRoster, separationOfDutiesActive } from "@/lib/workflow";
 import { writeRosterLedger } from "@/lib/ticketRoster";
 import { notifyBatchWithReason } from "@/lib/inAppNotifications";
 import {
-  PREAUTH_ACTOR, PREAUTH_AUDIT, preauthEligibleSlots, preauthFromRow, preauthSignatureStands, planPreauthorizations,
-  applyPreauthorizations, preauthHistoryEntry, isMissingPreauthTable, type Preauthorization, type PreauthSignatureRow,
+  PREAUTH_ACTOR, PREAUTH_AUDIT, PREAUTH_MIGRATION, preauthEligibleSlots, preauthFromRow, preauthSignatureStands, planPreauthorizations,
+  applyPreauthorizations, preauthHistoryEntry, isMissingPreauthTable, readGrantorMemberships, type Preauthorization, type PreauthSignatureRow,
 } from "@/lib/ticketPreauthorization";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Db = { from: (t: string) => any };
+type Db = { from: (t: string) => any; rpc: (fn: string, args: Record<string, unknown>) => any };
+
+/** 20261264's one-transaction re-check and write (merge-time fix pass). */
+export const PREAUTH_APPLY_RPC = "apply_ticket_preauthorizations";
 
 type Member = Record<string, unknown>;
 
@@ -102,6 +112,11 @@ export async function applyStandingPreauthorizations(db: Db, input: {
     if (sErr) return { applied: [], note: `the standing pre-authorizations' signatures could not be read, so none was applied: ${sErr.message}` };
     const sigById = new Map(((sRows as PreauthSignatureRow[] | null) ?? []).map((s) => [String(s.id ?? ""), s] as const));
     const signed = new Set(preauths.filter((p) => preauthSignatureStands(sigById.get(p.signatureId), p)).map((p) => p.id));
+    // In force only while the grantor has been an active member continuously
+    // since the record was created (merge-time fix pass).
+    const memberships = await readGrantorMemberships(db, input.orgId, preauths);
+    if (!memberships.ok) return { applied: [], note: `${memberships.error}, so no standing pre-authorization was applied` };
+    const continuous = new Set(preauths.filter((p) => memberships.byId.get(p.id) === "continuous").map((p) => p.id));
 
     const activeMembers = new Set(input.members.map((m) => String(m.uid ?? "")).filter(Boolean));
     const apps = planPreauthorizations({
@@ -110,7 +125,7 @@ export async function applyStandingPreauthorizations(db: Db, input: {
         orgId: input.orgId, requesterId: (row.requester_id as string | null) ?? null, assignedDrafterId: (row.assigned_drafter_id as string | null) ?? null,
         libraryId: (row.library_id as string | null) ?? null, requestType: (row.request_type as string | null) ?? null, workClass: (row.work_class as string | null) ?? null,
       },
-      engineered: false, preauths, signed, activeMembers, sodActive: separationOfDutiesActive(activeMembers.size), now,
+      engineered: false, preauths, signed, continuous, activeMembers, sodActive: separationOfDutiesActive(activeMembers.size), now,
     });
     if (apps.length === 0) return NONE;
 
@@ -145,39 +160,42 @@ export async function applyStandingPreauthorizations(db: Db, input: {
     const { error: aErr } = await db.from("audit_logs").insert(auditRow);
     if (aErr) return { applied: [], note: `the audit row could not be written, so no standing pre-authorization was applied (the slots wait for their sign-offs): ${aErr.message}` };
 
-    // DF-P22 fix pass: a revocation (or an expiry) that landed since the
-    // records were read is honoured — the records used are re-read right
-    // before the request's write. (One committing in the moment between this
-    // read and the write can still be used once; the request's history and
-    // this audit row then name it, with its revocation time on the record.)
+    // Merge-time fix pass: the re-check and the write are ONE transaction.
+    // apply_ticket_preauthorizations locks the grantors' membership rows and
+    // the records (FOR SHARE), re-checks revoked_at, expires_at and the
+    // grantor's continuous membership on the rows it locked, and only then
+    // compare-and-sets the request — so no use lands after a revocation (or a
+    // suspension) commits: one committed first is seen ("not_in_force"), one
+    // committing later waits for this call. Fail-safe: any other answer
+    // applies nothing.
     const usedIds = [...new Set(apps.map((a) => a.preauth.id))];
-    const { data: stillRows, error: stillErr } = await db.from("ticket_preauthorizations")
-      .select("id").in("id", usedIds).is("revoked_at", null).gt("expires_at", nowIso);
-    const still = new Set(((stillRows as Array<{ id: string }> | null) ?? []).map((x) => x.id));
-    if (stillErr || usedIds.some((id) => !still.has(id))) {
-      const { error: naErr } = await db.from("audit_logs").insert({
-        ...auditRow, id: crypto.randomUUID(), action: `${PREAUTH_AUDIT.applied}_NOT_APPLIED`,
-        details: { attempt: auditId, reason: stillErr ? "recheck_failed" : "revoked", ...(stillErr ? { error: stillErr.message } : { gone: usedIds.filter((id) => !still.has(id)) }) },
-      });
-      return { applied: [], note: `no standing pre-authorization was applied — ${stillErr ? `the records could not be re-read before the write (${stillErr.message})` : "a record it would use was revoked (or expired) since it was read"}; the slots wait for their sign-offs${naErr ? ` (and the not-applied record was refused: ${naErr.message})` : ""}` };
-    }
-
     const history = Array.isArray(row.history) ? row.history : [];
-    const update: Record<string, unknown> = {
-      metadata: { ...metadata, review_roster: next },
-      history: [...history, entry],
-      last_modified: nowIso,
-      ...(unread && released.size > 0 ? { unread_by: unread.filter((u) => !released.has(u)) } : {}),
-    };
-    let q = db.from("tickets").update(update).eq("id", input.ticketId).eq("status", "PENDING_REVIEW");
-    q = row.last_modified ? q.eq("last_modified", String(row.last_modified)) : q.is("last_modified", null);
-    const { data: landed, error: uErr } = await q.select("id");
-    if (uErr || !Array.isArray(landed) || landed.length === 0) {
+    const { data: rpcOut, error: rpcErr } = await db.rpc(PREAUTH_APPLY_RPC, {
+      p_ticket_id: input.ticketId,
+      p_org_id: input.orgId,
+      p_expected_last_modified: row.last_modified ? String(row.last_modified) : null,
+      p_preauthorization_ids: usedIds,
+      p_metadata: { ...metadata, review_roster: next },
+      p_history: [...history, entry],
+      p_last_modified: nowIso,
+      p_unread_by: unread && released.size > 0 ? unread.filter((u) => !released.has(u)) : null,
+    });
+    const outcome = rpcErr ? null : String((rpcOut as { result?: unknown } | null)?.result ?? "");
+    if (outcome !== "applied") {
+      const missingFn = !!rpcErr && /^(PGRST202|42883)$/.test(String((rpcErr as { code?: string }).code ?? ""));
+      const gone = Array.isArray((rpcOut as { gone?: unknown } | null)?.gone) ? ((rpcOut as { gone: unknown[] }).gone.map(String)) : [];
+      const reason = rpcErr ? (missingFn ? "function_missing" : "write_failed") : outcome === "not_in_force" ? "not_in_force" : outcome === "conflict" ? "conflict" : "unexpected_answer";
       const { error: naErr } = await db.from("audit_logs").insert({
         ...auditRow, id: crypto.randomUUID(), action: `${PREAUTH_AUDIT.applied}_NOT_APPLIED`,
-        details: { attempt: auditId, reason: uErr ? "write_failed" : "conflict", ...(uErr ? { error: uErr.message } : {}) },
+        details: { attempt: auditId, reason, ...(rpcErr ? { error: rpcErr.message } : {}), ...(reason === "not_in_force" ? { gone } : {}), ...(reason === "unexpected_answer" ? { answer: outcome } : {}) },
       });
-      return { applied: [], note: `no standing pre-authorization was applied — ${uErr ? uErr.message : "the request changed first"}; the slots wait for their sign-offs${naErr ? ` (and the not-applied record was refused: ${naErr.message})` : ""}` };
+      const why = reason === "function_missing"
+        ? `the database function ${PREAUTH_APPLY_RPC} is missing (re-paste ${PREAUTH_MIGRATION})`
+        : reason === "write_failed" ? String(rpcErr?.message ?? "the write failed")
+        : reason === "not_in_force" ? "a record it would use was revoked, expired, or its grantor's membership lapsed since it was read"
+        : reason === "conflict" ? "the request changed first"
+        : `the database answered "${outcome}"`;
+      return { applied: [], note: `no standing pre-authorization was applied — ${why}; the slots wait for their sign-offs${naErr ? ` (and the not-applied record was refused: ${naErr.message})` : ""}` };
     }
 
     const notes: string[] = [];
@@ -188,7 +206,7 @@ export async function applyStandingPreauthorizations(db: Db, input: {
     const { error: bellErr } = await notifyBatchWithReason(apps.map((a) => ({
       orgId: input.orgId, userId: a.preauth.grantorId, kind: "ticket_status" as const,
       title: `Signed off by your standing pre-authorization · ${input.ticketLabel}`.slice(0, 200),
-      body: `"${a.slot.label || a.slot.kind}" was signed off by your standing pre-authorization (expires ${a.preauth.expiresAt.slice(0, 10)}). You can revoke it at any time; requests that already used it keep naming it.`,
+      body: `"${a.slot.label || a.slot.kind}" was signed off by your standing pre-authorization (expires ${a.preauth.expiresAt.slice(0, 10)}). You can revoke it at any time: it then stops at once for every use not yet made, and this sign-off, completed while it was valid, stands and keeps naming it.`,
       link: `/requests/${input.ticketId}`, resourceType: "ticket", resourceId: input.ticketId, actorName: "System",
       metadata: { action: "preauthorization_applied", slot: a.slot.kind, preauthorizationId: a.preauth.id },
     })), db as never);

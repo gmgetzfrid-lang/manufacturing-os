@@ -12,8 +12,19 @@
 //     with an e-signature minted by /api/signatures/sign for the record's own
 //     id, as the like-in-kind declaration's is (intent "Acknowledged", the
 //     statement below — byte for byte). They, or an Admin, may revoke it at
-//     any time, effective immediately (the next request no longer uses it;
-//     the requests that already did keep naming it).
+//     any time (PREAUTH_REVOCATION_SCOPE — merge-time fix pass): a sign-off
+//     already completed under it while it was valid stands (its slot stays
+//     satisfied; the request's history and audit row keep naming it); the
+//     revocation takes effect immediately for every use not yet made,
+//     including on reviews open right now that have not applied it — the
+//     write that applies it re-checks revoked_at in the same transaction
+//     (20261264's apply_ticket_preauthorizations), so no use lands after a
+//     revocation commits.
+//   * IN FORCE ONLY WHILE ITS GRANTOR IS AN ACTIVE MEMBER, CONTINUOUSLY
+//     SINCE IT WAS RECORDED (merge-time fix pass — preauthGrantorMembership):
+//     a record whose grantor's membership lapsed after it was created
+//     (suspended, removed, re-added) is never used again, reactivation
+//     included.
 //   * SCOPE: from what a request already records — its library, its request
 //     type, its work class (at least one; each one given must match). Never
 //     the engineered lane: an engineered request is never in scope, whatever
@@ -75,6 +86,36 @@ export const PREAUTH_HISTORY_ACTION = "Standing pre-authorization applied";
 const DAY_MS = 86_400_000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * What revoking means (merge-time fix pass — the industry norm for revoking a
+ * delegation): an act already completed under a pre-authorization that was
+ * valid at the time stands; revocation takes effect immediately for every use
+ * not yet made. The panel, the route's answer and the records say exactly
+ * this.
+ */
+export const PREAUTH_REVOCATION_SCOPE =
+  "Revoking takes effect immediately for every use not yet made, including on reviews open right now that have not applied it yet. A sign-off already completed under it while it was valid stands: that slot stays satisfied, and the request's history and audit row keep naming it.";
+
+/** The membership audit rows that record a change of a member's status:
+ *  revoke_member's (20261042 → 20261204: suspend, remove, restore — written
+ *  in the same transaction as the status write) and the add-member route's
+ *  reactivation of a member who was not active. */
+export const MEMBERSHIP_STATUS_AUDIT_ACTIONS = ["MEMBER_SUSPENDED", "MEMBER_REMOVED", "MEMBER_RESTORED", "MEMBER_REACTIVATED"] as const;
+
+/** Whether a record's grantor has been an active member continuously since
+ *  the record was created: `continuous` (in force, as far as membership
+ *  goes), `lapsed` (their membership lapsed after it was created — never
+ *  used again), `unproven` (what is recorded cannot show it — treated as
+ *  not in force). */
+export type GrantorMembership = "continuous" | "lapsed" | "unproven";
+
+/** What the panel says of a record not in force for its grantor's
+ *  membership. */
+export const GRANTOR_MEMBERSHIP_WORDS: Record<Exclude<GrantorMembership, "continuous">, string> = {
+  lapsed: "not in force — grantor's membership lapsed",
+  unproven: "not in force — grantor's membership could not be confirmed continuous",
+};
+
 /** A standing pre-authorization as the app reads it. */
 export interface Preauthorization {
   id: string;
@@ -91,6 +132,9 @@ export interface Preauthorization {
   revokedAt: string | null;
   revokedBy: string | null;
   revokeReason: string | null;
+  /** Set by /api/tickets/preauthorizations GET (merge-time fix pass): the
+   *  grantor's membership since the record was created. */
+  grantorMembership?: GrantorMembership;
 }
 
 export function preauthFromRow(r: Record<string, unknown>): Preauthorization {
@@ -163,6 +207,80 @@ export function preauthStanding(p: Pick<Preauthorization, "createdAt" | "expires
   return true;
 }
 
+/**
+ * Has the grantor been an ACTIVE member continuously since the record was
+ * created? (merge-time fix pass.) Judged from what is recorded:
+ *   * org_members `status` — must be 'active' now;
+ *   * org_members `created_at` — the membership row must be no newer than
+ *     the record (a member removed and re-added has a new row: lapsed);
+ *   * the membership audit rows (MEMBERSHIP_STATUS_AUDIT_ACTIONS) — any
+ *     status change of theirs at or after the record's creation: lapsed.
+ * org_members keeps no time of a status change, so a suspension followed by
+ * a restore on the same row is seen only through those audit rows. Anything
+ * that cannot be read as a time is `unproven` (not in force). Pure.
+ */
+export function preauthGrantorMembership(
+  p: Pick<Preauthorization, "grantorId" | "createdAt">,
+  member: { status?: unknown; created_at?: unknown } | null | undefined,
+  statusChanges: ReadonlyArray<{ resource_id?: unknown; timestamp?: unknown }>,
+): GrantorMembership {
+  if (!member || member.status !== "active") return "lapsed";
+  const made = Date.parse(p.createdAt);
+  const joined = Date.parse(String(member.created_at ?? ""));
+  if (!Number.isFinite(made) || !Number.isFinite(joined)) return "unproven";
+  if (joined > made) return "lapsed";
+  for (const c of statusChanges) {
+    if (String(c.resource_id ?? "") !== p.grantorId) continue;
+    const at = Date.parse(String(c.timestamp ?? ""));
+    if (!Number.isFinite(at)) return "unproven";
+    if (at >= made) return "lapsed";
+  }
+  return "continuous";
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type MembershipDb = { from: (t: string) => any };
+/** The most membership audit rows read at once; a read that fills it is
+ *  treated as unreadable (a truncated history proves nothing). */
+const MEMBERSHIP_AUDIT_CAP = 500;
+/** Grantors per membership read. */
+const MEMBERSHIP_READ_SLICE = 100;
+
+/**
+ * Each record's grantor membership (preauthGrantorMembership), read as the
+ * service role: the grantors' org_members rows and their membership audit
+ * rows since the oldest record. `{ error }` when either read fails (the
+ * caller treats every record as not in force, or says it could not check).
+ */
+export async function readGrantorMemberships(
+  db: MembershipDb, orgId: string, records: ReadonlyArray<Pick<Preauthorization, "id" | "grantorId" | "createdAt">>,
+): Promise<{ ok: true; byId: Map<string, GrantorMembership> } | { ok: false; error: string }> {
+  const byId = new Map<string, GrantorMembership>();
+  if (records.length === 0) return { ok: true, byId };
+  const grantors = [...new Set(records.map((r) => r.grantorId).filter(Boolean))];
+  const times = records.map((r) => Date.parse(r.createdAt)).filter(Number.isFinite);
+  const since = times.length === records.length ? new Date(Math.min(...times)).toISOString() : null;
+  const memberRows: Array<{ uid?: unknown; status?: unknown; created_at?: unknown }> = [];
+  const changes: Array<{ resource_id?: unknown; timestamp?: unknown }> = [];
+  // In slices, so an Admin's list of many grantors never builds one huge filter.
+  for (let i = 0; i < grantors.length; i += MEMBERSHIP_READ_SLICE) {
+    const slice = grantors.slice(i, i + MEMBERSHIP_READ_SLICE);
+    const { data: mRows, error: mErr } = await db.from("org_members").select("uid, status, created_at").eq("org_id", orgId).in("uid", slice);
+    if (mErr) return { ok: false, error: `the grantors' memberships could not be read: ${mErr.message ?? mErr}` };
+    memberRows.push(...((mRows as typeof memberRows | null) ?? []));
+    let aq = db.from("audit_logs").select("resource_id, action, timestamp").eq("org_id", orgId).in("resource_id", slice).in("action", [...MEMBERSHIP_STATUS_AUDIT_ACTIONS]);
+    if (since) aq = aq.gte("timestamp", since);
+    const { data: aRows, error: aErr } = await aq.limit(MEMBERSHIP_AUDIT_CAP);
+    if (aErr) return { ok: false, error: `the grantors' membership history could not be read: ${aErr.message ?? aErr}` };
+    const got = (aRows as typeof changes | null) ?? [];
+    if (got.length >= MEMBERSHIP_AUDIT_CAP) return { ok: false, error: "the grantors' membership history is longer than one read" };
+    changes.push(...got);
+  }
+  const members = new Map(memberRows.map((m) => [String(m.uid ?? ""), m] as const));
+  for (const r of records) byId.set(r.id, preauthGrantorMembership(r, members.get(r.grantorId), changes));
+  return { ok: true, byId };
+}
+
 /** Does the record's scope cover this request? Every dimension it names
  *  must equal the request's own recorded value; at least one is named.
  *  Pure. */
@@ -225,7 +343,9 @@ export interface PreauthApplication { slot: TicketReviewSlot; preauth: Preauthor
  *     slotSignPlan as a primary or an active alternate (never as an
  *     override; every DEC-37 independence leg applied, on the roster as the
  *     earlier applications left it), and (d) holds a record that stands, is
- *     signed, and covers the request.
+ *     signed, covers the request, and whose grantor has been an active member
+ *     continuously since it was created (`continuous`, from
+ *     readGrantorMemberships — merge-time fix pass).
  *   * Never the last open "must sign off" slot: at least one stays open for
  *     a person's live act (a pre-authorization never issues a request).
  *   * Never one that leaves another open "must sign off" slot worse off
@@ -248,6 +368,9 @@ export function planPreauthorizations(input: {
   preauths: readonly Preauthorization[];
   /** Records whose signature stands (by id). */
   signed: ReadonlySet<string>;
+  /** Records whose grantor's membership is continuous since they were
+   *  created (by id; preauthGrantorMembership === "continuous"). */
+  continuous: ReadonlySet<string>;
   activeMembers: ReadonlySet<string>;
   sodActive: boolean;
   now: number;
@@ -256,7 +379,7 @@ export function planPreauthorizations(input: {
   const eligible = preauthEligibleSlots(input.roster);
   if (eligible.length === 0) return [];
   const usable = [...input.preauths]
-    .filter((p) => preauthStanding(p, input.now) && input.signed.has(p.id) && preauthCovers(p, input.ticket)
+    .filter((p) => preauthStanding(p, input.now) && input.signed.has(p.id) && input.continuous.has(p.id) && preauthCovers(p, input.ticket)
       && input.activeMembers.has(p.grantorId) && p.grantorId !== (input.ticket.assignedDrafterId ?? null))
     .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.id.localeCompare(b.id));
   if (usable.length === 0) return [];

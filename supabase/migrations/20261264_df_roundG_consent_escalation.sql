@@ -3,7 +3,7 @@
 --
 -- drafting-flow Round G — DF-P22 CONSENT AND ESCALATION FOLLOW-UPS (DEC-90
 -- rulings (1) and (2) for DF-P22: industry best practice, fail-safe, no
--- regression). Four additions, nothing renamed, no function re-created, no
+-- regression). Five additions, nothing renamed, no function re-created, no
 -- existing policy re-created:
 --
 --   (1) ticket_sla_escalations (new) — FRIC-1 done-when 2 / GAP-106: the
@@ -49,6 +49,21 @@
 --       may write the 'drafting' key, 20261209) can never switch it off or
 --       point it at themselves. They are AND-ed with 20261209's per-key
 --       policies, which are not touched; every other key is unchanged.
+--   (5) apply_ticket_preauthorizations (new; DF-P22 merge-time fix pass) —
+--       the ONE call that applies standing pre-authorizations to a request
+--       (lib/ticketPreauthorizationApply.ts). In a single transaction it
+--       locks the grantors' org_members rows, then the records, FOR SHARE;
+--       re-checks on the rows it locked that each record is not revoked, not
+--       expired, and that its grantor is an ACTIVE member whose membership
+--       row is no newer than the record and who has no membership status
+--       audit row (MEMBER_SUSPENDED / _REMOVED / _RESTORED / _REACTIVATED)
+--       since it was created; and only then compare-and-sets the request.
+--       A revocation or a suspension that commits first is seen
+--       ('not_in_force', nothing written); one that comes later waits for
+--       this transaction (its UPDATE needs the row this call holds) and then
+--       governs every later use — no use lands after a revocation commits.
+--       SECURITY INVOKER, search_path pinned; only the service role executes
+--       it.
 --
 -- PASTE / DEPLOY ORDER. Paste AFTER 20261255 (the first statement refuses
 -- otherwise, changing nothing). Either order with the DF-P22 deploy is safe;
@@ -60,6 +75,10 @@
 --     waits for its sign-off as today).
 --   * Pasted, app not yet deployed: the old app never reads either table or
 --     writes the new value; nothing changes.
+--   * An earlier 20261264 (before the merge-time fix pass) pasted, this app
+--     deployed: the function (5) is missing, so every application is refused
+--     (PGRST202), logged as _NOT_APPLIED, and the slot waits for its sign-off
+--     as today; re-paste this file (re-runnable) to add it.
 --   * No workspace has an escalation contact or an opted-in slot at the
 --     paste: the inventory below counts both (expected 0).
 --
@@ -67,7 +86,8 @@
 -- (service role only) and two tables become readable (the escalation record
 -- as its ticket reads; a pre-authorization by its grantor or an Admin); no client
 -- gains a write (and clients lose the write of the one new key, which no
--- workspace holds yet). The counts-only inventory is captured first (DEC-30).
+-- workspace holds yet); the one new function executes for the service role
+-- only. The counts-only inventory is captured first (DEC-30).
 -- Re-runnable: CREATE TABLE IF NOT EXISTS, CREATE OR REPLACE, DROP … IF
 -- EXISTS, the CHECK dropped and re-added.
 -- Single paste: prerequisite check → temp-table inventory (counts only) →
@@ -250,10 +270,78 @@ CREATE POLICY org_config_sla_escalation_no_client_del ON org_configurations
   AS RESTRICTIVE FOR DELETE
   USING (key <> 'sla_escalation');
 
+-- ── 5. applying a standing pre-authorization: re-check and write in ONE ─────
+--       transaction (DF-P22 merge-time fix pass)
+-- Locks the grantors' membership rows first, then the records — the order a
+-- suspension takes (its UPDATE of org_members, then whatever follows), so the
+-- two never wait on each other in a cycle. FOR SHARE in READ COMMITTED: a row
+-- changed by a transaction that committed since this statement began is
+-- re-read and its WHERE re-checked, and a writer still running is waited for.
+CREATE OR REPLACE FUNCTION apply_ticket_preauthorizations(
+  p_ticket_id UUID, p_org_id UUID, p_expected_last_modified TIMESTAMPTZ, p_preauthorization_ids UUID[],
+  p_metadata JSONB, p_history JSONB, p_last_modified TIMESTAMPTZ, p_unread_by UUID[])
+RETURNS JSONB LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
+DECLARE
+  v_ids UUID[];
+  v_grantors UUID[];
+  v_live UUID[];
+  v_n INTEGER;
+BEGIN
+  SELECT COALESCE(array_agg(DISTINCT x ORDER BY x), '{}') INTO v_ids
+    FROM unnest(p_preauthorization_ids) AS x WHERE x IS NOT NULL;
+  IF cardinality(v_ids) = 0 THEN
+    RAISE EXCEPTION 'apply_ticket_preauthorizations: no standing pre-authorization named; nothing was changed.'
+      USING ERRCODE = 'invalid_parameter_value';
+  END IF;
+  -- (a) the grantors' membership rows, held until this transaction ends
+  SELECT COALESCE(array_agg(DISTINCT p.grantor_id), '{}') INTO v_grantors
+    FROM ticket_preauthorizations p WHERE p.id = ANY (v_ids) AND p.org_id = p_org_id;
+  PERFORM 1 FROM org_members m
+    WHERE m.org_id = p_org_id AND m.uid = ANY (v_grantors)
+    ORDER BY m.uid
+    FOR SHARE;
+  -- (b) the records, held until this transaction ends, re-checked on the
+  --     rows locked: not revoked, not expired
+  SELECT COALESCE(array_agg(s.id), '{}') INTO v_live FROM (
+    SELECT p.id FROM ticket_preauthorizations p
+     WHERE p.id = ANY (v_ids) AND p.org_id = p_org_id AND p.revoked_at IS NULL AND p.expires_at > now()
+     ORDER BY p.id
+       FOR SHARE) AS s;
+  -- (c) the grantor an ACTIVE member continuously since the record was
+  --     created: the membership row no newer than the record (a member
+  --     removed and re-added has a new row) and no membership status audit
+  --     row of theirs since (revoke_member writes it with the status change)
+  SELECT COALESCE(array_agg(p.id), '{}') INTO v_live
+    FROM ticket_preauthorizations p
+   WHERE p.id = ANY (v_live)
+     AND EXISTS (SELECT 1 FROM org_members m
+                  WHERE m.org_id = p.org_id AND m.uid = p.grantor_id AND m.status = 'active'
+                    AND m.created_at IS NOT NULL AND m.created_at <= p.created_at)
+     AND NOT EXISTS (SELECT 1 FROM audit_logs a
+                      WHERE a.org_id = p.org_id AND a.resource_id = p.grantor_id::text
+                        AND a.action IN ('MEMBER_SUSPENDED', 'MEMBER_REMOVED', 'MEMBER_RESTORED', 'MEMBER_REACTIVATED')
+                        AND (a.timestamp IS NULL OR a.timestamp >= p.created_at));
+  IF cardinality(v_live) < cardinality(v_ids) THEN
+    RETURN jsonb_build_object('result', 'not_in_force',
+      'gone', (SELECT COALESCE(jsonb_agg(x ORDER BY x), '[]'::jsonb) FROM unnest(v_ids) AS x WHERE NOT (x = ANY (v_live))));
+  END IF;
+  -- (d) the compare-and-set on the request (a person who acted first wins)
+  UPDATE tickets
+     SET metadata = p_metadata, history = p_history, last_modified = p_last_modified,
+         unread_by = COALESCE(p_unread_by, unread_by)
+   WHERE id = p_ticket_id AND org_id = p_org_id AND status = 'PENDING_REVIEW'
+     AND last_modified IS NOT DISTINCT FROM p_expected_last_modified;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN jsonb_build_object('result', CASE WHEN v_n = 1 THEN 'applied' ELSE 'conflict' END);
+END;
+$$;
+REVOKE ALL ON FUNCTION apply_ticket_preauthorizations(UUID, UUID, TIMESTAMPTZ, UUID[], JSONB, JSONB, TIMESTAMPTZ, UUID[]) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION apply_ticket_preauthorizations(UUID, UUID, TIMESTAMPTZ, UUID[], JSONB, JSONB, TIMESTAMPTZ, UUID[]) TO service_role;
+
 COMMIT;
 
 -- ── Verification + inventory — ONE result set ───────────────────────────────
--- Probes: ok = true × 8 on a correct paste. Inventory rows: n = the count.
+-- Probes: ok = true × 9 on a correct paste. Inventory rows: n = the count.
 SELECT "check", ok, n FROM (
 SELECT 1 AS sec, 1 AS ord, 'FRIC-1 / GAP-106: ticket_sla_escalations exists, row security on, one claim per breach per period (UNIQUE), never rewritten (BEFORE UPDATE trigger, enabled)' AS check,
        (SELECT c.relrowsecurity FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
@@ -319,6 +407,18 @@ SELECT 1, 8, 'DF-P22 fix pass: no client writes the escalation setting (org_conf
              WHERE schemaname = 'public' AND tablename = 'org_configurations' AND policyname = 'org_config_sla_escalation_no_client_upd')
        AND EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'org_configurations'
                      AND policyname = 'org_config_key_writes_upd' AND qual LIKE '%''drafting''%'),
+       NULL
+UNION ALL
+SELECT 1, 9, 'DF-P22 merge-time fix pass: apply_ticket_preauthorizations re-checks each record (not revoked, not expired, its grantor''s membership continuous) on rows it holds FOR SHARE and writes the request in the same transaction; SECURITY INVOKER, search_path pinned; only the service role executes it',
+       COALESCE((SELECT NOT p.prosecdef AND p.proconfig @> ARRAY['search_path=public']
+                   AND p.prosrc LIKE '%FOR SHARE%' AND p.prosrc LIKE '%p.revoked_at IS NULL%'
+                   AND p.prosrc LIKE '%m.created_at <= p.created_at%' AND p.prosrc LIKE '%MEMBER_RESTORED%'
+                   AND p.prosrc LIKE '%last_modified IS NOT DISTINCT FROM p_expected_last_modified%'
+                   FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
+                  WHERE ns.nspname = 'public' AND p.proname = 'apply_ticket_preauthorizations'), false)
+       AND has_function_privilege('service_role', 'public.apply_ticket_preauthorizations(uuid, uuid, timestamptz, uuid[], jsonb, jsonb, timestamptz, uuid[])', 'EXECUTE')
+       AND NOT has_function_privilege('authenticated', 'public.apply_ticket_preauthorizations(uuid, uuid, timestamptz, uuid[], jsonb, jsonb, timestamptz, uuid[])', 'EXECUTE')
+       AND NOT has_function_privilege('anon', 'public.apply_ticket_preauthorizations(uuid, uuid, timestamptz, uuid[], jsonb, jsonb, timestamptz, uuid[])', 'EXECUTE'),
        NULL
 UNION ALL
 SELECT 2, ord, inventory, NULL, n FROM df_round_g_264_before

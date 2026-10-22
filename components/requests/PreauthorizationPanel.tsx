@@ -5,8 +5,12 @@
 //
 //   * Lists the viewer's own standing pre-authorizations (an Admin sees the
 //     workspace's) with what each covers, when it expires and whether it was
-//     revoked; the person who recorded one, or an Admin, may revoke it —
-//     effective immediately (requests that already used it keep naming it).
+//     revoked, and — merge-time fix pass — "not in force — grantor's
+//     membership lapsed" for a record whose grantor's membership lapsed after
+//     it was created (never used again, reactivation included); the person
+//     who recorded one, or an Admin, may revoke it (PREAUTH_REVOCATION_SCOPE:
+//     immediately for every use not yet made; a sign-off already completed
+//     under it while it was valid stands and keeps naming it).
 //   * Records a new one for the VIEWER only: what it covers (a library, a
 //     request type, a work class — at least one; the workspace's own lists),
 //     a REQUIRED expiry (at most 365 days), and the e-signature ceremony the
@@ -27,8 +31,8 @@ import SignatureCeremony from "@/components/signatures/SignatureCeremony";
 import { reviewClassOptions } from "@/lib/reviewModel";
 import type { OrgDraftingSettings } from "@/types/schema";
 import {
-  PREAUTH_SIGNATURE_INTENT, PREAUTH_SIGNATURE_RESOURCE, PREAUTH_MAX_DAYS, preauthDraftRefusal, preauthExpiryDay, preauthExpiryFromDay,
-  preauthLatestDay, preauthScopeWords, preauthStanding, preauthorizationStatement, type Preauthorization,
+  PREAUTH_SIGNATURE_INTENT, PREAUTH_SIGNATURE_RESOURCE, PREAUTH_MAX_DAYS, PREAUTH_REVOCATION_SCOPE, GRANTOR_MEMBERSHIP_WORDS, preauthDraftRefusal,
+  preauthExpiryDay, preauthExpiryFromDay, preauthLatestDay, preauthScopeWords, preauthStanding, preauthorizationStatement, type Preauthorization,
 } from "@/lib/ticketPreauthorization";
 
 interface Option { value: string; label: string }
@@ -51,6 +55,7 @@ export default function PreauthorizationPanel() {
   const [signing, setSigning] = useState<{ id: string; statement: string; expiresAt: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [signError, setSignError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!activeOrgId) return;
@@ -106,10 +111,12 @@ export default function PreauthorizationPanel() {
   const revoke = async (id: string) => {
     if (!activeOrgId) return;
     setError(null);
+    setNotice(null);
     try {
       const res = await fetch("/api/tickets/preauthorizations", { method: "PATCH", headers: await authHeader(), body: JSON.stringify({ orgId: activeOrgId, id, action: "revoke" }) });
-      const out = (await res.json().catch(() => ({}))) as { error?: string };
+      const out = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
       if (!res.ok) throw new Error(out.error || `It was not revoked (HTTP ${res.status})`);
+      setNotice(out.message || PREAUTH_REVOCATION_SCOPE);
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -127,15 +134,17 @@ export default function PreauthorizationPanel() {
         <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Standing pre-authorizations</div>
       </div>
       <p className="text-xs text-[var(--color-text-muted)]">
-        Give your sign-off ahead of time for a kind of request. It is used only on a review slot your workspace has set to accept a standing pre-authorization, never on engineered work, an engineering sign-off or an assurance check, and never for the last sign-off a review waits on. It always expires (at most {PREAUTH_MAX_DAYS} days), you can revoke it at any time, and every request that uses it names it.
+        Give your sign-off ahead of time for a kind of request. It is used only on a review slot your workspace has set to accept a standing pre-authorization, never on engineered work, an engineering sign-off or an assurance check, and never for the last sign-off a review waits on. It always expires (at most {PREAUTH_MAX_DAYS} days), it is in force only while you stay an active member of this workspace (if your membership lapses, it is never used again), and every request that uses it names it. You can revoke it at any time. {PREAUTH_REVOCATION_SCOPE}
       </p>
       {unavailable && <p className="text-xs text-amber-700">{unavailable}</p>}
+      {notice && <p role="status" className="text-xs text-[var(--color-text-muted)]">{notice}</p>}
       {error && <p role="alert" className="text-xs text-rose-700">{error}</p>}
 
       {records !== null && records.length > 0 && (
         <ul className="divide-y divide-[var(--color-border)]">
           {records.map((r) => {
             const standing = preauthStanding(r, now);
+            const lapsed = r.grantorMembership && r.grantorMembership !== "continuous" ? GRANTOR_MEMBERSHIP_WORDS[r.grantorMembership] : null;
             return (
               <li key={r.id} className="py-2 flex items-start gap-3 text-xs">
                 <div className="flex-1 min-w-0">
@@ -144,7 +153,7 @@ export default function PreauthorizationPanel() {
                   </div>
                   <div className="text-[var(--color-text-muted)]">
                     {admin && r.grantorId !== uid ? `${r.grantorName ?? "A member"} · ` : ""}
-                    recorded {preauthExpiryDay(r.createdAt)} · {r.revokedAt ? `revoked ${preauthExpiryDay(r.revokedAt)}` : standing ? `expires ${preauthExpiryDay(r.expiresAt)}` : `expired ${preauthExpiryDay(r.expiresAt)}`}
+                    recorded {preauthExpiryDay(r.createdAt)} · {r.revokedAt ? `revoked ${preauthExpiryDay(r.revokedAt)}` : !standing ? `expired ${preauthExpiryDay(r.expiresAt)}` : lapsed ? `${lapsed} · expires ${preauthExpiryDay(r.expiresAt)}` : `expires ${preauthExpiryDay(r.expiresAt)}`}
                   </div>
                 </div>
                 {standing && (r.grantorId === uid || admin) && (

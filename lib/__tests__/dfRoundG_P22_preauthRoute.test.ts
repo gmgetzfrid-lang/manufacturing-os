@@ -1,8 +1,11 @@
 // drafting-flow Round G, DF-P22 — /api/tickets/preauthorizations: a person
 // records their OWN standing pre-authorization (an e-signature over exactly
-// the statement the route composes), they or an Admin revoke it (effective
-// immediately), audit row first; before 20261264 the route answers 503 and
-// writes nothing.
+// the statement the route composes), they or an Admin revoke it
+// (immediately for every use not yet made; a sign-off already completed under
+// it stands — merge-time fix pass), audit row first; before 20261264 the route
+// answers 503 and writes nothing. A record whose grantor's membership lapsed
+// after it was created is listed as not in force; a grantor who is not active
+// gets a clear 403.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -23,6 +26,8 @@ vi.mock("@/lib/supabaseAdmin", () => {
       select: () => b, order: () => b, limit: () => b,
       eq: (k: string, v: unknown) => { filters.push((r) => r[k] === v); return b; },
       is: (k: string, v: unknown) => { filters.push((r) => (r[k] ?? null) === v); return b; },
+      in: (k: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[k])); return b; },
+      gte: (k: string, v: string) => { filters.push((r) => String(r[k]) >= v); return b; },
       insert: (rows: unknown) => { op = "insert"; payload = rows; return b; },
       update: (p: unknown) => { op = "update"; payload = p; return b; },
       maybeSingle: async () => (st.errors[table] ? { data: null, error: st.errors[table] } : { data: matched()[0] ?? null, error: null }),
@@ -49,7 +54,7 @@ vi.mock("@/lib/supabaseAdmin", () => {
   };
 });
 import { GET, POST, PATCH } from "@/app/api/tickets/preauthorizations/route";
-import { preauthorizationStatement, PREAUTH_AUDIT } from "@/lib/ticketPreauthorization";
+import { preauthorizationStatement, PREAUTH_AUDIT, PREAUTH_REVOCATION_SCOPE } from "@/lib/ticketPreauthorization";
 
 const ORG = "aaaaaaaa-0000-4000-8000-0000000000aa";
 const LIB = "aaaaaaaa-0000-4000-8000-0000000000bb";
@@ -69,9 +74,9 @@ beforeEach(() => {
   st.errors = {};
   st.tables = {
     org_members: [
-      { org_id: ORG, uid: QA, role: "Viewer", roles: ["Viewer"], display_name: "Quinn", email: "q@x.io", status: "active" },
-      { org_id: ORG, uid: ADMIN, role: "Manager", roles: ["Manager", "Admin"], display_name: "Ada", email: "a@x.io", status: "active" },
-      { org_id: ORG, uid: OTHER, role: "Viewer", roles: ["Viewer"], display_name: "Oz", email: "o@x.io", status: "active" },
+      { org_id: ORG, uid: QA, role: "Viewer", roles: ["Viewer"], display_name: "Quinn", email: "q@x.io", status: "active", created_at: "2026-01-01T00:00:00Z" },
+      { org_id: ORG, uid: ADMIN, role: "Manager", roles: ["Manager", "Admin"], display_name: "Ada", email: "a@x.io", status: "active", created_at: "2026-01-01T00:00:00Z" },
+      { org_id: ORG, uid: OTHER, role: "Viewer", roles: ["Viewer"], display_name: "Oz", email: "o@x.io", status: "active", created_at: "2026-01-01T00:00:00Z" },
     ],
     libraries: [{ id: LIB, name: "Piping", org_id: ORG }],
     e_signatures: [{ id: SIG, org_id: ORG, resource_type: "ticket_preauthorization", resource_id: ID, signer_user_id: QA, intent: "Acknowledged", statement, signed_at: new Date().toISOString() }],
@@ -117,7 +122,7 @@ describe("POST — record the caller's own", () => {
   });
 });
 
-describe("PATCH — revoke: the person, or an Admin; once; effective immediately", () => {
+describe("PATCH — revoke: the person, or an Admin; once; immediately for every use not yet made", () => {
   beforeEach(async () => { await POST(req("POST", body())); st.tables.audit_logs = []; });
   it("someone else (not an Admin) cannot revoke it", async () => {
     const res = await PATCH(req("PATCH", { orgId: ORG, id: ID, action: "revoke" }, "t-other"));
@@ -132,6 +137,23 @@ describe("PATCH — revoke: the person, or an Admin; once; effective immediately
     expect(st.tables.ticket_preauthorizations[0].revoked_at).toEqual(expect.any(String));
     const again = await PATCH(req("PATCH", { orgId: ORG, id: ID, action: "revoke" }));
     expect(((await again.json()) as { alreadyRevoked?: boolean }).alreadyRevoked).toBe(true);
+  });
+  it("merge-time fix pass: the answer says what revoking means — immediately for every use not yet made; a completed sign-off stands", async () => {
+    const res = await PATCH(req("PATCH", { orgId: ORG, id: ID, action: "revoke" }));
+    expect(((await res.json()) as { message?: string }).message).toBe(PREAUTH_REVOCATION_SCOPE);
+  });
+  it("merge-time fix pass: a grantor who is not an active member gets a clear 403; an Admin still revokes their record", async () => {
+    st.tables.org_members.find((x) => x.uid === QA)!.status = "suspended";
+    const res = await PATCH(req("PATCH", { orgId: ORG, id: ID, action: "revoke" }));
+    expect(res.status).toBe(403);
+    const out = (await res.json()) as { error?: string; code?: string };
+    expect(out.code).toBe("not_active_member");
+    expect(out.error).toMatch(/not an active member of this workspace, so you cannot revoke/);
+    expect(out.error).toMatch(/never used again, and an Admin can revoke it/);
+    expect(st.tables.ticket_preauthorizations[0].revoked_at).toBeNull();
+    const byAdmin = await PATCH(req("PATCH", { orgId: ORG, id: ID, action: "revoke" }, "t-admin"));
+    expect(byAdmin.status).toBe(200);
+    expect(st.tables.ticket_preauthorizations[0]).toMatchObject({ revoked_by: ADMIN });
   });
   it("an Admin (by the held collection, not the headline) revokes anyone's", async () => {
     const res = await PATCH(req("PATCH", { orgId: ORG, id: ID, action: "revoke" }, "t-admin"));
@@ -152,5 +174,31 @@ describe("GET — the caller's own; an Admin sees the workspace's", () => {
     const adm = (await (await GET(req("GET", undefined, "t-admin", `?orgId=${ORG}`))).json()) as { records: unknown[]; admin: boolean };
     expect(adm.records).toHaveLength(1);
     expect(adm.admin).toBe(true);
+  });
+  it("merge-time fix pass: each record carries its grantor's membership — continuous; suspended and restored, or removed and re-added, after it was recorded: lapsed (shown as not in force)", async () => {
+    await POST(req("POST", body()));
+    type Listed = { records: Array<{ id: string; grantorMembership?: string }> };
+    const list = async (token = "t-admin") => ((await (await GET(req("GET", undefined, token, `?orgId=${ORG}`))).json()) as Listed).records;
+    expect((await list())[0].grantorMembership).toBe("continuous");
+    // suspended now: lapsed (the Admin's list says so)
+    st.tables.org_members.find((x) => x.uid === QA)!.status = "suspended";
+    expect((await list())[0].grantorMembership).toBe("lapsed");
+    // restored — still lapsed: revoke_member recorded the suspension and the restore after the record
+    st.tables.org_members.find((x) => x.uid === QA)!.status = "active";
+    st.tables.audit_logs.push(
+      { action: "MEMBER_SUSPENDED", resource_type: "member", resource_id: QA, org_id: ORG, timestamp: "2026-10-23T00:00:00Z" },
+      { action: "MEMBER_RESTORED", resource_type: "member", resource_id: QA, org_id: ORG, timestamp: "2026-10-24T00:00:00Z" },
+    );
+    expect((await list())[0].grantorMembership).toBe("lapsed");
+    expect((await list("t-qa"))[0].grantorMembership).toBe("lapsed");
+    // removed and re-added: a membership row newer than the record
+    st.tables.audit_logs = [];
+    st.tables.org_members.find((x) => x.uid === QA)!.created_at = "2026-10-25T00:00:00Z";
+    expect((await list())[0].grantorMembership).toBe("lapsed");
+    // the membership history cannot be read: never shown as in force — 503, said
+    st.errors.audit_logs = { message: "timeout" };
+    const res = await GET(req("GET", undefined, "t-admin", `?orgId=${ORG}`));
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { error?: string }).error).toMatch(/Couldn't check the grantors' memberships/);
   });
 });

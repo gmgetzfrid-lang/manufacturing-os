@@ -41,7 +41,7 @@ vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({ uid: "u
 
 import SlaEscalationSection from "@/components/requests/SlaEscalationSection";
 import PreauthorizationPanel from "@/components/requests/PreauthorizationPanel";
-import { preauthorizationStatement, preauthExpiryFromDay } from "@/lib/ticketPreauthorization";
+import { preauthorizationStatement, preauthExpiryFromDay, PREAUTH_REVOCATION_SCOPE } from "@/lib/ticketPreauthorization";
 
 let host: HTMLDivElement;
 let root: Root;
@@ -172,6 +172,26 @@ describe("PreauthorizationPanel", () => {
     await act(async () => { revoke.click(); });
     await flush();
     expect(fetches.find((f) => f.method === "PATCH")!.body).toEqual({ orgId: "o-1", id: "p-1", action: "revoke" });
+    // merge-time fix pass: what revoking means is said after it, as the ruling words it
+    expect(host.querySelector('[role="status"]')!.textContent).toBe(PREAUTH_REVOCATION_SCOPE);
+  });
+  it("merge-time fix pass: the panel says what revoking means and that a record lives only while its grantor stays an active member", async () => {
+    await act(async () => { root.render(el(PreauthorizationPanel, {})); });
+    await flush();
+    expect(host.textContent).toContain(PREAUTH_REVOCATION_SCOPE);
+    expect(host.textContent).toMatch(/in force only while you stay an active member of this workspace \(if your membership lapses, it is never used again\)/);
+  });
+  it("merge-time fix pass: the Admin list shows a lapsed grantor's record as not in force — and an Admin can still revoke it", async () => {
+    const future = new Date(Date.now() + 86_400_000 * 10).toISOString();
+    const rec = (id: string, grantorMembership: string) => ({ id, orgId: "o-1", grantorId: `g-${id}`, grantorName: `G ${id}`, libraryId: null, requestType: "ISO", workClass: null, statement: "s", signatureId: "x", createdAt: "2026-10-01T00:00:00Z", expiresAt: future, revokedAt: null, revokedBy: null, revokeReason: null, grantorMembership });
+    listAnswer = { status: 200, body: { ok: true, admin: true, records: [rec("p-1", "lapsed"), rec("p-2", "continuous"), rec("p-3", "unproven")] } };
+    await act(async () => { root.render(el(PreauthorizationPanel, {})); });
+    await flush();
+    const items = [...host.querySelectorAll("li")].map((li) => li.textContent ?? "");
+    expect(items[0]).toContain("not in force — grantor's membership lapsed");
+    expect(items[1]).not.toContain("not in force");
+    expect(items[2]).toContain("not in force — grantor's membership could not be confirmed continuous");
+    expect([...host.querySelectorAll("li")][0].querySelector("button")!.textContent).toMatch(/Revoke/);
   });
 });
 

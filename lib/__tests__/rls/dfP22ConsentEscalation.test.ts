@@ -19,10 +19,19 @@
 //     the DraftingSupervisor still saves the 'drafting' key; the service role
 //     writes it); a workspace holding a standing pre-authorization (and an
 //     escalation record) can still be deleted — the orgs cascade removes them.
+//   * DF-P22 merge-time fix pass: apply_ticket_preauthorizations re-checks
+//     and writes in ONE transaction — a record revoked between plan and
+//     write is not applied; a revocation in flight is waited for and then
+//     seen; a revocation that comes while an application is in flight waits
+//     for it (the use made first stands); a grantor suspended, or suspended
+//     and restored (revoke_member), or removed and re-added is not in force;
+//     a continuously active grantor's record applies; a stale request is a
+//     conflict; no client executes it.
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import { admin, asCaller, mosDb, seedOrg, selectAs, skipReason, type SeededMember } from "./dbKit";
 import { REPLAY_DB } from "./replay";
 import { runPsql } from "./pgHarness";
@@ -65,7 +74,7 @@ describe.skipIf(skip !== null)("DF-P22 — the escalation record, standing pre-a
 
   it("re-pastes cleanly (DEC-30 one paste); every probe answers true; the inventory rows carry counts", () => {
     const { probes, inventory } = paste(F264);
-    expect(probes.length).toBe(8);
+    expect(probes.length).toBe(9);
     expect(probes.filter((l) => l.endsWith("|f|"))).toEqual([]);
     expect(inventory.length).toBe(6);
   });
@@ -174,5 +183,126 @@ describe.skipIf(skip !== null)("DF-P22 — the escalation record, standing pre-a
     expect(del).toBe("ok:1");
     expect(count(`SELECT COUNT(*) FROM ticket_preauthorizations WHERE id = '${pid}'`)).toBe(0);
     expect(count(`SELECT COUNT(*) FROM ticket_sla_escalations WHERE ticket_id = '${t2}'`)).toBe(0);
+  });
+});
+
+/** psql in the background (a second session), as the superuser. */
+function psqlAsync(sql: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  const { conn } = mosDb();
+  return new Promise((resolve) => {
+    const p = spawn(conn!.psql, ["-X", "-q", "-A", "-t", "-h", conn!.host, "-p", String(conn!.port), "-U", conn!.superuser, "-d", REPLAY_DB, "-v", "ON_ERROR_STOP=1", "-c", sql],
+      { env: { ...process.env, PGOPTIONS: "-c client_min_messages=warning", PGCONNECT_TIMEOUT: "10" } });
+    let stdout = "";
+    let stderr = "";
+    p.stdout.on("data", (d) => { stdout += String(d); });
+    p.stderr.on("data", (d) => { stderr += String(d); });
+    p.on("close", (code) => resolve({ code, stdout, stderr }));
+  });
+}
+const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+describe.skipIf(skip !== null)("DF-P22 merge-time fix pass — apply_ticket_preauthorizations: the re-check and the write are one transaction (runtime)", () => {
+  let orgId = "";
+  let m: Record<string, SeededMember> = {};
+  const count = (sql: string) => Number(admin(db, sql));
+  const memberRow = (uid: string) => admin(db, `SELECT id FROM org_members WHERE org_id = '${orgId}' AND uid = '${uid}'`).trim();
+  const ticket = () => {
+    const id = randomUUID();
+    admin(db, `INSERT INTO tickets (id, org_id, ticket_id, title, request_type, status, requester_id, history, metadata)
+               VALUES ('${id}', '${orgId}', 'KE-P22A-${id.slice(0, 6)}', 'Gasket', 'Revision', 'PENDING_REVIEW', '${m.requester.uid}', '[]'::jsonb, '{}'::jsonb)`);
+    return id;
+  };
+  const record = (grantor: string) => {
+    const id = randomUUID();
+    admin(db, `INSERT INTO ticket_preauthorizations (id, org_id, grantor_id, grantor_name, request_type, statement, signature_id, expires_at)
+               VALUES ('${id}', '${orgId}', '${grantor}', 'G', 'Revision', 'I give my standing pre-authorization', '${randomUUID()}', now() + interval '30 days')`);
+    return id;
+  };
+  const applySql = (t: string, p: string, expected = `(SELECT last_modified FROM tickets WHERE id = '${t}')`) =>
+    `SELECT apply_ticket_preauthorizations('${t}', '${orgId}', ${expected}, ARRAY['${p}']::uuid[], '{"applied":true}'::jsonb, '[{"action":"Standing pre-authorization applied"}]'::jsonb, now(), NULL)->>'result';`;
+  const apply = (t: string, p: string, expected?: string) => selectAs(db, SERVICE, applySql(t, p, expected)).join("");
+  const applied = (t: string) => count(`SELECT COUNT(*) FROM tickets WHERE id = '${t}' AND metadata ? 'applied'`) === 1;
+  const revokeSql = (p: string, by: string) => `UPDATE ticket_preauthorizations SET revoked_at = clock_timestamp(), revoked_by = '${by}' WHERE id = '${p}' AND revoked_at IS NULL`;
+
+  beforeAll(() => {
+    const s = seedOrg(db, { requester: { role: "Manager" }, qa: { role: "Viewer" }, q2: { role: "Viewer" }, q3: { role: "Viewer" }, q4: { role: "Viewer" }, admin: { role: "Admin" } });
+    orgId = s.orgId;
+    m = s.m;
+  });
+
+  it("a continuously active grantor's record applies: the request is written in the same call", () => {
+    const t = ticket();
+    expect(apply(t, record(m.qa.uid))).toBe("applied");
+    expect(applied(t)).toBe(true);
+  });
+
+  it("a record revoked between plan and write is not applied: not_in_force, the request untouched", () => {
+    const t = ticket();
+    const p = record(m.qa.uid);
+    // planned (the app read it standing) … then revoked before the write
+    expect(asCaller(db, SERVICE, revokeSql(p, m.qa.uid))).toEqual({ ok: true, rows: 1 });
+    expect(apply(t, p)).toBe("not_in_force");
+    expect(applied(t)).toBe(false);
+    // an expired record is not applied either (the CHECK forbids an expiry in the past at insert, so check the clause)
+    expect(admin(db, `SELECT prosrc LIKE '%p.expires_at > now()%' FROM pg_proc WHERE proname = 'apply_ticket_preauthorizations'`)).toBe("t");
+  });
+
+  it("a revocation in flight is waited for and then seen: the application is not made", async () => {
+    const t = ticket();
+    const p = record(m.qa.uid);
+    const held = psqlAsync(`BEGIN; SET ROLE service_role; ${revokeSql(p, m.qa.uid)}; SELECT pg_sleep(1.5); COMMIT;`);
+    await pause(500);
+    const started = Date.now();
+    expect(apply(t, p)).toBe("not_in_force");
+    expect(Date.now() - started).toBeGreaterThan(500);
+    expect((await held).code).toBe(0);
+    expect(applied(t)).toBe(false);
+  });
+
+  it("a revocation that comes while an application is in flight waits for it: the use made first stands, the revocation then lands", async () => {
+    const t = ticket();
+    const p = record(m.qa.uid);
+    const held = psqlAsync(`BEGIN; SET ROLE service_role; ${applySql(t, p)} SELECT pg_sleep(1.5); COMMIT;`);
+    await pause(500);
+    const started = Date.now();
+    expect(asCaller(db, SERVICE, revokeSql(p, m.qa.uid))).toEqual({ ok: true, rows: 1 });
+    expect(Date.now() - started).toBeGreaterThan(500);
+    const out = await held;
+    expect(out.code).toBe(0);
+    expect(out.stdout).toContain("applied");
+    expect(applied(t)).toBe(true);
+    expect(count(`SELECT COUNT(*) FROM ticket_preauthorizations WHERE id = '${p}' AND revoked_at IS NOT NULL`)).toBe(1);
+    // and every later use is refused
+    expect(apply(ticket(), p)).toBe("not_in_force");
+  });
+
+  it("a suspended grantor's record is not applied; after the grantor is restored it is STILL not applied (revoke_member records both)", () => {
+    const p = record(m.q2.uid);
+    const row = memberRow(m.q2.uid);
+    expect(asCaller(db, m.admin.caller, `SELECT revoke_member('${row}', 'suspend')`).ok).toBe(true);
+    expect(apply(ticket(), p)).toBe("not_in_force");
+    expect(asCaller(db, m.admin.caller, `SELECT revoke_member('${row}', 'restore')`).ok).toBe(true);
+    expect(count(`SELECT COUNT(*) FROM org_members WHERE id = '${row}' AND status = 'active'`)).toBe(1);
+    const t = ticket();
+    expect(apply(t, p)).toBe("not_in_force");
+    expect(applied(t)).toBe(false);
+    // a record the restored member gives AFTER the restore is in force
+    expect(apply(ticket(), record(m.q2.uid))).toBe("applied");
+  });
+
+  it("a grantor removed and re-added (a new membership row) is not in force for the record given before", () => {
+    const p = record(m.q3.uid);
+    admin(db, `DELETE FROM org_members WHERE org_id = '${orgId}' AND uid = '${m.q3.uid}'`);
+    admin(db, `INSERT INTO org_members (org_id, uid, email, role, roles, status) VALUES ('${orgId}', '${m.q3.uid}', '${m.q3.email}', 'Viewer', ARRAY[]::text[], 'active')`);
+    expect(apply(ticket(), p)).toBe("not_in_force");
+  });
+
+  it("a stale request is a conflict (a person acted first); no client executes the function", () => {
+    const t = ticket();
+    expect(apply(t, record(m.q4.uid), "'2000-01-01T00:00:00Z'::timestamptz")).toBe("conflict");
+    expect(applied(t)).toBe(false);
+    const client = asCaller(db, m.admin.caller, applySql(t, record(m.q4.uid)).replace(/->>'result';$/, ""));
+    expect(client.ok).toBe(false);
+    if (!client.ok) expect(client.code).toBe("42501");
   });
 });

@@ -12,9 +12,10 @@ import { join } from "node:path";
 import {
   preauthorizationStatement, preauthDraftRefusal, preauthStanding, preauthCovers, preauthSignatureRefusal, preauthSignatureStands,
   preauthEligibleSlots, planPreauthorizations, applyPreauthorizations, preauthHistoryEntry, preauthLatestDay, preauthExpiryFromDay,
-  isMissingPreauthTable, preauthLeavesSlotStranded, preauthLeavesNoSecondPerson, slotSignability, PREAUTH_SIGNATURE_INTENT, PREAUTH_SIGNATURE_RESOURCE, PREAUTH_ACTOR, PREAUTH_AUDIT, PREAUTH_MAX_DAYS, type Preauthorization,
+  isMissingPreauthTable, preauthLeavesSlotStranded, preauthLeavesNoSecondPerson, slotSignability, PREAUTH_SIGNATURE_INTENT, PREAUTH_SIGNATURE_RESOURCE, PREAUTH_ACTOR, PREAUTH_AUDIT, PREAUTH_MAX_DAYS,
+  PREAUTH_REVOCATION_SCOPE, MEMBERSHIP_STATUS_AUDIT_ACTIONS, preauthGrantorMembership, type Preauthorization,
 } from "@/lib/ticketPreauthorization";
-import { applyStandingPreauthorizations } from "@/lib/ticketPreauthorizationApply";
+import { applyStandingPreauthorizations, PREAUTH_APPLY_RPC } from "@/lib/ticketPreauthorizationApply";
 import { parseRoutingControl, validateRoutingDraft, preauthorizationOptInAllowed } from "@/lib/routingControl";
 import { openRoster, rosterCompletion } from "@/lib/ticketRoster";
 import { slotSignPlan, rosterLacksIndependentSignOff, PRODUCER_FLOOR_REASON } from "@/lib/workflow";
@@ -46,7 +47,7 @@ const pa = (over: Partial<Preauthorization> = {}): Preauthorization => ({
 });
 const tk = { orgId: "o1", requesterId: "req", assignedDrafterId: "d-1", libraryId: LIB, requestType: "ISO", workClass: "Like-in-kind" };
 const plan = (r: TicketReviewRoster, over: Partial<Parameters<typeof planPreauthorizations>[0]> = {}) => planPreauthorizations({
-  roster: r, ticket: tk, engineered: false, preauths: [pa()], signed: new Set([P1, P2]), activeMembers: new Set(["q-1", "q-2", "req", "d-1"]), sodActive: true, now: NOW, ...over,
+  roster: r, ticket: tk, engineered: false, preauths: [pa()], signed: new Set([P1, P2]), continuous: new Set([P1, P2]), activeMembers: new Set(["q-1", "q-2", "req", "d-1"]), sodActive: true, now: NOW, ...over,
 });
 
 describe("the record — what a person signs and what the route checks", () => {
@@ -206,6 +207,30 @@ describe("where it acts — only an opted-in, blocking, non-engineering, non-ass
     expect(plan(r, { signed: new Set() })).toEqual([]);
     expect(plan(r, { preauths: [pa({ requestType: "P&ID" })] })).toEqual([]);
     expect(plan(r, { activeMembers: new Set(["req", "d-1"]) })).toEqual([]);
+    // merge-time fix pass: a record whose grantor's membership is not continuous since it was created
+    expect(plan(r, { continuous: new Set() })).toEqual([]);
+  });
+  it("merge-time fix pass — in force only while the grantor has been an ACTIVE member continuously since the record was created", () => {
+    const p = { grantorId: "q-1", createdAt: "2026-10-01T00:00:00Z" };
+    const joined = { status: "active", created_at: "2026-01-01T00:00:00Z" };
+    expect(preauthGrantorMembership(p, joined, [])).toBe("continuous");
+    // suspended (or any status but active), or no membership row at all
+    expect(preauthGrantorMembership(p, { ...joined, status: "suspended" }, [])).toBe("lapsed");
+    expect(preauthGrantorMembership(p, null, [])).toBe("lapsed");
+    // suspended and restored on the same row: the status audit rows since the record say so
+    expect(preauthGrantorMembership(p, joined, [{ resource_id: "q-1", timestamp: "2026-10-05T00:00:00Z" }, { resource_id: "q-1", timestamp: "2026-10-06T00:00:00Z" }])).toBe("lapsed");
+    // a status change before the record, or someone else's, does not count
+    expect(preauthGrantorMembership(p, joined, [{ resource_id: "q-1", timestamp: "2026-09-01T00:00:00Z" }, { resource_id: "q-2", timestamp: "2026-10-05T00:00:00Z" }])).toBe("continuous");
+    // removed and re-added: a membership row newer than the record
+    expect(preauthGrantorMembership(p, { status: "active", created_at: "2026-10-02T00:00:00Z" }, [])).toBe("lapsed");
+    // what cannot be read as a time proves nothing: not in force
+    expect(preauthGrantorMembership(p, { status: "active", created_at: null }, [])).toBe("unproven");
+    expect(preauthGrantorMembership(p, joined, [{ resource_id: "q-1", timestamp: "garbage" }])).toBe("unproven");
+    expect(MEMBERSHIP_STATUS_AUDIT_ACTIONS).toEqual(["MEMBER_SUSPENDED", "MEMBER_REMOVED", "MEMBER_RESTORED", "MEMBER_REACTIVATED"]);
+  });
+  it("merge-time fix pass — what revoking means is said once, and says the ruling exactly", () => {
+    expect(PREAUTH_REVOCATION_SCOPE).toContain("takes effect immediately for every use not yet made, including on reviews open right now that have not applied it yet");
+    expect(PREAUTH_REVOCATION_SCOPE).toContain("A sign-off already completed under it while it was valid stands: that slot stays satisfied, and the request's history and audit row keep naming it.");
   });
   it("the history line names each record, its scope and dates, and says it never issues the request", () => {
     const r = roster([accept(), qa()]);
@@ -296,6 +321,8 @@ function builder(table: string) {
     is: (k: string, v: unknown) => { filters.push((r) => (r[k] ?? null) === v); return b; },
     in: (k: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[k])); return b; },
     gt: (k: string, v: string) => { filters.push((r) => String(r[k]) > v); return b; },
+    gte: (k: string, v: string) => { filters.push((r) => String(r[k]) >= v); return b; },
+    limit: () => b,
     insert: (rows: unknown) => { op = "insert"; payload = rows; db.calls.push({ table, method: "insert", args: rows }); return b; },
     update: (p: unknown) => { op = "update"; payload = p; db.calls.push({ table, method: "update", args: p }); return b; },
     maybeSingle: async () => (db.errors[table] ? { data: null, error: db.errors[table] } : { data: matched()[0] ?? null, error: null }),
@@ -309,7 +336,29 @@ function builder(table: string) {
   };
   return b;
 }
-const client = { from: (t: string) => builder(t) };
+// 20261264's apply_ticket_preauthorizations, as the fake database answers it
+// (its SQL runs on PostgreSQL 16 in rls/dfP22ConsentEscalation.test.ts).
+async function rpc(fn: string, args: Record<string, unknown>) {
+  db.calls.push({ table: `rpc:${fn}`, method: "rpc", args });
+  const err = db.errors[`rpc:${fn}`];
+  if (err) return { data: null, error: err };
+  const ids = [...new Set(args.p_preauthorization_ids as string[])];
+  const nowIso = new Date(NOW).toISOString();
+  const live = ids.filter((id) => {
+    const p = (db.tables.ticket_preauthorizations ?? []).find((r) => r.id === id && r.org_id === args.p_org_id);
+    if (!p || p.revoked_at || !(String(p.expires_at) > nowIso)) return false;
+    const mm = (db.tables.org_members ?? []).find((x) => x.org_id === p.org_id && x.uid === p.grantor_id);
+    if (!mm || mm.status !== "active" || !mm.created_at || String(mm.created_at) > String(p.created_at)) return false;
+    return !(db.tables.audit_logs ?? []).some((a) => a.org_id === p.org_id && a.resource_id === p.grantor_id
+      && (MEMBERSHIP_STATUS_AUDIT_ACTIONS as readonly unknown[]).includes(a.action) && String(a.timestamp) >= String(p.created_at));
+  });
+  if (live.length < ids.length) return { data: { result: "not_in_force", gone: ids.filter((i) => !live.includes(i)) }, error: null };
+  const t = (db.tables.tickets ?? []).find((x) => x.id === args.p_ticket_id && x.org_id === args.p_org_id && x.status === "PENDING_REVIEW" && (x.last_modified ?? null) === (args.p_expected_last_modified ?? null));
+  if (!t) return { data: { result: "conflict" }, error: null };
+  Object.assign(t, { metadata: args.p_metadata, history: args.p_history, last_modified: args.p_last_modified, ...(args.p_unread_by ? { unread_by: args.p_unread_by } : {}) });
+  return { data: { result: "applied" }, error: null };
+}
+const client = { from: (t: string) => builder(t), rpc };
 const members = ["q-1", "q-2", "req", "d-1"].map((uid) => ({ uid, display_name: uid.toUpperCase(), email: `${uid}@x.io` }));
 const record = (over: Row = {}): Row => ({ id: P1, org_id: "o1", grantor_id: "q-1", grantor_name: "Quinn", library_id: null, request_type: "ISO", work_class: null, statement: "S", signature_id: SIG1, created_at: "2026-10-01T00:00:00Z", expires_at: "2027-01-01T00:00:00Z", revoked_at: null, revoked_by: null, revoke_reason: null, ...over });
 const sig = { id: SIG1, org_id: "o1", resource_type: PREAUTH_SIGNATURE_RESOURCE, resource_id: P1, signer_user_id: "q-1", intent: "Acknowledged", statement: "S" };
@@ -317,6 +366,7 @@ const seed = (r: TicketReviewRoster) => {
   db.tables = {
     tickets: [{ id: "t1", org_id: "o1", status: "PENDING_REVIEW", last_modified: "2026-10-22T11:00:00Z", metadata: { review_roster: r }, history: [{ action: "Submitted" }], unread_by: ["req", "q-1"], requester_id: "req", assigned_drafter_id: "d-1", library_id: LIB, request_type: "ISO", work_class: null, archived_at: null }],
     ticket_preauthorizations: [record()], e_signatures: [sig], audit_logs: [],
+    org_members: ["q-1", "q-2", "req", "d-1"].map((uid) => ({ org_id: "o1", uid, status: "active", created_at: "2026-01-01T00:00:00Z" })),
     ticket_review_slots: [{ id: "l1", roster_id: "r1", slot_kind: "qa" }, { id: "l2", roster_id: "r1", slot_kind: "accept" }], ticket_review_slot_events: [], notifications: [],
   };
   db.calls = []; db.errors = {};
@@ -337,8 +387,10 @@ describe("applying it after the submission landed — audit first, then the comp
     const r = roster([accept(), qa()]);
     const out = await apply(r);
     expect(out.applied).toEqual([{ slot: "qa", label: "QA", preauthorizationId: P1, grantorId: "q-1" }]);
-    const order = db.calls.filter((c) => (c.table === "audit_logs" && c.method === "insert") || (c.table === "tickets" && c.method === "update")).map((c) => c.table);
-    expect(order).toEqual(["audit_logs", "tickets"]);
+    const order = db.calls.filter((c) => (c.table === "audit_logs" && c.method === "insert") || c.method === "rpc" || (c.table === "tickets" && c.method === "update")).map((c) => c.table);
+    // the request is written only by the one-transaction call (merge-time fix pass), after the audit row
+    expect(order).toEqual(["audit_logs", `rpc:${PREAUTH_APPLY_RPC}`]);
+    expect(db.calls.find((c) => c.method === "rpc")!.args).toMatchObject({ p_ticket_id: "t1", p_org_id: "o1", p_expected_last_modified: "2026-10-22T11:00:00Z", p_preauthorization_ids: [P1], p_last_modified: new Date(NOW).toISOString() });
     expect(db.tables.audit_logs[0]).toMatchObject({ action: PREAUTH_AUDIT.applied, user_id: null, user_email: PREAUTH_ACTOR, user_role: "system",
       details: { recordedBeforeApply: true, applied: [{ slot: "qa", preauthorizationId: P1, grantorId: "q-1", signatureId: SIG1 }] } });
     const t = db.tables.tickets[0];
@@ -359,7 +411,7 @@ describe("applying it after the submission landed — audit first, then the comp
     const realFrom = client.from;
     // the re-read sees one last_modified; a person's write lands before the CAS
     let reads = 0;
-    const racing = { from: (t: string) => { const b = realFrom(t) as Record<string, unknown>; if (t === "tickets") { const ms = b.maybeSingle as () => Promise<unknown>; b.maybeSingle = async () => { const v = (await ms()) as { data: Row | null; error: unknown }; reads += 1; const snapshot = v.data ? { ...v.data } : null; db.tables.tickets[0].last_modified = "2026-10-22T11:59:30Z"; return { ...v, data: snapshot }; }; } return b; } };
+    const racing = { rpc, from: (t: string) => { const b = realFrom(t) as Record<string, unknown>; if (t === "tickets") { const ms = b.maybeSingle as () => Promise<unknown>; b.maybeSingle = async () => { const v = (await ms()) as { data: Row | null; error: unknown }; reads += 1; const snapshot = v.data ? { ...v.data } : null; db.tables.tickets[0].last_modified = "2026-10-22T11:59:30Z"; return { ...v, data: snapshot }; }; } return b; } };
     const out = await applyStandingPreauthorizations(racing, { ticketId: "t1", orgId: "o1", roster: r, engineered: false, members, ticketLabel: "x", now: NOW });
     expect(reads).toBe(1);
     expect(out.applied).toEqual([]);
@@ -368,28 +420,67 @@ describe("applying it after the submission landed — audit first, then the comp
     expect(((db.tables.tickets[0].metadata as { review_roster: TicketReviewRoster }).review_roster).slots.find((s) => s.kind === "qa")!.status).toBe("open");
     expect(db.tables.notifications).toEqual([]);
   });
-  it("DF-P22 fix pass: a revocation that lands after the records were read, before the request's write, is honoured — _NOT_APPLIED (revoked), the request untouched", async () => {
+  it("merge-time fix pass: a record revoked between plan and write is not applied — _NOT_APPLIED (not_in_force), the request untouched", async () => {
     const r = roster([accept(), qa()]);
     const realFrom = client.from;
-    // the grantor revokes as the audit row is written (between the first read and the CAS)
-    const racing = { from: (t: string) => { const b = realFrom(t) as Record<string, unknown>; if (t === "audit_logs") { const ins = b.insert as (x: unknown) => unknown; b.insert = (x: unknown) => { db.tables.ticket_preauthorizations[0].revoked_at = "2026-10-22T12:00:00Z"; db.tables.ticket_preauthorizations[0].revoked_by = "q-1"; return ins(x); }; } return b; } };
+    // the grantor revokes after the plan, as the audit row is written (before the one-transaction write)
+    const racing = { rpc, from: (t: string) => { const b = realFrom(t) as Record<string, unknown>; if (t === "audit_logs") { const ins = b.insert as (x: unknown) => unknown; b.insert = (x: unknown) => { db.tables.ticket_preauthorizations[0].revoked_at = "2026-10-22T12:00:00Z"; db.tables.ticket_preauthorizations[0].revoked_by = "q-1"; return ins(x); }; } return b; } };
     const out = await applyStandingPreauthorizations(racing, { ticketId: "t1", orgId: "o1", roster: r, engineered: false, members, ticketLabel: "x", now: NOW });
     expect(out.applied).toEqual([]);
-    expect(out.note).toMatch(/revoked \(or expired\) since it was read/);
-    expect(db.tables.audit_logs.map((a) => a.action)).toEqual([PREAUTH_AUDIT.applied, `${PREAUTH_AUDIT.applied}_NOT_APPLIED`]);
-    expect((db.tables.audit_logs[1].details as Row)).toMatchObject({ reason: "revoked", gone: [P1] });
+    expect(out.note).toMatch(/revoked, expired, or its grantor's membership lapsed since it was read/);
+    expect(db.tables.audit_logs.filter((a) => String(a.action).startsWith("TICKET_PREAUTH")).map((a) => a.action)).toEqual([PREAUTH_AUDIT.applied, `${PREAUTH_AUDIT.applied}_NOT_APPLIED`]);
+    expect((db.tables.audit_logs[1].details as Row)).toMatchObject({ reason: "not_in_force", gone: [P1] });
+    expect(((db.tables.tickets[0].metadata as { review_roster: TicketReviewRoster }).review_roster).slots.find((s) => s.kind === "qa")!.status).toBe("open");
+    expect(db.tables.tickets[0].last_modified).toBe("2026-10-22T11:00:00Z");
     expect(db.calls.some((c) => c.table === "tickets" && c.method === "update")).toBe(false);
     expect(db.tables.notifications).toEqual([]);
   });
-  it("…and a re-read that fails applies nothing either", async () => {
+  it("…and the one-transaction call failing, or missing (an earlier 20261264 pasted), applies nothing either", async () => {
     const r = roster([accept(), qa()]);
-    let n = 0;
-    const realFrom = client.from;
-    const flaky = { from: (t: string) => { const b = realFrom(t) as Record<string, unknown>; if (t === "ticket_preauthorizations" && ++n === 2) { b.then = (resolve: (v: unknown) => void) => resolve({ data: null, error: { message: "timeout" } }); } return b; } };
-    const out = await applyStandingPreauthorizations(flaky, { ticketId: "t1", orgId: "o1", roster: r, engineered: false, members, ticketLabel: "x", now: NOW });
+    db.errors[`rpc:${PREAUTH_APPLY_RPC}`] = { code: "57014", message: "timeout" };
+    let out = await apply(r);
     expect(out.applied).toEqual([]);
-    expect(out.note).toMatch(/could not be re-read before the write/);
-    expect(db.calls.some((c) => c.table === "tickets" && c.method === "update")).toBe(false);
+    expect(out.note).toMatch(/timeout; the slots wait for their sign-offs/);
+    seed(roster([accept(), qa()]));
+    db.errors[`rpc:${PREAUTH_APPLY_RPC}`] = { code: "PGRST202", message: "Could not find the function public.apply_ticket_preauthorizations in the schema cache" };
+    out = await apply(r);
+    expect(out.applied).toEqual([]);
+    expect(out.note).toMatch(/apply_ticket_preauthorizations is missing \(re-paste 20261264\)/);
+    expect((db.tables.audit_logs.at(-1)!.details as Row)).toMatchObject({ reason: "function_missing" });
+    expect(((db.tables.tickets[0].metadata as { review_roster: TicketReviewRoster }).review_roster).slots.find((s) => s.kind === "qa")!.status).toBe("open");
+  });
+  it("merge-time fix pass — a SUSPENDED grantor's record is not applied (no read of their membership as active)", async () => {
+    db.tables.org_members.find((x) => x.uid === "q-1")!.status = "suspended";
+    // the route's active-member list would also drop them; the membership read alone refuses it
+    const out = await apply(roster([accept(), qa()]));
+    expect(out.applied).toEqual([]);
+    expect(db.calls.some((c) => c.method === "rpc")).toBe(false);
+    expect(db.tables.audit_logs).toEqual([]);
+  });
+  it("merge-time fix pass — a REACTIVATED grantor's record is STILL not applied (suspended and restored after it was recorded)", async () => {
+    db.tables.audit_logs.push(
+      { action: "MEMBER_SUSPENDED", resource_type: "member", resource_id: "q-1", org_id: "o1", timestamp: "2026-10-10T00:00:00Z" },
+      { action: "MEMBER_RESTORED", resource_type: "member", resource_id: "q-1", org_id: "o1", timestamp: "2026-10-11T00:00:00Z" },
+    );
+    const out = await apply(roster([accept(), qa()]));
+    expect(out.applied).toEqual([]);
+    expect(db.calls.some((c) => c.method === "rpc")).toBe(false);
+    // removed and re-added: a membership row newer than the record — not applied either
+    seed(roster([accept(), qa()]));
+    db.tables.org_members.find((x) => x.uid === "q-1")!.created_at = "2026-10-15T00:00:00Z";
+    expect((await apply(roster([accept(), qa()]))).applied).toEqual([]);
+    // the membership could not be read: nothing applied, said
+    seed(roster([accept(), qa()]));
+    db.errors.org_members = { message: "timeout" };
+    const failed = await apply(roster([accept(), qa()]));
+    expect(failed.applied).toEqual([]);
+    expect(failed.note).toMatch(/memberships could not be read/);
+  });
+  it("merge-time fix pass — a CONTINUOUSLY active grantor's record applies, unchanged (a status change BEFORE it was recorded does not count)", async () => {
+    db.tables.audit_logs.push({ action: "MEMBER_RESTORED", resource_type: "member", resource_id: "q-1", org_id: "o1", timestamp: "2026-09-01T00:00:00Z" });
+    const out = await apply(roster([accept(), qa()]));
+    expect(out.applied).toEqual([{ slot: "qa", label: "QA", preauthorizationId: P1, grantorId: "q-1" }]);
+    expect(((db.tables.tickets[0].metadata as { review_roster: TicketReviewRoster }).review_roster).slots.find((s) => s.kind === "qa")).toMatchObject({ status: "satisfied", via: "preauthorization", preauthorizationId: P1 });
   });
   it("before 20261264 (the table is missing): nothing applied, no note — today's review", async () => {
     db.errors.ticket_preauthorizations = { code: "42P01", message: 'relation "public.ticket_preauthorizations" does not exist' };

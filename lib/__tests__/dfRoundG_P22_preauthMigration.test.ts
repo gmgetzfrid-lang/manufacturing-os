@@ -82,6 +82,29 @@ describe("20261264 — DEC-30 one paste", () => {
     expect(S).toMatch(/\n\s+library_id UUID,\n/);
     expect(S).not.toMatch(/library_id UUID REFERENCES/);
   });
+  it("merge-time fix pass: apply_ticket_preauthorizations — SECURITY INVOKER, search_path pinned, service role only; locks membership rows then records FOR SHARE, re-checks revoked_at / expiry / continuous membership, then the compare-and-set — all in one call", () => {
+    const sig = "apply_ticket_preauthorizations(UUID, UUID, TIMESTAMPTZ, UUID[], JSONB, JSONB, TIMESTAMPTZ, UUID[])";
+    expect(S).toContain("RETURNS JSONB LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$");
+    expect(S).toContain(`REVOKE ALL ON FUNCTION ${sig} FROM PUBLIC, anon, authenticated;`);
+    expect(S).toContain(`GRANT EXECUTE ON FUNCTION ${sig} TO service_role;`);
+    const body = S.slice(S.indexOf("CREATE OR REPLACE FUNCTION apply_ticket_preauthorizations("), S.indexOf(`REVOKE ALL ON FUNCTION ${sig}`));
+    const at = (needle: string) => { const i = body.indexOf(needle); expect(i, needle).toBeGreaterThan(0); return i; };
+    // order: membership rows locked, then the records locked and re-checked, then membership continuity, then the write
+    const lockMembers = at("PERFORM 1 FROM org_members m");
+    const lockRecords = at("AND p.revoked_at IS NULL AND p.expires_at > now()");
+    const continuity = at("AND m.created_at IS NOT NULL AND m.created_at <= p.created_at");
+    const write = at("UPDATE tickets");
+    expect(lockMembers).toBeLessThan(lockRecords);
+    expect(lockRecords).toBeLessThan(continuity);
+    expect(continuity).toBeLessThan(write);
+    expect(body.match(/FOR SHARE/g)).toHaveLength(2);
+    expect(body).toContain("a.action IN ('MEMBER_SUSPENDED', 'MEMBER_REMOVED', 'MEMBER_RESTORED', 'MEMBER_REACTIVATED')");
+    expect(body).toContain("AND last_modified IS NOT DISTINCT FROM p_expected_last_modified;");
+    expect(body).toContain("'not_in_force'");
+    // it sits inside the one transaction, and the final SELECT probes it
+    expect(S.indexOf("CREATE OR REPLACE FUNCTION apply_ticket_preauthorizations(")).toBeLessThan(S.indexOf("\nCOMMIT;"));
+    expect(S).toContain("SELECT 1, 9, 'DF-P22 merge-time fix pass: apply_ticket_preauthorizations");
+  });
   it("the escalation claim: one row per (ticket, breach, period)", () => {
     expect(S).toContain("UNIQUE (ticket_id, breached_at, period_index)");
   });

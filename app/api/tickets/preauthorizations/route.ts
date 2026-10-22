@@ -3,7 +3,10 @@
 //
 //   GET    ?orgId=…            the caller's own records, and — for an Admin
 //                              (by the held collection) — everyone's in the
-//                              workspace.
+//                              workspace, each with its grantor's membership
+//                              since it was created (`grantorMembership`:
+//                              a record whose grantor's membership lapsed is
+//                              never used again — merge-time fix pass).
 //   POST   { orgId, id, libraryId?, requestType?, workClass?, expiresAt, signatureId }
 //                              record the CALLER's own pre-authorization. The
 //                              e-signature was minted by /api/signatures/sign
@@ -16,9 +19,17 @@
 //                              one on another person's behalf.
 //   PATCH  { orgId, id, action: "revoke", reason? }
 //                              revoke — by the person who recorded it, or an
-//                              Admin — effective immediately: the next review
-//                              no longer uses it; requests that already did
-//                              keep naming it (their history and audit rows).
+//                              Admin (any record, a lapsed grantor's
+//                              included). PREAUTH_REVOCATION_SCOPE: it takes
+//                              effect immediately for every use not yet made,
+//                              including on reviews open right now that have
+//                              not applied it (the apply call re-checks
+//                              revoked_at in its own transaction); a sign-off
+//                              already completed under it while it was valid
+//                              stands — its slot stays satisfied, and the
+//                              request's history and audit row keep naming it.
+//                              A caller who is not an active member gets a
+//                              403 that says so.
 //
 // Every write is the service role's, after its checks (20261264 grants no
 // client a write), audit row FIRST (TICKET_PREAUTHORIZATION_RECORDED /
@@ -29,8 +40,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import {
-  PREAUTH_AUDIT, PREAUTH_MIGRATION, preauthDraftRefusal, preauthFromRow, preauthSignatureRefusal, preauthorizationStatement, isMissingPreauthTable,
-  type PreauthSignatureRow,
+  PREAUTH_AUDIT, PREAUTH_MIGRATION, PREAUTH_REVOCATION_SCOPE, preauthDraftRefusal, preauthFromRow, preauthSignatureRefusal, preauthorizationStatement,
+  isMissingPreauthTable, readGrantorMemberships, type PreauthSignatureRow,
 } from "@/lib/ticketPreauthorization";
 
 export const runtime = "nodejs";
@@ -82,7 +93,13 @@ export async function GET(req: NextRequest) {
   if (!admin) q = q.eq("grantor_id", caller.id);
   const { data, error } = await q.order("created_at", { ascending: false }).limit(500);
   if (error) return isMissingPreauthTable(error) ? NextResponse.json(NOT_MIGRATED, { status: 503 }) : bad("Couldn't read the standing pre-authorizations — try again in a moment.", 503);
-  return NextResponse.json({ ok: true, admin, records: ((data as Array<Record<string, unknown>> | null) ?? []).map(preauthFromRow) });
+  const records = ((data as Array<Record<string, unknown>> | null) ?? []).map(preauthFromRow);
+  // Merge-time fix pass: whether each grantor has been an active member
+  // continuously since their record was created (never shown as in force
+  // when that could not be checked).
+  const memberships = await readGrantorMemberships(supabaseAdmin, orgId, records);
+  if (!memberships.ok) return bad("Couldn't check the grantors' memberships — try again in a moment.", 503);
+  return NextResponse.json({ ok: true, admin, records: records.map((r) => ({ ...r, grantorMembership: memberships.byId.get(r.id) ?? "unproven" })) });
 }
 
 export async function POST(req: NextRequest) {
@@ -151,7 +168,11 @@ export async function PATCH(req: NextRequest) {
   const reason = str(body.reason).slice(0, 500) || null;
   if (!UUID_RE.test(orgId) || !UUID_RE.test(id) || body.action !== "revoke") return bad("orgId, id and action: \"revoke\" are required", 400);
   const mem = await membershipOf(orgId, caller.id);
-  if (!mem.ok) return bad(mem.error, mem.status);
+  if (!mem.ok) {
+    return mem.status === 403
+      ? bad("You are not an active member of this workspace, so you cannot revoke a standing pre-authorization here. A record whose grantor's membership lapsed is never used again, and an Admin can revoke it.", 403, { code: "not_active_member" })
+      : bad(mem.error, mem.status);
+  }
   const { data, error } = await supabaseAdmin.from("ticket_preauthorizations").select("*").eq("id", id).eq("org_id", orgId).maybeSingle();
   if (error) return isMissingPreauthTable(error) ? NextResponse.json(NOT_MIGRATED, { status: 503 }) : bad("Couldn't read the standing pre-authorization — try again in a moment.", 503);
   if (!data) return bad("Standing pre-authorization not found", 404);
@@ -175,5 +196,5 @@ export async function PATCH(req: NextRequest) {
     await insertAudit({ ...auditRow, id: crypto.randomUUID(), action: `${PREAUTH_AUDIT.revoked}_NOT_APPLIED`, details: { attempt: auditId, ...(uErr ? { error: uErr.message } : { reason: "already_revoked" }) } });
     return uErr ? bad(`The standing pre-authorization was not revoked: ${uErr.message}`, 500) : NextResponse.json({ ok: true, alreadyRevoked: true });
   }
-  return NextResponse.json({ ok: true, revokedAt: nowIso });
+  return NextResponse.json({ ok: true, revokedAt: nowIso, message: PREAUTH_REVOCATION_SCOPE });
 }
