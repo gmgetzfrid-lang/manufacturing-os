@@ -38,14 +38,19 @@
 --     (isControllerPrincipal) and DELETE is controller-only (20261131);
 --     node_visible returns true for a controller on every document of its
 --     workspace, so for every same-workspace row a controller reads, and
---     deletes, exactly today's rows. NOT for a legacy row whose documents are
---     not both in the row's workspace (20261131's DRLS-13 inventory counts
---     those and keeps them): the documents membership policy hides the other
---     workspace's document from a member of the row's workspace alone, so the
---     rail hides that row from such a member, controllers included — the
---     reversal no longer sees it, a DELETE skips it with no error and the
---     read-back reports none left. Counted below; the residue (reconcile or
---     remove those rows) is document control's (DRLS-13), recorded at DACL-11;
+--     deletes, exactly today's rows. A legacy row whose documents are not
+--     both in the row's workspace (20261131's DRLS-13 inventory counts those
+--     and keeps them) would be the exception: the documents membership policy
+--     hides the other workspace's document from a member of the row's
+--     workspace alone, so the rail would hide that row from its own
+--     controllers, the reversal would no longer see it, a DELETE would skip
+--     it with no error and the read-back would report none left. So this
+--     file REFUSES while any such row exists (the prerequisite checks below,
+--     DEC-90 fail-safe): reconcile them under document control's DRLS-13
+--     first. A successful paste therefore finds none; after it, 20261131's
+--     INSERT / UPDATE rails (supersession_writable: both documents in the
+--     row's org) refuse a new one from every signed-in writer, and the
+--     restore refuses a row whose parent is outside the workspace;
 --   * the related panel / relationship graph (findRelatedDocuments) resolves
 --     every row's other end through documents under the caller's RLS, so a
 --     row the rail hides was never shown — the panel is unchanged;
@@ -56,8 +61,9 @@
 --     edge count. With the rail it is not returned, so it is not counted; a
 --     reader who can see both documents (every controller, for a
 --     same-workspace row) gets today's map.
--- No lineage screen loses a same-workspace row a person can legitimately see
--- today (the cross-workspace legacy rows are the one exception, above).
+-- No lineage screen loses a row a person can legitimately see today: every
+-- row a controller reads before the paste, it reads after (the paste refuses
+-- while a cross-workspace row exists, above).
 --
 -- NARROWS: a member who cannot read one of a supersession's documents no
 -- longer reads that row. WIDENS nothing. The service role (every server route
@@ -79,27 +85,43 @@
 -- FOR ALL policy on document_supersessions, its controller-only DELETE
 -- policy present, and the unique (superseded_doc_id, replacement_doc_id)
 -- index built (20261131 builds it only once no duplicate pairs remain, so no
--- re-run of 20261131 is pending once this file applies). The rail is never
--- layered on 20260615's FOR ALL member policy. Once document control makes
--- that check count PERMISSIVE policies only (a merge-time row, DACL-11), the
--- order may relax. Paste order: HOLD with 20261131 — after 20261131 (and
--- its re-run, if it reported duplicate pairs) and after 20261258 (no object
--- of 20261259 / 20261260 is touched — any order with them works). Do NOT
--- re-run 20261131 after this file while its check counts every policy: that
--- one row would read false (the database is still right). Deploy order:
+-- re-run of 20261131 is pending once this file applies). It also refuses
+-- while any document_supersessions row names a document in another
+-- workspace ("N document_supersessions rows name a document in another
+-- workspace; reconcile them under document-control DRLS-13 first; nothing
+-- was changed" — a count, never the rows): reconcile them (DRLS-13), then
+-- paste. The check runs twice: once before the inventory (so the SQL editor,
+-- which stops at the first error, skips the inventory too) and again
+-- immediately after BEGIN, so a client that continues past an error still
+-- cannot land the rail — the error aborts the transaction and COMMIT becomes
+-- ROLLBACK. The rail is never layered on 20260615's FOR ALL member policy.
+-- Once document control makes that check count PERMISSIVE policies only (a
+-- merge-time row, DACL-11), the order may relax.
+-- Paste order: HOLD with 20261131 — after 20261131 (and its re-run, if it
+-- reported duplicate pairs) and after 20261258 (no object of 20261259 /
+-- 20261260 is touched — any order with them works), and only once the
+-- cross-workspace lineage count is 0 (20261131's DRLS-13 inventory row, or
+-- this file's refusal, names it). Do NOT re-run 20261131 after this file
+-- while its check counts every policy: that one row would read false (the
+-- database is still right). Deploy order:
 -- none — no app change. Pre-apply inventory (DEC-30, inventory-first): a TEMP
 -- TABLE captured before the transaction, aggregate counts only — per table,
 -- the rows a rail hides from at least one member, including the cross-
--- workspace lineage rows above. documents.is_private is NOT counted:
+-- workspace lineage rows above (0 on any paste that applies: the paste
+-- refuses otherwise). documents.is_private is NOT counted:
 -- node_visible never reads it (it is enforced in the app), so no rail hides a
--- row for it. Single paste: the 20261131 prerequisite check → inventory →
--- BEGIN/DDL/COMMIT → ONE SELECT (check
--- text, ok boolean, n text). Idempotent: a re-paste drops and re-creates the
--- one policy.
+-- row for it. Single paste: the prerequisite check (20261131 live, no
+-- cross-workspace lineage row) → inventory → BEGIN / the same check again /
+-- DDL / COMMIT → ONE SELECT (check text, ok boolean, n text). Idempotent: a
+-- re-paste drops and re-creates the one policy.
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- ── Prerequisite: 20261131 live (see the header) — refuse, change nothing ───
+-- ── Prerequisite (see the header) — refuse, change nothing ─────────────────
+-- 20261131 live with its pair index, and no lineage row naming a document in
+-- another workspace (counts only). Repeated verbatim right after BEGIN.
 DO $$
+DECLARE
+  n_cross bigint;
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'document_supersessions' AND cmd = 'ALL')
      OR NOT EXISTS (SELECT 1 FROM pg_policies
@@ -112,6 +134,14 @@ BEGIN
                            = ARRAY['replacement_doc_id', 'superseded_doc_id'])
   THEN
     RAISE EXCEPTION '20261261 needs 20261131 live with its supersession pair index built: paste 20261131 first (if its inventory reports duplicate pairs, reconcile and re-run it), then this file. Nothing was changed.';
+  END IF;
+  SELECT COUNT(*) INTO n_cross
+    FROM document_supersessions s
+    JOIN documents a ON a.id = s.superseded_doc_id
+    JOIN documents b ON b.id = s.replacement_doc_id
+   WHERE a.org_id <> s.org_id OR b.org_id <> s.org_id;
+  IF n_cross > 0 THEN
+    RAISE EXCEPTION '20261261 refused: % document_supersessions rows name a document in another workspace; reconcile them under document-control DRLS-13 first; nothing was changed.', n_cross;
   END IF;
 END $$;
 
@@ -144,7 +174,7 @@ SELECT 'document_supersessions rows naming a normal document with a read deny on
   FROM document_supersessions s
  WHERE s.superseded_doc_id IN (SELECT id FROM denied) OR s.replacement_doc_id IN (SELECT id FROM denied)
 UNION ALL
-SELECT 'document_supersessions rows whose documents are not both in the row''s workspace (the NEW rail hides them from every member who is not also a member of the other workspace, controllers of the row''s workspace included: the reversal can no longer see or delete them — document control, DRLS-13)', COUNT(*)
+SELECT 'document_supersessions rows whose documents are not both in the row''s workspace (must be 0: the paste refuses otherwise — the rail would hide them from the row''s own controllers; reconcile them under document control''s DRLS-13 first)', COUNT(*)
   FROM document_supersessions s
   JOIN documents a ON a.id = s.superseded_doc_id
   JOIN documents b ON b.id = s.replacement_doc_id
@@ -166,6 +196,35 @@ SELECT 'active members outside the controller tier (Admin, DocCtrl) — the only
    AND NOT (m.role IN ('Admin', 'DocCtrl') OR COALESCE(m.roles, '{}'::text[]) && ARRAY['Admin', 'DocCtrl']::text[]);
 
 BEGIN;
+
+-- ── The same prerequisite check, inside the transaction (DEC-90): a client ──
+-- that continues past the first refusal hits it again here; the error aborts
+-- the transaction, the policy below is not created and COMMIT rolls back.
+DO $$
+DECLARE
+  n_cross bigint;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'document_supersessions' AND cmd = 'ALL')
+     OR NOT EXISTS (SELECT 1 FROM pg_policies
+                     WHERE tablename = 'document_supersessions' AND policyname = 'document_supersessions_delete' AND cmd = 'DELETE')
+     OR NOT EXISTS (SELECT 1 FROM pg_index i
+                     WHERE i.indrelid = 'document_supersessions'::regclass AND i.indisunique AND i.indpred IS NULL
+                       AND (SELECT array_agg(a.attname::text ORDER BY a.attname::text)
+                              FROM unnest(i.indkey::int2[]) k
+                              JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k)
+                           = ARRAY['replacement_doc_id', 'superseded_doc_id'])
+  THEN
+    RAISE EXCEPTION '20261261 needs 20261131 live with its supersession pair index built: paste 20261131 first (if its inventory reports duplicate pairs, reconcile and re-run it), then this file. Nothing was changed.';
+  END IF;
+  SELECT COUNT(*) INTO n_cross
+    FROM document_supersessions s
+    JOIN documents a ON a.id = s.superseded_doc_id
+    JOIN documents b ON b.id = s.replacement_doc_id
+   WHERE a.org_id <> s.org_id OR b.org_id <> s.org_id;
+  IF n_cross > 0 THEN
+    RAISE EXCEPTION '20261261 refused: % document_supersessions rows name a document in another workspace; reconcile them under document-control DRLS-13 first; nothing was changed.', n_cross;
+  END IF;
+END $$;
 
 -- ── DACL-11: a lineage row is readable only with both of its documents ─────
 -- RESTRICTIVE: ANDed with every permissive policy. The EXISTS runs under the

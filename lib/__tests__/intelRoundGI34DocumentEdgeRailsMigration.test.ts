@@ -4,6 +4,10 @@
 //
 //   * One paste (DEC-30): the TEMP counts-only inventory before the
 //     transaction, one BEGIN/COMMIT, ONE final SELECT (check, ok, n).
+//   * The prerequisite check (20261131 live; no lineage row naming a document
+//     in another workspace — DEC-90 ruling 2) runs before the inventory AND,
+//     verbatim, right after BEGIN, so a client that continues past an error
+//     still cannot land the rail (DEC-90 ruling 1).
 //   * It creates ONE object — document_supersessions_documents_readable —
 //     in the shape of 20261170's two rails (RESTRICTIVE FOR SELECT TO
 //     authenticated, EXISTS on documents under the caller's RLS), on BOTH
@@ -96,7 +100,7 @@ describe("20261261 — the paste contract (DEC-30)", () => {
     expect(inventory).not.toMatch(/is_private/);
     expect(inventory).toContain("WHERE d.visibility IN ('private', 'hidden')");
     // a legacy row whose documents are not both in its workspace is hidden from a member of that workspace alone
-    expect(inventory).toContain("SELECT 'document_supersessions rows whose documents are not both in the row''s workspace");
+    expect(inventory).toContain("SELECT 'document_supersessions rows whose documents are not both in the row''s workspace (must be 0: the paste refuses otherwise");
     expect(inventory).toMatch(/JOIN documents a ON a\.id = s\.superseded_doc_id\s+JOIN documents b ON b\.id = s\.replacement_doc_id\s+WHERE a\.org_id <> s\.org_id OR b\.org_id <> s\.org_id/);
     expect(code).not.toMatch(/SELECT \*/);
   });
@@ -119,6 +123,30 @@ describe("20261261 — the paste contract (DEC-30)", () => {
     // the member-read probe no longer accepts a FOR ALL policy
     expect(code).not.toMatch(/cmd IN \('SELECT', 'ALL'\)/);
     expect(code).toContain("AND NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'document_supersessions' AND cmd = 'ALL'),");
+  });
+
+  it("the prerequisite check is repeated verbatim between BEGIN and CREATE POLICY (DEC-90 fail-safe): a client that continues past the first refusal aborts the transaction, so COMMIT rolls back", () => {
+    const blocks = [...code.matchAll(/DO \$\$[\s\S]*?END \$\$;/g)].map((m) => ({ at: m.index!, text: m[0] }));
+    expect(blocks).toHaveLength(2);
+    const begin = code.indexOf("\nBEGIN;");
+    const create = code.indexOf("CREATE POLICY document_supersessions_documents_readable");
+    // the early one: before the inventory (the SQL editor stops there, so the inventory is skipped too)
+    expect(blocks[0].at).toBeLessThan(code.indexOf("CREATE TEMP TABLE IF NOT EXISTS _intel_g261_before AS"));
+    // the second one: inside the transaction, before the one DDL
+    expect(blocks[1].at).toBeGreaterThan(begin);
+    expect(blocks[1].at).toBeLessThan(create);
+    expect(code.slice(begin, blocks[1].at).trim()).toBe("BEGIN;");
+    expect(blocks[1].text).toBe(blocks[0].text);
+  });
+
+  it("refuses while any lineage row names a document in another workspace (DEC-90 ruling 2): counts only, a plain message, in both checks", () => {
+    for (const b of [...code.matchAll(/DO \$\$[\s\S]*?END \$\$;/g)].map((m) => m[0])) {
+      expect(b).toMatch(/SELECT COUNT\(\*\) INTO n_cross\s+FROM document_supersessions s\s+JOIN documents a ON a\.id = s\.superseded_doc_id\s+JOIN documents b ON b\.id = s\.replacement_doc_id\s+WHERE a\.org_id <> s\.org_id OR b\.org_id <> s\.org_id;/);
+      expect(b).toMatch(/IF n_cross > 0 THEN\s+RAISE EXCEPTION '20261261 refused: % document_supersessions rows name a document in another workspace; reconcile them under document-control DRLS-13 first; nothing was changed\.', n_cross;/);
+      // a count, never a row's contents
+      expect(b).not.toMatch(/s\.id|superseded_doc_id\s*,|RAISE[^;]*(superseded_doc_id|replacement_doc_id)/);
+    }
+    expect(sql).toContain("It also refuses\n-- while any document_supersessions row names a document in another\n-- workspace");
   });
 
   it("the probes are deparse-safe: no bare cast inside a LIKE pattern; the qual is matched on its deparsed text", () => {

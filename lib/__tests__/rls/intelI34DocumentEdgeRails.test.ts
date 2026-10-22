@@ -28,9 +28,17 @@
 // true. A re-run of 20261131 after it reads that one count row false until
 // document control counts PERMISSIVE policies only (the merge-time row,
 // DACL-11) — pinned both ways.
+//
+// DEC-90 (merge-time rulings): the prerequisite check also refuses while any
+// lineage row names a document in another workspace (the rail would hide it
+// from the row's own controllers, and the reversal's delete would skip it),
+// and it runs again right after BEGIN — so a client that continues past
+// errors (ON_ERROR_STOP off) still lands no policy. Pinned with 20261131
+// missing and with a seeded cross-workspace row; reconciled, the paste lands.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { admin, asCaller, mosDb, selectAs, seedOrg, skipReason, type Caller, type SeededMember } from "./dbKit";
@@ -57,9 +65,19 @@ describe.skipIf(skip !== null)("I-34 / DACL-11: document edge read rails, per ta
   const pasteOwn = `mos_i34_paste_own_${pid}`;
   const forAll = `mos_i34_forall_${pid}`;
   const pre131 = `mos_i34_pre131_${pid}`;
+  const contAll = `mos_i34_cont_all_${pid}`;
   const M131 = "20261131_dc_roundF_documents_rails.sql";
   const sql131 = () => readFileSync(join(process.cwd(), "supabase", "migrations", M131), "utf8");
   const REFUSED = /20261261 needs 20261131 live with its supersession pair index built/;
+  const CROSS = /20261261 refused: \d+ document_supersessions rows name a document in another workspace/;
+  // the paste as a client that continues past errors sends it: statement by statement, ON_ERROR_STOP off
+  const runFile = (on: string) => {
+    const dir = mkdtempSync(join(tmpdir(), "mos-i34-"));
+    const f = join(dir, FILE);
+    writeFileSync(f, sql());
+    try { return runPsql(mosDb().conn!, on, "postgres", { file: f, stopOnError: false }); }
+    finally { rmSync(dir, { recursive: true, force: true }); }
+  };
   const ourPolicy = "SELECT count(*) FROM pg_policies WHERE tablename = 'document_supersessions' AND policyname = 'document_supersessions_documents_readable'";
   const probesOf = (out: string) => out.split("\n").filter((l) => /\|[tf]\|$/.test(l));
   const anon: Caller = { role: "anon" };
@@ -104,7 +122,7 @@ describe.skipIf(skip !== null)("I-34 / DACL-11: document edge read rails, per ta
     admin(before, "DROP POLICY document_supersessions_documents_readable ON document_supersessions");
   });
   afterAll(() => {
-    for (const d of [before, afterW, beforeW, pasteCp, pasteOwn, forAll, pre131]) {
+    for (const d of [before, afterW, beforeW, pasteCp, pasteOwn, forAll, pre131, contAll]) {
       try { admin("postgres", `DROP DATABASE IF EXISTS ${d}`); } catch { /* deleted with the cluster */ }
     }
   });
@@ -197,7 +215,7 @@ describe.skipIf(skip !== null)("I-34 / DACL-11: document edge read rails, per ta
     expect(rows.filter((l) => /^inventory \(before\): .*\|\|\d+$/.test(l)).length).toBe(7);
   });
 
-  it("the inventory counts exactly the rows each rail hides from someone (this workspace alone, plus one legacy cross-workspace lineage row), and a re-paste is clean", () => {
+  it("a lineage row naming a document in another workspace refuses the paste (DEC-90 ruling 2), even past errors: nothing changes and the row's own controller still reads and deletes it; reconciled, the paste lands, the inventory counts exactly the rows each rail hides, and a re-paste is clean", () => {
     admin("postgres", `CREATE DATABASE ${pasteOwn} TEMPLATE ${before}`);
     // a legacy lineage row (20261131's DRLS-13 inventory keeps them) whose replacement sits in ANOTHER workspace
     const otherLib = randomUUID(), foreign = randomUUID();
@@ -211,33 +229,70 @@ describe.skipIf(skip !== null)("I-34 / DACL-11: document edge read rails, per ta
       `INSERT INTO documents (id, org_id, library_id, name, title, document_number, rev, status, visibility) VALUES ('${foreign}', '${otherOrg}', '${otherLib}', 'foreign.pdf', 'foreign', 'I34-${foreign.slice(0, 8)}', '0', 'Draft', 'normal')`,
       `INSERT INTO document_supersessions (org_id, superseded_doc_id, replacement_doc_id, reason, created_by) VALUES ('${orgId}', '${open2}', '${foreign}', 'legacy', '${m.docctrl.uid}')`,
     ].join(";\n") + ";");
-    // before the paste the row's own controller reads it (member-wide read)
+    // today: the row's own controller (and every member) reads it (member-wide read)
     expect(count(pasteOwn, m.docctrl.caller, "document_supersessions")).toBe("4");
+    expect(count(pasteOwn, m.viewer.caller, "document_supersessions")).toBe("4");
+    // the paste refuses — a count, never the row — and nothing changes
+    const refused = runPsql(mosDb().conn!, pasteOwn, "postgres", { sql: sql() });
+    expect(refused.error).toBe("20261261 refused: 1 document_supersessions rows name a document in another workspace; reconcile them under document-control DRLS-13 first; nothing was changed.");
+    expect(refused.stderr).not.toContain(foreign);
+    expect(admin(pasteOwn, ourPolicy)).toBe("0");
+    expect(count(pasteOwn, m.docctrl.caller, "document_supersessions")).toBe("4");
+    // a client that continues past errors (statement by statement, ON_ERROR_STOP off): the check inside the
+    // transaction refuses again, the CREATE POLICY is ignored, COMMIT rolls back — no policy lands
+    const cont = runFile(pasteOwn);
+    expect(cont.errors.filter((e) => CROSS.test(e))).toHaveLength(2);
+    expect(cont.errors.some((e) => /current transaction is aborted/.test(e))).toBe(true);
+    expect(admin(pasteOwn, ourPolicy)).toBe("0");
+    expect(probesOf(cont.stdout).find((p) => p.startsWith("DACL-11: "))).toMatch(/\|f\|$/);
+    expect(count(pasteOwn, m.docctrl.caller, "document_supersessions")).toBe("4");
+    // the reversal's delete still reaches the row today (the controller reconciles it, DRLS-13): 1 row
+    expect(asCaller(pasteOwn, m.docctrl.caller, `DELETE FROM document_supersessions WHERE replacement_doc_id = '${foreign}'`)).toEqual({ ok: true, rows: 1 });
+    // reconciled: the paste lands
     const r = runPsql(mosDb().conn!, pasteOwn, "postgres", { sql: sql() });
     expect(r.error).toBeNull();
+    expect(admin(pasteOwn, ourPolicy)).toBe("1");
     const inv = new Map(r.stdout.split("\n").filter((l) => l.startsWith("inventory (before): "))
       .map((l) => { const parts = l.split("|"); return [parts[0].replace("inventory (before): ", ""), parts[2]] as const; }));
     const pick = (prefix: string) => [...inv.entries()].find(([k]) => k.startsWith(prefix))?.[1];
-    expect(pick("document_supersessions rows")).toBe("4");
+    expect(pick("document_supersessions rows")).toBe("3");
     expect(pick("document_supersessions rows naming a private / hidden document")).toBe("2");
     expect(pick("document_supersessions rows naming a normal document with a read deny")).toBe("0");
-    expect(pick("document_supersessions rows whose documents are not both in the row's workspace")).toBe("1");
+    expect(pick("document_supersessions rows whose documents are not both in the row's workspace")).toBe("0");
     expect(pick("document_related_resources rows naming a private / hidden document")).toBe("2");
     expect(pick("entity_mentions rows on a private / hidden document")).toBe("2");
     // engineer and viewer here; docctrl (DocCtrl held additively) and the other workspace's Admin are controllers
     expect(pick("active members outside the controller tier")).toBe("2");
-    // the policy is in place and the Viewer now reads one lineage row
+    // the Viewer now reads one lineage row; the controller every row it read before the paste
     expect(count(pasteOwn, m.viewer.caller, "document_supersessions")).toBe("1");
-    // the residue the inventory names (document control, DRLS-13): the cross-workspace row is hidden from the
-    // row's own controller too, and a controller's DELETE of it skips it with no error (0 rows), so a
-    // reversal's read-back would report none left — recorded at DACL-11, not fixed here
     expect(count(pasteOwn, m.docctrl.caller, "document_supersessions")).toBe("3");
-    expect(asCaller(pasteOwn, m.docctrl.caller, `DELETE FROM document_supersessions WHERE replacement_doc_id = '${foreign}'`)).toEqual({ ok: true, rows: 0 });
-    expect(admin(pasteOwn, `SELECT count(*) FROM document_supersessions WHERE replacement_doc_id = '${foreign}'`)).toBe("1");
     const again = runPsql(mosDb().conn!, pasteOwn, "postgres", { sql: sql() });
     expect(again.error).toBeNull();
-    for (const p of again.stdout.split("\n").filter((l) => /\|[tf]\|$/.test(l))) expect(p, p).toMatch(/\|t\|$/);
+    for (const p of probesOf(again.stdout)) expect(p, p).toMatch(/\|t\|$/);
   });
+
+  it("with 20261131 missing (today's FOR ALL member policy), a client that continues past errors still cannot land the rail (DEC-90 ruling 1): the check after BEGIN aborts the transaction and COMMIT rolls back", () => {
+    admin("postgres", `CREATE DATABASE ${contAll} TEMPLATE ${before}`);
+    const member = "EXISTS (SELECT 1 FROM org_members WHERE org_id = document_supersessions.org_id AND uid = auth.uid() AND status = 'active')";
+    admin(contAll, [
+      "DROP POLICY document_supersessions_select ON document_supersessions",
+      "DROP POLICY document_supersessions_insert ON document_supersessions",
+      "DROP POLICY document_supersessions_update ON document_supersessions",
+      "DROP POLICY document_supersessions_delete ON document_supersessions",
+      `CREATE POLICY "document_supersessions_member_all" ON document_supersessions FOR ALL TO authenticated USING (${member}) WITH CHECK (${member})`,
+    ].join(";\n") + ";");
+    const cont = runFile(contAll);
+    // refused twice (before the inventory, and again inside the transaction); the DDL is ignored
+    expect(cont.errors.filter((e) => REFUSED.test(e))).toHaveLength(2);
+    expect(cont.errors.some((e) => /current transaction is aborted/.test(e))).toBe(true);
+    expect(admin(contAll, ourPolicy)).toBe("0");
+    expect(admin(contAll, "SELECT string_agg(policyname || ':' || cmd, ',') FROM pg_policies WHERE tablename = 'document_supersessions'"))
+      .toBe("document_supersessions_member_all:ALL");
+    expect(probesOf(cont.stdout).find((p) => p.startsWith("DACL-11: "))).toMatch(/\|f\|$/);
+    // reads as today
+    for (const k of ["engineer", "viewer", "docctrl"]) expect(count(contAll, m[k].caller, "document_supersessions"), k).toBe("3");
+  });
+
   it("on today's production read policy (20260615's FOR ALL member policy, 20261131 not yet in) the paste refuses and changes nothing: every role's reads, the upsert and the compensating deletes answer as today", () => {
     // the seeded 'before' copy with 20261131's four per-command policies swapped back for 20260615's FOR ALL one
     // (the pair index is kept, so the upsert below is the app's statement)
