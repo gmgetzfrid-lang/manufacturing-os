@@ -229,7 +229,11 @@ describe("getActions honours the resource — DEC-13 acceptance: ASBUILT may onl
     expect(src("lib/ticketPage.ts")).toContain("const scoped = scopedTokensFor(policy, pickCap, resource ?? null);");
     expect(src("lib/ticketPage.ts")).toContain('if (scoped !== null && !policyAllows(policy, pickCap, held[0] ?? "Viewer", [...held], uid, resource ?? null)) {');
     expect(r).toContain('(held[0] ?? "Viewer") as Role, held as Role[], ref, resource);');
-    expect(r).toMatch(/engineeringFirstTypes,\s*\n\s*closeWithoutReviewTypes,\s*\n\s*requesterRoles,\s*\n\s*\};\s*\n\s*const allowed = WorkflowEngine\.getActions\(ticket, callerRole, caller\.id, capPolicy, engineCtx\);/);
+    // DF-P24 merge-time fix pass: the engine context moved, verbatim, into
+    // lib/workflowAuthority.ts workflowEngineContext (shared with the
+    // examination-data waiver's authority); the route evaluates with it.
+    expect(src("lib/workflowAuthority.ts")).toMatch(/engineeringFirstTypes,\s*\n\s*closeWithoutReviewTypes,\s*\n\s*requesterRoles,\s*\n\s*\};\s*\n\s*return \{ kind: "ok", engineCtx,/);
+    expect(r).toMatch(/const \{ engineCtx, requesterRoles, declarationUnverified, driftLabels, sourceDriftUnchecked \} = builtCtx;\s*\n\s*const allowed = WorkflowEngine\.getActions\(ticket, callerRole, caller\.id, capPolicy, engineCtx\);/);
     expect(src("app/(protected)/requests/[id]/page.tsx")).toMatch(/engineeringFirstTypes,\s*\n\s*closeWithoutReviewTypes,\s*\n\s*requesterRoles,\s*\n\s*\}\);/);
     // the only policyAllows call sites, every one resource-aware or deliberately base-only
     // (Round E / SURF-9: the two admin pages' client reads moved into the ONE

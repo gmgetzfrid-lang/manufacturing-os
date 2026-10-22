@@ -106,7 +106,7 @@ vi.mock("@/lib/examinationScopeGate", async (importOriginal) => {
   return { ...real, issueScopeGate: (...a: Parameters<typeof real.issueScopeGate>) => (state.noP24 ? Promise.resolve({ kind: "none" as const }) : real.issueScopeGate(...a)) };
 });
 import { POST as workflowAction } from "@/app/api/tickets/workflow-action/route";
-import { POST as scopeRoute } from "@/app/api/tickets/examination-scope/route";
+import { POST as scopeRoute, GET as scopeGet } from "@/app/api/tickets/examination-scope/route";
 import { WorkflowEngine, ISSUING_APPROVALS } from "@/lib/workflow";
 import { rowToTicket } from "@/lib/ticketTransitions";
 
@@ -346,6 +346,16 @@ describe("ruling (2) — the gate on an issuing approval", () => {
     state.user = { id: who.uid };
     expect((await post({ ticketId: "t1", actionType: who.action })).status).toBe(200);
   });
+  it("merge-time fix pass (clock skew): a request filed less than 15 minutes after `since` is in flight — it issues, warned; from 15 minutes on it is refused", async () => {
+    const one = scopeCfg([{ field: "exam", libraryId: LIB, since: SINCE }]);
+    for (const [created, status] of [["2026-10-01T00:00:00.000Z", 200], ["2026-10-01T00:14:59.999Z", 200], ["2026-10-01T00:15:00.000Z", 409]] as const) {
+      const row = reviewRow({ created_at: created });
+      const who = issuer(row);
+      const r = await run(one, row, who.uid, { actionType: who.action }, false);
+      expect(r.status, created).toBe(status);
+      if (status === 200) expect(JSON.parse(r.json).examinationScopeWarning, created).toMatch(/filed before the requirement was set, so it can still issue/);
+    }
+  });
   it("a requirement on the request's WORK CLASS binds the same way", async () => {
     const row = reviewRow({ work_class: "code" });
     const who = issuer(row);
@@ -409,6 +419,33 @@ describe("ruling (2) — a roster sign-off that completes the review", () => {
     const completing = await waive(roster);
     expect(completing.status).toBe(200);
     expect((await completing.json()).waiver).toMatchObject({ fields: ["exam"], by: signer });
+  });
+  it("merge-time fix pass (ruling 2): someone the workflow route would refuse cannot waive — the waiver's authority is the route's own (a routed library's request in review with no roster: the engine offers the serial approval, the route refuses it, and so does the waiver)", async () => {
+    const TU = "7e000000-0000-4000-8000-000000000001";
+    const row = reviewRow({ id: TU });
+    const who = issuer(row);
+    const asWho = (routing: unknown) => { reset(); seed(cfg, routing); state.rows.tickets = [row]; state.user = { id: who.uid }; };
+    const waive = () => scopeRoute(new NextRequest("http://x/api/tickets/examination-scope", {
+      method: "POST", headers: { authorization: "Bearer t", "content-type": "application/json" }, body: JSON.stringify({ ticketId: TU, waiver: { reason: "vendor report to follow" } }),
+    }));
+    const mayWaive = async () => (await (await scopeGet(new NextRequest(`http://x/api/tickets/examination-scope?ticketId=${TU}`, { headers: { authorization: "Bearer t" } }))).json()).mayWaive;
+    // The workflow route refuses this member's issuing approval (TIER-5)…
+    asWho(ENGINEERING_ONLY);
+    const act = await post({ ticketId: TU, actionType: who.action, issueAsIsAcknowledged: true });
+    expect(act.status).toBe(409);
+    expect((await act.json()).code).toBe("routing_needs_roster");
+    // …so they cannot record a waiver either (403, nothing written), and the page is told not to offer it.
+    asWho(ENGINEERING_ONLY);
+    const refused = await waive();
+    expect(refused.status).toBe(403);
+    expect(state.calls.some((c) => (c.table === "audit_logs" || c.table === "ticket_examination_scopes") && (c.method === "insert" || c.method === "update"))).toBe(false);
+    asWho(ENGINEERING_ONLY);
+    expect(await mayWaive()).toBe(false);
+    // Control: the same member on the same request in an unrouted library may.
+    asWho(null);
+    expect(await mayWaive()).toBe(true);
+    asWho(null);
+    expect((await waive()).status).toBe(200);
   });
   it("REGRESSION (second fix pass): unconfigured, or a requirement elsewhere — a completing sign-off and its dry run are byte-identical with the whole gate removed (the sweep's rows carry no roster)", async () => {
     const roster = await openRoster();

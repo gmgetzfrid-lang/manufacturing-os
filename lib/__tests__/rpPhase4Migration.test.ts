@@ -224,9 +224,15 @@ describe("workflow-action route — the server half of the Phase 4 guards", () =
   });
 
   it("WF-7: the engine is evaluated with the caller's full role collection and org context", () => {
-    expect(route).toMatch(/userRoles: callerRoles,/);
-    expect(route).toMatch(/activeMemberCount: activeMemberCount \?\? 0,/);
-    expect(route).toMatch(/closeWithoutReviewTypes,/);
+    // DF-P24 merge-time fix pass: the engine context is built by
+    // lib/workflowAuthority.ts workflowEngineContext (moved out of the route
+    // verbatim, shared with the examination-data waiver's authority); the
+    // route passes it the caller's collection and the org context.
+    const ctxSrc = readFileSync(join(process.cwd(), "lib", "workflowAuthority.ts"), "utf8");
+    expect(ctxSrc).toMatch(/userRoles: callerRoles,/);
+    expect(ctxSrc).toMatch(/activeMemberCount: activeMemberCount \?\? 0,/);
+    expect(ctxSrc).toMatch(/closeWithoutReviewTypes,/);
+    expect(route).toMatch(/workflowEngineContext\(supabaseAdmin, \{\s*\n\s*ticket, ticketId: body\.ticketId, callerId: caller\.id, callerRole, callerRoles, capPolicy,\s*\n\s*activeMemberCount, sodActive, engineeringFirstTypes, closeWithoutReviewTypes,/);
   });
 });
 

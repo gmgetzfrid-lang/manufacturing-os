@@ -39,7 +39,7 @@ import {
 import { OUTCOME_LABEL } from '@/lib/ticketOutcome';
 import ReviewClassesSection from '@/components/requests/ReviewClassesSection';
 // GAP-102 acceptance 4 (drafting-flow DF-P24): the workspace's examination data and what requires it.
-import ExaminationScopeSection from '@/components/requests/ExaminationScopeSection';
+import ExaminationScopeSection, { editorScopeProblems } from '@/components/requests/ExaminationScopeSection';
 import { examinationScopeHasRequirements, EXAMINATION_SCOPE_KEY } from '@/lib/examinationScope';
 // FRIC-1 / GAP-106 (drafting-flow DF-P22): the escalation tier above the queue.
 import SlaEscalationSection from '@/components/requests/SlaEscalationSection';
@@ -148,6 +148,15 @@ export default function DraftingConfigPage() {
 
   const handleSave = async () => {
     if (!activeOrgId || !settings) return;
+    // DF-P24 merge-time fix pass: examination data the parser would drop
+    // (a bad, blank or duplicate key; a requirement on such data) is never
+    // saved — the section shows each problem at its row. Settings without
+    // examination data have none (today's save).
+    const scopeProblems = editorScopeProblems(settings);
+    if (scopeProblems.length > 0) {
+      await appAlert({ message: `Not saved — fix the examination data first (${scopeProblems.length === 1 ? "one entry" : `${scopeProblems.length} entries`}, shown in the Examination Data section): ${scopeProblems[0].message}`, tone: "danger" });
+      return;
+    }
     setSaving(true);
     try {
       // GAP-13 / GAP-107 (DF-P14): the reasons for ending a request are

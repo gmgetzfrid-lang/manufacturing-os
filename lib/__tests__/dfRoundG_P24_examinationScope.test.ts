@@ -4,9 +4,13 @@
 // limbs pinned in code:
 //   * ruling (1): a workspace's own fields and values; requirements per work
 //     class and/or library; an unconfigured workspace is no configuration;
-//   * ruling (2): a requirement binds a request filed at or after its `since`
-//     — an in-flight request only warns; a waiver covers the fields it names
-//     for the revision it was recorded for;
+//   * ruling (2): a requirement binds a request filed at least 15 minutes
+//     after its `since` (merge-time fix pass: the clock-skew grace) — an
+//     in-flight request only warns; a waiver covers the fields it names for
+//     the revision it was recorded for;
+//   * merge-time fix pass: who fills / changes / clears a field by where the
+//     request stands (rulings 1 and 4), the after-issue mark, the history
+//     line, and the editor's check — the parser's own rule (ruling 3);
 //   * fail-safe readings (ruling (6)): no `since`, an unfillable field, a
 //     retired value — never a refusal;
 //   * ruling (4) (notify-only limb, NOT built — recorded with an owner): the
@@ -23,7 +27,10 @@ import {
   waiverCovers, examinationScopeRefusal, examinationScopeWarning, examinationScopeAuditFields, checkScopeValuesInput, applyScopeChanges,
   scopeEditorBasis, isMissingScopeTable, EXAMINATION_SCOPE_KEY,
   hasBindingRequirement, scopeGateOutcome, examinationScopeHasRequirements, SCOPE_REQUESTER_STATUSES, SCOPE_ISSUED_STATUSES,
+  SCOPE_CLOCK_SKEW_GRACE_MS, scopeBindsFrom, scopePhase, scopeFieldRight, checkScopeWrite, scopeValuesAsIssued, examinationScopeHistoryEntry,
+  examinationScopeProblems, FIELD_KEY_RE, SCOPE_REVIEW_STATUSES,
 } from "@/lib/examinationScope";
+import { editorScopeProblems } from "@/components/requests/ExaminationScopeSection";
 import { WorkflowEngine, ISSUING_APPROVALS } from "@/lib/workflow";
 import { consentHeldAction } from "@/lib/consentWindow";
 import { editableScope, optionsToText, textToOptions, editRequirement } from "@/components/requests/ExaminationScopeSection";
@@ -263,5 +270,139 @@ describe("DEC-35 — no facility vocabulary in the new code", () => {
     for (const f of ["lib/examinationScope.ts", "app/api/tickets/examination-scope/route.ts", "components/requests/ExaminationScopePanel.tsx", "components/requests/ExaminationScopeSection.tsx"]) {
       expect(readFileSync(join(process.cwd(), f), "utf8"), f).not.toMatch(/QAQC|QA\/QC|B31|\bNDE\b|radiograph/i);
     }
+  });
+});
+
+describe("merge-time fix pass, item 6 — clock skew: a request filed less than 15 minutes after `since` is in flight (warned, never refused)", () => {
+  const c = parseExaminationScopeConfig(CFG);
+  const at = (ms: number) => new Date(Date.parse(SINCE) + ms).toISOString();
+  it("the grace is 15 minutes; scopeBindsFrom names when a requirement starts to bind", () => {
+    expect(SCOPE_CLOCK_SKEW_GRACE_MS).toBe(15 * 60 * 1000);
+    expect(scopeBindsFrom(SINCE)).toBe("2026-10-01T00:15:00.000Z");
+    expect(scopeBindsFrom(undefined)).toBeNull();
+    expect(scopeBindsFrom("not a date")).toBeNull();
+  });
+  it("filed at since, or up to a millisecond short of 15 minutes after: warned only — and an unreadable row never refuses it; from 15 minutes on: binds", () => {
+    for (const ms of [-60_000, 0, 60_000, SCOPE_CLOCK_SKEW_GRACE_MS - 1]) {
+      const t = ticket({ createdAt: at(ms) });
+      const s = examinationScopeStatus(c, t, {}, CFG);
+      expect(s.blocking, String(ms)).toEqual([]);
+      expect(s.warnOnly.map((w) => w.key), String(ms)).toEqual(["exam", "gov"]);
+      expect(hasBindingRequirement(c, t), String(ms)).toBe(false);
+      expect(scopeGateOutcome(c, { ...t, deliverableRev: "1A" }, { data: null, error: { code: "PGRST000", message: "timeout" } }).kind, String(ms)).toBe("pass");
+    }
+    for (const ms of [SCOPE_CLOCK_SKEW_GRACE_MS, SCOPE_CLOCK_SKEW_GRACE_MS + 1]) {
+      const t = ticket({ createdAt: at(ms) });
+      expect(examinationScopeStatus(c, t, {}, CFG).blocking.map((b) => b.key), String(ms)).toEqual(["exam", "gov"]);
+      expect(hasBindingRequirement(c, t), String(ms)).toBe(true);
+    }
+  });
+});
+
+describe("merge-time fix pass, rulings 1 and 4 — who may fill, change or clear a field, by where the request stands", () => {
+  const base = { assignedDrafterId: "d-1", assignedEngineerId: "e-1", requesterId: "req-1", metadata: { review_roster: { slots: [{ engineering: true, primaries: ["e-2"] }] } } };
+  const t = (status: string, over: Record<string, unknown> = {}) => ({ ...base, status, ...over }) as unknown as Ticket;
+  const mine = { by: "req-1" };
+  const theirs = { by: "d-1" };
+  it("phases: before review (the four with-the-drafter statuses), in review (PENDING_REVIEW, PENDING_FINAL_APPROVAL), after issue, closed (and an unknown status reads closed)", () => {
+    for (const st of SCOPE_REQUESTER_STATUSES) expect(scopePhase(st)).toBe("before_review");
+    expect([...SCOPE_REVIEW_STATUSES].sort()).toEqual(["PENDING_FINAL_APPROVAL", "PENDING_REVIEW"]);
+    for (const st of SCOPE_REVIEW_STATUSES) expect(scopePhase(st)).toBe("in_review");
+    for (const st of SCOPE_ISSUED_STATUSES) expect(scopePhase(st)).toBe("after_issue");
+    for (const st of ["CLOSED", "CANCELED", "NEW", "", null]) expect(scopePhase(st as never)).toBe("closed");
+  });
+  it("before review: the drafter, the engineers and the queue fill and change; the requester fills an empty field and changes only their own value", () => {
+    for (const st of SCOPE_REQUESTER_STATUSES) {
+      for (const [uid, q] of [["d-1", false], ["e-1", false], ["e-2", false], ["sup", true]] as const) {
+        expect(scopeFieldRight(t(st), uid, q, theirs), `${st} ${uid}`).toEqual({ fill: true, change: true });
+      }
+      expect(scopeFieldRight(t(st), "req-1", false, null), st).toEqual({ fill: true, change: false });
+      expect(scopeFieldRight(t(st), "req-1", false, theirs), st).toEqual({ fill: true, change: false });
+      expect(scopeFieldRight(t(st), "req-1", false, mine), st).toEqual({ fill: true, change: true });
+      expect(scopeFieldRight(t(st), "q-1", false, null), st).toEqual({ fill: false, change: false });
+    }
+  });
+  it("in review: only the assigned engineer of record — not the drafter, the roster engineer, the queue or the requester", () => {
+    for (const st of SCOPE_REVIEW_STATUSES) {
+      expect(scopeFieldRight(t(st), "e-1", false, theirs), st).toEqual({ fill: true, change: true });
+      for (const [uid, q] of [["d-1", false], ["e-2", false], ["sup", true], ["req-1", false]] as const) {
+        expect(scopeFieldRight(t(st), uid, q, theirs), `${st} ${uid}`).toEqual({ fill: false, change: false });
+        expect(scopeFieldRight(t(st), uid, q, null), `${st} ${uid}`).toEqual({ fill: false, change: false });
+      }
+      expect(scopeFieldRight(t(st, { assignedEngineerId: null }), "d-1", false, null), st).toEqual({ fill: false, change: false });
+    }
+  });
+  it("after issue: the drafter, the engineers and the queue FILL only; nobody changes or clears; not the requester", () => {
+    for (const st of SCOPE_ISSUED_STATUSES) {
+      for (const [uid, q] of [["d-1", false], ["e-1", false], ["e-2", false], ["sup", true]] as const) {
+        expect(scopeFieldRight(t(st), uid, q, null), `${st} ${uid}`).toEqual({ fill: true, change: false });
+      }
+      expect(scopeFieldRight(t(st), "req-1", false, null), st).toEqual({ fill: false, change: false });
+    }
+    for (const st of ["CLOSED", "CANCELED"]) expect(scopeFieldRight(t(st), "e-1", true, null), st).toEqual({ fill: false, change: false });
+  });
+  it("checkScopeWrite: per field; the same value again is no change; a mixed fill-and-change after issue is refused whole", () => {
+    const config = parseExaminationScopeConfig(CFG);
+    const cur = { exam: { value: "rt5", by: "d-1", at: SINCE } };
+    expect(checkScopeWrite(t("DRAFTING"), "req-1", false, config, cur, { gov: "c1" })).toMatchObject({ ok: true, basis: "requester" });
+    expect(checkScopeWrite(t("DRAFTING"), "req-1", false, config, cur, { exam: "rt100" })).toMatchObject({ ok: false, status: 403, code: "recorded_by_someone_else" });
+    expect(checkScopeWrite(t("DRAFTING"), "req-1", false, config, cur, { exam: null })).toMatchObject({ ok: false, status: 403 });
+    expect(checkScopeWrite(t("DRAFTING"), "req-1", false, config, cur, { exam: "rt5" })).toMatchObject({ ok: true });
+    expect(checkScopeWrite(t("PENDING_REVIEW"), "e-1", false, config, cur, { exam: null })).toMatchObject({ ok: true, phase: "in_review", basis: "engineer_of_record" });
+    expect(checkScopeWrite(t("PENDING_REVIEW"), "d-1", false, config, cur, { gov: "c1" })).toMatchObject({ ok: false, status: 403, code: "in_review" });
+    expect(checkScopeWrite(t("PENDING_IFC"), "d-1", false, config, cur, { gov: "c1" })).toMatchObject({ ok: true, phase: "after_issue", basis: "drafter" });
+    expect(checkScopeWrite(t("PENDING_IFC"), "d-1", false, config, cur, { gov: "c1", exam: "rt100" })).toMatchObject({ ok: false, status: 409, code: "issued" });
+    expect(checkScopeWrite(t("PENDING_IFC"), "req-1", false, config, cur, { gov: "c1" })).toMatchObject({ ok: false, status: 403 });
+    expect(checkScopeWrite(t("CLOSED"), "e-1", true, config, cur, { gov: "c1" })).toMatchObject({ ok: false, status: 409, code: "closed" });
+  });
+  it("ruling 4: a fill after issue is marked for the revision issued; what it issued with is the values less those marks (a later revision's issue reads them as its own)", () => {
+    const now = "2026-10-22T08:00:00.000Z";
+    const { values } = applyScopeChanges({ exam: { value: "rt5", by: "e-1", at: SINCE } }, { gov: "c1" }, { uid: "d-1", name: "D" }, now, { afterIssue: { rev: "1A" } });
+    expect(values.gov).toEqual({ value: "c1", by: "d-1", byName: "D", at: now, afterIssue: { rev: "1A" } });
+    expect(parseScopeValues(JSON.parse(JSON.stringify(values)))).toEqual(values);
+    expect(Object.keys(scopeValuesAsIssued(values, "1A"))).toEqual(["exam"]);
+    expect(Object.keys(scopeValuesAsIssued(values, "2A")).sort()).toEqual(["exam", "gov"]);
+    expect(applyScopeChanges({}, { gov: "c1" }, { uid: "d-1", name: null }, now).values.gov).not.toHaveProperty("afterIssue");
+  });
+  it("the history line names the change by the workspace's own labels, old → new", () => {
+    const config = parseExaminationScopeConfig(CFG);
+    const e = examinationScopeHistoryEntry({ phase: "in_review", config, changed: [{ field: "exam", from: "rt5", to: "rt100" }, { field: "gov", from: "c1", to: null }], user: "e@x.io", role: "Engineer-2", now: SINCE, attempt: "a1", actorId: "e-1" });
+    expect(e).toEqual({ action: "Examination data changed in review", user: "e@x.io", role: "Engineer-2", date: SINCE, attempt: "a1", actorId: "e-1",
+      details: "Examination scope: 5% RT → 100% RT; Governing code: Code one → — (changed by the engineer of record while the request was in review)" });
+    expect(examinationScopeHistoryEntry({ phase: "after_issue", config, changed: [{ field: "gov", from: null, to: "c1" }], user: null, role: null, now: SINCE, attempt: "a2", actorId: "d-1" }))
+      .toMatchObject({ action: "Examination data completed after issue", details: "Governing code: — → Code one (completed after issue — not part of what the request issued with)" });
+  });
+});
+
+describe("merge-time fix pass, item 3 — the editor's check is the parser's own rule", () => {
+  it("each kind of entry the parser drops is named; none without the key", () => {
+    const opts = [{ value: "a", label: "A" }];
+    const probs = examinationScopeProblems({ [EXAMINATION_SCOPE_KEY]: {
+      fields: [{ key: " ok ", options: opts }, { key: "_x", options: opts }, { key: "k".repeat(61), options: opts }, { key: "ok", options: opts }, { key: "", options: opts }, 7, { key: "many", options: Array.from({ length: 201 }, (_, i) => ({ value: `v${i}` })) }],
+      requirements: [{ field: "ok", workClass: "c" }, { field: "_x", workClass: "c" }, { field: "", workClass: "c" }, { field: "ok" }, null],
+    } });
+    expect(probs.map((p) => `${p.where}${p.index}`)).toEqual(["field1", "field2", "field3", "field4", "field5", "field6", "requirement1", "requirement2", "requirement3", "requirement4"]);
+    expect(examinationScopeProblems({})).toEqual([]);
+    expect(examinationScopeProblems(null)).toEqual([]);
+    expect(editorScopeProblems({} as never)).toEqual([]);
+    expect(FIELD_KEY_RE.test("Exam scope_1.a-b")).toBe(true);
+  });
+  it("PARITY: over many generated configurations, no problem ⇔ the parser keeps every field and every requirement", () => {
+    let seed = 7;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+    const keyPool = ["exam", "gov", " exam ", "_bad", "a b", "x".repeat(60), "y".repeat(61), "", "Z-9.q", "é"];
+    let clean = 0;
+    for (let n = 0; n < 2000; n++) {
+      const fields = Array.from({ length: Math.floor(rnd() * 4) }, () => ({ key: keyPool[Math.floor(rnd() * keyPool.length)], label: "L", options: [{ value: "a" }] }));
+      const requirements = Array.from({ length: Math.floor(rnd() * 3) }, () => ({ field: keyPool[Math.floor(rnd() * keyPool.length)].trim(), ...(rnd() < 0.8 ? { workClass: "c" } : {}) }));
+      const settings = { [EXAMINATION_SCOPE_KEY]: { fields, requirements } };
+      const parsed = parseExaminationScopeConfig(settings);
+      const keptAll = parsed.fields.length === fields.length && parsed.requirements.length === requirements.length
+        && parsed.requirements.every((r) => parsed.fields.some((f) => f.key === r.field));
+      const problems = examinationScopeProblems(settings);
+      expect(problems.length === 0, JSON.stringify(settings)).toBe(keptAll);
+      if (keptAll) clean++;
+    }
+    expect(clean).toBeGreaterThan(50);
   });
 });

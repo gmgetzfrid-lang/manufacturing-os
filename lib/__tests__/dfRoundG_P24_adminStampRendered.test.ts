@@ -126,7 +126,8 @@ describe("/admin/requests — a requirement's since is the database's (rendered,
     expect(reqsOf(h.writes[0])[0]).not.toHaveProperty("since");
     expect(h.fetches).toEqual([]);
     expect(h.readsAfterWrite).toBe(1);
-    expect(sinceText()).toEqual([`applies to requests filed from ${new Date(DB_STAMP).toLocaleString()}`]);
+    // merge-time fix pass: shown as when it binds — the stored time plus the 15-minute clock-skew grace
+    expect(sinceText()).toEqual([`applies to requests filed from ${new Date(Date.parse(DB_STAMP) + 15 * 60_000).toLocaleString()}`]);
     expect(h.alerts).toEqual(["Configuration saved successfully."]);
   });
 
@@ -138,7 +139,7 @@ describe("/admin/requests — a requirement's since is the database's (rendered,
     h.config = { ...h.config, examinationScope: { ...(h.config.examinationScope as Row), requirements: [{ field: "exam", workClass: "code", since: T1 }] } };
     await save();
     expect(h.writes).toHaveLength(1);
-    expect(sinceText()).toEqual([`applies to requests filed from ${new Date(T1).toLocaleString()}`]);
+    expect(sinceText()).toEqual([`applies to requests filed from ${new Date(Date.parse(T1) + 15 * 60_000).toLocaleString()}`]);
   });
 
   it("before 20261266 nothing stamps a requirement: saved, and the alert says it refuses nothing yet", async () => {
@@ -164,5 +165,43 @@ describe("/admin/requests — a requirement's since is the database's (rendered,
       expect(h.writes[0]).toMatchObject({ org_id: "o1", key: "drafting", data: cfg });
       expect(h.alerts).toEqual(["Configuration saved successfully."]);
     }
+  });
+});
+
+describe("/admin/requests — merge-time fix pass (ruling 3): examination data the parser would drop is never saved", () => {
+  it("a bad, over-long, duplicate or blank key — or a requirement on such data — refuses the save (no upsert), the alert naming it; fixed, it saves", async () => {
+    const opts = [{ value: "a", label: "A" }];
+    for (const fields of [
+      [{ key: "exam!", label: "Exam", options: opts }],
+      [{ key: "e".repeat(61), label: "Exam", options: opts }],
+      [{ key: "exam", label: "Exam", options: opts }, { key: "exam", label: "Again", options: opts }],
+      [{ key: "", label: "Exam", options: opts }],
+    ]) {
+      act(() => root?.unmount());
+      root = createRoot(host!);
+      h.writes = []; h.alerts = [];
+      h.config = { ...BASE, examinationScope: { fields, requirements: [] } };
+      await render();
+      expect(host!.querySelectorAll('[data-testid="examination-scope-problem"]').length, JSON.stringify(fields)).toBeGreaterThan(0);
+      await save();
+      expect(h.writes, JSON.stringify(fields)).toEqual([]);
+      expect(h.alerts[0]).toMatchObject({ tone: "danger", message: expect.stringMatching(/^Not saved — fix the examination data first/) });
+    }
+    // a requirement on data that would be dropped can never be saved
+    act(() => root?.unmount());
+    root = createRoot(host!);
+    h.writes = []; h.alerts = [];
+    h.config = { ...BASE, examinationScope: { fields: [{ key: "exam!", label: "Exam", options: opts }], requirements: [{ field: "exam!", workClass: "code" }] } };
+    await render();
+    await save();
+    expect(h.writes).toEqual([]);
+    // fixed: saves
+    act(() => root?.unmount());
+    root = createRoot(host!);
+    h.writes = []; h.alerts = [];
+    h.config = { ...BASE, examinationScope: { fields: [{ key: "exam", label: "Exam", options: opts }], requirements: [{ field: "exam", workClass: "code" }] } };
+    await render();
+    await save();
+    expect(h.writes).toHaveLength(1);
   });
 });

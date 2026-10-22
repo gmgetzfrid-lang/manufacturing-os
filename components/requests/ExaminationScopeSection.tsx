@@ -15,13 +15,21 @@
 // write (20261266's trigger — second fix pass; whatever `since` the page
 // sends is ignored); a request already in flight is never newly blocked, it
 // shows what is missing as a warning. Nothing configured = exactly today.
+//
+// Merge-time fix pass (ruling 3): the editor validates with the SAME rule the
+// parser reads by (lib/examinationScope.ts examinationScopeProblems —
+// FIELD_KEY_RE, the 60-character key, one entry per key, a blank key, the
+// list limits, a requirement naming a field that would be dropped or
+// naming neither a class nor a library): each problem is shown inline, and
+// the page's Save Changes refuses to save until it is fixed
+// (`editorScopeProblems`), so nothing saved here is silently dropped.
 
 import React, { useEffect, useState } from "react";
 import { Plus, Trash2, ClipboardCheck } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import type { OrgDraftingSettings } from "@/types/schema";
 import { reviewClassOptions } from "@/lib/reviewModel";
-import { EXAMINATION_SCOPE_KEY } from "@/lib/examinationScope";
+import { EXAMINATION_SCOPE_KEY, examinationScopeProblems, scopeBindsFrom, type ExaminationScopeProblem } from "@/lib/examinationScope";
 
 interface EditableOption { value: string; label: string }
 interface EditableField { key: string; label: string; options: EditableOption[] }
@@ -72,6 +80,16 @@ export function editRequirement(r: EditableRequirement, patch: Partial<Pick<Edit
   return next;
 }
 
+/** The problems the page's Save refuses over — checked on the configuration
+ *  as this editor holds and shows it (so each one is shown, at its row).
+ *  Settings without the key have none: an unconfigured workspace saves
+ *  exactly as before. Pure; exported for the page and tests. */
+export function editorScopeProblems(settings: Partial<OrgDraftingSettings> | null | undefined): ExaminationScopeProblem[] {
+  const raw = (settings as Record<string, unknown> | null | undefined)?.[EXAMINATION_SCOPE_KEY];
+  if (raw === undefined || raw === null) return [];
+  return examinationScopeProblems({ [EXAMINATION_SCOPE_KEY]: editableScope(settings) });
+}
+
 export default function ExaminationScopeSection({
   settings, orgId, onChange,
 }: {
@@ -106,14 +124,24 @@ export default function ExaminationScopeSection({
   const set = (next: EditableScope) => onChange({ [EXAMINATION_SCOPE_KEY]: next } as unknown as Partial<OrgDraftingSettings>);
   const fieldKeys = new Set(scope.fields.map((f) => f.key));
   const input = "rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm";
+  const problems = editorScopeProblems(settings);
+  const problemsAt = (where: ExaminationScopeProblem["where"], i: number) => problems.filter((p) => p.where === where && p.index === i);
+  const problemLines = (where: ExaminationScopeProblem["where"], i: number) => problemsAt(where, i).map((p, k) => (
+    <p key={k} role="alert" data-testid="examination-scope-problem" className="w-full text-[11px] text-red-700">{p.message}</p>
+  ));
 
   return (
     <div data-testid="examination-scope-section" className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-6 shadow-sm">
       <h2 className="text-sm font-bold text-[var(--color-text)] uppercase tracking-wide mb-1 flex items-center"><ClipboardCheck className="w-4 h-4 mr-2 text-orange-500" />Examination Data</h2>
       <p className="text-xs text-[var(--color-text-muted)] mb-4">
-        Optional. The data a package must carry before it issues — in your facility&apos;s words, each picked from its own list. The drafter or the engineer records it on the request; an issue that is missing what its work class or library requires is refused with what is missing. A requirement applies only to requests filed after you save it — a request already in progress shows what is missing as a warning and can still issue.
+        Optional. The data a package must carry before it issues — in your facility&apos;s words, each picked from its own list. The drafter or the engineer records it on the request; an issue that is missing what its work class or library requires is refused with what is missing. A requirement applies only to requests filed at least 15 minutes after you save it (a margin for the servers&apos; clocks) — a request already in progress shows what is missing as a warning and can still issue.
       </p>
 
+      {problems.length > 0 && (
+        <p data-testid="examination-scope-problems" role="alert" className="mb-3 text-xs font-bold text-red-700">
+          {problems.length === 1 ? "One entry below needs" : `${problems.length} entries below need`} fixing — Save Changes won&apos;t save until {problems.length === 1 ? "it is" : "they are"} fixed (otherwise it would be dropped).
+        </p>
+      )}
       <h3 className="text-xs font-bold text-[var(--color-text)] mb-2">Data</h3>
       {scope.fields.length === 0 && <p className="text-xs text-[var(--color-text-faint)] mb-3">None configured.</p>}
       <div className="space-y-3">
@@ -135,6 +163,7 @@ export default function ExaminationScopeSection({
             <button type="button" aria-label="Remove data" className="p-1 text-[var(--color-text-muted)] hover:text-red-600"
               onClick={() => set({ ...scope, fields: scope.fields.filter((_, j) => j !== i) })}><Trash2 className="w-4 h-4" /></button>
             {f.options.length === 0 && <p className="w-full text-[11px] text-amber-700">No choices yet — a requirement on this data refuses nothing until it has some.</p>}
+            {problemLines("field", i)}
           </div>
         ))}
       </div>
@@ -166,10 +195,10 @@ export default function ExaminationScopeSection({
               {libraries.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
               {r.libraryId && !libraries.some((l) => l.id === r.libraryId) && <option value={r.libraryId}>{r.libraryId}</option>}
             </select>
-            <span className="text-[11px] text-[var(--color-text-faint)]">{r.since ? `applies to requests filed from ${new Date(r.since).toLocaleString()}` : "applies to requests filed after you save"}</span>
+            <span className="text-[11px] text-[var(--color-text-faint)]">{scopeBindsFrom(r.since) ? `applies to requests filed from ${new Date(scopeBindsFrom(r.since)!).toLocaleString()}` : "applies to requests filed after you save"}</span>
             <button type="button" aria-label="Remove requirement" className="p-1 text-[var(--color-text-muted)] hover:text-red-600"
               onClick={() => set({ ...scope, requirements: scope.requirements.filter((_, j) => j !== i) })}><Trash2 className="w-4 h-4" /></button>
-            {!r.workClass && !r.libraryId && <p className="w-full text-[11px] text-amber-700">Pick a work class, a library, or both — a requirement naming neither applies to nothing.</p>}
+            {problemLines("requirement", i)}
           </div>
         ))}
       </div>

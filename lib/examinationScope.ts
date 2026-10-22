@@ -30,17 +30,26 @@
 // the flow, the assignment queue, or — second fix pass — the requester
 // while the request is still with the drafter (an engineer who files a
 // like-in-kind request records what they already specified); never a new
-// role, slot or stop). Once the request has issued (PENDING_IFC /
-// FINAL_DRAFT) its data is the issued record and is not changed; it opens
-// again if the request is sent back.
+// role, slot or stop). Merge-time fix pass (`scopeFieldRight`): the
+// requester fills an EMPTY field, and changes or clears only what they
+// recorded themselves; from the first review status (PENDING_REVIEW,
+// PENDING_FINAL_APPROVAL) only the engineer of record changes a value, each
+// change put on the request's history old → new; once the request has
+// issued (PENDING_IFC / FINAL_DRAFT) no value is changed or cleared — a
+// field still missing may be FILLED by the drafter, the engineer or the
+// queue, marked "completed after issue" (`afterIssue`), so what it issued
+// with stays readable (`scopeValuesAsIssued`). A request sent back opens
+// again.
 //
 // THE ISSUE GATE (ruling (2)). The issuing transitions (lib/workflow.ts
 // ISSUING_APPROVALS, a roster sign-off that completes the review, and — fix
 // pass — a consent window whose close on silence would complete it, which
 // lib/consentWindowScan.ts then HOLDS for a sign-off instead) refuse
 // with a plain sentence naming what is missing — but ONLY where a
-// requirement applies to the request AND the request was filed at or after
-// the requirement's `since`. A request already in flight when a requirement
+// requirement applies to the request AND the request was filed at least
+// SCOPE_CLOCK_SKEW_GRACE_MS (15 minutes — merge-time fix pass: `since` is the
+// database's clock, the filing time the app server's) after the
+// requirement's `since`. A request already in flight when a requirement
 // was configured is never newly blocked: it issues, and what is missing is
 // said as a warning. A person who already holds the issue authority may
 // record why the request issues without it (a waiver: a required reason,
@@ -87,10 +96,35 @@ export const EXAMINATION_SCOPE_MIGRATION = "20261266";
 /** The longest reason a waiver keeps. */
 export const EXAMINATION_WAIVER_REASON_MAX = 2000;
 
-const FIELD_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9 _.-]{0,59}$/;
-const MAX_FIELDS = 50;
-const MAX_OPTIONS = 200;
-const MAX_REQUIREMENTS = 500;
+/** A field key the parser keeps (trimmed first): a letter or digit, then
+ *  letters, digits, spaces, `_`, `.`, `-` — at most 60 characters. The admin
+ *  editor validates with this same rule (merge-time fix pass), so nothing it
+ *  saves is silently dropped by `parseExaminationScopeConfig`. */
+export const FIELD_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9 _.-]{0,59}$/;
+export const EXAMINATION_FIELD_KEY_MAX = 60;
+export const EXAMINATION_MAX_FIELDS = 50;
+export const EXAMINATION_MAX_OPTIONS = 200;
+export const EXAMINATION_MAX_REQUIREMENTS = 500;
+const MAX_FIELDS = EXAMINATION_MAX_FIELDS;
+const MAX_OPTIONS = EXAMINATION_MAX_OPTIONS;
+const MAX_REQUIREMENTS = EXAMINATION_MAX_REQUIREMENTS;
+
+/** Merge-time fix pass (DEC-90 ruling for DF-P24, clock skew): a
+ *  requirement's `since` is the DATABASE's clock (20261266's stamp trigger),
+ *  but a request's filing time (`tickets.created_at`) is the APP SERVER's
+ *  (the create route's `now`). A request filed less than this long after
+ *  `since` is treated as in flight — warned, never refused — so "a request
+ *  already in flight is never newly blocked" holds under any realistic skew
+ *  between the two clocks. */
+export const SCOPE_CLOCK_SKEW_GRACE_MS = 15 * 60 * 1000;
+
+/** The instant from which a requirement stored at `since` binds a request
+ *  (its filing at or after it): `since` plus the skew grace. null when
+ *  `since` cannot be read (such a requirement binds nothing). Pure. */
+export function scopeBindsFrom(since: string | null | undefined): string | null {
+  const t = since ? Date.parse(String(since)) : NaN;
+  return Number.isFinite(t) ? new Date(t + SCOPE_CLOCK_SKEW_GRACE_MS).toISOString() : null;
+}
 
 export interface ExaminationScopeOption { value: string; label: string }
 export interface ExaminationScopeField { key: string; label: string; options: ExaminationScopeOption[] }
@@ -169,8 +203,11 @@ export function applicableRequirements(
     && (!r.libraryId || r.libraryId === (ticket.libraryId ?? null)));
 }
 
-/** One recorded value on a request. */
-export interface ExaminationScopeValue { value: string; by: string | null; byName?: string | null; at: string | null }
+/** One recorded value on a request. `afterIssue` (merge-time fix pass,
+ *  ruling 4(b)): the value was FILLED after the request issued (it was
+ *  missing then) — "completed after issue", for the revision named; it is
+ *  not part of what the request issued with. */
+export interface ExaminationScopeValue { value: string; by: string | null; byName?: string | null; at: string | null; afterIssue?: { rev: string | null } }
 export type ExaminationScopeValues = Record<string, ExaminationScopeValue>;
 
 /** The values a ticket_examination_scopes row carries, read tolerantly. */
@@ -187,7 +224,24 @@ export function parseScopeValues(raw: unknown): ExaminationScopeValues {
       by: typeof o.by === "string" ? o.by : null,
       ...(typeof o.byName === "string" ? { byName: o.byName } : {}),
       at: typeof o.at === "string" ? o.at : null,
+      ...(o.afterIssue && typeof o.afterIssue === "object" && !Array.isArray(o.afterIssue)
+        ? { afterIssue: { rev: typeof (o.afterIssue as { rev?: unknown }).rev === "string" ? (o.afterIssue as { rev: string }).rev : null } }
+        : {}),
     };
+  }
+  return out;
+}
+
+/** The values a request issued with (merge-time fix pass, ruling 4(a)/(b)):
+ *  after an issue a value can only be FILLED (never changed or cleared), and
+ *  each such fill is marked `afterIssue` for the revision then issued — so
+ *  the values as they stood at that issue are the recorded values less those
+ *  marked for it. Pure. */
+export function scopeValuesAsIssued(values: ExaminationScopeValues, deliverableRev: string | null | undefined): ExaminationScopeValues {
+  const out: ExaminationScopeValues = {};
+  for (const [k, v] of Object.entries(values)) {
+    if (v.afterIssue && (v.afterIssue.rev ?? null) === (deliverableRev ?? null)) continue;
+    out[k] = v;
   }
   return out;
 }
@@ -224,8 +278,9 @@ export function parseScopeWaiver(raw: unknown): ExaminationScopeWaiver | null {
 export interface RequiredScopeField {
   key: string;
   label: string;
-  /** True when a requirement binds this request (it was filed at or after
-   *  the requirement's `since`) — a missing value then refuses an issue. */
+  /** True when a requirement binds this request (it was filed at least
+   *  SCOPE_CLOCK_SKEW_GRACE_MS after the requirement's `since`) — a missing
+   *  value then refuses an issue. */
   enforced: boolean;
   /** The earliest `since` among the requirements that name the field. */
   since: string | null;
@@ -250,6 +305,10 @@ export interface ExaminationScopeStatus {
 }
 
 const at = (iso: string | null | undefined): number => (iso ? Date.parse(String(iso)) : NaN);
+/** Does a requirement stored at `since` bind a request filed at `filed`?
+ *  Only with both readable, and the filing at least the skew grace after
+ *  `since` (SCOPE_CLOCK_SKEW_GRACE_MS). */
+const binds = (since: number, filed: number): boolean => Number.isFinite(since) && Number.isFinite(filed) && filed >= since + SCOPE_CLOCK_SKEW_GRACE_MS;
 
 /** Where a request stands against its workspace's requirements. Pure. */
 export function examinationScopeStatus(
@@ -265,7 +324,7 @@ export function examinationScopeStatus(
   for (const e of entries) {
     const field = config.fields.find((f) => f.key === e.field)!;
     const since = at(e.since);
-    const enforced = Number.isFinite(since) && Number.isFinite(filed) && filed >= since;
+    const enforced = binds(since, filed);
     const basis = [e.workClass ? `work class "${classLabel(e.workClass)}"` : null, e.libraryId ? "its library" : null].filter((x): x is string => !!x).join(" in ");
     const cur = byField.get(field.key);
     const value = values[field.key] ?? null;
@@ -286,7 +345,8 @@ export function examinationScopeStatus(
 }
 
 /** True when at least one requirement that applies to the request BINDS it
- *  (a readable `since`, the request filed at or after it) — knowable before
+ *  (a readable `since`, the request filed at least SCOPE_CLOCK_SKEW_GRACE_MS
+ *  after it) — knowable before
  *  the request's data is read. Pure. */
 export function hasBindingRequirement(
   config: ExaminationScopeConfig,
@@ -294,7 +354,7 @@ export function hasBindingRequirement(
 ): boolean {
   const filed = at(ticket.createdAt as string | null | undefined);
   if (!Number.isFinite(filed)) return false;
-  return applicableRequirements(config, ticket).some((e) => { const since = at(e.since); return Number.isFinite(since) && filed >= since; });
+  return applicableRequirements(config, ticket).some((e) => binds(at(e.since), filed));
 }
 
 /** What an issuing transition does with the request's examination data, from
@@ -407,6 +467,8 @@ export function applyScopeChanges(
   changes: Record<string, string | null>,
   who: { uid: string; name: string | null },
   nowIso: string,
+  /** Merge-time fix pass: a fill after issue carries `afterIssue`. */
+  mark?: Pick<ExaminationScopeValue, "afterIssue">,
 ): { values: ExaminationScopeValues; changed: string[] } {
   const values: ExaminationScopeValues = { ...current };
   const changed: string[] = [];
@@ -416,7 +478,7 @@ export function applyScopeChanges(
       continue;
     }
     if (values[k]?.value === v) continue;
-    values[k] = { value: v, by: who.uid, ...(who.name ? { byName: who.name } : {}), at: nowIso };
+    values[k] = { value: v, by: who.uid, ...(who.name ? { byName: who.name } : {}), at: nowIso, ...(mark?.afterIssue ? { afterIssue: mark.afterIssue } : {}) };
     changed.push(k);
   }
   return { values, changed };
@@ -425,8 +487,16 @@ export function applyScopeChanges(
 /** Second fix pass (GAP-102 acceptance 1): the statuses in which the
  *  request is still with the drafter — not yet under review, not issued —
  *  where its requester may record its examination data (the engineer who
- *  files a like-in-kind request has usually specified it already). */
+ *  files a like-in-kind request has usually specified it already). These are
+ *  every status BEFORE review (merge-time fix pass: `scopePhase`
+ *  "before_review"). */
 export const SCOPE_REQUESTER_STATUSES: ReadonlySet<string> = new Set(["PENDING_ENG_TEAM", "PENDING_ASSIGNMENT", "DRAFTING", "REVISION_REQ"]);
+
+/** Merge-time fix pass (ruling 4(a)): the review statuses the engine uses —
+ *  PENDING_REVIEW (the first: a submitted draft) and PENDING_FINAL_APPROVAL
+ *  (the engineer's final approval). From the first of them on, the request
+ *  is "in review": its values change only by its engineer of record. */
+export const SCOPE_REVIEW_STATUSES: ReadonlySet<string> = new Set(["PENDING_REVIEW", "PENDING_FINAL_APPROVAL"]);
 
 /** Who may record a request's examination data (ruling (1): the drafter or
  *  the engineer already in the flow — or the assignment queue that sets the
@@ -435,7 +505,8 @@ export const SCOPE_REQUESTER_STATUSES: ReadonlySet<string> = new Set(["PENDING_E
  *  (`queue`) a holder of the queue's capability for this request, or —
  *  second fix pass — its requester while the request is still with the
  *  drafter (SCOPE_REQUESTER_STATUSES; never once it is under review or
- *  issued). Pure. */
+ *  issued). WHAT each may do depends on where the request stands —
+ *  `scopeFieldRight` (merge-time fix pass). Pure. */
 export function scopeEditorBasis(
   ticket: Pick<Ticket, "assignedDrafterId" | "assignedEngineerId" | "metadata"> & Partial<Pick<Ticket, "requesterId" | "status">>,
   uid: string | null | undefined,
@@ -456,11 +527,132 @@ export const SCOPE_CLOSED_STATUSES: ReadonlySet<string> = new Set(["CLOSED", "CA
 
 /** Second fix pass: the statuses after an issue (lib/ticketTransitions.ts —
  *  every issuing approval and a completing sign-off move the request to
- *  PENDING_IFC, or FINAL_DRAFT when issued as-is). The data it issued with
- *  is the issued record: neither values nor a waiver change here (no
- *  issuing action is offered in these statuses — lib/workflow.ts — so
- *  nothing here can be blocked by it); a request sent back opens again. */
+ *  PENDING_IFC, or FINAL_DRAFT when issued as-is). No issuing action is
+ *  offered in these statuses (lib/workflow.ts), so nothing here can be
+ *  blocked by the data. Merge-time fix pass (ruling 4(b)): a value it issued
+ *  with is never changed or cleared here, and no waiver is recorded; a field
+ *  still MISSING may be filled (drafter, engineer, queue) — "completed after
+ *  issue", re-opening nothing. A request sent back opens again. */
 export const SCOPE_ISSUED_STATUSES: ReadonlySet<string> = new Set(["PENDING_IFC", "FINAL_DRAFT"]);
+
+/** Where a request stands for its examination data (merge-time fix pass).
+ *  An unknown status is read as closed (nothing changes — never a guess). */
+export type ScopePhase = "before_review" | "in_review" | "after_issue" | "closed";
+export function scopePhase(status: string | null | undefined): ScopePhase {
+  const st = String(status ?? "");
+  if (SCOPE_REQUESTER_STATUSES.has(st)) return "before_review";
+  if (SCOPE_REVIEW_STATUSES.has(st)) return "in_review";
+  if (SCOPE_ISSUED_STATUSES.has(st)) return "after_issue";
+  return "closed";
+}
+
+/** What one person may do to one field now (merge-time fix pass, rulings 1
+ *  and 4): `fill` — set a value on an EMPTY field; `change` — change or
+ *  clear a RECORDED value.
+ *   * before review: the drafter, the engineer (assigned, or on an
+ *     engineering sign-off), the queue — both; the requester may fill an
+ *     empty field, and change or clear only a value they recorded
+ *     themselves (never one someone else recorded);
+ *   * in review: only the assigned engineer of record — both (each change
+ *     is put on the request's history, old → new); nobody else, anything;
+ *   * after issue: the drafter, the engineer or the queue may FILL a field
+ *     still missing (recorded as completed after issue) — nobody changes or
+ *     clears a value;
+ *   * closed: nobody. Pure. */
+export interface ScopeFieldRight { fill: boolean; change: boolean }
+export function scopeFieldRight(
+  ticket: Pick<Ticket, "assignedDrafterId" | "assignedEngineerId" | "metadata"> & Partial<Pick<Ticket, "requesterId" | "status">>,
+  uid: string | null | undefined,
+  queue: boolean,
+  current: Pick<ExaminationScopeValue, "by"> | null | undefined,
+): ScopeFieldRight {
+  const none = { fill: false, change: false };
+  if (!uid) return none;
+  const phase = scopePhase(ticket.status);
+  if (phase === "closed") return none;
+  if (phase === "in_review") return ticket.assignedEngineerId === uid ? { fill: true, change: true } : none;
+  const basis = scopeEditorBasis(ticket, uid, queue);
+  if (!basis) return none;
+  if (phase === "after_issue") return basis === "requester" ? none : { fill: true, change: false };
+  if (basis === "requester") return { fill: true, change: !!current && current.by === uid };
+  return { fill: true, change: true };
+}
+
+/** A fill request checked against `scopeFieldRight` for every field it
+ *  touches (a value set to what it already is is no change and never
+ *  refused). Merge-time fix pass. Pure. */
+export function checkScopeWrite(
+  ticket: Pick<Ticket, "assignedDrafterId" | "assignedEngineerId" | "metadata"> & Partial<Pick<Ticket, "requesterId" | "status">>,
+  uid: string | null | undefined,
+  queue: boolean,
+  config: ExaminationScopeConfig,
+  current: ExaminationScopeValues,
+  changes: Record<string, string | null>,
+): { ok: true; phase: ScopePhase; basis: string } | { ok: false; status: 403 | 409; code: string; error: string } {
+  const phase = scopePhase(ticket.status);
+  if (phase === "closed") return { ok: false, status: 409, code: "closed", error: "This request is closed — its examination data is part of its record and is not changed." };
+  const label = (k: string) => config.fields.find((f) => f.key === k)?.label ?? k;
+  if (phase === "in_review") {
+    if (ticket.assignedEngineerId !== uid) {
+      return { ok: false, status: 403, code: "in_review", error: ticket.assignedEngineerId
+        ? "This request is in review — only its engineer of record changes its examination data now (each change goes on the request's history)."
+        : "This request is in review and has no engineer of record, so its examination data is not changed now. Someone who can issue it may record why it issues without the missing data, or it can be sent back for revision." };
+    }
+    return { ok: true, phase, basis: "engineer_of_record" };
+  }
+  const basis = scopeEditorBasis(ticket, uid, queue);
+  if (!basis || (phase === "after_issue" && basis === "requester")) {
+    return { ok: false, status: 403, code: "not_in_flow", error: phase === "after_issue"
+      ? "The request's drafter or engineer (or whoever runs the assignment queue) completes data still missing after it issued."
+      : "The request's drafter or engineer records its examination data (or whoever runs the assignment queue; its requester, until it goes for review)." };
+  }
+  for (const [k, v] of Object.entries(changes)) {
+    const cur = current[k] ?? null;
+    if (v !== null && cur?.value === v) continue;
+    if (v === null && !cur) continue;
+    const right = scopeFieldRight(ticket, uid, queue, cur);
+    if (!cur && right.fill) continue;
+    if (cur && right.change) continue;
+    if (phase === "after_issue") {
+      return { ok: false, status: 409, code: "issued", error: `This request has issued — ${label(k)} is part of what it issued with and is not changed or cleared (only data still missing may be completed).` };
+    }
+    return { ok: false, status: 403, code: "recorded_by_someone_else", error: `${label(k)} was recorded by someone else — as the requester you may fill a field that is empty, or change one you recorded yourself.` };
+  }
+  return { ok: true, phase, basis };
+}
+
+/** The request's history line for a change of its examination data in
+ *  review (old → new, ruling 4(a)) or a fill after issue ("completed after
+ *  issue", ruling 4(b)) — merge-time fix pass. Values are named by their
+ *  labels in the workspace's lists ("—" for none). `attempt` is the
+ *  TICKET_EXAMINATION_SCOPE_SET row written before the change (no
+ *  `historyAttempt` rides that row, so the audit drain never reads it as a
+ *  transition's). Pure. */
+export function examinationScopeHistoryEntry(p: {
+  phase: "in_review" | "after_issue";
+  config: ExaminationScopeConfig;
+  changed: ReadonlyArray<{ field: string; from: string | null; to: string | null }>;
+  user: string | null;
+  role: string | null;
+  now: string;
+  attempt: string;
+  actorId: string;
+}): Record<string, unknown> {
+  const field = (k: string) => p.config.fields.find((f) => f.key === k);
+  const name = (k: string, v: string | null) => (v === null ? "—" : field(k)?.options.find((o) => o.value === v)?.label ?? v);
+  const lines = p.changed.map((c) => `${field(c.field)?.label ?? c.field}: ${name(c.field, c.from)} → ${name(c.field, c.to)}`);
+  return {
+    action: p.phase === "in_review" ? "Examination data changed in review" : "Examination data completed after issue",
+    ...(p.user ? { user: p.user } : {}),
+    ...(p.role ? { role: p.role } : {}),
+    date: p.now,
+    details: p.phase === "in_review"
+      ? `${lines.join("; ")} (changed by the engineer of record while the request was in review)`
+      : `${lines.join("; ")} (completed after issue — not part of what the request issued with)`,
+    attempt: p.attempt,
+    actorId: p.actorId,
+  };
+}
 
 /** True when the error means 20261266 is not applied (42P01 / PGRST205, or
  *  the table named as missing). */
@@ -482,4 +674,48 @@ export function isMissingScopeTable(err: { code?: string | null; message?: strin
 export function examinationScopeHasRequirements(settings: object | null | undefined): boolean {
   const raw = (settings as Record<string, unknown> | null | undefined)?.[EXAMINATION_SCOPE_KEY] as Record<string, unknown> | undefined;
   return !!raw && typeof raw === "object" && Array.isArray(raw.requirements) && raw.requirements.length > 0;
+}
+
+/** One thing in the editor's examination-data configuration that the parser
+ *  would silently drop (merge-time fix pass, ruling 3). `index` is the
+ *  entry's position in the stored `fields` / `requirements` list. */
+export interface ExaminationScopeProblem { where: "field" | "requirement"; index: number; message: string }
+
+/** The editor's check — the SAME rule `parseExaminationScopeConfig` reads by
+ *  (FIELD_KEY_RE on the trimmed key, the first 50 fields, one entry per key,
+ *  the first 200 choices, the first 500 requirements, a requirement naming a
+ *  kept field and a work class and/or a library): every entry the parser
+ *  would leave out is named, so the page shows it inline and refuses to
+ *  save until it is fixed. Settings without the key have no problem (an
+ *  unconfigured workspace saves exactly as before). Pure. */
+export function examinationScopeProblems(settings: object | null | undefined): ExaminationScopeProblem[] {
+  const raw = (settings as Record<string, unknown> | null | undefined)?.[EXAMINATION_SCOPE_KEY];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  const r = raw as Record<string, unknown>;
+  const out: ExaminationScopeProblem[] = [];
+  const kept = new Set<string>();
+  (Array.isArray(r.fields) ? r.fields : []).forEach((f: unknown, i: number) => {
+    const bad = (message: string) => out.push({ where: "field", index: i, message });
+    if (i >= MAX_FIELDS) return bad(`Only the first ${MAX_FIELDS} pieces of data are kept — remove this one or another.`);
+    if (!f || typeof f !== "object") return bad("This entry can't be read — remove it.");
+    const o = f as Record<string, unknown>;
+    const key = str(o.key);
+    if (!key) return bad("Give this data a key.");
+    if (key.length > EXAMINATION_FIELD_KEY_MAX) return bad(`The key is longer than ${EXAMINATION_FIELD_KEY_MAX} characters.`);
+    if (!FIELD_KEY_RE.test(key)) return bad("A key starts with a letter or a digit and uses only letters, digits, spaces, _ . and -.");
+    if (kept.has(key)) return bad(`Another piece of data already uses the key "${key}".`);
+    kept.add(key);
+    if (Array.isArray(o.options) && o.options.length > MAX_OPTIONS) bad(`Only the first ${MAX_OPTIONS} choices are kept — remove some.`);
+  });
+  (Array.isArray(r.requirements) ? r.requirements : []).forEach((q: unknown, i: number) => {
+    const bad = (message: string) => out.push({ where: "requirement", index: i, message });
+    if (i >= MAX_REQUIREMENTS) return bad(`Only the first ${MAX_REQUIREMENTS} requirements are kept — remove this one or another.`);
+    if (!q || typeof q !== "object") return bad("This entry can't be read — remove it.");
+    const o = q as Record<string, unknown>;
+    const field = str(o.field);
+    if (!field) return bad("Pick the data this requirement names.");
+    if (!kept.has(field)) return bad(`"${field}" is not data configured above (or its key has a problem) — fix the data, or remove this requirement.`);
+    if (!str(o.workClass) && !str(o.libraryId)) bad("Pick a work class, a library, or both — a requirement naming neither applies to nothing.");
+  });
+  return out;
 }
