@@ -462,3 +462,34 @@ describe("the cron and the record (source pins)", () => {
     expect(tier).not.toMatch(/\.from\("tickets"\)\.update/);
   });
 });
+
+// drafting-flow Round G, DF-P25 — the DF-P22 follow-ups (b) and (c) on the
+// escalation pass (DEC-90 ruling (2) for DF-P25): the claim row's
+// `recipients` is the audience asked (documented — 20261267 comments the
+// column); a refused audit row's line names who was TOLD; a notice that
+// resolved its person but landed no bell row is said, as runTicketSlaScan
+// says it. Nothing else changes (the happy path above is unchanged).
+describe("DF-P25 — the escalation's record of who was told, and a notice with no bell row", () => {
+  it("(b) a refused audit row: the run's line names the people told (the claim row keeps the audience asked)", async () => {
+    configure({ contact: { kind: "role", role: "Admin" }, periodDays: 2 });
+    db.errors["audit_logs:insert"] = { code: "XX000", message: "audit refused" };
+    const r = await runSlaEscalationScan({ client, emit, now: NOW });
+    expect(r.escalated).toBe(1);
+    expect(db.tables.ticket_sla_escalations[0]).toMatchObject({ recipients: [ADMIN] });
+    expect(r.errors.join(" ")).toContain(`ticket t1: the escalation went out to ${ADMIN}, but its audit row was not written`);
+  });
+  it("(c) a notice that resolved its person but landed no bell row is said; it still counts as told (the claim is kept, the audit row written)", async () => {
+    configure({ contact: { kind: "role", role: "Admin" }, periodDays: 2 });
+    const noBell = async (input: SlaEmitInput) => { emitted.push(input); return { recipients: 1, inapp: { sent: 0, failed: 1 } }; };
+    const r = await runSlaEscalationScan({ client, emit: noBell, now: NOW });
+    expect(r).toMatchObject({ escalated: 1, unreached: 0 });
+    expect(r.errors.join(" ")).toContain(`the escalation notice of ticket t1 to ${ADMIN} landed no bell row; the email was queued, so it is not sent again`);
+    expect(db.tables.ticket_sla_escalations).toHaveLength(1);
+    expect(db.tables.audit_logs).toHaveLength(1);
+  });
+  it("REGRESSION: a bell row that landed says nothing new", async () => {
+    configure({ contact: { kind: "role", role: "Admin" }, periodDays: 2 });
+    const r = await runSlaEscalationScan({ client, emit, now: NOW });
+    expect(r.errors.join(" ")).not.toMatch(/landed no bell row|audit row was not written/);
+  });
+});

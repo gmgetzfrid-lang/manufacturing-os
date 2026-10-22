@@ -916,7 +916,11 @@ export async function runSlaEscalationScan(deps: SlaScanDeps): Promise<SlaEscala
         continue;
       }
       // Claim first: the unique (ticket, breach, period) key means one run
-      // sends it. 23505 = another run got there first.
+      // sends it. 23505 = another run got there first. The claim's
+      // `recipients` are the people the contact resolved to who may read the
+      // request — the audience asked, written BEFORE the notice; who was
+      // actually told is the audit row's details.recipients (DF-P25 — the
+      // DF-P22 follow-up (b); 20261267 comments the column so).
       const claimId = crypto.randomUUID();
       const auditId = crypto.randomUUID();
       const { error: claimErr } = await sb.from("ticket_sla_escalations").insert({
@@ -952,6 +956,12 @@ export async function runSlaEscalationScan(deps: SlaScanDeps): Promise<SlaEscala
                 tickets: items.map((k) => ({ id: k.t.id, breachedAt: k.t.slaBreachedAt, periodIndex: k.periodIndex })) },
         });
         if (res.recipients > 0) for (const k of items) reachedBy.set(k.claimId, [...(reachedBy.get(k.claimId) ?? []), uid]);
+        // DF-P25 (the DF-P22 follow-up (c)): a notice that resolved its person
+        // but landed no bell row (the email was queued) is said, as
+        // runTicketSlaScan says it — never silent; it still counts as told.
+        if (res.recipients > 0 && res.inapp && res.inapp.sent === 0) {
+          say(`org ${orgId}: the escalation ${one ? `notice of ticket ${first.t.id}` : `digest (${items.length} requests)`} to ${uid} landed no bell row; the email was queued, so it is not sent again`);
+        }
       } catch (e) {
         say(`org ${orgId}: an escalation notice failed: ${(e as Error)?.message ?? String(e)}`);
       }
@@ -976,7 +986,10 @@ export async function runSlaEscalationScan(deps: SlaScanDeps): Promise<SlaEscala
         user_id: null, user_email: SLA_ESCALATION_ACTOR, user_role: "system",
         details: { status: k.t.status, breachedAt: k.t.slaBreachedAt, target: k.t.targetCompletionAt ?? null, periodIndex: k.periodIndex, periodDays: config.periodDays, contact: config.contact, recipients: told, escalation: k.claimId, ...(digest ? { digest: true } : {}) },
       });
-      if (aErr) say(`ticket ${k.t.id}: the escalation went out, but its audit row was not written (ticket_sla_escalations row ${k.claimId} records it): ${aErr.message}`);
+      // DF-P25 (the DF-P22 follow-up (b)): the claim row names the audience
+      // asked, not the people told — so a refused audit row's line names who
+      // was told, and the run's report is that record.
+      if (aErr) say(`ticket ${k.t.id}: the escalation went out to ${told.join(", ")}, but its audit row was not written (ticket_sla_escalations row ${k.claimId} records the escalation and its audience; the people told are named here): ${aErr.message}`);
     }
   }
   return report;

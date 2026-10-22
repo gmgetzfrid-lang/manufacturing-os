@@ -115,7 +115,7 @@ export async function applyStandingPreauthorizations(db: Db, input: {
     const signed = new Set(preauths.filter((p) => preauthSignatureStands(sigById.get(p.signatureId), p)).map((p) => p.id));
     // In force only while the grantor has been an active member continuously
     // since the record was created (merge-time fix pass).
-    const memberships = await readGrantorMemberships(db, input.orgId, preauths);
+    const memberships = await readGrantorMemberships(db, input.orgId, preauths, now);
     if (!memberships.ok) return { applied: [], note: `${memberships.error}, so no standing pre-authorization was applied` };
     const continuous = new Set(preauths.filter((p) => memberships.byId.get(p.id) === "continuous").map((p) => p.id));
 
