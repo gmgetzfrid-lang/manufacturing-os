@@ -792,7 +792,10 @@ function DependencyEditor({
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const deps = useMemo(() => milestone.dependsOn ?? [], [milestone.dependsOn]);
+  // The predecessors as last saved here, so adding two in a row (before the
+  // schedule reloads) keeps both.
+  const [localDeps, setLocalDeps] = useState<{ from: unknown; deps: string[] }>({ from: milestone.dependsOn, deps: milestone.dependsOn ?? [] });
+  const deps = useMemo(() => (localDeps.from === milestone.dependsOn ? localDeps.deps : (milestone.dependsOn ?? [])), [localDeps, milestone.dependsOn]);
 
   const byId = useMemo(() => {
     const map = new Map<string, Milestone>();
@@ -828,6 +831,7 @@ function DependencyEditor({
       const kept: LinkMap = {};
       for (const id of next) { const l = nextLinks[id]; if (l && (l.type !== "FS" || l.lagHours)) kept[id] = l; }
       setLocalLinks({ from: milestone.linkTypes, links: kept });
+      setLocalDeps({ from: milestone.dependsOn, deps: next });
       await updateMilestone({ id: milestone.id, patch: { dependsOn: next, linkTypes: Object.keys(kept).length ? kept : null }, updatedBy: userId });
       if (next.length && milestone.projectId) {
         const me = milestone.id;

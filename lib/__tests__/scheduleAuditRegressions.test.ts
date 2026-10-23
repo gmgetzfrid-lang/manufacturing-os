@@ -354,3 +354,30 @@ describe("sweep 4 fixes", () => {
     expect(d.linksByRef?.["csv:2"]).toEqual({ type: "FS", lagHours: 36 });
   });
 });
+
+describe("sweep 5 fixes", () => {
+  const job = (n: number, pctOf: (i: number) => number) => Array.from({ length: n }, (_, i) => {
+    const d = `2026-10-${String(i + 1).padStart(2, "0")}`;
+    const p = pctOf(i);
+    return mk({ id: `d${i}`, name: `Day ${i + 1}`, plannedStartAt: at(d, "06:00"), plannedAt: at(d, "17:00"), status: p >= 100 ? "completed" : p > 0 ? "in_progress" : "planned", percentComplete: p });
+  });
+  it("on plan in the morning: the forecast is the planned finish, not a slip", () => {
+    const r = computeExecutionReport(job(10, (i) => (i < 4 ? 100 : 0)), { now: new Date(at("2026-10-05", "06:30")), tz: CHI });
+    expect(r.forecastFinish).toBe(r.finish);
+  });
+  it("behind with nothing finished still forecasts late (not 'on track')", () => {
+    const r = computeExecutionReport(job(10, (i) => (i < 4 ? 50 : 0)), { now: new Date(at("2026-10-05", "06:30")), tz: CHI });
+    expect(standingOf(r.pctComplete, r.expectedPct)).toBe("behind");
+    expect(Date.parse(r.forecastFinish!)).toBeGreaterThan(Date.parse(r.finish!));
+  });
+  it("behind with no work at all: no forecast", () => {
+    const r = computeExecutionReport(job(10, () => 0), { now: new Date(at("2026-10-05", "06:30")), tz: CHI });
+    expect(r.forecastFinish).toBeNull();
+  });
+  it("a single link with a decimal-comma lag", () => {
+    const csv = "id,name,start,finish,predecessors\n1,A,2026-10-26 06:00,2026-10-26 08:00,\n2,B,2026-10-26 08:00,2026-10-26 10:00,\n3,C,2026-10-26 10:00,2026-10-26 12:00,\"2FS+1,5d\"\n";
+    const c = parseScheduleFile("s.csv", csv, { timeZone: CHI }).rows.find((r) => r.name === "C")!;
+    expect(c.dependsOnExternalRefs).toEqual(["csv:2"]);
+    expect(c.linksByRef?.["csv:2"]).toEqual({ type: "FS", lagHours: 36 });
+  });
+});

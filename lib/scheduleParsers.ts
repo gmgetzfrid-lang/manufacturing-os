@@ -774,7 +774,10 @@ function parseCsvLikeWithSynonyms(text: string, tz: string, syn: SynonymSpec, re
       const raw = cell(iPred);
       if (raw) {
         // ";" separates links when present ("2FS+1,5d;3" has a decimal comma).
-        const parsed = raw.split(raw.includes(";") ? ";" : ",").map((tok) => parseLinkToken(tok.replace(/(\d),(\d)/g, "$1.$2"))).filter((x): x is NonNullable<typeof x> => !!x);
+        // A decimal comma before a lag unit ("2FS+1,5d") is a decimal point,
+        // not a second link; then ";" (or ",") separates links.
+        const text = raw.replace(/(\d),(\d+(?:\s*e?(?:mo|mons?|months?|m|mins?|minutes?|h|hrs?|hours?|d|days?|w|wks?|weeks?)\b|\s*%))/gi, "$1.$2");
+        const parsed = text.split(text.includes(";") ? ";" : ",").map((tok) => parseLinkToken(tok)).filter((x): x is NonNullable<typeof x> => !!x);
         if (parsed.length) dependsOnExternalRefs = parsed.map((p) => `${refTag}:${p.id}`);
         for (const p of parsed) if (p.link.type !== "FS" || p.link.lagHours) (linksByRef ??= {})[`${refTag}:${p.id}`] = p.link;
         roughLinks += parsed.filter((p) => p.approx).length;

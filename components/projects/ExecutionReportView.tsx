@@ -95,7 +95,7 @@ export default function ExecutionReportView({ milestones, shiftTimes }: { milest
 
         <Card>
           <Label>Forecast finish</Label>
-          <div className="text-lg font-black tracking-tight text-[var(--color-text)]">{fmtDate(r.forecastFinish, tz)}</div>
+          <div className={`text-lg font-black tracking-tight ${standing === "behind" ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"}`}>{r.forecastFinish ? fmtDate(r.forecastFinish, tz) : "No work yet to forecast from"}</div>
           <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
             planned {fmtDate(r.finish, tz)} · day {r.elapsedDays} of {r.totalDays}
           </div>

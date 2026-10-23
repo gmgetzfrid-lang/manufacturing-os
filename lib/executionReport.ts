@@ -20,7 +20,7 @@ import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { effectiveWeight, leafPercent, roundPct } from "@/lib/scheduleProgress";
 import { dayDiff } from "@/lib/scheduleTz";
 import { startOf, finishOf } from "@/lib/scheduleTime";
-import { expectedFraction, isOverdue, DEFAULT_SHIFT_TIMES, type ShiftTimes } from "@/lib/shiftReport";
+import { expectedFraction, isOverdue, BEHIND_POINTS, DEFAULT_SHIFT_TIMES, type ShiftTimes } from "@/lib/shiftReport";
 
 export interface GroupRollup {
   id: string;
@@ -199,20 +199,17 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
   const expectedPct = wsum > 0 ? Math.min(100, roundPct((wexp / wsum) * 100)) : 0;
   const paceDelta = pctComplete - expectedPct;
 
-  // Naive forecast: extrapolate completion rate over elapsed time.
+  // Forecast from the same work-hours pace as the verdict, so the two can't
+  // disagree: on plan or ahead → the planned finish; behind → the plan
+  // stretched by how far behind the work is (planned % ÷ done %), or, past
+  // the planned end, the pace so far carried to 100%. Behind with nothing
+  // done yet → no forecast (nothing to project from).
   let forecastFinish: string | null = finish;
-  // The pace so far uses every day actually worked — past the planned end
-  // too (elapsedDays stops at the plan's length for "day N of M").
-  const daysWorked = Number.isFinite(envStart) ? Math.max(0, dayDiff(envStart, now, tz) + 1) : 0;
-  if (Number.isFinite(envStart) && tally.done > 0 && pctComplete < 100 && daysWorked > 0) {
-    const ratePerDay = tally.done / daysWorked;             // leaves/day so far
-    const remaining = totalLeaves - tally.done;
-    if (ratePerDay > 0) {
-      const daysLeft = Math.ceil(remaining / ratePerDay);
-      forecastFinish = new Date(now + daysLeft * DAY).toISOString();
-    }
-  } else if (pctComplete >= 100) {
-    forecastFinish = finish;
+  const behind = pctComplete < 100 && expectedPct - pctComplete >= BEHIND_POINTS;
+  if (behind && Number.isFinite(envStart) && Number.isFinite(envFinish)) {
+    if (pctComplete <= 0) forecastFinish = null;
+    else if (now <= envFinish) forecastFinish = new Date(envFinish + (envFinish - envStart) * (expectedPct / pctComplete - 1)).toISOString();
+    else forecastFinish = new Date(now + (now - envStart) * ((100 - pctComplete) / pctComplete)).toISOString();
   }
 
   // ── Per-group rollups ────────────────────────────────────────
