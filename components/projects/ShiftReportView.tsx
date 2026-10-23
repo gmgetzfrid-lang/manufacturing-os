@@ -36,7 +36,7 @@ import type { Milestone } from "@/types/schema";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import {
-  buildShiftReport, shiftWindow, nextShift, previousShift, defaultReviewShift, nextShiftWithWork,
+  buildShiftReport, shiftWindow, nextShift, previousShift, defaultReviewShift, nextShiftWithWork, expectedByParent,
   DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftRow, type ShiftWindow, type ShiftReport,
 } from "@/lib/shiftReport";
 import { buildKickoff, buildCloseout, defaultMeeting, type MeetingKind, type PlanRow } from "@/lib/meetingPlan";
@@ -144,6 +144,8 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
 
   // When each main task really finishes: its last step (for "planned finish").
   const taskSpans = useMemo(() => effectiveSpans(milestones), [milestones]);
+  // Each main task's planned % by now — "on plan" or "behind" in the update.
+  const planByTask = useMemo(() => expectedByParent(milestones, asOf, tz, times), [milestones, asOf, tz, times]);
 
   // The report as data — for Copy (text / email).
   const exportDoc = (): ExportDoc => {
@@ -170,6 +172,7 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
         ? turnoverUpdate(report, { D: ctx.D, DTs: ctx.DTs, T: ctx.T, win: ctx.win, hrs: ctx.hrs }, {
           pctOf: (id) => progress?.get(id)?.percent,
           finishOf: (id) => taskSpans.get(id)?.finish,
+          planOf: (id) => planByTask.get(id),
         })
         : withoutEmpty(sections.filter((x) => x.data).map((x) => ({ id: x.id, title: x.title, sub: x.sub, flag: x.flag ?? null, blocks: x.data!() }))),
     };
@@ -587,6 +590,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     extraTags: [
       r.status === "blocked" ? { t: "blocked", tone: "rose" } : r.status === "on_hold" ? { t: "on hold", tone: "amber" } : null,
       r.overdue ? { t: "overdue", tone: "amber" } : r.lateStart ? { t: "late start", tone: "amber" } : null,
+      // Behind the plan, or simply carrying on as planned past this shift.
+      r.pace === "behind" ? { t: `behind plan · ${r.expectedPct}% due`, tone: "amber" }
+        : r.pace === "on plan" && r.finish > shift.end ? { t: `on plan · to ${c.D(r.finish)}`, tone: "muted" } : null,
     ],
   }));
   const doneItems = review.done.map((r) => ({
@@ -607,6 +613,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     extraTags: [
       r.carryOver ? { t: "carry-over", tone: "amber" } : null,
       !r.carryOver && r.lateStart ? { t: "late start", tone: "amber" } : null,
+      !r.carryOver && r.pace === "behind" ? { t: `behind plan · ${r.expectedPct}% due`, tone: "amber" } : null,
       waitTag(r),
       !r.carryOver && r.start < next.start ? { t: `since ${c.D(r.start)}`, tone: "muted" } : null,
       r.finish > next.end ? { t: `to ${c.D(r.finish)}`, tone: "muted" } : null,

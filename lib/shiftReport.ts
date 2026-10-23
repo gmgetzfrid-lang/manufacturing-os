@@ -204,6 +204,30 @@ export function expectedFraction(m: Milestone, now: number, tz: string, times: S
   return plannedFraction(m, now, tz, times, Number.isFinite(bs) && Number.isFinite(bf) ? { start: bs, finish: bf } : undefined);
 }
 
+/** Where a step stands against its plan right now (see ShiftRow.pace). */
+export function paceOf(m: Milestone, percent: number, now: number, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): Pace {
+  if (m.status === "completed" || percent >= 100) return "done";
+  if (m.status === "blocked" || m.status === "on_hold") return "held";
+  const f = finishMsOf(m);
+  if (Number.isFinite(f) && f <= now) return "overdue";
+  return percent + BEHIND_POINTS < expectedFraction(m, now, tz, times) * 100 ? "behind" : "on plan";
+}
+
+/** Each main task's (a leaf's parent's) planned % by now: its steps'
+ *  expected shares, weighted like % complete. */
+export function expectedByParent(milestones: Milestone[], now: number, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): Map<string, number> {
+  const parents = new Set(milestones.map((m) => m.parentId).filter((x): x is string => !!x));
+  const acc = new Map<string, { w: number; e: number }>();
+  for (const m of milestones) {
+    if (!m.parentId || (m.id && parents.has(m.id))) continue;   // leaves only
+    const w = effectiveWeight(m);
+    const a = acc.get(m.parentId) ?? { w: 0, e: 0 };
+    a.w += w; a.e += w * expectedFraction(m, now, tz, times);
+    acc.set(m.parentId, a);
+  }
+  return new Map([...acc].map(([k, v]) => [k, v.w > 0 ? Math.round((v.e / v.w) * 100) : 0]));
+}
+
 /** The shift to open on: the one ending now while the job is running;
  *  before the job starts, the first shift with scheduled work; after it
  *  ends, the last one. Never an empty page by default. */
@@ -273,7 +297,17 @@ export interface ShiftRow {
   waitingOn: Array<{ id: string; name: string }>;
   /** Which shift does its work: "day", "night" or round the clock. */
   work: WorkShift;
+  /** % the plan expects done by now (on its crew's hours). */
+  expectedPct: number;
+  /** Where unfinished work stands: past its finish ("overdue"), well short
+   *  of where the plan has it by now ("behind"), held ("held"), or where
+   *  the plan has it — work planned to carry on ("on plan"). Done = "done". */
+  pace: Pace;
 }
+
+export type Pace = "done" | "overdue" | "behind" | "held" | "on plan";
+/** How far short of the plan a step can be before it's called behind. */
+export const BEHIND_POINTS = 10;
 
 /** Planned work-hours for a step: its duration when the schedule gives
  *  one, else the length of its planned window, else its weight. A schedule
@@ -429,6 +463,8 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       lateStart: !finished && percent <= 0 && m.status !== "in_progress" && Number.isFinite(s) && s < now,
       waitingOn: finished ? [] : predecessorsOf(m).filter((p) => !doneM(p)).map((p) => ({ id: p.id ?? p.name, name: p.name })),
       work: workShiftOf(m, tz, times),
+      expectedPct: Math.round(expectedFraction(m, now, tz, times) * 100),
+      pace: paceOf(m, percent, now, tz, times),
     };
   };
   const inWin = (ms: number, win: ShiftWindow) => Number.isFinite(ms) && ms >= win.start && ms < win.end;

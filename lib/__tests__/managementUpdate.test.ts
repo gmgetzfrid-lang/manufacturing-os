@@ -34,13 +34,13 @@ const shift = shiftWindow("2026-10-26", "day", CHI);
 const report = buildShiftReport({ milestones: ms, tz: CHI, shift, now: shift.end });
 const progress = buildProgressIndex(ms);
 const spans = effectiveSpans(ms);
-const sections = turnoverUpdate(report, f, { pctOf: (id) => progress.get(id)?.percent, finishOf: (id) => spans.get(id)?.finish });
+const sections = turnoverUpdate(report, f, { pctOf: (id) => progress.get(id)?.percent, finishOf: (id) => spans.get(id)?.finish, planOf: () => 50 });
 
 describe("the update says what happened, in as few words as it takes", () => {
   it("leaves out what's empty: nothing unfinished, nothing blocked, nothing next", () => {
     expect(sections.map((s) => s.id)).toEqual(["stand", "last"]);
     const last = sections.find((s) => s.id === "last")!;
-    expect(last.blocks.some((b) => b.k === "label" && b.text === "Not finished")).toBe(false);
+    expect(last.blocks.some((b) => b.k === "label" && (b.text === "Behind" || b.text === "Carrying over as planned"))).toBe(false);
   });
 
   it("Completed: one row per main task — % done, last step, and when the rest is planned", () => {
@@ -51,7 +51,7 @@ describe("the update says what happened, in as few words as it takes", () => {
     const row = (name: string) => cells.find((r) => r[0] === name)!;
     // E-606 is part done with its last step planned tomorrow — shown as on its way, not unfinished.
     expect(row("E-606 Exchanger")[2]).toBe("Hydroblast");
-    expect(row("E-606 Exchanger")[3]).toMatch(/10-27/);
+    expect(row("E-606 Exchanger")[3]).toMatch(/10-27.*on plan/);
     expect(row("T-605 Tower")).toEqual(["T-605 Tower", "100%", "", "Complete"]);
     expect(table.rows).toHaveLength(2); // not a line per step
   });
@@ -71,5 +71,32 @@ describe("the update says what happened, in as few words as it takes", () => {
       { id: "b", title: "Blocked", blocks: [{ k: "table", head: ["Task"], rows: [["X"]] }] },
     ]);
     expect(out.map((s) => s.id)).toEqual(["b"]);
+  });
+});
+
+describe("unfinished work: behind, or carrying over as planned", () => {
+  // Day shift Oct 26 closing at 17:30.
+  const late = mk({ id: "late", name: "Hydroblast", parentId: "ex", plannedStartAt: at("2026-10-26", "11:00"), plannedAt: at("2026-10-26", "17:00"), durationHours: 6, status: "in_progress", percentComplete: 60 });
+  const slow = mk({ id: "slow", name: "Retube (2 days)", parentId: "ex", plannedStartAt: at("2026-10-26", "06:00"), plannedAt: at("2026-10-27", "17:00"), durationHours: 22, status: "in_progress", percentComplete: 10 });
+  const fine = mk({ id: "fine", name: "Blast tower (2 days)", parentId: "tw", plannedStartAt: at("2026-10-26", "06:00"), plannedAt: at("2026-10-27", "17:00"), durationHours: 22, status: "in_progress", percentComplete: 55 });
+  const all = [ms[0], ms[4], late, slow, fine];
+  const r = buildShiftReport({ milestones: all, tz: CHI, shift, now: shift.end });
+  const pace = (id: string) => [...r.review.carryOver, ...r.review.inProgress].find((x) => x.leaf.id === id)!.pace;
+
+  it("past its finish = overdue; well short of plan = behind; at plan = on plan", () => {
+    expect(pace("late")).toBe("overdue");
+    expect(pace("slow")).toBe("behind");   // 10% done, ~52% planned by end of day one
+    expect(pace("fine")).toBe("on plan");
+  });
+
+  it("the update lists them apart, with why", () => {
+    const secs = turnoverUpdate(r, f, { pctOf: () => 50, finishOf: () => undefined });
+    const last = secs.find((x) => x.id === "last")!;
+    const labels = last.blocks.filter((b) => b.k === "label").map((b) => (b.k === "label" ? b.text : ""));
+    expect(labels).toEqual(["Behind", "Carrying over as planned"]);
+    const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: secs });
+    expect(text).toMatch(/Hydroblast · 60% · Overdue — was due/);
+    expect(text).toMatch(/Retube \(2 days\) · 10% · Behind plan — \d+% planned by now/);
+    expect(text).toMatch(/Blast tower \(2 days\) · 55% · finishes/);
   });
 });
