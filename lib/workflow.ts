@@ -432,29 +432,22 @@ export function slotSignPlan(
   const fillsKind = (kind: string): boolean =>
     roster.slots.some((s) => s.kind === kind && s.status === "satisfied" && s.satisfiedBy === uid)
     || plan.fillable.some((f) => f.slot.kind === kind);
+  // GAP-115 (DF-P26 merge-time fix pass): two passes. The OPEN blocking
+  // slots are judged first, exactly as before and with no rule-satisfied
+  // slot in view, so an optional upgrade can never displace a person's real,
+  // required sign-off (before, with the rule's slot first in the table and
+  // an open slot independent of it — or it of the open slot — the upgrade
+  // was offered and the open slot blocked "Needs a second person", for good
+  // once the upgrade was given: the outcome depended on slot order). Only
+  // then are upgrades of rule-satisfied slots considered (pass 2).
   for (const slot of roster.slots) {
-    // GAP-115 (DF-P26 review fix): a slot the exception-only rule satisfied
-    // stays signable by its OWN occupants (a primary, or an alternate once
-    // alternates are active — never an overrider: an override is itself an
-    // exception), so a person's sign-off can upgrade the rule's. Without
-    // this, a review whose only other independent occupant left would wait
-    // behind the DEC-12 floor (the rule is never the second person) with
-    // nobody able to sign the rule's slot. Only a roster carrying such a
-    // slot (the opt-in) is affected. DF-P26 fix pass 2: the upgrade exists
-    // only for the floor — so only above the DEC-12 threshold, and never to
-    // the drafter (their sign-off is never the second person). The engine
-    // offers it as OPTIONAL unless the floor would otherwise leave nobody
-    // named able to complete (ruleUpgradeNeeded), so the reviewer the rule
-    // excused is not badged for it.
-    const ruleSatisfied = slot.status === "satisfied" && slot.via === "rule";
-    if (ruleSatisfied && (!sodActive || uid === ticket.assignedDrafterId)) continue;
-    if ((slot.status !== "open" && !ruleSatisfied) || !slotBlocks(slot)) continue;
+    if (slot.status !== "open" || !slotBlocks(slot)) continue;
     const alternateActive = slotAlternatesActive(roster, slot, now);
     const via = slot.primaries.includes(uid) ? "primary" as const
       : alternateActive && slot.alternates.includes(uid) ? "alternate" as const
       : slot.overriders.includes(uid) ? "override" as const
       : null;
-    if (!via || (ruleSatisfied && via === "override")) continue;
+    if (!via) continue;
     const label = slot.label || slot.kind;
     let reason: string | null = null;
     if (sodActive) {
@@ -474,13 +467,47 @@ export function slotSignPlan(
         if (conflict) reason = `Needs a second person: "${conflict.label || conflict.kind}", which you sign, must be independent of "${label}" (orgs of 3+).`;
       }
     }
-    // DF-P26 fix pass 3: an upgrade of the rule's satisfaction that this
-    // person cannot give (an independence reason) is simply not offered —
-    // the review does not wait on it, so it is never a disabled sign-off
-    // that badges them.
-    if (reason && ruleSatisfied) continue;
     if (reason) plan.blocked.push({ slot, reason });
     else plan.fillable.push({ slot, via });
+  }
+  // Pass 2 — GAP-115 (DF-P26 review fix): a slot the exception-only rule
+  // satisfied stays signable by its OWN occupants (a primary, or an
+  // alternate once alternates are active — never an overrider: an override
+  // is itself an exception), so a person's sign-off can upgrade the rule's.
+  // Without this, a review whose only other independent occupant left would
+  // wait behind the DEC-12 floor (the rule is never the second person) with
+  // nobody able to sign the rule's slot. Only a roster carrying such a slot
+  // (the opt-in) is affected. DF-P26 fix pass 2: the upgrade exists only for
+  // the floor — so only above the DEC-12 threshold, and never to the drafter
+  // (their sign-off is never the second person). The engine offers it as
+  // OPTIONAL unless the floor would otherwise leave nobody named able to
+  // complete (ruleUpgradeNeeded), so the reviewer the rule excused is not
+  // badged for it. DF-P26 fix pass 3: an upgrade this person cannot give (an
+  // independence reason) is simply not offered — never a disabled sign-off.
+  // Merge-time fix pass: nor is one whose independence leg conflicts with a
+  // slot this person signed, is signing now (pass 1 or an earlier upgrade)
+  // or is shown blocked on — nor with an open slot whose alternate window
+  // will open for them later (an alternate of a slot with a timeout) — so an
+  // upgrade's presence never produces a blocked reason on an open slot, now
+  // or once that window opens.
+  if (sodActive && uid !== ticket.assignedDrafterId) {
+    const laterAlternate = (kind: string): boolean =>
+      roster.slots.some((s) => s.kind === kind && s.status === "open" && slotBlocks(s) && s.timeoutDays !== null && s.alternates.includes(uid));
+    const tied = (kind: string): boolean => fillsKind(kind) || plan.blocked.some((b) => b.slot.kind === kind) || laterAlternate(kind);
+    for (const slot of roster.slots) {
+      if (slot.status !== "satisfied" || slot.via !== "rule" || !slotBlocks(slot)) continue;
+      const via = slot.primaries.includes(uid) ? "primary" as const
+        : slotAlternatesActive(roster, slot, now) && slot.alternates.includes(uid) ? "alternate" as const
+        : null;
+      if (!via) continue;
+      const forbidden = slot.independentOf.some((k) => (k === "drafter" || k === "requester") ? !!slotPartyLegReason(slot, k, ticket, uid) : tied(k))
+        || roster.slots.some((s) => s.kind !== slot.kind && s.independentOf.includes(slot.kind) && tied(s.kind));
+      if (forbidden) continue;
+      plan.fillable.push({ slot, via });
+    }
+    // One sign-off's slots in table order, as before the two passes.
+    const at = (s: TicketReviewSlot) => roster.slots.indexOf(s);
+    plan.fillable.sort((a, b) => at(a.slot) - at(b.slot));
   }
   // DEC-12 / DEC-37 acceptance 2 — the producer-versus-checker FLOOR, held
   // whatever the routing table declares: above the threshold the drafter

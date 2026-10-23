@@ -475,6 +475,65 @@ describe("limb 2 — re-opened before anything issues", () => {
     expect(events).toContainEqual(expect.objectContaining({ slot_kind: "doc", event: "satisfied" }));
     expect(events.some((e) => e.event === "reopened")).toBe(false);
   });
+  it("DF-P26 merge-time fix pass (DEC-90 rulings (1) and (4)): a completing sign-off that upgrades EVERY rule-satisfied slot leaves nothing to re-open — an unreadable waiver read never refuses it: 200 and the request issues (the dry run too)", async () => {
+    // e-2 is named on the live lead check AND on the exception-only document check: the rule satisfied the
+    // document check at open (the lead check still waited on e-2); e-2's one sign-off covers both.
+    const BOTH = { slots: [LEAD, { ...DOCCHK, fill: { users: ["e-2"] } }] };
+    const opened = await submit(BOTH);
+    expect(opened.roster!.slots.find((x) => x.kind === "doc")).toMatchObject({ status: "satisfied", via: "rule" });
+    const row = reviewRow({ metadata: { source_document: { id: DOC, document_number: "P-100", rev: "2" }, review_roster: opened.roster } });
+    const down = () => { state.errors.ticket_examination_scopes = { code: "08006", message: "down" }; };
+    const dry = await run(row, "e-2", { actionType: "sign_slot", dryRun: true }, BOTH, { extra: down });
+    expect(dry.status, JSON.stringify(dry.json)).toBe(200);
+    expect(dry.json.slots).toEqual(["Lead check", "Document check"]);
+    expect(dry.json.exceptionReopens).toBeUndefined();
+    const r = await run(row, "e-2", { actionType: "sign_slot", signatureId: SIG }, BOTH, { extra: down });
+    expect(r.status, JSON.stringify(r.json)).toBe(200);
+    expect(r.json.status).toBe("PENDING_IFC");
+    expect(r.json.exceptionReopened).toBeUndefined();
+    const slots = (ticketUpdates()[0].args[0] as { metadata: { review_roster: TicketReviewRoster } }).metadata.review_roster.slots;
+    expect(slots.find((x) => x.kind === "doc")).toMatchObject({ status: "satisfied", via: "primary", satisfiedBy: "e-2" });
+    expect(slots.find((x) => x.kind === "lead")).toMatchObject({ status: "satisfied", via: "primary", satisfiedBy: "e-2" });
+    expect(r.calls).not.toMatch(/"reopened"/);
+    // REGRESSION (kept, unchanged): a completing sign-off that leaves a rule-satisfied slot is still refused 503 on
+    // the unreadable read — the "the waiver row unreadable: 503, nothing written" case above.
+  });
+  it("DF-P26 merge-time fix pass: the route signs what the plan now offers — the reviewer named on an open slot independent of the rule's slot signs THAT slot (either table order, either direction); the rule's slot stays satisfied by the rule; nothing more is open to them after", async () => {
+    const XCHK = { kind: "xchk", label: "Cross check", mode: "blocking", fill: { users: ["q-1"] } };
+    for (const dir of ["x-of-doc", "doc-of-x"] as const) {
+      const x = dir === "x-of-doc" ? { ...XCHK, independent_of: ["doc"] } : XCHK;
+      const d = dir === "doc-of-x" ? { ...DOCCHK, independent_of: ["xchk"] } : DOCCHK;
+      for (const table of [{ slots: [LEAD, d, x] }, { slots: [LEAD, x, d] }]) {
+        const where = `${dir} ${table.slots.map((s) => s.kind).join(",")}`;
+        const opened = await submit(table);
+        expect(opened.roster!.slots.find((s) => s.kind === "doc"), where).toMatchObject({ status: "satisfied", via: "rule" });
+        const row = reviewRow({ metadata: { source_document: { id: DOC, document_number: "P-100", rev: "2" }, review_roster: opened.roster } });
+        const dry = await run(row, "q-1", { actionType: "sign_slot", dryRun: true }, table);
+        expect(dry.status, `${where} ${JSON.stringify(dry.json)}`).toBe(200);
+        expect(dry.json.slots, where).toEqual(["Cross check"]);
+        const r = await run(row, "q-1", { actionType: "sign_slot", signatureId: SIG }, table);
+        expect(r.status, `${where} ${JSON.stringify(r.json)}`).toBe(200);
+        expect(r.json.status, where).toBe("PENDING_REVIEW");
+        const after = (ticketUpdates()[0].args[0] as { metadata: { review_roster: TicketReviewRoster } }).metadata.review_roster;
+        expect(after.slots.find((s) => s.kind === "xchk"), where).toMatchObject({ status: "satisfied", via: "primary", satisfiedBy: "q-1" });
+        expect(after.slots.find((s) => s.kind === "doc"), where).toMatchObject({ status: "satisfied", via: "rule" });
+        // q-1 again: the upgrade of the rule's slot conflicts with what they signed — the engine offers them
+        // no sign-off, so the route refuses it (403), nothing written
+        const row2 = { ...row, metadata: { ...(row.metadata as object), review_roster: after } };
+        for (const dryRun of [true, false]) {
+          const again = await run(row2, "q-1", { actionType: "sign_slot", signatureId: SIG, dryRun }, table);
+          expect(again.status, where).toBe(403);
+          expect(again.json.error, where).toMatch(/^Action "sign_slot" is not available to you/);
+          expect(ticketUpdates(), where).toEqual([]);
+        }
+        // the live reviewer completes it
+        const SIG2 = "5a000000-0000-4000-8000-000000000002";
+        const done = await run(row2, "e-2", { actionType: "sign_slot", signatureId: SIG2 }, table, { extra: () => { state.rows.e_signatures = [{ ...state.rows.e_signatures[0], id: SIG2 }]; } });
+        expect(done.status, `${where} ${JSON.stringify(done.json)}`).toBe(200);
+        expect(done.json.status, where).toBe("PENDING_IFC");
+      }
+    }
+  });
   it("after the re-open, the slot's reviewer signs and the request issues", async () => {
     const row = await ruledRow();
     const extra = () => { state.rows.ticket_examination_scopes = [{ ticket_id: "t1", org_id: "o1", field_values: {}, waiver: { reason: "vendor data" } }]; };

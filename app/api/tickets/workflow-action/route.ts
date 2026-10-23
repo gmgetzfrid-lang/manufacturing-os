@@ -1335,10 +1335,17 @@ export async function POST(req: NextRequest) {
     // page only — or the like-in-kind declaration's signature) is a retry,
     // never a pass and never an exception (DF-P26 review fix: a failed read
     // is not a fact on record). Read only for such a roster.
+    // Merge-time fix pass (DEC-90 rulings (1) and (4)): judged on the roster
+    // AFTER this sign-off — a sign-off that upgrades every slot the rule
+    // satisfied leaves nothing to re-open, so it reads nothing and is never
+    // refused for an unreadable read (before, the reads and the 503 keyed on
+    // the roster before it).
     let reopenWith: string[] | null = null;
     let reopenLabels: string[] = [];
-    if (ruleSatisfiedSlots(openRosterNow).length > 0) {
-      const preview = applySignPlan(openRosterNow, plan, { uid: caller.id, name: null }, "exception-review-preview", new Date().toISOString());
+    const preview = ruleSatisfiedSlots(openRosterNow).length > 0
+      ? applySignPlan(openRosterNow, plan, { uid: caller.id, name: null }, "exception-review-preview", new Date().toISOString())
+      : null;
+    if (preview && ruleSatisfiedSlots(preview).length > 0) {
       const waiver = await readWaiverOnRecord(supabaseAdmin, body.ticketId);
       const moved = await readSourceMoved(supabaseAdmin, ticket);
       // (DF-P26 fix pass 4: the workspace's request types unread leave

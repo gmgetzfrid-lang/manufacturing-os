@@ -388,3 +388,102 @@ describe("DF-P26 fix pass 2 — the rule's slot is never DEMANDED of the reviewe
     expect(out.updates.unread_by).toEqual(["req", "c-1", "l-1"]);
   });
 });
+
+describe("DF-P26 merge-time fix pass — an optional upgrade never displaces a person's real, required sign-off (slot order does not decide)", () => {
+  const ticketWith = (r: TicketReviewRoster): Ticket => ({
+    id: "t1", orgId: "o1", ticketId: "REQ-1", title: "x", requestType: "ISO", status: "PENDING_REVIEW", requesterId: "req", requesterRole: "Manager" as Role,
+    assignedDrafterId: "d-1", attachments: [], comments: [], history: [], watchers: [], unreadBy: [], createdAt: "2026-10-01",
+    deliverableRev: "1A", revisionCount: 0, metadata: { review_roster: r },
+  } as unknown as Ticket);
+  const ctx = { activeMemberCount: 5, reviewRouted: true, now: NOW };
+  const acts = (r: TicketReviewRoster, uid: string) => WorkflowEngine.getActions(ticketWith(r), "Viewer", uid, undefined, ctx);
+  const required = (r: TicketReviewRoster, uid: string) => isActionRequired(ticketWith(r), { uid, roles: ["Viewer"], activeMemberCount: 5 } as never);
+  // p-1 is a primary of R (exception-only, satisfied by the rule at open) and of X (open); l-1 holds the live lead check.
+  // The independence runs either way (X of R, or R of X), and R sits before or after X in the table.
+  const cases = (["x-of-r", "r-of-x"] as const).flatMap((dir) => (["r-first", "x-first"] as const).map((order) => {
+    const R = slot({ kind: "doc", primaries: ["p-1"], exceptionOnly: true, independentOf: dir === "r-of-x" ? ["x"] : [] });
+    const X = slot({ kind: "x", primaries: ["p-1"], independentOf: dir === "x-of-r" ? ["doc"] : [] });
+    const slots = order === "r-first" ? [R, X, LIVE] : [X, R, LIVE];
+    return { where: `${dir} ${order}`, r: applyExceptionRule(roster(slots), ["doc"], "2026-10-22T08:00:00.000Z") };
+  }));
+
+  it("p-1 gets X fillable, and no upgrade of R is offered alongside it (both slot orders, both directions)", () => {
+    for (const { where, r } of cases) {
+      expect(r.slots.find((x) => x.kind === "doc"), where).toMatchObject({ status: "satisfied", via: "rule" });
+      expect(slotSignPlan(r, T, "p-1", true, NOW), where).toEqual({ fillable: [{ slot: r.slots.find((x) => x.kind === "x"), via: "primary" }], blocked: [] });
+      const sign = acts(r, "p-1").find((x) => x.action === "sign_slot")!;
+      expect(sign.label, where).toBe("Sign Off — X");
+      expect(sign.optional, where).toBeUndefined();
+      expect(sign.disabledReason, where).toBeUndefined();
+      expect(sign.description, where).not.toContain(RULE_UPGRADE_OPTIONAL_NOTE);
+      expect(required(r, "p-1"), where).toBe(true);
+    }
+  });
+  it("once p-1 has signed X, the upgrade of R stays withdrawn: nothing offered, not badged for R; R still satisfied by the rule and the review complete", () => {
+    for (const { where, r } of cases) {
+      const signedX = applySignPlan(r, slotSignPlan(r, T, "p-1", true, NOW), { uid: "p-1", name: "P" }, "sig-p", "2026-10-22T09:00:00.000Z");
+      expect(signedX.slots.find((x) => x.kind === "x"), where).toMatchObject({ status: "satisfied", satisfiedBy: "p-1" });
+      expect(signedX.slots.find((x) => x.kind === "doc"), where).toMatchObject({ status: "satisfied", via: "rule" });
+      expect(slotSignPlan(signedX, T, "p-1", true, NOW), where).toEqual({ fillable: [], blocked: [] });
+      expect(acts(signedX, "p-1").some((x) => x.action === "sign_slot"), where).toBe(false);
+      expect(acts(signedX, "p-1").some((x) => x.action === "request_revision" && !x.optional), where).toBe(false);
+      expect(required(signedX, "p-1"), where).toBe(false);
+      // the live reviewer completes it
+      const l = slotSignPlan(signedX, T, "l-1", true, NOW);
+      expect(rosterCompletion(applySignPlan(signedX, l, { uid: "l-1", name: "L" }, "sig-l", "2026-10-22T10:00:00.000Z"), { sodActive: true, drafterId: "d-1" }).complete, where).toBe(true);
+    }
+  });
+  it("p-1 only an ALTERNATE of X (its window not open yet): the conflicting upgrade of R is not offered, so p-1 is not badged for R; once the window opens, X is theirs to sign — never blocked by an upgrade", () => {
+    for (const order of ["r-first", "x-first"] as const) {
+      const R = slot({ kind: "doc", primaries: ["p-1"], exceptionOnly: true });
+      const X = slot({ kind: "x", primaries: ["k-1"], alternates: ["p-1"], timeoutDays: 1, independentOf: ["doc"] });
+      const r = applyExceptionRule(roster(order === "r-first" ? [R, X, LIVE] : [X, R, LIVE]), ["doc"], "2026-10-22T08:00:00.000Z");
+      expect(slotSignPlan(r, T, "p-1", true, NOW), order).toEqual({ fillable: [], blocked: [] });
+      expect(required(r, "p-1"), order).toBe(false);
+      const late = { ...r, openedAt: "2026-10-19T07:00:00Z" };
+      expect(slotSignPlan(late, T, "p-1", true, NOW).fillable.map((f) => [f.slot.kind, f.via]), order).toEqual([["x", "alternate"]]);
+      expect(slotSignPlan(late, T, "p-1", true, NOW).blocked, order).toEqual([]);
+    }
+  });
+  it("an open slot shown BLOCKED to them (another independence leg) still withdraws a conflicting upgrade — the upgrade never adds a reason to it", () => {
+    for (const order of ["r-first", "x-first"] as const) {
+      // the requester is a primary of R and of X; X must be independent of the requester (so blocked for them) and of R
+      const R = slot({ kind: "doc", primaries: ["req"], exceptionOnly: true });
+      const X = slot({ kind: "x", primaries: ["req", "k-1"], independentOf: ["requester", "doc"] });
+      const r = applyExceptionRule(roster(order === "r-first" ? [R, X, LIVE] : [X, R, LIVE]), ["doc"], "2026-10-22T08:00:00.000Z");
+      const plan = slotSignPlan(r, T, "req", true, NOW);
+      expect(plan.fillable, order).toEqual([]);
+      expect(plan.blocked.map((b) => [b.slot.kind, b.reason]), order).toEqual([["x", expect.stringMatching(/independent of the requester/)]]);
+    }
+  });
+  it("NO DEADLOCK BEHIND THE FLOOR: an alternate of an open slot whose window never opens (no timeout) is still offered the upgrade — the drafter, held by the floor, can then complete", () => {
+    // the open slot names the drafter (primary) and p-1 (an alternate who can never act on it); the floor holds the drafter
+    const R = slot({ kind: "doc", primaries: ["p-1"], exceptionOnly: true });
+    const X = slot({ kind: "x", primaries: ["d-1"], alternates: ["p-1"], timeoutDays: null, independentOf: ["doc"] });
+    const r = applyExceptionRule(roster([R, X]), ["doc"], "2026-10-22T08:00:00.000Z");
+    expect(slotSignPlan(r, T, "d-1", true, NOW).blocked.map((b) => b.reason)).toEqual([expect.stringMatching(/at least one sign-off on its review must come from someone else/)]);
+    const p = slotSignPlan(r, T, "p-1", true, NOW);
+    expect(p.fillable.map((f) => [f.slot.kind, f.via])).toEqual([["doc", "primary"]]);
+    const upgraded = applySignPlan(r, p, { uid: "p-1", name: "P" }, "sig-p", "2026-10-22T09:00:00.000Z");
+    const d = slotSignPlan(upgraded, T, "d-1", true, NOW);
+    expect(d.fillable.map((f) => f.slot.kind)).toEqual(["x"]);
+    expect(rosterCompletion(applySignPlan(upgraded, d, { uid: "d-1", name: "D" }, "sig-d", "2026-10-22T10:00:00.000Z"), { sodActive: true, drafterId: "d-1" }).complete).toBe(true);
+  });
+  it("REGRESSION: with no independence between them the upgrade still rides with X in one sign-off, slots in table order (optional upgrade not the whole of it, so the sign-off is required for X)", () => {
+    for (const order of ["r-first", "x-first"] as const) {
+      const R = slot({ kind: "doc", primaries: ["p-1"], exceptionOnly: true });
+      const X = slot({ kind: "x", primaries: ["p-1"] });
+      const r = applyExceptionRule(roster(order === "r-first" ? [R, X, LIVE] : [X, R, LIVE]), ["doc"], "2026-10-22T08:00:00.000Z");
+      const plan = slotSignPlan(r, T, "p-1", true, NOW);
+      expect(plan.fillable.map((f) => f.slot.kind), order).toEqual(order === "r-first" ? ["doc", "x"] : ["x", "doc"]);
+      expect(plan.blocked, order).toEqual([]);
+      expect(acts(r, "p-1").find((x) => x.action === "sign_slot")!.label, order).toBe(order === "r-first" ? "Sign Off — DOC, X" : "Sign Off — X, DOC");
+      expect(required(r, "p-1"), order).toBe(true);
+    }
+    // ... and a roster with no rule satisfaction plans exactly as before: the first open slot fillable, the one independent of it blocked
+    const plain = roster([slot({ kind: "doc", primaries: ["p-1"] }), slot({ kind: "x", primaries: ["p-1"], independentOf: ["doc"] }), LIVE]);
+    const p = slotSignPlan(plain, T, "p-1", true, NOW);
+    expect(p.fillable.map((f) => f.slot.kind)).toEqual(["doc"]);
+    expect(p.blocked.map((b) => b.slot.kind)).toEqual(["x"]);
+  });
+});
