@@ -430,10 +430,27 @@ export function slotSignPlan(
   return planSignOff(roster, ticket, uid, sodActive, now, true);
 }
 
+/** slotSignPlan WITHOUT the needed upgrade's precedence over a conflicting
+ *  override — the plan merge-time fix pass 2 gave. Exported for the
+ *  precedence's property test only (lib/__tests__/dfRoundG_P26_exceptionOnly);
+ *  nothing in the app reads it. */
+export function slotSignPlanWithoutOverridePrecedence(
+  roster: TicketReviewRoster,
+  ticket: Pick<Ticket, "requesterId" | "assignedDrafterId">,
+  uid: string | null | undefined,
+  sodActive: boolean,
+  now: number = Date.now(),
+): SlotSignPlan {
+  return planSignOff(roster, ticket, uid, sodActive, now, false);
+}
+
 /** slotSignPlan's body. `neededPrecedence` false skips the needed upgrade's
  *  precedence over a conflicting override (merge-time fix pass 3) — the
- *  form ruleUpgradeNeeded reads, which judges only the open slots (and so
- *  never recurses into itself). */
+ *  form ruleUpgradeNeeded and the precedence's own guard read, which judge
+ *  only the open slots (and so never recurse into themselves).
+ *  `droppedOverrides`: open slots whose OVERRIDE by `uid` the precedence
+ *  dropped — planned as if `uid` did not override them (merge-time fix pass
+ *  4: pass 1 re-run, so every blocked reason is the truth). */
 function planSignOff(
   roster: TicketReviewRoster,
   ticket: Pick<Ticket, "requesterId" | "assignedDrafterId">,
@@ -441,6 +458,7 @@ function planSignOff(
   sodActive: boolean,
   now: number,
   neededPrecedence: boolean,
+  droppedOverrides: ReadonlySet<string> = new Set(),
 ): SlotSignPlan {
   const plan: SlotSignPlan = { fillable: [], blocked: [] };
   if (!uid) return plan;
@@ -462,7 +480,7 @@ function planSignOff(
       : alternateActive && slot.alternates.includes(uid) ? "alternate" as const
       : slot.overriders.includes(uid) ? "override" as const
       : null;
-    if (!via) continue;
+    if (!via || (via === "override" && droppedOverrides.has(slot.kind))) continue;
     const label = slot.label || slot.kind;
     let reason: string | null = null;
     if (sodActive) {
@@ -510,10 +528,12 @@ function planSignOff(
   // NEEDED (ruleUpgradeNeeded) and the only thing it conflicts with is an
   // OVERRIDE in this person's plan, the upgrade takes precedence — those
   // conflicting override entries are dropped (never a primary or alternate
-  // fill; every other fill, label and blocked reason stays as it is) and the
-  // upgrade is offered, required. Only on a roster with a rule-satisfied
-  // slot; before, the person was offered only the optional override and the
-  // review waited with nobody able to complete it told.
+  // fill) and the upgrade is offered, required — guarded (merge-time fix
+  // pass 4): only where each dropped slot stays completable by someone else
+  // without an override, the plan then re-run without those overrides. Only
+  // on a roster with a rule-satisfied slot; before, the person was offered
+  // only the optional override and the review waited with nobody able to
+  // complete it told.
   if (sodActive && uid !== ticket.assignedDrafterId) {
     const laterAlternate = (kind: string): boolean =>
       roster.slots.some((s) => s.kind === kind && s.status === "open" && slotBlocks(s) && s.timeoutDays !== null && s.alternates.includes(uid));
@@ -536,10 +556,31 @@ function planSignOff(
         if (conflictsWith(slot, tiedButOverrides)) continue;
         if (needed === null) needed = ruleUpgradeNeeded(roster, ticket, sodActive, now);
         if (!needed) continue;
-        const dropped = new Set(overrides.filter((k) => slot.independentOf.includes(k) || (roster.slots.find((s) => s.kind === k)?.independentOf.includes(slot.kind) ?? false)));
-        for (let i = plan.fillable.length - 1; i >= 0; i--) {
-          if (plan.fillable[i].via === "override" && dropped.has(plan.fillable[i].slot.kind)) plan.fillable.splice(i, 1);
-        }
+        const dropped = overrides.filter((k) => slot.independentOf.includes(k) || (roster.slots.find((s) => s.kind === k)?.independentOf.includes(slot.kind) ?? false));
+        // Re-planned with those overrides dropped: pass 1 again, so no
+        // blocked reason rests on an override this person no longer gives,
+        // and an open slot that becomes theirs rides in the same sign-off
+        // (pass 2 judges the upgrade against it). Terminates: each re-plan
+        // drops at least one more override, and slots are finite. Kept only
+        // if the re-plan still carries this upgrade.
+        const replanned = planSignOff(roster, ticket, uid, sodActive, now, true, new Set([...droppedOverrides, ...dropped]));
+        if (!replanned.fillable.some((f) => f.slot.kind === slot.kind)) continue;
+        // Merge-time fix pass 4 (the integrator's ruling — guarded
+        // precedence, made fail-safe): kept only where the outcome is
+        // proven: after this person's whole sign-off (an override in it
+        // re-opening what the rule still satisfies, as limb 2 does), the
+        // drafter's ONE sign-off, without an override and with the floor as
+        // it then stands, fills every open blocking slot left — so each
+        // dropped slot is completed by someone other than this person
+        // through a fill that is not an override (the ruling's guard), and
+        // the review completes. The ruling's per-slot guard alone was not
+        // enough: the property test (dfRoundG_P26_exceptionOnly) generated a
+        // roster where the dropped slot was completable by the drafter only
+        // by giving up another slot the drafter alone could sign. Otherwise
+        // the override stays and the upgrade is not offered beside it
+        // (merge-time fix pass 2's plan).
+        if (!drafterCompletesAfter(roster, ticket, uid, sodActive, now, replanned)) continue;
+        return replanned;
       }
       plan.fillable.push({ slot, via });
     }
@@ -560,6 +601,39 @@ function planSignOff(
     plan.blocked.push({ slot: held.slot, reason: PRODUCER_FLOOR_REASON });
   }
   return plan;
+}
+
+/**
+ * GAP-115 (DF-P26 merge-time fix pass 4): after `uid` signs `plan` (each
+ * slot satisfied by them; an override among them re-opening every slot the
+ * exception-only rule still satisfies, as the route's limb 2 does), does the
+ * drafter's one sign-off — without an override, the floor judged as it then
+ * stands — fill every open blocking slot left? The precedence's outcome
+ * check: where it holds, the review completes in one more sign-off. Pure.
+ */
+function drafterCompletesAfter(
+  roster: TicketReviewRoster,
+  ticket: Pick<Ticket, "requesterId" | "assignedDrafterId">,
+  uid: string,
+  sodActive: boolean,
+  now: number,
+  plan: SlotSignPlan,
+): boolean {
+  const drafter = ticket.assignedDrafterId ?? null;
+  if (!drafter) return false;
+  let after: TicketReviewRoster = {
+    ...roster,
+    slots: roster.slots.map((s) => {
+      const f = plan.fillable.find((x) => x.slot.kind === s.kind);
+      return f ? { ...s, status: "satisfied" as const, via: f.via, satisfiedBy: uid, signatureId: "precedence-preview" } : s;
+    }),
+  };
+  if (after.slots.some((s) => s.status === "satisfied" && s.via === "override") && after.slots.some((s) => s.status === "satisfied" && s.via === "rule")) {
+    after = { ...after, slots: after.slots.map((s) => (s.status === "satisfied" && s.via === "rule" ? { ...s, status: "open" as const, via: undefined, satisfiedBy: null, satisfiedAt: null, signatureId: null } : s)) };
+  }
+  const left = after.slots.filter((s) => s.status === "open" && slotBlocks(s));
+  const d = planSignOff(after, ticket, drafter, sodActive, now, false);
+  return left.every((s) => d.fillable.some((f) => f.slot.kind === s.kind && f.via !== "override"));
 }
 
 /**
