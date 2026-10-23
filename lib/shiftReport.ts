@@ -14,7 +14,7 @@
 // Pure functions; the view only formats.
 
 import type { Milestone, MilestoneStatus } from "@/types/schema";
-import { effectiveWeight, leafPercent, overallPercent, type ProgressInfo } from "@/lib/scheduleProgress";
+import { effectiveWeight, leafPercent, roundPct, type ProgressInfo } from "@/lib/scheduleProgress";
 import { dayKey, dayKeyToMs, wallClock, wallClockToMs, addDays, dayDiff, hasTimeOfDay } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
 
@@ -201,7 +201,11 @@ export function plannedFraction(m: Milestone, now: number, tz: string, times: Sh
 export function expectedFraction(m: Milestone, now: number, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): number {
   const toMs = (v: unknown): number => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
   const bs = toMs(m.baselineStartAt), bf = toMs(m.baselineFinishAt);
-  return plannedFraction(m, now, tz, times, Number.isFinite(bs) && Number.isFinite(bf) ? { start: bs, finish: bf } : undefined);
+  if (!(Number.isFinite(bs) && Number.isFinite(bf))) return plannedFraction(m, now, tz, times);
+  // Measured as baselined — on the crew it was baselined for: moving a day
+  // job onto nights must not turn the baseline's day hours into night ones.
+  const asBaselined = { ...m, plannedStartAt: m.baselineStartAt, plannedAt: m.baselineFinishAt } as Milestone;
+  return plannedFraction(asBaselined, now, tz, times);
 }
 
 /** When a task is due: its finish, or for a date-only task the end of its
@@ -221,22 +225,29 @@ export function isOverdue(m: Milestone, now: number, tz: string, percent?: numbe
 export function paceOf(m: Milestone, percent: number, now: number, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): Pace {
   if (m.status === "completed" || percent >= 100) return "done";
   if (m.status === "blocked" || m.status === "on_hold") return "held";
-  const f = finishMsOf(m);
-  if (Number.isFinite(f) && f <= now) return "overdue";
+  const due = dueMsOf(m, tz);
+  if (Number.isFinite(due) && due <= now) return "overdue";
   return percent + BEHIND_POINTS < expectedFraction(m, now, tz, times) * 100 ? "behind" : "on plan";
 }
 
 /** Each main task's (a leaf's parent's) planned % by now: its steps'
  *  expected shares, weighted like % complete. */
 export function expectedByParent(milestones: Milestone[], now: number, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): Map<string, number> {
+  const byId = new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m]));
   const parents = new Set(milestones.map((m) => m.parentId).filter((x): x is string => !!x));
   const acc = new Map<string, { w: number; e: number }>();
   for (const m of milestones) {
     if (!m.parentId || (m.id && parents.has(m.id))) continue;   // leaves only
-    const w = effectiveWeight(m);
-    const a = acc.get(m.parentId) ?? { w: 0, e: 0 };
-    a.w += w; a.e += w * expectedFraction(m, now, tz, times);
-    acc.set(m.parentId, a);
+    const w = workHours(m), e = expectedFraction(m, now, tz, times);
+    // Every task above the step, not just its parent: a main task's plan
+    // includes the work in its sub-groups, like its % complete does.
+    const seen = new Set<string>();
+    for (let pid: string | null | undefined = m.parentId; pid && !seen.has(pid); pid = byId.get(pid)?.parentId) {
+      seen.add(pid);
+      const a = acc.get(pid) ?? { w: 0, e: 0 };
+      a.w += w; a.e += w * e;
+      acc.set(pid, a);
+    }
   }
   return new Map([...acc].map(([k, v]) => [k, v.w > 0 ? Math.round((v.e / v.w) * 100) : 0]));
 }
@@ -319,18 +330,23 @@ export interface ShiftRow {
 }
 
 export type Pace = "done" | "overdue" | "behind" | "held" | "on plan";
-/** How far short of the plan a step can be before it's called behind. */
-export const BEHIND_POINTS = 10;
+/** How far short of (or past) the plan, in percentage points, before work
+ *  is called behind (or ahead) — one line for the job, each task and each
+ *  step, in every view, so the headline and the rows can't disagree. */
+export const BEHIND_POINTS = 5;
 
-/** Planned work-hours for a step: its duration when the schedule gives
- *  one, else the length of its planned window, else its weight. A schedule
- *  imported without durations would otherwise count every step as 1 hour. */
+/** The verdict for actual vs planned %, the same everywhere. */
+export function standingOf(actualPct: number, plannedPct: number): "ahead" | "on track" | "behind" {
+  const v = actualPct - plannedPct;
+  return v <= -BEHIND_POINTS ? "behind" : v >= BEHIND_POINTS ? "ahead" : "on track";
+}
+
+/** Planned work-hours for a step — the weight % complete rolls up by
+ *  (lib/scheduleProgress effectiveWeight): its duration, else a weight
+ *  someone set, else the length of its planned window. One measure for the
+ *  plan, the actual and the gap. */
 export function workHours(m: Milestone): number {
-  const d = m.durationHours;
-  if (d != null && Number.isFinite(d) && d > 0) return d;
-  const span = (finishMsOf(m) - startMsOf(m)) / 3_600_000;
-  if (Number.isFinite(span) && span > 0) return Math.round(span * 10) / 10;
-  return effectiveWeight(m);
+  return Math.round(effectiveWeight(m) * 10) / 10;
 }
 
 export interface ShiftReport {
@@ -348,6 +364,8 @@ export interface ShiftReport {
     standing: "ahead" | "on track" | "behind";
     stepsDone: number;
     stepsTotal: number;
+    /** Steps with no planned dates: left out of plan and actual alike. */
+    unscheduled: number;
     plannedStart: number | null;
     plannedFinish: number | null;
     daysElapsed: number;
@@ -454,6 +472,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   const rowFor = (m: Milestone, win: ShiftWindow): ShiftRow => {
     const chain = pathOf(m);
     const s = startMsOf(m), f = finishMsOf(m);
+    const due = dueMsOf(m, tz);
     const percent = pctOf(m);
     const finished = m.status === "completed" || percent >= 100;
     const hours = workHours(m);
@@ -466,13 +485,13 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       status: m.status,
       carryOver: false,
       critical: !!m.id && criticalIds.has(m.id),
-      dueInShift: f > win.start && f <= win.end,
+      dueInShift: due > win.start && due <= win.end,
       startsInShift: s >= win.start && s < win.end,
       offSchedule: !(s < win.end && f > win.start),
       reason: m.statusReason ?? null,
       hours,
       hoursLeft: Math.round(hours * (1 - Math.min(100, Math.max(0, percent)) / 100) * 10) / 10,
-      overdue: !finished && Number.isFinite(f) && f <= now,
+      overdue: !finished && Number.isFinite(due) && due <= now,
       lateStart: !finished && percent <= 0 && m.status !== "in_progress" && Number.isFinite(s) && s < now,
       waitingOn: finished ? [] : predecessorsOf(m).filter((p) => !doneM(p)).map((p) => ({ id: p.id ?? p.name, name: p.name })),
       work: workShiftOf(m, tz, times),
@@ -490,13 +509,16 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     (a.start - b.start) || (a.finish - b.finish) || wbsCompare(a.leaf.wbs, b.leaf.wbs) || a.leaf.name.localeCompare(b.leaf.name);
 
   // ── 1. Overall standing ──────────────────────────────────────────
-  let wsum = 0, wplanned = 0, stepsDone = 0, baselined = 0, hsum = 0;
+  // Plan and actual over the SAME steps (the scheduled ones), weighted the
+  // same way (work-hours): a step with no dates can't be planned, so it
+  // can't count against the actual either — it's reported as unscheduled.
+  let wsum = 0, wplanned = 0, wactual = 0, stepsDone = 0, baselined = 0;
   let baselineSetAt: string | null = null;
   let plannedStart = Infinity, plannedFinish = -Infinity;
   for (const m of leaves) {
     const s = startMsOf(m), f = finishMsOf(m);
     plannedStart = Math.min(plannedStart, s); plannedFinish = Math.max(plannedFinish, f);
-    const w = effectiveWeight(m);
+    const w = workHours(m);
     // Measure "where the plan said we'd be" against the BASELINE when one
     // was captured: dragging a task later must not erase the slip.
     const bs = toMs(m.baselineStartAt), bf = toMs(m.baselineFinishAt);
@@ -509,13 +531,15 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     // The plan's clock runs only while the task's crew is on shift: a day
     // task earns no planned progress overnight.
     const frac = expectedFraction(m, now, tz, times);
-    wsum += w; wplanned += w * frac; hsum += workHours(m);
-    if (DONE({ status: m.status, percent: pctOf(m) })) stepsDone++;
+    const pct = pctOf(m);
+    wsum += w; wplanned += w * frac; wactual += w * pct / 100;
+    if (DONE({ status: m.status, percent: pct })) stepsDone++;
   }
-  const plannedPct = wsum > 0 ? Math.round((wplanned / wsum) * 100) : 0;
-  const actualPct = overallPercent(milestones);
+  const plannedPct = wsum > 0 ? roundPct((wplanned / wsum) * 100) : 0;
+  const actualPct = wsum > 0 ? roundPct((wactual / wsum) * 100) : 0;
   const variancePct = actualPct - plannedPct;
-  const standing: ShiftReport["overall"]["standing"] = variancePct >= 3 ? "ahead" : variancePct <= -3 ? "behind" : "on track";
+  const standing: ShiftReport["overall"]["standing"] = standingOf(actualPct, plannedPct);
+  const unscheduled = milestones.filter((m) => isLeaf(m) && !leaves.includes(m)).length;
   const hasSpan = Number.isFinite(plannedStart) && Number.isFinite(plannedFinish);
   const daysTotal = hasSpan ? Math.max(1, dayDiff(plannedStart, plannedFinish, tz) + 1) : 0;
   const daysElapsed = hasSpan ? Math.max(0, Math.min(daysTotal, dayDiff(plannedStart, now, tz) + 1)) : 0;
@@ -527,7 +551,9 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   // "In progress" = ALL open work on the job, this shift's first, because
   // open work is what the next crew inherits wherever it was planned.
   const scheduled = leaves.filter((m) => overlaps(m, shift)).map((m) => rowFor(m, shift)).sort(cmp);
-  for (const r of scheduled) r.carryOver = !DONE(r) && r.finish <= next.start;
+  // Carry-over = due by now and not done. Mid-shift, work due at 16:00
+  // isn't carried over at 10:00 — it's still this shift's.
+  for (const r of scheduled) r.carryOver = !DONE(r) && dueMsOf(r.leaf, tz) <= now;
   const seenDone = new Set<string>();
   const done: ShiftRow[] = [];
   for (const r of scheduled) if (DONE(r)) { done.push(r); if (r.leaf.id) seenDone.add(r.leaf.id); }
@@ -542,24 +568,27 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   const inProgress = leaves
     .map((m) => rowFor(m, shift))
     .filter(isOpen)
-    .map((r) => { r.carryOver = r.finish <= next.start; return r; })
+    .map((r) => { r.carryOver = dueMsOf(r.leaf, tz) <= now; return r; })
     .sort((a, b) => Number(a.offSchedule) - Number(b.offSchedule) || cmp(a, b));
   const notStarted = scheduled.filter((r) => !DONE(r) && !isOpen(r));
   // Carry-over also includes anything older that is still open: it was due
   // before this shift ended and nobody closed it.
   const carryOver = leaves
-    .filter((m) => finishMsOf(m) <= next.start && !DONE({ status: m.status, percent: pctOf(m) }))
+    .filter((m) => dueMsOf(m, tz) <= now && !DONE({ status: m.status, percent: pctOf(m) }))
     .map((m) => { const r = rowFor(m, shift); r.carryOver = true; return r; })
     .sort((a, b) => Number(b.critical) - Number(a.critical) || cmp(a, b));
 
   // ── 3. Goals for the next shift ──────────────────────────────────
+  // Blocked / on-hold work can't be worked: it's listed under Blocked (with
+  // its reason), not on the next crew's list or in its hours.
+  const held = (m: Milestone) => m.status === "blocked" || m.status === "on_hold";
   const planned = leaves
-    .filter((m) => overlaps(m, next) && !DONE({ status: m.status, percent: pctOf(m) }))
+    .filter((m) => overlaps(m, next) && !held(m) && !DONE({ status: m.status, percent: pctOf(m) }))
     .map((m) => rowFor(m, next))
     .filter((r) => !carryOver.some((c) => c.leaf.id === r.leaf.id))
     .sort((a, b) => Number(b.critical) - Number(a.critical) || cmp(a, b));
   const forNext = (r: ShiftRow) => r.work === "both" || r.work === next.kind;
-  const carriedAll = carryOver.map((r) => ({ ...rowFor(r.leaf, next), carryOver: true }))
+  const carriedAll = carryOver.filter((r) => !held(r.leaf)).map((r) => ({ ...rowFor(r.leaf, next), carryOver: true }))
     .sort((a, b) => Number(b.critical) - Number(a.critical) || cmp(a, b));
   const goalsCarry = carriedAll.filter(forNext);
   const otherShift = carriedAll.filter((r) => !forNext(r));
@@ -574,14 +603,15 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   const doneIds = new Set(leaves.filter((m) => DONE({ status: m.status, percent: pctOf(m) })).map((m) => m.id ?? ""));
   const horizonEnd = nextShift(nextShift(next, tz, times), tz, times).end;
   const stretch = leaves
-    .filter((m) => m.id && !mustIds.has(m.id) && !doneIds.has(m.id) && startMsOf(m) >= next.end && startMsOf(m) < horizonEnd)
+    .filter((m) => m.id && !mustIds.has(m.id) && !doneIds.has(m.id) && !held(m) && startMsOf(m) >= next.end && startMsOf(m) < horizonEnd)
     .filter((m) => (m.dependsOn ?? []).every((d) => !byId.has(d) || doneIds.has(d) || mustIds.has(d)))
     .map((m) => rowFor(m, next))
     .filter(forNext)
     .sort((a, b) => Number(b.critical) - Number(a.critical) || cmp(a, b))
     .slice(0, 12);
-  // Deficit in work-hours against the plan as of now.
-  const gapHours = Math.round(((plannedPct - actualPct) / 100) * hsum * 10) / 10;
+  // Deficit in work-hours against the plan as of now: planned hours earned
+  // by now minus hours actually done.
+  const gapHours = Math.round((wplanned - wactual) * 10) / 10;
   let backOnTrackAt: number | null = null;
   if (gapHours > 0) {
     let acc = 0;
@@ -596,7 +626,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   return {
     tz, now, shift, next,
     overall: {
-      actualPct, plannedPct, variancePct, standing, stepsDone, stepsTotal: leaves.length,
+      actualPct, plannedPct, variancePct, standing, stepsDone, stepsTotal: leaves.length, unscheduled,
       plannedStart: hasSpan ? plannedStart : null, plannedFinish: hasSpan ? plannedFinish : null,
       daysElapsed, daysTotal,
       planBasis: baselined > 0 ? "baseline" : "current",

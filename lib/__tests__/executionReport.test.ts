@@ -49,9 +49,10 @@ describe("computeExecutionReport", () => {
   });
 
   it("flags overdue: incomplete tasks past their finish", () => {
-    const r = computeExecutionReport(tree, { now }); // now = Mar 2 noon
-    // 'b' (Mar 2 00:00, blocked) is past due; 'c' (Mar 3) is not.
-    expect(r.overdue).toBe(1);
+    // 'b' is dated Mar 2 (no time): it's due at the END of Mar 2, so not
+    // overdue at noon that day — overdue the next morning. 'c' (Mar 3) is not.
+    expect(computeExecutionReport(tree, { now }).overdue).toBe(0); // Mar 2 noon
+    expect(computeExecutionReport(tree, { now: new Date(now.getTime() + 86_400_000) }).overdue).toBe(1);
   });
 
   it("computes pace vs expected", () => {

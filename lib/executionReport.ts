@@ -17,9 +17,10 @@
 // / sub-project) — never assume a specific facility's vocabulary.
 
 import type { Milestone, MilestoneStatus } from "@/types/schema";
-import { effectiveWeight, leafPercent } from "@/lib/scheduleProgress";
+import { effectiveWeight, leafPercent, roundPct } from "@/lib/scheduleProgress";
+import { dayDiff } from "@/lib/scheduleTz";
 import { startOf, finishOf } from "@/lib/scheduleTime";
-import { expectedFraction, DEFAULT_SHIFT_TIMES, type ShiftTimes } from "@/lib/shiftReport";
+import { expectedFraction, isOverdue, DEFAULT_SHIFT_TIMES, type ShiftTimes } from "@/lib/shiftReport";
 
 export interface GroupRollup {
   id: string;
@@ -106,7 +107,9 @@ const DAY = 86_400_000;
 // Dates arrive as strings, Dates or epoch numbers — read them all.
 const startMs = (m: Milestone) => startOf(m);
 const finishMs = (m: Milestone) => finishOf(m);
-const hoursOf = (m: Milestone) => (typeof m.durationHours === "number" && m.durationHours > 0 ? m.durationHours : 0);
+// Work-hours: the same measure % complete is weighted by, so "work hours
+// done" and "% complete" can never tell different stories.
+const hoursOf = (m: Milestone) => effectiveWeight(m);
 
 export function computeExecutionReport(milestones: Milestone[], opts?: {
   now?: Date;
@@ -141,7 +144,12 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
     return cur;
   };
 
-  const overdue = (m: Milestone) => m.status !== "completed" && finishMs(m) < now;
+  // The same rules as the shift report: past due = past the end of its
+  // planned work (a date-only task, its whole last day); done = complete or
+  // at 100%.
+  const tz = opts?.tz ?? "UTC";
+  const overdue = (m: Milestone) => isOverdue(m, now, tz);
+  const isDone = (m: Milestone) => m.status === "completed" || leafPercent(m) >= 100;
 
   // ── Top-line ─────────────────────────────────────────────────
   const tally = { done: 0, inProgress: 0, planned: 0, onHold: 0, blocked: 0, missed: 0, overdue: 0 };
@@ -150,8 +158,8 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
   let envStart = Infinity, envFinish = -Infinity;
 
   for (const m of leaves) {
-    switch (m.status) {
-      case "completed": tally.done++; break;
+    if (isDone(m)) tally.done++;
+    else switch (m.status) {
       case "in_progress": tally.inProgress++; break;
       case "on_hold": tally.onHold++; break;
       case "blocked": tally.blocked++; break;
@@ -173,22 +181,22 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
   const totalLeaves = leaves.length;
   // Effort-weighted % that counts partial progress (a 90%-done task is 90%,
   // not 0). `done` (count of fully-complete leaves) is reported separately.
-  const pctComplete = wsum > 0 ? Math.round(wpct / wsum) : 0;
+  const pctComplete = wsum > 0 ? roundPct(wpct / wsum) : 0;
   const pctHours = plannedHours > 0 ? Math.round((earnedHours / plannedHours) * 100) : pctComplete;
 
   const start = Number.isFinite(envStart) ? new Date(envStart).toISOString() : null;
   const finish = Number.isFinite(envFinish) ? new Date(envFinish).toISOString() : null;
+  // Days by the plant's calendar — "Day 2 of 4" here and on the shift report.
   const totalDays = (Number.isFinite(envStart) && Number.isFinite(envFinish))
-    ? Math.max(1, Math.round((envFinish - envStart) / DAY) + 1) : 0;
-  const elapsedDays = Number.isFinite(envStart) ? Math.max(0, Math.round((now - envStart) / DAY)) : 0;
+    ? Math.max(1, dayDiff(envStart, envFinish, tz) + 1) : 0;
+  const elapsedDays = Number.isFinite(envStart) ? Math.max(0, Math.min(totalDays, dayDiff(envStart, now, tz) + 1)) : 0;
   // Where the plan says the job should be by now: each step's share of its
   // own worked hours elapsed, weighted like % complete — the same number the
   // shift report shows as "plan by now". (Days elapsed over days in the job
   // said nothing about what work was due, and ran through nights for day work.)
-  const tz = opts?.tz ?? "UTC";
   let wexp = 0;
   for (const m of leaves) wexp += effectiveWeight(m) * expectedFraction(m, now, tz, opts?.shiftTimes ?? DEFAULT_SHIFT_TIMES);
-  const expectedPct = wsum > 0 ? Math.min(100, Math.round((wexp / wsum) * 100)) : 0;
+  const expectedPct = wsum > 0 ? Math.min(100, roundPct((wexp / wsum) * 100)) : 0;
   const paceDelta = pctComplete - expectedPct;
 
   // Naive forecast: extrapolate completion rate over elapsed time.
@@ -217,7 +225,7 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
       groupWeight.set(key, { wsum: 0, wpct: 0 });
     }
     r.total++;
-    if (m.status === "completed") r.done++;
+    if (isDone(m)) r.done++;
     else if (m.status === "in_progress") r.inProgress++;
     else if (m.status === "on_hold") r.onHold++;
     else if (m.status === "blocked") r.blocked++;
@@ -233,7 +241,7 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
     if (Number.isFinite(f)) r.finish = r.finish && Date.parse(r.finish) >= f ? r.finish : new Date(f).toISOString();
   }
   const groups = Array.from(groupMap.values())
-    .map((r) => { const gw = groupWeight.get(r.id); return { ...r, pctComplete: gw && gw.wsum > 0 ? Math.round(gw.wpct / gw.wsum) : 0 }; })
+    .map((r) => { const gw = groupWeight.get(r.id); return { ...r, pctComplete: gw && gw.wsum > 0 ? roundPct(gw.wpct / gw.wsum) : 0 }; })
     .sort((a, b) => (a.start ? Date.parse(a.start) : 0) - (b.start ? Date.parse(b.start) : 0));
 
   // ── Blockers (on-hold / blocked) with their captured reasons ─

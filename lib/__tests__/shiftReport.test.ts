@@ -70,7 +70,9 @@ describe("buildShiftReport", () => {
     expect(report.goals.all.map((r) => r.leaf.id)).toEqual(["d"]);
     expect(report.goals.planned.map((r) => r.leaf.id)).toEqual(["d"]);
     // The day steps left unfinished are listed for the day shift — not the night's must-do.
-    expect(report.goals.otherShift.map((r) => r.leaf.id)).toEqual(["c", "old", "b"]);
+    // The blocked "old" step isn't workable: it's under Blocked, not on anyone's list.
+    expect(report.goals.otherShift.map((r) => r.leaf.id)).toEqual(["c", "b"]);
+    expect(report.blocked.map((r) => r.leaf.id)).toEqual(["old"]);
     expect(report.goals.otherShift.every((r) => r.carryOver && r.work === "day")).toBe(true);
     expect(report.goals.carryOver).toEqual([]);
   });
@@ -79,7 +81,7 @@ describe("buildShiftReport", () => {
     const night = shiftWindow("2026-10-26", "night", CHI);
     const r = buildShiftReport({ milestones: all, criticalIds: new Set(["c"]), tz: CHI, shift: night, now: night.end });
     expect(r.next.kind).toBe("day");
-    expect(r.goals.carryOver.map((x) => x.leaf.id)).toEqual(["c", "old", "b"]);
+    expect(r.goals.carryOver.map((x) => x.leaf.id)).toEqual(["c", "b"]);
     expect(r.goals.critical.map((x) => x.leaf.id)).toEqual(["c"]);
   });
 

@@ -1009,7 +1009,9 @@ export function computeScheduleMetrics(milestones: Milestone[], opts?: { now?: D
 
   for (const m of milestones) {
     if (!isLeaf(m)) continue;
-    const w = effectiveWeight(m);
+    // Milestone-style earned value: each row counts by its own hours or
+    // weight (not its window's length).
+    const w = effectiveWeight({ weight: m.weight, durationHours: m.durationHours });
     totalWeight += w;
     byStatus[m.status]++;
     const plannedMs = new Date(m.plannedAt as string).getTime();

@@ -21,12 +21,21 @@ export interface ProgressNode {
   percentComplete?: number | null;
   weight?: number | null;
   durationHours?: number | null;
+  plannedStartAt?: unknown;
+  plannedAt?: unknown;
 }
 
-/** Clamp to an integer 0..100. */
+/** Clamp to an integer 0..100. Work short of 100% never rounds up to
+ *  100 — 99.6% (a P6 import, a rollup) is not complete. */
 export function clampPercent(p: number | null | undefined): number {
   if (p == null || !Number.isFinite(p)) return 0;
-  return Math.max(0, Math.min(100, Math.round(p)));
+  return roundPct(Math.max(0, Math.min(100, p)));
+}
+
+/** Round a percentage for display without ever calling unfinished work done. */
+export function roundPct(p: number): number {
+  const r = Math.round(p);
+  return r >= 100 && p < 100 ? 99 : r;
 }
 
 /** A leaf's own percent, reconciled with its status so a stale stored value can
@@ -38,15 +47,39 @@ export function leafPercent(m: { status: MilestoneStatus; percentComplete?: numb
   return clampPercent(m.percentComplete);
 }
 
-/** Relative weight used to roll progress up. Prefer planned work hours (the
- *  truest measure of effort), else the explicit weight, else 1 — so a 40h task
- *  pulls the rollup more than a 2h one, the way a real schedule behaves. */
-export function effectiveWeight(m: { weight?: number | null; durationHours?: number | null }): number {
+/** Relative weight used to roll progress up, in work-hours where it can
+ *  be: planned work hours, else a weight someone set, else the length of
+ *  its planned window — so a 40h task pulls the rollup more than a 2h one
+ *  even in a schedule imported without hours (counting every step as one
+ *  made a 1 h slip read as "50% behind"). */
+export function effectiveWeight(m: {
+  weight?: number | null; durationHours?: number | null;
+  plannedStartAt?: unknown; plannedAt?: unknown;
+}): number {
   const d = m.durationHours;
   if (d != null && Number.isFinite(d) && d > 0) return d;
   const w = m.weight;
-  if (w != null && Number.isFinite(w) && w > 0) return w;
-  return 1;
+  if (w != null && Number.isFinite(w) && w > 0 && w !== 1) return w;
+  const h = spanHours(m.plannedStartAt, m.plannedAt);
+  if (h > 0) return h;
+  return w != null && Number.isFinite(w) && w > 0 ? w : 1;
+}
+
+const msOf = (v: unknown): number =>
+  v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v));
+
+/** Hours in a planned window. A whole number of days (a date-only task:
+ *  start and finish at the same clock time) covers its days inclusively —
+ *  Oct 26 → Oct 28 is three days. */
+function spanHours(start: unknown, finish: unknown): number {
+  const f = msOf(finish), s0 = msOf(start);
+  if (!Number.isFinite(f)) return 0;
+  const s = Number.isFinite(s0) ? s0 : f;
+  const ms = f - s;
+  if (ms < 0) return 0;
+  const DAY = 86_400_000;
+  if (ms % DAY === 0) return (ms / DAY + 1) * 24;
+  return ms / 3_600_000;
 }
 
 /** Derive a summary's status from the leaf-descendant tallies. Mirrors how a
@@ -138,7 +171,7 @@ export function buildProgressIndex(milestones: ProgressNode[]): Map<string, Prog
     } else {
       const a = aggregate(m.id, new Set());
       out.set(m.id, {
-        percent: a.wsum > 0 ? Math.round(a.wpct / a.wsum) : 0,
+        percent: a.wsum > 0 ? roundPct(a.wpct / a.wsum) : 0,
         status: deriveSummaryStatus(a),
         isLeaf: false,
         leafDone: a.done,
@@ -162,5 +195,5 @@ export function overallPercent(milestones: ProgressNode[]): number {
     const w = effectiveWeight(m);
     wsum += w; wpct += w * leafPercent(m);
   }
-  return wsum > 0 ? Math.round(wpct / wsum) : 0;
+  return wsum > 0 ? roundPct(wpct / wsum) : 0;
 }

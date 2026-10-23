@@ -10,11 +10,11 @@
 // It stays quiet when there's nothing urgent (a single calm "on track"
 // line), so it informs without nagging.
 
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, PauseCircle, TrendingDown, CalendarClock, CheckCircle2, ArrowRight } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { computeExecutionReport } from "@/lib/executionReport";
-import type { ShiftTimes } from "@/lib/shiftReport";
+import { standingOf, type ShiftTimes } from "@/lib/shiftReport";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 
 interface Props {
@@ -28,7 +28,9 @@ interface Props {
 
 export default function SchedulePulse({ milestones, onShowOverdue, onShowBlocked, shiftTimes }: Props) {
   const tz = useScheduleTz();
-  const r = useMemo(() => computeExecutionReport(milestones, { tz, shiftTimes }), [milestones, tz, shiftTimes]);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(t); }, []);
+  const r = useMemo(() => computeExecutionReport(milestones, { tz, shiftTimes, now: new Date(now) }), [milestones, tz, shiftTimes, now]);
   if (r.totalLeaves === 0) return null;
 
   const items: React.ReactNode[] = [];
@@ -45,7 +47,7 @@ export default function SchedulePulse({ milestones, onShowOverdue, onShowBlocked
         text={<><b>{r.blocked + r.onHold}</b> stuck — {r.blocked} blocked, {r.onHold} on hold</>} cta="Review" />,
     );
   }
-  if (r.paceDelta <= -10) {
+  if (standingOf(r.pctComplete, r.expectedPct) === "behind") {
     items.push(
       <Nudge key="pace" tone="rose" icon={<TrendingDown className="w-4 h-4" />}
         text={<><b>{Math.abs(r.paceDelta)} pts</b> behind pace ({r.pctComplete}% done, expected {r.expectedPct}%)</>} />,

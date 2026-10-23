@@ -56,7 +56,7 @@ describe("the update says what happened, in as few words as it takes", () => {
     const row = (name: string) => cells.find((r) => r[0] === name)!;
     // E-606: two steps done, Retube planned tomorrow — on its way, not unfinished.
     expect(row("E-606 Exchanger")[2]).toBe("Retube");
-    expect(row("E-606 Exchanger")[3]).toMatch(/^On plan — finishes .*10-27/);
+    expect(row("E-606 Exchanger")[3]).toMatch(/^On plan · planned finish .*10-27/);
     expect(row("T-605 Tower")).toEqual(["T-605 Tower", "100%", "", "Complete"]);
     expect(table.rows).toHaveLength(2); // a task once, not a line per step
   });

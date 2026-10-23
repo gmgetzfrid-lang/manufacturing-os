@@ -7,7 +7,7 @@
 // reasons), and planned-vs-actual performer. Print-friendly so it
 // doubles as an end-of-job report.
 
-import React, { useMemo, useSyncExternalStore } from "react";
+import React, { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { fmtInTz } from "@/lib/scheduleTz";
@@ -17,12 +17,15 @@ import {
 } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { computeExecutionReport } from "@/lib/executionReport";
-import type { ShiftTimes } from "@/lib/shiftReport";
+import { standingOf, type ShiftTimes } from "@/lib/shiftReport";
 import { computeCriticalPathLite } from "@/lib/criticalPath";
 
 export default function ExecutionReportView({ milestones, shiftTimes }: { milestones: Milestone[]; shiftTimes?: ShiftTimes }) {
   const tz = useScheduleTz();
-  const r = useMemo(() => computeExecutionReport(milestones, { tz, shiftTimes }), [milestones, tz, shiftTimes]);
+  // "Expected by now" moves with the clock, not only when the data changes.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(t); }, []);
+  const r = useMemo(() => computeExecutionReport(milestones, { tz, shiftTimes, now: new Date(now) }), [milestones, tz, shiftTimes, now]);
   const critical = useMemo(() => computeCriticalPathLite(milestones), [milestones]);
   const criticalNames = useMemo(
     () => milestones.filter((m) => m.id && critical.ids.has(m.id)).map((m) => m.name),
@@ -39,6 +42,8 @@ export default function ExecutionReportView({ milestones, shiftTimes }: { milest
     );
   }
 
+  // The same verdict as the shift report and the banner.
+  const standing = standingOf(r.pctComplete, r.expectedPct);
   const ahead = r.paceDelta >= 0;
   return (
     <>
@@ -71,11 +76,11 @@ export default function ExecutionReportView({ milestones, shiftTimes }: { milest
 
         <Card>
           <Label>Pace</Label>
-          <div className={`flex items-center gap-1.5 text-2xl font-black tracking-tight ${ahead ? "text-emerald-600" : "text-rose-600"}`}>
+          <div className={`flex items-center gap-1.5 text-2xl font-black tracking-tight ${standing === "behind" ? "text-rose-600" : standing === "ahead" ? "text-emerald-600" : "text-[var(--color-text)]"}`}>
             {ahead ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
             {ahead ? "+" : ""}{r.paceDelta}<span className="text-base text-[var(--color-text-faint)] font-bold">pts</span>
           </div>
-          <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{ahead ? "ahead of" : "behind"} schedule · expected {r.expectedPct}% by now</div>
+          <div className="text-[11px] text-[var(--color-text-muted)] mt-1">{standing === "on track" ? "on track" : standing === "ahead" ? "ahead of schedule" : "behind schedule"} · expected {r.expectedPct}% by now</div>
         </Card>
 
         <Card>

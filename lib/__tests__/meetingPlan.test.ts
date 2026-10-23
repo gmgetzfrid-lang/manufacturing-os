@@ -29,7 +29,8 @@ describe("kick-off agenda", () => {
   });
   it("the first day and night shifts, each with its own work", () => {
     expect(k.firstShifts.map((s) => s.window.kind)).toEqual(["day", "night"]);
-    expect(k.firstShifts[0].rows.map((r) => r.leaf.id).sort()).toEqual(["a", "b", "k"]);
+    // The blocked crane step is under "not ready", not on the shift's work list.
+    expect(k.firstShifts[0].rows.map((r) => r.leaf.id).sort()).toEqual(["a", "b"]);
     expect(k.firstShifts[1].rows.map((r) => r.leaf.id)).toEqual(["c"]);
   });
 });
