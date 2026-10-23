@@ -270,6 +270,8 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
           [data-shift-print-root] tr, [data-shift-print-root] .keep { break-inside: avoid; }
           [data-shift-print-root] thead { display: table-header-group; }
           [data-shift-print-root] .no-print { display: none !important; }
+          /* Paper can't scroll: tables wrap to the page instead. */
+          [data-shift-print-root] .overflow-x-auto, [data-shift-print-root] .overflow-auto { overflow: visible !important; }
         }
       `}</style>
 
@@ -1144,7 +1146,7 @@ function SectionHead({ n, s, collapsed, big, print }: { n: number; s: Sec; colla
     <div className={`flex items-center gap-2 ${print ? "pb-0.5 border-b border-slate-900" : "pb-1 border-b-2 border-slate-900 dark:border-slate-500"}`}>
       <span className={`${big ? "w-7 h-7 text-[13px]" : "w-5 h-5 text-[10.5px]"} rounded-full ${ring} text-white font-black flex items-center justify-center shrink-0`}>{n}</span>
       <span className={`${big ? "text-[18px]" : print ? "text-[10.5pt]" : "text-[13.5px]"} font-black uppercase tracking-wide`}>{s.title}</span>
-      {s.sub && <span className={`min-w-0 truncate ${big ? "text-[12px]" : "text-[11px]"} text-[var(--color-text-muted)]`}>— {s.sub}</span>}
+      {s.sub && <span className={`min-w-0 truncate print:whitespace-normal print:overflow-visible ${big ? "text-[12px]" : "text-[11px]"} text-[var(--color-text-muted)]`}>— {s.sub}</span>}
       {!print && !big && <ChevronDown className={`ml-auto w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${collapsed ? "-rotate-90" : ""}`} />}
     </div>
   );
@@ -1255,7 +1257,7 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
   const one = "whitespace-nowrap overflow-hidden text-ellipsis";
   const cell = print ? "px-1 py-[1px]" : "px-1.5 py-[3px]";
   return (
-    <div className="rounded-md border border-slate-300 dark:border-slate-700 overflow-x-auto">
+    <div className={`rounded-md border border-slate-300 dark:border-slate-700 ${print ? "" : "overflow-x-auto"}`}>
       <table className={`w-full border-collapse table-fixed ${print ? "text-[8.5pt]" : "text-[12px]"}`}>
         <thead>
           <tr className="bg-slate-50 dark:bg-slate-800/60 text-[9px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 text-left">
@@ -1311,7 +1313,7 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
 function SimpleTable({ head, rows, print }: { head: string[]; rows: Array<{ id: string; cells: React.ReactNode[] }>; print: boolean }) {
   const cell = print ? "px-1 py-[1px]" : "px-1.5 py-[3px]";
   return (
-    <div className="rounded-md border border-slate-300 dark:border-slate-700 overflow-x-auto">
+    <div className={`rounded-md border border-slate-300 dark:border-slate-700 ${print ? "" : "overflow-x-auto"}`}>
       <table className={`w-full border-collapse ${print ? "text-[8.5pt]" : "text-[12px]"}`}>
         <thead>
           <tr className="bg-slate-50 dark:bg-slate-800/60 text-[9px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 text-left">
