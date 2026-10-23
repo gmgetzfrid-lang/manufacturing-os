@@ -343,6 +343,40 @@ export async function applyMilestoneMoves(input: {
   }).then(() => undefined, () => undefined);
 }
 
+/** Write a bulk field change (lib/bulkEdit.ts plans it): tasks that end up
+ *  with the same value are written together, 200 at a time, and the change
+ *  is audited once — what field, from what, to what, on which tasks. */
+export async function applyBulkFieldChange(input: {
+  orgId: string;
+  projectId: string;
+  field: keyof typeof PATCH_COLUMN;
+  changes: Array<{ id: string; after: string | null }>;
+  /** For the audit trail: "replace Acme → Gulf Coast" or "set on selection". */
+  summary: { mode: "replace" | "set"; from?: string; to: string | null };
+  actorUserId: string;
+  actorUserEmail?: string;
+}): Promise<void> {
+  const col = PATCH_COLUMN[input.field];
+  if (!col || input.changes.length === 0) return;
+  const now = new Date().toISOString();
+  const byValue = new Map<string | null, string[]>();
+  for (const c of input.changes) byValue.set(c.after, [...(byValue.get(c.after) ?? []), c.id]);
+  for (const [value, ids] of byValue) {
+    for (let i = 0; i < ids.length; i += 200) {
+      const { error } = await supabase.from("milestones")
+        .update({ [col]: value, updated_at: now, updated_by: input.actorUserId })
+        .in("id", ids.slice(i, i + 200));
+      if (error) throw new Error(error.message);
+    }
+  }
+  await supabase.from("audit_logs").insert({
+    action: "MILESTONES_BULK_EDITED",
+    resource_type: "project", resource_id: input.projectId,
+    org_id: input.orgId, user_id: input.actorUserId, user_email: input.actorUserEmail ?? null,
+    details: { field: input.field, ...input.summary, count: input.changes.length, ids: input.changes.map((c) => c.id).slice(0, 100) },
+  }).then(() => undefined, () => undefined);
+}
+
 export interface SetMilestoneStatusInput {
   id: string;
   status: MilestoneStatus;

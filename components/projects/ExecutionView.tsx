@@ -29,7 +29,7 @@ import {
   ChevronDown, ChevronRight as ChevronRightIcon, ChevronLeft,
   CalendarDays, CircleCheck, Loader2,
   FolderPlus, CalendarRange, X as XIcon, CheckSquare, Square,
-  ZoomIn, ZoomOut, ListTree, Crosshair, Info, Zap, Eye, ListOrdered, Link2,
+  ZoomIn, ZoomOut, ListTree, Crosshair, Info, Zap, Eye, ListOrdered, Link2, Replace,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { groupTasksUnderParent, setTaskDuration, addMilestoneNote } from "@/lib/milestones";
@@ -49,6 +49,7 @@ import { startMsOf as plannedStartMsOf } from "@/lib/calendarPlacement";
 import { effectiveSpans, byStart, spanLabel, barGeometry, xAt, hourStep, startOf as timedStart, finishOf as timedFinish } from "@/lib/scheduleTime";
 import { DEFAULT_SHIFT_TIMES, readShiftTimes, workShiftOf, type ShiftTimes, type WorkShift } from "@/lib/shiftReport";
 import ShiftMark from "@/components/projects/ShiftMark";
+import BulkEditModal from "@/components/projects/BulkEditModal";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl from "@/components/projects/ProgressControl";
@@ -114,6 +115,8 @@ export default function ExecutionView({
   // with an optimistic status above so the bar + dot move together).
   const [optimisticPct, setOptimisticPct] = useState<Map<string, number>>(new Map());
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Bulk change: replace a name everywhere, or set a value on the selection.
+  const [bulkMode, setBulkMode] = useState<"replace" | "set" | null>(null);
   const [groupOpen, setGroupOpen] = useState(false);
   const [durationFor, setDurationFor] = useState<Milestone | null>(null);
   // zoomFactor: null = auto-fit to the available width. A number is a
@@ -783,6 +786,13 @@ export default function ExecutionView({
             <Zap className="w-3.5 h-3.5" /> Critical path
           </button>
         )}
+        {canEdit && (
+          <button onClick={() => setBulkMode("replace")}
+            title="Swap a contractor, crew, company or location on every task at once"
+            className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+            <Replace className="w-3.5 h-3.5" /> Change on many
+          </button>
+        )}
       </div>
 
       {/* Find anything — applies to Timeline & Calendar. */}
@@ -858,6 +868,7 @@ export default function ExecutionView({
           selectedCount={selectedIds.size}
           onClearSelection={() => setSelectedIds(new Set())}
           onGroup={() => setGroupOpen(true)}
+          onBulkSet={() => setBulkMode("set")}
           onBulkStatus={(s) => void bulkStatus(s)}
           onBulkMove={(d) => bulkMove(d)}
         />
@@ -969,6 +980,15 @@ export default function ExecutionView({
         />
       )}
 
+      {bulkMode && (
+        <BulkEditModal
+          milestones={items} selectedIds={selectedIds} startMode={bulkMode}
+          orgId={orgId} projectId={projectId} userId={userId} userEmail={userEmail}
+          onClose={() => setBulkMode(null)}
+          onDone={(n) => { setBulkMode(null); notify(`Changed on ${n} task${n === 1 ? "" : "s"}.`, "success"); onRefresh(); }}
+        />
+      )}
+
       {groupOpen && selectedIds.size > 0 && (
         <GroupTasksModal
           orgId={orgId} projectId={projectId}
@@ -1051,14 +1071,14 @@ function Stat({ label, value, tone }: { label: string; value: number | string; t
 function Toolbar({
   canEdit, isAutoFit, canZoomIn, canZoomOut, onZoomIn, onZoomOut, onFit,
   onToday, onCollapseAll, onExpandAll,
-  selectedCount, onClearSelection, onGroup, onBulkStatus, onBulkMove,
+  selectedCount, onClearSelection, onGroup, onBulkSet, onBulkStatus, onBulkMove,
 }: {
   canEdit: boolean;
   isAutoFit: boolean; canZoomIn: boolean; canZoomOut: boolean;
   onZoomIn: () => void; onZoomOut: () => void; onFit: () => void;
   onToday: () => void;
   onCollapseAll: () => void; onExpandAll: () => void;
-  selectedCount: number; onClearSelection: () => void; onGroup: () => void;
+  selectedCount: number; onClearSelection: () => void; onGroup: () => void; onBulkSet: () => void;
   onBulkStatus: (s: MilestoneStatus) => void; onBulkMove: (deltaDays: number) => void;
 }) {
   return (
@@ -1085,6 +1105,10 @@ function Toolbar({
                 <button onClick={() => onBulkMove(1)} className="px-1.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold">+1d</button>
               </div>
               <span className="w-px h-4 bg-slate-200" />
+              <button onClick={onBulkSet} title="Set the contractor, crew, company, location… on all the selected tasks"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-[11px] font-bold transition-colors">
+                <Replace className="w-3 h-3" /> Set…
+              </button>
               <button onClick={onGroup} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[11px] font-bold transition-colors">
                 <FolderPlus className="w-3 h-3" /> Group
               </button>
