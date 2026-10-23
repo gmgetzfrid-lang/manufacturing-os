@@ -20,7 +20,7 @@ import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { effectiveWeight, leafPercent, roundPct } from "@/lib/scheduleProgress";
 import { dayDiff } from "@/lib/scheduleTz";
 import { startOf, finishOf } from "@/lib/scheduleTime";
-import { expectedFraction, isOverdue, BEHIND_POINTS, DEFAULT_SHIFT_TIMES, type ShiftTimes } from "@/lib/shiftReport";
+import { expectedFraction, isOverdue, workSpan, BEHIND_POINTS, DEFAULT_SHIFT_TIMES, type ShiftTimes } from "@/lib/shiftReport";
 
 export interface GroupRollup {
   id: string;
@@ -156,7 +156,10 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
   let plannedHours = 0, earnedHours = 0;
   let wsum = 0, wpct = 0; // effort-weighted progress (matches the rest of the app)
   let envStart = Infinity, envFinish = -Infinity;
-  // The window the plan % is measured on: baseline dates where captured.
+  // When the work is really over (a date-only task: the end of its last
+  // day — the rule "overdue" uses), and the window the plan % is measured
+  // on (baseline dates where captured), for the forecast.
+  let workFinish = -Infinity;
   let baseStart = Infinity, baseFinish = -Infinity;
 
   for (const m of leaves) {
@@ -178,11 +181,12 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
     const s = startMs(m), f = finishMs(m);
     if (Number.isFinite(s)) envStart = Math.min(envStart, s);
     if (Number.isFinite(f)) envFinish = Math.max(envFinish, f);
-    const bs = Date.parse(String(m.baselineStartAt ?? "")), bf = Date.parse(String(m.baselineFinishAt ?? ""));
-    const hasBase = Number.isFinite(bs) && Number.isFinite(bf);
-    const s2 = hasBase ? bs : s, f2 = hasBase ? bf : f;
-    if (Number.isFinite(s2)) baseStart = Math.min(baseStart, s2);
-    if (Number.isFinite(f2)) baseFinish = Math.max(baseFinish, f2);
+    const ws = workSpan(m, tz);
+    if (Number.isFinite(ws.finish)) workFinish = Math.max(workFinish, ws.finish);
+    const hasBase = Number.isFinite(Date.parse(String(m.baselineStartAt ?? ""))) && Number.isFinite(Date.parse(String(m.baselineFinishAt ?? "")));
+    const bw = hasBase ? workSpan({ ...m, plannedStartAt: m.baselineStartAt, plannedAt: m.baselineFinishAt } as Milestone, tz) : ws;
+    if (Number.isFinite(bw.start)) baseStart = Math.min(baseStart, bw.start);
+    if (Number.isFinite(bw.finish)) baseFinish = Math.max(baseFinish, bw.finish);
   }
 
   const totalLeaves = leaves.length;
@@ -217,12 +221,17 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
   // planned ÷ done — no earlier than the current planned finish.
   let forecastFinish: string | null = finish;
   const behind = pctComplete < 100 && expectedPct - pctComplete >= BEHIND_POINTS;
-  if (pctComplete < 100 && Number.isFinite(envStart) && Number.isFinite(envFinish) && (behind || now > envFinish)) {
+  const pastEnd = Number.isFinite(workFinish) && now >= workFinish;
+  if (pctComplete < 100 && Number.isFinite(envStart) && Number.isFinite(workFinish) && (behind || pastEnd)) {
     if (pctComplete <= 0) forecastFinish = null;
-    else if (now > envFinish) forecastFinish = new Date(now + (now - envStart) * ((100 - pctComplete) / pctComplete)).toISOString();
     else {
-      const bs = Number.isFinite(baseStart) ? baseStart : envStart, bf = Number.isFinite(baseFinish) ? baseFinish : envFinish;
-      forecastFinish = new Date(Math.max(envFinish, bs + (bf - bs) * (expectedPct / pctComplete))).toISOString();
+      const bs = Number.isFinite(baseStart) ? baseStart : envStart, bf = Number.isFinite(baseFinish) ? baseFinish : workFinish;
+      const at = pastEnd
+        ? now + (now - envStart) * ((100 - pctComplete) / pctComplete)
+        : bs + (bf - bs) * (expectedPct / pctComplete);
+      // Within the planned work: the planned finish. Past it: that moment,
+      // a hair earlier so the end of a day reads as that day, not the next.
+      forecastFinish = at <= workFinish ? finish : new Date(at - 1).toISOString();
     }
   }
 

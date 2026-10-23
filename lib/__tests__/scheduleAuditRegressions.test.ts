@@ -401,3 +401,16 @@ describe("sweep 6 fixes", () => {
     expect(Date.parse(r.forecastFinish!)).toBeGreaterThanOrEqual(Date.parse(r.finish!));
   });
 });
+
+describe("sweep 7 fixes", () => {
+  it("a date-only job on plan on its last day forecasts its planned finish", () => {
+    const t = mk({ id: "t", name: "T", plannedStartAt: day("2026-10-01"), plannedAt: day("2026-10-03"), status: "in_progress", percentComplete: 80 });
+    const r = computeExecutionReport([t], { now: new Date(at("2026-10-03", "10:00")), tz: CHI });
+    expect(r.forecastFinish).toBe(r.finish);
+  });
+  it("a date-only job at half pace forecasts the full stretch", () => {
+    const t = mk({ id: "t", name: "T", plannedStartAt: day("2026-10-01"), plannedAt: day("2026-10-02"), status: "in_progress", percentComplete: 25 });
+    const r = computeExecutionReport([t], { now: new Date(at("2026-10-01", "18:00")), tz: CHI });
+    expect(dayKey(Date.parse(r.forecastFinish!), CHI)).toBe("2026-10-04");
+  });
+});
