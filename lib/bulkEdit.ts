@@ -30,7 +30,7 @@ export const BULK_FIELDS: BulkField[] = [
   { key: "workOrderRef", label: "Work order #", list: false },
   // Which crew works it. Auto = read from the task's times.
   { key: "shift", label: "Crew — day / night / round the clock", list: false, options: [
-    { value: "", label: "Auto (from its times)" }, { value: "day", label: "Day" },
+    { value: "", label: "Auto (from its calendar, else its times)" }, { value: "day", label: "Day" },
     { value: "night", label: "Night" }, { value: "swing", label: "Round the clock" },
   ] },
 ];

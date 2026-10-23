@@ -19,7 +19,8 @@ const XML = `<?xml version="1.0" encoding="UTF-8"?>
     <Calendar><UID>4</UID><Name>12-Hour Shift</Name><IsBaseCalendar>1</IsBaseCalendar><BaseCalendarUID>-1</BaseCalendarUID><WeekDays>${week("06:00:00", "18:00:00")}</WeekDays></Calendar>
     <Calendar><UID>6</UID><Name>24 Hours</Name><IsBaseCalendar>1</IsBaseCalendar><BaseCalendarUID>-1</BaseCalendarUID><WeekDays>${week("00:00:00", "00:00:00")}</WeekDays></Calendar>
     <Calendar><UID>8</UID><Name>Schultz - Tower</Name><IsBaseCalendar>0</IsBaseCalendar><BaseCalendarUID>6</BaseCalendarUID></Calendar>
-    <Calendar><UID>9</UID><Name>Schultz 1</Name><IsBaseCalendar>0</IsBaseCalendar><BaseCalendarUID>4</BaseCalendarUID></Calendar>
+    <Calendar><UID>9</UID><Name>Schultz 1</Name><IsBaseCalendar>0</IsBaseCalendar><BaseCalendarUID>4</BaseCalendarUID>
+      <WorkWeeks><WorkWeek><TimePeriod><FromDate>2026-12-21T00:00:00</FromDate><ToDate>2026-12-27T23:59:00</ToDate></TimePeriod><Name>Holiday nights</Name><WeekDays>${week("18:00:00", "06:00:00")}</WeekDays></WorkWeek></WorkWeeks></Calendar>
   </Calendars>
   <Tasks>${task(1, "Open Internal Manways")}${task(2, "Pull bundle")}${task(3, "Project default")}${task(4, "Own calendar", 4)}</Tasks>
   <Resources><Resource><UID>4</UID><Name>Schultz - Tower</Name><CalendarUID>8</CalendarUID></Resource><Resource><UID>5</UID><Name>Schultz 1</Name><CalendarUID>9</CalendarUID></Resource></Resources>

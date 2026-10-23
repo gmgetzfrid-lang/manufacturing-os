@@ -236,7 +236,11 @@ function parseMsProjectXml(text: string, tz: string): { rows: ParsedMilestone[];
     const cuid = direct(cEl as Element, "UID");
     if (!cuid) continue;
     const days = new Map<number, Array<[number, number]>>();
-    for (const wd of Array.from((cEl as Element).getElementsByTagNameNS("*", "WeekDay"))) {
+    // Its standing week only — not <WorkWeeks> (alternate weeks for a
+    // date range, e.g. a holiday week).
+    const standing = Array.from((cEl as Element).children).filter((c) => c.localName === "WeekDays")
+      .flatMap((w) => Array.from(w.children).filter((c) => c.localName === "WeekDay"));
+    for (const wd of standing) {
       const dt = Number(direct(wd as Element, "DayType"));
       if (!(dt >= 1 && dt <= 7)) continue;  // 0 = a dated exception
       const ranges: Array<[number, number]> = [];
