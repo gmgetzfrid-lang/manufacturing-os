@@ -648,7 +648,6 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     note: comment(r, "last"),
     right: r.percent > 0 ? `${r.percent}%` : "not started",
     extraTags: [
-      pastDue.includes(r) ? { t: `was due ${c.DTs(r.finish)}`, tone: "amber" } : null,
       behindPlan.includes(r) ? { t: `${r.expectedPct}% planned by now`, tone: "amber" } : null,
       asPlanned.includes(r) && r.lateStart ? { t: "not started yet", tone: "amber" } : null,
       asPlanned.includes(r) && r.finish > shift.end ? { t: `to ${c.D(r.finish)}`, tone: "muted" } : null,

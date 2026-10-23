@@ -181,11 +181,12 @@ const td = (style: string, html: string, attrs = "") => `<td ${attrs}style="${FO
 function blockHtml(b: ExportBlock): string {
   switch (b.k) {
     case "stats":
-      return `<table role="presentation" cellpadding="0" cellspacing="4" border="0" style="border-collapse:separate;margin:2px 0 4px -4px;"><tr>${b.items.map((x) => {
+      return `<table role="presentation" cellpadding="0" cellspacing="3" border="0" style="border-collapse:separate;margin:2px 0 4px -3px;"><tr>${b.items.map((x) => {
         const t = TONE[x.tone];
-        return td(`border:1px solid ${t.bd};background-color:${t.bg};padding:4px 10px;min-width:80px;`,
-          `<div style="${FONT}font-size:9px;font-weight:bold;text-transform:uppercase;letter-spacing:0.5px;color:${MUTED};">${esc(x.label)}</div>` +
-          `<div style="${FONT}font-size:18px;font-weight:bold;color:${t.fg};">${esc(x.value)}</div>`, `bgcolor="${t.bg}" `);
+        // Narrow enough that four tiles fit a phone screen (375px).
+        return td(`border:1px solid ${t.bd};background-color:${t.bg};padding:4px 8px;min-width:60px;`,
+          `<div style="${FONT}font-size:9px;font-weight:bold;text-transform:uppercase;letter-spacing:0.5px;color:${MUTED};white-space:nowrap;">${esc(x.label)}</div>` +
+          `<div style="${FONT}font-size:17px;font-weight:bold;color:${t.fg};white-space:nowrap;">${esc(x.value)}</div>`, `bgcolor="${t.bg}" `);
       }).join("")}</tr></table>`;
     case "note":
       return `<p style="${FONT}font-size:12px;margin:3px 0;color:${b.tone ? TONE[b.tone].fg : INK};${b.tone ? "font-weight:bold;" : ""}">${esc(b.text)}</p>`;

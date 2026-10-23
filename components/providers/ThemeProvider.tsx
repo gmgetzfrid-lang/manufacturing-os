@@ -160,6 +160,16 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   // Don't stomp the pre-paint script's correct theme with the default
   // during the first frame — apply only once the saved state is loaded.
   useEffect(() => { if (hydrated) applyTheme(mode, effective); }, [hydrated, mode, effective]);
+  // Paper is white: print in the light theme whatever the screen is in, so
+  // reports and the shift turnover never print with dark backgrounds.
+  useEffect(() => {
+    const root = document.documentElement;
+    const before = () => root.classList.remove("dark");
+    const after = () => root.classList.toggle("dark", mode === "dark");
+    window.addEventListener("beforeprint", before);
+    window.addEventListener("afterprint", after);
+    return () => { window.removeEventListener("beforeprint", before); window.removeEventListener("afterprint", after); };
+  }, [mode]);
 
   const persistPalette = (p: Palette) => {
     try { localStorage.setItem(LS_PALETTE, JSON.stringify(p)); } catch { /* noop */ }

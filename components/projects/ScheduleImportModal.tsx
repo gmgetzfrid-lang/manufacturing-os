@@ -258,7 +258,7 @@ export default function ScheduleImportModal({
                 <span>Importing into</span>
                 <span className="font-bold text-[var(--color-text)] truncate max-w-[200px]">{projectName ?? `Project ${projectId.slice(0,8)}`}</span>
                 {projectStatus && projectStatus !== "active" && (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-rose-100 text-rose-800 border border-rose-200">
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
                     <AlertTriangle className="w-2.5 h-2.5" /> {projectStatus}
                   </span>
                 )}
@@ -347,7 +347,7 @@ export default function ScheduleImportModal({
               {/* Warnings — for everything except the refused-format case,
                   which the guide above covers. */}
               {parseResult.format !== "msproject-mpp" && parseResult.format !== "msproject-mpx" && parseResult.warnings.length > 0 && (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                <div className="rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 p-3 text-xs text-amber-900 dark:text-amber-200">
                   <div className="font-bold flex items-center gap-1.5 mb-1">
                     <AlertTriangle className="w-3.5 h-3.5" /> {parseResult.warnings.length} note{parseResult.warnings.length === 1 ? "" : "s"} from the parser
                   </div>
@@ -466,11 +466,11 @@ export default function ScheduleImportModal({
 
               {/* Import result */}
               {importResult && (
-                <div className={`rounded-xl p-3 border ${importResult.errors.length > 0 ? "border-rose-200 bg-rose-50" : "border-emerald-200 bg-emerald-50"}`}>
+                <div className={`rounded-xl p-3 border ${importResult.errors.length > 0 ? "border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40" : "border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40"}`}>
                   <div className="flex items-center gap-2 font-bold text-sm">
                     {importResult.errors.length > 0
-                      ? <><AlertTriangle className="w-4 h-4 text-rose-600" /> Imported with errors</>
-                      : <><CheckCircle2 className="w-4 h-4 text-emerald-600" /> Imported successfully</>
+                      ? <><AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400" /> Imported with errors</>
+                      : <><CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> Imported successfully</>
                     }
                   </div>
                   <div className="mt-1 text-xs space-y-0.5">
@@ -478,7 +478,7 @@ export default function ScheduleImportModal({
                     <div>Updated: <b>{importResult.updated}</b></div>
                     {importResult.skipped > 0 && <div>Skipped: <b>{importResult.skipped}</b></div>}
                     {importResult.errors.length > 0 && (
-                      <div className="text-rose-700">
+                      <div className="text-rose-700 dark:text-rose-300">
                         {importResult.errors.length} error{importResult.errors.length === 1 ? "" : "s"}:
                         <ul className="ml-5 list-disc">{importResult.errors.slice(0, 5).map((e, i) => <li key={i}>{e}</li>)}</ul>
                       </div>
@@ -497,7 +497,7 @@ export default function ScheduleImportModal({
             </div>
           )}
           {(existingCount ?? 0) > 0 && parseResult && parseResult.rows.length > 0 && !importResult && (
-            <label className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-900">
+            <label className="flex items-start gap-2 rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-[11px] text-rose-900 dark:text-rose-200">
               <input type="checkbox" checked={replaceExisting} onChange={(e) => setReplaceExisting(e.target.checked)} className="mt-0.5" />
               <span>
                 <b>Replace the current schedule</b> — delete the {existingCount} task{existingCount === 1 ? "" : "s"} already on this project first, then import the file from scratch.
@@ -572,17 +572,17 @@ function XmlExportGuide({ filename, format }: { filename: string; format: "mspro
         </div>
       </div>
       <div className="p-4">
-        <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-3">
-          <div className="text-xs font-black text-emerald-900 uppercase tracking-widest mb-2">Exact copy · no setup</div>
+        <div className="rounded-lg border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 p-3">
+          <div className="text-xs font-black text-emerald-900 dark:text-emerald-200 uppercase tracking-widest mb-2">Exact copy · no setup</div>
           <ol className="space-y-1.5 text-xs text-emerald-900/90">
             <Step n={1}>
-              Open <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">{filename || "your schedule"}</code> in Microsoft Project.
+              Open <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800 text-[10px]">{filename || "your schedule"}</code> in Microsoft Project.
             </Step>
             <Step n={2}>
-              <b>File → Save As</b> (or <kbd className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200">F12</kbd>) → choose <b>XML Format (*.xml)</b> and save.
+              <b>File → Save As</b> (or <kbd className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">F12</kbd>) → choose <b>XML Format (*.xml)</b> and save.
             </Step>
             <Step n={3}>
-              Drag that new <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">.xml</code> file right here. It imports with all dependencies, resources, and exact dates.
+              Drag that new <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800 text-[10px]">.xml</code> file right here. It imports with all dependencies, resources, and exact dates.
             </Step>
           </ol>
         </div>
@@ -618,14 +618,14 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
 
   return (
     <div className={`rounded-xl border p-3 space-y-2 ${
-      noHierarchy ? "bg-rose-50 border-rose-200" : "bg-emerald-50 border-emerald-200"
+      noHierarchy ? "bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800" : "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800"
     }`}>
       <div className="flex items-center gap-2">
         {noHierarchy
-          ? <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-          : <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          ? <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+          : <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
         }
-        <div className={`text-sm font-bold ${noHierarchy ? "text-rose-900" : "text-emerald-900"}`}>
+        <div className={`text-sm font-bold ${noHierarchy ? "text-rose-900 dark:text-rose-200" : "text-emerald-900 dark:text-emerald-200"}`}>
           {noHierarchy
             ? "Hierarchy NOT detected"
             : `Hierarchy detected — ${summaries} summary parent${summaries === 1 ? "" : "s"}, ${withParent} sub-task${withParent === 1 ? "" : "s"}`}
@@ -638,7 +638,7 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
         <StatCell label="WBS codes"        value={`${withWbs} / ${total}`}    tone={withWbs     > 0 ? "ok" : "muted"} />
       </div>
       {noHierarchy && (
-        <div className="text-[11px] text-rose-900 mt-1 space-y-1">
+        <div className="text-[11px] text-rose-900 dark:text-rose-200 mt-1 space-y-1">
           <div className="font-bold">Without parent/child structure, sub-tasks won&apos;t render as accordions and tasks won&apos;t group under phases.</div>
           <div>Most common causes:</div>
           <ol className="ml-4 list-decimal space-y-0.5">
@@ -648,7 +648,7 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
         </div>
       )}
       {!noHierarchy && noDurations && (
-        <div className="text-[11px] text-emerald-900 mt-1">
+        <div className="text-[11px] text-emerald-900 dark:text-emerald-200 mt-1">
           Note: most rows don&apos;t carry start dates — only finish. Tasks will render as single-day on their finish date. Use the per-task <b>Set duration</b> action in the Execution view to expand the ones that take multiple days.
         </div>
       )}
@@ -658,8 +658,8 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
 
 function StatCell({ label, value, tone }: { label: string; value: string; tone: "ok" | "warn" | "muted" }) {
   const cls =
-    tone === "ok"    ? "bg-[var(--color-surface)] border-emerald-200 text-emerald-900" :
-    tone === "warn"  ? "bg-[var(--color-surface)] border-rose-200 text-rose-900" :
+    tone === "ok"    ? "bg-[var(--color-surface)] border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200" :
+    tone === "warn"  ? "bg-[var(--color-surface)] border-rose-200 dark:border-rose-800 text-rose-900 dark:text-rose-200" :
                        "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text)]";
   return (
     <div className={`rounded-md border px-2 py-1 ${cls}`}>

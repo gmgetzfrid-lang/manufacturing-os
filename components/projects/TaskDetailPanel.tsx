@@ -197,7 +197,7 @@ export default function TaskDetailPanel({
       <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-[1px]" onClick={onClose} />
       <div className="relative w-full max-w-[440px] bg-[var(--color-surface)] shadow-2xl ring-1 ring-slate-900/10 flex flex-col animate-[slidein_.15s_ease-out]">
         {/* Header */}
-        <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-start gap-2 bg-gradient-to-b from-white to-slate-50/50">
+        <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-start gap-2 bg-gradient-to-b from-white dark:from-[var(--color-surface)] to-slate-50/50 dark:to-[var(--color-surface)]">
           <div className="flex-1 min-w-0">
             {/* Breadcrumb: DEC OUTAGE › Transmix 1 › Shut Down … so the
                 task is always shown in the context of its unit. Each
@@ -223,7 +223,7 @@ export default function TaskDetailPanel({
               <StatusPill status={effStatus} />
               <span className="text-[10px] font-black tabular-nums text-[var(--color-text-muted)]">{effPct}%</span>
               {m.wbs && <span className="font-mono text-[10px] text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{m.wbs}</span>}
-              {!isLeaf && <span className="text-[9px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">Summary</span>}
+              {!isLeaf && <span className="text-[9px] font-black uppercase tracking-wider bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded">Summary</span>}
             </div>
             <h2 className="mt-1.5 text-base font-bold text-[var(--color-text)] leading-snug break-words">{m.name}</h2>
           </div>
@@ -406,7 +406,7 @@ export default function TaskDetailPanel({
                   <div className="flex items-center gap-1.5 mb-1">
                     <Layers className="w-3.5 h-3.5 text-indigo-500" />
                     <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Subtasks</span>
-                    {leafProgress && <span className="text-[11px] font-mono text-indigo-600 font-bold ml-auto">{leafProgress.done}/{leafProgress.total} · {leafProgress.pct}%</span>}
+                    {leafProgress && <span className="text-[11px] font-mono text-indigo-600 dark:text-indigo-400 font-bold ml-auto">{leafProgress.done}/{leafProgress.total} · {leafProgress.pct}%</span>}
                   </div>
                   <div className="text-[10px] text-[var(--color-text-faint)] mb-2">
                     Dot = set status · ◀ ▶ = move this step a day earlier/later (the rest stay put) · name = open it
@@ -478,7 +478,7 @@ export default function TaskDetailPanel({
                       className="flex-1 text-xs px-2 py-1.5 border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30"
                       onKeyDown={(e) => { if (e.key === "Enter") void addNote(); }}
                     />
-                    <button onClick={() => void addNote()} disabled={!noteDraft.trim()} className="p-1.5 rounded-md text-indigo-600 hover:bg-indigo-50 disabled:opacity-40" title="Add note">
+                    <button onClick={() => void addNote()} disabled={!noteDraft.trim()} className="p-1.5 rounded-md text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 disabled:opacity-40" title="Add note">
                       <MessageSquarePlus className="w-4 h-4" />
                     </button>
                   </div>
@@ -529,13 +529,13 @@ export default function TaskDetailPanel({
 
         {/* Footer */}
         {canEdit && !editing && (
-          <div className="px-4 py-2.5 border-t border-[var(--color-border)] bg-slate-50/60 flex items-center">
-            <button onClick={() => void onDelete()} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-rose-600 hover:text-rose-800 hover:bg-rose-50 px-2 py-1 rounded-md">
+          <div className="px-4 py-2.5 border-t border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] flex items-center">
+            <button onClick={() => void onDelete()} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:text-rose-800 hover:bg-rose-50 px-2 py-1 rounded-md">
               <Trash2 className="w-3.5 h-3.5" /> Delete task
             </button>
           </div>
         )}
-        {saving && <div className="absolute inset-0 bg-white/40 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-indigo-600" /></div>}
+        {saving && <div className="absolute inset-0 bg-white/40 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-indigo-600 dark:text-indigo-400" /></div>}
       </div>
       <style jsx>{`@keyframes slidein { from { transform: translateX(16px); opacity: .6 } to { transform: translateX(0); opacity: 1 } }`}</style>
     </div>
@@ -687,7 +687,7 @@ function EditForm({
         </L>
       </div>
       <L label="Description"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className={`${inp} resize-y`} /></L>
-      {error && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-2">{error}</div>}
+      {error && <div className="text-xs text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-md p-2">{error}</div>}
       <div className="flex items-center justify-end gap-2 pt-1">
         <button onClick={onCancel} disabled={saving} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
         <button onClick={() => void save()} disabled={saving || !canSave || v.hasErrors} title={v.hasErrors ? "Fix the highlighted fields first" : undefined} className="inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-md disabled:opacity-40">
@@ -713,7 +713,7 @@ function L({ label, children }: { label: string; children: React.ReactNode }) {
 function Note({ err, warn }: { err?: string; warn?: string }) {
   if (!err && !warn) return null;
   return (
-    <div className={`mt-0.5 flex items-start gap-1 text-[10.5px] ${err ? "text-rose-600" : "text-amber-600"}`}>
+    <div className={`mt-0.5 flex items-start gap-1 text-[10.5px] ${err ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400"}`}>
       <AlertTriangle className="w-3 h-3 shrink-0 mt-px" /> {err ?? warn}
     </div>
   );
@@ -750,11 +750,11 @@ function StatusPill({ status, dotOnly }: { status: MilestoneStatus; dotOnly?: bo
     status === "missed"      ? "bg-rose-600" : "bg-slate-400";
   if (dotOnly) return <span className={`shrink-0 w-2 h-2 rounded-full ${tone}`} title={labelOf(status)} />;
   const text =
-    status === "completed"   ? "text-emerald-800 bg-emerald-100 border-emerald-200" :
-    status === "in_progress" ? "text-blue-800 bg-blue-100 border-blue-200" :
-    status === "on_hold"     ? "text-amber-900 bg-amber-100 border-amber-200" :
-    status === "blocked"     ? "text-rose-800 bg-rose-100 border-rose-200" :
-    status === "missed"      ? "text-rose-900 bg-rose-100 border-rose-200" : "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]";
+    status === "completed"   ? "text-emerald-800 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/40 border-emerald-200 dark:border-emerald-800" :
+    status === "in_progress" ? "text-blue-800 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/40 border-blue-200 dark:border-blue-800" :
+    status === "on_hold"     ? "text-amber-900 dark:text-amber-200 bg-amber-100 dark:bg-amber-900/40 border-amber-200 dark:border-amber-800" :
+    status === "blocked"     ? "text-rose-800 dark:text-rose-300 bg-rose-100 dark:bg-rose-900/40 border-rose-200 dark:border-rose-800" :
+    status === "missed"      ? "text-rose-900 dark:text-rose-200 bg-rose-100 dark:bg-rose-900/40 border-rose-200 dark:border-rose-800" : "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]";
   return <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${text}`}><span className={`w-1.5 h-1.5 rounded-full ${tone}`} />{labelOf(status)}</span>;
 }
 
@@ -834,7 +834,7 @@ function DependencyEditor({
           {deps.map((id) => {
             const t = byId.get(id);
             return (
-              <span key={id} className="inline-flex items-center gap-1 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-800 text-[11px] font-semibold pl-2 pr-1 py-0.5">
+              <span key={id} className="inline-flex items-center gap-1 rounded-full bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-indigo-800 dark:text-indigo-300 text-[11px] font-semibold pl-2 pr-1 py-0.5">
                 <button type="button" className="truncate max-w-[160px] hover:underline" onClick={() => t && onSelectMilestone?.(t)} title={t?.name ?? id}>
                   {t?.name ?? "(removed task)"}
                 </button>
@@ -861,7 +861,7 @@ function DependencyEditor({
           ))}
         </select>
       )}
-      {error && <div className="text-[11px] text-rose-600 mt-1">{error}</div>}
+      {error && <div className="text-[11px] text-rose-600 dark:text-rose-400 mt-1">{error}</div>}
     </div>
   );
 }

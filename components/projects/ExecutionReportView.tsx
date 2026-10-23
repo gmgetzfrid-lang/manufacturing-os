@@ -67,7 +67,7 @@ export default function ExecutionReportView({ milestones, shiftTimes }: { milest
         <Card>
           <Label>Complete</Label>
           <div className="flex items-baseline gap-1">
-            <span className={`text-3xl font-black tracking-tighter ${r.pctComplete === 100 ? "text-emerald-600" : "text-[var(--color-text)]"}`}>{r.pctComplete}</span>
+            <span className={`text-3xl font-black tracking-tighter ${r.pctComplete === 100 ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>{r.pctComplete}</span>
             <span className="text-base text-[var(--color-text-faint)] font-bold">%</span>
           </div>
           <Bar pct={r.pctComplete} done={r.pctComplete === 100} />
@@ -76,7 +76,7 @@ export default function ExecutionReportView({ milestones, shiftTimes }: { milest
 
         <Card>
           <Label>Pace</Label>
-          <div className={`flex items-center gap-1.5 text-2xl font-black tracking-tight ${standing === "behind" ? "text-rose-600" : standing === "ahead" ? "text-emerald-600" : "text-[var(--color-text)]"}`}>
+          <div className={`flex items-center gap-1.5 text-2xl font-black tracking-tight ${standing === "behind" ? "text-rose-600 dark:text-rose-400" : standing === "ahead" ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>
             {ahead ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
             {ahead ? "+" : ""}{r.paceDelta}<span className="text-base text-[var(--color-text-faint)] font-bold">pts</span>
           </div>
@@ -104,9 +104,9 @@ export default function ExecutionReportView({ milestones, shiftTimes }: { milest
 
       {/* Critical path — what's driving the finish */}
       {critical.ids.size > 0 && (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50/40 shadow-sm px-4 py-3">
+        <div className="rounded-2xl border border-rose-200 dark:border-rose-800 bg-rose-50/40 shadow-sm px-4 py-3">
           <div className="flex items-center gap-2 flex-wrap">
-            <Zap className="w-4 h-4 text-rose-600" />
+            <Zap className="w-4 h-4 text-rose-600 dark:text-rose-400" />
             <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Driving the finish</span>
             <span className="text-sm font-bold text-[var(--color-text)]">{critical.ids.size} task{critical.ids.size === 1 ? "" : "s"} on the critical path</span>
             {critical.remainingHours > 0 && <span className="text-[11px] text-[var(--color-text-muted)]">· {Math.round(critical.remainingHours)}h remaining on the chain</span>}
@@ -114,7 +114,7 @@ export default function ExecutionReportView({ milestones, shiftTimes }: { milest
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {criticalNames.slice(0, 10).map((n, i) => (
-              <span key={i} className="inline-flex items-center text-[11px] bg-[var(--color-surface)] border border-rose-200 text-rose-800 rounded-full px-2 py-0.5">{n}</span>
+              <span key={i} className="inline-flex items-center text-[11px] bg-[var(--color-surface)] border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300 rounded-full px-2 py-0.5">{n}</span>
             ))}
             {criticalNames.length > 10 && <span className="text-[11px] text-[var(--color-text-faint)] italic">+{criticalNames.length - 10} more</span>}
           </div>
@@ -123,21 +123,21 @@ export default function ExecutionReportView({ milestones, shiftTimes }: { milest
 
       {/* Baseline drift — planned vs now */}
       {r.baseline && (
-        <div className={`rounded-2xl border shadow-sm px-4 py-3 ${r.baseline.finishDriftDays > 0 ? "border-rose-200 bg-rose-50/40" : r.baseline.finishDriftDays < 0 ? "border-emerald-200 bg-emerald-50/40" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
+        <div className={`rounded-2xl border shadow-sm px-4 py-3 ${r.baseline.finishDriftDays > 0 ? "border-rose-200 dark:border-rose-800 bg-rose-50/40" : r.baseline.finishDriftDays < 0 ? "border-emerald-200 dark:border-emerald-800 bg-emerald-50/40" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
           <div className="flex items-center gap-3 flex-wrap">
             <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Vs. approved plan</span>
-            <span className={`text-lg font-black ${r.baseline.finishDriftDays > 0 ? "text-rose-600" : r.baseline.finishDriftDays < 0 ? "text-emerald-600" : "text-[var(--color-text)]"}`}>
+            <span className={`text-lg font-black ${r.baseline.finishDriftDays > 0 ? "text-rose-600 dark:text-rose-400" : r.baseline.finishDriftDays < 0 ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>
               {r.baseline.finishDriftDays === 0 ? "On plan" : r.baseline.finishDriftDays > 0 ? `${r.baseline.finishDriftDays}d behind plan` : `${Math.abs(r.baseline.finishDriftDays)}d ahead of plan`}
             </span>
             <span className="text-[11px] text-[var(--color-text-muted)]">planned finish {fmtDate(r.baseline.baselineFinish, tz)} → now {fmtDate(r.baseline.currentFinish, tz)}</span>
             <span className="ml-auto text-[11px] text-[var(--color-text-muted)]">
-              <b className="text-rose-600">{r.baseline.slipped}</b> slipped · <b className="text-emerald-600">{r.baseline.pulledIn}</b> pulled in
+              <b className="text-rose-600 dark:text-rose-400">{r.baseline.slipped}</b> slipped · <b className="text-emerald-600 dark:text-emerald-400">{r.baseline.pulledIn}</b> pulled in
             </span>
           </div>
           {r.baseline.worstSlips.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {r.baseline.worstSlips.map((s) => (
-                <span key={s.id} className="inline-flex items-center gap-1 text-[11px] bg-[var(--color-surface)] border border-rose-200 text-rose-800 rounded-full px-2 py-0.5">
+                <span key={s.id} className="inline-flex items-center gap-1 text-[11px] bg-[var(--color-surface)] border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300 rounded-full px-2 py-0.5">
                   {s.name} <b>+{s.days}d</b>
                 </span>
               ))}
@@ -160,16 +160,16 @@ export default function ExecutionReportView({ milestones, shiftTimes }: { milest
 
       {/* Blockers — what's stopping work, with reasons */}
       {r.blockers.length > 0 && (
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-rose-200 shadow-sm overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-rose-100 bg-rose-50/60 flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-rose-600" />
+        <div className="bg-[var(--color-surface)] rounded-2xl border border-rose-200 dark:border-rose-800 shadow-sm overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-rose-100 bg-rose-50/60 dark:bg-rose-950/30 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400" />
             <span className="font-bold text-[var(--color-text)] text-sm">Needs attention</span>
             <span className="text-[11px] text-[var(--color-text-muted)]">{r.blockers.length} on-hold / blocked</span>
           </div>
           <ul className="divide-y divide-[var(--color-border)]">
             {r.blockers.map((b) => (
               <li key={b.id} className="px-4 py-2.5 flex items-start gap-3">
-                <span className={`mt-0.5 shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${b.status === "blocked" ? "bg-rose-100 text-rose-800 border-rose-200" : "bg-amber-100 text-amber-900 border-amber-200"}`}>
+                <span className={`mt-0.5 shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${b.status === "blocked" ? "bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-300 border-rose-200 dark:border-rose-800" : "bg-amber-100 dark:bg-amber-900/40 text-amber-900 dark:text-amber-200 border-amber-200 dark:border-amber-800"}`}>
                   {b.status === "blocked" ? "Blocked" : "On hold"}
                 </span>
                 <div className="flex-1 min-w-0">
@@ -186,7 +186,7 @@ export default function ExecutionReportView({ milestones, shiftTimes }: { milest
       {/* Per-group rollups */}
       {r.groups.length > 1 && (
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-slate-50/60 font-bold text-[var(--color-text)] text-sm">By group</div>
+          <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] font-bold text-[var(--color-text)] text-sm">By group</div>
           <div className="divide-y divide-[var(--color-border)]">
             {r.groups.map((g) => (
               <div key={g.id} className="px-4 py-2.5 flex items-center gap-3">
@@ -199,9 +199,9 @@ export default function ExecutionReportView({ milestones, shiftTimes }: { milest
                 </div>
                 <div className="w-12 text-right text-[13px] font-black tabular-nums text-[var(--color-text)]">{g.pctComplete}%</div>
                 <div className="w-28 shrink-0 flex items-center justify-end gap-2 text-[11px]">
-                  {g.blocked > 0 && <span className="text-rose-600 font-bold">{g.blocked} blkd</span>}
-                  {g.onHold > 0 && <span className="text-amber-600 font-bold">{g.onHold} hold</span>}
-                  {g.overdue > 0 && <span className="text-rose-600 font-bold">{g.overdue} late</span>}
+                  {g.blocked > 0 && <span className="text-rose-600 dark:text-rose-400 font-bold">{g.blocked} blkd</span>}
+                  {g.onHold > 0 && <span className="text-amber-600 dark:text-amber-400 font-bold">{g.onHold} hold</span>}
+                  {g.overdue > 0 && <span className="text-rose-600 dark:text-rose-400 font-bold">{g.overdue} late</span>}
                 </div>
               </div>
             ))}
@@ -211,7 +211,7 @@ export default function ExecutionReportView({ milestones, shiftTimes }: { milest
 
       {/* Planned vs actual performer */}
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden">
-        <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-slate-50/60 flex items-center gap-2">
+        <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] flex items-center gap-2">
           <Users className="w-4 h-4 text-[var(--color-accent)]" />
           <span className="font-bold text-[var(--color-text)] text-sm">Who did the work</span>
         </div>
@@ -229,8 +229,8 @@ export default function ExecutionReportView({ milestones, shiftTimes }: { milest
             </div>
           )}
           {r.performers.deviations.length > 0 && (
-            <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-2.5">
-              <div className="text-[11px] font-bold text-amber-900 mb-1">{r.performers.deviations.length} task{r.performers.deviations.length === 1 ? "" : "s"} done by someone other than planned</div>
+            <div className="mt-3 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 p-2.5">
+              <div className="text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1">{r.performers.deviations.length} task{r.performers.deviations.length === 1 ? "" : "s"} done by someone other than planned</div>
               <ul className="space-y-0.5">
                 {r.performers.deviations.slice(0, 8).map((d) => (
                   <li key={d.id} className="text-[12px] text-amber-900/90">
@@ -290,7 +290,7 @@ function Bar({ pct, done }: { pct: number; done?: boolean }) {
   );
 }
 function Health({ icon, tone, label, value }: { icon: React.ReactNode; tone: "emerald" | "blue" | "amber" | "rose"; label: string; value: number }) {
-  const c = tone === "emerald" ? "text-emerald-600" : tone === "blue" ? "text-blue-600" : tone === "amber" ? "text-amber-600" : "text-rose-600";
+  const c = tone === "emerald" ? "text-emerald-600 dark:text-emerald-400" : tone === "blue" ? "text-blue-600 dark:text-blue-400" : tone === "amber" ? "text-amber-600 dark:text-amber-400" : "text-rose-600 dark:text-rose-400";
   return (
     <span className="inline-flex items-center gap-1.5">
       <span className={c}>{icon}</span>

@@ -14,9 +14,10 @@
 // Pure render — no fetches. Drives off the metrics already computed
 // by lib/milestones.ts:computeScheduleMetrics().
 
-import React from "react";
+import React, { useState } from "react";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { dayDiff as dayDiffTz, fmtInTz } from "@/lib/scheduleTz";
+import { isOverdue } from "@/lib/shiftReport";
 import {
   TrendingUp, TrendingDown, Flag, AlertTriangle, CalendarClock,
   CheckCircle2, Circle, PauseCircle, MinusCircle, XCircle,
@@ -30,12 +31,13 @@ interface Props {
 }
 
 const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: string; Icon: React.ComponentType<{ className?: string }> }> = {
-  planned:     { label: "Planned",     tone: "text-blue-700",    bar: "bg-blue-400",    Icon: Circle },
-  in_progress: { label: "In progress", tone: "text-amber-700",   bar: "bg-amber-400",   Icon: PauseCircle },
-  completed:   { label: "Completed",   tone: "text-emerald-700", bar: "bg-emerald-500", Icon: CheckCircle2 },
-  missed:      { label: "Missed",      tone: "text-rose-700",    bar: "bg-rose-500",    Icon: XCircle },
-  blocked:     { label: "Blocked",     tone: "text-purple-700",  bar: "bg-purple-500",  Icon: MinusCircle },
-  on_hold:     { label: "On hold",     tone: "text-amber-700",   bar: "bg-amber-500",   Icon: PauseCircle },
+  // The same colours as the timeline and calendar dots.
+  planned:     { label: "Planned",     tone: "text-slate-600 dark:text-slate-300",  bar: "bg-slate-400",   Icon: Circle },
+  in_progress: { label: "In progress", tone: "text-blue-700 dark:text-blue-300",    bar: "bg-blue-500",    Icon: PauseCircle },
+  completed:   { label: "Completed",   tone: "text-emerald-700 dark:text-emerald-300", bar: "bg-emerald-500", Icon: CheckCircle2 },
+  missed:      { label: "Missed",      tone: "text-rose-700 dark:text-rose-300",    bar: "bg-rose-600",    Icon: XCircle },
+  blocked:     { label: "Blocked",     tone: "text-rose-700 dark:text-rose-300",    bar: "bg-rose-500",    Icon: MinusCircle },
+  on_hold:     { label: "On hold",     tone: "text-amber-700 dark:text-amber-300",   bar: "bg-amber-500",   Icon: PauseCircle },
 };
 
 export default function ScheduleProgress({ milestones, metrics }: Props) {
@@ -49,11 +51,10 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
     .filter((x) => x.due >= today && x.due <= in14)
     .sort((a, b) => a.due.getTime() - b.due.getTime())
     .slice(0, 5);
-  const overdue = milestones.filter((m) => {
-    if (m.status === "completed") return false;
-    if (!m.plannedAt) return false;
-    return new Date(m.plannedAt as string).getTime() < today.getTime();
-  });
+  // Overdue by the one rule every view uses, counting steps (not phases).
+  const parents = new Set(milestones.map((m) => m.parentId).filter(Boolean));
+  const [nowMs] = useState(() => Date.now());
+  const overdue = milestones.filter((m) => !(m.id && parents.has(m.id)) && isOverdue(m, nowMs, tz));
 
   const earnedPct = Math.round(metrics.percentEarned * 100);
   const planPct = Math.round(metrics.percentPlanned * 100);
@@ -75,11 +76,11 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
           </div>
           <div className="text-right">
             <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">SPI</div>
-            <div className={`text-3xl font-black leading-none mt-1 ${metrics.spi >= 1 ? "text-emerald-600" : metrics.spi >= 0.9 ? "text-amber-600" : "text-rose-600"}`}>
+            <div className={`text-3xl font-black leading-none mt-1 ${metrics.spi >= 1 ? "text-emerald-600 dark:text-emerald-400" : metrics.spi >= 0.9 ? "text-amber-600 dark:text-amber-400" : "text-rose-600 dark:text-rose-400"}`}>
               {metrics.spi.toFixed(2)}
             </div>
             <div className="text-[11px] text-[var(--color-text-muted)] mt-1 inline-flex items-center gap-1 justify-end">
-              {metrics.spi >= 1 ? <TrendingUp className="w-3 h-3 text-emerald-600" /> : <TrendingDown className="w-3 h-3 text-rose-600" />}
+              {metrics.spi >= 1 ? <TrendingUp className="w-3 h-3 text-emerald-600 dark:text-emerald-400" /> : <TrendingDown className="w-3 h-3 text-rose-600 dark:text-rose-400" />}
               {metrics.spi >= 1 ? "on / ahead" : "behind plan"}
             </div>
           </div>
@@ -111,23 +112,23 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
         {/* Forecast / slip card */}
         <div className={`rounded-2xl p-4 border ${
           slipDays > 0
-            ? "bg-rose-50 border-rose-200"
+            ? "bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800"
             : metrics.forecastEndAt
-              ? "bg-emerald-50 border-emerald-200"
+              ? "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800"
               : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
         }`}>
           <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Forecast end</div>
           <div className="text-lg font-black text-[var(--color-text)] mt-1">
             {metrics.forecastEndAt ? humanDate(metrics.forecastEndAt, tz) : metrics.plannedEndAt ? humanDate(metrics.plannedEndAt, tz) : "—"}
           </div>
-          <div className={`text-[11px] mt-1 inline-flex items-center gap-1 ${slipDays > 0 ? "text-rose-700" : "text-emerald-700"}`}>
+          <div className={`text-[11px] mt-1 inline-flex items-center gap-1 ${slipDays > 0 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}`}>
             {slipDays > 0
               ? <><AlertTriangle className="w-3 h-3" /> {slipDays}d slip vs plan</>
               : metrics.forecastEndAt ? <><CheckCircle2 className="w-3 h-3" /> On track</> : "Plan not yet set"
             }
           </div>
           {overdue.length > 0 && (
-            <div className="mt-2 text-[11px] font-bold text-rose-700 inline-flex items-center gap-1">
+            <div className="mt-2 text-[11px] font-bold text-rose-700 dark:text-rose-300 inline-flex items-center gap-1">
               <AlertTriangle className="w-3 h-3" /> {overdue.length} overdue
             </div>
           )}

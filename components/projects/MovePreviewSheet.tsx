@@ -94,7 +94,7 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
     <div className="fixed inset-0 z-[260] flex items-end sm:items-start sm:items-center justify-center overflow-y-auto p-4" onClick={onCancel}>
       <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in" />
       <div className="relative w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
-        <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2 bg-gradient-to-b from-white to-slate-50/50">
+        <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2 bg-gradient-to-b from-white dark:from-[var(--color-surface)] to-slate-50/50 dark:to-[var(--color-surface)]">
           <CalendarRange className="w-4 h-4 text-[var(--color-accent)]" />
           <h2 className="font-bold text-[var(--color-text)] text-sm flex-1 min-w-0 truncate">
             Move {multi ? `${targets.length} tasks` : `“${primary.name}”`} {absDays} day{absDays === 1 ? "" : "s"} {dir}
@@ -123,7 +123,7 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
           </div>
 
           {/* Impact line — the confidence-builder */}
-          <div className={`rounded-lg border p-3 text-sm ${mode === "extend" ? "border-amber-200 bg-amber-50 text-amber-900" : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}>
+          <div className={`rounded-lg border p-3 text-sm ${mode === "extend" ? "border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200" : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}>
             {mode === "defer" ? (
               <div className="flex items-center gap-2">
                 <ArrowRight className="w-4 h-4 shrink-0" />
@@ -147,9 +147,9 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
           )}
 
           {warnings.length > 0 && (
-            <div className="rounded-lg border border-amber-300 bg-amber-50 p-2.5 space-y-1">
+            <div className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-2.5 space-y-1">
               {warnings.map((wn, i) => (
-                <div key={i} className="flex items-start gap-1.5 text-[12px] text-amber-900">
+                <div key={i} className="flex items-start gap-1.5 text-[12px] text-amber-900 dark:text-amber-200">
                   <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {wn}
                 </div>
               ))}
@@ -164,7 +164,7 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
           )}
         </div>
 
-        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 flex items-center justify-end gap-2">
+        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
           <button onClick={onCancel} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
           <button autoFocus onClick={() => onConfirm(mode)} disabled={busy} className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg disabled:opacity-40 transition-colors">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarRange className="w-4 h-4" />}
@@ -179,7 +179,7 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
 function ModeCard({ active, disabled, onClick, title, body, tone }: {
   active: boolean; disabled?: boolean; onClick: () => void; title: string; body: string; tone: "slate" | "amber";
 }) {
-  const ring = active ? (tone === "amber" ? "border-amber-400 ring-2 ring-amber-200 bg-amber-50" : "border-[var(--color-accent-ring)] ring-2 ring-[var(--color-accent-ring)]/30 bg-[var(--color-accent-soft)]") : "border-[var(--color-border)] hover:border-[var(--color-border-strong)] bg-[var(--color-surface)]";
+  const ring = active ? (tone === "amber" ? "border-amber-400 ring-2 ring-amber-200 bg-amber-50 dark:bg-amber-950/40" : "border-[var(--color-accent-ring)] ring-2 ring-[var(--color-accent-ring)]/30 bg-[var(--color-accent-soft)]") : "border-[var(--color-border)] hover:border-[var(--color-border-strong)] bg-[var(--color-surface)]";
   return (
     <button onClick={onClick} disabled={disabled} className={`text-left rounded-xl border p-3 transition-all disabled:opacity-40 disabled:cursor-not-allowed ${ring}`}>
       <div className="text-[13px] font-bold text-[var(--color-text)]">{title}</div>

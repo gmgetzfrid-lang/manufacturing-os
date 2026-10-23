@@ -256,8 +256,11 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   return (
     <div className="space-y-4">
       {error && (
-        <div className="flex items-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-          <AlertTriangle className="w-3.5 h-3.5" /> {error}
+        // Above every panel and day list, so a failed save is never hidden
+        // behind the thing you were working in.
+        <div role="alert" className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[400] max-w-[92vw] flex items-center gap-2 text-xs text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2 shadow-lg">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> <span className="flex-1">{error}</span>
+          <button onClick={() => setError(null)} className="shrink-0 font-bold underline">Dismiss</button>
         </div>
       )}
 
@@ -324,7 +327,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
                   onClick={() => void onResetProgress()}
                   disabled={busy || resetting}
                   title="Start the real run clean: every task back to 0% / planned, actual start and completion stamps cleared. Dates and notes stay."
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2.5 py-1.5 rounded-lg shadow-sm transition-colors disabled:opacity-50"
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 dark:text-amber-300 hover:text-amber-900 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 border border-amber-200 dark:border-amber-800 px-2.5 py-1.5 rounded-lg shadow-sm transition-colors disabled:opacity-50"
                 >
                   {resetting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />} Reset progress
                 </button>
@@ -334,7 +337,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
                   onClick={() => void onClearSchedule()}
                   disabled={busy || clearing}
                   title="Delete every task on this schedule so you can import the file again from scratch"
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-2.5 py-1.5 rounded-lg shadow-sm transition-colors disabled:opacity-50"
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:text-rose-800 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 border border-rose-200 dark:border-rose-800 px-2.5 py-1.5 rounded-lg shadow-sm transition-colors disabled:opacity-50"
                 >
                   {clearing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Clear schedule
                 </button>
@@ -355,7 +358,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
                   title={hasBaseline
                     ? "Re-capture the approved plan as the new baseline to measure drift against"
                     : "Snapshot the current plan as the baseline — every view then shows how far you've drifted from it"}
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2.5 py-1.5 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:text-emerald-900 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 border border-emerald-200 dark:border-emerald-800 px-2.5 py-1.5 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
                 >
                   <Flag className="w-3.5 h-3.5" /> {hasBaseline ? "Re-baseline" : "Set baseline"}
                 </button>
@@ -422,12 +425,14 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           }}
           onSetStatus={async (id, status, reason, percent) => {
             try {
-              await setMilestoneStatus({
+              const saved = await setMilestoneStatus({
                 id, status, statusReason: reason, percentComplete: percent,
                 actorUserId: userId, actorUserName: userName,
                 actorUserEmail: userEmail, actorUserRole: userRole,
               });
-              await refresh();
+              // Swap in the saved row instead of re-reading the whole schedule
+              // (live updates still bring other people's changes).
+              setMilestones((arr) => arr.map((m) => (m.id === saved.id ? saved : m)));
               return true;
             } catch (e) {
               setError((e as Error).message);
@@ -442,12 +447,12 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           }}
           onSetProgress={async (id, percent) => {
             try {
-              await setMilestoneProgress({
+              const saved = await setMilestoneProgress({
                 id, percentComplete: percent,
                 actorUserId: userId, actorUserName: userName,
                 actorUserEmail: userEmail, actorUserRole: userRole,
               });
-              await refresh();
+              setMilestones((arr) => arr.map((m) => (m.id === saved.id ? saved : m)));
               return true;
             } catch (e) {
               setError((e as Error).message);
@@ -467,7 +472,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           totalCount={planLeafStats.total}
         />
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] overflow-hidden shadow-sm">
-          <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center justify-between gap-3 bg-slate-50/60">
+          <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center justify-between gap-3 bg-slate-50/60 dark:bg-[var(--color-surface-2)]">
             <div className="flex items-center gap-2">
               <Flag className="w-4 h-4 text-[var(--color-accent)]" />
               <div className="font-bold text-[var(--color-text)] text-sm">Milestones</div>
@@ -612,11 +617,11 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
   const fmt = (d: Date) => fmtInTz(d, tz, { month: "short", day: "numeric" });
 
   const tone =
-    effStatus === "completed" ? "border-emerald-300 bg-emerald-50/50" :
-    effStatus === "missed"    ? "border-red-300 bg-red-50/50" :
-    effStatus === "blocked"   ? "border-amber-300 bg-amber-50/50" :
-    effStatus === "on_hold"   ? "border-amber-300 bg-amber-50/40" :
-    overdue                   ? "border-red-300 bg-red-50/40" :
+    effStatus === "completed" ? "border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/30" :
+    effStatus === "missed"    ? "border-red-300 dark:border-red-700 bg-red-50/50 dark:bg-red-950/30" :
+    effStatus === "blocked"   ? "border-amber-300 dark:border-amber-700 bg-amber-50/50 dark:bg-amber-950/30" :
+    effStatus === "on_hold"   ? "border-amber-300 dark:border-amber-700 bg-amber-50/40" :
+    overdue                   ? "border-red-300 dark:border-red-700 bg-red-50/40" :
                                 "border-[var(--color-border)] bg-[var(--color-surface)]";
 
   const ghost = m.source !== "manual";
@@ -633,7 +638,7 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
           <StatusChip status={effStatus} />
           <span className="text-[10px] font-black tabular-nums text-[var(--color-text-muted)]" title={isParent ? "Rolled up from sub-tasks" : "% complete"}>{effPct}%</span>
           {driftDays !== 0 && blFinish && (
-            <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${driftDays > 0 ? "bg-rose-50 text-rose-700 border-rose-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`} title="Drift vs approved plan">
+            <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border ${driftDays > 0 ? "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800" : "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"}`} title="Drift vs approved plan">
               {driftDays > 0 ? `+${driftDays}d` : `${driftDays}d`} vs plan
             </span>
           )}
@@ -658,12 +663,12 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
           {actual && (
             <>
               <ArrowRight className="w-3 h-3 text-slate-300" />
-              <span className={slipDays > 0 ? "text-red-700" : "text-emerald-700"}>
+              <span className={slipDays > 0 ? "text-red-700 dark:text-red-300" : "text-emerald-700 dark:text-emerald-300"}>
                 actual {actual.toLocaleDateString()}{slipDays !== 0 && ` (${slipDays > 0 ? "+" : ""}${slipDays}d)`}
               </span>
             </>
           )}
-          {overdue && !actual && <span className="text-red-700 font-bold">overdue</span>}
+          {overdue && !actual && <span className="text-red-700 dark:text-red-300 font-bold">overdue</span>}
           {m.linkedRevisionLabel && (
             <span className="text-[var(--color-text-muted)] font-mono">· {m.linkedRevisionLabel}</span>
           )}
@@ -682,7 +687,7 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
                 <button
                   onClick={() => onSetStatus(m.id!, "completed")}
                   disabled={busy}
-                  className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 py-1 rounded disabled:opacity-40 transition-colors"
+                  className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 hover:text-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 border border-emerald-200 dark:border-emerald-800 px-1.5 py-1 rounded disabled:opacity-40 transition-colors"
                   title="Mark complete"
                 >
                   <Check className="w-3 h-3" /> Done
@@ -707,10 +712,10 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
 
 function StatusChip({ status }: { status: MilestoneStatus }) {
   const tone =
-    status === "completed"   ? "bg-emerald-100 text-emerald-800 border-emerald-200" :
-    status === "in_progress" ? "bg-blue-100    text-blue-800    border-blue-200" :
-    status === "missed"      ? "bg-red-100     text-red-800     border-red-200" :
-    status === "blocked"     ? "bg-amber-100   text-amber-800   border-amber-200" :
+    status === "completed"   ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800" :
+    status === "in_progress" ? "bg-blue-100 dark:bg-blue-900/40    text-blue-800 dark:text-blue-300    border-blue-200 dark:border-blue-800" :
+    status === "missed"      ? "bg-red-100 dark:bg-red-900/40     text-red-800 dark:text-red-300     border-red-200 dark:border-red-800" :
+    status === "blocked"     ? "bg-amber-100 dark:bg-amber-900/40   text-amber-800 dark:text-amber-300   border-amber-200 dark:border-amber-800" :
                                "bg-[var(--color-surface-2)]   text-[var(--color-text)]   border-[var(--color-border)]";
   return (
     <span className={`text-[9px] font-bold uppercase tracking-widest border px-1.5 py-0.5 rounded ${tone}`}>
@@ -887,7 +892,7 @@ function AddMilestoneForm({
         <div className="text-[10.5px] text-[var(--color-text-muted)]">Finish will be set to <b>{fmtInTz(finishFromHours, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</b> (start + {hours} h).</div>
       )}
       {error && (
-        <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1">{error}</div>
+        <div className="text-[11px] text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded px-2 py-1">{error}</div>
       )}
       <div className="flex items-center justify-end gap-2">
         <button type="button" onClick={onCancel} className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 transition-colors">Cancel</button>

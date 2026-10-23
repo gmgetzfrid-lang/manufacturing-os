@@ -146,6 +146,8 @@ export default function ExecutionView({
   // Measure the timeline viewport so the day width can fill it edge to
   // edge instead of a hardcoded guess. Re-measures on resize.
   const [viewportW, setViewportW] = useState(0);
+  // The frozen task column gives way on a phone so the chart stays usable.
+  const leftW = viewportW > 0 && viewportW < 640 ? 168 : LEFT_W;
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -290,6 +292,16 @@ export default function ExecutionView({
   // descendants up, duration-weighted (see lib/scheduleProgress.ts).
   const progressIndex = useMemo(() => buildProgressIndex(items), [items]);
 
+  // Only the rows near the screen are drawn on a big schedule (600 tasks
+  // drawn in full was ~30,000 page elements and a 2-second stall per key).
+  const [view, setView] = useState({ top: 0, height: 900 });
+  const onScrollWindow = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const top = el.scrollTop, height = el.clientHeight || 900;
+    setView((v) => (Math.abs(v.top - top) < ROW_H * 5 && v.height === height ? v : { top, height }));
+  }, []);
+
   // Flatten to the rows actually visible given collapse state.
   const rows = useMemo(() => {
     const out: FlatRow[] = [];
@@ -313,6 +325,14 @@ export default function ExecutionView({
     walk(roots);
     return out;
   }, [roots, collapsed, progressIndex, filterOn]);
+  // Small schedules draw every row (printing, find-in-page); big ones a
+  // window around the screen, with room above and below for fast scrolling.
+  const win = useMemo(() => {
+    if (rows.length <= 150) return { first: 0, last: rows.length };
+    const first = Math.max(0, Math.floor((view.top - AXIS_H) / ROW_H) - 30);
+    const last = Math.min(rows.length, Math.ceil((view.top + view.height) / ROW_H) + 30);
+    return { first, last };
+  }, [rows.length, view]);
 
   // Date domain across the whole schedule.
   const domain = useMemo(() => {
@@ -334,9 +354,9 @@ export default function ExecutionView({
   // is the "fit to screen" baseline.
   const fitPxPerDay = useMemo(() => {
     if (!domain) return MIN_PX_PER_DAY;
-    const avail = Math.max(320, viewportW - LEFT_W);
+    const avail = Math.max(320, viewportW - leftW);
     return Math.min(MAX_PX_PER_DAY, Math.max(MIN_PX_PER_DAY, avail / domain.totalDays));
-  }, [domain, viewportW]);
+  }, [domain, viewportW, leftW]);
 
   // Final day width: auto-fit by default, or the user's manual zoom
   // factor applied on top of the fitted baseline.
@@ -363,9 +383,9 @@ export default function ExecutionView({
     const el = scrollRef.current;
     const inSpan = today >= domain.start && today <= domain.end;
     const target = inSpan ? todayX : 0;
-    el.scrollLeft = Math.max(0, target - (el.clientWidth - LEFT_W) / 2);
+    el.scrollLeft = Math.max(0, target - (el.clientWidth - leftW) / 2);
     didCenter.current = true;
-  }, [domain, today, todayX]);
+  }, [domain, today, todayX, leftW]);
 
   // ── Mutations ────────────────────────────────────────────────
   // One cheap guard against the wrong-day mis-click: recording progress on
@@ -723,7 +743,12 @@ export default function ExecutionView({
     const cur = rows[idx]?.ms;
     const move = (delta: number) => {
       const next = rows[Math.min(rows.length - 1, Math.max(0, idx + delta))];
-      if (next?.ms.id) { setFocusedId(next.ms.id); document.getElementById(`exec-row-${next.ms.id}`)?.scrollIntoView({ block: "nearest" }); }
+      if (next?.ms.id) {
+        setFocusedId(next.ms.id);
+        const el = document.getElementById(`exec-row-${next.ms.id}`);
+        if (el) el.scrollIntoView({ block: "nearest" });
+        else if (scrollRef.current) scrollRef.current.scrollTop = AXIS_H + rows.indexOf(next) * ROW_H - scrollRef.current.clientHeight / 2;
+      }
     };
     switch (e.key) {
       case "ArrowDown": e.preventDefault(); move(focusedId == null ? 0 : 1); break;
@@ -809,8 +834,8 @@ export default function ExecutionView({
           signal state), but edits are disabled — say why so it doesn't feel
           broken. */}
       {!canEdit && (
-        <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
-          <Eye className="w-4 h-4 shrink-0 text-amber-600" />
+        <div className="flex items-center gap-2 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-[12px] text-amber-800 dark:text-amber-300">
+          <Eye className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
           <span>
             <b>View only.</b> You&apos;re not a member of this project, so status and dates are read-only.
             Ask the project owner to add you as a member to make changes.
@@ -826,7 +851,7 @@ export default function ExecutionView({
       />
 
       <div className="flex items-center gap-2">
-        <SummaryStrip items={items} today={today} now={nowDate} domain={domain} />
+        <SummaryStrip items={items} now={nowDate} />
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -845,7 +870,7 @@ export default function ExecutionView({
           <button
             onClick={() => setShowCritical((v) => !v)}
             title="Highlight the unfinished tasks driving the finish date"
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors ${showCritical ? "bg-rose-600 text-white border-rose-600" : "bg-[var(--color-surface)] text-rose-700 border-rose-200 hover:border-rose-400"}`}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors ${showCritical ? "bg-rose-600 text-white border-rose-600" : "bg-[var(--color-surface)] text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800 hover:border-rose-400"}`}
           >
             <Zap className="w-3.5 h-3.5" /> Critical path
           </button>
@@ -926,7 +951,7 @@ export default function ExecutionView({
           onFit={() => setZoomFactor(null)}
           onToday={() => {
             const el = scrollRef.current; if (!el) return;
-            el.scrollTo({ left: Math.max(0, todayX - (el.clientWidth - LEFT_W) / 2), behavior: "smooth" });
+            el.scrollTo({ left: Math.max(0, todayX - (el.clientWidth - leftW) / 2), behavior: "smooth" });
           }}
           onCollapseAll={collapseAll} onExpandAll={expandAll}
           selectedCount={selectedIds.size}
@@ -942,16 +967,18 @@ export default function ExecutionView({
           ref={scrollRef}
           tabIndex={0}
           onKeyDown={onTimelineKeyDown}
+          onScroll={onScrollWindow}
           className="overflow-auto relative outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]/40 rounded-b-2xl"
           style={{ maxHeight: "70vh" }}
         >
-          <div className="flex" style={{ width: LEFT_W + timelineW }}>
+          <div className="flex" style={{ width: leftW + timelineW }}>
             {/* ── Frozen outline column ── */}
-            <div className="sticky left-0 z-20 bg-[var(--color-surface)] border-r border-[var(--color-border)] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]" style={{ width: LEFT_W }}>
-              <div className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur border-b border-[var(--color-border)] flex items-center px-3 text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]" style={{ height: AXIS_H }}>
+            <div className="sticky left-0 z-20 bg-[var(--color-surface)] border-r border-[var(--color-border)] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]" style={{ width: leftW }}>
+              <div className="sticky top-0 z-10 bg-slate-50/95 dark:bg-[var(--color-surface-2)]/95 backdrop-blur border-b border-[var(--color-border)] flex items-center px-3 text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]" style={{ height: AXIS_H }}>
                 <ListTree className="w-3.5 h-3.5 mr-1.5 text-[var(--color-accent)]" /> Work breakdown
               </div>
-              {rows.map((r) => (
+              {win.first > 0 && <div style={{ height: win.first * ROW_H }} aria-hidden />}
+              {rows.slice(win.first, win.last).map((r) => (
                 <OutlineRow
                   key={r.ms.id}
                   row={r}
@@ -973,6 +1000,7 @@ export default function ExecutionView({
                   onSequence={() => r.ms.id && void sequencePhase(r.ms.id)}
                 />
               ))}
+              {win.last < rows.length && <div style={{ height: (rows.length - win.last) * ROW_H }} aria-hidden />}
             </div>
 
             {/* ── Timeline column ── */}
@@ -986,12 +1014,12 @@ export default function ExecutionView({
                   <div className="absolute -top-0 -left-[3px] w-[7px] h-[7px] rounded-full bg-rose-500 shadow" />
                 </div>
               )}
-              {rows.map((r, i) => (
+              {rows.slice(win.first, win.last).map((r, j) => (
                 <Bar
                   key={r.ms.id}
                   row={r}
                   span={spanOf(r.ms)}
-                  top={AXIS_H + i * ROW_H}
+                  top={AXIS_H + (win.first + j) * ROW_H}
                   domain={domain}
                   pxPerDay={pxPerDay}
                   canEdit={canEdit}
@@ -1105,21 +1133,19 @@ function statusWord(s: MilestoneStatus): string {
 
 // ─── Summary strip ─────────────────────────────────────────────
 
-function SummaryStrip({ items, today, now, domain }: {
-  items: Milestone[]; today: Date; now: Date;
-  domain: { start: Date; end: Date; totalDays: number };
+function SummaryStrip({ items, now }: {
+  items: Milestone[]; now: Date;
 }) {
   const tz = useScheduleTz();
   // The same counts as the execution report and the shift report: one
   // definition of done, in progress, overdue and % complete.
   const r = useMemo(() => computeExecutionReport(items, { tz, now }), [items, tz, now]);
   const total = r.totalLeaves, done = r.done, inProg = r.inProgress, overdue = r.overdue, pct = r.pctComplete;
-  const elapsed = Math.max(0, Math.min(domain.totalDays, dayDiff(domain.start, today, tz)));
 
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03] px-4 py-3 flex items-center gap-5 flex-wrap">
       <div className="flex items-center gap-3 min-w-[200px]">
-        <div className={`text-3xl font-black tracking-tighter ${pct === 100 ? "text-emerald-600" : "text-[var(--color-text)]"}`}>{pct}<span className="text-base text-[var(--color-text-faint)] font-bold">%</span></div>
+        <div className={`text-3xl font-black tracking-tighter ${pct === 100 ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>{pct}<span className="text-base text-[var(--color-text-faint)] font-bold">%</span></div>
         <div className="flex-1">
           <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden w-40">
             <div className={`h-full transition-all duration-500 ${pct === 100 ? "bg-emerald-500" : "bg-[var(--color-accent)]"}`} style={{ width: `${pct}%` }} />
@@ -1129,13 +1155,14 @@ function SummaryStrip({ items, today, now, domain }: {
       </div>
       <Stat label="In progress" value={inProg} tone="blue" />
       <Stat label="Overdue" value={overdue} tone={overdue > 0 ? "rose" : "slate"} />
-      <Stat label="Schedule day" value={`${elapsed} / ${domain.totalDays}`} tone="slate" />
+      {/* The job's own days (not the chart's padded range) — same as the reports. */}
+      <Stat label="Schedule day" value={`${r.elapsedDays} / ${r.totalDays}`} tone="slate" />
     </div>
   );
 }
 
 function Stat({ label, value, tone }: { label: string; value: number | string; tone: "blue" | "rose" | "slate" }) {
-  const c = tone === "blue" ? "text-blue-600" : tone === "rose" ? "text-rose-600" : "text-[var(--color-text)]";
+  const c = tone === "blue" ? "text-blue-600 dark:text-blue-400" : tone === "rose" ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]";
   return (
     <div className="flex flex-col">
       <span className="text-[9px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">{label}</span>
@@ -1161,7 +1188,7 @@ function Toolbar({
   onBulkDelete: () => void;
 }) {
   return (
-    <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap bg-gradient-to-b from-white to-slate-50/40">
+    <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap bg-gradient-to-b from-white dark:from-[var(--color-surface)] to-slate-50/40 dark:to-[var(--color-surface)]">
       {selectedCount > 0 ? (
         <div className="flex items-center gap-2 flex-1 flex-wrap">
           <span className="text-xs font-bold text-[var(--color-accent)]">{selectedCount} selected</span>
@@ -1267,7 +1294,7 @@ function OutlineRow({
       // name / date range from bleeding over the row below — the rows must stay
       // pixel-aligned with the absolutely-positioned timeline bars on the right.
       // (The status picker is portaled, so it isn't clipped by this.)
-      className={`group relative flex items-center gap-1.5 border-b border-[var(--color-border)] pr-2 overflow-hidden transition-colors ${focused ? "ring-2 ring-inset ring-[var(--color-accent-ring)] bg-[var(--color-accent-soft)]/40" : selected ? "bg-[var(--color-accent-soft)]/70" : checked ? "bg-emerald-50/30" : depth === 0 ? color.tint : "hover:bg-[var(--color-surface-2)]"}`}
+      className={`group relative flex items-center gap-1.5 border-b border-[var(--color-border)] pr-2 overflow-hidden transition-colors ${focused ? "ring-2 ring-inset ring-[var(--color-accent-ring)] bg-[var(--color-accent-soft)]/40" : selected ? "bg-[var(--color-accent-soft)]/70" : checked ? "bg-emerald-50/30 dark:bg-emerald-950/20" : depth === 0 ? color.tint : "hover:bg-[var(--color-surface-2)]"}`}
       style={{ height: ROW_H, paddingLeft: indent }}
     >
       {/* Group color rail — same hue for a phase and all its children,
@@ -1330,12 +1357,12 @@ function OutlineRow({
         <ProgressControl percent={pct} onPick={onSetProgress} disabled={!canEdit} onDisabledClick={onViewOnly} busy={busy} size="sm" />
       )}
       {canEdit && !ms.isSummary && (
-        <button onClick={onSetDuration} title="Set duration" className="shrink-0 p-1 rounded text-slate-300 hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+        <button onClick={onSetDuration} title="Set duration" className="shrink-0 p-1 rounded text-slate-300 hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] opacity-60 sm:opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity">
           <CalendarRange className="w-3.5 h-3.5" />
         </button>
       )}
       {canEdit && hasChildren && onSequence && (
-        <button onClick={onSequence} title="Sequence sub-tasks end-to-end (each starts when the prior finishes)" className="shrink-0 p-1 rounded text-slate-300 hover:text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+        <button onClick={onSequence} title="Sequence sub-tasks end-to-end (each starts when the prior finishes)" className="shrink-0 p-1 rounded text-slate-300 hover:text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] opacity-60 sm:opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity">
           <ListOrdered className="w-3.5 h-3.5" />
         </button>
       )}
@@ -1436,14 +1463,14 @@ function Bar({
             <span
               onPointerDown={onEdgeDown("start")} onPointerMove={onEdgeMove} onPointerUp={onEdgeUp}
               title="Drag to start the phase earlier / later"
-              className="absolute -left-1.5 top-0 bottom-0 w-3.5 cursor-ew-resize opacity-0 group-hover/bar:opacity-100 flex items-center justify-center"
+              className="absolute -left-1.5 top-0 bottom-0 w-3.5 pointer-coarse:w-6 pointer-coarse:-left-3 cursor-ew-resize opacity-0 group-hover/bar:opacity-100 pointer-coarse:opacity-100 flex items-center justify-center"
             >
               <span className={`w-1.5 h-4 rounded ${color.rail} brightness-75 hover:brightness-50`} />
             </span>
             <span
               onPointerDown={onEdgeDown("finish")} onPointerMove={onEdgeMove} onPointerUp={onEdgeUp}
               title="Drag to extend / shorten the phase finish"
-              className="absolute -right-1.5 top-0 bottom-0 w-3.5 cursor-ew-resize opacity-0 group-hover/bar:opacity-100 flex items-center justify-center"
+              className="absolute -right-1.5 top-0 bottom-0 w-3.5 pointer-coarse:w-6 pointer-coarse:-right-3 cursor-ew-resize opacity-0 group-hover/bar:opacity-100 pointer-coarse:opacity-100 flex items-center justify-center"
             >
               <span className={`w-1.5 h-4 rounded ${color.rail} brightness-75 hover:brightness-50`} />
             </span>
@@ -1473,7 +1500,7 @@ function Bar({
   return (
     <div className={`absolute group/bar flex items-center transition-opacity ${dimmed ? "opacity-25" : ""} ${onPath ? "z-10" : ""}`} style={{ top: top + 6, left, width, height: ROW_H - 12 }}>
       {draggable && (
-        <button onClick={() => onNudge(-1)} className="absolute -left-5 opacity-0 group-hover/bar:opacity-100 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-opacity" title="Move back 1 day">
+        <button onClick={() => onNudge(-1)} className="absolute -left-5 pointer-coarse:-left-7 pointer-coarse:p-1.5 opacity-0 group-hover/bar:opacity-100 pointer-coarse:opacity-100 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-opacity" title="Move back 1 day">
           <ChevronLeft className="w-3.5 h-3.5" />
         </button>
       )}
@@ -1499,12 +1526,12 @@ function Bar({
             <span
               onPointerDown={onEdgeDown("start")} onPointerMove={onEdgeMove} onPointerUp={onEdgeUp}
               title="Drag to change the start (duration)"
-              className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize opacity-0 group-hover/bar:opacity-100 bg-white/40 hover:bg-white/70 border-r border-white/50"
+              className="absolute left-0 top-0 bottom-0 w-2 pointer-coarse:w-4 cursor-ew-resize opacity-0 group-hover/bar:opacity-100 pointer-coarse:opacity-100 bg-white/40 hover:bg-white/70 border-r border-white/50"
             />
             <span
               onPointerDown={onEdgeDown("finish")} onPointerMove={onEdgeMove} onPointerUp={onEdgeUp}
               title="Drag to change the finish (duration)"
-              className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize opacity-0 group-hover/bar:opacity-100 bg-white/40 hover:bg-white/70 border-l border-white/50"
+              className="absolute right-0 top-0 bottom-0 w-2 pointer-coarse:w-4 cursor-ew-resize opacity-0 group-hover/bar:opacity-100 pointer-coarse:opacity-100 bg-white/40 hover:bg-white/70 border-l border-white/50"
             />
           </>
         )}
@@ -1521,7 +1548,7 @@ function Bar({
         </span>
       )}
       {draggable && (
-        <button onClick={() => onNudge(1)} className="absolute -right-5 opacity-0 group-hover/bar:opacity-100 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-opacity" title="Move forward 1 day">
+        <button onClick={() => onNudge(1)} className="absolute -right-5 pointer-coarse:-right-7 pointer-coarse:p-1.5 opacity-0 group-hover/bar:opacity-100 pointer-coarse:opacity-100 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-opacity" title="Move forward 1 day">
           <ChevronRightIcon className="w-3.5 h-3.5" />
         </button>
       )}
@@ -1581,30 +1608,30 @@ function Axis({ domain, pxPerDay, shiftTimes }: { domain: { start: Date; totalDa
     }
   }
   return (
-    <div className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur border-b border-[var(--color-border)] overflow-hidden" style={{ height: AXIS_H }}>
+    <div className="sticky top-0 z-10 bg-slate-50/95 dark:bg-[var(--color-surface-2)]/95 backdrop-blur border-b border-[var(--color-border)] overflow-hidden" style={{ height: AXIS_H }}>
       {/* Days */}
       <div className="absolute inset-x-0 top-0" style={{ height: showShifts ? DAY_ROW : AXIS_H }}>
         {ticks.map((t) => (
           <div key={t.d} className="absolute top-0 bottom-0 flex items-center" style={{ left: t.x, width: step === 1 ? pxPerDay : undefined }}>
-            <div className="absolute top-0 bottom-0 left-0 w-px bg-slate-300" />
+            <div className="absolute top-0 bottom-0 left-0 w-px bg-slate-300 dark:bg-slate-600" />
             <span className={`pl-1.5 text-[10px] whitespace-nowrap ${t.anchor || step === 1 ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{t.label}</span>
           </div>
         ))}
       </div>
       {/* Shifts + hours */}
       {showShifts && (
-        <div className="absolute inset-x-0 bottom-0 border-t border-slate-200" style={{ height: AXIS_H - DAY_ROW }}>
+        <div className="absolute inset-x-0 bottom-0 border-t border-slate-200 dark:border-slate-700" style={{ height: AXIS_H - DAY_ROW }}>
           {bands.map((b, i) => (
-            <div key={i} className={`absolute top-0 flex items-center gap-1 overflow-hidden border-b border-slate-200 ${b.night ? "bg-indigo-100/80 text-indigo-800" : "bg-amber-50 text-amber-800"}`}
+            <div key={i} className={`absolute top-0 flex items-center gap-1 overflow-hidden border-b border-slate-200 dark:border-slate-700 ${b.night ? "bg-indigo-100/80 dark:bg-indigo-950/60 text-indigo-800 dark:text-indigo-300" : "bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300"}`}
               style={{ left: b.x, width: b.w, height: SHIFT_ROW }} title={`${b.night ? "Night" : "Day"} shift from ${b.label}`}>
-              <div className="absolute top-0 bottom-0 left-0 w-px bg-slate-300" />
+              <div className="absolute top-0 bottom-0 left-0 w-px bg-slate-300 dark:bg-slate-600" />
               <span className="pl-1 text-[9px] font-black whitespace-nowrap">{b.night ? "☾" : "☀"}{pxPerDay >= 110 ? ` ${b.night ? "Night" : "Day"} ${b.label}` : ""}</span>
             </div>
           ))}
           {hours.map((h, i) => (
             <div key={`h${i}`} className="absolute bottom-0" style={{ left: h.x }}>
-              <div className="absolute bottom-0 w-px h-1.5 bg-slate-400" />
-              <span className="absolute bottom-1.5 -translate-x-1/2 text-[8.5px] font-mono text-slate-600 whitespace-nowrap">{h.label}</span>
+              <div className="absolute bottom-0 w-px h-1.5 bg-slate-400 dark:bg-slate-500" />
+              <span className="absolute bottom-1.5 -translate-x-1/2 text-[8.5px] font-mono text-slate-600 dark:text-slate-300 whitespace-nowrap">{h.label}</span>
             </div>
           ))}
         </div>
@@ -1625,12 +1652,12 @@ function Gridlines({ domain, pxPerDay, rowCount, shiftTimes }: { domain: { start
     const dayAt = ((dh || 0) * 60 + (dm || 0)) / 1440, nightAt = ((nh || 0) * 60 + (nm || 0)) / 1440;
     for (let d = -1; d < domain.totalDays; d++) {
       const nx = (d + nightAt) * pxPerDay;
-      lines.push(<div key={`n${d}`} className="absolute top-0 bottom-0 bg-indigo-50/70" style={{ left: nx, width: (d + 1 + dayAt) * pxPerDay - nx }} />);
+      lines.push(<div key={`n${d}`} className="absolute top-0 bottom-0 bg-indigo-50/70 dark:bg-indigo-950/25" style={{ left: nx, width: (d + 1 + dayAt) * pxPerDay - nx }} />);
     }
     const hStep = hourStep(pxPerDay);
     if (hStep && hStep <= 3) {
       for (let d = 0; d < domain.totalDays; d++) for (let h = hStep; h < 24; h += hStep) {
-        lines.push(<div key={`h${d}-${h}`} className="absolute top-0 bottom-0 w-px bg-slate-100" style={{ left: (d + h / 24) * pxPerDay }} />);
+        lines.push(<div key={`h${d}-${h}`} className="absolute top-0 bottom-0 w-px bg-slate-100 dark:bg-slate-800" style={{ left: (d + h / 24) * pxPerDay }} />);
       }
     }
   }
@@ -1639,7 +1666,7 @@ function Gridlines({ domain, pxPerDay, rowCount, shiftTimes }: { domain: { start
     const weekend = !showShifts && pxPerDay >= 12 && [0, 6].includes(dayOfWeek(date.getTime(), tz));
     lines.push(
       <div key={d} className={`absolute top-0 bottom-0 ${weekend ? "bg-[var(--color-surface-2)]" : ""}`} style={{ left: d * pxPerDay, width: step * pxPerDay }}>
-        <div className={`absolute top-0 bottom-0 left-0 w-px ${showShifts ? "bg-slate-300" : "bg-[var(--color-surface-2)]"}`} />
+        <div className={`absolute top-0 bottom-0 left-0 w-px ${showShifts ? "bg-slate-300 dark:bg-slate-700" : "bg-[var(--color-surface-2)]"}`} />
       </div>,
     );
   }
@@ -1734,7 +1761,7 @@ function Legend() {
     ["planned", "Planned"], ["in_progress", "In progress"], ["completed", "Done"], ["on_hold", "On hold"], ["blocked", "Blocked"], ["missed", "Missed"],
   ];
   return (
-    <div className="px-3 py-2 border-t border-[var(--color-border)] bg-slate-50/60 space-y-1.5">
+    <div className="px-3 py-2 border-t border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] space-y-1.5">
       {/* Status colours */}
       <div className="flex items-center gap-3 flex-wrap">
         <span className="text-[9px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">Status</span>
@@ -1835,15 +1862,15 @@ function GroupTasksModal({
               {existingParents.map((p) => <option key={p.id} value={p.id ?? ""}>{p.name}</option>)}
             </Select>
           )}
-          <div className="rounded-md border border-[var(--color-border)] bg-slate-50/60 p-2.5 max-h-32 overflow-y-auto">
+          <div className="rounded-md border border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] p-2.5 max-h-32 overflow-y-auto">
             <ul className="space-y-0.5">
               {childNames.slice(0, 12).map((n, i) => <li key={i} className="text-[11px] text-[var(--color-text)] truncate">{n}</li>)}
               {childNames.length > 12 && <li className="text-[10px] text-[var(--color-text-muted)] italic">+{childNames.length - 12} more</li>}
             </ul>
           </div>
-          {error && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-2">{error}</div>}
+          {error && <div className="text-xs text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-md p-2">{error}</div>}
         </div>
-        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 flex items-center justify-end gap-2">
+        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
           <button onClick={submit} disabled={!canSubmit || busy} className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-md disabled:opacity-40 transition-colors">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderPlus className="w-4 h-4" />} Group
@@ -1912,9 +1939,9 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
             Keeps its finish, <b>{fmtInTz(finishAt, tz, { weekday: "short", month: "short", day: "numeric", ...(timed ? { hour: "2-digit", minute: "2-digit", hourCycle: "h23" } : {}) })}</b>;
             {unit === "hours" ? ` starts ${value} h before it.` : days > 1 ? ` starts ${Math.round(days) - 1} day${Math.round(days) - 1 === 1 ? "" : "s"} earlier.` : " a single-day task."}
           </div>
-          {error && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-2">{error}</div>}
+          {error && <div className="text-xs text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-md p-2">{error}</div>}
         </div>
-        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 flex items-center justify-end gap-2">
+        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
           <button onClick={submit} disabled={busy} className="inline-flex items-center gap-1.5 text-sm font-semibold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-md disabled:opacity-40 transition-colors">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarRange className="w-4 h-4" />} Apply

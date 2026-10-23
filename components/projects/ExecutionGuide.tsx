@@ -54,7 +54,7 @@ export default function ExecutionGuide() {
 
       {/* First-run banner. */}
       {!bannerDismissed && (
-        <div className="w-full flex items-center gap-2 bg-gradient-to-r from-[var(--color-accent-soft)] to-white border border-[var(--color-accent-ring)]/40 rounded-lg px-3 py-2 text-xs text-[var(--color-text)]">
+        <div className="w-full flex items-center gap-2 bg-gradient-to-r from-[var(--color-accent-soft)] to-white dark:to-[var(--color-surface)] border border-[var(--color-accent-ring)]/40 rounded-lg px-3 py-2 text-xs text-[var(--color-text)]">
           <MousePointerClick className="w-4 h-4 text-[var(--color-accent)] shrink-0" />
           <span className="flex-1">
             <b>New here?</b> This board runs the schedule day-by-day — move work, mark progress, and drill into sub-steps.

@@ -158,7 +158,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
         title={disabled ? (onDisabledClick ? `${meta.label} — view only` : meta.label) : `${meta.label} — click to change`}
         className={
           variant === "dot"
-            ? `inline-flex items-center justify-center rounded-full border ${dotSize} ${meta.dot} ${disabled ? `opacity-70 ${onDisabledClick ? "cursor-pointer" : "cursor-default"}` : "cursor-pointer hover:scale-110 transition-transform"}`
+            ? `relative inline-flex items-center justify-center rounded-full border ${dotSize} ${meta.dot} after:absolute after:-inset-1.5 pointer-coarse:after:-inset-3 after:content-[''] ${disabled ? `opacity-70 ${onDisabledClick ? "cursor-pointer" : "cursor-default"}` : "cursor-pointer hover:scale-110 transition-transform"}`
             : `inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${meta.pill} ${disabled ? `opacity-70 ${onDisabledClick ? "cursor-pointer" : "cursor-default"}` : "cursor-pointer hover:brightness-95"}`
         }
       >

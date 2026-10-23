@@ -27,23 +27,23 @@ export interface GroupColor {
 // A curated, high-contrast-against-white palette. Ordered so adjacent
 // groups are visually distinct (not two blues in a row).
 export const GROUP_PALETTE: GroupColor[] = [
-  { rail: "bg-indigo-500",  tint: "bg-indigo-50/50",  soft: "bg-indigo-50 border-indigo-200",   text: "text-indigo-700",  ring: "ring-indigo-400",  dot: "bg-indigo-500" },
-  { rail: "bg-teal-500",    tint: "bg-teal-50/50",    soft: "bg-teal-50 border-teal-200",       text: "text-teal-700",    ring: "ring-teal-400",    dot: "bg-teal-500" },
-  { rail: "bg-amber-500",   tint: "bg-amber-50/50",   soft: "bg-amber-50 border-amber-200",     text: "text-amber-700",   ring: "ring-amber-400",   dot: "bg-amber-500" },
-  { rail: "bg-fuchsia-500", tint: "bg-fuchsia-50/50", soft: "bg-fuchsia-50 border-fuchsia-200", text: "text-fuchsia-700", ring: "ring-fuchsia-400", dot: "bg-fuchsia-500" },
-  { rail: "bg-sky-500",     tint: "bg-sky-50/50",     soft: "bg-sky-50 border-sky-200",         text: "text-sky-700",     ring: "ring-sky-400",     dot: "bg-sky-500" },
-  { rail: "bg-lime-600",    tint: "bg-lime-50/50",    soft: "bg-lime-50 border-lime-200",       text: "text-lime-700",    ring: "ring-lime-500",    dot: "bg-lime-600" },
-  { rail: "bg-rose-500",    tint: "bg-rose-50/50",    soft: "bg-rose-50 border-rose-200",       text: "text-rose-700",    ring: "ring-rose-400",    dot: "bg-rose-500" },
-  { rail: "bg-violet-500",  tint: "bg-violet-50/50",  soft: "bg-violet-50 border-violet-200",   text: "text-violet-700",  ring: "ring-violet-400",  dot: "bg-violet-500" },
-  { rail: "bg-cyan-500",    tint: "bg-cyan-50/50",    soft: "bg-cyan-50 border-cyan-200",       text: "text-cyan-700",    ring: "ring-cyan-400",    dot: "bg-cyan-500" },
-  { rail: "bg-orange-500",  tint: "bg-orange-50/50",  soft: "bg-orange-50 border-orange-200",   text: "text-orange-700",  ring: "ring-orange-400",  dot: "bg-orange-500" },
+  { rail: "bg-indigo-500",  tint: "bg-indigo-50/50 dark:bg-indigo-950/30",  soft: "bg-indigo-50 border-indigo-200 dark:bg-indigo-950/50 dark:border-indigo-800",   text: "text-indigo-700 dark:text-indigo-300",  ring: "ring-indigo-400",  dot: "bg-indigo-500" },
+  { rail: "bg-teal-500",    tint: "bg-teal-50/50 dark:bg-teal-950/30",    soft: "bg-teal-50 border-teal-200 dark:bg-teal-950/50 dark:border-teal-800",       text: "text-teal-700 dark:text-teal-300",    ring: "ring-teal-400",    dot: "bg-teal-500" },
+  { rail: "bg-amber-500",   tint: "bg-amber-50/50 dark:bg-amber-950/30",   soft: "bg-amber-50 border-amber-200 dark:bg-amber-950/50 dark:border-amber-800",     text: "text-amber-700 dark:text-amber-300",   ring: "ring-amber-400",   dot: "bg-amber-500" },
+  { rail: "bg-fuchsia-500", tint: "bg-fuchsia-50/50 dark:bg-fuchsia-950/30", soft: "bg-fuchsia-50 border-fuchsia-200 dark:bg-fuchsia-950/50 dark:border-fuchsia-800", text: "text-fuchsia-700 dark:text-fuchsia-300", ring: "ring-fuchsia-400", dot: "bg-fuchsia-500" },
+  { rail: "bg-sky-500",     tint: "bg-sky-50/50 dark:bg-sky-950/30",     soft: "bg-sky-50 border-sky-200 dark:bg-sky-950/50 dark:border-sky-800",         text: "text-sky-700 dark:text-sky-300",     ring: "ring-sky-400",     dot: "bg-sky-500" },
+  { rail: "bg-lime-600",    tint: "bg-lime-50/50 dark:bg-lime-950/30",    soft: "bg-lime-50 border-lime-200 dark:bg-lime-950/50 dark:border-lime-800",       text: "text-lime-700 dark:text-lime-300",    ring: "ring-lime-500",    dot: "bg-lime-600" },
+  { rail: "bg-rose-500",    tint: "bg-rose-50/50 dark:bg-rose-950/30",    soft: "bg-rose-50 border-rose-200 dark:bg-rose-950/50 dark:border-rose-800",       text: "text-rose-700 dark:text-rose-300",    ring: "ring-rose-400",    dot: "bg-rose-500" },
+  { rail: "bg-violet-500",  tint: "bg-violet-50/50 dark:bg-violet-950/30",  soft: "bg-violet-50 border-violet-200 dark:bg-violet-950/50 dark:border-violet-800",   text: "text-violet-700 dark:text-violet-300",  ring: "ring-violet-400",  dot: "bg-violet-500" },
+  { rail: "bg-cyan-500",    tint: "bg-cyan-50/50 dark:bg-cyan-950/30",    soft: "bg-cyan-50 border-cyan-200 dark:bg-cyan-950/50 dark:border-cyan-800",       text: "text-cyan-700 dark:text-cyan-300",    ring: "ring-cyan-400",    dot: "bg-cyan-500" },
+  { rail: "bg-orange-500",  tint: "bg-orange-50/50 dark:bg-orange-950/30",  soft: "bg-orange-50 border-orange-200 dark:bg-orange-950/50 dark:border-orange-800",   text: "text-orange-700 dark:text-orange-300",  ring: "ring-orange-400",  dot: "bg-orange-500" },
 ];
 
 // Neutral hue for the single overarching root (the project envelope) so it
 // reads as "the whole thing" rather than competing with its colored phases.
 export const ROOT_COLOR: GroupColor = {
-  rail: "bg-slate-400", tint: "bg-slate-50/60", soft: "bg-slate-100 border-slate-300",
-  text: "text-slate-700", ring: "ring-slate-400", dot: "bg-slate-400",
+  rail: "bg-slate-400", tint: "bg-slate-50/60 dark:bg-slate-900/40", soft: "bg-slate-100 border-slate-300 dark:bg-slate-800 dark:border-slate-600",
+  text: "text-slate-700 dark:text-slate-300", ring: "ring-slate-400", dot: "bg-slate-400",
 };
 
 interface MinimalNode { id?: string | null; parentId?: string | null; name: string; plannedStartAt?: unknown; plannedAt: unknown }

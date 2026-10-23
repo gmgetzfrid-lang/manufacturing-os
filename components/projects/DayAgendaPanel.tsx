@@ -32,6 +32,8 @@ import ShiftMark from "@/components/projects/ShiftMark";
 
 interface Props {
   day: string; // "YYYY-MM-DD" in the plant zone
+  /** Kept mounted but out of sight (a task's details are open on top). */
+  hidden?: boolean;
   tz: string;
   milestones: Milestone[];
   childrenByParent: Map<string, Milestone[]>;
@@ -72,7 +74,7 @@ interface EquipmentGroup {
 
 export default function DayAgendaPanel({
   day, tz, milestones, childrenByParent, ancestorsOf, progress, canEdit,
-  onSetStatus, onSetProgress, onAddNote, onOpenDetail, onChangeDay, onClose, colorOf, shiftTimes = DEFAULT_SHIFT_TIMES,
+  onSetStatus, onSetProgress, onAddNote, onOpenDetail, onChangeDay, onClose, colorOf, shiftTimes = DEFAULT_SHIFT_TIMES, hidden,
 }: Props) {
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
@@ -185,14 +187,14 @@ export default function DayAgendaPanel({
   };
 
   return (
-    <div className="fixed inset-0 z-[170] flex justify-end" onClick={onClose}>
+    <div className={`fixed inset-0 z-[170] flex justify-end ${hidden ? "hidden" : ""}`} onClick={onClose}>
       <div className="absolute inset-0 bg-slate-900/30" />
       <div
         className="relative h-full w-full max-w-xl bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl ring-1 ring-black/10 flex flex-col animate-in slide-in-from-right duration-150"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header: the day, navigation, and the day's completion. */}
-        <div className="px-4 py-3 border-b border-[var(--color-border)] bg-gradient-to-b from-white to-slate-50/40">
+        <div className="px-4 py-3 border-b border-[var(--color-border)] bg-gradient-to-b from-white dark:from-[var(--color-surface)] to-slate-50/40 dark:to-[var(--color-surface)]">
           <div className="flex items-center gap-2">
             <button onClick={() => onChangeDay(dayKey(addDays(dayMs, -1, tz), tz))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Previous day"><ChevronLeft className="w-4 h-4" /></button>
             <div className="flex-1 min-w-0">
@@ -203,8 +205,8 @@ export default function DayAgendaPanel({
               </div>
               <div className="text-[11px] text-[var(--color-text-muted)]">
                 {totals.n === 0 ? "Nothing scheduled this day." : <>{totals.n} step{totals.n === 1 ? "" : "s"} · {totals.done} done · {totals.avg}% complete</>}
-                {isToday && live.overdue.length > 0 && <span className="ml-2 font-bold text-rose-700">{live.overdue.length} carried over</span>}
-                {isToday && live.early.length > 0 && <span className="ml-2 font-bold text-blue-700">{live.early.length} started early</span>}
+                {isToday && live.overdue.length > 0 && <span className="ml-2 font-bold text-rose-700 dark:text-rose-300">{live.overdue.length} carried over</span>}
+                {isToday && live.early.length > 0 && <span className="ml-2 font-bold text-blue-700 dark:text-blue-300">{live.early.length} started early</span>}
               </div>
             </div>
             <button onClick={() => onChangeDay(dayKey(addDays(dayMs, 1, tz), tz))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Next day"><ChevronRight className="w-4 h-4" /></button>
@@ -270,9 +272,9 @@ export default function DayAgendaPanel({
                     const note = spanNote(r);
                     return (
                       <li key={r.leaf.id} className={openId === r.leaf.id ? "bg-[var(--color-accent-soft)]/40" : ""}>
-                      <div className={`px-4 py-2 flex items-center gap-3 ${openId === r.leaf.id ? "" : r.live === "overdue" ? "bg-rose-50" : r.live === "started-early" ? "bg-blue-50/60" : ""}`}>
+                      <div className={`px-4 py-2 flex items-center gap-3 ${openId === r.leaf.id ? "" : r.live === "overdue" ? "bg-rose-50 dark:bg-rose-950/40" : r.live === "started-early" ? "bg-blue-50/60 dark:bg-blue-950/30" : ""}`}>
                         <ShiftMark work={workShiftOf(r.leaf, tz, shiftTimes)} />
-                        <span className={`w-[80px] shrink-0 text-[11px] font-mono tabular-nums ${r.live === "overdue" ? "font-black text-rose-700" : r.live === "started-early" ? "font-bold text-blue-700" : "text-[var(--color-text-muted)]"}`}>{windowOf(r)}</span>
+                        <span className={`w-[80px] shrink-0 text-[11px] font-mono tabular-nums ${r.live === "overdue" ? "font-black text-rose-700 dark:text-rose-300" : r.live === "started-early" ? "font-bold text-blue-700 dark:text-blue-300" : "text-[var(--color-text-muted)]"}`}>{windowOf(r)}</span>
                         <span className="shrink-0">
                           <StatusControl
                             status={r.leaf.status} size="sm" variant="dot" disabled={!canEdit || !onSetStatus || !r.leaf.id}

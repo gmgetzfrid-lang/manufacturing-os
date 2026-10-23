@@ -20,7 +20,7 @@ import { ChevronLeft, ChevronRight, Crosshair, Layers, Info, GripVertical, Check
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl from "@/components/projects/ProgressControl";
-import { GROUP_PALETTE } from "@/lib/scheduleColors";
+import { assignGroupColors } from "@/lib/scheduleColors";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { splitPlacements, compareDayPlacements, compareBandPlacements, activeWindowOnDay, startMsOf, finishMsOf, type BandPlacement, type DayPlacement } from "@/lib/calendarPlacement";
 import { addDays as addDaysTz, addMonths as addMonthsTz, clockLabel, dayDiff as dayDiffTz, dayKey, dayKeyToMs, dayOfWeek, fmtInTz, hasTimeOfDay, tzAbbrev, startOfDay as startOfDayTz, startOfMonth as startOfMonthTz, wallClock } from "@/lib/scheduleTz";
@@ -33,7 +33,6 @@ import { completionNote, completionNoteShort } from "@/lib/scheduleRules";
 
 // Use the shared palette so a group is the SAME hue here and on the
 // timeline. `.rail` is the solid accent (was `.bar` locally).
-const GROUP_COLORS = GROUP_PALETTE.map((c) => ({ bar: c.rail, soft: c.soft, text: c.text, dot: c.dot }));
 
 interface Props {
   milestones: Milestone[];
@@ -120,15 +119,13 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
     return chain.length > 0 ? chain[chain.length - 1] : m;
   }, [ancestorsOf]);
 
-  // Stable color index per top-level group.
-  const groupColorIndex = useMemo(() => {
-    const tops = milestones
-      .filter((m) => !m.parentId || !byId.has(m.parentId))
-      .sort((a, b) => startMs(a) - startMs(b));
-    const idx = new Map<string, number>();
-    tops.forEach((t, i) => { if (t.id) idx.set(t.id, i % GROUP_COLORS.length); });
-    return idx;
-  }, [milestones, byId]);
+  // The timeline's colours, by the timeline's rule (under a single root,
+  // each phase gets its own hue) — a phase is the same colour in both views.
+  const palette = useMemo(() => assignGroupColors(milestones), [milestones]);
+  const colorFor = useCallback((m: Milestone) => {
+    const c = palette.colorOf(m);
+    return { bar: c.rail, soft: c.soft, text: c.text, dot: c.dot };
+  }, [palette]);
 
   const isLeaf = useCallback((m: Milestone) => {
     const kids = m.id ? (childrenByParent.get(m.id) ?? []) : [];
@@ -159,15 +156,21 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
 
   // Distinct top-level groups that actually have rendered tasks beneath
   // them, in calendar order — used for the group color legend.
+  // The legend lists the colour groups (the phases under a single root).
   const units = useMemo(() => {
+    const anchor = new Map<string, Milestone>();
+    for (const g of palette.groups) if (g.id) anchor.set(g.id, g);
     const seen = new Map<string, Milestone>();
     for (const m of mains) {
-      const u = topGroupOf(m);
+      let cur: Milestone | undefined = m;
+      const guard = new Set<string>();
+      while (cur && cur.id && !anchor.has(cur.id) && !guard.has(cur.id)) { guard.add(cur.id); cur = cur.parentId ? byId.get(cur.parentId) : undefined; }
+      const u = cur && cur.id && anchor.has(cur.id) ? cur : topGroupOf(m);
       const key = u.id ?? u.name;
       if (!seen.has(key)) seen.set(key, u);
     }
     return Array.from(seen.values()).sort((a, b) => startMs(a) - startMs(b));
-  }, [mains, topGroupOf]);
+  }, [mains, topGroupOf, palette, byId]);
 
   const span = useMemo(() => {
     let min = Infinity, max = -Infinity;
@@ -327,7 +330,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
         </div>
       )}
       {/* Toolbar */}
-      <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap bg-gradient-to-b from-white to-slate-50/40">
+      <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap bg-gradient-to-b from-white dark:from-[var(--color-surface)] to-slate-50/40 dark:to-[var(--color-surface)]">
         <button onClick={() => setCursor(addMonthsUTC(cursor, -1, tz))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors"><ChevronLeft className="w-4 h-4" /></button>
         <div className="text-sm font-bold text-[var(--color-text)] min-w-[150px] text-center">
           {fmtInTz(cursor, tz, { month: "long", year: "numeric" })}
@@ -372,7 +375,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
         <div className="px-3 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex items-center gap-3 flex-wrap text-[10px]">
           <span className="font-black uppercase tracking-widest text-[var(--color-text-faint)]">Groups</span>
           {units.map((u) => {
-            const color = GROUP_COLORS[(u.id ? groupColorIndex.get(u.id) : undefined) ?? 0];
+            const color = colorFor(u);
             return (
               <span key={u.id ?? u.name} className="inline-flex items-center gap-1.5">
                 <span className={`w-2.5 h-2.5 rounded-sm ${color.bar}`} />
@@ -411,7 +414,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
       </div>
 
       {/* Weekday header */}
-      <div className="grid grid-cols-7 border-b border-[var(--color-border)] bg-slate-50/60">
+      <div className="grid grid-cols-7 border-b border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)]">
         {WEEKDAYS.map((d) => (
           <div key={d} className="px-2 py-1.5 text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)] text-center">{d}</div>
         ))}
@@ -445,7 +448,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                       type="button"
                       onClick={() => setAgendaDay(key)}
                       title={`Open ${fmtInTz(day, tz, { weekday: "long", month: "long", day: "numeric" })} — every step due that day, with progress entry`}
-                      className={`inline-flex items-center gap-1 text-[11px] font-bold rounded px-1 -ml-1 hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent)] transition-colors ${isToday ? "text-rose-600" : inMonth ? "text-[var(--color-text)]" : "text-slate-300"}`}
+                      className={`inline-flex items-center gap-1 text-[11px] font-bold rounded px-1 -ml-1 hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent)] transition-colors ${isToday ? "text-rose-600 dark:text-rose-400" : inMonth ? "text-[var(--color-text)]" : "text-slate-300"}`}
                     >
                       {wallClock(day.getTime(), tz).day}
                       {(items.length > 0 || bands.length > 0) && <span className="text-[8px] font-black uppercase tracking-wider opacity-0 group-hover/tile:opacity-70">Day view</span>}
@@ -464,16 +467,14 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                   {/* Groups covering this day — root first. Solid = work
                       under it is scheduled today; muted = it only carries over. */}
                   {shownBands.map((b) => {
-                    const unit = topGroupOf(b.ms);
-                    const color = GROUP_COLORS[(unit.id ? groupColorIndex.get(unit.id) : undefined) ?? 0];
+                    const color = colorFor(b.ms);
                     return <Band key={`band-${b.ms.id}-${b.dayIndex}`} band={b} color={color} onClick={() => onOpenDetail(b.ms)} />;
                   })}
                   {extraBands > 0 && (
                     <button onClick={() => setAgendaDay(key)} className="text-[9px] font-bold text-[var(--color-text-faint)] hover:text-[var(--color-accent)] px-1 text-left transition-colors">+{extraBands} more group{extraBands === 1 ? "" : "s"}</button>
                   )}
                   {shown.map((p) => {
-                    const unit = topGroupOf(p.ms);
-                    const color = GROUP_COLORS[(unit.id ? groupColorIndex.get(unit.id) : undefined) ?? 0];
+                    const color = colorFor(p.ms);
                     const chain = ancestorsOf(p.ms);
                     // Offer expand on any day the parent bar shows, so
                     // the arrow is reachable wherever you're looking.
@@ -581,7 +582,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
               style={{ top: subPopover.top, left: subPopover.left }}
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="px-3 py-2 border-b border-[var(--color-border)] bg-slate-50/60">
+              <div className="px-3 py-2 border-b border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)]">
                 <div className="flex items-center gap-2">
                   <Layers className="w-3.5 h-3.5 text-[var(--color-accent)] shrink-0" />
                   <span className="text-[12px] font-bold text-[var(--color-text)] truncate flex-1">{subPopover.ms.name}</span>
@@ -623,8 +624,11 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
       })()}
 
       {/* Day agenda — the work list for one day. */}
-      {agendaDay && !detailOpen && (
+      {/* Stays mounted (hidden) while a task's details are open, so its
+          search and open row are still there on the way back. */}
+      {agendaDay && (
         <DayAgendaPanel
+          hidden={!!detailOpen}
           day={agendaDay}
           tz={tz}
           milestones={milestones}
@@ -639,7 +643,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
           onOpenDetail={(m) => { onOpenDetail(m); }}
           onChangeDay={setAgendaDay}
           onClose={() => setAgendaDay(null)}
-          colorOf={(top) => GROUP_COLORS[(top.id ? groupColorIndex.get(top.id) : undefined) ?? 0]}
+          colorOf={(top) => colorFor(top)}
         />
       )}
 
@@ -784,7 +788,7 @@ function Chip({
           type="button"
           onClick={(e) => { e.stopPropagation(); onToggleSelect?.(); }}
           title={selected ? "Deselect" : "Select for bulk actions"}
-          className={`absolute top-0.5 right-0.5 z-10 w-4 h-4 rounded border flex items-center justify-center transition-opacity ${selected ? "bg-[var(--color-accent)] border-[var(--color-accent)] text-[var(--color-accent-fg)] opacity-100" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-transparent opacity-0 group-hover/chip:opacity-100"}`}
+          className={`absolute top-0.5 right-0.5 z-10 w-4 h-4 pointer-coarse:w-6 pointer-coarse:h-6 rounded border flex items-center justify-center transition-opacity ${selected ? "bg-[var(--color-accent)] border-[var(--color-accent)] text-[var(--color-accent-fg)] opacity-100" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-transparent opacity-0 group-hover/chip:opacity-100 pointer-coarse:opacity-100"}`}
         >
           <CheckSquare className="w-3 h-3" />
         </button>
@@ -827,9 +831,17 @@ function Chip({
           </button>
         )}
         {hasSubs && !canExpand && <Layers className="w-2.5 h-2.5 shrink-0 opacity-70" />}
-        {!hasSubs && <ShiftMark work={workShiftOf(ms, tz, shiftTimes ?? DEFAULT_SHIFT_TIMES)} />}
+        {/* Day / night on every chip — a task's mark says which crew its
+            steps belong to (both = some of each). */}
+        <ShiftMark work={(() => {
+          const t = shiftTimes ?? DEFAULT_SHIFT_TIMES;
+          if (!hasSubs) return workShiftOf(ms, tz, t);
+          const kinds = new Set(leafKids.map((k) => workShiftOf(k, tz, t)));
+          return kinds.size === 1 ? [...kinds][0] : "both";
+        })()} />
+        {/* The name first — it's what tells two chips apart; the time after. */}
+        <span className={`min-w-0 text-[10.5px] font-semibold leading-tight ${full ? "" : "truncate"} ${effStatus === "completed" ? "line-through opacity-70" : ""}`}>{ms.name}</span>
         {clock && <span className="shrink-0 text-[9px] font-mono opacity-70 tabular-nums">{clock}</span>}
-        <span className={`text-[10.5px] font-semibold leading-tight ${full ? "" : "truncate"} ${effStatus === "completed" ? "line-through opacity-70" : ""}`}>{ms.name}</span>
         {spanDays > 1 && (
           <span className="ml-auto shrink-0 text-[8.5px] font-bold px-1 rounded bg-black/10" title={`Day ${dayIndex + 1} of ${spanDays}`}>
             {dayIndex + 1}/{spanDays}
@@ -885,11 +897,11 @@ function Chip({
 
 function chipTone(s: MilestoneStatus): string {
   switch (s) {
-    case "completed":   return "bg-emerald-50 border-emerald-200 text-emerald-900";
-    case "in_progress": return "bg-blue-50 border-blue-200 text-blue-900";
-    case "on_hold":     return "bg-amber-50 border-amber-200 text-amber-900";
-    case "blocked":     return "bg-rose-50 border-rose-200 text-rose-900";
-    case "missed":      return "bg-rose-100 border-rose-300 text-rose-900";
+    case "completed":   return "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200";
+    case "in_progress": return "bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-200";
+    case "on_hold":     return "bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200";
+    case "blocked":     return "bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-900 dark:text-rose-200";
+    case "missed":      return "bg-rose-100 dark:bg-rose-900/40 border-rose-300 dark:border-rose-700 text-rose-900 dark:text-rose-200";
     default:            return "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text)]";
   }
 }

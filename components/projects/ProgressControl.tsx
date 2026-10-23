@@ -149,7 +149,7 @@ export default function ProgressControl({ percent, onPick, disabled, onDisabledC
         ref={btnRef}
         onClick={(e) => { e.stopPropagation(); openMenu(); }}
         title={disabled ? `${pct}% complete` : `${pct}% complete — click to set`}
-        className={`inline-flex items-center justify-center rounded-md border font-bold tabular-nums ${
+        className={`relative inline-flex items-center justify-center rounded-md border font-bold tabular-nums after:absolute after:-inset-1 pointer-coarse:after:-inset-2.5 after:content-[''] ${
           size === "sm" ? "px-1 py-0 text-[9px]" : "px-1.5 py-0.5 text-[10px]"
         } ${tone} ${disabled ? "cursor-default opacity-80" : "cursor-pointer hover:brightness-95"}`}
       >
