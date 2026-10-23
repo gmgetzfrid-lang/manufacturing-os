@@ -774,7 +774,11 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
 }
 
 /** What a delete removed — enough to put it all back (Undo). */
-export interface DeletedTasks { rows: MilestoneRow[]; notes: MilestoneNoteRow[]; orphans: Array<{ id: string; parentId: string }> }
+export interface DeletedTasks {
+  rows: MilestoneRow[]; notes: MilestoneNoteRow[]; orphans: Array<{ id: string; parentId: string }>;
+  /** Tasks the database refused to delete (permissions) — still there. */
+  notDeleted?: number;
+}
 
 /** Delete tasks — with everything under them when `withChildren` — and
  *  hand back what was removed so Undo can restore it, comments included.
@@ -813,23 +817,33 @@ export async function deleteMilestones(input: {
     const { rows: n } = await fetchAllRows<MilestoneNoteRow>((from, to) => supabase.from("milestone_notes").select("*").in("milestone_id", chunk).order("id").range(from, to));
     notes.push(...n);
   }
-  let removed = 0;
+  const gone = new Set<string>();
+  let failure: string | null = null;
   for (let i = 0; i < ids.length; i += 200) {
     const { data, error } = await supabase.from("milestones").delete().in("id", ids.slice(i, i + 200)).select("id");
-    if (error) throw new Error(error.message);
-    removed += data?.length ?? 0;
+    if (error) { failure = error.message; break; }
+    for (const r of (data ?? []) as Array<{ id: string }>) gone.add(r.id);
   }
-  if (removed < ids.length) {
-    throw new Error(removed === 0
-      ? "Nothing was deleted — you may not have permission to delete tasks on this project."
-      : `Only ${removed} of ${ids.length} tasks were deleted — you may not have permission for the rest.`);
+  // Steps moved up from under a parent that is still there go back under it.
+  for (const o of orphans) {
+    if (!gone.has(o.parentId)) await supabase.from("milestones").update({ parent_id: o.parentId }).eq("id", o.id);
+  }
+  if (gone.size === 0) {
+    throw new Error(failure ?? "Nothing was deleted — you may not have permission to delete tasks on this project.");
   }
   await logAuditAction({
     action: "MILESTONES_DELETED", resourceType: "project", resourceId: input.projectId,
     orgId: input.orgId, userId: input.actorUserId, userEmail: input.actorUserEmail,
-    details: { count: ids.length, names: rows.slice(0, 50).map((r) => r.name) },
+    details: { count: gone.size, names: rows.filter((r) => gone.has(r.id)).slice(0, 50).map((r) => r.name) },
   }).catch(() => undefined);
-  return { rows, notes, orphans };
+  // What was really removed — all of it can be put back with Undo, even
+  // when some tasks were refused.
+  return {
+    rows: rows.filter((r) => gone.has(r.id)),
+    notes: notes.filter((n) => gone.has(n.milestone_id)),
+    orphans: orphans.filter((o) => gone.has(o.parentId)),
+    notDeleted: ids.length - gone.size,
+  };
 }
 
 /** Undo a delete: the tasks come back with their ids, comments and links. */

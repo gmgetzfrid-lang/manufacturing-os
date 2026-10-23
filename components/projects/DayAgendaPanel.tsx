@@ -375,22 +375,34 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
   // "Saved" shows only once the save went through — a cancelled "record it
   // early?" or a failed write says so instead.
   const report = (ok: unknown, msg: string) => setSaved(ok === false ? "Not saved" : msg);
+  // One save per value: Enter, then the box losing focus to the "record it
+  // early?" dialog, mustn't ask (and save) twice.
+  const inFlight = useRef<number | null>(null);
   const setPct = async (v: number) => {
     if (ro || !onSetProgress) return;
     const c = Math.max(0, Math.min(100, Math.round(v)));
+    if (inFlight.current === c) return;
+    inFlight.current = c;
     setPctDraft(String(c));
-    report(await onSetProgress(id, c), `${c}% saved`);
+    // Finishing the step ends any hold picked here — closing the box mustn't
+    // put a done step back on hold.
+    if (c >= 100) { setHold(null); setHoldTouched(false); }
+    try { report(await onSetProgress(id, c), `${c}% saved`); }
+    finally { inFlight.current = null; }
   };
   const setStatus = async (st: MilestoneStatus) => {
     if (ro || !onSetStatus) return;
-    if (st === "on_hold" || st === "blocked") { setHold(st); return; } // needs a reason first
-    setHold(null);
+    if (st === "on_hold" || st === "blocked") { setHold(st); setHoldTouched(true); return; } // needs a reason first
+    setHold(null); setHoldTouched(false);
     if (st === "completed") setPctDraft("100");
     report(await onSetStatus(id, st), st === "completed" ? "Marked done" : "Marked working");
   };
   // The hold last saved from this box, so closing doesn't save it twice.
   const savedHold = useRef<string | null>(null);
-  const holdPending = () => !!hold && savedHold.current !== `${hold}|${reason.trim()}` && (hold !== leaf.status || reason.trim() !== (leaf.statusReason ?? ""));
+  // Pending only when the person picked or edited the hold in this box —
+  // not merely because the live status has since changed.
+  const [holdTouched, setHoldTouched] = useState(false);
+  const holdPending = () => holdTouched && !!hold && savedHold.current !== `${hold}|${reason.trim()}` && (hold !== leaf.status || reason.trim() !== (leaf.statusReason ?? ""));
   const saveHold = async () => {
     if (ro || !onSetStatus || !hold) return;
     savedHold.current = `${hold}|${reason.trim()}`;
@@ -437,7 +449,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
           <input ref={pctRef} value={pctDraft} disabled={ro} inputMode="numeric"
             onChange={(e) => setPctDraft(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (pctDraft !== "") void setPct(Number(pctDraft)); } }}
-            onBlur={() => { if (pctDraft !== "" && Number(pctDraft) !== Math.round(pct)) void setPct(Number(pctDraft)); }}
+            onBlur={() => { if (pctDraft !== "" && Number(pctDraft) !== Math.round(pct) && inFlight.current !== Number(pctDraft)) void setPct(Number(pctDraft)); }}
             aria-label="Percent done"
             className="h-7 w-12 px-1.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-right font-bold tabular-nums focus:outline-none focus:border-[var(--color-accent-ring)]" />
           <span className="font-bold text-[var(--color-text-muted)]">%</span>
@@ -455,7 +467,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
       {hold && (
         <div className="flex items-center gap-1.5">
           <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] text-[var(--color-text-muted)]">Blocking it</span>
-          <input value={reason} disabled={ro} autoFocus onChange={(e) => setReason(e.target.value)}
+          <input value={reason} disabled={ro} autoFocus onChange={(e) => { setReason(e.target.value); setHoldTouched(true); }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void saveHold(); } }}
             placeholder="What's stopping it — permit, scaffold, ops release, parts…"
             className="flex-1 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] focus:outline-none focus:border-[var(--color-accent-ring)]" />

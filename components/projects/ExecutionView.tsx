@@ -515,6 +515,7 @@ export default function ExecutionView({
       const removed = await deleteMilestones({ orgId, projectId, ids, withChildren: true, actorUserId: userId, actorUserEmail: userEmail });
       setSelectedIds(new Set());
       onRefresh();
+      if (removed.notDeleted) notify(`${removed.notDeleted} task${removed.notDeleted === 1 ? " wasn't" : "s weren't"} deleted — you may not have permission for ${removed.notDeleted === 1 ? "it" : "them"}.`, "warning");
       announce(`Deleted ${removed.rows.length} task${removed.rows.length === 1 ? "" : "s"}`, async () => {
         try { await restoreDeletedMilestones(removed); } catch (e) { notify(`Undo failed: ${(e as Error).message}`, "warning"); }
         onRefresh();

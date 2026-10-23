@@ -117,8 +117,11 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
     () => (pastShift && log ? scheduleAt(live, log, recordedBy) : null),
     [pastShift, log, live, recordedBy],
   );
-  const milestones = history ? history.milestones : live;
-  const progress = useMemo(() => (history ? buildProgressIndex(history.milestones, tz) : liveProgress), [history, liveProgress, tz]);
+  // Only a record that reaches back to the shift replaces today's
+  // progress; otherwise it's today's, and the label says so.
+  const asThen = history?.complete ? history : null;
+  const milestones = asThen ? asThen.milestones : live;
+  const progress = useMemo(() => (asThen ? buildProgressIndex(asThen.milestones, tz) : liveProgress), [asThen, liveProgress, tz]);
   const historyNote = !pastShift ? null
     : history?.complete ? `progress as recorded by ${clockLabel(recordedBy, tz)} ${fmtInTz(recordedBy, tz, { month: "short", day: "numeric" })}`
       : `progress as entered by now — the record doesn't reach back to this shift`;
@@ -151,12 +154,18 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
     latestNotes(stepIds.split(",")).then((n) => { if (live) setNotes(n); }).catch(() => { /* comments are extra */ });
     return () => { live = false; };
   }, [stepIds]);
+  // A comment written after an earlier shift isn't part of that shift's story.
+  const noteThen = useCallback((id: string) => {
+    const n = notes.get(id);
+    if (n && pastShift && n.at && Date.parse(n.at) > recordedBy) return undefined;
+    return n;
+  }, [notes, pastShift, recordedBy]);
   const sections = useMemo(() => meeting === "kickoff"
     ? kickoffSections(kickoff, ctx)
     : meeting === "closeout"
       ? closeoutSections(closeout, report, ctx)
-      : turnoverSections(report, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: (id) => notes.get(id) }),
-  [meeting, kickoff, closeout, report, ctx, jumpTarget, notes]);
+      : turnoverSections(report, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen }),
+  [meeting, kickoff, closeout, report, ctx, jumpTarget, noteThen]);
 
   // ── live-meeting navigation ──
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -233,7 +242,7 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
           finishOf: (id) => taskSpans.get(id)?.finish,
           planOf: (id) => planByTask.get(id),
           stepsOf: (id) => stepsByTask.get(id),
-          noteOf: (id) => notes.get(id),
+          noteOf: noteThen,
         })
         : withoutEmpty(sections.filter((x) => x.data).map((x) => ({ id: x.id, title: x.title, sub: x.sub, flag: x.flag ?? null, blocks: x.data!() }))),
     };

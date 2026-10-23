@@ -812,19 +812,36 @@ function DependencyEditor({
     .sort((a, b) => (Date.parse(a.plannedAt as string) - Date.parse(b.plannedAt as string)) || (a.name || "").localeCompare(b.name || "")),
     [allTasks, deps, reflowNodes, milestone.id]);
 
-  const links = milestone.linkTypes ?? {};
-  // Save the predecessors and how it waits on each; then, if it now starts
-  // too early for one of them, push it (and what follows it) like a drag.
+  // The links as last saved here, so a second edit made before the refresh
+  // lands builds on the first instead of overwriting it.
+  const [localLinks, setLocalLinks] = useState<{ from: unknown; links: LinkMap }>({ from: milestone.linkTypes, links: milestone.linkTypes ?? {} });
+  const links = localLinks.from === milestone.linkTypes ? localLinks.links : (milestone.linkTypes ?? {});
+  // Save the predecessors and how it waits on each; then, if THIS task now
+  // starts too early for one of them, push it and what follows it — and
+  // nothing else (other tasks waiting on the same predecessor stay put).
   const save = async (next: string[], nextLinks: LinkMap = links) => {
     if (!milestone.id) return;
     setSaving(true); setError(null);
     try {
       const kept: LinkMap = {};
       for (const id of next) { const l = nextLinks[id]; if (l && (l.type !== "FS" || l.lagHours)) kept[id] = l; }
+      setLocalLinks({ from: milestone.linkTypes, links: kept });
       await updateMilestone({ id: milestone.id, patch: { dependsOn: next, linkTypes: Object.keys(kept).length ? kept : null }, updatedBy: userId });
       if (next.length && milestone.projectId) {
-        const nodes = reflowNodes.map((n) => (n.id === milestone.id ? { ...n, dependsOn: next, links: kept } : n));
-        const moves = cascadeDependents(nodes, next, tz);
+        const me = milestone.id;
+        const nodes = reflowNodes.map((n) => (n.id === me ? { ...n, dependsOn: next, links: kept } : n));
+        // 1) Where this task (and its own steps) must now sit.
+        const kids = new Map<string, string[]>();
+        for (const n of nodes) if (n.parentId) kids.set(n.parentId, [...(kids.get(n.parentId) ?? []), n.id]);
+        const mine = new Set<string>();
+        const stack = [me];
+        while (stack.length) { const c = stack.pop()!; if (mine.has(c)) continue; mine.add(c); stack.push(...(kids.get(c) ?? [])); }
+        const own = cascadeDependents(nodes, next, tz).filter((c) => mine.has(c.id));
+        // 2) What follows it, from there.
+        const moved = new Map(own.map((c) => [c.id, c]));
+        const nodes2 = nodes.map((n) => { const c = moved.get(n.id); return c ? { ...n, plannedStartAt: c.plannedStartAt, plannedAt: c.plannedAt } : n; });
+        const after = own.length ? cascadeDependents(nodes2, [me], tz) : [];
+        const moves = [...own, ...after.filter((c) => !moved.has(c.id))];
         if (moves.length) await applyMilestoneMoves({ orgId: milestone.orgId, projectId: milestone.projectId, moves, actorUserId: userId });
       }
       onChanged();
