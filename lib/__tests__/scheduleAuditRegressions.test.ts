@@ -279,3 +279,32 @@ describe("link types and lags are honoured", () => {
     expect(row.waitingOn).toEqual([]);
   });
 });
+
+describe("edge cases", () => {
+  it("12 AM / 12 PM read correctly", () => {
+    expect(coerceIsoStrict("10/26/2026 12:30 PM", CHI)).toBe(at("2026-10-26", "12:30"));
+    expect(coerceIsoStrict("10/26/2026 12:30 AM", CHI)).toBe(at("2026-10-26", "00:30"));
+    expect(coerceIsoStrict("10/26/2026 13:30 PM", CHI)).toBeNull();
+  });
+  it("duplicate names in a CSV without ids get distinct, stable keys", () => {
+    const csv = "name,start,finish\nSet blinds,2026-10-26 06:00,2026-10-26 08:00\nSet blinds,2026-10-27 06:00,2026-10-27 08:00\n";
+    const r = parseScheduleFile("s.csv", csv, { timeZone: CHI });
+    const refs = r.rows.map((x) => x.externalRef);
+    expect(new Set(refs).size).toBe(2);
+  });
+  it("a completed (locked) successor never moves, whatever the link", () => {
+    const a: ReflowNode = { id: "a", plannedStartAt: at("2026-10-15", "08:00"), plannedAt: at("2026-10-15", "16:00") };
+    const b: ReflowNode = { id: "b", plannedStartAt: at("2026-10-15", "06:00"), plannedAt: at("2026-10-15", "07:00"), status: "completed", dependsOn: ["a"], links: { a: { type: "SS", lagHours: 4 } } };
+    expect(cascadeDependents([a, b], ["a"], CHI).find((x) => x.id === "b")).toBeUndefined();
+  });
+  it("a note dated by number works and an empty one is dropped", () => {
+    const D = (x: number) => new Date(x).toISOString().slice(5, 10);
+    expect(noteLine({ body: "x", at: ms(at("2026-10-20", "09:00")) }, ms(at("2026-10-26", "05:30")), D)).toBe("x · 10-20");
+    expect(noteLine({ body: "   \n " }, 0, D)).toBeUndefined();
+  });
+  it("the plan by now can't exceed 100% or go negative", () => {
+    const t = mk({ id: "t", name: "T", plannedStartAt: at("2026-10-26", "06:00"), plannedAt: at("2026-10-26", "08:00") });
+    expect(expectedFraction(t, ms(at("2026-10-28", "06:00")), CHI)).toBe(1);
+    expect(expectedFraction(t, ms(at("2026-10-20", "06:00")), CHI)).toBe(0);
+  });
+});
