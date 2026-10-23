@@ -125,7 +125,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId }: Pro
       <div className="space-y-3">
         {/* Forecast / slip card */}
         <div className={`rounded-2xl p-4 border ${
-          verdict === "behind"
+          verdict === "behind" || slipDays > 0
             ? "bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800"
             : forecastEndAt
               ? "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800"
@@ -136,8 +136,8 @@ export default function ScheduleProgress({ milestones, metrics, projectId }: Pro
             {forecastEndAt ? humanDate(forecastEndAt, tz) : plannedEndAt ? humanDate(plannedEndAt, tz) : "—"}
           </div>
           {/* Follows the verdict on the left — never "on track" while behind. */}
-          <div className={`text-[11px] mt-1 inline-flex items-center gap-1 ${verdict === "behind" ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}`}>
-            {verdict === "behind"
+          <div className={`text-[11px] mt-1 inline-flex items-center gap-1 ${verdict === "behind" || slipDays > 0 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}`}>
+            {verdict === "behind" || slipDays > 0
               ? <><AlertTriangle className="w-3 h-3" /> {!forecastEndAt ? "Behind — no work recorded yet to forecast from" : slipDays > 0 ? `${slipDays}d slip vs plan` : "Behind plan — under a day of slip so far"}</>
               : plannedEndAt ? <><CheckCircle2 className="w-3 h-3" /> On track</> : "Plan not yet set"
             }

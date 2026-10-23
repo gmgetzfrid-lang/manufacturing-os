@@ -156,6 +156,8 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
   let plannedHours = 0, earnedHours = 0;
   let wsum = 0, wpct = 0; // effort-weighted progress (matches the rest of the app)
   let envStart = Infinity, envFinish = -Infinity;
+  // The window the plan % is measured on: baseline dates where captured.
+  let baseStart = Infinity, baseFinish = -Infinity;
 
   for (const m of leaves) {
     if (isDone(m)) tally.done++;
@@ -176,6 +178,11 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
     const s = startMs(m), f = finishMs(m);
     if (Number.isFinite(s)) envStart = Math.min(envStart, s);
     if (Number.isFinite(f)) envFinish = Math.max(envFinish, f);
+    const bs = Date.parse(String(m.baselineStartAt ?? "")), bf = Date.parse(String(m.baselineFinishAt ?? ""));
+    const hasBase = Number.isFinite(bs) && Number.isFinite(bf);
+    const s2 = hasBase ? bs : s, f2 = hasBase ? bf : f;
+    if (Number.isFinite(s2)) baseStart = Math.min(baseStart, s2);
+    if (Number.isFinite(f2)) baseFinish = Math.max(baseFinish, f2);
   }
 
   const totalLeaves = leaves.length;
@@ -204,12 +211,19 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
   // stretched by how far behind the work is (planned % ÷ done %), or, past
   // the planned end, the pace so far carried to 100%. Behind with nothing
   // done yet → no forecast (nothing to project from).
+  // Past the planned end and not done: the pace so far carried to 100%
+  // (never a date already gone). Behind before the end: the window the
+  // plan % was measured on (the baseline when there is one) stretched by
+  // planned ÷ done — no earlier than the current planned finish.
   let forecastFinish: string | null = finish;
   const behind = pctComplete < 100 && expectedPct - pctComplete >= BEHIND_POINTS;
-  if (behind && Number.isFinite(envStart) && Number.isFinite(envFinish)) {
+  if (pctComplete < 100 && Number.isFinite(envStart) && Number.isFinite(envFinish) && (behind || now > envFinish)) {
     if (pctComplete <= 0) forecastFinish = null;
-    else if (now <= envFinish) forecastFinish = new Date(envFinish + (envFinish - envStart) * (expectedPct / pctComplete - 1)).toISOString();
-    else forecastFinish = new Date(now + (now - envStart) * ((100 - pctComplete) / pctComplete)).toISOString();
+    else if (now > envFinish) forecastFinish = new Date(now + (now - envStart) * ((100 - pctComplete) / pctComplete)).toISOString();
+    else {
+      const bs = Number.isFinite(baseStart) ? baseStart : envStart, bf = Number.isFinite(baseFinish) ? baseFinish : envFinish;
+      forecastFinish = new Date(Math.max(envFinish, bs + (bf - bs) * (expectedPct / pctComplete))).toISOString();
+    }
   }
 
   // ── Per-group rollups ────────────────────────────────────────

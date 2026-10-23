@@ -381,3 +381,23 @@ describe("sweep 5 fixes", () => {
     expect(c.linksByRef?.["csv:2"]).toEqual({ type: "FS", lagHours: 36 });
   });
 });
+
+describe("sweep 6 fixes", () => {
+  const job = (n: number, pctOf: (i: number) => number, shiftDays = 0, base = false) => Array.from({ length: n }, (_, i) => {
+    const d = `2026-10-${String(i + 1 + shiftDays).padStart(2, "0")}`, b = `2026-10-${String(i + 1).padStart(2, "0")}`;
+    const p = pctOf(i);
+    return mk({ id: `d${i}`, name: `Day ${i + 1}`, plannedStartAt: at(d, "06:00"), plannedAt: at(d, "17:00"),
+      ...(base ? { baselineStartAt: at(b, "06:00"), baselineFinishAt: at(b, "17:00") } : {}),
+      status: p >= 100 ? "completed" : p > 0 ? "in_progress" : "planned", percentComplete: p });
+  });
+  it("late and nearly done: the forecast is never a date already past", () => {
+    const now = ms(at("2026-10-13", "12:00"));
+    const r = computeExecutionReport(job(10, (i) => (i < 9 ? 100 : 60)), { now: new Date(now), tz: CHI });
+    expect(Date.parse(r.forecastFinish!)).toBeGreaterThanOrEqual(now);
+  });
+  it("a moved, baselined schedule: the slip isn't counted twice", () => {
+    const r = computeExecutionReport(job(10, (i) => (i < 4 ? 100 : 0), 5, true), { now: new Date(at("2026-10-10", "12:00")), tz: CHI });
+    expect(Date.parse(r.forecastFinish!)).toBeLessThan(ms(at("2026-10-25", "00:00")));
+    expect(Date.parse(r.forecastFinish!)).toBeGreaterThanOrEqual(Date.parse(r.finish!));
+  });
+});
