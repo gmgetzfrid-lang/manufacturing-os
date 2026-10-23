@@ -106,6 +106,10 @@ const TABLE_CLASS: Record<string, TableClass> = {
     category: "archive",
     reason: "Milestone activity log. Archive with the project.",
   },
+  milestone_progress_log: {
+    category: "archive",
+    reason: "Every change to a task's % and status — rebuilds past shift reports. Archive with the project.",
+  },
   notes: {
     category: "archive",
     reason: "Scratchpad records. Archive resolved notes after a while.",

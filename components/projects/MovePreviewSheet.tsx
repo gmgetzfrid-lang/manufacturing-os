@@ -83,7 +83,9 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
       for (const t of targets) {
         const projected = Date.parse((t.plannedStartAt as string | undefined) ?? (t.plannedAt as string)) + deltaDays * 86400000;
         for (const c of predecessorConflicts(t, projected, byId)) {
-          w.push(`“${t.name}” would start before “${c.pred.name}” finishes (${new Date(c.predFinish).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}) — that predecessor isn't done.`);
+          const when = new Date(c.predFinish).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+          const what = c.link.type === "SS" || c.link.type === "SF" ? "starts" : "finishes";
+          w.push(`“${t.name}” would start earlier than its link to “${c.pred.name}” allows (${what}${c.link.lagHours ? ` + ${c.link.lagHours} h` : ""} — ${when}), and that task isn't done.`);
         }
       }
     }

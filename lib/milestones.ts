@@ -59,6 +59,7 @@ interface MilestoneRow {
   duration_hours: number | null;
   attributes: Record<string, string | number | boolean | null> | null;
   depends_on: string[] | null;
+  link_types?: Record<string, { type: "FS" | "SS" | "FF" | "SF"; lagHours: number }> | null;
   baseline_start_at: string | null;
   baseline_finish_at: string | null;
   baseline_set_at: string | null;
@@ -110,6 +111,7 @@ function rowToMilestone(r: MilestoneRow): Milestone {
     durationHours: r.duration_hours != null ? Number(r.duration_hours) : null,
     attributes: r.attributes ?? {},
     dependsOn: Array.isArray(r.depends_on) ? r.depends_on : [],
+    linkTypes: r.link_types ?? null,
     baselineStartAt: r.baseline_start_at,
     baselineFinishAt: r.baseline_finish_at,
     baselineSetAt: r.baseline_set_at,
@@ -221,7 +223,7 @@ export type MilestonePatch = Partial<Pick<Milestone,
   | "linkedRevisionLabel" | "linkedTicketId" | "shift"
   | "workOrderRef" | "responsibleParty" | "responsibleKind" | "responsibleOrg"
   | "actualParty" | "actualKind" | "actualOrg" | "location" | "durationHours"
-  | "attributes" | "dependsOn" | "responsibleUserId" | "responsibleUserName"
+  | "attributes" | "dependsOn" | "linkTypes" | "responsibleUserId" | "responsibleUserName"
 >>;
 
 export interface UpdateMilestoneInput {
@@ -246,6 +248,7 @@ const PATCH_COLUMN: Record<string, string> = {
   actualParty: "actual_party", actualKind: "actual_kind", actualOrg: "actual_org",
   location: "location", durationHours: "duration_hours", attributes: "attributes",
   dependsOn: "depends_on",
+  linkTypes: "link_types",
 };
 
 export async function updateMilestone(input: UpdateMilestoneInput): Promise<Milestone> {
@@ -1091,6 +1094,66 @@ export interface ImportResult {
   updated: number;
   skipped: number;
   errors: string[];
+  /** Rows this import created (Undo removes them). */
+  insertedIds?: string[];
+}
+
+/** The whole schedule of a project as stored — taken just before an
+ *  import so the import can be undone exactly. */
+export interface ScheduleSnapshot { rows: MilestoneRow[]; notes: MilestoneNoteRow[] }
+
+export async function snapshotSchedule(orgId: string, projectId: string): Promise<ScheduleSnapshot> {
+  const { rows, error } = await fetchAllRows<MilestoneRow>((from, to) => supabase.from("milestones").select("*")
+    .eq("org_id", orgId).eq("project_id", projectId).order("id").range(from, to));
+  if (error) throw new Error(`Couldn't take a copy of the schedule first: ${error}`);
+  const notes: MilestoneNoteRow[] = [];
+  const ids = rows.map((r) => r.id);
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const { rows: n } = await fetchAllRows<MilestoneNoteRow>((from, to) => supabase.from("milestone_notes").select("*").in("milestone_id", chunk).order("id").range(from, to));
+    notes.push(...n);
+  }
+  return { rows, notes };
+}
+
+/** Put the schedule back as it was before an import. A merge is undone in
+ *  place — the new rows removed, the updated ones written back — so the
+ *  tasks keep their ids, comments and progress history. A replace (which
+ *  deleted everything first) brings the old tasks back with their
+ *  comments. */
+export async function undoImport(input: {
+  orgId: string; projectId: string; snapshot: ScheduleSnapshot; insertedIds: string[]; replaced: boolean;
+  actorUserId: string; actorUserEmail?: string;
+}): Promise<void> {
+  const { snapshot } = input;
+  // Remove what the import added.
+  const added = input.replaced
+    ? (await fetchAllRows<{ id: string }>((from, to) => supabase.from("milestones").select("id")
+        .eq("org_id", input.orgId).eq("project_id", input.projectId).order("id").range(from, to))).rows.map((r) => r.id)
+    : input.insertedIds;
+  const old = new Set(snapshot.rows.map((r) => r.id));
+  const drop = input.replaced ? added : added.filter((id) => !old.has(id));
+  for (let i = 0; i < drop.length; i += 200) {
+    const { error } = await supabase.from("milestones").delete().in("id", drop.slice(i, i + 200));
+    if (error) throw new Error(error.message);
+  }
+  if (input.replaced) {
+    await restoreDeletedMilestones({ rows: snapshot.rows, notes: snapshot.notes, orphans: [] });
+  } else {
+    // Write every pre-import row back as it was (parents first is not
+    // needed: they all still exist).
+    for (const r of snapshot.rows) {
+      const { id, created_at: _c, ...rest } = r as MilestoneRow & { created_at?: string };
+      void _c;
+      const { error } = await supabase.from("milestones").update(rest).eq("id", id);
+      if (error) throw new Error(error.message);
+    }
+  }
+  await logAuditAction({
+    action: "SCHEDULE_IMPORT_UNDONE", resourceType: "project", resourceId: input.projectId,
+    orgId: input.orgId, userId: input.actorUserId, userEmail: input.actorUserEmail,
+    details: { removed: drop.length, restored: snapshot.rows.length, replaced: input.replaced },
+  }).catch(() => undefined);
 }
 
 export async function importGhostMilestones(input: ImportGhostMilestonesInput): Promise<ImportResult> {
@@ -1221,6 +1284,8 @@ export interface ParsedMilestoneRow {
   /** External refs of predecessor rows (finish-to-start). Resolved to ids
    *  in pass 3 once every row has an id. */
   dependsOnExternalRefs?: string[];
+  /** Link type and lag per predecessor externalRef (missing = finish-to-start). */
+  linksByRef?: Record<string, { type: "FS" | "SS" | "FF" | "SF"; lagHours: number }>;
   // Rich execution fields extracted from the source schedule.
   workOrderRef?: string | null;
   responsibleParty?: string | null;
@@ -1515,19 +1580,30 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
 
     // Pass 3: resolve finish-to-start dependencies (predecessor external refs
     // → ids). Degrades silently if the depends_on column isn't migrated yet.
-    const depUpdates: Array<{ id: string; depends_on: string[] }> = [];
+    // Link types (start-to-start, lags…) come along keyed by predecessor.
+    const depUpdates: Array<{ id: string; depends_on: string[]; link_types: Record<string, { type: "FS" | "SS" | "FF" | "SF"; lagHours: number }> | null }> = [];
     for (const r of input.rows) {
       if (!r.externalRef || !r.dependsOnExternalRefs?.length) continue;
       const id = refToId.get(r.externalRef);
       if (!id) continue;
-      const predIds = r.dependsOnExternalRefs
-        .map((ref) => refToId.get(ref))
-        .filter((x): x is string => !!x && x !== id);
-      if (predIds.length > 0) depUpdates.push({ id, depends_on: predIds });
+      const predIds: string[] = [];
+      const links: Record<string, { type: "FS" | "SS" | "FF" | "SF"; lagHours: number }> = {};
+      for (const ref of r.dependsOnExternalRefs) {
+        const pid = refToId.get(ref);
+        if (!pid || pid === id) continue;
+        predIds.push(pid);
+        const l = r.linksByRef?.[ref];
+        if (l && (l.type !== "FS" || l.lagHours)) links[pid] = l;
+      }
+      if (predIds.length > 0) depUpdates.push({ id, depends_on: predIds, link_types: Object.keys(links).length ? links : null });
     }
     if (depUpdates.length > 0) {
       await Promise.all(depUpdates.map(async (u) => {
-        const res = await supabase.from("milestones").update({ depends_on: u.depends_on }).eq("id", u.id);
+        let res = await supabase.from("milestones").update({ depends_on: u.depends_on, link_types: u.link_types }).eq("id", u.id);
+        if (res.error && looksLikeUnknownColumn(res.error.message)) {
+          // No link_types column yet: keep the links as finish-to-start.
+          res = await supabase.from("milestones").update({ depends_on: u.depends_on }).eq("id", u.id);
+        }
         if (res.error && !looksLikeUnknownColumn(res.error.message)) {
           result.errors.push(`Dependencies for ${u.id}: ${res.error.message}`);
         }
@@ -1572,6 +1648,7 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
     }
   }
 
+  result.insertedIds = insertedIds;
   return result;
 }
 

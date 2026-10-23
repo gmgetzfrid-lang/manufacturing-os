@@ -17,6 +17,7 @@ import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { effectiveWeight, leafPercent, roundPct, type ProgressInfo } from "@/lib/scheduleProgress";
 import { dayKey, dayKeyToMs, wallClock, wallClockToMs, addDays, dayDiff, hasTimeOfDay } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
+import { blocksStart, linkOf } from "@/lib/scheduleLinks";
 
 export type ShiftKind = "day" | "night";
 
@@ -468,6 +469,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     return prev && finishMsOf(prev) <= startMsOf(m) + 3_600_000 ? [prev] : [];
   };
   const doneM = (m: Milestone) => m.status === "completed" || pctOf(m) >= 100;
+  const startedM = (m: Milestone) => doneM(m) || m.status === "in_progress" || pctOf(m) > 0;
 
   const rowFor = (m: Milestone, win: ShiftWindow): ShiftRow => {
     const chain = pathOf(m);
@@ -493,7 +495,11 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       hoursLeft: Math.round(hours * (1 - Math.min(100, Math.max(0, percent)) / 100) * 10) / 10,
       overdue: !finished && Number.isFinite(due) && due <= now,
       lateStart: !finished && percent <= 0 && m.status !== "in_progress" && Number.isFinite(s) && s < now,
-      waitingOn: finished ? [] : predecessorsOf(m).filter((p) => !doneM(p)).map((p) => ({ id: p.id ?? p.name, name: p.name })),
+      // Waiting = a link that stops it starting: finish-to-start until the
+      // other is done, start-to-start until it has started.
+      waitingOn: finished ? [] : predecessorsOf(m)
+        .filter((p) => blocksStart(linkOf(m.linkTypes, p.id ?? ""), { done: doneM(p), started: startedM(p) }))
+        .map((p) => ({ id: p.id ?? p.name, name: p.name })),
       work: workShiftOf(m, tz, times),
       expectedPct: Math.round(expectedFraction(m, now, tz, times) * 100),
       pace: paceOf(m, percent, now, tz, times),
@@ -604,7 +610,10 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   const horizonEnd = nextShift(nextShift(next, tz, times), tz, times).end;
   const stretch = leaves
     .filter((m) => m.id && !mustIds.has(m.id) && !doneIds.has(m.id) && !held(m) && startMsOf(m) >= next.end && startMsOf(m) < horizonEnd)
-    .filter((m) => (m.dependsOn ?? []).every((d) => !byId.has(d) || doneIds.has(d) || mustIds.has(d)))
+    .filter((m) => (m.dependsOn ?? []).every((d) => {
+      const p = byId.get(d);
+      return !p || doneIds.has(d) || mustIds.has(d) || !blocksStart(linkOf(m.linkTypes, d), { done: doneM(p), started: startedM(p) });
+    }))
     .map((m) => rowFor(m, next))
     .filter(forNext)
     .sort((a, b) => Number(b.critical) - Number(a.critical) || cmp(a, b))

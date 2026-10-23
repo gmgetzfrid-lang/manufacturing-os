@@ -51,7 +51,7 @@ describe("the update says what happened, in as few words as it takes", () => {
   it("one row per task: % done, the NEXT step, and whether it's on plan", () => {
     const table = sections.find((s) => s.id === "last")!.blocks.find((b) => b.k === "table")!;
     if (table.k !== "table") throw new Error();
-    expect(table.head).toEqual(["Task", "% complete", "Next step", "Status"]);
+    expect(table.head).toEqual(["Task", "Done / planned now", "Next step", "Status"]);
     const cells = table.rows.map((r) => r.map((c) => (typeof c === "string" ? c : c.t)));
     const row = (name: string) => cells.find((r) => r[0] === name)!;
     // E-606: two steps done, Retube planned tomorrow — on its way, not unfinished.

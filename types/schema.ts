@@ -504,6 +504,9 @@ export interface Milestone {
   /** Explicit predecessor task ids (finish-to-start): this task can't start
    *  until all of them finish. Empty/undefined = no dependencies. */
   dependsOn?: string[] | null;
+  /** How it waits on each predecessor (start-to-start, lag…): predecessor
+   *  id → link. Missing = finish-to-start, no lag. */
+  linkTypes?: Record<string, { type: "FS" | "SS" | "FF" | "SF"; lagHours: number }> | null;
   /** Approved-plan baseline. NULL until a baseline is captured; the
    *  live plannedStartAt/plannedAt drift from these. */
   baselineStartAt?: Timestamp | null;

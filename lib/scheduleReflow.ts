@@ -1,4 +1,5 @@
 import { addDays, dayDiff, DEFAULT_SCHEDULE_TZ, hasTimeOfDay, startOfDay } from "@/lib/scheduleTz";
+import { earliestStart, linkOf, type LinkMap } from "@/lib/scheduleLinks";
 // lib/scheduleReflow.ts
 //
 // The math behind on-the-fly rescheduling in the Execution views.
@@ -34,9 +35,10 @@ export interface ReflowNode {
    *  slips is taking LONGER → extend; everything else is just waiting
    *  → defer). Optional so existing callers keep working. */
   status?: string;
-  /** Predecessor task ids (finish-to-start): this task can't start until
-   *  every one of these finishes. Optional. */
+  /** Predecessor task ids: this task waits on each of these. Optional. */
   dependsOn?: string[] | null;
+  /** How it waits on each (start-to-start, lag…); missing = finish-to-start. */
+  links?: LinkMap | null;
   /** Explicitly pin this node's dates (an ACTUAL). When omitted, a
    *  `status === "completed"` node is treated as locked. Locked tasks are
    *  never moved by reflow / cascade / sequencing — exactly like MS Project
@@ -406,12 +408,19 @@ export function cascadeDependents(nodes: ReflowNode[], changedIds: string[], tz:
       // tasks are done, only the remaining ones reschedule" rule.
       if (isLocked(s)) continue;
       let req = -Infinity, byDay = false;
+      const ss = start.get(sid)!, sf = finish.get(sid)!;
+      const succLen = workEnd(ss, sf, tz) - ss;
       for (const pred of s.dependsOn ?? []) {
         if (!finish.has(pred)) continue;
         const ps = start.get(pred)!, pf = finish.get(pred)!;
-        const end = workEnd(ps, pf, tz);
-        if (end > req) { req = end; byDay = isDateOnly(ps, pf, tz); }
-        else if (end === req && isDateOnly(ps, pf, tz)) byDay = true;
+        // Each link type (finish-to-start, start-to-start, …, with its lag)
+        // gives the earliest this task may start.
+        const link = linkOf(s.links, pred);
+        const at = earliestStart(link, { start: ps, end: workEnd(ps, pf, tz) }, succLen);
+        // Whole days when either end is date-only and there's no hourly lag.
+        const dayish = (isDateOnly(ps, pf, tz) || isDateOnly(ss, sf, tz)) && link.lagHours % 24 === 0;
+        if (at > req) { req = at; byDay = dayish; }
+        else if (at === req && dayish) byDay = true;
       }
       if (!Number.isFinite(req)) continue;
       if (start.get(sid)! < req) {

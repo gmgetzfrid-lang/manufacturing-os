@@ -126,6 +126,7 @@ export const ORG_SCOPED_TABLES = [
   "markup_requests",
   "milestones",
   "milestone_notes",
+  "milestone_progress_log",
 
   // Equipment + operational scope
   "assets",

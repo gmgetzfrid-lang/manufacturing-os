@@ -12,6 +12,7 @@
 // Pure helpers over the milestone list; the views decide how to show
 // them. Only leaves count — parents roll up.
 
+import { earliestStart, linkOf, type LinkSpec } from "@/lib/scheduleLinks";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 
@@ -68,13 +69,17 @@ export function predecessorConflicts(
   task: Milestone,
   newStartMs: number,
   byId: Map<string, Milestone>,
-): Array<{ pred: Milestone; predFinish: number }> {
-  const out: Array<{ pred: Milestone; predFinish: number }> = [];
+): Array<{ pred: Milestone; predFinish: number; link: LinkSpec }> {
+  const out: Array<{ pred: Milestone; predFinish: number; link: LinkSpec }> = [];
+  const len = finishMsOf(task) - startMsOf(task);
   for (const id of task.dependsOn ?? []) {
     const p = byId.get(id);
     if (!p || isDone(p)) continue;
-    const pf = finishMsOf(p);
-    if (Number.isFinite(pf) && pf > newStartMs) out.push({ pred: p, predFinish: pf });
+    // The earliest this task may start under its link to `p` (finish-to-
+    // start, start-to-start…, with any lag): "predFinish" is that moment.
+    const link = linkOf(task.linkTypes, id);
+    const at = earliestStart(link, { start: startMsOf(p), end: finishMsOf(p) }, Number.isFinite(len) ? len : 0);
+    if (Number.isFinite(at) && at > newStartMs) out.push({ pred: p, predFinish: at, link });
   }
   return out.sort((a, b) => b.predFinish - a.predFinish);
 }

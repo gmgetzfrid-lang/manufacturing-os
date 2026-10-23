@@ -82,6 +82,7 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "library_views", migration: "20260602_documents_library_super.sql" },
   { table: "markup_requests", migration: "20260527_projects_and_collaboration.sql" },
   { table: "milestone_notes", migration: "20260705_milestones_execution_richdata.sql" },
+  { table: "milestone_progress_log", migration: "20261028_milestone_progress_log.sql" },
   { table: "milestones", migration: "20260614_phase7_milestones.sql" },
   { table: "notes", migration: "20260617_phase9_notes.sql" },
   { table: "notification_preferences", migration: "20260529_phase_b_notifications.sql" },

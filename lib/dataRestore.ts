@@ -84,6 +84,9 @@ const norm = (s: string | undefined | null) => (s ?? "").trim().toLowerCase();
 // Tables never imported by blind insert — identity/auth/config is handled by
 // reconciliation, not copied over the top of the live workspace.
 const SKIP_TABLES: Record<string, string> = {
+  // Written only by its trigger: restoring the tasks re-creates their
+  // starting points; the old change history is kept in the backup file.
+  milestone_progress_log: "Rebuilt by the database as tasks are restored (history stays in the backup file).",
   orgs: "target workspace already exists; org name is reconciled separately",
   org_members: "membership is rebuilt from the user reconciliation",
   users: "user profiles are created via the additive-by-email reconciliation",

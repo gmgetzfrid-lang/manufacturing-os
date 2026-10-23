@@ -168,7 +168,7 @@ describe("the management email judges a crew on its own work", () => {
     const secs = turnoverUpdate(r, f, { pctOf: () => 45, finishOf: () => ms(at("2026-10-27", "04:00")), stepsOf: () => steps });
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: secs });
     const last = text.split("\n").find((l) => l.includes("V-500 — 45%"))!;
-    expect(last).toMatch(/Overdue — was due/);   // its own day step
+    expect(last).toMatch(/Overdue — next step was due/);   // its own day step
     expect(last).not.toMatch(/Blocked/);         // the night step is under Needs a decision
     expect(text).toMatch(/NEEDS A DECISION\n.*Night step · Blocked · permit/);
   });
@@ -216,5 +216,66 @@ describe("CSV rows without ids keep their identity when a row is inserted", () =
     const refOf = (rs: typeof a.rows, n: string) => rs.find((r) => r.name === n)!.externalRef;
     expect(refOf(b.rows, "Hydroblast")).toBe(refOf(a.rows, "Hydroblast"));
     expect(refOf(b.rows, "Pull bundle")).toBe(refOf(a.rows, "Pull bundle"));
+  });
+});
+
+import { scheduleAt, type ProgressLogRow } from "@/lib/progressHistory";
+
+describe("an earlier shift shows progress as it stood then", () => {
+  const t = mk({ id: "t", name: "Retube", plannedStartAt: at("2026-10-26", "06:00"), plannedAt: at("2026-10-27", "16:00"), status: "in_progress", percentComplete: 80 });
+  const log: ProgressLogRow[] = [
+    { milestone_id: "t", at: at("2026-10-20", "00:00"), old_status: "planned", old_percent: 0, new_status: "planned", new_percent: 0 },
+    { milestone_id: "t", at: at("2026-10-26", "10:00"), old_status: "planned", old_percent: 0, new_status: "in_progress", new_percent: 30 },
+    { milestone_id: "t", at: at("2026-10-27", "09:00"), old_status: "in_progress", old_percent: 30, new_status: "in_progress", new_percent: 80 },
+  ];
+  it("at the end of the first day shift it was 30%, not today's 80%", () => {
+    const r = scheduleAt([t], log, ms(at("2026-10-26", "17:30")));
+    expect(r.milestones[0].percentComplete).toBe(30);
+    expect(r.complete).toBe(true);
+  });
+  it("before its first change it was planned at 0%", () => {
+    expect(scheduleAt([t], log, ms(at("2026-10-26", "08:00"))).milestones[0]).toMatchObject({ status: "planned", percentComplete: 0 });
+  });
+  it("a completion back-dated into the shift counts for that shift", () => {
+    const done = { ...t, status: "completed", percentComplete: 100, actualAt: at("2026-10-27", "03:00") } as Milestone;
+    const log2 = [...log, { milestone_id: "t", at: at("2026-10-27", "07:00"), old_status: "in_progress", old_percent: 80, new_status: "completed", new_percent: 100 } as ProgressLogRow];
+    expect(scheduleAt([done], log2, ms(at("2026-10-27", "05:30"))).milestones[0]).toMatchObject({ status: "completed", percentComplete: 100 });
+  });
+  it("says when the log doesn't reach back that far", () => {
+    expect(scheduleAt([t], log, ms(at("2026-10-19", "12:00"))).complete).toBe(false);
+  });
+});
+
+import { parseLinkToken, earliestStart } from "@/lib/scheduleLinks";
+
+describe("link types and lags are honoured", () => {
+  const n = (id: string, s: string, f: string, deps: string[] = [], links?: ReflowNode["links"]): ReflowNode => ({ id, plannedStartAt: s, plannedAt: f, dependsOn: deps, links });
+  it("start-to-start + 2 h: starts two hours after the other starts, not after it ends", () => {
+    const a = n("a", at("2026-10-15", "08:00"), at("2026-10-15", "16:00"));
+    const b = n("b", at("2026-10-15", "06:00"), at("2026-10-15", "09:00"), ["a"], { a: { type: "SS", lagHours: 2 } });
+    const out = cascadeDependents([a, b], ["a"], CHI).find((x) => x.id === "b")!;
+    expect(clockLabel(ms(out.plannedStartAt), CHI)).toBe("10:00");
+  });
+  it("finish-to-start + 12 h cure: starts 12 h after it ends", () => {
+    const a = n("a", at("2026-10-15", "08:00"), at("2026-10-15", "16:00"));
+    const b = n("b", at("2026-10-15", "17:00"), at("2026-10-15", "20:00"), ["a"], { a: { type: "FS", lagHours: 12 } });
+    const out = cascadeDependents([a, b], ["a"], CHI).find((x) => x.id === "b")!;
+    expect(out.plannedStartAt).toBe(at("2026-10-16", "04:00"));
+  });
+  it("finish-to-finish: finishes no earlier than the other", () => {
+    expect(earliestStart({ type: "FF", lagHours: 0 }, { start: 0, end: 10 * 3600000 }, 4 * 3600000)).toBe(6 * 3600000);
+  });
+  it("reads MS Project / CSV predecessor text", () => {
+    expect(parseLinkToken("5SS+1d")).toEqual({ id: "5", link: { type: "SS", lagHours: 24 } });
+    expect(parseLinkToken("3FF-4h")).toEqual({ id: "3", link: { type: "FF", lagHours: -4 } });
+    expect(parseLinkToken("7")).toEqual({ id: "7", link: { type: "FS", lagHours: 0 } });
+  });
+  it("a start-to-start successor isn't waiting once the other has started", () => {
+    const a = mk({ id: "a", name: "Paint", plannedStartAt: at("2026-10-26", "06:00"), plannedAt: at("2026-10-26", "16:00"), status: "in_progress", percentComplete: 20 });
+    const b = mk({ id: "b", name: "Blast", plannedStartAt: at("2026-10-26", "08:00"), plannedAt: at("2026-10-26", "12:00"), dependsOn: ["a"], linkTypes: { a: { type: "SS", lagHours: 0 } } });
+    const shift = shiftWindow("2026-10-26", "day", CHI);
+    const r = buildShiftReport({ milestones: [a, b], tz: CHI, shift, now: ms(at("2026-10-26", "09:00")) });
+    const row = [...r.review.scheduled].find((x) => x.leaf.id === "b")!;
+    expect(row.waitingOn).toEqual([]);
   });
 });

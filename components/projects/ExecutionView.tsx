@@ -49,8 +49,9 @@ import { addDays as addDaysTz, dayDiff as dayDiffTz, dayKey, dayOfWeek, fmtInTz,
 import { needsFutureConfirm } from "@/lib/scheduleRules";
 import { startMsOf as plannedStartMsOf } from "@/lib/calendarPlacement";
 import { effectiveSpans, byStart, spanLabel, barGeometry, xAt, hourStep, startOf as timedStart, finishOf as timedFinish } from "@/lib/scheduleTime";
-import { isOverdue, workShiftOf, type ShiftTimes, type WorkShift } from "@/lib/shiftReport";
+import { isOverdue, standingOf, workShiftOf, type ShiftTimes, type WorkShift } from "@/lib/shiftReport";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
+import { linkOf } from "@/lib/scheduleLinks";
 import ShiftMark from "@/components/projects/ShiftMark";
 import BulkEditModal from "@/components/projects/BulkEditModal";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -147,7 +148,9 @@ export default function ExecutionView({
   // edge instead of a hardcoded guess. Re-measures on resize.
   const [viewportW, setViewportW] = useState(0);
   // The frozen task column gives way on a phone so the chart stays usable.
-  const leftW = viewportW > 0 && viewportW < 640 ? 168 : LEFT_W;
+  const compact = viewportW > 0 && viewportW < 640;
+  const leftW = compact ? 168 : LEFT_W;
+  const [showCards, setShowCards] = useState(false);
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -581,6 +584,7 @@ export default function ExecutionView({
     plannedAt: m.plannedAt as string,
     status: m.status,
     dependsOn: m.dependsOn ?? null,
+    links: m.linkTypes ?? null,
   })), [items]);
 
   // After any edit, push dependents forward (finish-to-start) so the schedule
@@ -843,16 +847,24 @@ export default function ExecutionView({
         </div>
       )}
 
-      <SchedulePulse
-        milestones={items}
-        shiftTimes={shiftTimes}
-        onShowOverdue={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, overdueOnly: true, query: f.query })); }}
-        onShowBlocked={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, blockedOnly: true, query: f.query })); }}
-      />
+      {/* On a phone the summary folds to one line so the board is on screen. */}
+      {compact && !showCards ? (
+        <CompactSummary items={items} now={nowDate} onOpen={() => setShowCards(true)} />
+      ) : (
+        <>
+          <SchedulePulse
+            milestones={items}
+            shiftTimes={shiftTimes}
+            onShowOverdue={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, overdueOnly: true, query: f.query })); }}
+            onShowBlocked={() => { setLayout("timeline"); setFilter((f) => ({ ...EMPTY_FILTER, blockedOnly: true, query: f.query })); }}
+          />
 
-      <div className="flex items-center gap-2">
-        <SummaryStrip items={items} now={nowDate} />
-      </div>
+          <div className="flex items-center gap-2">
+            <SummaryStrip items={items} now={nowDate} />
+          </div>
+          {compact && <button onClick={() => setShowCards(false)} className="text-[11px] font-bold text-[var(--color-text-muted)]">Fold the summary</button>}
+        </>
+      )}
 
       <div className="flex items-center gap-2 flex-wrap">
         <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-lg p-0.5 gap-0.5">
@@ -1132,6 +1144,24 @@ function statusWord(s: MilestoneStatus): string {
 }
 
 // ─── Summary strip ─────────────────────────────────────────────
+
+/** The summary in one line, for a phone: tap for the full cards. */
+function CompactSummary({ items, now, onOpen }: { items: Milestone[]; now: Date; onOpen: () => void }) {
+  const tz = useScheduleTz();
+  const r = useMemo(() => computeExecutionReport(items, { tz, now }), [items, tz, now]);
+  const standing = standingOf(r.pctComplete, r.expectedPct);
+  return (
+    <button onClick={onOpen} className="w-full flex items-center gap-2 flex-wrap rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[12px] text-left">
+      <b className="text-[var(--color-text)]">{r.pctComplete}%</b>
+      <span className={standing === "behind" ? "font-bold text-rose-700 dark:text-rose-300" : standing === "ahead" ? "font-bold text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text-muted)]"}>
+        {standing === "on track" ? "on track" : standing} · plan {r.expectedPct}%
+      </span>
+      {r.overdue > 0 && <span className="font-bold text-rose-700 dark:text-rose-300">{r.overdue} overdue</span>}
+      {r.blocked + r.onHold > 0 && <span className="font-bold text-amber-700 dark:text-amber-300">{r.blocked + r.onHold} stuck</span>}
+      <span className="ml-auto text-[11px] text-[var(--color-text-faint)]">Details</span>
+    </button>
+  );
+}
 
 function SummaryStrip({ items, now }: {
   items: Milestone[]; now: Date;
@@ -1717,11 +1747,14 @@ function DependencyArrows({ rows, byId, domain, pxPerDay, spanOf }: {
       drawn.add(key);
       const pred = geom(pi);
       const succ = geom(si);
-      // Elbow connector: out of the predecessor's finish, down/up to the
-      // successor's row, into its start edge (arrowhead).
-      const x1 = pred.rightX, y1 = pred.midY;
-      const x2 = succ.leftX, y2 = succ.midY;
-      const outX = x1 + 7;
+      // Elbow connector from the end the link ties: finish-to-start leaves
+      // the predecessor's finish into the successor's start; start-to-start
+      // leaves its start; finish-to-finish ends at the successor's finish.
+      const type = linkOf(succMs.linkTypes, predId).type;
+      const fromStart = type === "SS" || type === "SF", toFinish = type === "FF" || type === "SF";
+      const x1 = fromStart ? pred.leftX : pred.rightX, y1 = pred.midY;
+      const x2 = toFinish ? succ.rightX : succ.leftX, y2 = succ.midY;
+      const outX = fromStart ? x1 - 7 : x1 + 7;
       const d = `M ${x1} ${y1} L ${outX} ${y1} L ${outX} ${y2} L ${x2} ${y2}`;
       paths.push(
         <path

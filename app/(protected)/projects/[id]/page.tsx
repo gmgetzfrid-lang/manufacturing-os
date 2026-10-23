@@ -24,6 +24,7 @@ import ProjectDocumentsCard from "@/components/projects/ProjectDocumentsCard";
 import ProjectScopePanel from "@/components/projects/ProjectScopePanel";
 import EditProjectModal from "@/components/projects/EditProjectModal";
 import { ScheduleTzProvider } from "@/components/projects/ScheduleTzContext";
+import TimeZoneNudge from "@/components/projects/TimeZoneNudge";
 import CostsTab from "@/components/projects/CostsTab";
 import QualityTab from "@/components/projects/QualityTab";
 import ProjectCoach from "@/components/projects/ProjectCoach";
@@ -538,6 +539,7 @@ export default function ProjectDetailPage() {
         )}
         {tab === "schedule" && uid && (
           <ScheduleTzProvider timeZone={project.timezone}>
+            <TimeZoneNudge projectId={project.id!} timezone={project.timezone} canManage={!!canManage} userId={uid} onFixed={() => void refresh()} />
             <ScheduleTab
               orgId={project.orgId}
               projectId={project.id!}

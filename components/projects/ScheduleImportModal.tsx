@@ -28,7 +28,7 @@ import {
   Columns3, ArrowRight, Link2,
 } from "lucide-react";
 import { parseScheduleFileFromBytes, type ParseResult, type ScheduleFormat } from "@/lib/scheduleParsers";
-import { importMilestonesFromParsed, clearProjectSchedule } from "@/lib/milestones";
+import { importMilestonesFromParsed, clearProjectSchedule, snapshotSchedule, undoImport, type ScheduleSnapshot, type ImportResult } from "@/lib/milestones";
 import type { MilestoneSource } from "@/types/schema";
 import { Select } from "@/components/ui/Field";
 import Spinner from "@/components/ui/Spinner";
@@ -90,6 +90,18 @@ export default function ScheduleImportModal({
   const [importing, setImporting] = useState(false);
   // Wipe the project's current schedule before writing the file's rows.
   const [replaceExisting, setReplaceExisting] = useState(false);
+  const [snapshot, setSnapshot] = useState<ScheduleSnapshot | null>(null);
+  const [replaced, setReplaced] = useState(false);
+  const [undoing, setUndoing] = useState<"idle" | "busy" | "done">("idle");
+  const [undoError, setUndoError] = useState<string | null>(null);
+  const undo = async () => {
+    if (!snapshot || !importResult) return;
+    setUndoing("busy"); setUndoError(null);
+    try {
+      await undoImport({ orgId, projectId, snapshot, insertedIds: importResult.insertedIds ?? [], replaced, actorUserId: userId, actorUserEmail: userEmail });
+      setUndoing("done");
+    } catch (e) { setUndoError((e as Error).message); setUndoing("idle"); }
+  };
   // What a merge would do — matched the way the import matches: by the
   // file's task ids, or for files keyed by name, by name.
   const mergePlan = useMemo(() => {
@@ -109,7 +121,7 @@ export default function ScheduleImportModal({
     const kept = existing.length - used.size - legacyUsed;
     return { updated, added: parseResult.rows.length - updated, kept: Math.max(0, kept) };
   }, [parseResult, existing]);
-  const [importResult, setImportResult] = useState<{ inserted: number; updated: number; skipped: number; errors: string[] } | null>(null);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
   // Per-column review config: include/exclude, rename, or map to a first-class
   // field. Lets the user shape ANY ingested column before the final import.
   const [colConfig, setColConfig] = useState<Record<string, { include: boolean; rename: string; mapTo: string }>>({});
@@ -181,6 +193,10 @@ export default function ScheduleImportModal({
     if (!parseResult || parseResult.rows.length === 0) return;
     setImporting(true);
     try {
+      // A copy of the schedule as it is, so the import can be undone.
+      if ((existingCount ?? 0) > 0) setSnapshot(await snapshotSchedule(orgId, projectId));
+      else setSnapshot({ rows: [], notes: [] });
+      setReplaced(replaceExisting && (existingCount ?? 0) > 0);
       if (replaceExisting && (existingCount ?? 0) > 0) {
         await clearProjectSchedule({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
       }
@@ -211,6 +227,7 @@ export default function ScheduleImportModal({
           externalRef: r.externalRef,
           parentExternalRef: r.parentExternalRef,
           dependsOnExternalRefs: r.dependsOnExternalRefs,
+          linksByRef: r.linksByRef,
           outlineLevel: r.outlineLevel,
           wbs: r.wbs,
           isSummary: r.isSummary,
@@ -233,12 +250,9 @@ export default function ScheduleImportModal({
       // can verify what landed. Caught a real bug where users
       // re-imported into a fresh project and saw nothing because
       // every row was an update to a different project's rows.
-      const cleanWin = res.errors.length === 0 && res.inserted > 0;
-      if (cleanWin) {
-        setTimeout(() => onDone(), 800);
-      }
+      // Stays open on the result, with Undo, until the person closes it.
     } finally { setImporting(false); }
-  }, [parseResult, orgId, projectId, userId, userName, userEmail, userRole, onDone, applyColConfig, tz, replaceExisting, existingCount]);
+  }, [parseResult, orgId, projectId, userId, userName, userEmail, userRole, applyColConfig, tz, replaceExisting, existingCount]);
 
   const canSubmit = !!parseResult && parseResult.rows.length > 0 && !importing;
   const previewRows = parseResult?.rows.slice(0, 8) ?? [];
@@ -483,6 +497,19 @@ export default function ScheduleImportModal({
                         <ul className="ml-5 list-disc">{importResult.errors.slice(0, 5).map((e, i) => <li key={i}>{e}</li>)}</ul>
                       </div>
                     )}
+                    {snapshot && (
+                      <div className="pt-1.5 flex items-center gap-2 flex-wrap">
+                        {undoing === "done" ? (
+                          <span className="font-bold text-emerald-700 dark:text-emerald-300">Import undone — the schedule is back as it was.</span>
+                        ) : (
+                          <button onClick={() => void undo()} disabled={undoing === "busy"}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-[var(--color-border-strong)] font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                            {undoing === "busy" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Undo this import
+                          </button>
+                        )}
+                        {undoError && <span className="text-rose-700 dark:text-rose-300">{undoError}</span>}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -514,7 +541,8 @@ export default function ScheduleImportModal({
         </div>
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2 shrink-0">
-          <button onClick={onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Close</button>
+          {/* After an import (or its undo) closing refreshes the schedule. */}
+          <button onClick={importResult ? onDone : onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">{importResult ? "Done" : "Close"}</button>
           {parseResult && parseResult.rows.length > 0 && !importResult && (
             <button
               onClick={submit}

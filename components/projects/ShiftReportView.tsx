@@ -33,7 +33,7 @@ import {
   Copy, Mail, FileText,
 } from "lucide-react";
 import type { Milestone } from "@/types/schema";
-import { leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
+import { buildProgressIndex, leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import {
   buildShiftReport, shiftWindow, nextShift, previousShift, defaultReviewShift, nextShiftWithWork, expectedByParent, paceOf, expectedFraction, workShiftOf, type Pace, type WorkShift,
@@ -47,6 +47,7 @@ import { toPlainText, toEmailHtml, type ExportBlock, type ExportDoc, type Export
 import { turnoverUpdate, withoutEmpty, noteLine } from "@/lib/managementUpdate";
 import { useShiftTimes, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
 import { latestNotes } from "@/lib/milestones";
+import { loadProgressLog, scheduleAt, type ProgressLogRow } from "@/lib/progressHistory";
 import { effectiveSpans } from "@/lib/scheduleTime";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 
@@ -64,7 +65,7 @@ const MEETINGS: Array<{ id: MeetingKind; label: string; Icon: typeof Rocket }> =
   { id: "closeout", label: "Close-out", Icon: Trophy },
 ];
 
-export default function ShiftReportView({ milestones, progress, criticalIds, projectId, projectName }: Props) {
+export default function ShiftReportView({ milestones: live, progress: liveProgress, criticalIds, projectId, projectName }: Props) {
   const tz = useScheduleTz();
   // The project's shift-change times — the same on every device.
   const times = useShiftTimes(projectId);
@@ -86,18 +87,42 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
   useEffect(() => { const id = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(id); }, []);
 
   const [meetingPick, setMeetingPick] = useState<MeetingKind | null>(null);
-  const meeting = meetingPick ?? defaultMeeting(milestones, now, progress);
+  const meeting = meetingPick ?? defaultMeeting(live, now, liveProgress);
 
   const [sel, setSel] = useState<{ dayKey: string; kind: "day" | "night" } | null>(null);
   const shift: ShiftWindow = useMemo(
-    () => (sel ? shiftWindow(sel.dayKey, sel.kind, tz, times) : defaultReviewShift(milestones, now, tz, times)),
-    [sel, now, tz, times, milestones],
+    () => (sel ? shiftWindow(sel.dayKey, sel.kind, tz, times) : defaultReviewShift(live, now, tz, times)),
+    [sel, now, tz, times, live],
   );
   const pick = (w: ShiftWindow) => setSel({ dayKey: w.dayKey, kind: w.kind });
 
   // "As of": now while the shift is under way; the shift's end once it is
   // over, and ALSO for a shift in the future so the page can be rehearsed.
   const asOf = now >= shift.start && now < shift.end ? now : shift.end;
+
+  // An earlier shift (before the one just ended) shows the job as it stood
+  // then, from the progress log: what was recorded by an hour after its
+  // end (late entries for the shift count). Without the log it reads
+  // against today's progress, and says so.
+  const pastShift = now > nextShift(shift, tz, times).end;
+  const [log, setLog] = useState<ProgressLogRow[] | null | undefined>(undefined);
+  useEffect(() => {
+    if (!pastShift || log !== undefined) return;
+    let alive = true;
+    loadProgressLog(projectId).then((l) => { if (alive) setLog(l); }).catch(() => { if (alive) setLog(null); });
+    return () => { alive = false; };
+  }, [pastShift, log, projectId]);
+  const recordedBy = shift.end + 3_600_000;
+  const history = useMemo(
+    () => (pastShift && log ? scheduleAt(live, log, recordedBy) : null),
+    [pastShift, log, live, recordedBy],
+  );
+  const milestones = history ? history.milestones : live;
+  const progress = useMemo(() => (history ? buildProgressIndex(history.milestones) : liveProgress), [history, liveProgress]);
+  const historyNote = !pastShift ? null
+    : history?.complete ? `progress as recorded by ${clockLabel(recordedBy, tz)} ${fmtInTz(recordedBy, tz, { month: "short", day: "numeric" })}`
+      : `progress as entered by now — the record doesn't reach back to this shift`;
+
   const report = useMemo(
     () => buildShiftReport({ milestones, progress, criticalIds, tz, times, shift, now: asOf }),
     [milestones, progress, criticalIds, tz, times, shift, asOf],
@@ -105,13 +130,13 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
   const kickoff = useMemo(() => buildKickoff({ milestones, progress, criticalIds, tz, times }), [milestones, progress, criticalIds, tz, times]);
   const closeout = useMemo(() => buildCloseout({ milestones, progress, criticalIds }), [milestones, progress, criticalIds]);
   const rehearsal = now < shift.start;
-  // An older shift reads against today's progress (progress isn't kept
-  // per shift): say so, so nobody reads it as how that shift ended.
-  const pastShift = now > nextShift(shift, tz, times).end;
   const jumpTarget = useMemo(() => (report.review.scheduled.length === 0 ? nextShiftWithWork(milestones, shift, tz, times) : null), [report.review.scheduled.length, milestones, shift, tz, times]);
   const byId = useMemo(() => { const m = new Map<string, Milestone>(); for (const x of milestones) if (x.id) m.set(x.id, x); return m; }, [milestones]);
 
-  const ctx = useMemo(() => makeCtx(tz, byId, progress), [tz, byId, progress]);
+  // Each main task's planned % by now — "on plan" or "behind", and "x% of
+  // y% planned" next to its progress.
+  const planByTask = useMemo(() => expectedByParent(milestones, asOf, tz, times), [milestones, asOf, tz, times]);
+  const ctx = useMemo(() => makeCtx(tz, byId, progress, planByTask), [tz, byId, progress, planByTask]);
 
   // The latest comment on each step ("sent out for calibration") — shown
   // as a quiet line under the step, here and in the copied update.
@@ -163,8 +188,6 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
 
   // When each main task really finishes: its last step (for "planned finish").
   const taskSpans = useMemo(() => effectiveSpans(milestones), [milestones]);
-  // Each main task's planned % by now — "on plan" or "behind" in the update.
-  const planByTask = useMemo(() => expectedByParent(milestones, asOf, tz, times), [milestones, asOf, tz, times]);
   // Each main task's steps and where each stands — for "next step" in the update.
   // Every step under a task — its sub-groups' too, as its % complete counts them.
   const stepsByTask = useMemo(() => {
@@ -200,7 +223,7 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
           detail: `${overall.actualPct}% vs ${overall.plannedPct}% plan` };
     return {
       kind, project: projectName ?? "Schedule", when,
-      asOf: `${ctx.DT(meeting === "turnover" ? asOf : now)} ${tzAbbrev(ctx.tz, now)}${meeting === "turnover" && rehearsal ? " · rehearsal — shift not started" : meeting === "turnover" && pastShift ? ` · progress as entered by ${ctx.DT(now)}` : ""}`,
+      asOf: `${ctx.DT(meeting === "turnover" ? asOf : now)} ${tzAbbrev(ctx.tz, now)}${meeting === "turnover" && rehearsal ? " · rehearsal — shift not started" : meeting === "turnover" && historyNote ? ` · ${historyNote}` : ""}`,
       status,
       // The update management reads, not the meeting's agenda: short
       // tables, one line per main task, and nothing that's empty.
@@ -218,7 +241,7 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
 
   const head = (print: boolean) => (
     <Masthead meeting={meeting} report={report} kickoff={kickoff} closeout={closeout} ctx={ctx} asOf={asOf} now={now}
-      rehearsal={rehearsal} pastShift={pastShift} projectName={projectName} print={print} />
+      rehearsal={rehearsal} historyNote={historyNote} projectName={projectName} print={print} />
   );
 
   return (
@@ -509,7 +532,7 @@ interface Ctx {
   group: (parentId: string | null, parentName: string | null, crumbs: string[], fallback: string) => TGroup;
 }
 
-function makeCtx(tz: string, byId: Map<string, Milestone>, progress?: Map<string, ProgressInfo>): Ctx {
+function makeCtx(tz: string, byId: Map<string, Milestone>, progress?: Map<string, ProgressInfo>, planOf?: Map<string, number>): Ctx {
   const D = (ms: number) => fmtInTz(ms, tz, { weekday: "short", month: "short", day: "numeric" });
   const DL = (ms: number) => fmtInTz(ms, tz, { weekday: "long", month: "long", day: "numeric" });
   const T = (ms: number) => clockLabel(ms, tz) || "0:00";
@@ -530,7 +553,7 @@ function makeCtx(tz: string, byId: Map<string, Milestone>, progress?: Map<string
         key: parentId ?? `solo:${fallback}`,
         title: parentName ?? "",
         crumbs: crumbs.join(" › "),
-        meta: [Number.isFinite(ps) && Number.isFinite(pf) ? span(ps, pf) : null, info ? `${info.leafDone}/${info.leafTotal} steps · ${info.percent}%` : null].filter(Boolean).join(" · "),
+        meta: [Number.isFinite(ps) && Number.isFinite(pf) ? span(ps, pf) : null, info ? `${info.leafDone}/${info.leafTotal} steps · ${info.percent}%${parentId && planOf?.get(parentId) != null ? ` of ${planOf.get(parentId)}% planned` : ""}` : null].filter(Boolean).join(" · "),
       };
     },
   };
@@ -1018,9 +1041,9 @@ function closeSection(title: string, signers: string[], sub = "Notes, actions an
 
 // ─── Masthead & footnote ─────────────────────────────────────────────
 
-function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehearsal, pastShift, projectName, print }: {
+function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehearsal, historyNote, projectName, print }: {
   meeting: MeetingKind; report: ShiftReport; kickoff: ReturnType<typeof buildKickoff>; closeout: ReturnType<typeof buildCloseout>;
-  ctx: Ctx; asOf: number; now: number; rehearsal: boolean; pastShift: boolean; projectName?: string; print: boolean;
+  ctx: Ctx; asOf: number; now: number; rehearsal: boolean; historyNote: string | null; projectName?: string; print: boolean;
 }) {
   const { overall, shift, next } = report;
   const standing = overall.standing;
@@ -1049,7 +1072,7 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
           <div className={`text-[11px] ${print ? "text-slate-700" : "text-slate-300"}`}>
             {when} · as of {c.T(meeting === "turnover" ? asOf : now)} {tzAbbrev(c.tz, now)}
             {rehearsal && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-amber-700 text-amber-800" : "bg-amber-400 text-slate-900"}`}>Rehearsal — shift not started</span>}
-            {pastShift && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold ${print ? "border border-slate-500 text-slate-700" : "bg-slate-700 text-slate-100"}`}>Earlier shift — progress as entered by {c.DT(now)}</span>}
+            {historyNote && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold ${print ? "border border-slate-500 text-slate-700" : "bg-slate-700 text-slate-100"}`}>Earlier shift — {historyNote}</span>}
           </div>
         </div>
         {pill && (

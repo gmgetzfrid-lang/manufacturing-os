@@ -1,6 +1,7 @@
 // lib/scheduleParsers.ts
 //
 // Parsers for the schedule-import path. Replaces the previous
+import { parseLinkToken, type LinkSpec } from "@/lib/scheduleLinks";
 import { naiveToIso, normalizeTimeZone } from "@/lib/scheduleTz";
 import { parseIsoDurationHours } from "@/lib/scheduleRules";
 // "paste CSV in a textarea" UX with real file support for the
@@ -43,6 +44,9 @@ export interface ParsedMilestone {
   /** externalRefs of PREDECESSOR rows (finish-to-start). Resolved to ids
    *  by the importer's dependency pass. */
   dependsOnExternalRefs?: string[];
+  /** How it waits on each predecessor (start-to-start, lag…), by the
+   *  predecessor's externalRef. Missing = finish-to-start, no lag. */
+  linksByRef?: Record<string, LinkSpec>;
   // ── Rich execution detail (optional; populated where the source
   //    carries it). Everything we can't map to a first-class field
   //    lands in `attributes` keyed by the source's own column label. ──
@@ -284,20 +288,19 @@ function parseMsProjectXml(text: string, tz: string): { rows: ParsedMilestone[];
     // Other link types (SS / FF / SF) and lags are kept as text on the
     // task — the schedule here links finish-to-start only — and counted
     // so the import says so instead of quietly changing the logic.
+    // MS Project link Type: 0 FF, 1 FS, 2 SF, 3 SS; LinkLag in tenths of a minute.
     const dependsOnExternalRefs: string[] = [];
-    const linkNotes: string[] = [];
+    const linksByRef: Record<string, LinkSpec> = {};
     for (const link of Array.from(t.getElementsByTagNameNS("*", "PredecessorLink"))) {
       const predUid = childText(link as Element, "PredecessorUID");
-      if (predUid) dependsOnExternalRefs.push(`msp-uid:${predUid}`);
+      if (!predUid) continue;
+      dependsOnExternalRefs.push(`msp-uid:${predUid}`);
       const type = Number(childText(link as Element, "Type") ?? "1");
       const lagMin = Number(childText(link as Element, "LinkLag") ?? "0") / 10;
-      if (predUid && ((Number.isFinite(type) && type !== 1) || (Number.isFinite(lagMin) && lagMin !== 0))) {
-        const kind = (["FF", "FS", "SF", "SS"] as const)[type] ?? "FS";
-        const lag = lagMin ? `${lagMin > 0 ? "+" : ""}${Math.round((lagMin / 60) * 10) / 10}h` : "";
-        linkNotes.push(`${kind}${lag} from UID ${predUid}`);
-      }
+      const kind = (["FF", "FS", "SF", "SS"] as const)[Number.isFinite(type) ? type : 1] ?? "FS";
+      const lagHours = Number.isFinite(lagMin) ? Math.round((lagMin / 60) * 100) / 100 : 0;
+      if (kind !== "FS" || lagHours) { linksByRef[`msp-uid:${predUid}`] = { type: kind, lagHours }; nonFsLinks++; }
     }
-    nonFsLinks += linkNotes.length;
 
     // Resource(s) responsible for this task.
     let responsibleParty: string | null = null;
@@ -321,7 +324,6 @@ function parseMsProjectXml(text: string, tz: string): { rows: ParsedMilestone[];
     if (isMilestone) attributes.milestone = "1"; // so the Gantt can draw a diamond
     const workRaw = childText(t, "Work"); // PT40H0M0S style → keep raw for reference
     if (workRaw) attributes.work = workRaw;
-    if (linkNotes.length) attributes["Link types"] = linkNotes.join("; ");
     // Real hours. Prefer <Work> (resourced effort) when it carries any, else
     // <Duration> (the schedule's own span in working time). Without this every
     // step weighed the same in the shift report's "hours behind / ahead".
@@ -347,6 +349,7 @@ function parseMsProjectXml(text: string, tz: string): { rows: ParsedMilestone[];
       isSummary,
       parentExternalRef,
       dependsOnExternalRefs: dependsOnExternalRefs.length > 0 ? dependsOnExternalRefs : undefined,
+      linksByRef: Object.keys(linksByRef).length ? linksByRef : undefined,
       responsibleParty,
       responsibleOrg,
       durationHours,
@@ -354,7 +357,7 @@ function parseMsProjectXml(text: string, tz: string): { rows: ParsedMilestone[];
     });
   }
   if (resourcesFound > 0) warnings.push(`Resources mapped onto ${resourcesFound} task${resourcesFound === 1 ? "" : "s"}.`);
-  if (nonFsLinks > 0) warnings.push(`${nonFsLinks} link${nonFsLinks === 1 ? " isn't" : "s aren't"} plain finish-to-start (start-to-start, finish-to-finish or a lag) — imported as finish-to-start; the original is kept in each task's "Link types" field.`);
+  if (nonFsLinks > 0) warnings.push(`${nonFsLinks} link${nonFsLinks === 1 ? " is" : "s are"} start-to-start, finish-to-finish or carry a lag — kept as they are.`);
   if (dropped > 0) warnings.push(`${dropped} task${dropped === 1 ? "" : "s"} skipped (missing name or date).`);
   if (projectSummarySkipped) warnings.push("The file's project summary row (its title) was not imported as a task.");
   const cleaned = dropPlaceholderLeaves(rows);
@@ -405,14 +408,20 @@ function parseP6Xml(text: string, tz: string): { rows: ParsedMilestone[]; warnin
   // predecessor + successor ObjectIds. Index them by successor so each activity
   // can carry its predecessors (same depends_on path as MS Project XML).
   const predsByActObjId = new Map<string, string[]>();
+  const p6Links = new Map<string, LinkSpec>();
   let p6NonFs = 0;
   for (const rel of Array.from(doc.getElementsByTagNameNS("*", "Relationship"))) {
     const succ = childText(rel as Element, "SuccessorActivityObjectId") || childText(rel as Element, "SuccessorObjectId");
     const pred = childText(rel as Element, "PredecessorActivityObjectId") || childText(rel as Element, "PredecessorObjectId");
     if (!succ || !pred) continue;
+    // P6: "Start to Start" … and Lag in hours.
     const type = (childText(rel as Element, "Type") ?? "").toLowerCase();
     const lag = Number(childText(rel as Element, "Lag") ?? "0");
-    if ((type && !/finish to start/.test(type)) || (Number.isFinite(lag) && lag !== 0)) p6NonFs++;
+    const kind: LinkSpec["type"] = /start to start/.test(type) ? "SS" : /finish to finish/.test(type) ? "FF" : /start to finish/.test(type) ? "SF" : "FS";
+    if (kind !== "FS" || (Number.isFinite(lag) && lag !== 0)) {
+      p6NonFs++;
+      p6Links.set(`${succ}|${pred}`, { type: kind, lagHours: Number.isFinite(lag) ? lag : 0 });
+    }
     const arr = predsByActObjId.get(succ) ?? [];
     if (!arr.includes(pred)) arr.push(pred);
     predsByActObjId.set(succ, arr);
@@ -447,12 +456,17 @@ function parseP6Xml(text: string, tz: string): { rows: ParsedMilestone[]; warnin
       externalRef: objId ? `p6-act:${objId}` : (idTxt ? `p6-id:${idTxt}` : null),
       parentExternalRef: wbsId ? `p6-wbs:${wbsId}` : null,
       dependsOnExternalRefs: preds.length ? preds.map((p) => `p6-act:${p}`) : undefined,
+      linksByRef: (() => {
+        const o: Record<string, LinkSpec> = {};
+        for (const p of preds) { const l = p6Links.get(`${objId}|${p}`); if (l) o[`p6-act:${p}`] = l; }
+        return Object.keys(o).length ? o : undefined;
+      })(),
       percentComplete: isNaN(pct) ? undefined : pct,
       wbs: idTxt || null,
     });
   }
   if (relationCount > 0) warnings.push(`${relationCount} dependency link${relationCount === 1 ? "" : "s"} mapped from relationships.`);
-  if (p6NonFs > 0) warnings.push(`${p6NonFs} link${p6NonFs === 1 ? " isn't" : "s aren't"} plain finish-to-start (start-to-start, finish-to-finish or a lag) — imported as finish-to-start. Check those in the schedule.`);
+  if (p6NonFs > 0) warnings.push(`${p6NonFs} link${p6NonFs === 1 ? " is" : "s are"} start-to-start, finish-to-finish or carry a lag — kept as they are.`);
 
   // Roll WBS spans up from activities, then compute outline depth and
   // drop any WBS branch that ended up with no dated descendants.
@@ -547,6 +561,7 @@ function parseP6Xer(text: string, tz: string): { rows: ParsedMilestone[]; warnin
   // (task_id) to a predecessor (pred_task_id). Index by successor so each task
   // carries its predecessors through the same depends_on path as everything else.
   const predsByTaskId = new Map<string, string[]>();
+  const xerLinks = new Map<string, LinkSpec>();
   let xerNonFs = 0;
   const taskpred = tables.get("TASKPRED");
   if (taskpred) {
@@ -561,7 +576,11 @@ function parseP6Xer(text: string, tz: string): { rows: ParsedMilestone[]; warnin
         if (!succ || !pred) continue;
         const type = pType >= 0 ? (r[pType] ?? "").trim().toUpperCase() : "";
         const lag = pLag >= 0 ? Number(r[pLag]) : 0;
-        if ((type && type !== "PR_FS") || (Number.isFinite(lag) && lag !== 0)) xerNonFs++;
+        const kind: LinkSpec["type"] = type === "PR_SS" ? "SS" : type === "PR_FF" ? "FF" : type === "PR_SF" ? "SF" : "FS";
+        if (kind !== "FS" || (Number.isFinite(lag) && lag !== 0)) {
+          xerNonFs++;
+          xerLinks.set(`${succ}|${pred}`, { type: kind, lagHours: Number.isFinite(lag) ? lag : 0 });
+        }
         const arr = predsByTaskId.get(succ) ?? [];
         if (!arr.includes(pred)) arr.push(pred);
         predsByTaskId.set(succ, arr);
@@ -598,12 +617,17 @@ function parseP6Xer(text: string, tz: string): { rows: ParsedMilestone[]; warnin
       externalRef: id ? `p6-task:${id}` : null,
       parentExternalRef: wbsId ? `p6-wbs:${wbsId}` : null,
       dependsOnExternalRefs: preds.length ? preds.map((p) => `p6-task:${p}`) : undefined,
+      linksByRef: (() => {
+        const o: Record<string, LinkSpec> = {};
+        for (const p of preds) { const l = xerLinks.get(`${id}|${p}`); if (l) o[`p6-task:${p}`] = l; }
+        return Object.keys(o).length ? o : undefined;
+      })(),
       percentComplete: isNaN(pct) ? undefined : pct,
       wbs: tCode >= 0 ? (r[tCode]?.trim() || null) : null,
     });
   }
   if (relationCount > 0) warnings.push(`${relationCount} dependency link${relationCount === 1 ? "" : "s"} mapped from TASKPRED.`);
-  if (xerNonFs > 0) warnings.push(`${xerNonFs} link${xerNonFs === 1 ? " isn't" : "s aren't"} plain finish-to-start (start-to-start, finish-to-finish or a lag) — imported as finish-to-start. Check those in the schedule.`);
+  if (xerNonFs > 0) warnings.push(`${xerNonFs} link${xerNonFs === 1 ? " is" : "s are"} start-to-start, finish-to-finish or carry a lag — kept as they are.`);
 
   rollUpSummaryDates(rows);
   computeOutlineLevels(rows);
@@ -744,14 +768,13 @@ function parseCsvLikeWithSynonyms(text: string, tz: string, syn: SynonymSpec, re
     // resolvable when the file has an id column (so refs line up); otherwise
     // they're left for the user to wire up manually rather than mis-linked.
     let dependsOnExternalRefs: string[] | undefined;
+    let linksByRef: Record<string, LinkSpec> | undefined;
     if (iPred >= 0 && iId >= 0) {
       const raw = cell(iPred);
       if (raw) {
-        const predIds = raw
-          .split(/[;,]/)
-          .map((tok) => tok.trim().match(/^\d+/)?.[0])
-          .filter((x): x is string => !!x);
-        if (predIds.length) dependsOnExternalRefs = predIds.map((p) => `${refTag}:${p}`);
+        const parsed = raw.split(/[;,]/).map((tok) => parseLinkToken(tok)).filter((x): x is NonNullable<typeof x> => !!x);
+        if (parsed.length) dependsOnExternalRefs = parsed.map((p) => `${refTag}:${p.id}`);
+        for (const p of parsed) if (p.link.type !== "FS" || p.link.lagHours) (linksByRef ??= {})[`${refTag}:${p.id}`] = p.link;
       }
     }
 
@@ -772,6 +795,7 @@ function parseCsvLikeWithSynonyms(text: string, tz: string, syn: SynonymSpec, re
       outlineLevel,
       wbs: wbsRaw || null,
       dependsOnExternalRefs,
+      linksByRef,
       workOrderRef: woCol >= 0 ? cell(woCol) || null : null,
       responsibleParty: resources || null,
       location: locCol >= 0 ? cell(locCol) || null : null,

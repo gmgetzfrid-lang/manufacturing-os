@@ -128,7 +128,9 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     const order = { overdue: 0, held: 1, behind: 2 } as Record<string, number>;
     const issues = open.filter((x) => x.pace in order && ownStep(x)).sort((a, b) => order[a.pace] - order[b.pace]);
     const worst = issues[0];
-    const who = (x: typeof next) => (x === next ? "" : `${x.name} `);
+    // Name the step the status is about — "next step" when it's the one in
+    // the Next step column — so a step's 0% isn't read as the task's.
+    const who = (x: typeof next) => (x === next ? "next step " : `${x.name} `);
     const more = issues.length > 1 ? ` (+${issues.length - 1} more)` : "";
     const plan = id ? look.planOf?.(id) : undefined;
     const fin = id ? look.finishOf(id) : r.finish;
@@ -136,7 +138,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     const finText = fin != null && Number.isFinite(fin) && fin > report.now ? ` · planned finish ${f.DTs(fin)}` : "";
     const status: ExportCell = worst
       ? worst.pace === "overdue" ? { t: `Overdue — ${who(worst)}${Number.isFinite(worst.finish) ? `was due ${f.DTs(worst.finish)}` : "past due"}${more}`, tone: "rose" }
-        : worst.pace === "held" ? { t: `${worst.status === "blocked" ? "Blocked" : "On hold"}${worst === next ? "" : ` — ${worst.name}`}${more} (see below)`, tone: worst.status === "blocked" ? "rose" : "amber" }
+        : worst.pace === "held" ? { t: `${worst.status === "blocked" ? "Blocked" : "On hold"} — ${worst === next ? "next step" : worst.name}${more} (see below)`, tone: worst.status === "blocked" ? "rose" : "amber" }
           : { t: `Behind — ${who(worst)}${worst.percent}% of ${worst.expectedPct}% planned${more}`, tone: "amber" }
       : plan != null && pct + BEHIND_POINTS <= plan ? { t: `Behind — ${pct}% of ${plan}% planned`, tone: "amber" }
         : { t: `On plan${finText}`, tone: "emerald" };
@@ -146,7 +148,8 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     const noteFor = (x?: { id?: string }) => (x?.id && !nextIds.has(x.id) ? note(x.id) : undefined);
     if (worst && worst !== next && typeof status !== "string") status.note = noteFor(worst);
     rows.push({
-      cells: [name, { t: `${pct}%`, bold: true },
+      // Done against where the plan has the task right now.
+      cells: [name, { t: plan != null ? `${pct}% / ${plan}%` : `${pct}%`, bold: true },
         next ? { t: `${next.name}${next.percent > 0 ? ` (${next.percent}%)` : ""}`, note: noteFor(next) } : "", status],
       rank: worst ? order[worst.pace] : behind ? 2 : 3, behind, complete: false,
     });
@@ -165,8 +168,8 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       sub: [`${review.done.length} step${review.done.length === 1 ? "" : "s"} done`, nBehind ? `${nBehind} task${nBehind === 1 ? "" : "s"} behind` : null, nDone ? `${nDone} complete` : null].filter(Boolean).join(" · "),
       flag: rows.some((x) => x.rank <= 1) ? "rose" : nBehind ? "amber" : null,
       blocks: [{
-        k: "table", head: ["Task", "% complete", "Next step", "Status"], align: ["left", "right", "left", "left"],
-        textLabels: ["", "", "next", ""],
+        k: "table", head: ["Task", "Done / planned now", "Next step", "Status"], align: ["left", "right", "left", "left"],
+        textLabels: ["", "done/planned", "next", ""],
         rows: [...shown.map((x) => x.cells), ...(hidden > 0 ? [[muted(`+ ${hidden} more on plan or complete`), "", "", ""] as ExportCell[]] : [])],
       }],
     });

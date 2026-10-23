@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import type { Milestone, MilestoneStatus, MilestoneNote, ProjectMember } from "@/types/schema";
 import { wouldCreateCycle, cascadeDependents, type ReflowNode } from "@/lib/scheduleReflow";
+import { LINK_LABEL, linkOf, linkShort, type LinkMap, type LinkType } from "@/lib/scheduleLinks";
 import { listMembers } from "@/lib/projects";
 import {
   updateMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestones, setActualTimes,
@@ -326,9 +327,10 @@ export default function TaskDetailPanel({
                       </span>
                     ) : (
                       <span>
-                        {m.actualStartAt ? `started ${fmtInTz(m.actualStartAt as string, tz, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}` : "not started"}
-                        {m.status === "completed" && m.actualAt ? ` · finished ${fmtInTz(m.actualAt as string, tz, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}` : ""}
-                        {canEdit && (m.actualStartAt || m.status === "completed") && (
+                        {m.actualStartAt ? `started ${fmtInTz(m.actualStartAt as string, tz, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}`
+                          : m.status === "completed" ? "start time not recorded" : m.status === "planned" ? "not started" : "start time not recorded"}
+                        {m.status === "completed" ? (m.actualAt ? ` · finished ${fmtInTz(m.actualAt as string, tz, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}` : " · finish time not recorded") : ""}
+                        {canEdit && (m.actualStartAt || m.status !== "planned") && (
                           <button onClick={() => setActualEdit({ start: toDateTimeInput(m.actualStartAt as string | null, tz), finish: toDateTimeInput(m.actualAt as string | null, tz) })}
                             className="ml-1.5 text-[10px] font-bold text-[var(--color-accent)] hover:underline" title="Correct when the work really started or finished — the shift that did it gets the credit">correct</button>
                         )}
@@ -637,7 +639,7 @@ function EditForm({
           id: t.id!, parentId: t.parentId ?? null,
           plannedStartAt: t.id === m.id ? (patch.plannedStartAt as string | null) ?? null : (t.plannedStartAt as string | undefined) ?? null,
           plannedAt: t.id === m.id ? (patch.plannedAt as string) : (t.plannedAt as string),
-          status: t.status, dependsOn: t.dependsOn ?? null,
+          status: t.status, dependsOn: t.dependsOn ?? null, links: t.linkTypes ?? null,
         }));
         const moves = cascadeDependents(nodes, [m.id], tz).filter((c) => c.id !== m.id);
         if (moves.length) await applyMilestoneMoves({ orgId: m.orgId, projectId: m.projectId, moves, actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole });
@@ -800,7 +802,9 @@ function DependencyEditor({
     id: t.id!, parentId: t.parentId ?? null,
     plannedStartAt: (t.plannedStartAt as string | undefined) ?? null,
     plannedAt: t.plannedAt as string, dependsOn: t.dependsOn ?? null,
+    links: t.linkTypes ?? null, status: t.status,
   })), [allTasks]);
+  const tz = useScheduleTz();
 
   // Candidates: any other task that wouldn't create a cycle and isn't already a dep.
   const candidates = useMemo(() => allTasks
@@ -808,11 +812,21 @@ function DependencyEditor({
     .sort((a, b) => (Date.parse(a.plannedAt as string) - Date.parse(b.plannedAt as string)) || (a.name || "").localeCompare(b.name || "")),
     [allTasks, deps, reflowNodes, milestone.id]);
 
-  const save = async (next: string[]) => {
+  const links = milestone.linkTypes ?? {};
+  // Save the predecessors and how it waits on each; then, if it now starts
+  // too early for one of them, push it (and what follows it) like a drag.
+  const save = async (next: string[], nextLinks: LinkMap = links) => {
     if (!milestone.id) return;
     setSaving(true); setError(null);
     try {
-      await updateMilestone({ id: milestone.id, patch: { dependsOn: next }, updatedBy: userId });
+      const kept: LinkMap = {};
+      for (const id of next) { const l = nextLinks[id]; if (l && (l.type !== "FS" || l.lagHours)) kept[id] = l; }
+      await updateMilestone({ id: milestone.id, patch: { dependsOn: next, linkTypes: Object.keys(kept).length ? kept : null }, updatedBy: userId });
+      if (next.length && milestone.projectId) {
+        const nodes = reflowNodes.map((n) => (n.id === milestone.id ? { ...n, dependsOn: next, links: kept } : n));
+        const moves = cascadeDependents(nodes, next, tz);
+        if (moves.length) await applyMilestoneMoves({ orgId: milestone.orgId, projectId: milestone.projectId, moves, actorUserId: userId });
+      }
       onChanged();
     } catch (e) { setError((e as Error).message); }
     finally { setSaving(false); }
@@ -825,25 +839,40 @@ function DependencyEditor({
       <div className="flex items-center gap-1.5 mb-1.5">
         <Link2 className="w-3.5 h-3.5 text-indigo-500" />
         <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Depends on</span>
-        <span className="text-[10px] text-[var(--color-text-faint)]">— must finish before this starts</span>
+        <span className="text-[10px] text-[var(--color-text-faint)]">— and how it waits on each</span>
       </div>
       {deps.length === 0 ? (
         <div className="text-[11px] text-[var(--color-text-faint)] italic mb-1.5">No dependencies.</div>
       ) : (
-        <div className="flex flex-wrap gap-1.5 mb-1.5">
+        <div className="space-y-1 mb-1.5">
           {deps.map((id) => {
             const t = byId.get(id);
+            const l = linkOf(links, id);
             return (
-              <span key={id} className="inline-flex items-center gap-1 rounded-full bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-indigo-800 dark:text-indigo-300 text-[11px] font-semibold pl-2 pr-1 py-0.5">
-                <button type="button" className="truncate max-w-[160px] hover:underline" onClick={() => t && onSelectMilestone?.(t)} title={t?.name ?? id}>
+              <div key={id} className="flex items-center gap-1.5 rounded-md bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-indigo-800 dark:text-indigo-300 text-[11px] font-semibold pl-2 pr-1 py-0.5">
+                <button type="button" className="flex-1 min-w-0 truncate text-left hover:underline" onClick={() => t && onSelectMilestone?.(t)} title={t?.name ?? id}>
                   {t?.name ?? "(removed task)"}
                 </button>
+                {canEdit ? (
+                  <>
+                    <select value={l.type} disabled={saving} title="How this task waits on it"
+                      onChange={(e) => void save(deps, { ...links, [id]: { ...l, type: e.target.value as LinkType } })}
+                      className="text-[10.5px] font-semibold rounded border border-indigo-200 dark:border-indigo-800 bg-[var(--color-surface)] text-[var(--color-text)] px-1 py-0.5">
+                      {(Object.keys(LINK_LABEL) as LinkType[]).map((k) => <option key={k} value={k}>{LINK_LABEL[k]}</option>)}
+                    </select>
+                    <label className="inline-flex items-center gap-0.5 text-[10.5px]" title="Lag in hours (negative = lead)">
+                      +<input key={`${id}-${l.lagHours}`} type="number" step={0.5} defaultValue={l.lagHours} disabled={saving}
+                        onBlur={(e) => { const v = Number(e.target.value) || 0; if (v !== l.lagHours) void save(deps, { ...links, [id]: { ...l, lagHours: v } }); }}
+                        className="w-12 rounded border border-indigo-200 dark:border-indigo-800 bg-[var(--color-surface)] text-[var(--color-text)] px-1 py-0.5 text-right" />h
+                    </label>
+                  </>
+                ) : linkShort(l) ? <span className="text-[10px]">{linkShort(l)}</span> : null}
                 {canEdit && (
                   <button type="button" disabled={saving} onClick={() => void save(deps.filter((dd) => dd !== id))} className="p-0.5 rounded-full hover:bg-indigo-200/60 text-indigo-500 hover:text-indigo-800" title="Remove dependency">
                     <XIcon className="w-3 h-3" />
                   </button>
                 )}
-              </span>
+              </div>
             );
           })}
         </div>

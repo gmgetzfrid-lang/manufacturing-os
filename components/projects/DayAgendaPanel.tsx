@@ -27,7 +27,7 @@ import { clockLabel, dayKey, dayKeyToMs, fmtInTz, addDays, tzAbbrev } from "@/li
 import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
 import { overdueOpenWork, startedEarlyWork } from "@/lib/openWork";
 import { completionNote } from "@/lib/scheduleRules";
-import { DEFAULT_SHIFT_TIMES, workShiftOf, type ShiftTimes } from "@/lib/shiftReport";
+import { DEFAULT_SHIFT_TIMES, expectedByParent, workShiftOf, type ShiftTimes } from "@/lib/shiftReport";
 import ShiftMark from "@/components/projects/ShiftMark";
 
 interface Props {
@@ -157,6 +157,10 @@ export default function DayAgendaPanel({
   const order = useMemo(() => shownGroups.flatMap((g) => g.rows.map((r) => r.leaf.id).filter((x): x is string => !!x)), [shownGroups]);
   const nextOf = (id: string) => { const i = order.indexOf(id); return i >= 0 && i + 1 < order.length ? order[i + 1] : null; };
 
+  // Where the plan has each piece of equipment right now — "19% of 25%
+  // planned" beside its progress.
+  const [nowMs] = useState(() => Date.now());
+  const planNow = useMemo(() => expectedByParent(milestones, nowMs, tz, shiftTimes), [milestones, nowMs, tz, shiftTimes]);
   const pctOf = (m: Milestone) =>
     (m.id ? progress?.get(m.id)?.percent : undefined) ?? (m.percentComplete != null ? Math.round(m.percentComplete) : (m.status === "completed" ? 100 : 0));
 
@@ -262,7 +266,8 @@ export default function DayAgendaPanel({
                   </div>
                   {g.parent && headInfo && (
                     <span className="shrink-0 text-[10px] font-mono text-[var(--color-text-muted)]" title="This equipment overall">
-                      {headInfo.leafDone}/{headInfo.leafTotal} · {headInfo.percent}%
+                      {headInfo.leafDone}/{headInfo.leafTotal} steps · {headInfo.percent}%
+                      {head.id && planNow.get(head.id) != null ? <> of {planNow.get(head.id)}% planned</> : null}
                     </span>
                   )}
                 </div>
