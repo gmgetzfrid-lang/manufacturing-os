@@ -43,13 +43,13 @@ const sections = turnoverUpdate(report, f, { pctOf: (id) => progress.get(id)?.pe
 
 describe("the update says what happened, in as few words as it takes", () => {
   it("leaves out what's empty: nothing unfinished, nothing blocked, nothing next", () => {
-    expect(sections.map((s) => s.id)).toEqual(["stand", "last"]);
-    const last = sections.find((s) => s.id === "last")!;
-    expect(last.blocks.some((b) => b.k === "label" && (b.text === "Behind" || b.text === "Carrying over as planned"))).toBe(false);
+    // Meeting order: what got done, then (none here) problems, then the
+    // tasks on plan — nothing next, nothing held.
+    expect(sections.map((s) => s.id)).toEqual(["stand", "done", "onplan"]);
   });
 
   it("one row per task: % done, the NEXT step, and whether it's on plan", () => {
-    const table = sections.find((s) => s.id === "last")!.blocks.find((b) => b.k === "table")!;
+    const table = sections.find((s) => s.id === "onplan")!.blocks.find((b) => b.k === "table")!;
     if (table.k !== "table") throw new Error();
     expect(table.head).toEqual(["Task", "Done / planned now", "Next step", "Status"]);
     const cells = table.rows.map((r) => r.map((c) => (typeof c === "string" ? c : c.t)));
@@ -57,8 +57,11 @@ describe("the update says what happened, in as few words as it takes", () => {
     // E-606: two steps done, Retube planned tomorrow — on its way, not unfinished.
     expect(row("E-606 Exchanger")[2]).toBe("Retube");
     expect(row("E-606 Exchanger")[3]).toMatch(/^On plan · planned finish .*10-27/);
-    expect(row("T-605 Tower")).toEqual(["T-605 Tower", "100%", "", "Complete"]);
-    expect(table.rows).toHaveLength(2); // a task once, not a line per step
+    expect(table.rows).toHaveLength(1); // a task once, not a line per step
+    // The finished tower is under Completed, by its step.
+    const done = sections.find((s) => s.id === "done")!.blocks.find((b) => b.k === "table")!;
+    if (done.k !== "table") throw new Error();
+    expect(done.rows.map((r) => r.map((c) => (typeof c === "string" ? c : c.t)).join(" | ")).join("\n")).toMatch(/T-605 Tower \| Open manways \| done/);
   });
 
   it("no numbers, no stretch, no 'in this order'", () => {

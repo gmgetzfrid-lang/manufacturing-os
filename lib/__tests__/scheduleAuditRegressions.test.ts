@@ -169,8 +169,8 @@ describe("the management email judges a crew on its own work", () => {
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: secs });
     const last = text.split("\n").find((l) => l.includes("V-500 — 45%"))!;
     expect(last).toMatch(/Overdue — next step was due/);   // its own day step
-    expect(last).not.toMatch(/Blocked/);         // the night step is under Needs a decision
-    expect(text).toMatch(/NEEDS A DECISION\n.*Night step · Blocked · permit/);
+    expect(last).not.toMatch(/Blocked/);         // the night step is listed with its reason
+    expect(text).toMatch(/PROBLEMS & DECISIONS[\s\S]*Night step · Blocked · permit/);
   });
   it("comments fold line breaks and carry their date when older than the shift", () => {
     const D = (x: number) => new Date(x).toISOString().slice(5, 10);

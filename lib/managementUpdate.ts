@@ -138,7 +138,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     const finText = fin != null && Number.isFinite(fin) && fin > report.now ? ` · planned finish ${f.DTs(fin)}` : "";
     const status: ExportCell = worst
       ? worst.pace === "overdue" ? { t: `Overdue — ${who(worst)}${Number.isFinite(worst.finish) ? `was due ${f.DTs(worst.finish)}` : "past due"}${more}`, tone: "rose" }
-        : worst.pace === "held" ? { t: `${worst.status === "blocked" ? "Blocked" : "On hold"} — ${worst === next ? "next step" : worst.name}${more} (see below)`, tone: worst.status === "blocked" ? "rose" : "amber" }
+        : worst.pace === "held" ? { t: `${worst.status === "blocked" ? "Blocked" : "On hold"} — ${worst === next ? "next step" : worst.name}${more} (reason below)`, tone: worst.status === "blocked" ? "rose" : "amber" }
           : { t: `Behind — ${who(worst)}${worst.percent}% of ${worst.expectedPct}% planned${more}`, tone: "amber" }
       : plan != null && pct + BEHIND_POINTS <= plan ? { t: `Behind — ${pct}% of ${plan}% planned`, tone: "amber" }
         : { t: `On plan${finText}`, tone: "emerald" };
@@ -154,38 +154,64 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       rank: worst ? order[worst.pace] : behind ? 2 : 3, behind, complete: false,
     });
   }
-  if (rows.length > 0) {
-    rows.sort((a, b) => a.rank - b.rank);
-    const nBehind = rows.filter((x) => x.behind).length, nDone = rows.filter((x) => x.complete).length;
-    // Every problem is listed; quiet rows stop at the cap with a count.
-    const problems = rows.filter((x) => x.rank <= 2);
-    const quiet = rows.filter((x) => x.rank > 2);
-    const room = Math.max(3, MAX_ROWS - problems.length);
-    const shown = [...problems, ...quiet.slice(0, room)];
-    const hidden = quiet.length - Math.min(quiet.length, room);
+  // ── Completed ── good news first: the steps finished on the shift.
+  if (review.done.length > 0) {
+    const list = review.done.slice(0, MAX_ROWS * 2);
+    const hiddenDone = review.done.length - list.length;
+    const finished = (r: ShiftRow): ExportCell => {
+      const at = r.leaf.actualAt ? Date.parse(String(r.leaf.actualAt)) : NaN;
+      return Number.isFinite(at) ? { t: `done ${f.DTs(at)}`, tone: "emerald" } : { t: "done", tone: "emerald" };
+    };
     out.push({
-      id: "last", title: `Last shift — ${shiftName(shift)} ${f.D(shift.start)}`,
-      sub: [`${review.done.length} step${review.done.length === 1 ? "" : "s"} done`, nBehind ? `${nBehind} task${nBehind === 1 ? "" : "s"} behind` : null, nDone ? `${nDone} complete` : null].filter(Boolean).join(" · "),
-      flag: rows.some((x) => x.rank <= 1) ? "rose" : nBehind ? "amber" : null,
+      id: "done", title: `Completed — ${shiftName(shift)} ${f.D(shift.start)}`,
+      sub: `${review.done.length} step${review.done.length === 1 ? "" : "s"} done`,
       blocks: [{
-        k: "table", head: ["Task", "Done / planned now", "Next step", "Status"], align: ["left", "right", "left", "left"],
-        textLabels: ["", "done/planned", "next", ""],
-        rows: [...shown.map((x) => x.cells), ...(hidden > 0 ? [[muted(`+ ${hidden} more on plan or complete`), "", "", ""] as ExportCell[]] : [])],
+        k: "table", head: ["Task", "Step", "Finished"], textLabels: ["", "", ""],
+        rows: [...byTask(list, (r) => [r.leaf.name, finished(r)]), ...(hiddenDone > 0 ? [[muted(`+ ${hiddenDone} more`), "", ""] as ExportCell[]] : [])],
       }],
     });
   }
 
-  // ── Needs a decision ── only when something is blocked or on hold.
-  if (blocked.length > 0) {
+  // ── Problems & decisions ── every task that's overdue, behind or held,
+  // once, with the blocked / on-hold steps and their reasons.
+  const problems = rows.filter((x) => x.rank <= 2).sort((a, b) => a.rank - b.rank);
+  if (problems.length > 0 || blocked.length > 0) {
+    const nBehind = problems.filter((x) => x.behind).length;
     out.push({
-      id: "decide", title: "Needs a decision", flag: blocked.some((r) => r.status === "blocked") ? "rose" : "amber",
+      id: "problems", title: "Problems & decisions",
+      sub: [nBehind ? `${nBehind} task${nBehind === 1 ? "" : "s"} behind or past due` : null, blocked.length ? `${blocked.length} blocked or on hold` : null].filter(Boolean).join(" · "),
+      flag: problems.some((x) => x.rank === 0) || blocked.some((r) => r.status === "blocked") ? "rose" : "amber",
+      blocks: [
+        ...(problems.length ? [{
+          k: "table", head: ["Task", "Done / planned now", "Next step", "Status"], align: ["left", "right", "left", "left"],
+          textLabels: ["", "done/planned", "next", ""],
+          rows: problems.map((x) => x.cells),
+        } as ExportBlock] : []),
+        ...(blocked.length ? [{
+          k: "table", head: ["Task", "Step", "Status", "Reason"], textLabels: ["", "", "", ""],
+          rows: byTask(blocked, (r) => [
+            r.leaf.name,
+            r.status === "blocked" ? { t: "Blocked", tone: "rose", bold: true } : { t: "On hold", tone: "amber", bold: true },
+            r.reason ?? muted("no reason recorded"),
+          ]),
+        } as ExportBlock] : []),
+      ],
+    });
+  }
+
+  // ── On plan ── each other task once: where it is against the plan and
+  // its next step. (Finished tasks are in Completed.)
+  const quiet = rows.filter((x) => x.rank === 3);
+  if (quiet.length > 0) {
+    const shown = quiet.slice(0, MAX_ROWS);
+    const hiddenQuiet = quiet.length - shown.length;
+    out.push({
+      id: "onplan", title: "On plan",
+      sub: `${quiet.length} task${quiet.length === 1 ? "" : "s"}`,
       blocks: [{
-        k: "table", head: ["Task", "Step", "Status", "Reason"], textLabels: ["", "", "", ""],
-        rows: byTask(blocked, (r) => [
-          r.leaf.name,
-          r.status === "blocked" ? { t: "Blocked", tone: "rose", bold: true } : { t: "On hold", tone: "amber", bold: true },
-          r.reason ?? muted("no reason recorded"),
-        ]),
+        k: "table", head: ["Task", "Done / planned now", "Next step", "Status"], align: ["left", "right", "left", "left"],
+        textLabels: ["", "done/planned", "next", ""],
+        rows: [...shown.map((x) => x.cells), ...(hiddenQuiet > 0 ? [[muted(`+ ${hiddenQuiet} more on plan`), "", "", ""] as ExportCell[]] : [])],
       }],
     });
   }

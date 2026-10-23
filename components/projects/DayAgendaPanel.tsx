@@ -307,13 +307,13 @@ export default function DayAgendaPanel({
                   <span className={`w-1.5 h-5 rounded-sm shrink-0 ${color.bar}`} />
                   <div className="flex-1 min-w-0">
                     {g.crumbs.length > 0 && (
-                      <div className={`text-[9px] font-bold uppercase tracking-wide truncate ${color.text}`}>
+                      <div className={`text-[9px] font-bold uppercase tracking-wide break-words ${color.text}`}>
                         {g.crumbs.map((c) => c.name).join(" › ")}
                       </div>
                     )}
-                    <button onClick={() => onOpenDetail(head)} className="flex items-center gap-1 text-[12px] font-bold text-[var(--color-text)] hover:underline text-left truncate max-w-full">
-                      <Layers className="w-3 h-3 shrink-0 opacity-70" />
-                      <span className="truncate">{head.name}</span>
+                    <button onClick={() => onOpenDetail(head)} className="flex items-start gap-1 text-[12px] font-bold text-[var(--color-text)] hover:underline text-left max-w-full">
+                      <Layers className="w-3 h-3 shrink-0 opacity-70 mt-0.5" />
+                      <span className="break-words min-w-0">{head.name}</span>
                       <ExternalLink className="w-3 h-3 shrink-0 opacity-50" />
                     </button>
                   </div>
@@ -350,7 +350,7 @@ export default function DayAgendaPanel({
                             {[note, r.leaf.responsibleParty, r.leaf.workOrderRef ? `WO ${r.leaf.workOrderRef}` : null].filter(Boolean).join(" · ")}
                           </span>
                           {r.leaf.id && latestByStep.get(r.leaf.id) && (
-                            <span className="block text-[10px] italic text-[var(--color-text-muted)] truncate">&ldquo;{latestByStep.get(r.leaf.id)!.body}&rdquo;</span>
+                            <span className="block text-[10px] italic text-[var(--color-text-muted)] break-words">&ldquo;{latestByStep.get(r.leaf.id)!.body}&rdquo;</span>
                           )}
                           {r.leaf.status !== "completed" && waitsOn(r.leaf).length > 0 && (
                             <span className="block text-[10px] font-semibold text-amber-700 dark:text-amber-400 break-words">
@@ -358,7 +358,7 @@ export default function DayAgendaPanel({
                             </span>
                           )}
                           {(r.leaf.status === "on_hold" || r.leaf.status === "blocked") && (
-                            <span className={`block text-[10px] font-semibold truncate ${r.leaf.status === "blocked" ? "text-rose-700 dark:text-rose-400" : "text-amber-700 dark:text-amber-400"}`}>
+                            <span className={`block text-[10px] font-semibold break-words ${r.leaf.status === "blocked" ? "text-rose-700 dark:text-rose-400" : "text-amber-700 dark:text-amber-400"}`}>
                               {r.leaf.status === "blocked" ? "Blocked" : "On hold"}: {r.leaf.statusReason || "no reason recorded"}
                             </span>
                           )}
