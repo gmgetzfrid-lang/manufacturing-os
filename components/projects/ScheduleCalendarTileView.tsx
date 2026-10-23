@@ -548,7 +548,6 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                         selected={!!p.ms.id && selected.has(p.ms.id)}
                         onToggleSelect={() => p.ms.id && toggleSelected(p.ms.id)}
                         dimmed={!!dragId && dragId === p.ms.id}
-                        full={mode === "week"}
                         shiftTimes={shiftTimes}
                       />
                     );
@@ -749,7 +748,7 @@ function DayScroller({ children, fade }: { children: React.ReactNode; fade: stri
 
 function Chip({
   ms, dayIndex, spanDays, todayStart, todayEnd, idleToday, childrenByParent, ancestors, color, canEdit, draggable, onDragStart, onTouchDragStart, onClick,
-  onSetStatus, onSetProgress, onSetProgressNote, onStartNote, progress, canExpand, isExpanded, onToggleExpand, selectable, selected, onToggleSelect, dimmed, full, shiftTimes,
+  onSetStatus, onSetProgress, onSetProgressNote, onStartNote, progress, canExpand, isExpanded, onToggleExpand, selectable, selected, onToggleSelect, dimmed, shiftTimes,
 }: {
   ms: Milestone; dayIndex: number; spanDays: number;
   /** This day's active window (see DayPlacement). */
@@ -770,7 +769,7 @@ function Chip({
   shiftTimes?: ShiftTimes;
   canExpand?: boolean; isExpanded?: boolean; onToggleExpand?: (e: React.MouseEvent) => void;
   selectable?: boolean; selected?: boolean; onToggleSelect?: () => void;
-  dimmed?: boolean; full?: boolean;
+  dimmed?: boolean;
 }) {
   const tz = useScheduleTz();
   const kids = ms.id ? (childrenByParent.get(ms.id) ?? []) : [];
