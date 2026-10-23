@@ -476,7 +476,6 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
       {mode === "day" ? (
         <DayAgendaPanel
           inline
-          hidden={!!detailOpen}
           planNow={planNow}
           userId={userId}
           day={ymd(focusDay, tz)}

@@ -632,10 +632,11 @@ function rowFromPlan(r: PlanRow, c: Ctx, o: { when?: string; right?: string; n?:
 
 function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void; jumpTarget: ShiftWindow | null; noteOf?: (id: string) => { body: string; at?: string | null } | undefined; times: ShiftTimes }): Sec[] {
   const { overall, review, goals, blocked, shift, next } = report;
-  // A step's latest comment, as one quiet line under it — shown once: under
-  // the next shift's step when it's there, else where the step appears.
+  // A step's latest comment, as one quiet line under it — shown once: with
+  // the problem when it's one (that's where it's discussed), else under the
+  // next shift's step when it's there, else where the step appears.
   const nextIds = new Set(goals.all.map((r) => r.leaf.id).filter(Boolean));
-  const comment = (r: ShiftRow, where: "last" | "next" | "other") => {
+  const comment = (r: ShiftRow, where: "last" | "next" | "other" | "problem") => {
     if (where === "last" && r.leaf.id && nextIds.has(r.leaf.id)) return undefined;
     const n = noteLine(r.leaf.id ? o.noteOf?.(r.leaf.id) : undefined, shift.start, c.D);
     return n ? `“${n}”` : undefined;
@@ -689,7 +690,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   // Done and where the plan says it should be, side by side.
   const problemRow = (r: ShiftRow) => rowFromShift(r, c, {
     when: r.offSchedule ? `due ${c.DTs(r.finish)}` : rowTime(r, shift),
-    note: comment(r, "last"),
+    note: comment(r, "problem"),
     right: `${r.percent}% / ${r.expectedPct}%`,
   });
   const pastRows = pastDue.map(problemRow), behindRows = behindPlan.map(problemRow);

@@ -130,7 +130,9 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy, autoF
   const [msg, setMsg] = useState<string | null>(null);
   const noteRef = useRef<HTMLInputElement>(null);
   const pctRef = useRef<HTMLInputElement>(null);
-  useEffect(() => { if (autoFocus) pctRef.current?.focus(); }, [autoFocus]);
+  // A mouse gets the % box ready to type in; a finger taps the buttons
+  // (focusing would pop the keyboard over half the form).
+  useEffect(() => { if (autoFocus && window.matchMedia?.("(pointer: fine)").matches) pctRef.current?.focus(); }, [autoFocus]);
   const choose = (v: number) => { setPick(clamp(v)); setTyped(""); setMsg(null); setTimeout(() => noteRef.current?.focus(), 0); };
   const value = pick ?? (start ? null : cur);
   // A new %, or the same % with a fresh comment ("still 25 — waiting on

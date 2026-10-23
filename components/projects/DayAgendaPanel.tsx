@@ -475,7 +475,8 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
   const [note, setNote] = useState(own ? latest!.body : "");
   const [saved, setSaved] = useState<string | null>(null);
   const pctRef = useRef<HTMLInputElement>(null);
-  useEffect(() => { pctRef.current?.focus(); pctRef.current?.select(); }, []);
+  // Ready to type with a mouse; on a tablet the keyboard would cover the form.
+  useEffect(() => { if (window.matchMedia?.("(pointer: fine)").matches) { pctRef.current?.focus(); pctRef.current?.select(); } }, []);
   useEffect(() => { if (!saved) return; const t = setTimeout(() => setSaved(null), 1800); return () => clearTimeout(t); }, [saved]);
   const ro = !canEdit;
 
