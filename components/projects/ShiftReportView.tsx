@@ -36,7 +36,7 @@ import type { Milestone } from "@/types/schema";
 import { buildProgressIndex, leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import {
-  buildShiftReport, shiftWindow, nextShift, previousShift, defaultReviewShift, nextShiftWithWork, expectedByParent, paceOf, expectedFraction, workShiftOf, type Pace, type WorkShift,
+  buildShiftReport, shiftWindow, nextShift, previousShift, defaultReviewShift, nextShiftWithWork, expectedByParent, paceOf, expectedFraction, workShiftOf, meetingLeadMin, type Pace, type WorkShift,
   DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftRow, type ShiftWindow, type ShiftReport,
 } from "@/lib/shiftReport";
 import { buildKickoff, buildCloseout, defaultMeeting, type MeetingKind, type PlanRow } from "@/lib/meetingPlan";
@@ -98,7 +98,11 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
 
   // "As of": now while the shift is under way; the shift's end once it is
   // over, and ALSO for a shift in the future so the page can be rehearsed.
-  const asOf = now >= shift.start && now < shift.end ? now : shift.end;
+  // From the turnover meeting (30 min before the change by default) it's
+  // the shift as it ends: what's due by the change and not done carries.
+  const lead = meetingLeadMin(times) * 60_000;
+  const inMeeting = now >= shift.end - lead && now < shift.end;
+  const asOf = now >= shift.start && now < shift.end && !inMeeting ? now : shift.end;
 
   // An earlier shift (before the one just ended) shows the job as it stood
   // then, from the progress log: what was recorded by an hour after its
@@ -309,6 +313,9 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
                 </label>
                 <label className="flex items-center justify-between gap-2 text-[var(--color-text-muted)]"><span className="inline-flex items-center gap-1"><Moon className="w-3 h-3" /> Night starts</span>
                   <input type="time" value={draft.nightStart} onChange={(e) => { setTimesMsg(null); setTimesDraft({ ...draft, nightStart: e.target.value || DEFAULT_SHIFT_TIMES.nightStart }); }} className="h-7 border border-[var(--color-border-strong)] rounded px-1 bg-[var(--color-surface)]" />
+                </label>
+                <label className="flex items-center justify-between gap-2 text-[var(--color-text-muted)]"><span>Turnover meeting, min before</span>
+                  <input type="number" min={0} max={180} step={5} value={meetingLeadMin(draft)} onChange={(e) => { setTimesMsg(null); setTimesDraft({ ...draft, meetingBefore: Number(e.target.value) }); }} className="h-7 w-16 border border-[var(--color-border-strong)] rounded px-1 bg-[var(--color-surface)]" />
                 </label>
                 {timesDraft && (
                   <div className="flex justify-end gap-1.5 pt-0.5">
@@ -839,6 +846,13 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       count: goals.all.length, flag: critCarry ? "rose" : goals.carryOver.length ? "amber" : null,
       body: (print) => (
         <div className="space-y-2">
+          {/* The other crew's unfinished work first: it needs a decision now. */}
+          {goals.otherShift.length > 0 && (
+            <>
+              <Sub tone="amber" icon={<AlertTriangle className="w-3.5 h-3.5" />} title={otherTitle} count={goals.otherShift.length} />
+              <StepTable print={print} rightHead="Left" rows={otherRows} />
+            </>
+          )}
           <Sub tone="slate" icon={<Flag className="w-3.5 h-3.5" />} title="Planned work" count={goals.all.length} />
           {goals.all.length === 0 ? <Empty>Nothing is scheduled for the next shift.</Empty> : (
             <StepTable print={print} box rightHead="Left" rows={nextRows} />
@@ -856,15 +870,10 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
               <StepTable print={print} rightHead="Done" rows={pausedRows} />
             </>
           )}
-          {goals.otherShift.length > 0 && (
-            <>
-              <Sub tone="slate" icon={next.kind === "day" ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />} title={otherTitle} count={goals.otherShift.length} />
-              <StepTable print={print} rightHead="Left" rows={otherRows} />
-            </>
-          )}
         </div>
       ),
       data: () => [
+        ...(goals.otherShift.length > 0 ? [{ k: "sub", title: otherTitle, count: goals.otherShift.length, tone: "amber" } as ExportBlock, stepsBlock(otherRows, "Left")] : []),
         { k: "sub", title: "Planned work", count: goals.all.length, tone: "slate" },
         goals.all.length === 0 ? { k: "empty", text: "Nothing is scheduled for the next shift." } : stepsBlock(nextRows, "Left"),
         ...(goals.stretch.length > 0 ? [
@@ -873,7 +882,6 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           stepsBlock(stretchRows, "Left"),
         ] : []),
         ...(goals.paused.length > 0 ? [{ k: "sub", title: pausedTitle, count: goals.paused.length, tone: "slate" } as ExportBlock, stepsBlock(pausedRows, "Done")] : []),
-        ...(goals.otherShift.length > 0 ? [{ k: "sub", title: otherTitle, count: goals.otherShift.length, tone: "slate" } as ExportBlock, stepsBlock(otherRows, "Left")] : []),
       ],
     },
     closeSection("Close", ["Outgoing supervisor", "Incoming supervisor", "Crew lead"]),

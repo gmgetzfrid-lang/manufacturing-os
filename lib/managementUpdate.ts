@@ -198,12 +198,12 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     const list = rows.slice(0, MAX_ROWS).map((r) => `${r.parentName ? `${r.parentName} — ` : ""}${r.leaf.name}${r.percent > 0 ? ` (${r.percent}%)` : ""}`);
     return list.join("; ") + (rows.length > list.length ? `; + ${rows.length - list.length} more` : "");
   };
-  const extra: ExportBlock[] = [
-    ...(goals.otherShift.length ? [{ k: "note", text: `${otherName} shift carry-over — pick up if you can: ${names(goals.otherShift)}.`, tone: "amber" } as ExportBlock] : []),
-    ...(goals.paused.length ? [{ k: "note", text: `${otherName} crew's work paused until ${f.T(next.end)}: ${names(goals.paused)}.` } as ExportBlock] : []),
-  ];
-  if (goals.all.length === 0 && extra.length) {
-    out.push({ id: "next", title: `Next shift — ${shiftName(next)} ${f.D(next.start)} ${f.win(next)}`, blocks: extra });
+  // The other crew's unfinished work leads (it needs attention); its work
+  // paused overnight follows the list.
+  const carry: ExportBlock[] = goals.otherShift.length ? [{ k: "note", text: `${otherName} shift carry-over — pick up if you can: ${names(goals.otherShift)}.`, tone: "amber" } as ExportBlock] : [];
+  const extra: ExportBlock[] = goals.paused.length ? [{ k: "note", text: `${otherName} crew's work paused until ${f.T(next.end)}: ${names(goals.paused)}.` } as ExportBlock] : [];
+  if (goals.all.length === 0 && (carry.length || extra.length)) {
+    out.push({ id: "next", title: `Next shift — ${shiftName(next)} ${f.D(next.start)} ${f.win(next)}`, blocks: [...carry, ...extra] });
   }
   if (goals.all.length > 0) {
     const nextList = goals.all.slice(0, MAX_ROWS * 2);
@@ -211,7 +211,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     out.push({
       id: "next", title: `Next shift — ${shiftName(next)} ${f.D(next.start)} ${f.win(next)}`,
       sub: `${goals.all.length} step${goals.all.length === 1 ? "" : "s"} · ${f.hrs(goals.mustDoHours)}`,
-      blocks: [{
+      blocks: [...carry, {
         k: "table", head: ["Task", "Step", "Planned", "Done"], align: ["left", "left", "left", "right"], textLabels: ["", "", "", "done"],
         rows: [...byTask(nextList, (r) => [
           { t: r.leaf.name, note: note(r.leaf.id) },

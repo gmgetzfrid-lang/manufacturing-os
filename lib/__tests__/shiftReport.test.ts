@@ -158,7 +158,8 @@ describe("must-do vs stretch", () => {
   const r = buildShiftReport({ milestones: [n1, n2, s1, s2, x, big, dayWork], tz: CHI, shift, now: shift.end });
   it("must-do carries the next shift's work plus overdue work, with hours left", () => {
     expect(r.goals.all.map((g) => g.leaf.id)).toEqual(["big", "n1", "n2"]);
-    expect(r.goals.mustDoHours).toBe(24 + 4 + 2);
+    // The next shift's share: the 24 h carry-over fills at most its 12 h.
+    expect(r.goals.mustDoHours).toBe(12 + 4 + 2);
   });
   it("stretch lists later work whose predecessors are done or on the must-do list", () => {
     // s2 waits on x; tomorrow's DAY work is not something a night crew pulls forward.

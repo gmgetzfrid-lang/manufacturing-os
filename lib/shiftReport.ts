@@ -26,6 +26,16 @@ export interface ShiftTimes {
   dayStart: string;
   /** "HH:MM" plant time the night shift starts (day shift ends). */
   nightStart: string;
+  /** Minutes before each shift change the turnover meeting is held
+   *  (shifts at 06:00, meetings at 05:30 → 30). From then on the turnover
+   *  report shows the shift as it ends. Missing = 30. */
+  meetingBefore?: number;
+}
+
+/** Minutes before a shift change the turnover meeting starts. */
+export function meetingLeadMin(t: ShiftTimes): number {
+  const v = t.meetingBefore;
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 180 ? Math.round(v) : 30;
 }
 
 export const DEFAULT_SHIFT_TIMES: ShiftTimes = { dayStart: "05:30", nightStart: "17:30" };
@@ -213,6 +223,16 @@ export function worksIn(m: Milestone, w: ShiftWindow, tz: string, times: ShiftTi
   const { start, finish } = workSpan(m, tz);
   if (finish <= start) return start >= w.start && start < w.end;   // a zero-length milestone
   return start < w.end && finish > w.start;
+}
+
+/** When a step's own crew is done with it: the end of its last worked
+ *  stretch. Day work planned 14:00–18:00 is the day crew's until 17:30 —
+ *  after that it carries over, even though its finish is still ahead. */
+export function crewDueMs(m: Milestone, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): number {
+  const due = dueMsOf(m, tz);
+  if (workShiftOf(m, tz, times) === "both") return due;
+  const win = workWindows(m, tz, times);
+  return win.length ? Math.min(due, win[win.length - 1][1]) : due;
 }
 
 /** Share of a task's planned work the plan expects done by `now`: the
@@ -596,7 +616,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   const scheduled = leaves.filter((m) => overlaps(m, shift)).map((m) => rowFor(m, shift)).sort(cmp);
   // Carry-over = due by now and not done. Mid-shift, work due at 16:00
   // isn't carried over at 10:00 — it's still this shift's.
-  for (const r of scheduled) r.carryOver = !DONE(r) && dueMsOf(r.leaf, tz) <= now;
+  for (const r of scheduled) r.carryOver = !DONE(r) && crewDueMs(r.leaf, tz, times) <= now;
   const seenDone = new Set<string>();
   const done: ShiftRow[] = [];
   for (const r of scheduled) if (DONE(r)) { done.push(r); if (r.leaf.id) seenDone.add(r.leaf.id); }
@@ -611,13 +631,13 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   const inProgress = leaves
     .map((m) => rowFor(m, shift))
     .filter(isOpen)
-    .map((r) => { r.carryOver = dueMsOf(r.leaf, tz) <= now; return r; })
+    .map((r) => { r.carryOver = crewDueMs(r.leaf, tz, times) <= now; return r; })
     .sort((a, b) => Number(a.offSchedule) - Number(b.offSchedule) || cmp(a, b));
   const notStarted = scheduled.filter((r) => !DONE(r) && !isOpen(r));
   // Carry-over also includes anything older that is still open: it was due
   // before this shift ended and nobody closed it.
   const carryOver = leaves
-    .filter((m) => dueMsOf(m, tz) <= now && !DONE({ status: m.status, percent: pctOf(m) }))
+    .filter((m) => crewDueMs(m, tz, times) <= now && !DONE({ status: m.status, percent: pctOf(m) }))
     .map((m) => { const r = rowFor(m, shift); r.carryOver = true; return r; })
     .sort((a, b) => Number(b.critical) - Number(a.critical) || cmp(a, b));
 
@@ -644,16 +664,30 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     .filter((r) => !forNext(r))
     .sort(cmp);
   const critical = all.filter((r) => r.critical);
-  const mustDoHours = Math.round(all.reduce((acc, r) => acc + r.hoursLeft, 0) * 10) / 10;
+  // The next shift's share of each step, not all that's left on it: a
+  // 55-hour job running through puts 12 hours on this shift, not 52.
+  const shiftHours = (next.end - next.start) / 3_600_000;
+  const hoursIn = (r: ShiftRow) => {
+    if (r.carryOver) return Math.min(r.hoursLeft, shiftHours);
+    const win = workWindows(r.leaf, tz, times);
+    const total = win.reduce((a, [x, y]) => a + (y - x), 0);
+    if (total <= 0) return Math.min(r.hoursLeft, shiftHours);
+    const inNext = win.reduce((a, [x, y]) => a + overlapMs(x, y, next.start, next.end), 0);
+    return Math.min(r.hoursLeft, r.hours * inNext / total);
+  };
+  const mustDoHours = Math.round(all.reduce((acc, r) => acc + hoursIn(r), 0) * 10) / 10;
 
   // Stretch: planned for the following shifts (up to ~2 shifts after the
   // next one), not done, not already on the must-do list, and READY — every
   // predecessor is done or is itself on the must-do list.
-  const mustIds = new Set(all.map((r) => r.leaf.id ?? ""));
+  // A step on the must-do list only clears the way for one after it if it
+  // is planned to finish on the next shift.
+  const allIds = new Set(all.map((r) => r.leaf.id ?? ""));
+  const mustIds = new Set(all.filter((r) => r.carryOver || r.finish <= next.end).map((r) => r.leaf.id ?? ""));
   const doneIds = new Set(leaves.filter((m) => DONE({ status: m.status, percent: pctOf(m) })).map((m) => m.id ?? ""));
   const horizonEnd = nextShift(nextShift(next, tz, times), tz, times).end;
   const stretch = leaves
-    .filter((m) => m.id && !mustIds.has(m.id) && !doneIds.has(m.id) && !held(m) && startMsOf(m) >= next.end && startMsOf(m) < horizonEnd)
+    .filter((m) => m.id && !allIds.has(m.id) && !doneIds.has(m.id) && !held(m) && startMsOf(m) >= next.end && startMsOf(m) < horizonEnd)
     .filter((m) => (m.dependsOn ?? []).every((d) => {
       const p = byId.get(d);
       return !p || doneIds.has(d) || mustIds.has(d) || !blocksStart(linkOf(m.linkTypes, d), { done: doneM(p), started: startedM(p) });
@@ -666,7 +700,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   // by now minus hours actually done.
   const gapHours = Math.round((wplanned - wactual) * 10) / 10;
   let backOnTrackAt: number | null = null;
-  if (gapHours > 0) {
+  if (gapHours > 0.5) {   // "even" within half an hour: nothing to close
     let acc = 0;
     for (let i = 0; i < stretch.length; i++) { acc += stretch[i].hoursLeft; if (acc >= gapHours) { backOnTrackAt = i + 1; break; } }
   }

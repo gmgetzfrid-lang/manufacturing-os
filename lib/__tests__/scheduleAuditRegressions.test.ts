@@ -458,12 +458,60 @@ describe("the next shift sees the other crew's unfinished and paused work", () =
   });
 });
 
-describe("day work due today, still going at shift change, shows as paused", () => {
-  it("a date-only day job counts to the end of its day", () => {
+describe("day work the day crew didn't finish carries over at shift change", () => {
+  const d = shiftWindow("2026-10-26", "day", CHI);
+  it("a date-only day job not done by 17:30 is the day shift's carry-over", () => {
     const job = mk({ id: "j", name: "Hydro test", plannedStartAt: day("2026-10-26"), plannedAt: day("2026-10-26"), status: "in_progress", percentComplete: 60 });
-    const d = shiftWindow("2026-10-26", "day", CHI);
     const r = buildShiftReport({ milestones: [job], tz: CHI, shift: d, now: d.end });
-    expect(r.goals.all).toEqual([]);
-    expect(r.goals.paused.map((x) => x.leaf.id)).toEqual(["j"]);
+    expect(r.goals.otherShift.map((x) => x.leaf.id)).toEqual(["j"]);
+    expect(r.goals.paused).toEqual([]);
+  });
+  it("day work planned 14:00–18:00 is carried over at 17:30, not lost (fire eye cleaning)", () => {
+    const insp = mk({ id: "i", name: "Burner S/O valve inspection", plannedStartAt: at("2026-10-26", "10:00"), plannedAt: at("2026-10-26", "14:00"), durationHours: 4, attributes: { work_hours: "06:00-18:00" } });
+    const eye = mk({ id: "e", name: "Fire eye cleaning", plannedStartAt: at("2026-10-26", "14:00"), plannedAt: at("2026-10-26", "18:00"), durationHours: 4, dependsOn: ["i"], attributes: { work_hours: "06:00-18:00" } });
+    const r = buildShiftReport({ milestones: [insp, eye], tz: CHI, shift: d, now: d.end });
+    expect(r.goals.otherShift.map((x) => x.leaf.id)).toEqual(["i", "e"]);
+    expect(r.review.carryOver.map((x) => x.leaf.id).sort()).toEqual(["e", "i"]);
+  });
+  it("round-the-clock work isn't carried over before its finish", () => {
+    const rtc = mk({ id: "r", name: "Manways", plannedStartAt: at("2026-10-26", "14:00"), plannedAt: at("2026-10-26", "18:00"), durationHours: 4, attributes: { work_hours: "00:00-24:00" } });
+    const r = buildShiftReport({ milestones: [rtc], tz: CHI, shift: d, now: d.end });
+    expect(r.review.carryOver).toEqual([]);
+    expect(r.goals.all.map((x) => x.leaf.id)).toEqual(["r"]);
+  });
+});
+
+describe("next shift hours are that shift's share; pulled-ahead work must be ready", () => {
+  const d = shiftWindow("2026-10-26", "day", CHI);
+  // A 55 h round-the-clock vendor step and the step after it.
+  const cal = mk({ id: "c", name: "Calibrate", plannedStartAt: at("2026-10-26", "15:00"), plannedAt: at("2026-10-28", "22:00"), durationHours: 55, percentComplete: 5, status: "in_progress", attributes: { work_hours: "00:00-24:00" } });
+  const install = mk({ id: "n", name: "Install meter", plannedStartAt: at("2026-10-28", "22:00"), plannedAt: at("2026-10-29", "02:00"), durationHours: 4, dependsOn: ["c"], attributes: { work_hours: "00:00-24:00" } });
+  const r = buildShiftReport({ milestones: [cal, install], tz: CHI, shift: d, now: d.end });
+  it("a 55 h step puts about 12 h on the night shift, not 52", () => {
+    expect(r.goals.mustDoHours).toBeGreaterThan(11);
+    expect(r.goals.mustDoHours).toBeLessThanOrEqual(12);
+  });
+  it("a step waiting on work that won't finish this shift isn't 'pulled ahead'", () => {
+    expect(r.goals.stretch).toEqual([]);
+  });
+  it("'closes gap' only when the job is really behind", () => {
+    expect(Math.abs(r.goals.gapHours) <= 0.5 ? r.goals.backOnTrackAt : null).toBeNull();
+  });
+});
+
+describe("turnover meeting lead", () => {
+  it("defaults to 30 minutes and accepts 0–180", async () => {
+    const { meetingLeadMin } = await import("@/lib/shiftReport");
+    expect(meetingLeadMin({ dayStart: "06:00", nightStart: "18:00" })).toBe(30);
+    expect(meetingLeadMin({ dayStart: "06:00", nightStart: "18:00", meetingBefore: 0 })).toBe(0);
+    expect(meetingLeadMin({ dayStart: "06:00", nightStart: "18:00", meetingBefore: 500 })).toBe(30);
+  });
+  it("at the 17:30 meeting for an 06:00–18:00 day, 14:00–18:00 day work not done carries over", () => {
+    const times = { dayStart: "06:00", nightStart: "18:00" };
+    const d = shiftWindow("2026-10-26", "day", CHI, times);
+    const eye = mk({ id: "e", name: "Fire eye cleaning", plannedStartAt: at("2026-10-26", "14:00"), plannedAt: at("2026-10-26", "18:00"), durationHours: 4, attributes: { work_hours: "06:00-18:00" } });
+    // The view reports as of the shift end once the meeting starts.
+    const r = buildShiftReport({ milestones: [eye], tz: CHI, times, shift: d, now: d.end });
+    expect(r.goals.otherShift.map((x) => x.leaf.id)).toEqual(["e"]);
   });
 });

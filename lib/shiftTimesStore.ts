@@ -23,7 +23,9 @@ export function shiftTimesProblem(t: ShiftTimes): string | null {
   const d = hm(t.dayStart), n = hm(t.nightStart);
   if (d == null || n == null) return "Use 24-hour times like 05:30.";
   if (d === n) return "Day and night can't start at the same time.";
-  if (d > n) return "Day shift must start earlier in the day than night shift (e.g. 05:30 and 17:30).";
+  if (d > n) return "Day shift must start earlier in the day than night shift (e.g. 06:00 and 18:00).";
+  const lead = t.meetingBefore;
+  if (lead != null && !(Number.isFinite(lead) && lead >= 0 && lead <= 180)) return "The meeting lead must be 0–180 minutes before the shift change.";
   return null;
 }
 
@@ -41,7 +43,7 @@ export async function loadProjectShiftTimes(projectId: string): Promise<ShiftTim
   const t = raw ? { ...DEFAULT_SHIFT_TIMES, ...raw } : DEFAULT_SHIFT_TIMES;
   const safe = shiftTimesProblem(t) ? DEFAULT_SHIFT_TIMES : t;
   const prev = readShiftTimes(projectId);
-  if (prev.dayStart !== safe.dayStart || prev.nightStart !== safe.nightStart) cache(projectId, safe);
+  if (prev.dayStart !== safe.dayStart || prev.nightStart !== safe.nightStart || prev.meetingBefore !== safe.meetingBefore) cache(projectId, safe);
   return safe;
 }
 
@@ -49,7 +51,10 @@ export async function loadProjectShiftTimes(projectId: string): Promise<ShiftTim
 export async function saveProjectShiftTimes(projectId: string, t: ShiftTimes): Promise<void> {
   const problem = shiftTimesProblem(t);
   if (problem) throw new Error(problem);
-  const clean = { dayStart: t.dayStart.trim().padStart(5, "0"), nightStart: t.nightStart.trim().padStart(5, "0") };
+  const clean: ShiftTimes = {
+    dayStart: t.dayStart.trim().padStart(5, "0"), nightStart: t.nightStart.trim().padStart(5, "0"),
+    ...(t.meetingBefore != null ? { meetingBefore: Math.round(t.meetingBefore) } : {}),
+  };
   const { data, error } = await supabase.from("projects").update({ shift_times: clean }).eq("id", projectId).select("id");
   if (error) {
     // The column isn't there yet: keep them on this device meanwhile.
