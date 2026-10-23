@@ -23,7 +23,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import { Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown, Upload, ArrowRight, Eye, EyeOff, Layers, Clock, Trash2, RotateCcw } from "lucide-react";
 import {
-  listMilestones, createMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestone, clearProjectSchedule, resetProjectProgress,
+  listMilestones, createMilestone, setMilestoneStatus, setMilestoneProgress, restoreMilestoneStates, deleteMilestone, clearProjectSchedule, resetProjectProgress,
   applyMilestoneMoves, computeScheduleMetrics, setBaseline,
 } from "@/lib/milestones";
 import { supabase } from "@/lib/supabase";
@@ -383,7 +383,11 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       {/* Active view */}
       {!loading && milestones.length > 0 && view === "execution" && (
         <ExecutionView
-          milestones={visible}
+          // The whole schedule, always: the Planning filter and the
+          // imported-rows toggle are for that list. Execution has its own
+          // search, and moves, the shift report and bulk changes must see
+          // every task.
+          milestones={milestones}
           canEdit={canEdit}
           orgId={orgId}
           projectId={projectId}
@@ -416,10 +420,10 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               return false;
             }
           }}
-          onSetStatus={async (id, status) => {
+          onSetStatus={async (id, status, reason, percent) => {
             try {
               await setMilestoneStatus({
-                id, status,
+                id, status, statusReason: reason, percentComplete: percent,
                 actorUserId: userId, actorUserName: userName,
                 actorUserEmail: userEmail, actorUserRole: userRole,
               });
@@ -429,6 +433,12 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               setError((e as Error).message);
               return false;
             }
+          }}
+          onRestore={async (states) => {
+            const { failed } = await restoreMilestoneStates(states, userId);
+            await refresh();
+            if (failed.length) { setError(`Undo couldn't restore ${failed.length} task${failed.length === 1 ? "" : "s"}.`); return false; }
+            return true;
           }}
           onSetProgress={async (id, percent) => {
             try {

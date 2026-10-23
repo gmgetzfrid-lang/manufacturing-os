@@ -38,7 +38,8 @@ export function statusLabel(s: MilestoneStatus): string { return STATUS_META[s].
 
 interface Props {
   status: MilestoneStatus;
-  onPick: (status: MilestoneStatus, reason?: string) => void;
+  /** `percent` comes with "in progress" picked from the how-far step. */
+  onPick: (status: MilestoneStatus, reason?: string, percent?: number) => void;
   disabled?: boolean;
   /** Called when a disabled control is clicked — lets callers explain WHY
    *  it's read-only (e.g. "you're not a project member") instead of the tap
@@ -182,7 +183,10 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                   confirmLabel={(v) => (v >= 100 ? "Mark done" : `Start at ${v}%`)}
                   // 0% = started, nothing measurable yet: in progress, not
                   // back to planned (which a 0% progress update would mean).
-                  onPick={(v) => { if (v <= 0) onPick("in_progress"); else onSetProgress?.(v); setOpen(false); }}
+                  // One write: the status and the % together, so starting a
+                  // blocked or on-hold task takes it off hold (a % alone keeps
+                  // the hold — 40% done and still blocked is real).
+                  onPick={(v) => { if (v >= 100) onPick("completed"); else onPick("in_progress", undefined, v); setOpen(false); }}
                 />
               </div>
             ) : reasonFor ? (

@@ -38,7 +38,7 @@ interface Props {
   ancestorsOf: (m: Milestone) => Milestone[];
   progress?: Map<string, ProgressInfo>;
   canEdit: boolean;
-  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string) => void;
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => void;
   onSetProgress?: (id: string, percent: number) => void;
   /** Add a note to the step's log. */
   onAddNote?: (id: string, body: string) => Promise<void> | void;
@@ -251,7 +251,7 @@ export default function DayAgendaPanel({
                         <span className="shrink-0">
                           <StatusControl
                             status={r.leaf.status} size="sm" variant="dot" disabled={!canEdit || !onSetStatus || !r.leaf.id}
-                            onPick={(st, reason) => { if (r.leaf.id && onSetStatus) onSetStatus(r.leaf.id, st, reason); }}
+                            onPick={(st, reason, p) => { if (r.leaf.id && onSetStatus) onSetStatus(r.leaf.id, st, reason, p); }}
                             percent={pct}
                             onSetProgress={onSetProgress ? (v) => { if (r.leaf.id) onSetProgress(r.leaf.id, v); } : undefined}
                           />
@@ -323,7 +323,7 @@ const PCTS = [0, 25, 50, 75, 90, 100];
  *  it, a note. Each change saves on its own; Next opens the step below. */
 function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, onOpenDetail, next, onNext, onClose }: {
   leaf: Milestone; pct: number; canEdit: boolean;
-  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string) => void;
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => void;
   onSetProgress?: (id: string, percent: number) => void;
   onAddNote?: (id: string, body: string) => Promise<void> | void;
   onOpenDetail: () => void;

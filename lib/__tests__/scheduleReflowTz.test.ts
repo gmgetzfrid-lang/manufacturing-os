@@ -25,8 +25,10 @@ describe("reflow in plant time", () => {
     const p = n("p", null, "2026-10-31T13:00:00Z", "2026-10-31T21:00:00Z");
     const [r] = computeEdgeResize([p, a, b], "a", "finish", 2, CHI).filter((c) => c.id === "a");
     expect(clockLabel(Date.parse(r.plannedAt), CHI)).toBe("16:00");
+    // Timed steps chain back-to-back: b starts when a's 16:00 finish lands,
+    // the same day — not a whole day later.
     const seq = sequenceSiblings([p, a, b], "p", CHI).find((c) => c.id === "b")!;
-    expect(dayKey(Date.parse(seq.plannedStartAt), CHI)).toBe("2026-11-01");
+    expect(dayKey(Date.parse(seq.plannedStartAt), CHI)).toBe("2026-10-31");
     expect(clockLabel(Date.parse(seq.plannedStartAt), CHI)).toBe("16:00");
   });
 

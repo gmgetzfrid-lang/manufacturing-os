@@ -204,6 +204,19 @@ export function expectedFraction(m: Milestone, now: number, tz: string, times: S
   return plannedFraction(m, now, tz, times, Number.isFinite(bs) && Number.isFinite(bf) ? { start: bs, finish: bf } : undefined);
 }
 
+/** When a task is due: its finish, or for a date-only task the end of its
+ *  last day (a task dated Oct 26 isn't late until Oct 26 is over). */
+export function dueMsOf(m: Milestone, tz: string): number {
+  return workSpan(m, tz).finish;
+}
+
+/** Past due and not done — one rule for every count, filter and report. */
+export function isOverdue(m: Milestone, now: number, tz: string, percent?: number): boolean {
+  if (m.status === "completed" || (percent ?? leafPercent(m)) >= 100) return false;
+  const due = dueMsOf(m, tz);
+  return Number.isFinite(due) && due <= now;
+}
+
 /** Where a step stands against its plan right now (see ShiftRow.pace). */
 export function paceOf(m: Milestone, percent: number, now: number, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): Pace {
   if (m.status === "completed" || percent >= 100) return "done";

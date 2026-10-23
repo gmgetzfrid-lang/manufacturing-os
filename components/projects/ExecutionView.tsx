@@ -32,7 +32,7 @@ import {
   ZoomIn, ZoomOut, ListTree, Crosshair, Info, Zap, Eye, ListOrdered, Link2, Replace,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
-import { groupTasksUnderParent, setTaskDuration, addMilestoneNote } from "@/lib/milestones";
+import { groupTasksUnderParent, setTaskDuration, addMilestoneNote, stateOf, type MilestoneState } from "@/lib/milestones";
 import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, cascadeDependents, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import { computeCriticalPathLite } from "@/lib/criticalPath";
 import { resolveVisibleDepIndex } from "@/lib/scheduleDeps";
@@ -77,9 +77,13 @@ interface Props {
   /** Persist a batch of reflowed date changes (one drag can shift a
    *  subtree + bleed its ancestors). */
   onMoveMany?: (changes: DateChange[]) => Promise<boolean>;
-  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string) => Promise<boolean>;
+  /** `percent` rides with "in progress" so starting a held task is one write. */
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => Promise<boolean>;
   /** Persist a leaf task's physical % complete (derives status server-side). */
   onSetProgress?: (id: string, percent: number) => Promise<boolean>;
+  /** Undo: put tasks back exactly as they were — status, %, hold reason,
+   *  actual times — in one write each. */
+  onRestore?: (states: MilestoneState[]) => Promise<boolean>;
 }
 
 // Day-width bounds (px). Auto-fit fills the available width; we never
@@ -105,7 +109,7 @@ interface FlatRow {
 
 export default function ExecutionView({
   milestones, canEdit, orgId, projectId, projectName, userId, userName, userEmail, userRole,
-  onRefresh, onMoveMany, onSetStatus, onSetProgress,
+  onRefresh, onMoveMany, onSetStatus, onSetProgress, onRestore,
 }: Props) {
   const tz = useScheduleTz();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -371,38 +375,56 @@ export default function ExecutionView({
     });
   }, [tz, scheduleStartMs]);
 
-  const setStatus = useCallback(async (id: string, next: MilestoneStatus, reason?: string) => {
-    if (!canEdit || !onSetStatus) return;
+  // Undo puts a task back exactly as it was: status, %, hold reason and
+  // actual times — "40% → done → undo" is 40% again, a hold stays a hold.
+  const restore = useCallback(async (states: MilestoneState[]) => {
+    if (!onRestore || states.length === 0) return;
+    setOptimistic((m) => { const n = new Map(m); for (const st of states) n.set(st.id, st.status); return n; });
+    setOptimisticPct((m) => { const n = new Map(m); for (const st of states) n.set(st.id, Math.round(st.percentComplete)); return n; });
+    const ok = await onRestore(states);
+    if (!ok) {
+      setOptimistic((m) => { const n = new Map(m); for (const st of states) n.delete(st.id); return n; });
+      setOptimisticPct((m) => { const n = new Map(m); for (const st of states) n.delete(st.id); return n; });
+    }
+  }, [onRestore]);
+
+  const setStatus = useCallback(async (id: string, next: MilestoneStatus, reason?: string, percent?: number): Promise<boolean> => {
+    if (!canEdit || !onSetStatus) return false;
     const prev = byId.get(id);                       // snapshot for undo
-    const prevStatus = prev?.status;
+    const before = prev?.id ? stateOf(prev) : null;
     const name = prev?.name ?? "Task";
-    if (!(await confirmFuture(prev, next, null))) return;
+    if (!(await confirmFuture(prev, next, percent ?? null))) return false;
     setOptimistic((m) => new Map(m).set(id, next));
+    const nextPct = next === "completed" ? 100 : next === "planned" ? 0 : percent;
+    if (nextPct != null) setOptimisticPct((m) => new Map(m).set(id, Math.round(nextPct)));
     setBusy((s) => new Set(s).add(id));
     try {
-      const ok = await onSetStatus(id, next, reason);
-      if (!ok) { setOptimistic((m) => { const n = new Map(m); n.delete(id); return n; }); return; }
-      if (prevStatus && prevStatus !== next) {
+      const ok = await onSetStatus(id, next, reason, percent);
+      if (!ok) {
+        setOptimistic((m) => { const n = new Map(m); n.delete(id); return n; });
+        setOptimisticPct((m) => { const n = new Map(m); n.delete(id); return n; });
+        return false;
+      }
+      if (before && (before.status !== next || (percent != null && Math.round(before.percentComplete) !== Math.round(percent)))) {
         announce(
-          `“${truncate(name)}” → ${statusWord(next)}`,
-          async () => {
-            setOptimistic((m) => new Map(m).set(id, prevStatus));
-            await onSetStatus(id, prevStatus);
-          },
+          `“${truncate(name)}” → ${statusWord(next)}${next === "in_progress" && percent != null ? ` ${Math.round(percent)}%` : ""}`,
+          () => restore([before]),
           next === "completed" ? "success" : "default",
         );
       }
+      return true;
     } finally {
       setBusy((s) => { const n = new Set(s); n.delete(id); return n; });
     }
-  }, [canEdit, onSetStatus, byId, announce, confirmFuture]);
+  }, [canEdit, onSetStatus, byId, announce, confirmFuture, restore]);
 
   // Set a leaf task's physical % complete. Optimistically updates BOTH the
   // percent and the derived status (so the fill bar and the status dot move
   // together), then persists. Summary rows never call this — their % rolls up.
-  const setProgress = useCallback(async (id: string, pct: number) => {
-    if (!canEdit || !onSetProgress) return;
+  const setProgress = useCallback(async (id: string, pct: number): Promise<boolean> => {
+    if (!canEdit || !onSetProgress) return false;
     const prev = byId.get(id);
+    const before = prev?.id ? stateOf(prev) : null;
     const prevStatus = prev?.status;
     const prevPct = prev?.percentComplete != null ? Math.round(prev.percentComplete) : (prevStatus === "completed" ? 100 : 0);
     const clamped = Math.max(0, Math.min(100, Math.round(pct)));
@@ -412,7 +434,7 @@ export default function ExecutionView({
       : clamped <= 0
         ? (isException ? prevStatus! : "planned")
         : (isException ? prevStatus! : "in_progress");
-    if (clamped > prevPct && !(await confirmFuture(prev, null, clamped))) return;
+    if (clamped > prevPct && !(await confirmFuture(prev, null, clamped))) return false;
     setOptimisticPct((m) => new Map(m).set(id, clamped));
     setOptimistic((m) => new Map(m).set(id, nextStatus));
     setBusy((s) => new Set(s).add(id));
@@ -421,19 +443,16 @@ export default function ExecutionView({
       if (!ok) {
         setOptimisticPct((m) => { const n = new Map(m); n.delete(id); return n; });
         setOptimistic((m) => { const n = new Map(m); n.delete(id); return n; });
-        return;
+        return false;
       }
-      if (prevPct !== clamped) {
-        announce(`“${truncate(prev?.name ?? "Task")}” → ${clamped}%`, async () => {
-          setOptimisticPct((m) => new Map(m).set(id, prevPct));
-          if (prevStatus) setOptimistic((m) => new Map(m).set(id, prevStatus));
-          await onSetProgress(id, prevPct);
-        }, clamped >= 100 ? "success" : "default");
+      if (prevPct !== clamped && before) {
+        announce(`“${truncate(prev?.name ?? "Task")}” → ${clamped}%`, () => restore([before]), clamped >= 100 ? "success" : "default");
       }
+      return true;
     } finally {
       setBusy((s) => { const n = new Set(s); n.delete(id); return n; });
     }
-  }, [canEdit, onSetProgress, byId, announce, confirmFuture]);
+  }, [canEdit, onSetProgress, byId, announce, confirmFuture, restore]);
 
   // Bulk status across the selection (with one undo that restores each
   // task's prior status).
@@ -442,7 +461,8 @@ export default function ExecutionView({
   const bulkStatusIds = useCallback(async (ids: string[], next: MilestoneStatus) => {
     if (!canEdit || !onSetStatus || ids.length === 0) return;
     const prev = new Map<string, MilestoneStatus>();
-    for (const id of ids) { const m = byId.get(id); if (m) prev.set(id, m.status); }
+    const before = new Map<string, MilestoneState>();
+    for (const id of ids) { const m = byId.get(id); if (m) { prev.set(id, m.status); before.set(id, stateOf(m)); } }
     setOptimistic((m) => { const n = new Map(m); for (const id of ids) n.set(id, next); return n; });
     setBusy((s) => { const n = new Set(s); for (const id of ids) n.add(id); return n; });
     try {
@@ -468,16 +488,15 @@ export default function ExecutionView({
 
       if (succeeded.length > 0) {
         // Only offer to undo what actually changed.
-        announce(`${succeeded.length} task${succeeded.length === 1 ? "" : "s"} → ${statusWord(next)}`, async () => {
-          setOptimistic((m) => { const n = new Map(m); for (const id of succeeded) { const st = prev.get(id); if (st) n.set(id, st); } return n; });
-          await Promise.all(succeeded.map((id) => { const st = prev.get(id); return st ? onSetStatus(id, st) : Promise.resolve(true); }));
-        }, next === "completed" ? "success" : "default");
+        announce(`${succeeded.length} task${succeeded.length === 1 ? "" : "s"} → ${statusWord(next)}`,
+          () => restore(succeeded.map((id) => before.get(id)).filter((x): x is MilestoneState => !!x)),
+          next === "completed" ? "success" : "default");
       }
       setSelectedIds(new Set());
     } finally {
       setBusy((s) => { const n = new Set(s); for (const id of ids) n.delete(id); return n; });
     }
-  }, [canEdit, onSetStatus, byId, announce, notify]);
+  }, [canEdit, onSetStatus, byId, announce, notify, restore]);
 
   // Bulk move for an explicit id set → open the confirmation sheet.
   const bulkMoveIds = useCallback((ids: string[], deltaDays: number) => {
@@ -837,8 +856,8 @@ export default function ExecutionView({
             const target = byId.get(id);
             if (target) void moveByDays(target, days);
           }}
-          onSetStatus={(id, s, reason) => void setStatus(id, s, reason)}
-          onSetProgress={(id, p) => void setProgress(id, p)}
+          onSetStatus={(id, s, reason, p) => setStatus(id, s, reason, p)}
+          onSetProgress={(id, p) => setProgress(id, p)}
           progress={progressIndex}
           onBulkStatus={(ids, s) => void bulkStatusIds(ids, s)}
           onBulkMove={(ids, d) => bulkMoveIds(ids, d)}
@@ -900,7 +919,7 @@ export default function ExecutionView({
                   busy={!!r.ms.id && busy.has(r.ms.id)}
                   onToggleCollapse={() => r.ms.id && toggleCollapse(r.ms.id)}
                   onToggleSelected={() => r.ms.id && toggleSelected(r.ms.id)}
-                  onSetStatus={(s, reason) => { if (r.ms.id) void setStatus(r.ms.id, s, reason); }}
+                  onSetStatus={(s, reason, p) => { if (r.ms.id) void setStatus(r.ms.id, s, reason, p); }}
                   onSetProgress={(p) => { if (r.ms.id) void setProgress(r.ms.id, p); }}
                   onSetDuration={() => setDurationFor(r.ms)}
                   onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
@@ -1165,7 +1184,7 @@ function OutlineRow({
 }: {
   row: FlatRow; span: { start: number; finish: number }; work: WorkShift | null; color: GroupColor; collapsed: boolean; selected: boolean; focused?: boolean; canEdit: boolean; busy: boolean;
   onToggleCollapse: () => void; onToggleSelected: () => void;
-  onSetStatus: (s: MilestoneStatus, reason?: string) => void; onSetProgress: (percent: number) => void;
+  onSetStatus: (s: MilestoneStatus, reason?: string, percent?: number) => void; onSetProgress: (percent: number) => void;
   onSetDuration: () => void; onOpenDetail: () => void;
   onViewOnly?: () => void; onSequence?: () => void;
 }) {

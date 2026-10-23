@@ -43,7 +43,7 @@ interface Props {
    *  ancestors) by a day delta. */
   onMoveDays?: (id: string, deltaDays: number) => void;
   /** One-click status change straight from a chip. */
-  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string) => void;
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => void;
   /** Set a leaf's physical % complete (derives status). */
   onSetProgress?: (id: string, percent: number) => void;
   /** Per-task effective progress + derived status (leaves: own; summaries:
@@ -547,7 +547,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
             <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
               <StatusControl
                 status={leaf.status} size="sm" variant="dot" disabled={!canEdit || !onSetStatus || !leaf.id}
-                onPick={(st, reason) => { if (leaf.id && onSetStatus) void onSetStatus(leaf.id, st, reason); }}
+                onPick={(st, reason, p) => { if (leaf.id && onSetStatus) void onSetStatus(leaf.id, st, reason, p); }}
                 percent={pctOf(leaf)}
                 onSetProgress={onSetProgress ? (v) => { if (leaf.id) onSetProgress(leaf.id, v); } : undefined}
               />
@@ -700,7 +700,7 @@ function Chip({
   onDragStart?: (e: React.DragEvent) => void;
   onTouchDragStart?: (e: React.PointerEvent) => void;
   onClick: () => void;
-  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string) => void;
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => void;
   onSetProgress?: (id: string, percent: number) => void;
   progress?: Map<string, ProgressInfo>;
   shiftTimes?: ShiftTimes;
@@ -808,7 +808,7 @@ function Chip({
               size="sm"
               variant="dot"
               disabled={!canEdit || !onSetStatus || !ms.id}
-              onPick={(st, reason) => { if (ms.id && onSetStatus) onSetStatus(ms.id, st, reason); }}
+              onPick={(st, reason, p) => { if (ms.id && onSetStatus) onSetStatus(ms.id, st, reason, p); }}
               percent={pct}
               onSetProgress={onSetProgress ? (p) => { if (ms.id) onSetProgress(ms.id, p); } : undefined}
             />

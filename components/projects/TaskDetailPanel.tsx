@@ -94,12 +94,12 @@ export default function TaskDetailPanel({
   }, [m.id]);
   useEffect(() => { loadNotes(); }, [loadNotes]);
 
-  const applyStatus = useCallback(async (status: MilestoneStatus, note?: string) => {
+  const applyStatus = useCallback(async (status: MilestoneStatus, reason?: string, percent?: number) => {
     if (!m.id) return;
     setBusyStatus(true);
     try {
       await setMilestoneStatus({
-        id: m.id, status, note,
+        id: m.id, status, statusReason: reason, percentComplete: percent,
         actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
       });
       loadNotes();
@@ -205,7 +205,7 @@ export default function TaskDetailPanel({
                       busy={busyStatus}
                       variant="pill"
                       disabled={!canEdit}
-                      onPick={(s, reason) => void applyStatus(s, reason)}
+                      onPick={(s, reason, p) => void applyStatus(s, reason, p)}
                     />
                     <span className="text-[10px] text-[var(--color-text-faint)]">incl. on-hold / blocked</span>
                   </div>
@@ -339,8 +339,8 @@ export default function TaskDetailPanel({
                               size="sm"
                               variant="dot"
                               disabled={!canEdit}
-                              onPick={(st, reason) => s.id && void setMilestoneStatus({
-                                id: s.id, status: st, note: reason,
+                              onPick={(st, reason, p) => s.id && void setMilestoneStatus({
+                                id: s.id, status: st, statusReason: reason, percentComplete: p,
                                 actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
                               }).then(onChanged)}
                             />

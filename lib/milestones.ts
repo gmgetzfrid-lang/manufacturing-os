@@ -21,7 +21,8 @@ import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
 import { reflowAllAncestors, type ReflowNode } from "@/lib/scheduleReflow";
 import { effectiveWeight, leafPercent } from "@/lib/scheduleProgress";
 import { mergeImportedProgress } from "@/lib/scheduleRules";
-import { DEFAULT_SCHEDULE_TZ, naiveToIso, normalizeTimeZone, shiftWallClock } from "@/lib/scheduleTz";
+import { DEFAULT_SCHEDULE_TZ, naiveToIso, normalizeTimeZone, shiftWallClock, addDays, hasTimeOfDay, dayDiff } from "@/lib/scheduleTz";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import type {
   Milestone, MilestoneStatus, MilestoneSource, MilestoneNote, MilestoneAttributes,
 } from "@/types/schema";
@@ -380,15 +381,30 @@ export async function applyBulkFieldChange(input: {
 export interface SetMilestoneStatusInput {
   id: string;
   status: MilestoneStatus;
+  /** Why it's blocked / on hold. Omitted on a hold = keep the reason
+   *  already recorded; any other status clears it. */
   statusReason?: string;
   /** Free-form breadcrumb note captured with the transition
    *  ("waiting on parts", "contractor no-show"). */
   note?: string;
+  /** When the work was really finished (ISO), for a completion recorded
+   *  after the fact — so the shift that did it gets the credit. */
+  completedAt?: string;
+  /** Progress to record with the move to in progress (1–99). */
+  percentComplete?: number;
   actorUserId: string;
   actorUserName?: string;
   actorUserEmail?: string;
   actorUserRole?: string;
 }
+
+/** A recorded time, never later than now. */
+function pastIso(iso: string | undefined, now: string): string {
+  const t = iso ? Date.parse(iso) : NaN;
+  return Number.isFinite(t) && t < Date.parse(now) ? new Date(t).toISOString() : now;
+}
+
+const HOLDS: MilestoneStatus[] = ["blocked", "on_hold", "missed"];
 
 /** Transition status. 'completed' stamps actual_at + completer;
  *  first move to 'in_progress' stamps actual_start_at; leaving
@@ -402,15 +418,17 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
   // was LAST signed off: a reopen→complete cycle stamps the new sign-off so
   // the shift that really finished it gets the credit.
   const { data: cur } = await supabase
-    .from("milestones").select("actual_start_at, first_completed_at, percent_complete").eq("id", input.id).maybeSingle();
-  const curRow = cur as { actual_start_at: string | null; first_completed_at: string | null; percent_complete: number | null } | null;
+    .from("milestones").select("actual_start_at, first_completed_at, percent_complete, status_reason").eq("id", input.id).maybeSingle();
+  const curRow = cur as { actual_start_at: string | null; first_completed_at: string | null; percent_complete: number | null; status_reason: string | null } | null;
   const existingStart = curRow?.actual_start_at ?? null;
   const existingFirstCompleted = curRow?.first_completed_at ?? null;
   const existingPct = curRow?.percent_complete != null ? Math.round(Number(curRow.percent_complete)) : 0;
 
   const update: Record<string, unknown> = {
     status: input.status,
-    status_reason: input.statusReason?.trim() || null,
+    // A hold keeps the reason on record unless a new one is given; leaving
+    // the hold clears it (a stale "waiting on crane" would read as current).
+    status_reason: HOLDS.includes(input.status) ? (input.statusReason?.trim() || curRow?.status_reason || null) : null,
     updated_at: now,
     updated_by: input.actorUserId,
   };
@@ -419,15 +437,18 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
   // in_progress clamped below 100. blocked/on_hold/missed keep their logged %.
   if (input.status === "completed") {
     update.percent_complete = 100;
-    // The sign-off time is now; the FIRST completion stays on record in
-    // first_completed_at so the history of a reopen is never lost.
-    update.actual_at = now;
-    if (!existingFirstCompleted) update.first_completed_at = now;
+    // The sign-off time is now (or when the work really finished); the
+    // FIRST completion stays on record in first_completed_at so the history
+    // of a reopen is never lost.
+    const doneAt = pastIso(input.completedAt, now);
+    update.actual_at = doneAt;
+    if (!existingFirstCompleted) update.first_completed_at = doneAt;
     update.completed_by = input.actorUserId;
     update.completed_by_name = input.actorUserName ?? null;
-    if (!existingStart) update.actual_start_at = now;
+    if (!existingStart || Date.parse(existingStart) > Date.parse(doneAt)) update.actual_start_at = doneAt;
   } else if (input.status === "in_progress") {
-    update.percent_complete = Math.min(99, Math.max(0, existingPct));
+    const want = input.percentComplete != null && Number.isFinite(input.percentComplete) ? Math.round(input.percentComplete) : existingPct;
+    update.percent_complete = Math.min(99, Math.max(0, want));
     update.actual_at = null;
     update.completed_by = null;
     update.completed_by_name = null;
@@ -488,6 +509,11 @@ export interface SetMilestoneProgressInput {
   /** Target physical progress, 0–100. */
   percentComplete: number;
   note?: string;
+  /** Recording progress takes a blocked / on-hold task off hold (the
+   *  person said work is happening). Default: the hold stays. */
+  resume?: boolean;
+  /** When the work was really finished (ISO), if it reaches 100%. */
+  completedAt?: string;
   actorUserId: string;
   actorUserName?: string;
   actorUserEmail?: string;
@@ -516,7 +542,7 @@ export async function setMilestoneProgress(input: SetMilestoneProgressInput): Pr
   const existingStart = curRow?.actual_start_at ?? null;
   const existingFirstCompleted = curRow?.first_completed_at ?? null;
   const prevStatus: MilestoneStatus = curRow?.status ?? "planned";
-  const isException = prevStatus === "blocked" || prevStatus === "on_hold" || prevStatus === "missed";
+  const isException = !input.resume && (prevStatus === "blocked" || prevStatus === "on_hold" || prevStatus === "missed");
 
   let nextStatus: MilestoneStatus;
   if (pct >= 100) nextStatus = "completed";
@@ -529,12 +555,14 @@ export async function setMilestoneProgress(input: SetMilestoneProgressInput): Pr
     updated_at: now,
     updated_by: input.actorUserId,
   };
+  if (!HOLDS.includes(nextStatus)) update.status_reason = null;
   if (nextStatus === "completed") {
-    update.actual_at = now;
-    if (!existingFirstCompleted) update.first_completed_at = now;
+    const doneAt = pastIso(input.completedAt, now);
+    update.actual_at = doneAt;
+    if (!existingFirstCompleted) update.first_completed_at = doneAt;
     update.completed_by = input.actorUserId;
     update.completed_by_name = input.actorUserName ?? null;
-    if (!existingStart) update.actual_start_at = now;
+    if (!existingStart || Date.parse(existingStart) > Date.parse(doneAt)) update.actual_start_at = doneAt;
   } else {
     update.actual_at = null;
     update.completed_by = null;
@@ -571,6 +599,72 @@ export async function setMilestoneProgress(input: SetMilestoneProgressInput): Pr
     details: { percentComplete: pct, newStatus: nextStatus },
   });
 
+  return m;
+}
+
+/** Where a task stood: what Undo puts back, exactly. */
+export interface MilestoneState {
+  id: string;
+  status: MilestoneStatus;
+  percentComplete: number;
+  statusReason?: string | null;
+  actualAt?: string | null;
+  actualStartAt?: string | null;
+  completedBy?: string | null;
+  completedByName?: string | null;
+}
+
+const isoOrNull = (v: unknown): string | null => {
+  const t = v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v));
+  return Number.isFinite(t) ? new Date(t).toISOString() : null;
+};
+
+export const stateOf = (m: Milestone): MilestoneState => ({
+  id: m.id!, status: m.status, percentComplete: m.percentComplete ?? 0, statusReason: m.statusReason ?? null,
+  actualAt: isoOrNull(m.actualAt), actualStartAt: isoOrNull(m.actualStartAt),
+  completedBy: m.completedBy ?? null, completedByName: m.completedByName ?? null,
+});
+
+/** Put tasks back exactly as they were (status, %, reason, actual times)
+ *  in one write each — Undo. A task someone else changed since is still
+ *  restored; the caller only offers Undo for its own most recent change. */
+export async function restoreMilestoneStates(states: MilestoneState[], actorUserId: string): Promise<{ failed: string[] }> {
+  const now = new Date().toISOString();
+  const failed: string[] = [];
+  await Promise.all(states.map(async (st) => {
+    const { error } = await supabase.from("milestones").update({
+      status: st.status, percent_complete: st.percentComplete, status_reason: st.statusReason ?? null,
+      actual_at: st.actualAt ?? null, actual_start_at: st.actualStartAt ?? null,
+      completed_by: st.completedBy ?? null, completed_by_name: st.completedByName ?? null,
+      updated_at: now, updated_by: actorUserId,
+    }).eq("id", st.id);
+    if (error) failed.push(st.id);
+  }));
+  return { failed };
+}
+
+/** Correct when work really started / finished — a night-shift completion
+ *  entered next morning belongs to the night shift. Times can't be in the
+ *  future, and a finish can't come before the start. */
+export async function setActualTimes(input: {
+  id: string; actualStartAt?: string | null; actualAt?: string | null; actorUserId: string; actorUserName?: string;
+}): Promise<Milestone> {
+  const now = Date.now();
+  const ms = (v?: string | null) => (v ? Date.parse(v) : NaN);
+  const s = ms(input.actualStartAt), f = ms(input.actualAt);
+  if ((Number.isFinite(s) && s > now) || (Number.isFinite(f) && f > now)) throw new Error("An actual time can't be in the future.");
+  if (Number.isFinite(s) && Number.isFinite(f) && f < s) throw new Error("Finish can't be before start.");
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: input.actorUserId };
+  if (input.actualStartAt !== undefined) patch.actual_start_at = input.actualStartAt;
+  if (input.actualAt !== undefined) patch.actual_at = input.actualAt;
+  const { data, error } = await supabase.from("milestones").update(patch).eq("id", input.id).select("*").single();
+  if (error || !data) throw new Error(error?.message ?? "Couldn't save the actual times");
+  const m = rowToMilestone(data as MilestoneRow);
+  await addMilestoneNote({
+    orgId: m.orgId, milestoneId: m.id!, kind: "status", statusAt: m.status,
+    body: `Actual times corrected${input.actualStartAt !== undefined ? ` · started ${input.actualStartAt ? new Date(input.actualStartAt).toISOString() : "—"}` : ""}${input.actualAt !== undefined ? ` · finished ${input.actualAt ? new Date(input.actualAt).toISOString() : "—"}` : ""}`,
+    createdBy: input.actorUserId, createdByName: input.actorUserName,
+  }).catch(() => undefined);
   return m;
 }
 
@@ -611,10 +705,11 @@ export async function addMilestoneNote(input: {
 export async function latestNotes(milestoneIds: string[]): Promise<Map<string, { body: string; at: string | null; by: string | null }>> {
   const out = new Map<string, { body: string; at: string | null; by: string | null }>();
   for (let i = 0; i < milestoneIds.length; i += 200) {
-    const { data, error } = await supabase.from("milestone_notes")
+    const chunk = milestoneIds.slice(i, i + 200);
+    const { rows: data, error } = await fetchAllRows<unknown>((from, to) => supabase.from("milestone_notes")
       .select("milestone_id, body, created_at, created_by_name")
-      .in("milestone_id", milestoneIds.slice(i, i + 200)).eq("kind", "note")
-      .order("created_at", { ascending: false }).limit(1000);
+      .in("milestone_id", chunk).eq("kind", "note")
+      .order("created_at", { ascending: false }).order("id").range(from, to));
     if (error) continue;
     for (const r of (data ?? []) as Array<{ milestone_id: string; body: string | null; created_at: string | null; created_by_name: string | null }>) {
       if (!r.body || out.has(r.milestone_id)) continue;
@@ -622,6 +717,22 @@ export async function latestNotes(milestoneIds: string[]): Promise<Map<string, {
     }
   }
   return out;
+}
+
+/** Fix a comment's wording. */
+export async function updateMilestoneNote(id: string, body: string): Promise<void> {
+  const text = body.trim();
+  if (!text) throw new Error("A comment can't be empty — delete it instead.");
+  const { data, error } = await supabase.from("milestone_notes").update({ body: text }).eq("id", id).select("id");
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) throw new Error("That comment couldn't be changed.");
+}
+
+/** Remove a comment. */
+export async function deleteMilestoneNote(id: string): Promise<void> {
+  const { data, error } = await supabase.from("milestone_notes").delete().eq("id", id).select("id");
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) throw new Error("That comment couldn't be deleted.");
 }
 
 export async function listMilestoneNotes(milestoneId: string): Promise<MilestoneNote[]> {
@@ -638,8 +749,9 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
   if (!row) return;
   const m = rowToMilestone(row as MilestoneRow);
 
-  const { error: delErr } = await supabase.from("milestones").delete().eq("id", id);
+  const { data: gone, error: delErr } = await supabase.from("milestones").delete().eq("id", id).select("id");
   if (delErr) throw new Error(delErr.message);
+  if (!gone || gone.length === 0) throw new Error("This task wasn't deleted — you may not have permission to delete it on this project.");
 
   const res = pickResource(m);
   await logMilestoneEvent({
@@ -651,6 +763,90 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
     type: "MILESTONE_DELETED",
     name: m.name,
   });
+}
+
+/** What a delete removed — enough to put it all back (Undo). */
+export interface DeletedTasks { rows: MilestoneRow[]; notes: MilestoneNoteRow[]; orphans: Array<{ id: string; parentId: string }> }
+
+/** Delete tasks — with everything under them when `withChildren` — and
+ *  hand back what was removed so Undo can restore it, comments included.
+ *  Steps left behind under a deleted parent move up to its parent. */
+export async function deleteMilestones(input: {
+  orgId: string; projectId: string; ids: string[]; withChildren: boolean;
+  actorUserId: string; actorUserEmail?: string;
+}): Promise<DeletedTasks> {
+  const { rows: all, error: loadErr } = await fetchAllRows<MilestoneRow>((from, to) => supabase.from("milestones").select("*")
+    .eq("org_id", input.orgId).eq("project_id", input.projectId).order("id").range(from, to));
+  if (loadErr) throw new Error(loadErr);
+  const byParent = new Map<string, MilestoneRow[]>();
+  for (const r of all) if (r.parent_id) byParent.set(r.parent_id, [...(byParent.get(r.parent_id) ?? []), r]);
+  const kill = new Set<string>();
+  const add = (id: string) => {
+    if (kill.has(id)) return;
+    kill.add(id);
+    if (input.withChildren) for (const c of byParent.get(id) ?? []) add(c.id);
+  };
+  input.ids.forEach(add);
+  const rows = all.filter((r) => kill.has(r.id));
+  const parentOf = new Map(all.map((r) => [r.id, r.parent_id]));
+  const orphans: Array<{ id: string; parentId: string }> = [];
+  for (const r of all) {
+    if (kill.has(r.id) || !r.parent_id || !kill.has(r.parent_id)) continue;
+    orphans.push({ id: r.id, parentId: r.parent_id });
+    let up = parentOf.get(r.parent_id) ?? null;
+    while (up && kill.has(up)) up = parentOf.get(up) ?? null;
+    const { error } = await supabase.from("milestones").update({ parent_id: up }).eq("id", r.id);
+    if (error) throw new Error(error.message);
+  }
+  const ids = [...kill];
+  const notes: MilestoneNoteRow[] = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200);
+    const { rows: n } = await fetchAllRows<MilestoneNoteRow>((from, to) => supabase.from("milestone_notes").select("*").in("milestone_id", chunk).order("id").range(from, to));
+    notes.push(...n);
+  }
+  let removed = 0;
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await supabase.from("milestones").delete().in("id", ids.slice(i, i + 200)).select("id");
+    if (error) throw new Error(error.message);
+    removed += data?.length ?? 0;
+  }
+  if (removed < ids.length) {
+    throw new Error(removed === 0
+      ? "Nothing was deleted — you may not have permission to delete tasks on this project."
+      : `Only ${removed} of ${ids.length} tasks were deleted — you may not have permission for the rest.`);
+  }
+  await logAuditAction({
+    action: "MILESTONES_DELETED", resourceType: "project", resourceId: input.projectId,
+    orgId: input.orgId, userId: input.actorUserId, userEmail: input.actorUserEmail,
+    details: { count: ids.length, names: rows.slice(0, 50).map((r) => r.name) },
+  }).catch(() => undefined);
+  return { rows, notes, orphans };
+}
+
+/** Undo a delete: the tasks come back with their ids, comments and links. */
+export async function restoreDeletedMilestones(d: DeletedTasks): Promise<void> {
+  // Parents before children, so parent_id always points at a row.
+  const ids = new Set(d.rows.map((r) => r.id));
+  const ordered: MilestoneRow[] = [];
+  const placed = new Set<string>();
+  const place = (r: MilestoneRow, guard = 0) => {
+    if (placed.has(r.id) || guard > 50) return;
+    if (r.parent_id && ids.has(r.parent_id) && !placed.has(r.parent_id)) {
+      const p = d.rows.find((x) => x.id === r.parent_id);
+      if (p) place(p, guard + 1);
+    }
+    placed.add(r.id); ordered.push(r);
+  };
+  d.rows.forEach((r) => place(r));
+  for (let i = 0; i < ordered.length; i += 200) {
+    const { error } = await supabase.from("milestones").insert(ordered.slice(i, i + 200));
+    if (error) throw new Error(error.message);
+  }
+  for (const o of d.orphans) await supabase.from("milestones").update({ parent_id: o.parentId }).eq("id", o.id);
+  for (let i = 0; i < d.notes.length; i += 200) {
+    await supabase.from("milestone_notes").insert(d.notes.slice(i, i + 200));
+  }
 }
 
 /** Delete EVERY milestone on a project (notes cascade with them) so the
@@ -696,10 +892,10 @@ export async function resetProjectProgress(input: {
   orgId: string; projectId: string;
   actorUserId: string; actorUserEmail?: string; actorUserRole?: string;
 }): Promise<{ reset: number }> {
-  const { data: rows, error: loadErr } = await supabase
-    .from("milestones").select("id").eq("org_id", input.orgId).eq("project_id", input.projectId);
-  if (loadErr) throw new Error(loadErr.message);
-  const ids = ((rows ?? []) as Array<{ id: string }>).map((r) => r.id);
+  const { rows, error: loadErr } = await fetchAllRows<{ id: string }>((from, to) => supabase
+    .from("milestones").select("id").eq("org_id", input.orgId).eq("project_id", input.projectId).order("id").range(from, to));
+  if (loadErr) throw new Error(loadErr);
+  const ids = rows.map((r) => r.id);
   if (ids.length === 0) return { reset: 0 };
   const { error } = await supabase
     .from("milestones")
@@ -745,13 +941,16 @@ export interface ListMilestonesParams {
 
 export async function listMilestones(params: ListMilestonesParams): Promise<Milestone[]> {
   const { orgId, projectId, documentId, includeGhost = true } = params;
-  let q = supabase.from("milestones").select("*").eq("org_id", orgId).order("planned_at", { ascending: true });
-  if (projectId) q = q.eq("project_id", projectId);
-  if (documentId) q = q.eq("document_id", documentId);
-  if (!includeGhost) q = q.eq("source", "manual");
-  const { data, error } = await q;
-  if (error) throw new Error(error.message);
-  return ((data as MilestoneRow[]) ?? []).map(rowToMilestone);
+  // Every row: a schedule past 1,000 tasks must not lose its last ones.
+  const { rows, error } = await fetchAllRows<MilestoneRow>((from, to) => {
+    let q = supabase.from("milestones").select("*").eq("org_id", orgId);
+    if (projectId) q = q.eq("project_id", projectId);
+    if (documentId) q = q.eq("document_id", documentId);
+    if (!includeGhost) q = q.eq("source", "manual");
+    return q.order("planned_at", { ascending: true }).order("id").range(from, to);
+  });
+  if (error) throw new Error(error);
+  return rows.map(rowToMilestone);
 }
 
 // ─── Earned-value rollup ────────────────────────────────────────
@@ -1165,7 +1364,7 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
         // left the new project empty.
         let q = supabase
           .from("milestones")
-          .select("id, status, percent_complete, actual_at, actual_start_at")
+          .select("id, status, percent_complete, actual_at, actual_start_at, description, work_order_ref, responsible_party, responsible_kind, responsible_org, location, attributes")
           .eq("org_id", input.orgId)
           .eq("source", input.source)
           .eq("external_ref", r.externalRef);
@@ -1174,7 +1373,7 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
         else q = q.is("project_id", null).is("document_id", null);
         const { data: existing } = await q.maybeSingle();
         if (existing) {
-          const ex = existing as { id: string; status: MilestoneStatus | null; percent_complete: number | null; actual_at: string | null; actual_start_at: string | null };
+          const ex = existing as { id: string; status: MilestoneStatus | null; percent_complete: number | null; actual_at: string | null; actual_start_at: string | null } & Record<string, unknown>;
           const id = ex.id;
           refToId.set(r.externalRef, id);
           // A re-import refreshes the PLAN (dates, names, hierarchy, hours)
@@ -1184,6 +1383,18 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
           const planFields = { ...baseFields };
           delete planFields.status; delete planFields.percent_complete;
           delete planFields.actual_at; delete planFields.actual_start_at;
+          // Who / where / why is kept as people set it in the app (a
+          // contractor swapped, a crew set to nights): the file only fills
+          // what's blank. The crew override is never touched.
+          delete planFields.shift;
+          for (const k of ["description", "work_order_ref", "responsible_party", "responsible_kind", "responsible_org", "location"]) {
+            const cur = ex[k];
+            if ((typeof cur === "string" && cur.trim() !== "") || planFields[k] == null) delete planFields[k];
+          }
+          if (planFields.attributes) {
+            const cur = (ex.attributes ?? {}) as Record<string, unknown>;
+            planFields.attributes = { ...(planFields.attributes as Record<string, unknown>), ...cur };
+          }
           const progressPatch = mergeImportedProgress({
             status: ex.status ?? "planned",
             percent: ex.percent_complete != null ? Number(ex.percent_complete) : 0,
@@ -1361,6 +1572,9 @@ export interface RebaseScheduleInput {
   /** The shifted dates are the new plan of record: re-capture the
    *  baseline afterwards so the report measures against them. */
   resetBaseline?: boolean;
+  /** The plant's zone: the shift moves tasks by calendar days there, so
+   *  a 6:00 start stays 6:00 across a daylight-saving change. */
+  timeZone?: string;
   actorUserId: string;
   actorUserName?: string;
   actorUserEmail?: string;
@@ -1393,12 +1607,12 @@ export async function shiftScheduleTimeZone(input: {
   if (from === to) return { shiftedCount: 0, errors: [] };
   const errors: string[] = [];
   const cols = ["planned_at", "planned_start_at", "baseline_start_at", "baseline_finish_at"] as const;
-  const { data: rows, error } = await supabase
+  const { rows, error } = await fetchAllRows<Record<string, string | null> & { id: string }>((from, to) => supabase
     .from("milestones")
     .select("id, planned_at, planned_start_at, baseline_start_at, baseline_finish_at")
     .eq("org_id", input.orgId)
-    .eq("project_id", input.projectId);
-  if (error) return { shiftedCount: 0, errors: [`Couldn't load milestones: ${error.message}`] };
+    .eq("project_id", input.projectId).order("id").range(from, to));
+  if (error) return { shiftedCount: 0, errors: [`Couldn't load milestones: ${error}`] };
   let shiftedCount = 0;
   const updatedAt = new Date().toISOString();
   for (const raw of (rows ?? []) as Array<Record<string, string | null> & { id: string }>) {
@@ -1421,13 +1635,13 @@ export async function shiftScheduleTimeZone(input: {
 export async function rebaseSchedule(input: RebaseScheduleInput): Promise<RebaseResult> {
   const errors: string[] = [];
   // 1. Load the current schedule so we can find the earliest anchor.
-  const { data: rows, error: loadErr } = await supabase
+  const { rows, error: loadErr } = await fetchAllRows<{ id: string; planned_at: string; planned_start_at: string | null; actual_at: string | null; actual_start_at: string | null; updated_at: string | null }>((from, to) => supabase
     .from("milestones")
     .select("id, planned_at, planned_start_at, actual_at, actual_start_at, updated_at")
     .eq("org_id", input.orgId)
-    .eq("project_id", input.projectId);
+    .eq("project_id", input.projectId).order("id").range(from, to));
   if (loadErr) {
-    errors.push(`Couldn't load milestones: ${loadErr.message}`);
+    errors.push(`Couldn't load milestones: ${loadErr}`);
     return { shiftedCount: 0, shiftDays: 0, oldAnchor: null, newAnchor: input.newStartIso, errors };
   }
   if (!rows || rows.length === 0) {
@@ -1456,6 +1670,11 @@ export async function rebaseSchedule(input: RebaseScheduleInput): Promise<Rebase
   }
   const deltaMs = newAnchorMs - earliestMs;
   const shiftDays = Math.round(deltaMs / 86400000);
+  // Whole days by the plant's calendar, then any leftover clock time.
+  const rtz = normalizeTimeZone(input.timeZone ?? DEFAULT_SCHEDULE_TZ);
+  const wholeDays = dayDiff(earliestMs, newAnchorMs, rtz);
+  const leftover = newAnchorMs - addDays(earliestMs, wholeDays, rtz);
+  const moveMs = (iso: string) => new Date(addDays(new Date(iso).getTime(), wholeDays, rtz) + leftover).toISOString();
 
   if (deltaMs === 0) {
     return {
@@ -1472,13 +1691,13 @@ export async function rebaseSchedule(input: RebaseScheduleInput): Promise<Rebase
   //    user can't write, so this respects org-scoping naturally.
   let shifted = 0;
   let skipped = 0;
-  for (const raw of rows as Array<{ id: string; planned_at: string; planned_start_at: string | null; actual_at: string | null; actual_start_at: string | null; updated_at: string | null }>) {
+  for (const raw of rows) {
     const patch: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
       updated_by: input.actorUserId,
     };
-    if (raw.planned_at) patch.planned_at = new Date(new Date(raw.planned_at).getTime() + deltaMs).toISOString();
-    if (raw.planned_start_at) patch.planned_start_at = new Date(new Date(raw.planned_start_at).getTime() + deltaMs).toISOString();
+    if (raw.planned_at) patch.planned_at = moveMs(raw.planned_at);
+    if (raw.planned_start_at) patch.planned_start_at = moveMs(raw.planned_start_at);
     // Actual dates do NOT shift — they're history.
     // Optimistic lock: only shift if the row hasn't been edited since we read
     // it, so a concurrent change isn't silently overwritten and counted as a
@@ -1660,16 +1879,19 @@ export async function groupTasksUnderParent(input: GroupTasksInput): Promise<Gro
   return { parentId, parentName, childCount: updated, errors };
 }
 
-/** Set a task's duration (in days). Updates planned_start_at so
- *  the task spans `days` calendar days ending on its planned_at.
- *  Useful when the import only gave us a single finish date and
- *  the user knows the task actually takes 3 days. */
+/** Set a task's length, keeping its finish. A task with clock times
+ *  takes `hours` (or `days` × 24); a date-only task spans `days` calendar
+ *  days, inclusive, in the plant's zone. */
 export async function setTaskDuration(input: {
   id: string;
-  days: number;
+  days?: number;
+  hours?: number;
+  timeZone?: string;
   actorUserId: string;
 }): Promise<{ ok: boolean; error?: string }> {
-  if (input.days < 1) return { ok: false, error: "Duration must be at least 1 day." };
+  const hours = input.hours ?? (input.days != null ? input.days * 24 : NaN);
+  if (!(hours > 0)) return { ok: false, error: "Duration must be more than zero." };
+  const dtz = normalizeTimeZone(input.timeZone ?? DEFAULT_SCHEDULE_TZ);
   const { data: row, error: readErr } = await supabase
     .from("milestones")
     .select("planned_at, project_id, parent_id")
@@ -1677,10 +1899,12 @@ export async function setTaskDuration(input: {
     .maybeSingle();
   if (readErr || !row) return { ok: false, error: readErr?.message ?? "Task not found" };
   const r = row as { planned_at: string; project_id: string | null; parent_id: string | null };
-  const finish = new Date(r.planned_at);
-  if (isNaN(finish.getTime())) return { ok: false, error: "Task has no valid finish date." };
-  const start = new Date(finish); start.setDate(finish.getDate() - (input.days - 1));
-  const newStartIso = start.toISOString();
+  const finishMs = Date.parse(r.planned_at);
+  if (!Number.isFinite(finishMs)) return { ok: false, error: "Task has no valid finish date." };
+  const timed = hasTimeOfDay(finishMs, dtz) || input.hours != null;
+  const newStartIso = new Date(timed
+    ? finishMs - hours * 3600000
+    : addDays(finishMs, -(Math.max(1, Math.round(hours / 24)) - 1), dtz)).toISOString();
   const { error: updErr } = await supabase
     .from("milestones")
     .update({
@@ -1697,12 +1921,12 @@ export async function setTaskDuration(input: {
   // leaf update already committed, so we don't fail the call if this slips.
   if (r.parent_id && r.project_id) {
     try {
-      const { data: rows } = await supabase
+      const { rows } = await fetchAllRows<{ id: string; parent_id: string | null; planned_start_at: string | null; planned_at: string }>((from, to) => supabase
         .from("milestones")
         .select("id, parent_id, planned_start_at, planned_at")
-        .eq("project_id", r.project_id);
-      if (rows) {
-        const nodes: ReflowNode[] = (rows as Array<{ id: string; parent_id: string | null; planned_start_at: string | null; planned_at: string }>)
+        .eq("project_id", r.project_id!).order("id").range(from, to));
+      if (rows.length) {
+        const nodes: ReflowNode[] = rows
           .map((m) => ({
             id: m.id,
             parentId: m.parent_id,
@@ -1738,18 +1962,18 @@ export async function setBaseline(input: {
   actorUserEmail?: string;
   actorUserRole?: string;
 }): Promise<{ ok: boolean; count: number; error?: string }> {
-  const { data: rows, error } = await supabase
+  const { rows, error } = await fetchAllRows<{ id: string; planned_at: string; planned_start_at: string | null }>((from, to) => supabase
     .from("milestones")
     .select("id, planned_at, planned_start_at")
     .eq("org_id", input.orgId)
-    .eq("project_id", input.projectId);
-  if (error) return { ok: false, count: 0, error: error.message };
+    .eq("project_id", input.projectId).order("id").range(from, to));
+  if (error) return { ok: false, count: 0, error };
   if (!rows || rows.length === 0) return { ok: false, count: 0, error: "No tasks to baseline." };
 
   const now = new Date().toISOString();
   let count = 0;
   const errors: string[] = [];
-  await Promise.all((rows as Array<{ id: string; planned_at: string; planned_start_at: string | null }>).map(async (r) => {
+  await Promise.all(rows.map(async (r) => {
     const { error: e } = await supabase.from("milestones").update({
       baseline_start_at: r.planned_start_at ?? r.planned_at,
       baseline_finish_at: r.planned_at,

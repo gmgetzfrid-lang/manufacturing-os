@@ -1,4 +1,4 @@
-import { addDays, dayDiff, DEFAULT_SCHEDULE_TZ, startOfDay } from "@/lib/scheduleTz";
+import { addDays, dayDiff, DEFAULT_SCHEDULE_TZ, hasTimeOfDay, startOfDay } from "@/lib/scheduleTz";
 // lib/scheduleReflow.ts
 //
 // The math behind on-the-fly rescheduling in the Execution views.
@@ -87,6 +87,7 @@ export interface MoveImpact {
 }
 
 const DAY_MS = 86_400_000;
+const QUARTER_HOUR_MS = 15 * 60_000;
 
 // Day arithmetic runs in the PLANT's zone (the project timezone) so a
 // move of "+1 day" keeps a task's clock time across a daylight-saving
@@ -98,6 +99,56 @@ function startMsOf(n: ReflowNode): number {
 }
 function finishMsOf(n: ReflowNode): number {
   return Date.parse(n.plannedAt);
+}
+
+/** No clock time on either end: the task is date-only and covers its days
+ *  inclusively (finish = plant midnight of its LAST day). Same test as the
+ *  timeline's barGeometry and the shift report's workSpan. */
+function isDateOnly(s: number, f: number, tz: string): boolean {
+  return !hasTimeOfDay(s, tz) && !hasTimeOfDay(f, tz);
+}
+
+/** When a task's work is really over, i.e. the earliest a successor may
+ *  start: the finish instant for timed work, the next plant midnight for a
+ *  date-only task (its last day is a whole working day). */
+function workEnd(s: number, f: number, tz: string): number {
+  return isDateOnly(s, f, tz) ? addDays(Math.max(s, f), 1, tz) : f;
+}
+
+/** Fewest whole plant days (may be negative) that move `ms` to at or after
+ *  `req`. Moving by days keeps the task's own clock time. */
+function daysToReach(ms: number, req: number, tz: string): number {
+  let n = dayDiff(ms, req, tz);
+  while (addDays(ms, n, tz) < req) n++;
+  while (addDays(ms, n - 1, tz) >= req) n--;
+  return n;
+}
+
+/** Move a node and its subtree so it starts at or after `req`. A date-only
+ *  task, or one waiting on a date-only predecessor (`byDay`), moves by whole
+ *  plant days so it keeps its clock time / stays date-only; timed work after
+ *  timed work starts exactly at `req`, back-to-back. Locked rows stay put. */
+function moveSubtreeTo(
+  ids: string[], rootId: string, req: number, byDay: boolean,
+  start: Map<string, number>, finish: Map<string, number>,
+  byId: Map<string, ReflowNode>, tz: string,
+): void {
+  const s0 = start.get(rootId)!, f0 = finish.get(rootId)!;
+  let shift: (ms: number) => number;
+  if (byDay || isDateOnly(s0, f0, tz)) {
+    const n = daysToReach(s0, req, tz);
+    if (n === 0) return;
+    shift = (ms) => addDays(ms, n, tz);
+  } else {
+    const delta = req - s0;
+    if (delta === 0) return;
+    shift = (ms) => ms + delta;
+  }
+  for (const t of ids) {
+    if (t !== rootId && isLocked(byId.get(t))) continue; // actuals inside never move
+    start.set(t, shift(start.get(t)!));
+    finish.set(t, shift(finish.get(t)!));
+  }
 }
 
 /**
@@ -294,8 +345,9 @@ export function wouldCreateCycle(nodes: ReflowNode[], taskId: string, newPredId:
 
 /**
  * Forward finish-to-start cascade. After the tasks in `changedIds` moved,
- * push any dependent task whose predecessors now finish at/after it starts so
- * that successor.start >= max(predecessor.finish) + 1 day. Only ever pushes
+ * push any dependent task that now starts before its latest predecessor's
+ * work ends: the finish instant of timed work, or the next plant day after a
+ * date-only predecessor (see workEnd). Only ever pushes
  * FORWARD (never pulls a task earlier), carries each pushed task's subtree,
  * re-envelopes ancestors, and is cycle-safe (bounded). Pure.
  */
@@ -353,18 +405,17 @@ export function cascadeDependents(nodes: ReflowNode[], changedIds: string[], tz:
       // it out just because a predecessor moved. This is the "if the earlier
       // tasks are done, only the remaining ones reschedule" rule.
       if (isLocked(s)) continue;
-      let req = -Infinity;
+      let req = -Infinity, byDay = false;
       for (const pred of s.dependsOn ?? []) {
-        if (finish.has(pred)) req = Math.max(req, addDays(finish.get(pred)!, 1, tz));
+        if (!finish.has(pred)) continue;
+        const ps = start.get(pred)!, pf = finish.get(pred)!;
+        const end = workEnd(ps, pf, tz);
+        if (end > req) { req = end; byDay = isDateOnly(ps, pf, tz); }
+        else if (end === req && isDateOnly(ps, pf, tz)) byDay = true;
       }
       if (!Number.isFinite(req)) continue;
-      const curStart = start.get(sid)!;
-      if (curStart < req) {
-        const delta = req - curStart;
-        for (const t of subtreeOf(sid)) {
-          start.set(t, start.get(t)! + delta);
-          finish.set(t, finish.get(t)! + delta);
-        }
+      if (start.get(sid)! < req) {
+        moveSubtreeTo(subtreeOf(sid), sid, req, byDay, start, finish, byId, tz);
         queue.push(sid); // its own dependents may need to move too
       }
     }
@@ -397,8 +448,9 @@ export function cascadeDependents(nodes: ReflowNode[], changedIds: string[], tz:
 
 /**
  * Lay a parent's DIRECT children end-to-end in schedule order
- * (finish-to-start): each child starts the day after the previous one
- * finishes, preserving each child's own duration and carrying its whole
+ * (finish-to-start): timed steps run back-to-back (08–10, 10–12, …), a
+ * date-only step starts the plant day after the previous one's last day,
+ * preserving each child's own duration and carrying its whole
  * subtree along. This is the classic "these steps are sequential — the next
  * can't start until the prior finishes." Ancestors re-envelope. Pure.
  */
@@ -435,21 +487,23 @@ export function sequenceSiblings(nodes: ReflowNode[], parentId: string, tz: stri
     return out;
   };
 
-  let cursor: number | null = null; // previous child's (new) finish
+  // When the previous child's work ends (workEnd), and whether that end is a
+  // day boundary from a date-only step (then the next one moves by whole days).
+  let cursor: number | null = null;
+  let cursorByDay = false;
   for (const kid of kids) {
+    const ks = start.get(kid.id)!, kf = finish.get(kid.id)!;
     // A locked (completed) child is an actual — leave it exactly where it is
     // and sequence the rest around it; the cursor still advances past it.
-    if (isLocked(kid)) { cursor = Math.max(cursor ?? -Infinity, finish.get(kid.id)!); continue; }
-    const curStart = start.get(kid.id)!;
-    const desiredStart = cursor === null ? curStart : addDays(cursor, 1, tz);
-    const delta = desiredStart - curStart;
-    if (delta !== 0) {
-      for (const sid of subtreeOf(kid.id)) {
-        start.set(sid, start.get(sid)! + delta);
-        finish.set(sid, finish.get(sid)! + delta);
-      }
+    if (isLocked(kid)) {
+      const end = workEnd(ks, kf, tz);
+      if (cursor === null || end > cursor) { cursor = end; cursorByDay = isDateOnly(ks, kf, tz); }
+      continue;
     }
-    cursor = finish.get(kid.id)!;
+    if (cursor !== null) moveSubtreeTo(subtreeOf(kid.id), kid.id, cursor, cursorByDay, start, finish, byId, tz);
+    const ns = start.get(kid.id)!, nf = finish.get(kid.id)!;
+    cursor = workEnd(ns, nf, tz);
+    cursorByDay = isDateOnly(ns, nf, tz);
   }
 
   // Re-envelope ancestors bottom-up from the updated leaves.
@@ -485,7 +539,9 @@ export function sequenceSiblings(nodes: ReflowNode[], parentId: string, tz: stri
  *   edge="finish", +N → every descendant's offset+duration scales so the
  *                       phase ends N days later (anchored at its start).
  *   edge="start",  -N → it begins N days earlier (anchored at its finish).
- * Leaves never collapse below 1 day; every ancestor re-envelopes. Pure.
+ * Date-only leaves snap to whole days and never collapse below 1 day; timed
+ * leaves keep their clock times (to the quarter hour) and never become
+ * zero-length or inverted. Every ancestor re-envelopes. Pure.
  */
 export function computeSummaryResize(
   nodes: ReflowNode[],
@@ -535,20 +591,36 @@ export function computeSummaryResize(
   const finish = new Map<string, number>();
   for (const n of nodes) { start.set(n.id, startMsOf(n)); finish.set(n.id, finishMsOf(n)); }
 
-  // Snap to the nearest plant midnight (half a day forward, then floor).
+  // Date-only steps snap to the nearest plant midnight (half a day forward,
+  // then floor). Timed steps keep their clock: round to the quarter hour, so
+  // a 08:00–10:00 job doesn't turn into a zero-length midnight blip.
   const snap = (ms: number) => startOfDay(ms + DAY_MS / 2, tz);
+  const quarter = (ms: number) => Math.round(ms / QUARTER_HOUR_MS) * QUARTER_HOUR_MS;
   for (const l of leaves) {
     if (isLocked(l)) continue; // a completed leaf is an actual — never rescale it
+    const s0 = startMsOf(l), f0 = finishMsOf(l);
     let s: number, f: number;
     if (edge === "finish") {
-      s = anchor + (startMsOf(l) - anchor) * k;
-      f = anchor + (finishMsOf(l) - anchor) * k;
+      s = anchor + (s0 - anchor) * k;
+      f = anchor + (f0 - anchor) * k;
     } else {
-      s = anchor - (anchor - startMsOf(l)) * k;
-      f = anchor - (anchor - finishMsOf(l)) * k;
+      s = anchor - (anchor - s0) * k;
+      f = anchor - (anchor - f0) * k;
     }
-    s = snap(s); f = snap(f);
-    if (f < s) f = s; // keep at least a same-day (1-day) span
+    if (isDateOnly(s0, f0, tz)) {
+      s = snap(s); f = snap(f);
+      if (f < s) f = s; // keep at least a same-day (1-day) span
+    } else {
+      s = quarter(s); f = quarter(f);
+      // Never zero-length or inverted: at least 15 min (or its own length
+      // if it was shorter than that to begin with).
+      const minLen = Math.max(0, Math.min(f0 - s0, QUARTER_HOUR_MS));
+      if (f - s < minLen) f = s + minLen;
+      // Both ends landing on midnight would read as a date-only task covering
+      // whole days; pull the finish back a quarter so it stays timed.
+      if (isDateOnly(s, f, tz) && f - s > QUARTER_HOUR_MS) f -= QUARTER_HOUR_MS;
+      else if (isDateOnly(s, f, tz)) f = s + QUARTER_HOUR_MS;
+    }
     start.set(l.id, s);
     finish.set(l.id, f);
   }

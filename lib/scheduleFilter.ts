@@ -58,7 +58,15 @@ function haystack(m: Milestone): string {
 export function filterMilestones(
   milestones: Milestone[],
   f: ScheduleFilter,
-  opts?: { now?: number; topGroupOf?: (m: Milestone) => Milestone },
+  opts?: {
+    now?: number; topGroupOf?: (m: Milestone) => Milestone;
+    /** Which crew works a task — the same reading the ☀/☾ marks use
+     *  (lib/shiftReport workShiftOf), so filtering on Night shows the ☾ work. */
+    shiftOf?: (m: Milestone) => "day" | "night" | "both";
+    /** Past due and not done — the same rule as everywhere else
+     *  (lib/shiftReport isOverdue). */
+    isOverdue?: (m: Milestone, now: number) => boolean;
+  },
 ): Set<string> {
   const all = new Set<string>();
   for (const m of milestones) if (m.id) all.add(m.id);
@@ -97,11 +105,18 @@ export function filterMilestones(
     }
     if (statusSet.size > 0 && !statusSet.has(m.status)) return false;
     if (f.overdueOnly) {
-      if (m.status === "completed") return false;
-      if (Date.parse(m.plannedAt as string) >= now) return false;
+      if (opts?.isOverdue) { if (!opts.isOverdue(m, now)) return false; }
+      else {
+        if (m.status === "completed") return false;
+        if (Date.parse(m.plannedAt as string) >= now) return false;
+      }
     }
     if (f.blockedOnly && m.status !== "blocked" && m.status !== "on_hold") return false;
-    if (f.shifts.length > 0 && (!m.shift || !f.shifts.includes(m.shift))) return false;
+    if (f.shifts.length > 0) {
+      // "swing" in the filter = round the clock ("both").
+      const w = opts?.shiftOf ? opts.shiftOf(m) : (m.shift === "swing" ? "both" : m.shift);
+      if (!w || !f.shifts.some((x) => (x === "swing" ? "both" : x) === w)) return false;
+    }
     if (groupSet.size > 0) {
       const g = topGroupOf(m);
       if (!g.id || !groupSet.has(g.id)) return false;
