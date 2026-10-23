@@ -493,14 +493,61 @@ describe("DF-P26 merge-time fix pass — an optional upgrade never displaces a p
     // REGRESSION: a roster with no rule satisfaction is never "needed", whoever it names
     expect(ruleUpgradeNeeded(roster([R, slot({ kind: "x", primaries: ["d-1"], overriders: ["o-1"] })]), T, true, NOW)).toBe(false);
   });
-  it("STATED (merge-time fix pass 2, raised to the integrator): the rule slot's occupant who is also an OVERRIDER of a drafter-only open slot independent of it is offered only that optional override — the upgrade is not offered beside it; only the drafter is badged (a revision; the floor disables their sign-off)", () => {
-    const r = applyExceptionRule(roster([slot({ kind: "doc", primaries: ["p-1"], exceptionOnly: true }), slot({ kind: "x", primaries: ["d-1"], overriders: ["p-1"], independentOf: ["doc"] })]), ["doc"], "2026-10-22T08:00:00.000Z");
-    expect(ruleUpgradeNeeded(r, T, true, NOW)).toBe(true);
-    expect(slotSignPlan(r, T, "p-1", true, NOW)).toEqual({ fillable: [{ slot: r.slots[1], via: "override" }], blocked: [] });
-    expect(acts(r, "p-1").filter((x) => x.action === "sign_slot").map((x) => [x.label, x.optional])).toEqual([["Sign Off — X", true]]);
-    expect(required(r, "p-1")).toBe(false);
-    expect(acts(r, "d-1").find((x) => x.action === "sign_slot")!.disabledReason).toMatch(/must come from someone else/);
-    expect(acts(r, "d-1").find((x) => x.action === "request_revision")!.optional).toBeUndefined();
+  it("merge-time fix pass 3 (the integrator's ruling): where the upgrade is NEEDED, it takes precedence over a conflicting OVERRIDE in the person's plan — the override dropped, the upgrade required and badged; p-1 upgrades, the drafter's floor lifts, the request completes", () => {
+    for (const dir of ["x-of-doc", "doc-of-x"] as const) {
+      for (const order of ["r-first", "x-first"] as const) {
+        const where = `${dir} ${order}`;
+        const R = slot({ kind: "doc", primaries: ["p-1"], exceptionOnly: true, independentOf: dir === "doc-of-x" ? ["x"] : [] });
+        const X = slot({ kind: "x", primaries: ["d-1"], overriders: ["p-1"], independentOf: dir === "x-of-doc" ? ["doc"] : [] });
+        const r = applyExceptionRule(roster(order === "r-first" ? [R, X] : [X, R]), ["doc"], "2026-10-22T08:00:00.000Z");
+        expect(ruleUpgradeNeeded(r, T, true, NOW), where).toBe(true);
+        expect(slotSignPlan(r, T, "p-1", true, NOW), where).toEqual({ fillable: [{ slot: r.slots.find((x) => x.kind === "doc"), via: "primary" }], blocked: [] });
+        const sign = acts(r, "p-1").find((x) => x.action === "sign_slot")!;
+        expect(sign.label, where).toBe("Sign Off — DOC");
+        expect(sign.optional, where).toBeUndefined();
+        expect(sign.description, where).toContain(RULE_UPGRADE_NEEDED_NOTE);
+        expect(required(r, "p-1"), where).toBe(true);
+        // the drafter is held by the floor until then
+        expect(acts(r, "d-1").find((x) => x.action === "sign_slot")!.disabledReason, where).toMatch(/must come from someone else/);
+        const upgraded = applySignPlan(r, slotSignPlan(r, T, "p-1", true, NOW), { uid: "p-1", name: "P" }, "sig-p", "2026-10-22T09:00:00.000Z");
+        expect(upgraded.slots.find((x) => x.kind === "doc"), where).toMatchObject({ status: "satisfied", via: "primary", satisfiedBy: "p-1" });
+        expect(upgraded.slots.find((x) => x.kind === "x"), where).toMatchObject({ status: "open" });
+        // p-1 now signed doc: their override of x conflicts — no sign-off left to them; the drafter completes x
+        expect(slotSignPlan(upgraded, T, "p-1", true, NOW).fillable, where).toEqual([]);
+        const d = slotSignPlan(upgraded, T, "d-1", true, NOW);
+        expect(d.fillable.map((f) => f.slot.kind), where).toEqual(["x"]);
+        expect(required(upgraded, "d-1"), where).toBe(true);
+        expect(rosterCompletion(applySignPlan(upgraded, d, { uid: "d-1", name: "D" }, "sig-d", "2026-10-22T10:00:00.000Z"), { sodActive: true, drafterId: "d-1" }).complete, where).toBe(true);
+      }
+    }
+  });
+  it("merge-time fix pass 3 — the precedence's scope: only when NEEDED, only the CONFLICTING override is dropped, never a primary or alternate fill; every other entry and reason as before", () => {
+    const R = slot({ kind: "doc", primaries: ["p-1"], exceptionOnly: true });
+    const ruled = (...others: TicketReviewSlot[]) => applyExceptionRule(roster([R, ...others]), ["doc"], "2026-10-22T08:00:00.000Z");
+    // not needed (k-1 can complete x): the override stays, the upgrade is not offered (as before)
+    const notNeeded = ruled(slot({ kind: "x", primaries: ["d-1", "k-1"], overriders: ["p-1"], independentOf: ["doc"] }));
+    expect(ruleUpgradeNeeded(notNeeded, T, true, NOW)).toBe(false);
+    expect(slotSignPlan(notNeeded, T, "p-1", true, NOW).fillable.map((f) => [f.slot.kind, f.via])).toEqual([["x", "override"]]);
+    // needed: a NON-conflicting override (y) stays beside the upgrade; only the conflicting one (x) is dropped
+    const mixed = ruled(slot({ kind: "x", primaries: ["d-1"], overriders: ["p-1"], independentOf: ["doc"] }), slot({ kind: "y", primaries: ["d-1"], overriders: ["p-1"] }));
+    expect(ruleUpgradeNeeded(mixed, T, true, NOW)).toBe(true);
+    expect(slotSignPlan(mixed, T, "p-1", true, NOW).fillable.map((f) => [f.slot.kind, f.via])).toEqual([["doc", "primary"], ["y", "override"]]);
+    // a PRIMARY fill that conflicts is never dropped: the upgrade is simply not offered (merge-time fix pass)
+    const primaryFill = ruled(slot({ kind: "x", primaries: ["d-1", "p-1"], independentOf: ["doc"] }));
+    expect(slotSignPlan(primaryFill, T, "p-1", true, NOW).fillable.map((f) => [f.slot.kind, f.via])).toEqual([["x", "primary"]]);
+    // a conflict through a blocked slot as well as an override: no precedence (the blocked reason stays as it is)
+    const alsoBlocked = ruled(
+      slot({ kind: "x", primaries: ["d-1"], overriders: ["p-1"], independentOf: ["doc"] }),
+      slot({ kind: "z", primaries: ["d-1", "p-1"], independentOf: ["requester", "doc"] }),
+    );
+    const reqT = { requesterId: "p-1", assignedDrafterId: "d-1" } as Pick<Ticket, "requesterId" | "assignedDrafterId">;
+    const pb = slotSignPlan(alsoBlocked, reqT, "p-1", true, NOW);
+    expect(pb.fillable.map((f) => [f.slot.kind, f.via])).toEqual([["x", "override"]]);
+    expect(pb.blocked.map((b) => b.slot.kind)).toEqual(["z"]);
+    // REGRESSION: a roster with no rule satisfaction plans exactly as before — the override offered, optional
+    const plain = roster([slot({ kind: "doc", primaries: ["p-1"] }), slot({ kind: "x", primaries: ["d-1"], overriders: ["p-1"], independentOf: ["doc"] })]);
+    expect(slotSignPlan(plain, T, "p-1", true, NOW).fillable.map((f) => [f.slot.kind, f.via])).toEqual([["doc", "primary"]]);
+    expect(slotSignPlan(plain, T, "p-1", true, NOW).blocked.map((b) => b.slot.kind)).toEqual(["x"]);
   });
   it("merge-time fix pass 2 — the reachable stall: the rule applied at open beside a live reviewer, then the drafter reassigned to that reviewer; the rule slot's reviewer is now REQUIRED and badged, and the request completes", () => {
     // R exception-only (primary p-1); X: primary l-1, alternate p-1 with no timeout, independent of R; drafter d-1

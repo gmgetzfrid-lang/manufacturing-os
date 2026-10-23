@@ -559,6 +559,42 @@ describe("limb 2 — re-opened before anything issues", () => {
     expect(done.status, JSON.stringify(done.json)).toBe(200);
     expect(done.json.status).toBe("PENDING_IFC");
   });
+  it("DF-P26 merge-time fix pass 3: where the upgrade is needed it takes precedence over the person's conflicting override — the route's sign_slot signs the rule's slot (no override of the open slot recorded, nothing re-opened), the drafter's floor lifts, and the request issues", async () => {
+    // doc: exception-only, a-1; xchk: e-1, overridable by an Admin (a-1), independent of doc; drafter d-1 at open
+    const DOCA = { ...DOCCHK, fill: { users: ["a-1"] } };
+    const XCHK = { kind: "xchk", label: "Cross check", mode: "blocking", fill: { users: ["e-1"] }, waivable_by: { roles: ["Admin"] }, independent_of: ["doc"] };
+    const TABLE = { slots: [DOCA, XCHK] };
+    const opened = await submit(TABLE);
+    expect(opened.roster!.slots.find((x) => x.kind === "doc")).toMatchObject({ status: "satisfied", via: "rule" });
+    expect(opened.roster!.slots.find((x) => x.kind === "xchk")!.overriders).toContain("a-1");
+    // reassign_drafter made e-1 the drafter: e-1 is held by the floor
+    const row = reviewRow({ assigned_drafter_id: "e-1", metadata: { source_document: { id: DOC, document_number: "P-100", rev: "2" }, review_roster: opened.roster } });
+    const held = await run(row, "e-1", { actionType: "sign_slot", dryRun: true }, TABLE);
+    expect(held.status, JSON.stringify(held.json)).toBe(403);
+    // a-1's sign-off is the needed upgrade of doc — never an override of xchk
+    const dry = await run(row, "a-1", { actionType: "sign_slot", dryRun: true }, TABLE);
+    expect(dry.status, JSON.stringify(dry.json)).toBe(200);
+    expect(dry.json.slots).toEqual(["Document check"]);
+    expect(dry.json.exceptionReopens).toBeUndefined();
+    const up = await run(row, "a-1", { actionType: "sign_slot", signatureId: SIG }, TABLE);
+    expect(up.status, JSON.stringify(up.json)).toBe(200);
+    expect(up.json.status).toBe("PENDING_REVIEW");
+    expect(up.json.exceptionReopened).toBeUndefined();
+    const after = (ticketUpdates()[0].args[0] as { metadata: { review_roster: TicketReviewRoster } }).metadata.review_roster;
+    expect(after.slots.find((x) => x.kind === "doc")).toMatchObject({ status: "satisfied", via: "primary", satisfiedBy: "a-1" });
+    expect(after.slots.find((x) => x.kind === "xchk")).toMatchObject({ status: "open" });
+    expect(up.calls).not.toMatch(/"override"|"reopened"/);
+    // an override of xchk by a-1 is no longer open to them (they signed doc, which xchk must be independent of): refused, nothing written
+    const row2 = { ...row, metadata: { ...(row.metadata as object), review_roster: after } };
+    const SIG2 = "5a000000-0000-4000-8000-000000000002";
+    const again = await run(row2, "a-1", { actionType: "sign_slot", signatureId: SIG2 }, TABLE, { extra: () => { state.rows.e_signatures = [{ ...state.rows.e_signatures[0], id: SIG2 }]; } });
+    expect(again.status, JSON.stringify(again.json)).toBe(403);
+    expect(ticketUpdates()).toEqual([]);
+    // the drafter completes xchk and the request issues
+    const done = await run(row2, "e-1", { actionType: "sign_slot", signatureId: SIG2 }, TABLE, { extra: () => { state.rows.e_signatures = [{ ...state.rows.e_signatures[0], id: SIG2 }]; } });
+    expect(done.status, JSON.stringify(done.json)).toBe(200);
+    expect(done.json.status).toBe("PENDING_IFC");
+  });
   it("after the re-open, the slot's reviewer signs and the request issues", async () => {
     const row = await ruledRow();
     const extra = () => { state.rows.ticket_examination_scopes = [{ ticket_id: "t1", org_id: "o1", field_values: {}, waiver: { reason: "vendor data" } }]; };

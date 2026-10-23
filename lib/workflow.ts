@@ -427,6 +427,21 @@ export function slotSignPlan(
   sodActive: boolean,
   now: number = Date.now(),
 ): SlotSignPlan {
+  return planSignOff(roster, ticket, uid, sodActive, now, true);
+}
+
+/** slotSignPlan's body. `neededPrecedence` false skips the needed upgrade's
+ *  precedence over a conflicting override (merge-time fix pass 3) — the
+ *  form ruleUpgradeNeeded reads, which judges only the open slots (and so
+ *  never recurses into itself). */
+function planSignOff(
+  roster: TicketReviewRoster,
+  ticket: Pick<Ticket, "requesterId" | "assignedDrafterId">,
+  uid: string | null | undefined,
+  sodActive: boolean,
+  now: number,
+  neededPrecedence: boolean,
+): SlotSignPlan {
   const plan: SlotSignPlan = { fillable: [], blocked: [] };
   if (!uid) return plan;
   const fillsKind = (kind: string): boolean =>
@@ -490,19 +505,42 @@ export function slotSignPlan(
   // will open for them later (an alternate of a slot with a timeout) — so an
   // upgrade's presence never produces a blocked reason on an open slot, now
   // or once that window opens.
+  // Merge-time fix pass 3 (the integrator's ruling — the normal sign-off
+  // path beats the exception path; no silent waits): where the upgrade is
+  // NEEDED (ruleUpgradeNeeded) and the only thing it conflicts with is an
+  // OVERRIDE in this person's plan, the upgrade takes precedence — those
+  // conflicting override entries are dropped (never a primary or alternate
+  // fill; every other fill, label and blocked reason stays as it is) and the
+  // upgrade is offered, required. Only on a roster with a rule-satisfied
+  // slot; before, the person was offered only the optional override and the
+  // review waited with nobody able to complete it told.
   if (sodActive && uid !== ticket.assignedDrafterId) {
     const laterAlternate = (kind: string): boolean =>
       roster.slots.some((s) => s.kind === kind && s.status === "open" && slotBlocks(s) && s.timeoutDays !== null && s.alternates.includes(uid));
     const tied = (kind: string): boolean => fillsKind(kind) || plan.blocked.some((b) => b.slot.kind === kind) || laterAlternate(kind);
+    const conflictsWith = (slot: TicketReviewSlot, tiedTo: (kind: string) => boolean): boolean =>
+      slot.independentOf.some((k) => (k === "drafter" || k === "requester") ? !!slotPartyLegReason(slot, k, ticket, uid) : tiedTo(k))
+      || roster.slots.some((s) => s.kind !== slot.kind && s.independentOf.includes(slot.kind) && tiedTo(s.kind));
+    let needed: boolean | null = null;
     for (const slot of roster.slots) {
       if (slot.status !== "satisfied" || slot.via !== "rule" || !slotBlocks(slot)) continue;
       const via = slot.primaries.includes(uid) ? "primary" as const
         : slotAlternatesActive(roster, slot, now) && slot.alternates.includes(uid) ? "alternate" as const
         : null;
       if (!via) continue;
-      const forbidden = slot.independentOf.some((k) => (k === "drafter" || k === "requester") ? !!slotPartyLegReason(slot, k, ticket, uid) : tied(k))
-        || roster.slots.some((s) => s.kind !== slot.kind && s.independentOf.includes(slot.kind) && tied(s.kind));
-      if (forbidden) continue;
+      if (conflictsWith(slot, tied)) {
+        const overrides = plan.fillable.filter((f) => f.via === "override" && f.slot.status === "open").map((f) => f.slot.kind);
+        if (!neededPrecedence || overrides.length === 0) continue;
+        // Would it conflict with nothing but those overrides?
+        const tiedButOverrides = (kind: string): boolean => (overrides.includes(kind) ? plan.blocked.some((b) => b.slot.kind === kind) || laterAlternate(kind) : tied(kind));
+        if (conflictsWith(slot, tiedButOverrides)) continue;
+        if (needed === null) needed = ruleUpgradeNeeded(roster, ticket, sodActive, now);
+        if (!needed) continue;
+        const dropped = new Set(overrides.filter((k) => slot.independentOf.includes(k) || (roster.slots.find((s) => s.kind === k)?.independentOf.includes(slot.kind) ?? false)));
+        for (let i = plan.fillable.length - 1; i >= 0; i--) {
+          if (plan.fillable[i].via === "override" && dropped.has(plan.fillable[i].slot.kind)) plan.fillable.splice(i, 1);
+        }
+      }
       plan.fillable.push({ slot, via });
     }
     // One sign-off's slots in table order, as before the two passes.
@@ -559,7 +597,7 @@ export function ruleUpgradeNeeded(
   const parties = { requesterId: ticket.requesterId ?? "", assignedDrafterId: drafter };
   const opened = Date.parse(roster.openedAt);
   const canComplete = (s: TicketReviewSlot, uid: string, at: number): boolean =>
-    slotSignPlan(roster, parties, uid, sodActive, at).fillable.some((f) => f.slot.kind === s.kind && f.via !== "override");
+    planSignOff(roster, parties, uid, sodActive, at, false).fillable.some((f) => f.slot.kind === s.kind && f.via !== "override");
   return open.every((s) => {
     if ([...new Set(s.primaries)].some((u) => !!u && u !== drafter && canComplete(s, u, now))) return false;
     if (s.timeoutDays === null || !Number.isFinite(opened)) return true;
