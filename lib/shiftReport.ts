@@ -639,7 +639,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   const listed = new Set([...all, ...otherShift].map((r) => r.leaf.id));
   const paused = leaves
     .filter((m) => m.id && !listed.has(m.id) && !held(m) && !DONE({ status: m.status, percent: pctOf(m) })
-      && (m.status === "in_progress" || pctOf(m) > 0) && finishMsOf(m) > next.start && startMsOf(m) < next.end)
+      && (m.status === "in_progress" || pctOf(m) > 0) && workSpan(m, tz).finish > next.start && workSpan(m, tz).start < next.end)
     .map((m) => rowFor(m, next))
     .filter((r) => !forNext(r))
     .sort(cmp);

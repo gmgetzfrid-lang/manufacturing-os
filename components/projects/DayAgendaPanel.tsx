@@ -169,6 +169,11 @@ export default function DayAgendaPanel({
     return groups.length <= 4 || g.rows.some((r) => r.live === "overdue" || r.leaf.id === openId);
   };
   const toggle = (g: EquipmentGroup) => setToggled((m) => new Map(m).set(keyOf(g), !isOpen(g)));
+  // Next into a section the person closed opens it, so the step shows.
+  const openGroupOf = (id: string) => {
+    const g = shownGroups.find((x) => x.rows.some((r) => r.leaf.id === id));
+    if (g && toggled.get(keyOf(g)) === false) setToggled((m) => new Map(m).set(keyOf(g), true));
+  };
   const order = useMemo(() => shownGroups.flatMap((g) => g.rows.map((r) => r.leaf.id).filter((x): x is string => !!x)), [shownGroups]);
   const nextOf = (id: string) => { const i = order.indexOf(id); return i >= 0 && i + 1 < order.length ? order[i + 1] : null; };
 
@@ -339,7 +344,7 @@ export default function DayAgendaPanel({
                           latest={latestByStep.get(r.leaf.id)} userId={userId} onNotesChanged={() => setNotesTick((t) => t + 1)}
                           onSetStatus={onSetStatus} onSetProgress={onSetProgress} onAddNote={onAddNote}
                           onOpenDetail={() => onOpenDetail(r.leaf)}
-                          next={nextOf(r.leaf.id)} onNext={(id) => { setOpenId(id); }} onClose={() => setOpenId(null)} />
+                          next={nextOf(r.leaf.id)} onNext={(id) => { setOpenId(id); openGroupOf(id); }} onClose={() => setOpenId(null)} />
                       )}
                       </li>
                     );

@@ -457,3 +457,13 @@ describe("the next shift sees the other crew's unfinished and paused work", () =
     expect(text).toMatch(/Day crew's work paused until .*: Retube \(30%\)/);
   });
 });
+
+describe("day work due today, still going at shift change, shows as paused", () => {
+  it("a date-only day job counts to the end of its day", () => {
+    const job = mk({ id: "j", name: "Hydro test", plannedStartAt: day("2026-10-26"), plannedAt: day("2026-10-26"), status: "in_progress", percentComplete: 60 });
+    const d = shiftWindow("2026-10-26", "day", CHI);
+    const r = buildShiftReport({ milestones: [job], tz: CHI, shift: d, now: d.end });
+    expect(r.goals.all).toEqual([]);
+    expect(r.goals.paused.map((x) => x.leaf.id)).toEqual(["j"]);
+  });
+});
