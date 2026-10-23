@@ -9,7 +9,7 @@
 // nothing is blocked.
 
 import { BEHIND_POINTS, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
-import type { ExportCell, ExportSection } from "@/lib/reportExport";
+import type { ExportBlock, ExportCell, ExportSection } from "@/lib/reportExport";
 
 export interface UpdateFormat {
   /** "Thu, Oct 22" */
@@ -190,7 +190,21 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     });
   }
 
-  // ── Next shift ── its work, in the order it's listed for the crew.
+  // ── Next shift ── its work, in the order it's listed for the crew; then
+  // one line each for the other crew's unfinished work (theirs, picked up
+  // if the next crew can) and its work paused until it's back.
+  const otherName = next.kind === "day" ? "Night" : "Day";
+  const names = (rows: ShiftRow[]) => {
+    const list = rows.slice(0, MAX_ROWS).map((r) => `${r.parentName ? `${r.parentName} — ` : ""}${r.leaf.name}${r.percent > 0 ? ` (${r.percent}%)` : ""}`);
+    return list.join("; ") + (rows.length > list.length ? `; + ${rows.length - list.length} more` : "");
+  };
+  const extra: ExportBlock[] = [
+    ...(goals.otherShift.length ? [{ k: "note", text: `${otherName} shift carry-over — pick up if you can: ${names(goals.otherShift)}.`, tone: "amber" } as ExportBlock] : []),
+    ...(goals.paused.length ? [{ k: "note", text: `${otherName} crew's work paused until ${f.T(next.end)}: ${names(goals.paused)}.` } as ExportBlock] : []),
+  ];
+  if (goals.all.length === 0 && extra.length) {
+    out.push({ id: "next", title: `Next shift — ${shiftName(next)} ${f.D(next.start)} ${f.win(next)}`, blocks: extra });
+  }
   if (goals.all.length > 0) {
     const nextList = goals.all.slice(0, MAX_ROWS * 2);
     const nextHidden = goals.all.length - nextList.length;
@@ -206,7 +220,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
               : `${f.T(r.start)}–${r.finish <= next.end ? f.T(r.finish) : "…"}`,
           r.percent > 0 ? `${r.percent}%` : "",
         ]), ...(nextHidden > 0 ? [[muted(`+ ${nextHidden} more steps`), "", "", ""] as ExportCell[]] : [])],
-      }],
+      }, ...extra],
     });
   }
   return out;

@@ -124,10 +124,42 @@ export function workSpan(m: Milestone, tz: string): { start: number; finish: num
   return { start: s0, finish: addDays(Math.max(s0, f), 1, tz), timed: false };
 }
 
+/** The crew a task's working hours (from the schedule's calendar, e.g.
+ *  "06:00-18:00") belong to, against the shift-change times: mostly in
+ *  one crew's hours → that crew; well into both → round the clock. Null
+ *  when the task carries no calendar hours. */
+export function calendarShift(m: Milestone, times: ShiftTimes = DEFAULT_SHIFT_TIMES): WorkShift | null {
+  const raw = (m.attributes as Record<string, unknown> | null | undefined)?.work_hours;
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const toMin = (hm: string) => { const [h, mm] = hm.split(":").map(Number); return (h || 0) * 60 + (mm || 0); };
+  const ds = toMin(times.dayStart), ns = toMin(times.nightStart);
+  // The day crew's minutes of the clock (the day can't wrap midnight here).
+  const dayOverlap = (a: number, b: number) => ds < ns ? Math.max(0, Math.min(b, ns) - Math.max(a, ds)) : 0;
+  let total = 0, day = 0;
+  for (const part of raw.split(",")) {
+    const [x, y] = part.split("-");
+    if (!x || !y) continue;
+    const a = toMin(x), b = toMin(y);
+    if (!(b > a)) continue;
+    total += b - a; day += dayOverlap(a, b);
+  }
+  if (total <= 0) return null;
+  const share = day / total;
+  if (share >= 0.65) return "day";
+  if (share <= 0.35) return "night";
+  return "both";
+}
+
 /** Which shift does this task's work. See the note above. */
 export function workShiftOf(m: Milestone, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): WorkShift {
   const set = m.shift as string | null | undefined;
   if (set === "both" || set === "swing") return "both";
+  // The schedule's own calendar says which hours it's worked — a person's
+  // Day / Night on the task still wins.
+  if (set !== "day" && set !== "night") {
+    const cal = calendarShift(m, times);
+    if (cal) return cal;
+  }
   const { start, finish, timed } = workSpan(m, tz);
   if (!timed) return set === "night" ? "night" : "day";
   if (!Number.isFinite(start) || !Number.isFinite(finish) || finish <= start) {
@@ -400,6 +432,10 @@ export interface ShiftReport {
      *  turnover): it waits for its own crew — listed, not counted as
      *  this shift's must-do. */
     otherShift: ShiftRow[];
+    /** Work under way that the next shift's crew doesn't do — set to the
+     *  other crew — paused over the next shift and resuming after it (so a
+     *  job "continuing as planned" doesn't vanish from the next shift). */
+    paused: ShiftRow[];
     /** STRETCH — work planned for the following shifts that is ready to
      *  pull forward (its predecessors done or on the must-do list), in
      *  schedule order. Doing it banks time or claws back a deficit. */
@@ -600,6 +636,13 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   const goalsCarry = carriedAll.filter(forNext);
   const otherShift = carriedAll.filter((r) => !forNext(r));
   const all = [...goalsCarry, ...planned];
+  const listed = new Set([...all, ...otherShift].map((r) => r.leaf.id));
+  const paused = leaves
+    .filter((m) => m.id && !listed.has(m.id) && !held(m) && !DONE({ status: m.status, percent: pctOf(m) })
+      && (m.status === "in_progress" || pctOf(m) > 0) && finishMsOf(m) > next.start && startMsOf(m) < next.end)
+    .map((m) => rowFor(m, next))
+    .filter((r) => !forNext(r))
+    .sort(cmp);
   const critical = all.filter((r) => r.critical);
   const mustDoHours = Math.round(all.reduce((acc, r) => acc + r.hoursLeft, 0) * 10) / 10;
 
@@ -643,7 +686,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       baselineSetAt: baselined > 0 ? baselineSetAt : null,
     },
     review: { scheduled, done, inProgress, notStarted, carryOver },
-    goals: { all, carryOver: goalsCarry, planned, critical, mustDoHours, otherShift, stretch, gapHours, backOnTrackAt },
+    goals: { all, carryOver: goalsCarry, planned, critical, mustDoHours, otherShift, paused, stretch, gapHours, backOnTrackAt },
     blocked,
   };
 }

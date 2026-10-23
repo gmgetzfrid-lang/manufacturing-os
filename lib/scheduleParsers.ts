@@ -220,6 +220,58 @@ function parseMsProjectXml(text: string, tz: string): { rows: ParsedMilestone[];
   let resourcesFound = 0;
   let nonFsLinks = 0;
 
+  // ── Working calendars ─────────────────────────────────────────
+  // Who works a task is in the schedule itself: its calendar (or its
+  // resources' calendars, or the project's) says which hours it's worked —
+  // "24 Hours" round the clock, "12-Hour Shift" 06:00–18:00, a night
+  // calendar overnight. Kept on the task as its working hours, so the shift
+  // report reads the crew from the schedule instead of guessing from dates.
+  const direct = (el: Element, tag: string): string => {
+    for (const c of Array.from(el.children)) if (c.localName === tag) return (c.textContent ?? "").trim();
+    return "";
+  };
+  const toMin = (hms: string) => { const [h, m] = hms.split(":").map(Number); return (h || 0) * 60 + (m || 0); };
+  const calendars = new Map<string, { name: string; base: string; days: Map<number, Array<[number, number]>> }>();
+  for (const cEl of Array.from(doc.getElementsByTagNameNS("*", "Calendar"))) {
+    const cuid = direct(cEl as Element, "UID");
+    if (!cuid) continue;
+    const days = new Map<number, Array<[number, number]>>();
+    for (const wd of Array.from((cEl as Element).getElementsByTagNameNS("*", "WeekDay"))) {
+      const dt = Number(direct(wd as Element, "DayType"));
+      if (!(dt >= 1 && dt <= 7)) continue;  // 0 = a dated exception
+      const ranges: Array<[number, number]> = [];
+      if (direct(wd as Element, "DayWorking") === "1") {
+        for (const wt of Array.from((wd as Element).getElementsByTagNameNS("*", "WorkingTime"))) {
+          const a = toMin(direct(wt as Element, "FromTime")), b0 = toMin(direct(wt as Element, "ToTime"));
+          const b = b0 <= a ? b0 + 1440 : b0;   // 00:00–00:00 is the whole day; 23:00–00:00 runs to midnight
+          if (b > a) ranges.push([a, Math.min(b, 1440)]);
+        }
+      }
+      days.set(dt, ranges);
+    }
+    calendars.set(cuid, { name: direct(cEl as Element, "Name"), base: direct(cEl as Element, "BaseCalendarUID"), days });
+  }
+  // A calendar's working hours across its week (a derived calendar takes
+  // the days it doesn't set from its base), merged.
+  const hoursOfCalendar = (cuid: string): Array<[number, number]> | null => {
+    const days = new Map<number, Array<[number, number]>>();
+    const seen = new Set<string>();
+    for (let c = calendars.get(cuid); c && !seen.has(cuid); c = calendars.get(c.base)) {
+      seen.add(cuid);
+      for (const [d, r] of c.days) if (!days.has(d)) days.set(d, r);
+      cuid = c.base;
+    }
+    if (days.size === 0) return null;
+    return mergeRanges(Array.from(days.values()).flat());
+  };
+  const projectCalendar = (() => { const root = doc.documentElement; return root ? direct(root, "CalendarUID") : ""; })();
+  const resourceCalendar = new Map<string, string>();
+  for (const rEl of Array.from(doc.getElementsByTagNameNS("*", "Resource"))) {
+    const ruid = direct(rEl as Element, "UID"), cuid = direct(rEl as Element, "CalendarUID");
+    if (ruid && cuid) resourceCalendar.set(ruid, cuid);
+  }
+  let calendarTasks = 0;
+
   // ── Custom (extended) columns ────────────────────────────────
   // User-defined columns in MS Project ("Contractor", "Area", "Cost Code")
   // are stored as extended attributes: definitions at project level map a
@@ -320,6 +372,18 @@ function parseMsProjectXml(text: string, tz: string): { rows: ParsedMilestone[];
     const deadlineRaw = childText(t, "Deadline");
     const deadlineIso = deadlineRaw && !/^NA$/i.test(deadlineRaw) ? coerceIso(deadlineRaw, tz) : null;
     const attributes: Record<string, string> = {};
+    // Its working calendar: its own, else its resources', else the project's.
+    if (calendars.size > 0 && !isSummary) {
+      const own = direct(t, "CalendarUID");
+      const viaRes = uid ? (resUidsByTaskUid.get(uid) ?? []).map((r) => resourceCalendar.get(r)).filter((c): c is string => !!c && calendars.has(c)) : [];
+      const cals = own && own !== "-1" && calendars.has(own) ? [own] : viaRes.length ? Array.from(new Set(viaRes)) : projectCalendar && calendars.has(projectCalendar) ? [projectCalendar] : [];
+      const hours = cals.map(hoursOfCalendar).filter((h): h is Array<[number, number]> => !!h);
+      if (hours.length) {
+        attributes.work_calendar = cals.map((c) => calendars.get(c)!.name).filter(Boolean).join(", ");
+        attributes.work_hours = formatRanges(mergeRanges(hours.flat()));
+        calendarTasks++;
+      }
+    }
     if (deadlineIso) attributes.deadline_at = deadlineIso;
     if (isMilestone) attributes.milestone = "1"; // so the Gantt can draw a diamond
     const workRaw = childText(t, "Work"); // PT40H0M0S style → keep raw for reference
@@ -356,6 +420,7 @@ function parseMsProjectXml(text: string, tz: string): { rows: ParsedMilestone[];
       attributes: Object.keys(attributes).length > 0 ? attributes : undefined,
     });
   }
+  if (calendarTasks > 0) warnings.push(`Working hours read from the schedule's calendars for ${calendarTasks} task${calendarTasks === 1 ? "" : "s"} — they set which crew works each one.`);
   if (resourcesFound > 0) warnings.push(`Resources mapped onto ${resourcesFound} task${resourcesFound === 1 ? "" : "s"}.`);
   if (nonFsLinks > 0) warnings.push(`${nonFsLinks} link${nonFsLinks === 1 ? " is" : "s are"} start-to-start, finish-to-finish or carry a lag — kept as they are.`);
   if (dropped > 0) warnings.push(`${dropped} task${dropped === 1 ? "" : "s"} skipped (missing name or date).`);
@@ -1015,6 +1080,23 @@ function parseXml(text: string): Document | null {
   const doc = new DOMParser().parseFromString(text, "application/xml");
   if (doc.getElementsByTagName("parsererror").length > 0) return null;
   return doc;
+}
+
+/** Minute-of-day ranges, sorted and joined where they touch. */
+function mergeRanges(ranges: Array<[number, number]>): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (const [a, b] of [...ranges].sort((x, y) => x[0] - y[0])) {
+    const last = out[out.length - 1];
+    if (last && a <= last[1]) last[1] = Math.max(last[1], b);
+    else out.push([a, b]);
+  }
+  return out;
+}
+
+/** "06:00-18:00" / "00:00-03:00,04:00-08:00,23:00-24:00". */
+function formatRanges(ranges: Array<[number, number]>): string {
+  const hm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  return ranges.map(([a, b]) => `${hm(a)}-${hm(b)}`).join(",");
 }
 
 function childText(parent: Element, tag: string): string {

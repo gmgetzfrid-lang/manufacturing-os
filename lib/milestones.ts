@@ -715,18 +715,18 @@ export async function addMilestoneNote(input: {
 /** The latest comment on each step (kind "note" — not status or
  *  reschedule breadcrumbs), for the shift report: "sent out for
  *  calibration" says why a step reads the way it does. */
-export async function latestNotes(milestoneIds: string[]): Promise<Map<string, { body: string; at: string | null; by: string | null }>> {
-  const out = new Map<string, { body: string; at: string | null; by: string | null }>();
+export async function latestNotes(milestoneIds: string[]): Promise<Map<string, { id: string; body: string; at: string | null; by: string | null; byId: string | null }>> {
+  const out = new Map<string, { id: string; body: string; at: string | null; by: string | null; byId: string | null }>();
   for (let i = 0; i < milestoneIds.length; i += 200) {
     const chunk = milestoneIds.slice(i, i + 200);
     const { rows: data, error } = await fetchAllRows<unknown>((from, to) => supabase.from("milestone_notes")
-      .select("milestone_id, body, created_at, created_by_name")
+      .select("id, milestone_id, body, created_at, created_by, created_by_name")
       .in("milestone_id", chunk).eq("kind", "note")
       .order("created_at", { ascending: false }).order("id").range(from, to));
     if (error) continue;
-    for (const r of (data ?? []) as Array<{ milestone_id: string; body: string | null; created_at: string | null; created_by_name: string | null }>) {
+    for (const r of (data ?? []) as Array<{ id: string; milestone_id: string; body: string | null; created_at: string | null; created_by: string | null; created_by_name: string | null }>) {
       if (!r.body || out.has(r.milestone_id)) continue;
-      out.set(r.milestone_id, { body: r.body, at: r.created_at, by: r.created_by_name });
+      out.set(r.milestone_id, { id: r.id, body: r.body, at: r.created_at, by: r.created_by_name, byId: r.created_by });
     }
   }
   return out;
@@ -1532,7 +1532,12 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
           }
           if (planFields.attributes) {
             const cur = (ex.attributes ?? {}) as Record<string, unknown>;
-            planFields.attributes = { ...(planFields.attributes as Record<string, unknown>), ...cur };
+            const file = planFields.attributes as Record<string, unknown>;
+            planFields.attributes = { ...file, ...cur };
+            // The working calendar is the schedule's — always the file's.
+            for (const k of ["work_calendar", "work_hours"]) {
+              if (file[k] != null) (planFields.attributes as Record<string, unknown>)[k] = file[k];
+            }
           }
           const progressPatch = mergeImportedProgress({
             status: ex.status ?? "planned",

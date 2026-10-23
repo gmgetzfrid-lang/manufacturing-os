@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { spanLabel, startOf, finishOf, effectiveSpans } from "@/lib/scheduleTime";
-import { workShiftOf } from "@/lib/shiftReport";
+import { workShiftOf, calendarShift } from "@/lib/shiftReport";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
 import { fmtInTz, fromDateTimeInput, toDateTimeInput, tzAbbrev } from "@/lib/scheduleTz";
 import {
@@ -365,7 +365,9 @@ export default function TaskDetailPanel({
                   const label = w === "both" ? "Round the clock" : w === "night" ? "Night shift" : "Day shift";
                   return (
                     <Field icon={w === "night" ? <Moon className="w-3.5 h-3.5" /> : w === "both" ? <Sunset className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />} label="Worked on">
-                      {label} <span className="text-[10px] text-[var(--color-text-faint)]">{m.shift === "swing" || ((m.shift === "day" || m.shift === "night") && w === m.shift) ? "· set on the task" : "· from its times"}</span>
+                      {label} <span className="text-[10px] text-[var(--color-text-faint)]">{m.shift === "swing" || ((m.shift === "day" || m.shift === "night") && w === m.shift) ? "· set on the task"
+                        : calendarShift(m, shiftTimes) ? `· from its calendar${typeof m.attributes?.work_calendar === "string" ? ` (${m.attributes.work_calendar}, ${String(m.attributes.work_hours ?? "").replace(/,/g, ", ")})` : ""}`
+                        : "· from its times — set the crew if that's wrong"}</span>
                     </Field>
                   );
                 })()}
@@ -514,7 +516,8 @@ export default function TaskDetailPanel({
                         ) : n.body && (
                           <div className="group flex items-start gap-1.5 mt-0.5 pl-1 border-l-2 border-[var(--color-border)] ml-1">
                             <span className="flex-1 text-[var(--color-text-muted)]">{n.body}</span>
-                            {canEdit && n.kind === "note" && n.id && (
+                            {/* A comment is its author's to change. */}
+                            {canEdit && n.kind === "note" && n.id && n.createdBy === userId && (
                               <span className="shrink-0 flex gap-1.5 text-[10px] font-bold">
                                 <button onClick={() => setEditNote({ id: n.id!, body: n.body ?? "" })} className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">Edit</button>
                                 <button onClick={() => void removeNote(n.id!)} className="text-[var(--color-text-faint)] hover:text-rose-600">Delete</button>

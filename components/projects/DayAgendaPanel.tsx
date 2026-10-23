@@ -28,6 +28,7 @@ import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
 import { overdueOpenWork, startedEarlyWork } from "@/lib/openWork";
 import { completionNote } from "@/lib/scheduleRules";
 import { DEFAULT_SHIFT_TIMES, expectedByParent, workShiftOf, type ShiftTimes } from "@/lib/shiftReport";
+import { latestNotes, updateMilestoneNote } from "@/lib/milestones";
 import ShiftMark from "@/components/projects/ShiftMark";
 
 interface Props {
@@ -47,6 +48,8 @@ interface Props {
   onSetProgress?: (id: string, percent: number) => unknown;
   /** Add a note to the step's log. */
   onAddNote?: (id: string, body: string) => Promise<void> | void;
+  /** Who is signed in — their own comments can be edited here. */
+  userId?: string;
   /** The project's shift-change times — which crew does each step. */
   shiftTimes?: ShiftTimes;
   onOpenDetail: (m: Milestone) => void;
@@ -77,13 +80,13 @@ interface EquipmentGroup {
 
 export default function DayAgendaPanel({
   day, tz, milestones, childrenByParent, ancestorsOf, progress, canEdit,
-  onSetStatus, onSetProgress, onAddNote, onOpenDetail, onChangeDay, onClose, colorOf, shiftTimes = DEFAULT_SHIFT_TIMES, hidden, planNow: planNowAll,
+  onSetStatus, onSetProgress, onAddNote, onOpenDetail, onChangeDay, onClose, colorOf, shiftTimes = DEFAULT_SHIFT_TIMES, hidden, planNow: planNowAll, userId,
 }: Props) {
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
-  // In time order (the default: the day as it runs), or gathered under
-  // each piece of equipment.
-  const [byEquipment, setByEquipment] = useState(false);
+  // Each piece of equipment is a section that folds open and shut; which
+  // ones the person opened or closed (by group key).
+  const [toggled, setToggled] = useState<Map<string, boolean>>(new Map());
   const dayMs = dayKeyToMs(day, tz);
   const label = fmtInTz(dayMs, tz, { weekday: "long", month: "long", day: "numeric" });
   // Today (plant time) also carries LIVE work whatever the plan says:
@@ -131,20 +134,9 @@ export default function DayAgendaPanel({
     const out = Array.from(byParent.values());
     for (const g of out) g.rows.sort(cmpRow);
     out.sort((a, b) => cmpRow(a.rows[0], b.rows[0]));
-    if (byEquipment) return out;
-    // Time order: every step by when it runs; the equipment heading repeats
-    // only when the next step is on a different piece of equipment.
-    const groupOf = new Map<Row, EquipmentGroup>();
-    for (const g of out) for (const r of g.rows) groupOf.set(r, g);
-    const timeline: EquipmentGroup[] = [];
-    for (const r of out.flatMap((g) => g.rows).sort(cmpRow)) {
-      const g = groupOf.get(r)!;
-      const last = timeline[timeline.length - 1];
-      if (last && last.parent === g.parent && last.top === g.top) last.rows.push(r);
-      else timeline.push({ ...g, rows: [r] });
-    }
-    return timeline;
-  }, [milestones, childrenByParent, ancestorsOf, day, tz, live, byEquipment]);
+    // Equipment in the order its work starts; its steps in time order inside.
+    return out;
+  }, [milestones, childrenByParent, ancestorsOf, day, tz, live]);
 
   // Narrow to an equipment tag, WO number, step name or crew — the way a
   // contractor's report names the work.
@@ -157,6 +149,26 @@ export default function DayAgendaPanel({
       return { ...g, rows: groupHit ? g.rows : g.rows.filter((r) => hit(r.leaf.name) || hit(r.leaf.workOrderRef) || hit(r.leaf.responsibleParty) || hit(r.leaf.location)) };
     }).filter((g) => g.rows.length > 0);
   }, [groups, query]);
+  // Each step's latest comment: on its row, and in its box to edit.
+  const [latestByStep, setLatestByStep] = useState<Map<string, LatestNote>>(new Map());
+  const [notesTick, setNotesTick] = useState(0);
+  const dayStepIds = useMemo(() => groups.flatMap((g) => g.rows.map((r) => r.leaf.id).filter((x): x is string => !!x)).sort().join(","), [groups]);
+  useEffect(() => {
+    if (!dayStepIds) return;
+    let alive = true;
+    latestNotes(dayStepIds.split(",")).then((m) => { if (alive) setLatestByStep(m); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [dayStepIds, notesTick]);
+  const keyOf = (g: EquipmentGroup) => g.parent?.id ?? `top-${g.rows[0].leaf.id}`;
+  const isOpen = (g: EquipmentGroup) => {
+    if (query.trim()) return true;
+    const t = toggled.get(keyOf(g));
+    if (t !== undefined) return t;
+    // Few pieces of equipment: all open. Many: closed, except ones with
+    // late work and the one holding the step being edited.
+    return groups.length <= 4 || g.rows.some((r) => r.live === "overdue" || r.leaf.id === openId);
+  };
+  const toggle = (g: EquipmentGroup) => setToggled((m) => new Map(m).set(keyOf(g), !isOpen(g)));
   const order = useMemo(() => shownGroups.flatMap((g) => g.rows.map((r) => r.leaf.id).filter((x): x is string => !!x)), [shownGroups]);
   const nextOf = (id: string) => { const i = order.indexOf(id); return i >= 0 && i + 1 < order.length ? order[i + 1] : null; };
 
@@ -236,12 +248,10 @@ export default function DayAgendaPanel({
               {query && <button onClick={() => setQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="Clear"><XIcon className="w-3.5 h-3.5" /></button>}
             </div>
           )}
-          {totals.n > 0 && (
-            <div className="mt-2 inline-flex rounded-md bg-[var(--color-surface-2)] p-0.5 text-[11px] font-bold">
-              {([[false, "In time order"], [true, "By equipment"]] as const).map(([v, label]) => (
-                <button key={label} onClick={() => setByEquipment(v)}
-                  className={`px-2.5 py-1 rounded ${byEquipment === v ? "bg-[var(--color-surface)] shadow-sm text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{label}</button>
-              ))}
+          {groups.length > 1 && (
+            <div className="mt-2 flex items-center gap-3 text-[11px] font-bold text-[var(--color-text-muted)]">
+              <button onClick={() => setToggled(new Map(groups.map((g) => [keyOf(g), true])))} className="hover:text-[var(--color-text)]">Open all</button>
+              <button onClick={() => setToggled(new Map(groups.map((g) => [keyOf(g), false])))} className="hover:text-[var(--color-text)]">Close all</button>
             </div>
           )}
         </div>
@@ -253,8 +263,12 @@ export default function DayAgendaPanel({
             const head = g.parent ?? g.rows[0].leaf;
             const headInfo = head.id ? progress?.get(head.id) : undefined;
             return (
-              <section key={`${g.parent?.id ?? "top"}-${g.rows[0].leaf.id}`} className="border-b border-[var(--color-border)]">
+              <section key={keyOf(g)} className="border-b border-[var(--color-border)]">
                 <div className={`px-4 py-2 flex items-center gap-2 ${color.soft}`}>
+                  <button onClick={() => toggle(g)} aria-expanded={isOpen(g)} title={isOpen(g) ? "Close" : "Open"}
+                    className="shrink-0 p-1 -m-1 rounded hover:bg-black/5 dark:hover:bg-white/10 text-[var(--color-text-muted)]">
+                    <ChevronRight className={`w-3.5 h-3.5 transition-transform ${isOpen(g) ? "rotate-90" : ""}`} />
+                  </button>
                   <span className={`w-1.5 h-5 rounded-sm shrink-0 ${color.bar}`} />
                   <div className="flex-1 min-w-0">
                     {g.crumbs.length > 0 && (
@@ -274,8 +288,9 @@ export default function DayAgendaPanel({
                       {head.id && planNow.get(head.id) != null ? <> of {planNow.get(head.id)}% planned</> : null}
                     </span>
                   )}
+                  {!isOpen(g) && <span className="shrink-0 text-[10px] font-bold text-[var(--color-text-muted)]">{g.rows.length} today</span>}
                 </div>
-                <ul className="divide-y divide-[var(--color-border)]">
+                {isOpen(g) && <ul className="divide-y divide-[var(--color-border)]">
                   {g.rows.map((r) => {
                     const pct = pctOf(r.leaf);
                     const note = spanNote(r);
@@ -298,6 +313,9 @@ export default function DayAgendaPanel({
                           <span className="block text-[9.5px] text-[var(--color-text-faint)] truncate">
                             {[note, r.leaf.responsibleParty, r.leaf.workOrderRef ? `WO ${r.leaf.workOrderRef}` : null].filter(Boolean).join(" · ")}
                           </span>
+                          {r.leaf.id && latestByStep.get(r.leaf.id) && (
+                            <span className="block text-[10px] italic text-[var(--color-text-muted)] truncate">&ldquo;{latestByStep.get(r.leaf.id)!.body}&rdquo;</span>
+                          )}
                           {(r.leaf.status === "on_hold" || r.leaf.status === "blocked") && (
                             <span className={`block text-[10px] font-semibold truncate ${r.leaf.status === "blocked" ? "text-rose-700 dark:text-rose-400" : "text-amber-700 dark:text-amber-400"}`}>
                               {r.leaf.status === "blocked" ? "Blocked" : "On hold"}: {r.leaf.statusReason || "no reason recorded"}
@@ -318,6 +336,7 @@ export default function DayAgendaPanel({
                       </div>
                       {openId === r.leaf.id && r.leaf.id && (
                         <QuickEdit key={r.leaf.id} leaf={r.leaf} pct={pct} canEdit={canEdit}
+                          latest={latestByStep.get(r.leaf.id)} userId={userId} onNotesChanged={() => setNotesTick((t) => t + 1)}
                           onSetStatus={onSetStatus} onSetProgress={onSetProgress} onAddNote={onAddNote}
                           onOpenDetail={() => onOpenDetail(r.leaf)}
                           next={nextOf(r.leaf.id)} onNext={(id) => { setOpenId(id); }} onClose={() => setOpenId(null)} />
@@ -325,7 +344,7 @@ export default function DayAgendaPanel({
                       </li>
                     );
                   })}
-                </ul>
+                </ul>}
               </section>
             );
           })}
@@ -357,8 +376,12 @@ const PCTS = [0, 25, 50, 75, 90, 100];
 
 /** The contractor's report, line by line: % done, status, what's blocking
  *  it, a note. Each change saves on its own; Next opens the step below. */
-function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, onOpenDetail, next, onNext, onClose }: {
+type LatestNote = { id: string; body: string; at: string | null; by: string | null; byId: string | null };
+
+function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, onOpenDetail, next, onNext, onClose, latest, userId, onNotesChanged }: {
   leaf: Milestone; pct: number; canEdit: boolean;
+  /** The step's latest comment — shown here; its author edits it in place. */
+  latest?: LatestNote; userId?: string; onNotesChanged?: () => void;
   onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => unknown;
   onSetProgress?: (id: string, percent: number) => unknown;
   onAddNote?: (id: string, body: string) => Promise<void> | void;
@@ -369,7 +392,11 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
   const [pctDraft, setPctDraft] = useState(String(pct));
   const [hold, setHold] = useState<MilestoneStatus | null>(leaf.status === "on_hold" || leaf.status === "blocked" ? leaf.status : null);
   const [reason, setReason] = useState(leaf.statusReason ?? "");
-  const [note, setNote] = useState("");
+  // Your own latest comment opens ready to edit (fix it before the report
+  // goes out); someone else's shows above the box and yours adds a new one.
+  const own = !!latest && !!userId && latest.byId === userId;
+  const [noteMode, setNoteMode] = useState<"edit" | "new">(own ? "edit" : "new");
+  const [note, setNote] = useState(own ? latest!.body : "");
   const [saved, setSaved] = useState<string | null>(null);
   const pctRef = useRef<HTMLInputElement>(null);
   useEffect(() => { pctRef.current?.focus(); pctRef.current?.select(); }, []);
@@ -412,15 +439,26 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
     savedHold.current = `${hold}|${reason.trim()}`;
     report(await onSetStatus(id, hold, reason.trim() || undefined), hold === "blocked" ? "Blocked — reason saved" : "On hold — reason saved");
   };
-  const sentNote = useRef<string | null>(null);
+  const sentNote = useRef<string | null>(own ? latest!.body.trim() : null);
+  // Edit mode: only a changed comment is written; new mode: added.
+  const writeNote = async (text: string) => {
+    if (noteMode === "edit" && latest) await updateMilestoneNote(latest.id, text);
+    else if (onAddNote) await onAddNote(id, text);
+    onNotesChanged?.();
+  };
+  const notePending = () => !!note.trim() && note.trim() !== sentNote.current;
   const saveNote = async () => {
-    if (ro || !onAddNote || !note.trim()) return;
-    sentNote.current = note.trim();
-    try { await onAddNote(id, note.trim()); setNote(""); setSaved("Note added"); }
-    catch { setSaved("Note not saved"); }
+    if (ro || !notePending()) return;
+    const text = note.trim();
+    sentNote.current = text;
+    try {
+      await writeNote(text);
+      if (noteMode === "new") setNote("");
+      setSaved(noteMode === "edit" ? "Comment updated" : "Note added");
+    } catch { setSaved("Note not saved"); sentNote.current = null; }
   };
   const goNext = async () => {
-    if (note.trim()) await saveNote();
+    if (notePending()) await saveNote();
     // On hold / blocked picked but not saved yet: Next saves it.
     if (holdPending()) await saveHold();
     if (next) onNext(next); else onClose();
@@ -432,7 +470,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
   useEffect(() => {
     flush.current = () => {
       if (ro) return;
-      if (note.trim() && note.trim() !== sentNote.current && onAddNote) void Promise.resolve(onAddNote(id, note.trim())).catch(() => undefined);
+      if (notePending()) void writeNote(note.trim()).catch(() => undefined);
       if (holdPending() && hold && onSetStatus) onSetStatus(id, hold, reason.trim() || undefined);
     };
   });
@@ -480,13 +518,25 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
           </button>
         </div>
       )}
+      {onAddNote && latest && noteMode === "new" && (
+        <div className="flex items-start gap-1.5">
+          <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] text-[var(--color-text-muted)]">Latest</span>
+          <span className="flex-1 italic text-[var(--color-text-muted)]">&ldquo;{latest.body}&rdquo; — {latest.by ?? "someone"}{latest.at ? `, ${new Date(latest.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</span>
+        </div>
+      )}
       {onAddNote && (
         <div className="flex items-center gap-1.5">
-          <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] text-[var(--color-text-muted)]">Note</span>
+          <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] text-[var(--color-text-muted)]">{noteMode === "edit" ? "Comment" : "Note"}</span>
           <input value={note} disabled={ro} onChange={(e) => setNote(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void saveNote(); } }}
             placeholder="Comment — shows on the shift report (e.g. sent out for calibration)"
             className="flex-1 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] focus:outline-none focus:border-[var(--color-accent-ring)]" />
+          {own && (
+            <button disabled={ro} onClick={() => { if (noteMode === "edit") { setNoteMode("new"); setNote(""); sentNote.current = null; } else { setNoteMode("edit"); setNote(latest!.body); sentNote.current = latest!.body.trim(); } }}
+              className="shrink-0 text-[10.5px] font-bold text-[var(--color-accent)] hover:underline">
+              {noteMode === "edit" ? "New comment instead" : "Edit my last one"}
+            </button>
+          )}
         </div>
       )}
       <div className="flex items-center gap-2">

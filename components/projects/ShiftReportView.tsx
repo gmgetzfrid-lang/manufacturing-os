@@ -30,7 +30,7 @@ import { createPortal } from "react-dom";
 import {
   Printer, ChevronLeft, ChevronRight, ChevronDown, Sun, Moon, AlertTriangle, CheckCircle2, Flag, FastForward,
   TrendingUp, TrendingDown, Minus, Zap, Presentation, X, Settings2, Rocket, ArrowLeftRight, Trophy,
-  Copy, Mail, FileText,
+  Copy, Mail, FileText, Pause,
 } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { buildProgressIndex, leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
@@ -689,10 +689,11 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   const heldHere = [...review.carryOver, ...review.inProgress, ...review.notStarted].filter((r) => ownWork(r) && isHeld(r));
   const heldIds = new Set(heldHere.map((r) => r.leaf.id));
   const heldLine = heldIds.size > 0 ? `${heldIds.size} blocked or on hold — see Needs a decision.` : null;
-  const doneItems = review.done.map((r) => ({
-    id: r.leaf.id ?? r.leaf.name,
-    text: `${r.parentName ? `${r.parentName} › ` : ""}${r.leaf.name}`,
-    note: [r.offSchedule ? `planned ${c.D(r.start)}` : rowTime(r, shift), completionNote(r.leaf.actualAt, r.finish, c.tz)].filter(Boolean).join(" · "),
+  const doneRows = review.done.map((r) => rowFromShift(r, c, {
+    when: r.offSchedule ? `planned ${c.D(r.start)}` : rowTime(r, shift),
+    right: completionNote(r.leaf.actualAt, r.finish, c.tz) ?? "done",
+    done: true,
+    note: comment(r, "last"),
   }));
   const decideRows = blocked.map((r) => rowFromShift(r, c, {
     when: `${r.percent}%`,
@@ -721,7 +722,16 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     right: r.percent > 0 ? `${r.percent}% · ${c.hrs(r.hoursLeft)}` : c.hrs(r.hoursLeft),
     extraTags: [r.status === "blocked" ? { t: "blocked", tone: "rose" } : r.status === "on_hold" ? { t: "on hold", tone: "amber" } : null],
   }));
-  const otherTitle = `For the ${otherKind} shift`;
+  // The other crew's unfinished work: theirs, but the next crew takes it
+  // on if they can.
+  const otherTitle = `${otherKind === "day" ? "Day" : "Night"} shift carry-over — pick up if you can`;
+  // Under way, but the other crew's: paused over the next shift.
+  const pausedTitle = `${otherKind === "day" ? "Day" : "Night"} crew's work — paused, resumes ${c.T(next.end)}`;
+  const pausedRows = goals.paused.map((r) => rowFromShift(r, c, {
+    when: `to ${c.D(r.finish)}`,
+    note: comment(r, "other"),
+    right: r.percent > 0 ? `${r.percent}%` : "not started",
+  }));
   const stretchRows = goals.stretch.map((r, i) => {
     const closes = goals.backOnTrackAt != null && i + 1 <= goals.backOnTrackAt;
     return rowFromShift(r, c, {
@@ -780,7 +790,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         ...(planRows.length ? [{ k: "sub", title: "Continuing as planned", count: planRows.length, tone: "slate" } as ExportBlock, stepsBlock(planRows, "Done")] : []),
         ...(heldLine ? [{ k: "note", text: heldLine, tone: "amber" } as ExportBlock] : []),
         { k: "sub", title: "Completed", count: review.done.length, tone: "emerald" },
-        review.done.length === 0 ? { k: "empty", text: "Nothing was completed on this shift." } : { k: "list", items: doneItems },
+        review.done.length === 0 ? { k: "empty", text: "Nothing was completed on this shift." } : stepsBlock(doneRows, "Finished"),
       ],
       body: (print) => nothingLast ? (
         <Empty>
@@ -809,7 +819,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           {heldLine && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{heldLine}</div>}
           <Sub tone="emerald" icon={<CheckCircle2 className="w-3.5 h-3.5" />} title="Completed" count={review.done.length} />
           {review.done.length === 0 ? <Empty>Nothing was completed on this shift.</Empty> : (
-            <DoneList print={print} items={doneItems} />
+            <StepTable print={print} rightHead="Finished" rows={doneRows} />
           )}
         </div>
       ),
@@ -840,6 +850,12 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
               <StepTable print={print} box rightHead="Left" rows={stretchRows} />
             </>
           )}
+          {goals.paused.length > 0 && (
+            <>
+              <Sub tone="slate" icon={<Pause className="w-3.5 h-3.5" />} title={pausedTitle} count={goals.paused.length} />
+              <StepTable print={print} rightHead="Done" rows={pausedRows} />
+            </>
+          )}
           {goals.otherShift.length > 0 && (
             <>
               <Sub tone="slate" icon={next.kind === "day" ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />} title={otherTitle} count={goals.otherShift.length} />
@@ -856,6 +872,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           ...(stretchMsg ? [{ k: "note", text: stretchMsg, tone: "amber" } as ExportBlock] : []),
           stepsBlock(stretchRows, "Left"),
         ] : []),
+        ...(goals.paused.length > 0 ? [{ k: "sub", title: pausedTitle, count: goals.paused.length, tone: "slate" } as ExportBlock, stepsBlock(pausedRows, "Done")] : []),
         ...(goals.otherShift.length > 0 ? [{ k: "sub", title: otherTitle, count: goals.otherShift.length, tone: "slate" } as ExportBlock, stepsBlock(otherRows, "Left")] : []),
       ],
     },
@@ -1164,28 +1181,6 @@ function Prompts({ items, print, lines = 0 }: { items: string[]; print: boolean;
   );
 }
 
-/** Completed work as a compact multi-column list — read, not worked. */
-function DoneList({ items, print }: { items: Array<{ id: string; text: string; note: string }>; print: boolean }) {
-  const [all, setAll] = useState(false);
-  const shown = print || all ? items : items.slice(0, 8);
-  return (
-    <div>
-      <ul className="columns-1 sm:columns-2 gap-6 text-[11.5px]">
-        {shown.map((i) => (
-          <li key={i.id} className="break-inside-avoid flex gap-1.5 py-px">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-px" />
-            <span className="min-w-0"><span className="text-[var(--color-text)]">{i.text}</span> <span className="text-[var(--color-text-faint)] font-mono text-[10.5px]">{i.note}</span></span>
-          </li>
-        ))}
-      </ul>
-      {!print && items.length > 8 && (
-        <button onClick={() => setAll((v) => !v)} className="mt-0.5 text-[11px] font-bold text-[var(--color-accent)] hover:underline">
-          {all ? "Show fewer" : `Show all ${items.length}`}
-        </button>
-      )}
-    </div>
-  );
-}
 
 type TagTone = "rose" | "amber" | "muted";
 interface TagT { t: string; tone: TagTone }

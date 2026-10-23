@@ -935,6 +935,7 @@ export default function ExecutionView({
       ) : layout === "calendar" ? (
         <ScheduleCalendarTileView
           planNow={planNowAll}
+          userId={userId}
           milestones={visibleItems}
           childrenByParent={childrenOf}
           canEdit={canEdit}

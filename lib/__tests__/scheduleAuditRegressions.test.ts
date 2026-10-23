@@ -414,3 +414,46 @@ describe("sweep 7 fixes", () => {
     expect(dayKey(Date.parse(r.forecastFinish!), CHI)).toBe("2026-10-04");
   });
 });
+
+describe("the crew comes from the schedule's calendar, not a guess", () => {
+  // V-7 internal manways: a 36 h job stretched over Mon 06:00 → Wed 17:00.
+  // From its dates alone the hours "fit" in the day shifts — a guess.
+  const base = { id: "mw", name: "Open internal manways", plannedStartAt: at("2026-10-26", "06:00"), plannedAt: at("2026-10-28", "17:00"), durationHours: 36, percentComplete: 30, status: "in_progress" as const };
+  it("without a calendar it falls back to the dates (day)", () => {
+    expect(workShiftOf(mk(base), CHI)).toBe("day");
+  });
+  it("a 24-hour calendar is round the clock — on the night crew's list", () => {
+    const mw = mk({ ...base, attributes: { work_calendar: "Schultz - Tower", work_hours: "00:00-24:00" } });
+    expect(workShiftOf(mw, CHI)).toBe("both");
+    const d = shiftWindow("2026-10-26", "day", CHI);
+    const r = buildShiftReport({ milestones: [mw], tz: CHI, shift: d, now: d.end });
+    expect(r.goals.all.map((x) => x.leaf.id)).toEqual(["mw"]);
+  });
+  it("12-hour days are day work; a night calendar is night work", () => {
+    expect(workShiftOf(mk({ ...base, attributes: { work_hours: "06:00-18:00" } }), CHI)).toBe("day");
+    expect(workShiftOf(mk({ ...base, attributes: { work_hours: "00:00-03:00,04:00-08:00,23:00-24:00" } }), CHI)).toBe("night");
+  });
+  it("a crew set by hand still wins", () => {
+    expect(workShiftOf(mk({ ...base, shift: "day", attributes: { work_hours: "00:00-24:00" } }), CHI)).toBe("day");
+    expect(workShiftOf(mk({ ...base, shift: "swing", attributes: { work_hours: "06:00-18:00" } }), CHI)).toBe("both");
+  });
+});
+
+describe("the next shift sees the other crew's unfinished and paused work", () => {
+  const f = { D: (x: number) => new Date(x).toISOString().slice(5, 10), DTs: (x: number) => new Date(x).toISOString().slice(5, 16), T: (x: number) => new Date(x).toISOString().slice(11, 16), win: () => "", hrs: (h: number) => `${h} h` };
+  // Day-only work: an unfinished 4 h job (past due) and a 3-day job under way.
+  const ext = mk({ id: "x", name: "Blind / open manways", plannedStartAt: at("2026-10-26", "12:00"), plannedAt: at("2026-10-26", "16:00"), durationHours: 4, status: "in_progress", percentComplete: 50 });
+  const long = mk({ id: "l", name: "Retube", plannedStartAt: at("2026-10-26", "06:00"), plannedAt: at("2026-10-28", "17:00"), shift: "day", status: "in_progress", percentComplete: 30 });
+  const d = shiftWindow("2026-10-26", "day", CHI);
+  const r = buildShiftReport({ milestones: [ext, long], tz: CHI, shift: d, now: d.end });
+  it("lists them apart from the night crew's own work", () => {
+    expect(r.goals.all).toEqual([]);
+    expect(r.goals.otherShift.map((x) => x.leaf.id)).toEqual(["x"]);
+    expect(r.goals.paused.map((x) => x.leaf.id)).toEqual(["l"]);
+  });
+  it("the email says so", () => {
+    const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r, f, { pctOf: () => 40, finishOf: () => undefined }) });
+    expect(text).toMatch(/Day shift carry-over — pick up if you can: Blind \/ open manways \(50%\)/);
+    expect(text).toMatch(/Day crew's work paused until .*: Retube \(30%\)/);
+  });
+});
