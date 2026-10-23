@@ -754,7 +754,8 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     { label: "Plan by now", value: `${overall.plannedPct}%`, tone: "slate" as const },
     // Coloured by the headline verdict, so it can't read red under ON TRACK.
     { label: overall.standing === "behind" ? "Work behind" : overall.standing === "ahead" ? "Work ahead" : "Gap",
-      value: Math.abs(gap) > 0.5 ? c.hrs(Math.abs(gap)) : "even",
+      // On track but not even: say which way, in words.
+      value: Math.abs(gap) <= 0.5 ? "even" : overall.standing === "on track" ? `${c.hrs(Math.abs(gap))} ${gap > 0 ? "behind" : "ahead"}` : c.hrs(Math.abs(gap)),
       tone: (overall.standing === "behind" ? "rose" : overall.standing === "ahead" ? "emerald" : "slate") as "rose" | "emerald" | "slate" },
     { label: "Steps done", value: `${overall.stepsDone}/${overall.stepsTotal}`, tone: "slate" as const },
     // Past due across every crew (blocked work is counted under decisions).
@@ -842,7 +843,10 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     },
     {
       id: "next", title: `Next shift — ${shiftName(next)} ${c.D(next.start)} ${c.win(next)}`, short: "Next shift",
-      sub: `${goals.all.length} steps · ${c.hrs(goals.mustDoHours)} · ${goals.carryOver.length} carried over · ${goals.critical.length} critical`,
+      sub: [`${goals.all.length} steps`, `${c.hrs(goals.mustDoHours)} this shift`,
+        goals.carryOver.length ? `${goals.carryOver.length} carried over` : null,
+        goals.otherShift.length ? `${goals.otherShift.length} ${otherKind}-shift carry-over` : null,
+        goals.critical.length ? `${goals.critical.length} critical` : null].filter(Boolean).join(" · "),
       count: goals.all.length, flag: critCarry ? "rose" : goals.carryOver.length ? "amber" : null,
       body: (print) => (
         <div className="space-y-2">

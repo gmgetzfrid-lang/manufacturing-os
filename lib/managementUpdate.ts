@@ -89,7 +89,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       k: "stats", items: [
         { label: "Complete", value: `${overall.actualPct}%`, tone: overall.standing === "behind" ? "rose" : overall.standing === "ahead" ? "emerald" : "slate" },
         { label: "Plan", value: `${overall.plannedPct}%`, tone: "slate" },
-        { label: gapTile.label, value: Math.abs(gap) > 0.5 ? f.hrs(Math.abs(gap)) : "even", tone: gapTile.tone },
+        { label: gapTile.label, value: Math.abs(gap) <= 0.5 ? "even" : overall.standing === "on track" ? `${f.hrs(Math.abs(gap))} ${gap > 0 ? "behind" : "ahead"}` : f.hrs(Math.abs(gap)), tone: gapTile.tone },
         { label: "Steps done", value: `${overall.stepsDone} / ${overall.stepsTotal}`, tone: "slate" },
       ],
     }],
@@ -210,7 +210,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     const nextHidden = goals.all.length - nextList.length;
     out.push({
       id: "next", title: `Next shift — ${shiftName(next)} ${f.D(next.start)} ${f.win(next)}`,
-      sub: `${goals.all.length} step${goals.all.length === 1 ? "" : "s"} · ${f.hrs(goals.mustDoHours)}`,
+      sub: `${goals.all.length} step${goals.all.length === 1 ? "" : "s"} · ${f.hrs(goals.mustDoHours)} this shift`,
       blocks: [...carry, {
         k: "table", head: ["Task", "Step", "Planned", "Done"], align: ["left", "left", "left", "right"], textLabels: ["", "", "", "done"],
         rows: [...byTask(nextList, (r) => [
