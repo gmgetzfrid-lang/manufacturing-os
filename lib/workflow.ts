@@ -480,7 +480,7 @@ export function slotSignPlan(
   // (the opt-in) is affected. DF-P26 fix pass 2: the upgrade exists only for
   // the floor — so only above the DEC-12 threshold, and never to the drafter
   // (their sign-off is never the second person). The engine offers it as
-  // OPTIONAL unless the floor would otherwise leave nobody named able to
+  // OPTIONAL unless the floor would otherwise leave nobody able to
   // complete (ruleUpgradeNeeded), so the reviewer the rule excused is not
   // badged for it. DF-P26 fix pass 3: an upgrade this person cannot give (an
   // independence reason) is simply not offered — never a disabled sign-off.
@@ -528,16 +528,26 @@ export function slotSignPlan(
  * GAP-115 (DF-P26 fix pass 2): is a sign-off on a slot the exception-only
  * rule satisfied NEEDED for the review to complete — rather than an optional
  * "sign it yourself" upgrade? True only above the DEC-12 threshold, with a
- * drafter assigned, when nobody but the drafter has signed a blocking slot
- * (the rule, a pre-authorization and a consent silence are nobody's look)
- * and every open blocking slot names nobody but the drafter (primary,
- * alternate or overrider) — so the floor would otherwise leave nobody named
- * on the roster able to complete. Pure.
+ * drafter assigned, on a roster carrying a rule satisfaction, when nobody
+ * but the drafter has signed a blocking slot (the rule, a pre-authorization
+ * and a consent silence are nobody's look) and no open blocking slot has
+ * anyone but the drafter who can actually complete it — so the floor would
+ * otherwise leave nobody able to complete. Merge-time fix pass 2 (DEC-29):
+ * "can actually complete" is judged as waitsOnLiveSecondPerson judges it —
+ * a primary who is not the drafter, or an alternate of a slot with a timeout
+ * (judged once its window opens), counted only if slotSignPlan gives them
+ * that slot fillable other than by override; an overrider never counts (an
+ * override is itself an exception), nor an alternate whose window never
+ * opens. Before, every named alternate and overrider counted, so a roster
+ * whose open slot named only the drafter and such a person left the rule
+ * slot's reviewer an optional sign-off — nobody badged — while the drafter
+ * was held by the floor. Pure.
  */
 export function ruleUpgradeNeeded(
-  roster: Pick<TicketReviewRoster, "slots">,
-  ticket: Pick<Ticket, "assignedDrafterId">,
+  roster: TicketReviewRoster,
+  ticket: Pick<Ticket, "assignedDrafterId"> & Partial<Pick<Ticket, "requesterId">>,
   sodActive: boolean,
+  now: number = Date.now(),
 ): boolean {
   const drafter = ticket.assignedDrafterId ?? null;
   if (!sodActive || !drafter) return false;
@@ -545,7 +555,17 @@ export function ruleUpgradeNeeded(
   if (!blocking.some((s) => s.status === "satisfied" && s.via === "rule")) return false;
   if (blocking.some((s) => s.status === "satisfied" && !!s.satisfiedBy && s.satisfiedBy !== drafter && s.via !== "preauthorization" && s.via !== "rule")) return false;
   const open = blocking.filter((s) => s.status === "open");
-  return open.length > 0 && open.every((s) => [...s.primaries, ...s.alternates, ...s.overriders].every((u) => u === drafter));
+  if (open.length === 0) return false;
+  const parties = { requesterId: ticket.requesterId ?? "", assignedDrafterId: drafter };
+  const opened = Date.parse(roster.openedAt);
+  const canComplete = (s: TicketReviewSlot, uid: string, at: number): boolean =>
+    slotSignPlan(roster, parties, uid, sodActive, at).fillable.some((f) => f.slot.kind === s.kind && f.via !== "override");
+  return open.every((s) => {
+    if ([...new Set(s.primaries)].some((u) => !!u && u !== drafter && canComplete(s, u, now))) return false;
+    if (s.timeoutDays === null || !Number.isFinite(opened)) return true;
+    const windowAt = Math.max(now, opened + s.timeoutDays * DAY_MS);
+    return ![...new Set(s.alternates)].some((u) => !!u && u !== drafter && canComplete(s, u, windowAt));
+  });
 }
 
 /** GAP-115 (DF-P26 fix pass 2): what a sign-off offered only on a slot the
@@ -946,9 +966,9 @@ export const WorkflowEngine = {
           // GAP-115 (DF-P26 fix pass 2): a sign-off offered only on slots the
           // exception-only rule satisfied is an optional upgrade — never
           // waited on, so never badged — unless the DEC-12 floor would
-          // otherwise leave nobody named able to complete (ruleUpgradeNeeded).
+          // otherwise leave nobody able to complete (ruleUpgradeNeeded).
           const onlyRule = plan.fillable.length > 0 && plan.fillable.every((f) => f.slot.status === "satisfied" && f.slot.via === "rule");
-          const ruleOptional = onlyRule && !ruleUpgradeNeeded(roster, ticket, sod);
+          const ruleOptional = onlyRule && !ruleUpgradeNeeded(roster, ticket, sod, ctx?.now ?? Date.now());
           if (plan.fillable.length > 0) {
             const labels = plan.fillable.map((f) => f.slot.label || f.slot.kind);
             const allOverride = plan.fillable.every((f) => f.via === "override");

@@ -534,6 +534,31 @@ describe("limb 2 — re-opened before anything issues", () => {
       }
     }
   });
+  it("DF-P26 merge-time fix pass 2: the drafter reassigned to the live reviewer after the rule applied — the route takes the rule slot's reviewer's (now required) upgrade, refuses the new drafter until then (the floor), and the request issues", async () => {
+    // doc: exception-only, q-1; xchk: e-1, alternate q-1 (no timeout), independent of doc; drafter d-1 at open
+    const XCHK = { kind: "xchk", label: "Cross check", mode: "blocking", fill: { users: ["e-1"] }, alternates: { users: ["q-1"] }, independent_of: ["doc"] };
+    const TABLE = { slots: [DOCCHK, XCHK] };
+    const opened = await submit(TABLE);
+    expect(opened.roster!.slots.find((x) => x.kind === "doc")).toMatchObject({ status: "satisfied", via: "rule" });
+    // reassign_drafter made e-1 the drafter
+    const row = reviewRow({ assigned_drafter_id: "e-1", metadata: { source_document: { id: DOC, document_number: "P-100", rev: "2" }, review_roster: opened.roster } });
+    const held = await run(row, "e-1", { actionType: "sign_slot", dryRun: true }, TABLE);
+    expect(held.status, JSON.stringify(held.json)).toBe(403);
+    expect(held.json.error).toMatch(/at least one sign-off on its review must come from someone else/);
+    const dry = await run(row, "q-1", { actionType: "sign_slot", dryRun: true }, TABLE);
+    expect(dry.status, JSON.stringify(dry.json)).toBe(200);
+    expect(dry.json.slots).toEqual(["Document check"]);
+    const up = await run(row, "q-1", { actionType: "sign_slot", signatureId: SIG }, TABLE);
+    expect(up.status, JSON.stringify(up.json)).toBe(200);
+    expect(up.json.status).toBe("PENDING_REVIEW");
+    const after = (ticketUpdates()[0].args[0] as { metadata: { review_roster: TicketReviewRoster } }).metadata.review_roster;
+    expect(after.slots.find((x) => x.kind === "doc")).toMatchObject({ status: "satisfied", via: "primary", satisfiedBy: "q-1" });
+    const row2 = { ...row, metadata: { ...(row.metadata as object), review_roster: after } };
+    const SIG2 = "5a000000-0000-4000-8000-000000000002";
+    const done = await run(row2, "e-1", { actionType: "sign_slot", signatureId: SIG2 }, TABLE, { extra: () => { state.rows.e_signatures = [{ ...state.rows.e_signatures[0], id: SIG2 }]; } });
+    expect(done.status, JSON.stringify(done.json)).toBe(200);
+    expect(done.json.status).toBe("PENDING_IFC");
+  });
   it("after the re-open, the slot's reviewer signs and the request issues", async () => {
     const row = await ruledRow();
     const extra = () => { state.rows.ticket_examination_scopes = [{ ticket_id: "t1", org_id: "o1", field_values: {}, waiver: { reason: "vendor data" } }]; };

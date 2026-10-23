@@ -464,10 +464,77 @@ describe("DF-P26 merge-time fix pass — an optional upgrade never displaces a p
     expect(slotSignPlan(r, T, "d-1", true, NOW).blocked.map((b) => b.reason)).toEqual([expect.stringMatching(/at least one sign-off on its review must come from someone else/)]);
     const p = slotSignPlan(r, T, "p-1", true, NOW);
     expect(p.fillable.map((f) => [f.slot.kind, f.via])).toEqual([["doc", "primary"]]);
+    // merge-time fix pass 2: an alternate who can never act on X is not someone who can complete it — the upgrade is
+    // NEEDED, so it is required and p-1 is badged (before, every named alternate counted: optional, nobody badged)
+    expect(ruleUpgradeNeeded(r, T, true, NOW)).toBe(true);
+    const sign = acts(r, "p-1").find((x) => x.action === "sign_slot")!;
+    expect(sign.optional).toBeUndefined();
+    expect(sign.description).toContain(RULE_UPGRADE_NEEDED_NOTE);
+    expect(required(r, "p-1")).toBe(true);
     const upgraded = applySignPlan(r, p, { uid: "p-1", name: "P" }, "sig-p", "2026-10-22T09:00:00.000Z");
     const d = slotSignPlan(upgraded, T, "d-1", true, NOW);
     expect(d.fillable.map((f) => f.slot.kind)).toEqual(["x"]);
     expect(rosterCompletion(applySignPlan(upgraded, d, { uid: "d-1", name: "D" }, "sig-d", "2026-10-22T10:00:00.000Z"), { sodActive: true, drafterId: "d-1" }).complete).toBe(true);
+  });
+  it("merge-time fix pass 2 — who can actually complete an open slot: a non-drafter primary the plan lets sign it, or an alternate of a slot with a timeout (judged once its window opens); never an overrider, never an alternate whose window never opens", () => {
+    const R = slot({ kind: "doc", primaries: ["p-1"], exceptionOnly: true });
+    const ruled = (X: TicketReviewSlot) => applyExceptionRule(roster([R, X]), ["doc"], "2026-10-22T08:00:00.000Z");
+    // an overrider only: an override is itself an exception — needed
+    expect(ruleUpgradeNeeded(ruled(slot({ kind: "x", primaries: ["d-1"], overriders: ["o-1"] })), T, true, NOW)).toBe(true);
+    // an alternate whose window opens later (a timeout): they can complete it then — not needed (optional)
+    const timed = ruled(slot({ kind: "x", primaries: ["d-1"], alternates: ["a-1"], timeoutDays: 3 }));
+    expect(ruleUpgradeNeeded(timed, T, true, NOW)).toBe(false);
+    expect(acts(timed, "p-1").find((x) => x.action === "sign_slot")!.optional).toBe(true);
+    // ... unless the plan would not let them sign it (independent of the requester they are)
+    expect(ruleUpgradeNeeded(ruled(slot({ kind: "x", primaries: ["d-1"], alternates: ["req"], timeoutDays: 3, independentOf: ["requester"] })), T, true, NOW)).toBe(true);
+    // a non-drafter primary the plan lets sign it: not needed; one the plan blocks (the requester, independent of the requester): needed
+    expect(ruleUpgradeNeeded(ruled(slot({ kind: "x", primaries: ["d-1", "k-1"] })), T, true, NOW)).toBe(false);
+    expect(ruleUpgradeNeeded(ruled(slot({ kind: "x", primaries: ["d-1", "req"], independentOf: ["requester"] })), T, true, NOW)).toBe(true);
+    // REGRESSION: a roster with no rule satisfaction is never "needed", whoever it names
+    expect(ruleUpgradeNeeded(roster([R, slot({ kind: "x", primaries: ["d-1"], overriders: ["o-1"] })]), T, true, NOW)).toBe(false);
+  });
+  it("STATED (merge-time fix pass 2, raised to the integrator): the rule slot's occupant who is also an OVERRIDER of a drafter-only open slot independent of it is offered only that optional override — the upgrade is not offered beside it; only the drafter is badged (a revision; the floor disables their sign-off)", () => {
+    const r = applyExceptionRule(roster([slot({ kind: "doc", primaries: ["p-1"], exceptionOnly: true }), slot({ kind: "x", primaries: ["d-1"], overriders: ["p-1"], independentOf: ["doc"] })]), ["doc"], "2026-10-22T08:00:00.000Z");
+    expect(ruleUpgradeNeeded(r, T, true, NOW)).toBe(true);
+    expect(slotSignPlan(r, T, "p-1", true, NOW)).toEqual({ fillable: [{ slot: r.slots[1], via: "override" }], blocked: [] });
+    expect(acts(r, "p-1").filter((x) => x.action === "sign_slot").map((x) => [x.label, x.optional])).toEqual([["Sign Off — X", true]]);
+    expect(required(r, "p-1")).toBe(false);
+    expect(acts(r, "d-1").find((x) => x.action === "sign_slot")!.disabledReason).toMatch(/must come from someone else/);
+    expect(acts(r, "d-1").find((x) => x.action === "request_revision")!.optional).toBeUndefined();
+  });
+  it("merge-time fix pass 2 — the reachable stall: the rule applied at open beside a live reviewer, then the drafter reassigned to that reviewer; the rule slot's reviewer is now REQUIRED and badged, and the request completes", () => {
+    // R exception-only (primary p-1); X: primary l-1, alternate p-1 with no timeout, independent of R; drafter d-1
+    const R = slot({ kind: "doc", primaries: ["p-1"], exceptionOnly: true });
+    const X = slot({ kind: "x", primaries: ["l-1"], alternates: ["p-1"], timeoutDays: null, independentOf: ["doc"] });
+    const atOpen = roster([R, X]);
+    expect(planExceptionRule(atOpen, { ticket: T, sodActive: true, engineered: false, now: NOW })).toEqual(["doc"]);
+    const r = applyExceptionRule(atOpen, ["doc"], "2026-10-22T08:00:00.000Z");
+    // before the reassignment: l-1 is badged for X; p-1's upgrade is optional and not badged
+    expect(required(r, "l-1")).toBe(true);
+    expect(acts(r, "p-1").find((x) => x.action === "sign_slot")!.optional).toBe(true);
+    expect(required(r, "p-1")).toBe(false);
+    // reassign_drafter is offered in review (the queue owners)
+    expect(WorkflowEngine.getActions(ticketWith(r), "Admin", "a-1", undefined, ctx).some((x) => x.action === "reassign_drafter")).toBe(true);
+    // the drafter is now l-1
+    const T2 = { requesterId: "req", assignedDrafterId: "l-1" } as Pick<Ticket, "requesterId" | "assignedDrafterId">;
+    const reassigned = (ro: TicketReviewRoster) => ({ ...ticketWith(ro), assignedDrafterId: "l-1" } as Ticket);
+    const acts2 = (ro: TicketReviewRoster, uid: string) => WorkflowEngine.getActions(reassigned(ro), "Viewer", uid, undefined, ctx);
+    const required2 = (ro: TicketReviewRoster, uid: string) => isActionRequired(reassigned(ro), { uid, roles: ["Viewer"], activeMemberCount: 5 } as never);
+    // l-1 is held by the floor (a disabled sign-off — not badged for it)
+    expect(acts2(r, "l-1").find((x) => x.action === "sign_slot")!.disabledReason).toMatch(/at least one sign-off on its review must come from someone else/);
+    // p-1: the upgrade is NEEDED — required, said, badged
+    expect(ruleUpgradeNeeded(r, T2, true, NOW)).toBe(true);
+    const sign = acts2(r, "p-1").find((x) => x.action === "sign_slot")!;
+    expect(sign).toMatchObject({ label: "Sign Off — DOC" });
+    expect(sign.optional).toBeUndefined();
+    expect(sign.description).toContain(RULE_UPGRADE_NEEDED_NOTE);
+    expect(required2(r, "p-1")).toBe(true);
+    // p-1 signs it; the drafter l-1 can now complete X
+    const upgraded = applySignPlan(r, slotSignPlan(r, T2, "p-1", true, NOW), { uid: "p-1", name: "P" }, "sig-p", "2026-10-22T09:00:00.000Z");
+    const l = slotSignPlan(upgraded, T2, "l-1", true, NOW);
+    expect(l.fillable.map((f) => f.slot.kind)).toEqual(["x"]);
+    expect(required2(upgraded, "l-1")).toBe(true);
+    expect(rosterCompletion(applySignPlan(upgraded, l, { uid: "l-1", name: "L" }, "sig-l", "2026-10-22T10:00:00.000Z"), { sodActive: true, drafterId: "l-1" }).complete).toBe(true);
   });
   it("REGRESSION: with no independence between them the upgrade still rides with X in one sign-off, slots in table order (optional upgrade not the whole of it, so the sign-off is required for X)", () => {
     for (const order of ["r-first", "x-first"] as const) {
