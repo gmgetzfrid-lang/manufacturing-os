@@ -567,8 +567,9 @@ function planSignOff(
         if (!replanned.fillable.some((f) => f.slot.kind === slot.kind)) continue;
         // Merge-time fix pass 4 (the integrator's ruling — guarded
         // precedence, made fail-safe): kept only where the outcome is
-        // proven: after this person's whole sign-off (an override in it
-        // re-opening what the rule still satisfies, as limb 2 does), the
+        // proven: after this person's whole sign-off (what the rule still
+        // satisfies re-opened, as limb 2 does on any exception on record —
+        // assumed, merge-time fix pass 5), the
         // drafter's ONE sign-off, without an override and with the floor as
         // it then stands, fills every open blocking slot left — so each
         // dropped slot is completed by someone other than this person
@@ -605,8 +606,10 @@ function planSignOff(
 
 /**
  * GAP-115 (DF-P26 merge-time fix pass 4): after `uid` signs `plan` (each
- * slot satisfied by them; an override among them re-opening every slot the
- * exception-only rule still satisfies, as the route's limb 2 does), does the
+ * slot satisfied by them; every slot the exception-only rule still satisfies
+ * re-opened, as the route's limb 2 does for any exception on record — the
+ * engine cannot see whether one is, so it assumes one: merge-time fix pass
+ * 5), does the
  * drafter's one sign-off — without an override, the floor judged as it then
  * stands — fill every open blocking slot left? The precedence's outcome
  * check: where it holds, the review completes in one more sign-off. Pure.
@@ -628,7 +631,11 @@ function drafterCompletesAfter(
       return f ? { ...s, status: "satisfied" as const, via: f.via, satisfiedBy: uid, signatureId: "precedence-preview" } : s;
     }),
   };
-  if (after.slots.some((s) => s.status === "satisfied" && s.via === "override") && after.slots.some((s) => s.status === "satisfied" && s.via === "rule")) {
+  // Merge-time fix pass 5: limb 2 re-opens the rule's remaining slots for
+  // ANY exception on record (a moved source, a waiver, a declaration not on
+  // record, the request become engineered — not only an override), and the
+  // engine cannot see those, so the re-open is always assumed.
+  if (after.slots.some((s) => s.status === "satisfied" && s.via === "rule")) {
     after = { ...after, slots: after.slots.map((s) => (s.status === "satisfied" && s.via === "rule" ? { ...s, status: "open" as const, via: undefined, satisfiedBy: null, satisfiedAt: null, signatureId: null } : s)) };
   }
   const left = after.slots.filter((s) => s.status === "open" && slotBlocks(s));

@@ -606,13 +606,15 @@ describe("DF-P26 merge-time fix pass — an optional upgrade never displaces a p
 describe("DF-P26 merge-time fix pass 4 — the precedence is GUARDED: an override gives way only where its slot stays completable by someone else", () => {
   type Parties = Pick<Ticket, "requesterId" | "assignedDrafterId">;
   const ISO = "2026-10-22T09:00:00.000Z";
-  // one sign-off as the route takes it: the plan signed; an override on record re-opens what the rule satisfied (limb 2)
-  const step = (r: TicketReviewRoster, t: Parties, uid: string, planned = slotSignPlan(r, t, uid, true, NOW)): TicketReviewRoster => {
-    const plan = planned;
+  // one sign-off as the route takes it: the plan signed; an exception on record re-opens what the rule still satisfies
+  // (limb 2) — an override on the roster, or (`exception`) another exception already on record (a moved source, a
+  // waiver, a declaration not on record, the request become engineered)
+  const step = (r: TicketReviewRoster, t: Parties, uid: string, exception = false): TicketReviewRoster => {
+    const plan = slotSignPlan(r, t, uid, true, NOW);
     expect(plan.fillable.length, `${uid} has a sign-off`).toBeGreaterThan(0);
     const signed = applySignPlan(r, plan, { uid, name: uid }, `sig-${uid}`, ISO);
-    return signed.slots.some((x) => x.status === "satisfied" && x.via === "override") && ruleSatisfiedSlots(signed).length > 0
-      ? reopenRuleSatisfied(signed, ["an override"], ISO) : signed;
+    return (exception || signed.slots.some((x) => x.status === "satisfied" && x.via === "override")) && ruleSatisfiedSlots(signed).length > 0
+      ? reopenRuleSatisfied(signed, ["an exception"], ISO) : signed;
   };
   const kinds = (p: { fillable: Array<{ slot: TicketReviewSlot; via: string }> }) => p.fillable.map((f) => [f.slot.kind, f.via]);
 
@@ -658,7 +660,32 @@ describe("DF-P26 merge-time fix pass 4 — the precedence is GUARDED: an overrid
     expect(rosterCompletion(done, { sodActive: true, drafterId: "d-1" }).complete).toBe(true);
   });
 
-  it("PROPERTY: over generated rule rosters, the precedence never turns a completable roster into one that cannot complete — at every reachable state, every sign-off that used it leaves the roster completable", () => {
+  it("merge-time fix pass 5: the re-open is assumed for ANY exception on record (the engine cannot see a moved source or a waiver) — with one on record, u keeps the override; the roster completes whoever acts first", () => {
+    // r1 rule [u, v] independent of o; r2 rule [d] independent of o; o: primary d, overrider u. Opened with drafter z
+    // (the rule applied to r1 and r2), then reassign_drafter → d; then the source moves (an exception on record).
+    const R1 = slot({ kind: "r1", primaries: ["u", "v"], exceptionOnly: true, independentOf: ["o"] });
+    const R2 = slot({ kind: "r2", primaries: ["d"], exceptionOnly: true, independentOf: ["o"] });
+    const O = slot({ kind: "o", primaries: ["d"], overriders: ["u"] });
+    const r = applyExceptionRule(roster([R1, R2, O]), ["r1", "r2"], "2026-10-22T08:00:00.000Z");
+    const TD: Parties = { requesterId: "req", assignedDrafterId: "d" };
+    expect(ruleUpgradeNeeded(r, TD, true, NOW)).toBe(true);
+    // u is NOT given the upgrade of r1 over the override: once u signed r1 an exception re-opens r2, and d could then
+    // sign only one of r2 / o (r2 must be independent of o) — o would strand
+    expect(kinds(slotSignPlan(r, TD, "u", true, NOW))).toEqual([["o", "override"]]);
+    expect(kinds(slotSignPlan(r, TD, "v", true, NOW))).toEqual([["r1", "primary"]]);
+    // u first: the override; r1 and r2 re-open; d signs r2 (d did not sign o), v signs r1
+    let a = step(r, TD, "u", true);
+    expect(ruleSatisfiedSlots(a)).toEqual([]);
+    a = step(a, TD, "d", true);
+    a = step(a, TD, "v", true);
+    expect(rosterCompletion(a, { sodActive: true, drafterId: "d" }).complete).toBe(true);
+    // v first: v upgrades r1; r2 re-opens; u overrides o; d signs r2
+    let b = step(r, TD, "v", true);
+    b = step(b, TD, "u", true);
+    b = step(b, TD, "d", true);
+    expect(rosterCompletion(b, { sodActive: true, drafterId: "d" }).complete).toBe(true);
+  });
+  it("PROPERTY: over generated rule rosters, the precedence never turns a completable roster into one that cannot complete — at every reachable state, every sign-off that used it leaves the roster completable, with and without another exception on record", () => {
     // deterministic PRNG
     let seed = 0x5eed26;
     const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 2 ** 32; };
@@ -667,6 +694,7 @@ describe("DF-P26 merge-time fix pass 4 — the precedence is GUARDED: an overrid
     const PEOPLE = ["d-1", "req", "u", "v", "w"];
     const keyOf = (r: TicketReviewRoster) => r.slots.map((x) => `${x.kind}:${x.status}:${x.via ?? ""}:${x.satisfiedBy ?? ""}`).join("|");
     let precedenceSteps = 0;
+    const byMode = [0, 0];
     let rosters = 0;
     for (let n = 0; n < 12000; n++) {
       // the rule's slot u (and maybe v / w) may sign; open slots that u may override, primaries among the drafter, the requester and w
@@ -692,42 +720,46 @@ describe("DF-P26 merge-time fix pass 4 — the precedence is GUARDED: an overrid
       const r0 = applyExceptionRule(roster(slots), ruleKinds, "2026-10-22T08:00:00.000Z");
       if (r0.slots.some((x) => x.status === "open" && slotBlocks(x) && x.primaries.length + x.alternates.length + x.overriders.length === 0)) continue;
       rosters++;
-      const memo = new Map<string, boolean>();
-      const completable = (r: TicketReviewRoster): boolean => {
-        const k = keyOf(r);
-        const seen = memo.get(k);
-        if (seen !== undefined) return seen;
-        memo.set(k, false);
-        let ok = rosterCompletion(r, { sodActive: true, drafterId: "d-1" }).complete;
-        for (const p of PEOPLE) {
-          if (ok) break;
-          if (slotSignPlan(r, T, p, true, NOW).fillable.length > 0 && completable(step(r, T, p))) ok = true;
-        }
-        memo.set(k, ok);
-        return ok;
-      };
-      const visited = new Set<string>();
-      const walk = (r: TicketReviewRoster) => {
-        const k = keyOf(r);
-        if (visited.has(k) || rosterCompletion(r, { sodActive: true, drafterId: "d-1" }).complete) return;
-        visited.add(k);
-        for (const p of PEOPLE) {
-          const real = slotSignPlan(r, T, p, true, NOW);
-          if (real.fillable.length === 0) continue;
-          const next = step(r, T, p);
-          const without = slotSignPlanWithoutOverridePrecedence(r, T, p, true, NOW);
-          if (JSON.stringify([kinds(real), real.blocked.map((b) => b.slot.kind)]) !== JSON.stringify([kinds(without), without.blocked.map((b) => b.slot.kind)])) {
-            precedenceSteps++;
-            // (stronger than "completable before ⇒ after": the outcome check makes every such sign-off completable)
-            if (!completable(next)) expect.fail(`the precedence left a roster that cannot complete: ${JSON.stringify(slots)} at ${keyOf(r)} — ${p}${completable(r) ? " (it was completable)" : ""}`);
+      // mode 2: an exception already on record (re-open on every sign-off that leaves a rule satisfaction)
+      for (const exception of [false, true]) {
+        const memo = new Map<string, boolean>();
+        const completable = (r: TicketReviewRoster): boolean => {
+          const k = keyOf(r);
+          const seen = memo.get(k);
+          if (seen !== undefined) return seen;
+          memo.set(k, false);
+          let ok = rosterCompletion(r, { sodActive: true, drafterId: "d-1" }).complete;
+          for (const p of PEOPLE) {
+            if (ok) break;
+            if (slotSignPlan(r, T, p, true, NOW).fillable.length > 0 && completable(step(r, T, p, exception))) ok = true;
           }
-          walk(next);
-        }
-      };
-      walk(r0);
+          memo.set(k, ok);
+          return ok;
+        };
+        const visited = new Set<string>();
+        const walk = (r: TicketReviewRoster) => {
+          const k = keyOf(r);
+          if (visited.has(k) || rosterCompletion(r, { sodActive: true, drafterId: "d-1" }).complete) return;
+          visited.add(k);
+          for (const p of PEOPLE) {
+            const real = slotSignPlan(r, T, p, true, NOW);
+            if (real.fillable.length === 0) continue;
+            const next = step(r, T, p, exception);
+            const without = slotSignPlanWithoutOverridePrecedence(r, T, p, true, NOW);
+            if (JSON.stringify([kinds(real), real.blocked.map((b) => b.slot.kind)]) !== JSON.stringify([kinds(without), without.blocked.map((b) => b.slot.kind)])) {
+              precedenceSteps++;
+              byMode[exception ? 1 : 0]++;
+              // (stronger than "completable before ⇒ after": the outcome check makes every such sign-off completable)
+              if (!completable(next)) expect.fail(`the precedence left a roster that cannot complete${exception ? " (an exception on record)" : ""}: ${JSON.stringify(slots)} at ${keyOf(r)} — ${p}${completable(r) ? " (it was completable)" : ""}`);
+            }
+            walk(next);
+          }
+        };
+        walk(r0);
+      }
     }
     expect(rosters).toBeGreaterThan(8000);
     // the generator does reach the precedence (a fuzz that never hits a dropped override proves nothing)
-    expect(precedenceSteps, `rosters ${rosters}; sign-offs that used the precedence ${precedenceSteps}`).toBeGreaterThan(200);
+    expect(precedenceSteps, `rosters ${rosters}; sign-offs that used the precedence ${precedenceSteps} (no other exception ${byMode[0]}, an exception on record ${byMode[1]})`).toBeGreaterThan(200);
   }, 120_000);
 });
