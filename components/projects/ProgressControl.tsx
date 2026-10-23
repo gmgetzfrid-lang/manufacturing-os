@@ -11,7 +11,7 @@
 // Summary/parent tasks never use this — their % is rolled up from children
 // (see lib/scheduleProgress.ts), so callers render it read-only there.
 
-import React, { useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 function clamp(p: number): number {
@@ -69,7 +69,9 @@ export function ProgressSlider({ percent, onPick, disabled, busy, commitSame, co
         onPointerDown={() => setDragging(true)}
         onChange={(e) => setVal(Number(e.target.value))}
         onPointerUp={(e) => commit(Number((e.target as HTMLInputElement).value))}
-        onKeyUp={(e) => commit(Number((e.target as HTMLInputElement).value))}
+        // Arrow keys move the thumb; Enter (or leaving the slider) saves.
+        onKeyUp={(e) => { if (e.key === "Enter") commit(Number((e.target as HTMLInputElement).value)); }}
+        onBlur={(e) => { if (clamp(Number(e.target.value)) !== clamp(percent)) commit(Number(e.target.value)); }}
         className="w-full accent-[var(--color-accent)] cursor-pointer disabled:opacity-50"
         aria-label="Percent complete"
       />
@@ -107,6 +109,13 @@ interface ChipProps extends SliderProps {
 
 export default function ProgressControl({ percent, onPick, disabled, onDisabledClick, busy, size = "md" }: ChipProps) {
   const [open, setOpen] = useState(false);
+  // Esc closes the menu.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); setOpen(false); } };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open]);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number; anchorTop: number }>({ top: 0, left: 0, anchorTop: 0 });
@@ -156,7 +165,8 @@ export default function ProgressControl({ percent, onPick, disabled, onDisabledC
             style={{ top: pos.top, left: pos.left }}
             onClick={(e) => e.stopPropagation()}
           >
-            <ProgressSlider percent={pct} onPick={onPick} busy={busy} />
+            {/* A pick saves and closes — one click per task. */}
+            <ProgressSlider percent={pct} onPick={(v) => { onPick(v); setOpen(false); }} busy={busy} />
           </div>
         </>,
         document.body,

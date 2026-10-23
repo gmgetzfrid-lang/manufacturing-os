@@ -16,7 +16,7 @@
 // reason. The popover renders in a portal so it's never clipped by a
 // card's overflow.
 
-import React, { useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Circle, Loader2, CircleCheck, PauseCircle, AlertTriangle, XCircle } from "lucide-react";
 import type { MilestoneStatus } from "@/types/schema";
@@ -65,6 +65,13 @@ interface Props {
 
 export default function StatusControl({ status, onPick, disabled, onDisabledClick, busy, variant = "pill", size = "md", readOnly, title, percent, onSetProgress }: Props) {
   const [open, setOpen] = useState(false);
+  // Esc closes the menu.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); setOpen(false); } };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open]);
   const [reasonFor, setReasonFor] = useState<MilestoneStatus | null>(null);
   const [reason, setReason] = useState("");
   const [pctStep, setPctStep] = useState(false);

@@ -13,7 +13,7 @@
 // The default mode comes from status (in-progress slipping later =
 // taking longer = extend; otherwise defer), but the user can flip it.
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { predecessorConflicts } from "@/lib/openWork";
 import { X as XIcon, CalendarRange, Clock, ArrowRight, Loader2, AlertTriangle } from "lucide-react";
 import type { Milestone } from "@/types/schema";
@@ -29,9 +29,11 @@ interface Props {
   onCancel: () => void;
   onConfirm: (mode: MoveMode) => void;
   busy?: boolean;
+  /** Linked tasks the move pushes along with it (their names), per mode. */
+  pushedBy?: (mode: MoveMode) => string[];
 }
 
-export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCancel, onConfirm, busy }: Props) {
+export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCancel, onConfirm, busy, pushedBy }: Props) {
   const primary = targets[0];
   // Default mode: if ANY moved task is in-progress and we're slipping
   // later, default to extend; else defer.
@@ -46,25 +48,16 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
   const absDays = Math.abs(deltaDays);
   const canExtend = deltaDays > 0; // can't extend backwards
 
-  // Work-hours impact: extend adds (delta × per-day-rate) of work per
-  // task that carries hours. We approximate per-day from durationHours
-  // over the task's current span.
-  const hoursImpact = useMemo(() => {
-    if (mode !== "extend") return null;
-    let added = 0, base = 0, counted = 0;
-    for (const t of targets) {
-      const h = typeof t.durationHours === "number" ? t.durationHours : 0;
-      if (h <= 0) continue;
-      counted++;
-      base += h;
-      const span = spanDays(t);
-      added += (h / span) * deltaDays;
-    }
-    if (counted === 0) return null;
-    return { added: Math.round(added), base: Math.round(base), after: Math.round(base + added) };
-  }, [mode, targets, deltaDays]);
-
   const multi = targets.length > 1;
+  const pushed = useMemo(() => pushedBy?.(mode) ?? [], [pushedBy, mode]);
+
+  // Esc backs out; focus starts on the confirm button, so Enter confirms
+  // here instead of reaching the timeline underneath.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) { e.stopPropagation(); onCancel(); } };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onCancel, busy]);
 
   // Capture "now" once per mount so the warnings memo stays pure.
   const [nowMs] = useState<number>(() => Date.now());
@@ -124,7 +117,7 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
               disabled={!canExtend}
               onClick={() => canExtend && setMode("extend")}
               title="It's taking longer"
-              body={canExtend ? "Keep the start, push the finish out. Adds work hours." : "Only when moving later."}
+              body={canExtend ? "Keep the start, push the finish out." : "Only when moving later."}
               tone="amber"
             />
           </div>
@@ -140,18 +133,18 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
               <div className="flex items-start gap-2">
                 <Clock className="w-4 h-4 shrink-0 mt-0.5" />
                 <div>
-                  <span>Extending the finish by {absDays} day{absDays === 1 ? "" : "s"} — <b>this adds work</b>.</span>
-                  {hoursImpact ? (
-                    <div className="mt-1 font-mono text-[12px]">
-                      +{hoursImpact.added} h · {hoursImpact.base} h → <b>{hoursImpact.after} h</b>
-                    </div>
-                  ) : (
-                    <div className="mt-1 text-[11px] opacity-80">No work-hours recorded on {multi ? "these tasks" : "this task"}, so only the duration grows.</div>
-                  )}
+                  <span>Extending the finish by {absDays} day{absDays === 1 ? "" : "s"}; the start stays.</span>
+                  <div className="mt-1 text-[11px] opacity-80">Planned work hours stay as entered — change them on the task if the job itself grew.</div>
                 </div>
               </div>
             )}
           </div>
+
+          {pushed.length > 0 && (
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2.5 text-[12px] text-[var(--color-text)]">
+              <b>Also moves</b> — linked step{pushed.length === 1 ? "" : "s"} that can&apos;t start until this finishes: {pushed.slice(0, 6).join(", ")}{pushed.length > 6 ? ` and ${pushed.length - 6} more` : ""}.
+            </div>
+          )}
 
           {warnings.length > 0 && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-2.5 space-y-1">
@@ -173,7 +166,7 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 flex items-center justify-end gap-2">
           <button onClick={onCancel} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
-          <button onClick={() => onConfirm(mode)} disabled={busy} className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg disabled:opacity-40 transition-colors">
+          <button autoFocus onClick={() => onConfirm(mode)} disabled={busy} className="inline-flex items-center gap-1.5 text-sm font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg disabled:opacity-40 transition-colors">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarRange className="w-4 h-4" />}
             {mode === "extend" ? "Extend" : "Shift"} {multi ? `${targets.length} tasks` : "task"}
           </button>
@@ -200,10 +193,4 @@ function statusWord(status: string, multi: boolean, targets: Milestone[]): strin
     return targets.some((t) => t.status === "in_progress") ? "in-progress work" : "not-yet-started work";
   }
   return status === "in_progress" ? "in progress" : status === "on_hold" ? "on hold" : status === "blocked" ? "blocked" : "planned";
-}
-
-function spanDays(m: Milestone): number {
-  const s = m.plannedStartAt ? Date.parse(m.plannedStartAt as string) : Date.parse(m.plannedAt as string);
-  const f = Date.parse(m.plannedAt as string);
-  return Math.max(1, Math.round((f - s) / 86400000) + 1);
 }

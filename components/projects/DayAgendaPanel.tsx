@@ -38,8 +38,8 @@ interface Props {
   ancestorsOf: (m: Milestone) => Milestone[];
   progress?: Map<string, ProgressInfo>;
   canEdit: boolean;
-  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => void;
-  onSetProgress?: (id: string, percent: number) => void;
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => unknown;
+  onSetProgress?: (id: string, percent: number) => unknown;
   /** Add a note to the step's log. */
   onAddNote?: (id: string, body: string) => Promise<void> | void;
   /** The project's shift-change times — which crew does each step. */
@@ -76,6 +76,9 @@ export default function DayAgendaPanel({
 }: Props) {
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
+  // In time order (the default: the day as it runs), or gathered under
+  // each piece of equipment.
+  const [byEquipment, setByEquipment] = useState(false);
   const dayMs = dayKeyToMs(day, tz);
   const label = fmtInTz(dayMs, tz, { weekday: "long", month: "long", day: "numeric" });
   // Today (plant time) also carries LIVE work whatever the plan says:
@@ -123,8 +126,20 @@ export default function DayAgendaPanel({
     const out = Array.from(byParent.values());
     for (const g of out) g.rows.sort(cmpRow);
     out.sort((a, b) => cmpRow(a.rows[0], b.rows[0]));
-    return out;
-  }, [milestones, childrenByParent, ancestorsOf, day, tz, live]);
+    if (byEquipment) return out;
+    // Time order: every step by when it runs; the equipment heading repeats
+    // only when the next step is on a different piece of equipment.
+    const groupOf = new Map<Row, EquipmentGroup>();
+    for (const g of out) for (const r of g.rows) groupOf.set(r, g);
+    const timeline: EquipmentGroup[] = [];
+    for (const r of out.flatMap((g) => g.rows).sort(cmpRow)) {
+      const g = groupOf.get(r)!;
+      const last = timeline[timeline.length - 1];
+      if (last && last.parent === g.parent && last.top === g.top) last.rows.push(r);
+      else timeline.push({ ...g, rows: [r] });
+    }
+    return timeline;
+  }, [milestones, childrenByParent, ancestorsOf, day, tz, live, byEquipment]);
 
   // Narrow to an equipment tag, WO number, step name or crew — the way a
   // contractor's report names the work.
@@ -203,10 +218,20 @@ export default function DayAgendaPanel({
           {totals.n > 0 && (
             <div className="mt-2 relative">
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
-              <input value={query} onChange={(e) => setQuery(e.target.value)} autoFocus
+              <input value={query} onChange={(e) => setQuery(e.target.value)}
+                // A keyboard popping up on a tablet hides half the list: focus only with a mouse.
+                autoFocus={typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches}
                 placeholder="Find equipment, WO # or step — e.g. E-606, 4410037"
                 className="w-full h-8 pl-8 pr-8 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-accent-ring)]" />
               {query && <button onClick={() => setQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="Clear"><XIcon className="w-3.5 h-3.5" /></button>}
+            </div>
+          )}
+          {totals.n > 0 && (
+            <div className="mt-2 inline-flex rounded-md bg-[var(--color-surface-2)] p-0.5 text-[11px] font-bold">
+              {([[false, "In time order"], [true, "By equipment"]] as const).map(([v, label]) => (
+                <button key={label} onClick={() => setByEquipment(v)}
+                  className={`px-2.5 py-1 rounded ${byEquipment === v ? "bg-[var(--color-surface)] shadow-sm text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{label}</button>
+              ))}
             </div>
           )}
         </div>
@@ -218,7 +243,7 @@ export default function DayAgendaPanel({
             const head = g.parent ?? g.rows[0].leaf;
             const headInfo = head.id ? progress?.get(head.id) : undefined;
             return (
-              <section key={g.parent?.id ?? `top-${g.rows[0].leaf.id}`} className="border-b border-[var(--color-border)]">
+              <section key={`${g.parent?.id ?? "top"}-${g.rows[0].leaf.id}`} className="border-b border-[var(--color-border)]">
                 <div className={`px-4 py-2 flex items-center gap-2 ${color.soft}`}>
                   <span className={`w-1.5 h-5 rounded-sm shrink-0 ${color.bar}`} />
                   <div className="flex-1 min-w-0">
@@ -323,8 +348,8 @@ const PCTS = [0, 25, 50, 75, 90, 100];
  *  it, a note. Each change saves on its own; Next opens the step below. */
 function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, onOpenDetail, next, onNext, onClose }: {
   leaf: Milestone; pct: number; canEdit: boolean;
-  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => void;
-  onSetProgress?: (id: string, percent: number) => void;
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => unknown;
+  onSetProgress?: (id: string, percent: number) => unknown;
   onAddNote?: (id: string, body: string) => Promise<void> | void;
   onOpenDetail: () => void;
   next: string | null; onNext: (id: string) => void; onClose: () => void;
@@ -340,38 +365,55 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
   useEffect(() => { if (!saved) return; const t = setTimeout(() => setSaved(null), 1800); return () => clearTimeout(t); }, [saved]);
   const ro = !canEdit;
 
-  const setPct = (v: number) => {
+  // "Saved" shows only once the save went through — a cancelled "record it
+  // early?" or a failed write says so instead.
+  const report = (ok: unknown, msg: string) => setSaved(ok === false ? "Not saved" : msg);
+  const setPct = async (v: number) => {
     if (ro || !onSetProgress) return;
     const c = Math.max(0, Math.min(100, Math.round(v)));
     setPctDraft(String(c));
-    onSetProgress(id, c);
-    setSaved(`${c}% saved`);
+    report(await onSetProgress(id, c), `${c}% saved`);
   };
-  const setStatus = (st: MilestoneStatus) => {
+  const setStatus = async (st: MilestoneStatus) => {
     if (ro || !onSetStatus) return;
     if (st === "on_hold" || st === "blocked") { setHold(st); return; } // needs a reason first
     setHold(null);
-    onSetStatus(id, st);
     if (st === "completed") setPctDraft("100");
-    setSaved(st === "completed" ? "Marked done" : "Marked working");
+    report(await onSetStatus(id, st), st === "completed" ? "Marked done" : "Marked working");
   };
-  const saveHold = () => {
+  // The hold last saved from this box, so closing doesn't save it twice.
+  const savedHold = useRef<string | null>(null);
+  const holdPending = () => !!hold && savedHold.current !== `${hold}|${reason.trim()}` && (hold !== leaf.status || reason.trim() !== (leaf.statusReason ?? ""));
+  const saveHold = async () => {
     if (ro || !onSetStatus || !hold) return;
-    onSetStatus(id, hold, reason.trim() || undefined);
-    setSaved(hold === "blocked" ? "Blocked — reason saved" : "On hold — reason saved");
+    savedHold.current = `${hold}|${reason.trim()}`;
+    report(await onSetStatus(id, hold, reason.trim() || undefined), hold === "blocked" ? "Blocked — reason saved" : "On hold — reason saved");
   };
+  const sentNote = useRef<string | null>(null);
   const saveNote = async () => {
     if (ro || !onAddNote || !note.trim()) return;
-    await onAddNote(id, note.trim());
-    setNote("");
-    setSaved("Note added");
+    sentNote.current = note.trim();
+    try { await onAddNote(id, note.trim()); setNote(""); setSaved("Note added"); }
+    catch { setSaved("Note not saved"); }
   };
   const goNext = async () => {
     if (note.trim()) await saveNote();
     // On hold / blocked picked but not saved yet: Next saves it.
-    if (hold && (hold !== leaf.status || reason.trim() !== (leaf.statusReason ?? ""))) saveHold();
+    if (holdPending()) await saveHold();
     if (next) onNext(next); else onClose();
   };
+  // Closing the row — Esc, the X, another row — keeps what was typed or
+  // picked: a note in the box and a hold that looks selected are saved,
+  // not dropped.
+  const flush = useRef<() => void>(() => undefined);
+  useEffect(() => {
+    flush.current = () => {
+      if (ro) return;
+      if (note.trim() && note.trim() !== sentNote.current && onAddNote) void Promise.resolve(onAddNote(id, note.trim())).catch(() => undefined);
+      if (holdPending() && hold && onSetStatus) onSetStatus(id, hold, reason.trim() || undefined);
+    };
+  });
+  useEffect(() => () => flush.current(), []);
   const active = hold ?? leaf.status;
 
   return (
@@ -379,7 +421,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
       <div className="flex items-center gap-1.5 flex-wrap">
         <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] text-[var(--color-text-muted)]">% done</span>
         {PCTS.map((v) => (
-          <button key={v} disabled={ro} onClick={() => setPct(v)}
+          <button key={v} disabled={ro} onClick={() => void setPct(v)}
             className={`h-7 min-w-[38px] px-1.5 rounded-md border font-bold tabular-nums ${Math.round(pct) === v ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-[var(--color-accent)]" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"} disabled:opacity-40`}>
             {v === 100 ? "100" : v}
           </button>
@@ -387,8 +429,8 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
         <span className="inline-flex items-center gap-1 ml-1">
           <input ref={pctRef} value={pctDraft} disabled={ro} inputMode="numeric"
             onChange={(e) => setPctDraft(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
-            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (pctDraft !== "") setPct(Number(pctDraft)); } }}
-            onBlur={() => { if (pctDraft !== "" && Number(pctDraft) !== Math.round(pct)) setPct(Number(pctDraft)); }}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (pctDraft !== "") void setPct(Number(pctDraft)); } }}
+            onBlur={() => { if (pctDraft !== "" && Number(pctDraft) !== Math.round(pct)) void setPct(Number(pctDraft)); }}
             aria-label="Percent done"
             className="h-7 w-12 px-1.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-right font-bold tabular-nums focus:outline-none focus:border-[var(--color-accent-ring)]" />
           <span className="font-bold text-[var(--color-text-muted)]">%</span>
@@ -397,7 +439,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
       <div className="flex items-center gap-1.5 flex-wrap">
         <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] text-[var(--color-text-muted)]">Status</span>
         {STATUS_BTNS.map((b) => (
-          <button key={b.s} disabled={ro} onClick={() => setStatus(b.s)}
+          <button key={b.s} disabled={ro} onClick={() => void setStatus(b.s)}
             className={`h-7 px-2.5 rounded-md border font-bold ${active === b.s ? b.on : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"} disabled:opacity-40`}>
             {b.label}
           </button>
@@ -407,10 +449,10 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
         <div className="flex items-center gap-1.5">
           <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] text-[var(--color-text-muted)]">Blocking it</span>
           <input value={reason} disabled={ro} autoFocus onChange={(e) => setReason(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); saveHold(); } }}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void saveHold(); } }}
             placeholder="What's stopping it — permit, scaffold, ops release, parts…"
             className="flex-1 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] focus:outline-none focus:border-[var(--color-accent-ring)]" />
-          <button disabled={ro} onClick={saveHold} className={`h-7 px-2.5 rounded-md font-bold text-white ${hold === "blocked" ? "bg-rose-600 hover:bg-rose-700" : "bg-amber-500 hover:bg-amber-600"} disabled:opacity-40`}>
+          <button disabled={ro} onClick={() => void saveHold()} className={`h-7 px-2.5 rounded-md font-bold text-white ${hold === "blocked" ? "bg-rose-600 hover:bg-rose-700" : "bg-amber-500 hover:bg-amber-600"} disabled:opacity-40`}>
             Save {hold === "blocked" ? "blocked" : "on hold"}
           </button>
         </div>
@@ -430,8 +472,8 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
           <ExternalLink className="w-3 h-3" /> Full details
         </button>
         <button onClick={() => void goNext()}
-          className="inline-flex items-center gap-1 h-7 px-3 rounded-md bg-slate-900 text-white font-bold hover:bg-slate-800">
-          {next ? <><ArrowDown className="w-3.5 h-3.5" /> Next step</> : <><Check className="w-3.5 h-3.5" /> Done</>}
+          className="inline-flex items-center gap-1 h-7 px-3 rounded-md bg-slate-900 text-white font-bold hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white">
+          {next ? <><ArrowDown className="w-3.5 h-3.5" /> Next step</> : <>Close</>}
         </button>
       </div>
     </div>

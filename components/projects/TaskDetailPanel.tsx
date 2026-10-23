@@ -9,9 +9,10 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
-import { spanLabel, startOf, finishOf } from "@/lib/scheduleTime";
-import { workShiftOf, readShiftTimes } from "@/lib/shiftReport";
-import { fmtInTz, fromDateTimeInput, hasTimeOfDay, toDateTimeInput, tzAbbrev } from "@/lib/scheduleTz";
+import { spanLabel, startOf, finishOf, effectiveSpans } from "@/lib/scheduleTime";
+import { workShiftOf } from "@/lib/shiftReport";
+import { useShiftTimes } from "@/lib/shiftTimesStore";
+import { fmtInTz, fromDateTimeInput, toDateTimeInput, tzAbbrev } from "@/lib/scheduleTz";
 import {
   X as XIcon, Pencil, Trash2, Loader2, Save, Clock, MapPin, Hash,
   User, HardHat, AlertTriangle, Sun, Moon, Sunset,
@@ -19,11 +20,11 @@ import {
   Link2, Target,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus, MilestoneNote, ProjectMember } from "@/types/schema";
-import { wouldCreateCycle, type ReflowNode } from "@/lib/scheduleReflow";
+import { wouldCreateCycle, cascadeDependents, type ReflowNode } from "@/lib/scheduleReflow";
 import { listMembers } from "@/lib/projects";
 import {
-  updateMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestone,
-  listMilestoneNotes, addMilestoneNote, type MilestonePatch,
+  updateMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestones, setActualTimes,
+  listMilestoneNotes, addMilestoneNote, updateMilestoneNote, deleteMilestoneNote, applyMilestoneMoves, type MilestonePatch,
 } from "@/lib/milestones";
 import { buildProgressIndex } from "@/lib/scheduleProgress";
 import StatusControl from "@/components/projects/StatusControl";
@@ -63,9 +64,19 @@ export default function TaskDetailPanel({
   const [busyStatus, setBusyStatus] = useState(false);
   const [notes, setNotes] = useState<MilestoneNote[]>([]);
   const [noteDraft, setNoteDraft] = useState("");
+  // A failed save says so, here, instead of the control just snapping back.
+  const [err, setErr] = useState<string | null>(null);
+  const failed = (e: unknown) => setErr((e as Error)?.message || "That didn't save — try again.");
+  const shiftTimes = useShiftTimes(milestone.projectId);
 
   const m = milestone;
   const isLeaf = subtasks.length === 0;
+  // When it really runs: a phase from its first step to its last — the same
+  // times the timeline shows.
+  const span = useMemo(() => {
+    const sp = m.id && allTasks?.length ? effectiveSpans(allTasks).get(m.id) : undefined;
+    return sp ?? { start: startOf(m), finish: finishOf(m) };
+  }, [m, allTasks]);
 
   // Effective progress + status: a leaf carries its own; a summary rolls up its
   // leaf descendants, duration-weighted (computed from the full task list, so
@@ -96,47 +107,90 @@ export default function TaskDetailPanel({
 
   const applyStatus = useCallback(async (status: MilestoneStatus, reason?: string, percent?: number) => {
     if (!m.id) return;
-    setBusyStatus(true);
+    setBusyStatus(true); setErr(null);
     try {
       await setMilestoneStatus({
         id: m.id, status, statusReason: reason, percentComplete: percent,
         actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
       });
       loadNotes();
-      onChanged();
-    } finally { setBusyStatus(false); }
+    } catch (e) { failed(e); }
+    finally { setBusyStatus(false); onChanged(); }
   }, [m.id, userId, userName, userEmail, userRole, onChanged, loadNotes]);
 
   const applyProgress = useCallback(async (percent: number) => {
     if (!m.id) return;
-    setBusyStatus(true);
+    setBusyStatus(true); setErr(null);
     try {
       await setMilestoneProgress({
         id: m.id, percentComplete: percent,
         actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
       });
       loadNotes();
-      onChanged();
-    } finally { setBusyStatus(false); }
+    } catch (e) { failed(e); }
+    finally { setBusyStatus(false); onChanged(); }
   }, [m.id, userId, userName, userEmail, userRole, onChanged, loadNotes]);
 
   const addNote = useCallback(async () => {
     if (!m.id || !noteDraft.trim()) return;
-    await addMilestoneNote({
-      orgId: m.orgId, milestoneId: m.id, kind: "note", statusAt: m.status,
-      body: noteDraft.trim(), createdBy: userId, createdByName: userName,
-    });
-    setNoteDraft("");
-    loadNotes();
+    setErr(null);
+    try {
+      await addMilestoneNote({
+        orgId: m.orgId, milestoneId: m.id, kind: "note", statusAt: m.status,
+        body: noteDraft.trim(), createdBy: userId, createdByName: userName,
+      });
+      setNoteDraft("");
+      loadNotes();
+    } catch (e) { failed(e); }
   }, [m.id, m.orgId, m.status, noteDraft, userId, userName, loadNotes]);
 
+  // Fix or remove a comment (the shift report shows the latest one).
+  const [editNote, setEditNote] = useState<{ id: string; body: string } | null>(null);
+  const saveNoteEdit = useCallback(async () => {
+    if (!editNote) return;
+    setErr(null);
+    try { await updateMilestoneNote(editNote.id, editNote.body); setEditNote(null); loadNotes(); }
+    catch (e) { failed(e); }
+  }, [editNote, loadNotes]);
+  const removeNote = useCallback(async (id: string) => {
+    if (!(await appConfirm({ message: "Delete this comment? It comes off the shift report too.", tone: "danger", confirmLabel: "Delete" }))) return;
+    setErr(null);
+    try { await deleteMilestoneNote(id); loadNotes(); } catch (e) { failed(e); }
+  }, [loadNotes]);
+
   const onDelete = useCallback(async () => {
-    if (!m.id) return;
-    if (!(await appConfirm({ message: `Delete "${m.name}"? This is audited and cannot be undone.`, tone: "danger" }))) return;
-    await deleteMilestone(m.id, userId);
-    onChanged();
-    onClose();
-  }, [m.id, m.name, userId, onChanged, onClose]);
+    if (!m.id || !m.projectId) return;
+    const n = subtasks.length;
+    if (!(await appConfirm({
+      message: n > 0
+        ? `Delete "${m.name}" and the ${n} step${n === 1 ? "" : "s"} under it, with their comments? This is audited. Use Delete on the timeline's selection if you want Undo.`
+        : `Delete "${m.name}" and its comments? This is audited. Use Delete on the timeline's selection if you want Undo.`,
+      tone: "danger",
+    }))) return;
+    setErr(null);
+    try {
+      await deleteMilestones({ orgId: m.orgId, projectId: m.projectId, ids: [m.id], withChildren: true, actorUserId: userId, actorUserEmail: userEmail });
+      onChanged();
+      onClose();
+    } catch (e) { failed(e); }
+  }, [m.id, m.name, m.orgId, m.projectId, subtasks.length, userId, userEmail, onChanged, onClose]);
+
+  // Correct when the work really started / finished (a night completion
+  // entered the next morning belongs to the night).
+  const [actualEdit, setActualEdit] = useState<{ start: string; finish: string } | null>(null);
+  const saveActuals = useCallback(async () => {
+    if (!m.id || !actualEdit) return;
+    setErr(null);
+    try {
+      await setActualTimes({
+        id: m.id,
+        actualStartAt: actualEdit.start ? fromDateTimeInput(actualEdit.start, tz) : null,
+        ...(m.status === "completed" ? { actualAt: actualEdit.finish ? fromDateTimeInput(actualEdit.finish, tz) : null } : {}),
+        actorUserId: userId, actorUserName: userName,
+      });
+      setActualEdit(null); loadNotes(); onChanged();
+    } catch (e) { failed(e); }
+  }, [m.id, m.status, actualEdit, tz, userId, userName, loadNotes, onChanged]);
 
   return (
     <div className="fixed inset-0 z-[150] flex justify-end" role="dialog" aria-modal="true">
@@ -182,9 +236,15 @@ export default function TaskDetailPanel({
         </div>
 
         <div className="flex-1 overflow-y-auto">
+          {err && (
+            <div className="mx-4 mt-3 flex items-start gap-2 rounded-md border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-2 text-[12px] text-rose-800 dark:text-rose-300">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span className="flex-1">{err}</span>
+              <button onClick={() => setErr(null)} className="shrink-0" title="Dismiss"><XIcon className="w-3.5 h-3.5" /></button>
+            </div>
+          )}
           {editing ? (
             <EditForm
-              milestone={m} canSave={canEdit} saving={saving} setSaving={setSaving}
+              milestone={m} isLeaf={isLeaf} allTasks={allTasks} canSave={canEdit} saving={saving} setSaving={setSaving}
               userId={userId} userName={userName} userEmail={userEmail} userRole={userRole}
               onDone={() => { setEditing(false); onChanged(); }}
               onCancel={() => setEditing(false)}
@@ -246,8 +306,36 @@ export default function TaskDetailPanel({
               {/* Metadata */}
               <div className="px-4 py-3 border-b border-[var(--color-border)] space-y-2.5">
                 <Field icon={<CalendarDays className="w-3.5 h-3.5" />} label="Scheduled">
-                  {fmtRange(m, tz)}
+                  {spanLabel(span.start, span.finish, tz)} <span className="text-[10px] text-[var(--color-text-faint)]">{tzAbbrev(tz, span.start)}</span>
+                  {!isLeaf && <span className="block text-[10px] text-[var(--color-text-faint)]">from its first step to its last</span>}
                 </Field>
+                {isLeaf && (m.actualStartAt || m.actualAt || canEdit) && (
+                  <Field icon={<Clock className="w-3.5 h-3.5" />} label="Actual">
+                    {actualEdit ? (
+                      <span className="block space-y-1.5">
+                        <label className="flex items-center gap-2 text-[11px]"><span className="w-12 text-[var(--color-text-muted)]">Started</span>
+                          <input type="datetime-local" value={actualEdit.start} onChange={(e) => setActualEdit({ ...actualEdit, start: e.target.value })} className="flex-1 h-7 px-1.5 text-xs border border-[var(--color-border-strong)] rounded bg-[var(--color-surface)]" /></label>
+                        {m.status === "completed" && (
+                          <label className="flex items-center gap-2 text-[11px]"><span className="w-12 text-[var(--color-text-muted)]">Finished</span>
+                            <input type="datetime-local" value={actualEdit.finish} onChange={(e) => setActualEdit({ ...actualEdit, finish: e.target.value })} className="flex-1 h-7 px-1.5 text-xs border border-[var(--color-border-strong)] rounded bg-[var(--color-surface)]" /></label>
+                        )}
+                        <span className="flex justify-end gap-2">
+                          <button onClick={() => setActualEdit(null)} className="text-[11px] text-[var(--color-text-muted)]">Cancel</button>
+                          <button onClick={() => void saveActuals()} className="text-[11px] font-bold text-[var(--color-accent)]">Save ({tzAbbrev(tz)})</button>
+                        </span>
+                      </span>
+                    ) : (
+                      <span>
+                        {m.actualStartAt ? `started ${fmtInTz(m.actualStartAt as string, tz, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}` : "not started"}
+                        {m.status === "completed" && m.actualAt ? ` · finished ${fmtInTz(m.actualAt as string, tz, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}` : ""}
+                        {canEdit && (m.actualStartAt || m.status === "completed") && (
+                          <button onClick={() => setActualEdit({ start: toDateTimeInput(m.actualStartAt as string | null, tz), finish: toDateTimeInput(m.actualAt as string | null, tz) })}
+                            className="ml-1.5 text-[10px] font-bold text-[var(--color-accent)] hover:underline" title="Correct when the work really started or finished — the shift that did it gets the credit">correct</button>
+                        )}
+                      </span>
+                    )}
+                  </Field>
+                )}
                 {m.durationHours != null && (
                   <Field icon={<Clock className="w-3.5 h-3.5" />} label="Planned work">{m.durationHours} h</Field>
                 )}
@@ -271,7 +359,7 @@ export default function TaskDetailPanel({
                 )}
                 {!isLeaf ? null : (() => {
                   // Which crew does it — what the shift report counts it against.
-                  const w = workShiftOf(m, tz, readShiftTimes(m.projectId));
+                  const w = workShiftOf(m, tz, shiftTimes);
                   const label = w === "both" ? "Round the clock" : w === "night" ? "Night shift" : "Day shift";
                   return (
                     <Field icon={w === "night" ? <Moon className="w-3.5 h-3.5" /> : w === "both" ? <Sunset className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />} label="Worked on">
@@ -342,7 +430,7 @@ export default function TaskDetailPanel({
                               onPick={(st, reason, p) => s.id && void setMilestoneStatus({
                                 id: s.id, status: st, statusReason: reason, percentComplete: p,
                                 actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
-                              }).then(onChanged)}
+                              }).catch(failed).finally(onChanged)}
                             />
                           )}
                         </span>
@@ -409,9 +497,27 @@ export default function TaskDetailPanel({
                               : <MessageSquarePlus className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" />}
                           <span className="font-semibold text-[var(--color-text)]">{n.createdByName ?? "Someone"}</span>
                           <span className="text-[var(--color-text-faint)]">{n.kind === "status" ? "set status" : n.kind === "reschedule" ? "rescheduled" : "noted"}{n.kind === "status" && n.statusAt ? ` · ${labelOf(n.statusAt)}` : ""}</span>
-                          <span className="text-slate-300 ml-auto">{fmtWhen(n.createdAt)}</span>
+                          <span className="text-[var(--color-text-faint)] ml-auto">{fmtWhen(n.createdAt, tz)}</span>
                         </div>
-                        {n.body && <div className="text-[var(--color-text-muted)] mt-0.5 pl-1 border-l-2 border-[var(--color-border)] ml-1">{n.body}</div>}
+                        {editNote && editNote.id === n.id ? (
+                          <div className="mt-1 flex items-center gap-1.5">
+                            <input value={editNote.body} autoFocus onChange={(e) => setEditNote({ id: editNote.id, body: e.target.value })}
+                              onKeyDown={(e) => { if (e.key === "Enter") void saveNoteEdit(); if (e.key === "Escape") setEditNote(null); }}
+                              className="flex-1 text-xs px-2 py-1 border border-[var(--color-border-strong)] rounded-md bg-[var(--color-surface)]" />
+                            <button onClick={() => void saveNoteEdit()} className="text-[11px] font-bold text-[var(--color-accent)]">Save</button>
+                            <button onClick={() => setEditNote(null)} className="text-[11px] text-[var(--color-text-muted)]">Cancel</button>
+                          </div>
+                        ) : n.body && (
+                          <div className="group flex items-start gap-1.5 mt-0.5 pl-1 border-l-2 border-[var(--color-border)] ml-1">
+                            <span className="flex-1 text-[var(--color-text-muted)]">{n.body}</span>
+                            {canEdit && n.kind === "note" && n.id && (
+                              <span className="shrink-0 flex gap-1.5 text-[10px] font-bold">
+                                <button onClick={() => setEditNote({ id: n.id!, body: n.body ?? "" })} className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">Edit</button>
+                                <button onClick={() => void removeNote(n.id!)} className="text-[var(--color-text-faint)] hover:text-rose-600">Delete</button>
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -439,9 +545,9 @@ export default function TaskDetailPanel({
 // ─── Edit form ─────────────────────────────────────────────────
 
 function EditForm({
-  milestone, canSave, saving, setSaving, userId, userName, userEmail, userRole, onDone, onCancel,
+  milestone, isLeaf, allTasks, canSave, saving, setSaving, userId, userName, userEmail, userRole, onDone, onCancel,
 }: {
-  milestone: Milestone; canSave: boolean; saving: boolean; setSaving: (b: boolean) => void;
+  milestone: Milestone; isLeaf: boolean; allTasks?: Milestone[]; canSave: boolean; saving: boolean; setSaving: (b: boolean) => void;
   userId: string; userName?: string; userEmail?: string; userRole?: string;
   onDone: () => void; onCancel: () => void;
 }) {
@@ -499,19 +605,43 @@ function EditForm({
     if (!m.id || v.hasErrors) return;
     setSaving(true); setError(null);
     try {
-      const patch: MilestonePatch = {
-        name: name.trim(),
-        plannedStartAt: fromDateTimeInput(start, tz),
-        plannedAt: fromDateTimeInput(finish, tz) ?? m.plannedAt,
-        durationHours: durationHours ? Number(durationHours) : null,
-        workOrderRef, responsibleParty, responsibleOrg, responsibleKind,
-        actualParty, actualOrg, actualKind, location, description,
-        shift: (shift || null) as MilestonePatch["shift"],
-      };
-      await updateMilestone({
-        id: m.id, patch,
-        updatedBy: userId, updatedByName: userName, updatedByEmail: userEmail, updatedByRole: userRole,
-      });
+      // Only what was changed here: a field someone else edited while this
+      // form was open isn't written back over.
+      const was = (x: unknown) => (x == null ? "" : String(x));
+      const patch: MilestonePatch = {};
+      if (name.trim() !== m.name) patch.name = name.trim();
+      const datesChanged = isLeaf && (start !== toLocalInput(m.plannedStartAt as string | null | undefined, tz) || finish !== toLocalInput(m.plannedAt as string, tz));
+      if (datesChanged) {
+        patch.plannedStartAt = fromDateTimeInput(start, tz);
+        patch.plannedAt = fromDateTimeInput(finish, tz) ?? m.plannedAt;
+      }
+      if (durationHours !== (m.durationHours != null ? String(m.durationHours) : "")) patch.durationHours = durationHours ? Number(durationHours) : null;
+      const text: Array<[keyof MilestonePatch, string, unknown]> = [
+        ["workOrderRef", workOrderRef, m.workOrderRef], ["responsibleParty", responsibleParty, m.responsibleParty],
+        ["responsibleOrg", responsibleOrg, m.responsibleOrg], ["responsibleKind", responsibleKind, m.responsibleKind],
+        ["actualParty", actualParty, m.actualParty], ["actualOrg", actualOrg, m.actualOrg], ["actualKind", actualKind, m.actualKind],
+        ["location", location, m.location], ["description", description, m.description],
+      ];
+      for (const [k, now, before] of text) if (now !== was(before)) (patch as Record<string, unknown>)[k] = now;
+      if (shift !== (m.shift ?? "")) patch.shift = (shift || null) as MilestonePatch["shift"];
+      if (Object.keys(patch).length > 0) {
+        await updateMilestone({
+          id: m.id, patch,
+          updatedBy: userId, updatedByName: userName, updatedByEmail: userEmail, updatedByRole: userRole,
+        });
+      }
+      // New dates push the steps linked after it (finish-to-start) and keep
+      // its phase around it, exactly as a drag on the timeline does.
+      if (datesChanged && allTasks?.length && m.projectId) {
+        const nodes: ReflowNode[] = allTasks.map((t) => ({
+          id: t.id!, parentId: t.parentId ?? null,
+          plannedStartAt: t.id === m.id ? (patch.plannedStartAt as string | null) ?? null : (t.plannedStartAt as string | undefined) ?? null,
+          plannedAt: t.id === m.id ? (patch.plannedAt as string) : (t.plannedAt as string),
+          status: t.status, dependsOn: t.dependsOn ?? null,
+        }));
+        const moves = cascadeDependents(nodes, [m.id], tz).filter((c) => c.id !== m.id);
+        if (moves.length) await applyMilestoneMoves({ orgId: m.orgId, projectId: m.projectId, moves, actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole });
+      }
       onDone();
     } catch (e) { setError((e as Error).message); }
     finally { setSaving(false); }
@@ -524,9 +654,10 @@ function EditForm({
     <div className="p-4 space-y-3">
       <L label="Task name"><input value={name} onChange={(e) => setName(e.target.value)} className={cls("name")} /><Note err={v.errors.name} warn={v.warnings.name} /></L>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <L label={`Start (${tzAbbrev(tz)})`}><input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} className={cls("start")} /><Note err={v.errors.start} warn={v.warnings.start} /></L>
-        <L label={`Finish (${tzAbbrev(tz)})`}><input type="datetime-local" value={finish} onChange={(e) => setFinish(e.target.value)} className={cls("finish")} /><Note err={v.errors.finish} warn={v.warnings.finish} /></L>
+        <L label={`Start (${tzAbbrev(tz)})`}><input type="datetime-local" value={start} disabled={!isLeaf} onChange={(e) => setStart(e.target.value)} className={cls("start")} /><Note err={v.errors.start} warn={v.warnings.start} /></L>
+        <L label={`Finish (${tzAbbrev(tz)})`}><input type="datetime-local" value={finish} disabled={!isLeaf} onChange={(e) => setFinish(e.target.value)} className={cls("finish")} /><Note err={v.errors.finish} warn={v.warnings.finish} /></L>
       </div>
+      {!isLeaf && <div className="text-[10px] text-[var(--color-text-muted)] -mt-1">A phase runs from its first step to its last — move the phase (or its steps) on the timeline to change its dates.</div>}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <L label="Work hours"><input type="number" min={0} value={durationHours} onChange={(e) => setDurationHours(e.target.value)} className={cls("durationHours")} /><Note err={v.errors.durationHours} warn={v.warnings.durationHours} /></L>
         <L label="Work order #"><input value={workOrderRef} onChange={(e) => setWorkOrderRef(e.target.value)} className={inp} /></L>
@@ -632,27 +763,10 @@ function labelOf(s: MilestoneStatus): string {
 }
 
 
-// One end of a planned span, in the plant's zone (a task entered as 08:00
-// reads as 08:00 for every viewer). Tasks with no meaningful time-of-day
-// (plant midnight, e.g. a date-only import) show just the date — no "12:00 AM".
-function fmtSchedulePoint(d: Date, tz: string): string {
-  const hasTime = hasTimeOfDay(d.getTime(), tz);
-  const opt: Intl.DateTimeFormatOptions = hasTime
-    ? { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }
-    : { weekday: "short", month: "short", day: "numeric" };
-  return fmtInTz(d, tz, opt);
-}
-
-function fmtRange(m: Milestone, tz: string): string {
-  const s = m.plannedStartAt ? new Date(m.plannedStartAt as string) : null;
-  const f = new Date(m.plannedAt as string);
-  if (s && s.getTime() !== f.getTime()) return `${fmtSchedulePoint(s, tz)}  →  ${fmtSchedulePoint(f, tz)}`;
-  return fmtSchedulePoint(f, tz);
-}
-
-function fmtWhen(iso?: string | number | Date | null): string {
+/** "Oct 26 14:05" in plant time, like every other time on the schedule. */
+function fmtWhen(iso: string | number | Date | null | undefined, tz: string): string {
   if (!iso) return "";
-  try { return new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
+  try { return fmtInTz(iso, tz, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }); }
   catch { return ""; }
 }
 

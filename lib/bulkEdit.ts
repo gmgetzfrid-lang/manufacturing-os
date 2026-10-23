@@ -11,10 +11,12 @@
 import type { Milestone } from "@/types/schema";
 
 export interface BulkField {
-  key: "responsibleParty" | "responsibleOrg" | "responsibleKind" | "actualParty" | "actualOrg" | "actualKind" | "location" | "workOrderRef";
+  key: "responsibleParty" | "responsibleOrg" | "responsibleKind" | "actualParty" | "actualOrg" | "actualKind" | "location" | "workOrderRef" | "shift";
   label: string;
   /** Holds a comma-separated list of names (several resources on one task). */
   list: boolean;
+  /** A fixed set of values (set on the selection only): stored value → label. */
+  options?: Array<{ value: string; label: string }>;
 }
 
 export const BULK_FIELDS: BulkField[] = [
@@ -26,7 +28,18 @@ export const BULK_FIELDS: BulkField[] = [
   { key: "actualKind", label: "Did the work — type", list: false },
   { key: "location", label: "Location / area", list: false },
   { key: "workOrderRef", label: "Work order #", list: false },
+  // Which crew works it. Auto = read from the task's times.
+  { key: "shift", label: "Crew — day / night / round the clock", list: false, options: [
+    { value: "", label: "Auto (from its times)" }, { value: "day", label: "Day" },
+    { value: "night", label: "Night" }, { value: "swing", label: "Round the clock" },
+  ] },
 ];
+
+/** How a stored value reads ("swing" → "Round the clock"). */
+export function valueLabel(field: BulkField, v: string | null): string {
+  if (!field.options) return v ?? "";
+  return field.options.find((o) => o.value === (v ?? ""))?.label ?? v ?? "";
+}
 
 const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
 const split = (v: string, list: boolean) => (list ? v.split(/\s*[,;]\s*/) : [v]).map((x) => x.trim()).filter(Boolean);

@@ -24,30 +24,33 @@
 // drag to move, "Set duration" to stretch, "Group" to build missing
 // WBS — all write through to the same audited mutations.
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown, ChevronRight as ChevronRightIcon, ChevronLeft,
   CalendarDays, CircleCheck, Loader2,
   FolderPlus, CalendarRange, X as XIcon, CheckSquare, Square,
   ZoomIn, ZoomOut, ListTree, Crosshair, Info, Zap, Eye, ListOrdered, Link2, Replace,
+  Trash2,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
-import { groupTasksUnderParent, setTaskDuration, addMilestoneNote, stateOf, type MilestoneState } from "@/lib/milestones";
+import { groupTasksUnderParent, setTaskDuration, addMilestoneNote, stateOf, deleteMilestones, restoreDeletedMilestones, type MilestoneState } from "@/lib/milestones";
 import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, cascadeDependents, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import { computeCriticalPathLite } from "@/lib/criticalPath";
 import { resolveVisibleDepIndex } from "@/lib/scheduleDeps";
-import { buildProgressIndex, overallPercent } from "@/lib/scheduleProgress";
+import { buildProgressIndex } from "@/lib/scheduleProgress";
+import { computeExecutionReport } from "@/lib/executionReport";
 import { assignGroupColors, type GroupColor } from "@/lib/scheduleColors";
 import SchedulePulse from "@/components/projects/SchedulePulse";
 import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
 import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
 import ShiftReportView from "@/components/projects/ShiftReportView";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
-import { addDays as addDaysTz, dayDiff as dayDiffTz, dayOfWeek, fmtInTz, startOfDay as startOfDayTz, wallClock } from "@/lib/scheduleTz";
+import { addDays as addDaysTz, dayDiff as dayDiffTz, dayKey, dayOfWeek, fmtInTz, hasTimeOfDay, startOfDay as startOfDayTz, wallClock } from "@/lib/scheduleTz";
 import { needsFutureConfirm } from "@/lib/scheduleRules";
 import { startMsOf as plannedStartMsOf } from "@/lib/calendarPlacement";
 import { effectiveSpans, byStart, spanLabel, barGeometry, xAt, hourStep, startOf as timedStart, finishOf as timedFinish } from "@/lib/scheduleTime";
-import { DEFAULT_SHIFT_TIMES, readShiftTimes, workShiftOf, type ShiftTimes, type WorkShift } from "@/lib/shiftReport";
+import { isOverdue, workShiftOf, type ShiftTimes, type WorkShift } from "@/lib/shiftReport";
+import { useShiftTimes } from "@/lib/shiftTimesStore";
 import ShiftMark from "@/components/projects/ShiftMark";
 import BulkEditModal from "@/components/projects/BulkEditModal";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -216,18 +219,22 @@ export default function ExecutionView({
   const cmp = useMemo(() => byStart(effStart, wbsCompare), [effStart]);
   const spanOf = useCallback((m: Milestone) => (m.id ? effSpan.get(m.id) : undefined) ?? { start: startMs(m), finish: finishMs(m) }, [effSpan]);
 
-  // Shift change times (set on the shift report) — the timeline marks day
-  // and night shifts with them.
-  const [shiftTimes, setShiftTimes] = useState<ShiftTimes>(DEFAULT_SHIFT_TIMES);
-  // Re-read on every view switch: they're edited on the shift report.
-  useEffect(() => { setShiftTimes(readShiftTimes(projectId)); }, [projectId, layout]);
+  // The project's shift-change times (set on the shift report, the same on
+  // every device) — the timeline marks day and night shifts with them.
+  const shiftTimes = useShiftTimes(projectId);
 
   // ── Search / filter ──────────────────────────────────────────
   const [filter, setFilter] = useState<ScheduleFilter>(EMPTY_FILTER);
-  const filterOn = isFilterActive(filter);
+  // Typing stays instant on a 600-task board: the rows follow a moment later.
+  const appliedFilter = useDeferredValue(filter);
+  const filterOn = isFilterActive(appliedFilter);
   const visibleIds = useMemo(
-    () => filterMilestones(items, filter),
-    [items, filter],
+    () => filterMilestones(items, appliedFilter, {
+      // Night = the ☾ work, overdue = the same rule as every count.
+      shiftOf: (m) => workShiftOf(m, tz, shiftTimes),
+      isOverdue: (m, now) => isOverdue(m, now, tz),
+    }),
+    [items, appliedFilter, tz, shiftTimes],
   );
   // The milestones each sub-view should render (full list when the
   // filter is off, so nothing changes for the common case).
@@ -266,14 +273,17 @@ export default function ExecutionView({
 
   // Build the forest. Roots = rows whose parent is missing/absent.
   // Siblings sort by execution time (start), then WBS, then name.
+  // Search and filters narrow the timeline too (a match keeps its parents,
+  // so it stays in context).
   const roots = useMemo(() => {
+    const shown = (m: Milestone) => !filterOn || (!!m.id && visibleIds.has(m.id));
     const build = (ms: Milestone, depth: number): TreeNode => {
-      const kids = (childrenOf.get(ms.id!) ?? []).slice().sort(cmp);
+      const kids = (childrenOf.get(ms.id!) ?? []).filter(shown).sort(cmp);
       return { ms, depth, children: kids.map((k) => build(k, depth + 1)) };
     };
-    const top = items.filter((x) => !x.parentId || !byId.has(x.parentId)).sort(cmp);
+    const top = items.filter((x) => (!x.parentId || !byId.has(x.parentId)) && shown(x)).sort(cmp);
     return top.map((m) => build(m, 0));
-  }, [items, childrenOf, byId, cmp]);
+  }, [items, childrenOf, byId, cmp, filterOn, visibleIds]);
 
   // One pass over the whole tree: each task's effective % + status. Leaves
   // report their own (status-reconciled) percent; summaries roll their leaf
@@ -296,12 +306,13 @@ export default function ExecutionView({
           pct: info?.percent ?? 0,
           derivedStatus: info?.status ?? n.ms.status,
         });
-        if (hasChildren && n.ms.id && !collapsed.has(n.ms.id)) walk(n.children);
+        // While searching, matches show even under a collapsed phase.
+        if (hasChildren && n.ms.id && (filterOn || !collapsed.has(n.ms.id))) walk(n.children);
       }
     };
     walk(roots);
     return out;
-  }, [roots, collapsed, progressIndex]);
+  }, [roots, collapsed, progressIndex, filterOn]);
 
   // Date domain across the whole schedule.
   const domain = useMemo(() => {
@@ -335,9 +346,16 @@ export default function ExecutionView({
   }, [zoomFactor, fitPxPerDay]);
 
   const timelineW = domain ? domain.totalDays * pxPerDay : 0;
-  const today = useMemo(() => startOfDayUTC(new Date(), tz), [tz]);
+  // The clock, ticking each minute: the now-line moves and "today" rolls
+  // over at midnight for a night crew with the board open.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => { const t = setInterval(() => setNowMs(Date.now()), 60_000); return () => clearInterval(t); }, []);
+  const todayKey = dayKey(nowMs, tz);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- "today" changes when the plant day does, not every minute
+  const today = useMemo(() => startOfDayUTC(new Date(nowMs), tz), [tz, todayKey]);
+  const nowDate = useMemo(() => new Date(nowMs), [nowMs]);
   // The red line is NOW, at its clock time — not the middle of today.
-  const todayX = domain ? xAt(Date.now(), domain.start.getTime(), pxPerDay, tz) : -1;
+  const todayX = domain ? xAt(nowMs, domain.start.getTime(), pxPerDay, tz) : -1;
 
   // Center the viewport on "today" (or schedule start) on first paint.
   useEffect(() => {
@@ -453,6 +471,33 @@ export default function ExecutionView({
       setBusy((s) => { const n = new Set(s); n.delete(id); return n; });
     }
   }, [canEdit, onSetProgress, byId, announce, confirmFuture, restore]);
+
+  // Delete the selection — with everything under a selected phase when the
+  // person says so — and offer Undo, which brings back the tasks, their
+  // comments and their place in the outline.
+  const bulkDelete = useCallback(async () => {
+    if (!canEdit || selectedIds.size === 0) return;
+    const ids = [...selectedIds];
+    const withKids = ids.some((id) => (childrenOf.get(id) ?? []).length > 0);
+    const n = ids.length;
+    const ok = await appConfirm({
+      title: `Delete ${n} task${n === 1 ? "" : "s"}?`,
+      message: withKids
+        ? "Some of these have steps under them — those are deleted too, with their comments. Undo right after brings everything back."
+        : "Their comments go with them. Undo right after brings them back.",
+      tone: "danger", confirmLabel: "Delete",
+    });
+    if (!ok) return;
+    try {
+      const removed = await deleteMilestones({ orgId, projectId, ids, withChildren: true, actorUserId: userId, actorUserEmail: userEmail });
+      setSelectedIds(new Set());
+      onRefresh();
+      announce(`Deleted ${removed.rows.length} task${removed.rows.length === 1 ? "" : "s"}`, async () => {
+        try { await restoreDeletedMilestones(removed); } catch (e) { notify(`Undo failed: ${(e as Error).message}`, "warning"); }
+        onRefresh();
+      });
+    } catch (e) { notify((e as Error).message, "warning"); onRefresh(); }
+  }, [canEdit, selectedIds, childrenOf, orgId, projectId, userId, userEmail, onRefresh, announce, notify]);
 
   // Bulk status across the selection (with one undo that restores each
   // task's prior status).
@@ -781,7 +826,7 @@ export default function ExecutionView({
       />
 
       <div className="flex items-center gap-2">
-        <SummaryStrip items={items} today={today} domain={domain} />
+        <SummaryStrip items={items} today={today} now={nowDate} domain={domain} />
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -890,6 +935,7 @@ export default function ExecutionView({
           onBulkSet={() => setBulkMode("set")}
           onBulkStatus={(s) => void bulkStatus(s)}
           onBulkMove={(d) => bulkMove(d)}
+          onBulkDelete={() => void bulkDelete()}
         />
 
         <div
@@ -979,6 +1025,19 @@ export default function ExecutionView({
           deltaDays={pendingMove.deltaDays}
           onCancel={() => setPendingMove(null)}
           onConfirm={(mode) => void commitMove(mode)}
+          pushedBy={(mode) => {
+            const primary: DateChange[] = [];
+            const seen = new Set<string>();
+            for (const id of pendingMove.ids) {
+              for (const c of computeTreeMove(reflowNodes, id, pendingMove.deltaDays, mode, tz)) {
+                if (!seen.has(c.id)) { seen.add(c.id); primary.push(c); }
+              }
+            }
+            // Linked steps pushed along — not the moved tasks, their steps or their phases.
+            return withCascade(primary)
+              .filter((c) => !seen.has(c.id) && !(childrenOf.get(c.id)?.length))
+              .map((c) => byId.get(c.id)?.name ?? "").filter(Boolean);
+          }}
         />
       )}
 
@@ -1004,7 +1063,10 @@ export default function ExecutionView({
           milestones={items} selectedIds={selectedIds} startMode={bulkMode}
           orgId={orgId} projectId={projectId} userId={userId} userEmail={userEmail}
           onClose={() => setBulkMode(null)}
-          onDone={(n) => { setBulkMode(null); notify(`Changed on ${n} task${n === 1 ? "" : "s"}.`, "success"); onRefresh(); }}
+          onDone={(n, undo) => {
+            setBulkMode(null); onRefresh();
+            announce(`Changed on ${n} task${n === 1 ? "" : "s"}`, async () => { await undo(); onRefresh(); }, "success");
+          }}
         />
       )}
 
@@ -1043,18 +1105,15 @@ function statusWord(s: MilestoneStatus): string {
 
 // ─── Summary strip ─────────────────────────────────────────────
 
-function SummaryStrip({ items, today, domain }: {
-  items: Milestone[]; today: Date;
+function SummaryStrip({ items, today, now, domain }: {
+  items: Milestone[]; today: Date; now: Date;
   domain: { start: Date; end: Date; totalDays: number };
 }) {
   const tz = useScheduleTz();
-  const leaves = items.filter((m) => !items.some((c) => c.parentId === m.id));
-  const total = leaves.length;
-  const done = leaves.filter((m) => m.status === "completed").length;
-  const inProg = leaves.filter((m) => m.status === "in_progress").length;
-  const overdue = leaves.filter((m) => m.status !== "completed" && finishMs(m) < today.getTime()).length;
-  // Duration-weighted earned %, counting partial progress — not a flat done/total.
-  const pct = overallPercent(items);
+  // The same counts as the execution report and the shift report: one
+  // definition of done, in progress, overdue and % complete.
+  const r = useMemo(() => computeExecutionReport(items, { tz, now }), [items, tz, now]);
+  const total = r.totalLeaves, done = r.done, inProg = r.inProgress, overdue = r.overdue, pct = r.pctComplete;
   const elapsed = Math.max(0, Math.min(domain.totalDays, dayDiff(domain.start, today, tz)));
 
   return (
@@ -1090,7 +1149,7 @@ function Stat({ label, value, tone }: { label: string; value: number | string; t
 function Toolbar({
   canEdit, isAutoFit, canZoomIn, canZoomOut, onZoomIn, onZoomOut, onFit,
   onToday, onCollapseAll, onExpandAll,
-  selectedCount, onClearSelection, onGroup, onBulkSet, onBulkStatus, onBulkMove,
+  selectedCount, onClearSelection, onGroup, onBulkSet, onBulkStatus, onBulkMove, onBulkDelete,
 }: {
   canEdit: boolean;
   isAutoFit: boolean; canZoomIn: boolean; canZoomOut: boolean;
@@ -1099,6 +1158,7 @@ function Toolbar({
   onCollapseAll: () => void; onExpandAll: () => void;
   selectedCount: number; onClearSelection: () => void; onGroup: () => void; onBulkSet: () => void;
   onBulkStatus: (s: MilestoneStatus) => void; onBulkMove: (deltaDays: number) => void;
+  onBulkDelete: () => void;
 }) {
   return (
     <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap bg-gradient-to-b from-white to-slate-50/40">
@@ -1130,6 +1190,10 @@ function Toolbar({
               </button>
               <button onClick={onGroup} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[11px] font-bold transition-colors">
                 <FolderPlus className="w-3 h-3" /> Group
+              </button>
+              <button onClick={onBulkDelete} title="Delete the selected tasks (Undo brings them back)"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-rose-300 text-rose-700 dark:text-rose-300 dark:border-rose-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-[11px] font-bold transition-colors">
+                <Trash2 className="w-3 h-3" /> Delete
               </button>
             </>
           )}
@@ -1794,18 +1858,27 @@ function GroupTasksModal({
 
 function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milestone; actorUserId: string; onClose: () => void; onDone: () => void }) {
   const tz = useScheduleTz();
-  const finish = new Date(finishMs(task));
-  const startStored = task.plannedStartAt ? new Date(task.plannedStartAt as string) : null;
-  const current = startStored ? Math.max(1, dayDiff(startStored, finish, tz) + 1) : 1;
-  const [days, setDays] = useState(current);
+  const finishAt = finishMs(task);
+  const finish = new Date(finishAt);
+  const startAt = task.plannedStartAt ? Date.parse(task.plannedStartAt as string) : finishAt;
+  // Work planned by the clock is sized in hours; date-only work in days.
+  const timed = hasTimeOfDay(startAt, tz) || hasTimeOfDay(finishAt, tz);
+  const [unit, setUnit] = useState<"hours" | "days">(timed ? "hours" : "days");
+  const current = unit === "hours"
+    ? Math.max(0.25, Math.round(((finishAt - startAt) / 3_600_000) * 4) / 4)
+    : Math.max(1, dayDiff(new Date(startAt), finish, tz) + 1);
+  const [value, setValue] = useState<number>(current);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const days = value;
 
   const submit = async () => {
     if (!task.id) return;
     setBusy(true); setError(null);
     try {
-      const res = await setTaskDuration({ id: task.id, days, actorUserId });
+      const res = await setTaskDuration(unit === "hours"
+        ? { id: task.id, hours: value, timeZone: tz, actorUserId }
+        : { id: task.id, days: Math.round(value), timeZone: tz, actorUserId });
       if (!res.ok) setError(res.error ?? "Couldn't set duration");
       else onDone();
     } finally { setBusy(false); }
@@ -1823,9 +1896,22 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
           <button onClick={onClose} className="p-1.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><XIcon className="w-4 h-4" /></button>
         </div>
         <div className="p-5 space-y-3">
-          <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">Days the task runs</label>
-          <input type="number" min={1} max={365} value={days} onChange={(e) => setDays(Math.max(1, Math.min(365, Number(e.target.value) || 1)))} className="w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30" />
-          <div className="text-[11px] text-[var(--color-text-muted)]">Ends on <b>{fmtDateUTC(finish, tz)}</b>. {days > 1 ? `Starts ${days - 1} day${days - 1 === 1 ? "" : "s"} earlier.` : "Single-day task."}</div>
+          <div className="flex items-center justify-between">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">How long it runs</label>
+            <div className="inline-flex rounded-md bg-[var(--color-surface-2)] p-0.5 text-[11px] font-bold">
+              {(["hours", "days"] as const).map((u) => (
+                <button key={u} onClick={() => { setUnit(u); setValue(u === "hours" ? Math.max(0.25, Math.round(((finishAt - startAt) / 3_600_000) * 4) / 4) : Math.max(1, dayDiff(new Date(startAt), finish, tz) + 1)); }}
+                  className={`px-2 py-0.5 rounded ${unit === u ? "bg-[var(--color-surface)] shadow-sm text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{u}</button>
+              ))}
+            </div>
+          </div>
+          <input type="number" min={unit === "hours" ? 0.25 : 1} max={unit === "hours" ? 2000 : 365} step={unit === "hours" ? 0.25 : 1} value={value}
+            onChange={(e) => { const v = Number(e.target.value); setValue(Number.isFinite(v) && v > 0 ? v : unit === "hours" ? 0.25 : 1); }}
+            className="w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30" />
+          <div className="text-[11px] text-[var(--color-text-muted)]">
+            Keeps its finish, <b>{fmtInTz(finishAt, tz, { weekday: "short", month: "short", day: "numeric", ...(timed ? { hour: "2-digit", minute: "2-digit", hourCycle: "h23" } : {}) })}</b>;
+            {unit === "hours" ? ` starts ${value} h before it.` : days > 1 ? ` starts ${Math.round(days) - 1} day${Math.round(days) - 1 === 1 ? "" : "s"} earlier.` : " a single-day task."}
+          </div>
           {error && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-2">{error}</div>}
         </div>
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 flex items-center justify-end gap-2">

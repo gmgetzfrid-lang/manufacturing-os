@@ -8,7 +8,7 @@ import React, { useMemo, useState } from "react";
 import { Replace, Loader2, ArrowRight, Search } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
-import { BULK_FIELDS, valuesIn, planReplace, planSet, type BulkField } from "@/lib/bulkEdit";
+import { BULK_FIELDS, valuesIn, planReplace, planSet, valueLabel, type BulkField } from "@/lib/bulkEdit";
 import { applyBulkFieldChange } from "@/lib/milestones";
 
 export default function BulkEditModal({ milestones, selectedIds, startMode, orgId, projectId, userId, userEmail, onClose, onDone }: {
@@ -17,8 +17,9 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
   startMode: "replace" | "set";
   orgId: string; projectId: string; userId: string; userEmail?: string;
   onClose: () => void;
-  /** After a change is written: how many tasks changed. */
-  onDone: (count: number) => void;
+  /** After a change is written: how many tasks changed, and how to put
+   *  every one of them back (Undo). */
+  onDone: (count: number, undo: () => Promise<void>) => void;
 }) {
   const [mode, setMode] = useState<"replace" | "set">(selectedIds.size > 0 ? startMode : "replace");
   const [field, setField] = useState<BulkField>(BULK_FIELDS[0]);
@@ -44,17 +45,27 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
         summary: mode === "replace" ? { mode, from: from ?? "", to: to.trim() || null } : { mode, to: to.trim() || null },
         actorUserId: userId, actorUserEmail: userEmail,
       });
-      onDone(plan.length);
+      const key = field.key;
+      const back = plan.map((c) => ({ id: c.id, after: c.before }));
+      onDone(plan.length, () => applyBulkFieldChange({
+        orgId, projectId, field: key, changes: back, summary: { mode: "set", to: "(undo)" },
+        actorUserId: userId, actorUserEmail: userEmail,
+      }));
     } catch (e) { setError((e as Error).message); setBusy(false); }
   };
 
-  const pickField = (key: string) => { setField(BULK_FIELDS.find((f) => f.key === key) ?? BULK_FIELDS[0]); setFrom(null); setTo(""); setQuery(""); };
+  const pickField = (key: string) => {
+    const f = BULK_FIELDS.find((x) => x.key === key) ?? BULK_FIELDS[0];
+    setField(f); setFrom(null); setTo(""); setQuery("");
+    // A fixed-choice field (the crew) is set on the selection.
+    if (f.options && selectedIds.size > 0) setMode("set");
+  };
   const inp = "w-full h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent-ring)]";
 
   return (
     <Modal onClose={busy ? () => undefined : onClose} size="lg" dismissable={!busy}>
       <ModalHeader icon={Replace} title="Change on many tasks"
-        subtitle="Swap a contractor, crew, company or location everywhere it appears — or set it on the tasks you selected." onClose={busy ? undefined : onClose} />
+        subtitle="Swap a contractor, crew, company or location everywhere it appears — or set it (or day / night) on the tasks you selected." onClose={busy ? undefined : onClose} />
       <ModalBody className="space-y-3">
         <div className="inline-flex rounded-lg bg-[var(--color-surface-2)] p-0.5 text-[12px] font-bold">
           <button onClick={() => setMode("replace")} className={`px-3 py-1.5 rounded-md ${mode === "replace" ? "bg-[var(--color-surface)] shadow-sm text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>Replace a name everywhere</button>
@@ -72,7 +83,10 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
           </select>
         </label>
 
-        {mode === "replace" && (
+        {mode === "replace" && field.options && (
+          <p className="text-[12px] text-[var(--color-text-muted)]">Select the tasks on the timeline first, then set the crew on them.</p>
+        )}
+        {mode === "replace" && !field.options && (
           <div>
             <span className="block text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">Replace</span>
             {values.length === 0 ? (
@@ -101,7 +115,15 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
           </div>
         )}
 
-        {(mode === "set" || from) && (
+        {mode === "set" && field.options && (
+          <label className="block">
+            <span className="block text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">Set to</span>
+            <select value={to} onChange={(e) => setTo(e.target.value)} className={inp}>
+              {field.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </label>
+        )}
+        {(mode === "set" || from) && !field.options && (
           <label className="block">
             <span className="block text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
               {mode === "replace" ? <>With <span className="normal-case font-semibold">(leave blank to remove &ldquo;{from}&rdquo;)</span></> : "Set to (blank clears it)"}
@@ -118,9 +140,9 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
               {plan.slice(0, 200).map((c) => (
                 <li key={c.id} className="px-3 py-1.5 flex items-center gap-2">
                   <span className="w-44 shrink-0 truncate font-semibold text-[var(--color-text)]" title={c.name}>{c.name}</span>
-                  <span className="truncate text-[var(--color-text-muted)] line-through" title={c.before ?? ""}>{c.before || "—"}</span>
+                  <span className="truncate text-[var(--color-text-muted)] line-through" title={c.before ?? ""}>{valueLabel(field, c.before) || "—"}</span>
                   <ArrowRight className="w-3 h-3 shrink-0 text-[var(--color-text-faint)]" />
-                  <span className="truncate font-semibold text-[var(--color-text)]" title={c.after ?? ""}>{c.after || "(empty)"}</span>
+                  <span className="truncate font-semibold text-[var(--color-text)]" title={c.after ?? ""}>{valueLabel(field, c.after) || "(empty)"}</span>
                 </li>
               ))}
               {plan.length > 200 && <li className="px-3 py-1.5 text-[var(--color-text-muted)]">…and {plan.length - 200} more</li>}

@@ -43,9 +43,9 @@ interface Props {
    *  ancestors) by a day delta. */
   onMoveDays?: (id: string, deltaDays: number) => void;
   /** One-click status change straight from a chip. */
-  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => void;
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => unknown;
   /** Set a leaf's physical % complete (derives status). */
-  onSetProgress?: (id: string, percent: number) => void;
+  onSetProgress?: (id: string, percent: number) => unknown;
   /** Per-task effective progress + derived status (leaves: own; summaries:
    *  rolled up), computed once by the parent so chips match the timeline. */
   progress?: Map<string, ProgressInfo>;
@@ -700,8 +700,8 @@ function Chip({
   onDragStart?: (e: React.DragEvent) => void;
   onTouchDragStart?: (e: React.PointerEvent) => void;
   onClick: () => void;
-  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => void;
-  onSetProgress?: (id: string, percent: number) => void;
+  onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => unknown;
+  onSetProgress?: (id: string, percent: number) => unknown;
   progress?: Map<string, ProgressInfo>;
   shiftTimes?: ShiftTimes;
   canExpand?: boolean; isExpanded?: boolean; onToggleExpand?: (e: React.MouseEvent) => void;
