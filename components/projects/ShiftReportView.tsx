@@ -687,9 +687,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     when: r.offSchedule ? `due ${c.DTs(r.finish)}` : rowTime(r, shift),
     n: undefined,
     note: comment(r, "last"),
-    right: r.percent > 0 ? `${r.percent}%` : "not started",
+    // Done and where the plan says it should be, side by side.
+    right: `${r.percent}% / ${r.expectedPct}%`,
     extraTags: [
-      behindPlan.includes(r) ? { t: `${r.expectedPct}% planned by now`, tone: "amber" } : null,
       asPlanned.includes(r) && r.lateStart ? { t: "not started yet", tone: "amber" } : null,
       asPlanned.includes(r) && r.finish > shift.end ? { t: `to ${c.D(r.finish)}`, tone: "muted" } : null,
     ],
@@ -714,11 +714,11 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     when: r.carryOver ? `due ${c.DTs(r.finish)}` : rowTime(r, next),
     note: comment(r, "next"),
     n: { num: priorityOf.get(r.leaf.id ?? "") ?? 0, tone: r.critical ? "rose" : r.carryOver ? "amber" : "slate" },
-    right: `${r.percent > 0 ? `${r.percent}% · ` : ""}${c.hrs(r.hoursLeft)}`,
+    right: `${r.percent > 0 || r.pace === "behind" ? `${r.percent}%${r.pace === "behind" && !r.carryOver ? ` / ${r.expectedPct}%` : ""} · ` : ""}${c.hrs(r.hoursLeft)}`,
     extraTags: [
       r.carryOver ? { t: "carry-over", tone: "amber" } : null,
       !r.carryOver && r.lateStart ? { t: "late start", tone: "amber" } : null,
-      !r.carryOver && r.pace === "behind" ? { t: `behind plan · ${r.expectedPct}% due`, tone: "amber" } : null,
+      !r.carryOver && r.pace === "behind" ? { t: "behind plan", tone: "amber" } : null,
       waitTag(r),
       !r.carryOver && r.start < next.start ? { t: `since ${c.D(r.start)}`, tone: "muted" } : null,
       r.finish > next.end ? { t: `to ${c.D(r.finish)}`, tone: "muted" } : null,
@@ -795,9 +795,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       count: didNotFinish.length, flag: pastDue.some((r) => r.critical) ? "rose" : pastDue.length || behindPlan.length ? "amber" : null,
       data: () => nothingLast ? [{ k: "empty", text: "Nothing was planned for this shift." }] : [
         ...(didNotFinish.length === 0 && !heldLine ? [{ k: "empty", text: "Everything planned for this shift is done." } as ExportBlock] : []),
-        ...(pastRows.length ? [{ k: "sub", title: "Past due — carries over", count: pastRows.length, tone: "rose" } as ExportBlock, stepsBlock(pastRows, "Done")] : []),
-        ...(behindRows.length ? [{ k: "sub", title: "Behind plan", count: behindRows.length, tone: "amber" } as ExportBlock, stepsBlock(behindRows, "Done")] : []),
-        ...(planRows.length ? [{ k: "sub", title: "Continuing as planned", count: planRows.length, tone: "slate" } as ExportBlock, stepsBlock(planRows, "Done")] : []),
+        ...(pastRows.length ? [{ k: "sub", title: "Past due — carries over", count: pastRows.length, tone: "rose" } as ExportBlock, stepsBlock(pastRows, "Done / plan")] : []),
+        ...(behindRows.length ? [{ k: "sub", title: "Behind plan", count: behindRows.length, tone: "amber" } as ExportBlock, stepsBlock(behindRows, "Done / plan")] : []),
+        ...(planRows.length ? [{ k: "sub", title: "Continuing as planned", count: planRows.length, tone: "slate" } as ExportBlock, stepsBlock(planRows, "Done / plan")] : []),
         ...(heldLine ? [{ k: "note", text: heldLine, tone: "amber" } as ExportBlock] : []),
         { k: "sub", title: "Completed", count: review.done.length, tone: "emerald" },
         review.done.length === 0 ? { k: "empty", text: "Nothing was completed on this shift." } : stepsBlock(doneRows, "Finished"),
@@ -816,15 +816,15 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           {didNotFinish.length === 0 && !heldLine && <Empty>Everything planned for this shift is done.</Empty>}
           {pastRows.length > 0 && <>
             <Sub tone="rose" icon={<AlertTriangle className="w-3.5 h-3.5" />} title="Past due — carries over" count={pastRows.length} />
-            <StepTable print={print} rightHead="Done" rows={pastRows} />
+            <StepTable print={print} rightHead="Done / plan" rows={pastRows} />
           </>}
           {behindRows.length > 0 && <>
             <Sub tone="amber" icon={<TrendingDown className="w-3.5 h-3.5" />} title="Behind plan" count={behindRows.length} />
-            <StepTable print={print} rightHead="Done" rows={behindRows} />
+            <StepTable print={print} rightHead="Done / plan" rows={behindRows} />
           </>}
           {planRows.length > 0 && <>
             <Sub tone="slate" icon={<Minus className="w-3.5 h-3.5" />} title="Continuing as planned" count={planRows.length} />
-            <StepTable print={print} rightHead="Done" rows={planRows} />
+            <StepTable print={print} rightHead="Done / plan" rows={planRows} />
           </>}
           {heldLine && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{heldLine}</div>}
           <Sub tone="emerald" icon={<CheckCircle2 className="w-3.5 h-3.5" />} title="Completed" count={review.done.length} />
@@ -1267,7 +1267,7 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
             <th className={cell}>Step</th>
             {hasWho && <th className={`${cell} hidden sm:table-cell print:table-cell w-[132px]`}>Who</th>}
             {hasWo && <th className={`${cell} hidden md:table-cell print:table-cell w-[64px]`}>WO</th>}
-            <th className={`${cell} w-[78px] text-right`}>{rightHead}</th>
+            <th className={`${cell} w-[96px] text-right`}>{rightHead}</th>
           </tr>
         </thead>
         <tbody>

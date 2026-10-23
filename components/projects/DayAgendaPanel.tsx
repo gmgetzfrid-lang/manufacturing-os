@@ -27,7 +27,7 @@ import { clockLabel, dayKey, dayKeyToMs, fmtInTz, addDays, tzAbbrev } from "@/li
 import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
 import { overdueOpenWork, startedEarlyWork } from "@/lib/openWork";
 import { completionNote } from "@/lib/scheduleRules";
-import { DEFAULT_SHIFT_TIMES, expectedByParent, workShiftOf, type ShiftTimes } from "@/lib/shiftReport";
+import { DEFAULT_SHIFT_TIMES, expectedByParent, expectedFraction, shiftAt, shiftWindow, workShiftOf, type ShiftTimes } from "@/lib/shiftReport";
 import { latestNotes, updateMilestoneNote } from "@/lib/milestones";
 import ShiftMark from "@/components/projects/ShiftMark";
 
@@ -35,6 +35,8 @@ interface Props {
   day: string; // "YYYY-MM-DD" in the plant zone
   /** Kept mounted but out of sight (a task's details are open on top). */
   hidden?: boolean;
+  /** Shown in the page (the calendar's Day view) instead of sliding over it. */
+  inline?: boolean;
   /** Each task's planned % by now over ALL its steps (a crew or search
    *  filter mustn't shrink the plan behind "x% of y% planned"). */
   planNow?: Map<string, number>;
@@ -84,7 +86,7 @@ interface EquipmentGroup {
 
 export default function DayAgendaPanel({
   day, tz, milestones, childrenByParent, ancestorsOf, progress, canEdit,
-  onSetStatus, onSetProgress, onAddNote, onOpenDetail, onChangeDay, onClose, colorOf, shiftTimes = DEFAULT_SHIFT_TIMES, hidden, planNow: planNowAll, userId, onSetProgressNote, onStartNote,
+  onSetStatus, onSetProgress, onAddNote, onOpenDetail, onChangeDay, onClose, colorOf, shiftTimes = DEFAULT_SHIFT_TIMES, hidden, planNow: planNowAll, userId, onSetProgressNote, onStartNote, inline,
 }: Props) {
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
@@ -170,7 +172,7 @@ export default function DayAgendaPanel({
     if (t !== undefined) return t;
     // Few pieces of equipment: all open. Many: closed, except ones with
     // late work and the one holding the step being edited.
-    return groups.length <= 4 || g.rows.some((r) => r.live === "overdue" || r.leaf.id === openId);
+    return inline || groups.length <= 4 || g.rows.some((r) => r.live === "overdue" || r.leaf.id === openId);
   };
   const toggle = (g: EquipmentGroup) => setToggled((m) => new Map(m).set(keyOf(g), !isOpen(g)));
   // Next into a section the person closed opens it, so the step shows.
@@ -186,6 +188,28 @@ export default function DayAgendaPanel({
   const [nowMs] = useState(() => Date.now());
   const planNowHere = useMemo(() => (planNowAll ? null : expectedByParent(milestones, nowMs, tz, shiftTimes)), [planNowAll, milestones, nowMs, tz, shiftTimes]);
   const planNow = planNowAll ?? planNowHere ?? new Map<string, number>();
+  // Where each step should be by the end of the shift: today, the shift
+  // running now; another day, the end of that day's night shift.
+  const goalAt = isToday ? shiftAt(nowMs, tz, shiftTimes).end : shiftWindow(day, "night", tz, shiftTimes).end;
+  const goalLabel = isToday ? clockLabel(goalAt, tz) : fmtInTz(goalAt, tz, { weekday: "short" }) + " " + clockLabel(goalAt, tz);
+  const goalOf = (m: Milestone) => Math.round(expectedFraction(m, goalAt, tz, shiftTimes) * 100);
+  // What a step waits on, by name: predecessors not done yet.
+  const byIdAll = useMemo(() => new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m])), [milestones]);
+  const waitsOn = (m: Milestone) => (m.dependsOn ?? []).map((id) => byIdAll.get(id))
+    .filter((p): p is Milestone => !!p && p.status !== "completed" && (p.percentComplete ?? 0) < 100);
+  // A search also finds steps on other days, to jump to them.
+  const otherDays = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (q.length < 2) return [];
+    const here = new Set(groups.flatMap((g) => g.rows.map((r) => r.leaf.id)));
+    const kids = new Set(milestones.map((m) => m.parentId).filter(Boolean));
+    const hit = (s?: string | null) => !!s && s.toLowerCase().includes(q);
+    return milestones
+      .filter((m) => m.id && !kids.has(m.id) && !here.has(m.id) && m.plannedAt)
+      .filter((m) => hit(m.name) || hit(m.workOrderRef) || hit(m.responsibleParty) || ancestorsOf(m).some((a) => hit(a.name)))
+      .sort((a, b) => startMsOf(a) - startMsOf(b))
+      .slice(0, 12);
+  }, [query, groups, milestones, ancestorsOf]);
   const pctOf = (m: Milestone) =>
     (m.id ? progress?.get(m.id)?.percent : undefined) ?? (m.percentComplete != null ? Math.round(m.percentComplete) : (m.status === "completed" ? 100 : 0));
 
@@ -216,10 +240,12 @@ export default function DayAgendaPanel({
   };
 
   return (
-    <div className={`fixed inset-0 z-[170] flex justify-end ${hidden ? "hidden" : ""}`} onClick={onClose}>
-      <div className="absolute inset-0 bg-slate-900/30" />
+    <div className={inline ? (hidden ? "hidden" : "") : `fixed inset-0 z-[170] flex justify-end ${hidden ? "hidden" : ""}`} onClick={inline ? undefined : onClose}>
+      {!inline && <div className="absolute inset-0 bg-slate-900/30" />}
       <div
-        className="relative h-full w-full max-w-xl bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl ring-1 ring-black/10 flex flex-col animate-in slide-in-from-right duration-150"
+        className={inline
+          ? "relative w-full max-h-[78vh] bg-[var(--color-surface)] text-[var(--color-text)] flex flex-col"
+          : "relative h-full w-full max-w-xl bg-[var(--color-surface)] text-[var(--color-text)] shadow-2xl ring-1 ring-black/10 flex flex-col animate-in slide-in-from-right duration-150"}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header: the day, navigation, and the day's completion. */}
@@ -239,7 +265,7 @@ export default function DayAgendaPanel({
               </div>
             </div>
             <button onClick={() => onChangeDay(dayKey(addDays(dayMs, 1, tz), tz))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Next day"><ChevronRight className="w-4 h-4" /></button>
-            <button onClick={onClose} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Close"><XIcon className="w-4 h-4" /></button>
+            {!inline && <button onClick={onClose} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Close"><XIcon className="w-4 h-4" /></button>}
           </div>
           {totals.n > 0 && (
             <div className="mt-2 h-1.5 rounded-full bg-black/10 overflow-hidden">
@@ -319,12 +345,17 @@ export default function DayAgendaPanel({
                         </span>
                         <button onClick={() => setOpenId(openId === r.leaf.id ? null : r.leaf.id ?? null)} className="flex-1 min-w-0 text-left" aria-expanded={openId === r.leaf.id}
                           title={canEdit ? "Update this step here — % done, status, what's blocking it, a note" : "Show this step"}>
-                          <span className={`block text-[12px] truncate font-semibold ${r.leaf.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{r.leaf.name}</span>
+                          <span className={`block text-[12px] leading-snug break-words font-semibold ${r.leaf.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{r.leaf.name}</span>
                           <span className="block text-[9.5px] text-[var(--color-text-faint)] truncate">
                             {[note, r.leaf.responsibleParty, r.leaf.workOrderRef ? `WO ${r.leaf.workOrderRef}` : null].filter(Boolean).join(" · ")}
                           </span>
                           {r.leaf.id && latestByStep.get(r.leaf.id) && (
                             <span className="block text-[10px] italic text-[var(--color-text-muted)] truncate">&ldquo;{latestByStep.get(r.leaf.id)!.body}&rdquo;</span>
+                          )}
+                          {r.leaf.status !== "completed" && waitsOn(r.leaf).length > 0 && (
+                            <span className="block text-[10px] font-semibold text-amber-700 dark:text-amber-400 break-words">
+                              Waits on {waitsOn(r.leaf).map((p) => `${ancestorsOf(p)[0]?.name ? `${ancestorsOf(p)[0].name} · ` : ""}${p.name}${p.responsibleParty ? ` (${p.responsibleParty})` : ""}`).join("; ")}
+                            </span>
                           )}
                           {(r.leaf.status === "on_hold" || r.leaf.status === "blocked") && (
                             <span className={`block text-[10px] font-semibold truncate ${r.leaf.status === "blocked" ? "text-rose-700 dark:text-rose-400" : "text-amber-700 dark:text-amber-400"}`}>
@@ -332,7 +363,8 @@ export default function DayAgendaPanel({
                             </span>
                           )}
                         </button>
-                        <span className="shrink-0 w-16 flex items-center justify-end gap-1">
+                        <span className="shrink-0 w-[76px] flex flex-col items-end gap-0.5">
+                        <span className="flex items-center justify-end gap-1">
                           <span className="h-1 w-8 rounded-full bg-black/10 overflow-hidden">
                             <span className={`block h-full ${pct >= 100 ? "bg-emerald-500" : "bg-[var(--color-accent)]"}`} style={{ width: `${pct}%` }} />
                           </span>
@@ -343,6 +375,17 @@ export default function DayAgendaPanel({
                             disabled={!canEdit || !onSetProgress || !r.leaf.id}
                             size="sm"
                           />
+                        </span>
+                        {pct < 100 && (() => {
+                          const g = goalOf(r.leaf);
+                          const short = g - pct >= 5;
+                          return (
+                            <span title={`The plan has this step at ${g}% by ${goalLabel}`}
+                              className={`text-[9.5px] font-bold tabular-nums whitespace-nowrap ${short ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-faint)]"}`}>
+                              goal {g}% by {goalLabel}
+                            </span>
+                          );
+                        })()}
                         </span>
                       </div>
                       {openId === r.leaf.id && r.leaf.id && (
@@ -364,6 +407,28 @@ export default function DayAgendaPanel({
           )}
           {groups.length > 0 && shownGroups.length === 0 && (
             <div className="px-4 py-8 text-center text-xs text-[var(--color-text-muted)]">Nothing on {label} matches &ldquo;{query}&rdquo;.</div>
+          )}
+          {otherDays.length > 0 && (
+            <section className="border-t border-[var(--color-border)]">
+              <div className="px-4 py-2 text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] bg-[var(--color-surface-2)]">On other days — click to go to its day</div>
+              <ul className="divide-y divide-[var(--color-border)]">
+                {otherDays.map((m) => {
+                  const d = dayKey(startMsOf(m), tz);
+                  return (
+                    <li key={m.id}>
+                      <button onClick={() => { setQuery(""); setOpenId(m.id ?? null); onChangeDay(d); }}
+                        className="w-full px-4 py-2 flex items-start gap-3 text-left hover:bg-[var(--color-surface-2)]">
+                        <span className="w-[80px] shrink-0 text-[11px] font-mono font-bold text-[var(--color-accent)]">{fmtInTz(startMsOf(m), tz, { weekday: "short", month: "short", day: "numeric" })}</span>
+                        <span className="flex-1 min-w-0">
+                          <span className="block text-[12px] font-semibold break-words">{m.name}</span>
+                          <span className="block text-[9.5px] text-[var(--color-text-faint)] truncate">{[ancestorsOf(m)[0]?.name, m.responsibleParty, `${pctOf(m)}%`].filter(Boolean).join(" · ")}</span>
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
           )}
         </div>
 

@@ -99,6 +99,7 @@ const ZOOM_STEP = 1.35;
 const ROW_H = 40;     // height of each timeline row, px
 const AXIS_H = 58;    // height of the date axis header (days / shifts / hours), px
 const LEFT_W = 320;   // width of the frozen outline column, px
+const MIN_LEFT_W = 220, MAX_LEFT_W = 640;
 const PAD_DAYS = 2;   // padding on each side of the schedule span
 
 interface TreeNode { ms: Milestone; children: TreeNode[]; depth: number }
@@ -138,7 +139,11 @@ export default function ExecutionView({
   // Critical-path-lite highlight toggle.
   const [showCritical, setShowCritical] = useState(false);
 
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  // The timeline mounts later than this view when another tab opens first
+  // (calendar, report), so it's measured whenever its box appears.
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
+  const bindScroll = useCallback((el: HTMLDivElement | null) => { scrollRef.current = el; setScrollEl(el); }, []);
   const didCenter = useRef(false);
 
   // Undo/feedback — the safety net so a new user can act fearlessly.
@@ -149,17 +154,36 @@ export default function ExecutionView({
   const [viewportW, setViewportW] = useState(0);
   // The frozen task column gives way on a phone so the chart stays usable.
   const compact = viewportW > 0 && viewportW < 640;
-  const leftW = compact ? 168 : LEFT_W;
+  // The task column's width: dragged wider or narrower, remembered here.
+  const [userLeftW, setUserLeftW] = useState(LEFT_W);
+  useEffect(() => {
+    try {
+      const v = Number(localStorage.getItem("timeline:leftW"));
+      if (v >= MIN_LEFT_W && v <= MAX_LEFT_W) setUserLeftW(v);
+    } catch { /* private mode */ }
+  }, []);
+  const leftW = compact ? 168 : userLeftW;
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const x0 = e.clientX, w0 = userLeftW;
+    let w = w0;
+    const move = (ev: PointerEvent) => { w = Math.max(MIN_LEFT_W, Math.min(MAX_LEFT_W, w0 + ev.clientX - x0)); setUserLeftW(w); };
+    const up = () => {
+      window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
+      try { localStorage.setItem("timeline:leftW", String(Math.round(w))); } catch { /* private mode */ }
+    };
+    window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+  };
   const [showCards, setShowCards] = useState(false);
   useEffect(() => {
-    const el = scrollRef.current;
+    const el = scrollEl;
     if (!el) return;
     const measure = () => setViewportW(el.clientWidth);
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [scrollEl]);
 
   // Overlay optimistic status + percent onto the raw list.
   const items = useMemo(() => {
@@ -998,7 +1022,7 @@ export default function ExecutionView({
         />
 
         <div
-          ref={scrollRef}
+          ref={bindScroll}
           tabIndex={0}
           onKeyDown={onTimelineKeyDown}
           onScroll={onScrollWindow}
@@ -1008,6 +1032,13 @@ export default function ExecutionView({
           <div className="flex" style={{ width: leftW + timelineW }}>
             {/* ── Frozen outline column ── */}
             <div className="sticky left-0 z-20 bg-[var(--color-surface)] border-r border-[var(--color-border)] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.08)]" style={{ width: leftW }}>
+              {/* Drag to widen or narrow the task column (double-click resets). */}
+              {!compact && (
+                <div role="separator" aria-orientation="vertical" aria-label="Resize the task column" title="Drag to resize · double-click to reset"
+                  onPointerDown={startResize}
+                  onDoubleClick={() => { setUserLeftW(LEFT_W); try { localStorage.removeItem("timeline:leftW"); } catch { /* private mode */ } }}
+                  className="absolute top-0 -right-1 z-30 h-full w-2 cursor-col-resize hover:bg-[var(--color-accent)]/30 active:bg-[var(--color-accent)]/50" />
+              )}
               <div className="sticky top-0 z-10 bg-slate-50/95 dark:bg-[var(--color-surface-2)]/95 backdrop-blur border-b border-[var(--color-border)] flex items-center px-3 text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]" style={{ height: AXIS_H }}>
                 <ListTree className="w-3.5 h-3.5 mr-1.5 text-[var(--color-accent)]" /> Work breakdown
               </div>

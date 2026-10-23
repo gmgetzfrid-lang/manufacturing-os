@@ -15,7 +15,7 @@
 // lib/calendarPlacement.ts so they're unit-tested. The detail panel
 // surfaces a group chip's subtask accordion.
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Crosshair, Layers, Info, GripVertical, CheckSquare, X as XIcon, ListChecks } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import StatusControl from "@/components/projects/StatusControl";
@@ -88,7 +88,18 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   // The sub-items popover is DAY-SPECIFIC: opened from a chip on a tile, it
   // lists the steps scheduled on that day, with status and progress entry,
   // and tucks the other days' steps behind a toggle.
-  const [subPopover, setSubPopover] = useState<{ ms: Milestone; top: number; left: number; dayKey: string } | null>(null);
+  const [subPopover, setSubPopover] = useState<{ ms: Milestone; top: number; left: number; dayKey: string; anchorTop?: number } | null>(null);
+  // Near the bottom of the screen the steps popover opens upward, and never
+  // runs past the window edge (measured after it renders).
+  const subRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = subRef.current;
+    if (!subPopover || !el) return;
+    const h = el.offsetHeight, vh = window.innerHeight;
+    let top = subPopover.top;
+    if (top + h > vh - 8) top = subPopover.anchorTop != null && subPopover.anchorTop - h - 4 >= 8 ? subPopover.anchorTop - h - 4 : Math.max(8, vh - h - 8);
+    el.style.top = `${top}px`;
+  });
   const [popoverShowOthers, setPopoverShowOthers] = useState(false);
   // The day agenda: click a day number to get that day's full work list
   // (every step due, grouped by equipment, with progress entry).
@@ -191,6 +202,30 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   }, [mains]);
 
   const [cursor, setCursor] = useState<Date>(() => firstOfMonthUTC(new Date(), tz));
+  // Month, one week (tall days), or one day (its full step list).
+  type Mode = "month" | "week" | "day";
+  const [mode, setModeState] = useState<Mode>("month");
+  const [focusDay, setFocusDay] = useState<Date>(() => startOfDayUTC(new Date(), tz));
+  React.useEffect(() => {
+    try {
+      const v = localStorage.getItem("calendar:mode");
+      if (v === "week" || v === "day") setModeState(v);
+    } catch { /* private mode */ }
+  }, []);
+  const setMode = (m: Mode) => {
+    if (m === mode) return;
+    if (mode === "month") {
+      const now = new Date();
+      setFocusDay(startOfDayUTC(sameMonth(now, cursor, tz) ? now : cursor, tz));
+    } else if (m === "month") setCursor(firstOfMonthUTC(focusDay, tz));
+    setModeState(m);
+    try { localStorage.setItem("calendar:mode", m); } catch { /* private mode */ }
+  };
+  const step = (dir: 1 | -1) => {
+    if (mode === "month") setCursor(addMonthsUTC(cursor, dir, tz));
+    else setFocusDay(addDaysUTC(focusDay, mode === "week" ? 7 * dir : dir, tz));
+  };
+  const goToday = () => { const now = new Date(); setCursor(firstOfMonthUTC(now, tz)); setFocusDay(startOfDayUTC(now, tz)); };
   // Snap to the schedule's first month if today isn't within the span.
   const didSnap = React.useRef(false);
   React.useEffect(() => {
@@ -198,6 +233,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
     const now = new Date();
     const inSpan = now >= span.earliest && now <= span.latest;
     setCursor(firstOfMonthUTC(inSpan ? now : span.earliest, tz));
+    setFocusDay(startOfDayUTC(inSpan ? now : span.earliest, tz));
     didSnap.current = true;
   }, [span, tz]);
 
@@ -265,6 +301,12 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   }, [cursor, tz]);
 
   const monthIdx = wallClock(cursor.getTime(), tz).month;
+  // The week holding the focused day (week view).
+  const weekDays = useMemo(() => {
+    const start = addDaysUTC(focusDay, -dayOfWeek(focusDay.getTime(), tz), tz);
+    return Array.from({ length: 7 }, (_, d) => addDaysUTC(start, d, tz));
+  }, [focusDay, tz]);
+  const gridWeeks = mode === "week" ? [weekDays] : weeks;
   const [dragId, setDragId] = useState<string | null>(null);
   // Touch-drag state — HTML5 DnD doesn't fire on touch, so we run a parallel
   // pointer-based drag for phones/tablets. A floating ghost follows the finger;
@@ -339,13 +381,23 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
       )}
       {/* Toolbar */}
       <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap bg-gradient-to-b from-white dark:from-[var(--color-surface)] to-slate-50/40 dark:to-[var(--color-surface)]">
-        <button onClick={() => setCursor(addMonthsUTC(cursor, -1, tz))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors"><ChevronLeft className="w-4 h-4" /></button>
+        <button onClick={() => step(-1)} title={`Previous ${mode}`} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors"><ChevronLeft className="w-4 h-4" /></button>
         <div className="text-sm font-bold text-[var(--color-text)] min-w-[150px] text-center">
-          {fmtInTz(cursor, tz, { month: "long", year: "numeric" })}
+          {mode === "month" ? fmtInTz(cursor, tz, { month: "long", year: "numeric" })
+            : mode === "week" ? `${fmtInTz(weekDays[0], tz, { month: "short", day: "numeric" })} – ${fmtInTz(weekDays[6], tz, { month: "short", day: "numeric", year: "numeric" })}`
+              : fmtInTz(focusDay, tz, { weekday: "short", month: "short", day: "numeric", year: "numeric" })}
         </div>
-        <button onClick={() => setCursor(addMonthsUTC(cursor, 1, tz))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors"><ChevronRight className="w-4 h-4" /></button>
+        <button onClick={() => step(1)} title={`Next ${mode}`} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors"><ChevronRight className="w-4 h-4" /></button>
+        <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-md p-0.5 gap-0.5" role="group" aria-label="Calendar view">
+          {(["month", "week", "day"] as const).map((m) => (
+            <button key={m} onClick={() => setMode(m)} aria-pressed={mode === m}
+              className={`px-2.5 py-1 rounded text-[11px] font-bold capitalize transition-colors ${mode === m ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+              {m}
+            </button>
+          ))}
+        </div>
         <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title={`Days and times are shown in the plant's zone: ${tz}`}>{tzAbbrev(tz, cursor.getTime())}</span>
-        <button onClick={() => setCursor(firstOfMonthUTC(new Date(), tz))} className="ml-1 inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] transition-colors">
+        <button onClick={goToday} className="ml-1 inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] transition-colors">
           <Crosshair className="w-3.5 h-3.5 text-rose-500" /> Today
         </button>
         <button onClick={() => setAgendaDay(ymd(new Date(), tz))}
@@ -354,7 +406,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           <ListChecks className="w-3.5 h-3.5" /> Update progress
         </button>
         {span && (
-          <button onClick={() => setCursor(firstOfMonthUTC(span.earliest, tz))} className="text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)] transition-colors">
+          <button onClick={() => { setCursor(firstOfMonthUTC(span.earliest, tz)); setFocusDay(startOfDayUTC(span.earliest, tz)); }} className="text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)] transition-colors">
             ⏮ Schedule start
           </button>
         )}
@@ -396,12 +448,12 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
 
       {/* How-to strip — explicit, state-aware instructions so moving
           sub-items is never a mystery. */}
-      <div className="px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)]/40 flex items-center gap-2 flex-wrap text-[11px] text-[var(--color-text-muted)]">
+      <div className={`px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)]/40 flex items-center gap-2 flex-wrap text-[11px] text-[var(--color-text-muted)] ${mode === "day" ? "hidden" : ""}`}>
         <Info className="w-3.5 h-3.5 text-[var(--color-accent)] shrink-0" />
         {showSubtasks ? (
           <span><b className="text-[var(--color-text)]">Sub-item mode:</b> each step is its own chip. Drag its <GripVertical className="inline w-3 h-3 align-middle text-[var(--color-text-muted)]" /> handle to another day to move just that step — the rest stay put and the parent stretches to follow.</span>
         ) : (
-          <span><b className="text-[var(--color-text)]">Day view:</b> click a day&apos;s number for everything due that day with progress entry. <b className="text-[var(--color-text)]">To move one sub-item:</b> click a task&apos;s <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)] align-middle"><ChevronRight className="w-3 h-3" /></span> to pop open its steps, then use each step&apos;s ◀ ▶ buttons. Or flip <b>Show → Sub-items</b> to spread every step across the grid as draggable chips.</span>
+          <span><b className="text-[var(--color-text)]">Day list:</b> click a day&apos;s number for everything due that day with progress entry. <b className="text-[var(--color-text)]">To move one sub-item:</b> click a task&apos;s <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)] align-middle"><ChevronRight className="w-3 h-3" /></span> to pop open its steps, then use each step&apos;s ◀ ▶ buttons. Or flip <b>Show → Sub-items</b> to spread every step across the grid as draggable chips.</span>
         )}
         <span className="ml-auto inline-flex items-center gap-2 text-[var(--color-text-faint)]">
           <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> dot = status</span>
@@ -413,7 +465,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
       </div>
 
       {/* Marks legend */}
-      <div className="px-3 py-1.5 border-b border-[var(--color-border)] bg-slate-50/40 flex items-center gap-3 flex-wrap text-[10px] text-[var(--color-text-muted)]">
+      <div className={`px-3 py-1.5 border-b border-[var(--color-border)] bg-slate-50/40 flex items-center gap-3 flex-wrap text-[10px] text-[var(--color-text-muted)] ${mode === "day" ? "hidden" : ""}`}>
         <span className="inline-flex items-center gap-1"><span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)]"><ChevronRight className="w-3 h-3" /></span> expand a task to its steps</span>
         <span className="inline-flex items-center gap-1"><GripVertical className="w-3 h-3" /> drag handle (move to another day)</span>
         <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> status dot (click to change)</span>
@@ -421,6 +473,31 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         <span className="inline-flex items-center gap-1"><span className="inline-block w-6 h-2.5 rounded-sm bg-[var(--color-accent-soft)] border border-[var(--color-accent-ring)]/40" /> group covering the day (muted = nothing under it today)</span>
       </div>
 
+      {mode === "day" ? (
+        <DayAgendaPanel
+          inline
+          hidden={!!detailOpen}
+          planNow={planNow}
+          userId={userId}
+          day={ymd(focusDay, tz)}
+          tz={tz}
+          milestones={milestones}
+          childrenByParent={childrenByParent}
+          ancestorsOf={ancestorsOf}
+          progress={progress}
+          canEdit={canEdit}
+          onSetStatus={onSetStatus}
+          onSetProgress={onSetProgress}
+          onAddNote={onAddNote}
+          onSetProgressNote={onSetProgressNote}
+          onStartNote={onStartNote}
+          shiftTimes={shiftTimes}
+          onOpenDetail={(m) => { onOpenDetail(m); }}
+          onChangeDay={(k) => setFocusDay(ymdToDate(k, tz))}
+          onClose={() => setMode("month")}
+          colorOf={(top) => colorFor(top)}
+        />
+      ) : (<>
       {/* Weekday header */}
       <div className="grid grid-cols-7 border-b border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)]">
         {WEEKDAYS.map((d) => (
@@ -430,19 +507,17 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
 
       {/* Weeks */}
       <div className="flex-1">
-        {weeks.map((week, wi) => (
-          <div key={wi} className="grid grid-cols-7 border-b border-[var(--color-border)] last:border-b-0" style={{ minHeight: 116 }}>
+        {gridWeeks.map((week, wi) => (
+          <div key={wi} className="grid grid-cols-7 border-b border-[var(--color-border)] last:border-b-0" style={{ minHeight: mode === "week" ? "62vh" : 116 }}>
             {week.map((day) => {
               const key = ymd(day, tz);
               const items = byDay.get(key) ?? [];
               const bands = bandsByDay.get(key) ?? [];
-              const inMonth = wallClock(day.getTime(), tz).month === monthIdx;
+              const inMonth = mode === "week" || wallClock(day.getTime(), tz).month === monthIdx;
               const isToday = sameDayUTC(day, today, tz);
-              const shown = items.slice(0, 4);
-              const extra = items.length - shown.length;
-              const MAX_BANDS = 3;
-              const shownBands = bands.slice(0, MAX_BANDS);
-              const extraBands = bands.length - shownBands.length;
+              // Every task shows; a busy day scrolls inside its box.
+              const shown = items;
+              const shownBands = bands;
               return (
                 <div
                   key={key}
@@ -472,15 +547,13 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                       ⚠ {overdueToday.length} carried over — not done
                     </button>
                   )}
+                  <div className={`flex flex-col gap-1 overflow-y-auto overscroll-contain pr-0.5 -mr-0.5 ${mode === "week" ? "max-h-[60vh]" : "max-h-[280px]"}`}>
                   {/* Groups covering this day — root first. Solid = work
                       under it is scheduled today; muted = it only carries over. */}
                   {shownBands.map((b) => {
                     const color = colorFor(b.ms);
-                    return <Band key={`band-${b.ms.id}-${b.dayIndex}`} band={b} color={color} onClick={() => onOpenDetail(b.ms)} />;
+                    return <Band key={`band-${b.ms.id}-${b.dayIndex}`} band={b} color={color} full={mode === "week"} onClick={() => onOpenDetail(b.ms)} />;
                   })}
-                  {extraBands > 0 && (
-                    <button onClick={() => setAgendaDay(key)} className="text-[9px] font-bold text-[var(--color-text-faint)] hover:text-[var(--color-accent)] px-1 text-left transition-colors">+{extraBands} more group{extraBands === 1 ? "" : "s"}</button>
-                  )}
                   {shown.map((p) => {
                     const color = colorFor(p.ms);
                     const chain = ancestorsOf(p.ms);
@@ -509,25 +582,26 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                         onToggleExpand={canExpand && p.ms.id ? (e) => {
                           const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
                           setPopoverShowOthers(false);
-                          setSubPopover((cur) => cur && cur.ms.id === p.ms.id && cur.dayKey === key ? null : { ms: p.ms, top: r.bottom + 4, left: Math.min(r.left, window.innerWidth - 320), dayKey: key });
+                          setSubPopover((cur) => cur && cur.ms.id === p.ms.id && cur.dayKey === key ? null : { ms: p.ms, top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 348)), dayKey: key, anchorTop: r.top });
                         } : undefined}
                         selectable={canEdit && p.dayIndex === 0}
                         selected={!!p.ms.id && selected.has(p.ms.id)}
                         onToggleSelect={() => p.ms.id && toggleSelected(p.ms.id)}
                         dimmed={!!dragId && dragId === p.ms.id}
+                        full={mode === "week"}
                         shiftTimes={shiftTimes}
                       />
                     );
                   })}
-                  {extra > 0 && (
-                    <button onClick={() => setAgendaDay(key)} title="Open the day — every step, with progress entry" className="text-[10px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-1 text-left transition-colors">+{extra} more</button>
-                  )}
+                  </div>
                 </div>
               );
             })}
           </div>
         ))}
       </div>
+
+      </>)}
 
       {/* Sub-items popover — opens at the chip's chevron on a specific day
           tile. Shows the steps scheduled on THAT day (status dot, time,
@@ -590,7 +664,8 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         return (
           <div className="fixed inset-0 z-[160]" onClick={() => setSubPopover(null)}>
             <div
-              className="absolute w-[340px] max-w-[92vw] max-h-[60dvh] overflow-y-auto bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg animate-in fade-in zoom-in-95 duration-150"
+              ref={subRef}
+              className="absolute w-[340px] max-w-[92vw] max-h-[70dvh] overflow-y-auto bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg animate-in fade-in zoom-in-95 duration-150"
               style={{ top: subPopover.top, left: subPopover.left }}
               onClick={(e) => e.stopPropagation()}
             >
@@ -932,6 +1007,7 @@ function firstOfMonthUTC(d: Date, tz: string): Date { return new Date(startOfMon
 function addMonthsUTC(d: Date, n: number, tz: string): Date { return new Date(addMonthsTz(d.getTime(), n, tz)); }
 function addDaysUTC(d: Date, n: number, tz: string): Date { return new Date(addDaysTz(d.getTime(), n, tz)); }
 function dayDiff(a: Date, b: Date, tz: string): number { return dayDiffTz(a.getTime(), b.getTime(), tz); }
+function sameMonth(a: Date, b: Date, tz: string): boolean { const x = wallClock(a.getTime(), tz), y = wallClock(b.getTime(), tz); return x.year === y.year && x.month === y.month; }
 function sameDayUTC(a: Date, b: Date, tz: string): boolean { return ymd(a, tz) === ymd(b, tz); }
 function ymd(d: Date, tz: string): string { return dayKey(d.getTime(), tz); }
 function ymdToDate(s: string, tz: string): Date { return new Date(dayKeyToMs(s, tz)); }
