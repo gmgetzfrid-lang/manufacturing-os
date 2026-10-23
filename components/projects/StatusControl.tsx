@@ -20,7 +20,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Circle, Loader2, CircleCheck, PauseCircle, AlertTriangle, XCircle } from "lucide-react";
 import type { MilestoneStatus } from "@/types/schema";
-import { ProgressSlider } from "@/components/projects/ProgressControl";
+import { ProgressSlider, ProgressNoteForm } from "@/components/projects/ProgressControl";
 
 export const STATUS_ORDER: MilestoneStatus[] = ["planned", "in_progress", "completed", "on_hold", "blocked", "missed"];
 
@@ -61,9 +61,12 @@ interface Props {
    *  without opening the detail drawer). 100 ⇒ done, 0 ⇒ planned. */
   percent?: number;
   onSetProgress?: (percent: number) => void;
+  /** Starting work with a comment: "In progress" asks how far and what got
+   *  done, and saves both (status + % + note). */
+  onStartWithNote?: (percent: number, note: string) => Promise<unknown> | unknown;
 }
 
-export default function StatusControl({ status, onPick, disabled, onDisabledClick, busy, variant = "pill", size = "md", readOnly, title, percent, onSetProgress }: Props) {
+export default function StatusControl({ status, onPick, disabled, onDisabledClick, busy, variant = "pill", size = "md", readOnly, title, percent, onSetProgress, onStartWithNote }: Props) {
   const [open, setOpen] = useState(false);
   // Esc closes the menu.
   useEffect(() => {
@@ -95,7 +98,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
     if (disabled) return;
     if (btnRef.current) {
       const r = btnRef.current.getBoundingClientRect();
-      const left = Math.min(r.left, window.innerWidth - 188);
+      const left = Math.min(r.left, window.innerWidth - (onStartWithNote ? 312 : 188));
       setPos({ top: r.bottom + 4, left: Math.max(8, left), anchorTop: r.top });
     }
     setReasonFor(null);
@@ -107,7 +110,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
   const choose = (s: MilestoneStatus) => {
     // "In progress" with progress wiring → ask "how far?" right here instead of
     // committing a bare in_progress the user then has to open a drawer to set.
-    if (s === "in_progress" && onSetProgress) {
+    if (s === "in_progress" && (onSetProgress || onStartWithNote)) {
       setPctStep(true);
       return;
     }
@@ -174,7 +177,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
           <div className="fixed inset-0 z-[300]" onClick={() => setOpen(false)} />
           <div
             ref={menuRef}
-            className="fixed z-[310] w-[180px] bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg py-1 animate-in fade-in zoom-in-95 duration-150"
+            className={`fixed z-[310] ${pctStep && onStartWithNote ? "w-[300px] max-w-[calc(100vw-16px)]" : "w-[180px]"} bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg py-1 animate-in fade-in zoom-in-95 duration-150`}
             style={{ top: pos.top, left: pos.left }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -184,7 +187,10 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                   <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-text-faint)]">How far along?</span>
                   <button onClick={() => setPctStep(false)} className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Back</button>
                 </div>
-                <ProgressSlider
+                {onStartWithNote ? (
+                  <ProgressNoteForm percent={percent ?? 0} start busy={busy} onCancel={() => setOpen(false)}
+                    onSave={async (v, n) => { const ok = await onStartWithNote(v, n); if (ok !== false) setOpen(false); return ok; }} />
+                ) : <ProgressSlider
                   percent={seedPct}
                   commitSame
                   confirmLabel={(v) => (v >= 100 ? "Mark done" : `Start at ${v}%`)}
@@ -194,7 +200,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                   // blocked or on-hold task takes it off hold (a % alone keeps
                   // the hold — 40% done and still blocked is real).
                   onPick={(v) => { if (v >= 100) onPick("completed"); else onPick("in_progress", undefined, v); setOpen(false); }}
-                />
+                />}
               </div>
             ) : reasonFor ? (
               <div className="p-2">

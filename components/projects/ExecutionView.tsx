@@ -497,6 +497,24 @@ export default function ExecutionView({
     }
   }, [canEdit, onSetProgress, byId, announce, confirmFuture, restore]);
 
+  // Progress always comes with what got done (the line the next crew and
+  // the shift report read): the % (or "started") saves first, then the
+  // comment — nothing is written if the % was cancelled.
+  const addNote = useCallback(async (id: string, body: string) => {
+    const m = byId.get(id);
+    await addMilestoneNote({ orgId, milestoneId: id, kind: "note", statusAt: m?.status ?? null, body, createdBy: userId, createdByName: userName });
+  }, [byId, orgId, userId, userName]);
+  const progressWithNote = useCallback(async (id: string, pct: number, note: string): Promise<boolean> => {
+    const ok = await setProgress(id, pct);
+    if (ok && note) await addNote(id, note);
+    return ok;
+  }, [setProgress, addNote]);
+  const startWithNote = useCallback(async (id: string, pct: number, note: string): Promise<boolean> => {
+    const ok = pct >= 100 ? await setStatus(id, "completed") : await setStatus(id, "in_progress", undefined, pct);
+    if (ok && note) await addNote(id, note);
+    return ok;
+  }, [setStatus, addNote]);
+
   // Delete the selection — with everything under a selected phase when the
   // person says so — and offer Undo, which brings back the tasks, their
   // comments and their place in the outline.
@@ -951,10 +969,9 @@ export default function ExecutionView({
           onOpenDetail={(m) => m.id && setDetailId(m.id)}
           detailOpen={detailId != null}
           shiftTimes={shiftTimes}
-          onAddNote={async (id, body) => {
-            const m = byId.get(id);
-            await addMilestoneNote({ orgId, milestoneId: id, kind: "note", statusAt: m?.status ?? null, body, createdBy: userId, createdByName: userName });
-          }}
+          onAddNote={addNote}
+          onSetProgressNote={progressWithNote}
+          onStartNote={startWithNote}
         />
       ) : (
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden flex flex-col">
@@ -1011,6 +1028,8 @@ export default function ExecutionView({
                   onToggleSelected={() => r.ms.id && toggleSelected(r.ms.id)}
                   onSetStatus={(s, reason, p) => { if (r.ms.id) void setStatus(r.ms.id, s, reason, p); }}
                   onSetProgress={(p) => { if (r.ms.id) void setProgress(r.ms.id, p); }}
+                  onSetProgressNote={(p, n) => (r.ms.id ? progressWithNote(r.ms.id, p, n) : false)}
+                  onStartNote={(p, n) => (r.ms.id ? startWithNote(r.ms.id, p, n) : false)}
                   onSetDuration={() => setDurationFor(r.ms)}
                   onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
                   onViewOnly={notifyViewOnly}
@@ -1306,11 +1325,13 @@ function Toolbar({
 
 function OutlineRow({
   row, span, work, color, collapsed, selected, focused, canEdit, busy,
-  onToggleCollapse, onToggleSelected, onSetStatus, onSetProgress, onSetDuration, onOpenDetail, onViewOnly, onSequence,
+  onToggleCollapse, onToggleSelected, onSetStatus, onSetProgress, onSetProgressNote, onStartNote, onSetDuration, onOpenDetail, onViewOnly, onSequence,
 }: {
   row: FlatRow; span: { start: number; finish: number }; work: WorkShift | null; color: GroupColor; collapsed: boolean; selected: boolean; focused?: boolean; canEdit: boolean; busy: boolean;
   onToggleCollapse: () => void; onToggleSelected: () => void;
   onSetStatus: (s: MilestoneStatus, reason?: string, percent?: number) => void; onSetProgress: (percent: number) => void;
+  onSetProgressNote: (percent: number, note: string) => Promise<boolean> | boolean;
+  onStartNote: (percent: number, note: string) => Promise<boolean> | boolean;
   onSetDuration: () => void; onOpenDetail: () => void;
   onViewOnly?: () => void; onSequence?: () => void;
 }) {
@@ -1355,7 +1376,7 @@ function OutlineRow({
       {hasChildren ? (
         <StatusControl status={derivedStatus} variant="dot" size="md" readOnly title="Phase status — rolls up from sub-tasks" onPick={() => {}} />
       ) : (
-        <StatusControl status={ms.status} busy={busy} disabled={!canEdit} onDisabledClick={onViewOnly} variant="dot" size="md" onPick={onSetStatus} percent={pct} onSetProgress={onSetProgress} />
+        <StatusControl status={ms.status} busy={busy} disabled={!canEdit} onDisabledClick={onViewOnly} variant="dot" size="md" onPick={onSetStatus} percent={pct} onSetProgress={onSetProgress} onStartWithNote={onStartNote} />
       )}
 
       <button
@@ -1389,7 +1410,7 @@ function OutlineRow({
         </div>
       ) : (
         // Leaf: editable % complete.
-        <ProgressControl percent={pct} onPick={onSetProgress} disabled={!canEdit} onDisabledClick={onViewOnly} busy={busy} size="sm" />
+        <ProgressControl percent={pct} onPick={onSetProgress} onSaveWithNote={onSetProgressNote} disabled={!canEdit} onDisabledClick={onViewOnly} busy={busy} size="sm" />
       )}
       {canEdit && !ms.isSummary && (
         <button onClick={onSetDuration} title="Set duration" className="shrink-0 p-1 rounded text-slate-300 hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] opacity-60 sm:opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity">

@@ -102,12 +102,96 @@ export function ProgressSlider({ percent, onPick, disabled, busy, commitSame, co
   );
 }
 
+// ── % with a comment ──────────────────────────────────────────────
+// Work in progress always says what got done — that line is what the next
+// crew and the shift report read. One tap picks the %, the comment box is
+// ready to type in, Enter saves both. Done and 0 % don't need a comment.
+
+export const PICK_PCTS = [0, 10, 25, 50, 75, 90, 100];
+
+/** Does saving this % need a comment? Anything under way does. */
+export const needsComment = (pct: number | null) => pct != null && pct > 0 && pct < 100;
+
+export function ProgressNoteForm({ percent, start, onSave, onCancel, busy, autoFocus = true }: {
+  percent: number;
+  /** Starting work ("In progress"): a pick is required, even the current %. */
+  start?: boolean;
+  /** Saves the % and the comment together; false = not saved. */
+  onSave: (percent: number, note: string) => Promise<unknown> | unknown;
+  onCancel?: () => void;
+  busy?: boolean;
+  autoFocus?: boolean;
+}) {
+  const cur = clamp(percent);
+  const [pick, setPick] = useState<number | null>(start ? (cur > 0 && cur < 100 ? cur : null) : null);
+  const [typed, setTyped] = useState("");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const noteRef = useRef<HTMLInputElement>(null);
+  const pctRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (autoFocus) pctRef.current?.focus(); }, [autoFocus]);
+  const choose = (v: number) => { setPick(clamp(v)); setTyped(""); setMsg(null); setTimeout(() => noteRef.current?.focus(), 0); };
+  const value = pick ?? (start ? null : cur);
+  // A new %, or the same % with a fresh comment ("still 25 — waiting on
+  // the crane") — both worth saving.
+  const changed = pick != null && (start || pick !== cur || !!note.trim());
+  // Starting work needs a word even at 0 % ("rigging set, waiting on crane").
+  const wantsNote = start ? pick != null && pick < 100 : needsComment(pick);
+  const missing = wantsNote && !note.trim();
+  const ready = changed && !missing && !saving && !busy;
+  const save = async () => {
+    if (!changed) { setMsg("Pick a %."); return; }
+    if (missing) { setMsg("Say what got done — it goes on the shift report."); noteRef.current?.focus(); return; }
+    setSaving(true);
+    try {
+      const ok = await onSave(pick!, note.trim());
+      if (ok === false) setMsg("Not saved.");
+    } catch (e) { setMsg((e as Error).message || "Not saved."); }
+    finally { setSaving(false); }
+  };
+  return (
+    <div className="w-full space-y-2 text-[11px]">
+      <div className="flex items-center gap-1 flex-wrap">
+        {PICK_PCTS.map((v) => (
+          <button key={v} type="button" disabled={busy || saving} onClick={() => choose(v)}
+            className={`h-8 min-w-[36px] px-1.5 rounded-md border font-bold tabular-nums pointer-coarse:h-10 ${value === v ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-[var(--color-accent)]" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"} disabled:opacity-50`}>
+            {v === 100 ? "Done" : v}
+          </button>
+        ))}
+        <span className="inline-flex items-center gap-0.5">
+          <input ref={pctRef} value={typed} inputMode="numeric" placeholder={String(value ?? cur)} aria-label="Percent done"
+            onChange={(e) => { const t = e.target.value.replace(/[^0-9]/g, "").slice(0, 3); setTyped(t); if (t !== "") { setPick(clamp(Number(t))); setMsg(null); } }}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (typed !== "") choose(Number(typed)); } }}
+            className="h-8 w-11 px-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-right font-bold tabular-nums pointer-coarse:h-10 focus:outline-none focus:border-[var(--color-accent-ring)]" />
+          <span className="font-bold text-[var(--color-text-muted)]">%</span>
+        </span>
+      </div>
+      <input ref={noteRef} value={note} onChange={(e) => { setNote(e.target.value); setMsg(null); }}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void save(); } if (e.key === "Escape" && onCancel) { e.stopPropagation(); onCancel(); } }}
+        placeholder={wantsNote ? "What got done? (needed for work in progress)" : "Comment (optional)"}
+        className={`w-full h-8 px-2 rounded-md border bg-[var(--color-surface)] pointer-coarse:h-10 focus:outline-none focus:border-[var(--color-accent-ring)] ${missing && msg ? "border-rose-400" : "border-[var(--color-border-strong)]"}`} />
+      {msg && <div className="text-rose-700 dark:text-rose-400 font-semibold">{msg}</div>}
+      <div className="flex items-center gap-2">
+        {onCancel && <button type="button" onClick={onCancel} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>}
+        <button type="button" disabled={!ready} onClick={() => void save()}
+          className="ml-auto h-8 px-3 rounded-md font-black bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 pointer-coarse:h-10">
+          {saving ? "Saving…" : pick === 100 ? "Mark done" : pick != null ? `Save ${pick}%` : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 interface ChipProps extends SliderProps {
+  /** Saves the % with a comment (required for work in progress). When
+   *  given, the chip opens the comment form instead of the bare slider. */
+  onSaveWithNote?: (percent: number, note: string) => Promise<unknown> | unknown;
   onDisabledClick?: () => void;
   size?: "sm" | "md";
 }
 
-export default function ProgressControl({ percent, onPick, disabled, onDisabledClick, busy, size = "md" }: ChipProps) {
+export default function ProgressControl({ percent, onPick, disabled, onDisabledClick, busy, size = "md", onSaveWithNote }: ChipProps) {
   const [open, setOpen] = useState(false);
   // Esc closes the menu.
   useEffect(() => {
@@ -132,7 +216,7 @@ export default function ProgressControl({ percent, onPick, disabled, onDisabledC
     if (disabled) { onDisabledClick?.(); return; }
     if (btnRef.current) {
       const r = btnRef.current.getBoundingClientRect();
-      setPos({ top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 240)), anchorTop: r.top });
+      setPos({ top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - (onSaveWithNote ? 312 : 240))), anchorTop: r.top });
     }
     setOpen((v) => !v);
   };
@@ -161,12 +245,17 @@ export default function ProgressControl({ percent, onPick, disabled, onDisabledC
           <div className="fixed inset-0 z-[300]" onClick={() => setOpen(false)} />
           <div
             ref={menuRef}
-            className="fixed z-[310] w-[224px] bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg p-3 animate-in fade-in zoom-in-95 duration-150"
+            className={`fixed z-[310] ${onSaveWithNote ? "w-[300px] max-w-[calc(100vw-16px)]" : "w-[224px]"} bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg p-3 animate-in fade-in zoom-in-95 duration-150`}
             style={{ top: pos.top, left: pos.left }}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* A pick saves and closes — one click per task. */}
-            <ProgressSlider percent={pct} onPick={(v) => { onPick(v); setOpen(false); }} busy={busy} />
+            {onSaveWithNote ? (
+              <ProgressNoteForm percent={pct} busy={busy} onCancel={() => setOpen(false)}
+                onSave={async (v, n) => { const ok = await onSaveWithNote(v, n); if (ok !== false) setOpen(false); return ok; }} />
+            ) : (
+              /* A pick saves and closes — one click per task. */
+              <ProgressSlider percent={pct} onPick={(v) => { onPick(v); setOpen(false); }} busy={busy} />
+            )}
           </div>
         </>,
         document.body,

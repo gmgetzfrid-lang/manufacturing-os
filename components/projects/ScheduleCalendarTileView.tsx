@@ -62,13 +62,17 @@ interface Props {
   detailOpen?: boolean;
   /** Add a note to a step's log (what got done, what's turned over). */
   onAddNote?: (id: string, body: string) => Promise<void> | void;
+  /** Set a step's % with what got done (required for work in progress). */
+  onSetProgressNote?: (id: string, percent: number, note: string) => Promise<boolean> | boolean;
+  /** Start a step ("in progress") with what got done. */
+  onStartNote?: (id: string, percent: number, note: string) => Promise<boolean> | boolean;
   /** The project's shift-change times — which crew does each step. */
   shiftTimes?: ShiftTimes;
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-export default function ScheduleCalendarTileView({ planNow, userId, milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail, detailOpen, onAddNote, shiftTimes = DEFAULT_SHIFT_TIMES }: Props) {
+export default function ScheduleCalendarTileView({ planNow, userId, milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail, detailOpen, onAddNote, onSetProgressNote, onStartNote, shiftTimes = DEFAULT_SHIFT_TIMES }: Props) {
   const tz = useScheduleTz();
   // Multi-select for bulk actions on the calendar (mirrors the timeline).
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -497,6 +501,8 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                         onClick={() => { if (selected.size > 0 && p.ms.id) toggleSelected(p.ms.id); else onOpenDetail(p.ms); }}
                         onSetStatus={onSetStatus}
                         onSetProgress={onSetProgress}
+                        onSetProgressNote={onSetProgressNote}
+                        onStartNote={onStartNote}
                         progress={progress}
                         canExpand={canExpand}
                         isExpanded={subPopover?.ms.id === p.ms.id}
@@ -555,6 +561,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                 onPick={(st, reason, p) => { if (leaf.id && onSetStatus) void onSetStatus(leaf.id, st, reason, p); }}
                 percent={pctOf(leaf)}
                 onSetProgress={onSetProgress ? (v) => { if (leaf.id) onSetProgress(leaf.id, v); } : undefined}
+                onStartWithNote={onStartNote && leaf.id ? (v, n) => onStartNote(leaf.id!, v, n) : undefined}
               />
             </span>
             <button onClick={() => { onOpenDetail(leaf); setSubPopover(null); }} className="flex-1 min-w-0 text-left">
@@ -567,6 +574,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
               <ProgressControl
                 percent={pctOf(leaf)}
                 onPick={(v) => { if (leaf.id && onSetProgress) onSetProgress(leaf.id, v); }}
+                onSaveWithNote={onSetProgressNote && leaf.id ? (v, n) => onSetProgressNote(leaf.id!, v, n) : undefined}
                 disabled={!canEdit || !onSetProgress || !leaf.id}
                 size="sm"
               />
@@ -645,6 +653,8 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           onSetStatus={onSetStatus}
           onSetProgress={onSetProgress}
           onAddNote={onAddNote}
+          onSetProgressNote={onSetProgressNote}
+          onStartNote={onStartNote}
           shiftTimes={shiftTimes}
           onOpenDetail={(m) => { onOpenDetail(m); }}
           onChangeDay={setAgendaDay}
@@ -697,7 +707,7 @@ function Band({ band, color, onClick, full }: {
 
 function Chip({
   ms, dayIndex, spanDays, todayStart, todayEnd, idleToday, childrenByParent, ancestors, color, canEdit, draggable, onDragStart, onTouchDragStart, onClick,
-  onSetStatus, onSetProgress, progress, canExpand, isExpanded, onToggleExpand, selectable, selected, onToggleSelect, dimmed, full, shiftTimes,
+  onSetStatus, onSetProgress, onSetProgressNote, onStartNote, progress, canExpand, isExpanded, onToggleExpand, selectable, selected, onToggleSelect, dimmed, full, shiftTimes,
 }: {
   ms: Milestone; dayIndex: number; spanDays: number;
   /** This day's active window (see DayPlacement). */
@@ -712,6 +722,8 @@ function Chip({
   onClick: () => void;
   onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => unknown;
   onSetProgress?: (id: string, percent: number) => unknown;
+  onSetProgressNote?: (id: string, percent: number, note: string) => Promise<boolean> | boolean;
+  onStartNote?: (id: string, percent: number, note: string) => Promise<boolean> | boolean;
   progress?: Map<string, ProgressInfo>;
   shiftTimes?: ShiftTimes;
   canExpand?: boolean; isExpanded?: boolean; onToggleExpand?: (e: React.MouseEvent) => void;
@@ -821,6 +833,7 @@ function Chip({
               onPick={(st, reason, p) => { if (ms.id && onSetStatus) onSetStatus(ms.id, st, reason, p); }}
               percent={pct}
               onSetProgress={onSetProgress ? (p) => { if (ms.id) onSetProgress(ms.id, p); } : undefined}
+              onStartWithNote={onStartNote && ms.id ? (p, n) => onStartNote(ms.id!, p, n) : undefined}
             />
           ) : (
             <StatusControl status={effStatus} size="sm" variant="dot" readOnly title="Phase status — rolls up from sub-tasks" onPick={() => {}} />
@@ -887,6 +900,7 @@ function Chip({
           <ProgressControl
             percent={pct}
             onPick={(p) => { if (ms.id && onSetProgress) onSetProgress(ms.id, p); }}
+            onSaveWithNote={onSetProgressNote && ms.id ? (p, n) => onSetProgressNote(ms.id!, p, n) : undefined}
             disabled={!canEdit || !onSetProgress || !ms.id}
             size="sm"
           />
