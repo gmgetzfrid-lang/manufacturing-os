@@ -345,3 +345,12 @@ describe("sweep 3 fixes", () => {
     expect(r.rows[1].externalRef).toBe("csv-key:heater #1␟2");
   });
 });
+
+describe("sweep 4 fixes", () => {
+  it("a decimal-comma lag doesn't invent a link", () => {
+    const csv = "id\tname\tstart\tfinish\tpredecessors\n1\tA\t2026-10-26 06:00\t2026-10-26 08:00\t\n2\tB\t2026-10-26 08:00\t2026-10-26 10:00\t\n3\tC\t2026-10-26 10:00\t2026-10-26 12:00\t\n4\tD\t2026-10-26 12:00\t2026-10-26 14:00\t2FS+1,5d;3\n";
+    const d = parseScheduleFile("s.csv", csv, { timeZone: CHI }).rows.find((r) => r.name === "D")!;
+    expect(d.dependsOnExternalRefs).toEqual(["csv:2", "csv:3"]);
+    expect(d.linksByRef?.["csv:2"]).toEqual({ type: "FS", lagHours: 36 });
+  });
+});

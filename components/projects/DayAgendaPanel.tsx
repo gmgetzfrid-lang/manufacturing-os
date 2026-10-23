@@ -34,6 +34,9 @@ interface Props {
   day: string; // "YYYY-MM-DD" in the plant zone
   /** Kept mounted but out of sight (a task's details are open on top). */
   hidden?: boolean;
+  /** Each task's planned % by now over ALL its steps (a crew or search
+   *  filter mustn't shrink the plan behind "x% of y% planned"). */
+  planNow?: Map<string, number>;
   tz: string;
   milestones: Milestone[];
   childrenByParent: Map<string, Milestone[]>;
@@ -74,7 +77,7 @@ interface EquipmentGroup {
 
 export default function DayAgendaPanel({
   day, tz, milestones, childrenByParent, ancestorsOf, progress, canEdit,
-  onSetStatus, onSetProgress, onAddNote, onOpenDetail, onChangeDay, onClose, colorOf, shiftTimes = DEFAULT_SHIFT_TIMES, hidden,
+  onSetStatus, onSetProgress, onAddNote, onOpenDetail, onChangeDay, onClose, colorOf, shiftTimes = DEFAULT_SHIFT_TIMES, hidden, planNow: planNowAll,
 }: Props) {
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
@@ -160,7 +163,8 @@ export default function DayAgendaPanel({
   // Where the plan has each piece of equipment right now — "19% of 25%
   // planned" beside its progress.
   const [nowMs] = useState(() => Date.now());
-  const planNow = useMemo(() => expectedByParent(milestones, nowMs, tz, shiftTimes), [milestones, nowMs, tz, shiftTimes]);
+  const planNowHere = useMemo(() => (planNowAll ? null : expectedByParent(milestones, nowMs, tz, shiftTimes)), [planNowAll, milestones, nowMs, tz, shiftTimes]);
+  const planNow = planNowAll ?? planNowHere ?? new Map<string, number>();
   const pctOf = (m: Milestone) =>
     (m.id ? progress?.get(m.id)?.percent : undefined) ?? (m.percentComplete != null ? Math.round(m.percentComplete) : (m.status === "completed" ? 100 : 0));
 

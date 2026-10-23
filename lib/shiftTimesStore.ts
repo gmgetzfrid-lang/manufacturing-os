@@ -50,12 +50,18 @@ export async function saveProjectShiftTimes(projectId: string, t: ShiftTimes): P
   const problem = shiftTimesProblem(t);
   if (problem) throw new Error(problem);
   const clean = { dayStart: t.dayStart.trim().padStart(5, "0"), nightStart: t.nightStart.trim().padStart(5, "0") };
-  const { error } = await supabase.from("projects").update({ shift_times: clean }).eq("id", projectId);
-  cache(projectId, clean);
+  const { data, error } = await supabase.from("projects").update({ shift_times: clean }).eq("id", projectId).select("id");
   if (error) {
-    if (/shift_times/.test(error.message)) throw new Error("Saved on this device only — run migration 20261027_project_shift_times.sql so everyone on the project gets these times.");
-    throw new Error(`Saved on this device only: ${error.message}`);
+    // The column isn't there yet: keep them on this device meanwhile.
+    if (/shift_times/.test(error.message)) {
+      cache(projectId, clean);
+      throw new Error("Saved on this device only — run migration 20261027_project_shift_times.sql so everyone on the project gets these times.");
+    }
+    throw new Error(`Not saved: ${error.message}`);
   }
+  // The database saved nothing (not allowed to change this project).
+  if (!data || data.length === 0) throw new Error("Not saved — only the project owner or an admin can change the shift times.");
+  cache(projectId, clean);
 }
 
 /** The project's shift times, kept current: loads once, follows changes

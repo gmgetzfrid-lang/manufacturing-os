@@ -43,6 +43,8 @@ interface Props {
   onMoveDays?: (id: string, deltaDays: number) => void;
   /** One-click status change straight from a chip. */
   onSetStatus?: (id: string, status: MilestoneStatus, reason?: string, percent?: number) => unknown;
+  /** Planned % by now per task, over the whole schedule (for the day list). */
+  planNow?: Map<string, number>;
   /** Set a leaf's physical % complete (derives status). */
   onSetProgress?: (id: string, percent: number) => unknown;
   /** Per-task effective progress + derived status (leaves: own; summaries:
@@ -64,7 +66,7 @@ interface Props {
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-export default function ScheduleCalendarTileView({ milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail, detailOpen, onAddNote, shiftTimes = DEFAULT_SHIFT_TIMES }: Props) {
+export default function ScheduleCalendarTileView({ planNow, milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail, detailOpen, onAddNote, shiftTimes = DEFAULT_SHIFT_TIMES }: Props) {
   const tz = useScheduleTz();
   // Multi-select for bulk actions on the calendar (mirrors the timeline).
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -629,6 +631,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
       {agendaDay && (
         <DayAgendaPanel
           hidden={!!detailOpen}
+          planNow={planNow}
           day={agendaDay}
           tz={tz}
           milestones={milestones}

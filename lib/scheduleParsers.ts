@@ -773,7 +773,8 @@ function parseCsvLikeWithSynonyms(text: string, tz: string, syn: SynonymSpec, re
     if (iPred >= 0 && iId >= 0) {
       const raw = cell(iPred);
       if (raw) {
-        const parsed = raw.split(/[;,]/).map((tok) => parseLinkToken(tok)).filter((x): x is NonNullable<typeof x> => !!x);
+        // ";" separates links when present ("2FS+1,5d;3" has a decimal comma).
+        const parsed = raw.split(raw.includes(";") ? ";" : ",").map((tok) => parseLinkToken(tok.replace(/(\d),(\d)/g, "$1.$2"))).filter((x): x is NonNullable<typeof x> => !!x);
         if (parsed.length) dependsOnExternalRefs = parsed.map((p) => `${refTag}:${p.id}`);
         for (const p of parsed) if (p.link.type !== "FS" || p.link.lagHours) (linksByRef ??= {})[`${refTag}:${p.id}`] = p.link;
         roughLinks += parsed.filter((p) => p.approx).length;

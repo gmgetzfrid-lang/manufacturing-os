@@ -68,8 +68,12 @@ export default function ScheduleProgress({ milestones, metrics, projectId }: Pro
   const planPct = r.expectedPct;
   const spi = planPct > 0 ? earnedPct / planPct : 1;
   const verdict = standingOf(earnedPct, planPct);
-  const slipDays = metrics.plannedEndAt && metrics.forecastEndAt
-    ? Math.round((new Date(metrics.forecastEndAt).getTime() - new Date(metrics.plannedEndAt).getTime()) / 86400000)
+  // Forecast from the same report as the verdict above: the finish at the
+  // pace so far, against the planned finish (whole plant days).
+  const forecastEndAt = r.forecastFinish;
+  const plannedEndAt = r.finish;
+  const slipDays = forecastEndAt && plannedEndAt
+    ? Math.max(0, dayDiffTz(Date.parse(plannedEndAt), Date.parse(forecastEndAt), tz))
     : 0;
 
   return (
@@ -123,18 +127,18 @@ export default function ScheduleProgress({ milestones, metrics, projectId }: Pro
         <div className={`rounded-2xl p-4 border ${
           slipDays > 0
             ? "bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800"
-            : metrics.forecastEndAt
+            : forecastEndAt
               ? "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800"
               : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
         }`}>
           <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Forecast end</div>
           <div className="text-lg font-black text-[var(--color-text)] mt-1">
-            {metrics.forecastEndAt ? humanDate(metrics.forecastEndAt, tz) : metrics.plannedEndAt ? humanDate(metrics.plannedEndAt, tz) : "—"}
+            {forecastEndAt ? humanDate(forecastEndAt, tz) : plannedEndAt ? humanDate(plannedEndAt, tz) : "—"}
           </div>
           <div className={`text-[11px] mt-1 inline-flex items-center gap-1 ${slipDays > 0 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}`}>
             {slipDays > 0
               ? <><AlertTriangle className="w-3 h-3" /> {slipDays}d slip vs plan</>
-              : metrics.forecastEndAt ? <><CheckCircle2 className="w-3 h-3" /> On track</> : "Plan not yet set"
+              : forecastEndAt ? <><CheckCircle2 className="w-3 h-3" /> On track</> : "Plan not yet set"
             }
           </div>
           {overdue.length > 0 && (

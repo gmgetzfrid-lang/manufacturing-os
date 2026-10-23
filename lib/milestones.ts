@@ -272,7 +272,12 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
     priorFinish = (before as { planned_at: string } | null)?.planned_at ?? null;
   }
 
-  const { data, error } = await supabase.from("milestones").update(update).eq("id", input.id).select("*").single();
+  let { data, error } = await supabase.from("milestones").update(update).eq("id", input.id).select("*").single();
+  // Before the link-types migration: save the rest (links as finish-to-start).
+  if (error && "link_types" in update && looksLikeUnknownColumn(error.message)) {
+    delete update.link_types;
+    ({ data, error } = await supabase.from("milestones").update(update).eq("id", input.id).select("*").single());
+  }
   if (error || !data) throw new Error(error?.message ?? "Failed to update milestone");
   const m = rowToMilestone(data as MilestoneRow);
 

@@ -49,7 +49,7 @@ import { addDays as addDaysTz, dayDiff as dayDiffTz, dayKey, dayOfWeek, fmtInTz,
 import { needsFutureConfirm } from "@/lib/scheduleRules";
 import { startMsOf as plannedStartMsOf } from "@/lib/calendarPlacement";
 import { effectiveSpans, byStart, spanLabel, barGeometry, xAt, hourStep, startOf as timedStart, finishOf as timedFinish } from "@/lib/scheduleTime";
-import { isOverdue, standingOf, workShiftOf, type ShiftTimes, type WorkShift } from "@/lib/shiftReport";
+import { expectedByParent, isOverdue, standingOf, workShiftOf, type ShiftTimes, type WorkShift } from "@/lib/shiftReport";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
 import { linkOf } from "@/lib/scheduleLinks";
 import ShiftMark from "@/components/projects/ShiftMark";
@@ -377,6 +377,8 @@ export default function ExecutionView({
   // eslint-disable-next-line react-hooks/exhaustive-deps -- "today" changes when the plant day does, not every minute
   const today = useMemo(() => startOfDayUTC(new Date(nowMs), tz), [tz, todayKey]);
   const nowDate = useMemo(() => new Date(nowMs), [nowMs]);
+  // Each task's planned % by now over the whole schedule (not a filtered view).
+  const planNowAll = useMemo(() => expectedByParent(items, nowMs, tz, shiftTimes), [items, nowMs, tz, shiftTimes]);
   // The red line is NOW, at its clock time — not the middle of today.
   const todayX = domain ? xAt(nowMs, domain.start.getTime(), pxPerDay, tz) : -1;
 
@@ -932,6 +934,7 @@ export default function ExecutionView({
         <ShiftReportView milestones={items} progress={progressIndex} criticalIds={critical.ids} projectId={projectId} projectName={projectName} />
       ) : layout === "calendar" ? (
         <ScheduleCalendarTileView
+          planNow={planNowAll}
           milestones={visibleItems}
           childrenByParent={childrenOf}
           canEdit={canEdit}
