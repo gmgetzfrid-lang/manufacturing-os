@@ -394,6 +394,8 @@ export default function TaskDetailPanel({
 
               {/* Dependencies (finish-to-start) */}
               <DependencyEditor
+                // A fresh editor per task: nothing typed on one carries to the next.
+                key={m.id}
                 milestone={m}
                 allTasks={allTasks ?? []}
                 canEdit={canEdit}

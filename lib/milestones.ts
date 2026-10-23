@@ -1495,7 +1495,7 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
         let { data: existing } = await q.maybeSingle();
         if (!existing && legacyByKey.size > 0) {
           // "csv-key:e-12 › pull bundle #2" → the 2nd old row on that path.
-          const m = (r.externalRef ?? "").match(/-key:(.*?)(?: #(\d+))?$/);
+          const m = (r.externalRef ?? "").match(/-key:(.*?)(?:\u241F(\d+))?$/);
           const ids = m ? legacyByKey.get(m[1]) ?? [] : [];
           const oldId = ids[(m?.[2] ? Number(m[2]) : 1) - 1];
           if (oldId && !takenLegacy.has(oldId)) {

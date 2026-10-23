@@ -19,6 +19,7 @@ import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { dayDiff as dayDiffTz, fmtInTz } from "@/lib/scheduleTz";
 import { isOverdue, standingOf } from "@/lib/shiftReport";
 import { computeExecutionReport } from "@/lib/executionReport";
+import { useShiftTimes } from "@/lib/shiftTimesStore";
 import {
   TrendingUp, TrendingDown, Flag, AlertTriangle, CalendarClock,
   CheckCircle2, Circle, PauseCircle, MinusCircle, XCircle,
@@ -29,6 +30,8 @@ import type { ScheduleMetrics } from "@/lib/milestones";
 interface Props {
   milestones: Milestone[];
   metrics: ScheduleMetrics;
+  /** For the project's shift-change times (plan by now runs on them). */
+  projectId?: string;
 }
 
 const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: string; Icon: React.ComponentType<{ className?: string }> }> = {
@@ -41,7 +44,7 @@ const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: s
   on_hold:     { label: "On hold",     tone: "text-amber-700 dark:text-amber-300",   bar: "bg-amber-500",   Icon: PauseCircle },
 };
 
-export default function ScheduleProgress({ milestones, metrics }: Props) {
+export default function ScheduleProgress({ milestones, metrics, projectId }: Props) {
   const tz = useScheduleTz();
   const total = milestones.length;
   const today = new Date(); today.setHours(0,0,0,0);
@@ -59,7 +62,8 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
 
   // The same % complete, plan by now and verdict as the reports and the
   // board (one weighting, one rule) — not a separate count.
-  const r = computeExecutionReport(milestones, { tz, now: new Date(nowMs) });
+  const shiftTimes = useShiftTimes(projectId);
+  const r = computeExecutionReport(milestones, { tz, now: new Date(nowMs), shiftTimes });
   const earnedPct = r.pctComplete;
   const planPct = r.expectedPct;
   const spi = planPct > 0 ? earnedPct / planPct : 1;

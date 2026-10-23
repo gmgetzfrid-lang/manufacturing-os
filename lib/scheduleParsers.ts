@@ -739,6 +739,7 @@ function parseCsvLikeWithSynonyms(text: string, tz: string, syn: SynonymSpec, re
   if (order.dayFirst) warnings.push("Dates read as day/month/year (the file has dates like 15/08 that only work that way).");
   if (order.ambiguous) warnings.push("Some dates only work as day/month and others only as month/day — check the dates after import.");
   let badDates = 0;
+  let roughLinks = 0;
 
   let dropped = 0;
   let rowIndex = 0; // stable index used for synthetic refs / hierarchy
@@ -775,6 +776,7 @@ function parseCsvLikeWithSynonyms(text: string, tz: string, syn: SynonymSpec, re
         const parsed = raw.split(/[;,]/).map((tok) => parseLinkToken(tok)).filter((x): x is NonNullable<typeof x> => !!x);
         if (parsed.length) dependsOnExternalRefs = parsed.map((p) => `${refTag}:${p.id}`);
         for (const p of parsed) if (p.link.type !== "FS" || p.link.lagHours) (linksByRef ??= {})[`${refTag}:${p.id}`] = p.link;
+        roughLinks += parsed.filter((p) => p.approx).length;
       }
     }
 
@@ -819,6 +821,7 @@ function parseCsvLikeWithSynonyms(text: string, tz: string, syn: SynonymSpec, re
   // slide every later row's progress and comments onto the wrong task.
   if (iId < 0) stableRowKeys(rows, refTag);
 
+  if (roughLinks > 0) warnings.push(`${roughLinks} predecessor link${roughLinks === 1 ? "" : "s"} had a lag that can't be kept (like a % of the other task) or text that couldn't be read — kept as plain finish-to-start. Check ${roughLinks === 1 ? "it" : "them"} on the task.`);
   if (badDates > 0) warnings.push(`${badDates} date${badDates === 1 ? "" : "s"} couldn't be read (like a month 13 or Feb 30) — ${badDates === 1 ? "that row was" : "those rows were"} skipped or left without a start.`);
   if (dropped - badDates > 0) warnings.push(`${dropped - badDates} row${dropped - badDates === 1 ? "" : "s"} skipped (missing name or date).`);
   return { rows, warnings };
@@ -845,7 +848,9 @@ function stableRowKeys(rows: ParsedMilestone[], refTag: string): void {
     const base = r.wbs ? `wbs ${norm(r.wbs)}` : pathOf(r);
     const n = (counts.get(base) ?? 0) + 1;
     counts.set(base, n);
-    if (r.externalRef) rename.set(r.externalRef, `${refTag}-key:${base}${n > 1 ? ` #${n}` : ""}`);
+    // Repeats are numbered after a mark no task name uses (\u241F), so
+    // "Heater #1" stays its own name.
+    if (r.externalRef) rename.set(r.externalRef, `${refTag}-key:${base}${n > 1 ? `\u241F${n}` : ""}`);
   }
   for (const r of rows) {
     if (r.externalRef) r.externalRef = rename.get(r.externalRef) ?? r.externalRef;

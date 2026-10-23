@@ -55,19 +55,33 @@ export function linkShort(l: LinkSpec): string {
   return `${l.type}${lag}`;
 }
 
-/** Read "2SS+1d", "5FF-4h", "3" (MS Project / CSV predecessor text) into
- *  the predecessor's id and its link. Days count as 24 h unless `dayHours`
- *  says how many working hours a day is. */
-export function parseLinkToken(tok: string, dayHours = 24): { id: string; link: LinkSpec } | null {
-  const m = tok.trim().match(/^(\d+)\s*(FS|SS|FF|SF)?\s*(?:([+-])\s*(\d+(?:\.\d+)?)\s*(d|day|days|h|hr|hrs|hour|hours|w|wk|wks|week|weeks)?)?$/i);
-  if (!m) return null;
+/** Read "2SS+1d", "5FF-4h", "1FS+30m", "2FS+1ed", "4SS+50%", "3" (MS
+ *  Project / CSV predecessor text) into the predecessor's id and its link.
+ *  Units: m / h / d / w / mo, with or without MS Project's "e" (elapsed);
+ *  days count as `dayHours` (24 unless told). A lag the schedule can't
+ *  express here (a % of the predecessor) or text it can't read still keeps
+ *  the predecessor — finish-to-start, `approx` set so the import can say
+ *  so. Null only when there's no predecessor id at all. */
+export function parseLinkToken(tok: string, dayHours = 24): { id: string; link: LinkSpec; approx?: boolean } | null {
+  const t = tok.trim();
+  const m = t.match(/^(\d+)\s*(FS|SS|FF|SF)?\s*(?:([+-])\s*(\d+(?:\.\d+)?)\s*(e?(?:mo|mons?|months?|m|mins?|minutes?|h|hrs?|hours?|d|days?|w|wks?|weeks?)|%)?)?$/i);
+  if (!m) {
+    const id = t.match(/^\d+/)?.[0];
+    return id ? { id, link: { type: "FS", lagHours: 0 }, approx: true } : null;
+  }
   const type = (m[2]?.toUpperCase() as LinkType | undefined) ?? "FS";
-  let lag = 0;
+  let lag = 0, approx = false;
   if (m[3] && m[4]) {
     const n = Number(m[4]);
-    const unit = (m[5] ?? "d").toLowerCase();
-    const hours = unit.startsWith("h") ? n : unit.startsWith("w") ? n * dayHours * 7 : n * dayHours;
+    const unit = (m[5] ?? "d").toLowerCase().replace(/^e(?=[a-z])/, "");
+    let hours: number;
+    if (unit === "%") { hours = 0; approx = true; }
+    else if (/^mo/.test(unit)) hours = n * dayHours * 30;
+    else if (/^m/.test(unit)) hours = n / 60;
+    else if (/^h/.test(unit)) hours = n;
+    else if (/^w/.test(unit)) hours = n * dayHours * 7;
+    else hours = n * dayHours;
     lag = m[3] === "-" ? -hours : hours;
   }
-  return { id: m[1], link: { type, lagHours: lag } };
+  return { id: m[1], link: { type, lagHours: Math.round(lag * 100) / 100 }, ...(approx ? { approx } : {}) };
 }

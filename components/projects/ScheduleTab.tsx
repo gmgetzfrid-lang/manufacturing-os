@@ -271,7 +271,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       </FirstRunHint>
 
       {/* Progress dashboard — always on top, summarizes everything */}
-      <ScheduleProgress milestones={milestones} metrics={metrics} />
+      <ScheduleProgress milestones={milestones} metrics={metrics} projectId={projectId} />
 
       {/* Which clock the schedule runs on. Every date and time below is the
           plant's; a project without a zone still reads as UTC, so say so. */}

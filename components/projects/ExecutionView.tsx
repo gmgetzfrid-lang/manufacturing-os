@@ -850,7 +850,7 @@ export default function ExecutionView({
 
       {/* On a phone the summary folds to one line so the board is on screen. */}
       {compact && !showCards ? (
-        <CompactSummary items={items} now={nowDate} onOpen={() => setShowCards(true)} />
+        <CompactSummary items={items} now={nowDate} shiftTimes={shiftTimes} onOpen={() => setShowCards(true)} />
       ) : (
         <>
           <SchedulePulse
@@ -861,7 +861,7 @@ export default function ExecutionView({
           />
 
           <div className="flex items-center gap-2">
-            <SummaryStrip items={items} now={nowDate} />
+            <SummaryStrip items={items} now={nowDate} shiftTimes={shiftTimes} />
           </div>
           {compact && <button onClick={() => setShowCards(false)} className="text-[11px] font-bold text-[var(--color-text-muted)]">Fold the summary</button>}
         </>
@@ -1147,9 +1147,9 @@ function statusWord(s: MilestoneStatus): string {
 // ─── Summary strip ─────────────────────────────────────────────
 
 /** The summary in one line, for a phone: tap for the full cards. */
-function CompactSummary({ items, now, onOpen }: { items: Milestone[]; now: Date; onOpen: () => void }) {
+function CompactSummary({ items, now, shiftTimes, onOpen }: { items: Milestone[]; now: Date; shiftTimes: ShiftTimes; onOpen: () => void }) {
   const tz = useScheduleTz();
-  const r = useMemo(() => computeExecutionReport(items, { tz, now }), [items, tz, now]);
+  const r = useMemo(() => computeExecutionReport(items, { tz, now, shiftTimes }), [items, tz, now, shiftTimes]);
   const standing = standingOf(r.pctComplete, r.expectedPct);
   return (
     <button onClick={onOpen} className="w-full flex items-center gap-2 flex-wrap rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-[12px] text-left">
@@ -1164,13 +1164,13 @@ function CompactSummary({ items, now, onOpen }: { items: Milestone[]; now: Date;
   );
 }
 
-function SummaryStrip({ items, now }: {
-  items: Milestone[]; now: Date;
+function SummaryStrip({ items, now, shiftTimes }: {
+  items: Milestone[]; now: Date; shiftTimes: ShiftTimes;
 }) {
   const tz = useScheduleTz();
   // The same counts as the execution report and the shift report: one
   // definition of done, in progress, overdue and % complete.
-  const r = useMemo(() => computeExecutionReport(items, { tz, now }), [items, tz, now]);
+  const r = useMemo(() => computeExecutionReport(items, { tz, now, shiftTimes }), [items, tz, now, shiftTimes]);
   const total = r.totalLeaves, done = r.done, inProg = r.inProgress, overdue = r.overdue, pct = r.pctComplete;
 
   return (

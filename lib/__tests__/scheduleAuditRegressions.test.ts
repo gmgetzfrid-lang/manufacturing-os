@@ -329,3 +329,19 @@ describe("sweep 1 fixes", () => {
     expect(Date.parse(r.forecastFinish!)).toBeGreaterThan(ms(at("2026-10-19", "00:00")));
   });
 });
+
+describe("sweep 3 fixes", () => {
+  it("keeps predecessors with any MS Project lag unit", () => {
+    expect(parseLinkToken("1FS+30m")).toEqual({ id: "1", link: { type: "FS", lagHours: 0.5 } });
+    expect(parseLinkToken("2FS+1ed")).toEqual({ id: "2", link: { type: "FS", lagHours: 24 } });
+    expect(parseLinkToken("4SS+50%")).toEqual({ id: "4", link: { type: "SS", lagHours: 0 }, approx: true });
+    expect(parseLinkToken("4SS+1mo")?.link.lagHours).toBe(720);
+    expect(parseLinkToken("7 weird")).toEqual({ id: "7", link: { type: "FS", lagHours: 0 }, approx: true });
+    expect(parseLinkToken("abc")).toBeNull();
+  });
+  it("a task named \"Heater #1\" keeps its own key", () => {
+    const r = parseScheduleFile("s.csv", "name,start,finish\nHeater #1,2026-10-26 06:00,2026-10-26 08:00\nHeater #1,2026-10-27 06:00,2026-10-27 08:00\n", { timeZone: CHI });
+    expect(r.rows[0].externalRef).toBe("csv-key:heater #1");
+    expect(r.rows[1].externalRef).toBe("csv-key:heater #1␟2");
+  });
+});
