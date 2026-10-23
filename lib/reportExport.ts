@@ -26,7 +26,12 @@ export interface ExportStepRow {
 }
 
 /** A table cell: plain text, or text with emphasis. "" = left blank. */
-export type ExportCell = string | { t: string; tone?: Tone; bold?: boolean };
+export type ExportCell = string | {
+  t: string; tone?: Tone; bold?: boolean;
+  /** A short comment shown under the value — quiet, one line ("sent out
+   *  for calibration"). */
+  note?: string;
+};
 const cellText = (c: ExportCell) => (typeof c === "string" ? c : c.t);
 
 export type ExportBlock =
@@ -117,7 +122,8 @@ export function toPlainText(d: ExportDoc): string {
               const v = cellText(c);
               if (!v) return "";
               const label = b.textLabels ? b.textLabels[j + 1] ?? "" : (b.head[j + 1] ?? "").toLowerCase();
-              return label && typeof c === "string" ? `${label} ${v}` : v;
+              const note = typeof c !== "string" && c.note ? ` ("${c.note}")` : "";
+              return (label && (typeof c === "string" || (!c.tone && !c.bold)) ? `${label} ${v}` : v) + note;
             }).filter(Boolean).join(" · ");
             if (first) out.push(`   • ${first}${tail ? ` — ${tail}` : ""}`);
             else if (tail) out.push(`       ${tail}`);
@@ -206,7 +212,8 @@ function blockHtml(b: ExportBlock): string {
             if (!keep[j]) return "";
             const o = typeof c === "string" ? { t: c } : c;
             const color = o.tone ? (o.tone === "muted" ? MUTED : TONE[o.tone].fg) : INK;
-            return td(`font-size:13px;color:${color};padding:5px 8px;${cont ? "" : "border-top:1px solid #e2e8f0;"}text-align:${al(j)};vertical-align:top;${o.bold ? "font-weight:bold;" : ""}`, esc(o.t));
+            const note = "note" in o && o.note ? `<div style="${FONT}font-size:11px;font-style:italic;font-weight:normal;color:${MUTED};margin-top:1px;">“${esc(o.note)}”</div>` : "";
+            return td(`font-size:13px;color:${color};padding:5px 8px;${cont ? "" : "border-top:1px solid #e2e8f0;"}text-align:${al(j)};vertical-align:top;${o.bold ? "font-weight:bold;" : ""}`, esc(o.t) + note);
           }).join("")}</tr>`;
         }).join("") +
         `</table>`;

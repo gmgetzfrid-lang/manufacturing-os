@@ -33,10 +33,10 @@ import {
   Copy, Mail, FileText,
 } from "lucide-react";
 import type { Milestone } from "@/types/schema";
-import type { ProgressInfo } from "@/lib/scheduleProgress";
+import { leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import {
-  buildShiftReport, shiftWindow, nextShift, previousShift, defaultReviewShift, nextShiftWithWork, expectedByParent,
+  buildShiftReport, shiftWindow, nextShift, previousShift, defaultReviewShift, nextShiftWithWork, expectedByParent, paceOf, expectedFraction, type Pace,
   DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftRow, type ShiftWindow, type ShiftReport,
 } from "@/lib/shiftReport";
 import { buildKickoff, buildCloseout, defaultMeeting, type MeetingKind, type PlanRow } from "@/lib/meetingPlan";
@@ -45,6 +45,7 @@ import { completionNote } from "@/lib/scheduleRules";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { toPlainText, toEmailHtml, type ExportBlock, type ExportDoc, type ExportStepRow } from "@/lib/reportExport";
 import { turnoverUpdate, withoutEmpty } from "@/lib/managementUpdate";
+import { latestNotes } from "@/lib/milestones";
 import { effectiveSpans } from "@/lib/scheduleTime";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 
@@ -109,12 +110,26 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
   const byId = useMemo(() => { const m = new Map<string, Milestone>(); for (const x of milestones) if (x.id) m.set(x.id, x); return m; }, [milestones]);
 
   const ctx = useMemo(() => makeCtx(tz, byId, progress), [tz, byId, progress]);
+
+  // The latest comment on each step ("sent out for calibration") — shown
+  // as a quiet line under the step, here and in the copied update.
+  const [notes, setNotes] = useState<Map<string, { body: string; at: string | null; by: string | null }>>(new Map());
+  const stepIds = useMemo(() => {
+    const parents = new Set(milestones.map((m) => m.parentId).filter(Boolean));
+    return milestones.filter((m) => m.id && !parents.has(m.id)).map((m) => m.id!).sort().join(",");
+  }, [milestones]);
+  useEffect(() => {
+    let live = true;
+    if (!stepIds) return;
+    latestNotes(stepIds.split(",")).then((n) => { if (live) setNotes(n); }).catch(() => { /* comments are extra */ });
+    return () => { live = false; };
+  }, [stepIds]);
   const sections = useMemo(() => meeting === "kickoff"
     ? kickoffSections(kickoff, ctx)
     : meeting === "closeout"
       ? closeoutSections(closeout, report, ctx)
-      : turnoverSections(report, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget }),
-  [meeting, kickoff, closeout, report, ctx, jumpTarget]);
+      : turnoverSections(report, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: (id) => notes.get(id)?.body }),
+  [meeting, kickoff, closeout, report, ctx, jumpTarget, notes]);
 
   // ── live-meeting navigation ──
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -146,6 +161,19 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
   const taskSpans = useMemo(() => effectiveSpans(milestones), [milestones]);
   // Each main task's planned % by now — "on plan" or "behind" in the update.
   const planByTask = useMemo(() => expectedByParent(milestones, asOf, tz, times), [milestones, asOf, tz, times]);
+  // Each main task's steps and where each stands — for "next step" in the update.
+  const stepsByTask = useMemo(() => {
+    const parents = new Set(milestones.map((m) => m.parentId).filter((x): x is string => !!x));
+    const out = new Map<string, Array<{ id?: string; name: string; start: number; finish: number; percent: number; pace: Pace; expectedPct: number; status: string }>>();
+    for (const m of milestones) {
+      if (!m.parentId || (m.id && parents.has(m.id))) continue;
+      const pct = (m.id ? progress?.get(m.id)?.percent : undefined) ?? leafPercent(m);
+      const list = out.get(m.parentId) ?? [];
+      list.push({ id: m.id, name: m.name, start: startMsOf(m), finish: finishMsOf(m), percent: pct, pace: paceOf(m, pct, asOf, tz, times), expectedPct: Math.round(expectedFraction(m, asOf, tz, times) * 100), status: m.status });
+      out.set(m.parentId, list);
+    }
+    return out;
+  }, [milestones, progress, asOf, tz, times]);
 
   // The report as data — for Copy (text / email).
   const exportDoc = (): ExportDoc => {
@@ -173,6 +201,8 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
           pctOf: (id) => progress?.get(id)?.percent,
           finishOf: (id) => taskSpans.get(id)?.finish,
           planOf: (id) => planByTask.get(id),
+          stepsOf: (id) => stepsByTask.get(id),
+          noteOf: (id) => notes.get(id)?.body,
         })
         : withoutEmpty(sections.filter((x) => x.data).map((x) => ({ id: x.id, title: x.title, sub: x.sub, flag: x.flag ?? null, blocks: x.data!() }))),
     };
@@ -539,7 +569,12 @@ function rowFromPlan(r: PlanRow, c: Ctx, o: { when?: string; right?: string; n?:
   };
 }
 
-function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void; jumpTarget: ShiftWindow | null }): Sec[] {
+function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void; jumpTarget: ShiftWindow | null; noteOf?: (id: string) => string | undefined }): Sec[] {
+  // A step's latest comment, as one quiet line under it.
+  const comment = (r: ShiftRow) => {
+    const n = r.leaf.id ? o.noteOf?.(r.leaf.id) : undefined;
+    return n ? `“${n.length > 120 ? `${n.slice(0, 117).trimEnd()}…` : n}”` : undefined;
+  };
   const { overall, review, goals, blocked, shift, next } = report;
   const rowTime = (r: ShiftRow, w: ShiftWindow) => {
     const s = r.start >= w.start && r.start < w.end ? c.T(r.start) : null;
@@ -560,14 +595,11 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   const priorityOf = new Map<string, number>();
   goals.all.forEach((r, i) => { if (r.leaf.id) priorityOf.set(r.leaf.id, i + 1); });
   const gap = goals.gapHours;
-  const stretchHours = goals.stretch.reduce((a, r) => a + r.hoursLeft, 0);
-  const stretchMsg = gap > 0.5
-    ? (goals.backOnTrackAt
-      ? `About ${c.hrs(gap)} behind plan. Must-do holds the line; stretch 1–${goals.backOnTrackAt} (${c.hrs(goals.stretch.slice(0, goals.backOnTrackAt).reduce((a, r) => a + r.hoursLeft, 0))}) gets you back on plan.`
-      : goals.stretch.length
-        ? `About ${c.hrs(gap)} behind plan. Every stretch item closes the gap; all ${goals.stretch.length} are ${c.hrs(stretchHours)}.`
-        : `About ${c.hrs(gap)} behind plan. Nothing else is ready to pull forward — clearing must-do is the whole job.`)
-    : gap < -0.5 ? `About ${c.hrs(-gap)} ahead of plan. Anything here banks more time.` : "On plan. Anything here puts you ahead.";
+  // One line, only when it says something the numbers above don't: which
+  // pulled-ahead items would close the gap.
+  const stretchMsg = gap > 0.5 && goals.backOnTrackAt
+    ? `Items 1–${goals.backOnTrackAt} (${c.hrs(goals.stretch.slice(0, goals.backOnTrackAt).reduce((a, r) => a + r.hoursLeft, 0))}) would close the ${c.hrs(gap)} gap.`
+    : null;
   const critCarry = goals.carryOver.filter((r) => r.critical).length;
   // "After #2": a step waiting on another must-do step names its number;
   // on something off this list, its name.
@@ -580,12 +612,13 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   };
   const waiting = goals.all.filter((r) => r.waitingOn.length > 0);
   const waitingMsg = waiting.length > 0
-    ? `${waiting.length} step${waiting.length === 1 ? "" : "s"} (${waiting.map((r) => `#${priorityOf.get(r.leaf.id ?? "") ?? "?"}`).join(", ")}) can't start until the steps before ${waiting.length === 1 ? "it are" : "them are"} done — ${waiting.length === 1 ? "it" : "they"} will run late unless those are cleared first.`
+    ? `${waiting.map((r) => `#${priorityOf.get(r.leaf.id ?? "") ?? "?"}`).join(", ")} ${waiting.length === 1 ? "waits" : "wait"} on earlier steps — clear those first.`
     : null;
 
   const lastRows = didNotFinish.map((r) => rowFromShift(r, c, {
     when: r.offSchedule ? `due ${c.DTs(r.finish)}` : rowTime(r, shift),
     n: undefined,
+    note: comment(r),
     right: r.percent > 0 ? `${r.percent}%` : "not started",
     extraTags: [
       r.status === "blocked" ? { t: "blocked", tone: "rose" } : r.status === "on_hold" ? { t: "on hold", tone: "amber" } : null,
@@ -608,6 +641,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   }));
   const nextRows = goals.all.map((r) => rowFromShift(r, c, {
     when: r.carryOver ? `due ${c.DTs(r.finish)}` : rowTime(r, next),
+    note: comment(r),
     n: { num: priorityOf.get(r.leaf.id ?? "") ?? 0, tone: r.critical ? "rose" : r.carryOver ? "amber" : "slate" },
     right: `${r.percent > 0 ? `${r.percent}% · ` : ""}${c.hrs(r.hoursLeft)}`,
     extraTags: [
@@ -625,14 +659,14 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     right: r.percent > 0 ? `${r.percent}% · ${c.hrs(r.hoursLeft)}` : c.hrs(r.hoursLeft),
     extraTags: [r.status === "blocked" ? { t: "blocked", tone: "rose" } : r.status === "on_hold" ? { t: "on hold", tone: "amber" } : null],
   }));
-  const otherTitle = `Waiting for the ${otherKind} shift — ${otherKind} work, not on this shift's list`;
+  const otherTitle = `For the ${otherKind} shift`;
   const stretchRows = goals.stretch.map((r, i) => {
     const closes = goals.backOnTrackAt != null && i + 1 <= goals.backOnTrackAt;
     return rowFromShift(r, c, {
       when: `planned ${c.DTs(r.start)}`,
       n: { num: i + 1, tone: closes ? "amber" : "slate" },
       right: c.hrs(r.hoursLeft),
-      extraTags: [closes ? { t: "back on track", tone: "amber" } : null],
+      extraTags: [closes ? { t: "closes gap", tone: "amber" } : null],
     });
   });
   const standStats = [
@@ -710,18 +744,22 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     },
     {
       id: "next", title: `Next shift — ${shiftName(next)} ${c.D(next.start)} ${c.win(next)}`, short: "Next shift",
-      sub: `Must do: ${goals.all.length} steps · ${c.hrs(goals.mustDoHours)} · ${goals.carryOver.length} carried over · ${goals.critical.length} critical`,
+      sub: `${goals.all.length} steps · ${c.hrs(goals.mustDoHours)} · ${goals.carryOver.length} carried over · ${goals.critical.length} critical`,
       count: goals.all.length, flag: critCarry ? "rose" : goals.carryOver.length ? "amber" : null,
       body: (print) => (
         <div className="space-y-2">
-          <Sub tone="slate" icon={<Flag className="w-3.5 h-3.5" />} title="Must do — in this order" count={goals.all.length} />
+          <Sub tone="slate" icon={<Flag className="w-3.5 h-3.5" />} title="Planned work" count={goals.all.length} />
           {waitingMsg && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300 keep">{waitingMsg}</div>}
           {goals.all.length === 0 ? <Empty>Nothing is scheduled for the next shift.</Empty> : (
             <StepTable print={print} box rightHead="Left" rows={nextRows} />
           )}
-          <Sub tone={gap > 0.5 ? "amber" : "emerald"} icon={<Zap className="w-3.5 h-3.5" />} title="Stretch — if you have the hands" count={goals.stretch.length} />
-          <div className={`text-[11.5px] font-semibold ${gap > 0.5 ? "text-amber-800 dark:text-amber-300" : "text-emerald-800 dark:text-emerald-300"}`}>{stretchMsg}</div>
-          {goals.stretch.length > 0 && <StepTable print={print} box rightHead="Left" rows={stretchRows} />}
+          {goals.stretch.length > 0 && (
+            <>
+              <Sub tone={gap > 0.5 ? "amber" : "emerald"} icon={<Zap className="w-3.5 h-3.5" />} title="Can be pulled ahead" count={goals.stretch.length} />
+              {stretchMsg && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{stretchMsg}</div>}
+              <StepTable print={print} box rightHead="Left" rows={stretchRows} />
+            </>
+          )}
           {goals.otherShift.length > 0 && (
             <>
               <Sub tone="slate" icon={next.kind === "day" ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />} title={otherTitle} count={goals.otherShift.length} />
@@ -731,12 +769,14 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         </div>
       ),
       data: () => [
-        { k: "sub", title: "Must do — in this order", count: goals.all.length, tone: "slate" },
+        { k: "sub", title: "Planned work", count: goals.all.length, tone: "slate" },
         ...(waitingMsg ? [{ k: "note", text: waitingMsg, tone: "amber" } as ExportBlock] : []),
         goals.all.length === 0 ? { k: "empty", text: "Nothing is scheduled for the next shift." } : stepsBlock(nextRows, "Left"),
-        { k: "sub", title: "Stretch — if you have the hands", count: goals.stretch.length, tone: gap > 0.5 ? "amber" : "emerald" },
-        { k: "note", text: stretchMsg, tone: gap > 0.5 ? "amber" : "emerald" },
-        ...(goals.stretch.length > 0 ? [stepsBlock(stretchRows, "Left")] : []),
+        ...(goals.stretch.length > 0 ? [
+          { k: "sub", title: "Can be pulled ahead", count: goals.stretch.length, tone: gap > 0.5 ? "amber" : "emerald" } as ExportBlock,
+          ...(stretchMsg ? [{ k: "note", text: stretchMsg, tone: "amber" } as ExportBlock] : []),
+          stepsBlock(stretchRows, "Left"),
+        ] : []),
         ...(goals.otherShift.length > 0 ? [{ k: "sub", title: otherTitle, count: goals.otherShift.length, tone: "slate" } as ExportBlock, stepsBlock(otherRows, "Left")] : []),
       ],
     },

@@ -605,6 +605,25 @@ export async function addMilestoneNote(input: {
   return noteRowTo(data as MilestoneNoteRow);
 }
 
+/** The latest comment on each step (kind "note" — not status or
+ *  reschedule breadcrumbs), for the shift report: "sent out for
+ *  calibration" says why a step reads the way it does. */
+export async function latestNotes(milestoneIds: string[]): Promise<Map<string, { body: string; at: string | null; by: string | null }>> {
+  const out = new Map<string, { body: string; at: string | null; by: string | null }>();
+  for (let i = 0; i < milestoneIds.length; i += 200) {
+    const { data, error } = await supabase.from("milestone_notes")
+      .select("milestone_id, body, created_at, created_by_name")
+      .in("milestone_id", milestoneIds.slice(i, i + 200)).eq("kind", "note")
+      .order("created_at", { ascending: false }).limit(1000);
+    if (error) continue;
+    for (const r of (data ?? []) as Array<{ milestone_id: string; body: string | null; created_at: string | null; created_by_name: string | null }>) {
+      if (!r.body || out.has(r.milestone_id)) continue;
+      out.set(r.milestone_id, { body: r.body, at: r.created_at, by: r.created_by_name });
+    }
+  }
+  return out;
+}
+
 export async function listMilestoneNotes(milestoneId: string): Promise<MilestoneNote[]> {
   const { data, error } = await supabase
     .from("milestone_notes").select("*").eq("milestone_id", milestoneId)

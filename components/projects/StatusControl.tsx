@@ -178,7 +178,11 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                 </div>
                 <ProgressSlider
                   percent={seedPct}
-                  onPick={(v) => { onSetProgress?.(v); setOpen(false); }}
+                  commitSame
+                  confirmLabel={(v) => (v >= 100 ? "Mark done" : `Start at ${v}%`)}
+                  // 0% = started, nothing measurable yet: in progress, not
+                  // back to planned (which a 0% progress update would mean).
+                  onPick={(v) => { if (v <= 0) onPick("in_progress"); else onSetProgress?.(v); setOpen(false); }}
                 />
               </div>
             ) : reasonFor ? (

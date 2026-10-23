@@ -25,9 +25,15 @@ interface SliderProps {
   onPick: (percent: number) => void;
   disabled?: boolean;
   busy?: boolean;
+  /** Save a pick even when it equals the starting value — for a slider
+   *  that opens on a suggestion (marking a task in progress opens at 50%),
+   *  where "50%" is a real answer, not "no change". */
+  commitSame?: boolean;
+  /** Shows a "Start at N%" button that saves the value on the slider. */
+  confirmLabel?: (percent: number) => string;
 }
 
-export function ProgressSlider({ percent, onPick, disabled, busy }: SliderProps) {
+export function ProgressSlider({ percent, onPick, disabled, busy, commitSame, confirmLabel }: SliderProps) {
   const target = clamp(percent);
   const [val, setVal] = useState(target);
   const [synced, setSynced] = useState(target);
@@ -44,7 +50,7 @@ export function ProgressSlider({ percent, onPick, disabled, busy }: SliderProps)
     const c = clamp(v);
     setDragging(false);
     setVal(c);
-    if (c !== clamp(percent)) onPick(c);
+    if (commitSame || c !== clamp(percent)) onPick(c);
   };
 
   return (
@@ -84,6 +90,12 @@ export function ProgressSlider({ percent, onPick, disabled, busy }: SliderProps)
           </button>
         ))}
       </div>
+      {confirmLabel && (
+        <button type="button" disabled={disabled || busy} onClick={() => commit(val)}
+          className="mt-2 w-full text-[12px] font-black py-1.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          {confirmLabel(val)}
+        </button>
+      )}
     </div>
   );
 }

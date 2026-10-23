@@ -420,7 +420,7 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
           <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] text-[var(--color-text-muted)]">Note</span>
           <input value={note} disabled={ro} onChange={(e) => setNote(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void saveNote(); } }}
-            placeholder="What got done / what's turned over (Enter to add)"
+            placeholder="Comment — shows on the shift report (e.g. sent out for calibration)"
             className="flex-1 h-7 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] focus:outline-none focus:border-[var(--color-accent-ring)]" />
         </div>
       )}
