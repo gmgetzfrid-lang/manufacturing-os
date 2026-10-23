@@ -439,3 +439,14 @@ html[data-density="compact"] tbody tr {
     display: flex !important;
   }
 }
+/* A list that scrolls quietly: no bar until the pointer is over it, then a
+   hairline one (calendar day boxes). Touch scrolls as usual. */
+.scroll-quiet {
+  scrollbar-width: none;
+  overscroll-behavior: contain;
+}
+.scroll-quiet::-webkit-scrollbar { width: 0; height: 0; }
+.scroll-quiet:hover { scrollbar-width: thin; scrollbar-color: rgb(148 163 184 / 0.55) transparent; }
+.scroll-quiet:hover::-webkit-scrollbar { width: 4px; }
+.scroll-quiet:hover::-webkit-scrollbar-thumb { background: rgb(148 163 184 / 0.55); border-radius: 999px; }
+.scroll-quiet:hover::-webkit-scrollbar-track { background: transparent; }

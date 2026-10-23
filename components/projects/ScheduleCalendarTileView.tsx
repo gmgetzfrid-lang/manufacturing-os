@@ -16,13 +16,13 @@
 // surfaces a group chip's subtask accordion.
 
 import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Crosshair, Layers, Info, GripVertical, CheckSquare, X as XIcon, ListChecks } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, Crosshair, Layers, Info, GripVertical, CheckSquare, X as XIcon, ListChecks } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl from "@/components/projects/ProgressControl";
 import { assignGroupColors } from "@/lib/scheduleColors";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
-import { splitPlacements, compareDayPlacements, compareBandPlacements, activeWindowOnDay, startMsOf, finishMsOf, type BandPlacement, type DayPlacement } from "@/lib/calendarPlacement";
+import { splitPlacements, compareDayPlacements, activeWindowOnDay, startMsOf, finishMsOf, type DayPlacement } from "@/lib/calendarPlacement";
 import { addDays as addDaysTz, addMonths as addMonthsTz, clockLabel, dayDiff as dayDiffTz, dayKey, dayKeyToMs, dayOfWeek, fmtInTz, hasTimeOfDay, tzAbbrev, startOfDay as startOfDayTz, startOfMonth as startOfMonthTz, wallClock } from "@/lib/scheduleTz";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { DEFAULT_SHIFT_TIMES, workShiftOf, type ShiftTimes } from "@/lib/shiftReport";
@@ -162,8 +162,8 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
     return out;
   }, [childrenByParent]);
 
-  // Chips = the work (leaves, plus bottom-level groups in Tasks mode);
-  // bands = every group above it. In Sub-tasks mode every leaf is a chip
+  // Chips = the work (leaves, plus bottom-level groups in Tasks mode); the
+  // groups above them name each card's place instead. In Sub-tasks mode every leaf is a chip
   // exactly once so a single sub-item can be dragged on its own day
   // while its siblings stay put. See lib/calendarPlacement.ts.
   const split = useMemo(
@@ -171,7 +171,6 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
     [milestones, childrenByParent, showSubtasks],
   );
   const mains = split.chips;
-  const bandTasks = split.bands;
 
   // Distinct top-level groups that actually have rendered tasks beneath
   // them, in calendar order — used for the group color legend.
@@ -262,34 +261,6 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
     for (const arr of m.values()) arr.sort(compareDayPlacements);
     return m;
   }, [mains, tz, leafDescendants]);
-
-  // Bucket every group (band) onto each day it covers, root-first, and
-  // note whether any chip placed that day sits beneath it.
-  const bandsByDay = useMemo(() => {
-    const activeAncestors = new Map<string, Set<string>>();
-    for (const [key, arr] of byDay) {
-      const set = new Set<string>();
-      for (const p of arr) for (const a of ancestorsOf(p.ms)) if (a.id) set.add(a.id);
-      activeAncestors.set(key, set);
-    }
-    const m = new Map<string, BandPlacement<Milestone>[]>();
-    for (const ms of bandTasks) {
-      const s = startMs(ms), f = finishMs(ms);
-      if (!Number.isFinite(s) || !Number.isFinite(f)) continue;
-      const start = startOfDayUTC(new Date(s), tz);
-      const finish = startOfDayUTC(new Date(f), tz);
-      const total = Math.max(1, dayDiff(start, finish, tz) + 1);
-      const depth = ancestorsOf(ms).length;
-      for (let i = 0; i < total; i++) {
-        const key = ymd(addDaysUTC(start, i, tz), tz);
-        const arr = m.get(key) ?? [];
-        arr.push({ ms, dayIndex: i, spanDays: total, depth, hasWorkToday: !!ms.id && (activeAncestors.get(key)?.has(ms.id) ?? false) });
-        m.set(key, arr);
-      }
-    }
-    for (const arr of m.values()) arr.sort(compareBandPlacements);
-    return m;
-  }, [bandTasks, byDay, ancestorsOf, tz]);
 
   // 6-week grid starting on the Sunday on/before the 1st.
   const weeks = useMemo(() => {
@@ -446,31 +417,17 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         </div>
       )}
 
-      {/* How-to strip — explicit, state-aware instructions so moving
-          sub-items is never a mystery. */}
-      <div className={`px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-accent-soft)]/40 flex items-center gap-2 flex-wrap text-[11px] text-[var(--color-text-muted)] ${mode === "day" ? "hidden" : ""}`}>
+      {/* One quiet line of how-to — what each mark on a card does. */}
+      <div className={`px-3 py-1.5 border-b border-[var(--color-border)] bg-slate-50/40 dark:bg-[var(--color-surface-2)]/40 flex items-center gap-x-3 gap-y-1 flex-wrap text-[10.5px] text-[var(--color-text-muted)] ${mode === "day" ? "hidden" : ""}`}>
         <Info className="w-3.5 h-3.5 text-[var(--color-accent)] shrink-0" />
-        {showSubtasks ? (
-          <span><b className="text-[var(--color-text)]">Sub-item mode:</b> each step is its own chip. Drag its <GripVertical className="inline w-3 h-3 align-middle text-[var(--color-text-muted)]" /> handle to another day to move just that step — the rest stay put and the parent stretches to follow.</span>
-        ) : (
-          <span><b className="text-[var(--color-text)]">Day list:</b> click a day&apos;s number for everything due that day with progress entry. <b className="text-[var(--color-text)]">To move one sub-item:</b> click a task&apos;s <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)] align-middle"><ChevronRight className="w-3 h-3" /></span> to pop open its steps, then use each step&apos;s ◀ ▶ buttons. Or flip <b>Show → Sub-items</b> to spread every step across the grid as draggable chips.</span>
-        )}
-        <span className="ml-auto inline-flex items-center gap-2 text-[var(--color-text-faint)]">
-          <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> dot = status</span>
-          <span>·</span>
-          <span className="inline-flex items-center gap-1"><GripVertical className="w-3 h-3" /> handle = drag</span>
-          <span>·</span>
-          <span className="inline-flex items-center gap-1"><CheckSquare className="w-3 h-3" /> select for bulk</span>
-        </span>
-      </div>
-
-      {/* Marks legend */}
-      <div className={`px-3 py-1.5 border-b border-[var(--color-border)] bg-slate-50/40 flex items-center gap-3 flex-wrap text-[10px] text-[var(--color-text-muted)] ${mode === "day" ? "hidden" : ""}`}>
-        <span className="inline-flex items-center gap-1"><span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)]"><ChevronRight className="w-3 h-3" /></span> expand a task to its steps</span>
-        <span className="inline-flex items-center gap-1"><GripVertical className="w-3 h-3" /> drag handle (move to another day)</span>
-        <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> status dot (click to change)</span>
-        <span className="inline-flex items-center gap-1"><span className="text-[8.5px] font-bold px-1 rounded bg-black/10">2/3</span> day 2 of a 3-day task</span>
-        <span className="inline-flex items-center gap-1"><span className="inline-block w-6 h-2.5 rounded-sm bg-[var(--color-accent-soft)] border border-[var(--color-accent-ring)]/40" /> group covering the day (muted = nothing under it today)</span>
+        {showSubtasks
+          ? <span><b className="text-[var(--color-text)]">Sub-items:</b> each step is its own card — drag one to move just that step.</span>
+          : <span><b className="text-[var(--color-text)]">Click a day&apos;s number</b> for its full list with progress entry.</span>}
+        <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> status</span>
+        <span className="inline-flex items-center gap-1"><span className="text-[9px] font-bold px-1 rounded border border-[var(--color-border-strong)]">40%</span> set progress</span>
+        {!showSubtasks && <span className="inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" /> its steps that day</span>}
+        <span className="inline-flex items-center gap-1"><GripVertical className="w-3 h-3" /> drag by the colored edge</span>
+        <span className="inline-flex items-center gap-1"><CheckSquare className="w-3 h-3" /> select (on hover)</span>
       </div>
 
       {mode === "day" ? (
@@ -507,25 +464,30 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
       {/* Weeks */}
       <div className="flex-1">
         {gridWeeks.map((week, wi) => (
-          <div key={wi} className="grid grid-cols-7 border-b border-[var(--color-border)] last:border-b-0" style={{ minHeight: mode === "week" ? "62vh" : 116 }}>
+          // A day box has one fixed, comfortable size; a busy day scrolls
+          // inside it (cards never shrink).
+          // A week with nothing in it stays short, so the busy weeks get the room.
+          <div key={wi} className="grid grid-cols-7 border-b border-[var(--color-border)] last:border-b-0"
+            style={{ height: mode === "week" ? "68vh" : week.some((d) => (byDay.get(ymd(d, tz)) ?? []).length > 0) ? 212 : 56 }}>
             {week.map((day) => {
               const key = ymd(day, tz);
               const items = byDay.get(key) ?? [];
-              const bands = bandsByDay.get(key) ?? [];
               const inMonth = mode === "week" || wallClock(day.getTime(), tz).month === monthIdx;
               const isToday = sameDayUTC(day, today, tz);
-              // Every task shows; a busy day scrolls inside its box.
-              const shown = items;
-              const shownBands = bands;
+              // Every task shows; a busy day scrolls inside its box. Open
+              // work first (in time order), finished work sinks below it.
+              const isDone = (p: (typeof items)[number]) => (p.ms.id ? progress?.get(p.ms.id)?.percent : undefined) === 100 || p.ms.status === "completed";
+              const shown = [...items.filter((p) => !isDone(p)), ...items.filter(isDone)];
+              const doneHere = items.filter(isDone).length;
               return (
                 <div
                   key={key}
                   data-daykey={key}
                   onDragOver={(e) => { if (canEdit) { e.preventDefault(); } }}
                   onDrop={(e) => void onDropDay(key, e)}
-                  className={`group/tile border-r border-[var(--color-border)] last:border-r-0 p-1 flex flex-col gap-1 ${inMonth ? "bg-[var(--color-surface)]" : "bg-slate-50/40"} ${isToday ? "ring-1 ring-inset ring-rose-300" : ""}`}
+                  className={`group/tile min-h-0 min-w-0 border-r border-[var(--color-border)] last:border-r-0 p-1 flex flex-col gap-1 ${inMonth ? "bg-[var(--color-surface)]" : "bg-slate-50/40"} ${isToday ? "ring-1 ring-inset ring-rose-300" : ""}`}
                 >
-                  <div className="flex items-center justify-between px-0.5">
+                  <div className="shrink-0 flex items-center justify-between gap-1 px-0.5">
                     <button
                       type="button"
                       onClick={() => setAgendaDay(key)}
@@ -533,26 +495,25 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                       className={`inline-flex items-center gap-1 text-[11px] font-bold rounded px-1 -ml-1 hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent)] transition-colors ${isToday ? "text-rose-600 dark:text-rose-400" : inMonth ? "text-[var(--color-text)]" : "text-slate-300"}`}
                     >
                       {wallClock(day.getTime(), tz).day}
-                      {(items.length > 0 || bands.length > 0) && <span className="text-[8px] font-black uppercase tracking-wider opacity-0 group-hover/tile:opacity-70">Day view</span>}
+                      {items.length > 0 && <span className="text-[8px] font-black uppercase tracking-wider opacity-0 group-hover/tile:opacity-70">Open day</span>}
                     </button>
+                    {items.length > 0 && (
+                      <span className={`text-[9.5px] font-semibold tabular-nums ${inMonth ? "text-[var(--color-text-faint)]" : "text-slate-300"}`}>
+                        {items.length} task{items.length === 1 ? "" : "s"}{doneHere ? ` · ${doneHere} done` : ""}
+                      </span>
+                    )}
                   </div>
                   {isToday && overdueToday.length > 0 && (
                     <button
                       type="button"
                       onClick={() => setAgendaDay(key)}
                       title={overdueToday.slice(0, 6).map((w) => `• ${w.leaf.name}`).join("\n") + (overdueToday.length > 6 ? `\n…and ${overdueToday.length - 6} more` : "") + "\nOpen the day view to work them"}
-                      className="w-full text-left rounded px-1.5 py-1 bg-rose-600 text-white text-[10px] font-black uppercase tracking-wide hover:bg-rose-700"
+                      className="shrink-0 w-full text-left rounded px-1.5 py-1 bg-rose-600 text-white text-[10px] font-black uppercase tracking-wide hover:bg-rose-700"
                     >
                       ⚠ {overdueToday.length} carried over — not done
                     </button>
                   )}
-                  <div className={`flex flex-col gap-1 overflow-y-auto overscroll-contain pr-0.5 -mr-0.5 ${mode === "week" ? "max-h-[60vh]" : "max-h-[280px]"}`}>
-                  {/* Groups covering this day — root first. Solid = work
-                      under it is scheduled today; muted = it only carries over. */}
-                  {shownBands.map((b) => {
-                    const color = colorFor(b.ms);
-                    return <Band key={`band-${b.ms.id}-${b.dayIndex}`} band={b} color={color} full={mode === "week"} onClick={() => onOpenDetail(b.ms)} />;
-                  })}
+                  <DayScroller fade={inMonth ? "from-[var(--color-surface)]" : "from-slate-50"}>
                   {shown.map((p) => {
                     const color = colorFor(p.ms);
                     const chain = ancestorsOf(p.ms);
@@ -592,7 +553,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                       />
                     );
                   })}
-                  </div>
+                  </DayScroller>
                 </div>
               );
             })}
@@ -750,32 +711,39 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   );
 }
 
-// A group (the root, a phase, a unit) covering this day: one thin strip,
-// never a full chip, so the hierarchy is always visible without the
-// root repeating down the month. Solid when work under it is scheduled
-// today, muted when it only carries over.
-function Band({ band, color, onClick, full }: {
-  band: BandPlacement<Milestone>;
-  color: { bar: string; soft: string; text: string; dot: string };
-  onClick: () => void;
-  full?: boolean;
-}) {
-  const { ms, dayIndex, spanDays, hasWorkToday, depth } = band;
-  const tip = `${ms.name}\nGroup · day ${dayIndex + 1} of ${spanDays}${hasWorkToday ? "" : "\nCarries over — nothing scheduled under it today"}\n— Click to open`;
+/** A day box's list: fills the space under the day number and scrolls
+ *  quietly when it's longer — no bar until the pointer is over it; a soft
+ *  fade and a small "↓ 3 more" say there's more below. */
+function DayScroller({ children, fade }: { children: React.ReactNode; fade: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [below, setBelow] = useState(0);
+  const measure = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    const bottom = el.scrollTop + el.clientHeight;
+    let n = 0;
+    for (const c of Array.from(el.children) as HTMLElement[]) if (c.offsetTop + c.offsetHeight > bottom + 4) n++;
+    setBelow(n);
+  }, []);
+  // After every render (cards added, expanded, resized) and on scroll.
+  React.useEffect(() => { const id = requestAnimationFrame(measure); return () => cancelAnimationFrame(id); });
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={tip}
-      className={`w-full flex items-center gap-1 rounded px-1 ${full ? "py-1" : "h-[15px]"} text-[8.5px] font-bold uppercase tracking-wide text-left border transition-colors ${hasWorkToday
-        ? `${color.soft} ${color.text} border-transparent hover:brightness-95`
-        : "border-dashed border-[var(--color-border)] text-[var(--color-text-faint)] bg-transparent hover:bg-[var(--color-surface-2)]"}`}
-      style={{ paddingLeft: 4 + Math.min(depth, 3) * 6 }}
-    >
-      <span className={`w-1.5 h-1.5 rounded-sm shrink-0 ${hasWorkToday ? color.dot : "bg-[var(--color-border-strong)]"}`} />
-      <span className={`truncate ${full ? "" : "min-w-0"}`}>{ms.name}</span>
-      <span className="ml-auto shrink-0 font-mono normal-case tracking-normal opacity-70">{dayIndex + 1}/{spanDays}</span>
-    </button>
+    <div className="relative flex-1 min-h-0">
+      <div ref={ref} onScroll={measure} className="scroll-quiet relative h-full overflow-y-auto flex flex-col gap-1 pb-1">
+        {children}
+      </div>
+      {below > 0 && (
+        <>
+          <div className={`pointer-events-none absolute inset-x-0 bottom-0 h-9 bg-gradient-to-t ${fade} to-transparent`} aria-hidden />
+          <button type="button"
+            onClick={(e) => { e.stopPropagation(); ref.current?.scrollBy({ top: (ref.current?.clientHeight ?? 120) * 0.8, behavior: "smooth" }); }}
+            title="Scroll for the rest of this day's tasks"
+            className="absolute bottom-0.5 left-1/2 -translate-x-1/2 inline-flex items-center gap-0.5 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] shadow-sm px-2 py-[1px] text-[9.5px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent-ring)]">
+            <ChevronDown className="w-3 h-3" /> {below} more
+          </button>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -864,40 +832,56 @@ function Chip({
     "— Click to open · drag to another day to reschedule",
   ].filter(Boolean).join("\n");
 
+  const crew = (() => {
+    const t = shiftTimes ?? DEFAULT_SHIFT_TIMES;
+    if (!hasSubs) return workShiftOf(ms, tz, t);
+    const kinds = new Set(leafKids.map((k) => workShiftOf(k, tz, t)));
+    return kinds.size === 1 ? [...kinds][0] : "both";
+  })();
+  // The quiet second line: where it belongs, when today, which day of a
+  // multi-day job.
+  const meta = [parentLabel, clock, spanDays > 1 ? `day ${dayIndex + 1}/${spanDays}` : null].filter(Boolean).join(" · ");
+
+  // One card: name and % on top; where / when below; a hairline of
+  // progress along the bottom. Drag by the colored edge; select and drag
+  // grips appear on hover (always on touch).
   return (
     <div
       onClick={onClick}
       title={tip}
-      className={`group/chip relative w-full text-left rounded-md border pl-2 pr-1 py-1 overflow-hidden cursor-pointer transition-colors ${tone} ${dimmed ? "opacity-40" : ""} ${selected ? "ring-2 ring-[var(--color-accent-ring)] ring-offset-1" : ""}`}
+      className={`group/chip relative shrink-0 w-full text-left rounded-md border pl-2.5 pr-1 pt-1 pb-1.5 overflow-hidden cursor-pointer transition-colors ${tone} ${dimmed ? "opacity-40" : ""} ${selected ? "ring-2 ring-[var(--color-accent-ring)] ring-offset-1" : ""}`}
     >
-      {/* Unit accent stripe — same color for every task in a unit. */}
+      {/* Unit accent stripe — same color for every task in a unit; it's the
+          drag handle too. */}
       {color && <span className={`absolute left-0 top-0 bottom-0 w-1 ${color.bar}`} aria-hidden />}
+      {draggable && (
+        <span
+          draggable
+          onDragStart={onDragStart}
+          onPointerDown={onTouchDragStart}
+          onClick={(e) => e.stopPropagation()}
+          title="Drag to move to another day"
+          style={{ touchAction: "none" }}
+          className="absolute left-0 top-0 bottom-0 w-2.5 z-10 flex items-center justify-center cursor-grab active:cursor-grabbing text-[var(--color-text-faint)] opacity-0 group-hover/chip:opacity-100 pointer-coarse:opacity-100 hover:bg-black/10"
+        >
+          <GripVertical className="w-2.5 h-3" />
+        </span>
+      )}
 
-      {/* Select toggle — shows on hover (or always when selected) so the
-          whole-chip click can open OR add to a multi-select. */}
       {selectable && (
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); onToggleSelect?.(); }}
           title={selected ? "Deselect" : "Select for bulk actions"}
-          className={`absolute top-0.5 right-0.5 z-10 w-4 h-4 pointer-coarse:w-6 pointer-coarse:h-6 rounded border flex items-center justify-center transition-opacity ${selected ? "bg-[var(--color-accent)] border-[var(--color-accent)] text-[var(--color-accent-fg)] opacity-100" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-transparent opacity-0 group-hover/chip:opacity-100 pointer-coarse:opacity-100"}`}
+          className={`absolute top-0.5 right-0.5 z-10 w-4 h-4 pointer-coarse:w-6 pointer-coarse:h-6 rounded border flex items-center justify-center transition-opacity ${selected ? "bg-[var(--color-accent)] border-[var(--color-accent)] text-[var(--color-accent-fg)] opacity-100" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-transparent opacity-0 group-hover/chip:opacity-100"}`}
         >
           <CheckSquare className="w-3 h-3" />
         </button>
       )}
 
-      {/* Parent / unit label so you always know what this belongs to. */}
-      {parentLabel && (
-        <div className={`flex items-center gap-1 ${color?.text ?? "text-[var(--color-text-muted)]"} ${full ? "" : "truncate"}`}>
-          <Layers className="w-2.5 h-2.5 shrink-0 opacity-80" />
-          <span className="text-[8.5px] font-bold uppercase tracking-wide truncate">{parentLabel}</span>
-        </div>
-      )}
-
-      <div className="flex items-center gap-1">
-        {/* Status dot — same picker as everywhere; click for the full
-            list (doing / done / on-hold / blocked), not just done. */}
-        <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
+      <div className="flex items-start gap-1.5">
+        {/* Status dot — same picker as everywhere. */}
+        <span className="shrink-0 mt-[3px]" onClick={(e) => e.stopPropagation()}>
           {isLeaf ? (
             <StatusControl
               status={ms.status}
@@ -910,81 +894,47 @@ function Chip({
               onStartWithNote={onStartNote && ms.id ? (p, n) => onStartNote(ms.id!, p, n) : undefined}
             />
           ) : (
-            <StatusControl status={effStatus} size="sm" variant="dot" readOnly title="Phase status — rolls up from sub-tasks" onPick={() => {}} />
+            <StatusControl status={effStatus} size="sm" variant="dot" readOnly title="Status — rolls up from its steps" onPick={() => {}} />
           )}
         </span>
-        {canExpand && (
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onToggleExpand?.(e); }}
-            title={isExpanded ? "Hide sub-items" : "Show this task's sub-items"}
-            className={`shrink-0 inline-flex items-center justify-center w-4 h-4 rounded border transition-colors ${isExpanded ? "bg-[var(--color-accent)] border-[var(--color-accent)] text-[var(--color-accent-fg)]" : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:border-[var(--color-accent-ring)] hover:text-[var(--color-accent)]"}`}
-          >
-            <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} strokeWidth={2.5} />
-          </button>
-        )}
-        {hasSubs && !canExpand && <Layers className="w-2.5 h-2.5 shrink-0 opacity-70" />}
-        {/* Day / night on every chip — a task's mark says which crew its
-            steps belong to (both = some of each). */}
-        <ShiftMark work={(() => {
-          const t = shiftTimes ?? DEFAULT_SHIFT_TIMES;
-          if (!hasSubs) return workShiftOf(ms, tz, t);
-          const kinds = new Set(leafKids.map((k) => workShiftOf(k, tz, t)));
-          return kinds.size === 1 ? [...kinds][0] : "both";
-        })()} />
-        {/* The name first — it's what tells two chips apart; the time after. */}
-        <span className={`min-w-0 text-[10.5px] font-semibold leading-tight ${full ? "" : "truncate"} ${effStatus === "completed" ? "line-through opacity-70" : ""}`}>{ms.name}</span>
-        {clock && <span className="shrink-0 text-[9px] font-mono opacity-70 tabular-nums">{clock}</span>}
-        {spanDays > 1 && (
-          <span className="ml-auto shrink-0 text-[8.5px] font-bold px-1 rounded bg-black/10" title={`Day ${dayIndex + 1} of ${spanDays}`}>
-            {dayIndex + 1}/{spanDays}
-          </span>
-        )}
-        {/* The ONLY draggable part — a clear grip. Clicking elsewhere on
-            the chip opens it; only this handle starts a drag, so the
-            status dot and expand arrow stay clickable. */}
-        {draggable && (
-          <span
-            draggable
-            onDragStart={onDragStart}
-            onPointerDown={onTouchDragStart}
-            onClick={(e) => e.stopPropagation()}
-            title="Drag this handle to move to another day"
-            style={{ touchAction: "none" }}
-            className={`${spanDays > 1 ? "" : "ml-auto"} shrink-0 inline-flex items-center justify-center w-4 h-5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-black/10 cursor-grab active:cursor-grabbing`}
-          >
-            <GripVertical className="w-3 h-3" />
-          </span>
-        )}
+        <div className="min-w-0 flex-1">
+          <div className={`text-[11px] font-semibold leading-snug line-clamp-2 break-words ${effStatus === "completed" ? "line-through opacity-70" : ""}`}>{ms.name}</div>
+          {meta && (
+            <div className="flex items-center gap-1 min-w-0 text-[9.5px] leading-tight opacity-70">
+              {/* Day-only or night-only work is marked; round the clock is the norm. */}
+              {crew !== "both" && <ShiftMark work={crew} />}
+              <span className="truncate">{meta}</span>
+            </div>
+          )}
+        </div>
+        <span className="shrink-0 flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+          {isLeaf ? (
+            <ProgressControl
+              percent={pct}
+              onPick={(p) => { if (ms.id && onSetProgress) onSetProgress(ms.id, p); }}
+              onSaveWithNote={onSetProgressNote && ms.id ? (p, n) => onSetProgressNote(ms.id!, p, n) : undefined}
+              disabled={!canEdit || !onSetProgress || !ms.id}
+              size="sm"
+            />
+          ) : (
+            <span className="text-[9.5px] font-bold tabular-nums opacity-80" title={`${pct}% complete · ${done}/${leafTotal} steps done`}>{pct}%</span>
+          )}
+          {canExpand && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onToggleExpand?.(e); }}
+              title={isExpanded ? "Hide its steps" : "Show its steps for this day"}
+              className={`inline-flex items-center justify-center w-4 h-4 pointer-coarse:w-6 pointer-coarse:h-6 rounded transition-colors ${isExpanded ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)] hover:bg-black/10 hover:text-[var(--color-accent)]"}`}
+            >
+              <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} strokeWidth={2.5} />
+            </button>
+          )}
+        </span>
       </div>
-      {!isLeaf ? (
-        // Summary chip: rolled-up progress (read-only).
-        <div className="mt-1 pl-2.5 flex items-center gap-1" title={`${pct}% complete · ${done}/${leafTotal} sub-tasks done`}>
-          <span className="h-1 flex-1 rounded-full bg-black/10 overflow-hidden">
-            <span className={`block h-full ${pct === 100 ? "bg-emerald-500" : "bg-[var(--color-accent)]"}`} style={{ width: `${pct}%` }} />
-          </span>
-          <span className="text-[8.5px] font-mono opacity-70">{pct}%</span>
-        </div>
-      ) : (
-        // Leaf chip: a thin fill + an editable % control.
-        <div className="mt-1 pl-2.5 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-          <span className="h-1 flex-1 rounded-full bg-black/10 overflow-hidden">
-            <span className={`block h-full ${pct === 100 ? "bg-emerald-500" : "bg-[var(--color-accent)]"}`} style={{ width: `${pct}%` }} />
-          </span>
-          <ProgressControl
-            percent={pct}
-            onPick={(p) => { if (ms.id && onSetProgress) onSetProgress(ms.id, p); }}
-            onSaveWithNote={onSetProgressNote && ms.id ? (p, n) => onSetProgressNote(ms.id!, p, n) : undefined}
-            disabled={!canEdit || !onSetProgress || !ms.id}
-            size="sm"
-          />
-        </div>
-      )}
-      {full && (time || ms.workOrderRef) && (
-        <div className="pl-2.5 mt-0.5 text-[9px] font-mono opacity-70">
-          {[time, ms.workOrderRef ? `WO ${ms.workOrderRef}` : null].filter(Boolean).join(" · ")}
-        </div>
-      )}
+      {/* Progress as a hairline along the bottom edge. */}
+      <span className="absolute left-1 right-0 bottom-0 h-[2px] bg-black/5" aria-hidden>
+        <span className={`block h-full ${pct >= 100 ? "bg-emerald-500" : "bg-[var(--color-accent)]"}`} style={{ width: `${pct}%` }} />
+      </span>
     </div>
   );
 }
