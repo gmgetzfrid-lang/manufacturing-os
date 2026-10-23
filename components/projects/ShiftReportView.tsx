@@ -118,7 +118,7 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
     [pastShift, log, live, recordedBy],
   );
   const milestones = history ? history.milestones : live;
-  const progress = useMemo(() => (history ? buildProgressIndex(history.milestones) : liveProgress), [history, liveProgress]);
+  const progress = useMemo(() => (history ? buildProgressIndex(history.milestones, tz) : liveProgress), [history, liveProgress, tz]);
   const historyNote = !pastShift ? null
     : history?.complete ? `progress as recorded by ${clockLabel(recordedBy, tz)} ${fmtInTz(recordedBy, tz, { month: "short", day: "numeric" })}`
       : `progress as entered by now — the record doesn't reach back to this shift`;

@@ -293,7 +293,7 @@ export default function ExecutionView({
   // One pass over the whole tree: each task's effective % + status. Leaves
   // report their own (status-reconciled) percent; summaries roll their leaf
   // descendants up, duration-weighted (see lib/scheduleProgress.ts).
-  const progressIndex = useMemo(() => buildProgressIndex(items), [items]);
+  const progressIndex = useMemo(() => buildProgressIndex(items, tz), [items, tz]);
 
   // Only the rows near the screen are drawn on a big schedule (600 tasks
   // drawn in full was ~30,000 page elements and a 2-second stall per key).

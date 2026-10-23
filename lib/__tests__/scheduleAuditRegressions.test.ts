@@ -308,3 +308,24 @@ describe("edge cases", () => {
     expect(expectedFraction(t, ms(at("2026-10-20", "06:00")), CHI)).toBe(0);
   });
 });
+
+describe("sweep 1 fixes", () => {
+  it("weights in the plant zone: a 24 h timed job is 24 h; a date-only task across the clock change is 3 days", () => {
+    expect(effectiveWeight({ plannedStartAt: at("2026-10-26", "06:00"), plannedAt: at("2026-10-27", "06:00") }, CHI)).toBe(24);
+    const s = new Date(Date.parse("2026-10-31T00:00:00-05:00")).toISOString(), f = new Date(Date.parse("2026-11-02T00:00:00-06:00")).toISOString();
+    expect(effectiveWeight({ plannedStartAt: s, plannedAt: f }, CHI)).toBe(72);
+    expect(effectiveWeight({ plannedStartAt: at("2026-10-26", "14:00"), plannedAt: at("2026-10-26", "14:00") }, CHI)).toBe(1);
+  });
+  it("5 points short is behind for a step, as for its task and the job", () => {
+    const t = mk({ id: "t", name: "T", plannedStartAt: at("2026-10-26", "06:00"), plannedAt: at("2026-10-26", "16:00"), status: "in_progress", percentComplete: 45 });
+    const now = ms(at("2026-10-26", "11:00")); // 50% planned
+    expect(Math.round(expectedFraction(t, now, CHI) * 100)).toBe(50);
+    expect(paceOf(t, 45, now, CHI)).toBe("behind");
+  });
+  it("the forecast uses every day worked, past the planned end too", () => {
+    const steps = Array.from({ length: 10 }, (_, i) => mk({ id: `s${i}`, name: `S${i}`, plannedStartAt: day("2026-10-01"), plannedAt: day("2026-10-04"),
+      status: i < 5 ? "completed" : "in_progress", percentComplete: i < 5 ? 100 : 10 }));
+    const r = computeExecutionReport(steps, { now: new Date(at("2026-10-11", "12:00")), tz: CHI });
+    expect(Date.parse(r.forecastFinish!)).toBeGreaterThan(ms(at("2026-10-19", "00:00")));
+  });
+});

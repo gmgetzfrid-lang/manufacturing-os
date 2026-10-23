@@ -228,7 +228,8 @@ export function paceOf(m: Milestone, percent: number, now: number, tz: string, t
   if (m.status === "blocked" || m.status === "on_hold") return "held";
   const due = dueMsOf(m, tz);
   if (Number.isFinite(due) && due <= now) return "overdue";
-  return percent + BEHIND_POINTS < expectedFraction(m, now, tz, times) * 100 ? "behind" : "on plan";
+  // Same line as the task and the job (standingOf): 5 points short is behind.
+  return percent + BEHIND_POINTS <= expectedFraction(m, now, tz, times) * 100 ? "behind" : "on plan";
 }
 
 /** Each main task's (a leaf's parent's) planned % by now: its steps'
@@ -239,7 +240,7 @@ export function expectedByParent(milestones: Milestone[], now: number, tz: strin
   const acc = new Map<string, { w: number; e: number }>();
   for (const m of milestones) {
     if (!m.parentId || (m.id && parents.has(m.id))) continue;   // leaves only
-    const w = workHours(m), e = expectedFraction(m, now, tz, times);
+    const w = workHours(m, tz), e = expectedFraction(m, now, tz, times);
     // Every task above the step, not just its parent: a main task's plan
     // includes the work in its sub-groups, like its % complete does.
     const seen = new Set<string>();
@@ -346,8 +347,8 @@ export function standingOf(actualPct: number, plannedPct: number): "ahead" | "on
  *  (lib/scheduleProgress effectiveWeight): its duration, else a weight
  *  someone set, else the length of its planned window. One measure for the
  *  plan, the actual and the gap. */
-export function workHours(m: Milestone): number {
-  return Math.round(effectiveWeight(m) * 10) / 10;
+export function workHours(m: Milestone, tz?: string): number {
+  return Math.round(effectiveWeight(m, tz) * 10) / 10;
 }
 
 export interface ShiftReport {
@@ -477,7 +478,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     const due = dueMsOf(m, tz);
     const percent = pctOf(m);
     const finished = m.status === "completed" || percent >= 100;
-    const hours = workHours(m);
+    const hours = workHours(m, tz);
     return {
       leaf: m,
       path: chain.slice().reverse().map((a) => a.name),
@@ -524,7 +525,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   for (const m of leaves) {
     const s = startMsOf(m), f = finishMsOf(m);
     plannedStart = Math.min(plannedStart, s); plannedFinish = Math.max(plannedFinish, f);
-    const w = workHours(m);
+    const w = workHours(m, tz);
     // Measure "where the plan said we'd be" against the BASELINE when one
     // was captured: dragging a task later must not erase the slip.
     const bs = toMs(m.baselineStartAt), bf = toMs(m.baselineFinishAt);

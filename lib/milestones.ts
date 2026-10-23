@@ -654,7 +654,12 @@ export async function setActualTimes(input: {
 }): Promise<Milestone> {
   const now = Date.now();
   const ms = (v?: string | null) => (v ? Date.parse(v) : NaN);
-  const s = ms(input.actualStartAt), f = ms(input.actualAt);
+  // Check the pair as it will be stored: a new start against the finish
+  // already recorded, and the other way round.
+  const { data: cur } = await supabase.from("milestones").select("actual_start_at, actual_at").eq("id", input.id).maybeSingle();
+  const stored = cur as { actual_start_at: string | null; actual_at: string | null } | null;
+  const s = ms(input.actualStartAt !== undefined ? input.actualStartAt : stored?.actual_start_at);
+  const f = ms(input.actualAt !== undefined ? input.actualAt : stored?.actual_at);
   if ((Number.isFinite(s) && s > now) || (Number.isFinite(f) && f > now)) throw new Error("An actual time can't be in the future.");
   if (Number.isFinite(s) && Number.isFinite(f) && f < s) throw new Error("Finish can't be before start.");
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: input.actorUserId };
@@ -1376,16 +1381,35 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
   // ("csv-key:e-12 › pull bundle"). On the first re-import after that
   // change, match the old rows by name so nothing is duplicated, and move
   // them onto the new key.
-  const legacyByName = new Map<string, Array<{ id: string }>>();
+  // Old rows are matched by the same key the file's rows now carry — their
+  // outline path of names (or WBS), and which repeat of it they are, in
+  // file order — so two "Pull bundle" steps under different exchangers
+  // each find their own row.
+  const legacyByKey = new Map<string, string[]>();
   if (input.projectId && input.rows.some((r) => /-key:/.test(r.externalRef ?? ""))) {
-    const { rows: olds } = await fetchAllRows<{ id: string; name: string; external_ref: string | null }>((from, to) => supabase
-      .from("milestones").select("id, name, external_ref").eq("org_id", input.orgId).eq("project_id", input.projectId!)
-      .eq("source", input.source).like("external_ref", "%-row:%").order("external_ref").range(from, to));
-    for (const o of olds) {
-      const k = o.name.trim().replace(/\s+/g, " ").toLowerCase();
-      legacyByName.set(k, [...(legacyByName.get(k) ?? []), { id: o.id }]);
+    const { rows: all } = await fetchAllRows<{ id: string; name: string; parent_id: string | null; external_ref: string | null; wbs: string | null }>((from, to) => supabase
+      .from("milestones").select("id, name, parent_id, external_ref, wbs").eq("org_id", input.orgId).eq("project_id", input.projectId!)
+      .order("id").range(from, to));
+    const byId = new Map(all.map((r) => [r.id, r]));
+    const norm = (x: string) => x.trim().replace(/\s+/g, " ").toLowerCase();
+    const pathOf = (r: { name: string; parent_id: string | null }) => {
+      const names: string[] = [];
+      const seen = new Set<string>();
+      for (let cur: typeof r | undefined = r; cur; cur = cur.parent_id && !seen.has(cur.parent_id) ? byId.get(cur.parent_id) : undefined) {
+        if (cur.parent_id) seen.add(cur.parent_id);
+        names.unshift(norm(cur.name));
+      }
+      return names.join(" › ");
+    };
+    const lineOf = (ref: string) => Number(ref.match(/-row:(\d+)$/)?.[1] ?? Infinity);
+    const legacy = all.filter((r) => /-row:\d+$/.test(r.external_ref ?? "")).sort((a, b) => lineOf(a.external_ref!) - lineOf(b.external_ref!));
+    for (const o of legacy) {
+      for (const k of [pathOf(o), o.wbs ? `wbs ${norm(o.wbs)}` : null]) {
+        if (k) legacyByKey.set(k, [...(legacyByKey.get(k) ?? []), o.id]);
+      }
     }
   }
+  const takenLegacy = new Set<string>();
 
   for (let i = 0; i < input.rows.length; i++) {
     const r = input.rows[i];
@@ -1455,13 +1479,17 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
         else if (input.documentId) q = q.eq("document_id", input.documentId);
         else q = q.is("project_id", null).is("document_id", null);
         let { data: existing } = await q.maybeSingle();
-        if (!existing && legacyByName.size > 0) {
-          const old = legacyByName.get(name.replace(/\s+/g, " ").toLowerCase())?.shift();
-          if (old) {
-            await supabase.from("milestones").update({ external_ref: r.externalRef }).eq("id", old.id);
+        if (!existing && legacyByKey.size > 0) {
+          // "csv-key:e-12 › pull bundle #2" → the 2nd old row on that path.
+          const m = (r.externalRef ?? "").match(/-key:(.*?)(?: #(\d+))?$/);
+          const ids = m ? legacyByKey.get(m[1]) ?? [] : [];
+          const oldId = ids[(m?.[2] ? Number(m[2]) : 1) - 1];
+          if (oldId && !takenLegacy.has(oldId)) {
+            takenLegacy.add(oldId);
+            await supabase.from("milestones").update({ external_ref: r.externalRef }).eq("id", oldId);
             ({ data: existing } = await supabase.from("milestones")
               .select("id, status, percent_complete, actual_at, actual_start_at, description, work_order_ref, responsible_party, responsible_kind, responsible_org, location, attributes")
-              .eq("id", old.id).maybeSingle());
+              .eq("id", oldId).maybeSingle());
           }
         }
         if (existing) {

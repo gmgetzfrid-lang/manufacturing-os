@@ -17,7 +17,8 @@
 import React, { useState } from "react";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { dayDiff as dayDiffTz, fmtInTz } from "@/lib/scheduleTz";
-import { isOverdue } from "@/lib/shiftReport";
+import { isOverdue, standingOf } from "@/lib/shiftReport";
+import { computeExecutionReport } from "@/lib/executionReport";
 import {
   TrendingUp, TrendingDown, Flag, AlertTriangle, CalendarClock,
   CheckCircle2, Circle, PauseCircle, MinusCircle, XCircle,
@@ -56,8 +57,13 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
   const [nowMs] = useState(() => Date.now());
   const overdue = milestones.filter((m) => !(m.id && parents.has(m.id)) && isOverdue(m, nowMs, tz));
 
-  const earnedPct = Math.round(metrics.percentEarned * 100);
-  const planPct = Math.round(metrics.percentPlanned * 100);
+  // The same % complete, plan by now and verdict as the reports and the
+  // board (one weighting, one rule) — not a separate count.
+  const r = computeExecutionReport(milestones, { tz, now: new Date(nowMs) });
+  const earnedPct = r.pctComplete;
+  const planPct = r.expectedPct;
+  const spi = planPct > 0 ? earnedPct / planPct : 1;
+  const verdict = standingOf(earnedPct, planPct);
   const slipDays = metrics.plannedEndAt && metrics.forecastEndAt
     ? Math.round((new Date(metrics.forecastEndAt).getTime() - new Date(metrics.plannedEndAt).getTime()) / 86400000)
     : 0;
@@ -72,16 +78,16 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
             <div className="text-3xl font-black text-[var(--color-text)] leading-none mt-1">
               {earnedPct}<span className="text-base text-[var(--color-text-muted)] font-bold">%</span>
             </div>
-            <div className="text-[11px] text-[var(--color-text-muted)] mt-1">Earned weight · planned was {planPct}%</div>
+            <div className="text-[11px] text-[var(--color-text-muted)] mt-1">Work done · plan by now {planPct}%</div>
           </div>
           <div className="text-right">
             <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">SPI</div>
-            <div className={`text-3xl font-black leading-none mt-1 ${metrics.spi >= 1 ? "text-emerald-600 dark:text-emerald-400" : metrics.spi >= 0.9 ? "text-amber-600 dark:text-amber-400" : "text-rose-600 dark:text-rose-400"}`}>
-              {metrics.spi.toFixed(2)}
+            <div className={`text-3xl font-black leading-none mt-1 ${verdict === "behind" ? "text-rose-600 dark:text-rose-400" : verdict === "ahead" ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text)]"}`}>
+              {spi.toFixed(2)}
             </div>
             <div className="text-[11px] text-[var(--color-text-muted)] mt-1 inline-flex items-center gap-1 justify-end">
-              {metrics.spi >= 1 ? <TrendingUp className="w-3 h-3 text-emerald-600 dark:text-emerald-400" /> : <TrendingDown className="w-3 h-3 text-rose-600 dark:text-rose-400" />}
-              {metrics.spi >= 1 ? "on / ahead" : "behind plan"}
+              {verdict === "behind" ? <TrendingDown className="w-3 h-3 text-rose-600 dark:text-rose-400" /> : <TrendingUp className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />}
+              {verdict === "behind" ? "behind plan" : verdict === "ahead" ? "ahead of plan" : "on plan"}
             </div>
           </div>
         </div>

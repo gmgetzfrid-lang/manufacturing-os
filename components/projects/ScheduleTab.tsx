@@ -178,7 +178,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const metrics = useMemo(() => computeScheduleMetrics(milestones), [milestones]);
   // Per-task effective progress + derived status for the Planning list, so a
   // phase shows a rolled-up status/% and can't be marked done directly.
-  const planProgress = useMemo(() => buildProgressIndex(ghostFiltered), [ghostFiltered]);
+  const planProgress = useMemo(() => buildProgressIndex(ghostFiltered, tz), [ghostFiltered, tz]);
 
   const onSetStatus = async (id: string, status: MilestoneStatus) => {
     setBusy(true);

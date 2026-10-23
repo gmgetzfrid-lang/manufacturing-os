@@ -13,6 +13,7 @@
 // No I/O — unit-testable and reused by both the UI and lib/milestones.ts.
 
 import type { MilestoneStatus } from "@/types/schema";
+import { dayDiff, hasTimeOfDay } from "@/lib/scheduleTz";
 
 export interface ProgressNode {
   id?: string;
@@ -55,12 +56,12 @@ export function leafPercent(m: { status: MilestoneStatus; percentComplete?: numb
 export function effectiveWeight(m: {
   weight?: number | null; durationHours?: number | null;
   plannedStartAt?: unknown; plannedAt?: unknown;
-}): number {
+}, tz?: string): number {
   const d = m.durationHours;
   if (d != null && Number.isFinite(d) && d > 0) return d;
   const w = m.weight;
   if (w != null && Number.isFinite(w) && w > 0 && w !== 1) return w;
-  const h = spanHours(m.plannedStartAt, m.plannedAt);
+  const h = spanHours(m.plannedStartAt, m.plannedAt, tz);
   if (h > 0) return h;
   return w != null && Number.isFinite(w) && w > 0 ? w : 1;
 }
@@ -68,16 +69,24 @@ export function effectiveWeight(m: {
 const msOf = (v: unknown): number =>
   v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v));
 
-/** Hours in a planned window. A whole number of days (a date-only task:
- *  start and finish at the same clock time) covers its days inclusively —
- *  Oct 26 → Oct 28 is three days. */
-function spanHours(start: unknown, finish: unknown): number {
+/** Hours in a planned window. A date-only task (plant midnight at both
+ *  ends) covers its days inclusively — Oct 26 → Oct 28 is three days of 24
+ *  h, across a clock change too. A timed task is its clock span; a timed
+ *  point (start = finish) has none, and falls back to its weight. Without
+ *  the plant zone, a whole number of days at the same clock time is read
+ *  as date-only. */
+function spanHours(start: unknown, finish: unknown, tz?: string): number {
   const f = msOf(finish), s0 = msOf(start);
   if (!Number.isFinite(f)) return 0;
   const s = Number.isFinite(s0) ? s0 : f;
   const ms = f - s;
   if (ms < 0) return 0;
   const DAY = 86_400_000;
+  if (tz) {
+    if (!hasTimeOfDay(s, tz) && !hasTimeOfDay(f, tz)) return (dayDiff(s, f, tz) + 1) * 24;
+    return ms / 3_600_000;
+  }
+  if (ms === 0) return 0;
   if (ms % DAY === 0) return (ms / DAY + 1) * 24;
   return ms / 3_600_000;
 }
@@ -118,7 +127,7 @@ interface Agg {
  * values are duration-weighted rollups of their leaf descendants; leaves report
  * their own status-reconciled percent. Cycle-safe.
  */
-export function buildProgressIndex(milestones: ProgressNode[]): Map<string, ProgressInfo> {
+export function buildProgressIndex(milestones: ProgressNode[], tz?: string): Map<string, ProgressInfo> {
   const byId = new Map<string, ProgressNode>();
   const kids = new Map<string, ProgressNode[]>();
   for (const m of milestones) if (m.id) byId.set(m.id, m);
@@ -139,7 +148,7 @@ export function buildProgressIndex(milestones: ProgressNode[]): Map<string, Prog
     const children = kids.get(id) ?? [];
     let res: Agg;
     if (children.length === 0) {
-      const w = effectiveWeight(node);
+      const w = effectiveWeight(node, tz);
       const p = leafPercent(node);
       res = {
         wsum: w, wpct: w * p,
@@ -184,7 +193,7 @@ export function buildProgressIndex(milestones: ProgressNode[]): Map<string, Prog
 
 /** Headline completion % for a whole list: duration-weighted over LEAF tasks
  *  only (summaries are envelopes — counting them would double-count). */
-export function overallPercent(milestones: ProgressNode[]): number {
+export function overallPercent(milestones: ProgressNode[], tz?: string): number {
   const parents = new Set<string>();
   const byId = new Map<string, ProgressNode>();
   for (const m of milestones) if (m.id) byId.set(m.id, m);
@@ -192,7 +201,7 @@ export function overallPercent(milestones: ProgressNode[]): number {
   let wsum = 0, wpct = 0;
   for (const m of milestones) {
     if (!m.id || parents.has(m.id)) continue; // leaves only
-    const w = effectiveWeight(m);
+    const w = effectiveWeight(m, tz);
     wsum += w; wpct += w * leafPercent(m);
   }
   return wsum > 0 ? roundPct(wpct / wsum) : 0;

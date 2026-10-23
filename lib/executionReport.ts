@@ -109,7 +109,7 @@ const startMs = (m: Milestone) => startOf(m);
 const finishMs = (m: Milestone) => finishOf(m);
 // Work-hours: the same measure % complete is weighted by, so "work hours
 // done" and "% complete" can never tell different stories.
-const hoursOf = (m: Milestone) => effectiveWeight(m);
+const hoursOf = (m: Milestone, tz?: string) => effectiveWeight(m, tz);
 
 export function computeExecutionReport(milestones: Milestone[], opts?: {
   now?: Date;
@@ -167,11 +167,11 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
       default: tally.planned++;
     }
     if (overdue(m)) tally.overdue++;
-    const h = hoursOf(m);
+    const h = hoursOf(m, tz);
     const lp = leafPercent(m);             // 0..100, status-reconciled, partial-aware
     plannedHours += h;
     earnedHours += h * (lp / 100);         // PARTIAL earned hours, not just fully-done
-    const w = effectiveWeight(m);
+    const w = effectiveWeight(m, tz);
     wsum += w; wpct += w * lp;
     const s = startMs(m), f = finishMs(m);
     if (Number.isFinite(s)) envStart = Math.min(envStart, s);
@@ -195,14 +195,17 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
   // shift report shows as "plan by now". (Days elapsed over days in the job
   // said nothing about what work was due, and ran through nights for day work.)
   let wexp = 0;
-  for (const m of leaves) wexp += effectiveWeight(m) * expectedFraction(m, now, tz, opts?.shiftTimes ?? DEFAULT_SHIFT_TIMES);
+  for (const m of leaves) wexp += effectiveWeight(m, tz) * expectedFraction(m, now, tz, opts?.shiftTimes ?? DEFAULT_SHIFT_TIMES);
   const expectedPct = wsum > 0 ? Math.min(100, roundPct((wexp / wsum) * 100)) : 0;
   const paceDelta = pctComplete - expectedPct;
 
   // Naive forecast: extrapolate completion rate over elapsed time.
   let forecastFinish: string | null = finish;
-  if (Number.isFinite(envStart) && tally.done > 0 && pctComplete < 100 && elapsedDays > 0) {
-    const ratePerDay = tally.done / elapsedDays;             // leaves/day so far
+  // The pace so far uses every day actually worked — past the planned end
+  // too (elapsedDays stops at the plan's length for "day N of M").
+  const daysWorked = Number.isFinite(envStart) ? Math.max(0, dayDiff(envStart, now, tz) + 1) : 0;
+  if (Number.isFinite(envStart) && tally.done > 0 && pctComplete < 100 && daysWorked > 0) {
+    const ratePerDay = tally.done / daysWorked;             // leaves/day so far
     const remaining = totalLeaves - tally.done;
     if (ratePerDay > 0) {
       const daysLeft = Math.ceil(remaining / ratePerDay);
@@ -230,12 +233,12 @@ export function computeExecutionReport(milestones: Milestone[], opts?: {
     else if (m.status === "on_hold") r.onHold++;
     else if (m.status === "blocked") r.blocked++;
     if (overdue(m)) r.overdue++;
-    const h = hoursOf(m);
+    const h = hoursOf(m, tz);
     const lp = leafPercent(m);
     r.plannedHours += h;
     r.earnedHours += h * (lp / 100);  // partial earned hours
     const gw = groupWeight.get(key)!;
-    gw.wsum += effectiveWeight(m); gw.wpct += effectiveWeight(m) * lp;
+    gw.wsum += effectiveWeight(m, tz); gw.wpct += effectiveWeight(m, tz) * lp;
     const s = startMs(m), f = finishMs(m);
     if (Number.isFinite(s)) r.start = r.start && Date.parse(r.start) <= s ? r.start : new Date(s).toISOString();
     if (Number.isFinite(f)) r.finish = r.finish && Date.parse(r.finish) >= f ? r.finish : new Date(f).toISOString();

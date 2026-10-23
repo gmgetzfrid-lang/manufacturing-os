@@ -13,7 +13,9 @@ CREATE TABLE IF NOT EXISTS milestone_progress_log (
   id            BIGSERIAL PRIMARY KEY,
   org_id        UUID NOT NULL,
   project_id    UUID,
-  milestone_id  UUID NOT NULL REFERENCES milestones(id) ON DELETE CASCADE,
+  -- No foreign key: the history outlives a delete, so a task brought back
+  -- by Undo (same id) keeps its record of where it stood.
+  milestone_id  UUID NOT NULL,
   at            TIMESTAMPTZ NOT NULL DEFAULT now(),
   old_status    TEXT,
   old_percent   NUMERIC,

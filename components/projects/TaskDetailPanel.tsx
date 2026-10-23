@@ -83,8 +83,8 @@ export default function TaskDetailPanel({
   // leaf descendants, duration-weighted (computed from the full task list, so
   // sub-rows that are themselves phases also read as derived).
   const progressIndex = useMemo(
-    () => buildProgressIndex(allTasks && allTasks.length ? allTasks : [m, ...subtasks]),
-    [allTasks, m, subtasks],
+    () => buildProgressIndex(allTasks && allTasks.length ? allTasks : [m, ...subtasks], tz),
+    [allTasks, m, subtasks, tz],
   );
   const progressInfo = m.id ? progressIndex.get(m.id) : undefined;
   const effPct = progressInfo?.percent ?? (m.percentComplete != null ? Math.round(m.percentComplete) : (m.status === "completed" ? 100 : 0));
