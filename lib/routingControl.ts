@@ -136,6 +136,23 @@ export interface RoutingSlot {
    *  acceptance; dropped silently otherwise (a stored value never makes the
    *  table invalid), and the editor refuses a save that writes one. */
   accepts_preauthorization?: true;
+  /** GAP-115 / GAP-109 mechanism 3 (drafting-flow DF-P26; DEC-90 ruling (1)
+   *  for DF-P26): the controller's explicit opt-in — EXCEPTION-ONLY REVIEW.
+   *  When a review opens, this BLOCKING slot is satisfied by a recorded
+   *  system act naming the rule (lib/exceptionOnlyReview.ts) if no exception
+   *  is on record — a source revision that moved, an override sign-off, an
+   *  examination-data waiver, a like-in-kind declaration that could not be
+   *  checked — and it is RE-OPENED for its reviewer, before anything issues,
+   *  when one comes on record later. Never on engineered work, never the
+   *  last sign-off a review waits on, never the second person the DEC-12
+   *  floor needs. Absent = the slot behaves exactly as before. Kept only
+   *  where exceptionOnlyOptInAllowed says it can ride — a blocking slot not
+   *  filled by the requester alone nor by an engineering capability, not an
+   *  assurance check (records_examination) and not one accepting a standing
+   *  pre-authorization; dropped silently otherwise (a stored value never
+   *  makes the table invalid), and the editor refuses a save that writes
+   *  one. */
+  exception_only?: true;
 }
 
 export interface RoutingControl {
@@ -172,8 +189,8 @@ export function examinationOptInAllowed(slot: Pick<RoutingSlot, "mode" | "fill">
 /** drafting-flow DF-P25 (GAP-102 ruling (2), the notify-only limb): the
  *  NOTIFY-ONLY slots the examination opt-in can ride — told, never waited
  *  on; their people may place a hold on the request's source document that
- *  records what they examined (the hold stops work on the document, not the
- *  request — DF-P25 review fix pass 5; GAP-116). The same exclusions as the blocking
+ *  records what they examined (the hold stops work on the document and —
+ *  DF-P26, GAP-116 — the request: lib/requestHoldStop.ts). The same exclusions as the blocking
  *  opt-in: not the requester alone, not an engineering capability. Pure. */
 export function notifyExaminationOptInAllowed(slot: Pick<RoutingSlot, "mode" | "fill">): boolean {
   if (slot.mode !== "notify_only") return false;
@@ -191,6 +208,16 @@ export function notifyExaminationOptInAllowed(slot: Pick<RoutingSlot, "mode" | "
  *  request; a standing consent examines nothing). Pure. */
 export function preauthorizationOptInAllowed(slot: Pick<RoutingSlot, "mode" | "fill" | "records_examination">): boolean {
   return examinationOptInAllowed(slot) && slot.records_examination !== true;
+}
+
+/** GAP-115 (drafting-flow DF-P26): the slots the exception-only opt-in
+ *  (`exception_only`) can ride — exactly the slots the pre-authorization
+ *  opt-in can (a BLOCKING slot not filled by the requester alone nor by an
+ *  engineering capability, not an assurance check), less one that accepts a
+ *  standing pre-authorization (two ways of not waiting on one slot are never
+ *  stacked). Pure. */
+export function exceptionOnlyOptInAllowed(slot: Pick<RoutingSlot, "mode" | "fill" | "records_examination" | "accepts_preauthorization">): boolean {
+  return preauthorizationOptInAllowed(slot) && slot.accepts_preauthorization !== true;
 }
 
 /** A declared level is any non-null value (NULL = inherit). */
@@ -294,6 +321,10 @@ export function parseRoutingControl(raw: unknown): { ok: true; control: RoutingC
     // read exactly like the assurance opt-in: kept only when `true` on a
     // slot that can carry it, dropped silently otherwise (never refused).
     if (o.accepts_preauthorization === true && preauthorizationOptInAllowed(slot)) slot.accepts_preauthorization = true;
+    // GAP-115 (DF-P26): the exception-only opt-in — read exactly like the
+    // other opt-ins: kept only when `true` on a slot that can carry it,
+    // dropped silently otherwise (never refused).
+    if (o.exception_only === true && exceptionOnlyOptInAllowed(slot)) slot.exception_only = true;
     slots.push(slot);
   }
   // independent_of may name a party or another slot of THIS table.
@@ -599,6 +630,26 @@ export function validateRoutingDraft(control: RoutingControl | null, stored?: un
           : misplacedPreauth.records_examination === true
             ? `slot "${misplacedPreauth.kind}": an assurance check records what its reviewer examined on each request — it cannot accept a standing pre-authorization`
             : `slot "${misplacedPreauth.kind}": the requester's own acceptance cannot be pre-authorized`;
+  }
+  // GAP-115 (DF-P26): a save that writes a misplaced exception-only opt-in
+  // is refused with the reason (the parser drops one silently).
+  const misplacedException = control.slots.find((s) => {
+    const v = (s as { exception_only?: unknown }).exception_only;
+    return v !== undefined && v !== null && v !== false && (v !== true || !exceptionOnlyOptInAllowed(s));
+  });
+  if (misplacedException) {
+    const v = (misplacedException as { exception_only?: unknown }).exception_only;
+    return v !== true
+      ? `slot "${misplacedException.kind}": exception-only review is on or off (exception_only is true or absent)`
+      : misplacedException.mode !== "blocking"
+        ? `slot "${misplacedException.kind}": only a "must sign off" slot can be exception-only`
+        : misplacedException.fill?.capability && CONSENT_REFUSED_CAPABILITIES.includes(misplacedException.fill.capability)
+          ? `slot "${misplacedException.kind}": the engineering sign-off is never satisfied by a rule`
+          : misplacedException.records_examination === true
+            ? `slot "${misplacedException.kind}": an assurance check records what its reviewer examined on each request — it cannot be exception-only`
+            : misplacedException.accepts_preauthorization === true
+              ? `slot "${misplacedException.kind}": a slot that accepts a standing pre-authorization cannot also be exception-only — choose one`
+              : `slot "${misplacedException.kind}": the requester's own acceptance cannot be satisfied by a rule`;
   }
   // GAP-109 / DEC-90 ruling (1) for DF-P7: silence never stands in for the
   // engineering sign-off — the highest class of review — so a table that

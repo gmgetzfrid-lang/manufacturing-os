@@ -82,6 +82,14 @@
 // before every requirement issues, as on the route. No requirement applies
 // → no read, the close is today's.
 //
+// DF-P26 (GAP-116): a close that would ISSUE the request is not made while
+// an open hold on its source document carries this request's examination
+// record and was placed by the people of the notify-only slot it names
+// (lib/requestHoldStop.ts — the route's issuing acts meet the same stop).
+// The window stays unclosed (nothing written) and is checked again each
+// run; releasing the hold lets it close. No such slot or no source
+// document → no read, the close is today's.
+//
 // ticket_notice_events (20261255) is the record that survives any bell
 // purge: append-only, written only by the service role.
 
@@ -93,10 +101,13 @@ import { isDeclaredLikeInKind, declarationSignatureStands, type DeclarationSigna
 import { heldRoles } from "@/lib/roleHeld";
 import { flaggedRequestTypes } from "@/lib/requestTypes";
 import { parseExaminationScopeConfig, applicableRequirements, scopeGateOutcome, type ScopeGateOutcome } from "@/lib/examinationScope";
+import { requestHoldStop } from "@/lib/requestHoldStop";
+import { issueExaminationNote } from "@/lib/issueNoticeExamination";
+import { ruleSatisfiedSlots, exceptionsOnRecord, reopenRuleSatisfied, readWaiverOnRecord, ruleReopenNote, EXCEPTION_RULE_ACTOR } from "@/lib/exceptionOnlyReview";
 import { resolveTicketRecipients, isRoutedStatus } from "@/lib/ticketRouting";
 import { wrapEmailBody } from "@/lib/emailRender";
 import { isPreferenceExempt } from "@/lib/notificationPrefs";
-import { resolveFill, rosterCompletion, writeRosterLedger, type OccupantContext } from "@/lib/ticketRoster";
+import { resolveFill, rosterCompletion, writeRosterLedger, writeRosterReopen, type OccupantContext } from "@/lib/ticketRoster";
 import { loadPickerMembers } from "@/lib/ticketPickerMembers";
 import { loadCapabilityPolicyStrict, type CapabilityPolicy, type CapabilityResource } from "@/lib/capabilityPolicy";
 import { notifyBatchWithReason } from "@/lib/inAppNotifications";
@@ -1047,7 +1058,44 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     const askedActive = asked.filter((u) => activeUids.has(u));
     const departed = asked.filter((u) => !activeUids.has(u));
     const details = `${advancedHistoryDetails({ state, states, nameOf, closedAt: now })}${departed.length ? ` No longer an active member, so their silence is not counted: ${departed.map(nameOf).join(", ")}.` : ""}`;
-    const advancedRoster: TicketReviewRoster = { ...roster, slots: roster.slots.map((s) => (s.kind === slotKind && s.status === "open" ? consentSatisfiedSlot(s, nowIso) : s)) };
+    let advancedRoster: TicketReviewRoster = { ...roster, slots: roster.slots.map((s) => (s.kind === slotKind && s.status === "open" ? consentSatisfiedSlot(s, nowIso) : s)) };
+    // DF-P26 (GAP-115 limb 2; DEC-90 ruling (1)): on a roster with a slot the
+    // exception-only rule satisfied, an exception on record now — the source
+    // moved, an override sign-off, a waiver, a declaration not on record, the
+    // request become engineered work — re-opens that slot for its reviewer in
+    // this same close (lib/exceptionOnlyReview.ts): the window still closes
+    // on silence for ITS slot, but the request does not issue — it waits on
+    // the re-opened slot. What cannot be checked waits a run, as every other
+    // transient read here — where the close would issue (fix pass 4). Read
+    // only for such a roster.
+    let ruleReopen: { slots: TicketReviewRoster["slots"]; labels: string[]; exceptions: string[] } | null = null;
+    if (ruleSatisfiedSlots(advancedRoster).length > 0) {
+      const moved = await sourceDriftOf(ticket);
+      const waiver = await readWaiverOnRecord(sb, ticketId);
+      if (moved.unchecked || !waiver.ok) {
+        // DF-P26 fix pass 4 (DEC-90 rulings (1) and (4)): a read that cannot
+        // prove there is no exception holds only a close that would ISSUE
+        // the request. A close that leaves the review waiting on another
+        // sign-off cannot issue: it closes, nothing is re-opened by it, and
+        // the act that completes the review (the route's sign-off, or a
+        // later close) checks again — as the route takes a partial sign-off.
+        const why = !waiver.ok ? `: ${waiver.error}` : "";
+        if (rosterCompletion(advancedRoster).complete) {
+          report.failed += 1;
+          say(`ticket ${ticketId}: whether an exception is on record for its exception-only sign-off could not be checked — the window was not closed (retried next run)${why}`);
+          return;
+        }
+        say(`ticket ${ticketId}: whether an exception is on record for its exception-only sign-off could not be checked; this close does not complete the review, so the window closes and the sign-off that completes it checks again${why}`);
+      } else {
+        const found = exceptionsOnRecord({ driftLabels: moved.moved, roster: advancedRoster, waiver: waiver.waiver, declarationUnverified: declarationMissing ? "missing" : null, engineered });
+        if (found.length > 0) {
+          const ruled = ruleSatisfiedSlots(advancedRoster);
+          const texts = found.map((f) => f.text);
+          advancedRoster = reopenRuleSatisfied(advancedRoster, texts, nowIso);
+          ruleReopen = { slots: advancedRoster.slots.filter((x) => ruled.some((r) => r.kind === x.kind)), labels: ruled.map((r) => r.label || r.kind), exceptions: texts };
+        }
+      }
+    }
     // DEC-12 / DEC-37: the floor as it reads for silence (consentFloorHolds
     // stands in for rosterCompletion's floor, which never counts a window).
     const floorHolds = consentFloorHolds(advancedRoster, { sodActive: ctx.sodActive, drafterId: ticket.assignedDrafterId }, asked);
@@ -1092,6 +1140,27 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
       say(`ticket ${ticketId}: its examination data could not be read — the window was not closed (retried next run): ${scopeGate.error}`);
       return;
     }
+    // DF-P26 (GAP-116; DEC-90 ruling (2) for DF-P26): a close that would
+    // issue meets the same hold stop as the route's issuing acts — an open
+    // hold on the source document carrying THIS request's examination record,
+    // placed by the people of the notify-only slot it names
+    // (lib/requestHoldStop.ts). While it is in force the window is NOT
+    // closed (nothing written; checked again every run), so releasing the
+    // hold lets the close proceed; a read that fails where a record could
+    // exist waits a run, as every other transient read here. Read only where
+    // such a record could exist — every other close is today's.
+    if (undelivered.length === 0 && !engineered && !floorHolds && !independenceHolds && !noLongerMember && wouldIssue && ledgerAgrees && drift.moved.length === 0 && !drift.unchecked && scopeGate?.kind !== "blocked") {
+      const holdStop = await requestHoldStop(sb, { ticket, ticketId, orgId: ticket.orgId });
+      if (holdStop.kind === "unreadable") {
+        report.failed += 1;
+        say(`ticket ${ticketId}: the holds on its source document could not be read — the window was not closed (retried next run): ${holdStop.error}`);
+        return;
+      }
+      if (holdStop.kind === "stopped") {
+        say(`ticket ${ticketId}: ${holdStop.documentLabel} is on hold by the people told of this review (${holdStop.holds.map((h) => h.slotLabel).join(", ")}), which stops this request — the window was not closed; it closes on a run after the hold is released`);
+        return;
+      }
+    }
     const holdReason: ConsentHoldReason | null = undelivered.length > 0 ? "undelivered"
       : engineered ? "engineered"
       : floorHolds ? "producer_floor"
@@ -1127,7 +1196,7 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     const { updates, newStatus } = computeTransition(ticket, {
       actionType: "consent_window_advance",
       actionLabel: "Advanced without objection",
-      consentAdvance: { roster: finalRoster, complete, label, details: `${details}${heldWhy}`, held, holdReason, issueAsIs },
+      consentAdvance: { roster: finalRoster, complete, label, details: `${details}${heldWhy}${ruleReopen && !held ? ` ${ruleReopenNote(ruleReopen.labels, ruleReopen.exceptions)}` : ""}`, held, holdReason, issueAsIs },
       actor: { uid: null, email: CONSENT_WINDOW_ACTOR, role: "System" },
       now: nowIso,
     });
@@ -1171,6 +1240,8 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
         // where a requirement applies — no key otherwise).
         ...(scopeGate?.kind === "pass" ? { examinationScope: scopeGate.audit } : {}),
         ...(scopeGate?.kind === "blocked" ? { examinationScope: { missing: scopeGate.blocking.map((b) => b.key) } } : {}),
+        // DF-P26 (GAP-115): a re-open of the exception-only rule's slots.
+        ...(ruleReopen && !held ? { exceptionReview: { reopened: ruleReopen.slots.map((x) => x.kind), exceptions: ruleReopen.exceptions } } : {}),
         deliverable_rev: (updates.deliverable_rev as string | undefined) ?? ticket.deliverableRev ?? null,
         recordedBeforeApply: true,
       },
@@ -1230,6 +1301,11 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
       const touched = advancedRoster.slots.filter((s) => s.kind === slotKind);
       const ledgerErr = await writeRosterLedger(sb, { orgId: ticket.orgId, ticketId, roster: advancedRoster, event: "satisfied", slots: touched, actor: { uid: null, name: CONSENT_WINDOW_ACTOR } });
       if (ledgerErr) say(`ticket ${ticketId}: the roster ledger was not written for the advance (audit row ${auditId}) — reconcile from tickets.metadata.review_roster: ${ledgerErr}`);
+      // DF-P26 (GAP-115): the re-open's ledger side.
+      if (!ledgerErr && ruleReopen) {
+        const reopenErr = await writeRosterReopen(sb, { orgId: ticket.orgId, ticketId, roster: advancedRoster, slots: ruleReopen.slots, exceptions: ruleReopen.exceptions, actor: { uid: null, name: EXCEPTION_RULE_ACTOR } });
+        if (reopenErr) say(`ticket ${ticketId}: the re-open of the exception-only sign-off was not written to the roster ledger (audit row ${auditId}) — reconcile from tickets.metadata.review_roster: ${reopenErr}`);
+      }
     }
 
     // Tell the people with a stake (bell): the requester, the drafter, the
@@ -1238,12 +1314,19 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     const told = [...new Set([ticket.requesterId, ticket.assignedDrafterId, ...state.recipients, ...waiting, ...pool, ...escalate].filter((u): u is string => !!u))];
     const audience = told.filter((u) => activeUids.has(u));
     let bellLanded = false;
+    // DF-P26 (GAP-102 acceptance 2): an issuing close's notice names the
+    // request's recorded examination data, as the route's issue notice does
+    // (lib/issueNoticeExamination.ts — names and counts only; read only where
+    // such a record could exist; nothing recorded → today's notice).
+    const issueExamination = complete && audience.length > 0
+      ? await issueExaminationNote(sb, { ticket, ticketId, orgId: ticket.orgId, draftingCfg: ctx.draftingCfg ?? null, roster: advancedRoster })
+      : null;
     if (audience.length > 0) {
       const ticketLabel = `${ticket.ticketId || ""} ${ticket.title || ""}`.trim();
       const { error: bellErr } = await notifyBatchWithReason(audience.map((uid) => ({
         orgId: ticket.orgId, userId: uid, kind: "ticket_status" as const,
         title: `${held ? "Consent window closed" : "Advanced without objection"} · ${ticketLabel}`.slice(0, 200),
-        body: held ? `"${label}" still waits for a sign-off.${heldWhy}` : complete ? `Nobody objected to "${label}" — every sign-off is in; issued Rev ${String(updates.deliverable_rev ?? "")}.` : `Nobody objected to "${label}" — the review waits on the remaining sign-offs.`,
+        body: held ? `"${label}" still waits for a sign-off.${heldWhy}` : complete ? `Nobody objected to "${label}" — every sign-off is in; issued Rev ${String(updates.deliverable_rev ?? "")}.${issueExamination ? `\n\n${issueExamination}` : ""}` : `Nobody objected to "${label}" — the review waits on the remaining sign-offs.`,
         link: `/requests/${ticketId}`, resourceType: "ticket", resourceId: ticketId,
         actorName: "System",
         metadata: { action: "consent_window_advance", status: String(newStatus) },

@@ -62,6 +62,10 @@ interface DraftSlot {
    *  accepts_preauthorization). Written only where an assurance check could
    *  ride and the slot is not one; never set by default. */
   acceptsPreauthorization?: boolean;
+  /** GAP-115 (DF-P26): the controller's exception-only opt-in
+   *  (lib/routingControl.ts exception_only). Written only where
+   *  exceptionOptInFor offers it; never set by default. */
+  exceptionOnly?: boolean;
   /** DF-P5 fix pass: what a stored slot carries that this editor cannot show
    *  — a fill's other sources (a fill naming roles AND people), the
    *  override (`waivable_by`) and named alternate people. Carried through a
@@ -136,15 +140,17 @@ export function withSlotMode(d: DraftSlot, mode: RoutingSlotMode): DraftSlot {
   if (d.mode === mode) return d;
   const next: DraftSlot = { ...d, mode };
   delete next.recordsExamination;
+  // DF-P26 (GAP-115): nor is the exception-only opt-in carried across modes.
+  delete next.exceptionOnly;
   return next;
 }
 
 /** DF-P25: what the notify-only opt-in does — never a suggestion to add a
- *  sign-off (GAP-102: assurance as notice plus a stop). DF-P25 review fix
- *  pass 5: and never a claim the hold stops the request — it stops work on
- *  the source document only (GAP-116 owns a stop of the request). */
+ *  sign-off (GAP-102: assurance as notice plus a stop). DF-P26 (GAP-116):
+ *  the hold now stops the request as well as work on the source document
+ *  (lib/requestHoldStop.ts on every issuing path), and the hint says so. */
 export const NOTIFY_EXAMINATION_HINT =
-  "Its people are still only told — nobody waits on them and no sign-off is added. If one of them finds a problem, they can place a hold on the request's source document from the request page, and the hold records the files they examined and why. The hold stops work on the document (no new revision of it is published, and it is not transmitted or shared, until the hold is released — unless Document Control forces a publish past it); it does not stop the request — its review can still complete and its deliverable be issued. Its people need permission to place holds (Admin → Permissions → Action permissions, Place a hold).";
+  "Its people are still only told — nobody waits on them and no sign-off is added. If one of them finds a problem, they can place a hold on the request's source document from the request page, and the hold records the files they examined and why. The hold stops work on the document (no new revision of it is published, and it is not transmitted or shared, until the hold is released — unless Document Control forces a publish past it), and a hold that records what they examined stops the request too: while it is in force the review cannot complete and the deliverable cannot be issued (a hold placed without that record — before the database update 20261267, or when the record is too large — stops work on the document only). Releasing the hold lets the request go on. Its people need permission to place holds (Admin → Permissions → Action permissions, Place a hold).";
 
 /** GAP-109 mechanism 2 (DF-P22): may this slot accept a standing
  *  pre-authorization? Exactly where the assurance opt-in may ride
@@ -153,6 +159,16 @@ export const NOTIFY_EXAMINATION_HINT =
 export function preauthOptInFor(d: DraftSlot): "offer" | "none" {
   return assuranceOptInFor(d) === "offer" && !d.recordsExamination ? "offer" : "none";
 }
+
+/** GAP-115 (DF-P26): may this slot be exception-only? Exactly where the
+ *  pre-authorization opt-in may ride, and not while the slot accepts one
+ *  (lib/routingControl.ts exceptionOnlyOptInAllowed). */
+export function exceptionOptInFor(d: DraftSlot): "offer" | "none" {
+  return preauthOptInFor(d) === "offer" && !d.acceptsPreauthorization ? "offer" : "none";
+}
+
+export const EXCEPTION_ONLY_HINT =
+  "When a review opens with no exception on record — the source unmoved, no override, no waiver of examination data, a like-in-kind declaration that checks out — this sign-off is recorded as satisfied by the rule, naming it. If an exception comes on record before the request issues, it is re-opened for its reviewer and the request waits for it. Never on engineered work, and never the last sign-off a review waits on.";
 
 export const PREAUTH_OPT_IN_HINT =
   "A person this slot names who recorded a standing pre-authorization covering the request (their own, signed, with an expiry) has it signed off for them — never on engineered work, and never for the last sign-off a review waits on.";
@@ -205,6 +221,10 @@ export function draftToControl(slots: DraftSlot[]): RoutingControl {
         // opt-in, on a slot that can carry it (never an assurance check) — a
         // slot switched away, or made an assurance check, drops it.
         ...(d.acceptsPreauthorization && preauthOptInFor(d) === "offer" ? { accepts_preauthorization: true as const } : {}),
+        // DF-P26 (GAP-115): the exception-only opt-in, on a slot that can
+        // carry it — a slot switched away, made an assurance check or set to
+        // accept a pre-authorization drops it.
+        ...(d.exceptionOnly && exceptionOptInFor(d) === "offer" ? { exception_only: true as const } : {}),
       };
     }),
   };
@@ -232,6 +252,7 @@ export function controlToDraft(c: RoutingControl): DraftSlot[] {
       timeoutDays: s.timeoutDays ? String(s.timeoutDays) : "", alternateRoles: s.alternates?.roles ?? [],
       ...(s.records_examination === true ? { recordsExamination: true } : {}),
       ...(s.accepts_preauthorization === true ? { acceptsPreauthorization: true } : {}),
+      ...(s.exception_only === true ? { exceptionOnly: true } : {}),
       ...(Object.keys(kept).length ? { kept } : {}),
     };
   });
@@ -540,6 +561,13 @@ export default function RoutingControlSection({ level, id, orgId }: { level: Rou
                       <input type="checkbox" checked={!!s.acceptsPreauthorization} onChange={(e) => patch(i, { acceptsPreauthorization: e.target.checked })} />
                       <span className="font-bold text-[var(--color-text-muted)]">Accepts a standing pre-authorization</span>
                       <span className="text-[var(--color-text-faint)]">{PREAUTH_OPT_IN_HINT}</span>
+                    </label>
+                  )}
+                  {exceptionOptInFor(s) === "offer" && (
+                    <label className="flex flex-wrap items-center gap-1.5 text-[11px]" data-testid="routing-slot-exception-only">
+                      <input type="checkbox" checked={!!s.exceptionOnly} onChange={(e) => patch(i, { exceptionOnly: e.target.checked })} />
+                      <span className="font-bold text-[var(--color-text-muted)]">Exception-only review</span>
+                      <span className="text-[var(--color-text-faint)]">{EXCEPTION_ONLY_HINT}</span>
                     </label>
                   )}
                   {s.acceptsPreauthorization && preauthOptInFor(s) === "offer" && preauthNeverActsNote(slots) && (

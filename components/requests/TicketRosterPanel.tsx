@@ -48,7 +48,7 @@ import { Users, CheckCircle2, Clock, Bell, ShieldAlert, Loader2, Library } from 
 import { supabase } from "@/lib/supabase";
 import { recordSignature, type SigningCredential, type SignatureIntent } from "@/lib/eSignatures";
 import SignatureCeremony from "@/components/signatures/SignatureCeremony";
-import { currentRoster, slotSignPlan, separationOfDutiesActive, engineeringGateRequired, slotBlocks, issueReadyFor, ISSUE_AS_IS_NOTE, unhashedFilesNote, ROUTED_NO_ROSTER_REASON } from "@/lib/workflow";
+import { currentRoster, slotSignPlan, separationOfDutiesActive, engineeringGateRequired, slotBlocks, issueReadyFor, ISSUE_AS_IS_NOTE, unhashedFilesNote, ROUTED_NO_ROSTER_REASON, ruleUpgradeNeeded, RULE_UPGRADE_OPTIONAL_NOTE, RULE_UPGRADE_NEEDED_NOTE } from "@/lib/workflow";
 import { engineeringOverrideOf } from "@/lib/reviewModel";
 import { seededSlotsFor, MODE_LABEL, isMissingRosterLedger, ROSTER_LEDGER_NOT_WRITTEN } from "@/lib/routingControl";
 import {
@@ -193,8 +193,35 @@ export function slotQuestion(slot: Pick<TicketReviewSlot, "kind" | "primaries">,
   return requesterOnly ? "Is this what you asked for?" : "Is it correct?";
 }
 
+/** GAP-115 (DF-P26): what a slot the exception-only rule satisfied says. */
+export const RULE_SATISFIED_TEXT = "Satisfied by rule — exception-only review, no exception on record (re-opened for its reviewer if one comes on record before the request issues)";
+/** GAP-115 (DF-P26): what a slot an exception re-opened says before who it waits on. */
+export const exceptionReopenedText = (exceptions: readonly string[]): string =>
+  `Re-opened for its reviewer: ${exceptions.join("; ")}.`;
+/** GAP-115 (DF-P26 fix pass 2): what the signer is asked BEFORE an
+ *  e-signature is minted when the dry run says their sign-off will re-open a
+ *  slot the exception-only rule satisfied (the route's `exceptionReopens` /
+ *  `exceptionReopenReasons`) instead of issuing. Pure. */
+export function exceptionReopenConfirmation(labels: readonly string[], reasons: readonly string[] | null | undefined): string {
+  const why = reasons && reasons.length > 0 ? ` because ${reasons.join("; ")}` : " because an exception is now on record";
+  return `Your sign-off will be recorded, but ${labels.join(", ")} will be re-opened for its reviewer${why}. The request will not issue yet.`;
+}
+/** GAP-115 (DF-P26 fix pass 2): a sign-off offered only on slots the
+ *  exception-only rule satisfied, as the button says it. Pure. */
+export function ruleUpgradeButtonText(labels: readonly string[], needed: boolean): string {
+  return needed ? `Sign off — ${labels.join(", ")} (needed: the rule is not the second person)` : `Sign it yourself (optional) — ${labels.join(", ")}`;
+}
+const waitingText = (slot: TicketReviewSlot): string => {
+  const n = slot.primaries.length;
+  return `Waiting on any one of ${n} ${n === 1 ? "person" : "people"}${slot.fallback ? " (the management tier — the routing named nobody active)" : ""}`;
+};
+
 /** The words for one slot's state. */
 export function slotStateText(slot: TicketReviewSlot, names: ReadonlyMap<string, string>, now: number = Date.now(), openedAt?: string): string {
+  // GAP-115 (DF-P26): a slot the exception-only rule satisfied names the
+  // rule, never a signer; one an exception re-opened says why it waits.
+  if (slot.status === "satisfied" && slot.via === "rule") return `${RULE_SATISFIED_TEXT}${slot.satisfiedAt ? ` · ${new Date(slot.satisfiedAt).toLocaleString()}` : ""}`;
+  if (slot.status === "open" && slot.exceptionReopened) return `${exceptionReopenedText(slot.exceptionReopened.exceptions)} ${waitingText(slot)}`;
   if (slot.status === "satisfied") {
     const who = (slot.satisfiedBy && names.get(slot.satisfiedBy)) || slot.satisfiedByName || "someone";
     const how = slot.via === "alternate" ? " (as alternate)" : slot.via === "override" ? " (as an override)" : "";
@@ -348,6 +375,11 @@ export default function TicketRosterPanel({
 
   const sod = separationOfDutiesActive(activeMemberCount);
   const plan = roster ? slotSignPlan(roster, ticket, uid, sod) : null;
+  // GAP-115 (DF-P26 fix pass 2): a sign-off open only on slots the
+  // exception-only rule satisfied is an optional upgrade (the engine's own
+  // rule — lib/workflow.ts ruleUpgradeNeeded says when it is needed).
+  const ruleOnlyPlan = !!plan && plan.fillable.length > 0 && plan.fillable.every((f) => f.slot.status === "satisfied" && f.slot.via === "rule");
+  const ruleNeeded = !!roster && ruleOnlyPlan && ruleUpgradeNeeded(roster, ticket, sod);
   // FRIC-5 (fix pass 2): the drafter's issue-as-is mark is in front of every
   // signer — on the panel and in the statement they sign.
   const issueReady = issueReadyFor(ticket);
@@ -450,6 +482,15 @@ export default function TicketRosterPanel({
         out = (await res.json().catch(() => ({}))) as { error?: string };
       }
       if (!res.ok) throw new Error(out.error || `This sign-off can't be taken right now (HTTP ${res.status})`);
+      // GAP-115 (DF-P26 fix pass 2): a sign-off that will re-open a slot the
+      // exception-only rule satisfied (an exception is now on record) is
+      // recorded but does not issue — the signer is told before signing.
+      const reopens = (out as { exceptionReopens?: unknown }).exceptionReopens;
+      if (Array.isArray(reopens) && reopens.length > 0) {
+        const reasons = (out as { exceptionReopenReasons?: unknown }).exceptionReopenReasons;
+        const message = exceptionReopenConfirmation(reopens.map(String), Array.isArray(reasons) ? reasons.map(String) : null);
+        if (!(await appConfirm({ title: "This sign-off will not issue the request", message, confirmLabel: "Sign off anyway" }))) return;
+      }
       setSigning(true);
     } catch (e) {
       setError((e as Error).message);
@@ -634,8 +675,13 @@ export default function TicketRosterPanel({
           className="px-4 py-2 rounded-lg text-sm font-bold bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
         >
           {busy ? <Loader2 className="w-4 h-4 animate-spin inline mr-1" /> : null}
-          Sign off — {plan.fillable.map((f) => f.slot.label).join(", ")}
+          {ruleOnlyPlan
+            ? ruleUpgradeButtonText(plan.fillable.map((f) => f.slot.label), ruleNeeded)
+            : <>Sign off — {plan.fillable.map((f) => f.slot.label).join(", ")}</>}
         </button>
+      )}
+      {roster && plan && ruleOnlyPlan && (
+        <p className="text-xs text-[var(--color-text-muted)]" data-testid="rule-upgrade-note">{ruleNeeded ? RULE_UPGRADE_NEEDED_NOTE : RULE_UPGRADE_OPTIONAL_NOTE}</p>
       )}
 
       {routedNoRoster && (

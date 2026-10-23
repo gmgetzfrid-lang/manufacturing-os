@@ -1307,7 +1307,10 @@ describe("DF-P24 fix pass: the examination-scope gate on an issuing close", () =
     db.tables.tickets[0].created_at = createdAt;
     if (cfg) db.tables.org_configurations = [{ org_id: "o1", key: "drafting", data: cfg }];
   };
-  const scopeReads = () => calls("ticket_examination_scopes", "select");
+  // DF-P26 (GAP-102 acceptance 2): an issuing close's notice also reads the
+  // recorded values to name them (select "field_values", only where fields
+  // are configured) — pinned in the DF-P26 block; these pins are the GATE's.
+  const scopeReads = () => calls("ticket_examination_scopes", "select").filter((c) => c.args[0] !== "field_values");
   it("required data missing (filed after the requirement, no waiver): HELD ('examination_scope_missing') — not issued, the history names the field", async () => {
     seedScope(scopeCfg([{ field: "gov", libraryId: LIB_ID, since: SCOPE_SINCE }]));
     db.tables.ticket_examination_scopes = [];
@@ -1378,5 +1381,188 @@ describe("DF-P24 fix pass: the examination-scope gate on an issuing close", () =
     db.tables.org_configurations = [{ org_id: "o1", key: "drafting", data: scopeCfg([{ field: "gov", libraryId: LIB_ID, since: SCOPE_SINCE }]) }];
     expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 0 });
     expect(scopeReads()).toEqual([]);
+  });
+});
+
+// drafting-flow DF-P26 (GAP-116; DEC-90 ruling (2) for DF-P26): a consent
+// close that would ISSUE the request is not made while an open hold on its
+// source document carries THIS request's examination record and was placed
+// by the people of the notify-only slot it names (lib/requestHoldStop.ts).
+// The window stays unclosed (nothing written; checked again every run);
+// releasing the hold lets it close. Without such a slot or document the
+// close is today's, with no hold read.
+describe("DF-P26 (GAP-116): a notify-only hold stops the consent close that would issue", () => {
+  const DOC = "d0c00000-0000-4000-8000-000000000001";
+  const WATCH = () => slot({ kind: "watch", label: "Inspection notice", mode: "notify_only", primaries: ["q-2"], recordsExamination: true });
+  const hold = (over: Row = {}): Row => ({
+    id: "h-1", org_id: "o1", document_id: DOC, reason: "Other", opened_by: "q-2", opened_at: "2026-10-20T10:00:00Z", released_at: null,
+    examination: { stop: "hold", ticketId: "t1", rosterId: ROSTER_ID, slotKind: "watch", contentHash: "h", files: [], ofFiles: 0, note: "nozzle orientation" },
+    ...over,
+  });
+  const seedHeld = (opts: { watch?: boolean; source?: boolean } = {}) => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    const t = db.tables.tickets[0];
+    const meta = t.metadata as { review_roster: TicketReviewRoster } & Row;
+    if (opts.watch !== false) meta.review_roster = { ...meta.review_roster, slots: [...meta.review_roster.slots, WATCH()] };
+    if (opts.source !== false) meta.source_document = { id: DOC, document_number: "P-100" };
+    db.tables.org_members.push(member("q-2", "Viewer"));
+    db.tables.documents = [{ id: DOC, org_id: "o1", library_id: LIB_ID, collection_id: null, rev: null, current_version_id: null, document_number: "P-100", routing_control: null }];
+  };
+  const holdReads = () => calls("document_holds", "select");
+  it("an open hold of the slot's people naming this request: NOT closed (nothing written); released, the next run issues", async () => {
+    seedHeld();
+    db.tables.document_holds = [hold()];
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 0, held: 0, issued: 0 });
+    expect(r.errors.join("\n")).toMatch(/P-100 is on hold by the people told of this review \(Inspection notice\), which stops this request — the window was not closed; it closes on a run after the hold is released/);
+    expect(db.tables.tickets[0].status).toBe("PENDING_REVIEW");
+    expect(calls("tickets", "update")).toEqual([]);
+    expect(calls("audit_logs", "insert")).toEqual([]);
+    expect(ledgerOps().status).toBe("open");
+    // released: the next run closes it and issues
+    db.tables.document_holds[0].released_at = "2026-10-23T02:00:00Z";
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+    expect(db.tables.tickets[0].status).toBe("PENDING_IFC");
+  });
+  it("a hold naming this request but placed by someone who is not the slot's: the close issues as before", async () => {
+    seedHeld();
+    db.tables.document_holds = [hold({ opened_by: "o-1" })];
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+  });
+  it("the holds unreadable where a record could exist: not closed (retried next run, nothing written)", async () => {
+    seedHeld();
+    db.errors.document_holds = { code: "08006", message: "connection lost" };
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 0, held: 0, issued: 0, failed: 1 });
+    expect(r.errors.join("\n")).toMatch(/the holds on its source document could not be read — the window was not closed \(retried next run\): connection lost/);
+    expect(calls("tickets", "update")).toEqual([]);
+  });
+  it("before 20261267 (no examination column): no hold can carry a record — the close issues", async () => {
+    seedHeld();
+    db.errors.document_holds = { code: "42703", message: "column document_holds.examination does not exist" };
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+  });
+  it("DF-P26 fix pass 3: a roster that plans a consent window and carries the earlier-round mark (no opted-in slot of its own): a round-1 hold of that round's slot person holds the close; released, the next run issues", async () => {
+    const OLD = "0d000000-0000-4000-8000-000000000001";
+    seedHeld({ watch: false });
+    const meta = db.tables.tickets[0].metadata as { review_roster: TicketReviewRoster };
+    meta.review_roster = { ...meta.review_roster, notifyHoldRecordsEarlier: true };
+    db.tables.ticket_review_slots.push({ id: "lw", org_id: "o1", ticket_id: "t1", roster_id: OLD, slot_kind: "watch", label: "Inspection notice", mode: "notify_only", status: "open", primaries: ["q-2"], alternates: [], independent_of: [], fallback: false });
+    db.tables.document_holds = [hold({ examination: { ...(hold().examination as Row), rosterId: OLD } })];
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 0, issued: 0 });
+    expect(r.errors.join("\n")).toMatch(/P-100 is on hold by the people told of this review \(Inspection notice\), which stops this request/);
+    expect(calls("tickets", "update")).toEqual([]);
+    db.tables.document_holds[0].released_at = "2026-10-23T02:00:00Z";
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+  });
+  it("REGRESSION: no opted-in notify-only slot, or no source document, or a close that does not issue — no hold read; today's close", async () => {
+    for (const opts of [{ watch: false }, { source: false }]) {
+      db.calls = [];
+      db.errors = {};
+      seedHeld(opts);
+      db.tables.document_holds = [hold()];
+      expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+      expect(holdReads()).toEqual([]);
+    }
+    db.calls = [];
+    seedHeld();
+    db.tables.tickets[0].metadata = { ...(db.tables.tickets[0].metadata as Row) };
+    const meta = db.tables.tickets[0].metadata as { review_roster: TicketReviewRoster };
+    meta.review_roster = { ...meta.review_roster, slots: meta.review_roster.slots.map((s) => (s.kind === "accept" ? { ...s, status: "open" as const, satisfiedBy: undefined, via: undefined, signatureId: undefined } : s)) };
+    db.tables.ticket_review_slots.find((r) => r.slot_kind === "accept")!.status = "open";
+    db.tables.document_holds = [hold()];
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 0 });
+    expect(holdReads()).toEqual([]);
+  });
+});
+
+// drafting-flow DF-P26 (GAP-102 acceptance 2): an issuing close's notice names
+// the request's recorded examination data (names and counts only); a request
+// with none gets exactly today's notice.
+describe("DF-P26 (GAP-102 acceptance 2): the consent close's issue notice carries the examination data", () => {
+  const CFG = { examinationScope: { fields: [{ key: "gov", label: "Governing code", options: [{ value: "c1", label: "Code one" }] }], requirements: [] } };
+  const bellBodies = () => calls("notifications", "insert").flatMap((c) => c.args[0] as Array<{ body: string }>).map((b) => b.body);
+  it("values recorded: every bell row of the issue ends with the one line", async () => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+    db.tables.org_configurations = [{ org_id: "o1", key: "drafting", data: CFG }];
+    db.tables.ticket_examination_scopes = [{ ticket_id: "t1", org_id: "o1", field_values: { gov: { value: "c1", by: "d-1", at: "2026-10-20T00:00:00Z" } }, waiver: null }];
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+    const bodies = bellBodies();
+    expect(bodies.length).toBeGreaterThan(0);
+    for (const b of bodies) expect(b).toBe('Nobody objected to "Operations" — every sign-off is in; issued Rev 1.\n\nExamination data: Governing code: Code one.');
+  });
+  it("PIN: nothing recorded (fields configured, no row; or unconfigured) — today's notice, word for word", async () => {
+    for (const cfg of [CFG, null]) {
+      db.calls = [];
+      seedTicket({ warned: "2026-10-21T09:00:00Z" });
+      db.tables.org_configurations = cfg ? [{ org_id: "o1", key: "drafting", data: cfg }] : [];
+      db.tables.ticket_examination_scopes = [];
+      expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+      for (const b of bellBodies()) expect(b).toBe('Nobody objected to "Operations" — every sign-off is in; issued Rev 1.');
+      if (!cfg) expect(calls("ticket_examination_scopes", "select")).toEqual([]);
+    }
+  });
+});
+
+// drafting-flow DF-P26 (GAP-115 / GAP-109 mechanism 3, limb 2): a consent
+// close that would complete a review on which a slot stands satisfied by the
+// exception-only rule first looks for an exception on record. None: today's
+// issuing close. One (here a waiver of required examination data): the
+// window closes as a recorded system act, the rule's slot is RE-OPENED in the
+// same write (history, audit row, ledger "reopened"), and the request does
+// not issue. The waiver unreadable: not closed, retried next run.
+describe("DF-P26 (GAP-115): the consent close re-opens a slot satisfied by the exception-only rule when an exception is on record", () => {
+  const seedRuled = (accept?: "open") => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z", ...(accept ? { accept } : {}) });
+    const meta = db.tables.tickets[0].metadata as { review_roster: TicketReviewRoster };
+    meta.review_roster = { ...meta.review_roster, slots: [...meta.review_roster.slots, slot({ kind: "doc", label: "Document check", primaries: ["q-1"], exceptionOnly: true, status: "satisfied", via: "rule", satisfiedBy: null as unknown as string, signatureId: null as unknown as string, satisfiedAt: "2026-10-19T09:00:00Z" })] };
+    db.tables.ticket_review_slots.push({ id: "ld", ticket_id: "t1", roster_id: ROSTER_ID, slot_kind: "doc", mode: "blocking", status: "satisfied", primaries: ["q-1"], independent_of: [], fallback: false });
+    db.tables.org_members.push(member("q-1", "Viewer"));
+  };
+  const reopenedEvents = () => calls("ticket_review_slot_events", "insert").flatMap((c) => c.args[0] as Row[]).filter((e) => e.event === "reopened");
+  it("no exception on record: today's issuing close; the rule's slot stays satisfied; no 'reopened' event", async () => {
+    seedRuled();
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 1 });
+    expect(db.tables.tickets[0].status).toBe("PENDING_IFC");
+    expect(rosterOf().slots.find((s) => s.kind === "doc")).toMatchObject({ status: "satisfied", via: "rule" });
+    expect(reopenedEvents()).toEqual([]);
+    expect(auditDetails().exceptionReview).toBeUndefined();
+  });
+  it("a waiver on record: the window closes, the rule's slot is re-opened in the same write, the request does NOT issue — history, audit row and ledger say so", async () => {
+    seedRuled();
+    db.tables.ticket_examination_scopes = [{ ticket_id: "t1", org_id: "o1", field_values: {}, waiver: { reason: "vendor data" } }];
+    expect(await runConsentWindowScan({ client, now: NOW })).toMatchObject({ advanced: 1, issued: 0 });
+    expect(db.tables.tickets[0].status).toBe("PENDING_REVIEW");
+    const r = rosterOf();
+    expect(r.slots.find((s) => s.kind === "ops")!.status).toBe("satisfied");
+    expect(r.slots.find((s) => s.kind === "doc")).toMatchObject({ status: "open", exceptionReopened: { exceptions: ["a waiver of required examination data is recorded"] } });
+    expect(lastHistory().details).toContain("Re-opened for its reviewer: Document check — exception-only review no longer stands because a waiver of required examination data is recorded.");
+    expect(auditDetails().exceptionReview).toEqual({ reopened: ["doc"], exceptions: ["a waiver of required examination data is recorded"] });
+    expect(reopenedEvents()).toEqual([expect.objectContaining({ slot_kind: "doc", event: "reopened", actor_id: null, actor_name: "System — exception-only review", details: { via: "rule", exceptions: ["a waiver of required examination data is recorded"] } })]);
+    expect(db.tables.ticket_review_slots.find((x) => x.slot_kind === "doc")).toMatchObject({ status: "open", satisfied_via: null, satisfied_by: null });
+  });
+  it("the waiver unreadable: not closed (nothing written), retried next run", async () => {
+    seedRuled();
+    db.errors.ticket_examination_scopes = { code: "08006", message: "connection lost" };
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 0, issued: 0, failed: 1 });
+    expect(calls("tickets", "update")).toEqual([]);
+    expect(calls("audit_logs", "insert")).toEqual([]);
+  });
+  it("DF-P26 fix pass 4 (DEC-90 rulings (1) and (4)): the waiver unreadable on a close that would NOT complete the review (another blocking slot still open) — the window closes, nothing re-opened, nothing issued; the read never delays it", async () => {
+    seedRuled("open");
+    db.errors.ticket_examination_scopes = { code: "08006", message: "connection lost" };
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 1, issued: 0, failed: 0 });
+    expect(db.tables.tickets[0].status).toBe("PENDING_REVIEW");
+    const roster = rosterOf();
+    expect(roster.slots.find((s) => s.kind === "ops")!.status).toBe("satisfied");
+    expect(roster.slots.find((s) => s.kind === "accept")!.status).toBe("open");
+    expect(roster.slots.find((s) => s.kind === "doc")).toMatchObject({ status: "satisfied", via: "rule" });
+    expect(reopenedEvents()).toEqual([]);
+    expect(auditDetails().exceptionReview).toBeUndefined();
+    expect(r.errors.some((m) => /could not be checked; this close does not complete the review, so the window closes/.test(m))).toBe(true);
+    // the same unreadable read on a close that WOULD complete it still waits a run (above)
   });
 });

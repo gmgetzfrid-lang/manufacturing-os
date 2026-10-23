@@ -366,6 +366,18 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     migration: "20261265_df_roundG_transition_record.sql",
     feature: "Correcting a request's equipment tag in one transaction (app/api/tickets/equipment; intelligence GAP-312)",
   },
+  // drafting-flow DF-P26: the app asks this before it satisfies any
+  // exception-only slot by the rule. No arguments: the call reads the live
+  // CHECK definitions and returns a boolean, nothing is written. Missing
+  // until 20261268 is pasted (42883 / PGRST202) — the rule then applies
+  // nothing and every exception-only slot waits for its sign-off, as today.
+  {
+    signature: "exception_only_review_ready()",
+    fn: "exception_only_review_ready",
+    probeArgs: {},
+    migration: "20261268_df_roundG_issuing_path_stops.sql",
+    feature: "Exception-only review: a slot satisfied by a recorded rule and re-opened on an exception (drafting-flow DF-P26, GAP-115)",
+  },
   {
     signature: "apply_checklist_item_writes(uuid, jsonb)",
     fn: "apply_checklist_item_writes",

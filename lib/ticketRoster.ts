@@ -407,6 +407,11 @@ export function openRoster(input: {
       // assurance slot — parseRoutingControl drops it there); absent, the
       // slot is stored exactly as before.
       ...(s.mode === "blocking" && s.accepts_preauthorization === true && s.records_examination !== true ? { acceptsPreauthorization: true as const } : {}),
+      // GAP-115 (DF-P26): the controller's exception-only opt-in, frozen with
+      // the roster (only where the parser kept it — never an assurance or a
+      // pre-authorization slot, never the engineering gate this function
+      // appends); absent, the slot is stored exactly as before.
+      ...(s.mode === "blocking" && s.exception_only === true && s.records_examination !== true && s.accepts_preauthorization !== true && s.kind !== gateKind ? { exceptionOnly: true as const } : {}),
       fallback,
       ...((s.fill.capability && ENGINEERING_CAPABILITIES.includes(s.fill.capability)) || s.kind === gateKind ? { engineering: true } : {}),
       status: slotBlocks(s) ? "open" : "told",
@@ -442,7 +447,10 @@ export function applySignPlan(
   const via = new Map(plan.fillable.map((f) => [f.slot.kind, f.via] as const));
   return {
     ...roster,
-    slots: roster.slots.map((s) => (s.status === "open" && via.has(s.kind)
+    // GAP-115 (DF-P26 review fix): a slot the exception-only rule satisfied
+    // is upgraded to the person's sign-off (lib/workflow.ts slotSignPlan
+    // offers it to its own occupants only).
+    slots: roster.slots.map((s) => ((s.status === "open" || (s.status === "satisfied" && s.via === "rule")) && via.has(s.kind)
       ? { ...s, status: "satisfied" as const, satisfiedBy: actor.uid, satisfiedByName: actor.name, satisfiedAt: now, signatureId, via: via.get(s.kind)! }
       : s)),
   };
@@ -467,7 +475,10 @@ export function rosterCompletion(
     // signature — its backing is the window's record (open_consent_window's
     // delivered events and the close's audit row), named here so the
     // evaluator counts it; any other satisfied slot still needs its own.
-    signatureId: s.status === "satisfied" ? (s.signatureId ?? (s.via === "consent" ? `consent-window:${s.id}` : null)) : null,
+    // GAP-115 (DF-P26): so does a slot the exception-only rule satisfied
+    // (its backing is the rule's record — the history line, the audit row
+    // and the ledger event naming it).
+    signatureId: s.status === "satisfied" ? (s.signatureId ?? (s.via === "consent" ? `consent-window:${s.id}` : s.via === "rule" ? `exception-rule:${s.id}` : null)) : null,
     slotGroup: s.kind,
   }));
   const { complete, unsatisfiedGroups } = evaluateSlotCompletion(rows);
@@ -585,7 +596,10 @@ export async function writeRosterLedger(client: LedgerClient, input: {
       ? { examination: { ...input.examination.record, ...(slot.label ? { slotLabel: slot.label } : {}) } }
       : {};
   if (input.event === "opened") {
-    const err = await once(() => slotsTable().insert(input.slots.map((s) => ({
+    // GAP-115 (DF-P26): a slot the exception-only rule satisfied at open is
+    // recorded opened first; the route then records its satisfaction (via
+    // "rule") as its own event — never a satisfied row without its event.
+    const err = await once(() => slotsTable().insert(input.slots.map((s0) => (s0.via === "rule" && s0.status === "satisfied" ? { ...s0, status: "open" as const } : s0)).map((s) => ({
       org_id: orgId, ticket_id: ticketId, roster_id: roster.id, cycle: roster.cycle,
       slot_kind: s.kind, label: s.label, mode: s.mode, primaries: s.primaries, alternates: s.alternates,
       overriders: s.overriders, independent_of: s.independentOf, timeout_days: s.timeoutDays, fallback: s.fallback,
@@ -610,6 +624,38 @@ export async function writeRosterLedger(client: LedgerClient, input: {
     details: input.event === "opened"
       ? { primaries: s.primaries.length, alternates: s.alternates.length, fallback: s.fallback, level: roster.level }
       : { ...(input.event === "satisfied" ? { via: s.via ?? null } : { reason: input.reason ?? roster.closedReason ?? null }), ...examinedOn(s) },
+  }))));
+}
+
+/**
+ * GAP-115 (drafting-flow DF-P26): the ledger side of a RE-OPEN — each slot
+ * the exception-only rule had satisfied goes back to open (its satisfaction
+ * cleared) with one "reopened" event naming the exceptions on record
+ * (20261268 widens the event list by exactly that value). Written as the
+ * service role after the transition that re-opened it landed; checked, each
+ * step tried once more; the error, or null.
+ */
+export async function writeRosterReopen(client: LedgerClient, input: {
+  orgId: string;
+  ticketId: string;
+  roster: TicketReviewRoster;
+  slots: TicketReviewSlot[];
+  exceptions: readonly string[];
+  actor: { uid: string | null; name: string | null };
+}): Promise<string | null> {
+  const { orgId, ticketId, roster } = input;
+  const slotsTable = () => client.from("ticket_review_slots") as {
+    update: (r: unknown) => { eq: (k: string, v: unknown) => { eq: (k: string, v: unknown) => { select: (c: string) => RowsThenable } } };
+  };
+  const eventsTable = () => client.from("ticket_review_slot_events") as { insert: (r: unknown) => Thenable };
+  for (const s of input.slots) {
+    const err = await onceRows(() => slotsTable().update({ status: "open", satisfied_by: null, satisfied_at: null, satisfied_via: null, signature_id: null }).eq("roster_id", roster.id).eq("slot_kind", s.kind).select("id"));
+    if (err) return err;
+  }
+  return once(() => eventsTable().insert(input.slots.map((s) => ({
+    org_id: orgId, ticket_id: ticketId, roster_id: roster.id, slot_kind: s.kind, event: "reopened",
+    actor_id: input.actor.uid, actor_name: input.actor.name, signature_id: null, content_hash: roster.contentHash,
+    details: { via: "rule", exceptions: [...input.exceptions] },
   }))));
 }
 

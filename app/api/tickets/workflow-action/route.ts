@@ -8,7 +8,7 @@ import { engineerPickCap, engineerPickRefusal } from "@/lib/ticketPage";
 import { effectiveRoutingForTicket, routingForWorkClass, ROSTER_LEDGER_NOT_WRITTEN } from "@/lib/routingControl";
 import {
   hashStoredFilesBounded, draftsToHashOnApproval, HASH_LIMITS, filesUnderReview, openRoster, applySignPlan, rosterCompletion, rosterBinding,
-  signatureRefusal, writeRosterLedger, isMissingRosterLedger, type FileHash, type SignatureRow,
+  signatureRefusal, writeRosterLedger, writeRosterReopen, isMissingRosterLedger, type FileHash, type SignatureRow,
 } from "@/lib/ticketRoster";
 import { loadPickerMembers } from "@/lib/ticketPickerMembers";
 import { r2, R2_BUCKET } from "@/lib/r2";
@@ -25,7 +25,7 @@ import {
   rosterPartialReleased,
   type TransitionInput,
 } from "@/lib/ticketTransitions";
-import type { Role, TicketAttachment, TicketHistoryEntry, TicketOutcome, TicketReviewRoster } from "@/types/schema";
+import type { Role, TicketAttachment, TicketHistoryEntry, TicketOutcome, TicketReviewRoster, TicketReviewSlot } from "@/types/schema";
 import { TICKET_INTENT_TTL_MS } from "@/lib/intents";
 import { parseSourceDocument, parseSourceDocuments } from "@/lib/sourceDocRef";
 import { reviewClassOptions, resolveReviewClass, withMinorCorrectionClass, minorCorrectionClassOf, hasReviewModelColumns } from "@/lib/reviewModel";
@@ -46,6 +46,15 @@ import { examinationForAct, examinationAuditFields, type ExaminationOnAct } from
 // GAP-102 acceptance 4 (drafting-flow DF-P24): the examination-scope issue gate.
 import { issueScopeGate } from "@/lib/examinationScopeGate";
 import { workflowEngineContext, rosterlessRoutedRefusal, draftingTypeFlags, DECLARATION_DECIDES } from "@/lib/workflowAuthority";
+// GAP-116 (drafting-flow DF-P26): a notify-only hold that stops the request.
+import { issueHoldStopGate, carryNotifyHoldMark } from "@/lib/requestHoldStop";
+// GAP-102 acceptance 2 (drafting-flow DF-P26): the issue notice carries the examination data.
+import { issueExaminationNote, issueExaminationMayExist } from "@/lib/issueNoticeExamination";
+// GAP-115 / GAP-109 mechanism 3 (drafting-flow DF-P26): exception-only review.
+import {
+  rosterHasExceptionOnlySlot, exceptionRuleAtOpen, ruleSatisfiedSlots, exceptionsOnRecord, reopenRuleSatisfied, readWaiverOnRecord, readSourceMoved,
+  ruleOpenNote, ruleReopenNote, EXCEPTION_RULE_ACTOR,
+} from "@/lib/exceptionOnlyReview";
 import { ticketReadScope } from "@/lib/ticketReadScope";
 import { offerableLibraries, libraryLabelForTicket, libraryChoiceFromRow, LIBRARY_CHOICE_COLUMNS, UNNAMED_TARGET_LIBRARY } from "@/lib/ticketLibrary";
 import { LIBRARY_RUNG_COLUMNS } from "@/lib/libraryAccess";
@@ -500,6 +509,13 @@ export async function POST(req: NextRequest) {
   // lists (seeded empty). null when it could not be read.
   let draftingCfg: Record<string, unknown> | null = null;
   let draftingCfgRead = false;
+  // GAP-115 (DF-P26 fix pass 4; DEC-90 ruling (1)): whether the
+  // engineering-first types above are the workspace's own — the row read AND
+  // its request types parsed. When not, "engineered" is unknown, and the
+  // exception-only rule treats it as unchecked (limb 1 applies nothing; limb
+  // 2 refuses a completing sign-off), as the consent close does
+  // (lib/consentWindowScan.ts engineeredLaneNow). Nothing else reads it.
+  let engineeringFirstKnown = false;
   // DF-P24 merge-time fix pass 2: the examination-scope gate's copy of the
   // row, taken BEFORE the request-type flags are computed — a malformed
   // `requestTypes` (which makes that reading throw) no longer hides the
@@ -521,6 +537,7 @@ export async function POST(req: NextRequest) {
     // authority, DF-P24 merge-time fix pass; it throws where this reading
     // always threw, so the defaults stand exactly as before.)
     ({ closeWithoutReviewTypes, engineeringFirstTypes } = draftingTypeFlags(cfgRow?.data));
+    engineeringFirstKnown = draftingCfgRead;
     draftingCfg = (cfgRow?.data as Record<string, unknown> | null) ?? null;
   } catch { /* default stands */ }
 
@@ -1059,6 +1076,32 @@ export async function POST(req: NextRequest) {
     examinationScopeWarningText = scopeDecision.warning;
   }
 
+  // ── GAP-116 (DF-P26; DEC-90 ruling (2) for DF-P26): a hold that stops the request
+  // An issuing approval, or a roster sign-off that would complete the review
+  // (its dry run too), is refused (409 request_on_hold, nothing written)
+  // while an OPEN hold on the request's source document carries THIS
+  // request's examination record and was placed by one of the people of the
+  // notify-only slot the record names (DF-P25's hold — lib/requestHoldStop.ts).
+  // Releasing the hold lets it proceed. Read only where such a record could
+  // exist (a source document, and a roster on record with an opted-in
+  // notify-only slot); every other request reads nothing here. A read that
+  // fails where a record could exist is a 503 (try again) — never a pass.
+  const holdStop = await issueHoldStopGate(supabaseAdmin, { action: action.action, ticket, ticketId: body.ticketId, callerId: caller.id, sodActive });
+  if (holdStop.kind === "unreadable") {
+    console.error(`[workflow-action] holds on the source document unreadable for ticket ${body.ticketId}: ${holdStop.error}`);
+    const unreadable = "The holds on this request's source document could not be checked, so the approval was not applied. Try again in a moment.";
+    if (action.action === "sign_slot" && body.dryRun !== true) {
+      await recordRefusedSignOff({ signatureId: body.signatureId, ticketId: body.ticketId, orgId: ticket.orgId, caller: { id: caller.id, email: callerEmail, role: callerRole }, status: 503, reason: unreadable, code: "request_hold_unreadable", rosterId: currentRoster(ticket)?.id ?? null });
+    }
+    return NextResponse.json({ error: unreadable, code: "request_hold_unreadable" }, { status: 503 });
+  }
+  if (holdStop.kind === "stopped") {
+    if (action.action === "sign_slot" && body.dryRun !== true) {
+      await recordRefusedSignOff({ signatureId: body.signatureId, ticketId: body.ticketId, orgId: ticket.orgId, caller: { id: caller.id, email: callerEmail, role: callerRole }, status: 409, reason: holdStop.refusal, code: "request_on_hold", rosterId: currentRoster(ticket)?.id ?? null });
+    }
+    return NextResponse.json({ error: holdStop.refusal, code: "request_on_hold", holds: holdStop.holds.map((h) => ({ id: h.id, reason: h.reason, slot: h.slotLabel })) }, { status: 409 });
+  }
+
   // ── GAP-103 / GAP-112 (DF-P5 ROSTER) ───────────────────────────────────
   // A draft entering PENDING_REVIEW in a library that declares a routing
   // table opens a PARALLEL roster (lib/ticketRoster.ts): every slot's
@@ -1090,6 +1133,13 @@ export async function POST(req: NextRequest) {
   // roster was opened under — a standing pre-authorization never acts on
   // engineered work (nor while the declaration could not be checked).
   let rosterEngineered = true;
+  // GAP-115 (DF-P26): what the exception-only rule did on this act — the
+  // audit row's `exceptionReview` (null: nothing — every roster without an
+  // exception-only slot), the labels it satisfied at open (history), and a
+  // re-open of the slots it had satisfied (history, ledger, response).
+  let exceptionReview: Record<string, unknown> | null = null;
+  let exceptionRuleOpenLabels: string[] = [];
+  let exceptionReopen: { slots: TicketReviewSlot[]; labels: string[]; exceptions: string[] } | null = null;
   // Only a SUBMISSION opens a roster. reopen_ticket takes today's path into
   // PENDING_REVIEW (DF-P5 fix pass): a reopened request may have no readable
   // Draft at all, and its previous Draft is the already-issued bytes — the
@@ -1177,7 +1227,12 @@ export async function POST(req: NextRequest) {
           openedBy: caller.id, now: new Date().toISOString(), engineeringGate,
         });
         if (!opened.ok) return refuse(409, opened.code, opened.error);
-        rosterOpen = opened.roster;
+        // GAP-116 (DF-P26 fix pass 2): a hold placed with its record in an
+        // earlier round keeps stopping the request after the routing drops
+        // the notify-only opt-in — the new roster carries that an earlier one
+        // could hold such a record (lib/requestHoldStop.ts). Never set where
+        // no earlier roster carried such a slot: the roster is then today's.
+        rosterOpen = carryNotifyHoldMark(opened.roster, ticket);
         rosterEngineered = engineeringGate.required || declarationUnverified !== null;
         // GAP-109 / DEC-90 rulings for DF-P7: a consent slot runs a window
         // only where lib/consentWindow.ts planConsentWindow allows it — never
@@ -1204,11 +1259,41 @@ export async function POST(req: NextRequest) {
         // branch — no plan on the roster, no note, no warning blaming the
         // paste: the review is today's, byte for byte.
         if (isUnconfirmedConsentPlan(consentPlan)) { /* today's review, unchanged */ }
-        else if (consentPlan && consentColumns) rosterOpen = { ...opened.roster, consentPlan };
+        // (DF-P26 fix pass 3: built on the roster as it now stands, so the
+        // earlier-round hold mark carried above is kept.)
+        else if (consentPlan && consentColumns) rosterOpen = { ...rosterOpen, consentPlan };
         else if (consentPlan) consentWarning = `${consentPlan.label ? `"${consentPlan.label}"` : "The consent slot"} waits for a sign-off: ${CONSENT_REASON.notPasted}.`;
         consentMembers = members.rows;
+        // GAP-115 (DF-P26; DEC-90 ruling (1)) limb 1: an exception-only slot
+        // is satisfied by a recorded system act naming the rule — only when
+        // the request is not engineered work, no exception is on record (the
+        // source unmoved, no examination-data waiver), the review still waits
+        // on a live sign-off someone other than the drafter may give, and
+        // 20261268 is in place (lib/exceptionOnlyReview.ts). Otherwise the
+        // slot waits for its sign-off, as today. Read only for a roster that
+        // carries such a slot.
+        if (rosterOpen && rosterHasExceptionOnlySlot(rosterOpen, ticket)) {
+          // (DF-P26 fix pass 4: request types that could not be read leave
+          // "engineered" unknown — nothing applied, reason "unchecked".)
+          const eo = await exceptionRuleAtOpen(supabaseAdmin, { roster: rosterOpen, ticket, ticketId: body.ticketId, sodActive, engineered: rosterEngineered, engineeredUnchecked: !engineeringFirstKnown, now: Date.now() });
+          rosterOpen = eo.roster;
+          if (eo.applied) {
+            exceptionRuleOpenLabels = eo.labels;
+            exceptionReview = { satisfiedByRule: eo.kinds, rule: "exception_only" };
+          } else {
+            exceptionReview = { ruleNotApplied: eo.reason, slots: eo.kinds };
+          }
+        }
       }
     }
+  }
+  // GAP-115 (DF-P26): a serial issuing approval is never offered on a
+  // request under a roster (the roster's sign-off is its only issuing act),
+  // so this never meets one — but should one ever arrive on a roster with a
+  // slot the exception-only rule satisfied, it is refused, nothing written:
+  // only a sign-off (which checks for exceptions first) may complete it.
+  if (ISSUING_APPROVALS.has(action.action) && ruleSatisfiedSlots(openRosterNow).length > 0) {
+    return NextResponse.json({ error: "This request is under a review roster, and one of its sign-offs was satisfied by the exception-only rule — it issues only through the roster's sign-offs.", code: "exception_review_roster" }, { status: 409 });
   }
   if (action.action === "sign_slot") {
     // DEC-37: one sign-off satisfies every slot the caller can fill; the
@@ -1238,8 +1323,56 @@ export async function POST(req: NextRequest) {
     const exam = examinationForAct(openRosterNow, ticket, plan.fillable, body.examination, { act: "sign_off" });
     if (!exam.ok) return refuseSign(400, exam.error, "examination_invalid");
     examination = exam.value;
+    // GAP-115 (DF-P26; DEC-90 ruling (1)) limb 2: on a roster with a slot
+    // the exception-only rule satisfied, an exception on record NOW — the
+    // source moved, an override sign-off (this one included), a waiver, a
+    // declaration that is not on record or could not be checked, the request
+    // become engineered work — re-opens that slot for its reviewer in this
+    // same compare-and-set: the sign-off is recorded, the request does not
+    // issue. What cannot be checked (the waiver row, the source documents —
+    // ALL of them, read by readSourceMoved as limb 1 and the consent close
+    // read them, more than one read takes being "unchecked", never the first
+    // page only — or the like-in-kind declaration's signature) is a retry,
+    // never a pass and never an exception (DF-P26 review fix: a failed read
+    // is not a fact on record). Read only for such a roster.
+    // Merge-time fix pass (DEC-90 rulings (1) and (4)): judged on the roster
+    // AFTER this sign-off — a sign-off that upgrades every slot the rule
+    // satisfied leaves nothing to re-open, so it reads nothing and is never
+    // refused for an unreadable read (before, the reads and the 503 keyed on
+    // the roster before it).
+    let reopenWith: string[] | null = null;
+    let reopenLabels: string[] = [];
+    const preview = ruleSatisfiedSlots(openRosterNow).length > 0
+      ? applySignPlan(openRosterNow, plan, { uid: caller.id, name: null }, "exception-review-preview", new Date().toISOString())
+      : null;
+    if (preview && ruleSatisfiedSlots(preview).length > 0) {
+      const waiver = await readWaiverOnRecord(supabaseAdmin, body.ticketId);
+      const moved = await readSourceMoved(supabaseAdmin, ticket);
+      // (DF-P26 fix pass 4: the workspace's request types unread leave
+      // "engineered" unknown — the same retry, never "not engineered".)
+      if (!waiver.ok || !moved.ok || declarationUnverified === "unchecked" || !engineeringFirstKnown) {
+        const why = !waiver.ok ? waiver.error : !moved.ok ? `the source documents could not be read (${moved.error})` : declarationUnverified === "unchecked" ? "the like-in-kind declaration's signature could not be read" : "the workspace's request types could not be read, so whether this request is engineered work is unknown";
+        // DF-P26 fix pass 3 (DEC-90 rulings (1) and (4)): the deliberate
+        // refusal is for an ISSUING act only. A sign-off that leaves the
+        // review open cannot issue, so an unreadable read never refuses it:
+        // it is taken, nothing is re-opened by it, and the sign-off that
+        // completes the review (or the consent close) checks again.
+        if (rosterCompletion(preview, { sodActive, drafterId: ticket.assignedDrafterId }).complete) {
+          console.error(`[workflow-action] exception-only review unchecked for ticket ${body.ticketId}: ${why}`);
+          return refuseSign(503, "Whether an exception is on record for this review (a moved source, a recorded waiver, the like-in-kind declaration's signature or whether the request is engineered work) could not be checked, so the sign-off was not taken. Try again in a moment.", "exception_review_unchecked");
+        }
+        console.warn(`[workflow-action] exception-only review unchecked for ticket ${body.ticketId} on a sign-off that does not complete the review (taken; the completing act checks again): ${why}`);
+      } else {
+        const engineeredNow = engineeringGateRequired(ticket, requesterRoles, capPolicy) || engineeringFirstTypes.includes(ticket.requestType);
+        const found = exceptionsOnRecord({ driftLabels: moved.labels, roster: preview, waiver: waiver.waiver, declarationUnverified, engineered: engineeredNow });
+        // (DF-P26 review fix: a sign-off that upgrades the last slot the rule
+        // satisfied leaves nothing to re-open.)
+        reopenLabels = ruleSatisfiedSlots(preview).map((x) => x.label || x.kind);
+        if (found.length > 0 && reopenLabels.length > 0) reopenWith = found.map((e) => e.text);
+      }
+    }
     if (body.dryRun === true) {
-      return NextResponse.json({ ok: true, dryRun: true, slots: plan.fillable.map((f) => f.slot.label || f.slot.kind), contentHash: openRosterNow.contentHash });
+      return NextResponse.json({ ok: true, dryRun: true, slots: plan.fillable.map((f) => f.slot.label || f.slot.kind), contentHash: openRosterNow.contentHash, ...(reopenWith ? { exceptionReopens: reopenLabels, exceptionReopenReasons: reopenWith } : {}) });
     }
     if (!UUID_RE.test(sigId)) return NextResponse.json({ error: "A sign-off needs your e-signature.", code: "signature_required" }, { status: 400 });
     const { data: sig, error: sigErr } = await supabaseAdmin
@@ -1248,7 +1381,14 @@ export async function POST(req: NextRequest) {
     if (sigErr) return NextResponse.json({ error: "Your signature could not be checked — try again in a moment." }, { status: 503 });
     const refusal = signatureRefusal(sig as SignatureRow | null, { orgId: ticket.orgId, ticketId: body.ticketId, signerId: caller.id, roster: openRosterNow });
     if (refusal) return refuseSign(403, refusal, "signature_invalid", sig as SignatureRow | null);
-    const signed = applySignPlan(openRosterNow, plan, { uid: caller.id, name: memberName(member as { display_name?: unknown; email?: unknown }) }, sigId, new Date().toISOString());
+    const signedNow = new Date().toISOString();
+    let signed = applySignPlan(openRosterNow, plan, { uid: caller.id, name: memberName(member as { display_name?: unknown; email?: unknown }) }, sigId, signedNow);
+    if (reopenWith) {
+      const ruled = ruleSatisfiedSlots(signed);
+      signed = reopenRuleSatisfied(signed, reopenWith, signedNow);
+      exceptionReopen = { slots: signed.slots.filter((x) => ruled.some((r) => r.kind === x.kind)), labels: ruled.map((r) => r.label || r.kind), exceptions: reopenWith };
+      exceptionReview = { reopened: ruled.map((r) => r.kind), exceptions: reopenWith };
+    }
     rosterSign = { roster: signed, complete: rosterCompletion(signed, { sodActive, drafterId: ticket.assignedDrafterId }).complete, labels: plan.fillable.map((f) => f.slot.label || f.slot.kind) };
   }
   // GAP-102 (DF-P20): a veto by an assurance slot's occupant records what
@@ -1313,6 +1453,19 @@ export async function POST(req: NextRequest) {
     actor: { uid: caller.id, email: callerEmail, role: callerRole },
   };
   const { updates, newStatus, recipients: transitionRecipients, newComment, historyEntry: transitionHistoryEntry } = computeTransition(ticket, input);
+  // GAP-115 (DF-P26): the rule's recorded system act is named on the
+  // request's history — on the roster-opened line when it satisfied a slot,
+  // on this act's line when an exception re-opened one. (No other line moves.)
+  if (exceptionRuleOpenLabels.length > 0 && Array.isArray(updates.history)) {
+    const hist = updates.history as TicketHistoryEntry[];
+    for (let i = hist.length - 1; i >= 0; i--) {
+      if (hist[i]?.action === "Review roster opened") { hist[i].details = `${hist[i].details ? `${hist[i].details} · ` : ""}${ruleOpenNote(exceptionRuleOpenLabels)}`; break; }
+    }
+  }
+  if (exceptionReopen && transitionHistoryEntry) {
+    const note = ruleReopenNote(exceptionReopen.labels, exceptionReopen.exceptions);
+    transitionHistoryEntry.details = transitionHistoryEntry.details ? `${transitionHistoryEntry.details} [${note}]` : note;
+  }
   // FRIC-5 / EVID-12 (DF-P5 fix pass 2): the Finals an issue-as-is approval
   // recorded, for the audit row — on a roster with the sha256 the roster
   // bound the Draft (same bytes) to; on today's path the Draft's hash is in
@@ -1635,6 +1788,9 @@ export async function POST(req: NextRequest) {
       // GAP-102 acceptance 4 (DF-P24): the examination data an issue was
       // checked against (only where a requirement applies — no key otherwise).
       ...(examinationScopeAudit ? { examinationScope: examinationScopeAudit } : {}),
+      // GAP-115 (DF-P26): what the exception-only rule did (only on a roster
+      // with an exception-only slot — no key otherwise).
+      ...(exceptionReview ? { exceptionReview } : {}),
       // DF-P6 fix pass (minor 11): a declaration whose e-signature is not on
       // record (or could not be read) was evaluated as undeclared.
       ...(declarationUnverified ? { declarationUnverified } : {}),
@@ -2007,9 +2163,17 @@ export async function POST(req: NextRequest) {
     let ledgerErr: string | null = null;
     if (rosterOpen) {
       ledgerErr = await writeRosterLedger(supabaseAdmin, { orgId: ticket.orgId, ticketId: body.ticketId, roster: rosterOpen, event: "opened", slots: rosterOpen.slots, actor: actorRef });
+      // GAP-115 (DF-P26): the rule's satisfaction, its own event (via "rule").
+      if (!ledgerErr && exceptionRuleOpenLabels.length > 0) {
+        ledgerErr = await writeRosterLedger(supabaseAdmin, { orgId: ticket.orgId, ticketId: body.ticketId, roster: rosterOpen, event: "satisfied", slots: ruleSatisfiedSlots(rosterOpen), actor: { uid: null, name: EXCEPTION_RULE_ACTOR } });
+      }
     } else if (rosterSign) {
       const touched = rosterSign.roster.slots.filter((x) => x.signatureId === body.signatureId && x.status === "satisfied");
       ledgerErr = await writeRosterLedger(supabaseAdmin, { orgId: ticket.orgId, ticketId: body.ticketId, roster: rosterSign.roster, event: "satisfied", slots: touched, actor: actorRef, examination });
+      // GAP-115 (DF-P26): the re-open — each slot back to open, a "reopened" event.
+      if (!ledgerErr && exceptionReopen) {
+        ledgerErr = await writeRosterReopen(supabaseAdmin, { orgId: ticket.orgId, ticketId: body.ticketId, roster: rosterSign.roster, slots: exceptionReopen.slots, exceptions: exceptionReopen.exceptions, actor: { uid: null, name: EXCEPTION_RULE_ACTOR } });
+      }
     } else if (openRosterNow && newStatus !== "PENDING_REVIEW") {
       const voided = openRosterNow.slots.filter((x) => x.status === "open").map((x) => ({ ...x, status: "void" as const }));
       if (voided.length > 0) {
@@ -2130,27 +2294,61 @@ export async function POST(req: NextRequest) {
   // server fallback to Vercel's production domain), else the origin this
   // request arrived on.
   const emailOrigin = publicOrigin() || new URL(req.url).origin;
-  try {
-    await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, activity: isActivity, rosterCompleted: action.action === "sign_slot" && rosterSign?.complete === true, rosterPartial: action.action === "sign_slot" && rosterSign?.complete === false, rosterReleased: action.action === "sign_slot" && rosterSign && !rosterSign.complete ? rosterPartialReleased(rosterSign.roster, ticket, caller.id) : [], comment: fanOutComment, emailOrigin });
-    // Kick the email drain AFTER the response is sent (the daily cron is the
-    // fallback, not the primary path — recipients should get email in seconds).
-    // WF-19 done-when 3: CRON_SECRET ships blank, and a blank bearer is a
-    // 401 at the drain — so in a default deployment every workflow email
-    // waited for the daily cron. The caller's own session token is a
-    // legitimate drain credential (SURF-5 scopes it to their orgs, which
-    // include this ticket's), so it is the fallback.
-    const drainUrl = new URL("/api/notifications/send-queued", req.url);
-    const drainToken = process.env.CRON_SECRET || authHeader.slice(7);
-    after(async () => {
-      try {
-        await fetch(drainUrl, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${drainToken}` },
-        });
-      } catch { /* cron fallback */ }
-    });
-  } catch (e) {
-    console.error("[workflow-action] fan-out failed (transition committed):", e);
+  // GAP-102 acceptance 2 (DF-P26; DEC-90 ruling (3)): an act that ISSUES the
+  // request (an issuing approval, or the sign-off that completes the review)
+  // tells its people what was recorded about the examination — the scope
+  // values, the assurance records, the notify-only holds — names and counts
+  // only, one line on the existing notice (lib/issueNoticeExamination.ts).
+  // Read only where such a record could exist (issueExaminationMayExist —
+  // pure, no read), bounded in time; anything unread leaves the notice
+  // exactly as today's. DF-P26 review fix (DEC-90 ruling (4) — bookkeeping
+  // never delays a person's act): where such a record could exist, composing
+  // the line AND sending the notice run AFTER the response (next/server
+  // after(), as the pre-authorization step and the email drain do), so a slow
+  // examination read never holds the person's answer. Where none could
+  // exist (every unconfigured workspace) the notice is sent in the request,
+  // exactly as before.
+  const issueNoticeInput = { ticket, ticketId: body.ticketId, orgId: ticket.orgId, draftingCfg: draftingCfgRead ? scopeDraftingCfg : null, roster: rosterSign?.roster ?? null };
+  const issuingAct = ISSUING_APPROVALS.has(action.action) || (action.action === "sign_slot" && rosterSign?.complete === true);
+  const deferNotice = issuingAct && issueExaminationMayExist(issueNoticeInput);
+  // Kick the email drain AFTER the response is sent (the daily cron is the
+  // fallback, not the primary path — recipients should get email in seconds).
+  // WF-19 done-when 3: CRON_SECRET ships blank, and a blank bearer is a
+  // 401 at the drain — so in a default deployment every workflow email
+  // waited for the daily cron. The caller's own session token is a
+  // legitimate drain credential (SURF-5 scopes it to their orgs, which
+  // include this ticket's), so it is the fallback.
+  const drainUrl = new URL("/api/notifications/send-queued", req.url);
+  const drainToken = process.env.CRON_SECRET || authHeader.slice(7);
+  const kickDrain = async () => {
+    try {
+      await fetch(drainUrl, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${drainToken}` },
+      });
+    } catch { /* cron fallback */ }
+  };
+  if (deferNotice) {
+    try {
+      after(async () => {
+        try {
+          const issueExamination = await issueExaminationNote(supabaseAdmin, issueNoticeInput);
+          await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, activity: isActivity, rosterCompleted: action.action === "sign_slot" && rosterSign?.complete === true, rosterPartial: action.action === "sign_slot" && rosterSign?.complete === false, rosterReleased: action.action === "sign_slot" && rosterSign && !rosterSign.complete ? rosterPartialReleased(rosterSign.roster, ticket, caller.id) : [], examinationNote: issueExamination, comment: fanOutComment, emailOrigin });
+          await kickDrain();
+        } catch (e) {
+          console.error("[workflow-action] fan-out failed (transition committed):", e);
+        }
+      });
+    } catch (e) {
+      console.error(`[workflow-action] the issue notice for ticket ${body.ticketId} could not be scheduled (transition committed):`, e);
+    }
+  } else {
+    try {
+      await fanOut({ ticket, ticketId: body.ticketId, action: { type: action.action, label: action.label }, newStatus: String(newStatus), recipients, actorUid: caller.id, actorEmail: callerEmail, activity: isActivity, rosterCompleted: action.action === "sign_slot" && rosterSign?.complete === true, rosterPartial: action.action === "sign_slot" && rosterSign?.complete === false, rosterReleased: action.action === "sign_slot" && rosterSign && !rosterSign.complete ? rosterPartialReleased(rosterSign.roster, ticket, caller.id) : [], comment: fanOutComment, emailOrigin });
+      after(kickDrain);
+    } catch (e) {
+      console.error("[workflow-action] fan-out failed (transition committed):", e);
+    }
   }
 
   // EVID-12 (DF-P5 fix pass 2): today's path hashes AFTER the response, and
@@ -2373,6 +2571,11 @@ export async function POST(req: NextRequest) {
     ...(rosterLedgerNotWritten ? { rosterLedgerNotWritten: true } : {}),
     ...(examinationScopeWarningText ? { examinationScopeWarning: examinationScopeWarningText } : {}),
     ...(consentWarning && !holdOutcome && !libraryNotStored && !rosterWarning && !reviewClassNotStored ? { warning: consentWarning } : {}),
+    // GAP-115 (DF-P26): the sign-off was recorded, and an exception on record
+    // re-opened a slot the exception-only rule had satisfied — the request
+    // waits on it instead of issuing.
+    ...(exceptionReopen ? { exceptionReopened: { slots: exceptionReopen.labels, exceptions: exceptionReopen.exceptions } } : {}),
+    ...(exceptionReopen && !holdOutcome && !libraryNotStored && !rosterWarning && !reviewClassNotStored && !consentWarning ? { warning: ruleReopenNote(exceptionReopen.labels, exceptionReopen.exceptions) } : {}),
   });
 }
 
@@ -2441,8 +2644,12 @@ async function fanOut(params: {
    *  ticket waits on them no more, so their action alerts are retired with
    *  the signer's. */
   rosterReleased?: string[];
+  /** GAP-102 acceptance 2 (DF-P26): on an issuing act, the one line naming
+   *  the request's recorded examination data (null: today's notice). */
+  examinationNote?: string | null;
 }) {
   const { ticket, ticketId, action, newStatus, recipients, actorUid, actorEmail, comment, activity, emailOrigin } = params;
+  const examinationNote = params.examinationNote ?? null;
   // ROUTE-6 (DF-P3): thread activity with nobody to tell has nothing to do.
   // A TRANSITION always reaches the supersede step below, even when it tells
   // nobody (a Drafter picking up their own request): the queue's "needs a
@@ -2597,7 +2804,7 @@ async function fanOut(params: {
       userId: uid,
       kind: cls.inAppKind,
       title: cls.inAppTitle,
-      body: comment || `Status: ${ticketStatusLabel(newStatus)}`,
+      body: examinationNote ? `${comment || `Status: ${ticketStatusLabel(newStatus)}`}\n\n${examinationNote}` : comment || `Status: ${ticketStatusLabel(newStatus)}`,
       link,
       resourceType: "ticket",
       resourceId: ticketId,
@@ -2632,11 +2839,12 @@ async function fanOut(params: {
   // render layer adds the footer (lib/emailRender.ts — the drain then
   // attaches the one-click unsubscribe header).
   const note = comment ? plainMentions(comment) : null;
-  const composedText = `${actorEmail} performed: ${action.label}\n\nStatus is now: ${ticketStatusLabel(newStatus)}\n${note ? `\nNote: ${note}\n` : ""}\n${emailLink}`;
+  const composedText = `${actorEmail} performed: ${action.label}\n\nStatus is now: ${ticketStatusLabel(newStatus)}\n${note ? `\nNote: ${note}\n` : ""}${examinationNote ? `\n${examinationNote}\n` : ""}\n${emailLink}`;
   const composedHtml = `
         <p><b>${escapeHtml(actorEmail)}</b> performed <b>${escapeHtml(action.label)}</b> on <a href="${escapeHtml(emailLink)}">${escapeHtml(ticketLabel)}</a>.</p>
         <p>Status: <b>${escapeHtml(ticketStatusLabel(newStatus))}</b></p>
-        ${note ? `<blockquote style="border-left:3px solid #cbd5e1;padding-left:12px;color:#475569;white-space:pre-wrap">${escapeHtml(note)}</blockquote>` : ""}
+        ${note ? `<blockquote style="border-left:3px solid #cbd5e1;padding-left:12px;color:#475569;white-space:pre-wrap">${escapeHtml(note)}</blockquote>` : ""}${examinationNote ? `
+        <p>${escapeHtml(examinationNote)}</p>` : ""}
         <p><a href="${escapeHtml(emailLink)}">Open ticket</a></p>`;
   let body: { bodyText: string; bodyHtml: string } | null = null;
   try {

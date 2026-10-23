@@ -427,11 +427,52 @@ export function slotSignPlan(
   sodActive: boolean,
   now: number = Date.now(),
 ): SlotSignPlan {
+  return planSignOff(roster, ticket, uid, sodActive, now, true);
+}
+
+/** slotSignPlan WITHOUT the needed upgrade's precedence over a conflicting
+ *  override — the plan merge-time fix pass 2 gave. Exported for the
+ *  precedence's property test only (lib/__tests__/dfRoundG_P26_exceptionOnly);
+ *  nothing in the app reads it. */
+export function slotSignPlanWithoutOverridePrecedence(
+  roster: TicketReviewRoster,
+  ticket: Pick<Ticket, "requesterId" | "assignedDrafterId">,
+  uid: string | null | undefined,
+  sodActive: boolean,
+  now: number = Date.now(),
+): SlotSignPlan {
+  return planSignOff(roster, ticket, uid, sodActive, now, false);
+}
+
+/** slotSignPlan's body. `neededPrecedence` false skips the needed upgrade's
+ *  precedence over a conflicting override (merge-time fix pass 3) — the
+ *  form ruleUpgradeNeeded and the precedence's own guard read, which judge
+ *  only the open slots (and so never recurse into themselves).
+ *  `droppedOverrides`: open slots whose OVERRIDE by `uid` the precedence
+ *  dropped — planned as if `uid` did not override them (merge-time fix pass
+ *  4: pass 1 re-run, so every blocked reason is the truth). */
+function planSignOff(
+  roster: TicketReviewRoster,
+  ticket: Pick<Ticket, "requesterId" | "assignedDrafterId">,
+  uid: string | null | undefined,
+  sodActive: boolean,
+  now: number,
+  neededPrecedence: boolean,
+  droppedOverrides: ReadonlySet<string> = new Set(),
+): SlotSignPlan {
   const plan: SlotSignPlan = { fillable: [], blocked: [] };
   if (!uid) return plan;
   const fillsKind = (kind: string): boolean =>
     roster.slots.some((s) => s.kind === kind && s.status === "satisfied" && s.satisfiedBy === uid)
     || plan.fillable.some((f) => f.slot.kind === kind);
+  // GAP-115 (DF-P26 merge-time fix pass): two passes. The OPEN blocking
+  // slots are judged first, exactly as before and with no rule-satisfied
+  // slot in view, so an optional upgrade can never displace a person's real,
+  // required sign-off (before, with the rule's slot first in the table and
+  // an open slot independent of it — or it of the open slot — the upgrade
+  // was offered and the open slot blocked "Needs a second person", for good
+  // once the upgrade was given: the outcome depended on slot order). Only
+  // then are upgrades of rule-satisfied slots considered (pass 2).
   for (const slot of roster.slots) {
     if (slot.status !== "open" || !slotBlocks(slot)) continue;
     const alternateActive = slotAlternatesActive(roster, slot, now);
@@ -439,7 +480,7 @@ export function slotSignPlan(
       : alternateActive && slot.alternates.includes(uid) ? "alternate" as const
       : slot.overriders.includes(uid) ? "override" as const
       : null;
-    if (!via) continue;
+    if (!via || (via === "override" && droppedOverrides.has(slot.kind))) continue;
     const label = slot.label || slot.kind;
     let reason: string | null = null;
     if (sodActive) {
@@ -462,6 +503,92 @@ export function slotSignPlan(
     if (reason) plan.blocked.push({ slot, reason });
     else plan.fillable.push({ slot, via });
   }
+  // Pass 2 — GAP-115 (DF-P26 review fix): a slot the exception-only rule
+  // satisfied stays signable by its OWN occupants (a primary, or an
+  // alternate once alternates are active — never an overrider: an override
+  // is itself an exception), so a person's sign-off can upgrade the rule's.
+  // Without this, a review whose only other independent occupant left would
+  // wait behind the DEC-12 floor (the rule is never the second person) with
+  // nobody able to sign the rule's slot. Only a roster carrying such a slot
+  // (the opt-in) is affected. DF-P26 fix pass 2: the upgrade exists only for
+  // the floor — so only above the DEC-12 threshold, and never to the drafter
+  // (their sign-off is never the second person). The engine offers it as
+  // OPTIONAL unless the floor would otherwise leave nobody able to
+  // complete (ruleUpgradeNeeded), so the reviewer the rule excused is not
+  // badged for it. DF-P26 fix pass 3: an upgrade this person cannot give (an
+  // independence reason) is simply not offered — never a disabled sign-off.
+  // Merge-time fix pass: nor is one whose independence leg conflicts with a
+  // slot this person signed, is signing now (pass 1 or an earlier upgrade)
+  // or is shown blocked on — nor with an open slot whose alternate window
+  // will open for them later (an alternate of a slot with a timeout) — so an
+  // upgrade's presence never produces a blocked reason on an open slot, now
+  // or once that window opens.
+  // Merge-time fix pass 3 (the integrator's ruling — the normal sign-off
+  // path beats the exception path; no silent waits): where the upgrade is
+  // NEEDED (ruleUpgradeNeeded) and the only thing it conflicts with is an
+  // OVERRIDE in this person's plan, the upgrade takes precedence — those
+  // conflicting override entries are dropped (never a primary or alternate
+  // fill) and the upgrade is offered, required — guarded (merge-time fix
+  // pass 4): only where each dropped slot stays completable by someone else
+  // without an override, the plan then re-run without those overrides. Only
+  // on a roster with a rule-satisfied slot; before, the person was offered
+  // only the optional override and the review waited with nobody able to
+  // complete it told.
+  if (sodActive && uid !== ticket.assignedDrafterId) {
+    const laterAlternate = (kind: string): boolean =>
+      roster.slots.some((s) => s.kind === kind && s.status === "open" && slotBlocks(s) && s.timeoutDays !== null && s.alternates.includes(uid));
+    const tied = (kind: string): boolean => fillsKind(kind) || plan.blocked.some((b) => b.slot.kind === kind) || laterAlternate(kind);
+    const conflictsWith = (slot: TicketReviewSlot, tiedTo: (kind: string) => boolean): boolean =>
+      slot.independentOf.some((k) => (k === "drafter" || k === "requester") ? !!slotPartyLegReason(slot, k, ticket, uid) : tiedTo(k))
+      || roster.slots.some((s) => s.kind !== slot.kind && s.independentOf.includes(slot.kind) && tiedTo(s.kind));
+    let needed: boolean | null = null;
+    for (const slot of roster.slots) {
+      if (slot.status !== "satisfied" || slot.via !== "rule" || !slotBlocks(slot)) continue;
+      const via = slot.primaries.includes(uid) ? "primary" as const
+        : slotAlternatesActive(roster, slot, now) && slot.alternates.includes(uid) ? "alternate" as const
+        : null;
+      if (!via) continue;
+      if (conflictsWith(slot, tied)) {
+        const overrides = plan.fillable.filter((f) => f.via === "override" && f.slot.status === "open").map((f) => f.slot.kind);
+        if (!neededPrecedence || overrides.length === 0) continue;
+        // Would it conflict with nothing but those overrides?
+        const tiedButOverrides = (kind: string): boolean => (overrides.includes(kind) ? plan.blocked.some((b) => b.slot.kind === kind) || laterAlternate(kind) : tied(kind));
+        if (conflictsWith(slot, tiedButOverrides)) continue;
+        if (needed === null) needed = ruleUpgradeNeeded(roster, ticket, sodActive, now);
+        if (!needed) continue;
+        const dropped = overrides.filter((k) => slot.independentOf.includes(k) || (roster.slots.find((s) => s.kind === k)?.independentOf.includes(slot.kind) ?? false));
+        // Re-planned with those overrides dropped: pass 1 again, so no
+        // blocked reason rests on an override this person no longer gives,
+        // and an open slot that becomes theirs rides in the same sign-off
+        // (pass 2 judges the upgrade against it). Terminates: each re-plan
+        // drops at least one more override, and slots are finite. Kept only
+        // if the re-plan still carries this upgrade.
+        const replanned = planSignOff(roster, ticket, uid, sodActive, now, true, new Set([...droppedOverrides, ...dropped]));
+        if (!replanned.fillable.some((f) => f.slot.kind === slot.kind)) continue;
+        // Merge-time fix pass 4 (the integrator's ruling — guarded
+        // precedence, made fail-safe): kept only where the outcome is
+        // proven: after this person's whole sign-off (what the rule still
+        // satisfies re-opened, as limb 2 does on any exception on record —
+        // assumed, merge-time fix pass 5), the
+        // drafter's ONE sign-off, without an override and with the floor as
+        // it then stands, fills every open blocking slot left — so each
+        // dropped slot is completed by someone other than this person
+        // through a fill that is not an override (the ruling's guard), and
+        // the review completes. The ruling's per-slot guard alone was not
+        // enough: the property test (dfRoundG_P26_exceptionOnly) generated a
+        // roster where the dropped slot was completable by the drafter only
+        // by giving up another slot the drafter alone could sign. Otherwise
+        // the override stays and the upgrade is not offered beside it
+        // (merge-time fix pass 2's plan).
+        if (!drafterCompletesAfter(roster, ticket, uid, sodActive, now, replanned)) continue;
+        return replanned;
+      }
+      plan.fillable.push({ slot, via });
+    }
+    // One sign-off's slots in table order, as before the two passes.
+    const at = (s: TicketReviewSlot) => roster.slots.indexOf(s);
+    plan.fillable.sort((a, b) => at(a.slot) - at(b.slot));
+  }
   // DEC-12 / DEC-37 acceptance 2 — the producer-versus-checker FLOOR, held
   // whatever the routing table declares: above the threshold the drafter
   // may not be the one whose sign-off completes the review unless somebody
@@ -476,6 +603,94 @@ export function slotSignPlan(
   }
   return plan;
 }
+
+/**
+ * GAP-115 (DF-P26 merge-time fix pass 4): after `uid` signs `plan` (each
+ * slot satisfied by them; every slot the exception-only rule still satisfies
+ * re-opened, as the route's limb 2 does for any exception on record — the
+ * engine cannot see whether one is, so it assumes one: merge-time fix pass
+ * 5), does the
+ * drafter's one sign-off — without an override, the floor judged as it then
+ * stands — fill every open blocking slot left? The precedence's outcome
+ * check: where it holds, the review completes in one more sign-off. Pure.
+ */
+function drafterCompletesAfter(
+  roster: TicketReviewRoster,
+  ticket: Pick<Ticket, "requesterId" | "assignedDrafterId">,
+  uid: string,
+  sodActive: boolean,
+  now: number,
+  plan: SlotSignPlan,
+): boolean {
+  const drafter = ticket.assignedDrafterId ?? null;
+  if (!drafter) return false;
+  let after: TicketReviewRoster = {
+    ...roster,
+    slots: roster.slots.map((s) => {
+      const f = plan.fillable.find((x) => x.slot.kind === s.kind);
+      return f ? { ...s, status: "satisfied" as const, via: f.via, satisfiedBy: uid, signatureId: "precedence-preview" } : s;
+    }),
+  };
+  // Merge-time fix pass 5: limb 2 re-opens the rule's remaining slots for
+  // ANY exception on record (a moved source, a waiver, a declaration not on
+  // record, the request become engineered — not only an override), and the
+  // engine cannot see those, so the re-open is always assumed.
+  if (after.slots.some((s) => s.status === "satisfied" && s.via === "rule")) {
+    after = { ...after, slots: after.slots.map((s) => (s.status === "satisfied" && s.via === "rule" ? { ...s, status: "open" as const, via: undefined, satisfiedBy: null, satisfiedAt: null, signatureId: null } : s)) };
+  }
+  const left = after.slots.filter((s) => s.status === "open" && slotBlocks(s));
+  const d = planSignOff(after, ticket, drafter, sodActive, now, false);
+  return left.every((s) => d.fillable.some((f) => f.slot.kind === s.kind && f.via !== "override"));
+}
+
+/**
+ * GAP-115 (DF-P26 fix pass 2): is a sign-off on a slot the exception-only
+ * rule satisfied NEEDED for the review to complete — rather than an optional
+ * "sign it yourself" upgrade? True only above the DEC-12 threshold, with a
+ * drafter assigned, on a roster carrying a rule satisfaction, when nobody
+ * but the drafter has signed a blocking slot (the rule, a pre-authorization
+ * and a consent silence are nobody's look) and no open blocking slot has
+ * anyone but the drafter who can actually complete it — so the floor would
+ * otherwise leave nobody able to complete. Merge-time fix pass 2 (DEC-29):
+ * "can actually complete" is judged as waitsOnLiveSecondPerson judges it —
+ * a primary who is not the drafter, or an alternate of a slot with a timeout
+ * (judged once its window opens), counted only if slotSignPlan gives them
+ * that slot fillable other than by override; an overrider never counts (an
+ * override is itself an exception), nor an alternate whose window never
+ * opens. Before, every named alternate and overrider counted, so a roster
+ * whose open slot named only the drafter and such a person left the rule
+ * slot's reviewer an optional sign-off — nobody badged — while the drafter
+ * was held by the floor. Pure.
+ */
+export function ruleUpgradeNeeded(
+  roster: TicketReviewRoster,
+  ticket: Pick<Ticket, "assignedDrafterId"> & Partial<Pick<Ticket, "requesterId">>,
+  sodActive: boolean,
+  now: number = Date.now(),
+): boolean {
+  const drafter = ticket.assignedDrafterId ?? null;
+  if (!sodActive || !drafter) return false;
+  const blocking = roster.slots.filter((s) => slotBlocks(s) && s.status !== "void");
+  if (!blocking.some((s) => s.status === "satisfied" && s.via === "rule")) return false;
+  if (blocking.some((s) => s.status === "satisfied" && !!s.satisfiedBy && s.satisfiedBy !== drafter && s.via !== "preauthorization" && s.via !== "rule")) return false;
+  const open = blocking.filter((s) => s.status === "open");
+  if (open.length === 0) return false;
+  const parties = { requesterId: ticket.requesterId ?? "", assignedDrafterId: drafter };
+  const opened = Date.parse(roster.openedAt);
+  const canComplete = (s: TicketReviewSlot, uid: string, at: number): boolean =>
+    planSignOff(roster, parties, uid, sodActive, at, false).fillable.some((f) => f.slot.kind === s.kind && f.via !== "override");
+  return open.every((s) => {
+    if ([...new Set(s.primaries)].some((u) => !!u && u !== drafter && canComplete(s, u, now))) return false;
+    if (s.timeoutDays === null || !Number.isFinite(opened)) return true;
+    const windowAt = Math.max(now, opened + s.timeoutDays * DAY_MS);
+    return ![...new Set(s.alternates)].some((u) => !!u && u !== drafter && canComplete(s, u, windowAt));
+  });
+}
+
+/** GAP-115 (DF-P26 fix pass 2): what a sign-off offered only on a slot the
+ *  exception-only rule satisfied says — optional, or needed (the floor). */
+export const RULE_UPGRADE_OPTIONAL_NOTE = "Optional — the exception-only rule already satisfied this sign-off (no exception on record), so the request does not wait on you. Sign it yourself only if you want your own sign-off on record in place of the rule's.";
+export const RULE_UPGRADE_NEEDED_NOTE = "Needed — the exception-only rule satisfied this sign-off, but the rule is never the second person over the drafter's own sign-off, and nobody else named on this review can give one: sign it yourself so the review can complete.";
 
 /** When a completed roster's engineering approval was given: the latest
  *  sign-off among its satisfied engineering slots (lib/ticketRoster.ts
@@ -498,12 +713,14 @@ export const PRODUCER_FLOOR_REASON = "Needs a second person: you are this delive
  * standing pre-authorization satisfied (via "preauthorization", DF-P22) is
  * not anyone else's sign-off here: a consent recorded before the work
  * existed is not a second person looking at THIS revision (as a consent
- * window's silence is not — it carries no signer). Pure.
+ * window's silence is not — it carries no signer). GAP-115 (DF-P26): nor
+ * is a slot the exception-only rule satisfied (via "rule" — a rule is
+ * nobody's look at this revision). Pure.
  */
 export function rosterLacksIndependentSignOff(roster: TicketReviewRoster, uid: string, signing: readonly string[] = []): boolean {
   const blocking = roster.slots.filter((s) => slotBlocks(s) && s.status !== "void");
   const completes = blocking.every((s) => s.status === "satisfied" || signing.includes(s.kind));
-  const independent = blocking.some((s) => s.status === "satisfied" && !!s.satisfiedBy && s.satisfiedBy !== uid && s.via !== "preauthorization");
+  const independent = blocking.some((s) => s.status === "satisfied" && !!s.satisfiedBy && s.satisfiedBy !== uid && s.via !== "preauthorization" && s.via !== "rule");
   return completes && !independent;
 }
 
@@ -865,6 +1082,12 @@ export const WorkflowEngine = {
           const windowSlot = windowRunning(roster) ? roster.consentWindow!.slot : null;
           const onlyWindow = (xs: Array<{ slot: TicketReviewSlot }>) => !!windowSlot && xs.length > 0 && xs.every((x) => x.slot.kind === windowSlot);
           const occupiesOnlyWindow = occupies && onlyWindow([...plan.fillable, ...plan.blocked]);
+          // GAP-115 (DF-P26 fix pass 2): a sign-off offered only on slots the
+          // exception-only rule satisfied is an optional upgrade — never
+          // waited on, so never badged — unless the DEC-12 floor would
+          // otherwise leave nobody able to complete (ruleUpgradeNeeded).
+          const onlyRule = plan.fillable.length > 0 && plan.fillable.every((f) => f.slot.status === "satisfied" && f.slot.via === "rule");
+          const ruleOptional = onlyRule && !ruleUpgradeNeeded(roster, ticket, sod, ctx?.now ?? Date.now());
           if (plan.fillable.length > 0) {
             const labels = plan.fillable.map((f) => f.slot.label || f.slot.kind);
             const allOverride = plan.fillable.every((f) => f.via === "override");
@@ -873,8 +1096,8 @@ export const WorkflowEngine = {
               action: 'sign_slot',
               variant: 'success',
               requiresSignature: true,
-              description: `Your e-signature is bound to the files under review${roster.cycle ? ` (Rev ${roster.cycle})` : ""}. One sign-off covers every slot you fill.${issueReady ? ` ${ISSUE_AS_IS_NOTE}` : ""}${onlyWindow(plan.fillable) ? ` ${CONSENT_WINDOW_SIGN_NOTE}` : ""}`,
-              ...(allOverride || onlyWindow(plan.fillable) ? { optional: true } : {}),
+              description: `Your e-signature is bound to the files under review${roster.cycle ? ` (Rev ${roster.cycle})` : ""}. One sign-off covers every slot you fill.${issueReady ? ` ${ISSUE_AS_IS_NOTE}` : ""}${onlyWindow(plan.fillable) ? ` ${CONSENT_WINDOW_SIGN_NOTE}` : ""}${onlyRule ? ` ${ruleOptional ? RULE_UPGRADE_OPTIONAL_NOTE : RULE_UPGRADE_NEEDED_NOTE}` : ""}`,
+              ...(allOverride || onlyWindow(plan.fillable) || ruleOptional ? { optional: true } : {}),
             });
           } else if (plan.blocked.length > 0) {
             actions.push({
@@ -886,6 +1109,9 @@ export const WorkflowEngine = {
             });
           }
           const occupiesOnlyAsOverride = occupies && plan.fillable.length > 0 && plan.fillable.every((f) => f.via === "override") && plan.blocked.length === 0;
+          // GAP-115 (DF-P26 fix pass 2): nor is an occupant only of slots the
+          // rule satisfied badged to send it back.
+          const occupiesOnlyRuleSatisfied = ruleOptional && plan.blocked.length === 0;
           if (occupies || isRequesterIdentity) {
             // The ticket waits on its occupants: a requester the routing
             // does not roster, or an occupant only by override, may send it
@@ -895,7 +1121,7 @@ export const WorkflowEngine = {
               action: 'request_revision',
               variant: 'warning',
               requiresComment: true,
-              ...(!occupies || occupiesOnlyAsOverride || occupiesOnlyWindow ? { optional: true } : {}),
+              ...(!occupies || occupiesOnlyAsOverride || occupiesOnlyWindow || occupiesOnlyRuleSatisfied ? { optional: true } : {}),
             });
           } else if (isManagement) {
             actions.push({ label: 'Request Revision', action: 'request_revision', variant: 'warning', requiresComment: true, optional: true });

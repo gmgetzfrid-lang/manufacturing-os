@@ -1180,6 +1180,16 @@ export interface TicketReviewSlot {
   /** DF-P22: set when the slot was satisfied by a standing
    *  pre-authorization (`via: "preauthorization"`) — the record's id. */
   preauthorizationId?: string | null;
+  /** GAP-115 / GAP-109 mechanism 3 (drafting-flow DF-P26): true when the
+   *  routing slot carries the controller's exception-only opt-in
+   *  (lib/routingControl.ts exception_only) — copied when the roster opens,
+   *  on a blocking slot only. Absent on every other slot (today's roster,
+   *  byte for byte). */
+  exceptionOnly?: true;
+  /** DF-P26: the slot was satisfied by the exception-only rule and later
+   *  RE-OPENED for its reviewer because an exception came on record (what
+   *  was on record, as people read it, and when). */
+  exceptionReopened?: { at: string; exceptions: string[] };
   /** True when the slot's own fill resolved to nobody and the management
    *  tier was rostered instead (a stop never resolves to nobody). */
   fallback: boolean;
@@ -1195,8 +1205,12 @@ export interface TicketReviewSlot {
   satisfiedAt?: string | null;
   signatureId?: string | null;
   /** "consent" (GAP-109, DF-P7): satisfied by a consent window that closed
-   *  with no objection — a recorded system act, no signer, no signature. */
-  via?: "primary" | "alternate" | "override" | "consent" | "preauthorization" | null;
+   *  with no objection — a recorded system act, no signer, no signature.
+   *  "rule" (GAP-115, DF-P26): satisfied when the review opened by the
+   *  exception-only rule (no exception on record) — a recorded system act,
+   *  no signer, no signature; re-opened for its reviewer if an exception
+   *  comes on record before the request issues (lib/exceptionOnlyReview.ts). */
+  via?: "primary" | "alternate" | "override" | "consent" | "preauthorization" | "rule" | null;
 }
 
 /** GAP-109 / GAP-113 (DF-P7): what the roster decided about its consent
@@ -1258,6 +1272,11 @@ export interface TicketReviewRoster {
    *  opened, and — once open_consent_window has stamped it — the window. */
   consentPlan?: TicketConsentPlan | null;
   consentWindow?: TicketConsentWindowMark | null;
+  /** GAP-116 (DF-P26 fix pass 2): an earlier round of this request carried a
+   *  notify-only slot opted in to recording what its people examined, so an
+   *  open hold placed with its record then still stops the request
+   *  (lib/requestHoldStop.ts). Absent on every other roster. */
+  notifyHoldRecordsEarlier?: true;
   closedAt?: string | null;
   closedReason?: string | null;
 }
