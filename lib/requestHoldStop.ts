@@ -53,9 +53,13 @@ import {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** How many open holds on the source document naming this request are read
- *  at once. A full page with no stop among it is "unreadable" (judged on
- *  part of the record, it proves nothing). */
+ *  at once. DF-P26 fix pass 4: a full page is followed by the next (keyset
+ *  on the hold's id), so holds placed by people outside the slot never make
+ *  the record unreadable however many there are — every page is judged. */
 export const REQUEST_HOLD_READ_LIMIT = 100;
+/** A runaway guard only: more pages than this (10,000 open holds naming one
+ *  request) is "unreadable" — a retry, never a pass. */
+export const REQUEST_HOLD_PAGE_CAP = 100;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = { from: (t: string) => any };
@@ -168,31 +172,46 @@ export async function requestHoldStop(db: Db, input: { ticket: Ticket; ticketId:
   const scope = holdStopScope(input.ticket);
   if (!scope) return { kind: "none" };
   const { ticketId, orgId } = input;
-  let read: { data: unknown; error: { code?: string; message?: string } | null };
-  try {
-    read = await db.from("document_holds")
-      .select("id, reason, opened_by, opened_at, examination")
-      .eq("org_id", orgId).eq("document_id", scope.sourceId).eq("examination->>ticketId", ticketId).is("released_at", null)
-      .order("opened_at", { ascending: true }).limit(REQUEST_HOLD_READ_LIMIT);
-  } catch (e) {
-    return { kind: "unreadable", error: (e as Error)?.message ?? String(e) };
+  type HoldRow = { id: string; reason?: string | null; opened_by?: string | null; opened_at?: string | null; examination?: unknown };
+  // DF-P26 fix pass 4: every open hold naming this request is read, page by
+  // page (keyset on id), never only the first page — a pile of holds placed
+  // by people outside the slot neither stops the request nor makes it
+  // unreadable.
+  const rows: HoldRow[] = [];
+  let after: string | null = null;
+  for (let page = 0; ; page += 1) {
+    if (page >= REQUEST_HOLD_PAGE_CAP) return { kind: "unreadable", error: `more than ${REQUEST_HOLD_READ_LIMIT * REQUEST_HOLD_PAGE_CAP} open holds name this request` };
+    let read: { data: unknown; error: { code?: string; message?: string } | null };
+    try {
+      let q = db.from("document_holds")
+        .select("id, reason, opened_by, opened_at, examination")
+        .eq("org_id", orgId).eq("document_id", scope.sourceId).eq("examination->>ticketId", ticketId).is("released_at", null);
+      if (after !== null) q = q.gt("id", after);
+      read = await q.order("id", { ascending: true }).limit(REQUEST_HOLD_READ_LIMIT);
+    } catch (e) {
+      return { kind: "unreadable", error: (e as Error)?.message ?? String(e) };
+    }
+    if (read.error) {
+      if (isMissingHoldExamination(read.error)) return { kind: "clear" };
+      return { kind: "unreadable", error: read.error.message || "the holds could not be read" };
+    }
+    const pageRows = (read.data ?? []) as HoldRow[];
+    rows.push(...pageRows);
+    if (pageRows.length < REQUEST_HOLD_READ_LIMIT) break;
+    const last = String(pageRows[pageRows.length - 1]?.id ?? "");
+    // A page that does not move past the last one read proves nothing.
+    if (!last || (after !== null && last <= after)) return { kind: "unreadable", error: "the holds could not be read page by page" };
+    after = last;
   }
-  if (read.error) {
-    if (isMissingHoldExamination(read.error)) return { kind: "clear" };
-    return { kind: "unreadable", error: read.error.message || "the holds could not be read" };
-  }
-  const rows = ((read.data ?? []) as Array<{ id: string; reason?: string | null; opened_by?: string | null; opened_at?: string | null; examination?: unknown }>);
   const records = rows.map((h) => ({ h, rec: holdExaminationOf(h.examination, ticketId) })).filter((x) => x.rec !== null) as Array<{ h: typeof rows[number]; rec: NonNullable<ReturnType<typeof holdExaminationOf>> }>;
   // An earlier round's slots come from the roster ledger.
   const occ = await holdRecordOccupancy(db, { orgId, ticketId, roster: scope.roster, records: records.map((x) => x.rec) });
   if (!occ.ok) return { kind: "unreadable", error: occ.error };
   const occupancy = occ.occupancy;
-  const stopping = records.filter((x) => holdOpenerInSlot(x.h.opened_by, x.rec, occupancy) === "slot");
-  if (stopping.length === 0) {
-    // Judged on a full page only: what was not read could hold a stop.
-    if (rows.length >= REQUEST_HOLD_READ_LIMIT) return { kind: "unreadable", error: `more than ${REQUEST_HOLD_READ_LIMIT} open holds name this request` };
-    return { kind: "clear" };
-  }
+  // (read by id; named oldest first, as before)
+  const stopping = records.filter((x) => holdOpenerInSlot(x.h.opened_by, x.rec, occupancy) === "slot")
+    .sort((a, b) => String(a.h.opened_at ?? "\uffff").localeCompare(String(b.h.opened_at ?? "\uffff")) || String(a.h.id).localeCompare(String(b.h.id)));
+  if (stopping.length === 0) return { kind: "clear" };
   const openers = [...new Set(stopping.map((x) => String(x.h.opened_by)))];
   const names = new Map<string, string>();
   try {

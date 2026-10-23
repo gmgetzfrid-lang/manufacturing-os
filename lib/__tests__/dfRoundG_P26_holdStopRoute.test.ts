@@ -117,7 +117,7 @@ vi.mock("@/lib/issueNoticeExamination", async (importOriginal) => {
 import { POST as workflowAction } from "@/app/api/tickets/workflow-action/route";
 import { WorkflowEngine, ISSUING_APPROVALS } from "@/lib/workflow";
 import { rowToTicket } from "@/lib/ticketTransitions";
-import { requestHoldRefusal, holdStopScope, carryNotifyHoldMark } from "@/lib/requestHoldStop";
+import { requestHoldRefusal, holdStopScope, carryNotifyHoldMark, requestHoldStop, REQUEST_HOLD_READ_LIMIT, REQUEST_HOLD_PAGE_CAP } from "@/lib/requestHoldStop";
 
 const post = (body: unknown) => workflowAction(new NextRequest("http://x/api/tickets/workflow-action", {
   method: "POST", headers: { authorization: "Bearer t", "content-type": "application/json" }, body: JSON.stringify(body),
@@ -432,6 +432,72 @@ describe("DF-P26 fix pass 3 — the earlier-round hold mark survives a round who
     const released = await run(row, signer, { actionType: "sign_slot", signatureId: SIG }, false, CONSENT_ROUTING, () => { extra(); state.rows.document_holds = [hold({ released_at: "2026-10-22T07:30:00.000Z" }, round1.id)]; });
     expect(released.status, JSON.stringify(released.raw)).toBe(200);
     expect(released.raw.status).toBe("PENDING_IFC");
+  });
+});
+
+// DF-P26 fix pass 4 (GAP-116 review minor): every open hold naming the
+// request is read page by page (keyset on id) — a pile of holds placed by
+// people outside the slot never makes every issuing act a 503.
+describe("DF-P26 fix pass 4 — holds by people outside the slot never make the request unreadable, however many", () => {
+  const R = "R";
+  const roster = { v: 1, id: R, openedAt: LM, openedBy: "d-1", level: "library", cycle: "1A", contentHash: "h", files: [], slots: [
+    { id: "r:watch", kind: "watch", label: "Inspection notice", mode: "notify_only", primaries: ["q-2"], alternates: [], overriders: [], independentOf: [], timeoutDays: null, fallback: false, status: "open", recordsExamination: true },
+  ] } as unknown as TicketReviewRoster;
+  const ticket = { id: "t1", orgId: "o1", requesterId: "req-1", metadata: { ...SOURCE, review_roster: roster } } as unknown as Ticket;
+  const hold = (i: number, by: string, at = `2026-10-${String(10 + (i % 10)).padStart(2, "0")}T00:00:00Z`) => ({
+    id: `h0000000-0000-4000-8000-${String(i).padStart(12, "0")}`, org_id: "o1", document_id: DOC, reason: `hold ${i}`, opened_by: by, opened_at: at, released_at: null,
+    examination: { stop: "hold", ticketId: "t1", rosterId: R, slotKind: "watch", contentHash: "h", files: [], ofFiles: 0, note: "n" },
+  });
+  // a fake that honours eq / is / gt / order(id) / limit, as PostgREST does
+  function pagedDb(rows: Array<Record<string, unknown>>, opts: { stuck?: boolean } = {}) {
+    const reads: Array<{ gt: string | null }> = [];
+    const db = {
+      from: (table: string) => {
+        const f: Array<(r: Record<string, unknown>) => boolean> = [];
+        let gt: string | null = null; let lim = Infinity;
+        const q: Record<string, unknown> = {
+          select: () => q,
+          eq: (k: string, v: unknown) => { f.push((r) => pathGet(r, k) === v); return q; },
+          is: (k: string, v: unknown) => { f.push((r) => (r[k] ?? null) === v); return q; },
+          in: (k: string, v: unknown[]) => { f.push((r) => v.includes(r[k])); return q; },
+          gt: (k: string, v: string) => { gt = v; if (!opts.stuck) f.push((r) => String(r[k]) > v); return q; },
+          order: () => q,
+          limit: (n: number) => { lim = n; return q; },
+          then: (resolve: (v: unknown) => void) => {
+            if (table === "document_holds") reads.push({ gt });
+            const src = table === "document_holds" ? rows : [];
+            return resolve({ data: src.filter((r) => f.every((fn) => fn(r))).sort((x, y) => String(x.id).localeCompare(String(y.id))).slice(0, lim), error: null });
+          },
+        };
+        return q;
+      },
+    };
+    return { db, reads };
+  }
+  it("150 open holds naming the request, none placed by the slot's people: \"clear\" (both pages read) — never \"unreadable\"", async () => {
+    const rows = Array.from({ length: 150 }, (_, i) => hold(i + 1, "a-1"));
+    const { db, reads } = pagedDb(rows);
+    expect(await requestHoldStop(db, { ticket, ticketId: "t1", orgId: "o1" })).toEqual({ kind: "clear" });
+    expect(reads.length).toBe(2);
+    expect(reads[1].gt).toBe(rows[REQUEST_HOLD_READ_LIMIT - 1].id);
+  });
+  it("exactly a full page of outsiders' holds: \"clear\" after an empty second page", async () => {
+    const { db, reads } = pagedDb(Array.from({ length: REQUEST_HOLD_READ_LIMIT }, (_, i) => hold(i + 1, "a-1")));
+    expect(await requestHoldStop(db, { ticket, ticketId: "t1", orgId: "o1" })).toEqual({ kind: "clear" });
+    expect(reads.length).toBe(2);
+  });
+  it("the slot person's hold behind 120 outsiders' holds (on the second page) still stops the request, named oldest first", async () => {
+    const rows = [...Array.from({ length: 120 }, (_, i) => hold(i + 1, "a-1")), hold(200, "q-2", "2026-10-25T00:00:00Z"), hold(201, "q-2", "2026-10-02T00:00:00Z")];
+    const { db } = pagedDb(rows);
+    const r = await requestHoldStop(db, { ticket, ticketId: "t1", orgId: "o1" });
+    expect(r.kind).toBe("stopped");
+    if (r.kind !== "stopped") return;
+    expect(r.holds.map((h) => h.reason)).toEqual(["hold 201", "hold 200"]);
+  });
+  it("a page that does not move past the last one read (a misbehaving store) is \"unreadable\", never a pass; the runaway guard is bounded", async () => {
+    const { db } = pagedDb(Array.from({ length: REQUEST_HOLD_READ_LIMIT }, (_, i) => hold(i + 1, "a-1")), { stuck: true });
+    expect(await requestHoldStop(db, { ticket, ticketId: "t1", orgId: "o1" })).toMatchObject({ kind: "unreadable" });
+    expect(REQUEST_HOLD_PAGE_CAP * REQUEST_HOLD_READ_LIMIT).toBe(10000);
   });
 });
 

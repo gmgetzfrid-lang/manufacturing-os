@@ -1513,8 +1513,8 @@ describe("DF-P26 (GAP-102 acceptance 2): the consent close's issue notice carrie
 // same write (history, audit row, ledger "reopened"), and the request does
 // not issue. The waiver unreadable: not closed, retried next run.
 describe("DF-P26 (GAP-115): the consent close re-opens a slot satisfied by the exception-only rule when an exception is on record", () => {
-  const seedRuled = () => {
-    seedTicket({ warned: "2026-10-21T09:00:00Z" });
+  const seedRuled = (accept?: "open") => {
+    seedTicket({ warned: "2026-10-21T09:00:00Z", ...(accept ? { accept } : {}) });
     const meta = db.tables.tickets[0].metadata as { review_roster: TicketReviewRoster };
     meta.review_roster = { ...meta.review_roster, slots: [...meta.review_roster.slots, slot({ kind: "doc", label: "Document check", primaries: ["q-1"], exceptionOnly: true, status: "satisfied", via: "rule", satisfiedBy: null as unknown as string, signatureId: null as unknown as string, satisfiedAt: "2026-10-19T09:00:00Z" })] };
     db.tables.ticket_review_slots.push({ id: "ld", ticket_id: "t1", roster_id: ROSTER_ID, slot_kind: "doc", mode: "blocking", status: "satisfied", primaries: ["q-1"], independent_of: [], fallback: false });
@@ -1549,5 +1549,20 @@ describe("DF-P26 (GAP-115): the consent close re-opens a slot satisfied by the e
     expect(r).toMatchObject({ advanced: 0, issued: 0, failed: 1 });
     expect(calls("tickets", "update")).toEqual([]);
     expect(calls("audit_logs", "insert")).toEqual([]);
+  });
+  it("DF-P26 fix pass 4 (DEC-90 rulings (1) and (4)): the waiver unreadable on a close that would NOT complete the review (another blocking slot still open) — the window closes, nothing re-opened, nothing issued; the read never delays it", async () => {
+    seedRuled("open");
+    db.errors.ticket_examination_scopes = { code: "08006", message: "connection lost" };
+    const r = await runConsentWindowScan({ client, now: NOW });
+    expect(r).toMatchObject({ advanced: 1, issued: 0, failed: 0 });
+    expect(db.tables.tickets[0].status).toBe("PENDING_REVIEW");
+    const roster = rosterOf();
+    expect(roster.slots.find((s) => s.kind === "ops")!.status).toBe("satisfied");
+    expect(roster.slots.find((s) => s.kind === "accept")!.status).toBe("open");
+    expect(roster.slots.find((s) => s.kind === "doc")).toMatchObject({ status: "satisfied", via: "rule" });
+    expect(reopenedEvents()).toEqual([]);
+    expect(auditDetails().exceptionReview).toBeUndefined();
+    expect(r.errors.some((m) => /could not be checked; this close does not complete the review, so the window closes/.test(m))).toBe(true);
+    // the same unreadable read on a close that WOULD complete it still waits a run (above)
   });
 });

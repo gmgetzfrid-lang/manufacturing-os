@@ -1066,22 +1066,34 @@ export async function runConsentWindowScan(deps: { client: Db; now?: number; dea
     // this same close (lib/exceptionOnlyReview.ts): the window still closes
     // on silence for ITS slot, but the request does not issue — it waits on
     // the re-opened slot. What cannot be checked waits a run, as every other
-    // transient read here. Read only for such a roster.
+    // transient read here — where the close would issue (fix pass 4). Read
+    // only for such a roster.
     let ruleReopen: { slots: TicketReviewRoster["slots"]; labels: string[]; exceptions: string[] } | null = null;
     if (ruleSatisfiedSlots(advancedRoster).length > 0) {
       const moved = await sourceDriftOf(ticket);
       const waiver = await readWaiverOnRecord(sb, ticketId);
       if (moved.unchecked || !waiver.ok) {
-        report.failed += 1;
-        say(`ticket ${ticketId}: whether an exception is on record for its exception-only sign-off could not be checked — the window was not closed (retried next run)${!waiver.ok ? `: ${waiver.error}` : ""}`);
-        return;
-      }
-      const found = exceptionsOnRecord({ driftLabels: moved.moved, roster: advancedRoster, waiver: waiver.waiver, declarationUnverified: declarationMissing ? "missing" : null, engineered });
-      if (found.length > 0) {
-        const ruled = ruleSatisfiedSlots(advancedRoster);
-        const texts = found.map((f) => f.text);
-        advancedRoster = reopenRuleSatisfied(advancedRoster, texts, nowIso);
-        ruleReopen = { slots: advancedRoster.slots.filter((x) => ruled.some((r) => r.kind === x.kind)), labels: ruled.map((r) => r.label || r.kind), exceptions: texts };
+        // DF-P26 fix pass 4 (DEC-90 rulings (1) and (4)): a read that cannot
+        // prove there is no exception holds only a close that would ISSUE
+        // the request. A close that leaves the review waiting on another
+        // sign-off cannot issue: it closes, nothing is re-opened by it, and
+        // the act that completes the review (the route's sign-off, or a
+        // later close) checks again — as the route takes a partial sign-off.
+        const why = !waiver.ok ? `: ${waiver.error}` : "";
+        if (rosterCompletion(advancedRoster).complete) {
+          report.failed += 1;
+          say(`ticket ${ticketId}: whether an exception is on record for its exception-only sign-off could not be checked — the window was not closed (retried next run)${why}`);
+          return;
+        }
+        say(`ticket ${ticketId}: whether an exception is on record for its exception-only sign-off could not be checked; this close does not complete the review, so the window closes and the sign-off that completes it checks again${why}`);
+      } else {
+        const found = exceptionsOnRecord({ driftLabels: moved.moved, roster: advancedRoster, waiver: waiver.waiver, declarationUnverified: declarationMissing ? "missing" : null, engineered });
+        if (found.length > 0) {
+          const ruled = ruleSatisfiedSlots(advancedRoster);
+          const texts = found.map((f) => f.text);
+          advancedRoster = reopenRuleSatisfied(advancedRoster, texts, nowIso);
+          ruleReopen = { slots: advancedRoster.slots.filter((x) => ruled.some((r) => r.kind === x.kind)), labels: ruled.map((r) => r.label || r.kind), exceptions: texts };
+        }
       }
     }
     // DEC-12 / DEC-37: the floor as it reads for silence (consentFloorHolds

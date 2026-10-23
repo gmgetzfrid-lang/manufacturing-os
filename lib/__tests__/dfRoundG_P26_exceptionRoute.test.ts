@@ -40,6 +40,9 @@ const state = vi.hoisted(() => ({
   noNote: false,
   ready: true,
   noEO: false,
+  // DF-P26 fix pass 4: only the org's "drafting" configuration row errors
+  // (the permission policy, read from the same table, still reads).
+  draftingDown: false,
 }));
 const pathGet = (r: Record<string, unknown>, key: string): unknown => {
   if (!key.includes("->")) return r[key];
@@ -55,11 +58,13 @@ function chain(table: string) {
     .filter((r) => filters.every(([k, v, how]) => (how === "is" ? (pathGet(r, k) ?? null) === v : how === "in" ? (v as unknown[]).includes(pathGet(r, k)) : pathGet(r, k) === v)))
     .map((r) => ({ ...r }));
   const c: Record<string, unknown> = {};
+  const errOf = () => state.errors[table]
+    ?? (state.draftingDown && table === "org_configurations" && filters.some(([k, v]) => k === "key" && v === "drafting") ? { code: "08006", message: "down" } : undefined);
   const h: ProxyHandler<Record<string, unknown>> = {
     get(_t, prop: string) {
       if (prop === "then") return (resolve: (v: unknown) => void) => {
         if (head && state.errors[table] && /PGRST205|42P01/.test(state.errors[table].code ?? "")) return resolve({ data: null, error: null, count: null, status: 204 });
-        if (state.errors[table]) return resolve({ data: null, error: state.errors[table] });
+        if (errOf()) return resolve({ data: null, error: errOf() });
         if (head) return resolve({ data: null, error: null, count: rows().length });
         return resolve({ data: rows(), error: null, count: rows().length });
       };
@@ -73,7 +78,7 @@ function chain(table: string) {
         if (prop === "is") filters.push([String(args[0]), args[1], "is"]);
         if (prop === "in") filters.push([String(args[0]), args[1], "in"]);
         if (prop === "maybeSingle" || prop === "single") {
-          if (state.errors[table]) return Promise.resolve({ data: null, error: state.errors[table] });
+          if (errOf()) return Promise.resolve({ data: null, error: errOf() });
           return Promise.resolve({ data: rows()[0] ?? null, error: null });
         }
         return new Proxy(c, h);
@@ -149,7 +154,7 @@ const ticketRow = (over: Record<string, unknown> = {}) => ({
 const reviewRow = (over: Record<string, unknown> = {}) => ticketRow({ status: "PENDING_REVIEW", deliverable_rev: "1A", draft_iteration: 1, attachments: [{ ...DRAFT, status: "submitted", rev: "1A" }], ...over });
 const reset = () => {
   __resetCapabilityPolicyCache();
-  state.user = null; state.rows = {}; state.calls = []; state.errors = {}; state.after = []; state.noP26 = false; state.noNote = false; state.ready = true; state.noEO = false;
+  state.user = null; state.rows = {}; state.calls = []; state.errors = {}; state.after = []; state.noP26 = false; state.noNote = false; state.ready = true; state.noEO = false; state.draftingDown = false;
 };
 const seed = (routing: unknown = null) => {
   state.rows.org_members = MEMBERS.map((m) => ({ ...m }));
@@ -293,6 +298,22 @@ describe("limb 1 — satisfied at open by a recorded system act naming the rule"
     expect(auditRow()!.details.exceptionReview).toMatchObject({ ruleNotApplied: "engineered" });
     expect(state.calls.some((c) => c.table === "rpc:exception_only_review_ready")).toBe(false);
   });
+  it("DF-P26 fix pass 4 (DEC-90 ruling (1), fail-safe): the workspace's request types UNREADABLE — whether the request is engineered work is unknown, so nothing is applied (never assumed not engineered); the slot waits, the audit row says unchecked", async () => {
+    // an engineering-first ISO type the route cannot see while the row is down
+    const r = await submit(WITH_EO, undefined, () => {
+      state.rows.org_configurations = [{ org_id: "o1", key: "drafting", data: { requestTypes: { options: [{ value: "ISO", label: "ISO", engineeringFirst: true }] } } }];
+      state.draftingDown = true;
+    });
+    expect(r.status, JSON.stringify(r.json)).toBe(200);
+    expect(r.roster!.slots.find((x) => x.kind === "doc")).toMatchObject({ status: "open" });
+    expect(r.roster!.slots.find((x) => x.kind === "doc")!.via).toBeUndefined();
+    expect(auditRow()!.details.exceptionReview).toEqual({ ruleNotApplied: "unchecked", slots: ["doc"] });
+    expect(state.calls.some((c) => c.table === "rpc:exception_only_review_ready")).toBe(false);
+    expect(writesTo("ticket_review_slots", "update")).not.toContainEqual(expect.objectContaining({ satisfied_via: "rule" }));
+    // the same row readable (types not engineering-first): the rule applies — the read was the only difference
+    const ok = await submit(WITH_EO, undefined, () => { state.rows.org_configurations = [{ org_id: "o1", key: "drafting", data: { requestTypes: { options: [{ value: "ISO", label: "ISO" }] } } }]; });
+    expect(ok.roster!.slots.find((x) => x.kind === "doc")).toMatchObject({ status: "satisfied", via: "rule" });
+  });
 });
 
 describe("limb 2 — re-opened before anything issues", () => {
@@ -380,6 +401,43 @@ describe("limb 2 — re-opened before anything issues", () => {
       expect(done.json.code).toBe("exception_review_unchecked");
       expect(ticketUpdates()).toEqual([]);
     }
+  });
+  it("DF-P26 fix pass 4 (DEC-90 ruling (1), fail-safe): the workspace's request types UNREADABLE when the completing sign-off arrives — 503 exception_review_unchecked, nothing written (the dry run too); never issued as \"not engineered\"", async () => {
+    const row = await ruledRow();
+    const down = () => {
+      state.rows.org_configurations = [{ org_id: "o1", key: "drafting", data: { requestTypes: { options: [{ value: "ISO", label: "ISO", engineeringFirst: true }] } } }];
+      state.draftingDown = true;
+    };
+    for (const dryRun of [true, false]) {
+      const r = await run(row, "e-2", { actionType: "sign_slot", signatureId: SIG, dryRun }, WITH_EO, { extra: down });
+      expect(r.status, `${dryRun} ${JSON.stringify(r.json)}`).toBe(503);
+      expect(r.json.code).toBe("exception_review_unchecked");
+      expect(r.json.error).toMatch(/whether the request is engineered work\) could not be checked/);
+      expect(ticketUpdates()).toEqual([]);
+      expect(writesTo("ticket_review_slot_events", "insert")).toEqual([]);
+    }
+    // readable again, and the type now engineering-first: an exception on record — re-opened, not issued
+    const back = await run(row, "e-2", { actionType: "sign_slot", signatureId: SIG }, WITH_EO, { extra: () => { down(); state.draftingDown = false; } });
+    expect(back.status, JSON.stringify(back.json)).toBe(200);
+    expect(back.json.status).toBe("PENDING_REVIEW");
+    expect(back.json.exceptionReopened).toBeTruthy();
+  });
+  it("DF-P26 fix pass 4: the request types unreadable on a sign-off that does NOT complete the review — taken (200), nothing re-opened; the completing one still waits", async () => {
+    const LEAD2 = { kind: "lead2", label: "Second check", mode: "blocking", fill: { users: ["e-1"] }, independent_of: ["drafter"] };
+    const THREE = { slots: [LEAD, LEAD2, DOCCHK] };
+    const opened = await submit(THREE);
+    const row = reviewRow({ metadata: { source_document: { id: DOC, document_number: "P-100", rev: "2" }, review_roster: opened.roster } });
+    const down = () => { state.draftingDown = true; };
+    const partial = await run(row, "e-2", { actionType: "sign_slot", signatureId: SIG }, THREE, { extra: down });
+    expect(partial.status, JSON.stringify(partial.json)).toBe(200);
+    expect(partial.json.exceptionReopened).toBeUndefined();
+    const after = (ticketUpdates()[0].args[0] as { metadata: { review_roster: TicketReviewRoster } }).metadata.review_roster;
+    expect(after.slots.find((x) => x.kind === "doc")).toMatchObject({ status: "satisfied", via: "rule" });
+    const row2 = { ...row, metadata: { ...(row.metadata as object), review_roster: after } };
+    const done = await run(row2, "e-1", { actionType: "sign_slot", signatureId: SIG }, THREE, { extra: down });
+    expect(done.status).toBe(503);
+    expect(done.json.code).toBe("exception_review_unchecked");
+    expect(ticketUpdates()).toEqual([]);
   });
   it("DF-P26 review fix: more source documents than one read takes (101): 503 exception_review_unchecked, nothing written — never only the first 100 read", async () => {
     const row = await ruledRow();

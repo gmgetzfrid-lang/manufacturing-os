@@ -509,6 +509,13 @@ export async function POST(req: NextRequest) {
   // lists (seeded empty). null when it could not be read.
   let draftingCfg: Record<string, unknown> | null = null;
   let draftingCfgRead = false;
+  // GAP-115 (DF-P26 fix pass 4; DEC-90 ruling (1)): whether the
+  // engineering-first types above are the workspace's own — the row read AND
+  // its request types parsed. When not, "engineered" is unknown, and the
+  // exception-only rule treats it as unchecked (limb 1 applies nothing; limb
+  // 2 refuses a completing sign-off), as the consent close does
+  // (lib/consentWindowScan.ts engineeredLaneNow). Nothing else reads it.
+  let engineeringFirstKnown = false;
   // DF-P24 merge-time fix pass 2: the examination-scope gate's copy of the
   // row, taken BEFORE the request-type flags are computed — a malformed
   // `requestTypes` (which makes that reading throw) no longer hides the
@@ -530,6 +537,7 @@ export async function POST(req: NextRequest) {
     // authority, DF-P24 merge-time fix pass; it throws where this reading
     // always threw, so the defaults stand exactly as before.)
     ({ closeWithoutReviewTypes, engineeringFirstTypes } = draftingTypeFlags(cfgRow?.data));
+    engineeringFirstKnown = draftingCfgRead;
     draftingCfg = (cfgRow?.data as Record<string, unknown> | null) ?? null;
   } catch { /* default stands */ }
 
@@ -1265,7 +1273,9 @@ export async function POST(req: NextRequest) {
         // slot waits for its sign-off, as today. Read only for a roster that
         // carries such a slot.
         if (rosterOpen && rosterHasExceptionOnlySlot(rosterOpen, ticket)) {
-          const eo = await exceptionRuleAtOpen(supabaseAdmin, { roster: rosterOpen, ticket, ticketId: body.ticketId, sodActive, engineered: rosterEngineered, now: Date.now() });
+          // (DF-P26 fix pass 4: request types that could not be read leave
+          // "engineered" unknown — nothing applied, reason "unchecked".)
+          const eo = await exceptionRuleAtOpen(supabaseAdmin, { roster: rosterOpen, ticket, ticketId: body.ticketId, sodActive, engineered: rosterEngineered, engineeredUnchecked: !engineeringFirstKnown, now: Date.now() });
           rosterOpen = eo.roster;
           if (eo.applied) {
             exceptionRuleOpenLabels = eo.labels;
@@ -1331,8 +1341,10 @@ export async function POST(req: NextRequest) {
       const preview = applySignPlan(openRosterNow, plan, { uid: caller.id, name: null }, "exception-review-preview", new Date().toISOString());
       const waiver = await readWaiverOnRecord(supabaseAdmin, body.ticketId);
       const moved = await readSourceMoved(supabaseAdmin, ticket);
-      if (!waiver.ok || !moved.ok || declarationUnverified === "unchecked") {
-        const why = !waiver.ok ? waiver.error : !moved.ok ? `the source documents could not be read (${moved.error})` : "the like-in-kind declaration's signature could not be read";
+      // (DF-P26 fix pass 4: the workspace's request types unread leave
+      // "engineered" unknown — the same retry, never "not engineered".)
+      if (!waiver.ok || !moved.ok || declarationUnverified === "unchecked" || !engineeringFirstKnown) {
+        const why = !waiver.ok ? waiver.error : !moved.ok ? `the source documents could not be read (${moved.error})` : declarationUnverified === "unchecked" ? "the like-in-kind declaration's signature could not be read" : "the workspace's request types could not be read, so whether this request is engineered work is unknown";
         // DF-P26 fix pass 3 (DEC-90 rulings (1) and (4)): the deliberate
         // refusal is for an ISSUING act only. A sign-off that leaves the
         // review open cannot issue, so an unreadable read never refuses it:
@@ -1340,7 +1352,7 @@ export async function POST(req: NextRequest) {
         // completes the review (or the consent close) checks again.
         if (rosterCompletion(preview, { sodActive, drafterId: ticket.assignedDrafterId }).complete) {
           console.error(`[workflow-action] exception-only review unchecked for ticket ${body.ticketId}: ${why}`);
-          return refuseSign(503, "Whether an exception is on record for this review (a moved source, a recorded waiver or the like-in-kind declaration's signature) could not be checked, so the sign-off was not taken. Try again in a moment.", "exception_review_unchecked");
+          return refuseSign(503, "Whether an exception is on record for this review (a moved source, a recorded waiver, the like-in-kind declaration's signature or whether the request is engineered work) could not be checked, so the sign-off was not taken. Try again in a moment.", "exception_review_unchecked");
         }
         console.warn(`[workflow-action] exception-only review unchecked for ticket ${body.ticketId} on a sign-off that does not complete the review (taken; the completing act checks again): ${why}`);
       } else {

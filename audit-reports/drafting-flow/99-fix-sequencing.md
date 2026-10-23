@@ -794,7 +794,7 @@ DF-P25 EXCEPTION-ONLY REVIEW AND PRE-AUTHORIZATION FOLLOW-UPS (DEC-90 rulings (1
 
 ## Hand-offs from DF-P26 (Round G) that no package brief carries yet
 
-DF-P26 ISSUING-PATH STOPS (DEC-90 rulings (1)–(3) for DF-P26; calls in `DEC-44 (DF-P26-issuing-path-stops)`) resolved `GAP-115` (exception-only review — both limbs in one merge; `GAP-109` mechanism 3), `GAP-116` (a notify-only hold that stops the request) and `GAP-102` acceptance 2 (the issue notice carrying the examination data). The DF-P25 hand-off rows for `GAP-115`, `GAP-116` and `GAP-102` acceptance 2 are superseded by this section.
+DF-P26 ISSUING-PATH STOPS (DEC-90 rulings (1)–(3) for DF-P26; calls in `DEC-44 (DF-P26-issuing-path-stops)`) resolved `GAP-115` (exception-only review — both limbs in one merge; `GAP-109` mechanism 3; RESOLVED with one remainder since fix pass 4 — the committed base-route A/B pin in the row below), `GAP-116` (a notify-only hold that stops the request) and `GAP-102` acceptance 2 (the issue notice carrying the examination data). The DF-P25 hand-off rows for `GAP-115`, `GAP-116` and `GAP-102` acceptance 2 are superseded by this section.
 
 | Finding / item | Owner | What remains |
 |---|---|---|

@@ -258,10 +258,14 @@ export type ExceptionRuleAtOpen =
  * caller checks rosterHasExceptionOnlySlot first). Never throws; anything
  * unreadable applies nothing.
  */
-export async function exceptionRuleAtOpen(db: Db, input: { roster: TicketReviewRoster; ticket: Ticket; ticketId: string; sodActive: boolean; engineered: boolean; now: number }): Promise<ExceptionRuleAtOpen> {
+export async function exceptionRuleAtOpen(db: Db, input: { roster: TicketReviewRoster; ticket: Ticket; ticketId: string; sodActive: boolean; engineered: boolean; engineeredUnchecked?: boolean; now: number }): Promise<ExceptionRuleAtOpen> {
   const { roster, ticket } = input;
   const candidates = roster.slots.filter((s) => s.status === "open" && isExceptionOnlySlot(s, ticket)).map((s) => s.kind);
   if (input.engineered) return { applied: false, roster, reason: "engineered", kinds: candidates };
+  // DF-P26 fix pass 4 (DEC-90 ruling (1), fail-safe): whether the request is
+  // engineered work could not be decided (the workspace's request types
+  // unread) — "not engineered" is never assumed; the slot waits.
+  if (input.engineeredUnchecked === true) return { applied: false, roster, reason: "unchecked", kinds: candidates };
   const plan = planExceptionRule(roster, { ticket, sodActive: input.sodActive, engineered: false, now: input.now });
   if (plan.length === 0) return { applied: false, roster, reason: "no_live_sign_off", kinds: candidates };
   if (!(await exceptionOnlyReady(db))) return { applied: false, roster, reason: "not_migrated", kinds: candidates };

@@ -243,6 +243,16 @@ describe("the reads (fail-safe: anything unreadable applies nothing)", () => {
     }
     expect(await exceptionRuleAtOpen(fakeDb(docs).db, { roster: roster([EO]), ticket: t, ticketId: "t1", sodActive: true, engineered: false, now: NOW })).toMatchObject({ applied: false, reason: "no_live_sign_off" });
   });
+  it("DF-P26 fix pass 4: whether the request is engineered work UNKNOWN (engineeredUnchecked) — nothing applied, reason \"unchecked\", nothing read; a known engineered request still says \"engineered\"", async () => {
+    const r = roster([EO, LIVE]);
+    const t = ticket({ source_document: { id: DOC, rev: "2" } });
+    const f = fakeDb({ documents: [{ id: DOC, org_id: "o1", rev: "2", current_version_id: null }] });
+    const res = await exceptionRuleAtOpen(f.db, { roster: r, ticket: t, ticketId: "t1", sodActive: true, engineered: false, engineeredUnchecked: true, now: NOW });
+    expect(res).toMatchObject({ applied: false, reason: "unchecked", kinds: ["doc"] });
+    expect(res.roster).toBe(r);
+    expect(f.reads).toEqual([]);
+    expect(await exceptionRuleAtOpen(f.db, { roster: r, ticket: t, ticketId: "t1", sodActive: true, engineered: true, engineeredUnchecked: true, now: NOW })).toMatchObject({ applied: false, reason: "engineered" });
+  });
 });
 
 describe("DF-P26 review fix — a slot the rule satisfied stays signable by its own occupants (no deadlock behind the DEC-12 floor)", () => {
