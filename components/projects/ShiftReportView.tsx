@@ -30,7 +30,7 @@ import { createPortal } from "react-dom";
 import {
   Printer, ChevronLeft, ChevronRight, ChevronDown, Sun, Moon, AlertTriangle, CheckCircle2, Flag, FastForward,
   TrendingUp, TrendingDown, Minus, Zap, Presentation, X, Settings2, Rocket, ArrowLeftRight, Trophy,
-  Copy, Mail, FileText, Check,
+  Copy, Mail, FileText,
 } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
@@ -44,6 +44,9 @@ import { clockLabel, fmtInTz, tzAbbrev } from "@/lib/scheduleTz";
 import { completionNote } from "@/lib/scheduleRules";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { toPlainText, toEmailHtml, type ExportBlock, type ExportDoc, type ExportStepRow } from "@/lib/reportExport";
+import { turnoverUpdate, withoutEmpty } from "@/lib/managementUpdate";
+import { effectiveSpans } from "@/lib/scheduleTime";
+import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 
 interface Props {
   milestones: Milestone[];
@@ -139,6 +142,9 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
+  // When each main task really finishes: its last step (for "planned finish").
+  const taskSpans = useMemo(() => effectiveSpans(milestones), [milestones]);
+
   // The report as data — for Copy (text / email).
   const exportDoc = (): ExportDoc => {
     const { overall, shift: sh, next } = report;
@@ -158,8 +164,14 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
       kind, project: projectName ?? "Schedule", when,
       asOf: `${ctx.DT(meeting === "turnover" ? asOf : now)} ${tzAbbrev(ctx.tz, now)}`,
       status,
-      sections: sections.filter((x) => x.data).map((x) => ({ title: x.title, sub: x.sub, flag: x.flag ?? null, blocks: x.data!() })),
-      footer: `${meeting === "turnover" ? "Plan % = work the schedule expected done by now, hour-weighted; actual % = progress entered. " : ""}Critical = on the chain that drives the finish date. Hours are planned work-hours.`,
+      // The update management reads, not the meeting's agenda: short
+      // tables, one line per main task, and nothing that's empty.
+      sections: meeting === "turnover"
+        ? turnoverUpdate(report, { D: ctx.D, DTs: ctx.DTs, T: ctx.T, win: ctx.win, hrs: ctx.hrs }, {
+          pctOf: (id) => progress?.get(id)?.percent,
+          finishOf: (id) => taskSpans.get(id)?.finish,
+        })
+        : withoutEmpty(sections.filter((x) => x.data).map((x) => ({ id: x.id, title: x.title, sub: x.sub, flag: x.flag ?? null, blocks: x.data!() }))),
     };
   };
 
@@ -233,7 +245,7 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
             title="Run the meeting one agenda item at a time (← → keys, Esc to leave)">
             {presenting != null ? <><X className="w-3.5 h-3.5" /> Leave present</> : <><Presentation className="w-3.5 h-3.5" /> Present</>}
           </button>
-          <CopyMenu doc={exportDoc} />
+          <CopyUpdate doc={exportDoc} meeting={meeting} />
           <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-3 py-1.5 rounded-lg shadow-sm">
             <Printer className="w-3.5 h-3.5" /> Print
           </button>
@@ -351,73 +363,80 @@ async function copyText(text: string): Promise<boolean> {
   return ok;
 }
 
-/** Copy ▾ — the report for an email (tables and colors kept; paste into
- *  Outlook, Gmail…) or as plain text (Teams, a text message). */
-function CopyMenu({ doc }: { doc: () => ExportDoc }) {
-  const [open, setOpen] = useState(false);
-  const [done, setDone] = useState<{ what: "email" | "text"; ok: boolean; subject: string } | null>(null);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-    document.addEventListener("mousedown", close); document.addEventListener("keydown", esc);
-    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc); };
-  }, [open]);
-  useEffect(() => {
-    if (!done) return;
-    const t = setTimeout(() => setDone(null), 8000);
-    return () => clearTimeout(t);
-  }, [done]);
+/** Copy — the update as it will be sent, with a box per section to leave
+ *  one out today (remembered for next time), then copy it for an email
+ *  (tables and colors kept in Outlook, Gmail…) or as plain text. */
+function CopyUpdate({ doc, meeting }: { doc: () => ExportDoc; meeting: MeetingKind }) {
+  const key = `shiftReport.copyOff.${meeting}`;
+  const [d, setD] = useState<ExportDoc | null>(null);
+  const [off, setOff] = useState<Set<string>>(new Set());
+  const [done, setDone] = useState<{ what: "email" | "text"; ok: boolean } | null>(null);
+  const open = () => {
+    let saved: string[] = [];
+    try { saved = JSON.parse(localStorage.getItem(key) ?? "[]") as string[]; } catch { /* private mode */ }
+    setOff(new Set(saved)); setDone(null); setD(doc());
+  };
+  const toggle = (id: string) => setOff((cur) => {
+    const n = new Set(cur);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    try { localStorage.setItem(key, JSON.stringify([...n])); } catch { /* ignore */ }
+    return n;
+  });
+  const idOf = (s: ExportDoc["sections"][number]) => s.id ?? s.title;
+  const picked = d ? { ...d, sections: d.sections.filter((s) => !off.has(idOf(s))) } : null;
+  const html = picked ? toEmailHtml(picked) : "";
+  const subject = d ? `${d.project} — ${d.kind} — ${d.when.split(" → ").pop()}` : "";
 
   const run = async (what: "email" | "text") => {
-    setOpen(false);
-    const d = doc();
-    const text = toPlainText(d);
-    const ok = what === "email" ? await copyRich(toEmailHtml(d), text) : await copyText(text);
-    setDone({ what, ok, subject: `${d.project} — ${d.kind} — ${d.when.split(" → ").pop()}` });
+    if (!picked) return;
+    const text = toPlainText(picked);
+    const ok = what === "email" ? await copyRich(html, text) : await copyText(text);
+    setDone({ what, ok });
   };
 
   return (
-    <div className="relative" ref={ref}>
-      <button onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open}
-        className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border ${done?.ok ? "border-emerald-400 text-emerald-700 dark:text-emerald-300" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}
-        title="Copy this report to paste into an email or a message">
-        {done?.ok ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />} {done?.ok ? "Copied" : "Copy"} <ChevronDown className="w-3 h-3 opacity-70" />
+    <>
+      <button onClick={open}
+        className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+        title="Copy a short update for email or a message — see it first">
+        <Copy className="w-3.5 h-3.5" /> Copy
       </button>
-      {open && (
-        <div role="menu" className="absolute right-0 top-full mt-1 z-30 w-72 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-1">
-          <button role="menuitem" onClick={() => void run("email")} className="w-full text-left flex items-start gap-2 rounded-md px-2.5 py-2 hover:bg-[var(--color-surface-2)]">
-            <Mail className="w-4 h-4 mt-0.5 shrink-0 text-[var(--color-accent)]" />
-            <span>
-              <span className="block text-[12px] font-bold text-[var(--color-text)]">Copy for email</span>
-              <span className="block text-[11px] text-[var(--color-text-muted)]">Paste into Outlook, Gmail or any email — keeps the tables and colors.</span>
-            </span>
-          </button>
-          <button role="menuitem" onClick={() => void run("text")} className="w-full text-left flex items-start gap-2 rounded-md px-2.5 py-2 hover:bg-[var(--color-surface-2)]">
-            <FileText className="w-4 h-4 mt-0.5 shrink-0 text-[var(--color-text-muted)]" />
-            <span>
-              <span className="block text-[12px] font-bold text-[var(--color-text)]">Copy as plain text</span>
-              <span className="block text-[11px] text-[var(--color-text-muted)]">For Teams, a text message, or a plain-text email.</span>
-            </span>
-          </button>
-        </div>
+      {d && picked && (
+        <Modal onClose={() => setD(null)} size="xl">
+          <ModalHeader icon={Mail} title="Copy the update" subtitle="What you'll send — leave out any section for today." onClose={() => setD(null)} />
+          <ModalBody className="space-y-3">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px]">
+              <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Include</span>
+              {d.sections.map((s) => (
+                <label key={idOf(s)} className="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                  <input type="checkbox" className="accent-[var(--color-accent)]" checked={!off.has(idOf(s))} onChange={() => toggle(idOf(s))} />
+                  <span className="font-semibold text-[var(--color-text)]">{s.title.split(" — ")[0]}</span>
+                </label>
+              ))}
+            </div>
+            <div className="rounded-lg border border-[var(--color-border)] bg-white p-4 max-h-[58vh] overflow-y-auto">
+              {/* The email body itself — escaped text in inline-styled tables. */}
+              <div dangerouslySetInnerHTML={{ __html: html }} />
+            </div>
+          </ModalBody>
+          <ModalFooter>
+            {done && (
+              <span role="status" className={`mr-auto text-[12px] font-bold ${done.ok ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700"}`}>
+                {!done.ok ? "Your browser blocked the copy — try again." : done.what === "email"
+                  ? <>Copied — paste into your email (Ctrl+V). <a className="underline" href={`mailto:?subject=${encodeURIComponent(subject)}`}>New email with subject</a></>
+                  : "Copied as text — paste anywhere (Ctrl+V)."}
+              </span>
+            )}
+            <button onClick={() => void run("text")} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              <FileText className="w-4 h-4" /> Copy as text
+            </button>
+            <button onClick={() => void run("email")} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)]">
+              <Mail className="w-4 h-4" /> Copy for email
+            </button>
+          </ModalFooter>
+        </Modal>
       )}
-      {done && !open && (
-        <div role="status" className={`absolute right-0 top-full mt-1 z-30 w-72 rounded-lg border shadow-lg px-3 py-2 text-[11px] ${done.ok ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-100 dark:border-emerald-900" : "border-rose-300 bg-rose-50 text-rose-900"}`}>
-          {done.ok ? (
-            <>
-              <div className="font-bold">{done.what === "email" ? "Copied — paste it into your email (Ctrl+V)." : "Copied as text — paste it anywhere (Ctrl+V)."}</div>
-              {done.what === "email" && (
-                <a href={`mailto:?subject=${encodeURIComponent(done.subject)}`} className="mt-0.5 inline-flex items-center gap-1 font-bold underline">
-                  <Mail className="w-3 h-3" /> Start a new email with the subject filled in
-                </a>
-              )}
-            </>
-          ) : <div className="font-bold">Your browser blocked the copy. Try again, or use Print.</div>}
-        </div>
-      )}
-    </div>
+    </>
   );
 }
 

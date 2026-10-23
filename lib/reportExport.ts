@@ -25,16 +25,31 @@ export interface ExportStepRow {
   note?: string;
 }
 
+/** A table cell: plain text, or text with emphasis. "" = left blank. */
+export type ExportCell = string | { t: string; tone?: Tone; bold?: boolean };
+const cellText = (c: ExportCell) => (typeof c === "string" ? c : c.t);
+
 export type ExportBlock =
   | { k: "stats"; items: Array<{ label: string; value: string; tone: Tone }> }
   | { k: "note"; text: string; tone?: Tone }
   | { k: "sub"; title: string; count: number; tone: Tone }
+  /** A small heading inside a section ("Completed"). */
+  | { k: "label"; text: string }
   | { k: "steps"; whenHead: string; rightHead: string; flat?: boolean; rows: ExportStepRow[] }
-  | { k: "table"; head: string[]; rows: string[][] }
+  | {
+    k: "table"; head: string[]; rows: ExportCell[][]; align?: Array<"left" | "right">;
+    /** Plain text: the word before each column's value ("last step"), "" for
+     *  none. Emphasised cells (statuses) always read on their own. */
+    textLabels?: string[];
+  }
   | { k: "list"; items: Array<{ text: string; note?: string }> }
   | { k: "empty"; text: string };
 
-export interface ExportSection { title: string; sub?: string; flag?: "rose" | "amber" | null; blocks: ExportBlock[] }
+export interface ExportSection {
+  /** Stable key ("stand", "last") — which sections a person leaves out is remembered by it. */
+  id?: string;
+  title: string; sub?: string; flag?: "rose" | "amber" | null; blocks: ExportBlock[];
+}
 
 export interface ExportDoc {
   kind: string;          // "Shift turnover"
@@ -70,9 +85,9 @@ export function toPlainText(d: ExportDoc): string {
   out.push(`${d.kind.toUpperCase()} — ${d.project}`);
   out.push(`${d.when} · as of ${d.asOf}`);
   if (d.status) out.push(`Status: ${d.status.label}${d.status.detail ? ` — ${d.status.detail}` : ""}`);
-  d.sections.forEach((s, i) => {
+  for (const s of d.sections) {
     out.push("");
-    out.push(`${i + 1}. ${s.title.toUpperCase()}${s.sub ? ` — ${s.sub}` : ""}`);
+    out.push(`${s.title.toUpperCase()}${s.sub ? ` — ${s.sub}` : ""}`);
     for (const b of s.blocks) {
       switch (b.k) {
         case "stats":
@@ -84,15 +99,31 @@ export function toPlainText(d: ExportDoc): string {
         case "sub":
           out.push(`   ${b.title.toUpperCase()} (${b.count})`);
           break;
+        case "label":
+          out.push(`   ${b.text}:`);
+          break;
         case "empty":
           out.push(`   ${b.text}`);
           break;
         case "list":
           for (const x of b.items) out.push(`   ✓ ${x.text}${x.note ? ` (${x.note})` : ""}`);
           break;
-        case "table":
-          for (const r of b.rows) out.push(`   • ${r.map((c, j) => (j === 0 ? c : `${b.head[j]}: ${c}`)).join(" — ")}`);
+        case "table": {
+          // A blank first cell continues the task above: its rows indent
+          // under it. Blank cells are skipped, not printed.
+          for (const r of b.rows) {
+            const first = cellText(r[0] ?? "");
+            const tail = r.slice(1).map((c, j) => {
+              const v = cellText(c);
+              if (!v) return "";
+              const label = b.textLabels ? b.textLabels[j + 1] ?? "" : (b.head[j + 1] ?? "").toLowerCase();
+              return label && typeof c === "string" ? `${label} ${v}` : v;
+            }).filter(Boolean).join(" · ");
+            if (first) out.push(`   • ${first}${tail ? ` — ${tail}` : ""}`);
+            else if (tail) out.push(`       ${tail}`);
+          }
           break;
+        }
         case "steps": {
           for (const { group, rows } of groupRows(b.rows, b.flat)) {
             if (group) out.push(`   ${group.title}${group.meta ? ` (${group.meta})` : ""}`);
@@ -116,7 +147,7 @@ export function toPlainText(d: ExportDoc): string {
         }
       }
     }
-  });
+  }
   if (d.footer) { out.push(""); out.push(d.footer); }
   return out.join("\n");
 }
@@ -154,17 +185,32 @@ function blockHtml(b: ExportBlock): string {
       return `<p style="${FONT}font-size:12px;margin:3px 0;color:${b.tone ? TONE[b.tone].fg : INK};${b.tone ? "font-weight:bold;" : ""}">${esc(b.text)}</p>`;
     case "sub":
       return `<p style="${FONT}font-size:11px;font-weight:bold;text-transform:uppercase;letter-spacing:0.5px;margin:8px 0 3px;color:${TONE[b.tone].fg};">${esc(b.title)} (${b.count})</p>`;
+    case "label":
+      return `<p style="${FONT}font-size:12px;font-weight:bold;margin:10px 0 4px;color:${INK};">${esc(b.text)}</p>`;
     case "empty":
       return `<p style="${FONT}font-size:12px;font-style:italic;margin:3px 0;color:${MUTED};">${esc(b.text)}</p>`;
     case "list":
       return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">${b.items.map((x) =>
         `<tr>${td("font-size:12px;color:#059669;padding:1px 6px 1px 0;vertical-align:top;", "&#10003;")}${td(`font-size:12px;color:${INK};padding:1px 0;`,
           `${esc(x.text)}${x.note ? ` <span style="color:${MUTED};font-size:11px;">${esc(x.note)}</span>` : ""}`)}</tr>`).join("")}</table>`;
-    case "table":
+    case "table": {
+      // A column with nothing in it (no step started yet) isn't drawn.
+      const keep = b.head.map((_, j) => j === 0 || b.rows.some((r) => cellText(r[j] ?? "") !== ""));
+      const al = (j: number) => b.align?.[j] ?? "left";
       return `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;border:1px solid ${LINE};">` +
-        `<tr>${b.head.map((h) => td(`font-size:9px;font-weight:bold;text-transform:uppercase;color:${MUTED};background-color:#f8fafc;padding:4px 6px;border-bottom:1px solid ${LINE};text-align:left;`, esc(h), `bgcolor="#f8fafc" `)).join("")}</tr>` +
-        b.rows.map((r) => `<tr>${r.map((c, j) => td(`font-size:12px;color:${INK};padding:3px 6px;border-top:1px solid #e2e8f0;${j === 0 ? "font-weight:bold;" : "white-space:nowrap;"}`, esc(c))).join("")}</tr>`).join("") +
+        `<tr>${b.head.map((h, j) => !keep[j] ? "" : td(`font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:0.3px;color:${MUTED};background-color:#f8fafc;padding:5px 8px;border-bottom:1px solid ${LINE};text-align:${al(j)};`, esc(h), `bgcolor="#f8fafc" `)).join("")}</tr>` +
+        b.rows.map((r) => {
+          // A row that continues the task above has no line between them.
+          const cont = cellText(r[0] ?? "") === "";
+          return `<tr>${r.map((c, j) => {
+            if (!keep[j]) return "";
+            const o = typeof c === "string" ? { t: c } : c;
+            const color = o.tone ? (o.tone === "muted" ? MUTED : TONE[o.tone].fg) : INK;
+            return td(`font-size:13px;color:${color};padding:5px 8px;${cont ? "" : "border-top:1px solid #e2e8f0;"}text-align:${al(j)};vertical-align:top;${o.bold ? "font-weight:bold;" : ""}`, esc(o.t));
+          }).join("")}</tr>`;
+        }).join("") +
         `</table>`;
+    }
     case "steps": {
       const hasN = b.rows.some((r) => r.n != null);
       const hasWho = b.rows.some((r) => r.who);
@@ -209,15 +255,15 @@ export function toEmailHtml(d: ExportDoc): string {
       `<div style="${FONT}font-size:18px;font-weight:bold;color:#ffffff;">${esc(d.project)}</div>` +
       `<div style="${FONT}font-size:11px;color:#cbd5e1;">${esc(d.when)} · as of ${esc(d.asOf)}</div>`, `bgcolor="#0f172a" `) +
     status + `</tr></table>`;
-  d.sections.forEach((s, i) => {
-    const ring = s.flag === "rose" ? SOLID.rose : s.flag === "amber" ? SOLID.amber : INK;
-    html += `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;margin-top:14px;"><tr>` +
-      td(`border-bottom:2px solid ${INK};padding:0 0 3px;`,
-        `<span style="${FONT}display:inline-block;background-color:${ring};color:#ffffff;font-size:11px;font-weight:bold;padding:1px 6px;">${i + 1}</span> ` +
-        `<span style="${FONT}font-size:14px;font-weight:bold;text-transform:uppercase;letter-spacing:0.5px;color:${INK};">${esc(s.title)}</span>` +
-        (s.sub ? ` <span style="${FONT}font-size:11px;color:${MUTED};">— ${esc(s.sub)}</span>` : "")) +
-      `</tr><tr>${td("padding:4px 0 0;", s.blocks.map(blockHtml).join(""))}</tr></table>`;
-  });
+  for (const s of d.sections) {
+    // A section that needs attention gets a colored rule, not a number.
+    const rule = s.flag === "rose" ? SOLID.rose : s.flag === "amber" ? SOLID.amber : INK;
+    html += `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;margin-top:18px;"><tr>` +
+      td(`border-bottom:2px solid ${rule};padding:0 0 3px;`,
+        `<span style="${FONT}font-size:15px;font-weight:bold;color:${INK};">${esc(s.title)}</span>` +
+        (s.sub ? `<span style="${FONT}font-size:12px;color:${MUTED};">&nbsp;&nbsp;${esc(s.sub)}</span>` : "")) +
+      `</tr><tr>${td("padding:6px 0 0;", s.blocks.map(blockHtml).join(""))}</tr></table>`;
+  }
   if (d.footer) html += `<p style="${FONT}font-size:10px;color:#94a3b8;margin-top:14px;max-width:820px;">${esc(d.footer)}</p>`;
   return html + `</div>`;
 }
