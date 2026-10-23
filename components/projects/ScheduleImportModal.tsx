@@ -49,6 +49,8 @@ interface Props {
   /** Tasks already on the project — offers "replace the current
    *  schedule" so a re-import starts from a clean slate. */
   existingCount?: number;
+  /** The tasks already on the project, to show what a re-import will do. */
+  existing?: Array<{ name: string; externalRef?: string | null }>;
   onClose: () => void;
   onDone: () => void;
 }
@@ -77,7 +79,7 @@ const FORMAT_TO_SOURCE: Record<ScheduleFormat, ImportSource> = {
 };
 
 export default function ScheduleImportModal({
-  orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole, existingCount, onClose, onDone,
+  orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole, existingCount, existing, onClose, onDone,
 }: Props) {
   const tz = useScheduleTz();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -88,6 +90,25 @@ export default function ScheduleImportModal({
   const [importing, setImporting] = useState(false);
   // Wipe the project's current schedule before writing the file's rows.
   const [replaceExisting, setReplaceExisting] = useState(false);
+  // What a merge would do — matched the way the import matches: by the
+  // file's task ids, or for files keyed by name, by name.
+  const mergePlan = useMemo(() => {
+    if (!parseResult || parseResult.rows.length === 0 || !existing || existing.length === 0) return null;
+    const norm = (x: string) => x.trim().replace(/\s+/g, " ").toLowerCase();
+    const refs = new Set(existing.map((m) => m.externalRef).filter((x): x is string => !!x));
+    const legacy = new Map<string, number>();
+    for (const m of existing) if (/-row:/.test(m.externalRef ?? "")) legacy.set(norm(m.name), (legacy.get(norm(m.name)) ?? 0) + 1);
+    let updated = 0;
+    const used = new Set<string>();
+    for (const r of parseResult.rows) {
+      if (r.externalRef && refs.has(r.externalRef)) { updated++; used.add(r.externalRef); continue; }
+      const left = legacy.get(norm(r.name)) ?? 0;
+      if (left > 0 && /-key:/.test(r.externalRef ?? "")) { legacy.set(norm(r.name), left - 1); updated++; }
+    }
+    const legacyUsed = existing.filter((m) => /-row:/.test(m.externalRef ?? "")).length - [...legacy.values()].reduce((a, b) => a + b, 0);
+    const kept = existing.length - used.size - legacyUsed;
+    return { updated, added: parseResult.rows.length - updated, kept: Math.max(0, kept) };
+  }, [parseResult, existing]);
   const [importResult, setImportResult] = useState<{ inserted: number; updated: number; skipped: number; errors: string[] } | null>(null);
   // Per-column review config: include/exclude, rename, or map to a first-class
   // field. Lets the user shape ANY ingested column before the final import.
@@ -468,12 +489,19 @@ export default function ScheduleImportModal({
             </>
           )}
 
+          {mergePlan && !replaceExisting && !importResult && (
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-[11px] text-[var(--color-text)]">
+              <b>If you merge:</b> {mergePlan.updated} task{mergePlan.updated === 1 ? "" : "s"} updated, {mergePlan.added} new
+              {mergePlan.kept > 0 ? <>, {mergePlan.kept} already here and not in the file — kept, not deleted</> : null}.
+              <span className="text-[var(--color-text-muted)]"> Updated tasks take the file&apos;s names, dates, hours and outline. Progress, comments, hold reasons and the crew setting stay as recorded here; contractor, location and work order are filled from the file only where they&apos;re blank.</span>
+            </div>
+          )}
           {(existingCount ?? 0) > 0 && parseResult && parseResult.rows.length > 0 && !importResult && (
             <label className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-900">
               <input type="checkbox" checked={replaceExisting} onChange={(e) => setReplaceExisting(e.target.checked)} className="mt-0.5" />
               <span>
                 <b>Replace the current schedule</b> — delete the {existingCount} task{existingCount === 1 ? "" : "s"} already on this project first, then import the file from scratch.
-                The file becomes the plan of record (baseline). Untick to merge instead: dates and hours refresh, progress already recorded here is never lowered, and the baseline stays.
+                The file becomes the plan of record (baseline). Untick to merge instead (see above): the baseline stays and nothing recorded here is lost.
                 Deleting is audited and can&apos;t be undone.
               </span>
             </label>

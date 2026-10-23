@@ -188,3 +188,33 @@ describe("the Day/Night filter matches the day/night marks", () => {
     expect([...ids]).toEqual(["n"]);
   });
 });
+
+import { coerceIsoStrict, dayFirstColumn, parseScheduleFile } from "@/lib/scheduleParsers";
+
+describe("CSV dates are read in plant time, and impossible ones refused", () => {
+  it("never rolls 15/08 into another year", () => {
+    expect(coerceIsoStrict("15/08/2026", CHI)).toBeNull();
+    expect(coerceIsoStrict("15/08/2026", CHI, true)).toBe(day("2026-08-15"));
+    expect(coerceIsoStrict("2/30/2026", CHI)).toBeNull();
+  });
+  it("reads AM/PM and weekday-prefixed MS Project dates in the plant zone", () => {
+    expect(coerceIsoStrict("8/15/2026 8:00 AM", CHI)).toBe(new Date(Date.parse("2026-08-15T08:00:00-05:00")).toISOString());
+    expect(coerceIsoStrict("Mon 10/26/26 8:00 PM", CHI)).toBe(at("2026-10-26", "20:00"));
+    expect(coerceIsoStrict("10/26/2026 12:00 AM", CHI)).toBe(day("2026-10-26"));
+  });
+  it("tells day-first columns from month-first ones", () => {
+    expect(dayFirstColumn(["15/08/2026", "03/09/2026"]).dayFirst).toBe(true);
+    expect(dayFirstColumn(["08/15/2026", "09/03/2026"]).dayFirst).toBe(false);
+    expect(dayFirstColumn(["15/08/2026", "08/15/2026"]).ambiguous).toBe(true);
+  });
+});
+
+describe("CSV rows without ids keep their identity when a row is inserted", () => {
+  it("keys rows by name, not line number", () => {
+    const a = parseScheduleFile("s.csv", "name,start,finish\nPull bundle,2026-10-26 08:00,2026-10-26 12:00\nHydroblast,2026-10-26 12:00,2026-10-26 16:00\n", { timeZone: CHI });
+    const b = parseScheduleFile("s.csv", "name,start,finish\nSet blinds,2026-10-26 06:00,2026-10-26 08:00\nPull bundle,2026-10-26 08:00,2026-10-26 12:00\nHydroblast,2026-10-26 12:00,2026-10-26 16:00\n", { timeZone: CHI });
+    const refOf = (rs: typeof a.rows, n: string) => rs.find((r) => r.name === n)!.externalRef;
+    expect(refOf(b.rows, "Hydroblast")).toBe(refOf(a.rows, "Hydroblast"));
+    expect(refOf(b.rows, "Pull bundle")).toBe(refOf(a.rows, "Pull bundle"));
+  });
+});

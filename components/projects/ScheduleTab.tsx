@@ -548,6 +548,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           userEmail={userEmail}
           userRole={userRole}
           existingCount={milestones.length}
+          existing={milestones}
           onClose={() => setImportOpen(false)}
           onDone={() => { setImportOpen(false); void refresh(); }}
         />

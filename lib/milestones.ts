@@ -1306,6 +1306,22 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
     if (cleanupErr) result.errors.push(`Couldn't remove the old project-summary row: ${cleanupErr.message}`);
   }
 
+  // Files without an id column used to be keyed by line number
+  // ("csv-row:12"); they're now keyed by outline path and name
+  // ("csv-key:e-12 › pull bundle"). On the first re-import after that
+  // change, match the old rows by name so nothing is duplicated, and move
+  // them onto the new key.
+  const legacyByName = new Map<string, Array<{ id: string }>>();
+  if (input.projectId && input.rows.some((r) => /-key:/.test(r.externalRef ?? ""))) {
+    const { rows: olds } = await fetchAllRows<{ id: string; name: string; external_ref: string | null }>((from, to) => supabase
+      .from("milestones").select("id, name, external_ref").eq("org_id", input.orgId).eq("project_id", input.projectId!)
+      .eq("source", input.source).like("external_ref", "%-row:%").order("external_ref").range(from, to));
+    for (const o of olds) {
+      const k = o.name.trim().replace(/\s+/g, " ").toLowerCase();
+      legacyByName.set(k, [...(legacyByName.get(k) ?? []), { id: o.id }]);
+    }
+  }
+
   for (let i = 0; i < input.rows.length; i++) {
     const r = input.rows[i];
     const name = r.name?.trim();
@@ -1373,7 +1389,16 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
         if (input.projectId) q = q.eq("project_id", input.projectId);
         else if (input.documentId) q = q.eq("document_id", input.documentId);
         else q = q.is("project_id", null).is("document_id", null);
-        const { data: existing } = await q.maybeSingle();
+        let { data: existing } = await q.maybeSingle();
+        if (!existing && legacyByName.size > 0) {
+          const old = legacyByName.get(name.replace(/\s+/g, " ").toLowerCase())?.shift();
+          if (old) {
+            await supabase.from("milestones").update({ external_ref: r.externalRef }).eq("id", old.id);
+            ({ data: existing } = await supabase.from("milestones")
+              .select("id, status, percent_complete, actual_at, actual_start_at, description, work_order_ref, responsible_party, responsible_kind, responsible_org, location, attributes")
+              .eq("id", old.id).maybeSingle());
+          }
+        }
         if (existing) {
           const ex = existing as { id: string; status: MilestoneStatus | null; percent_complete: number | null; actual_at: string | null; actual_start_at: string | null } & Record<string, unknown>;
           const id = ex.id;

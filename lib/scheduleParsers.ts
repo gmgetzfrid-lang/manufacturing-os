@@ -214,6 +214,7 @@ function parseMsProjectXml(text: string, tz: string): { rows: ParsedMilestone[];
     resUidsByTaskUid.set(tUid, arr);
   }
   let resourcesFound = 0;
+  let nonFsLinks = 0;
 
   // ── Custom (extended) columns ────────────────────────────────
   // User-defined columns in MS Project ("Contractor", "Area", "Cost Code")
@@ -280,11 +281,23 @@ function parseMsProjectXml(text: string, tz: string): { rows: ParsedMilestone[];
 
     // Predecessors → finish-to-start dependencies. MS Project stores each as
     // <PredecessorLink><PredecessorUID>N</PredecessorUID></PredecessorLink>.
+    // Other link types (SS / FF / SF) and lags are kept as text on the
+    // task — the schedule here links finish-to-start only — and counted
+    // so the import says so instead of quietly changing the logic.
     const dependsOnExternalRefs: string[] = [];
+    const linkNotes: string[] = [];
     for (const link of Array.from(t.getElementsByTagNameNS("*", "PredecessorLink"))) {
       const predUid = childText(link as Element, "PredecessorUID");
       if (predUid) dependsOnExternalRefs.push(`msp-uid:${predUid}`);
+      const type = Number(childText(link as Element, "Type") ?? "1");
+      const lagMin = Number(childText(link as Element, "LinkLag") ?? "0") / 10;
+      if (predUid && ((Number.isFinite(type) && type !== 1) || (Number.isFinite(lagMin) && lagMin !== 0))) {
+        const kind = (["FF", "FS", "SF", "SS"] as const)[type] ?? "FS";
+        const lag = lagMin ? `${lagMin > 0 ? "+" : ""}${Math.round((lagMin / 60) * 10) / 10}h` : "";
+        linkNotes.push(`${kind}${lag} from UID ${predUid}`);
+      }
     }
+    nonFsLinks += linkNotes.length;
 
     // Resource(s) responsible for this task.
     let responsibleParty: string | null = null;
@@ -308,6 +321,7 @@ function parseMsProjectXml(text: string, tz: string): { rows: ParsedMilestone[];
     if (isMilestone) attributes.milestone = "1"; // so the Gantt can draw a diamond
     const workRaw = childText(t, "Work"); // PT40H0M0S style → keep raw for reference
     if (workRaw) attributes.work = workRaw;
+    if (linkNotes.length) attributes["Link types"] = linkNotes.join("; ");
     // Real hours. Prefer <Work> (resourced effort) when it carries any, else
     // <Duration> (the schedule's own span in working time). Without this every
     // step weighed the same in the shift report's "hours behind / ahead".
@@ -340,6 +354,7 @@ function parseMsProjectXml(text: string, tz: string): { rows: ParsedMilestone[];
     });
   }
   if (resourcesFound > 0) warnings.push(`Resources mapped onto ${resourcesFound} task${resourcesFound === 1 ? "" : "s"}.`);
+  if (nonFsLinks > 0) warnings.push(`${nonFsLinks} link${nonFsLinks === 1 ? " isn't" : "s aren't"} plain finish-to-start (start-to-start, finish-to-finish or a lag) — imported as finish-to-start; the original is kept in each task's "Link types" field.`);
   if (dropped > 0) warnings.push(`${dropped} task${dropped === 1 ? "" : "s"} skipped (missing name or date).`);
   if (projectSummarySkipped) warnings.push("The file's project summary row (its title) was not imported as a task.");
   const cleaned = dropPlaceholderLeaves(rows);
@@ -390,10 +405,14 @@ function parseP6Xml(text: string, tz: string): { rows: ParsedMilestone[]; warnin
   // predecessor + successor ObjectIds. Index them by successor so each activity
   // can carry its predecessors (same depends_on path as MS Project XML).
   const predsByActObjId = new Map<string, string[]>();
+  let p6NonFs = 0;
   for (const rel of Array.from(doc.getElementsByTagNameNS("*", "Relationship"))) {
     const succ = childText(rel as Element, "SuccessorActivityObjectId") || childText(rel as Element, "SuccessorObjectId");
     const pred = childText(rel as Element, "PredecessorActivityObjectId") || childText(rel as Element, "PredecessorObjectId");
     if (!succ || !pred) continue;
+    const type = (childText(rel as Element, "Type") ?? "").toLowerCase();
+    const lag = Number(childText(rel as Element, "Lag") ?? "0");
+    if ((type && !/finish to start/.test(type)) || (Number.isFinite(lag) && lag !== 0)) p6NonFs++;
     const arr = predsByActObjId.get(succ) ?? [];
     if (!arr.includes(pred)) arr.push(pred);
     predsByActObjId.set(succ, arr);
@@ -433,6 +452,7 @@ function parseP6Xml(text: string, tz: string): { rows: ParsedMilestone[]; warnin
     });
   }
   if (relationCount > 0) warnings.push(`${relationCount} dependency link${relationCount === 1 ? "" : "s"} mapped from relationships.`);
+  if (p6NonFs > 0) warnings.push(`${p6NonFs} link${p6NonFs === 1 ? " isn't" : "s aren't"} plain finish-to-start (start-to-start, finish-to-finish or a lag) — imported as finish-to-start. Check those in the schedule.`);
 
   // Roll WBS spans up from activities, then compute outline depth and
   // drop any WBS branch that ended up with no dated descendants.
@@ -527,15 +547,21 @@ function parseP6Xer(text: string, tz: string): { rows: ParsedMilestone[]; warnin
   // (task_id) to a predecessor (pred_task_id). Index by successor so each task
   // carries its predecessors through the same depends_on path as everything else.
   const predsByTaskId = new Map<string, string[]>();
+  let xerNonFs = 0;
   const taskpred = tables.get("TASKPRED");
   if (taskpred) {
     const pSucc = col(taskpred, ["task_id"]);
     const pPred = col(taskpred, ["pred_task_id"]);
+    const pType = col(taskpred, ["pred_type"]);
+    const pLag = col(taskpred, ["lag_hr_cnt"]);
     if (pSucc >= 0 && pPred >= 0) {
       for (const r of taskpred.rows) {
         const succ = r[pSucc]?.trim();
         const pred = r[pPred]?.trim();
         if (!succ || !pred) continue;
+        const type = pType >= 0 ? (r[pType] ?? "").trim().toUpperCase() : "";
+        const lag = pLag >= 0 ? Number(r[pLag]) : 0;
+        if ((type && type !== "PR_FS") || (Number.isFinite(lag) && lag !== 0)) xerNonFs++;
         const arr = predsByTaskId.get(succ) ?? [];
         if (!arr.includes(pred)) arr.push(pred);
         predsByTaskId.set(succ, arr);
@@ -577,6 +603,7 @@ function parseP6Xer(text: string, tz: string): { rows: ParsedMilestone[]; warnin
     });
   }
   if (relationCount > 0) warnings.push(`${relationCount} dependency link${relationCount === 1 ? "" : "s"} mapped from TASKPRED.`);
+  if (xerNonFs > 0) warnings.push(`${xerNonFs} link${xerNonFs === 1 ? " isn't" : "s aren't"} plain finish-to-start (start-to-start, finish-to-finish or a lag) — imported as finish-to-start. Check those in the schedule.`);
 
   rollUpSummaryDates(rows);
   computeOutlineLevels(rows);
@@ -682,6 +709,13 @@ function parseCsvLikeWithSynonyms(text: string, tz: string, syn: SynonymSpec, re
   const woCol = extraCols.find((c) => /work\s*order|^wo$|wo\s*#|wo[_-]?num|order\s*#/i.test(c.h))?.idx ?? -1;
   const locCol = extraCols.find((c) => /location|area|unit|equipment|tag/i.test(c.h))?.idx ?? -1;
 
+  // Day-first or month-first, decided per file from the dates themselves.
+  const dateCells = (idx: number) => idx < 0 ? [] : lines.slice(1).map((l) => (csvSplit(l, delim)[idx] ?? "").trim().replace(/^"|"$/g, ""));
+  const order = dayFirstColumn([...dateCells(iPlanned), ...dateCells(iStart)]);
+  if (order.dayFirst) warnings.push("Dates read as day/month/year (the file has dates like 15/08 that only work that way).");
+  if (order.ambiguous) warnings.push("Some dates only work as day/month and others only as month/day — check the dates after import.");
+  let badDates = 0;
+
   let dropped = 0;
   let rowIndex = 0; // stable index used for synthetic refs / hierarchy
   for (let i = 1; i < lines.length; i++) {
@@ -721,10 +755,14 @@ function parseCsvLikeWithSynonyms(text: string, tz: string, syn: SynonymSpec, re
       }
     }
 
+    const plannedIso = coerceIsoStrict(planned, tz, order.dayFirst);
+    if (!plannedIso) { badDates++; dropped++; continue; }
+    const startIso = startRaw ? coerceIsoStrict(startRaw, tz, order.dayFirst) : null;
+    if (startRaw && !startIso) badDates++;
     rows.push({
       name,
-      plannedAt: coerceIso(planned, tz),
-      plannedStartAt: startRaw ? coerceIso(startRaw, tz) : null,
+      plannedAt: plannedIso,
+      plannedStartAt: startIso,
       weight: isNaN(weight) ? 1 : weight,
       // Always give CSV rows a stable ref so hierarchy can be wired up
       // even when the file has no id column.
@@ -752,8 +790,43 @@ function parseCsvLikeWithSynonyms(text: string, tz: string, syn: SynonymSpec, re
     computeOutlineLevels(rows);
   }
 
-  if (dropped > 0) warnings.push(`${dropped} row${dropped === 1 ? "" : "s"} skipped (missing name or date).`);
+  // No id column: key each row by its place in the outline and its name
+  // (not its line number), so inserting a row in the spreadsheet doesn't
+  // slide every later row's progress and comments onto the wrong task.
+  if (iId < 0) stableRowKeys(rows, refTag);
+
+  if (badDates > 0) warnings.push(`${badDates} date${badDates === 1 ? "" : "s"} couldn't be read (like a month 13 or Feb 30) — ${badDates === 1 ? "that row was" : "those rows were"} skipped or left without a start.`);
+  if (dropped - badDates > 0) warnings.push(`${dropped - badDates} row${dropped - badDates === 1 ? "" : "s"} skipped (missing name or date).`);
   return { rows, warnings };
+}
+
+/** Replace line-number refs with keys from each row's outline path and
+ *  name ("csv-key:e-12 › pull bundle"), numbering exact repeats. Parent
+ *  links follow the new keys. */
+function stableRowKeys(rows: ParsedMilestone[], refTag: string): void {
+  const byRef = new Map(rows.filter((r) => r.externalRef).map((r) => [r.externalRef!, r]));
+  const norm = (x: string) => x.trim().replace(/\s+/g, " ").toLowerCase();
+  const pathOf = (r: ParsedMilestone): string => {
+    const names: string[] = [];
+    const seen = new Set<string>();
+    for (let cur: ParsedMilestone | undefined = r; cur && !seen.has(cur.externalRef ?? ""); cur = cur.parentExternalRef ? byRef.get(cur.parentExternalRef) : undefined) {
+      seen.add(cur.externalRef ?? "");
+      names.unshift(norm(cur.name));
+    }
+    return names.join(" › ");
+  };
+  const counts = new Map<string, number>();
+  const rename = new Map<string, string>();
+  for (const r of rows) {
+    const base = r.wbs ? `wbs ${norm(r.wbs)}` : pathOf(r);
+    const n = (counts.get(base) ?? 0) + 1;
+    counts.set(base, n);
+    if (r.externalRef) rename.set(r.externalRef, `${refTag}-key:${base}${n > 1 ? ` #${n}` : ""}`);
+  }
+  for (const r of rows) {
+    if (r.externalRef) r.externalRef = rename.get(r.externalRef) ?? r.externalRef;
+    if (r.parentExternalRef) r.parentExternalRef = rename.get(r.parentExternalRef) ?? r.parentExternalRef;
+  }
 }
 
 // ─── Hierarchy helpers (shared across P6 + CSV) ─────────────────
@@ -924,35 +997,74 @@ function childText(parent: Element, tag: string): string {
 }
 
 // Coerce a bunch of common date strings to an ISO instant. Accepts:
-//   2026-08-15
-//   2026-08-15T00:00:00
-//   2026-08-15 00:00
-//   8/15/2026
-//   15/08/2026 (ambiguous — we treat as M/D/Y if first part ≤ 12)
-// Schedule files write wall-clock times at the plant ("2026-08-15 08:00",
-// MS Project's "2026-08-15T08:00:00" with no offset). Those become instants
-// in the project's zone; values that carry their own offset are kept.
-function coerceIso(s: string, tz: string): string {
+//   2026-08-15 · 2026-08-15T08:00:00 · 2026-08-15 08:00
+//   8/15/2026 · 8/15/26 8:00 AM · Mon 8/15/26 8:00 PM · 8/15/2026 08:00:00
+//   15/08/2026 when the column reads day-first (see dayFirstColumn)
+// Schedule files write wall-clock times at the plant; they become instants
+// in the project's zone — never the zone of whoever's browser imports them.
+// An impossible date (month 13, Feb 30) is refused, not rolled over into
+// another month: null, and the caller warns.
+const SLASH_DATE = /^(?:[A-Za-z]{3,9},?\s+)?(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp]\.?[Mm]\.?)?)?$/;
+
+function validYmd(y: number, m: number, d: number): boolean {
+  if (m < 1 || m > 12 || d < 1) return false;
+  return d <= new Date(Date.UTC(y, m, 0)).getUTCDate();
+}
+
+function naiveParts(y: number, mo: number, d: number, h: number, mi: number, sec: number, tz: string): string | null {
+  const pad = (n: number, w = 2) => String(n).padStart(w, "0");
+  const timed = h !== 0 || mi !== 0 || sec !== 0;
+  return naiveToIso(`${pad(y, 4)}-${pad(mo)}-${pad(d)}${timed ? `T${pad(h)}:${pad(mi)}:${pad(sec)}` : ""}`, tz);
+}
+
+export function coerceIsoStrict(s: string, tz: string, dayFirst = false): string | null {
   const trimmed = s.trim();
+  if (!trimmed) return null;
   // ISO date-time (with or without an offset) or a bare date.
   if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
-    const iso = naiveToIso(trimmed, tz);
-    if (iso) return iso;
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(trimmed)!;
+    if (!validYmd(+m[1], +m[2], +m[3])) return null;
+    return naiveToIso(trimmed, tz);
   }
-  // M/D/YYYY or D/M/YYYY (assume the first form when ambiguous), optional " HH:MM".
-  const m2 = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})(?:[ T](\d{1,2}):(\d{2}))?$/);
+  const m2 = trimmed.match(SLASH_DATE);
   if (m2) {
-    const a = Number(m2[1]); const b = Number(m2[2]);
+    const a = Number(m2[1]), b = Number(m2[2]);
     const yRaw = Number(m2[3]); const y = yRaw < 100 ? 2000 + yRaw : yRaw;
-    const month = a; const day = b; // M/D first
-    const iso = `${y.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}`
-      + (m2[4] ? `T${m2[4].padStart(2, "0")}:${m2[5]}:00` : "");
-    return naiveToIso(iso, tz) ?? trimmed;
+    const month = dayFirst ? b : a, day = dayFirst ? a : b;
+    if (!validYmd(y, month, day)) return null;
+    let h = m2[4] ? Number(m2[4]) : 0;
+    const mi = m2[5] ? Number(m2[5]) : 0, sec = m2[6] ? Number(m2[6]) : 0;
+    const ap = m2[7]?.toLowerCase().replace(/\./g, "");
+    if (ap) { if (h < 1 || h > 12) return null; h = (h % 12) + (ap === "pm" ? 12 : 0); }
+    if (h > 23 || mi > 59 || sec > 59) return null;
+    return naiveParts(y, month, day, h, mi, sec, tz);
   }
-  // Last resort — let Date try (browser-local for offset-less text).
+  // Anything else ("October 26, 2026 8:00 AM"): let Date read it, then take
+  // the wall clock it read and place it in the plant's zone. Text carrying
+  // its own offset or Z is a real instant and is kept as is.
   const d = new Date(trimmed);
-  if (!isNaN(d.getTime())) return d.toISOString();
-  return trimmed; // hand it to the importer; if invalid, Supabase will reject.
+  if (isNaN(d.getTime())) return null;
+  if (/(?:z|[+-]\d{2}:?\d{2})$/i.test(trimmed)) return d.toISOString();
+  return naiveParts(d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds(), tz);
+}
+
+/** Does a column of dates read day-first (15/08/2026)? Yes when some value
+ *  only makes sense that way and none only makes sense month-first. */
+export function dayFirstColumn(values: string[]): { dayFirst: boolean; ambiguous: boolean } {
+  let onlyDayFirst = false, onlyMonthFirst = false;
+  for (const v of values) {
+    const m = v.trim().match(SLASH_DATE);
+    if (!m) continue;
+    const a = Number(m[1]), b = Number(m[2]);
+    if (a > 12 && b <= 12) onlyDayFirst = true;
+    if (b > 12 && a <= 12) onlyMonthFirst = true;
+  }
+  return { dayFirst: onlyDayFirst && !onlyMonthFirst, ambiguous: onlyDayFirst && onlyMonthFirst };
+}
+
+/** Lenient form for the XML / XER readers (their dates are ISO). */
+function coerceIso(s: string, tz: string): string {
+  return coerceIsoStrict(s, tz) ?? s.trim();
 }
 
 // Same minimal CSV split as before, but parameterizable by delim.
