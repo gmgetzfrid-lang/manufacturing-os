@@ -306,24 +306,26 @@ export default function DayAgendaPanel({
                   </button>
                   <span className={`w-1.5 h-5 rounded-sm shrink-0 ${color.bar}`} />
                   <div className="flex-1 min-w-0">
+                    {/* Just the area it's in (Exchangers, Towers) — the full path
+                        is on the task itself. */}
                     {g.crumbs.length > 0 && (
-                      <div className={`text-[9px] font-bold uppercase tracking-wide break-words ${color.text}`}>
-                        {g.crumbs.map((c) => c.name).join(" › ")}
+                      <div className={`text-[9px] font-bold uppercase tracking-wide truncate ${color.text}`} title={g.crumbs.map((c) => c.name).join(" › ")}>
+                        {g.crumbs[g.crumbs.length - 1].name}
                       </div>
                     )}
                     <button onClick={() => onOpenDetail(head)} className="flex items-start gap-1 text-[12px] font-bold text-[var(--color-text)] hover:underline text-left max-w-full">
                       <Layers className="w-3 h-3 shrink-0 opacity-70 mt-0.5" />
                       <span className="break-words min-w-0">{head.name}</span>
-                      <ExternalLink className="w-3 h-3 shrink-0 opacity-50" />
+                      <ExternalLink className="w-3 h-3 shrink-0 opacity-50 mt-0.5" />
                     </button>
+                    {/* Under the name, so the name keeps the width: how the
+                        equipment stands overall and how many steps today. */}
+                    <div className="text-[10px] font-mono text-[var(--color-text-muted)]" title="This equipment overall">
+                      {g.parent && headInfo ? <>
+                        {headInfo.percent}%{head.id && planNow.get(head.id) != null ? <> of {planNow.get(head.id)}% planned</> : null} · {headInfo.leafDone}/{headInfo.leafTotal} steps · </> : null}
+                      {g.rows.length} today
+                    </div>
                   </div>
-                  {g.parent && headInfo && (
-                    <span className="shrink-0 text-[10px] font-mono text-[var(--color-text-muted)]" title="This equipment overall">
-                      {headInfo.leafDone}/{headInfo.leafTotal} steps · {headInfo.percent}%
-                      {head.id && planNow.get(head.id) != null ? <> of {planNow.get(head.id)}% planned</> : null}
-                    </span>
-                  )}
-                  {!isOpen(g) && <span className="shrink-0 text-[10px] font-bold text-[var(--color-text-muted)]">{g.rows.length} today</span>}
                 </div>
                 {isOpen(g) && <ul className="divide-y divide-[var(--color-border)]">
                   {g.rows.map((r) => {
@@ -332,7 +334,8 @@ export default function DayAgendaPanel({
                     return (
                       <li key={r.leaf.id} className={openId === r.leaf.id ? "bg-[var(--color-accent-soft)]/40" : ""}>
                       <div className={`px-4 py-2 flex items-center gap-3 ${openId === r.leaf.id ? "" : r.live === "overdue" ? "bg-rose-50 dark:bg-rose-950/40" : r.live === "started-early" ? "bg-blue-50/60 dark:bg-blue-950/30" : ""}`}>
-                        <ShiftMark work={workShiftOf(r.leaf, tz, shiftTimes)} />
+                        {/* Day-only or night-only work is marked; round the clock is the norm. */}
+                        {(() => { const w = workShiftOf(r.leaf, tz, shiftTimes); return w === "both" ? <span className="w-4 shrink-0" aria-hidden /> : <ShiftMark work={w} />; })()}
                         <span className={`w-[80px] shrink-0 text-[11px] font-mono tabular-nums ${r.live === "overdue" ? "font-black text-rose-700 dark:text-rose-300" : r.live === "started-early" ? "font-bold text-blue-700 dark:text-blue-300" : "text-[var(--color-text-muted)]"}`}>{windowOf(r)}</span>
                         <span className="shrink-0">
                           <StatusControl
@@ -381,8 +384,8 @@ export default function DayAgendaPanel({
                           const short = g - pct >= 5;
                           return (
                             <span title={`The plan has this step at ${g}% by ${goalLabel}`}
-                              className={`text-[9.5px] font-bold tabular-nums whitespace-nowrap ${short ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-faint)]"}`}>
-                              goal {g}% by {goalLabel}
+                              className={`text-right text-[9.5px] font-bold tabular-nums leading-tight ${short ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-faint)]"}`}>
+                              goal {g}%<span className="block font-semibold opacity-80">by {goalLabel}</span>
                             </span>
                           );
                         })()}

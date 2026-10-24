@@ -327,8 +327,61 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
     window.addEventListener("pointercancel", up);
   };
 
+  // The calendar's own width: under ~760 px (a phone) the month is a
+  // compact grid of counts and the week stacks its days.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [boxW, setBoxW] = useState(0);
+  React.useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setBoxW(el.clientWidth));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const compact = boxW > 0 && boxW < 760;
+
+  // One card per task, the same in every layout.
+  const chipFor = (p: DayPlacement<Milestone>, key: string) => {
+    const color = colorFor(p.ms);
+    const chain = ancestorsOf(p.ms);
+    // Offer expand on any day the parent bar shows, so
+    // the arrow is reachable wherever you're looking.
+    const canExpand = !isLeaf(p.ms) && !showSubtasks;
+    return (
+      <Chip
+        key={`${p.ms.id}-${p.dayIndex}`}
+        ms={p.ms} dayIndex={p.dayIndex} spanDays={p.spanDays}
+        todayStart={p.todayStart} todayEnd={p.todayEnd} idleToday={p.idleToday}
+        childrenByParent={childrenByParent}
+        ancestors={chain} color={color}
+        canEdit={canEdit}
+        draggable={canEdit && !!p.ms.id && p.ms.status !== "completed"}
+        onDragStart={(e) => { setDragId(p.ms.id ?? null); e.dataTransfer.setData("text/plain", `${p.ms.id}|${key}`); }}
+        onTouchDragStart={p.ms.id ? (e) => startTouchDrag(p.ms.id!, key, p.ms.name, e) : undefined}
+        onClick={() => { if (selected.size > 0 && p.ms.id) toggleSelected(p.ms.id); else onOpenDetail(p.ms); }}
+        onSetStatus={onSetStatus}
+        onSetProgress={onSetProgress}
+        onSetProgressNote={onSetProgressNote}
+        onStartNote={onStartNote}
+        progress={progress}
+        canExpand={canExpand}
+        isExpanded={subPopover?.ms.id === p.ms.id}
+        onToggleExpand={canExpand && p.ms.id ? (e) => {
+          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+          setPopoverShowOthers(false);
+          setSubPopover((cur) => cur && cur.ms.id === p.ms.id && cur.dayKey === key ? null : { ms: p.ms, top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 348)), dayKey: key, anchorTop: r.top });
+        } : undefined}
+        selectable={canEdit && p.dayIndex === 0}
+        selected={!!p.ms.id && selected.has(p.ms.id)}
+        onToggleSelect={() => p.ms.id && toggleSelected(p.ms.id)}
+        dimmed={!!dragId && dragId === p.ms.id}
+        shiftTimes={shiftTimes}
+      />
+    );
+  };
+
   return (
-    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden flex flex-col">
+    <div ref={rootRef} className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden flex flex-col">
       {/* Bulk action bar — appears when chips are selected. */}
       {canEdit && selected.size > 0 && (
         <div className="px-3 py-2 border-b border-[var(--color-accent-ring)]/40 bg-[var(--color-accent-soft)]/70 flex items-center gap-2 flex-wrap">
@@ -422,12 +475,15 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         <Info className="w-3.5 h-3.5 text-[var(--color-accent)] shrink-0" />
         {showSubtasks
           ? <span><b className="text-[var(--color-text)]">Sub-items:</b> each step is its own card — drag one to move just that step.</span>
-          : <span><b className="text-[var(--color-text)]">Click a day&apos;s number</b> for its full list with progress entry.</span>}
-        <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> status</span>
-        <span className="inline-flex items-center gap-1"><span className="text-[9px] font-bold px-1 rounded border border-[var(--color-border-strong)]">40%</span> set progress</span>
-        {!showSubtasks && <span className="inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" /> its steps that day</span>}
-        <span className="inline-flex items-center gap-1"><GripVertical className="w-3 h-3" /> drag by the colored edge</span>
-        <span className="inline-flex items-center gap-1"><CheckSquare className="w-3 h-3" /> select (on hover)</span>
+          : <span><b className="text-[var(--color-text)]">{compact ? "Tap a day" : "Click a day\u2019s number"}</b> for its full list with progress entry.</span>}
+        {/* What the marks on a card do — not on a phone, where a day opens its list. */}
+        {!compact && <>
+          <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> status</span>
+          <span className="inline-flex items-center gap-1"><span className="text-[9px] font-bold px-1 rounded border border-[var(--color-border-strong)]">40%</span> set progress</span>
+          {!showSubtasks && <span className="inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" /> its steps that day</span>}
+          <span className="inline-flex items-center gap-1"><GripVertical className="w-3 h-3" /> drag by the colored edge</span>
+          <span className="inline-flex items-center gap-1"><CheckSquare className="w-3 h-3" /> select (on hover)</span>
+        </>}
       </div>
 
       {mode === "day" ? (
@@ -454,6 +510,31 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           colorOf={(top) => colorFor(top)}
         />
       ) : (<>
+      {compact && mode === "week" ? (
+        // Phone week: the days stacked, each with its cards full width.
+        <div className="divide-y divide-[var(--color-border)]">
+          {weekDays.map((day) => {
+            const key = ymd(day, tz);
+            const items = byDay.get(key) ?? [];
+            const isToday = sameDayUTC(day, today, tz);
+            const isDone = (p: (typeof items)[number]) => (p.ms.id ? progress?.get(p.ms.id)?.percent : undefined) === 100 || p.ms.status === "completed";
+            const shown = [...items.filter((p) => !isDone(p)), ...items.filter(isDone)];
+            return (
+              <section key={key} data-daykey={key} className="px-2 py-2">
+                <button type="button" onClick={() => setAgendaDay(key)} className="w-full flex items-center justify-between gap-2 mb-1.5 text-left">
+                  <span className={`text-[12px] font-black ${isToday ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text)]"}`}>
+                    {fmtInTz(day, tz, { weekday: "long", month: "short", day: "numeric" })}
+                  </span>
+                  <span className="text-[10.5px] font-semibold text-[var(--color-text-faint)]">
+                    {items.length ? `${items.length} task${items.length === 1 ? "" : "s"}${items.filter(isDone).length ? ` · ${items.filter(isDone).length} done` : ""} ›` : "Nothing scheduled"}
+                  </span>
+                </button>
+                {shown.length > 0 && <div className="flex flex-col gap-1">{shown.map((p) => chipFor(p, key))}</div>}
+              </section>
+            );
+          })}
+        </div>
+      ) : (<>
       {/* Weekday header */}
       <div className="grid grid-cols-7 border-b border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)]">
         {WEEKDAYS.map((d) => (
@@ -468,7 +549,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           // inside it (cards never shrink).
           // A week with nothing in it stays short, so the busy weeks get the room.
           <div key={wi} className="grid grid-cols-7 border-b border-[var(--color-border)] last:border-b-0"
-            style={{ height: mode === "week" ? "68vh" : week.some((d) => (byDay.get(ymd(d, tz)) ?? []).length > 0) ? 212 : 56 }}>
+            style={{ height: mode === "week" ? "68vh" : week.some((d) => (byDay.get(ymd(d, tz)) ?? []).length > 0) ? (compact ? 64 : 212) : (compact ? 40 : 56) }}>
             {week.map((day) => {
               const key = ymd(day, tz);
               const items = byDay.get(key) ?? [];
@@ -479,6 +560,21 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
               const isDone = (p: (typeof items)[number]) => (p.ms.id ? progress?.get(p.ms.id)?.percent : undefined) === 100 || p.ms.status === "completed";
               const shown = [...items.filter((p) => !isDone(p)), ...items.filter(isDone)];
               const doneHere = items.filter(isDone).length;
+              if (compact && mode === "month") {
+                // Phone month: the day, how many tasks, how far along —
+                // tap for the day's full list.
+                const avg = items.length ? Math.round(items.reduce((a, p) => a + ((p.ms.id ? progress?.get(p.ms.id)?.percent : undefined) ?? 0), 0) / items.length) : 0;
+                return (
+                  <button key={key} type="button" data-daykey={key} onClick={() => items.length && setAgendaDay(key)}
+                    className={`min-w-0 border-r border-[var(--color-border)] last:border-r-0 p-1 flex flex-col items-start gap-0.5 text-left ${inMonth ? "bg-[var(--color-surface)]" : "bg-slate-50/40 dark:bg-transparent"} ${isToday ? "ring-1 ring-inset ring-rose-300" : ""}`}>
+                    <span className={`text-[11px] font-bold ${isToday ? "text-rose-600 dark:text-rose-400" : inMonth ? "text-[var(--color-text)]" : "text-slate-300 dark:text-slate-600"}`}>{wallClock(day.getTime(), tz).day}</span>
+                    {items.length > 0 && <>
+                      <span className="text-[10px] font-black tabular-nums px-1.5 rounded-full bg-[var(--color-accent-soft)] text-[var(--color-accent)]">{items.length}</span>
+                      <span className="mt-auto w-full h-1 rounded-full bg-black/10 overflow-hidden"><span className={`block h-full ${avg >= 100 ? "bg-emerald-500" : "bg-[var(--color-accent)]"}`} style={{ width: `${avg}%` }} /></span>
+                    </>}
+                  </button>
+                );
+              }
               return (
                 <div
                   key={key}
@@ -498,7 +594,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                       {items.length > 0 && <span className="text-[8px] font-black uppercase tracking-wider opacity-0 group-hover/tile:opacity-70">Open day</span>}
                     </button>
                     {items.length > 0 && (
-                      <span className={`text-[9.5px] font-semibold tabular-nums ${inMonth ? "text-[var(--color-text-faint)]" : "text-slate-300"}`}>
+                      <span className={`min-w-0 truncate whitespace-nowrap text-[9.5px] font-semibold tabular-nums ${inMonth ? "text-[var(--color-text-faint)]" : "text-slate-300"}`}>
                         {items.length} task{items.length === 1 ? "" : "s"}{doneHere ? ` · ${doneHere} done` : ""}
                       </span>
                     )}
@@ -514,44 +610,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                     </button>
                   )}
                   <DayScroller fade={inMonth ? "from-[var(--color-surface)]" : "from-slate-50"}>
-                  {shown.map((p) => {
-                    const color = colorFor(p.ms);
-                    const chain = ancestorsOf(p.ms);
-                    // Offer expand on any day the parent bar shows, so
-                    // the arrow is reachable wherever you're looking.
-                    const canExpand = !isLeaf(p.ms) && !showSubtasks;
-                    return (
-                      <Chip
-                        key={`${p.ms.id}-${p.dayIndex}`}
-                        ms={p.ms} dayIndex={p.dayIndex} spanDays={p.spanDays}
-                        todayStart={p.todayStart} todayEnd={p.todayEnd} idleToday={p.idleToday}
-                        childrenByParent={childrenByParent}
-                        ancestors={chain} color={color}
-                        canEdit={canEdit}
-                        draggable={canEdit && !!p.ms.id && p.ms.status !== "completed"}
-                        onDragStart={(e) => { setDragId(p.ms.id ?? null); e.dataTransfer.setData("text/plain", `${p.ms.id}|${key}`); }}
-                        onTouchDragStart={p.ms.id ? (e) => startTouchDrag(p.ms.id!, key, p.ms.name, e) : undefined}
-                        onClick={() => { if (selected.size > 0 && p.ms.id) toggleSelected(p.ms.id); else onOpenDetail(p.ms); }}
-                        onSetStatus={onSetStatus}
-                        onSetProgress={onSetProgress}
-                        onSetProgressNote={onSetProgressNote}
-                        onStartNote={onStartNote}
-                        progress={progress}
-                        canExpand={canExpand}
-                        isExpanded={subPopover?.ms.id === p.ms.id}
-                        onToggleExpand={canExpand && p.ms.id ? (e) => {
-                          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                          setPopoverShowOthers(false);
-                          setSubPopover((cur) => cur && cur.ms.id === p.ms.id && cur.dayKey === key ? null : { ms: p.ms, top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 348)), dayKey: key, anchorTop: r.top });
-                        } : undefined}
-                        selectable={canEdit && p.dayIndex === 0}
-                        selected={!!p.ms.id && selected.has(p.ms.id)}
-                        onToggleSelect={() => p.ms.id && toggleSelected(p.ms.id)}
-                        dimmed={!!dragId && dragId === p.ms.id}
-                        shiftTimes={shiftTimes}
-                      />
-                    );
-                  })}
+                  {shown.map((p) => chipFor(p, key))}
                   </DayScroller>
                 </div>
               );
@@ -559,6 +618,8 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           </div>
         ))}
       </div>
+
+      </>)}
 
       </>)}
 
@@ -737,7 +798,7 @@ function DayScroller({ children, fade }: { children: React.ReactNode; fade: stri
           <button type="button"
             onClick={(e) => { e.stopPropagation(); ref.current?.scrollBy({ top: (ref.current?.clientHeight ?? 120) * 0.8, behavior: "smooth" }); }}
             title="Scroll for the rest of this day's tasks"
-            className="absolute bottom-0.5 left-1/2 -translate-x-1/2 inline-flex items-center gap-0.5 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] shadow-sm px-2 py-[1px] text-[9.5px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent-ring)]">
+            className="absolute bottom-0.5 left-1/2 -translate-x-1/2 inline-flex items-center gap-0.5 whitespace-nowrap rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] shadow-sm px-2 py-[1px] text-[9.5px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-accent)] hover:border-[var(--color-accent-ring)]">
             <ChevronDown className="w-3 h-3" /> {below} more
           </button>
         </>
@@ -898,37 +959,39 @@ function Chip({
         </span>
         <div className="min-w-0 flex-1">
           <div className={`text-[11px] font-semibold leading-snug line-clamp-2 break-words ${effStatus === "completed" ? "line-through opacity-70" : ""}`}>{ms.name}</div>
-          {meta && (
-            <div className="flex items-center gap-1 min-w-0 text-[9.5px] leading-tight opacity-70">
+          {/* Second line: where / when on the left, % and its steps on the
+              right — the name keeps the whole first line. */}
+          <div className="mt-0.5 flex items-center gap-1 min-w-0">
+            <span className="flex items-center gap-1 min-w-0 flex-1 text-[9.5px] leading-tight opacity-70">
               {/* Day-only or night-only work is marked; round the clock is the norm. */}
               {crew !== "both" && <ShiftMark work={crew} />}
               <span className="truncate">{meta}</span>
-            </div>
-          )}
+            </span>
+            <span className="shrink-0 flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+              {isLeaf ? (
+                <ProgressControl
+                  percent={pct}
+                  onPick={(p) => { if (ms.id && onSetProgress) onSetProgress(ms.id, p); }}
+                  onSaveWithNote={onSetProgressNote && ms.id ? (p, n) => onSetProgressNote(ms.id!, p, n) : undefined}
+                  disabled={!canEdit || !onSetProgress || !ms.id}
+                  size="sm"
+                />
+              ) : (
+                <span className="text-[9.5px] font-bold tabular-nums opacity-80" title={`${pct}% complete · ${done}/${leafTotal} steps done`}>{pct}%</span>
+              )}
+              {canExpand && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onToggleExpand?.(e); }}
+                  title={isExpanded ? "Hide its steps" : "Show its steps for this day"}
+                  className={`inline-flex items-center justify-center w-4 h-4 pointer-coarse:w-6 pointer-coarse:h-6 rounded transition-colors ${isExpanded ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)] hover:bg-black/10 hover:text-[var(--color-accent)]"}`}
+                >
+                  <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} strokeWidth={2.5} />
+                </button>
+              )}
+            </span>
+          </div>
         </div>
-        <span className="shrink-0 flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
-          {isLeaf ? (
-            <ProgressControl
-              percent={pct}
-              onPick={(p) => { if (ms.id && onSetProgress) onSetProgress(ms.id, p); }}
-              onSaveWithNote={onSetProgressNote && ms.id ? (p, n) => onSetProgressNote(ms.id!, p, n) : undefined}
-              disabled={!canEdit || !onSetProgress || !ms.id}
-              size="sm"
-            />
-          ) : (
-            <span className="text-[9.5px] font-bold tabular-nums opacity-80" title={`${pct}% complete · ${done}/${leafTotal} steps done`}>{pct}%</span>
-          )}
-          {canExpand && (
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onToggleExpand?.(e); }}
-              title={isExpanded ? "Hide its steps" : "Show its steps for this day"}
-              className={`inline-flex items-center justify-center w-4 h-4 pointer-coarse:w-6 pointer-coarse:h-6 rounded transition-colors ${isExpanded ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)]" : "text-[var(--color-text-muted)] hover:bg-black/10 hover:text-[var(--color-accent)]"}`}
-            >
-              <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} strokeWidth={2.5} />
-            </button>
-          )}
-        </span>
       </div>
       {/* Progress as a hairline along the bottom edge. */}
       <span className="absolute left-1 right-0 bottom-0 h-[2px] bg-black/5" aria-hidden>
