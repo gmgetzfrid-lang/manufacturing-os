@@ -1,15 +1,19 @@
 "use client";
 
 // TaskQuickLook — the card a supervisor opens mid-meeting when someone asks
-// about a step: where it should be by the end of the shift, when it and its
-// equipment are scheduled to finish, what comes after it, what it waits on.
+// about a step. Answers first, in three tiles: where it should be by the
+// end of the shift, when the step is done, when its equipment is done.
+// Then every step on the equipment in start order with its times (this
+// step and the next one marked), what else waits on it, and when each
+// overall task above it is scheduled to be done.
 // Plus a search box to pull up any step, on tonight's report or not.
 // Screen only — the printout is unchanged.
 
 import { createContext, useContext, useMemo, useRef, useState } from "react";
-import { ArrowRight, Hourglass, Search, Target, Wrench } from "lucide-react";
+import { Search, Wrench } from "lucide-react";
 import { Modal, ModalHeader, ModalBody } from "@/components/ui/Modal";
 import { searchSteps, type QuickLook, type QuickLookIndex } from "@/lib/taskQuickLook";
+import { equipmentTag } from "@/lib/safetyMoment";
 
 /** Lets a step name anywhere in the report open its card. */
 export const QuickLookOpen = createContext<((id: string) => void) | null>(null);
@@ -22,15 +26,21 @@ export interface QuickLookFmt {
   T: (ms: number) => string;
 }
 
-function Line({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
+function Tile({ label, sub, big, small, tone }: { label: string; sub?: string; big: React.ReactNode; small?: React.ReactNode; tone?: "accent" }) {
   return (
-    <div className="flex gap-2.5 py-1.5 border-t border-[var(--color-border)] first:border-t-0">
-      <span className="mt-0.5 text-[var(--color-text-faint)] shrink-0">{icon}</span>
-      <div className="min-w-0 flex-1">
-        <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">{label}</div>
-        <div className="text-[13px] text-[var(--color-text)]">{children}</div>
-      </div>
+    <div className={`min-w-0 rounded-lg border px-2 py-1.5 sm:px-3 sm:py-2 ${tone === "accent" ? "border-orange-400 bg-orange-50 dark:border-orange-700 dark:bg-orange-950/40" : "border-[var(--color-border)] bg-[var(--color-surface-2)]"}`}>
+      <div className="text-[9px] sm:text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">{label}{sub && <span className="hidden sm:inline normal-case font-semibold tracking-normal"> · {sub}</span>}</div>
+      <div className="text-[13px] sm:text-[18px] font-black leading-tight text-[var(--color-text)] tabular-nums">{big}</div>
+      {small && <div className="text-[10.5px] sm:text-[11.5px] leading-snug text-[var(--color-text-muted)]">{small}</div>}
     </div>
+  );
+}
+
+function Heading({ children, hint }: { children: React.ReactNode; hint?: string }) {
+  return (
+    <h3 className="mt-4 mb-1.5 text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">
+      {children}{hint && <span className="ml-1.5 normal-case font-semibold tracking-normal text-[var(--color-text-faint)]">{hint}</span>}
+    </h3>
   );
 }
 
@@ -44,65 +54,113 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
   onOpen: (id: string) => void;
   onClose: () => void;
 }) {
-  const goalLabel = `By ${fmt.T(goalAt.end)} (end of ${goalAt.kind} shift)`;
   const note = noteOf?.(look.id)?.body ?? null;
   const done = look.percent >= 100;
   const behind = !done && look.percent + 5 < look.planNow;
-  const stepLink = (s: QuickLook["next"][number]) => (
-    <button type="button" onClick={() => onOpen(s.id)} className="text-left font-semibold text-[var(--color-accent)] hover:underline">
-      {s.name}
-    </button>
+  const eq = look.equipment;
+  const eqName = eq ? (equipmentTag(eq.name) ?? eq.name) : null;
+  const above = look.levels.slice(1);
+  const link = (s: { id: string; name: string }, cls = "") => (
+    <button type="button" onClick={() => onOpen(s.id)} className={`text-left hover:underline ${cls}`}>{s.name}</button>
   );
   return (
-    <Modal onClose={onClose} size="sm">
+    <Modal onClose={onClose} size="lg">
       <ModalHeader icon={Wrench} title={look.name} onClose={onClose}
-        subtitle={[look.parentName, look.who, look.wo ? `WO ${look.wo}` : null].filter(Boolean).join(" · ")} />
+        subtitle={[eq?.name, look.who, look.wo ? `WO ${look.wo}` : null].filter(Boolean).join(" · ")} />
       <ModalBody>
-        <div className="-mt-1">
-          <Line icon={<Target className="w-4 h-4" />} label={goalLabel}>
-            {done ? <b>Done</b> : (
-              <>
-                <b className="text-[15px]">{look.goal}%</b>
-                <span className="text-[var(--color-text-muted)]"> · now {look.percent}%</span>
-                <span className={behind ? "text-rose-700 dark:text-rose-300 font-semibold" : "text-[var(--color-text-muted)]"}> · plan by now {look.planNow}%</span>
-              </>
-            )}
-          </Line>
-          <Line icon={<Hourglass className="w-4 h-4" />} label="Scheduled">
-            This step {fmt.DTs(look.start)} → <b>{fmt.DTs(look.finish)}</b>
-            {look.equipment && (
-              <div className="text-[12px] text-[var(--color-text-muted)]">
-                {look.equipment.name}: done <b className="text-[var(--color-text)]">{fmt.DTs(look.equipment.finish)}</b> · {look.equipment.done}/{look.equipment.total} steps · {look.equipment.percent}%
-              </div>
-            )}
-          </Line>
-          <Line icon={<ArrowRight className="w-4 h-4" />} label="Next after it">
-            {look.next.length === 0 ? <span className="text-[var(--color-text-muted)]">Nothing — it&apos;s the last step{look.equipment ? ` on ${look.equipment.name}` : ""}.</span> : (
-              <ul className="space-y-0.5">
-                {look.next.map((s) => (
-                  <li key={s.id}>
-                    {stepLink(s)}
-                    <span className="text-[12px] text-[var(--color-text-muted)]"> · {fmt.DTs(s.start)}{s.who ? ` · ${s.who}` : ""}{s.parentName && s.parentName !== look.parentName ? ` · ${s.parentName}` : ""}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Line>
-          {look.waitsOn.length > 0 && (
-            <Line icon={<Hourglass className="w-4 h-4" />} label="Waits on">
-              <ul className="space-y-0.5">
-                {look.waitsOn.map((s) => (
-                  <li key={s.id}>{stepLink(s)} <span className="text-[12px] text-[var(--color-text-muted)]">· {s.percent}% · due {fmt.DTs(s.finish)}</span></li>
-                ))}
-              </ul>
-            </Line>
-          )}
-          {(look.reason || note) && (
-            <Line icon={<span className="block w-4 text-center font-black">“</span>} label={look.reason ? "Reason" : "Last comment"}>
-              <span className="italic">{look.reason ?? note}</span>
-            </Line>
-          )}
+        {/* The three questions, answered first. */}
+        <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
+          <Tile tone="accent" label={`Goal by ${fmt.T(goalAt.end)}`} sub={`end of ${goalAt.kind} shift`}
+            big={done ? "Done" : `${look.goal}%`}
+            small={done ? null : <>now {look.percent}% · <span className={behind ? "font-bold text-rose-700 dark:text-rose-300" : ""}>plan by now {look.planNow}%</span></>} />
+          <Tile label="This step done by" big={fmt.DTs(look.finish)} small={`starts ${fmt.DTs(look.start)}`} />
+          {eq ? (
+            <Tile label={`${eqName} done by`} big={Number.isFinite(eq.finish) ? fmt.DTs(eq.finish) : "—"} small={`${eq.done} of ${eq.total} steps · ${eq.percent}%`} />
+          ) : <Tile label="Next" big={look.next[0] ? fmt.DTs(look.next[0].start) : "—"} small={look.next[0]?.name ?? "nothing after it"} />}
         </div>
+
+        {look.waitsOn.length > 0 && (
+          <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[12.5px] dark:border-amber-900 dark:bg-amber-950/30">
+            <b className="text-amber-900 dark:text-amber-200">Can&apos;t start until done: </b>
+            {look.waitsOn.map((s, i) => (
+              <span key={s.id}>{i > 0 && " · "}{link(s, "font-semibold text-[var(--color-text)]")} <span className="text-[var(--color-text-muted)]">({s.percent}%, due {fmt.DTs(s.finish)})</span></span>
+            ))}
+          </div>
+        )}
+
+        {/* Every step on the equipment, in order, with its times. */}
+        {look.order.length > 1 && (
+          <>
+            <Heading hint="in start order — tap a step to open it">Step order on {eqName ?? "this task"}</Heading>
+            <div className="rounded-lg border border-[var(--color-border)] overflow-hidden">
+              <table className="w-full text-[12px]">
+                <thead>
+                  <tr className="bg-[var(--color-surface-2)] text-[9.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)] text-left">
+                    <th className="px-2 py-1 w-[104px]">Starts</th>
+                    <th className="px-2 py-1 w-[104px] hidden sm:table-cell">Done by</th>
+                    <th className="px-2 py-1">Step</th>
+                    <th className="px-2 py-1 hidden sm:table-cell">Who</th>
+                    <th className="px-2 py-1 w-12 text-right">%</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {look.order.map((s) => {
+                    const fin = s.percent >= 100;
+                    return (
+                      <tr key={s.id} className={`border-t border-[var(--color-border)] align-top ${s.isThis ? "bg-orange-50 dark:bg-orange-950/40" : ""}`}>
+                        <td className="px-2 py-1 font-mono tabular-nums text-[11px] whitespace-nowrap">{fmt.DTs(s.start)}</td>
+                        <td className="px-2 py-1 font-mono tabular-nums text-[11px] whitespace-nowrap hidden sm:table-cell">{fmt.DTs(s.finish)}</td>
+                        <td className="px-2 py-1">
+                          {s.isThis ? <b className="text-[var(--color-text)]">{s.name}</b> : link(s, fin ? "text-[var(--color-text-faint)] line-through" : "font-semibold text-[var(--color-text)]")}
+                          {s.isThis && <span className="ml-1.5 rounded bg-[var(--color-accent)] px-1 py-px text-[9px] font-black uppercase text-[var(--color-accent-fg)]">This step</span>}
+                          {s.isNext && <span className="ml-1.5 rounded bg-slate-800 px-1 py-px text-[9px] font-black uppercase text-white dark:bg-slate-200 dark:text-slate-900">Next</span>}
+                        </td>
+                        <td className="px-2 py-1 hidden sm:table-cell text-[11px] text-[var(--color-text-muted)]">{s.who}</td>
+                        <td className="px-2 py-1 text-right font-mono tabular-nums text-[11px]">{fin ? "✓" : `${s.percent}%`}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+        {look.order.length > 0 && look.next.length === 0 && (
+          <p className="mt-1.5 text-[12px] text-[var(--color-text-muted)]">This is the last step on {eqName ?? "this task"}.</p>
+        )}
+
+        {look.nextElsewhere.length > 0 && (
+          <>
+            <Heading>Also waiting on this step</Heading>
+            <ul className="space-y-0.5 text-[12.5px]">
+              {look.nextElsewhere.map((s) => (
+                <li key={s.id}>{link(s, "font-semibold text-[var(--color-text)]")} <span className="text-[var(--color-text-muted)]">· {s.parentName} · starts {fmt.DTs(s.start)}</span></li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {/* When each task above it is scheduled to be done. */}
+        {above.length > 0 && (
+          <>
+            <Heading>Overall tasks it rolls up to</Heading>
+            <ul className="space-y-1">
+              {above.map((l, i) => (
+                <li key={l.id} className="flex items-baseline gap-2 text-[12.5px]" style={{ paddingLeft: i * 10 }}>
+                  <span className="min-w-0 flex-1 truncate text-[var(--color-text)]">{l.name}</span>
+                  <span className="shrink-0 text-[var(--color-text-muted)]">done by <b className="font-mono text-[var(--color-text)]">{Number.isFinite(l.finish) ? fmt.DTs(l.finish) : "—"}</b> · {l.percent}%</span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {(look.reason || note) && (
+          <>
+            <Heading>{look.reason ? "Reason it's held" : "Last comment"}</Heading>
+            <p className="text-[12.5px] italic text-[var(--color-text)]">{look.reason ?? note}</p>
+          </>
+        )}
       </ModalBody>
     </Modal>
   );

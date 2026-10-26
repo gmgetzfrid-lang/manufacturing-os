@@ -46,6 +46,7 @@ interface MilestoneRow {
   outline_level: number | null;
   wbs: string | null;
   shift: "day" | "night" | "swing" | null;
+  critical_override?: "yes" | "no" | null;
   work_order_ref: string | null;
   responsible_party: string | null;
   responsible_user_id: string | null;
@@ -98,6 +99,7 @@ function rowToMilestone(r: MilestoneRow): Milestone {
     outlineLevel: r.outline_level,
     wbs: r.wbs,
     shift: r.shift,
+    criticalOverride: r.critical_override ?? null,
     workOrderRef: r.work_order_ref,
     responsibleParty: r.responsible_party,
     responsibleUserId: r.responsible_user_id,
@@ -220,7 +222,7 @@ export async function createMilestone(input: CreateMilestoneInput): Promise<Mile
 
 export type MilestonePatch = Partial<Pick<Milestone,
   | "name" | "description" | "weight" | "plannedAt" | "plannedStartAt"
-  | "linkedRevisionLabel" | "linkedTicketId" | "shift"
+  | "linkedRevisionLabel" | "linkedTicketId" | "shift" | "criticalOverride"
   | "workOrderRef" | "responsibleParty" | "responsibleKind" | "responsibleOrg"
   | "actualParty" | "actualKind" | "actualOrg" | "location" | "durationHours"
   | "attributes" | "dependsOn" | "linkTypes" | "responsibleUserId" | "responsibleUserName"
@@ -242,6 +244,7 @@ const PATCH_COLUMN: Record<string, string> = {
   plannedAt: "planned_at", plannedStartAt: "planned_start_at",
   linkedRevisionLabel: "linked_revision_label", linkedTicketId: "linked_ticket_id",
   shift: "shift",
+  criticalOverride: "critical_override",
   workOrderRef: "work_order_ref",
   responsibleParty: "responsible_party", responsibleKind: "responsible_kind", responsibleOrg: "responsible_org",
   responsibleUserId: "responsible_user_id", responsibleUserName: "responsible_user_name",
@@ -1535,7 +1538,7 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
             const file = planFields.attributes as Record<string, unknown>;
             planFields.attributes = { ...file, ...cur };
             // The working calendar is the schedule's — always the file's.
-            for (const k of ["work_calendar", "work_hours"]) {
+            for (const k of ["work_calendar", "work_hours", "ms_critical"]) {
               if (file[k] != null) (planFields.attributes as Record<string, unknown>)[k] = file[k];
             }
           }

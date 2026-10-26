@@ -33,9 +33,10 @@ import {
   Trash2,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
-import { groupTasksUnderParent, setTaskDuration, addMilestoneNote, stateOf, deleteMilestones, restoreDeletedMilestones, type MilestoneState } from "@/lib/milestones";
+import { groupTasksUnderParent, setTaskDuration, addMilestoneNote, stateOf, deleteMilestones, restoreDeletedMilestones, applyBulkFieldChange, type MilestoneState } from "@/lib/milestones";
 import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, cascadeDependents, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
-import { computeCriticalPathLite } from "@/lib/criticalPath";
+import { resolveCriticalPath, CRITICAL_MODES, type CriticalMode, type CriticalOverride } from "@/lib/criticalPath";
+import { useCriticalMode, saveCriticalMode } from "@/lib/criticalModeStore";
 import { resolveVisibleDepIndex } from "@/lib/scheduleDeps";
 import { buildProgressIndex } from "@/lib/scheduleProgress";
 import { computeExecutionReport } from "@/lib/executionReport";
@@ -289,8 +290,55 @@ export default function ExecutionView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, visibleIds]);
 
-  // Critical-path-lite: the unfinished chain driving the finish date.
-  const critical = useMemo(() => computeCriticalPathLite(items), [items]);
+  // The critical path as the project has it: its source (the file's flags,
+  // the app's estimate, or none) with every hand mark on top.
+  const criticalMode = useCriticalMode(projectId);
+  const critical = useMemo(() => resolveCriticalPath(items, criticalMode), [items, criticalMode]);
+  // A task with any critical step under it reads as critical too.
+  const criticalAny = useMemo(() => {
+    const out = new Set<string>();
+    for (const id of critical.ids) {
+      for (let t = byId.get(id); t?.id && !out.has(t.id); t = t.parentId ? byId.get(t.parentId) : undefined) out.add(t.id);
+    }
+    return out;
+  }, [critical, byId]);
+  const criticalSourceLabel = CRITICAL_MODES.find((x) => x.value === critical.mode)?.label ?? "";
+  // Mark a task critical or not — an overall task takes every step under it
+  // along (their own marks are cleared). Undo puts every mark back.
+  const markCritical = useCallback(async (ms: Milestone, v: CriticalOverride | null) => {
+    if (!canEdit || !ms.id) return;
+    const below: Milestone[] = [];
+    const walk = (id: string) => { for (const c of childrenOf.get(id) ?? []) { below.push(c); if (c.id) walk(c.id); } };
+    walk(ms.id);
+    const touched = [ms, ...below.filter((t) => t.criticalOverride)];
+    const changes = touched.map((t) => ({ id: t.id!, after: t.id === ms.id ? v : null }));
+    try {
+      await applyBulkFieldChange({ orgId, projectId, field: "criticalOverride", changes, summary: { mode: "set", to: v }, actorUserId: userId, actorUserEmail: userEmail });
+      onRefresh();
+      announce(`“${truncate(ms.name)}” → ${v === "yes" ? "critical" : v === "no" ? "not critical" : "critical: auto"}${below.length ? " (and everything under it)" : ""}`, async () => {
+        await applyBulkFieldChange({ orgId, projectId, field: "criticalOverride", changes: touched.map((t) => ({ id: t.id!, after: t.criticalOverride ?? null })), summary: { mode: "set", to: "undo" }, actorUserId: userId, actorUserEmail: userEmail });
+        onRefresh();
+      }, "default");
+    } catch (e) {
+      notify(/critical_override/.test((e as Error).message) ? "Run migration 20261101_critical_path_control.sql first." : `Not saved: ${(e as Error).message}`, "warning");
+    }
+  }, [canEdit, childrenOf, orgId, projectId, userId, userEmail, onRefresh, announce, notify]);
+  const handMarked = useMemo(() => items.filter((t) => t.criticalOverride), [items]);
+  const clearMarks = useCallback(async () => {
+    if (!handMarked.length) return;
+    const before = handMarked.map((t) => ({ id: t.id!, after: t.criticalOverride ?? null }));
+    try {
+      await applyBulkFieldChange({ orgId, projectId, field: "criticalOverride", changes: before.map((c) => ({ id: c.id, after: null })), summary: { mode: "set", to: null }, actorUserId: userId, actorUserEmail: userEmail });
+      onRefresh();
+      announce(`Cleared ${before.length} critical-path mark${before.length === 1 ? "" : "s"}`, async () => {
+        await applyBulkFieldChange({ orgId, projectId, field: "criticalOverride", changes: before, summary: { mode: "set", to: "undo" }, actorUserId: userId, actorUserEmail: userEmail });
+        onRefresh();
+      }, "default");
+    } catch (e) { notify(`Not saved: ${(e as Error).message}`, "warning"); }
+  }, [handMarked, orgId, projectId, userId, userEmail, onRefresh, announce, notify]);
+  const setCriticalSource = useCallback(async (mode: CriticalMode) => {
+    try { await saveCriticalMode(projectId, mode); } catch (e) { notify((e as Error).message, "warning"); }
+  }, [projectId, notify]);
 
   // Group color assignment — a phase + all its children share one hue.
   const colors = useMemo(() => assignGroupColors(items), [items]);
@@ -923,14 +971,33 @@ export default function ExecutionView({
             </button>
           ))}
         </div>
-        {layout === "timeline" && critical.ids.size > 0 && (
+        {layout === "timeline" && (
           <button
             onClick={() => setShowCritical((v) => !v)}
-            title="Highlight the unfinished tasks driving the finish date"
+            aria-pressed={showCritical}
+            title="Show the critical path — and mark tasks on or off it"
             className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors ${showCritical ? "bg-rose-600 text-white border-rose-600" : "bg-[var(--color-surface)] text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800 hover:border-rose-400"}`}
           >
-            <Zap className="w-3.5 h-3.5" /> Critical path
+            <Zap className="w-3.5 h-3.5" /> Critical path <span className="font-mono opacity-80">{critical.ids.size}</span>
           </button>
+        )}
+        {layout === "timeline" && showCritical && (
+          <div className="inline-flex flex-wrap items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
+            <label className="inline-flex items-center gap-1">
+              From
+              <select value={critical.mode} disabled={!canEdit} onChange={(e) => void setCriticalSource(e.target.value as CriticalMode)}
+                title={CRITICAL_MODES.find((x) => x.value === critical.mode)?.hint}
+                className="rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 py-1 text-[11px] font-semibold text-[var(--color-text)]">
+                {CRITICAL_MODES.map((x) => <option key={x.value} value={x.value}>{x.label}</option>)}
+              </select>
+            </label>
+            {canEdit && <span>Tap <Zap className="inline w-3 h-3 text-rose-600" /> on a row to mark it on or off</span>}
+            {canEdit && handMarked.length > 0 && (
+              <button onClick={() => void clearMarks()} className="font-bold text-[var(--color-accent)] hover:underline">
+                Clear {handMarked.length} hand mark{handMarked.length === 1 ? "" : "s"}
+              </button>
+            )}
+          </div>
         )}
         {canEdit && (
           <button onClick={() => setBulkMode("replace")}
@@ -971,7 +1038,7 @@ export default function ExecutionView({
       )}
 
       {layout === "report" ? (
-        <ExecutionReportView milestones={items} shiftTimes={shiftTimes} />
+        <ExecutionReportView milestones={items} shiftTimes={shiftTimes} critical={critical} criticalSource={criticalSourceLabel} />
       ) : layout === "shift" ? (
         <ShiftReportView milestones={items} progress={progressIndex} criticalIds={critical.ids} projectId={projectId} projectName={projectName} />
       ) : layout === "calendar" ? (
@@ -1065,6 +1132,11 @@ export default function ExecutionView({
                   onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
                   onViewOnly={notifyViewOnly}
                   onSequence={() => r.ms.id && void sequencePhase(r.ms.id)}
+                  criticalMark={showCritical && canEdit ? {
+                    on: !!r.ms.id && criticalAny.has(r.ms.id),
+                    own: r.ms.criticalOverride ?? null,
+                    onToggle: () => void markCritical(r.ms, r.ms.id && criticalAny.has(r.ms.id) ? "no" : "yes"),
+                  } : null}
                 />
               ))}
               {win.last < rows.length && <div style={{ height: (rows.length - win.last) * ROW_H }} aria-hidden />}
@@ -1101,7 +1173,7 @@ export default function ExecutionView({
                     else void resizeEdge(r.ms.id, edge, d);
                   }}
                   onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
-                  critical={showCritical ? (r.ms.id ? critical.ids.has(r.ms.id) : false) : null}
+                  critical={showCritical ? (r.ms.id ? criticalAny.has(r.ms.id) : false) : null}
                   color={colors.colorOf(r.ms)}
                 />
               ))}
@@ -1150,6 +1222,7 @@ export default function ExecutionView({
           onSelectSubtask={(m) => m.id && setDetailId(m.id)}
           onSelectMilestone={(m) => m.id && setDetailId(m.id)}
           onMoveDays={(id, days) => { const t = byId.get(id); if (t) void moveByDays(t, days); }}
+          critical={{ ids: critical.ids, sourceLabel: criticalSourceLabel }}
         />
       )}
 
@@ -1356,7 +1429,7 @@ function Toolbar({
 
 function OutlineRow({
   row, span, work, color, collapsed, selected, focused, canEdit, busy,
-  onToggleCollapse, onToggleSelected, onSetStatus, onSetProgress, onSetProgressNote, onStartNote, onSetDuration, onOpenDetail, onViewOnly, onSequence,
+  onToggleCollapse, onToggleSelected, onSetStatus, onSetProgress, onSetProgressNote, onStartNote, onSetDuration, onOpenDetail, onViewOnly, onSequence, criticalMark,
 }: {
   row: FlatRow; span: { start: number; finish: number }; work: WorkShift | null; color: GroupColor; collapsed: boolean; selected: boolean; focused?: boolean; canEdit: boolean; busy: boolean;
   onToggleCollapse: () => void; onToggleSelected: () => void;
@@ -1365,6 +1438,9 @@ function OutlineRow({
   onStartNote: (percent: number, note: string) => Promise<boolean> | boolean;
   onSetDuration: () => void; onOpenDetail: () => void;
   onViewOnly?: () => void; onSequence?: () => void;
+  /** Critical-path editing: on the path or not, its own mark, and the
+   *  toggle (null = not editing the critical path). */
+  criticalMark?: { on: boolean; own: CriticalOverride | null; onToggle: () => void } | null;
 }) {
   const tz = useScheduleTz();
   const { ms, depth, hasChildren, done, total, pct, derivedStatus } = row;
@@ -1394,6 +1470,13 @@ function OutlineRow({
       {canEdit && (
         <button onClick={onToggleSelected} className="shrink-0 text-slate-300 hover:text-[var(--color-accent)] transition-colors" title={selected ? "Deselect" : "Select"}>
           {selected ? <CheckSquare className="w-4 h-4 text-[var(--color-accent)]" /> : <Square className="w-4 h-4" />}
+        </button>
+      )}
+      {criticalMark && (
+        <button onClick={criticalMark.onToggle} aria-pressed={criticalMark.on}
+          title={`${criticalMark.on ? "On the critical path — tap to take it off" : "Not critical — tap to mark it critical"}${hasChildren ? " (with everything under it)" : ""}${criticalMark.own ? " · marked by hand" : ""}`}
+          className={`shrink-0 w-5 h-5 inline-flex items-center justify-center rounded ${criticalMark.on ? "bg-rose-600 text-white" : "text-slate-300 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"} ${criticalMark.own ? "ring-1 ring-offset-1 ring-rose-400 dark:ring-offset-slate-900" : ""}`}>
+          <Zap className="w-3 h-3" />
         </button>
       )}
       {hasChildren ? (

@@ -388,6 +388,10 @@ function parseMsProjectXml(text: string, tz: string): { rows: ParsedMilestone[];
         calendarTasks++;
       }
     }
+    // MS Project's own critical flag — the project can take its critical
+    // path from the file (lib/criticalPath resolveCriticalPath).
+    const criticalRaw = childText(t, "Critical");
+    if (!isSummary && (criticalRaw === "1" || criticalRaw === "0")) attributes.ms_critical = criticalRaw;
     if (deadlineIso) attributes.deadline_at = deadlineIso;
     if (isMilestone) attributes.milestone = "1"; // so the Gantt can draw a diamond
     const workRaw = childText(t, "Work"); // PT40H0M0S style → keep raw for reference

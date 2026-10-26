@@ -11,7 +11,7 @@
 import type { Milestone } from "@/types/schema";
 
 export interface BulkField {
-  key: "responsibleParty" | "responsibleOrg" | "responsibleKind" | "actualParty" | "actualOrg" | "actualKind" | "location" | "workOrderRef" | "shift";
+  key: "responsibleParty" | "responsibleOrg" | "responsibleKind" | "actualParty" | "actualOrg" | "actualKind" | "location" | "workOrderRef" | "shift" | "criticalOverride";
   label: string;
   /** Holds a comma-separated list of names (several resources on one task). */
   list: boolean;
@@ -32,6 +32,12 @@ export const BULK_FIELDS: BulkField[] = [
   { key: "shift", label: "Crew — day / night / round the clock", list: false, options: [
     { value: "", label: "Auto (from its calendar, else its times)" }, { value: "day", label: "Day" },
     { value: "night", label: "Night" }, { value: "swing", label: "Round the clock" },
+  ] },
+  // On the critical path by hand. Auto = as the project's source has it;
+  // a mark on an overall task covers every step under it.
+  { key: "criticalOverride", label: "Critical path", list: false, options: [
+    { value: "", label: "Auto (from the project's critical-path source)" }, { value: "yes", label: "Critical" },
+    { value: "no", label: "Not critical" },
   ] },
 ];
 

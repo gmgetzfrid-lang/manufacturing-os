@@ -55,6 +55,26 @@ describe("a step's card", () => {
     expect(q.waitsOn.map((s) => s.name)).toEqual(["Pull Bundle"]);    // 50%, not done
   });
 
+  it("lists the equipment's steps in start order, this one and the next marked, and every level above", () => {
+    const q = quickLook("c", idx, o)!;
+    expect(q.order.map((s) => s.name)).toEqual(["Set Blinds", "Pull Bundle", "Hydroblast 10K Tubes", "Inspect Tubes", "Close Up"]);
+    expect(q.order.find((s) => s.isThis)!.name).toBe("Hydroblast 10K Tubes");
+    expect(q.order.filter((s) => s.isNext).map((s) => s.name)).toEqual(["Inspect Tubes"]);
+    expect(q.levels.map((l) => l.name)).toEqual(["E-12 - Exchanger No. 2"]);
+    expect(q.nextElsewhere).toEqual([]);
+  });
+
+  it("a step on other equipment that waits on it is listed apart", () => {
+    const e14 = mk({ id: "e14", name: "E-14", plannedStartAt: at("2026-10-27", "00:00"), plannedAt: at("2026-10-27", "12:00"), isSummary: true });
+    const top = mk({ id: "top", name: "Exchangers", plannedStartAt: at("2026-10-26", "06:00"), plannedAt: at("2026-10-27", "12:00"), isSummary: true });
+    const x = mk({ id: "x", name: "Reuse blind on E-14", parentId: "e14", plannedStartAt: at("2026-10-27", "00:00"), plannedAt: at("2026-10-27", "02:00"), dependsOn: ["c"] });
+    const nested = [top, { ...e12, parentId: "top" }, { ...e14, parentId: "top" }, blinds, pull, blast, inspect, retube, x];
+    const q = quickLook("c", quickLookIndex(nested), o)!;
+    expect(q.nextElsewhere.map((s) => s.name)).toEqual(["Reuse blind on E-14"]);
+    expect(q.levels.map((l) => l.name)).toEqual(["E-12 - Exchanger No. 2", "Exchangers"]);
+    expect(q.levels[1].finish).toBe(at("2026-10-27", "12:00"));
+  });
+
   it("a step that runs past the shift gets its share as the goal", () => {
     const q = quickLook("e", idx, o)!;
     expect(q.goal).toBeGreaterThan(0);

@@ -481,6 +481,10 @@ export interface Milestone {
   wbs?: string | null;
   /** Execution shift the work runs on. */
   shift?: MilestoneShift | null;
+  /** Set by hand: on the critical path ("yes") or off it ("no"), here and
+   *  for every step under it. Null = as the project's critical-path source
+   *  has it. */
+  criticalOverride?: "yes" | "no" | null;
   /** EAM / CMMS work order reference (Infor EAM, Maximo, SAP PM…). */
   workOrderRef?: string | null;
   /** PLANNED owner — who the schedule says should do this. */

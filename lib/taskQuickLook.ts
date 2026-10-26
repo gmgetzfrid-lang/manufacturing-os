@@ -22,6 +22,17 @@ export interface QuickLookStep {
   percent: number;
 }
 
+/** A task above the step — equipment, area, phase, the job — and when it
+ *  is scheduled to be done. */
+export interface QuickLookLevel {
+  id: string;
+  name: string;
+  finish: number;
+  percent: number;
+  done: number;
+  total: number;
+}
+
 export interface QuickLook extends QuickLookStep {
   wo: string | null;
   status: Milestone["status"];
@@ -31,10 +42,17 @@ export interface QuickLook extends QuickLookStep {
   /** % the plan has it at by the end of the next shift. */
   goal: number;
   /** The equipment it belongs to: when it finishes and how far along. */
-  equipment: { name: string; finish: number; percent: number; done: number; total: number } | null;
+  equipment: QuickLookLevel | null;
+  /** Every level above it, nearest first (equipment … the whole job). */
+  levels: QuickLookLevel[];
+  /** The equipment's steps in start order, this one marked, and the one
+   *  that comes next marked. */
+  order: Array<QuickLookStep & { isThis: boolean; isNext: boolean }>;
   /** What follows it: the steps that wait on it, else the next step on
    *  the same equipment. Empty = the last step there. */
   next: QuickLookStep[];
+  /** Steps on OTHER equipment that wait on it. */
+  nextElsewhere: QuickLookStep[];
   /** Unfinished steps it waits on. */
   waitsOn: QuickLookStep[];
 }
@@ -80,23 +98,33 @@ export function quickLook(id: string, idx: QuickLookIndex, o: {
   const base = stepOf(m, idx, o.progress);
   const done = base.percent >= 100 || m.status === "completed";
   const parent = m.parentId ? idx.byId.get(m.parentId) : undefined;
-  const siblings = parent?.id ? (idx.children.get(parent.id) ?? []).filter((x) => x.id && !idx.children.has(x.id)) : [];
-  // Every step under the equipment, nested groups included.
+  // Every step under a task, nested groups included.
   const under = (pid: string): Milestone[] => (idx.children.get(pid) ?? []).flatMap((c) => (c.id && idx.children.has(c.id) ? under(c.id) : [c]));
-  const eqSteps = parent?.id ? under(parent.id) : [];
-  const equipment = parent ? {
-    name: parent.name,
-    finish: Math.max(finishMsOf(parent), ...eqSteps.map(finishMsOf).filter(Number.isFinite)),
-    percent: (parent.id ? o.progress?.get(parent.id)?.percent : undefined) ?? Math.round(eqSteps.reduce((a, s) => a + pctOf(s, o.progress), 0) / Math.max(1, eqSteps.length)),
-    done: eqSteps.filter((s) => pctOf(s, o.progress) >= 100).length,
-    total: eqSteps.length,
-  } : null;
+  const levelOf = (t: Milestone): QuickLookLevel => {
+    const steps = t.id ? under(t.id) : [];
+    const finishes = [finishMsOf(t), ...steps.map(finishMsOf)].filter(Number.isFinite);
+    return {
+      id: t.id ?? t.name, name: t.name,
+      finish: finishes.length ? Math.max(...finishes) : NaN,
+      percent: (t.id ? o.progress?.get(t.id)?.percent : undefined) ?? Math.round(steps.reduce((a, s) => a + pctOf(s, o.progress), 0) / Math.max(1, steps.length)),
+      done: steps.filter((s) => pctOf(s, o.progress) >= 100).length,
+      total: steps.length,
+    };
+  };
+  const levels: QuickLookLevel[] = [];
+  for (let t = parent, n = 0; t && n < 10; t = t.parentId ? idx.byId.get(t.parentId) : undefined, n++) levels.push(levelOf(t));
+  const equipment = levels[0] ?? null;
+  const eqSteps = (parent?.id ? under(parent.id) : [m]).slice().sort(byStart);
+  const eqIds = new Set(eqSteps.map((x) => x.id));
 
   const succ = (idx.successors.get(id) ?? []).slice().sort(byStart);
-  const nextOnEquipment = siblings
+  const nextOnEquipment = eqSteps
     .filter((x) => x.id !== id && (startMsOf(x) > base.start || (startMsOf(x) === base.start && finishMsOf(x) > base.finish)))
-    .sort(byStart).slice(0, 1);
+    .slice(0, 1);
   const next = (succ.length ? succ.slice(0, 3) : nextOnEquipment).map((x) => stepOf(x, idx, o.progress));
+  const nextIds = new Set(next.map((x) => x.id));
+  const order = eqSteps.map((x) => ({ ...stepOf(x, idx, o.progress), isThis: x.id === id, isNext: nextIds.has(x.id ?? x.name) }));
+  const nextElsewhere = succ.filter((x) => !eqIds.has(x.id)).map((x) => stepOf(x, idx, o.progress));
 
   const waitsOn = (m.dependsOn ?? [])
     .map((d) => idx.byId.get(d)).filter((p): p is Milestone => !!p && pctOf(p, o.progress) < 100)
@@ -108,7 +136,7 @@ export function quickLook(id: string, idx: QuickLookIndex, o: {
     ...base,
     wo: m.workOrderRef ?? null, status: m.status, reason: m.statusReason ?? null,
     planNow: Math.round(expectedFraction(m, o.asOf, o.tz, o.times) * 100),
-    goal, equipment, next, waitsOn,
+    goal, equipment, levels, order, next, nextElsewhere, waitsOn,
   };
 }
 

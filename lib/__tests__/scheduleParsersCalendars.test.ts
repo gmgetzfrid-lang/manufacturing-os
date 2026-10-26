@@ -45,3 +45,15 @@ describe("MS Project calendars set the crew", () => {
     expect(warnings.join(" ")).toMatch(/Working hours read from the schedule's calendars for 4 tasks/);
   });
 });
+
+describe("MS Project's own critical flag", () => {
+  const withCrit = XML
+    .replace("<Name>Open Internal Manways</Name>", "<Name>Open Internal Manways</Name><Critical>1</Critical>")
+    .replace("<Name>Pull bundle</Name>", "<Name>Pull bundle</Name><Critical>0</Critical>");
+  const { rows } = parseScheduleFile("tar.xml", withCrit, { timeZone: "America/Los_Angeles" });
+  it("is kept on each step, so the project can take its critical path from the file", () => {
+    expect(rows.find((r) => r.name === "Open Internal Manways")!.attributes).toMatchObject({ ms_critical: "1" });
+    expect(rows.find((r) => r.name === "Pull bundle")!.attributes).toMatchObject({ ms_critical: "0" });
+    expect(rows.find((r) => r.name === "Project default")!.attributes?.ms_critical).toBeUndefined();
+  });
+});

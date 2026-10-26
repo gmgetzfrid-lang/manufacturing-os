@@ -17,7 +17,7 @@ import {
   X as XIcon, Pencil, Trash2, Loader2, Save, Clock, MapPin, Hash,
   User, HardHat, AlertTriangle, Sun, Moon, Sunset,
   CalendarDays, Layers, MessageSquarePlus, History, ChevronRight, ChevronLeft,
-  Link2, Target,
+  Link2, Target, Zap,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus, MilestoneNote, ProjectMember } from "@/types/schema";
 import { wouldCreateCycle, cascadeDependents, type ReflowNode } from "@/lib/scheduleReflow";
@@ -25,7 +25,7 @@ import { LINK_LABEL, linkOf, linkShort, type LinkMap, type LinkType } from "@/li
 import { listMembers } from "@/lib/projects";
 import {
   updateMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestones, setActualTimes,
-  listMilestoneNotes, addMilestoneNote, updateMilestoneNote, deleteMilestoneNote, applyMilestoneMoves, type MilestonePatch,
+  listMilestoneNotes, addMilestoneNote, updateMilestoneNote, deleteMilestoneNote, applyMilestoneMoves, applyBulkFieldChange, type MilestonePatch,
 } from "@/lib/milestones";
 import { buildProgressIndex } from "@/lib/scheduleProgress";
 import StatusControl from "@/components/projects/StatusControl";
@@ -53,11 +53,18 @@ interface Props {
   /** Move a task/subtask by N days (routes through the reflow engine,
    *  so the parent span follows). Powers the per-row ◀ ▶ buttons. */
   onMoveDays?: (id: string, deltaDays: number) => void;
+  /** The project's critical path (unfinished steps on it) and where it
+   *  comes from ("From the schedule file") — for the Critical path row. */
+  critical?: { ids: Set<string>; sourceLabel: string };
 }
+
+/** Schedule-file values the app reads for itself, shown elsewhere in
+ *  plain words (Critical path row), not in the raw list. */
+const HIDDEN_ATTRS = new Set(["ms_critical"]);
 
 export default function TaskDetailPanel({
   milestone, subtasks, allTasks, childCount, ancestors, canEdit, userId, userName, userEmail, userRole,
-  onClose, onChanged, onSelectSubtask, onSelectMilestone, onMoveDays,
+  onClose, onChanged, onSelectSubtask, onSelectMilestone, onMoveDays, critical,
 }: Props) {
   const tz = useScheduleTz();
   const [editing, setEditing] = useState(false);
@@ -371,17 +378,19 @@ export default function TaskDetailPanel({
                     </Field>
                   );
                 })()}
+                {critical && <CriticalRow m={m} isLeaf={isLeaf} allTasks={allTasks ?? []} critical={critical} canEdit={canEdit}
+                  userId={userId} userEmail={userEmail} onChanged={onChanged} />}
                 {m.description && (
                   <div className="text-xs text-[var(--color-text-muted)] whitespace-pre-wrap pt-1">{m.description}</div>
                 )}
               </div>
 
               {/* Source attributes (the labeled columns from the schedule) */}
-              {m.attributes && Object.keys(m.attributes).length > 0 && (
+              {m.attributes && Object.keys(m.attributes).some((k) => !HIDDEN_ATTRS.has(k)) && (
                 <div className="px-4 py-3 border-b border-[var(--color-border)]">
                   <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)] mb-2">From the schedule</div>
                   <div className="grid grid-cols-1 gap-1">
-                    {Object.entries(m.attributes).map(([k, v]) => (
+                    {Object.entries(m.attributes).filter(([k]) => !HIDDEN_ATTRS.has(k)).map(([k, v]) => (
                       <div key={k} className="flex items-baseline gap-2 text-xs">
                         <span className="text-[var(--color-text-muted)] shrink-0 capitalize">{k}</span>
                         <span className="flex-1 text-[var(--color-text)] break-words text-right font-medium">{String(v)}</span>
@@ -981,5 +990,71 @@ function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
         <div className="text-xs text-[var(--color-text-muted)]">{assignedName || <span className="text-[var(--color-text-faint)] italic">Unassigned</span>}</div>
       )}
     </div>
+  );
+}
+
+/** On the critical path or not, why, and — for whoever can edit — Auto /
+ *  Critical / Not critical. Marking an overall task marks every step under
+ *  it (their own marks are cleared so the whole branch follows). */
+function CriticalRow({ m, isLeaf, allTasks, critical, canEdit, userId, userEmail, onChanged }: {
+  m: Milestone; isLeaf: boolean; allTasks: Milestone[];
+  critical: { ids: Set<string>; sourceLabel: string };
+  canEdit: boolean; userId: string; userEmail?: string; onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const byId = useMemo(() => new Map(allTasks.filter((t) => t.id).map((t) => [t.id!, t])), [allTasks]);
+  const below = useMemo(() => {
+    if (isLeaf || !m.id) return [] as Milestone[];
+    const kids = new Map<string, Milestone[]>();
+    for (const t of allTasks) if (t.parentId) kids.set(t.parentId, [...(kids.get(t.parentId) ?? []), t]);
+    const out: Milestone[] = [];
+    const walk = (id: string) => { for (const c of kids.get(id) ?? []) { out.push(c); if (c.id) walk(c.id); } };
+    walk(m.id);
+    return out;
+  }, [isLeaf, m.id, allTasks]);
+  const onCount = isLeaf ? (m.id && critical.ids.has(m.id) ? 1 : 0) : below.filter((t) => t.id && critical.ids.has(t.id)).length;
+  const own = m.criticalOverride ?? null;
+  const inherited = !own && m.parentId ? (() => {
+    for (let t = byId.get(m.parentId!); t; t = t.parentId ? byId.get(t.parentId) : undefined) if (t.criticalOverride) return t;
+    return undefined;
+  })() : undefined;
+  const why = own ? "set on this task" : inherited ? `set on ${inherited.name}` : critical.sourceLabel.toLowerCase();
+  const set = async (v: "yes" | "no" | null) => {
+    if (!m.id || busy || v === own) return;
+    setBusy(true);
+    try {
+      const clear = below.filter((t) => t.id && t.criticalOverride).map((t) => ({ id: t.id!, after: null }));
+      await applyBulkFieldChange({
+        orgId: m.orgId, projectId: m.projectId!, field: "criticalOverride",
+        changes: [{ id: m.id, after: v }, ...clear],
+        summary: { mode: "set", to: v }, actorUserId: userId, actorUserEmail: userEmail,
+      });
+      onChanged();
+    } catch (e) {
+      void appAlert({ title: "Not saved", message: /critical_override/.test((e as Error).message) ? "Run migration 20261101_critical_path_control.sql first." : (e as Error).message });
+    } finally { setBusy(false); }
+  };
+  const opt = (v: "yes" | "no" | null, label: string) => (
+    <button type="button" disabled={busy} onClick={() => void set(v)} aria-pressed={own === v}
+      className={`px-2 py-0.5 text-[11px] font-bold ${own === v ? (v === "yes" ? "bg-rose-600 text-white" : "bg-slate-800 text-white dark:bg-slate-200 dark:text-slate-900") : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
+      {label}
+    </button>
+  );
+  return (
+    <Field icon={<Zap className="w-3.5 h-3.5" />} label="Critical path">
+      <span className={onCount ? "font-bold text-rose-700 dark:text-rose-300" : ""}>
+        {isLeaf ? (onCount ? "On the critical path" : "Not critical") : onCount ? `${onCount} of ${below.filter((t) => !allTasks.some((c) => c.parentId === t.id)).length} steps critical` : "No steps critical"}
+      </span>
+      <span className="ml-1 text-[10px] text-[var(--color-text-faint)]">· {why}</span>
+      {canEdit && (
+        <div className="mt-1 flex items-center gap-2 flex-wrap">
+          <div className="inline-flex overflow-hidden rounded-md border border-[var(--color-border-strong)] divide-x divide-[var(--color-border)]" role="group" aria-label="Critical path">
+            {opt(null, "Auto")}{opt("yes", "Critical")}{opt("no", "Not critical")}
+          </div>
+          {!isLeaf && <span className="text-[10px] text-[var(--color-text-faint)]">applies to every step under it</span>}
+          {busy && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-faint)]" />}
+        </div>
+      )}
+    </Field>
   );
 }

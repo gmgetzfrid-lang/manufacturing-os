@@ -18,15 +18,21 @@ import {
 import type { Milestone } from "@/types/schema";
 import { computeExecutionReport } from "@/lib/executionReport";
 import { standingOf, type ShiftTimes } from "@/lib/shiftReport";
-import { computeCriticalPathLite } from "@/lib/criticalPath";
+import { computeCriticalPathLite, type CriticalPathResult } from "@/lib/criticalPath";
 
-export default function ExecutionReportView({ milestones, shiftTimes }: { milestones: Milestone[]; shiftTimes?: ShiftTimes }) {
+export default function ExecutionReportView({ milestones, shiftTimes, critical: given, criticalSource }: {
+  milestones: Milestone[]; shiftTimes?: ShiftTimes;
+  /** The project's critical path (its source plus hand marks). */
+  critical?: CriticalPathResult;
+  /** Where it comes from, for the note on the card. */
+  criticalSource?: string;
+}) {
   const tz = useScheduleTz();
   // "Expected by now" moves with the clock, not only when the data changes.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(t); }, []);
   const r = useMemo(() => computeExecutionReport(milestones, { tz, shiftTimes, now: new Date(now) }), [milestones, tz, shiftTimes, now]);
-  const critical = useMemo(() => computeCriticalPathLite(milestones), [milestones]);
+  const critical = useMemo(() => given ?? computeCriticalPathLite(milestones), [given, milestones]);
   const criticalNames = useMemo(
     () => milestones.filter((m) => m.id && critical.ids.has(m.id)).map((m) => m.name),
     [milestones, critical],
@@ -110,7 +116,7 @@ export default function ExecutionReportView({ milestones, shiftTimes }: { milest
             <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Driving the finish</span>
             <span className="text-sm font-bold text-[var(--color-text)]">{critical.ids.size} task{critical.ids.size === 1 ? "" : "s"} on the critical path</span>
             {critical.remainingHours > 0 && <span className="text-[11px] text-[var(--color-text-muted)]">· {Math.round(critical.remainingHours)}h remaining on the chain</span>}
-            <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">heuristic — based on schedule shape, not dependency links</span>
+            <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">{criticalSource ? `${criticalSource} · change it on the Timeline` : "estimate — based on schedule shape, not dependency links"}</span>
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {criticalNames.slice(0, 10).map((n, i) => (

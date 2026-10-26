@@ -86,3 +86,74 @@ export function computeCriticalPathLite(
 
   return { ids: chain, finish: new Date(projFinish).toISOString(), remainingHours };
 }
+
+// ─── Which steps are critical, under the project's control ───────────
+
+/** Where the critical path comes from: the schedule file's own flags (MS
+ *  Project's Critical), the app's estimate above, or nothing but what
+ *  people mark by hand. */
+export type CriticalMode = "file" | "estimate" | "none";
+export type CriticalOverride = "yes" | "no";
+
+export const CRITICAL_MODES: Array<{ value: CriticalMode; label: string; hint: string }> = [
+  { value: "file", label: "From the schedule file", hint: "What MS Project marked critical, plus your changes" },
+  { value: "estimate", label: "App's estimate", hint: "The unfinished work ending nearest the finish date, plus your changes" },
+  { value: "none", label: "Only what I mark", hint: "Nothing is critical unless you mark it" },
+];
+
+const fileFlag = (m: Milestone): string | undefined => {
+  const v = (m.attributes as Record<string, unknown> | null | undefined)?.ms_critical;
+  return v == null ? undefined : String(v);
+};
+
+/** The import carried the file's own critical flags. */
+export function fileHasCritical(milestones: Milestone[]): boolean {
+  return milestones.some((m) => fileFlag(m) !== undefined);
+}
+
+/** The mode in force: the project's choice, else the file's flags when
+ *  the import carried them, else the estimate. */
+export function effectiveCriticalMode(milestones: Milestone[], mode: CriticalMode | null | undefined): CriticalMode {
+  if (mode) return mode;
+  return fileHasCritical(milestones) ? "file" : "estimate";
+}
+
+/** A task's own mark, else the nearest one above it — marking E-17 marks
+ *  every step under it, unless a step says otherwise. */
+export function criticalOverrideOf(m: Milestone, byId: Map<string, Milestone>): CriticalOverride | null {
+  const seen = new Set<string>();
+  for (let t: Milestone | undefined = m; t && !seen.has(t.id ?? ""); t = t.parentId ? byId.get(t.parentId) : undefined) {
+    if (t.id) seen.add(t.id);
+    if (t.criticalOverride === "yes" || t.criticalOverride === "no") return t.criticalOverride;
+  }
+  return null;
+}
+
+/** The unfinished steps on the critical path, as the project has it: the
+ *  mode's set, then every Yes / No mark applied on top. */
+export function resolveCriticalPath(milestones: Milestone[], mode: CriticalMode | null | undefined): CriticalPathResult & { mode: CriticalMode; marked: number } {
+  const eff = effectiveCriticalMode(milestones, mode);
+  const byId = new Map<string, Milestone>();
+  const parents = new Set<string>();
+  for (const m of milestones) { if (m.id) byId.set(m.id, m); if (m.parentId) parents.add(m.parentId); }
+  const leaves = milestones.filter((m) => m.id && !parents.has(m.id));
+  const base = eff === "estimate" ? computeCriticalPathLite(milestones).ids
+    : eff === "file" ? new Set(leaves.filter((m) => fileFlag(m) === "1" || fileFlag(m) === "true").map((m) => m.id!))
+      : new Set<string>();
+  const ids = new Set<string>();
+  let marked = 0;
+  for (const m of leaves) {
+    const o = criticalOverrideOf(m, byId);
+    if (o) marked++;
+    const on = o === "yes" ? true : o === "no" ? false : base.has(m.id!);
+    if (on && m.status !== "completed") ids.add(m.id!);
+  }
+  let remainingHours = 0, finish = -Infinity;
+  for (const id of ids) {
+    const m = byId.get(id)!;
+    if (typeof m.durationHours === "number") remainingHours += m.durationHours;
+    const f = finishMs(m);
+    if (Number.isFinite(f) && f > finish) finish = f;
+  }
+  return { ids, finish: Number.isFinite(finish) ? new Date(finish).toISOString() : null, remainingHours, mode: eff, marked };
+}
