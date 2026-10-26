@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { parseIsoDurationHours, mergeImportedProgress, completionNote, completionNoteShort, needsFutureConfirm } from "@/lib/scheduleRules";
+import { parseIsoDurationHours, mergeImportedProgress, needsFutureConfirm } from "@/lib/scheduleRules";
 
-const TZ = "America/Chicago";
 const at = (d: string, hm: string) => Date.parse(`${d}T${hm}:00-05:00`);
 const NOW = "2026-10-25T14:00:00.000Z";
 
@@ -47,28 +46,6 @@ describe("mergeImportedProgress — a re-import never takes progress away", () =
     expect(mergeImportedProgress(live("planned", 0), 250, NOW)?.percent_complete).toBe(100);
     expect(mergeImportedProgress(live("planned", 0), -5, NOW)).toBeNull();
     expect(mergeImportedProgress(live("planned", 0), Number.NaN, NOW)).toBeNull();
-  });
-});
-
-describe("completionNote — a finished step says when, relative to its plan", () => {
-  const plannedFinish = at("2026-10-28", "16:00"); // the 3-day task 26–28, due the 28th
-  it("done on the 25th against a 28th finish → 3 days early", () => {
-    expect(completionNote(at("2026-10-25", "10:00"), plannedFinish, TZ)).toBe("done Oct 25 · 3 days early");
-    expect(completionNoteShort(at("2026-10-25", "10:00"), plannedFinish, TZ)).toBe("3d early");
-  });
-  it("done on the 29th → 1 day late", () => {
-    expect(completionNote(at("2026-10-29", "02:00"), plannedFinish, TZ)).toBe("done Oct 29 · 1 day late");
-    expect(completionNoteShort(at("2026-10-29", "02:00"), plannedFinish, TZ)).toBe("1d late");
-  });
-  it("done on its planned day → no note (nothing to call out)", () => {
-    expect(completionNote(at("2026-10-28", "23:30"), plannedFinish, TZ)).toBeNull();
-    expect(completionNoteShort(at("2026-10-28", "01:00"), plannedFinish, TZ)).toBeNull();
-  });
-  it("tolerates missing stamps", () => {
-    expect(completionNote(null, plannedFinish, TZ)).toBeNull();
-    expect(completionNote("", plannedFinish, TZ)).toBeNull();
-    expect(completionNote("not a date", plannedFinish, TZ)).toBeNull();
-    expect(completionNote(at("2026-10-25", "10:00"), Number.NaN, TZ)).toBeNull();
   });
 });
 

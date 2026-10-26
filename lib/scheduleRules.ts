@@ -3,14 +3,11 @@
 //
 //   • parseIsoDurationHours   MS Project's PT4H30M0S → 4.5
 //   • mergeImportedProgress   a re-import never takes progress away
-//   • completionNote          "done Oct 25 · 3 days early" wherever a
-//                              finished task appears off its planned day
 //   • needsFutureConfirm      marking work that is planned more than a day
 //                              ahead asks once before it lands
 // Pure functions; views and data writers call them.
 
 import type { MilestoneStatus } from "@/types/schema";
-import { dayDiff, fmtInTz } from "@/lib/scheduleTz";
 
 /** "PT40H0M0S" / "PT4H30M" / "P1DT2H" → hours. Null when unparseable or 0. */
 export function parseIsoDurationHours(raw: string | null | undefined): number | null {
@@ -55,29 +52,6 @@ export function mergeImportedProgress(live: LiveProgress, filePercent: number | 
     out.actual_start_at = live.actualStartAt ?? nowIso;
   }
   return out;
-}
-
-/** "done Oct 25 · 3 days early" / "done Oct 29 · 1 day late" / null when it
- *  finished on its planned day (or has no completion stamp). */
-export function completionNote(actualAt: string | number | Date | null | undefined, plannedFinishMs: number, tz: string): string | null {
-  if (actualAt == null || actualAt === "") return null;
-  const a = actualAt instanceof Date ? actualAt.getTime() : typeof actualAt === "number" ? actualAt : Date.parse(actualAt);
-  if (!Number.isFinite(a) || !Number.isFinite(plannedFinishMs)) return null;
-  const days = dayDiff(a, plannedFinishMs, tz); // positive = finished before the planned day
-  const when = fmtInTz(a, tz, { month: "short", day: "numeric" });
-  if (days === 0) return null;
-  const n = Math.abs(days);
-  return `done ${when} · ${n} day${n === 1 ? "" : "s"} ${days > 0 ? "early" : "late"}`;
-}
-
-/** Chip-sized variant: "3d early" / "1d late" / null. */
-export function completionNoteShort(actualAt: string | number | Date | null | undefined, plannedFinishMs: number, tz: string): string | null {
-  if (actualAt == null || actualAt === "") return null;
-  const a = actualAt instanceof Date ? actualAt.getTime() : typeof actualAt === "number" ? actualAt : Date.parse(actualAt);
-  if (!Number.isFinite(a) || !Number.isFinite(plannedFinishMs)) return null;
-  const days = dayDiff(a, plannedFinishMs, tz);
-  if (days === 0) return null;
-  return `${Math.abs(days)}d ${days > 0 ? "early" : "late"}`;
 }
 
 /** Ask before recording progress on work planned more than a day ahead —

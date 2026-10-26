@@ -42,10 +42,9 @@ import {
 } from "@/lib/shiftReport";
 import { buildKickoff, buildCloseout, defaultMeeting, type MeetingKind, type PlanRow } from "@/lib/meetingPlan";
 import { clockLabel, fmtInTz, tzAbbrev } from "@/lib/scheduleTz";
-import { completionNote } from "@/lib/scheduleRules";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { toPlainText, toEmailHtml, type ExportBlock, type ExportDoc, type ExportStepRow } from "@/lib/reportExport";
-import { turnoverUpdate, withoutEmpty, noteLine } from "@/lib/managementUpdate";
+import { turnoverUpdate, withoutEmpty, noteLine, hazardJobsOf } from "@/lib/managementUpdate";
 import { useShiftTimes, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
 import { latestNotes } from "@/lib/milestones";
 import { loadProgressLog, scheduleAt, type ProgressLogRow } from "@/lib/progressHistory";
@@ -269,6 +268,7 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
           planOf: (id) => planByTask.get(id),
           stepsOf: (id) => stepsByTask.get(id),
           noteOf: noteThen,
+          goalOf: (r) => (r.carryOver ? 100 : Math.round(expectedFraction(r.leaf, report.next.end, tz, times) * 100)),
         })
         : withoutEmpty(sections.filter((x) => x.data).map((x) => ({ id: x.id, title: x.title, sub: x.sub, flag: x.flag ?? null, blocks: x.data!() }))),
     };
@@ -510,6 +510,8 @@ async function copyText(text: string): Promise<boolean> {
  *  (tables and colors kept in Outlook, Gmail…) or as plain text. */
 function CopyUpdate({ doc, meeting }: { doc: () => ExportDoc; meeting: MeetingKind }) {
   const key = `shiftReport.copyOff.${meeting}`;
+  // Sections left out unless ticked (the safety focus): the ones ticked.
+  const onKey = `shiftReport.copyOn.${meeting}`;
   const [d, setD] = useState<ExportDoc | null>(null);
   const [off, setOff] = useState<Set<string>>(new Set());
   const [done, setDone] = useState<{ what: "email" | "text"; ok: boolean } | null>(null);
@@ -521,12 +523,21 @@ function CopyUpdate({ doc, meeting }: { doc: () => ExportDoc; meeting: MeetingKi
     // ticked when the box opens: unticking it once must not hide tomorrow's
     // problems from management.
     const flagged = new Set(fresh.sections.filter((x) => x.flag).map((x) => x.id ?? x.title));
-    setOff(new Set(saved.filter((id) => !flagged.has(id)))); setDone(null); setD(fresh);
+    let on: string[] = [];
+    try { on = JSON.parse(localStorage.getItem(onKey) ?? "[]") as string[]; } catch { /* private mode */ }
+    const quiet = fresh.sections.filter((x) => x.offByDefault && !on.includes(x.id ?? x.title)).map((x) => x.id ?? x.title);
+    setOff(new Set([...saved.filter((id) => !flagged.has(id)), ...quiet])); setDone(null); setD(fresh);
   };
   const toggle = (id: string) => setOff((cur) => {
     const n = new Set(cur);
     if (n.has(id)) n.delete(id); else n.add(id);
-    try { localStorage.setItem(key, JSON.stringify([...n])); } catch { /* ignore */ }
+    const byDefault = new Set((d?.sections ?? []).filter((x) => x.offByDefault).map((x) => x.id ?? x.title));
+    try {
+      localStorage.setItem(key, JSON.stringify([...n].filter((x) => !byDefault.has(x))));
+      // Keep a choice for a section that isn't in today's update (no safety focus today).
+      const before = (JSON.parse(localStorage.getItem(onKey) ?? "[]") as string[]).filter((x) => !byDefault.has(x));
+      localStorage.setItem(onKey, JSON.stringify([...before, ...[...byDefault].filter((x) => !n.has(x))]));
+    } catch { /* ignore */ }
     return n;
   });
   const idOf = (s: ExportDoc["sections"][number]) => s.id ?? s.title;
@@ -752,7 +763,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   const pastRows = pastDue.map(problemRow), behindRows = behindPlan.map(problemRow);
   const doneRows = review.done.map((r) => rowFromShift(r, c, {
     when: r.offSchedule ? `planned ${c.D(r.start)}` : rowTime(r, shift),
-    right: completionNote(r.leaf.actualAt, r.finish, c.tz) ?? "done",
+    // Just "done": when it's marked done isn't when it finished (progress
+    // is often caught up later), so no early / late is claimed.
+    right: "done ✓",
     done: true,
     note: comment(r, "last"),
   }));
@@ -782,16 +795,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   }));
   // The next shift's work as the safety moment ranks it: its hours on
   // that shift (what's left, for work already past due).
-  const hazardJobs: HazardJobInput[] = planList.map((r) => {
-    const span = r.finish - r.start;
-    const overlap = Math.max(0, Math.min(r.finish, next.end) - Math.max(r.start, next.start));
-    return {
-      id: r.leaf.id ?? r.leaf.name, name: r.leaf.name, parentName: r.parentName, crumbs: r.path.slice(0, -1),
-      who: r.leaf.responsibleParty ?? null, critical: r.critical,
-      hours: overlap > 0 && span > 0 ? r.hours * (overlap / span) : r.hoursLeft,
-      when: r.carryOver ? `due ${c.DTs(r.finish)}` : rowTime(r, next),
-    };
-  });
+  const hazardJobs: HazardJobInput[] = hazardJobsOf(planList, next, (r) => (r.carryOver ? `due ${c.DTs(r.finish)}` : rowTime(r, next)));
   // The other crew's work under way, paused over the next shift: a line.
   const pausedLine = goals.paused.length
     ? `${otherKind === "day" ? "Day" : "Night"} crew's work paused until ${c.T(next.end)}: ${goals.paused.map((r) => `${r.parentName ? `${r.parentName} — ` : ""}${r.leaf.name} (${r.percent}%)`).join("; ")}.`

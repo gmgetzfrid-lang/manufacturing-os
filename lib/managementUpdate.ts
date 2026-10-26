@@ -8,7 +8,8 @@
 // no "did not finish" when everything finished, no "needs a decision" when
 // nothing is blocked.
 
-import { BEHIND_POINTS, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
+import { BEHIND_POINTS, whoOf, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
+import { rankHazards, hazardContext, lessonFor, equipmentTag, type HazardJobInput } from "@/lib/safetyMoment";
 import type { ExportBlock, ExportCell, ExportSection } from "@/lib/reportExport";
 
 export interface UpdateFormat {
@@ -35,6 +36,23 @@ export interface UpdateLookups {
   stepsOf?: (id: string) => Array<{ id?: string; name: string; start: number; finish: number; percent: number; pace: Pace; expectedPct: number; status: string; work?: WorkShift }> | undefined;
   /** The latest comment on a step ("sent out for calibration"), and when. */
   noteOf?: (stepId: string) => string | { body: string; at?: string | number | null } | undefined;
+  /** Where a next-shift step should be when that shift ends (%). */
+  goalOf?: (r: ShiftRow) => number;
+}
+
+/** The next shift's steps as the safety moment ranks them: their hours
+ *  on that shift (what's left, for work already past due). */
+export function hazardJobsOf(rows: ShiftRow[], next: ShiftWindow, when: (r: ShiftRow) => string): HazardJobInput[] {
+  return rows.map((r) => {
+    const span = r.finish - r.start;
+    const overlap = Math.max(0, Math.min(r.finish, next.end) - Math.max(r.start, next.start));
+    return {
+      id: r.leaf.id ?? r.leaf.name, name: r.leaf.name, parentName: r.parentName, crumbs: r.path.slice(0, -1),
+      who: r.leaf.responsibleParty ?? null, critical: r.critical,
+      hours: overlap > 0 && span > 0 ? r.hours * (overlap / span) : r.hoursLeft,
+      when: when(r),
+    };
+  });
 }
 
 /** A comment as one quiet line: line breaks folded, long ones cut, and its
@@ -82,18 +100,19 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   const gapTile = overall.standing === "behind" ? { label: "Work behind", tone: "rose" as const }
     : overall.standing === "ahead" ? { label: "Work ahead", tone: "emerald" as const }
       : { label: "Work gap", tone: "slate" as const };
-  out.push({
+  const standStats = [
+    { label: "Complete", value: `${overall.actualPct}%`, tone: overall.standing === "behind" ? "rose" : overall.standing === "ahead" ? "emerald" : "slate" },
+    { label: "Plan", value: `${overall.plannedPct}%`, tone: "slate" },
+    { label: gapTile.label, value: Math.abs(gap) <= 0.5 ? "even" : overall.standing === "on track" ? `${f.hrs(Math.abs(gap))} ${gap > 0 ? "behind" : "ahead"}` : f.hrs(Math.abs(gap)), tone: gapTile.tone },
+    { label: "Steps done", value: `${overall.stepsDone} / ${overall.stepsTotal}`, tone: "slate" },
+  ] as const;
+  // Filled in once the problems are known (the bottom line names them).
+  const stand: ExportSection & { id: string } = {
     id: "stand", title: "Where we stand",
     sub: overall.plannedFinish ? `Day ${overall.daysElapsed} of ${overall.daysTotal} · planned finish ${f.D(overall.plannedFinish)}` : undefined,
-    blocks: [{
-      k: "stats", items: [
-        { label: "Complete", value: `${overall.actualPct}%`, tone: overall.standing === "behind" ? "rose" : overall.standing === "ahead" ? "emerald" : "slate" },
-        { label: "Plan", value: `${overall.plannedPct}%`, tone: "slate" },
-        { label: gapTile.label, value: Math.abs(gap) <= 0.5 ? "even" : overall.standing === "on track" ? `${f.hrs(Math.abs(gap))} ${gap > 0 ? "behind" : "ahead"}` : f.hrs(Math.abs(gap)), tone: gapTile.tone },
-        { label: "Steps done", value: `${overall.stepsDone} / ${overall.stepsTotal}`, tone: "slate" },
-      ],
-    }],
-  });
+    blocks: [],
+  };
+  out.push(stand);
 
   // ── Last shift ── one row per task the crew had: how far it is, what's
   // next on it, and the one thing to know — on plan, behind, overdue, held
@@ -158,16 +177,15 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   if (review.done.length > 0) {
     const list = review.done.slice(0, MAX_ROWS * 2);
     const hiddenDone = review.done.length - list.length;
-    const finished = (r: ShiftRow): ExportCell => {
-      const at = r.leaf.actualAt ? Date.parse(String(r.leaf.actualAt)) : NaN;
-      return Number.isFinite(at) ? { t: `done ${f.DTs(at)}`, tone: "emerald" } : { t: "done", tone: "emerald" };
-    };
+    // Just "done": when it was marked done isn't when it finished
+    // (progress is often caught up later), so no time is claimed.
     out.push({
       id: "done", title: `Completed — ${shiftName(shift)} ${f.D(shift.start)}`,
       sub: `${review.done.length} step${review.done.length === 1 ? "" : "s"} done`,
       blocks: [{
-        k: "table", head: ["Task", "Step", "Finished"], textLabels: ["", "", ""],
-        rows: [...byTask(list, (r) => [r.leaf.name, finished(r)]), ...(hiddenDone > 0 ? [[muted(`+ ${hiddenDone} more`), "", ""] as ExportCell[]] : [])],
+        k: "table", head: ["Task", "Step", "Who", "Done"], align: ["left", "left", "left", "right"], textLabels: ["", "", "by", ""],
+        rows: [...byTask(list, (r) => [r.leaf.name, muted(r.leaf.responsibleParty ?? ""), { t: "✓", tone: "emerald", bold: true }]),
+          ...(hiddenDone > 0 ? [[muted(`+ ${hiddenDone} more`), "", "", ""] as ExportCell[]] : [])],
       }],
     });
   }
@@ -238,15 +256,82 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       id: "next", title: `Next shift — ${shiftName(next)} ${f.D(next.start)} ${f.win(next)}`,
       sub: `${goals.all.length} step${goals.all.length === 1 ? "" : "s"} · ${f.hrs(goals.mustDoHours)} this shift`,
       blocks: [...carry, {
-        k: "table", head: ["Task", "Step", "Planned", "Done"], align: ["left", "left", "left", "right"], textLabels: ["", "", "", "done"],
+        k: "table", head: ["Task", "Step", "Planned", "Who", look.goalOf ? "Now → goal" : "Done"], align: ["left", "left", "left", "left", "right"],
+        textLabels: ["", "", "", "by", look.goalOf ? "now → goal" : "done"], nowrap: [2, 4],
         rows: [...byTask(nextList, (r) => [
           { t: r.leaf.name, note: note(r.leaf.id) },
           r.carryOver ? { t: `carried over — was due ${f.DTs(r.finish)}`, tone: "rose" }
-            : r.start < next.start ? (r.pace === "behind" ? { t: "continues — behind plan", tone: "amber" } : muted("continues as planned"))
+            : r.start < next.start ? (r.pace === "behind" ? { t: "continues — behind", tone: "amber" } : muted("continues"))
               : `${f.T(r.start)}–${r.finish <= next.end ? f.T(r.finish) : "…"}`,
-          r.percent > 0 ? `${r.percent}%` : "",
-        ]), ...(nextHidden > 0 ? [[muted(`+ ${nextHidden} more steps`), "", "", ""] as ExportCell[]] : [])],
+          muted(r.leaf.responsibleParty ?? ""),
+          look.goalOf ? `${r.percent}% → ${look.goalOf(r)}%` : r.percent > 0 ? `${r.percent}%` : "",
+        ]), ...(nextHidden > 0 ? [[muted(`+ ${nextHidden} more steps`), "", "", "", ""] as ExportCell[]] : [])],
       }, ...extra],
+    });
+  }
+  // ── The bottom line, beside the numbers: the verdict, the next shift's
+  // size, the one thing to watch, and what finishes on it.
+  const fin = overall.plannedFinish ? f.D(overall.plannedFinish) : null;
+  const verdict = overall.standing === "behind" ? `Behind by ${f.hrs(Math.abs(gap))} of work${fin ? ` — planned finish ${fin} at risk` : ""}.`
+    : overall.standing === "ahead" ? `Ahead by ${f.hrs(Math.abs(gap))} of work${fin ? ` — planned finish ${fin}` : ""}.`
+      : `On track${fin ? ` — planned finish holds for ${fin}` : ""}.`;
+  const hoursBy = new Map<string, number>();
+  for (const r of goals.all) { const k = equipmentTag(r.parentName, r.leaf.name) ?? r.leaf.name; hoursBy.set(k, (hoursBy.get(k) ?? 0) + (r.hoursNext ?? 0)); }
+  const biggest = [...hoursBy].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k);
+  const size = goals.all.length
+    ? `${shiftName(next)} has ${goals.all.length} step${goals.all.length === 1 ? "" : "s"} (${f.hrs(goals.mustDoHours)})${biggest.length ? ` — most on ${biggest.join(", ")}` : ""}.`
+    : `Nothing is planned for the ${shiftName(next).toLowerCase()}.`;
+  const tasksOf = (rs: ShiftRow[]) => [...new Set(rs.map((r) => equipmentTag(r.parentName, r.leaf.name) ?? r.leaf.name))].slice(0, 3).join(", ");
+  const pastDue = review.carryOver.filter((r) => r.status !== "blocked" && r.status !== "on_hold");
+  const behindTasks = rows.filter((x) => x.rank === 2).length;
+  const watch = pastDue.length ? { text: `${pastDue.length} step${pastDue.length === 1 ? "" : "s"} past due — ${tasksOf(pastDue)}.`, tone: "rose" as const }
+    : blocked.length ? { text: `${blocked.length} step${blocked.length === 1 ? "" : "s"} blocked or on hold — ${tasksOf(blocked)}.`, tone: "rose" as const }
+      : behindTasks ? { text: `${behindTasks} task${behindTasks === 1 ? "" : "s"} behind plan — see Problems.`, tone: "amber" as const }
+        : null;
+  const finishing = [...new Map(goals.all.filter((r) => r.parentId).map((r) => [r.parentId!, r])).values()]
+    .map((r) => ({ name: r.parentName ?? r.leaf.name, at: look.finishOf(r.parentId!) }))
+    .filter((x): x is { name: string; at: number } => x.at != null && x.at > next.start && x.at <= next.end)
+    .sort((a, b) => a.at - b.at);
+  stand.blocks = [{
+    k: "overview", stats: [...standStats],
+    bars: overall.plannedStart != null && overall.plannedFinish != null
+      ? { done: overall.actualPct, plan: overall.plannedPct, from: f.D(overall.plannedStart), to: f.D(overall.plannedFinish) } : undefined,
+    title: "Bottom line",
+    lines: [
+      { text: verdict },
+      { text: size },
+      ...(watch ? [{ label: "Watch", text: watch.text, tone: watch.tone }] : []),
+      ...(finishing.length ? [{ label: `Finishes on ${shiftName(next).toLowerCase()}`, text: finishing.slice(0, 3).map((x) => `${x.name} (${f.T(x.at)})`).join(", ") + (finishing.length > 3 ? ` + ${finishing.length - 3} more` : "") }] : []),
+    ],
+  }];
+
+  // ── Crews on the next shift: how many steps and hours each has.
+  if (goals.all.length > 0) {
+    const crews = new Map<string, { steps: number; hours: number }>();
+    for (const r of goals.all) { const w = whoOf(r); const e = crews.get(w) ?? { steps: 0, hours: 0 }; e.steps++; e.hours += r.hoursNext ?? 0; crews.set(w, e); }
+    const list = [...crews].sort((a, b) => b[1].hours - a[1].hours || b[1].steps - a[1].steps || a[0].localeCompare(b[0], undefined, { numeric: true }))
+      .map(([who, e]) => ({ title: who, value: `${e.steps} step${e.steps === 1 ? "" : "s"} · ${f.hrs(e.hours)}` }));
+    const half = Math.ceil(list.length / 2);
+    const at = out.findIndex((s) => s.id === "next");
+    const crewSec: ExportSection & { id: string } = {
+      id: "crews", title: `Crews on ${shiftName(next).toLowerCase()}`,
+      blocks: [{ k: "columns", cols: list.length > 3 ? [{ title: "", rows: list.slice(0, half) }, { title: "", rows: list.slice(half) }] : [{ title: "", rows: list }] }],
+    };
+    out.splice(at >= 0 ? at : out.length, 0, crewSec);
+  }
+
+  // ── Safety focus: the next shift's riskiest jobs, each with this shift's
+  // "don't miss" lesson. Left out of a copy unless ticked.
+  const hazards = rankHazards(hazardJobsOf(goals.all, next, (r) => (r.carryOver ? `due ${f.DTs(r.finish)}` : `${f.T(Math.max(r.start, next.start))}–${r.finish <= next.end ? f.T(r.finish) : "…"}`)), { max: 2 });
+  if (hazards.length > 0) {
+    out.push({
+      id: "safety", title: `Safety focus — ${shiftName(next).toLowerCase()}`, offByDefault: true,
+      blocks: [{ k: "columns", cols: hazards.map((h, i) => {
+        const l = lessonFor(h.kind, next.start);
+        return { title: `${i + 1} · ${h.label}`, tone: "amber" as const, rows: [
+          { title: hazardContext(h), text: l ? `${l.watch} → ${l.prevent}` : "" },
+        ] };
+      }) }],
     });
   }
   return out;

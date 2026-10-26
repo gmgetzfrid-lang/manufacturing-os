@@ -26,7 +26,6 @@ import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { clockLabel, dayKey, dayKeyToMs, fmtInTz, addDays, tzAbbrev } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf, wbsCompare, stepShiftOnDay } from "@/lib/calendarPlacement";
 import { overdueOpenWork, startedEarlyWork } from "@/lib/openWork";
-import { completionNote } from "@/lib/scheduleRules";
 import { DEFAULT_SHIFT_TIMES, expectedByParent, expectedFraction, shiftAt, shiftWindow, workShiftOf, type ShiftTimes } from "@/lib/shiftReport";
 import { latestNotes, updateMilestoneNote } from "@/lib/milestones";
 import ShiftMark from "@/components/projects/ShiftMark";
@@ -255,7 +254,7 @@ export default function DayAgendaPanel({
     return `${a}–${b}`;
   };
   const spanNote = (r: Row) => {
-    if (r.leaf.status === "completed") { const n = completionNote(r.leaf.actualAt, r.finishMs, tz); if (n) return n; }
+    if (r.leaf.status === "completed") return null;
     if (r.live === "overdue") return `was due ${fmtInTz(r.finishMs, tz, { month: "short", day: "numeric" })} ${clockLabel(r.finishMs, tz)} — carry-over, finish or re-plan it`;
     if (r.live === "started-early") return `planned ${fmtInTz(r.startMs, tz, { month: "short", day: "numeric" })} ${clockLabel(r.startMs, tz)} — started ahead of plan`;
     if (r.startsToday && r.endsToday) return null;

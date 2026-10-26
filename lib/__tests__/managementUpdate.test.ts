@@ -61,7 +61,9 @@ describe("the update says what happened, in as few words as it takes", () => {
     // The finished tower is under Completed, by its step.
     const done = sections.find((s) => s.id === "done")!.blocks.find((b) => b.k === "table")!;
     if (done.k !== "table") throw new Error();
-    expect(done.rows.map((r) => r.map((c) => (typeof c === "string" ? c : c.t)).join(" | ")).join("\n")).toMatch(/T-605 Tower \| Open manways \| done/);
+    expect(done.rows.map((r) => r.map((c) => (typeof c === "string" ? c : c.t)).join(" | ")).join("\n")).toMatch(/T-605 Tower \| Open manways \| .* \| ✓/);
+    // No finish time is claimed: when it was marked done isn't when it finished.
+    expect(done.head).toEqual(["Task", "Step", "Who", "Done"]);
   });
 
   it("no numbers, no stretch, no 'in this order'", () => {
@@ -121,5 +123,21 @@ describe("a comment explains a step, quietly", () => {
     expect(html).toMatch(/Calibrate meter \(50%\)<div[^>]*font-style:italic[^>]*>“Sent out for calibration — back Wednesday”/);
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: secs });
     expect(text).toMatch(/FT-101 Coriolis meter — 50% · next Calibrate meter \(50%\) \("Sent out for calibration — back Wednesday"\) · On plan/);
+  });
+});
+
+describe("the update's first glance", () => {
+  it("puts the numbers, two bars and a bottom line in Where we stand, and the safety focus off by default", () => {
+    const stand = sections.find((s) => s.id === "stand")!;
+    const ov = stand.blocks[0];
+    if (ov.k !== "overview") throw new Error("no overview");
+    expect(ov.stats.map((x) => x.label)).toEqual(["Complete", "Plan", expect.any(String), "Steps done"]);
+    expect(ov.title).toBe("Bottom line");
+    expect(ov.lines[0].text).toMatch(/^(On track|Behind|Ahead)/);
+    const safety = sections.find((s) => s.id === "safety");
+    if (safety) expect(safety.offByDefault).toBe(true);
+    const html = toEmailHtml({ kind: "Shift turnover", project: "P", when: "w", asOf: "a", sections });
+    expect(html).toContain("Bottom line");
+    expect(html).not.toMatch(/display:\s*(flex|grid)/);
   });
 });

@@ -46,6 +46,23 @@ export type ExportBlock =
     /** Plain text: the word before each column's value ("last step"), "" for
      *  none. Emphasised cells (statuses) always read on their own. */
     textLabels?: string[];
+    /** Columns kept on one line ("10:00–12:00" never breaks). */
+    nowrap?: number[];
+  }
+  /** The numbers, two bars (done and planned, of the whole job) and the
+   *  bottom line beside them — the update's first glance. */
+  | {
+    k: "overview";
+    stats: Array<{ label: string; value: string; tone: Tone }>;
+    bars?: { done: number; plan: number; from: string; to: string };
+    title: string;
+    lines: Array<{ label?: string; text: string; tone?: Tone }>;
+  }
+  /** Short labelled boxes side by side ("Crews on day shift" | "Safety
+   *  focus"), each a list of lines. */
+  | {
+    k: "columns";
+    cols: Array<{ title: string; tone?: Tone; rows: Array<{ title: string; text?: string; value?: string }> }>;
   }
   | { k: "list"; items: Array<{ text: string; note?: string }> }
   | { k: "empty"; text: string };
@@ -54,6 +71,8 @@ export interface ExportSection {
   /** Stable key ("stand", "last") — which sections a person leaves out is remembered by it. */
   id?: string;
   title: string; sub?: string; flag?: "rose" | "amber" | null; blocks: ExportBlock[];
+  /** Left out of a copy unless the person ticks it (the safety focus). */
+  offByDefault?: boolean;
 }
 
 export interface ExportDoc {
@@ -112,6 +131,18 @@ export function toPlainText(d: ExportDoc): string {
           break;
         case "list":
           for (const x of b.items) out.push(`   ✓ ${x.text}${x.note ? ` (${x.note})` : ""}`);
+          break;
+        case "overview":
+          out.push(`   ${b.stats.map((x) => `${x.label}: ${x.value}`).join("  |  ")}`);
+          if (b.bars) out.push(`   Job progress: ${b.bars.done}% done, ${b.bars.plan}% planned by now`);
+          out.push(`   ${b.title.toUpperCase()}`);
+          for (const l of b.lines) out.push(`   ${l.label ? `${l.label}: ` : ""}${l.text}`);
+          break;
+        case "columns":
+          for (const c of b.cols) {
+            if (c.title) out.push(`   ${c.title.toUpperCase()}`);
+            for (const r of c.rows) out.push(`   • ${r.title}${r.value ? ` — ${r.value}` : ""}${r.text ? ` — ${r.text}` : ""}`);
+          }
           break;
         case "table": {
           // A blank first cell continues the task above: its rows indent
@@ -205,7 +236,7 @@ function blockHtml(b: ExportBlock): string {
       const keep = b.head.map((_, j) => j === 0 || b.rows.some((r) => cellText(r[j] ?? "") !== ""));
       const al = (j: number) => b.align?.[j] ?? "left";
       return `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;border:1px solid ${LINE};">` +
-        `<tr>${b.head.map((h, j) => !keep[j] ? "" : td(`font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:0.3px;color:${MUTED};background-color:#f8fafc;padding:5px 8px;border-bottom:1px solid ${LINE};text-align:${al(j)};`, esc(h), `bgcolor="#f8fafc" `)).join("")}</tr>` +
+        `<tr>${b.head.map((h, j) => !keep[j] ? "" : td(`font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:0.3px;color:${MUTED};background-color:#f8fafc;padding:5px 8px;border-bottom:1px solid ${LINE};text-align:${al(j)};white-space:nowrap;`, esc(h), `bgcolor="#f8fafc" `)).join("")}</tr>` +
         b.rows.map((r) => {
           // A row that continues the task above has no line between them.
           const cont = cellText(r[0] ?? "") === "";
@@ -214,10 +245,48 @@ function blockHtml(b: ExportBlock): string {
             const o = typeof c === "string" ? { t: c } : c;
             const color = o.tone ? (o.tone === "muted" ? MUTED : TONE[o.tone].fg) : INK;
             const note = "note" in o && o.note ? `<div style="${FONT}font-size:11px;font-style:italic;font-weight:normal;color:${MUTED};margin-top:1px;">“${esc(o.note)}”</div>` : "";
-            return td(`font-size:13px;color:${color};padding:5px 8px;${cont ? "" : "border-top:1px solid #e2e8f0;"}text-align:${al(j)};vertical-align:top;${o.bold ? "font-weight:bold;" : ""}`, esc(o.t) + note);
+            const nw = b.nowrap?.includes(j) ? "white-space:nowrap;" : "";
+            return td(`font-size:13px;color:${color};padding:5px 8px;${cont ? "" : "border-top:1px solid #e2e8f0;"}text-align:${al(j)};vertical-align:top;${nw}${o.bold ? "font-weight:bold;" : ""}`, esc(o.t) + note);
           }).join("")}</tr>`;
         }).join("") +
         `</table>`;
+    }
+    case "overview": {
+      // Left: the numbers and the two bars. Right: the bottom line.
+      const bar = (label: string, pct: number, color: string) => {
+        const w = Math.max(0, Math.min(100, Math.round(pct)));
+        return `<tr>${td(`font-size:10px;color:${MUTED};padding:1px 6px 1px 0;white-space:nowrap;width:34px;`, esc(label))}` +
+          td("padding:1px 0;", `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;"><tr>` +
+            (w > 0 ? td(`background-color:${color};height:8px;font-size:1px;line-height:1px;`, "&nbsp;", `width="${w}%" bgcolor="${color}" `) : "") +
+            (w < 100 ? td("background-color:#e2e8f0;height:8px;font-size:1px;line-height:1px;", "&nbsp;", `bgcolor="#e2e8f0" `) : "") +
+            `</tr></table>`) +
+          td(`font-size:10px;color:${INK};font-weight:bold;padding:1px 0 1px 6px;white-space:nowrap;width:30px;text-align:right;`, `${w}%`) + `</tr>`;
+      };
+      const left = blockHtml({ k: "stats", items: b.stats }) + (b.bars
+        ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin-top:4px;">` +
+          bar("Done", b.bars.done, "#0f766e") + bar("Plan", b.bars.plan, "#94a3b8") +
+          `<tr>${td("", "")}${td(`font-size:9px;color:${MUTED};padding-top:1px;`, `${esc(b.bars.from)} → ${esc(b.bars.to)} · whole job`)}${td("", "")}</tr></table>`
+        : "");
+      const right = `<div style="${FONT}font-size:10px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;color:#4338ca;margin-bottom:3px;">${esc(b.title)}</div>` +
+        b.lines.map((l, i) => `<div style="${FONT}font-size:12px;line-height:1.4;margin-top:${i ? 3 : 0}px;color:${l.tone ? TONE[l.tone].fg : INK};">${l.label ? `<b>${esc(l.label)}:</b> ` : ""}${i === 0 && !l.label ? `<b>${esc(l.text)}</b>` : esc(l.text)}</div>`).join("");
+      return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;"><tr>` +
+        td("vertical-align:top;padding:0 10px 0 0;width:330px;", left, `width="330" `) +
+        // min-width: on a phone the row scrolls sideways instead of squeezing the
+        // bottom line into a word-per-line column (Outlook desktop ignores it).
+        td("vertical-align:top;padding:7px 10px;background-color:#eef2ff;border:1px solid #c7d2fe;min-width:240px;", right, `bgcolor="#eef2ff" `) +
+        `</tr></table>`;
+    }
+    case "columns": {
+      const w = Math.floor(100 / Math.max(1, b.cols.length));
+      return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;"><tr>` +
+        b.cols.map((c, i) => td(`vertical-align:top;padding:0 ${i < b.cols.length - 1 ? 10 : 0}px 0 0;`,
+          (c.title ? `<div style="${FONT}font-size:14px;font-weight:bold;color:${INK};border-bottom:2px solid ${c.tone ? SOLID[c.tone] : INK};padding-bottom:2px;margin-bottom:4px;">${esc(c.title)}</div>` : "") +
+          `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;">` +
+          c.rows.map((r) => r.text != null
+            ? `<tr>${td(`font-size:12px;line-height:1.4;color:${INK};padding:2px 0 4px;`, `<b>${esc(r.title)}</b>${r.text ? `<br><span style="color:#475569;">${esc(r.text)}</span>` : ""}`)}</tr>`
+            : `<tr>${td(`font-size:12px;color:${INK};padding:3px 6px;border:1px solid #e2e8f0;`, `<b>${esc(r.title)}</b>`)}${td(`font-size:12px;color:${MUTED};padding:3px 6px;border:1px solid #e2e8f0;text-align:right;white-space:nowrap;`, esc(r.value ?? ""))}</tr>`).join("") +
+          `</table>`, `width="${w}%" `)).join("") +
+        `</tr></table>`;
     }
     case "steps": {
       const hasN = b.rows.some((r) => r.n != null);
