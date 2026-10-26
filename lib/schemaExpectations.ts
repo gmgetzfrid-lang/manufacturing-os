@@ -84,6 +84,7 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "milestone_notes", migration: "20260705_milestones_execution_richdata.sql" },
   { table: "milestone_progress_log", migration: "20261028_milestone_progress_log.sql" },
   { table: "milestones", migration: "20260614_phase7_milestones.sql" },
+  { table: "shift_handovers", migration: "20261103_shift_handovers.sql" },
   { table: "notes", migration: "20260617_phase9_notes.sql" },
   { table: "notification_preferences", migration: "20260529_phase_b_notifications.sql" },
   { table: "notifications", migration: "20260621_in_app_notifications.sql" },

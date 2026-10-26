@@ -110,6 +110,10 @@ const TABLE_CLASS: Record<string, TableClass> = {
     category: "archive",
     reason: "Every change to a task's % and status — rebuilds past shift reports. Archive with the project.",
   },
+  shift_handovers: {
+    category: "archive",
+    reason: "Each turnover as shipped — what was handed over and asked. Archive with the project.",
+  },
   notes: {
     category: "archive",
     reason: "Scratchpad records. Archive resolved notes after a while.",

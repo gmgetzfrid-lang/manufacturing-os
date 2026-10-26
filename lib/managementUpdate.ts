@@ -36,6 +36,10 @@ export interface UpdateLookups {
   stepsOf?: (id: string) => Array<{ id?: string; name: string; start: number; finish: number; dueAt?: number; percent: number; pace: Pace; expectedPct: number; status: string; work?: WorkShift }> | undefined;
   /** The latest comment on a step ("sent out for calibration"), and when. */
   noteOf?: (stepId: string) => string | { body: string; at?: string | number | null } | undefined;
+  /** Marked at the meeting: the next shift could try this other-crew step. */
+  tryOf?: (stepId: string) => { crew?: string | null; note?: string | null } | undefined;
+  /** What the last turnover asked this shift to try, and where each got. */
+  asked?: Array<{ id: string; name: string; crew: string | null; from: number; now: number | null }>;
 }
 
 /** The next shift's steps as the safety moment ranks them: their hours
@@ -192,6 +196,17 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     });
   }
 
+  // ── Asked to try ── what the last turnover asked of this shift.
+  const asked = look.asked ?? [];
+  const askedDone = asked.filter((a) => (a.now ?? 0) >= 100).length;
+  if (asked.length > 0) {
+    out.push({
+      id: "asked", title: `Asked to try — ${shiftName(shift)}`, sub: `${askedDone} of ${asked.length} done · as entered`,
+      blocks: [{ k: "table", head: ["Step", "Crew", "At ship", "Now"], align: ["left", "left", "right", "right"],
+        rows: asked.map((a) => [a.name, a.crew ?? muted("—"), `${a.from}%`, a.now == null ? "—" : a.now >= 100 ? { t: "done ✓", tone: "emerald", bold: true } : a.now > a.from ? `${a.now}%` : muted("not started")]) }],
+    });
+  }
+
   // ── Problems & decisions ── every task that's overdue, behind or held,
   // once, with the blocked / on-hold steps and their reasons.
   const problems = rows.filter((x) => x.rank <= 2).sort((a, b) => a.rank - b.rank);
@@ -274,7 +289,28 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   }
   // ── Carries to the other crew: its unfinished work, and work the file
   // put in the next shift's hours that has no crew then.
-  const carries = [...goals.otherShift, ...goals.movedOff];
+  const allCarries = [...goals.otherShift, ...goals.movedOff];
+  const tried = allCarries.filter((r) => r.leaf.id && look.tryOf?.(r.leaf.id));
+  const carries = allCarries.filter((r) => !tried.includes(r));
+  if (tried.length > 0) {
+    const nextSec = out.find((x) => x.id === "next");
+    const block: ExportBlock = {
+      k: "table", head: ["Task", "Step", "Why", "Crew", "Done"], align: ["left", "left", "left", "left", "right"],
+      textLabels: ["", "", "", "crew", "done"], nowrap: [4],
+      rows: byTask(tried, (r) => {
+        const d = look.tryOf!(r.leaf.id!)!;
+        return [
+          { t: r.leaf.name, note: d.note ? `“${d.note}”` : undefined },
+          r.carryOver ? { t: `carry-over — was due ${f.DTs(r.dueAt)}`, tone: "amber" } : muted(`${otherName.toLowerCase()} work — planned ${f.DTs(r.start)}`),
+          d.crew ?? muted("not named"),
+          `${r.percent}%`,
+        ];
+      }),
+    };
+    const sub: ExportBlock = { k: "sub", title: `Could try if possible — the ${otherName.toLowerCase()} crew's work`, count: tried.length, tone: "amber" };
+    if (nextSec) nextSec.blocks.push(sub, block);
+    else out.push({ id: "next", title: `Next shift — ${shiftName(next)} ${f.D(next.start)} ${f.win(next)}`, blocks: [sub, block] });
+  }
   if (carries.length > 0) {
     const otherLower = otherName.toLowerCase();
     out.push({
@@ -331,6 +367,8 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       { text: verdict },
       { text: size },
       ...(watch ? [{ label: "Watch", text: watch.text, tone: watch.tone }] : []),
+      ...(tried.length ? [{ label: `${shiftName(next)} could try`, text: `${tried.length} ${otherName.toLowerCase()}-crew step${tried.length === 1 ? "" : "s"}, if possible — see Next shift.` }] : []),
+      ...(asked.length ? [{ label: "Asked last turnover", text: `${askedDone} of ${asked.length} done (as entered).` }] : []),
       ...(finishing.length ? [{ label: `Planned to finish on ${shiftName(next).toLowerCase()}`, text: finishing.slice(0, 3).map((x) => `${x.name} (${f.T(x.at)})`).join(", ") + (finishing.length > 3 ? ` + ${finishing.length - 3} more` : "") }] : []),
     ],
   }];

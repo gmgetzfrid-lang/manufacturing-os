@@ -313,7 +313,7 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "asset_files",
   "curated_collection_items", "library_views", "plot_plans",
   "project_documents", "project_activity",
-  "milestones", "milestone_notes",
+  "milestones", "milestone_notes", "shift_handovers",
   "ticket_number_counters", "tickets", "ticket_comments",
   "checkout_sessions", "checkout_episodes", "checkout_messages",
   "markup_requests", "notes", "download_audits",
