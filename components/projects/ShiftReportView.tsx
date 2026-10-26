@@ -38,6 +38,7 @@ import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import {
   buildShiftReport, shiftWindow, nextShift, previousShift, defaultReviewShift, nextShiftWithWork, expectedByParent, paceOf, expectedFraction, workShiftOf, meetingLeadMin, type Pace, type WorkShift,
   DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftRow, type ShiftWindow, type ShiftReport,
+  crewsOnReport, filterShiftReport,
 } from "@/lib/shiftReport";
 import { buildKickoff, buildCloseout, defaultMeeting, type MeetingKind, type PlanRow } from "@/lib/meetingPlan";
 import { clockLabel, fmtInTz, tzAbbrev } from "@/lib/scheduleTz";
@@ -50,8 +51,13 @@ import { latestNotes } from "@/lib/milestones";
 import { loadProgressLog, scheduleAt, type ProgressLogRow } from "@/lib/progressHistory";
 import { effectiveSpans } from "@/lib/scheduleTime";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
-import { SafetyMomentBox, useSafetyMoment, type SafetyMomentState } from "@/components/projects/SafetyMomentBox";
+import { SafetyMomentBox } from "@/components/projects/SafetyMomentBox";
 import type { HazardJobInput } from "@/lib/safetyMoment";
+import { QuickLookCard, QuickLookOpen, TaskSearch, useQuickLookOpen } from "@/components/projects/TaskQuickLook";
+import { quickLook, quickLookIndex } from "@/lib/taskQuickLook";
+
+/** The crew the report is narrowed to (tables then drop their Who column). */
+const ReportCrew = React.createContext<string | null>(null);
 
 interface Props {
   milestones: Milestone[];
@@ -59,8 +65,6 @@ interface Props {
   criticalIds: Set<string>;
   projectId: string;
   projectName?: string;
-  /** The workspace — builds the safety moment on the member's AI key. */
-  orgId?: string;
 }
 
 const MEETINGS: Array<{ id: MeetingKind; label: string; Icon: typeof Rocket }> = [
@@ -69,7 +73,7 @@ const MEETINGS: Array<{ id: MeetingKind; label: string; Icon: typeof Rocket }> =
   { id: "closeout", label: "Close-out", Icon: Trophy },
 ];
 
-export default function ShiftReportView({ milestones: live, progress: liveProgress, criticalIds, projectId, projectName, orgId }: Props) {
+export default function ShiftReportView({ milestones: live, progress: liveProgress, criticalIds, projectId, projectName }: Props) {
   const tz = useScheduleTz();
   // The project's shift-change times — the same on every device.
   const times = useShiftTimes(projectId);
@@ -138,6 +142,11 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
     () => buildShiftReport({ milestones, progress, criticalIds, tz, times, shift, now: asOf }),
     [milestones, progress, criticalIds, tz, times, shift, asOf],
   );
+  // One crew at a time: the whole turnover narrows to their steps.
+  const crews = useMemo(() => crewsOnReport(report), [report]);
+  const [crewPick, setCrewPick] = useState<string | null>(null);
+  const crew = meeting === "turnover" && crewPick && crews.some((x) => x.who === crewPick) ? crewPick : null;
+  const view = useMemo(() => (crew ? filterShiftReport(report, crew) : report), [report, crew]);
   const kickoff = useMemo(() => buildKickoff({ milestones, progress, criticalIds, tz, times }), [milestones, progress, criticalIds, tz, times]);
   const closeout = useMemo(() => buildCloseout({ milestones, progress, criticalIds }), [milestones, progress, criticalIds]);
   const rehearsal = now < shift.start;
@@ -148,9 +157,6 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
   // y% planned" next to its progress.
   const planByTask = useMemo(() => expectedByParent(milestones, asOf, tz, times), [milestones, asOf, tz, times]);
   const ctx = useMemo(() => makeCtx(tz, byId, progress, planByTask), [tz, byId, progress, planByTask]);
-
-  // The next shift's safety moment — saved per shift, the same on every screen.
-  const safety = useSafetyMoment({ orgId, projectId, shiftStart: report.next.start, shiftKind: report.next.kind });
 
   // The latest comment on each step ("sent out for calibration") — shown
   // as a quiet line under the step, here and in the copied update.
@@ -175,8 +181,17 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
     ? kickoffSections(kickoff, ctx)
     : meeting === "closeout"
       ? closeoutSections(closeout, report, ctx)
-      : turnoverSections(report, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, safety }),
-  [meeting, kickoff, closeout, report, ctx, jumpTarget, noteThen, times, safety]);
+      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report }),
+  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew]);
+
+  // A step's card: asked about mid-meeting, answered from the schedule.
+  const qlIndex = useMemo(() => quickLookIndex(milestones), [milestones]);
+  const [lookId, setLookId] = useState<string | null>(null);
+  const look = useMemo(
+    () => (lookId ? quickLook(lookId, qlIndex, { progress, tz, times, asOf, goalAt: report.next.end }) : null),
+    [lookId, qlIndex, progress, tz, times, asOf, report.next.end],
+  );
+  const openLook = useCallback((id: string) => { if (qlIndex.byId.has(id)) setLookId(id); }, [qlIndex]);
 
   // ── live-meeting navigation ──
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -229,7 +244,7 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
   // The report as data — for Copy (text / email).
   const exportDoc = (): ExportDoc => {
     const { overall, shift: sh, next } = report;
-    const kind = meeting === "kickoff" ? "Kick-off meeting" : meeting === "closeout" ? "Close-out meeting" : "Shift turnover";
+    const kind = meeting === "kickoff" ? "Kick-off meeting" : meeting === "closeout" ? "Close-out meeting" : `Shift turnover${crew ? ` — ${crew}` : ""}`;
     const when = meeting === "turnover"
       ? `${shiftName(sh)} ${ctx.D(sh.start)} ${ctx.win(sh)} → ${shiftName(next)} ${ctx.D(next.start)} ${ctx.win(next)}`
       : meeting === "kickoff"
@@ -261,10 +276,11 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
 
   const head = (print: boolean) => (
     <Masthead meeting={meeting} report={report} kickoff={kickoff} closeout={closeout} ctx={ctx} asOf={asOf} now={now}
-      rehearsal={rehearsal} historyNote={historyNote} projectName={projectName} print={print} />
+      rehearsal={rehearsal} historyNote={historyNote} projectName={projectName} print={print} crew={crew} />
   );
 
   return (
+    <ReportCrew.Provider value={crew}>
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03]">
       <style>{`
         [data-shift-print-root] { display: none; }
@@ -351,7 +367,8 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
       {head(false)}
 
       {/* ── Agenda bar: stays on screen, jumps to each item ───────────── */}
-      <nav className="sticky top-0 z-20 px-3 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur flex items-center gap-1 overflow-x-auto" aria-label="Agenda">
+      <div className="sticky top-0 z-20 border-b border-[var(--color-border)] bg-[var(--color-surface)]/95 backdrop-blur">
+      <nav className="px-3 py-1.5 flex items-center gap-1 overflow-x-auto" aria-label="Agenda">
         {sections.map((s, i) => {
           const active = presenting === i;
           const tone = s.flag === "rose" ? "border-rose-300 bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-200 dark:border-rose-900"
@@ -367,8 +384,31 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
           );
         })}
       </nav>
+      {/* ── One crew at a time, and look up any step ───────────────── */}
+      {meeting === "turnover" && (
+        <div className="px-3 pb-1.5 flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-1.5">
+          {crews.length > 1 && (
+            <div className="min-w-0 w-full sm:w-auto sm:flex-1 flex items-center gap-1 overflow-x-auto scroll-quiet" role="group" aria-label="Show one crew">
+              <span className="shrink-0 text-[9.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mr-0.5">Crew</span>
+              {[{ who: null as string | null, steps: 0 }, ...crews].map((x) => {
+                const on = crew === x.who;
+                return (
+                  <button key={x.who ?? "__all"} type="button" aria-pressed={on} onClick={() => setCrewPick(x.who)}
+                    className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${on ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-[var(--color-accent)]" : "border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                    {x.who ?? "All"}
+                    {x.who && <span className="font-mono opacity-60">{x.steps}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <TaskSearch idx={qlIndex} fmt={ctx} onPick={openLook} />
+        </div>
+      )}
+      </div>
 
       {/* ── Screen body ─────────────────────────────────────────────── */}
+      <QuickLookOpen.Provider value={openLook}>
       {presenting != null && sections[presenting] ? (
         <div className="px-6 py-5 min-h-[420px] text-[14px]">
           <SectionHead n={presenting + 1} s={sections[presenting]} big />
@@ -399,6 +439,11 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
           <Footnote meeting={meeting} ctx={ctx} asOf={asOf} now={now} projectName={projectName} />
         </div>
       )}
+      </QuickLookOpen.Provider>
+      {look && (
+        <QuickLookCard look={look} fmt={ctx} onOpen={openLook} onClose={() => setLookId(null)}
+          goalAt={report.next} noteOf={noteThen} />
+      )}
 
       {/* Print copy — a direct child of <body>, so the page layout never
           offsets or clips it. Hidden on screen by the style above. */}
@@ -418,6 +463,7 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
         document.body,
       )}
     </div>
+    </ReportCrew.Provider>
   );
 }
 
@@ -637,7 +683,10 @@ function rowFromPlan(r: PlanRow, c: Ctx, o: { when?: string; right?: string; n?:
   };
 }
 
-function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void; jumpTarget: ShiftWindow | null; noteOf?: (id: string) => { body: string; at?: string | null } | undefined; times: ShiftTimes; safety?: SafetyMomentState }): Sec[] {
+function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void; jumpTarget: ShiftWindow | null; noteOf?: (id: string) => { body: string; at?: string | null } | undefined; times: ShiftTimes;
+  /** Narrowed to one crew: its name, and the whole job's report (the
+   *  standing up top stays the whole job's). */
+  crew?: string | null; whole?: ShiftReport }): Sec[] {
   const { overall, review, goals, blocked, shift, next } = report;
   // A step's latest comment, as one quiet line under it — shown once: with
   // the problem when it's one (that's where it's discussed), else under the
@@ -756,7 +805,8 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       extraTags: [closes ? { t: "closes gap", tone: "amber" } : null],
     });
   });
-  const pastDueAll = review.carryOver.filter((r) => !isHeld(r)).length;
+  const pastDueAll = (o.whole ?? report).review.carryOver.filter((r) => !isHeld(r)).length;
+  const forCrew = o.crew ? ` for ${o.crew}` : "";
   const standStats = [
     { label: "Actual", value: `${overall.actualPct}%`, tone: (overall.standing === "behind" ? "rose" : overall.standing === "ahead" ? "emerald" : "slate") as "rose" | "emerald" | "slate" },
     { label: "Plan by now", value: `${overall.plannedPct}%`, tone: "slate" as const },
@@ -790,7 +840,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       sub: "Open every turnover here — then the work.",
       body: (print) => (
         <div className="space-y-2">
-          {o.safety && <SafetyMomentBox jobs={hazardJobs} safety={o.safety} shiftKind={next.kind} shiftLabel={`${shiftName(next)} ${c.D(next.start)} ${c.win(next)}`} print={print} stamp={c.DTs} />}
+          <SafetyMomentBox jobs={hazardJobs} shiftKind={next.kind} shiftStart={next.start} print={print} />
           <Prompts print={print} cols={3} items={[
             "Incidents, near misses, first aid since last turnover",
             "Permits and lock-outs open across the change",
@@ -804,19 +854,19 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       id: "done", title: `Completed — ${shiftName(shift)} ${c.D(shift.start)} ${c.win(shift)}`, short: "Completed",
       sub: [`${review.scheduled.length} planned · ${review.done.length} done`, problemCount ? `${problemCount} problem${problemCount === 1 ? "" : "s"} next` : null].filter(Boolean).join(" · "),
       count: review.done.length,
-      data: () => nothingLast ? [{ k: "empty", text: "Nothing was planned for this shift." }] : [
-        review.done.length === 0 ? { k: "empty", text: "Nothing was completed on this shift." } : stepsBlock(doneRows, "Finished"),
+      data: () => nothingLast ? [{ k: "empty", text: `Nothing was planned${forCrew} on this shift.` }] : [
+        review.done.length === 0 ? { k: "empty", text: `Nothing was completed${forCrew} on this shift.` } : stepsBlock(doneRows, "Finished"),
       ],
       body: (print) => nothingLast ? (
         <Empty>
-          Nothing was planned for this shift.
+          Nothing was planned{forCrew} on this shift.
           {o.onJump && o.jumpTarget && !print && (
             <button onClick={o.onJump} className="ml-2 inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline">
               <FastForward className="w-3.5 h-3.5" /> Jump to {o.jumpTarget.kind} shift, {c.D(o.jumpTarget.start)}
             </button>
           )}
         </Empty>
-      ) : review.done.length === 0 ? <Empty>Nothing was completed on this shift.</Empty> : (
+      ) : review.done.length === 0 ? <Empty>Nothing was completed{forCrew} on this shift.</Empty> : (
         <StepTable print={print} rightHead="Finished" rows={doneRows} />
       ),
     },
@@ -1071,9 +1121,11 @@ function closeSection(title: string, signers: string[], sub = "Notes, actions an
 
 // ─── Masthead & footnote ─────────────────────────────────────────────
 
-function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehearsal, historyNote, projectName, print }: {
+function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehearsal, historyNote, projectName, print, crew }: {
   meeting: MeetingKind; report: ShiftReport; kickoff: ReturnType<typeof buildKickoff>; closeout: ReturnType<typeof buildCloseout>;
   ctx: Ctx; asOf: number; now: number; rehearsal: boolean; historyNote: string | null; projectName?: string; print: boolean;
+  /** The crew the report is narrowed to. */
+  crew?: string | null;
 }) {
   const { overall, shift, next } = report;
   const standing = overall.standing;
@@ -1101,6 +1153,7 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
           </div>
           <div className={`text-[11px] ${print ? "text-slate-700" : "text-slate-300"}`}>
             {when} · as of {c.T(meeting === "turnover" ? asOf : now)} {tzAbbrev(c.tz, now)}
+            {crew && meeting === "turnover" && <span className={`ml-2 whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-slate-700 text-slate-900" : "bg-white text-slate-900"}`}>{crew} only</span>}
             {rehearsal && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${print ? "border border-amber-700 text-amber-800" : "bg-amber-400 text-slate-900"}`}>Rehearsal — shift not started</span>}
             {historyNote && meeting === "turnover" && <span className={`ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold ${print ? "border border-slate-500 text-slate-700" : "bg-slate-700 text-slate-100"}`}>Earlier shift — {historyNote}</span>}
           </div>
@@ -1240,8 +1293,11 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
     if (!at.has(k)) { at.set(k, groups.length); groups.push({ g: r.group.title && !flat ? r.group : { key: "__solo", title: "", crumbs: "", meta: "" }, rows: [] }); }
     groups[at.get(k)!].rows.push(r);
   }
+  const crew = React.useContext(ReportCrew);
+  const open = useQuickLookOpen();
   const hasN = rows.some((r) => r.n);
-  const hasWho = rows.some((r) => r.who);
+  // Narrowed to one crew, every row's Who is that crew.
+  const hasWho = !crew && rows.some((r) => r.who);
   const hasWo = rows.some((r) => r.wo);
   const cols = (box ? 1 : 0) + (hasN ? 1 : 0) + 3 + (hasWho ? 1 : 0) + (hasWo ? 1 : 0);
   const one = "whitespace-nowrap overflow-hidden text-ellipsis";
@@ -1280,7 +1336,12 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
                     <td className={`${cell} font-mono tabular-nums font-bold text-[10.5px] break-words overflow-hidden`}>{r.when}</td>
                     <td className={cell}>
                       {flat && r.group.title && <span className="text-slate-500 dark:text-slate-400">{r.group.title} › </span>}
-                      <span className={r.done ? "line-through text-slate-400" : "font-semibold"}>{r.name}</span>
+                      {open && !print ? (
+                        <button type="button" onClick={() => open(r.id)} title="When it's due, the goal for the shift, what comes next"
+                          className={`text-left hover:underline decoration-dotted underline-offset-2 ${r.done ? "line-through text-slate-400" : "font-semibold"}`}>{r.name}</button>
+                      ) : (
+                        <span className={r.done ? "line-through text-slate-400" : "font-semibold"}>{r.name}</span>
+                      )}
                       {r.tags?.filter((t): t is TagT => !!t).map((t) => <span key={t.t} className="ml-1"><TagChip t={t.t} tone={t.tone} /></span>)}
                       {r.note && <div className="text-[10.5px] italic text-slate-600 dark:text-slate-300">{r.note}</div>}
                       {ownerLine && <div className="text-[10px] text-slate-500 mt-0.5">Owner / decision: <span className="inline-block w-44 border-b border-dotted border-slate-400 align-baseline">&nbsp;</span></div>}

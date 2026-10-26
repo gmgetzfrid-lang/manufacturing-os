@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
-  HAZARD_KINDS, hitListOf, classifyStep, rankHazards, equipmentTag, hazardContext, parseSafetyMoment, normalizeUrl, safetyMomentPrompt,
-  type HazardJobInput,
+  HAZARD_KINDS, classifyStep, rankHazards, equipmentTag, hazardContext, lessonFor, sourceLabel,
+  type HazardJobInput, type HazardKind, type SafetyLesson,
 } from "@/lib/safetyMoment";
+import { SAFETY_LESSONS } from "@/lib/safetyLessons";
 
 const job = (id: string, name: string, parentName: string | null, hours: number, extra: Partial<HazardJobInput> = {}): HazardJobInput =>
   ({ id, name, parentName, hours, when: "all shift", ...extra });
@@ -58,13 +59,6 @@ describe("rankHazards", () => {
     ]);
     expect(top.map((h) => h.kind)).toEqual(["lifting", "hot_work"]);
   });
-  it("the supervisor's note brings in work the schedule doesn't show", () => {
-    const top = rankHazards(NIGHT, { note: "Also one crane pick at 02:00 over the pipe rack" });
-    expect(top[0].kind).toBe("lifting");
-    expect(top[0].fromNote).toBe(true);
-    expect(hazardContext(top[0])).toBe("From your note");
-    expect(top).toHaveLength(3);
-  });
   it("returns fewer when the shift has fewer kinds of risky work", () => {
     expect(rankHazards([job("x", "Calibrate Equipment", null, 4)])).toEqual([]);
   });
@@ -84,62 +78,6 @@ describe("equipmentTag / hazardContext", () => {
     expect(hazardContext(hb)).toBe("E-17 18:00–22:00, E-12 4:00–… · Evergreen 1");
   });
 });
-
-describe("parseSafetyMoment", () => {
-  const hazards = rankHazards(NIGHT);
-  const searched = [
-    { url: "https://www.csb.gov/tosco-avon-refinery-petroleum-naphtha-fire/", title: "Tosco Avon" },
-    { url: "https://eusalt.com/_library/_files/Proj1_Ineos.pdf", title: "Inovyn" },
-  ];
-  it("keeps sourced gems, drops any whose source the search never returned", () => {
-    const text = "Here you go:\n" + JSON.stringify({ hazards: [
-      { kind: "line_break", title: "PSV-021 swap", gems: [
-        { watch: "A line that won't drain still holds liquid behind the break.", prevent: "Won't drain? Stop.", source: "http://csb.gov/tosco-avon-refinery-petroleum-naphtha-fire#top" },
-        { watch: "Made up lesson.", prevent: "Something.", source: "https://example.com/fake" },
-      ] },
-      { kind: "hydroblast", title: "Hydroblasting 10K", hitList: ["Dump tested before every start", "10K-rated hoses and fittings", "Whip checks on every joint", "Spray path barricaded", "Medical card on every blaster"], gems: [
-        { watch: "A taped or sticking dump pedal keeps the gun live.", prevent: "Pedal dumps on release.", source: "https://eusalt.com/_library/_files/Proj1_Ineos.pdf" },
-        { watch: "In Germany in 2018 an operator taped his pedal down.", prevent: "Don't.", source: "https://eusalt.com/_library/_files/Proj1_Ineos.pdf" },
-      ] },
-    ] });
-    const { items, dropped } = parseSafetyMoment(text, hazards, searched);
-    // The made-up source and the story (it names a year) are both dropped.
-    expect(dropped).toBe(2);
-    expect(items.find((i) => i.kind === "hydroblast")!.gems.map((g) => g.what)).toEqual(["A taped or sticking dump pedal keeps the gun live."]);
-    expect(items.map((i) => i.kind)).toEqual(hazards.map((h) => h.kind));
-    const lb = items.find((i) => i.kind === "line_break")!;
-    expect(lb.title).toBe("PSV-021 swap");
-    expect(lb.gems).toHaveLength(1);
-    expect(lb.gems[0].source.url).toBe("https://www.csb.gov/tosco-avon-refinery-petroleum-naphtha-fire/");
-    // A kind the model skipped keeps its place, empty, with the standard hit list.
-    const cs = items.find((i) => i.kind === "confined_space")!;
-    expect(cs.gems).toEqual([]);
-    expect(cs.hitList).toEqual(HAZARD_KINDS.confined_space.hitList);
-    // A tailored hit list comes through as written.
-    expect(items.find((i) => i.kind === "hydroblast")!.hitList).toEqual(["Dump tested before every start", "10K-rated hoses and fittings", "Whip checks on every joint", "Spray path barricaded", "Medical card on every blaster"]);
-  });
-  it("refuses an answer that isn't JSON", () => {
-    expect(() => parseSafetyMoment("no idea", hazards, searched)).toThrow(/expected form/);
-  });
-  it("compares URLs loosely", () => {
-    expect(normalizeUrl("https://www.csb.gov/a/b/#x")).toBe(normalizeUrl("http://csb.gov/a/b"));
-  });
-});
-
-describe("safetyMomentPrompt", () => {
-  it("lists each kind with its jobs, the note and sources to avoid", () => {
-    const p = safetyMomentPrompt({
-      projectName: "Transmix-1 Turnaround", shiftLabel: "Night shift Mon, Oct 26 18:00–6:00",
-      hazards: rankHazards(NIGHT), note: "Flex lance on the tubes", avoidUrls: ["https://csb.gov/x"],
-    });
-    expect(p).toContain('kind "hydroblast"');
-    expect(p).toContain("E-17: Hydroblast 10K Tubes and Shell — 18:00–22:00 — Evergreen 1");
-    expect(p).toContain("Supervisor's note: Flex lance on the tubes");
-    expect(p).toContain("- https://csb.gov/x");
-    expect(p).toContain("Standard hit list: Entry permit signed and posted at the manway /");
-  });
-});
-
 describe("hit lists", () => {
   it("every kind has a short standard hit list", () => {
     for (const def of Object.values(HAZARD_KINDS)) {
@@ -148,8 +86,46 @@ describe("hit lists", () => {
       for (const t of def.hitList) expect(t.split(/\s+/).length).toBeLessThanOrEqual(9);
     }
   });
-  it("a moment saved before hit lists existed gets the standard one", () => {
-    expect(hitListOf({ kind: "hydroblast" })).toEqual(HAZARD_KINDS.hydroblast.hitList);
-    expect(hitListOf({ kind: "hydroblast", hitList: [] })).toEqual(HAZARD_KINDS.hydroblast.hitList);
+});
+
+describe("the lesson library", () => {
+  const words = (t: string) => t.trim().split(/\s+/).length;
+  it("every lesson is a short takeaway with a real source — never the story", () => {
+    expect(SAFETY_LESSONS.length).toBeGreaterThan(0);
+    for (const l of SAFETY_LESSONS) {
+      expect(HAZARD_KINDS[l.kind], l.watch).toBeTruthy();
+      expect(words(l.watch), l.watch).toBeLessThanOrEqual(24);
+      expect(words(l.prevent), l.prevent).toBeLessThanOrEqual(16);
+      expect(l.source.url, l.watch).toMatch(/^https:\/\/[^\s]+\.[a-z]{2,}/i);
+      expect(l.source.title.length, l.watch).toBeGreaterThan(0);
+      // A year means it's retelling the incident.
+      expect(`${l.watch} ${l.prevent}`, l.watch).not.toMatch(/\b(19|20)\d{2}\b/);
+    }
+  });
+  it("no lesson is listed twice", () => {
+    const seen = new Set(SAFETY_LESSONS.map((l) => l.watch.toLowerCase()));
+    expect(seen.size).toBe(SAFETY_LESSONS.length);
+  });
+  it("the common turnaround jobs each have lessons", () => {
+    const has = (k: HazardKind) => SAFETY_LESSONS.some((l) => l.kind === k);
+    for (const k of ["confined_space", "hydroblast", "line_break"] as HazardKind[]) expect(has(k), k).toBe(true);
+  });
+});
+
+describe("lessonFor", () => {
+  const lib: SafetyLesson[] = ["a", "b", "c"].map((w) => ({ kind: "hydroblast", watch: w, prevent: "p", source: { url: "https://x.test", title: "t" } }));
+  const SHIFT = 43_200_000;
+  it("gives a different lesson each shift, round the list, the same on every screen", () => {
+    const t0 = Date.parse("2026-10-26T13:00:00Z");
+    const seq = [0, 1, 2, 3].map((n) => lessonFor("hydroblast", t0 + n * SHIFT, lib)!.watch);
+    expect(new Set(seq.slice(0, 3)).size).toBe(3);
+    expect(seq[3]).toBe(seq[0]);
+    expect(lessonFor("hydroblast", t0, lib)).toEqual(lessonFor("hydroblast", t0, lib));
+  });
+  it("nothing for a kind with no lessons", () => {
+    expect(lessonFor("radiography", Date.now(), lib)).toBeNull();
+  });
+  it("names a source by its site", () => {
+    expect(sourceLabel({ url: "https://www.csb.gov/x/" })).toBe("csb.gov");
   });
 });

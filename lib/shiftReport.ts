@@ -366,6 +366,8 @@ export interface ShiftRow {
   hours: number;
   /** Hours still to do = hours × (1 − percent). */
   hoursLeft: number;
+  /** On the next shift's list: its hours on that shift. */
+  hoursNext?: number;
   /** Its planned finish has passed and it isn't done. */
   overdue: boolean;
   /** Its planned start has passed and nothing has been done on it. */
@@ -675,7 +677,8 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     const inNext = win.reduce((a, [x, y]) => a + overlapMs(x, y, next.start, next.end), 0);
     return Math.min(r.hoursLeft, r.hours * inNext / total);
   };
-  const mustDoHours = Math.round(all.reduce((acc, r) => acc + hoursIn(r), 0) * 10) / 10;
+  for (const r of all) r.hoursNext = hoursIn(r);
+  const mustDoHours = Math.round(all.reduce((acc, r) => acc + (r.hoursNext ?? 0), 0) * 10) / 10;
 
   // Stretch: planned for the following shifts (up to ~2 shifts after the
   // next one), not done, not already on the must-do list, and READY — every
@@ -730,4 +733,53 @@ export function shiftLabel(w: ShiftWindow, tz: string): string {
   const d = new Date(w.start).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: tz });
   const t = (ms: number) => { const c = wallClock(ms, tz); return `${String(c.hour).padStart(2, "0")}:${String(c.minute).padStart(2, "0")}`; };
   return `${w.kind === "day" ? "Day" : "Night"} shift · ${d} · ${t(w.start)}–${t(w.end)}`;
+}
+
+// ─── One crew at a time ──────────────────────────────────────────────
+
+/** Who does a step, as the report groups it: its responsible party, or
+ *  "Unassigned". */
+export const UNASSIGNED = "Unassigned";
+export function whoOf(r: { leaf: Milestone }): string {
+  return (r.leaf.responsibleParty ?? "").trim() || UNASSIGNED;
+}
+
+/** Every crew with work on this turnover — last shift's and the next
+ *  one's — with how many steps each has on it, busiest first. */
+export function crewsOnReport(report: ShiftReport): Array<{ who: string; steps: number }> {
+  const seen = new Map<string, Set<string>>();
+  const add = (r: ShiftRow) => {
+    const who = whoOf(r);
+    const set = seen.get(who) ?? new Set<string>();
+    set.add(r.leaf.id ?? r.leaf.name);
+    seen.set(who, set);
+  };
+  const { review, goals, blocked } = report;
+  for (const list of [review.scheduled, review.done, review.carryOver, review.inProgress, review.notStarted, goals.all, goals.otherShift, goals.paused, blocked]) list.forEach(add);
+  return [...seen].map(([who, ids]) => ({ who, steps: ids.size }))
+    .sort((a, b) => Number(a.who === UNASSIGNED) - Number(b.who === UNASSIGNED) || b.steps - a.steps || a.who.localeCompare(b.who));
+}
+
+/** The report narrowed to one crew's steps. Where the job stands
+ *  (overall) stays the whole job's; the gap-closing hint, which is about
+ *  the whole job, is dropped. */
+export function filterShiftReport(report: ShiftReport, who: string): ShiftReport {
+  const keep = (rows: ShiftRow[]) => rows.filter((r) => whoOf(r) === who);
+  const { review, goals } = report;
+  const all = keep(goals.all);
+  return {
+    ...report,
+    review: {
+      scheduled: keep(review.scheduled), done: keep(review.done), inProgress: keep(review.inProgress),
+      notStarted: keep(review.notStarted), carryOver: keep(review.carryOver),
+    },
+    goals: {
+      ...goals,
+      all, carryOver: keep(goals.carryOver), planned: keep(goals.planned), critical: keep(goals.critical),
+      mustDoHours: Math.round(all.reduce((a, r) => a + (r.hoursNext ?? 0), 0) * 10) / 10,
+      otherShift: keep(goals.otherShift), paused: keep(goals.paused), stretch: keep(goals.stretch),
+      backOnTrackAt: null,
+    },
+    blocked: keep(report.blocked),
+  };
 }
