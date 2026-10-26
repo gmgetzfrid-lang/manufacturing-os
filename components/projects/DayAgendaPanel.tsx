@@ -18,13 +18,13 @@
 // for a progress update.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, X as XIcon, CalendarDays, Layers, ExternalLink, Search, ArrowDown, Check } from "lucide-react";
+import { ChevronLeft, ChevronRight, X as XIcon, CalendarDays, Layers, ExternalLink, Search, ArrowDown, Check, Sun, Moon } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl, { PICK_PCTS } from "@/components/projects/ProgressControl";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { clockLabel, dayKey, dayKeyToMs, fmtInTz, addDays, tzAbbrev } from "@/lib/scheduleTz";
-import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
+import { startMsOf, finishMsOf, wbsCompare, stepShiftOnDay } from "@/lib/calendarPlacement";
 import { overdueOpenWork, startedEarlyWork } from "@/lib/openWork";
 import { completionNote } from "@/lib/scheduleRules";
 import { DEFAULT_SHIFT_TIMES, expectedByParent, expectedFraction, shiftAt, shiftWindow, workShiftOf, type ShiftTimes } from "@/lib/shiftReport";
@@ -155,6 +155,32 @@ export default function DayAgendaPanel({
       return { ...g, rows: groupHit ? g.rows : g.rows.filter((r) => hit(r.leaf.name) || hit(r.leaf.workOrderRef) || hit(r.leaf.responsibleParty) || hit(r.leaf.location)) };
     }).filter((g) => g.rows.length > 0);
   }, [groups, query]);
+  // The day shift's work, then the night shift's: a step the night crew
+  // works goes under Night shift, so night work never sits in the middle
+  // of the day's list. Without night work there's one list, no headings.
+  const sections = useMemo(() => {
+    // Night work on this day: when it's scheduled today, for the crews
+    // that can work then (a round-the-clock crew's 18:00 step is night).
+    const dayShift = shiftWindow(day, "day", tz, shiftTimes);
+    const nextDay = addDays(dayMs, 1, tz);
+    const isNight = (r: Row) => {
+      const crew = workShiftOf(r.leaf, tz, shiftTimes);
+      return (r.live ? crew : stepShiftOnDay(r.startMs, r.finishMs, crew, dayMs, nextDay, dayShift)) === "night";
+    };
+    const part = (pred: (r: Row) => boolean) => shownGroups
+      .map((g) => ({ ...g, rows: g.rows.filter(pred) }))
+      .filter((g) => g.rows.length > 0);
+    const first = (g: EquipmentGroup) => g.rows[0];
+    const lead = (r: Row) => (r.live === "overdue" ? 0 : r.live === "started-early" ? 1 : 2);
+    const dayGroups = part((r) => !isNight(r));
+    const nightGroups = part(isNight).sort((a, b) => lead(first(a)) - lead(first(b)) || first(a).startMs - first(b).startMs);
+    if (nightGroups.length === 0) return [{ key: "all", shift: null, groups: dayGroups }];
+    return [
+      ...(dayGroups.length ? [{ key: "day", shift: "day" as const, groups: dayGroups }] : []),
+      { key: "night", shift: "night" as const, groups: nightGroups },
+    ];
+  }, [shownGroups, tz, shiftTimes, day, dayMs]);
+
   // Each step's latest comment: on its row, and in its box to edit.
   const [latestByStep, setLatestByStep] = useState<Map<string, LatestNote>>(new Map());
   const [notesTick, setNotesTick] = useState(0);
@@ -180,7 +206,7 @@ export default function DayAgendaPanel({
     const g = shownGroups.find((x) => x.rows.some((r) => r.leaf.id === id));
     if (g && toggled.get(keyOf(g)) === false) setToggled((m) => new Map(m).set(keyOf(g), true));
   };
-  const order = useMemo(() => shownGroups.flatMap((g) => g.rows.map((r) => r.leaf.id).filter((x): x is string => !!x)), [shownGroups]);
+  const order = useMemo(() => sections.flatMap((sec) => sec.groups.flatMap((g) => g.rows.map((r) => r.leaf.id).filter((x): x is string => !!x))), [sections]);
   const nextOf = (id: string) => { const i = order.indexOf(id); return i >= 0 && i + 1 < order.length ? order[i + 1] : null; };
 
   // Where the plan has each piece of equipment right now — "19% of 25%
@@ -293,12 +319,30 @@ export default function DayAgendaPanel({
 
         {/* Body: equipment groups, each with the steps due today. */}
         <div className="flex-1 overflow-y-auto">
-          {shownGroups.map((g) => {
+          {sections.map((sec) => (
+            <React.Fragment key={sec.key}>
+            {sec.shift === "day" && (
+              <div className="sticky top-0 z-[1] px-4 py-1.5 flex items-center gap-2 border-b border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/60 dark:text-amber-100">
+                <Sun className="w-3.5 h-3.5" aria-hidden />
+                <span className="text-[12px] font-black">Day shift</span>
+                <span className="text-[11px] opacity-80">{shiftTimes.dayStart}–{shiftTimes.nightStart}</span>
+                <span className="ml-auto text-[10.5px] font-semibold opacity-80">{sec.groups.reduce((a, g) => a + g.rows.length, 0)} steps</span>
+              </div>
+            )}
+            {sec.shift === "night" && (
+              <div className="sticky top-0 z-[1] px-4 py-1.5 flex items-center gap-2 bg-indigo-900 text-white dark:bg-indigo-950">
+                <Moon className="w-3.5 h-3.5 text-indigo-200" aria-hidden />
+                <span className="text-[12px] font-black">Night shift</span>
+                <span className="text-[11px] text-indigo-200">{shiftTimes.nightStart}–{shiftTimes.dayStart}</span>
+                <span className="ml-auto text-[10.5px] font-semibold text-indigo-200">{sec.groups.reduce((a, g) => a + g.rows.length, 0)} steps</span>
+              </div>
+            )}
+            {sec.groups.map((g) => {
             const color = colorOf(g.top);
             const head = g.parent ?? g.rows[0].leaf;
             const headInfo = head.id ? progress?.get(head.id) : undefined;
             return (
-              <section key={keyOf(g)} className="border-b border-[var(--color-border)]">
+              <section key={`${sec.key}:${keyOf(g)}`} className="border-b border-[var(--color-border)]">
                 <div className={`px-4 py-2 flex items-center gap-2 ${color.soft}`}>
                   <button onClick={() => toggle(g)} aria-expanded={isOpen(g)} title={isOpen(g) ? "Close" : "Open"}
                     className="shrink-0 p-1 -m-1 rounded hover:bg-black/5 dark:hover:bg-white/10 text-[var(--color-text-muted)]">
@@ -405,6 +449,8 @@ export default function DayAgendaPanel({
               </section>
             );
           })}
+            </React.Fragment>
+          ))}
           {groups.length === 0 && (
             <div className="px-4 py-8 text-center text-xs text-[var(--color-text-muted)]">No steps are scheduled on {label}.</div>
           )}

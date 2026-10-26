@@ -50,6 +50,49 @@ export interface DayPlacement<T extends PlaceableTask = PlaceableTask> {
   /** True when nothing under a group chip is scheduled on this day (a
    *  gap day inside its span). */
   idleToday?: boolean;
+  /** Which crew does the work under this chip on this day: day, night,
+   *  round the clock, or a mix that includes night. Night work sorts after
+   *  the day's work, so a box reads day shift first, then night shift. */
+  crew?: DayCrew;
+}
+
+export type DayCrew = "day" | "night" | "both" | "mixed";
+
+/** The steps under a chip that have work on this day (a leaf: itself). */
+export function stepsOnDay<T extends PlaceableTask>(ms: T, steps: T[], dayStart: number, dayEnd: number): T[] {
+  const list = steps.length ? steps : [ms];
+  return list.filter((st) => {
+    const s0 = startMsOf(st), f0 = finishMsOf(st);
+    if (!Number.isFinite(s0) || !Number.isFinite(f0)) return false;
+    if (s0 < dayEnd && f0 > dayStart) return true;
+    return s0 === f0 && s0 >= dayStart && s0 < dayEnd;
+  });
+}
+
+/** One crew for a chip on a day, from its steps': all night → night;
+ *  all day → day; all through both shifts → both; day work alongside
+ *  night work → mixed. */
+export function crewOf(crews: Iterable<"day" | "night" | "both">): DayCrew {
+  const set = new Set(crews);
+  if (set.size === 0) return "day";
+  if (set.size === 1) return [...set][0];
+  return set.has("night") || set.has("both") ? "mixed" : "day";
+}
+
+/** Which shift a step's work falls in on one day: when it is scheduled
+ *  that day, against the day shift's hours, for the crews that can work
+ *  then. A round-the-clock crew's 18:00–22:00 step is night work; its
+ *  all-day step is both; a day crew's step is day work. */
+export function stepShiftOnDay(
+  start: number, finish: number, crew: "day" | "night" | "both",
+  dayStart: number, dayEnd: number, dayShift: { start: number; end: number },
+): "day" | "night" | "both" {
+  if (crew !== "both") return crew;
+  const s = Math.max(start, dayStart), f = Math.min(finish, dayEnd);
+  if (!(f > s)) return "day";
+  const inDay = Math.max(0, Math.min(f, dayShift.end) - Math.max(s, dayShift.start));
+  const inNight = (f - s) - inDay;
+  return inDay > 0 && inNight > 0 ? "both" : inNight > 0 ? "night" : "day";
 }
 
 /** The active window of a chip on one day. `steps` are the leaf rows a
@@ -151,12 +194,17 @@ export function placeableTasks<T extends PlaceableTask>(
   return splitPlacements(milestones, childrenByParent, showSubtasks).chips;
 }
 
-/** Time-of-day order for the chips inside one day tile: by when the work
- *  is active on THAT day (todayStart/todayEnd when known), so a carry-over
- *  that is busy from 00:00 leads and a 14:00 step sorts after a 6:00 one
- *  whatever day their parent began. Idle gap-days sink to the bottom. */
+/** Time-of-day order for the chips inside one day tile: the day crew's
+ *  work, then the night crew's; each by when the work is active on THAT
+ *  day (todayStart/todayEnd when known), so a carry-over that is busy from
+ *  00:00 leads and a 14:00 step sorts after a 6:00 one whatever day their
+ *  parent began. Idle gap-days sink to the bottom. */
 export function compareDayPlacements(a: DayPlacement, b: DayPlacement): number {
   if (!!a.idleToday !== !!b.idleToday) return a.idleToday ? 1 : -1;
+  // The day's work first, then the night crew's — never night work in the
+  // middle of the day shift's list.
+  const an = a.crew === "night" ? 1 : 0, bn = b.crew === "night" ? 1 : 0;
+  if (an !== bn) return an - bn;
   if (a.todayStart != null && b.todayStart != null) {
     const s0 = cmpNum(a.todayStart, b.todayStart);
     if (s0) return s0;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { placeableTasks, splitPlacements, compareDayPlacements, compareBandPlacements, activeWindowOnDay, type DayPlacement, type BandPlacement, type PlaceableTask } from "@/lib/calendarPlacement";
+import { placeableTasks, splitPlacements, compareDayPlacements, compareBandPlacements, activeWindowOnDay, crewOf, stepsOnDay, stepShiftOnDay, type DayPlacement, type BandPlacement, type PlaceableTask } from "@/lib/calendarPlacement";
 
 type T = PlaceableTask & { id: string; parentId: string | null };
 
@@ -151,5 +151,51 @@ describe("activeWindowOnDay + day ordering by today's work", () => {
     const gap = p("gap-day", "2026-10-24T06:00:00Z", "2026-10-27T00:00:00Z", "2026-10-28T00:00:00Z", true);
     expect([early, gap, late, carry].sort(compareDayPlacements).map((x) => x.ms.id))
       .toEqual(["busy-since-midnight", "late-parent-early-today", "early-parent-late-today", "gap-day"]);
+  });
+});
+
+describe("day crew and day-then-night order", () => {
+  const mkP = (id: string, start: string, end: string, crew?: "day" | "night" | "both" | "mixed"): DayPlacement =>
+    ({ ms: { id, name: id, plannedStartAt: start, plannedAt: end }, dayIndex: 0, spanDays: 1, todayStart: Date.parse(start), todayEnd: Date.parse(end), crew });
+  it("puts the night crew's work after the day's, each in time order", () => {
+    const night1 = mkP("blast 18:00", "2026-10-26T18:00:00Z", "2026-10-26T22:00:00Z", "night");
+    const tail = mkP("inspect tail 00:00", "2026-10-26T00:00:00Z", "2026-10-26T04:00:00Z", "night");
+    const day1 = mkP("blinds 10:00", "2026-10-26T10:00:00Z", "2026-10-26T12:00:00Z", "day");
+    const day2 = mkP("pull 14:00", "2026-10-26T14:00:00Z", "2026-10-26T18:00:00Z", "mixed");
+    const round = mkP("manways 00:00", "2026-10-26T00:00:00Z", "2026-10-27T00:00:00Z", "both");
+    expect([night1, tail, day2, round, day1].sort(compareDayPlacements).map((p) => p.ms.id))
+      .toEqual(["manways 00:00", "blinds 10:00", "pull 14:00", "inspect tail 00:00", "blast 18:00"]);
+  });
+  it("reads a chip's crew from its steps that day", () => {
+    expect(crewOf(["night", "night"])).toBe("night");
+    expect(crewOf(["both"])).toBe("both");
+    expect(crewOf(["day", "night"])).toBe("mixed");
+    expect(crewOf(["day", "both"])).toBe("mixed");
+    expect(crewOf(["day", "day"])).toBe("day");
+    expect(crewOf([])).toBe("day");
+  });
+  it("finds the steps with work on a day", () => {
+    const steps = [
+      { id: "a", name: "a", plannedStartAt: "2026-10-26T10:00:00Z", plannedAt: "2026-10-26T12:00:00Z" },
+      { id: "b", name: "b", plannedStartAt: "2026-10-27T10:00:00Z", plannedAt: "2026-10-27T12:00:00Z" },
+      { id: "c", name: "c", plannedStartAt: "2026-10-25T20:00:00Z", plannedAt: "2026-10-26T02:00:00Z" },
+    ];
+    const parent = { id: "p", name: "p", plannedStartAt: "2026-10-25T20:00:00Z", plannedAt: "2026-10-27T12:00:00Z" };
+    expect(stepsOnDay(parent, steps, Date.parse("2026-10-26T00:00:00Z"), Date.parse("2026-10-27T00:00:00Z")).map((x) => x.id)).toEqual(["a", "c"]);
+  });
+});
+
+describe("stepShiftOnDay", () => {
+  const day = (h: number) => Date.parse(`2026-10-26T${String(h).padStart(2, "0")}:00:00Z`);
+  const D0 = day(0), D24 = Date.parse("2026-10-27T00:00:00Z"), shift = { start: day(6), end: day(18) };
+  it("a round-the-clock crew's work is night, day or both by when it's scheduled", () => {
+    expect(stepShiftOnDay(day(18), day(22), "both", D0, D24, shift)).toBe("night");
+    expect(stepShiftOnDay(day(0), day(4), "both", D0, D24, shift)).toBe("night");
+    expect(stepShiftOnDay(day(8), day(12), "both", D0, D24, shift)).toBe("day");
+    expect(stepShiftOnDay(day(0), D24, "both", D0, D24, shift)).toBe("both");
+  });
+  it("a day or night crew stays its own", () => {
+    expect(stepShiftOnDay(day(18), day(22), "day", D0, D24, shift)).toBe("day");
+    expect(stepShiftOnDay(day(8), day(12), "night", D0, D24, shift)).toBe("night");
   });
 });

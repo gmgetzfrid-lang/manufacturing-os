@@ -16,16 +16,16 @@
 // surfaces a group chip's subtask accordion.
 
 import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, ChevronDown, Crosshair, Layers, Info, GripVertical, CheckSquare, X as XIcon, ListChecks } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, Crosshair, Layers, Info, GripVertical, CheckSquare, X as XIcon, ListChecks, Moon, Sun } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl from "@/components/projects/ProgressControl";
 import { assignGroupColors } from "@/lib/scheduleColors";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
-import { splitPlacements, compareDayPlacements, activeWindowOnDay, startMsOf, finishMsOf, type DayPlacement } from "@/lib/calendarPlacement";
+import { splitPlacements, compareDayPlacements, activeWindowOnDay, stepsOnDay, crewOf, stepShiftOnDay, startMsOf, finishMsOf, type DayPlacement, type DayCrew } from "@/lib/calendarPlacement";
 import { addDays as addDaysTz, addMonths as addMonthsTz, clockLabel, dayDiff as dayDiffTz, dayKey, dayKeyToMs, dayOfWeek, fmtInTz, hasTimeOfDay, tzAbbrev, startOfDay as startOfDayTz, startOfMonth as startOfMonthTz, wallClock } from "@/lib/scheduleTz";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
-import { DEFAULT_SHIFT_TIMES, workShiftOf, type ShiftTimes } from "@/lib/shiftReport";
+import { DEFAULT_SHIFT_TIMES, workShiftOf, shiftWindow, type ShiftTimes } from "@/lib/shiftReport";
 import ShiftMark from "@/components/projects/ShiftMark";
 import DayAgendaPanel from "@/components/projects/DayAgendaPanel";
 import { overdueOpenWork } from "@/lib/openWork";
@@ -236,8 +236,21 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
     didSnap.current = true;
   }, [span, tz]);
 
+  // Day work, night work, or both — the crew switch in the toolbar.
+  const [crewFilter, setCrewFilterState] = useState<"all" | "day" | "night">("all");
+  React.useEffect(() => {
+    try {
+      const v = localStorage.getItem("calendar:crew");
+      if (v === "day" || v === "night") setCrewFilterState(v);
+    } catch { /* private mode */ }
+  }, []);
+  const setCrewFilter = (v: "all" | "day" | "night") => {
+    setCrewFilterState(v);
+    try { localStorage.setItem("calendar:crew", v); } catch { /* private mode */ }
+  };
+
   // Bucket every placed task onto each UTC day it covers, then order
-  // each tile by time of day (carry-overs first, then start time).
+  // each tile: the day crew's work, then the night crew's, each by time.
   const byDay = useMemo(() => {
     const m = new Map<string, DayPlacement<Milestone>[]>();
     for (const ms of mains) {
@@ -253,14 +266,21 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         const dayStartMs = d.getTime();
         const dayEndMs = addDaysUTC(d, 1, tz).getTime();
         const w = activeWindowOnDay(ms, steps, dayStartMs, dayEndMs);
+        // Day or night work on this day: when its steps are scheduled
+        // that day, for the crews that can work then.
+        const dayShift = shiftWindow(key, "day", tz, shiftTimes);
+        const crew = crewOf(stepsOnDay(ms, steps, dayStartMs, dayEndMs)
+          .map((st) => stepShiftOnDay(startMs(st), finishMs(st), workShiftOf(st, tz, shiftTimes), dayStartMs, dayEndMs, dayShift)));
+        if (crewFilter === "day" && crew === "night") continue;
+        if (crewFilter === "night" && crew === "day") continue;
         const arr = m.get(key) ?? [];
-        arr.push({ ms, dayIndex: i, spanDays: total, todayStart: w.start, todayEnd: w.end, idleToday: w.idle });
+        arr.push({ ms, dayIndex: i, spanDays: total, todayStart: w.start, todayEnd: w.end, idleToday: w.idle, crew });
         m.set(key, arr);
       }
     }
     for (const arr of m.values()) arr.sort(compareDayPlacements);
     return m;
-  }, [mains, tz, leafDescendants]);
+  }, [mains, tz, leafDescendants, shiftTimes, crewFilter]);
 
   // 6-week grid starting on the Sunday on/before the 1st.
   const weeks = useMemo(() => {
@@ -351,7 +371,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
       <Chip
         key={`${p.ms.id}-${p.dayIndex}`}
         ms={p.ms} dayIndex={p.dayIndex} spanDays={p.spanDays}
-        todayStart={p.todayStart} todayEnd={p.todayEnd} idleToday={p.idleToday}
+        todayStart={p.todayStart} todayEnd={p.todayEnd} idleToday={p.idleToday} crewToday={p.crew}
         childrenByParent={childrenByParent}
         ancestors={chain} color={color}
         canEdit={canEdit}
@@ -434,7 +454,19 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
             ⏮ Schedule start
           </button>
         )}
-        <div className="ml-auto inline-flex items-center gap-1.5">
+        <div className="ml-auto inline-flex items-center gap-1.5 flex-wrap">
+          {mode !== "day" && <>
+            <span className="text-[10px] font-semibold text-[var(--color-text-faint)] uppercase tracking-wide">Crew</span>
+            <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-md p-0.5 gap-0.5" role="group" aria-label="Crew">
+              {([["all", "All"], ["day", "Day"], ["night", "Night"]] as const).map(([id, label]) => (
+                <button key={id} onClick={() => setCrewFilter(id)} aria-pressed={crewFilter === id}
+                  title={id === "all" ? "Day and night work" : id === "day" ? "Only work the day crew does" : "Only work the night crew does"}
+                  className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-bold transition-colors ${crewFilter === id ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                  {id === "day" && <Sun className="w-3 h-3" />}{id === "night" && <Moon className="w-3 h-3" />}{label}
+                </button>
+              ))}
+            </div>
+          </>}
           <span className="text-[10px] font-semibold text-[var(--color-text-faint)] uppercase tracking-wide">Show</span>
           <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-md p-0.5 gap-0.5">
             {([["tasks", "Tasks"], ["subtasks", "Sub-tasks"]] as const).map(([id, label]) => (
@@ -526,7 +558,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                     {fmtInTz(day, tz, { weekday: "long", month: "short", day: "numeric" })}
                   </span>
                   <span className="text-[10.5px] font-semibold text-[var(--color-text-faint)]">
-                    {items.length ? `${items.length} task${items.length === 1 ? "" : "s"}${items.filter(isDone).length ? ` · ${items.filter(isDone).length} done` : ""} ›` : "Nothing scheduled"}
+                    {items.length ? `${items.length} task${items.length === 1 ? "" : "s"}${items.filter((p) => p.crew === "night").length ? ` · ${items.filter((p) => p.crew === "night").length} night` : ""}${items.filter(isDone).length ? ` · ${items.filter(isDone).length} done` : ""} ›` : "Nothing scheduled"}
                   </span>
                 </button>
                 {shown.length > 0 && <div className="flex flex-col gap-1">{shown.map((p) => chipFor(p, key))}</div>}
@@ -595,7 +627,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                     </button>
                     {items.length > 0 && (
                       <span className={`min-w-0 truncate whitespace-nowrap text-[9.5px] font-semibold tabular-nums ${inMonth ? "text-[var(--color-text-faint)]" : "text-slate-300"}`}>
-                        {items.length} task{items.length === 1 ? "" : "s"}{doneHere ? ` · ${doneHere} done` : ""}
+                        {items.length} task{items.length === 1 ? "" : "s"}{items.some((p) => p.crew === "night") && <span className="text-indigo-700 dark:text-indigo-300"> · {items.filter((p) => p.crew === "night").length} night</span>}{doneHere ? ` · ${doneHere} done` : ""}
                       </span>
                     )}
                   </div>
@@ -808,12 +840,14 @@ function DayScroller({ children, fade }: { children: React.ReactNode; fade: stri
 }
 
 function Chip({
-  ms, dayIndex, spanDays, todayStart, todayEnd, idleToday, childrenByParent, ancestors, color, canEdit, draggable, onDragStart, onTouchDragStart, onClick,
+  ms, dayIndex, spanDays, todayStart, todayEnd, idleToday, crewToday, childrenByParent, ancestors, color, canEdit, draggable, onDragStart, onTouchDragStart, onClick,
   onSetStatus, onSetProgress, onSetProgressNote, onStartNote, progress, canExpand, isExpanded, onToggleExpand, selectable, selected, onToggleSelect, dimmed, shiftTimes,
 }: {
   ms: Milestone; dayIndex: number; spanDays: number;
   /** This day's active window (see DayPlacement). */
   todayStart?: number; todayEnd?: number; idleToday?: boolean;
+  /** Which crew does its work on this day (see DayPlacement.crew). */
+  crewToday?: DayCrew;
   childrenByParent: Map<string, Milestone[]>;
   ancestors?: Milestone[];
   color?: { bar: string; soft: string; text: string; dot: string };
@@ -892,15 +926,21 @@ function Chip({
     "— Click to open · drag to another day to reschedule",
   ].filter(Boolean).join("\n");
 
-  const crew = (() => {
+  const crew: DayCrew = crewToday ?? (() => {
     const t = shiftTimes ?? DEFAULT_SHIFT_TIMES;
     if (!hasSubs) return workShiftOf(ms, tz, t);
-    const kinds = new Set(leafKids.map((k) => workShiftOf(k, tz, t)));
-    return kinds.size === 1 ? [...kinds][0] : "both";
+    return crewOf(leafKids.map((k) => workShiftOf(k, tz, t)));
   })();
+  // Night work reads as night at a glance: an indigo card (when it isn't
+  // already colored by its status) and a NIGHT tag.
+  const night = crew === "night";
+  const toneClass = night && effStatus === "planned"
+    ? "bg-indigo-50 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-800 text-[var(--color-text)]"
+    : tone;
   // The quiet second line: where it belongs, when today, which day of a
   // multi-day job.
-  const meta = [parentLabel, clock, spanDays > 1 ? `day ${dayIndex + 1}/${spanDays}` : null].filter(Boolean).join(" · ");
+  // The time first, so a box reads in order at a glance.
+  const meta = [clock, parentLabel, spanDays > 1 ? `day ${dayIndex + 1}/${spanDays}` : null].filter(Boolean).join(" · ");
 
   // One card: name and % on top; where / when below; a hairline of
   // progress along the bottom. Drag by the colored edge; select and drag
@@ -909,7 +949,7 @@ function Chip({
     <div
       onClick={onClick}
       title={tip}
-      className={`group/chip relative shrink-0 w-full text-left rounded-md border pl-2.5 pr-1 pt-1 pb-1.5 overflow-hidden cursor-pointer transition-colors ${tone} ${dimmed ? "opacity-40" : ""} ${selected ? "ring-2 ring-[var(--color-accent-ring)] ring-offset-1" : ""}`}
+      className={`group/chip relative shrink-0 w-full text-left rounded-md border pl-2.5 pr-1 pt-1 pb-1.5 overflow-hidden cursor-pointer transition-colors ${toneClass} ${dimmed ? "opacity-40" : ""} ${selected ? "ring-2 ring-[var(--color-accent-ring)] ring-offset-1" : ""}`}
     >
       {/* Unit accent stripe — same color for every task in a unit; it's the
           drag handle too. */}
@@ -963,8 +1003,19 @@ function Chip({
               right — the name keeps the whole first line. */}
           <div className="mt-0.5 flex items-center gap-1 min-w-0">
             <span className="flex items-center gap-1 min-w-0 flex-1 text-[9.5px] leading-tight opacity-70">
-              {/* Day-only or night-only work is marked; round the clock is the norm. */}
-              {crew !== "both" && <ShiftMark work={crew} />}
+              {/* Night work is tagged; round the clock and day-and-night
+                  mixes are marked; day work — most of it — is left quiet. */}
+              {night && (
+                <span title="Night-shift work" className="shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-[8.5px] font-black leading-[14px] bg-indigo-900 text-white dark:bg-indigo-300 dark:text-indigo-950">
+                  <Moon className="w-2.5 h-2.5" />NIGHT
+                </span>
+              )}
+              {crew === "both" && <ShiftMark work="both" />}
+              {crew === "mixed" && (
+                <span title="Day and night work today" className="shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-[8.5px] font-black leading-[14px] bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200">
+                  <Sun className="w-2.5 h-2.5" />+<Moon className="w-2.5 h-2.5" />
+                </span>
+              )}
               <span className="truncate">{meta}</span>
             </span>
             <span className="shrink-0 flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
