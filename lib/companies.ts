@@ -7,6 +7,7 @@
 // turnover reviews, milestones, portal submissions, safety events). The
 // scorecard can always show its work because its inputs are these rows.
 
+import { activeOnly } from "@/lib/activeMilestones";
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
 import {
@@ -274,7 +275,10 @@ export async function gatherCompanyProfile(company: Company): Promise<CompanyPro
 
   // Milestones on their scopes: responsible_party matches the company name.
   const msRows = projectIds.length
-    ? await safe(supabase.from("milestones").select("status, planned_at, actual_at").in("project_id", projectIds).ilike("responsible_party", company.name).limit(500))
+    ? await safe(activeOnly((a) => {
+      const q = supabase.from("milestones").select("status, planned_at, actual_at").in("project_id", projectIds).ilike("responsible_party", company.name);
+      return (a ? q.is("cancelled_at", null) : q).limit(500);
+    }))
     : [];
   const milestones = ((msRows ?? []) as Array<{ status: string; planned_at: string | null; actual_at: string | null }>);
   const hit = milestones.filter((m) =>

@@ -9,6 +9,7 @@
 // orders by reason, schedule slips, rejected turnover, punch history) so
 // closeout starts from facts, and a human edits it into the record.
 
+import { activeOnly } from "@/lib/activeMilestones";
 import { supabase } from "@/lib/supabase";
 import { listAccounts, listEntries, computeCostRollup, milestonePctIndex, fmtMoney } from "@/lib/costs";
 import { listChangeOrders, summarizeChangeOrders, CO_REASON_LABEL, type CoReason } from "@/lib/changeOrders";
@@ -40,7 +41,10 @@ async function gatherReportData(orgId: string, projectId: string): Promise<Repor
     safe(listAccounts(orgId, projectId), []),
     safe(listEntries(orgId, projectId), []),
     safe(listChangeOrders(projectId), []),
-    safe(supabase.from("milestones").select("name, planned_at, status, percent_complete, source").eq("project_id", projectId).order("planned_at").limit(500)
+    safe(activeOnly((a) => {
+      const q = supabase.from("milestones").select("name, planned_at, status, percent_complete, source").eq("project_id", projectId);
+      return (a ? q.is("cancelled_at", null) : q).order("planned_at").limit(500);
+    })
       .then((r) => (r.error ? [] : ((r.data ?? []) as Array<Record<string, unknown>>))), []),
     safe(listTurnoverItems(orgId, projectId), []),
     safe(listChecklists(orgId, projectId), []),

@@ -8,6 +8,7 @@
 // One round trip per source table, fired in parallel. Each section's
 // fetch is independent — a failure in one doesn't blank the rest.
 
+import { activeOnly } from "@/lib/activeMilestones";
 import { supabase } from "@/lib/supabase";
 import { listMyPendingAcks } from "@/lib/acknowledgments";
 import { listMyPendingReviews } from "@/lib/reviewControl";
@@ -154,10 +155,12 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
       .order("created_at", { ascending: false }),
     // Open milestones from the recent past (overdue) through the next 7 days
     // (due soon). We split them into overdue vs upcoming below.
-    supabase.from("milestones").select("*").eq("org_id", orgId)
-      .gte("planned_at", milestoneLookbackIso).lte("planned_at", sevenDaysIso)
-      .in("status", ["planned", "in_progress", "blocked"])
-      .order("planned_at", { ascending: true }).limit(100),
+    activeOnly((a) => {
+      const q = supabase.from("milestones").select("*").eq("org_id", orgId)
+        .gte("planned_at", milestoneLookbackIso).lte("planned_at", sevenDaysIso)
+        .in("status", ["planned", "in_progress", "blocked"]);
+      return (a ? q.is("cancelled_at", null) : q).order("planned_at", { ascending: true }).limit(100);
+    }),
     // Projects I'm a member of — to scope milestones below
     supabase.from("project_members").select("project_id").eq("user_id", userId),
     // Unread notification count

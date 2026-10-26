@@ -79,6 +79,9 @@ export default function RebaseScheduleModal({
         orgId, projectId,
         newStartIso: fromDateTimeInput(`${target}T${targetTime}`, tz) ?? new Date(`${target}T${targetTime}:00`).toISOString(),
         resetBaseline,
+        // Whole days by the plant's calendar (a daylight-saving change in
+        // between doesn't move tasks by an hour).
+        timeZone: tz,
         actorUserId, actorUserName, actorUserEmail, actorUserRole,
       });
       setResult(res);

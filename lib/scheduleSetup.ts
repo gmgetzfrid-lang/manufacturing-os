@@ -4,10 +4,11 @@
 //
 //   Time zone     "now" vs the plan — plan-by-now, behind, which shift
 //   Shift times   the day / night split, the turnover meeting time
+//   Night crews   which jobs have hands on nights (the rest is day work)
 //   Critical path where it comes from (the file can mark everything)
 //   Baseline      the plan progress is measured against
 
-export type SetupItemId = "timezone" | "shifts" | "critical" | "baseline";
+export type SetupItemId = "timezone" | "shifts" | "night" | "critical" | "baseline";
 
 export interface SetupItem {
   id: SetupItemId;
@@ -26,12 +27,16 @@ export function setupChecklist(s: {
   shiftTimesSaved: boolean | null;
   criticalChosen: boolean;
   hasBaseline: boolean;
+  /** Night crews decided: named jobs, or "follow the file". */
+  nightDecided?: boolean;
 }): SetupItem[] {
   return [
     { id: "timezone", label: "Plant time zone", required: true, done: s.timezoneSet,
       why: "Without it the schedule runs on UTC — plan-by-now, behind / on plan and the current shift are hours off." },
     { id: "shifts", label: "Shift change times", required: true, done: s.shiftTimesSaved === true, checking: s.shiftTimesSaved == null,
       why: "Every day / night split, the shift report and the turnover meeting time hang on these." },
+    { id: "night", label: "Night crews", required: false, done: !!s.nightDecided,
+      why: "Until it's set, every step the file put in night hours is listed as night work — even on jobs nights don't staff." },
     { id: "critical", label: "Critical path source", required: false, done: s.criticalChosen,
       why: "Schedule files often mark nearly everything critical — choose where it comes from." },
     { id: "baseline", label: "Baseline", required: false, done: s.hasBaseline,

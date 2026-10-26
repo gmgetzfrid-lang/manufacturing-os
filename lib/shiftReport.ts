@@ -18,6 +18,7 @@ import { effectiveWeight, leafPercent, roundPct, type ProgressInfo } from "@/lib
 import { dayKey, dayKeyToMs, wallClock, wallClockToMs, addDays, dayDiff, hasTimeOfDay } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
 import { blocksStart, linkOf } from "@/lib/scheduleLinks";
+import type { NightJobs } from "@/lib/nightStaffing";
 
 export type ShiftKind = "day" | "night";
 
@@ -30,6 +31,8 @@ export interface ShiftTimes {
    *  (shifts at 06:00, meetings at 05:30 → 30). From then on the turnover
    *  report shows the shift as it ends. Missing = 30. */
   meetingBefore?: number;
+  /** Jobs with a night crew — see lib/nightStaffing. */
+  nightJobs?: NightJobs;
 }
 
 /** Minutes before a shift change the turnover meeting starts. */
@@ -162,6 +165,8 @@ export function calendarShift(m: Milestone, times: ShiftTimes = DEFAULT_SHIFT_TI
 
 /** Which shift does this task's work. See the note above. */
 export function workShiftOf(m: Milestone, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): WorkShift {
+  // No night crew on this job: day work, whatever hours the file gave it.
+  if (m.staffedShift === "day") return "day";
   const set = m.shift as string | null | undefined;
   if (set === "both" || set === "swing") return "both";
   // The schedule's own calendar says which hours it's worked — a person's
@@ -200,20 +205,38 @@ export function workShiftOf(m: Milestone, tz: string, times: ShiftTimes = DEFAUL
   return "both";
 }
 
-/** The stretches of time a task is worked: its span, cut to its shift. */
-export function workWindows(m: Milestone, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES, span?: { start: number; finish: number }): Array<[number, number]> {
+/** The stretches of time a task is worked: its span, cut to its crew's
+ *  shifts. A date-only step is its crew's shift on each of its days (a
+ *  night step dated the 27th is the night that starts on the 27th). Work
+ *  planned wholly outside its crew's hours — day work the file put
+ *  overnight, a job with no night crew — is done on the crew's next hours
+ *  from its start, as long as it takes; `reflowed` says so. */
+export function crewWindows(m: Milestone, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES, span?: { start: number; finish: number }): { windows: Array<[number, number]>; reflowed: boolean } {
   const ws = workSpan(m, tz);
   const start = span?.start ?? ws.start, finish = span?.finish ?? ws.finish;
-  if (!Number.isFinite(start) || !Number.isFinite(finish) || finish <= start) return [];
+  if (!Number.isFinite(start) || !Number.isFinite(finish) || finish <= start) return { windows: [], reflowed: false };
   const kind = workShiftOf(m, tz, times);
-  if (kind === "both") return [[start, finish]];
+  if (kind === "both") return { windows: [[start, finish]], reflowed: false };
   const out: Array<[number, number]> = [];
-  for (const w of shiftWindowsBetween(start, finish, tz, times)) {
-    if (w.kind !== kind) continue;
-    const a = Math.max(start, w.start), b = Math.min(finish, w.end);
-    if (b > a) out.push([a, b]);
+  if (!ws.timed) {
+    for (let d = start, i = 0; d < finish && i < 400; d = addDays(d, 1, tz), i++) {
+      const w = shiftWindow(dayKey(d, tz), kind, tz, times);
+      out.push([w.start, w.end]);
+    }
+  } else {
+    for (const w of shiftWindowsBetween(start, finish, tz, times)) {
+      if (w.kind !== kind) continue;
+      const a = Math.max(start, w.start), b = Math.min(finish, w.end);
+      if (b > a) out.push([a, b]);
+    }
   }
-  return out;
+  if (out.length > 0) return { windows: out, reflowed: false };
+  const moved = crewHoursFrom(m, start, finish, tz, times);
+  return { windows: moved, reflowed: moved.length > 0 };
+}
+
+export function workWindows(m: Milestone, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES, span?: { start: number; finish: number }): Array<[number, number]> {
+  return crewWindows(m, tz, times, span).windows;
 }
 
 /** Does this task have work planned in this shift? */
@@ -222,7 +245,8 @@ export function worksIn(m: Milestone, w: ShiftWindow, tz: string, times: ShiftTi
   if (kind !== "both" && kind !== w.kind) return false;
   const { start, finish } = workSpan(m, tz);
   if (finish <= start) return start >= w.start && start < w.end;   // a zero-length milestone
-  return start < w.end && finish > w.start;
+  if (kind === "both") return start < w.end && finish > w.start;
+  return workWindows(m, tz, times).some(([a, b]) => a < w.end && b > w.start);
 }
 
 /** When a step's own crew is done with it: the end of its last worked
@@ -231,8 +255,32 @@ export function worksIn(m: Milestone, w: ShiftWindow, tz: string, times: ShiftTi
 export function crewDueMs(m: Milestone, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): number {
   const due = dueMsOf(m, tz);
   if (workShiftOf(m, tz, times) === "both") return due;
-  const win = workWindows(m, tz, times);
-  return win.length ? Math.min(due, win[win.length - 1][1]) : due;
+  const { windows, reflowed } = crewWindows(m, tz, times);
+  if (!windows.length) return due;
+  const end = windows[windows.length - 1][1];
+  return reflowed ? end : Math.min(due, end);
+}
+
+/** When a step is past due: its finish — or, for work moved onto its
+ *  crew's next hours (see crewWindows), the end of those hours. */
+export function staffedDueMs(m: Milestone, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): number {
+  const { windows, reflowed } = crewWindows(m, tz, times);
+  return reflowed ? windows[windows.length - 1][1] : dueMsOf(m, tz);
+}
+
+/** The crew's hours from `start` on, as many as the work takes (its
+ *  duration, else its planned span). */
+function crewHoursFrom(m: Milestone, start: number, finish: number, tz: string, times: ShiftTimes): Array<[number, number]> {
+  const kind = workShiftOf(m, tz, times);
+  let need = m.durationHours != null && m.durationHours > 0 ? m.durationHours * 3_600_000 : finish - start;
+  const out: Array<[number, number]> = [];
+  let w = shiftAt(start, tz, times);
+  for (let i = 0; i < 400 && need > 0; i++, w = nextShift(w, tz, times)) {
+    if (w.kind !== kind) continue;
+    const a = Math.max(start, w.start), b = Math.min(w.end, a + need);
+    if (b > a) { out.push([a, b]); need -= b - a; }
+  }
+  return out;
 }
 
 /** Share of a task's planned work the plan expects done by `now`: the
@@ -242,6 +290,8 @@ export function plannedFraction(m: Milestone, now: number, tz: string, times: Sh
   const ws = workSpan(m, tz);
   const s = span?.start ?? ws.start, f = span?.finish ?? ws.finish;
   if (!(f > s)) return now >= f ? 1 : 0;
+  // Work outside its crew's hours is expected on the crew's next hours,
+  // not overnight when nobody is there (crewWindows).
   const win = workWindows(m, tz, times, { start: s, finish: f });
   const total = win.reduce((a, [x, y]) => a + (y - x), 0);
   if (total <= 0) return Math.max(0, Math.min(1, (now - s) / (f - s)));
@@ -268,9 +318,11 @@ export function dueMsOf(m: Milestone, tz: string): number {
 }
 
 /** Past due and not done — one rule for every count, filter and report. */
-export function isOverdue(m: Milestone, now: number, tz: string, percent?: number): boolean {
+export function isOverdue(m: Milestone, now: number, tz: string, percent?: number, times?: ShiftTimes): boolean {
   if (m.status === "completed" || (percent ?? leafPercent(m)) >= 100) return false;
-  const due = dueMsOf(m, tz);
+  // With the shift times: work moved onto its crew's hours is due when
+  // those hours end (staffedDueMs).
+  const due = times ? staffedDueMs(m, tz, times) : dueMsOf(m, tz);
   return Number.isFinite(due) && due <= now;
 }
 
@@ -278,7 +330,7 @@ export function isOverdue(m: Milestone, now: number, tz: string, percent?: numbe
 export function paceOf(m: Milestone, percent: number, now: number, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): Pace {
   if (m.status === "completed" || percent >= 100) return "done";
   if (m.status === "blocked" || m.status === "on_hold") return "held";
-  const due = dueMsOf(m, tz);
+  const due = staffedDueMs(m, tz, times);
   if (Number.isFinite(due) && due <= now) return "overdue";
   // Same line as the task and the job (standingOf): 5 points short is behind.
   return percent + BEHIND_POINTS <= expectedFraction(m, now, tz, times) * 100 ? "behind" : "on plan";
@@ -311,9 +363,13 @@ export function expectedByParent(milestones: Milestone[], now: number, tz: strin
  *  ends, the last one. Never an empty page by default. */
 export function defaultReviewShift(milestones: Milestone[], now: number, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): ShiftWindow {
   let first = Infinity, last = -Infinity;
+  // Steps only — a parent keeps its stored dates after its last steps move
+  // or are cancelled. Their crew's hours: a date-only step's whole day.
+  const parents = new Set(milestones.map((m) => m.parentId).filter(Boolean));
   for (const m of milestones) {
-    if (!m.plannedAt) continue;
-    const s = startMsOf(m), f = finishMsOf(m);
+    if (!m.plannedAt || (m.id && parents.has(m.id))) continue;
+    const win = workWindows(m, tz, times);
+    const s = win[0]?.[0] ?? startMsOf(m), f = win[win.length - 1]?.[1] ?? dueMsOf(m, tz);
     if (Number.isFinite(s)) first = Math.min(first, s);
     if (Number.isFinite(f)) last = Math.max(last, f);
   }
@@ -368,8 +424,20 @@ export interface ShiftRow {
   hoursLeft: number;
   /** On the next shift's list: its hours on that shift. */
   hoursNext?: number;
+  /** On the next shift's list: the % it should reach by the end of that
+   *  shift — never below where it is now, never above 100. One number for
+   *  the screen, the print and the email. */
+  goalPct?: number;
+  /** When its own crew is done with it — the time a carry-over "was due"
+   *  (a date-only step: the end of its day, not its midnight start). */
+  dueAt: number;
   /** Its planned finish has passed and it isn't done. */
   overdue: boolean;
+  /** Planned wholly outside its crew's hours (day work the file put
+   *  overnight): worked on the crew's next hours — crewStart–crewFinish. */
+  reflowed: boolean;
+  crewStart: number;
+  crewFinish: number;
   /** Its planned start has passed and nothing has been done on it. */
   lateStart: boolean;
   /** Steps that must finish before it can start and aren't done — it
@@ -454,6 +522,10 @@ export interface ShiftReport {
      *  turnover): it waits for its own crew — listed, not counted as
      *  this shift's must-do. */
     otherShift: ShiftRow[];
+    /** Work the schedule file put in the next shift's hours but whose crew
+     *  isn't on then (a job with no night crew): it waits for its crew's
+     *  next hours (crewStart). Listed with the other crew's carry-over. */
+    movedOff: ShiftRow[];
     /** Work under way that the next shift's crew doesn't do — set to the
      *  other crew — paused over the next shift and resuming after it (so a
      *  job "continuing as planned" doesn't vanish from the next shift). */
@@ -533,7 +605,11 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   const rowFor = (m: Milestone, win: ShiftWindow): ShiftRow => {
     const chain = pathOf(m);
     const s = startMsOf(m), f = finishMsOf(m);
-    const due = dueMsOf(m, tz);
+    const due = staffedDueMs(m, tz, times);
+    const cw = crewWindows(m, tz, times);
+    // Its crew's first hour on it — a date-only day step dated today hasn't
+    // started late at the 05:30 meeting.
+    const firstWork = cw.windows[0]?.[0] ?? s;
     const percent = pctOf(m);
     const finished = m.status === "completed" || percent >= 100;
     const hours = workHours(m, tz);
@@ -543,17 +619,21 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       parentName: chain[0]?.name ?? null,
       parentId: chain[0]?.id ?? null,
       start: s, finish: f, percent,
+      dueAt: crewDueMs(m, tz, times),
       status: m.status,
       carryOver: false,
       critical: !!m.id && criticalIds.has(m.id),
       dueInShift: due > win.start && due <= win.end,
       startsInShift: s >= win.start && s < win.end,
-      offSchedule: !(s < win.end && f > win.start),
+      offSchedule: cw.windows.length ? !cw.windows.some(([a, b]) => a < win.end && b > win.start) : !(s < win.end && f > win.start),
+      reflowed: cw.reflowed,
+      crewStart: cw.windows[0]?.[0] ?? s,
+      crewFinish: cw.windows[cw.windows.length - 1]?.[1] ?? f,
       reason: m.statusReason ?? null,
       hours,
       hoursLeft: Math.round(hours * (1 - Math.min(100, Math.max(0, percent)) / 100) * 10) / 10,
       overdue: !finished && Number.isFinite(due) && due <= now,
-      lateStart: !finished && percent <= 0 && m.status !== "in_progress" && Number.isFinite(s) && s < now,
+      lateStart: !finished && percent <= 0 && m.status !== "in_progress" && Number.isFinite(firstWork) && firstWork < now,
       // Waiting = a link that stops it starting: finish-to-start until the
       // other is done, start-to-start until it has started.
       waitingOn: finished ? [] : predecessorsOf(m)
@@ -621,7 +701,10 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   for (const r of scheduled) r.carryOver = !DONE(r) && crewDueMs(r.leaf, tz, times) <= now;
   const seenDone = new Set<string>();
   const done: ShiftRow[] = [];
-  for (const r of scheduled) if (DONE(r)) { done.push(r); if (r.leaf.id) seenDone.add(r.leaf.id); }
+  // Done on an earlier shift (a step that spans several) isn't this
+  // shift's news — it was reported when it was marked done.
+  const doneBefore = (m: Milestone) => { const a = toMs(m.actualAt); return Number.isFinite(a) && a < shift.start; };
+  for (const r of scheduled) if (DONE(r) && !doneBefore(r.leaf)) { done.push(r); if (r.leaf.id) seenDone.add(r.leaf.id); }
   for (const m of leaves) {
     if (!m.id || seenDone.has(m.id)) continue;
     const row = rowFor(m, shift);
@@ -658,7 +741,12 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   const goalsCarry = carriedAll.filter(forNext);
   const otherShift = carriedAll.filter((r) => !forNext(r));
   const all = [...goalsCarry, ...planned];
-  const listed = new Set([...all, ...otherShift].map((r) => r.leaf.id));
+  const movedOff = leaves
+    .filter((m) => !held(m) && !DONE({ status: m.status, percent: pctOf(m) }) && !otherShift.some((r) => r.leaf.id === m.id))
+    .map((m) => rowFor(m, next))
+    .filter((r) => r.reflowed && !forNext(r) && r.start < next.end && r.finish > next.start)
+    .sort(cmp);
+  const listed = new Set([...all, ...otherShift, ...movedOff].map((r) => r.leaf.id));
   const paused = leaves
     .filter((m) => m.id && !listed.has(m.id) && !held(m) && !DONE({ status: m.status, percent: pctOf(m) })
       && (m.status === "in_progress" || pctOf(m) > 0) && workSpan(m, tz).finish > next.start && workSpan(m, tz).start < next.end)
@@ -675,9 +763,17 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     const total = win.reduce((a, [x, y]) => a + (y - x), 0);
     if (total <= 0) return Math.min(r.hoursLeft, shiftHours);
     const inNext = win.reduce((a, [x, y]) => a + overlapMs(x, y, next.start, next.end), 0);
-    return Math.min(r.hoursLeft, r.hours * inNext / total);
+    return Math.min(r.hoursLeft, r.hours * inNext / total, shiftHours);
   };
-  for (const r of all) r.hoursNext = hoursIn(r);
+  for (const r of all) {
+    r.hoursNext = hoursIn(r);
+    // Past due: finish it, or as far as one shift's hours take it. Planned:
+    // where the current plan has it at the shift's end.
+    const goal = r.carryOver
+      ? (r.hours > 0 ? r.percent + ((r.hoursNext ?? 0) / r.hours) * 100 : 100)
+      : plannedFraction(r.leaf, next.end, tz, times) * 100;
+    r.goalPct = Math.max(r.percent, Math.min(100, Math.round(goal)));
+  }
   const mustDoHours = Math.round(all.reduce((acc, r) => acc + (r.hoursNext ?? 0), 0) * 10) / 10;
 
   // Stretch: planned for the following shifts (up to ~2 shifts after the
@@ -691,9 +787,11 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   const horizonEnd = nextShift(nextShift(next, tz, times), tz, times).end;
   const stretch = leaves
     .filter((m) => m.id && !allIds.has(m.id) && !doneIds.has(m.id) && !held(m) && startMsOf(m) >= next.end && startMsOf(m) < horizonEnd)
-    .filter((m) => (m.dependsOn ?? []).every((d) => {
-      const p = byId.get(d);
-      return !p || doneIds.has(d) || mustIds.has(d) || !blocksStart(linkOf(m.linkTypes, d), { done: doneM(p), started: startedM(p) });
+    // Its predecessors as the report reads them everywhere (the file's
+    // links, else the step before it on the same equipment).
+    .filter((m) => predecessorsOf(m).every((p) => {
+      const d = p.id ?? "";
+      return doneIds.has(d) || (mustIds.has(d) && !held(p)) || !blocksStart(linkOf(m.linkTypes, d), { done: doneM(p), started: startedM(p) });
     }))
     .map((m) => rowFor(m, next))
     .filter(forNext)
@@ -723,7 +821,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       baselineSetAt: baselined > 0 ? baselineSetAt : null,
     },
     review: { scheduled, done, inProgress, notStarted, carryOver },
-    goals: { all, carryOver: goalsCarry, planned, critical, mustDoHours, otherShift, paused, stretch, gapHours, backOnTrackAt },
+    goals: { all, carryOver: goalsCarry, planned, critical, mustDoHours, otherShift, movedOff, paused, stretch, gapHours, backOnTrackAt },
     blocked,
   };
 }
@@ -755,7 +853,7 @@ export function crewsOnReport(report: ShiftReport): Array<{ who: string; steps: 
     seen.set(who, set);
   };
   const { review, goals, blocked } = report;
-  for (const list of [review.scheduled, review.done, review.carryOver, review.inProgress, review.notStarted, goals.all, goals.otherShift, goals.paused, blocked]) list.forEach(add);
+  for (const list of [review.scheduled, review.done, review.carryOver, review.inProgress, review.notStarted, goals.all, goals.otherShift, goals.movedOff, goals.paused, blocked]) list.forEach(add);
   return [...seen].map(([who, ids]) => ({ who, steps: ids.size }))
     .sort((a, b) => Number(a.who === UNASSIGNED) - Number(b.who === UNASSIGNED) || b.steps - a.steps || a.who.localeCompare(b.who));
 }
@@ -777,7 +875,7 @@ export function filterShiftReport(report: ShiftReport, who: string): ShiftReport
       ...goals,
       all, carryOver: keep(goals.carryOver), planned: keep(goals.planned), critical: keep(goals.critical),
       mustDoHours: Math.round(all.reduce((a, r) => a + (r.hoursNext ?? 0), 0) * 10) / 10,
-      otherShift: keep(goals.otherShift), paused: keep(goals.paused), stretch: keep(goals.stretch),
+      otherShift: keep(goals.otherShift), movedOff: keep(goals.movedOff), paused: keep(goals.paused), stretch: keep(goals.stretch),
       backOnTrackAt: null,
     },
     blocked: keep(report.blocked),

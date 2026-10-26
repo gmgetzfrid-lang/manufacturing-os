@@ -7,6 +7,7 @@
 // a crash. One round of parallel queries — the coach renders on every
 // project open, so this stays cheap.
 
+import { activeOnly } from "@/lib/activeMilestones";
 import { supabase } from "@/lib/supabase";
 import { listAccounts, listEntries, computeCostRollup, milestonePctIndex } from "@/lib/costs";
 import { quoteGroups, type CostDocument } from "@/lib/costDocs";
@@ -28,8 +29,10 @@ export async function gatherProjectSnapshot(orgId: string, projectId: string): P
         .then((r) => (r.error ? [] : (r.data ?? []))), []),
       safe(supabase.from("change_orders").select("status, amount").eq("project_id", projectId).limit(500)
         .then((r) => (r.error ? [] : ((r.data ?? []) as Array<{ status: string; amount: number }>))), []),
-      safe(supabase.from("milestones").select("id, status, planned_at, percent_complete, baseline_finish_at, source")
-        .eq("project_id", projectId).limit(1000)
+      safe(activeOnly((a) => {
+        const q = supabase.from("milestones").select("id, status, planned_at, percent_complete, baseline_finish_at, source").eq("project_id", projectId);
+        return (a ? q.is("cancelled_at", null) : q).limit(1000);
+      })
         .then((r) => (r.error ? [] : ((r.data ?? []) as Array<Record<string, unknown>>))), []),
       safe(supabase.from("project_checklists").select("id, status").eq("project_id", projectId).limit(50)
         .then((r) => (r.error ? [] : ((r.data ?? []) as Array<{ id: string; status: string }>))), []),

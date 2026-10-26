@@ -39,6 +39,15 @@ describe("splitCancelled", () => {
     expect(cancelled.map((j) => j.m.id)).toEqual(["tw1"]);
   });
 
+  it("a step cancelled on its own keeps its own line when its job is cancelled later", () => {
+    const LATER = "2026-10-27T15:00:00Z";
+    const job = mk({ id: "j", name: "E-12", cancelledAt: LATER, movedTo: "Spring 2027" });
+    const s1 = mk({ id: "s1", name: "Retube", parentId: "j", cancelledAt: AT, movedTo: "WO 123", cancelNote: "vendor does it" });
+    const s2 = mk({ id: "s2", name: "Blast", parentId: "j", cancelledAt: LATER });
+    const { cancelled } = splitCancelled([job, s1, s2]);
+    expect(cancelled.map((j) => [j.m.id, j.steps, j.m.movedTo])).toEqual([["j", 1, "Spring 2027"], ["s1", 1, "WO 123"]]);
+  });
+
   it("nothing cancelled: the same list back", () => {
     const list = [unit, v7, v7a];
     expect(splitCancelled(list).active).toBe(list);

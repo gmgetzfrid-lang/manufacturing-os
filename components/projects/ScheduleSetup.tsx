@@ -6,18 +6,20 @@
 // now filled in, so confirming a right answer is one click.
 
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Check, ChevronLeft, ChevronRight, Clock, Flag, Globe2, Loader2, Settings2, Zap } from "lucide-react";
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Clock, Flag, Globe2, Loader2, Moon, Settings2, Zap } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { setupChecklist, missingRequired, type SetupItem, type SetupItemId } from "@/lib/scheduleSetup";
 import { browserTimeZone, listTimeZones, tzLabel, DEFAULT_SCHEDULE_TZ } from "@/lib/scheduleTz";
 import { updateProjectMeta } from "@/lib/projects";
 import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
-import { meetingLeadMin, type ShiftTimes } from "@/lib/shiftReport";
-import { useCriticalMode, saveCriticalMode } from "@/lib/criticalModeStore";
+import { meetingLeadMin, workShiftOf, type ShiftTimes } from "@/lib/shiftReport";
+import { nightJobChoices, type NightJobs } from "@/lib/nightStaffing";
+import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
+import { useCriticalMode, useCriticalModeLoaded, saveCriticalMode } from "@/lib/criticalModeStore";
 import { CRITICAL_MODES, resolveCriticalPath, effectiveCriticalMode, type CriticalMode } from "@/lib/criticalPath";
 import type { Milestone } from "@/types/schema";
 
-const ICON: Record<SetupItemId, typeof Clock> = { timezone: Globe2, shifts: Clock, critical: Zap, baseline: Flag };
+const ICON: Record<SetupItemId, typeof Clock> = { timezone: Globe2, shifts: Clock, night: Moon, critical: Zap, baseline: Flag };
 const SESSION_KEY = (projectId: string) => `scheduleSetup.shown:${projectId}`;
 
 interface Props {
@@ -39,9 +41,10 @@ interface Props {
 export function ScheduleSetup(p: Props) {
   const saved = useShiftTimesSaved(p.projectId);
   const critical = useCriticalMode(p.projectId);
+  const nightDecided = useShiftTimes(p.projectId).nightJobs !== undefined;
   const items = useMemo(() => setupChecklist({
-    timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline,
-  }), [p.timezone, saved, critical, p.hasBaseline]);
+    timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided,
+  }), [p.timezone, saved, critical, p.hasBaseline, nightDecided]);
   const missing = missingRequired(items);
   // Opens by itself once per session for someone who can fix it.
   const [open, setOpen] = useState<SetupItemId | null>(null);
@@ -85,7 +88,8 @@ export function ScheduleSetup(p: Props) {
 export function ScheduleSetupButton(p: Props) {
   const saved = useShiftTimesSaved(p.projectId);
   const critical = useCriticalMode(p.projectId);
-  const items = setupChecklist({ timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline });
+  const nightDecided = useShiftTimes(p.projectId).nightJobs !== undefined;
+  const items = setupChecklist({ timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided });
   const todo = items.filter((i) => !i.done && !i.checking).length;
   const [open, setOpen] = useState(false);
   return (
@@ -101,7 +105,13 @@ export function ScheduleSetupButton(p: Props) {
   );
 }
 
-function SetupWizard({ items, start, critical, onClose, ...p }: Props & { items: SetupItem[]; start: SetupItemId; critical: CriticalMode | null; onClose: () => void }) {
+function SetupWizard({ items: given, start, critical, onClose: close, ...rest }: Props & { items: SetupItem[]; start: SetupItemId; critical: CriticalMode | null; onClose: () => void }) {
+  // The project re-reads only when the wizard closes: re-reading mid-way
+  // would reload the page under it and close it after step 1.
+  const [tzSaved, setTzSaved] = useState<string | null>(null);
+  const p = { ...rest, timezone: tzSaved ?? rest.timezone, onProjectChanged: () => undefined };
+  const items = given.map((i) => (i.id === "timezone" && tzSaved ? { ...i, done: true } : i));
+  const onClose = () => { close(); if (tzSaved) rest.onProjectChanged(); };
   const [at, setAt] = useState<SetupItemId>(start);
   const idx = items.findIndex((i) => i.id === at);
   const item = items[idx];
@@ -141,8 +151,9 @@ function SetupWizard({ items, start, critical, onClose, ...p }: Props & { items:
               </div>
               <p className="text-[12.5px] text-[var(--color-text-muted)] mt-0.5">{item.why}</p>
             </div>
-            {at === "timezone" && <TimeZoneStep {...p} done={item.done} onSaved={() => go(1)} />}
-            {at === "shifts" && <ShiftsStep {...p} done={item.done} onSaved={() => go(1)} />}
+            {at === "timezone" && <TimeZoneStep {...p} done={item.done} onSaved={(z) => { setTzSaved(z); go(1); }} />}
+            {at === "shifts" && <ShiftsStep {...p} done={item.done} checking={!!item.checking} onSaved={() => go(1)} />}
+            {at === "night" && <NightStep {...p} done={item.done} onSaved={() => go(1)} />}
             {at === "critical" && <CriticalStep {...p} critical={critical} onSaved={() => go(1)} />}
             {at === "baseline" && <BaselineStep {...p} done={item.done} />}
           </div>
@@ -181,7 +192,7 @@ function NoRights() {
 
 const US_ZONES = ["America/Los_Angeles", "America/Denver", "America/Phoenix", "America/Chicago", "America/New_York", "America/Anchorage", "Pacific/Honolulu"];
 
-function TimeZoneStep({ projectId, timezone, canManage, userId, onProjectChanged, done, onSaved }: Props & { done: boolean; onSaved: () => void }) {
+function TimeZoneStep({ projectId, timezone, canManage, userId, done, onSaved }: Props & { done: boolean; onSaved: (tz: string) => void }) {
   const here = browserTimeZone();
   const [tz, setTz] = useState(timezone || (here !== DEFAULT_SCHEDULE_TZ ? here : "America/Los_Angeles"));
   const [busy, setBusy] = useState(false);
@@ -191,7 +202,7 @@ function TimeZoneStep({ projectId, timezone, canManage, userId, onProjectChanged
     setBusy(true); setErr(null);
     try {
       await updateProjectMeta({ projectId, patch: { timezone: tz }, keepWallClock: true, actorUserId: userId });
-      onProjectChanged(); onSaved();
+      onSaved(tz);
     } catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); }
   };
@@ -214,7 +225,7 @@ function TimeZoneStep({ projectId, timezone, canManage, userId, onProjectChanged
   );
 }
 
-function ShiftsStep({ projectId, canManage, done, onSaved }: Props & { done: boolean; onSaved: () => void }) {
+function ShiftsStep({ projectId, canManage, done, checking, onSaved }: Props & { done: boolean; checking: boolean; onSaved: () => void }) {
   const times = useShiftTimes(projectId);
   const [draft, setDraft] = useState<ShiftTimes | null>(null);
   const t = draft ?? times;
@@ -243,17 +254,91 @@ function ShiftsStep({ projectId, canManage, done, onSaved }: Props & { done: boo
       {!done && !draft && <p className="text-[12px] text-[var(--color-text-muted)]">These are filled in with what the app is using now. If they&apos;re right, just confirm.</p>}
       <Msg err={err} />
       {canManage && (
-        <button onClick={() => void save()} disabled={busy || (done && !draft)} className={btn}>
-          {busy && <Loader2 className="w-4 h-4 animate-spin" />} {done && !draft ? "Saved" : draft ? "Save shift times" : "These are right — confirm"}
+        <button onClick={() => void save()} disabled={busy || (done && !draft) || (checking && !draft)} className={btn}>
+          {busy && <Loader2 className="w-4 h-4 animate-spin" />} {checking && !draft ? "Reading the saved times…" : done && !draft ? "Saved" : draft ? "Save shift times" : "These are right — confirm"}
         </button>
       )}
     </div>
   );
 }
 
+function NightStep({ projectId, milestones, canManage, done, onSaved }: Props & { done: boolean; onSaved: () => void }) {
+  const tz = useScheduleTz();
+  const times = useShiftTimes(projectId);
+  const saved: NightJobs | undefined = times.nightJobs;
+  const [mode, setMode] = useState<"jobs" | "file">(saved === "file" ? "file" : "jobs");
+  const [ids, setIds] = useState<Set<string>>(() => new Set(Array.isArray(saved) ? saved : []));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  // The file's own hours, before any night-crew setting is applied.
+  const choices = useMemo(() => nightJobChoices(milestones, (m) => workShiftOf({ ...m, staffedShift: null }, tz, times) !== "day"), [milestones, tz, times]);
+  const byId = useMemo(() => new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m])), [milestones]);
+  // A job checked covers every job under it.
+  const coveredBy = (id: string): string | null => {
+    const seen = new Set<string>();
+    for (let m = byId.get(id), p = m?.parentId ? byId.get(m.parentId) : undefined; p && p.id && !seen.has(p.id); p = p.parentId ? byId.get(p.parentId) : undefined) {
+      seen.add(p.id);
+      if (ids.has(p.id)) return p.name;
+    }
+    return null;
+  };
+  const toggle = (id: string) => setIds((cur) => { const n = new Set(cur); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const next: NightJobs = mode === "file" ? "file" : [...ids].filter((id) => !coveredBy(id));
+  const same = JSON.stringify(next) === JSON.stringify(saved === "file" ? "file" : Array.isArray(saved) ? [...saved].filter((id) => byId.has(id)) : undefined);
+  const save = async () => {
+    setBusy(true); setErr(null);
+    try { await saveProjectShiftTimes(projectId, { ...times, nightJobs: next }); onSaved(); }
+    catch (e) { setErr((e as Error).message); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="space-y-2.5">
+      <label className={`flex items-start gap-2.5 rounded-lg border px-3 py-2 cursor-pointer ${mode === "jobs" ? "border-orange-400 bg-orange-50 dark:border-orange-700 dark:bg-orange-950/40" : "border-[var(--color-border)]"}`}>
+        <input type="radio" name="night" disabled={!canManage} checked={mode === "jobs"} onChange={() => setMode("jobs")} className="mt-1" />
+        <span className="flex-1 min-w-0">
+          <span className="block text-[13px] font-bold text-[var(--color-text)]">Only these jobs have a night crew</span>
+          <span className="block text-[12px] text-[var(--color-text-muted)]">Everything else is day work. Steps the file put overnight wait for the next day shift and are listed under &ldquo;Carries to day shift&rdquo;, not as night work. Tick none if nights don&apos;t work at all.</span>
+        </span>
+      </label>
+      {mode === "jobs" && (
+        <div className="max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+          {choices.length === 0 && <div className="px-3 py-2 text-[12px] text-[var(--color-text-muted)]">No jobs with steps yet — import the schedule first.</div>}
+          {choices.map((c) => {
+            const under = coveredBy(c.id);
+            return (
+              <label key={c.id} className="flex items-center gap-2 px-3 py-1.5 text-[12.5px] cursor-pointer hover:bg-[var(--color-surface-2)]" style={{ paddingLeft: 12 + c.depth * 16 }}>
+                <input type="checkbox" disabled={!canManage || !!under} checked={!!under || ids.has(c.id)} onChange={() => toggle(c.id)} />
+                <span className={`flex-1 min-w-0 truncate ${under ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`} title={c.name}>{c.name}</span>
+                <span className={`shrink-0 font-mono text-[11px] ${c.nightSteps ? "text-indigo-700 dark:text-indigo-300" : "text-[var(--color-text-faint)]"}`}
+                  title="Steps the schedule file puts in night hours">{c.nightSteps ? `${c.nightSteps} of ${c.steps} in night hours` : `${c.steps} step${c.steps === 1 ? "" : "s"}`}</span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+      <label className={`flex items-start gap-2.5 rounded-lg border px-3 py-2 cursor-pointer ${mode === "file" ? "border-orange-400 bg-orange-50 dark:border-orange-700 dark:bg-orange-950/40" : "border-[var(--color-border)]"}`}>
+        <input type="radio" name="night" disabled={!canManage} checked={mode === "file"} onChange={() => setMode("file")} className="mt-1" />
+        <span className="flex-1 min-w-0">
+          <span className="block text-[13px] font-bold text-[var(--color-text)]">Follow the schedule file&apos;s hours</span>
+          <span className="block text-[12px] text-[var(--color-text-muted)]">Whatever the file puts in night hours is night work.</span>
+        </span>
+      </label>
+      <Msg err={err} />
+      {canManage ? (
+        <button onClick={() => void save()} disabled={busy || (done && same)} className={btn}>
+          {busy && <Loader2 className="w-4 h-4 animate-spin" />} {done && same ? "Saved" : mode === "jobs" ? `Save — ${next.length} job${next.length === 1 ? "" : "s"} with a night crew` : "Save"}
+        </button>
+      ) : <NoRights />}
+    </div>
+  );
+}
+
 function CriticalStep({ projectId, milestones, canManage, critical, onSaved }: Props & { critical: CriticalMode | null; onSaved: () => void }) {
   const inForce = effectiveCriticalMode(milestones, critical);
-  const [pick, setPick] = useState<CriticalMode>(critical ?? inForce);
+  // Not until the saved choice has been read — never preselect over it.
+  const loaded = useCriticalModeLoaded(projectId);
+  const [picked, setPick] = useState<CriticalMode | null>(null);
+  const pick = picked ?? critical ?? inForce;
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const counts = useMemo(() => {
@@ -282,8 +367,8 @@ function CriticalStep({ projectId, milestones, canManage, critical, onSaved }: P
       <p className="text-[12px] text-[var(--color-text-muted)]">Mark any task Critical / Not critical on its card afterwards — that wins over this.</p>
       <Msg err={err} />
       {canManage ? (
-        <button onClick={() => void save()} disabled={busy || critical === pick} className={btn}>
-          {busy && <Loader2 className="w-4 h-4 animate-spin" />} {critical === pick ? "Saved" : critical == null && pick === inForce ? "Confirm" : "Save"}
+        <button onClick={() => void save()} disabled={busy || !loaded || critical === pick} className={btn}>
+          {busy && <Loader2 className="w-4 h-4 animate-spin" />} {!loaded ? "Reading the saved choice…" : critical === pick ? "Saved" : critical == null && pick === inForce ? "Confirm" : "Save"}
         </button>
       ) : <NoRights />}
     </div>

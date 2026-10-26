@@ -38,10 +38,18 @@ describe("kick-off agenda", () => {
 describe("close-out", () => {
   const done = (m: Milestone, actual: number): Milestone => ({ ...m, status: "completed", percentComplete: 100, actualAt: new Date(actual).toISOString() } as Milestone);
   const co = buildCloseout({ milestones: [e12, done(a, at("2026-10-26", "07:30")), done(b, at("2026-10-26", "16:00")), c, crane] });
-  it("what finished, late or on time, and what's still open", () => {
-    expect([co.done, co.steps, co.onTime, co.late]).toEqual([2, 4, 1, 1]);
+  it("what's done and what's still open — never 'late' or 'on time' from when it was marked", () => {
+    expect([co.done, co.steps]).toEqual([2, 4]);
+    expect(co).not.toHaveProperty("late");
+    expect(co).not.toHaveProperty("onTime");
     expect(co.open.map((r) => r.leaf.id)).toEqual(["c"]);
     expect(co.blocked.map((r) => r.leaf.id)).toEqual(["k"]);
+  });
+  it("never reads 100% while work is open", () => {
+    const big = { ...a, id: "big", durationHours: 250, plannedStartAt: at("2026-10-26", "06:00"), plannedAt: at("2026-10-26", "17:00") } as Milestone;
+    const tiny = { ...c, id: "tiny", durationHours: 1 } as Milestone;
+    const co2 = buildCloseout({ milestones: [done(big, at("2026-10-26", "17:00")), tiny], tz: CHI });
+    expect(co2.actualPct).toBeLessThan(100);
   });
 });
 

@@ -43,7 +43,7 @@ export async function loadProjectShiftTimes(projectId: string): Promise<ShiftTim
   const t = raw ? { ...DEFAULT_SHIFT_TIMES, ...raw } : DEFAULT_SHIFT_TIMES;
   const safe = shiftTimesProblem(t) ? DEFAULT_SHIFT_TIMES : t;
   const prev = readShiftTimes(projectId);
-  if (prev.dayStart !== safe.dayStart || prev.nightStart !== safe.nightStart || prev.meetingBefore !== safe.meetingBefore) cache(projectId, safe);
+  if (JSON.stringify(prev) !== JSON.stringify(safe)) cache(projectId, safe);
   return safe;
 }
 
@@ -54,6 +54,8 @@ export async function saveProjectShiftTimes(projectId: string, t: ShiftTimes): P
   const clean: ShiftTimes = {
     dayStart: t.dayStart.trim().padStart(5, "0"), nightStart: t.nightStart.trim().padStart(5, "0"),
     ...(t.meetingBefore != null ? { meetingBefore: Math.round(t.meetingBefore) } : {}),
+    // Which jobs have a night crew (lib/nightStaffing) — kept with the times.
+    ...(t.nightJobs === "file" || Array.isArray(t.nightJobs) ? { nightJobs: t.nightJobs === "file" ? "file" : t.nightJobs.filter((x) => typeof x === "string") } : {}),
   };
   const { data, error } = await supabase.from("projects").update({ shift_times: clean }).eq("id", projectId).select("id");
   if (error) {
@@ -108,9 +110,14 @@ export function useShiftTimesSaved(projectId?: string | null): boolean | null {
 
 async function shiftTimesSaved(projectId: string): Promise<boolean | null> {
   const { data, error } = await supabase.from("projects").select("shift_times").eq("id", projectId).maybeSingle();
-  if (error || !data) {
-    // The column isn't there yet: a copy saved on this device counts.
+  if (error) {
+    // The column isn't there yet: a copy saved on this device counts. Any
+    // other failure: unknown — neither shouted about nor shown as set.
+    if (!/shift_times/.test(error.message)) return null;
     try { return localStorage.getItem(key(projectId)) != null; } catch { return null; }
   }
-  return (data as { shift_times: unknown }).shift_times != null;
+  if (!data) return null;
+  const raw = (data as { shift_times: Partial<ShiftTimes> | null }).shift_times;
+  // Stored but unusable is the same as not set: the app is on its guess.
+  return raw != null && !shiftTimesProblem({ ...DEFAULT_SHIFT_TIMES, ...raw });
 }

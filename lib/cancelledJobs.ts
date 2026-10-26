@@ -48,9 +48,22 @@ export function splitCancelled(all: Milestone[]): { active: Milestone[]; cancell
     keepMemo.set(m.id, v);
     return v;
   };
-  const leaves = (m: Milestone, guard = 0): number => {
-    const ch = m.id ? kids.get(m.id) ?? [] : [];
-    return ch.length === 0 || guard > 50 ? 1 : ch.reduce((n, c) => n + leaves(c, guard + 1), 0);
+  // A step cancelled on its own (its own time, note and destination) is
+  // listed on its own, not counted in a job cancelled later around it.
+  const ownCancel = (c: Milestone, job: Milestone) => !!c.cancelledAt && c.cancelledAt !== job.cancelledAt;
+  const leaves = (m: Milestone, job: Milestone, guard = 0): number => {
+    const ch = (m.id ? kids.get(m.id) ?? [] : []).filter((c) => !ownCancel(c, job));
+    if ((m.id ? kids.get(m.id) ?? [] : []).length === 0 || guard > 50) return 1;
+    return ch.reduce((n, c) => n + leaves(c, job, guard + 1), 0);
+  };
+  // The nearest cancelled job above a row, if any.
+  const cancelledAbove = (m: Milestone): Milestone | undefined => {
+    const seen = new Set<string>();
+    for (let p = m.parentId ? byId.get(m.parentId) : undefined; p && p.id && !seen.has(p.id); p = p.parentId ? byId.get(p.parentId) : undefined) {
+      seen.add(p.id);
+      if (p.cancelledAt) return p;
+    }
+    return undefined;
   };
   const crumbsOf = (m: Milestone) => {
     const out: string[] = [];
@@ -62,8 +75,8 @@ export function splitCancelled(all: Milestone[]): { active: Milestone[]; cancell
 
   const active = all.filter((m) => keep(m));
   const cancelled = all
-    .filter((m) => m.cancelledAt && !(m.parentId && byId.has(m.parentId) && off(byId.get(m.parentId)!)))
-    .map((m) => ({ m, crumbs: crumbsOf(m), steps: leaves(m), at: m.cancelledAt ? Date.parse(m.cancelledAt) : null }))
+    .filter((m) => { if (!m.cancelledAt) return false; const above = cancelledAbove(m); return !above || ownCancel(m, above); })
+    .map((m) => ({ m, crumbs: crumbsOf(m), steps: leaves(m, m), at: m.cancelledAt ? Date.parse(m.cancelledAt) : null }))
     .sort((a, b) => (startOf(a.m) - startOf(b.m)) || a.m.name.localeCompare(b.m.name));
   return { active, cancelled };
 }

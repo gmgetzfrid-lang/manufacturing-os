@@ -46,6 +46,8 @@ import ExecutionView from "@/components/projects/ExecutionView";
 import { CancelledJobsBar } from "@/components/projects/CancelledJobs";
 import { ScheduleSetup, ScheduleSetupButton } from "@/components/projects/ScheduleSetup";
 import { splitCancelled } from "@/lib/cancelledJobs";
+import { applyNightStaffing } from "@/lib/nightStaffing";
+import { useShiftTimes } from "@/lib/shiftTimesStore";
 
 // Two modes only: Planning (build & manage the schedule as a list) and
 // Execution (run it — the timeline/calendar board). The old Gantt and
@@ -86,7 +88,11 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const [allMilestones, setMilestones] = useState<Milestone[]>([]);
   // Jobs taken off this schedule leave every view (their steps with them);
   // the close-out report and the Cancelled list keep them in sight.
-  const { active: milestones, cancelled } = useMemo(() => splitCancelled(allMilestones), [allMilestones]);
+  const { active, cancelled } = useMemo(() => splitCancelled(allMilestones), [allMilestones]);
+  // Jobs with no night crew are day work, whatever hours the file gave
+  // them (Schedule setup → Night crews). A view-only mark, never saved.
+  const shiftTimes = useShiftTimes(projectId);
+  const milestones = useMemo(() => applyNightStaffing(active, shiftTimes.nightJobs), [active, shiftTimes.nightJobs]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showGhost, setShowGhost] = useState(true);
@@ -592,8 +598,10 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
       {rebaseOpen && (() => {
         // Anchor = current earliest planned date in the schedule
         // (planned_start_at, fallback planned_at).
+        // Every row, cancelled ones too — the same set the rebase shifts
+        // from, so the preview matches what happens.
         let earliestMs = Infinity;
-        for (const m of milestones) {
+        for (const m of allMilestones) {
           const candidate = (m.plannedStartAt as string | undefined) ?? (m.plannedAt as string | undefined);
           if (!candidate) continue;
           const t = new Date(candidate).getTime();

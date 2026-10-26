@@ -530,6 +530,9 @@ export interface Milestone {
   completedBy?: string | null;
   completedByName?: string | null;
   statusReason?: string | null;
+  /** Derived, never saved: the project says no night crew works this job,
+   *  so it's day work whatever hours the file gave it (lib/nightStaffing). */
+  staffedShift?: "day" | null;
   /** Taken off this schedule (it's still done, elsewhere): when, by whom,
    *  the note and where it went. Null = on the schedule. */
   cancelledAt?: string | null;

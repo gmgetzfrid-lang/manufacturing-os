@@ -814,6 +814,7 @@ export async function cancelMilestone(input: {
     const { error: e } = await supabase.from("milestones").update(stamp).in("id", steps.slice(i, i + 200));
     if (e) throw new Error(e.message);
   }
+  await refitParents(row.project_id, input.actorUserId);
   await logAuditAction({
     action: "MILESTONE_CANCELLED", resourceType: "project", resourceId: row.project_id ?? row.id,
     orgId: row.org_id, userId: input.actorUserId, userEmail: input.actorUserEmail,
@@ -833,6 +834,7 @@ export async function restoreCancelledMilestone(input: { id: string; actorUserId
     if (error) throw new Error(missingCancelColumns(error.message) ?? error.message);
     if (i === 0 && (!data || data.length === 0)) throw new Error("This job wasn't put back — you may not have permission to change it on this project.");
   }
+  await refitParents(row.project_id, input.actorUserId);
   await logAuditAction({
     action: "MILESTONE_UNCANCELLED", resourceType: "project", resourceId: row.project_id ?? row.id,
     orgId: row.org_id, userId: input.actorUserId, userEmail: input.actorUserEmail,
@@ -862,6 +864,39 @@ async function jobAndSteps(id: string): Promise<{ row: CancelRow; under: CancelR
   return { row, under };
 }
 
+/** Re-fit every parent's dates around its steps on the schedule (not the
+ *  cancelled ones) after a job comes off or goes back. Best-effort. */
+async function refitParents(projectId: string | null, actorUserId: string): Promise<void> {
+  if (!projectId) return;
+  try {
+    const { rows } = await fetchAllRows<{ id: string; parent_id: string | null; planned_start_at: string | null; planned_at: string; cancelled_at?: string | null }>((from, to) => supabase
+      .from("milestones").select("id, parent_id, planned_start_at, planned_at, cancelled_at")
+      .eq("project_id", projectId).order("id").range(from, to));
+    const nodes: ReflowNode[] = rows.filter((m) => !m.cancelled_at)
+      .map((m) => ({ id: m.id, parentId: m.parent_id, plannedStartAt: m.planned_start_at, plannedAt: m.planned_at }));
+    const changes = reflowAllAncestors(nodes);
+    await Promise.all(changes.map((c) => supabase.from("milestones").update({
+      planned_start_at: c.plannedStartAt, planned_at: c.plannedAt, updated_at: new Date().toISOString(), updated_by: actorUserId,
+    }).eq("id", c.id)));
+  } catch { /* the views fit parents to their steps anyway */ }
+}
+
+/** After a "replace" import: jobs that were cancelled before stay
+ *  cancelled — matched by the schedule file's id — with their note and
+ *  where they went. Returns how many were carried over. */
+export async function reapplyCancellations(orgId: string, projectId: string, before: Array<Record<string, unknown>>): Promise<number> {
+  const keep = before.filter((r) => r.cancelled_at && typeof r.external_ref === "string" && r.external_ref);
+  let n = 0;
+  for (const r of keep) {
+    const { data } = await supabase.from("milestones").update({
+      cancelled_at: r.cancelled_at, cancelled_by: r.cancelled_by ?? null, cancelled_by_name: r.cancelled_by_name ?? null,
+      cancel_note: r.cancel_note ?? null, moved_to: r.moved_to ?? null,
+    }).eq("org_id", orgId).eq("project_id", projectId).eq("external_ref", r.external_ref as string).select("id");
+    n += (data ?? []).length ? 1 : 0;
+  }
+  return n;
+}
+
 /** Saving before the columns exist says what to run, not a raw error. */
 function missingCancelColumns(msg: string): string | null {
   return /cancelled_at|cancel_note|moved_to|cancelled_by/.test(msg)
@@ -889,10 +924,13 @@ export async function deleteMilestones(input: {
   const byParent = new Map<string, MilestoneRow[]>();
   for (const r of all) if (r.parent_id) byParent.set(r.parent_id, [...(byParent.get(r.parent_id) ?? []), r]);
   const kill = new Set<string>();
+  const asked = new Set(input.ids);
   const add = (id: string) => {
     if (kill.has(id)) return;
     kill.add(id);
-    if (input.withChildren) for (const c of byParent.get(id) ?? []) add(c.id);
+    // A cancelled job under it isn't swept away with it: its record (note,
+    // where it went) stays on the close-out list, moved up a level.
+    if (input.withChildren) for (const c of byParent.get(id) ?? []) if (!c.cancelled_at || asked.has(c.id)) add(c.id);
   };
   input.ids.forEach(add);
   const rows = all.filter((r) => kill.has(r.id));

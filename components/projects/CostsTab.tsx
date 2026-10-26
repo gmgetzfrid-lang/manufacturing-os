@@ -13,6 +13,7 @@
 // blank pane. Writes: org controllers and the PROJECT OWNER (RLS,
 // 20261013); everyone on the project reads the same picture.
 
+import { activeOnly } from "@/lib/activeMilestones";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CircleDollarSign, Plus, X, Loader2, Check, ChevronDown, ChevronRight,
@@ -83,8 +84,11 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         listEntries(orgId, projectId),
         listParties(orgId, projectId),
         listCostDocs(orgId, projectId).catch(() => [] as CostDocument[]), // pre-migration tolerance
-        supabase.from("milestones").select("id, name, percent_complete, status, planned_at, parent_id, weight, duration_hours")
-          .eq("project_id", projectId).order("planned_at"),
+        // Jobs cancelled off the schedule don't count toward % complete.
+        activeOnly((a) => {
+          const q = supabase.from("milestones").select("id, name, percent_complete, status, planned_at, parent_id, weight, duration_hours").eq("project_id", projectId);
+          return (a ? q.is("cancelled_at", null) : q).order("planned_at");
+        }),
       ]);
       setAccounts(a);
       // First open: a project with no budget lands where the budget gets built.

@@ -89,7 +89,8 @@ export function stepShiftOnDay(
 ): "day" | "night" | "both" {
   if (crew !== "both") return crew;
   const s = Math.max(start, dayStart), f = Math.min(finish, dayEnd);
-  if (!(f > s)) return "day";
+  // A moment, not a stretch (a milestone): the shift it falls in.
+  if (!(f > s)) return s >= dayShift.start && s < dayShift.end ? "day" : "night";
   const inDay = Math.max(0, Math.min(f, dayShift.end) - Math.max(s, dayShift.start));
   const inNight = (f - s) - inDay;
   return inDay > 0 && inNight > 0 ? "both" : inNight > 0 ? "night" : "day";

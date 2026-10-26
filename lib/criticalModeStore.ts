@@ -63,3 +63,17 @@ export function useCriticalMode(projectId?: string | null): CriticalMode | null 
   }, [projectId]);
   return mode;
 }
+
+/** The project's choice and whether it has been read yet (a fresh device
+ *  starts with nothing cached) — so a form doesn't offer to overwrite a
+ *  saved choice it hasn't seen. */
+export function useCriticalModeLoaded(projectId?: string | null): boolean {
+  const [loaded, setLoaded] = useState<{ projectId?: string | null; ok: boolean }>({ projectId, ok: false });
+  useEffect(() => {
+    if (!projectId) return;
+    let live = true;
+    loadCriticalMode(projectId).then(() => { if (live) setLoaded({ projectId, ok: true }); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [projectId]);
+  return loaded.projectId === projectId && loaded.ok;
+}

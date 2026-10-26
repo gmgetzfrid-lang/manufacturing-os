@@ -451,9 +451,11 @@ describe("the next shift sees the other crew's unfinished and paused work", () =
     expect(r.goals.otherShift.map((x) => x.leaf.id)).toEqual(["x"]);
     expect(r.goals.paused.map((x) => x.leaf.id)).toEqual(["l"]);
   });
-  it("the email says so", () => {
+  it("the email says so — waiting for its own crew, never 'pick up if you can'", () => {
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r, f, { pctOf: () => 40, finishOf: () => undefined }) });
-    expect(text).toMatch(/Day shift carry-over — pick up if you can: Blind \/ open manways \(50%\)/);
+    expect(text).toMatch(/CARRIES TO DAY SHIFT/);
+    expect(text).toMatch(/Blind \/ open manways · carry-over — was due/);
+    expect(text).not.toMatch(/if you can/i);
     expect(text).toMatch(/Day crew's work paused until .*: Retube \(30%\)/);
   });
 });

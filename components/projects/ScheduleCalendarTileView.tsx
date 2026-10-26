@@ -268,8 +268,12 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         // Day or night work on this day: when its steps are scheduled
         // that day, for the crews that can work then.
         const dayShift = shiftWindow(key, "day", tz, shiftTimes);
-        const crew = crewOf(stepsOnDay(ms, steps, dayStartMs, dayEndMs)
-          .map((st) => stepShiftOnDay(startMs(st), finishMs(st), workShiftOf(st, tz, shiftTimes), dayStartMs, dayEndMs, dayShift)));
+        // No step scheduled inside this day's clock (a date-only job's last
+        // day): its steps' own crews, never a default of "day".
+        const today = stepsOnDay(ms, steps, dayStartMs, dayEndMs);
+        const crew = today.length
+          ? crewOf(today.map((st) => stepShiftOnDay(startMs(st), finishMs(st), workShiftOf(st, tz, shiftTimes), dayStartMs, dayEndMs, dayShift)))
+          : crewOf((steps.length ? steps : [ms]).map((st) => workShiftOf(st, tz, shiftTimes)));
         if (crewFilter === "day" && crew === "night") continue;
         if (crewFilter === "night" && crew === "day") continue;
         const arr = m.get(key) ?? [];

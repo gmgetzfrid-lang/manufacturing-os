@@ -9,11 +9,11 @@
 //              open, what finished late.
 
 import type { Milestone } from "@/types/schema";
-import { leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
+import { leafPercent, roundPct, type ProgressInfo } from "@/lib/scheduleProgress";
 import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
 import { dayDiff } from "@/lib/scheduleTz";
 import {
-  buildShiftReport, shiftAt, nextShift, previousShift, workHours, DEFAULT_SHIFT_TIMES,
+  buildShiftReport, shiftAt, nextShift, previousShift, workHours, worksIn, dueMsOf, DEFAULT_SHIFT_TIMES,
   type ShiftTimes, type ShiftWindow, type ShiftRow,
 } from "@/lib/shiftReport";
 
@@ -69,17 +69,11 @@ export interface CloseoutPlan {
   steps: number;
   done: number;
   actualPct: number;
-  /** Done steps finished after their planned finish / on or before it. */
-  late: number;
-  onTime: number;
-  /** When the last step was actually completed, if recorded. */
-  lastActual: number | null;
   open: PlanRow[];
   blocked: PlanRow[];
 }
 
 const DONE = (m: Milestone, pct: number) => m.status === "completed" || pct >= 100;
-const toMs = (v: unknown): number => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
 
 function index(milestones: Milestone[]) {
   const byId = new Map<string, Milestone>();
@@ -97,14 +91,14 @@ function index(milestones: Milestone[]) {
   return { byId, leaves, chain };
 }
 
-function planRow(m: Milestone, chain: Milestone[], criticalIds: Set<string>, progress?: Map<string, ProgressInfo>): PlanRow {
+function planRow(m: Milestone, chain: Milestone[], criticalIds: Set<string>, progress?: Map<string, ProgressInfo>, tz?: string): PlanRow {
   return {
     leaf: m,
     parentId: chain[0]?.id ?? null,
     parentName: chain[0]?.name ?? null,
     crumbs: chain.slice(1).reverse().map((a) => a.name),
     start: startMsOf(m), finish: finishMsOf(m),
-    hours: workHours(m),
+    hours: workHours(m, tz),
     percent: (m.id ? progress?.get(m.id)?.percent : undefined) ?? leafPercent(m),
     critical: !!m.id && criticalIds.has(m.id),
     who: m.responsibleParty?.trim() || null,
@@ -115,12 +109,13 @@ const byTime = (a: PlanRow, b: PlanRow) => (a.start - b.start) || (a.finish - b.
 
 /** Which meeting the page should open on: kick-off before the job starts,
  *  close-out once everything is done or the plan has ended, else turnover. */
-export function defaultMeeting(milestones: Milestone[], now: number, progress?: Map<string, ProgressInfo>): MeetingKind {
+export function defaultMeeting(milestones: Milestone[], now: number, progress?: Map<string, ProgressInfo>, tz = "UTC"): MeetingKind {
   const { leaves } = index(milestones);
   const dated = leaves.filter((m) => m.plannedAt && Number.isFinite(startMsOf(m)) && Number.isFinite(finishMsOf(m)));
   if (dated.length === 0) return "kickoff";
   const first = Math.min(...dated.map(startMsOf));
-  const last = Math.max(...dated.map(finishMsOf));
+  // Due, not the raw finish: a date-only last day runs to its end.
+  const last = Math.max(...dated.map((m) => dueMsOf(m, tz)));
   const pct = (m: Milestone) => (m.id ? progress?.get(m.id)?.percent : undefined) ?? leafPercent(m);
   const started = dated.some((m) => m.status === "in_progress" || m.status === "completed" || pct(m) > 0);
   if (now < first && !started) return "kickoff";
@@ -137,7 +132,7 @@ export function buildKickoff(input: {
   const criticalIds = input.criticalIds ?? new Set<string>();
   const { leaves, chain } = index(milestones);
   const dated = leaves.filter((m) => m.plannedAt && Number.isFinite(startMsOf(m)) && Number.isFinite(finishMsOf(m)));
-  const rows = dated.map((m) => planRow(m, chain(m), criticalIds, progress)).sort(byTime);
+  const rows = dated.map((m) => planRow(m, chain(m), criticalIds, progress, tz)).sort(byTime);
   const start = rows.length ? Math.min(...rows.map((r) => r.start)) : null;
   const finish = rows.length ? Math.max(...rows.map((r) => r.finish)) : null;
 
@@ -167,13 +162,17 @@ export function buildKickoff(input: {
   // planned list is that shift's work.
   const firstShifts: KickoffPlan["firstShifts"] = [];
   if (start != null) {
+    // The first shift that has work (a date-only job's midnight start
+    // falls in the night before day one, which has none).
     let w = shiftAt(start, tz, times);
+    for (let i = 0; i < 6 && !dated.some((m) => worksIn(m, w, tz, times)); i++) w = nextShift(w, tz, times);
     for (let i = 0; i < (input.firstShiftCount ?? 2); i++) {
       const rep = buildShiftReport({ milestones, progress, criticalIds, tz, times, shift: previousShift(w, tz, times), now: w.start });
       // The plan as written: what each shift is scheduled to do (nothing has
       // been missed yet at a kick-off, so there is no carry-over to show).
       const list = rep.goals.planned;
-      firstShifts.push({ window: w, rows: list, hours: Math.round(list.reduce((a, r) => a + r.hoursLeft, 0) * 10) / 10 });
+      // Each step's share of this shift, not all of it: a 48 h job is 12 h here.
+      firstShifts.push({ window: w, rows: list, hours: Math.round(list.reduce((a, r) => a + (r.hoursNext ?? r.hoursLeft), 0) * 10) / 10 });
       w = nextShift(w, tz, times);
     }
   }
@@ -187,36 +186,30 @@ export function buildKickoff(input: {
     groups: [...groups.values()].sort((a, b) => a.start - b.start || a.name.localeCompare(b.name)).map((g) => ({ ...g, hours: Math.round(g.hours * 10) / 10 })),
     critical: rows.filter((r) => r.critical),
     people: [...people.values()].sort((a, b) => a.first - b.first).map((p) => ({ ...p, hours: Math.round(p.hours * 10) / 10 })),
-    notReady: leaves.filter((m) => m.status === "blocked" || m.status === "on_hold").map((m) => planRow(m, chain(m), criticalIds, progress)).sort(byTime),
+    notReady: leaves.filter((m) => m.status === "blocked" || m.status === "on_hold").map((m) => planRow(m, chain(m), criticalIds, progress, tz)).sort(byTime),
     firstShifts,
   };
 }
 
 export function buildCloseout(input: {
-  milestones: Milestone[]; progress?: Map<string, ProgressInfo>; criticalIds?: Set<string>;
+  milestones: Milestone[]; progress?: Map<string, ProgressInfo>; criticalIds?: Set<string>; tz?: string;
 }): CloseoutPlan {
-  const { milestones, progress } = input;
+  const { milestones, progress, tz } = input;
   const criticalIds = input.criticalIds ?? new Set<string>();
   const { leaves, chain } = index(milestones);
-  const rows = leaves.map((m) => planRow(m, chain(m), criticalIds, progress));
-  const dated = rows.filter((r) => Number.isFinite(r.start) && Number.isFinite(r.finish));
-  let late = 0, onTime = 0, lastActual: number | null = null, wsum = 0, wdone = 0;
-  for (const r of rows) {
-    wsum += r.hours; wdone += r.hours * Math.min(100, Math.max(0, r.percent)) / 100;
-    if (!DONE(r.leaf, r.percent)) continue;
-    const a = toMs(r.leaf.actualAt);
-    if (Number.isFinite(a)) {
-      lastActual = lastActual == null ? a : Math.max(lastActual, a);
-      if (Number.isFinite(r.finish)) { if (a > r.finish + 60_000) late++; else onTime++; }
-    }
-  }
+  // Dated steps, weighted as the turnover weighs them — the two reports
+  // must agree on % complete. (No "on time / late": when a step is marked
+  // done isn't when it finished.)
+  const rows = leaves.filter((m) => m.plannedAt && Number.isFinite(startMsOf(m)) && Number.isFinite(finishMsOf(m)))
+    .map((m) => planRow(m, chain(m), criticalIds, progress, tz));
+  let wsum = 0, wdone = 0;
+  for (const r of rows) { wsum += r.hours; wdone += r.hours * Math.min(100, Math.max(0, r.percent)) / 100; }
   return {
-    start: dated.length ? Math.min(...dated.map((r) => r.start)) : null,
-    finish: dated.length ? Math.max(...dated.map((r) => r.finish)) : null,
+    start: rows.length ? Math.min(...rows.map((r) => r.start)) : null,
+    finish: rows.length ? Math.max(...rows.map((r) => r.finish)) : null,
     steps: rows.length,
     done: rows.filter((r) => DONE(r.leaf, r.percent)).length,
-    actualPct: wsum > 0 ? Math.round((wdone / wsum) * 100) : 0,
-    late, onTime, lastActual,
+    actualPct: wsum > 0 ? roundPct((wdone / wsum) * 100) : 0,
     open: rows.filter((r) => !DONE(r.leaf, r.percent) && r.leaf.status !== "blocked" && r.leaf.status !== "on_hold")
       .sort((a, b) => Number(b.critical) - Number(a.critical) || byTime(a, b)),
     blocked: rows.filter((r) => r.leaf.status === "blocked" || r.leaf.status === "on_hold").sort(byTime),

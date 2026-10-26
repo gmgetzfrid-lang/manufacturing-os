@@ -767,7 +767,9 @@ export async function updateProjectMeta(input: {
   if (input.patch.timezone !== undefined) {
     if (input.patch.timezone && !isValidTimeZone(input.patch.timezone)) throw new Error(`Unknown timezone "${input.patch.timezone}".`);
     nextTz = normalizeTimeZone(input.patch.timezone);
-    update.timezone = nextTz === DEFAULT_SCHEDULE_TZ ? null : nextTz;
+    // A zone chosen — UTC included — is kept, so "set" can be told from
+    // "never set". Clearing it stores null.
+    update.timezone = input.patch.timezone ? nextTz : null;
   }
   const { error } = await supabase.from("projects").update(update).eq("id", input.projectId);
   if (error) {

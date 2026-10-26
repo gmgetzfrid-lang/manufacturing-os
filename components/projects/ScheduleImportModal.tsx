@@ -28,7 +28,7 @@ import {
   Columns3, ArrowRight, Link2,
 } from "lucide-react";
 import { parseScheduleFileFromBytes, type ParseResult, type ScheduleFormat } from "@/lib/scheduleParsers";
-import { importMilestonesFromParsed, clearProjectSchedule, snapshotSchedule, undoImport, type ScheduleSnapshot, type ImportResult } from "@/lib/milestones";
+import { importMilestonesFromParsed, clearProjectSchedule, snapshotSchedule, undoImport, reapplyCancellations, type ScheduleSnapshot, type ImportResult } from "@/lib/milestones";
 import type { MilestoneSource } from "@/types/schema";
 import { Select } from "@/components/ui/Field";
 import Spinner from "@/components/ui/Spinner";
@@ -194,8 +194,8 @@ export default function ScheduleImportModal({
     setImporting(true);
     try {
       // A copy of the schedule as it is, so the import can be undone.
-      if ((existingCount ?? 0) > 0) setSnapshot(await snapshotSchedule(orgId, projectId));
-      else setSnapshot({ rows: [], notes: [] });
+      const before = (existingCount ?? 0) > 0 ? await snapshotSchedule(orgId, projectId) : { rows: [], notes: [] };
+      setSnapshot(before);
       setReplaced(replaceExisting && (existingCount ?? 0) > 0);
       if (replaceExisting && (existingCount ?? 0) > 0) {
         await clearProjectSchedule({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
@@ -242,6 +242,8 @@ export default function ScheduleImportModal({
         createdBy: userId,
         createdByName: userName,
       });
+      // A replace re-creates every row: cancelled jobs stay cancelled.
+      if (replaceExisting && before.rows.length) await reapplyCancellations(orgId, projectId, before.rows as unknown as Array<Record<string, unknown>>);
       setImportResult(res);
       // Only auto-close when at least one row was actually INSERTED
       // into this project. Pure-update results (which happen when
@@ -527,7 +529,7 @@ export default function ScheduleImportModal({
             <label className="flex items-start gap-2 rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-[11px] text-rose-900 dark:text-rose-200">
               <input type="checkbox" checked={replaceExisting} onChange={(e) => setReplaceExisting(e.target.checked)} className="mt-0.5" />
               <span>
-                <b>Replace the current schedule</b> — delete the {existingCount} task{existingCount === 1 ? "" : "s"} already on this project first, then import the file from scratch.
+                <b>Replace the current schedule</b> — delete the {existingCount} task{existingCount === 1 ? "" : "s"} already on this project first, then import the file from scratch. Cancelled jobs stay cancelled, with their notes.
                 The file becomes the plan of record (baseline). Untick to merge instead (see above): the baseline stays and nothing recorded here is lost.
                 Deleting is audited and can&apos;t be undone.
               </span>
