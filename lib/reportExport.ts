@@ -320,17 +320,21 @@ function blockHtml(b: ExportBlock): string {
 }
 
 export function toEmailHtml(d: ExportDoc): string {
+  // No dark blocks with light text anywhere: phone mail apps switching
+  // light / dark mode recolor text and backgrounds separately, and white
+  // text on a kept-dark background comes out black on navy. Light panels
+  // with dark text (every color set on the element itself) flip cleanly.
   const status = d.status
-    ? td(`padding:6px 10px;background-color:${SOLID[d.status.tone]};color:#ffffff;text-align:right;white-space:nowrap;`,
-      `<div style="${FONT}font-size:14px;font-weight:bold;color:#ffffff;">${esc(d.status.label)}</div>` +
-      (d.status.detail ? `<div style="${FONT}font-size:10px;color:#ffffff;">${esc(d.status.detail)}</div>` : ""), `bgcolor="${SOLID[d.status.tone]}" `)
+    ? td(`padding:6px 10px;background-color:${TONE[d.status.tone].bg};border:1px solid ${TONE[d.status.tone].bd};border-left:4px solid ${SOLID[d.status.tone]};text-align:right;white-space:nowrap;vertical-align:middle;`,
+      `<div style="${FONT}font-size:14px;font-weight:bold;color:${TONE[d.status.tone].fg};">${esc(d.status.label)}</div>` +
+      (d.status.detail ? `<div style="${FONT}font-size:10px;color:${TONE[d.status.tone].fg};">${esc(d.status.detail)}</div>` : ""), `bgcolor="${TONE[d.status.tone].bg}" `)
     : "";
   let html = `<div style="${FONT}color:${INK};">`;
   html += `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;"><tr>` +
-    td(`padding:8px 12px;background-color:#0f172a;color:#ffffff;`,
-      `<div style="${FONT}font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:1.5px;color:#94a3b8;">${esc(d.kind)}</div>` +
-      `<div style="${FONT}font-size:18px;font-weight:bold;color:#ffffff;">${esc(d.project)}</div>` +
-      `<div style="${FONT}font-size:11px;color:#cbd5e1;">${esc(d.when)} · as of ${esc(d.asOf)}</div>`, `bgcolor="#0f172a" `) +
+    td(`padding:8px 12px;background-color:#f8fafc;border-top:4px solid ${INK};border-bottom:1px solid ${LINE};border-left:1px solid ${LINE};`,
+      `<div style="${FONT}font-size:10px;font-weight:bold;text-transform:uppercase;letter-spacing:1.5px;color:${MUTED};">${esc(d.kind)}</div>` +
+      `<div style="${FONT}font-size:18px;font-weight:bold;color:${INK};">${esc(d.project)}</div>` +
+      `<div style="${FONT}font-size:11px;color:#334155;">${esc(d.when)} · as of ${esc(d.asOf)}</div>`, `bgcolor="#f8fafc" `) +
     status + `</tr></table>`;
   for (const s of d.sections) {
     // A section that needs attention gets a colored rule, not a number.
