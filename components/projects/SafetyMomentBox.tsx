@@ -4,9 +4,11 @@
 // "safety moment" checkbox had.
 //
 // Three columns: the next shift's riskiest kinds of work (ranked from the
-// schedule as soon as the report opens), each with two lessons drawn from
-// real incidents — what to look out for, then what prevents it — and the
-// pages they came from. Lessons, not stories. The supervisor can add a line the schedule doesn't
+// schedule as soon as the report opens). Each is the supervisor's agenda
+// for that job: a hit list of the essentials (permit, gas test, attendant
+// …) — there from the start — and, once built, one or two "don't miss"
+// lessons drawn from real incidents: what to look out for, then what
+// prevents it, with the pages they came from. Lessons, not stories. The supervisor can add a line the schedule doesn't
 // show ("one crane pick at 02:00") and build it with one click; it's saved
 // for the shift, so every screen and the printout show the same thing.
 
@@ -14,7 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, RefreshCw, ShieldAlert } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
-  rankHazards, hazardContext, sourceLabel,
+  rankHazards, hazardContext, sourceLabel, hitListOf,
   type HazardJobInput, type RankedHazard, type SafetyMoment,
 } from "@/lib/safetyMoment";
 
@@ -108,8 +110,8 @@ export function SafetyMomentBox({ jobs, safety, shiftKind, shiftLabel, print, st
   // Built: the lessons. Not yet: the three jobs, so the meeting still sees
   // what's riskiest even before (or without) the search.
   const cols = moment && !editing
-    ? moment.items.map((it) => ({ key: it.kind, title: it.title, context: it.context, gems: it.gems }))
-    : hazards.map((h) => ({ key: h.kind, title: h.label, context: hazardContext(h), gems: null }));
+    ? moment.items.map((it) => ({ key: it.kind, title: it.title, context: it.context, hits: hitListOf(it), gems: it.gems }))
+    : hazards.map((h) => ({ key: h.kind, title: h.label, context: hazardContext(h), hits: hitListOf(h), gems: null }));
 
   if (cols.length === 0 && (print || !safety.canBuild)) return null;
 
@@ -139,14 +141,27 @@ export function SafetyMomentBox({ jobs, safety, shiftKind, shiftLabel, print, st
                 <div className="text-[12.5px] font-extrabold leading-tight text-[var(--color-text)]">{i + 1} · {c.title}</div>
                 {c.context && <div className={`text-[10.5px] leading-snug ${muted}`}>{c.context}</div>}
               </div>
-              {c.gems?.map((g) => (
-                <p key={g.what} className="text-[11.5px] leading-snug text-[var(--color-text)]">
-                  {g.what} <span className="text-orange-700 dark:text-orange-300" aria-hidden="true">→</span>{" "}
-                  <b className="font-bold">{g.do}</b>
-                </p>
-              ))}
-              {c.gems && c.gems.length === 0 && (
-                <p className={`text-[11px] italic ${muted}`}>No lesson it could back with a source — talk this one through.</p>
+              <ul className="space-y-0.5">
+                {c.hits.map((t) => (
+                  <li key={t} className="flex gap-1.5 text-[11.5px] leading-snug text-[var(--color-text)]">
+                    <span className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full bg-orange-500" aria-hidden="true" />
+                    <span className="min-w-0">{t}</span>
+                  </li>
+                ))}
+              </ul>
+              {c.gems && (
+                <div className="space-y-1 border-t border-dashed border-orange-300 pt-1.5 dark:border-orange-900">
+                  <div className="text-[9.5px] font-black uppercase tracking-wider text-orange-800 dark:text-orange-300">Don&apos;t miss</div>
+                  {c.gems.map((g) => (
+                    <p key={g.what} className="text-[11.5px] leading-snug text-[var(--color-text)]">
+                      {g.what} <span className="text-orange-700 dark:text-orange-300" aria-hidden="true">→</span>{" "}
+                      <b className="font-bold">{g.do}</b>
+                    </p>
+                  ))}
+                  {c.gems.length === 0 && (
+                    <p className={`text-[11px] italic ${muted}`}>Nothing it could back with a source — the hit list stands.</p>
+                  )}
+                </div>
               )}
               {c.gems && c.gems.length > 0 && (
                 <div className="text-[10px] leading-tight">

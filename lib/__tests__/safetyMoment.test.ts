@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  classifyStep, rankHazards, equipmentTag, hazardContext, parseSafetyMoment, normalizeUrl, safetyMomentPrompt,
+  HAZARD_KINDS, hitListOf, classifyStep, rankHazards, equipmentTag, hazardContext, parseSafetyMoment, normalizeUrl, safetyMomentPrompt,
   type HazardJobInput,
 } from "@/lib/safetyMoment";
 
@@ -97,7 +97,7 @@ describe("parseSafetyMoment", () => {
         { watch: "A line that won't drain still holds liquid behind the break.", prevent: "Won't drain? Stop.", source: "http://csb.gov/tosco-avon-refinery-petroleum-naphtha-fire#top" },
         { watch: "Made up lesson.", prevent: "Something.", source: "https://example.com/fake" },
       ] },
-      { kind: "hydroblast", title: "Hydroblasting 10K", gems: [
+      { kind: "hydroblast", title: "Hydroblasting 10K", hitList: ["Dump tested before every start", "10K-rated hoses and fittings", "Whip checks on every joint", "Spray path barricaded", "Medical card on every blaster"], gems: [
         { watch: "A taped or sticking dump pedal keeps the gun live.", prevent: "Pedal dumps on release.", source: "https://eusalt.com/_library/_files/Proj1_Ineos.pdf" },
         { watch: "In Germany in 2018 an operator taped his pedal down.", prevent: "Don't.", source: "https://eusalt.com/_library/_files/Proj1_Ineos.pdf" },
       ] },
@@ -111,8 +111,12 @@ describe("parseSafetyMoment", () => {
     expect(lb.title).toBe("PSV-021 swap");
     expect(lb.gems).toHaveLength(1);
     expect(lb.gems[0].source.url).toBe("https://www.csb.gov/tosco-avon-refinery-petroleum-naphtha-fire/");
-    // A kind the model skipped keeps its place, empty.
-    expect(items.find((i) => i.kind === "confined_space")!.gems).toEqual([]);
+    // A kind the model skipped keeps its place, empty, with the standard hit list.
+    const cs = items.find((i) => i.kind === "confined_space")!;
+    expect(cs.gems).toEqual([]);
+    expect(cs.hitList).toEqual(HAZARD_KINDS.confined_space.hitList);
+    // A tailored hit list comes through as written.
+    expect(items.find((i) => i.kind === "hydroblast")!.hitList).toEqual(["Dump tested before every start", "10K-rated hoses and fittings", "Whip checks on every joint", "Spray path barricaded", "Medical card on every blaster"]);
   });
   it("refuses an answer that isn't JSON", () => {
     expect(() => parseSafetyMoment("no idea", hazards, searched)).toThrow(/expected form/);
@@ -132,5 +136,20 @@ describe("safetyMomentPrompt", () => {
     expect(p).toContain("E-17: Hydroblast 10K Tubes and Shell — 18:00–22:00 — Evergreen 1");
     expect(p).toContain("Supervisor's note: Flex lance on the tubes");
     expect(p).toContain("- https://csb.gov/x");
+    expect(p).toContain("Standard hit list: Entry permit signed and posted at the manway /");
+  });
+});
+
+describe("hit lists", () => {
+  it("every kind has a short standard hit list", () => {
+    for (const def of Object.values(HAZARD_KINDS)) {
+      expect(def.hitList.length).toBeGreaterThanOrEqual(4);
+      expect(def.hitList.length).toBeLessThanOrEqual(5);
+      for (const t of def.hitList) expect(t.split(/\s+/).length).toBeLessThanOrEqual(9);
+    }
+  });
+  it("a moment saved before hit lists existed gets the standard one", () => {
+    expect(hitListOf({ kind: "hydroblast" })).toEqual(HAZARD_KINDS.hydroblast.hitList);
+    expect(hitListOf({ kind: "hydroblast", hitList: [] })).toEqual(HAZARD_KINDS.hydroblast.hitList);
   });
 });
