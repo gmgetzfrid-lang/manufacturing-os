@@ -17,7 +17,7 @@ import {
   X as XIcon, Pencil, Trash2, Loader2, Save, Clock, MapPin, Hash,
   User, HardHat, AlertTriangle, Sun, Moon, Sunset,
   CalendarDays, Layers, MessageSquarePlus, History, ChevronRight, ChevronLeft,
-  Link2, Target, Zap,
+  Link2, Target, Zap, Ban,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus, MilestoneNote, ProjectMember } from "@/types/schema";
 import { wouldCreateCycle, cascadeDependents, type ReflowNode } from "@/lib/scheduleReflow";
@@ -29,6 +29,7 @@ import {
 } from "@/lib/milestones";
 import { buildProgressIndex } from "@/lib/scheduleProgress";
 import StatusControl from "@/components/projects/StatusControl";
+import { CancelJobForm } from "@/components/projects/CancelledJobs";
 import { ProgressSlider } from "@/components/projects/ProgressControl";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 
@@ -165,6 +166,19 @@ export default function TaskDetailPanel({
     setErr(null);
     try { await deleteMilestoneNote(id); loadNotes(); } catch (e) { failed(e); }
   }, [loadNotes]);
+
+  // Cancel: off this schedule, still done elsewhere — note and where it went.
+  const [cancelling, setCancelling] = useState(false);
+  const stepCount = useMemo(() => {
+    const list = allTasks ?? subtasks;
+    const kids = new Map<string, Milestone[]>();
+    for (const t of list) if (t.parentId) kids.set(t.parentId, [...(kids.get(t.parentId) ?? []), t]);
+    const count = (id: string | undefined, guard = 0): number => {
+      const ch = id ? kids.get(id) ?? [] : [];
+      return ch.length === 0 || guard > 50 ? 1 : ch.reduce((n, c) => n + count(c.id, guard + 1), 0);
+    };
+    return count(m.id);
+  }, [allTasks, subtasks, m.id]);
 
   const onDelete = useCallback(async () => {
     if (!m.id || !m.projectId) return;
@@ -545,10 +559,21 @@ export default function TaskDetailPanel({
 
         {/* Footer */}
         {canEdit && !editing && (
-          <div className="px-4 py-2.5 border-t border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] flex items-center">
-            <button onClick={() => void onDelete()} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:text-rose-800 hover:bg-rose-50 px-2 py-1 rounded-md">
-              <Trash2 className="w-3.5 h-3.5" /> Delete task
-            </button>
+          <div className="px-4 py-2.5 border-t border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] flex items-center gap-2">
+            {cancelling && m.id ? (
+              <CancelJobForm id={m.id} name={m.name} steps={stepCount} userId={userId} userName={userName} userEmail={userEmail}
+                onClose={() => setCancelling(false)} onDone={() => { onChanged(); onClose(); }} />
+            ) : (
+              <>
+                <button onClick={() => setCancelling(true)} title="Take it off this schedule — it's still done, somewhere else"
+                  className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-700 dark:text-amber-400 hover:text-amber-900 dark:hover:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40 px-2 py-1 rounded-md">
+                  <Ban className="w-3.5 h-3.5" /> Cancel job
+                </button>
+                <button onClick={() => void onDelete()} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:text-rose-800 hover:bg-rose-50 dark:hover:bg-rose-950/40 px-2 py-1 rounded-md">
+                  <Trash2 className="w-3.5 h-3.5" /> Delete task
+                </button>
+              </>
+            )}
           </div>
         )}
         {saving && <div className="absolute inset-0 bg-white/40 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-indigo-600 dark:text-indigo-400" /></div>}

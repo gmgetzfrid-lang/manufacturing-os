@@ -530,6 +530,13 @@ export interface Milestone {
   completedBy?: string | null;
   completedByName?: string | null;
   statusReason?: string | null;
+  /** Taken off this schedule (it's still done, elsewhere): when, by whom,
+   *  the note and where it went. Null = on the schedule. */
+  cancelledAt?: string | null;
+  cancelledBy?: string | null;
+  cancelledByName?: string | null;
+  cancelNote?: string | null;
+  movedTo?: string | null;
 }
 
 // ─── Holds (Phase 5) ─────────────────────────────────────────────

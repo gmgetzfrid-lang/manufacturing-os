@@ -43,6 +43,8 @@ import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { DEFAULT_SCHEDULE_TZ, fmtInTz, fromDateTimeInput, tzLabel } from "@/lib/scheduleTz";
 import { ClipboardList, PlayCircle } from "lucide-react";
 import ExecutionView from "@/components/projects/ExecutionView";
+import { CancelledJobsBar } from "@/components/projects/CancelledJobs";
+import { splitCancelled } from "@/lib/cancelledJobs";
 
 // Two modes only: Planning (build & manage the schedule as a list) and
 // Execution (run it — the timeline/calendar board). The old Gantt and
@@ -74,7 +76,10 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const tz = useScheduleTz();
   const canEdit = !!isProjectOwner || (!!userRole && ADMIN_ROLES.has(userRole));
 
-  const [milestones, setMilestones] = useState<Milestone[]>([]);
+  const [allMilestones, setMilestones] = useState<Milestone[]>([]);
+  // Jobs taken off this schedule leave every view (their steps with them);
+  // the close-out report and the Cancelled list keep them in sight.
+  const { active: milestones, cancelled } = useMemo(() => splitCancelled(allMilestones), [allMilestones]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showGhost, setShowGhost] = useState(true);
@@ -196,7 +201,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   // Wipe the whole schedule so it can be rebuilt from a fresh import.
   const [clearing, setClearing] = useState(false);
   const onClearSchedule = async () => {
-    const n = milestones.length;
+    const n = allMilestones.length;
     const ok = await appConfirm({
       message: `Delete all ${n} task${n === 1 ? "" : "s"} on this project's schedule? Notes on them go too. This can't be undone — import the schedule file again afterwards to rebuild it. This action is audited.`,
       tone: "danger",
@@ -214,7 +219,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   // planned with its actual stamps cleared. Dates and notes stay.
   const [resetting, setResetting] = useState(false);
   const onResetProgress = async () => {
-    const n = milestones.length;
+    const n = allMilestones.length;
     const ok = await appConfirm({
       message: `Reset progress on all ${n} task${n === 1 ? "" : "s"}? Every task goes back to 0% and "planned", and its actual start / completion stamps are cleared, so the real outage starts clean after testing. Planned dates, the baseline, dependencies and notes stay (status-change notes from the rehearsal are removed). This action is audited.`,
       tone: "danger",
@@ -383,6 +388,11 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
         />
       )}
 
+      {/* Jobs taken off this schedule — still to be done elsewhere. */}
+      {!loading && cancelled.length > 0 && (
+        <CancelledJobsBar jobs={cancelled} canEdit={canEdit} userId={userId} userEmail={userEmail} onChanged={refresh} />
+      )}
+
       {/* Active view */}
       {!loading && milestones.length > 0 && view === "execution" && (
         <ExecutionView
@@ -391,6 +401,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           // search, and moves, the shift report and bulk changes must see
           // every task.
           milestones={milestones}
+          cancelled={cancelled}
           canEdit={canEdit}
           orgId={orgId}
           projectId={projectId}
@@ -552,8 +563,8 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           userName={userName}
           userEmail={userEmail}
           userRole={userRole}
-          existingCount={milestones.length}
-          existing={milestones}
+          existingCount={allMilestones.length}
+          existing={allMilestones}
           onClose={() => setImportOpen(false)}
           onDone={() => { setImportOpen(false); void refresh(); }}
         />
@@ -576,7 +587,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
             projectId={projectId}
             projectName={projectName}
             currentAnchorIso={currentAnchor}
-            totalTaskCount={milestones.length}
+            totalTaskCount={allMilestones.length}
             actorUserId={userId}
             actorUserName={userName}
             actorUserEmail={userEmail}

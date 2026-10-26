@@ -54,6 +54,7 @@ import { SafetyMomentBox } from "@/components/projects/SafetyMomentBox";
 import type { HazardJobInput } from "@/lib/safetyMoment";
 import { QuickLookCard, QuickLookOpen, TaskSearch, useQuickLookOpen } from "@/components/projects/TaskQuickLook";
 import { quickLook, quickLookIndex } from "@/lib/taskQuickLook";
+import type { CancelledJob } from "@/lib/cancelledJobs";
 
 /** The crew the report is narrowed to (tables then drop their Who column). */
 const ReportCrew = React.createContext<string | null>(null);
@@ -64,7 +65,11 @@ interface Props {
   criticalIds: Set<string>;
   projectId: string;
   projectName?: string;
+  /** Jobs taken off this schedule (done elsewhere) — on the close-out. */
+  cancelled?: CancelledJob[];
 }
+
+const NONE_CANCELLED: CancelledJob[] = [];
 
 const MEETINGS: Array<{ id: MeetingKind; label: string; Icon: typeof Rocket }> = [
   { id: "kickoff", label: "Kick-off", Icon: Rocket },
@@ -72,7 +77,7 @@ const MEETINGS: Array<{ id: MeetingKind; label: string; Icon: typeof Rocket }> =
   { id: "closeout", label: "Close-out", Icon: Trophy },
 ];
 
-export default function ShiftReportView({ milestones: live, progress: liveProgress, criticalIds, projectId, projectName }: Props) {
+export default function ShiftReportView({ milestones: live, progress: liveProgress, criticalIds, projectId, projectName, cancelled = NONE_CANCELLED }: Props) {
   const tz = useScheduleTz();
   // The project's shift-change times — the same on every device.
   const times = useShiftTimes(projectId);
@@ -179,9 +184,9 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
   const sections = useMemo(() => meeting === "kickoff"
     ? kickoffSections(kickoff, ctx)
     : meeting === "closeout"
-      ? closeoutSections(closeout, report, ctx)
+      ? closeoutSections(closeout, report, ctx, cancelled)
       : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report }),
-  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew]);
+  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled]);
 
   // A step's card: asked about mid-meeting, answered from the schedule.
   const qlIndex = useMemo(() => quickLookIndex(milestones), [milestones]);
@@ -1045,7 +1050,7 @@ function kickoffSections(k: ReturnType<typeof buildKickoff>, c: Ctx): Sec[] {
   return secs;
 }
 
-function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftReport, c: Ctx): Sec[] {
+function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftReport, c: Ctx, cancelled: CancelledJob[]): Sec[] {
   const finalStats = [
     { label: "Complete", value: `${co.actualPct}%`, tone: (co.actualPct >= 100 ? "emerald" : "amber") as "emerald" | "amber" },
     { label: "Steps done", value: `${co.done}/${co.steps}`, tone: "slate" as const },
@@ -1086,6 +1091,7 @@ function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftRep
       ),
       data: () => [co.blocked.length === 0 ? { k: "empty", text: "Nothing blocked or on hold." } : stepsBlock(blockedRows, "Done")],
     },
+    ...(cancelled.length ? [cancelledSection(cancelled, c)] : []),
     {
       id: "lessons", title: "Hand-back & lessons", short: "Lessons",
       body: (print) => <Prompts print={print} lines={2} items={[
@@ -1097,6 +1103,40 @@ function closeoutSections(co: ReturnType<typeof buildCloseout>, report: ShiftRep
     },
     closeSection("Sign-off", ["Project / turnaround lead", "Operations", "Safety"]),
   ];
+}
+
+/** Jobs taken off this schedule that still get done somewhere else —
+ *  with the note and where they went, so none is forgotten. */
+function cancelledSection(jobs: CancelledJob[], c: Ctx): Sec {
+  const when = (j: CancelledJob) => [j.at != null && Number.isFinite(j.at) ? c.D(j.at) : null, j.m.cancelledByName].filter(Boolean).join(" · ");
+  const title = (j: CancelledJob) => (j.crumbs.length ? `${j.crumbs[j.crumbs.length - 1]} — ${j.m.name}` : j.m.name);
+  return {
+    id: "cancelled", title: "Cancelled from this schedule", short: "Cancelled", count: jobs.length, flag: "amber",
+    sub: "Still to be done — moved off this schedule",
+    body: (print) => (
+      <div className={`rounded-md border border-amber-300 dark:border-amber-800/70 divide-y divide-amber-200 dark:divide-amber-900/60 ${print ? "text-[8.5pt]" : "text-[12.5px]"}`}>
+        {jobs.map((j) => (
+          <div key={j.m.id ?? j.m.name} className={`keep ${print ? "px-1.5 py-1" : "px-2.5 py-2"} flex flex-col gap-0.5`}>
+            <div className="flex items-baseline gap-x-2 flex-wrap">
+              <b className="text-[var(--color-text)]">{title(j)}</b>
+              {j.crumbs.length > 1 && <span className="text-[11px] text-[var(--color-text-faint)]">{j.crumbs.slice(0, -1).join(" › ")}</span>}
+              {j.steps > 1 && <span className="text-[11px] text-[var(--color-text-muted)]">{j.steps} steps</span>}
+            </div>
+            <div className="text-[var(--color-text)]">
+              <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-400">Moved to </span>
+              {j.m.movedTo ? <b>{j.m.movedTo}</b> : <span className="text-[var(--color-text-faint)]">not said</span>}
+            </div>
+            {j.m.cancelNote && <div className="text-[var(--color-text-muted)] italic">“{j.m.cancelNote}”</div>}
+            <div className="text-[10.5px] text-[var(--color-text-faint)]">Cancelled {when(j)}</div>
+          </div>
+        ))}
+      </div>
+    ),
+    data: () => [{
+      k: "table", head: ["Job", "Moved to", "Note", "Cancelled"],
+      rows: jobs.map((j) => [title(j), j.m.movedTo || "—", j.m.cancelNote || "", when(j)]),
+    }],
+  };
 }
 
 function closeSection(title: string, signers: string[], sub = "Notes, actions and sign-off"): Sec {

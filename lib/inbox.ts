@@ -232,7 +232,8 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
   );
 
   const allMilestones = milestonesRes.status === "fulfilled"
-    ? ((milestonesRes.value.data || []) as Array<Record<string, unknown>>).map(rowToMilestone)
+    // A job cancelled off its schedule (done elsewhere) isn't overdue here.
+    ? ((milestonesRes.value.data || []) as Array<Record<string, unknown>>).filter((r) => !r.cancelled_at).map(rowToMilestone)
     : [];
   // Mine = in one of my projects, or assigned directly (no projectId).
   const myMilestones = allMilestones.filter((m) => !m.projectId || myProjectIds.has(m.projectId));

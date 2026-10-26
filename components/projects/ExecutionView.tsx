@@ -33,6 +33,7 @@ import {
   Trash2,
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
+import type { CancelledJob } from "@/lib/cancelledJobs";
 import { groupTasksUnderParent, setTaskDuration, addMilestoneNote, stateOf, deleteMilestones, restoreDeletedMilestones, applyBulkFieldChange, type MilestoneState } from "@/lib/milestones";
 import { computeTreeMove, computeEdgeResize, computeSummaryResize, sequenceSiblings, cascadeDependents, type ReflowNode, type DateChange } from "@/lib/scheduleReflow";
 import { resolveCriticalPath, CRITICAL_MODES, type CriticalMode, type CriticalOverride } from "@/lib/criticalPath";
@@ -69,6 +70,8 @@ import { filterMilestones, isFilterActive, EMPTY_FILTER, type ScheduleFilter } f
 
 interface Props {
   milestones: Milestone[];
+  /** Jobs taken off this schedule — listed on the close-out report. */
+  cancelled?: CancelledJob[];
   canEdit: boolean;
   orgId: string;
   projectId: string;
@@ -114,7 +117,7 @@ interface FlatRow {
 }
 
 export default function ExecutionView({
-  milestones, canEdit, orgId, projectId, projectName, userId, userName, userEmail, userRole,
+  milestones, cancelled, canEdit, orgId, projectId, projectName, userId, userName, userEmail, userRole,
   onRefresh, onMoveMany, onSetStatus, onSetProgress, onRestore,
 }: Props) {
   const tz = useScheduleTz();
@@ -1040,7 +1043,7 @@ export default function ExecutionView({
       {layout === "report" ? (
         <ExecutionReportView milestones={items} shiftTimes={shiftTimes} critical={critical} criticalSource={criticalSourceLabel} />
       ) : layout === "shift" ? (
-        <ShiftReportView milestones={items} progress={progressIndex} criticalIds={critical.ids} projectId={projectId} projectName={projectName} />
+        <ShiftReportView milestones={items} cancelled={cancelled} progress={progressIndex} criticalIds={critical.ids} projectId={projectId} projectName={projectName} />
       ) : layout === "calendar" ? (
         <ScheduleCalendarTileView
           planNow={planNowAll}

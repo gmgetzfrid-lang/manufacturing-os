@@ -77,6 +77,11 @@ interface MilestoneRow {
   completed_by: string | null;
   completed_by_name: string | null;
   status_reason: string | null;
+  cancelled_at?: string | null;
+  cancelled_by?: string | null;
+  cancelled_by_name?: string | null;
+  cancel_note?: string | null;
+  moved_to?: string | null;
 }
 
 function rowToMilestone(r: MilestoneRow): Milestone {
@@ -130,6 +135,11 @@ function rowToMilestone(r: MilestoneRow): Milestone {
     completedBy: r.completed_by,
     completedByName: r.completed_by_name,
     statusReason: r.status_reason,
+    cancelledAt: r.cancelled_at ?? null,
+    cancelledBy: r.cancelled_by ?? null,
+    cancelledByName: r.cancelled_by_name ?? null,
+    cancelNote: r.cancel_note ?? null,
+    movedTo: r.moved_to ?? null,
   };
 }
 
@@ -779,6 +789,84 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
     type: "MILESTONE_DELETED",
     name: m.name,
   });
+}
+
+/** Take a job off this schedule — it still gets done, somewhere else —
+ *  with a note and where it went. Its steps go with it (stamped too, so
+ *  every reader leaves them out). Nothing is deleted: it leaves the views
+ *  and the progress numbers and is listed on the close-out report, and
+ *  Put back restores it as it was. */
+export async function cancelMilestone(input: {
+  id: string; note: string; movedTo: string;
+  actorUserId: string; actorUserName?: string; actorUserEmail?: string;
+}): Promise<void> {
+  const { row, under } = await jobAndSteps(input.id);
+  const now = new Date().toISOString();
+  const stamp = { cancelled_at: now, cancelled_by: input.actorUserId, cancelled_by_name: input.actorUserName ?? null, updated_at: now, updated_by: input.actorUserId };
+  const { data, error } = await supabase.from("milestones").update({
+    ...stamp, cancel_note: input.note.trim() || null, moved_to: input.movedTo.trim() || null,
+  }).eq("id", row.id).select("id");
+  if (error) throw new Error(missingCancelColumns(error.message) ?? error.message);
+  if (!data || data.length === 0) throw new Error("This job wasn't cancelled — you may not have permission to change it on this project.");
+  // Its steps, unless one was already cancelled on its own (keeps its note).
+  const steps = under.filter((r) => !r.cancelled_at).map((r) => r.id);
+  for (let i = 0; i < steps.length; i += 200) {
+    const { error: e } = await supabase.from("milestones").update(stamp).in("id", steps.slice(i, i + 200));
+    if (e) throw new Error(e.message);
+  }
+  await logAuditAction({
+    action: "MILESTONE_CANCELLED", resourceType: "project", resourceId: row.project_id ?? row.id,
+    orgId: row.org_id, userId: input.actorUserId, userEmail: input.actorUserEmail,
+    details: { id: row.id, name: row.name, steps: steps.length, note: input.note.trim() || null, movedTo: input.movedTo.trim() || null },
+  }).catch(() => undefined);
+}
+
+/** Put a cancelled job back on the schedule, with the steps that came off
+ *  with it. Its note is kept in the audit log. */
+export async function restoreCancelledMilestone(input: { id: string; actorUserId: string; actorUserEmail?: string }): Promise<void> {
+  const { row, under } = await jobAndSteps(input.id);
+  const clear = { cancelled_at: null, cancelled_by: null, cancelled_by_name: null, cancel_note: null, moved_to: null, updated_at: new Date().toISOString(), updated_by: input.actorUserId };
+  // Steps cancelled in the same click as the job — not one cancelled on its own before.
+  const ids = [row.id, ...under.filter((r) => r.cancelled_at && r.cancelled_at === row.cancelled_at).map((r) => r.id)];
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await supabase.from("milestones").update(clear).in("id", ids.slice(i, i + 200)).select("id");
+    if (error) throw new Error(missingCancelColumns(error.message) ?? error.message);
+    if (i === 0 && (!data || data.length === 0)) throw new Error("This job wasn't put back — you may not have permission to change it on this project.");
+  }
+  await logAuditAction({
+    action: "MILESTONE_UNCANCELLED", resourceType: "project", resourceId: row.project_id ?? row.id,
+    orgId: row.org_id, userId: input.actorUserId, userEmail: input.actorUserEmail,
+    details: { id: row.id, name: row.name, note: row.cancel_note, movedTo: row.moved_to },
+  }).catch(() => undefined);
+}
+
+type CancelRow = { id: string; org_id: string; project_id: string | null; parent_id: string | null; name: string; cancelled_at: string | null; cancel_note: string | null; moved_to: string | null };
+
+/** A job and every step under it. */
+async function jobAndSteps(id: string): Promise<{ row: CancelRow; under: CancelRow[] }> {
+  const { data, error } = await supabase.from("milestones").select("*").eq("id", id).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("This job isn't on the schedule any more.");
+  const row = data as CancelRow;
+  if (!("cancelled_at" in row)) throw new Error(missingCancelColumns("cancelled_at")!);
+  if (!row.project_id) return { row, under: [] };
+  const { rows: all, error: loadErr } = await fetchAllRows<CancelRow>((from, to) => supabase.from("milestones").select("*")
+    .eq("org_id", row.org_id).eq("project_id", row.project_id!).order("id").range(from, to));
+  if (loadErr) throw new Error(loadErr);
+  const kids = new Map<string, CancelRow[]>();
+  for (const r of all) if (r.parent_id) kids.set(r.parent_id, [...(kids.get(r.parent_id) ?? []), r]);
+  const under: CancelRow[] = [];
+  const seen = new Set<string>([id]);
+  const walk = (pid: string) => { for (const c of kids.get(pid) ?? []) if (!seen.has(c.id)) { seen.add(c.id); under.push(c); walk(c.id); } };
+  walk(id);
+  return { row, under };
+}
+
+/** Saving before the columns exist says what to run, not a raw error. */
+function missingCancelColumns(msg: string): string | null {
+  return /cancelled_at|cancel_note|moved_to|cancelled_by/.test(msg)
+    ? "Cancelling jobs needs a one-time database update (20261102_cancelled_jobs.sql) — ask your admin to run it."
+    : null;
 }
 
 /** What a delete removed — enough to put it all back (Undo). */
