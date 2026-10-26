@@ -127,6 +127,8 @@ export const ORG_SCOPED_TABLES = [
   "milestones",
   "milestone_notes",
   "milestone_progress_log",
+  // Each shift's safety moment — the lessons the crews were given.
+  "shift_safety_moments",
 
   // Equipment + operational scope
   "assets",

@@ -36,6 +36,12 @@ export async function governedAiCall(input: {
   images?: AiCallImage[];
   maxTokens?: number;
   timeoutMs?: number;
+  /** Search the web live during the call, up to maxSearches times. */
+  webSearch?: boolean;
+  maxSearches?: number;
+  /** Refuse (412) rather than answer from the model's memory when the
+   *  member's provider has no live web search here. */
+  requireLiveWeb?: boolean;
 }): Promise<AiCallResult> {
   const { orgId, userId } = input;
 
@@ -74,6 +80,10 @@ export async function governedAiCall(input: {
 
   const provider = conn.provider as AiProviderId;
   const model = String(conn.model);
+  if (input.requireLiveWeb && provider === "openai") {
+    throw new GovernedCallError(
+      "This needs a live web search, which runs on a Claude key — OpenAI keys can't search the web here. Switch to a Claude key in AI settings.", 412);
+  }
   try {
     const out = await callAiModel({
       provider, model,
@@ -83,6 +93,8 @@ export async function governedAiCall(input: {
       images: input.images,
       maxTokens: input.maxTokens ?? 2000,
       timeoutMs: input.timeoutMs ?? 45_000,
+      webSearch: input.webSearch,
+      maxSearches: input.maxSearches,
     });
     await recordAskUsage({ orgId, userId, provider, model, usage: out.usage, ok: true, op: input.op });
     return out;

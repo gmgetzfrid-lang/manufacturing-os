@@ -50,6 +50,8 @@ import { latestNotes } from "@/lib/milestones";
 import { loadProgressLog, scheduleAt, type ProgressLogRow } from "@/lib/progressHistory";
 import { effectiveSpans } from "@/lib/scheduleTime";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
+import { SafetyMomentBox, useSafetyMoment, type SafetyMomentState } from "@/components/projects/SafetyMomentBox";
+import type { HazardJobInput } from "@/lib/safetyMoment";
 
 interface Props {
   milestones: Milestone[];
@@ -57,6 +59,8 @@ interface Props {
   criticalIds: Set<string>;
   projectId: string;
   projectName?: string;
+  /** The workspace — builds the safety moment on the member's AI key. */
+  orgId?: string;
 }
 
 const MEETINGS: Array<{ id: MeetingKind; label: string; Icon: typeof Rocket }> = [
@@ -65,7 +69,7 @@ const MEETINGS: Array<{ id: MeetingKind; label: string; Icon: typeof Rocket }> =
   { id: "closeout", label: "Close-out", Icon: Trophy },
 ];
 
-export default function ShiftReportView({ milestones: live, progress: liveProgress, criticalIds, projectId, projectName }: Props) {
+export default function ShiftReportView({ milestones: live, progress: liveProgress, criticalIds, projectId, projectName, orgId }: Props) {
   const tz = useScheduleTz();
   // The project's shift-change times — the same on every device.
   const times = useShiftTimes(projectId);
@@ -145,6 +149,9 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
   const planByTask = useMemo(() => expectedByParent(milestones, asOf, tz, times), [milestones, asOf, tz, times]);
   const ctx = useMemo(() => makeCtx(tz, byId, progress, planByTask), [tz, byId, progress, planByTask]);
 
+  // The next shift's safety moment — saved per shift, the same on every screen.
+  const safety = useSafetyMoment({ orgId, projectId, shiftStart: report.next.start, shiftKind: report.next.kind });
+
   // The latest comment on each step ("sent out for calibration") — shown
   // as a quiet line under the step, here and in the copied update.
   const [notes, setNotes] = useState<Map<string, { body: string; at: string | null; by: string | null }>>(new Map());
@@ -168,8 +175,8 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
     ? kickoffSections(kickoff, ctx)
     : meeting === "closeout"
       ? closeoutSections(closeout, report, ctx)
-      : turnoverSections(report, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times }),
-  [meeting, kickoff, closeout, report, ctx, jumpTarget, noteThen, times]);
+      : turnoverSections(report, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, safety }),
+  [meeting, kickoff, closeout, report, ctx, jumpTarget, noteThen, times, safety]);
 
   // ── live-meeting navigation ──
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -630,7 +637,7 @@ function rowFromPlan(r: PlanRow, c: Ctx, o: { when?: string; right?: string; n?:
   };
 }
 
-function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void; jumpTarget: ShiftWindow | null; noteOf?: (id: string) => { body: string; at?: string | null } | undefined; times: ShiftTimes }): Sec[] {
+function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void; jumpTarget: ShiftWindow | null; noteOf?: (id: string) => { body: string; at?: string | null } | undefined; times: ShiftTimes; safety?: SafetyMomentState }): Sec[] {
   const { overall, review, goals, blocked, shift, next } = report;
   // A step's latest comment, as one quiet line under it — shown once: with
   // the problem when it's one (that's where it's discussed), else under the
@@ -724,6 +731,18 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       r.finish > next.end ? { t: `to ${c.D(r.finish)}`, tone: "muted" } : null,
     ],
   }));
+  // The next shift's work as the safety moment ranks it: its hours on
+  // that shift (what's left, for work already past due).
+  const hazardJobs: HazardJobInput[] = planList.map((r) => {
+    const span = r.finish - r.start;
+    const overlap = Math.max(0, Math.min(r.finish, next.end) - Math.max(r.start, next.start));
+    return {
+      id: r.leaf.id ?? r.leaf.name, name: r.leaf.name, parentName: r.parentName, crumbs: r.path.slice(0, -1),
+      who: r.leaf.responsibleParty ?? null, critical: r.critical,
+      hours: overlap > 0 && span > 0 ? r.hours * (overlap / span) : r.hoursLeft,
+      when: r.carryOver ? `due ${c.DTs(r.finish)}` : rowTime(r, next),
+    };
+  });
   // The other crew's work under way, paused over the next shift: a line.
   const pausedLine = goals.paused.length
     ? `${otherKind === "day" ? "Day" : "Night"} crew's work paused until ${c.T(next.end)}: ${goals.paused.map((r) => `${r.parentName ? `${r.parentName} — ` : ""}${r.leaf.name} (${r.percent}%)`).join("; ")}.`
@@ -769,12 +788,16 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     {
       id: "safety", title: "Safety & people", short: "Safety",
       sub: "Open every turnover here — then the work.",
-      body: (print) => <Prompts print={print} items={[
-        "Safety moment — incidents, near misses, first aid since last turnover",
-        "Permits, isolations and lock-outs that stay open across the change",
-        "Manpower and equipment — who is short, what is down, what arrives",
-        "Hazards on the next shift's work (lifts, confined space, hot work, line breaks)",
-      ]} />,
+      body: (print) => (
+        <div className="space-y-2">
+          {o.safety && <SafetyMomentBox jobs={hazardJobs} safety={o.safety} shiftKind={next.kind} shiftLabel={`${shiftName(next)} ${c.D(next.start)} ${c.win(next)}`} print={print} stamp={c.DTs} />}
+          <Prompts print={print} cols={3} items={[
+            "Incidents, near misses, first aid since last turnover",
+            "Permits and lock-outs open across the change",
+            "Manpower and equipment — short, down, arriving",
+          ]} />
+        </div>
+      ),
     },
     {
       // ── Completed — good news first, no decisions in it.
@@ -1146,9 +1169,9 @@ function Blank({ print }: { print: boolean }) {
 }
 
 /** Talking points the meeting covers, with a box to tick. */
-function Prompts({ items, print, lines = 0 }: { items: string[]; print: boolean; lines?: number }) {
+function Prompts({ items, print, lines = 0, cols = 2 }: { items: string[]; print: boolean; lines?: number; cols?: 2 | 3 }) {
   return (
-    <ul className={`grid ${lines ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2"} gap-x-4 gap-y-1 keep`}>
+    <ul className={`grid ${lines ? "grid-cols-1" : cols === 3 ? "grid-cols-1 sm:grid-cols-3 print:grid-cols-3" : "grid-cols-1 sm:grid-cols-2"} gap-x-4 gap-y-1 keep`}>
       {items.map((t) => (
         <li key={t} className="text-[11.5px]">
           <label className="flex items-start gap-1.5">

@@ -96,10 +96,14 @@ export interface AiCallResult {
   text: string;
   /** Live web sources the provider consulted (Anthropic/Gemini web tools). */
   webSources: WebSource[];
+  /** Every page the live web search returned this call (Anthropic) — what
+   *  a caller checks a cited URL against, so no answer can cite a page the
+   *  search never saw. Absent when no search ran. */
+  searchResults?: WebSource[];
   /** True only when a LIVE web tool actually ran (vs model knowledge). */
   liveWeb: boolean;
   /** Exact token counts from the provider's response — feeds spend metering. */
-  usage: { inputTokens: number; outputTokens: number };
+  usage: { inputTokens: number; outputTokens: number; webSearches?: number };
 }
 
 export interface AiCallImage {
@@ -127,6 +131,9 @@ export interface AiCallInput {
    *  "[W<k>]", k = its 1-based index in webSources — so every web claim is
    *  tied to the page (and quoted text) it came from. Anthropic only. */
   markWebCitations?: boolean;
+  /** With webSearch: how many searches the model may run (Anthropic;
+   *  default 4). */
+  maxSearches?: number;
   /** Abort the call after this long. Callers running inside a serverless
    *  invocation use it to guarantee they get control back with time to
    *  commit — an unbounded call that outlives its function loses whatever
@@ -187,6 +194,8 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
       type: string;
       text?: string;
       citations?: Array<{ url?: string; title?: string; cited_text?: string }>;
+      /** web_search_tool_result: the pages the search returned. */
+      content?: unknown;
     };
     // Server-side web search can pause the turn mid-way (stop_reason
     // "pause_turn"); resume by echoing the assistant content back.
@@ -257,9 +266,11 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
     let data: {
       stop_reason?: string;
       content?: Block[];
-      usage?: { input_tokens?: number; output_tokens?: number };
+      usage?: { input_tokens?: number; output_tokens?: number; server_tool_use?: { web_search_requests?: number } };
     } = {};
-    const usage = { inputTokens: 0, outputTokens: 0 };
+    const usage = { inputTokens: 0, outputTokens: 0, webSearches: 0 };
+    const searched: WebSource[] = [];
+    const seenSearched = new Set<string>();
     for (let round = 0; round < 4; round++) {
       const res = await fetchWithRetry("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -282,7 +293,7 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
           system,
           messages,
           ...(webSearch
-            ? { tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }] }
+            ? { tools: [{ type: "web_search_20250305", name: "web_search", max_uses: input.maxSearches ?? 4 }] }
             : {}),
         }),
         signal,
@@ -292,6 +303,15 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
       // Each pause_turn round bills separately — sum across rounds.
       usage.inputTokens += data.usage?.input_tokens ?? 0;
       usage.outputTokens += data.usage?.output_tokens ?? 0;
+      usage.webSearches += data.usage?.server_tool_use?.web_search_requests ?? 0;
+      for (const b of data.content ?? []) {
+        if (b.type !== "web_search_tool_result" || !Array.isArray(b.content)) continue;
+        for (const r of b.content as Array<{ type?: string; url?: string; title?: string }>) {
+          if (r?.type !== "web_search_result" || !r.url || seenSearched.has(r.url)) continue;
+          seenSearched.add(r.url);
+          searched.push({ url: r.url, title: r.title ?? null });
+        }
+      }
       if (data.stop_reason === "refusal") {
         throw new AiCallError("The model declined to answer this question.", 422);
       }
@@ -339,7 +359,7 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
       blocks.flatMap((b) => b.citations ?? [])
         .map((c) => ({ url: c.url ?? "", title: c.title ?? null })),
     );
-    return { text, webSources, liveWeb: !!webSearch, usage };
+    return { text, webSources, liveWeb: !!webSearch, usage, ...(webSearch ? { searchResults: searched } : {}) };
   }
 
   if (provider === "openai") {

@@ -65,7 +65,12 @@ export function buildAgreementText(provider?: string): string {
 export interface AiUsage {
   inputTokens: number;
   outputTokens: number;
+  /** Live web searches the provider ran (billed per search). */
+  webSearches?: number;
 }
+
+/** $ per live web search (Anthropic: $10 per 1,000). */
+const WEB_SEARCH_USD = 0.01;
 
 /** $ per MILLION tokens: [input, output]. Longest-prefix match on the model
  *  id so dated snapshots ("gpt-4o-2024-11-20") price like their family. */
@@ -113,7 +118,8 @@ export function estimateCostUsd(model: string, usage: AiUsage): number {
   const [inPerM, outPerM] = modelPricePerMTok(model);
   const cost =
     (Math.max(0, usage.inputTokens) / 1_000_000) * inPerM +
-    (Math.max(0, usage.outputTokens) / 1_000_000) * outPerM;
+    (Math.max(0, usage.outputTokens) / 1_000_000) * outPerM +
+    Math.max(0, usage.webSearches ?? 0) * WEB_SEARCH_USD;
   // Round to micro-dollars: enough precision to accumulate tiny calls
   // without floating-point lint in the ledger.
   return Math.round(cost * 1_000_000) / 1_000_000;

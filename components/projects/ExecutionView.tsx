@@ -973,7 +973,7 @@ export default function ExecutionView({
       {layout === "report" ? (
         <ExecutionReportView milestones={items} shiftTimes={shiftTimes} />
       ) : layout === "shift" ? (
-        <ShiftReportView milestones={items} progress={progressIndex} criticalIds={critical.ids} projectId={projectId} projectName={projectName} />
+        <ShiftReportView milestones={items} progress={progressIndex} criticalIds={critical.ids} projectId={projectId} projectName={projectName} orgId={orgId} />
       ) : layout === "calendar" ? (
         <ScheduleCalendarTileView
           planNow={planNowAll}
