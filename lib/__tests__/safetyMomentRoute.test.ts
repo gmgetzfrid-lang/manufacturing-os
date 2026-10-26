@@ -73,11 +73,11 @@ beforeEach(() => {
   state.aiOut = {
     text: JSON.stringify({ hazards: [
       { kind: "hydroblast", title: "Hydroblasting 10K", gems: [
-        { what: "Pedal taped down; fatal (Germany, 2018).", do: "Pedal dumps on release.", source: "https://eusalt.com/x.pdf" },
-        { what: "Invented.", do: "Nothing.", source: "https://made.up/page" },
+        { watch: "A taped or sticking dump pedal keeps the gun live.", prevent: "Pedal dumps on release.", source: "https://eusalt.com/x.pdf" },
+        { watch: "Invented.", prevent: "Nothing.", source: "https://made.up/page" },
       ] },
       { kind: "line_break", title: "PSV-021 swap", gems: [
-        { what: "Undrainable line cut as routine; 4 killed (Tosco Avon, 1999).", do: "Won't drain? Stop.", source: "https://www.csb.gov/tosco/" },
+        { watch: "A line that won't drain still holds liquid behind the break.", prevent: "Won't drain? Stop.", source: "https://www.csb.gov/tosco/" },
       ] },
     ] }),
     webSources: [],

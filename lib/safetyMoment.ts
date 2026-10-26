@@ -1,8 +1,9 @@
 // lib/safetyMoment.ts — the turnover's safety moment.
 //
 // Instead of "safety moment — anyone?", the next shift's three riskiest
-// kinds of work, each with two lessons from real incidents found on the web
-// that turn: what went wrong somewhere, and what to check on this job.
+// kinds of work, each with two lessons drawn from real incidents found on
+// the web that turn — not their stories, their lessons: what to look out
+// for on this job, and what prevents it.
 //
 //   1. rankHazards — read the next shift's steps, sort them into kinds of
 //      work (hydroblasting, vessel entry, line breaks, lifts …) by their
@@ -239,9 +240,9 @@ export function hazardContext(h: RankedHazard): string {
 // ─── The lessons ─────────────────────────────────────────────────────
 
 export interface SafetyGem {
-  /** What went wrong, where — the incident or failure in one line. */
+  /** What to look out for on this job — the condition, present tense. */
   what: string;
-  /** What to check on this job, in a few words. */
+  /** What prevents it, in a few words. */
   do: string;
   source: { url: string; title: string | null };
 }
@@ -264,12 +265,17 @@ export interface SafetyMoment {
 export const SAFETY_SYSTEM = [
   "You prepare the safety moment for a refinery turnaround's shift-turnover meeting. The crews have 20 years of generic safety talks behind them and tune them out. Your job is the lesson they have not heard: hyper-specific to the work they are about to do.",
   "",
-  "For EACH kind of work you are given, use web search to find real incidents (or documented failure investigations) that match that work as closely as possible, then write exactly 2 gems.",
+  "For EACH kind of work you are given, use web search to find real incidents and investigations that match that work as closely as possible. Read them for their LESSONS — what would have prevented it, what the crew should have seen coming — then write exactly 2 gems.",
   "",
-  "A gem:",
-  "- what: one line, at most 28 words. What happened or how it goes wrong, concretely. Name the place/company and year when it is an incident (\"Tosco Avon, 1999\").",
-  "- do: at most 14 words, imperative. A check or action the crew can do on THIS job tonight.",
-  "- source: the exact URL of a search result you got in this conversation that backs the gem. Never a URL you did not receive from search. If you cannot source a gem, leave it out.",
+  "A gem is a takeaway, NOT a story. The supervisor delivers it in ten seconds; nobody tells what happened to whom.",
+  "- watch: at most 20 words, present tense. What to look out for on this job — the condition or warning sign that leads to it.",
+  "- prevent: at most 14 words, imperative. What prevents it — a check or action the crew does on THIS job tonight.",
+  "- Never retell the incident: no company, place, date, year, victim or \"a worker was…\". The incident is only the evidence; its page goes in source.",
+  "- source: the exact URL of a search result you got in this conversation whose lessons back the gem. Never a URL you did not receive from search. If you cannot source a gem, leave it out.",
+  "",
+  "Example of the form (hydroblasting):",
+  '  watch: "A dump pedal that is taped, wedged or sticking keeps the gun live after the lancer lets go."',
+  '  prevent: "Test the dump at every start. Standby watches the lancer, nothing else."',
   "",
   "Quality bar — leave out anything an experienced hand could say without the incident:",
   "- Not allowed: wear PPE, stay focused, communicate, watch for pinch points, three points of contact, housekeeping, take your time, follow the procedure, be aware of surroundings, line of fire (unless naming the specific mechanism).",
@@ -281,7 +287,7 @@ export const SAFETY_SYSTEM = [
   "",
   "title: 2–4 words naming the work as the crew would (\"Hydroblasting 10K\", \"Inside V-7\", \"PSV-021 swap\").",
   "",
-  'Return STRICT JSON only, nothing else: {"hazards":[{"kind":"<kind as given>","title":"…","gems":[{"what":"…","do":"…","source":"https://…"}]}]}',
+  'Return STRICT JSON only, nothing else: {"hazards":[{"kind":"<kind as given>","title":"…","gems":[{"watch":"…","prevent":"…","source":"https://…"}]}]}',
 ].join("\n");
 
 export function safetyMomentPrompt(input: {
@@ -328,9 +334,13 @@ const clip = (s: unknown, n: number) => {
   return t.length > n ? `${t.slice(0, n - 1).trimEnd()}…` : t;
 };
 
+/** A gem that names a year is telling the story, not the lesson. */
+const STORY = /\b(19|20)\d{2}\b/;
+
 /** Read the model's answer into the moment's items, in the ranked order.
- *  A gem whose source is not one the search returned is dropped; at most
- *  two gems per kind. Throws when the answer isn't JSON at all. */
+ *  A gem whose source is not one the search returned is dropped, and so is
+ *  one that retells the incident; at most two gems per kind. Throws when
+ *  the answer isn't JSON at all. */
 export function parseSafetyMoment(
   text: string,
   hazards: RankedHazard[],
@@ -338,7 +348,7 @@ export function parseSafetyMoment(
 ): { items: SafetyMomentItem[]; dropped: number } {
   const m = /\{[\s\S]*\}/.exec(text);
   if (!m) throw new Error("The answer wasn't in the expected form. Try again.");
-  let raw: { hazards?: Array<{ kind?: string; title?: string; gems?: Array<{ what?: string; do?: string; source?: string }> }> };
+  let raw: { hazards?: Array<{ kind?: string; title?: string; gems?: Array<{ watch?: string; prevent?: string; what?: string; do?: string; source?: string }> }> };
   try { raw = JSON.parse(m[0]); } catch { throw new Error("The answer wasn't in the expected form. Try again."); }
   const found = new Map<string, { url: string; title: string | null }>();
   for (const s of searched) if (s.url) found.set(normalizeUrl(s.url), s);
@@ -347,9 +357,9 @@ export function parseSafetyMoment(
     const r = (raw.hazards ?? []).find((x) => x?.kind === h.kind);
     const gems: SafetyGem[] = [];
     for (const g of r?.gems ?? []) {
-      const what = clip(g?.what, 260), act = clip(g?.do, 140);
+      const what = clip(g?.watch ?? g?.what, 200), act = clip(g?.prevent ?? g?.do, 140);
       const hit = g?.source ? found.get(normalizeUrl(g.source)) : undefined;
-      if (!what || !act || !hit) { dropped++; continue; }
+      if (!what || !act || !hit || STORY.test(`${what} ${act}`)) { dropped++; continue; }
       if (gems.length >= 2) continue;
       gems.push({ what, do: act, source: { url: hit.url, title: hit.title } });
     }

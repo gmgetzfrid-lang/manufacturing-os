@@ -4,9 +4,9 @@
 // "safety moment" checkbox had.
 //
 // Three columns: the next shift's riskiest kinds of work (ranked from the
-// schedule as soon as the report opens), each with two lessons from real
-// incidents — what went wrong somewhere, then what to check here — and the
-// pages they came from. The supervisor can add a line the schedule doesn't
+// schedule as soon as the report opens), each with two lessons drawn from
+// real incidents — what to look out for, then what prevents it — and the
+// pages they came from. Lessons, not stories. The supervisor can add a line the schedule doesn't
 // show ("one crane pick at 02:00") and build it with one click; it's saved
 // for the shift, so every screen and the printout show the same thing.
 
@@ -140,9 +140,9 @@ export function SafetyMomentBox({ jobs, safety, shiftKind, shiftLabel, print, st
                 {c.context && <div className={`text-[10.5px] leading-snug ${muted}`}>{c.context}</div>}
               </div>
               {c.gems?.map((g) => (
-                <p key={g.what} className="text-[11.5px] leading-snug">
-                  <span className="text-[var(--color-text-muted)]">{g.what}</span>{" "}
-                  <b className="font-bold text-[var(--color-text)]">{g.do}</b>
+                <p key={g.what} className="text-[11.5px] leading-snug text-[var(--color-text)]">
+                  {g.what} <span className="text-orange-700 dark:text-orange-300" aria-hidden="true">→</span>{" "}
+                  <b className="font-bold">{g.do}</b>
                 </p>
               ))}
               {c.gems && c.gems.length === 0 && (
@@ -186,7 +186,7 @@ export function SafetyMomentBox({ jobs, safety, shiftKind, shiftLabel, print, st
         </form>
       )}
       {!print && building && (
-        <p className={`text-[11px] ${muted}`}>Searching real incidents for {cols.map((c) => c.title.toLowerCase()).join(", ")} — about a minute.</p>
+        <p className={`text-[11px] ${muted}`}>Pulling the lessons from real incidents for {cols.map((c) => c.title.toLowerCase()).join(", ")} — about a minute.</p>
       )}
       {!print && safety.error && <p className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-300">{safety.error}</p>}
       {!print && safety.warning && <p className="text-[11px] text-amber-800 dark:text-amber-300">{safety.warning}</p>}

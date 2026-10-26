@@ -94,15 +94,18 @@ describe("parseSafetyMoment", () => {
   it("keeps sourced gems, drops any whose source the search never returned", () => {
     const text = "Here you go:\n" + JSON.stringify({ hazards: [
       { kind: "line_break", title: "PSV-021 swap", gems: [
-        { what: "A line that wouldn't drain was cut anyway; 4 killed (Tosco Avon, 1999).", do: "Won't drain? Stop.", source: "http://csb.gov/tosco-avon-refinery-petroleum-naphtha-fire#top" },
-        { what: "Made up incident.", do: "Something.", source: "https://example.com/fake" },
+        { watch: "A line that won't drain still holds liquid behind the break.", prevent: "Won't drain? Stop.", source: "http://csb.gov/tosco-avon-refinery-petroleum-naphtha-fire#top" },
+        { watch: "Made up lesson.", prevent: "Something.", source: "https://example.com/fake" },
       ] },
       { kind: "hydroblast", title: "Hydroblasting 10K", gems: [
-        { what: "Pedal taped down; fatal (Germany, 2018).", do: "Pedal dumps on release.", source: "https://eusalt.com/_library/_files/Proj1_Ineos.pdf" },
+        { watch: "A taped or sticking dump pedal keeps the gun live.", prevent: "Pedal dumps on release.", source: "https://eusalt.com/_library/_files/Proj1_Ineos.pdf" },
+        { watch: "In Germany in 2018 an operator taped his pedal down.", prevent: "Don't.", source: "https://eusalt.com/_library/_files/Proj1_Ineos.pdf" },
       ] },
     ] });
     const { items, dropped } = parseSafetyMoment(text, hazards, searched);
-    expect(dropped).toBe(1);
+    // The made-up source and the story (it names a year) are both dropped.
+    expect(dropped).toBe(2);
+    expect(items.find((i) => i.kind === "hydroblast")!.gems.map((g) => g.what)).toEqual(["A taped or sticking dump pedal keeps the gun live."]);
     expect(items.map((i) => i.kind)).toEqual(hazards.map((h) => h.kind));
     const lb = items.find((i) => i.kind === "line_break")!;
     expect(lb.title).toBe("PSV-021 swap");
