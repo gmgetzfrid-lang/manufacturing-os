@@ -1,0 +1,317 @@
+"use client";
+
+// Schedule setup — one place for everything the schedule's reports hang
+// on. A red banner names what's missing until it's done (it can't be
+// dismissed), and the wizard walks through each item with what's in force
+// now filled in, so confirming a right answer is one click.
+
+import React, { useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Clock, Flag, Globe2, Loader2, Settings2, Zap } from "lucide-react";
+import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
+import { setupChecklist, missingRequired, type SetupItem, type SetupItemId } from "@/lib/scheduleSetup";
+import { browserTimeZone, listTimeZones, tzLabel, DEFAULT_SCHEDULE_TZ } from "@/lib/scheduleTz";
+import { updateProjectMeta } from "@/lib/projects";
+import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
+import { meetingLeadMin, type ShiftTimes } from "@/lib/shiftReport";
+import { useCriticalMode, saveCriticalMode } from "@/lib/criticalModeStore";
+import { CRITICAL_MODES, resolveCriticalPath, effectiveCriticalMode, type CriticalMode } from "@/lib/criticalPath";
+import type { Milestone } from "@/types/schema";
+
+const ICON: Record<SetupItemId, typeof Clock> = { timezone: Globe2, shifts: Clock, critical: Zap, baseline: Flag };
+const SESSION_KEY = (projectId: string) => `scheduleSetup.shown:${projectId}`;
+
+interface Props {
+  projectId: string;
+  /** The project's own zone (null = never set, running on UTC). */
+  timezone: string | null | undefined;
+  milestones: Milestone[];
+  hasBaseline: boolean;
+  /** Owner / admin: may change project settings. */
+  canManage: boolean;
+  /** May set the baseline. */
+  canEdit: boolean;
+  userId: string;
+  onProjectChanged: () => void;
+  onSetBaseline: () => Promise<void>;
+}
+
+/** The banner (while anything required is missing) and the wizard. */
+export function ScheduleSetup(p: Props) {
+  const saved = useShiftTimesSaved(p.projectId);
+  const critical = useCriticalMode(p.projectId);
+  const items = useMemo(() => setupChecklist({
+    timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline,
+  }), [p.timezone, saved, critical, p.hasBaseline]);
+  const missing = missingRequired(items);
+  // Opens by itself once per session for someone who can fix it.
+  const [open, setOpen] = useState<SetupItemId | null>(null);
+  const first = p.canManage ? missing[0]?.id : undefined;
+  useEffect(() => {
+    if (!first) return;
+    try {
+      if (sessionStorage.getItem(SESSION_KEY(p.projectId)) === "1") return;
+      sessionStorage.setItem(SESSION_KEY(p.projectId), "1");
+    } catch { /* private mode: the banner still shouts */ }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- opens once, after the settings have loaded
+    setOpen(first);
+  }, [first, p.projectId]);
+
+  return (
+    <>
+      {missing.length > 0 ? (
+        <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border-2 border-rose-400 dark:border-rose-700 bg-rose-50 dark:bg-rose-950/50 px-3.5 py-3 text-rose-900 dark:text-rose-100">
+          <AlertTriangle className="w-5 h-5 shrink-0 text-rose-600 dark:text-rose-400" />
+          <div className="flex-1 min-w-[220px] text-[13px] leading-snug">
+            <b>Finish setting up this schedule — the reports can&apos;t be trusted yet.</b>{" "}
+            Missing: {missing.map((i) => i.label.toLowerCase()).join(" and ")}.
+            <span className="block text-[12px] text-rose-800/90 dark:text-rose-200/80">{missing[0].why}</span>
+          </div>
+          {p.canManage ? (
+            <button onClick={() => setOpen(missing[0].id)}
+              className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[12.5px] font-bold px-3.5 py-2 shadow-sm">
+              <Settings2 className="w-4 h-4" /> Finish setup
+            </button>
+          ) : (
+            <span className="shrink-0 text-[12px] font-semibold">Ask the project owner to finish setup.</span>
+          )}
+        </div>
+      ) : null}
+      {open && <SetupWizard {...p} items={items} start={open} critical={critical} onClose={() => setOpen(null)} />}
+    </>
+  );
+}
+
+/** The always-there way back in: "Setup ✓" / "Setup · 2 to do". */
+export function ScheduleSetupButton(p: Props) {
+  const saved = useShiftTimesSaved(p.projectId);
+  const critical = useCriticalMode(p.projectId);
+  const items = setupChecklist({ timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline });
+  const todo = items.filter((i) => !i.done && !i.checking).length;
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button onClick={() => setOpen(true)} title="Time zone, shift times, critical path, baseline"
+        className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border shadow-sm transition-colors ${todo
+          ? "text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 hover:bg-amber-100"
+          : "text-[var(--color-text)] bg-[var(--color-surface)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
+        <Settings2 className="w-3.5 h-3.5" /> Setup{todo ? ` · ${todo} to do` : <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />}
+      </button>
+      {open && <SetupWizard {...p} items={items} start={items.find((i) => !i.done)?.id ?? "timezone"} critical={critical} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+function SetupWizard({ items, start, critical, onClose, ...p }: Props & { items: SetupItem[]; start: SetupItemId; critical: CriticalMode | null; onClose: () => void }) {
+  const [at, setAt] = useState<SetupItemId>(start);
+  const idx = items.findIndex((i) => i.id === at);
+  const item = items[idx];
+  const go = (d: number) => setAt(items[Math.max(0, Math.min(items.length - 1, idx + d))].id);
+  const allDone = items.every((i) => i.done);
+  return (
+    <Modal onClose={onClose} size="lg">
+      <ModalHeader icon={Settings2} title="Schedule setup" subtitle="What the schedule's reports hang on — set once for everyone on the project." onClose={onClose} />
+      <ModalBody className="p-0">
+        <div className="flex flex-col sm:flex-row">
+          {/* Steps */}
+          <nav className="sm:w-56 shrink-0 border-b sm:border-b-0 sm:border-r border-[var(--color-border)] p-2 flex sm:flex-col gap-1 overflow-x-auto" aria-label="Setup steps">
+            {items.map((i, n) => {
+              const Icon = ICON[i.id];
+              const on = i.id === at;
+              return (
+                <button key={i.id} onClick={() => setAt(i.id)} aria-current={on ? "step" : undefined}
+                  className={`shrink-0 flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] ${on ? "bg-[var(--color-surface-2)] font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
+                  <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 ${i.done
+                    ? "bg-emerald-600 text-white" : i.required ? "bg-rose-600 text-white" : "bg-amber-500 text-white"}`}>
+                    {i.done ? <Check className="w-3 h-3" /> : n + 1}
+                  </span>
+                  <Icon className="w-3.5 h-3.5 shrink-0 hidden sm:block" />
+                  <span className="whitespace-nowrap">{i.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+          {/* The step */}
+          <div className="flex-1 min-w-0 p-4 space-y-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-[15px] font-black text-[var(--color-text)]">{item.label}</h3>
+                {item.checking ? <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">checking…</span> : item.done
+                  ? <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 dark:text-emerald-400">✓ set</span>
+                  : <span className={`text-[10px] font-black uppercase tracking-wider ${item.required ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400"}`}>{item.required ? "needed" : "advised"}</span>}
+              </div>
+              <p className="text-[12.5px] text-[var(--color-text-muted)] mt-0.5">{item.why}</p>
+            </div>
+            {at === "timezone" && <TimeZoneStep {...p} done={item.done} onSaved={() => go(1)} />}
+            {at === "shifts" && <ShiftsStep {...p} done={item.done} onSaved={() => go(1)} />}
+            {at === "critical" && <CriticalStep {...p} critical={critical} onSaved={() => go(1)} />}
+            {at === "baseline" && <BaselineStep {...p} done={item.done} />}
+          </div>
+        </div>
+      </ModalBody>
+      <ModalFooter>
+        <div className="flex items-center w-full gap-2">
+          <button onClick={() => go(-1)} disabled={idx === 0} className="inline-flex items-center gap-1 text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1.5 disabled:opacity-30">
+            <ChevronLeft className="w-4 h-4" /> Back
+          </button>
+          <span className="flex-1 text-center text-[11px] text-[var(--color-text-faint)]">{items.filter((i) => i.done).length} of {items.length} set</span>
+          {idx < items.length - 1 ? (
+            <button onClick={() => go(1)} className="inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--color-text)] px-2 py-1.5">
+              {item.done ? "Next" : "Skip for now"} <ChevronRight className="w-4 h-4" />
+            </button>
+          ) : (
+            <button onClick={onClose} className={`text-[12px] font-bold px-3 py-1.5 rounded-lg ${allDone ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "text-[var(--color-text)]"}`}>
+              {allDone ? "All set — close" : "Close"}
+            </button>
+          )}
+        </div>
+      </ModalFooter>
+    </Modal>
+  );
+}
+
+const btn = "inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-[12.5px] font-bold px-3.5 py-2 shadow-sm disabled:opacity-50";
+const field = "h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[13px] text-[var(--color-text)]";
+
+function Msg({ err }: { err: string | null }) {
+  return err ? <div className="text-[12px] text-rose-700 dark:text-rose-300">{err}</div> : null;
+}
+function NoRights() {
+  return <div className="text-[12px] text-[var(--color-text-muted)]">Only the project owner or an admin can change this.</div>;
+}
+
+const US_ZONES = ["America/Los_Angeles", "America/Denver", "America/Phoenix", "America/Chicago", "America/New_York", "America/Anchorage", "Pacific/Honolulu"];
+
+function TimeZoneStep({ projectId, timezone, canManage, userId, onProjectChanged, done, onSaved }: Props & { done: boolean; onSaved: () => void }) {
+  const here = browserTimeZone();
+  const [tz, setTz] = useState(timezone || (here !== DEFAULT_SCHEDULE_TZ ? here : "America/Los_Angeles"));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const all = useMemo(() => listTimeZones(), []);
+  const save = async () => {
+    setBusy(true); setErr(null);
+    try {
+      await updateProjectMeta({ projectId, patch: { timezone: tz }, keepWallClock: true, actorUserId: userId });
+      onProjectChanged(); onSaved();
+    } catch (e) { setErr((e as Error).message); }
+    finally { setBusy(false); }
+  };
+  if (!canManage) return done ? <div className="text-[13px]">Plant time: <b>{tzLabel(timezone!)}</b></div> : <NoRights />;
+  return (
+    <div className="space-y-2.5">
+      <label className="block space-y-1">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">The plant&apos;s time zone</span>
+        <select value={tz} onChange={(e) => setTz(e.target.value)} className={`${field} w-full`}>
+          <optgroup label="US">{US_ZONES.map((z) => <option key={z} value={z}>{tzLabel(z)}</option>)}</optgroup>
+          <optgroup label="All">{all.filter((z) => !US_ZONES.includes(z)).map((z) => <option key={z} value={z}>{z}</option>)}</optgroup>
+        </select>
+      </label>
+      <p className="text-[12px] text-[var(--color-text-muted)]">Times on the schedule stay as written — 8:00 stays 8:00.</p>
+      <Msg err={err} />
+      <button onClick={() => void save()} disabled={busy || (done && tz === timezone)} className={btn}>
+        {busy && <Loader2 className="w-4 h-4 animate-spin" />} {done && tz === timezone ? "Saved" : timezone && tz === timezone ? "Confirm" : "Save time zone"}
+      </button>
+    </div>
+  );
+}
+
+function ShiftsStep({ projectId, canManage, done, onSaved }: Props & { done: boolean; onSaved: () => void }) {
+  const times = useShiftTimes(projectId);
+  const [draft, setDraft] = useState<ShiftTimes | null>(null);
+  const t = draft ?? times;
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const save = async () => {
+    const problem = shiftTimesProblem(t);
+    if (problem) { setErr(problem); return; }
+    setBusy(true); setErr(null);
+    try { await saveProjectShiftTimes(projectId, { ...t, meetingBefore: meetingLeadMin(t) }); setDraft(null); onSaved(); }
+    catch (e) { setErr((e as Error).message); }
+    finally { setBusy(false); }
+  };
+  if (!canManage && !done) return <NoRights />;
+  return (
+    <div className="space-y-2.5">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+        <label className="space-y-1"><span className="block text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Day shift starts</span>
+          <input type="time" disabled={!canManage} value={t.dayStart} onChange={(e) => setDraft({ ...t, dayStart: e.target.value })} className={`${field} w-full`} /></label>
+        <label className="space-y-1"><span className="block text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Night shift starts</span>
+          <input type="time" disabled={!canManage} value={t.nightStart} onChange={(e) => setDraft({ ...t, nightStart: e.target.value })} className={`${field} w-full`} /></label>
+        <label className="space-y-1"><span className="block text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Turnover meeting</span>
+          <span className="flex items-center gap-1.5"><input type="number" min={0} max={180} step={5} disabled={!canManage} value={meetingLeadMin(t)} onChange={(e) => setDraft({ ...t, meetingBefore: Number(e.target.value) })} className={`${field} w-20`} />
+            <span className="text-[12px] text-[var(--color-text-muted)]">min before</span></span></label>
+      </div>
+      {!done && !draft && <p className="text-[12px] text-[var(--color-text-muted)]">These are filled in with what the app is using now. If they&apos;re right, just confirm.</p>}
+      <Msg err={err} />
+      {canManage && (
+        <button onClick={() => void save()} disabled={busy || (done && !draft)} className={btn}>
+          {busy && <Loader2 className="w-4 h-4 animate-spin" />} {done && !draft ? "Saved" : draft ? "Save shift times" : "These are right — confirm"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function CriticalStep({ projectId, milestones, canManage, critical, onSaved }: Props & { critical: CriticalMode | null; onSaved: () => void }) {
+  const inForce = effectiveCriticalMode(milestones, critical);
+  const [pick, setPick] = useState<CriticalMode>(critical ?? inForce);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const counts = useMemo(() => {
+    const leaves = new Set(milestones.map((m) => m.parentId).filter(Boolean));
+    const steps = milestones.filter((m) => m.id && !leaves.has(m.id) && m.status !== "completed").length;
+    return { steps, of: Object.fromEntries(CRITICAL_MODES.map((o) => [o.value, resolveCriticalPath(milestones, o.value).ids.size])) as Record<CriticalMode, number> };
+  }, [milestones]);
+  const save = async () => {
+    setBusy(true); setErr(null);
+    try { await saveCriticalMode(projectId, pick); onSaved(); }
+    catch (e) { setErr((e as Error).message); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="space-y-2">
+      {CRITICAL_MODES.map((o) => (
+        <label key={o.value} className={`flex items-start gap-2.5 rounded-lg border px-3 py-2 cursor-pointer ${pick === o.value ? "border-orange-400 bg-orange-50 dark:border-orange-700 dark:bg-orange-950/40" : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
+          <input type="radio" name="crit" disabled={!canManage} checked={pick === o.value} onChange={() => setPick(o.value)} className="mt-1" />
+          <span className="flex-1 min-w-0">
+            <span className="block text-[13px] font-bold text-[var(--color-text)]">{o.label}</span>
+            <span className="block text-[12px] text-[var(--color-text-muted)]">{o.hint}</span>
+          </span>
+          <span className="shrink-0 text-[12px] font-mono text-[var(--color-text-muted)]">{counts.of[o.value]} of {counts.steps} open steps</span>
+        </label>
+      ))}
+      <p className="text-[12px] text-[var(--color-text-muted)]">Mark any task Critical / Not critical on its card afterwards — that wins over this.</p>
+      <Msg err={err} />
+      {canManage ? (
+        <button onClick={() => void save()} disabled={busy || critical === pick} className={btn}>
+          {busy && <Loader2 className="w-4 h-4 animate-spin" />} {critical === pick ? "Saved" : critical == null && pick === inForce ? "Confirm" : "Save"}
+        </button>
+      ) : <NoRights />}
+    </div>
+  );
+}
+
+function BaselineStep({ milestones, canEdit, done, onSetBaseline }: Props & { done: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const when = useMemo(() => {
+    const t = milestones.map((m) => Date.parse(String(m.baselineSetAt ?? ""))).filter(Number.isFinite);
+    return t.length ? new Date(Math.max(...t)) : null;
+  }, [milestones]);
+  if (done) {
+    return <div className="text-[13px] text-[var(--color-text)]">Progress is measured against the plan captured {when ? <b>{when.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</b> : "earlier"}. Re-baseline from the schedule toolbar only if the plan was formally changed.</div>;
+  }
+  if (!canEdit) return <NoRights />;
+  if (milestones.length === 0) return <div className="text-[12.5px] text-[var(--color-text-muted)]">Import the schedule first — then capture it here.</div>;
+  return (
+    <div className="space-y-2.5">
+      <p className="text-[12.5px] text-[var(--color-text)]">Capture the plan as it stands now. From then on, a step moved later still counts as late against it.</p>
+      <Msg err={err} />
+      <button disabled={busy} className={btn} onClick={async () => {
+        setBusy(true); setErr(null);
+        try { await onSetBaseline(); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+      }}>
+        {busy && <Loader2 className="w-4 h-4 animate-spin" />} Set the baseline now
+      </button>
+    </div>
+  );
+}

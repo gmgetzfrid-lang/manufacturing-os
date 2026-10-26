@@ -45,7 +45,7 @@ import { clockLabel, fmtInTz, tzAbbrev } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 import { toPlainText, toEmailHtml, type ExportBlock, type ExportDoc, type ExportStepRow } from "@/lib/reportExport";
 import { turnoverUpdate, withoutEmpty, noteLine, hazardJobsOf } from "@/lib/managementUpdate";
-import { useShiftTimes, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
+import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
 import { latestNotes } from "@/lib/milestones";
 import { loadProgressLog, scheduleAt, type ProgressLogRow } from "@/lib/progressHistory";
 import { effectiveSpans } from "@/lib/scheduleTime";
@@ -81,6 +81,8 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
   const tz = useScheduleTz();
   // The project's shift-change times — the same on every device.
   const times = useShiftTimes(projectId);
+  // Never saved: the day / night split is the app's 05:30 / 17:30 guess.
+  const timesSaved = useShiftTimesSaved(projectId);
   const [timesDraft, setTimesDraft] = useState<ShiftTimes | null>(null);
   const [timesMsg, setTimesMsg] = useState<string | null>(null);
   const draft = timesDraft ?? times;
@@ -334,7 +336,14 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
 
         <div className="ml-auto flex items-center gap-1.5">
           <div className="relative">
-            <button onClick={() => setShowTimes((v) => !v)} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Shift times" aria-expanded={showTimes}><Settings2 className="w-4 h-4" /></button>
+            {timesSaved === false ? (
+              <button onClick={() => setShowTimes((v) => !v)} aria-expanded={showTimes} title="The day / night split is a guess until the shift times are saved"
+                className="inline-flex items-center gap-1 rounded-md border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/50 px-2 py-1 text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/50">
+                <Settings2 className="w-3.5 h-3.5" /> Set shift times
+              </button>
+            ) : (
+              <button onClick={() => setShowTimes((v) => !v)} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title="Shift times" aria-expanded={showTimes}><Settings2 className="w-4 h-4" /></button>
+            )}
             {showTimes && (
               <div className="absolute right-0 top-full mt-1 z-30 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg p-2.5 space-y-1.5 text-[11px] w-52">
                 <div className="font-bold text-[var(--color-text)]">Shift change times (plant time)</div>
@@ -347,6 +356,12 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
                 <label className="flex items-center justify-between gap-2 text-[var(--color-text-muted)]"><span>Turnover meeting, min before</span>
                   <input type="number" min={0} max={180} step={5} value={meetingLeadMin(draft)} onChange={(e) => { setTimesMsg(null); setTimesDraft({ ...draft, meetingBefore: Number(e.target.value) }); }} className="h-7 w-16 border border-[var(--color-border-strong)] rounded px-1 bg-[var(--color-surface)]" />
                 </label>
+                {!timesDraft && timesSaved === false && (
+                  <div className="flex justify-end pt-0.5">
+                    <button onClick={() => { void saveProjectShiftTimes(projectId, times).then(() => setTimesMsg("Saved for everyone on this project.")).catch((e: Error) => setTimesMsg(e.message)); }}
+                      className="px-2.5 py-1 rounded-md font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]">These are right — confirm</button>
+                  </div>
+                )}
                 {timesDraft && (
                   <div className="flex justify-end gap-1.5 pt-0.5">
                     <button onClick={() => { setTimesDraft(null); setTimesMsg(null); }} className="px-2 py-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>

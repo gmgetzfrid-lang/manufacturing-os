@@ -44,6 +44,7 @@ import { DEFAULT_SCHEDULE_TZ, fmtInTz, fromDateTimeInput, tzLabel } from "@/lib/
 import { ClipboardList, PlayCircle } from "lucide-react";
 import ExecutionView from "@/components/projects/ExecutionView";
 import { CancelledJobsBar } from "@/components/projects/CancelledJobs";
+import { ScheduleSetup, ScheduleSetupButton } from "@/components/projects/ScheduleSetup";
 import { splitCancelled } from "@/lib/cancelledJobs";
 
 // Two modes only: Planning (build & manage the schedule as a list) and
@@ -70,9 +71,15 @@ interface ScheduleTabProps {
    *  their org role — ownership was previously ignored here, so an
    *  Engineer who owned the project could delete it but not plan it. */
   isProjectOwner?: boolean;
+  /** The project's own time zone (null = never set) — for Schedule setup. */
+  timezone?: string | null;
+  /** Owner / admin: may change project settings in Schedule setup. */
+  canManage?: boolean;
+  /** Re-read the project after a setting on it changed (time zone). */
+  onProjectChanged?: () => void;
 }
 
-export default function ScheduleTab({ orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole, isProjectOwner }: ScheduleTabProps) {
+export default function ScheduleTab({ orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole, isProjectOwner, timezone, canManage, onProjectChanged }: ScheduleTabProps) {
   const tz = useScheduleTz();
   const canEdit = !!isProjectOwner || (!!userRole && ADMIN_ROLES.has(userRole));
 
@@ -257,9 +264,20 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
     finally { setBaselineBusy(false); }
   };
 
+  // Schedule setup: everything the reports hang on, in one wizard.
+  const setupProps = {
+    projectId, timezone, milestones, hasBaseline, canManage: !!canManage, canEdit, userId,
+    onProjectChanged: () => onProjectChanged?.(),
+    onSetBaseline: async () => {
+      const res = await setBaseline({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
+      if (!res.ok) throw new Error(res.error ?? "Couldn't set the baseline.");
+      await refresh();
+    },
+  };
 
   return (
     <div className="space-y-4">
+      <ScheduleSetup {...setupProps} />
       {error && (
         // Above every panel and day list, so a failed save is never hidden
         // behind the thing you were working in.
@@ -319,6 +337,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           >
             {showGhost ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />} Imported rows
           </button>
+          <ScheduleSetupButton {...setupProps} />
           {canEdit && (
             <>
               <button

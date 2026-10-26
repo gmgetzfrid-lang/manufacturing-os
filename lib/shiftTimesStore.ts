@@ -89,3 +89,28 @@ export function useShiftTimes(projectId?: string | null): ShiftTimes {
   }, [projectId]);
   return t;
 }
+
+/** Have the project's shift times been saved, or is the app still on its
+ *  05:30 / 17:30 guess? Null while loading. Kept current after a save. */
+export function useShiftTimesSaved(projectId?: string | null): boolean | null {
+  const [state, setState] = useState<{ projectId?: string | null; saved: boolean | null }>({ projectId, saved: null });
+  useEffect(() => {
+    if (!projectId) return;
+    let live = true;
+    const check = () => shiftTimesSaved(projectId).then((v) => { if (live) setState({ projectId, saved: v }); }).catch(() => undefined);
+    void check();
+    const on = (e: Event) => { if ((e as CustomEvent<{ projectId: string }>).detail?.projectId === projectId) void check(); };
+    window.addEventListener(EVENT, on);
+    return () => { live = false; window.removeEventListener(EVENT, on); };
+  }, [projectId]);
+  return state.projectId === projectId ? state.saved : null;
+}
+
+async function shiftTimesSaved(projectId: string): Promise<boolean | null> {
+  const { data, error } = await supabase.from("projects").select("shift_times").eq("id", projectId).maybeSingle();
+  if (error || !data) {
+    // The column isn't there yet: a copy saved on this device counts.
+    try { return localStorage.getItem(key(projectId)) != null; } catch { return null; }
+  }
+  return (data as { shift_times: unknown }).shift_times != null;
+}
