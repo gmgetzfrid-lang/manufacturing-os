@@ -1064,16 +1064,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         <div className="space-y-2">
           {askedText && <div className="text-[11.5px] font-semibold text-slate-700 dark:text-slate-200">{askedText}</div>}
           {doneRows.length > 0 ? (
-            <SimpleTable print={print} head={["Task", "Done this shift", "Who", "What it means", "vs plan"]} rows={doneTasks.map((x) => ({
-              id: x.ids.join(","),
-              cells: [
-                <b key="t">{x.task}</b>,
-                <span key="s">{x.steps}</span>,
-                <span key="w" className="text-[var(--color-text-muted)]">{x.who}</span>,
-                <b key="r" className={x.result.tone === "amber" ? "text-amber-700 dark:text-amber-300" : "text-emerald-700 dark:text-emerald-400"}>{x.result.text}</b>,
-                <b key="v" className={`font-mono whitespace-nowrap ${x.vs.tone === "rose" ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{x.vs.text}</b>,
-              ],
-            }))} />
+            <DoneTasks rows={doneTasks} print={print} />
           ) : (
             <Empty>
               Nothing was {nothingLast ? "planned" : "completed"}{forCrew} on this shift.
@@ -1548,7 +1539,7 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
                 that squeeze the step's. */}
             {hasWho && <th className={`${cell} w-0 sm:w-[132px] print:w-[132px] max-sm:p-0 max-sm:text-[0px] overflow-hidden`}>Who</th>}
             {hasWo && <th className={`${cell} w-0 md:w-[64px] print:w-[64px] max-md:p-0 max-md:text-[0px] overflow-hidden`}>WO</th>}
-            <th className={`${cell} w-[96px] text-right`}>{rightHead}</th>
+            <th className={`${cell} w-[96px] sm:w-[124px] text-right`}>{rightHead}</th>
           </tr>
         </thead>
         <tbody>
@@ -1585,7 +1576,10 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
                     </td>
                     {hasWho && <td className={`${cell} hidden sm:table-cell print:table-cell text-[10.5px] text-slate-600 dark:text-slate-300 max-w-[132px] ${one}`} title={r.who}>{r.who}</td>}
                     {hasWo && <td className={`${cell} hidden md:table-cell print:table-cell font-mono text-[10px] text-slate-600 dark:text-slate-300 ${one}`}>{r.wo}</td>}
-                    <td className={`${cell} text-right font-mono font-bold text-[10.5px] text-slate-700 dark:text-slate-200 whitespace-nowrap`}>{r.right}</td>
+                    {/* "40% · goal 100%": two short lines on a phone, one line where there's room. */}
+                    <td className={`${cell} text-right font-mono font-bold text-[10.5px] text-slate-700 dark:text-slate-200 whitespace-nowrap`}>
+                      {r.right.split(" · ").map((part, i) => <span key={i} className="block sm:inline">{i > 0 && <span className="hidden sm:inline"> · </span>}{part}</span>)}
+                    </td>
                   </tr>
                   {/* The meeting's decision on this step — its own full-width line. */}
                   {!print && r.control && (
@@ -1598,6 +1592,54 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** What got done, one row per work order: a table where there's room;
+ *  on a phone, a short card each — nothing to scroll sideways for. */
+function DoneTasks({ rows, print }: { rows: Array<{ task: string; steps: string; who: string; result: { text: string; tone: string }; vs: { text: string; tone?: string }; ids: string[] }>; print: boolean }) {
+  const resultCls = (t: string) => (t === "amber" ? "text-amber-700 dark:text-amber-300" : "text-emerald-700 dark:text-emerald-400");
+  const vsCls = (t?: string) => (t === "rose" ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400");
+  const cell = print ? "px-1 py-[1px]" : "px-2 py-1.5";
+  return (
+    <>
+      {!print && (
+        <div className="sm:hidden rounded-md border border-slate-300 dark:border-slate-700 divide-y divide-slate-200 dark:divide-slate-700/60">
+          {rows.map((x) => (
+            <div key={x.ids.join(",")} className="px-3 py-2 text-[12.5px] space-y-0.5">
+              <div className="flex items-start justify-between gap-2">
+                <b className="text-[var(--color-text)] break-words">{x.task}</b>
+                {x.vs.text && <b className={`shrink-0 font-mono text-[12px] ${vsCls(x.vs.tone)}`}>{x.vs.text}</b>}
+              </div>
+              <div className="text-[var(--color-text)] break-words">{x.steps}</div>
+              <div className={`font-bold break-words ${resultCls(x.result.tone)}`}>{x.result.text}</div>
+              {x.who && <div className="text-[11.5px] text-[var(--color-text-muted)] break-words">{x.who}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className={`${print ? "" : "hidden sm:block"} rounded-md border border-slate-300 dark:border-slate-700`}>
+        <table className={`w-full border-collapse ${print ? "text-[8.5pt]" : "text-[12px]"}`}>
+          <thead>
+            <tr className="bg-slate-50 dark:bg-slate-800/60 text-[9px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 text-left">
+              <th className={`${cell} w-[20%]`}>Task</th><th className={cell}>Done this shift</th><th className={`${cell} w-[16%]`}>Who</th>
+              <th className={`${cell} w-[24%]`}>What it means</th><th className={`${cell} w-[64px] text-right`}>vs plan</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((x) => (
+              <tr key={x.ids.join(",")} className="border-t border-slate-200 dark:border-slate-700/60 align-top">
+                <td className={`${cell} font-bold break-words`}>{x.task}</td>
+                <td className={`${cell} break-words`}>{x.steps}</td>
+                <td className={`${cell} text-[11.5px] text-[var(--color-text-muted)] break-words`}>{x.who}</td>
+                <td className={`${cell} font-bold break-words ${resultCls(x.result.tone)}`}>{x.result.text}</td>
+                <td className={`${cell} text-right font-mono font-bold whitespace-nowrap ${vsCls(x.vs.tone)}`}>{x.vs.text}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 
