@@ -24,6 +24,8 @@ export interface HandoverDecision {
    *  carried work), and when it was planned. */
   pulled?: boolean;
   plannedStart?: number;
+  /** Why it was on the list, as shipped. */
+  why?: "pulled ahead" | "carry-over" | "other crew's work";
 }
 
 export interface Handover {
@@ -95,6 +97,7 @@ export function decisionsToShip(decisions: Record<string, HandoverDecision>, row
       // Pulled work with no crew of its own went with the extra-work crew.
       tryIt: true, crew: d.crew ?? (d.pulled ? pullCrew ?? null : null), note: d.note?.trim() || null, pctAtShip: r.percent, name: r.leaf.name,
       ...(d.pulled ? { pulled: true, plannedStart: r.crewStart } : {}),
+      why: d.pulled ? "pulled ahead" : r.carryOver ? "carry-over" : "other crew's work",
     };
   }
   return out;
@@ -121,11 +124,19 @@ export function suggestCrews(row: ShiftRow, report: ShiftReport): Array<{ crew: 
 
 /** What became of the steps the last turnover asked this shift to try —
  *  as entered so far (progress is often caught up later). */
-export function askedOutcomes(prior: Handover | null, pctOf: (id: string) => number | undefined): Array<{ id: string; name: string; crew: string | null; from: number; now: number | null; pulled: boolean }> {
+export function askedOutcomes(prior: Handover | null, pctOf: (id: string) => number | undefined): Array<{ id: string; name: string; crew: string | null; from: number; now: number | null; pulled: boolean; why: string }> {
   // Only what was shipped: a draft nobody shipped wasn't handed over.
   if (!prior?.shippedAt) return [];
   return Object.entries(prior.decisions).filter(([, d]) => d.tryIt)
-    .map(([id, d]) => ({ id, name: d.name ?? id, crew: d.crew ?? null, from: d.pctAtShip ?? 0, now: pctOf(id) ?? null, pulled: !!d.pulled }));
+    .map(([id, d]) => ({ id, name: d.name ?? id, crew: d.crew ?? null, from: d.pctAtShip ?? 0, now: pctOf(id) ?? null, pulled: !!d.pulled, why: d.why ?? (d.pulled ? "pulled ahead" : "carry-over") }));
+}
+
+/** What became of an asked step, in words: done, how far, or no progress. */
+export function askedResult(a: { from: number; now: number | null }): string {
+  if (a.now == null) return "—";
+  if (a.now >= 100) return "done ✓";
+  if (a.now > a.from) return `${a.from}% → ${a.now}%`;
+  return a.from > 0 ? "no progress" : "not started";
 }
 
 /** Hours a step would take on one shift: what's left, at most a shift. */

@@ -12,7 +12,7 @@ import { setupChecklist, missingRequired, type SetupItem, type SetupItemId } fro
 import { browserTimeZone, listTimeZones, tzLabel, DEFAULT_SCHEDULE_TZ } from "@/lib/scheduleTz";
 import { updateProjectMeta } from "@/lib/projects";
 import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
-import { meetingLeadMin, workShiftOf, type ShiftTimes } from "@/lib/shiftReport";
+import { meetingLeadMin, workShiftOf, type PullCrew, type ShiftTimes } from "@/lib/shiftReport";
 import { nightJobChoices, type NightJobs } from "@/lib/nightStaffing";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { useCriticalMode, useCriticalModeLoaded, saveCriticalMode } from "@/lib/criticalModeStore";
@@ -271,7 +271,11 @@ function NightStep({ projectId, milestones, canManage, done, onSaved }: Props & 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   // Hands kept for extra work the turnover pulls forward (optional).
-  const [helpers, setHelpers] = useState(() => times.helpers ?? { crew: null as string | null, hands: 2, hours: 12 });
+  // undefined = untouched (whatever is saved); null = cleared.
+  const [edited, setEdited] = useState<PullCrew | null | undefined>(undefined);
+  const chosen: PullCrew | null = edited === undefined ? times.helpers ?? null : edited;
+  const helpers: PullCrew = chosen ?? { crew: null, hands: 2, hours: 12 };
+  const setHelpers = (p: PullCrew) => setEdited(p);
   const crews = useMemo(() => [...new Set(milestones.map((m) => m.responsibleParty?.trim()).filter((x): x is string => !!x))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), [milestones]);
   // The file's own hours, before any night-crew setting is applied.
   const choices = useMemo(() => nightJobChoices(milestones, (m) => workShiftOf({ ...m, staffedShift: null }, tz, times) !== "day"), [milestones, tz, times]);
@@ -287,11 +291,11 @@ function NightStep({ projectId, milestones, canManage, done, onSaved }: Props & 
   };
   const toggle = (id: string) => setIds((cur) => { const n = new Set(cur); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const next: NightJobs = mode === "file" ? "file" : [...ids].filter((id) => !coveredBy(id));
-  const helpersSame = JSON.stringify(times.helpers ?? null) === JSON.stringify(helpers.crew ? helpers : times.helpers ?? null);
+  const helpersSame = JSON.stringify(chosen) === JSON.stringify(times.helpers ?? null);
   const same = helpersSame && JSON.stringify(next) === JSON.stringify(saved === "file" ? "file" : Array.isArray(saved) ? [...saved].filter((id) => byId.has(id)) : undefined);
   const save = async () => {
     setBusy(true); setErr(null);
-    try { await saveProjectShiftTimes(projectId, { ...times, nightJobs: next, ...(helpers.crew ? { helpers } : {}) }); onSaved(); }
+    try { await saveProjectShiftTimes(projectId, { ...times, nightJobs: next, helpers: chosen ?? undefined }); setEdited(undefined); onSaved(); }
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); }
   };
@@ -339,6 +343,8 @@ function NightStep({ projectId, milestones, canManage, done, onSaved }: Props & 
           <span className="text-[var(--color-text-muted)]">hands ×</span>
           <input type="number" min={0} max={24} step={0.5} disabled={!canManage} value={helpers.hours} onChange={(e) => setHelpers({ ...helpers, hours: Math.max(0, Math.min(24, Number(e.target.value) || 0)) })} aria-label="Hours each" className={`${field} w-16`} />
           <span className="text-[var(--color-text-muted)]">h</span>
+          {chosen && canManage && <button type="button" onClick={() => setEdited(null)} className="text-[11.5px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline">Clear</button>}
+          {!chosen && <span className="text-[11.5px] text-[var(--color-text-faint)]">not set</span>}
         </div>
       </div>
       <Msg err={err} />

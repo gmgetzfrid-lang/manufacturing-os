@@ -21,11 +21,16 @@ export function TryControl({ kind, decision, suggestions, crews, disabled, onCha
   onChange: (d: HandoverDecision) => void;
 }) {
   const on = !!decision?.tryIt;
-  const [note, setNote] = useState(decision?.note ?? "");
+  // The note as typed here, kept in step with the saved one (a change made
+  // elsewhere, or a reload, replaces a stale copy instead of being wiped by it).
+  const saved = decision?.note ?? "";
+  const [note, setNote] = useState(saved);
+  const [seen, setSeen] = useState(saved);
+  if (saved !== seen) { setSeen(saved); setNote(saved); }
   const others = crews.filter((c) => !suggestions.some((s) => s.crew === c));
   return (
     <div className="flex flex-wrap items-center gap-1.5 pb-1 print:hidden">
-      <button type="button" disabled={disabled} aria-pressed={on}
+      <button type="button" disabled={disabled} aria-pressed={on} title={on ? "Click to take it off the list" : undefined}
         onClick={() => onChange({ ...decision, tryIt: !on, crew: !on ? decision?.crew ?? suggestions[0]?.crew ?? null : decision?.crew })}
         className={`shrink-0 whitespace-nowrap inline-flex items-center rounded-full border px-2 py-0.5 text-[10.5px] font-bold transition-colors disabled:opacity-60 ${on
           ? "border-indigo-500 bg-indigo-600 text-white"
@@ -45,7 +50,7 @@ export function TryControl({ kind, decision, suggestions, crews, disabled, onCha
             {others.length > 0 && <optgroup label="Other crews">{others.map((c) => <option key={c} value={c}>{c}</option>)}</optgroup>}
           </select>
           <input disabled={disabled} value={note} onChange={(e) => setNote(e.target.value)} maxLength={200}
-            onBlur={() => { if ((decision?.note ?? "") !== note) onChange({ ...decision, tryIt: true, note }); }}
+            onBlur={() => { if (saved !== note) onChange({ ...decision, tryIt: true, note }); }}
             placeholder="Note (optional)" className="h-6 w-full sm:w-44 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-[11px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
         </>
       )}

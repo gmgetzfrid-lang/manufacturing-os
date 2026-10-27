@@ -93,3 +93,48 @@ describe("pulled forward", () => {
     expect(text).toMatch(/Night shift could try: 2 extra steps \(16 h\)/);
   });
 });
+
+describe("audit fixes", () => {
+  it("a pulled step that gets blocked comes off the list, flagged — not counted or shipped", () => {
+    const blocked = { ...clean, status: "blocked", statusReason: "no scaffold" } as Milestone;
+    const r = buildShiftReport({ milestones: [e12, open, blast, e20, blocked, h1, insp, v9, retube], tz: CHI, shift: day, now: day.end, pullIds: ["cl"] });
+    expect(r.goals.pulled).toEqual([]);
+    expect(r.goals.pulledHeld.map((x) => x.leaf.id)).toEqual(["cl"]);
+    expect(decisionsToShip({ cl: { tryIt: true, pulled: true } }, [...r.goals.pulled])).toEqual({});
+  });
+  it("the other crew's work under way isn't offered (it's already listed as paused)", () => {
+    const weld = mk({ id: "wd", name: "Weld nozzle", parentId: "e20", plannedStartAt: at("2026-10-26", "06:00"), plannedAt: at("2026-10-29", "17:00"), shift: "day", status: "in_progress", percentComplete: 30 });
+    const night = shiftWindow("2026-10-25", "night", CHI);
+    const r = buildShiftReport({ milestones: [...all, weld], tz: CHI, shift: night, now: night.end, lookAheadUntil: Infinity });
+    const r2 = buildShiftReport({ milestones: [...all, weld], tz: CHI, shift: day, now: day.end, lookAheadUntil: Infinity });
+    expect(r2.goals.paused.map((x) => x.leaf.id)).toContain("wd");
+    expect(r2.goals.lookAhead.map((x) => x.row.leaf.id)).not.toContain("wd");
+    expect(r.goals.lookAhead.length).toBeGreaterThan(0);
+  });
+  it("'after X' only when X can be finished on that shift; a blocked predecessor means it can't start", () => {
+    // Open heads is a 36 h carry-over: one shift won't finish it.
+    const bigOpen = { ...open, plannedStartAt: at("2026-10-25", "18:00"), plannedAt: at("2026-10-26", "06:00"), durationHours: 36, status: "in_progress", percentComplete: 10 } as Milestone;
+    const r = buildShiftReport({ milestones: [e12, bigOpen, blast], tz: CHI, shift: day, now: day.end, lookAheadUntil: Infinity });
+    expect(r.goals.lookAhead.find((x) => x.row.leaf.id === "bl")!.readiness).toBe("waiting");
+    const heldOpen = { ...open, status: "on_hold", statusReason: "permit" } as Milestone;
+    const r2 = buildShiftReport({ milestones: [e12, heldOpen, blast], tz: CHI, shift: day, now: day.end, lookAheadUntil: Infinity });
+    expect(r2.goals.lookAhead.find((x) => x.row.leaf.id === "bl")!.blockedBy).toBe("Open heads");
+  });
+  it("ships why each step was asked, and reads back progress honestly", async () => {
+    const { askedResult } = await import("@/lib/shiftHandover");
+    const r = build(["cl"]);
+    expect(decisionsToShip({ cl: { tryIt: true, pulled: true } }, r.goals.pulled, "Maintenance (KE)").cl).toMatchObject({ why: "pulled ahead", crew: "Maintenance (KE)" });
+    expect(askedResult({ from: 30, now: 30 })).toBe("no progress");
+    expect(askedResult({ from: 0, now: 0 })).toBe("not started");
+    expect(askedResult({ from: 30, now: 60 })).toBe("30% → 60%");
+    expect(askedResult({ from: 30, now: 100 })).toBe("done ✓");
+  });
+  it("no crew size set: the email claims no capacity; set: hours shown as counted (a shift at most)", () => {
+    const r = build(["cl"]);
+    const mail = (pull: { crew: string | null; hands: number; hours: number } | null) => toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r, f, {
+      pctOf: () => 0, finishOf: () => undefined, tryOf: (id) => (id === "cl" ? { crew: null, note: null } : undefined), pull,
+    }) });
+    expect(mail(null)).toMatch(/Could try if possible — 4 h\b(?! of)/i);
+    expect(mail({ crew: "KE", hands: 2, hours: 14 })).toMatch(/4 h of 24 h \(KE, 2 × 12 h\)/i);
+  });
+});

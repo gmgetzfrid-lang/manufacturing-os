@@ -543,6 +543,8 @@ export interface ShiftReport {
     /** Steps the meeting pulled forward for the next shift (pullIds), as
      *  next-shift rows — not on its planned list. */
     pulled: ShiftRow[];
+    /** Pulled forward, then blocked or put on hold since: off the list. */
+    pulledHeld: ShiftRow[];
     /** STRETCH — work planned for the following shifts that is ready to
      *  pull forward (its predecessors done or on the must-do list), in
      *  schedule order. Doing it banks time or claws back a deficit. */
@@ -587,6 +589,8 @@ export interface LookAheadItem {
   readiness: Readiness;
   /** What it waits on that isn't done (names), for "waiting" / "after". */
   waits: string[];
+  /** A step it waits on is itself blocked or on hold: it can't start. */
+  blockedBy?: string;
 }
 
 const DONE = (r: { status: MilestoneStatus; percent: number }) => r.status === "completed" || r.percent >= 100;
@@ -814,7 +818,8 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   // A step on the must-do list only clears the way for one after it if it
   // is planned to finish on the next shift.
   const allIds = new Set(all.map((r) => r.leaf.id ?? ""));
-  const mustIds = new Set(all.filter((r) => r.carryOver || r.finish <= next.end).map((r) => r.leaf.id ?? ""));
+  // A carry-over counts only if one shift can finish it (its goal is 100%).
+  const mustIds = new Set(all.filter((r) => (r.carryOver ? (r.goalPct ?? 0) >= 100 : r.finish <= next.end)).map((r) => r.leaf.id ?? ""));
   const doneIds = new Set(leaves.filter((m) => DONE({ status: m.status, percent: pctOf(m) })).map((m) => m.id ?? ""));
   const horizonEnd = nextShift(nextShift(next, tz, times), tz, times).end;
   const stretch = leaves
@@ -832,12 +837,14 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   // ── Look-ahead & pulled forward ── upcoming work the next shift could
   // do early. Not already on a list; its readiness from the same
   // predecessors the report reads everywhere.
-  const onLists = new Set([...all, ...otherShift, ...movedOff].map((r) => r.leaf.id ?? ""));
-  const readinessOf = (m: Milestone): { readiness: Readiness; waits: string[] } => {
+  const onLists = new Set([...all, ...otherShift, ...movedOff, ...paused].map((r) => r.leaf.id ?? ""));
+  const readinessOf = (m: Milestone): { readiness: Readiness; waits: string[]; blockedBy?: string } => {
     if (held(m)) return { readiness: "held", waits: [] };
     const open = predecessorsOf(m).filter((p) => !doneIds.has(p.id ?? "") && blocksStart(linkOf(m.linkTypes, p.id ?? ""), { done: doneM(p), started: startedM(p) }));
     if (open.length === 0) return { readiness: "ready", waits: [] };
-    const tonight = open.every((p) => mustIds.has(p.id ?? "") && !held(p));
+    const stuck = open.find((p) => held(p));
+    if (stuck) return { readiness: "waiting", waits: open.map((p) => p.name), blockedBy: stuck.name };
+    const tonight = open.every((p) => mustIds.has(p.id ?? ""));
     return { readiness: tonight ? "after-tonight" : "waiting", waits: open.map((p) => p.name) };
   };
   const RANK: Record<Readiness, number> = { ready: 0, "after-tonight": 1, waiting: 2, held: 3 };
@@ -848,8 +855,11 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     .map((row) => ({ row, ...readinessOf(row.leaf) }))
     .sort((a, b) => RANK[a.readiness] - RANK[b.readiness] || Number(b.row.critical) - Number(a.row.critical) || a.row.crewStart - b.row.crewStart || cmp(a.row, b.row));
   const pullSet = new Set(input.pullIds ?? []);
+  const pulledHeld = pullSet.size === 0 ? [] : leaves
+    .filter((m) => m.id && pullSet.has(m.id) && !onLists.has(m.id) && !doneIds.has(m.id) && held(m))
+    .map((m) => rowFor(m, next));
   const pulled = pullSet.size === 0 ? [] : leaves
-    .filter((m) => m.id && pullSet.has(m.id) && !onLists.has(m.id) && !doneIds.has(m.id))
+    .filter((m) => m.id && pullSet.has(m.id) && !onLists.has(m.id) && !doneIds.has(m.id) && !held(m))
     .map((m) => { const r = rowFor(m, next); r.hoursNext = Math.min(r.hoursLeft, shiftHours); return r; })
     .sort((a, b) => Number(b.critical) - Number(a.critical) || a.crewStart - b.crewStart || cmp(a, b));
   // Deficit in work-hours against the plan as of now: planned hours earned
@@ -876,7 +886,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       baselineSetAt: baselined > 0 ? baselineSetAt : null,
     },
     review: { scheduled, done, inProgress, notStarted, carryOver },
-    goals: { all, carryOver: goalsCarry, planned, critical, mustDoHours, otherShift, movedOff, paused, stretch, gapHours, backOnTrackAt, lookAhead, pulled },
+    goals: { all, carryOver: goalsCarry, planned, critical, mustDoHours, otherShift, movedOff, paused, stretch, gapHours, backOnTrackAt, lookAhead, pulled, pulledHeld },
     blocked,
   };
 }
@@ -908,7 +918,7 @@ export function crewsOnReport(report: ShiftReport): Array<{ who: string; steps: 
     seen.set(who, set);
   };
   const { review, goals, blocked } = report;
-  for (const list of [review.scheduled, review.done, review.carryOver, review.inProgress, review.notStarted, goals.all, goals.otherShift, goals.movedOff, goals.pulled, goals.paused, blocked]) list.forEach(add);
+  for (const list of [review.scheduled, review.done, review.carryOver, review.inProgress, review.notStarted, goals.all, goals.otherShift, goals.movedOff, goals.paused, blocked]) list.forEach(add);
   return [...seen].map(([who, ids]) => ({ who, steps: ids.size }))
     .sort((a, b) => Number(a.who === UNASSIGNED) - Number(b.who === UNASSIGNED) || b.steps - a.steps || a.who.localeCompare(b.who));
 }
@@ -931,7 +941,9 @@ export function filterShiftReport(report: ShiftReport, who: string): ShiftReport
       all, carryOver: keep(goals.carryOver), planned: keep(goals.planned), critical: keep(goals.critical),
       mustDoHours: Math.round(all.reduce((a, r) => a + (r.hoursNext ?? 0), 0) * 10) / 10,
       otherShift: keep(goals.otherShift), movedOff: keep(goals.movedOff), paused: keep(goals.paused), stretch: keep(goals.stretch),
-      lookAhead: goals.lookAhead.filter((x) => keep([x.row]).length > 0), pulled: keep(goals.pulled),
+      // Pulled work belongs to the meeting's extra crew, not the step's owner:
+      // the view decides what to show (ShiftReportView).
+      lookAhead: goals.lookAhead, pulled: goals.pulled, pulledHeld: goals.pulledHeld,
       backOnTrackAt: null,
     },
     blocked: keep(report.blocked),

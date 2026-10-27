@@ -31,7 +31,7 @@ describe("shift handover", () => {
   });
   it("ships only the steps marked to try, with where each stood", () => {
     const d = decisionsToShip({ hb: { tryIt: true, crew: "Schultz - Tower", note: "  if trays wait  " }, bl: { tryIt: false } }, carried);
-    expect(d).toEqual({ hb: { tryIt: true, crew: "Schultz - Tower", note: "if trays wait", pctAtShip: 0, name: "Hydroblast" } });
+    expect(d).toEqual({ hb: { tryIt: true, crew: "Schultz - Tower", note: "if trays wait", pctAtShip: 0, name: "Hydroblast", why: "other crew's work" } });
   });
   it("offers the crew already on that job first, then the lightest load — and says why", () => {
     const blindsRow = carried.find((x) => x.leaf.id === "bl")!;
@@ -41,7 +41,7 @@ describe("shift handover", () => {
   });
   it("reads back what was asked, as entered", () => {
     const out = askedOutcomes({ shiftKey: "k", shippedAt: "x", shippedByName: null, decisions: { hb: { tryIt: true, crew: "Schultz - Tower", pctAtShip: 0, name: "Hydroblast" } } }, () => 100);
-    expect(out).toEqual([{ id: "hb", name: "Hydroblast", crew: "Schultz - Tower", from: 0, now: 100, pulled: false }]);
+    expect(out).toEqual([{ id: "hb", name: "Hydroblast", crew: "Schultz - Tower", from: 0, now: 100, pulled: false, why: "carry-over" }]);
   });
   it("a draft nobody shipped wasn't handed over — nothing to read back", () => {
     expect(askedOutcomes({ shiftKey: "k", shippedAt: null, shippedByName: null, decisions: { hb: { tryIt: true, name: "Hydroblast" } } }, () => 100)).toEqual([]);

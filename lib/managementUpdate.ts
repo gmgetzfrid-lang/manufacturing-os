@@ -8,6 +8,7 @@
 // no "did not finish" when everything finished, no "needs a decision" when
 // nothing is blocked.
 
+import { capacityOf, askedResult } from "@/lib/shiftHandover";
 import { BEHIND_POINTS, whoOf, type PullCrew, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
 import { rankHazards, hazardContext, lessonFor, equipmentTag, type HazardJobInput } from "@/lib/safetyMoment";
 import type { ExportBlock, ExportCell, ExportSection } from "@/lib/reportExport";
@@ -39,7 +40,7 @@ export interface UpdateLookups {
   /** Marked at the meeting: the next shift could try this other-crew step. */
   tryOf?: (stepId: string) => { crew?: string | null; note?: string | null } | undefined;
   /** What the last turnover asked this shift to try, and where each got. */
-  asked?: Array<{ id: string; name: string; crew: string | null; from: number; now: number | null; pulled?: boolean }>;
+  asked?: Array<{ id: string; name: string; crew: string | null; from: number; now: number | null; pulled?: boolean; why?: string }>;
   /** The crew kept for pulled-forward work, and its size. */
   pull?: PullCrew | null;
 }
@@ -205,7 +206,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     out.push({
       id: "asked", title: `Asked to try — ${shiftName(shift)}`, sub: `${askedDone} of ${asked.length} done · as entered`,
       blocks: [{ k: "table", head: ["Step", "Why", "Crew", "At ship", "Now"], align: ["left", "left", "left", "right", "right"],
-        rows: asked.map((a) => [a.name, muted(a.pulled ? "pulled ahead" : "carry-over"), a.crew ?? muted("—"), `${a.from}%`, a.now == null ? "—" : a.now >= 100 ? { t: "done ✓", tone: "emerald", bold: true } : a.now > a.from ? `${a.now}%` : muted("not started")]) }],
+        rows: asked.map((a) => [a.name, muted(a.why ?? (a.pulled ? "pulled ahead" : "carry-over")), a.crew ?? muted("—"), `${a.from}%`, (a.now ?? 0) >= 100 ? { t: "done ✓", tone: "emerald", bold: true } : askedResult(a)]) }],
     });
   }
 
@@ -298,8 +299,10 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   const tried = [...allCarries.filter((r) => r.leaf.id && look.tryOf?.(r.leaf.id)), ...pulledRows];
   const carries = allCarries.filter((r) => !tried.includes(r));
   const shiftHrs = (next.end - next.start) / 3_600_000;
-  const triedHours = Math.round(tried.reduce((a, r) => a + Math.min(r.hoursLeft, shiftHrs), 0) * 10) / 10;
-  const cap = look.pull ? Math.round(look.pull.hands * Math.min(look.pull.hours, shiftHrs) * 10) / 10 : 0;
+  // The same count as the screen and the picker (capacityOf); a crew size
+  // only when one was set — never a made-up one.
+  const capa = capacityOf(look.pull ?? null, tried, shiftHrs);
+  const triedHours = capa.used;
   if (tried.length > 0) {
     const nextSec = out.find((x) => x.id === "next");
     const block: ExportBlock = {
@@ -320,7 +323,8 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
         ];
       }),
     };
-    const sub: ExportBlock = { k: "sub", title: `Could try if possible — ${f.hrs(triedHours)}${cap > 0 ? ` of ${f.hrs(cap)}${look.pull?.crew ? ` (${look.pull.crew}, ${look.pull.hands} × ${look.pull.hours} h)` : ""}` : ""}`, count: tried.length, tone: "amber" };
+    const ps = look.pull;
+    const sub: ExportBlock = { k: "sub", title: `Could try if possible — ${f.hrs(triedHours)}${capa.hours > 0 && ps ? ` of ${f.hrs(capa.hours)}${capa.over ? " — over" : ""} (${ps.crew ? `${ps.crew}, ` : ""}${ps.hands} × ${Math.min(ps.hours, shiftHrs)} h)` : ""}`, count: tried.length, tone: "amber" };
     if (nextSec) nextSec.blocks.push(sub, block);
     else out.push({ id: "next", title: `Next shift — ${shiftName(next)} ${f.D(next.start)} ${f.win(next)}`, blocks: [sub, block] });
   }
