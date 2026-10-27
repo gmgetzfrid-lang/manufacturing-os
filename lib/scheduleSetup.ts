@@ -49,3 +49,7 @@ export function setupChecklist(s: {
 
 /** Required items still open — the banner names them. */
 export const missingRequired = (items: SetupItem[]) => items.filter((i) => i.required && !i.done && !i.checking);
+
+/** Opens Schedule setup at a step from anywhere on the page (the calendar's
+ *  "Night crews"): window.dispatchEvent(new CustomEvent(OPEN_SETUP_EVENT, { detail: "night" })). */
+export const OPEN_SETUP_EVENT = "schedule-setup:open";
