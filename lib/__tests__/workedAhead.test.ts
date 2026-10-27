@@ -49,7 +49,7 @@ describe("work done early and progress made show on the turnover", () => {
     // One row for E-17: everything the shift did on it — finished AND in
     // progress (the bundle pulled to 40% gets its credit), and the hours.
     const doneSec = text.slice(text.search(/^DONE — /m), text.search(/^NEXT — |^CARRIES /m));
-    expect(doneSec).toMatch(/E-17 Exchanger — 1 done, 2 in progress: Remove components, Pull bundle \(0% → 40%\), Hydroblast \(0% → 30%\) · .*1 done early \(planned 10-27T13:00\); 1 started early \(planned 10-28T11:00\); 1 in progress · \+5.8 h/);
+    expect(doneSec).toMatch(/E-17 Exchanger — 1 done, 2 in progress: Remove components, Pull bundle \(40%\), Hydroblast \(30%\) · .*1 done early \(planned 10-27T13:00\); 1 started early \(planned 10-28T11:00\); 1 in progress · \+5.8 h/);
     // Unfinished and due: it carries — where it stands, its hours counted here (once).
     expect(text).toMatch(/Pull bundle · Schultz · was due 10-26T21:00 · done 40% · −4.8 h/);
     expect(text).not.toMatch(/this shift ·.*−4.8 h/);
@@ -57,6 +57,8 @@ describe("work done early and progress made show on the turnover", () => {
     // No bottom-line box: the numbers, and each step's hours in "vs plan".
     expect(text).not.toMatch(/BOTTOM LINE/);
     expect(text).toMatch(/Work ahead: 1 h/);
+    // Every % reads as where it is now — never "0% → 25%".
+    expect(text).not.toMatch(/% → /);
     // Each step credited once under Done.
     for (const name of ["Pull bundle", "Remove components", "Hydroblast"]) expect(doneSec.match(new RegExp(name, "g"))?.length).toBe(1);
   });
@@ -66,7 +68,7 @@ describe("work done early and progress made show on the turnover", () => {
     expect(r2.review.ahead.map((x) => x.leaf.id).sort()).toEqual(["hy", "rc"]);
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r2, f, { pctOf: () => 40, finishOf: () => undefined }) });
     expect(text).toMatch(/Hydroblast \(30%\) · .*started early \(planned 10-28T11:00\)/);
-    expect(text).not.toMatch(/0% → 30%/); // no start on record: no "from"
+    expect(text).not.toMatch(/% → /); // where it is now — never a "0% → …" to puzzle out
   });
 });
 

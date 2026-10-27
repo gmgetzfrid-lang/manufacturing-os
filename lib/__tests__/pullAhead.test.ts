@@ -125,7 +125,7 @@ describe("audit fixes", () => {
     expect(decisionsToShip({ cl: { tryIt: true, pulled: true } }, r.goals.pulled, "Maintenance (KE)").cl).toMatchObject({ why: "pulled ahead", crew: "Maintenance (KE)" });
     expect(askedResult({ from: 30, now: 30 })).toBe("no progress");
     expect(askedResult({ from: 0, now: 0 })).toBe("not started");
-    expect(askedResult({ from: 30, now: 60 })).toBe("30% → 60%");
+    expect(askedResult({ from: 30, now: 60 })).toBe("60%");
     expect(askedResult({ from: 30, now: 100 })).toBe("done ✓");
   });
   it("no crew size set: the email claims no capacity; set: hours shown as counted (a shift at most)", () => {

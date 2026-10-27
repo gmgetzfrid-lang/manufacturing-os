@@ -9,7 +9,7 @@
 // nothing is blocked.
 
 import { capacityOf, askedResult } from "@/lib/shiftHandover";
-import { turnoverPlan, nextOf, standing, askedLine, crewsOf, vsPlan, doneByTask } from "@/lib/turnoverPlan";
+import { turnoverPlan, nextOf, askedLine, crewsOf, vsPlan, doneByTask } from "@/lib/turnoverPlan";
 import { type PullCrew, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
 import { rankHazards, hazardContext, lessonFor, type HazardJobInput } from "@/lib/safetyMoment";
 import type { ExportBlock, ExportCell, ExportSection } from "@/lib/reportExport";
@@ -178,9 +178,11 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     const text = x.detail ? `${label} — ${x.detail}` : label;
     return x.tone && x.tone !== "muted" ? { t: text, tone: x.tone, bold: kind === "held" } : text;
   };
-  const progCell = (r: ShiftRow): ExportCell => {
-    // What this shift did is credited under Done; here, where it stands.
-    return standing(r, kindOf.get(r)!);
+  // Where it is now, and where it should be by the end of the shift — two
+  // columns, no arrows.
+  const goalCell = (r: ShiftRow): ExportCell => {
+    const goal = kindOf.get(r) === "next" ? r.goalPct ?? r.percent : r.percent;
+    return goal > r.percent ? `${goal}%` : { t: "—", tone: "muted" };
   };
   // The next crew's table holds only its own work (and what it could try);
   // the other crew's carried work and anything blocked get their own.
@@ -202,9 +204,9 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       ].filter(Boolean).join(" · "),
       blocks: [
         tonight.length ? {
-          k: "table", head: ["Task", "Step", "Who", "When", "Done → goal", "vs plan"], align: ["left", "left", "left", "left", "right", "right"],
-          textLabels: ["", "", "by", "", "", "vs plan"], nowrap: [4, 5],
-          rows: [...byTask(shown, (r) => [stepCell(r), who(r), planCell(r), progCell(r), vsCell(r)]), ...more(tonight.length - shown.length, 6)],
+          k: "table", head: ["Task", "Step", "Who", "When", "Done", "Goal", "vs plan"], align: ["left", "left", "left", "left", "right", "right", "right"],
+          textLabels: ["", "", "by", "", "done", "goal", "vs plan"], nowrap: [4, 5, 6],
+          rows: [...byTask(shown, (r) => [stepCell(r), who(r), planCell(r), `${r.percent}%`, goalCell(r), vsCell(r)]), ...more(tonight.length - shown.length, 7)],
         } as ExportBlock : { k: "note", text: `Nothing planned for the ${shiftName(next).toLowerCase()}.` } as ExportBlock,
         ...(tried.length ? [{ k: "note", text: `Could try if there's time: ${tried.length} step${tried.length === 1 ? "" : "s"}, ${f.hrs(capa.used)}${capa.hours > 0 && ps ? ` of ${f.hrs(capa.hours)}${capa.over ? " — over" : ""} (${ps.crew ? `${ps.crew}, ` : ""}${ps.hands} × ${Math.min(ps.hours, shiftHrs)} h)` : ""}.`, tone: "amber" } as ExportBlock] : []),
         ...(finishing.length ? [{ k: "note", text: `Planned to finish on the ${shiftName(next).toLowerCase()}: ${finishing.slice(0, 4).map((x) => `${x.name} (${f.T(x.at)})`).join(", ")}${finishing.length > 4 ? ` + ${finishing.length - 4} more` : ""}.` } as ExportBlock] : []),

@@ -120,14 +120,15 @@ export function nextOf(report: ShiftReport, r: ShiftRow, kind: NextKind, t: { T:
 }
 
 /** Where a step stands, and — for the next crew's own work — its goal by
- *  the end of that shift. "45% → 45%" never shows: at its goal, it's "45%". */
+ *  the end of that shift: "25% · goal 100%" — where it is first, never a
+ *  "0% → …" to puzzle out. At its goal, just "45%". */
 export function standing(r: ShiftRow, kind: NextKind): string {
   const goal = kind === "next" ? r.goalPct ?? r.percent : r.percent;
-  return goal > r.percent ? `${r.percent}% → ${goal}%` : `${r.percent}%`;
+  return goal > r.percent ? `${r.percent}% · goal ${goal}%` : `${r.percent}%`;
 }
 
 /** What the last turnover asked of this shift, in one line (as entered):
- *  "1 of 3 done — Pull bundle 0% → 40%, Blinds not started". */
+ *  "1 of 3 done — Pull bundle 40%, Blinds not started". */
 export function askedLine(asked: Array<{ name: string; from: number; now: number | null }>, result: (a: { from: number; now: number | null }) => string): string {
   const done = asked.filter((a) => (a.now ?? 0) >= 100).length;
   const open = asked.filter((a) => (a.now ?? 0) < 100);
@@ -156,8 +157,7 @@ export function doneOf(report: ShiftReport, r: ShiftRow, t: Fmt): { label: strin
     if (r.dueAt < report.shift.start) return { label: "Done late", detail: `was due ${t.DTs(r.dueAt)}`, tone: "amber", text: `done late (was due ${t.DTs(r.dueAt)})` };
     return { label: "Done", detail: "on plan", tone: "emerald", text: "done, on plan" };
   }
-  const g = gainOf(report, r);
-  const moved = g > 0 ? `${r.percent - g}% → ${r.percent}%` : `${r.percent}%`;
+  const moved = `${r.percent}%`;
   return r.plannedLater
     ? { label: moved, detail: `started early — planned ${t.DTs(r.crewStart)}`, tone: "emerald", text: `${moved} this shift, started early (planned ${t.DTs(r.crewStart)})` }
     : { label: moved, detail: "progress this shift", tone: "emerald", text: `${moved} this shift` };
@@ -277,7 +277,8 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
     const movedEarly = moved.filter((r) => r.plannedLater);
     const stepText = [
       ...done.map((r) => r.leaf.name),
-      ...moved.map((r) => { const g = gainOf(report, r); return `${r.leaf.name} (${g > 0 ? `${r.percent - g}% → ` : ""}${r.percent}%)`; }),
+      // Where it is now — one number, read at a glance.
+      ...moved.map((r) => `${r.leaf.name} (${r.percent}%)`),
     ].map((txt, i) => { const r = [...done, ...moved][i]; const n = r.leaf.id ? noteOf?.(r.leaf.id) : undefined; return n ? `${txt} “${n}”` : txt; }).join(", ");
     const parts: string[] = [];
     const onPlan = done.length - early.length - late.length;

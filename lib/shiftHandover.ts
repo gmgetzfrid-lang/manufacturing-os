@@ -135,7 +135,7 @@ export function askedOutcomes(prior: Handover | null, pctOf: (id: string) => num
 export function askedResult(a: { from: number; now: number | null }): string {
   if (a.now == null) return "—";
   if (a.now >= 100) return "done ✓";
-  if (a.now > a.from) return `${a.from}% → ${a.now}%`;
+  if (a.now > a.from) return `${a.now}%`;
   return a.from > 0 ? "no progress" : "not started";
 }
 

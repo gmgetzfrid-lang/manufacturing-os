@@ -1102,7 +1102,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
             </div>
           )}
           {planList.length + tryList.length === 0 ? <Empty>Nothing is scheduled for the next shift.</Empty> : (
-            <StepTable print={print} box whenHead="When" rightHead="Now → goal" rows={nextRows(print, true)} />
+            <StepTable print={print} box whenHead="When" rightHead="Done · goal" rows={nextRows(print, true)} />
           )}
           {tryLine && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{tryLine}</div>}
           {goals.pulledHeld.length > 0 && (
@@ -1114,7 +1114,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         </div>
       ),
       data: () => [
-        planList.length + tryList.length === 0 ? { k: "empty", text: "Nothing is scheduled for the next shift." } : stepsBlock(nextRows(true, true), "Now → goal", "When"),
+        planList.length + tryList.length === 0 ? { k: "empty", text: "Nothing is scheduled for the next shift." } : stepsBlock(nextRows(true, true), "Done · goal", "When"),
         ...(tryLine ? [{ k: "note", text: tryLine, tone: "amber" } as ExportBlock] : []),
       ],
     },
