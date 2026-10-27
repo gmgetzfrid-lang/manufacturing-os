@@ -30,7 +30,7 @@ import { createPortal } from "react-dom";
 import {
   Printer, ChevronLeft, ChevronRight, ChevronDown, Sun, Moon, CheckCircle2, Flag, FastForward,
   TrendingUp, TrendingDown, Minus, Zap, Presentation, X, Settings2, Rocket, ArrowLeftRight, Trophy,
-  Copy, Mail, FileText,
+  Mail, FileText,
 } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { buildProgressIndex, leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
@@ -708,6 +708,16 @@ function CopyUpdate({ doc, meeting }: { doc: () => ExportDoc; meeting: MeetingKi
   const html = picked ? toEmailHtml(picked) : "";
   const subject = d ? `${d.project} — ${d.kind} — ${d.when.split(" → ").pop()}` : "";
 
+  // Print exactly what goes in the email.
+  const printIt = () => {
+    const w = window.open("", "_blank");
+    if (!w) { setDone({ what: "text", ok: false }); return; }
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${subject.replace(/</g, "&lt;")}</title><style>@page{margin:12mm}body{margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}</style></head><body>${html}</body></html>`);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 300);
+  };
+
   const run = async (what: "email" | "text") => {
     if (!picked) return;
     const text = toPlainText(picked);
@@ -719,12 +729,12 @@ function CopyUpdate({ doc, meeting }: { doc: () => ExportDoc; meeting: MeetingKi
     <>
       <button onClick={open}
         className="inline-flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-        title="Copy a short update for email or a message — see it first">
-        <Copy className="w-3.5 h-3.5" /> Copy
+        title="The short update: copy it into an email, or print it — see it first">
+        <Mail className="w-3.5 h-3.5" /> Email / Print
       </button>
       {d && picked && (
         <Modal onClose={() => setD(null)} size="xl">
-          <ModalHeader icon={Mail} title="Copy the update" subtitle="What you'll send — leave out any section for today." onClose={() => setD(null)} />
+          <ModalHeader icon={Mail} title="Email or print the update" subtitle="What you'll send or print — leave out any section for today." onClose={() => setD(null)} />
           <ModalBody className="space-y-3">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px]">
               <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Include</span>
@@ -748,6 +758,9 @@ function CopyUpdate({ doc, meeting }: { doc: () => ExportDoc; meeting: MeetingKi
                   : "Copied as text — paste anywhere (Ctrl+V)."}
               </span>
             )}
+            <button onClick={printIt} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              <Printer className="w-4 h-4" /> Print
+            </button>
             <button onClick={() => void run("text")} className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-[var(--color-border-strong)] text-xs font-bold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <FileText className="w-4 h-4" /> Copy as text
             </button>
@@ -1586,7 +1599,7 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
                     {flat && r.group.title && <span className="text-slate-500 dark:text-slate-400">{r.group.title} › </span>}
                     {nameOf(r)}
                     <div className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">
-                      <span className="font-mono font-bold">{r.when}</span>{!crew && r.who ? <> · {r.who}</> : null}
+                      <span className="font-mono font-bold">{r.when}</span>{!crew && r.who ? <> · {r.who}</> : null}{r.wo ? <> · <span className="font-mono">WO {r.wo}</span></> : null}
                     </div>
                     {((r.tags ?? []).some(Boolean) || (!print && r.inline)) && (
                       <div className="flex flex-wrap gap-1 mt-1">
@@ -1679,7 +1692,8 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
 
 /** What got done, one row per work order: a table where there's room;
  *  on a phone, a short card each — nothing to scroll sideways for. */
-function DoneTasks({ rows, print }: { rows: Array<{ task: string; steps: string; who: string; result: { text: string; tone: string }; vs: { text: string; tone?: string }; ids: string[] }>; print: boolean }) {
+function DoneTasks({ rows, print }: { rows: Array<{ task: string; wo: string; steps: string; who: string; result: { text: string; tone: string }; vs: { text: string; tone?: string }; ids: string[] }>; print: boolean }) {
+  const hasWo = rows.some((x) => x.wo);
   const resultCls = (t: string) => (t === "amber" ? "text-amber-700 dark:text-amber-300" : "text-emerald-700 dark:text-emerald-400");
   const vsCls = (t?: string) => (t === "rose" ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400");
   const cell = print ? "px-1 py-[1px]" : "px-2 py-1.5";
@@ -1690,7 +1704,7 @@ function DoneTasks({ rows, print }: { rows: Array<{ task: string; steps: string;
           {rows.map((x) => (
             <div key={x.ids.join(",")} className="px-3 py-2 text-[12.5px] space-y-0.5">
               <div className="flex items-start justify-between gap-2">
-                <b className="text-[var(--color-text)] break-words">{x.task}</b>
+                <b className="text-[var(--color-text)] break-words">{x.task}{x.wo && <span className="ml-1.5 font-mono font-semibold text-[11px] text-[var(--color-text-muted)]">WO {x.wo}</span>}</b>
                 {x.vs.text && <b className={`shrink-0 font-mono text-[12px] ${vsCls(x.vs.tone)}`}>{x.vs.text}</b>}
               </div>
               <div className="text-[var(--color-text)] break-words">{x.steps}</div>
@@ -1704,7 +1718,7 @@ function DoneTasks({ rows, print }: { rows: Array<{ task: string; steps: string;
         <table className={`w-full border-collapse ${print ? "text-[8.5pt]" : "text-[12px]"}`}>
           <thead>
             <tr className="bg-slate-50 dark:bg-slate-800/60 text-[9px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 text-left">
-              <th className={`${cell} w-[20%]`}>Task</th><th className={cell}>Done this shift</th><th className={`${cell} w-[16%]`}>Who</th>
+              <th className={`${cell} w-[20%]`}>Task</th>{hasWo && <th className={`${cell} w-[70px]`}>WO</th>}<th className={cell}>Done this shift</th><th className={`${cell} w-[16%]`}>Who</th>
               <th className={`${cell} w-[24%]`}>What it means</th><th className={`${cell} w-[64px] text-right`}>vs plan</th>
             </tr>
           </thead>
@@ -1712,6 +1726,7 @@ function DoneTasks({ rows, print }: { rows: Array<{ task: string; steps: string;
             {rows.map((x) => (
               <tr key={x.ids.join(",")} className="border-t border-slate-200 dark:border-slate-700/60 align-top">
                 <td className={`${cell} font-bold break-words`}>{x.task}</td>
+                {hasWo && <td className={`${cell} font-mono text-[11px] whitespace-nowrap`}>{x.wo}</td>}
                 <td className={`${cell} break-words`}>{x.steps}</td>
                 <td className={`${cell} text-[11.5px] text-[var(--color-text-muted)] break-words`}>{x.who}</td>
                 <td className={`${cell} font-bold break-words ${resultCls(x.result.tone)}`}>{x.result.text}</td>

@@ -53,11 +53,12 @@ describe("the update says what happened, in as few words as it takes", () => {
     if (done.k !== "table") throw new Error();
     const lines = done.rows.map((r) => r.map((c) => (typeof c === "string" ? c : c.t)).join(" | "));
     // One row per task, its steps in one cell — not a line per sub-step.
-    expect(lines.join("\n")).toMatch(/^T-605 Tower \| 1 done: Open manways \| .* \| done, on plan \| $/m); // on plan: nothing in "vs plan"
-    expect(lines.join("\n")).toMatch(/^E-606 Exchanger \| 2 done: Pull bundle, Hydroblast \| .* \| done, on plan \| $/m);
+    expect(lines.join("\n")).toMatch(/^T-605 Tower \|  \| 1 done: Open manways \| .* \| done, on plan \| $/m); // on plan: nothing in "vs plan"
+    expect(lines.join("\n")).toMatch(/^E-606 Exchanger \|  \| 2 done: Pull bundle, Hydroblast \| .* \| done, on plan \| $/m);
     expect(done.rows).toHaveLength(2);
     // When it was marked done isn't when it finished — no time is claimed.
-    expect(done.head).toEqual(["Task", "Done this shift", "Who", "What it means", "vs plan"]);
+    // The WO column (empty here: these steps have no WO number) is left out of the email.
+    expect(done.head).toEqual(["Task", "WO", "Done this shift", "Who", "What it means", "vs plan"]);
   });
 
   it("no numbers, no stretch, no 'in this order'", () => {

@@ -24,11 +24,12 @@ import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl, { PICK_PCTS } from "@/components/projects/ProgressControl";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { clockLabel, dayKey, dayKeyToMs, fmtInTz, addDays, tzAbbrev } from "@/lib/scheduleTz";
-import { startMsOf, finishMsOf, wbsCompare, stepShiftOnDay } from "@/lib/calendarPlacement";
+import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
 import { overdueOpenWork, startedEarlyWork } from "@/lib/openWork";
 import { DEFAULT_SHIFT_TIMES, expectedByParent, expectedFraction, shiftAt, shiftWindow, workShiftOf, type ShiftTimes } from "@/lib/shiftReport";
 import { latestNotes, updateMilestoneNote } from "@/lib/milestones";
 import ShiftMark from "@/components/projects/ShiftMark";
+import { stepBandDays, type BandDays } from "@/lib/shiftBands";
 
 interface Props {
   day: string; // "YYYY-MM-DD" in the plant zone
@@ -66,6 +67,8 @@ interface Props {
 
 interface Row {
   leaf: Milestone;
+  /** The shifts it's worked on, by date (lib/shiftBands). */
+  bands?: BandDays;
   startsToday: boolean;
   endsToday: boolean;
   startMs: number;
@@ -105,13 +108,18 @@ export default function DayAgendaPanel({
   const groups = useMemo(() => {
     const isLeaf = (m: Milestone) => !m.id || (childrenByParent.get(m.id) ?? []).length === 0;
     const rows: Row[] = [];
+    // This date's day shift and its night shift (into the next morning):
+    // a step after midnight is the night before's.
+    const prev = dayKey(addDays(dayMs, -1, tz), tz), next = dayKey(addDays(dayMs, 1, tz), tz);
     for (const m of milestones) {
       if (!isLeaf(m) || !m.plannedAt) continue;
       const s = startMsOf(m), f = finishMsOf(m);
       if (!Number.isFinite(s) || !Number.isFinite(f)) continue;
       const sKey = dayKey(s, tz), fKey = dayKey(f, tz);
-      if (sKey > day || fKey < day) continue;
-      rows.push({ leaf: m, startsToday: sKey === day, endsToday: fKey === day, startMs: s, finishMs: f });
+      if (sKey > next || fKey < prev) continue;
+      const bands = stepBandDays(m, tz, shiftTimes);
+      if (!bands.day.has(day) && !bands.night.has(day)) continue;
+      rows.push({ leaf: m, bands, startsToday: sKey === day, endsToday: fKey === day, startMs: s, finishMs: f });
     }
     for (const w of live.overdue) rows.push({ leaf: w.leaf, startsToday: false, endsToday: false, startMs: w.start, finishMs: w.finish, live: "overdue" });
     for (const w of live.early) rows.push({ leaf: w.leaf, startsToday: false, endsToday: false, startMs: w.start, finishMs: w.finish, live: "started-early" });
@@ -141,7 +149,7 @@ export default function DayAgendaPanel({
     out.sort((a, b) => cmpRow(a.rows[0], b.rows[0]));
     // Equipment in the order its work starts; its steps in time order inside.
     return out;
-  }, [milestones, childrenByParent, ancestorsOf, day, tz, live]);
+  }, [milestones, childrenByParent, ancestorsOf, day, tz, live, dayMs, shiftTimes]);
 
   // Narrow to an equipment tag, WO number, step name or crew — the way a
   // contractor's report names the work.
@@ -156,29 +164,27 @@ export default function DayAgendaPanel({
   }, [groups, query]);
   // The day shift's work, then the night shift's: a step the night crew
   // works goes under Night shift, so night work never sits in the middle
-  // of the day's list. Without night work there's one list, no headings.
+  // of the day's list. The night shift runs into the next morning.
   const sections = useMemo(() => {
     // Night work on this day: when it's scheduled today, for the crews
     // that can work then (a round-the-clock crew's 18:00 step is night).
-    const dayShift = shiftWindow(day, "day", tz, shiftTimes);
-    const nextDay = addDays(dayMs, 1, tz);
-    const isNight = (r: Row) => {
-      const crew = workShiftOf(r.leaf, tz, shiftTimes);
-      return (r.live ? crew : stepShiftOnDay(r.startMs, r.finishMs, crew, dayMs, nextDay, dayShift)) === "night";
-    };
+    // Late or early work (today) goes with its crew; the rest with the
+    // shift it's worked — round-the-clock work under both.
+    const inDay = (r: Row) => (r.bands ? r.bands.day.has(day) : workShiftOf(r.leaf, tz, shiftTimes) !== "night");
+    const inNight = (r: Row) => (r.bands ? r.bands.night.has(day) : workShiftOf(r.leaf, tz, shiftTimes) === "night");
     const part = (pred: (r: Row) => boolean) => shownGroups
       .map((g) => ({ ...g, rows: g.rows.filter(pred) }))
       .filter((g) => g.rows.length > 0);
     const first = (g: EquipmentGroup) => g.rows[0];
     const lead = (r: Row) => (r.live === "overdue" ? 0 : r.live === "started-early" ? 1 : 2);
-    const dayGroups = part((r) => !isNight(r));
-    const nightGroups = part(isNight).sort((a, b) => lead(first(a)) - lead(first(b)) || first(a).startMs - first(b).startMs);
-    if (nightGroups.length === 0) return [{ key: "all", shift: null, groups: dayGroups }];
+    const dayGroups = part(inDay);
+    const nightGroups = part(inNight).sort((a, b) => lead(first(a)) - lead(first(b)) || first(a).startMs - first(b).startMs);
+    // Always labelled: which shift's work this is is the first thing to know.
     return [
       ...(dayGroups.length ? [{ key: "day", shift: "day" as const, groups: dayGroups }] : []),
-      { key: "night", shift: "night" as const, groups: nightGroups },
+      ...(nightGroups.length ? [{ key: "night", shift: "night" as const, groups: nightGroups }] : []),
     ];
-  }, [shownGroups, tz, shiftTimes, day, dayMs]);
+  }, [shownGroups, tz, shiftTimes, day]);
 
   // Each step's latest comment: on its row, and in its box to edit.
   const [latestByStep, setLatestByStep] = useState<Map<string, LatestNote>>(new Map());
@@ -321,7 +327,7 @@ export default function DayAgendaPanel({
           {sections.map((sec) => (
             <React.Fragment key={sec.key}>
             {sec.shift === "day" && (
-              <div className="sticky top-0 z-[1] px-4 py-1.5 flex items-center gap-2 border-b border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/60 dark:text-amber-100">
+              <div className="sticky top-0 z-[1] px-4 py-1.5 flex items-center gap-2 border-b border-sky-200 bg-sky-100 text-sky-900 dark:border-sky-900 dark:bg-sky-950/70 dark:text-sky-100">
                 <Sun className="w-3.5 h-3.5" aria-hidden />
                 <span className="text-[12px] font-black">Day shift</span>
                 <span className="text-[11px] opacity-80">{shiftTimes.dayStart}–{shiftTimes.nightStart}</span>
@@ -329,11 +335,11 @@ export default function DayAgendaPanel({
               </div>
             )}
             {sec.shift === "night" && (
-              <div className="sticky top-0 z-[1] px-4 py-1.5 flex items-center gap-2 bg-indigo-900 text-white dark:bg-indigo-950">
-                <Moon className="w-3.5 h-3.5 text-indigo-200" aria-hidden />
+              <div className="sticky top-0 z-[1] px-4 py-1.5 flex items-center gap-2 bg-violet-800 text-white dark:bg-violet-950">
+                <Moon className="w-3.5 h-3.5 text-violet-200" aria-hidden />
                 <span className="text-[12px] font-black">Night shift</span>
-                <span className="text-[11px] text-indigo-200">{shiftTimes.nightStart}–{shiftTimes.dayStart}</span>
-                <span className="ml-auto text-[10.5px] font-semibold text-indigo-200">{sec.groups.reduce((a, g) => a + g.rows.length, 0)} steps</span>
+                <span className="text-[11px] text-violet-200">{shiftTimes.nightStart} → {fmtInTz(addDays(dayMs, 1, tz), tz, { weekday: "short" })} {shiftTimes.dayStart}</span>
+                <span className="ml-auto text-[10.5px] font-semibold text-violet-200">{sec.groups.reduce((a, g) => a + g.rows.length, 0)} steps</span>
               </div>
             )}
             {sec.groups.map((g) => {

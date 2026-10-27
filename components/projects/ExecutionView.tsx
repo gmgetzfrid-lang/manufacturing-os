@@ -1226,6 +1226,8 @@ export default function ExecutionView({
           onSelectMilestone={(m) => m.id && setDetailId(m.id)}
           onMoveDays={(id, days) => { const t = byId.get(id); if (t) void moveByDays(t, days); }}
           critical={{ ids: critical.ids, sourceLabel: criticalSourceLabel }}
+          onSetProgressNote={progressWithNote}
+          onStartNote={startWithNote}
         />
       )}
 

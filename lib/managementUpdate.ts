@@ -118,6 +118,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   const t = { T: f.T, DTs: f.DTs, hrs: f.hrs };
   const note = (id?: string | null) => (id ? noteLine(look.noteOf?.(id), shift.start, f.D) : undefined);
   const who = (r: ShiftRow) => muted(r.leaf.responsibleParty?.trim() ?? "");
+  const wo = (r: ShiftRow): ExportCell => r.leaf.workOrderRef?.trim() ?? "";
   const plan = turnoverPlan(report, (id) => !!look.tryOf?.(id));
   const { items, kindOf, tried, carries, held } = plan;
   const nextList = items.filter((x) => x.kind === "next").map((x) => x.r);
@@ -162,9 +163,9 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       sub: [`${plan.done.length} finished`, plan.moved.length ? `${plan.moved.length} moved forward` : null].filter(Boolean).join(" · "),
       blocks: [
         ...(byTaskDone.length ? [{
-          k: "table", head: ["Task", "Done this shift", "Who", "What it means", "vs plan"], align: ["left", "left", "left", "left", "right"],
-          textLabels: ["", "", "by", "", "vs plan"], nowrap: [4],
-          rows: byTaskDone.map((x) => [{ t: x.task, bold: true }, x.steps, muted(x.who), { t: x.result.text, tone: x.result.tone === "amber" ? "amber" : "emerald", bold: true }, { t: x.vs.text, tone: x.vs.tone, bold: true }] as ExportCell[]),
+          k: "table", head: ["Task", "WO", "Done this shift", "Who", "What it means", "vs plan"], align: ["left", "left", "left", "left", "left", "right"],
+          textLabels: ["", "WO", "", "by", "", "vs plan"], nowrap: [1, 5],
+          rows: byTaskDone.map((x) => [{ t: x.task, bold: true }, x.wo, x.steps, muted(x.who), { t: x.result.text, tone: x.result.tone === "amber" ? "amber" : "emerald", bold: true }, { t: x.vs.text, tone: x.vs.tone, bold: true }] as ExportCell[]),
         } as ExportBlock] : []),
         ...(asked.length ? [{ k: "note", text: `Asked to try last turnover: ${askedLine(asked, askedResult)}` } as ExportBlock] : []),
       ],
@@ -215,9 +216,9 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       ].filter(Boolean).join(" · "),
       blocks: [
         tonight.length ? {
-          k: "table", head: ["Task", "Step", "Who", "When", "Done", "Goal", "vs plan"], align: ["left", "left", "left", "left", "right", "right", "right"],
-          textLabels: ["", "", "by", "", "done", "goal", "vs plan"], nowrap: [4, 5, 6],
-          rows: [...byTask(shown, (r) => [stepCell(r), who(r), planCell(r), `${r.percent}%`, goalCell(r), vsCell(r)]), ...more(tonight.length - shown.length, 7)],
+          k: "table", head: ["Task", "Step", "WO", "Who", "When", "Done", "Goal", "vs plan"], align: ["left", "left", "left", "left", "left", "right", "right", "right"],
+          textLabels: ["", "", "WO", "by", "", "done", "goal", "vs plan"], nowrap: [2, 5, 6, 7],
+          rows: [...byTask(shown, (r) => [stepCell(r), wo(r), who(r), planCell(r), `${r.percent}%`, goalCell(r), vsCell(r)]), ...more(tonight.length - shown.length, 8)],
         } as ExportBlock : { k: "note", text: `Nothing planned for the ${shiftName(next).toLowerCase()}.` } as ExportBlock,
         ...(tried.length ? [{ k: "note", text: `Could try if there's time: ${tried.length} step${tried.length === 1 ? "" : "s"}, ${f.hrs(capa.used)}${capa.hours > 0 && ps ? ` of ${f.hrs(capa.hours)}${capa.over ? " — over" : ""} (${ps.crew ? `${ps.crew}, ` : ""}${ps.hands} × ${Math.min(ps.hours, shiftHrs)} h)` : ""}.`, tone: "amber" } as ExportBlock] : []),
         ...(finishing.length ? [{ k: "note", text: `Planned to finish on the ${shiftName(next).toLowerCase()}: ${finishing.slice(0, 4).map((x) => `${x.name} (${f.T(x.at)})`).join(", ")}${finishing.length > 4 ? ` + ${finishing.length - 4} more` : ""}.` } as ExportBlock] : []),
@@ -238,9 +239,9 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       sub: [carries.length ? `${carries.length} for the ${other} crew` : null, held.length ? `${held.length} blocked or on hold` : null].filter(Boolean).join(" · ") + ` — not the ${next.kind} shift's work`,
       flag: held.some((r) => r.status === "blocked") ? "rose" : null,
       blocks: [{
-        k: "table", head: ["Task", "Step", "Who", "Why it carries", "Done", "vs plan"], align: ["left", "left", "left", "left", "right", "right"],
-        textLabels: ["", "", "by", "", "done", "vs plan"], nowrap: [4, 5],
-        rows: [...byTask(shown, (r) => [stepCell(r), who(r), why(r), doneCell(r), vsCell(r)]), ...more(later.length - shown.length, 6)],
+        k: "table", head: ["Task", "Step", "WO", "Who", "Why it carries", "Done", "vs plan"], align: ["left", "left", "left", "left", "left", "right", "right"],
+        textLabels: ["", "", "WO", "by", "", "done", "vs plan"], nowrap: [2, 5, 6],
+        rows: [...byTask(shown, (r) => [stepCell(r), wo(r), who(r), why(r), doneCell(r), vsCell(r)]), ...more(later.length - shown.length, 7)],
       }],
     });
   }

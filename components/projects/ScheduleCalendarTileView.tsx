@@ -22,10 +22,11 @@ import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl from "@/components/projects/ProgressControl";
 import { assignGroupColors } from "@/lib/scheduleColors";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
-import { splitPlacements, compareDayPlacements, wbsCompare, activeWindowOnDay, stepsOnDay, crewOf, stepShiftOnDay, startMsOf, finishMsOf, type DayPlacement, type DayCrew } from "@/lib/calendarPlacement";
+import { splitPlacements, compareDayPlacements, wbsCompare, crewOf, startMsOf, finishMsOf, type DayPlacement, type DayCrew } from "@/lib/calendarPlacement";
 import { addDays as addDaysTz, addMonths as addMonthsTz, clockLabel, dayDiff as dayDiffTz, dayKey, dayKeyToMs, dayOfWeek, fmtInTz, hasTimeOfDay, tzAbbrev, startOfDay as startOfDayTz, startOfMonth as startOfMonthTz, wallClock } from "@/lib/scheduleTz";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
-import { DEFAULT_SHIFT_TIMES, workShiftOf, shiftWindow, type ShiftTimes } from "@/lib/shiftReport";
+import { DEFAULT_SHIFT_TIMES, workShiftOf, workSpan, shiftWindow, type ShiftTimes } from "@/lib/shiftReport";
+import { bandIndex, stepBandDays, type Band } from "@/lib/shiftBands";
 import ShiftMark from "@/components/projects/ShiftMark";
 import DayAgendaPanel from "@/components/projects/DayAgendaPanel";
 import { overdueOpenWork } from "@/lib/openWork";
@@ -71,6 +72,10 @@ interface Props {
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+/** A card in one shift of one day: the day shift, or that evening's night
+ *  shift running into the next morning. */
+type Placed = DayPlacement<Milestone> & { band: Band; bandStart: number; bandEnd: number };
+
 export default function ScheduleCalendarTileView({ planNow, userId, milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail, detailOpen, onAddNote, onSetProgressNote, onStartNote, shiftTimes = DEFAULT_SHIFT_TIMES }: Props) {
   const tz = useScheduleTz();
   // Multi-select for bulk actions on the calendar (mirrors the timeline).
@@ -87,7 +92,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   // The sub-items popover is DAY-SPECIFIC: opened from a chip on a tile, it
   // lists the steps scheduled on that day, with status and progress entry,
   // and tucks the other days' steps behind a toggle.
-  const [subPopover, setSubPopover] = useState<{ ms: Milestone; top: number; left: number; dayKey: string; anchorTop?: number } | null>(null);
+  const [subPopover, setSubPopover] = useState<{ ms: Milestone; top: number; left: number; dayKey: string; band?: Band; anchorTop?: number } | null>(null);
   // Near the bottom of the screen the steps popover opens upward, and never
   // runs past the window edge (measured after it renders).
   const subRef = useRef<HTMLDivElement>(null);
@@ -248,42 +253,92 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
     try { localStorage.setItem("calendar:crew", v); } catch { /* private mode */ }
   };
 
-  // Bucket every placed task onto each UTC day it covers, then order
-  // each tile: the day crew's work, then the night crew's, each by time.
+  // Each step's shifts by date: the day shift, or that evening's night
+  // shift running into the next morning (lib/shiftBands).
+  const leafBands = useMemo(() => bandIndex(milestones.filter((m) => isLeaf(m)), tz, shiftTimes), [milestones, isLeaf, tz, shiftTimes]);
+  const bandsOf = useCallback((m: Milestone) => (m.id ? leafBands.get(m.id) : undefined) ?? stepBandDays(m, tz, shiftTimes), [leafBands, tz, shiftTimes]);
+
+  // Every task onto the shifts it's worked: each date's day shift and its
+  // night shift (into the next morning). A work order sits in each shift
+  // its steps are worked; a gap day inside its span, quietly under Day.
   const byDay = useMemo(() => {
-    const m = new Map<string, DayPlacement<Milestone>[]>();
+    const m = new Map<string, { day: Placed[]; night: Placed[] }>();
+    const slot = (k: string) => { let v = m.get(k); if (!v) { v = { day: [], night: [] }; m.set(k, v); } return v; };
     for (const ms of mains) {
-      const start = startOfDayUTC(new Date(startMs(ms)), tz);
-      const finish = startOfDayUTC(new Date(finishMs(ms)), tz);
-      const total = Math.max(1, dayDiff(start, finish, tz) + 1);
-      // A group chip stands in for its leaf steps: its clock and order on
-      // each day come from the steps that actually fall on that day.
       const steps = ms.id ? leafDescendants(ms) : [];
-      for (let i = 0; i < total; i++) {
-        const d = addDaysUTC(start, i, tz);
-        const key = ymd(d, tz);
-        const dayStartMs = d.getTime();
-        const dayEndMs = addDaysUTC(d, 1, tz).getTime();
-        const w = activeWindowOnDay(ms, steps, dayStartMs, dayEndMs);
-        // Day or night work on this day: when its steps are scheduled
-        // that day, for the crews that can work then.
-        const dayShift = shiftWindow(key, "day", tz, shiftTimes);
-        // No step scheduled inside this day's clock (a date-only job's last
-        // day): its steps' own crews, never a default of "day".
-        const today = stepsOnDay(ms, steps, dayStartMs, dayEndMs);
-        const crew = today.length
-          ? crewOf(today.map((st) => stepShiftOnDay(startMs(st), finishMs(st), workShiftOf(st, tz, shiftTimes), dayStartMs, dayEndMs, dayShift)))
-          : crewOf((steps.length ? steps : [ms]).map((st) => workShiftOf(st, tz, shiftTimes)));
-        if (crewFilter === "day" && crew === "night") continue;
-        if (crewFilter === "night" && crew === "day") continue;
-        const arr = m.get(key) ?? [];
-        arr.push({ ms, dayIndex: i, spanDays: total, todayStart: w.start, todayEnd: w.end, idleToday: w.idle, crew });
-        m.set(key, arr);
+      const units = steps.length ? steps : [ms];
+      const s0 = startMs(ms), f0 = finishMs(ms);
+      if (!Number.isFinite(s0) || !Number.isFinite(f0)) continue;
+      const start = startOfDayUTC(new Date(s0), tz);
+      const total = Math.max(1, dayDiff(start, startOfDayUTC(new Date(f0), tz), tz) + 1);
+      const span = new Set(Array.from({ length: total }, (_, i) => ymd(addDaysUTC(start, i, tz), tz)));
+      const keys = new Set(span);
+      for (const st of units) { const b = bandsOf(st); b.day.forEach((k) => keys.add(k)); b.night.forEach((k) => keys.add(k)); }
+      for (const key of keys) {
+        const dayIndex = Math.max(0, dayDiff(start, ymdToDate(key, tz), tz));
+        const put = (band: Band, idle = false) => {
+          const w = shiftWindow(key, band, tz, shiftTimes);
+          const win = idle ? { start: w.start, end: w.end } : windowIn(units.filter((st) => bandsOf(st)[band].has(key)), w.start, w.end, tz);
+          slot(key)[band].push({ ms, dayIndex, spanDays: total, todayStart: win.start, todayEnd: win.end, idleToday: idle, crew: band, band, bandStart: w.start, bandEnd: w.end });
+        };
+        const d = units.some((st) => bandsOf(st).day.has(key)), n = units.some((st) => bandsOf(st).night.has(key));
+        if (d && crewFilter !== "night") put("day");
+        if (n && crewFilter !== "day") put("night");
+        if (!d && !n && span.has(key) && crewFilter !== "night") put("day", true);
       }
     }
-    for (const arr of m.values()) arr.sort(compareDayPlacements);
+    for (const v of m.values()) { v.day.sort(compareDayPlacements); v.night.sort(compareDayPlacements); }
     return m;
-  }, [mains, tz, leafDescendants, shiftTimes, crewFilter]);
+  }, [mains, tz, leafDescendants, shiftTimes, crewFilter, bandsOf]);
+  const isDonePl = (p: Placed) => (p.ms.id ? progress?.get(p.ms.id)?.percent : undefined) === 100 || p.ms.status === "completed";
+  const doneLast = (arr: Placed[]) => [...arr.filter((p) => !isDonePl(p)), ...arr.filter(isDonePl)];
+  // A day's cards once each (a work order worked day and night counts once).
+  const uniqueOf = (key: string) => {
+    const b = byDay.get(key);
+    if (!b) return [] as Placed[];
+    const seen = new Set<string>();
+    return [...b.day, ...b.night].filter((p) => { const k = p.ms.id ?? p.ms.name; if (seen.has(k)) return false; seen.add(k); return true; });
+  };
+  // Work orders open across a day with no step on it: folded into one line.
+  const [idleOpen, setIdleOpen] = useState<Set<string>>(new Set());
+  // Day shift in blue, night shift in purple — the night box runs to the next morning.
+  const renderBands = (key: string, big = false) => {
+    const all = byDay.get(key) ?? { day: [], night: [] };
+    const idle = all.day.filter((p) => p.idleToday);
+    const b = { day: all.day.filter((p) => !p.idleToday), night: all.night };
+    const out = (["day", "night"] as const).filter((band) => b[band].length > 0).map((band) => {
+      const w = shiftWindow(key, band, tz, shiftTimes);
+      const busy = b[band].length;
+      return (
+        <div key={band} className={`shrink-0 rounded-md p-0.5 flex flex-col gap-1 ${band === "day" ? "bg-sky-50 dark:bg-sky-950/30" : "bg-violet-100 dark:bg-violet-950/50"}`}>
+          <button type="button" onClick={() => setAgendaDay(key)}
+            title={`${band === "day" ? "Day" : "Night"} shift ${clockLabel(w.start, tz)}–${clockLabel(w.end, tz)}${band === "night" ? ` (into ${fmtInTz(w.end, tz, { weekday: "short" })} morning)` : ""} — open the list to enter progress`}
+            className={`flex items-center gap-1 px-1 ${big ? "text-[10.5px]" : "text-[9px]"} font-black uppercase tracking-wider ${band === "day" ? "text-sky-800 dark:text-sky-300" : "text-violet-800 dark:text-violet-200"}`}>
+            {band === "day" ? <Sun className="w-2.5 h-2.5" aria-hidden /> : <Moon className="w-2.5 h-2.5" aria-hidden />}
+            {band === "day" ? "Day" : "Night"}
+            <span className="font-semibold normal-case tracking-normal opacity-80 truncate">{clockLabel(w.start, tz)}–{band === "night" ? `${fmtInTz(w.end, tz, { weekday: "short" })} ` : ""}{clockLabel(w.end, tz)}</span>
+            <span className="ml-auto tabular-nums">{busy}</span>
+          </button>
+          {doneLast(b[band]).map((p) => chipFor(p, key))}
+        </div>
+      );
+    });
+    if (idle.length) {
+      const open = idleOpen.has(key);
+      out.push(
+        <div key="idle" className="shrink-0 flex flex-col gap-1">
+          <button type="button" onClick={() => setIdleOpen((cur) => { const n = new Set(cur); if (n.has(key)) n.delete(key); else n.add(key); return n; })}
+            title={idle.map((p) => p.ms.name).join("\n")}
+            className={`flex items-center gap-1 px-1 text-left ${big ? "text-[10.5px]" : "text-[9.5px]"} font-semibold text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]`}>
+            <ChevronRight className={`w-3 h-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} aria-hidden />
+            {idle.length} open, no work this day
+          </button>
+          {open && <div className="flex flex-col gap-1 opacity-70">{idle.map((p) => chipFor(p, key))}</div>}
+        </div>,
+      );
+    }
+    return out;
+  };
 
   // 6-week grid starting on the Sunday on/before the 1st.
   const weeks = useMemo(() => {
@@ -364,7 +419,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   const compact = boxW > 0 && boxW < 760;
 
   // One card per task, the same in every layout.
-  const chipFor = (p: DayPlacement<Milestone>, key: string) => {
+  const chipFor = (p: Placed, key: string) => {
     const color = colorFor(p.ms);
     const chain = ancestorsOf(p.ms);
     // Offer expand on any day the parent bar shows, so
@@ -374,7 +429,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
       <Chip
         key={`${p.ms.id}-${p.dayIndex}`}
         ms={p.ms} dayIndex={p.dayIndex} spanDays={p.spanDays}
-        todayStart={p.todayStart} todayEnd={p.todayEnd} idleToday={p.idleToday} crewToday={p.crew}
+        todayStart={p.todayStart} todayEnd={p.todayEnd} idleToday={p.idleToday} crewToday={p.crew} bandStart={p.bandStart} bandEnd={p.bandEnd}
         childrenByParent={childrenByParent}
         ancestors={chain} color={color}
         canEdit={canEdit}
@@ -388,11 +443,11 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         onStartNote={onStartNote}
         progress={progress}
         canExpand={canExpand}
-        isExpanded={subPopover?.ms.id === p.ms.id}
+        isExpanded={!!subPopover && subPopover.ms.id === p.ms.id && subPopover.dayKey === key && subPopover.band === p.band}
         onToggleExpand={canExpand && p.ms.id ? (e) => {
           const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
           setPopoverShowOthers(false);
-          setSubPopover((cur) => cur && cur.ms.id === p.ms.id && cur.dayKey === key ? null : { ms: p.ms, top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 348)), dayKey: key, anchorTop: r.top });
+          setSubPopover((cur) => cur && cur.ms.id === p.ms.id && cur.dayKey === key && cur.band === p.band ? null : { ms: p.ms, top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 348)), dayKey: key, band: p.band, anchorTop: r.top });
         } : undefined}
         selectable={canEdit && p.dayIndex === 0}
         selected={!!p.ms.id && selected.has(p.ms.id)}
@@ -550,10 +605,10 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         <div className="divide-y divide-[var(--color-border)]">
           {weekDays.map((day) => {
             const key = ymd(day, tz);
-            const items = byDay.get(key) ?? [];
+            const items = uniqueOf(key);
+            const nightN = (byDay.get(key)?.night ?? []).length;
             const isToday = sameDayUTC(day, today, tz);
-            const isDone = (p: (typeof items)[number]) => (p.ms.id ? progress?.get(p.ms.id)?.percent : undefined) === 100 || p.ms.status === "completed";
-            const shown = [...items.filter((p) => !isDone(p)), ...items.filter(isDone)];
+            const isDone = isDonePl;
             return (
               <section key={key} data-daykey={key} className="px-2 py-2">
                 <button type="button" onClick={() => setAgendaDay(key)} className="w-full flex items-center justify-between gap-2 mb-1.5 text-left">
@@ -561,10 +616,10 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                     {fmtInTz(day, tz, { weekday: "long", month: "short", day: "numeric" })}
                   </span>
                   <span className="text-[10.5px] font-semibold text-[var(--color-text-faint)]">
-                    {items.length ? `${items.length} task${items.length === 1 ? "" : "s"}${items.filter((p) => p.crew === "night").length ? ` · ${items.filter((p) => p.crew === "night").length} night` : ""}${items.filter(isDone).length ? ` · ${items.filter(isDone).length} done` : ""} ›` : "Nothing scheduled"}
+                    {items.length ? `${items.length} task${items.length === 1 ? "" : "s"}${nightN ? ` · ${nightN} night` : ""}${items.filter(isDone).length ? ` · ${items.filter(isDone).length} done` : ""} ›` : "Nothing scheduled"}
                   </span>
                 </button>
-                {shown.length > 0 && <div className="flex flex-col gap-1">{shown.map((p) => chipFor(p, key))}</div>}
+                {items.length > 0 && <div className="flex flex-col gap-1.5">{renderBands(key, true)}</div>}
               </section>
             );
           })}
@@ -584,17 +639,16 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           // inside it (cards never shrink).
           // A week with nothing in it stays short, so the busy weeks get the room.
           <div key={wi} className="grid grid-cols-7 border-b border-[var(--color-border)] last:border-b-0"
-            style={{ height: mode === "week" ? "68vh" : week.some((d) => (byDay.get(ymd(d, tz)) ?? []).length > 0) ? (compact ? 64 : 212) : (compact ? 40 : 56) }}>
+            style={{ height: mode === "week" ? "68vh" : week.some((d) => uniqueOf(ymd(d, tz)).length > 0) ? (compact ? 64 : 212) : (compact ? 40 : 56) }}>
             {week.map((day) => {
               const key = ymd(day, tz);
-              const items = byDay.get(key) ?? [];
+              const items = uniqueOf(key);
+              const nightN = (byDay.get(key)?.night ?? []).length;
               const inMonth = mode === "week" || wallClock(day.getTime(), tz).month === monthIdx;
               const isToday = sameDayUTC(day, today, tz);
-              // Every task shows; a busy day scrolls inside its box. Open
-              // work first (in time order), finished work sinks below it.
-              const isDone = (p: (typeof items)[number]) => (p.ms.id ? progress?.get(p.ms.id)?.percent : undefined) === 100 || p.ms.status === "completed";
-              const shown = [...items.filter((p) => !isDone(p)), ...items.filter(isDone)];
-              const doneHere = items.filter(isDone).length;
+              // Every task shows, in its shift; a busy day scrolls inside
+              // its box. Open work first (in time order), finished below.
+              const doneHere = items.filter(isDonePl).length;
               if (compact && mode === "month") {
                 // Phone month: the day, how many tasks, how far along —
                 // tap for the day's full list.
@@ -630,7 +684,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                     </button>
                     {items.length > 0 && (
                       <span className={`min-w-0 truncate whitespace-nowrap text-[9.5px] font-semibold tabular-nums ${inMonth ? "text-[var(--color-text-faint)]" : "text-slate-300"}`}>
-                        {items.length} task{items.length === 1 ? "" : "s"}{items.some((p) => p.crew === "night") && <span className="text-indigo-700 dark:text-indigo-300"> · {items.filter((p) => p.crew === "night").length} night</span>}{doneHere ? ` · ${doneHere} done` : ""}
+                        {items.length} task{items.length === 1 ? "" : "s"}{nightN > 0 && <span className="text-violet-700 dark:text-violet-300"> · {nightN} night</span>}{doneHere ? ` · ${doneHere} done` : ""}
                       </span>
                     )}
                   </div>
@@ -645,7 +699,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                     </button>
                   )}
                   <DayScroller fade={inMonth ? "from-[var(--color-surface)]" : "from-slate-50"}>
-                  {shown.map((p) => chipFor(p, key))}
+                  {renderBands(key)}
                   </DayScroller>
                 </div>
               );
@@ -667,16 +721,21 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         const dayKey = subPopover.dayKey;
         // By start, then the one that finishes first, then the file's order.
         const all = leafDescendants(subPopover.ms).slice().sort((a, b) => startMs(a) - startMs(b) || finishMs(a) - finishMs(b) || wbsCompare(a.wbs, b.wbs));
+        const band = subPopover.band;
+        // Opened from a shift: that shift's steps; the rest behind a toggle.
         const coversDay = (l: Milestone) => {
+          if (band) return bandsOf(l)[band].has(dayKey);
           const s0 = startMs(l), f0 = finishMs(l);
           if (!Number.isFinite(s0) || !Number.isFinite(f0)) return false;
           return ymd(new Date(s0), tz) <= dayKey && dayKey <= ymd(new Date(f0), tz);
         };
         const onDay = all.filter(coversDay);
         const others = all.filter((l) => !coversDay(l));
-        const dayLabel = fmtInTz(ymdToDate(dayKey, tz), tz, { weekday: "short", month: "short", day: "numeric" });
+        const dayLabel = `${band === "day" ? "Day shift " : band === "night" ? "Night shift " : ""}${fmtInTz(ymdToDate(dayKey, tz), tz, { weekday: "short", month: "short", day: "numeric" })}`;
         const timeOf = (l: Milestone) => {
           const s0 = startMs(l), f0 = finishMs(l);
+          // Under a day long and timed: its clock, across midnight too.
+          if (f0 > s0 && f0 - s0 < 86_400_000 && (hasTimeOfDay(s0, tz) || hasTimeOfDay(f0, tz))) return `${clockLabel(s0, tz) || "0:00"}–${clockLabel(f0, tz) || "24:00"}`;
           const sameDayStart = ymd(new Date(s0), tz) === dayKey, sameDayEnd = ymd(new Date(f0), tz) === dayKey;
           const a = sameDayStart ? (clockLabel(s0, tz) || "0:00") : "…";
           const b = sameDayEnd ? (clockLabel(f0, tz) || "24:00") : "…";
@@ -732,7 +791,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                   <button onClick={() => { onOpenDetail(subPopover.ms); setSubPopover(null); }} className="text-[10px] font-bold text-[var(--color-accent)] hover:underline shrink-0">Open</button>
                 </div>
                 <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
-                  <b className="text-[var(--color-text)]">{dayLabel}</b> · {onDay.length} of {all.length} step{all.length === 1 ? "" : "s"} scheduled this day
+                  <b className="text-[var(--color-text)]">{dayLabel}</b> · {onDay.length} of {all.length} step{all.length === 1 ? "" : "s"} {band ? "this shift" : "scheduled this day"}
                 </div>
               </div>
               {onDay.length === 0 ? (
@@ -749,7 +808,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                     className="w-full px-3 py-1.5 text-left text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-1"
                   >
                     <ChevronRight className={`w-3 h-3 transition-transform ${popoverShowOthers ? "rotate-90" : ""}`} />
-                    {others.length} step{others.length === 1 ? "" : "s"} on other days
+                    {others.length} step{others.length === 1 ? "" : "s"} on other {band ? "shifts" : "days"}
                   </button>
                   {popoverShowOthers && (
                     <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
@@ -818,7 +877,8 @@ function DayScroller({ children, fade }: { children: React.ReactNode; fade: stri
     if (!el) return;
     const bottom = el.scrollTop + el.clientHeight;
     let n = 0;
-    for (const c of Array.from(el.children) as HTMLElement[]) if (c.offsetTop + c.offsetHeight > bottom + 4) n++;
+    // Cards (inside their shift boxes) that run past the bottom.
+    for (const c of Array.from(el.querySelectorAll("[data-chip]")) as HTMLElement[]) if (c.offsetTop + c.offsetHeight > bottom + 4) n++;
     setBelow(n);
   }, []);
   // After every render (cards added, expanded, resized) and on scroll.
@@ -844,7 +904,7 @@ function DayScroller({ children, fade }: { children: React.ReactNode; fade: stri
 }
 
 function Chip({
-  ms, dayIndex, spanDays, todayStart, todayEnd, idleToday, crewToday, childrenByParent, ancestors, color, canEdit, draggable, onDragStart, onTouchDragStart, onClick,
+  ms, dayIndex, spanDays, todayStart, todayEnd, idleToday, crewToday, bandStart, bandEnd, childrenByParent, ancestors, color, canEdit, draggable, onDragStart, onTouchDragStart, onClick,
   onSetStatus, onSetProgress, onSetProgressNote, onStartNote, progress, canExpand, isExpanded, onToggleExpand, selectable, selected, onToggleSelect, dimmed, shiftTimes,
 }: {
   ms: Milestone; dayIndex: number; spanDays: number;
@@ -852,6 +912,8 @@ function Chip({
   todayStart?: number; todayEnd?: number; idleToday?: boolean;
   /** Which crew does its work on this day (see DayPlacement.crew). */
   crewToday?: DayCrew;
+  /** The shift it's shown in (its clock reads against it). */
+  bandStart?: number; bandEnd?: number;
   childrenByParent: Map<string, Milestone[]>;
   ancestors?: Milestone[];
   color?: { bar: string; soft: string; text: string; dot: string };
@@ -895,6 +957,12 @@ function Chip({
     if (ms.status === "completed") return "✓ done";
     if (idleToday) return "no work today";
     if (todayStart == null || todayEnd == null) return dayIndex > 0 ? "cont." : startClock(ms, tz);
+    if (bandStart != null && bandEnd != null) {
+      // Against its shift: "18:00–3:00", "→14:00", "all shift".
+      const s = clockLabel(todayStart, tz) || "0:00", e = clockLabel(todayEnd, tz) || "0:00";
+      const sIn = todayStart > bandStart + 60_000, eIn = todayEnd < bandEnd - 60_000 || todayStart >= bandEnd;
+      return sIn && eIn ? `${s}–${e}` : sIn ? `${s}→` : eIn ? `→${e}` : "all shift";
+    }
     const dayStartMs = startOfDayTz(todayStart, tz);
     const dayEndMs = addDaysTz(dayStartMs, 1, tz);
     const startsToday = todayStart > dayStartMs;
@@ -948,6 +1016,7 @@ function Chip({
   // grips appear on hover (always on touch).
   return (
     <div
+      data-chip
       onClick={onClick}
       title={tip}
       className={`group/chip relative shrink-0 w-full text-left rounded-md border pl-2.5 pr-1 pt-1 pb-1.5 overflow-hidden cursor-pointer transition-colors ${toneClass} ${dimmed ? "opacity-40" : ""} ${selected ? "ring-2 ring-[var(--color-accent-ring)] ring-offset-1" : ""}`}
@@ -995,7 +1064,12 @@ function Chip({
               onStartWithNote={onStartNote && ms.id ? (p, n) => onStartNote(ms.id!, p, n) : undefined}
             />
           ) : (
-            <StatusControl status={effStatus} size="sm" variant="dot" readOnly title="Status — rolls up from its steps" onPick={() => {}} />
+            // A work order's status rolls up from its steps: tapping it opens
+            // the steps for this shift, each with its own % and comment.
+            <button type="button" onClick={(e) => { e.stopPropagation(); if (onToggleExpand) onToggleExpand(e); else onClick(); }}
+              title="Update its steps for this shift" className="relative inline-flex after:absolute after:-inset-1.5 pointer-coarse:after:-inset-3 after:content-['']">
+              <StatusControl status={effStatus} size="sm" variant="dot" readOnly title="Update its steps for this shift" onPick={() => {}} />
+            </button>
           )}
         </span>
         <div className="min-w-0 flex-1">
@@ -1006,7 +1080,7 @@ function Chip({
             <span className="flex items-center gap-1 min-w-0 flex-1 text-[9.5px] leading-tight opacity-70">
               {/* Night work is tagged; round the clock and day-and-night
                   mixes are marked; day work — most of it — is left quiet. */}
-              {night && (
+              {night && bandStart == null && (
                 <span title="Night-shift work" className="shrink-0 inline-flex items-center gap-0.5 rounded px-1 text-[8.5px] font-black leading-[14px] bg-indigo-900 text-white dark:bg-indigo-300 dark:text-indigo-950">
                   <Moon className="w-2.5 h-2.5" />NIGHT
                 </span>
@@ -1029,7 +1103,11 @@ function Chip({
                   size="sm"
                 />
               ) : (
-                <span className="text-[9.5px] font-bold tabular-nums opacity-80" title={`${pct}% complete · ${done}/${leafTotal} steps done`}>{pct}%</span>
+                <button type="button" onClick={(e) => { e.stopPropagation(); if (onToggleExpand) onToggleExpand(e); else onClick(); }}
+                  title={`${pct}% complete · ${done}/${leafTotal} steps done — tap to update its steps`}
+                  className={`relative inline-flex items-center justify-center rounded-md border px-1 py-0 text-[9px] font-bold tabular-nums after:absolute after:-inset-1 pointer-coarse:after:-inset-2.5 after:content-[''] hover:brightness-95 ${pct >= 100 ? "text-emerald-700 bg-emerald-50 border-emerald-200" : pct > 0 ? "text-blue-700 bg-blue-50 border-blue-200" : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]"}`}>
+                  {pct}%
+                </button>
               )}
               {canExpand && (
                 <button
@@ -1062,6 +1140,21 @@ function chipTone(s: MilestoneStatus): string {
     case "missed":      return "bg-rose-100 dark:bg-rose-900/40 border-rose-300 dark:border-rose-700 text-rose-900 dark:text-rose-200";
     default:            return "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text)]";
   }
+}
+
+/** When the work under a card runs in a shift: its steps' hours inside
+ *  the shift (date-only steps as the whole shift); day-crew work written at
+ *  night hours keeps its own hours. */
+function windowIn(steps: Milestone[], from: number, to: number, tz: string): { start: number; end: number } {
+  let s = Infinity, e = -Infinity;
+  const spans = steps.map((st) => workSpan(st, tz)).filter((x) => Number.isFinite(x.start) && Number.isFinite(x.finish));
+  for (const x of spans) {
+    const a = Math.max(x.start, from), b = Math.min(x.finish, to);
+    if (b > a || (x.start === x.finish && x.start >= from && x.start < to)) { s = Math.min(s, a); e = Math.max(e, b, a); }
+  }
+  if (Number.isFinite(s)) return { start: s, end: e };
+  for (const x of spans) { s = Math.min(s, x.start); e = Math.max(e, x.finish); }
+  return Number.isFinite(s) && Number.isFinite(e) ? { start: s, end: e } : { start: from, end: to };
 }
 
 // ── Date helpers in the PLANT's zone (tz), shared with the timeline view ──

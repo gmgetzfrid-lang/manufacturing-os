@@ -30,7 +30,7 @@ import {
 import { buildProgressIndex } from "@/lib/scheduleProgress";
 import StatusControl from "@/components/projects/StatusControl";
 import { CancelJobForm } from "@/components/projects/CancelledJobs";
-import { ProgressSlider } from "@/components/projects/ProgressControl";
+import ProgressControl, { ProgressSlider } from "@/components/projects/ProgressControl";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 
 interface Props {
@@ -57,6 +57,10 @@ interface Props {
   /** The project's critical path (unfinished steps on it) and where it
    *  comes from ("From the schedule file") — for the Critical path row. */
   critical?: { ids: Set<string>; sourceLabel: string };
+  /** A step's % with what got done (required for work in progress), and
+   *  starting one — for the steps listed under a work order. */
+  onSetProgressNote?: (id: string, percent: number, note: string) => Promise<boolean> | boolean;
+  onStartNote?: (id: string, percent: number, note: string) => Promise<boolean> | boolean;
 }
 
 /** Schedule-file values the app reads for itself, shown elsewhere in
@@ -65,7 +69,7 @@ const HIDDEN_ATTRS = new Set(["ms_critical"]);
 
 export default function TaskDetailPanel({
   milestone, subtasks, allTasks, childCount, ancestors, canEdit, userId, userName, userEmail, userRole,
-  onClose, onChanged, onSelectSubtask, onSelectMilestone, onMoveDays, critical,
+  onClose, onChanged, onSelectSubtask, onSelectMilestone, onMoveDays, critical, onSetProgressNote, onStartNote,
 }: Props) {
   const tz = useScheduleTz();
   const [editing, setEditing] = useState(false);
@@ -306,7 +310,7 @@ export default function TaskDetailPanel({
                   </div>
                   <div className="mt-2 text-[10px] text-[var(--color-text-faint)] flex items-start gap-1">
                     <Layers className="w-3 h-3 mt-0.5 shrink-0" />
-                    This is a phase — its status and % complete roll up automatically from the sub-tasks below. Set progress on the individual tasks.
+                    Its status and % roll up from its steps. Set each step&apos;s progress in the list below.
                   </div>
                 </div>
               )}
@@ -438,7 +442,7 @@ export default function TaskDetailPanel({
                     {leafProgress && <span className="text-[11px] font-mono text-indigo-600 dark:text-indigo-400 font-bold ml-auto">{leafProgress.done}/{leafProgress.total} · {leafProgress.pct}%</span>}
                   </div>
                   <div className="text-[10px] text-[var(--color-text-faint)] mb-2">
-                    Dot = set status · ◀ ▶ = move this step a day earlier/later (the rest stay put) · name = open it
+                    % = progress and what got done · dot = status · ◀ ▶ = move this step a day (the rest stay put) · name = open it
                   </div>
                   <ul className="space-y-1">
                     {subtasks.map((s) => {
@@ -456,10 +460,12 @@ export default function TaskDetailPanel({
                               size="sm"
                               variant="dot"
                               disabled={!canEdit}
+                              percent={sInfo?.percent ?? (s.status === "completed" ? 100 : Math.round(s.percentComplete ?? 0))}
                               onPick={(st, reason, p) => s.id && void setMilestoneStatus({
                                 id: s.id, status: st, statusReason: reason, percentComplete: p,
                                 actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
                               }).catch(failed).finally(onChanged)}
+                              onStartWithNote={onStartNote && s.id ? async (p, n) => { const ok = await onStartNote(s.id!, p, n); onChanged(); return ok; } : undefined}
                             />
                           )}
                         </span>
@@ -467,6 +473,21 @@ export default function TaskDetailPanel({
                           <span className={`block text-[12px] truncate ${sStatus === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{s.name}</span>
                           <span className="block text-[10px] text-[var(--color-text-muted)] font-mono">{spanLabel(startOf(s), finishOf(s), tz)}{sInfo ? ` · ${sInfo.percent}%` : ""}</span>
                         </button>
+                        {/* A step's % with what got done — right here, no need to open it. */}
+                        {!sIsSummary && s.id && (
+                          <span className="shrink-0">
+                            <ProgressControl
+                              percent={sInfo?.percent ?? (s.status === "completed" ? 100 : Math.round(s.percentComplete ?? 0))}
+                              onPick={(v) => void setMilestoneProgress({
+                                id: s.id!, percentComplete: v,
+                                actorUserId: userId, actorUserName: userName, actorUserEmail: userEmail, actorUserRole: userRole,
+                              }).catch(failed).finally(onChanged)}
+                              onSaveWithNote={onSetProgressNote ? async (v, n) => { const ok = await onSetProgressNote(s.id!, v, n); onChanged(); return ok; } : undefined}
+                              disabled={!canEdit}
+                              size="sm"
+                            />
+                          </span>
+                        )}
                         {canEdit && onMoveDays && s.id && (
                           <span className="shrink-0 flex items-center gap-0.5">
                             <button

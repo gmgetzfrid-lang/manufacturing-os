@@ -264,7 +264,7 @@ export function crewsOf(report: ShiftReport, plan: TurnoverPlan, hrs: (h: number
  *  moved this shift in one cell, what that meant for the plan, and the
  *  hours it's worth — not a line per sub-step. */
 export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, noteOf?: (id: string) => string | undefined): Array<{
-  task: string; steps: string; who: string; result: { text: string; tone: NextTone }; vs: { text: string; tone?: "emerald" | "rose" }; ids: string[];
+  task: string; wo: string; steps: string; who: string; result: { text: string; tone: NextTone }; vs: { text: string; tone?: "emerald" | "rose" }; ids: string[];
 }> {
   const groups = new Map<string, ShiftRow[]>();
   for (const r of [...plan.done, ...plan.moved]) {
@@ -297,6 +297,8 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
     const who = [...new Set(rows.map((r) => r.leaf.responsibleParty?.trim()).filter(Boolean))].join(", ");
     return {
       task: rows[0].parentName ?? rows[0].leaf.name,
+      // The work order number(s) — one for most work orders.
+      wo: [...new Set(rows.map((r) => r.leaf.workOrderRef?.trim()).filter(Boolean))].join(", "),
       steps: `${done.length ? `${done.length} done` : ""}${done.length && moved.length ? ", " : ""}${moved.length ? `${moved.length} in progress` : ""}: ${stepText}`,
       who,
       result: { text: parts.join("; "), tone: late.length ? "amber" : "emerald" },
