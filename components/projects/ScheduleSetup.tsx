@@ -6,9 +6,11 @@
 // now filled in, so confirming a right answer is one click.
 
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Check, ChevronLeft, ChevronRight, Clock, Flag, Globe2, Loader2, Moon, Settings2, Zap } from "lucide-react";
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Clock, Flag, Globe2, Loader2, Moon, Printer, Settings2, Zap } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
-import { setupChecklist, missingRequired, OPEN_SETUP_EVENT, type SetupItem, type SetupItemId } from "@/lib/scheduleSetup";
+import { setupChecklist, missingRequired, toDo, OPEN_SETUP_EVENT, type SetupItem, type SetupItemId } from "@/lib/scheduleSetup";
+import { useLetterhead } from "@/lib/letterheadStore";
+import { LetterheadStep } from "@/components/projects/LetterheadSetup";
 import { browserTimeZone, listTimeZones, tzLabel, DEFAULT_SCHEDULE_TZ } from "@/lib/scheduleTz";
 import { updateProjectMeta } from "@/lib/projects";
 import { useShiftTimes, useShiftTimesState, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
@@ -23,7 +25,7 @@ import { useCriticalMode, useCriticalModeLoaded, saveCriticalMode } from "@/lib/
 import { CRITICAL_MODES, resolveCriticalPath, effectiveCriticalMode, type CriticalMode } from "@/lib/criticalPath";
 import type { Milestone } from "@/types/schema";
 
-const ICON: Record<SetupItemId, typeof Clock> = { timezone: Globe2, shifts: Clock, night: Moon, critical: Zap, baseline: Flag };
+const ICON: Record<SetupItemId, typeof Clock> = { timezone: Globe2, shifts: Clock, night: Moon, critical: Zap, baseline: Flag, print: Printer };
 // Opened by itself once per project on this device — after that the banner
 // (while anything's really missing) and the Setup button are the way in.
 const SHOWN_KEY = (projectId: string) => `scheduleSetup.autoOpened:${projectId}`;
@@ -51,9 +53,10 @@ export function ScheduleSetup(p: Props) {
   // Not known until the project's saved settings are read: a new device has
   // no copy yet, and that isn't "not set".
   const nightDecided = st.loaded ? st.times.nightJobs !== undefined : null;
+  const letterheadSet = !!useLetterhead(p.projectId).lh;
   const items = useMemo(() => setupChecklist({
-    timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided,
-  }), [p.timezone, saved, critical, p.hasBaseline, nightDecided]);
+    timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided, letterheadSet,
+  }), [p.timezone, saved, critical, p.hasBaseline, nightDecided, letterheadSet]);
   const missing = missingRequired(items);
   // Opens by itself for someone who can fix it — only once everything has
   // been read (nothing "checking"), and only once on this device.
@@ -101,8 +104,9 @@ export function ScheduleSetupButton(p: Props) {
   const critical = useCriticalMode(p.projectId);
   const st = useShiftTimesState(p.projectId);
   const nightDecided = st.loaded ? st.times.nightJobs !== undefined : null;
-  const items = setupChecklist({ timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided });
-  const todo = items.filter((i) => !i.done && !i.checking).length;
+  const letterheadSet = !!useLetterhead(p.projectId).lh;
+  const items = setupChecklist({ timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided, letterheadSet });
+  const todo = toDo(items).length;
   const [open, setOpen] = useState(false);
   // Opened at a step from elsewhere on the page (the calendar's "Night crews").
   const [at, setAt] = useState<SetupItemId | null>(null);
@@ -113,13 +117,13 @@ export function ScheduleSetupButton(p: Props) {
   }, []);
   return (
     <>
-      <button onClick={() => setOpen(true)} title="Time zone, shift times, critical path, baseline"
+      <button onClick={() => setOpen(true)} title="Time zone, shift times, night crews, critical path, baseline, printed reports"
         className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1.5 rounded-lg border shadow-sm transition-colors ${todo
           ? "text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 hover:bg-amber-100"
           : "text-[var(--color-text)] bg-[var(--color-surface)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
         <Settings2 className="w-3.5 h-3.5" /> Setup{todo ? ` · ${todo} to do` : <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />}
       </button>
-      {open && <SetupWizard {...p} items={items} start={at ?? items.find((i) => !i.done)?.id ?? "timezone"} critical={critical} onClose={() => { setOpen(false); setAt(null); }} />}
+      {open && <SetupWizard {...p} items={items} start={at ?? items.find((i) => !i.done && !i.extra)?.id ?? "timezone"} critical={critical} onClose={() => { setOpen(false); setAt(null); }} />}
     </>
   );
 }
@@ -135,9 +139,11 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
   const idx = items.findIndex((i) => i.id === at);
   const item = items[idx];
   const go = (d: number) => setAt(items[Math.max(0, Math.min(items.length - 1, idx + d))].id);
-  const allDone = items.every((i) => i.done);
+  // Optional extras (the letterhead) never count against "all set".
+  const counted = items.filter((i) => !i.extra);
+  const allDone = counted.every((i) => i.done);
   return (
-    <Modal onClose={onClose} size={at === "night" ? "full" : "lg"}>
+    <Modal onClose={onClose} size={at === "night" ? "full" : at === "print" ? "xl" : "lg"}>
       <ModalHeader icon={Settings2} title="Schedule setup" subtitle="What the schedule's reports hang on — set once for everyone on the project." onClose={onClose} />
       <ModalBody className="p-0">
         <div className="flex flex-col sm:flex-row">
@@ -150,7 +156,7 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
                 <button key={i.id} onClick={() => setAt(i.id)} aria-current={on ? "step" : undefined}
                   className={`shrink-0 flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] ${on ? "bg-[var(--color-surface-2)] font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
                   <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 ${i.done
-                    ? "bg-emerald-600 text-white" : i.required ? "bg-rose-600 text-white" : "bg-amber-500 text-white"}`}>
+                    ? "bg-emerald-600 text-white" : i.required ? "bg-rose-600 text-white" : i.extra ? "bg-slate-400 text-white dark:bg-slate-600" : "bg-amber-500 text-white"}`}>
                     {i.done ? <Check className="w-3 h-3" /> : n + 1}
                   </span>
                   <Icon className="w-3.5 h-3.5 shrink-0 hidden sm:block" />
@@ -166,7 +172,7 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
                 <h3 className="text-[15px] font-black text-[var(--color-text)]">{item.label}</h3>
                 {item.checking ? <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-faint)]">checking…</span> : item.done
                   ? <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 dark:text-emerald-400">✓ set</span>
-                  : <span className={`text-[10px] font-black uppercase tracking-wider ${item.required ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400"}`}>{item.required ? "needed" : "advised"}</span>}
+                  : <span className={`text-[10px] font-black uppercase tracking-wider ${item.required ? "text-rose-600 dark:text-rose-400" : item.extra ? "text-[var(--color-text-faint)]" : "text-amber-600 dark:text-amber-400"}`}>{item.required ? "needed" : item.extra ? "optional" : "advised"}</span>}
               </div>
               <p className="text-[12.5px] text-[var(--color-text-muted)] mt-0.5">{item.why}</p>
             </div>
@@ -176,6 +182,7 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
             {at === "night" && <NightStep {...p} done={item.done} onSaved={() => undefined} />}
             {at === "critical" && <CriticalStep {...p} critical={critical} onSaved={() => go(1)} />}
             {at === "baseline" && <BaselineStep {...p} done={item.done} />}
+            {at === "print" && <LetterheadStep projectId={p.projectId} canManage={p.canManage} />}
           </div>
         </div>
       </ModalBody>
@@ -184,7 +191,7 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
           <button onClick={() => go(-1)} disabled={idx === 0} className="inline-flex items-center gap-1 text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1.5 disabled:opacity-30">
             <ChevronLeft className="w-4 h-4" /> Back
           </button>
-          <span className="flex-1 text-center text-[11px] text-[var(--color-text-faint)]">{items.filter((i) => i.done).length} of {items.length} set</span>
+          <span className="flex-1 text-center text-[11px] text-[var(--color-text-faint)]">{counted.filter((i) => i.done).length} of {counted.length} set</span>
           {idx < items.length - 1 ? (
             <button onClick={() => go(1)} className="inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--color-text)] px-2 py-1.5">
               {item.done ? "Next" : "Skip for now"} <ChevronRight className="w-4 h-4" />

@@ -5,7 +5,8 @@
 // the two riskiest kinds of work on the shift being planned. Each card is
 // built to talk from: a title, a line on why now, three points with the
 // thing to do in bold. Tap a card to present it full screen, big enough to
-// read to a room. On a phone the cards swipe sideways. Built in: no AI.
+// read to a room. On a phone the cards swipe sideways. Printed, they get a
+// page of their own, one under the other in big type. Built in: no AI.
 
 import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Maximize2, ShieldAlert, X } from "lucide-react";
@@ -42,15 +43,16 @@ export function SafetyMomentBox({ jobs, shift, T, print, project, recent, label 
   if (jobs.length === 0 || topics.length === 0) return null;
 
   return (
-    <div className="keep space-y-1.5">
+    // Printed: a page of its own — the cards may break between, never inside.
+    <div className={print ? "space-y-[6pt]" : "keep space-y-1.5"}>
       <div className="flex flex-wrap items-baseline gap-x-2">
-        <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-orange-800 dark:text-orange-300">
-          <ShieldAlert className="w-3 h-3 self-center" aria-hidden="true" /> Safety topics{label ? ` — ${label}` : ""}
+        <span className={`inline-flex items-center gap-1 font-semibold text-orange-800 dark:text-orange-300 ${print ? "text-[10pt]" : "text-[12px]"}`}>
+          <ShieldAlert className="w-3.5 h-3.5 self-center" aria-hidden="true" /> Safety topics{label ? ` — ${label}` : ""}
         </span>
         {!print && <span className="text-[11px] text-[var(--color-text-muted)]">Tap one to present it full screen</span>}
       </div>
       {/* No risky work at all: two topics, side by side at full width. */}
-      <div className={print ? `grid ${topics.length === 2 ? "grid-cols-2" : "grid-cols-3"} gap-2` : `-mx-1 px-1 flex gap-2 overflow-x-auto snap-x snap-mandatory sm:grid ${topics.length === 2 ? "sm:grid-cols-2" : "sm:grid-cols-3"} sm:overflow-visible scroll-quiet`}>
+      <div className={print ? "grid grid-cols-1 gap-[7pt]" : `-mx-1 px-1 flex gap-2 overflow-x-auto snap-x snap-mandatory sm:grid ${topics.length === 2 ? "sm:grid-cols-2" : "sm:grid-cols-3"} sm:overflow-visible scroll-quiet`}>
         {topics.map((t, i) => (
           <TopicCard key={t.key + i} t={t} n={i + 1} tone={TONE[i % TONE.length]} print={print} onPresent={() => setPresenting(i)} />
         ))}
@@ -65,10 +67,10 @@ function TopicCard({ t, n, tone, print, onPresent }: { t: SafetyTopic; n: number
   return (
     <article
       onClick={print ? undefined : onPresent}
-      className={`snap-start shrink-0 w-[86%] sm:w-auto min-w-0 flex flex-col rounded-lg border border-[var(--color-border)] border-t-4 ${tone.bar} bg-[var(--color-surface)] ${print ? "p-1.5" : "p-2.5 cursor-pointer hover:shadow-md transition-shadow"}`}>
+      className={`snap-start shrink-0 min-w-0 flex flex-col rounded-lg border border-[var(--color-border)] border-t-4 ${tone.bar} bg-[var(--color-surface)] ${print ? "w-full p-[7pt] break-inside-avoid" : "w-[86%] sm:w-auto p-2.5 cursor-pointer hover:shadow-md transition-shadow"}`}>
       <div className="flex items-center gap-1.5">
-        <span className={`shrink-0 w-4 h-4 rounded-full ${tone.num} text-white text-[10px] font-black flex items-center justify-center`}>{n}</span>
-        <span className={`min-w-0 truncate text-[9.5px] font-black uppercase tracking-wider ${tone.kick}`}>{t.kicker}</span>
+        <span className={`shrink-0 rounded-full ${tone.num} text-white font-bold flex items-center justify-center ${print ? "w-[13pt] h-[13pt] text-[8pt]" : "w-4 h-4 text-[10px]"}`}>{n}</span>
+        <span className={`min-w-0 truncate font-semibold ${tone.kick} ${print ? "text-[9pt]" : "text-[11px]"}`}>{t.kicker}</span>
         {!print && (
           <button type="button" onClick={(e) => { e.stopPropagation(); onPresent(); }} title="Present this topic full screen" aria-label={`Present ${t.title}`}
             className="ml-auto shrink-0 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
@@ -76,21 +78,21 @@ function TopicCard({ t, n, tone, print, onPresent }: { t: SafetyTopic; n: number
           </button>
         )}
       </div>
-      <h4 className={`mt-0.5 font-black leading-tight text-[var(--color-text)] ${print ? "text-[10pt]" : "text-[14.5px]"}`}>{t.title}</h4>
-      <p className={`mt-0.5 leading-snug text-[var(--color-text-muted)] ${print ? "text-[7.5pt]" : "text-[11px]"}`}>{t.why}</p>
-      <ul className={`mt-1.5 space-y-1.5 leading-snug text-[var(--color-text)] ${print ? "text-[8pt]" : "text-[12.5px]"}`}>
+      <h4 className={`mt-0.5 font-bold leading-tight text-[var(--color-text)] ${print ? "text-[13pt]" : "text-[15px]"}`}>{t.title}</h4>
+      <p className={`mt-0.5 leading-snug text-[var(--color-text-muted)] ${print ? "text-[9pt]" : "text-[12px]"}`}>{t.why}</p>
+      <ul className={`mt-1.5 leading-snug text-[var(--color-text)] ${print ? "text-[10.5pt] space-y-[4pt]" : "text-[12.5px] space-y-1.5"}`}>
         {t.points.map((p, i) => {
           const [lead, rest] = splitLead(p.say);
           return (
             <li key={i} className="flex gap-1.5">
-              <span className={`mt-[6px] shrink-0 w-1.5 h-1.5 rounded-full ${tone.dot}`} aria-hidden />
+              <span className={`shrink-0 rounded-full ${tone.dot} ${print ? "mt-[5pt] w-[4.5pt] h-[4.5pt]" : "mt-[6px] w-1.5 h-1.5"}`} aria-hidden />
               <span><b>{lead}</b>{rest ? <span className="text-[var(--color-text-muted)]"> {rest}</span> : null}</span>
             </li>
           );
         })}
       </ul>
       {sources.length > 0 && (
-        <div className="mt-auto pt-1.5 text-[9.5px] text-[var(--color-text-faint)] truncate">
+        <div className={`mt-auto pt-1.5 text-[var(--color-text-faint)] truncate ${print ? "text-[8pt]" : "text-[10.5px]"}`}>
           From {sources.map((s, i) => (
             <span key={s.url}>{i > 0 && " · "}<a href={s.url} target="_blank" rel="noreferrer" title={s.title} onClick={(e) => e.stopPropagation()} className="underline underline-offset-2 hover:text-[var(--color-text)]">{s.label}</a></span>
           ))}

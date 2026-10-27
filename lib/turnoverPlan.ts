@@ -307,3 +307,40 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, note
     };
   });
 }
+
+/** Behind by this much or more — most of a shift — it shows red. */
+export const SEVERE_BEHIND_H = 8;
+
+/** The next shift's list in a few lines, for the five-second read: what's
+ *  badly behind (and what waits on it), what's carried over from earlier
+ *  shifts (and what it waits on), how much is critical. */
+export function watchLines(rows: ShiftRow[], report: ShiftReport, t: { hrs: (h: number) => string }, numOf: (id: string | null | undefined) => number | undefined): Array<{ tone: "rose" | "amber" | "slate"; strong: string; rest?: string }> {
+  const out: Array<{ tone: "rose" | "amber" | "slate"; strong: string; rest?: string }> = [];
+  const label = (r: ShiftRow) => { const tag = equipmentTag(r.parentName, r.leaf.name); return tag && !r.leaf.name.startsWith(tag) ? `${tag} ${r.leaf.name}` : r.leaf.name; };
+  const listed = new Set(rows.map((r) => r.leaf.id));
+  const h = (x: number) => t.hrs(Math.round(x * 10) / 10);
+  const and = (xs: string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
+  // Badly behind — and the steps on the list that can't start until it's done.
+  const severe = rows.map((r) => ({ r, s: shareOf(report, r.leaf.id) })).filter((x) => x.s?.side === "behind" && x.s.hours >= SEVERE_BEHIND_H)
+    .sort((a, b) => b.s!.hours - a.s!.hours).slice(0, 2);
+  for (const { r, s } of severe) {
+    const after = rows.filter((x) => x.waitingOn.some((w) => w.id === r.leaf.id));
+    const crit = after.some((x) => x.critical) ? ", and it's on the critical path" : "";
+    out.push({ tone: "rose", strong: `${label(r)} is ${h(s!.hours)} behind`, rest: after.length ? ` — ${and(after.map((x) => x.leaf.name))} can't start until it's done${crit}.` : "." });
+  }
+  // Carried over from earlier shifts — and what they wait on that isn't on this list.
+  const carried = rows.filter((r) => r.carryOver);
+  if (carried.length) {
+    const waits = carried.filter((r) => r.waitingOn.some((w) => !listed.has(w.id)));
+    const names = [...new Set(waits.flatMap((r) => r.waitingOn.filter((w) => !listed.has(w.id)).map((w) => w.name)))];
+    const who = waits.length === carried.length ? (carried.length === 1 ? "it waits" : carried.length === 2 ? "both wait" : "all wait") : `${waits.length} wait`;
+    out.push({ tone: "amber", strong: `${carried.length} carried over from earlier shifts`,
+      rest: waits.length ? ` — ${who} on steps not on this list (${names.slice(0, 3).join(", ")}${names.length > 3 ? ` + ${names.length - 3} more` : ""}).` : ` — ${and(carried.slice(0, 3).map(label))}.` });
+  }
+  const crit = rows.filter((r) => r.critical);
+  if (crit.length) {
+    const nums = crit.map((r) => numOf(r.leaf.id)).filter((n): n is number => n != null);
+    out.push({ tone: "slate", strong: `${crit.length} of ${rows.length} step${rows.length === 1 ? "" : "s"} ${crit.length === 1 ? "is" : "are"} critical`, rest: nums.length ? ` — #${nums.join(", #")}.` : "." });
+  }
+  return out;
+}

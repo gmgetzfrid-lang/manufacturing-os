@@ -389,7 +389,8 @@ export function toEmailHtml(d: ExportDoc): string {
   for (const s of d.sections) {
     // A section that needs attention gets a colored rule, not a number.
     const rule = s.flag === "rose" ? SOLID.rose : s.flag === "amber" ? SOLID.amber : INK;
-    html += `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;margin-top:18px;"><tr>` +
+    // data-sec: lets a printed copy put a section on its own page (safety).
+    html += `<table data-sec="${esc(s.id ?? "")}" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;max-width:820px;margin-top:18px;"><tr>` +
       td(`border-bottom:2px solid ${rule};padding:0 0 3px;`,
         `<span style="${FONT}font-size:15px;font-weight:bold;color:${INK};">${esc(s.title)}</span>` +
         (s.sub ? `<span style="${FONT}font-size:12px;color:${MUTED};">&nbsp;&nbsp;${esc(s.sub)}</span>` : "")) +

@@ -39,8 +39,10 @@ function cache(projectId: string, t: ShiftTimes) {
 export async function loadProjectShiftTimes(projectId: string): Promise<ShiftTimes> {
   const { data, error } = await supabase.from("projects").select("shift_times").eq("id", projectId).maybeSingle();
   if (error || !data) return readShiftTimes(projectId);
-  const raw = (data as { shift_times: Partial<ShiftTimes> | null }).shift_times;
-  const t = raw ? { ...DEFAULT_SHIFT_TIMES, ...raw } : DEFAULT_SHIFT_TIMES;
+  const raw = (data as { shift_times: (Partial<ShiftTimes> & { letterhead?: unknown }) | null }).shift_times;
+  // The letterhead lives beside the times (lib/letterheadStore) — not carried here.
+  const { letterhead: _letterhead, ...times } = raw ?? {};
+  const t = raw ? { ...DEFAULT_SHIFT_TIMES, ...times } : DEFAULT_SHIFT_TIMES;
   const safe = shiftTimesProblem(t) ? DEFAULT_SHIFT_TIMES : t;
   const prev = readShiftTimes(projectId);
   if (JSON.stringify(prev) !== JSON.stringify(safe)) cache(projectId, safe);
@@ -64,7 +66,10 @@ export async function saveProjectShiftTimes(projectId: string, t: ShiftTimes): P
     ...(t.nightJobs === "file" || Array.isArray(t.nightJobs) ? { nightJobs: t.nightJobs === "file" ? "file" : t.nightJobs.filter((x) => typeof x === "string") } : {}),
     ...(t.helpers ? { helpers: cleanPullCrew(t.helpers) } : {}),
   };
-  const { data, error } = await supabase.from("projects").update({ shift_times: clean }).eq("id", projectId).select("id");
+  // Keep the letterhead saved beside the times (lib/letterheadStore).
+  const { data: kept } = await supabase.from("projects").select("lh:shift_times->letterhead").eq("id", projectId).maybeSingle();
+  const lh = (kept as { lh?: unknown } | null)?.lh;
+  const { data, error } = await supabase.from("projects").update({ shift_times: lh ? { ...clean, letterhead: lh } : clean }).eq("id", projectId).select("id");
   if (error) {
     // The column isn't there yet: keep them on this device meanwhile.
     if (/shift_times/.test(error.message)) {

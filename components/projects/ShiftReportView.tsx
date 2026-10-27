@@ -30,13 +30,13 @@ import { createPortal } from "react-dom";
 import {
   Printer, ChevronLeft, ChevronRight, ChevronDown, Sun, Moon, CheckCircle2, Flag, FastForward,
   TrendingUp, TrendingDown, Minus, Zap, Presentation, X, Settings2, Rocket, ArrowLeftRight, Trophy,
-  Mail, FileText,
+  Mail, FileText, Hourglass,
 } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { buildProgressIndex, leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { withWorkOrderCrews } from "@/lib/workOrderCrew";
-import { turnoverPlan, nextOf, standing, askedLine, doneOf, crewsOf, vsPlan, doneByTask } from "@/lib/turnoverPlan";
+import { turnoverPlan, nextOf, standing, askedLine, doneOf, crewsOf, doneByTask, shareOf, watchLines, SEVERE_BEHIND_H } from "@/lib/turnoverPlan";
 import {
   buildShiftReport, shiftWindow, shiftAt, nextShift, previousShift, defaultReviewShift, nextShiftWithWork, expectedByParent, paceOf, expectedFraction, workShiftOf, staffedDueMs, meetingLeadMin, type Pace, type WorkShift,
   DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftRow, type ShiftWindow, type ShiftReport, type PullCrew,
@@ -53,6 +53,8 @@ import { loadProgressLog, scheduleAt, type ProgressLogRow } from "@/lib/progress
 import { effectiveSpans } from "@/lib/scheduleTime";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { SafetyMomentBox } from "@/components/projects/SafetyMomentBox";
+import { useLetterhead } from "@/lib/letterheadStore";
+import { letterheadDocument, letterheadLayersHtml, letterheadPrintCss, type Letterhead } from "@/lib/letterhead";
 import { riskHistory, type ProjectBase } from "@/lib/safetyTalk";
 import type { HazardJobInput, HazardKind } from "@/lib/safetyMoment";
 import { QuickLookCard, QuickLookOpen, TaskSearch, useQuickLookOpen } from "@/components/projects/TaskQuickLook";
@@ -108,6 +110,9 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const [showTimes, setShowTimes] = useState(false);
   // A step with no crew named is reported under its work order's crew.
   const live = useMemo(() => withWorkOrderCrews(rawLive), [rawLive]);
+  // The company letterhead printed reports sit on (Schedule setup → Printed reports).
+  const { lh } = useLetterhead(projectId);
+  const lhLayers = useMemo(() => (lh ? letterheadLayersHtml(lh) : null), [lh]);
 
   // Re-evaluated every minute so a tab left open rolls over a shift
   // boundary (and "as of now" stays current) without a reload.
@@ -400,7 +405,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       <style>{`
         [data-shift-print-root] { display: none; }
         @media print {
-          @page { size: auto; margin: 9mm; }
+          ${lh ? "" : "@page { size: auto; margin: 9mm; }"}
           body > *:not([data-shift-print-root]) { display: none !important; }
           [data-shift-print-root] { display: block !important; width: 100%; max-width: 100%; margin: 0; font-size: 9pt; line-height: 1.3; color: #0f172a; background: #fff; }
           [data-shift-print-root] * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
@@ -485,7 +490,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
             title="Run the meeting one agenda item at a time (← → keys, Esc to leave)">
             {presenting != null ? <><X className="w-3.5 h-3.5" /> Leave present</> : <><Presentation className="w-3.5 h-3.5" /> Present</>}
           </button>
-          <CopyUpdate doc={exportDoc} meeting={meeting} />
+          <CopyUpdate doc={exportDoc} meeting={meeting} lh={lh} />
           <button onClick={() => window.print()} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-3 py-1.5 rounded-lg shadow-sm">
             <Printer className="w-3.5 h-3.5" /> Print
           </button>
@@ -596,19 +601,53 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       )}
 
       {/* Print copy — a direct child of <body>, so the page layout never
-          offsets or clips it. Hidden on screen by the style above. */}
+          offsets or clips it. Hidden on screen by the style above. The
+          report first; the safety topics on a page of their own after it.
+          On the company letterhead when there is one: the letterhead behind
+          every page, the report inside its margins. */}
       {mounted && createPortal(
         <div data-shift-print-root>
-          {head(true)}
-          <div style={{ padding: "4px 0" }}>
-            {sections.map((s, i) => (
-              <section key={s.id} style={{ marginTop: 8 }}>
-                <div className="sec-head"><SectionHead n={i + 1} s={s} print /></div>
-                <div style={{ marginTop: 3 }}>{s.body(true)}</div>
-              </section>
-            ))}
-            <Footnote meeting={meeting} ctx={ctx} asOf={asOf} now={now} projectName={projectName} />
-          </div>
+          {lh && lhLayers && (
+            <>
+              <style>{`@media print{${letterheadPrintCss(lh, "[data-shift-print-root]")}}`}</style>
+              {/* Built from the checked letterhead: text escaped, pictures only pictures. */}
+              {lhLayers.every && <div className="lh-layer" dangerouslySetInnerHTML={{ __html: lhLayers.every }} />}
+              {lhLayers.first && <div className="lh-first" dangerouslySetInnerHTML={{ __html: lhLayers.first }} />}
+            </>
+          )}
+          {(() => {
+            const safetyAt = sections.findIndex((s) => s.id === "safety");
+            const body = (
+              <>
+                {head(true)}
+                <div style={{ padding: "4px 0" }}>
+                  {sections.map((s, i) => (i === safetyAt ? null : (
+                    <section key={s.id} style={{ marginTop: 10 }}>
+                      <div className="sec-head"><SectionHead n={i + 1} s={s} print /></div>
+                      <div style={{ marginTop: 4 }}>{s.body(true)}</div>
+                    </section>
+                  )))}
+                  <Footnote meeting={meeting} ctx={ctx} asOf={asOf} now={now} projectName={projectName} />
+                </div>
+                {safetyAt >= 0 && (
+                  <section style={{ breakBefore: "page" }}>
+                    <div className="sec-head">
+                      <div className="text-[8pt] text-slate-500">{projectName ?? "Schedule"} · shift turnover</div>
+                      <div style={{ marginTop: 2 }}><SectionHead n={safetyAt + 1} s={sections[safetyAt]} print /></div>
+                    </div>
+                    <div style={{ marginTop: 6 }}>{sections[safetyAt].body(true)}</div>
+                  </section>
+                )}
+              </>
+            );
+            return lh ? (
+              <table className="lh-frame">
+                <thead><tr><td /></tr></thead>
+                <tfoot><tr><td /></tr></tfoot>
+                <tbody><tr><td>{body}</td></tr></tbody>
+              </table>
+            ) : body;
+          })()}
         </div>,
         document.body,
       )}
@@ -658,7 +697,7 @@ async function copyText(text: string): Promise<boolean> {
 /** Copy — the update as it will be sent, with a box per section to leave
  *  one out today (remembered for next time), then copy it for an email
  *  (tables and colors kept in Outlook, Gmail…) or as plain text. */
-function CopyUpdate({ doc, meeting }: { doc: () => ExportDoc; meeting: MeetingKind }) {
+function CopyUpdate({ doc, meeting, lh }: { doc: () => ExportDoc; meeting: MeetingKind; lh?: Letterhead | null }) {
   const key = `shiftReport.copyOff.${meeting}`;
   // Sections left out unless ticked (the safety focus): the ones ticked.
   const onKey = `shiftReport.copyOn.${meeting}`;
@@ -696,11 +735,15 @@ function CopyUpdate({ doc, meeting }: { doc: () => ExportDoc; meeting: MeetingKi
   const html = picked ? toEmailHtml(picked) : "";
   const subject = d ? `${d.project} — ${d.kind} — ${d.when.split(" → ").pop()}` : "";
 
-  // Print exactly what goes in the email.
+  // Print what goes in the email — the safety topics on a page of their
+  // own at the end, on the company letterhead when there is one.
   const printIt = () => {
     const w = window.open("", "_blank");
     if (!w) { setDone({ what: "text", ok: false }); return; }
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${subject.replace(/</g, "&lt;")}</title><style>@page{margin:12mm}body{margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}</style></head><body>${html}</body></html>`);
+    const forPrint = picked ? toEmailHtml({ ...picked, sections: [...picked.sections.filter((s) => s.id !== "safety"), ...picked.sections.filter((s) => s.id === "safety")] }) : html;
+    const ownPage = `table[data-sec="safety"]{break-before:page}`;
+    w.document.write(lh ? letterheadDocument(lh, subject, forPrint, ownPage)
+      : `<!doctype html><html><head><meta charset="utf-8"><title>${subject.replace(/</g, "&lt;")}</title><style>@page{margin:12mm}body{margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}${ownPage}</style></head><body>${forPrint}</body></html>`);
     w.document.close();
     w.focus();
     setTimeout(() => w.print(), 300);
@@ -818,7 +861,9 @@ function makeCtx(tz: string, byId: Map<string, Milestone>, progress?: Map<string
         key: parentId ?? `solo:${fallback}`,
         title: parentName ?? "",
         crumbs: crumbs.join(" › "),
-        meta: [Number.isFinite(ps) && Number.isFinite(pf) ? span(ps, pf) : null, info ? `${info.leafDone}/${info.leafTotal} steps · ${info.percent}%${parentId && planOf?.get(parentId) != null ? ` of ${planOf.get(parentId)}% planned` : ""}` : null].filter(Boolean).join(" · "),
+        // Its progress against the plan; its date range only when there's nothing else to say.
+        meta: info ? `${info.leafDone} of ${info.leafTotal} steps · ${info.percent}% done${parentId && planOf?.get(parentId) != null ? `, ${planOf.get(parentId)}% planned` : ""}`
+          : Number.isFinite(ps) && Number.isFinite(pf) ? span(ps, pf) : "",
       };
     },
   };
@@ -846,7 +891,7 @@ function exportRows(rows: TRow[]): ExportStepRow[] {
   return rows.map((r) => ({
     group: r.group.title ? { title: r.group.title, crumbs: r.group.crumbs || undefined, meta: r.group.meta || undefined } : undefined,
     n: r.n?.num, when: r.when, name: r.name,
-    tags: (r.tags ?? []).filter((t): t is TagT => !!t).map((t) => ({ t: t.t, tone: t.tone })),
+    tags: (r.tags ?? []).filter((t): t is TagT => !!t).map((t) => ({ t: t.t, tone: t.tone === "wait" ? "muted" as const : t.tone })),
     who: r.who, wo: r.wo, right: r.right, note: r.note,
   }));
 }
@@ -918,11 +963,16 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     if (r.waitingOn.length === 0) return null;
     const nums = r.waitingOn.map((w) => priorityOf.get(w.id)).filter((n): n is number => n != null);
     return nums.length === r.waitingOn.length
-      ? { t: `after #${nums.join(", #")}`, tone: "amber" }
-      : { t: `waits on ${r.waitingOn[0].name}${r.waitingOn.length > 1 ? ` +${r.waitingOn.length - 1}` : ""}`, tone: "amber" };
+      ? { t: nums.length === 1 ? `starts after #${nums[0]} ${r.waitingOn[0].name}` : `starts after #${nums.join(", #")}`, tone: "wait" }
+      : { t: `waits on ${r.waitingOn[0].name}${r.waitingOn.length > 1 ? ` +${r.waitingOn.length - 1}` : ""}`, tone: "wait" };
   };
-  // Each step's hours ahead / behind ride on its own row (vsPlan).
-  const vsTag = (r: ShiftRow): TagT | null => { const v = vsPlan(report, r, c.hrs); return v.text ? { t: `${v.text} vs plan`, tone: v.tone ?? "muted" } : null; };
+  // Each step's hours ahead / behind, in words: red only past most of a shift.
+  const vsTag = (r: ShiftRow): TagT | null => {
+    const sh = shareOf(report, r.leaf.id);
+    if (!sh) return null;
+    const h = c.hrs(Math.round(sh.hours * 10) / 10);
+    return sh.side === "ahead" ? { t: `${h} ahead of plan`, tone: "emerald" } : { t: `${h} behind plan`, tone: sh.hours >= SEVERE_BEHIND_H ? "rose" : "amber" };
+  };
   // ── Done: finished, and moved forward but on no list below.
   const doneIds = new Set(plan.done.map((r) => r.leaf.id ?? r.leaf.name));
   // One row per task: its steps done or moved this shift, in one cell.
@@ -959,12 +1009,14 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         right: standing(r, kind),
         // The step's comment shows once: with its credit under Done, if it moved.
         note: [kind === "try" && d?.note ? `“${d.note}”` : null, creditedIds.has(r.leaf.id) ? null : comment(r)].filter(Boolean).join(" ") || undefined,
-        extraTags: [
-          x.detail ? { t: x.detail, tone: x.tone ?? "muted" } : null,
-          vsTag(r),
-          kind === "next" || pulled ? waitTag(r) : null,
-          scope ? { t: `${scope}'s scope — coordinate`, tone: "amber" } : null,
-        ],
+        extraTags: (() => {
+          const vs = vsTag(r);
+          // "Behind plan" says nothing the hours behind don't; late work is
+          // amber (the hours say how bad) — red is for blocked.
+          const detail = x.detail && !(vs && /^behind plan/.test(x.detail))
+            ? { t: x.detail, tone: (x.tone === "rose" && kind !== "held" ? "amber" : x.tone ?? "muted") as TagTone } : null;
+          return [vs, detail, kind === "next" || pulled ? waitTag(r) : null, scope ? { t: `${scope}'s scope — coordinate`, tone: "amber" as const } : null];
+        })(),
       }),
       // The meeting's call on it (never printed): could the next crew try
       // it? One small button on the line; once marked, its crew and note.
@@ -985,6 +1037,8 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   const hazardJobs: HazardJobInput[] = hazardJobsOf(planList, next, (r) => (r.carryOver ? `due ${c.DTs(r.dueAt)}` : rowTime(r, next)),
     (id) => noteLine(o.noteOf?.(id), shift.start, c.D));
   const capa = capacityOf(ho?.pullSet ?? null, tryList, shiftHrs);
+  // The five-second read of the list.
+  const watch = watchLines(planList, report, { hrs: c.hrs }, (id) => (id ? priorityOf.get(id) : undefined));
   const addButton = ho?.openPicker ? (
     <button type="button" onClick={ho.openPicker}
       className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-indigo-400 dark:border-indigo-700 px-3 py-1.5 text-[12px] font-bold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 print:hidden">
@@ -1033,12 +1087,10 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         overall.planBasis === "baseline" ? `vs baseline${overall.baselineSetAt ? ` of ${c.D(Date.parse(overall.baselineSetAt))}` : ""}` : "vs live dates (no baseline)",
         overall.unscheduled > 0 ? `${overall.unscheduled} step${overall.unscheduled === 1 ? "" : "s"} without dates not counted` : null].filter(Boolean).join(" · "),
       flag: overall.standing === "behind" ? "rose" : null,
-      body: () => (
-        <div className="space-y-2">
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 keep">
-            {standStats.map((x) => <Stat key={x.label} label={x.label} value={x.value} tone={x.tone} />)}
-          </div>
-        </div>
+      body: (print) => (
+        <StandTiles print={print} actual={overall.actualPct} planned={overall.plannedPct} standing={overall.standing}
+          gap={{ label: standStats[2].label, value: standStats[2].value }} done={overall.stepsDone} total={overall.stepsTotal}
+          pastDue={pastDueAll} pastDueLabel={standStats[4].label} />
       ),
       data: () => [
         { k: "stats", items: standStats },
@@ -1051,13 +1103,13 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 keep">
           {crewCols.map((col) => (
             <div key={col.title} className="rounded-md border border-[var(--color-border)] px-3 py-2">
-              <div className="text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">{col.title}</div>
+              <div className="text-[12px] font-semibold text-slate-600 dark:text-slate-300 mb-1">{col.title}</div>
               {col.rows.length === 0 ? <div className="text-[12px] italic text-[var(--color-text-muted)]">No work planned</div> : (
                 <ul className="space-y-0.5">
                   {col.rows.map((x) => (
-                    <li key={x.crew} className="flex items-baseline justify-between gap-3 text-[12.5px]">
+                    <li key={x.crew} className="flex items-baseline justify-between gap-3 text-[13px]">
                       <span className="min-w-0"><b className="text-[var(--color-text)] break-words">{x.crew}</b>{x.note && <span className="block text-[11px] text-[var(--color-text-muted)] break-words">{x.note}</span>}</span>
-                      <span className="shrink-0 font-mono text-[11px] text-[var(--color-text-muted)]">{x.text}</span>
+                      <span className="shrink-0 font-mono text-[12px] text-[var(--color-text-muted)]">{x.text}</span>
                     </li>
                   ))}
                 </ul>
@@ -1126,8 +1178,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
               <b>Night crews aren&apos;t set</b> — this list follows the schedule file&apos;s hours, which can hand day work to nights. Set them once in <b>Schedule setup → Night crews</b>.
             </div>
           )}
+          <WatchBox lines={watch} label={`Watch ${next.kind === "night" ? "tonight" : "today"}`} print={print} />
           {planList.length + tryList.length === 0 ? <Empty>Nothing is scheduled for the next shift.</Empty> : (
-            <StepTable print={print} box whenHead="When" rightHead="Done · goal" rows={nextRows(print, true)} />
+            <StepTable print={print} box whenHead="When" rightHead="Done → goal" rows={nextRows(print, true)} />
           )}
           {tryLine && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{tryLine}</div>}
           {goals.pulledHeld.length > 0 && (
@@ -1358,11 +1411,11 @@ function closeSection(title: string, signers: string[], sub = "Notes, actions an
     body: (print) => (
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 keep">
         <div className="rounded-md border border-[var(--color-border)] px-2.5 py-1.5">
-          <div className="text-[9px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Notes & actions</div>
+          <div className="text-[12px] font-semibold text-slate-600 dark:text-slate-300">Notes &amp; actions</div>
           {Array.from({ length: print ? 4 : 3 }).map((_, i) => <div key={i} className="h-5 border-b border-dotted border-[var(--color-border-strong)]" />)}
         </div>
         <div className="rounded-md border border-[var(--color-border)] px-2.5 py-1.5 space-y-2">
-          <div className="text-[9px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Sign-off</div>
+          <div className="text-[12px] font-semibold text-slate-600 dark:text-slate-300">Sign-off</div>
           {signers.map((who) => (
             <div key={who} className="flex items-end gap-2 text-[11px] text-[var(--color-text-muted)]">
               <span className="w-40 shrink-0">{who}</span>
@@ -1388,9 +1441,9 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
   const standing = overall.standing;
   const pill = meeting === "kickoff" ? null
     : meeting === "closeout"
-      ? { label: closeout.done >= closeout.steps ? "COMPLETE" : `${closeout.steps - closeout.done} OPEN`, cls: closeout.done >= closeout.steps ? "emerald" : "amber", Icon: CheckCircle2 }
-      : standing === "ahead" ? { label: "AHEAD", cls: "emerald", Icon: TrendingUp }
-        : standing === "behind" ? { label: "BEHIND", cls: "rose", Icon: TrendingDown } : { label: "ON TRACK", cls: "slate", Icon: Minus };
+      ? { label: closeout.done >= closeout.steps ? "Complete" : `${closeout.steps - closeout.done} open`, cls: closeout.done >= closeout.steps ? "emerald" : "amber", Icon: CheckCircle2 }
+      : standing === "ahead" ? { label: "Ahead", cls: "emerald", Icon: TrendingUp }
+        : standing === "behind" ? { label: "Behind", cls: "rose", Icon: TrendingDown } : { label: "On track", cls: "slate", Icon: Minus };
   const pillCls = !pill ? "" : print
     ? `border-2 ${pill.cls === "emerald" ? "border-emerald-700 text-emerald-800" : pill.cls === "rose" ? "border-rose-700 text-rose-800" : pill.cls === "amber" ? "border-amber-700 text-amber-800" : "border-slate-700 text-slate-800"}`
     : pill.cls === "emerald" ? "bg-emerald-600 text-white" : pill.cls === "rose" ? "bg-rose-600 text-white" : pill.cls === "amber" ? "bg-amber-500 text-white" : "bg-slate-700 text-white";
@@ -1405,8 +1458,8 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
       <div className="flex items-center gap-3 flex-wrap">
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2 flex-wrap">
-            <span className={`text-[10px] font-black uppercase tracking-[0.18em] ${print ? "text-slate-500" : "text-slate-400"}`}>{title}</span>
-            <h2 className={`${print ? "text-[13pt]" : "text-[17px]"} font-black leading-tight truncate`}>{projectName ?? "Schedule"}</h2>
+            <span className={`text-[11px] font-semibold ${print ? "text-slate-500" : "text-slate-400"}`}>{title}</span>
+            <h2 className={`${print ? "text-[14pt]" : "text-[18px]"} font-bold tracking-tight leading-tight truncate`}>{projectName ?? "Schedule"}</h2>
           </div>
           <div className={`text-[11px] ${print ? "text-slate-700" : "text-slate-300"}`}>
             {when} · as of {c.T(meeting === "turnover" ? asOf : now)} {tzAbbrev(c.tz, now)}
@@ -1417,8 +1470,8 @@ function Masthead({ meeting, report, kickoff, closeout, ctx: c, asOf, now, rehea
         </div>
         {pill && (
           <div className={`rounded-lg px-2.5 py-1 text-right shrink-0 ${pillCls}`}>
-            <div className="inline-flex items-center gap-1 text-[13px] font-black leading-none"><pill.Icon className="w-3.5 h-3.5" /> {pill.label}</div>
-            {meeting === "turnover" && <div className="text-[10px] font-bold opacity-90">{overall.actualPct}% vs {overall.plannedPct}% plan</div>}
+            <div className="inline-flex items-center gap-1 text-[13px] font-bold leading-none"><pill.Icon className="w-3.5 h-3.5" /> {pill.label}</div>
+            {meeting === "turnover" && <div className="text-[10.5px] font-medium opacity-90">{overall.actualPct}% done vs {overall.plannedPct}% planned</div>}
           </div>
         )}
       </div>
@@ -1431,7 +1484,7 @@ function Footnote({ meeting, ctx: c, asOf, now, projectName }: { meeting: Meetin
     <footer className="pt-2 mt-2 border-t border-[var(--color-border)] text-[9.5px] text-[var(--color-text-faint)] flex justify-between gap-3 flex-wrap">
       <span>
         {meeting === "turnover" ? `Plan % = work the schedule expected done by ${c.DT(asOf)}, hour-weighted; actual % = progress entered. Gap = the difference in planned work-hours. ` : ""}
-        Critical = on the chain that drives the finish date. Hours are planned work-hours.
+        Critical = on the chain that drives the finish date. Hours are planned work-hours. Behind {SEVERE_BEHIND_H} h or more shows red; less, amber.
       </span>
       <span className="shrink-0">Printed {c.DT(now)}{projectName ? ` · ${projectName}` : ""}</span>
     </footer>
@@ -1441,26 +1494,84 @@ function Footnote({ meeting, ctx: c, asOf, now, projectName }: { meeting: Meetin
 // ─── Building blocks ─────────────────────────────────────────────────
 
 function SectionHead({ n, s, collapsed, big, print }: { n: number; s: Sec; collapsed?: boolean; big?: boolean; print?: boolean }) {
-  const ring = s.flag === "rose" ? "bg-rose-600" : s.flag === "amber" ? "bg-amber-500" : "bg-slate-900";
   return (
-    <div className={`flex items-center gap-2 ${print ? "pb-0.5 border-b border-slate-900" : "pb-1 border-b-2 border-slate-900 dark:border-slate-500"}`}>
-      <span className={`${big ? "w-7 h-7 text-[13px]" : "w-5 h-5 text-[10.5px]"} rounded-full ${ring} text-white font-black flex items-center justify-center shrink-0`}>{n}</span>
-      <span className={`${big ? "text-[18px]" : print ? "text-[10.5pt]" : "text-[13.5px]"} font-black uppercase tracking-wide`}>{s.title}</span>
-      {s.sub && <span className={`min-w-0 truncate print:whitespace-normal print:overflow-visible ${big ? "text-[12px]" : "text-[11px]"} text-[var(--color-text-muted)]`}>— {s.sub}</span>}
-      {!print && !big && <ChevronDown className={`ml-auto w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${collapsed ? "-rotate-90" : ""}`} />}
+    <div className={`flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 ${print ? "pb-[2px] border-b-[1.5px] border-slate-900" : "pb-1.5 border-b-2 border-slate-900 dark:border-slate-500"}`}>
+      <span className={`${big ? "w-7 h-7 text-[13px]" : print ? "w-4 h-4 text-[7.5pt]" : "w-5 h-5 text-[11px]"} self-center rounded-full bg-slate-900 text-white dark:bg-slate-200 dark:text-slate-900 font-bold flex items-center justify-center shrink-0`}>{n}</span>
+      <span className={`${big ? "text-[20px]" : print ? "text-[11pt]" : "text-[16px]"} min-w-0 font-bold tracking-tight`}>{s.title}</span>
+      {s.sub && <span className={`min-w-0 ${big ? "text-[13px]" : print ? "text-[8pt]" : "text-[12px]"} text-[var(--color-text-muted)]`}>{s.sub}</span>}
+      {!print && !big && <ChevronDown className={`ml-auto self-center w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${collapsed ? "-rotate-90" : ""}`} />}
     </div>
   );
 }
 
-function Stat({ label, value, tone }: { label: string; value: string; tone: "emerald" | "rose" | "amber" | "slate" }) {
-  const t = tone === "emerald" ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200 dark:border-emerald-900"
-    : tone === "rose" ? "border-rose-300 bg-rose-50 text-rose-900 dark:bg-rose-950/30 dark:text-rose-200 dark:border-rose-900"
-      : tone === "amber" ? "border-amber-300 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200 dark:border-amber-900"
-        : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]";
+/** Where the job stands, four tiles: progress against the plan (with the
+ *  plan marked), work behind or ahead, steps done, past due. Colour only
+ *  on a number that's off. */
+function StandTiles({ actual, planned, standing, gap, done, total, pastDue, pastDueLabel, print }: {
+  actual: number; planned: number; standing: "ahead" | "behind" | "on track"; gap: { label: string; value: string };
+  done: number; total: number; pastDue: number; pastDueLabel: string; print: boolean;
+}) {
+  const tile = `rounded-lg border border-slate-200 dark:border-slate-700 ${print ? "px-2 py-1" : "px-3 py-2"}`;
+  const label = `font-medium text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-[11px]"}`;
+  const value = `font-bold tracking-tight tabular-nums leading-tight ${print ? "text-[14pt]" : "text-[22px]"}`;
+  const small = `font-medium text-slate-600 dark:text-slate-300 ${print ? "text-[8pt]" : "text-[13px]"}`;
+  const sub = `text-slate-500 dark:text-slate-400 ${print ? "text-[7pt]" : "text-[11px]"}`;
+  const gapTone = standing === "behind" ? "text-rose-700 dark:text-rose-400" : standing === "ahead" ? "text-emerald-700 dark:text-emerald-400" : "";
   return (
-    <div className={`rounded-md border px-2.5 py-1 ${t}`}>
-      <div className="text-[8.5px] font-black uppercase tracking-widest opacity-70">{label}</div>
-      <div className="text-[17px] font-black leading-tight tabular-nums">{value}</div>
+    <div className={`grid grid-cols-2 sm:grid-cols-4 ${print ? "gap-1.5" : "gap-2"} keep`}>
+      <div className={tile}>
+        <div className={label}>Progress</div>
+        <div className={value}>{actual}% <span className={small}>of {planned}% planned</span></div>
+        <div className="relative mt-1.5 h-1.5 rounded-full bg-slate-200 dark:bg-slate-700" aria-hidden>
+          <div className="absolute inset-y-0 left-0 rounded-full bg-slate-900 dark:bg-slate-200" style={{ width: `${Math.min(100, actual)}%` }} />
+          <div className={`absolute -top-[3px] w-0.5 h-3 ${standing === "behind" ? "bg-rose-700" : "bg-slate-500"}`} style={{ left: `calc(${Math.min(100, planned)}% - 1px)` }} />
+        </div>
+      </div>
+      <div className={tile}>
+        <div className={label}>{gap.label}</div>
+        <div className={`${value} ${gapTone}`}>{gap.value}</div>
+        <div className={sub}>{standing === "behind" ? "planned work-hours not done" : standing === "ahead" ? "work-hours done early" : "planned work-hours, either way"}</div>
+      </div>
+      <div className={tile}>
+        <div className={label}>Steps done</div>
+        <div className={value}>{done} <span className={small}>of {total}</span></div>
+        <div className={sub}>all crews, whole job</div>
+      </div>
+      <div className={tile}>
+        <div className={label}>{pastDueLabel}</div>
+        <div className={`${value} ${pastDue ? "text-amber-700 dark:text-amber-400" : ""}`}>{pastDue}</div>
+        <div className={sub}>steps past their finish</div>
+      </div>
+    </div>
+  );
+}
+
+/** The next shift's list in a few lines — what to watch. */
+function WatchBox({ lines, label, print }: { lines: ReturnType<typeof watchLines>; label: string; print: boolean }) {
+  if (!lines.length) return null;
+  const dot = { rose: "bg-rose-700", amber: "bg-amber-600", slate: "bg-slate-500" };
+  return (
+    <div className={`keep rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 ${print ? "px-2 py-1" : "px-3.5 py-2.5"}`}>
+      <div className={`font-semibold text-slate-900 dark:text-slate-100 ${print ? "text-[8.5pt]" : "text-[12.5px]"}`}>{label}</div>
+      <ul className={`mt-0.5 space-y-0.5 text-slate-800 dark:text-slate-200 ${print ? "text-[8pt]" : "text-[12.5px]"}`}>
+        {lines.map((l) => (
+          <li key={l.strong} className="flex items-baseline gap-2 leading-snug">
+            <span className={`shrink-0 w-[7px] h-[7px] rounded-full -translate-y-px ${dot[l.tone]}`} aria-hidden />
+            <span><b className="font-semibold">{l.strong}</b>{l.rest}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** A number in a plain tile — coloured only when it's off. */
+function Stat({ label, value, tone }: { label: string; value: string; tone: "emerald" | "rose" | "amber" | "slate" }) {
+  const t = tone === "emerald" ? "text-emerald-700 dark:text-emerald-400" : tone === "rose" ? "text-rose-700 dark:text-rose-400" : tone === "amber" ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text)]";
+  return (
+    <div className="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-1.5">
+      <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400">{label}</div>
+      <div className={`text-[20px] font-bold leading-tight tabular-nums ${t}`}>{value}</div>
     </div>
   );
 }
@@ -1491,20 +1602,49 @@ function Prompts({ items, print, lines = 0, cols = 2 }: { items: string[]; print
 }
 
 
-type TagTone = "rose" | "amber" | "emerald" | "muted";
+type TagTone = "rose" | "amber" | "emerald" | "muted" | "wait";
 interface TagT { t: string; tone: TagTone }
 function TagChip({ t, tone }: TagT) {
   const cls = tone === "rose" ? "bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/40 dark:text-rose-200 dark:border-rose-900"
     : tone === "amber" ? "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900"
       : tone === "emerald" ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-900"
         : "bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
-  return <span className={`inline-block max-w-full whitespace-nowrap px-1 py-px rounded border text-[8.5px] font-black uppercase tracking-wider align-middle ${cls}`}>{t}</span>;
+  return <span className={`inline-block max-w-full whitespace-nowrap px-1 py-px rounded border text-[10px] font-bold align-middle ${cls}`}>{t}</span>;
+}
+
+/** The one filled colour on the page: work on the chain that drives the finish. */
+function CriticalTag({ print }: { print?: boolean }) {
+  return <span className={`ml-2 inline-block rounded px-1.5 py-px font-bold leading-snug bg-rose-700 text-white align-[1px] ${print ? "text-[7pt]" : "text-[10.5px]"}`}>Critical</span>;
+}
+
+/** What's going on with a step, as one quiet line: how far behind (red only
+ *  past most of a shift), late, what it waits on — the first word capitalised. */
+const TONE_TEXT: Record<TagTone, string> = {
+  rose: "text-rose-700 dark:text-rose-400 font-semibold",
+  amber: "text-amber-700 dark:text-amber-400 font-medium",
+  emerald: "text-emerald-700 dark:text-emerald-400 font-medium",
+  muted: "text-slate-600 dark:text-slate-300",
+  wait: "text-slate-600 dark:text-slate-300",
+};
+function StatusLine({ tags, print }: { tags: TagT[]; print?: boolean }) {
+  if (!tags.length) return null;
+  return (
+    <div className={`mt-0.5 leading-snug ${print ? "text-[7.5pt]" : "text-[12px]"}`}>
+      {tags.map((t, i) => (
+        <span key={`${t.t}${i}`} className={TONE_TEXT[t.tone]}>
+          {i > 0 && <span className="mx-1.5 font-normal text-slate-400" aria-hidden>·</span>}
+          {t.tone === "wait" && <Hourglass className="inline w-3 h-3 -mt-0.5 mr-0.5" aria-hidden />}
+          {i === 0 ? t.t.charAt(0).toUpperCase() + t.t.slice(1) : t.t}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 type NumTone = "rose" | "amber" | "slate";
-function Num({ n, tone }: { n: number; tone: NumTone }) {
-  const cls = tone === "rose" ? "bg-rose-600 text-white" : tone === "amber" ? "bg-amber-500 text-white" : "bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-100";
-  return <span className={`inline-flex w-[18px] h-[18px] rounded-full text-[9.5px] font-black items-center justify-center ${cls}`}>{n}</span>;
+/** The order on the list: a plain number — colour is for problems. */
+function Num({ n }: { n: number; tone?: NumTone }) {
+  return <span className="inline-block min-w-[14px] text-right font-mono text-[12px] text-slate-500 dark:text-slate-400 tabular-nums">{n}</span>;
 }
 
 function Box() {
@@ -1532,8 +1672,35 @@ interface TRow {
   inline?: React.ReactNode;
 }
 
-/** One line per step, grouped under its equipment with the equipment's
- *  window and progress on a thin header row. */
+/** "E-17 - Transmix Feed…" → the tag in bold, then the name. */
+function GroupTitle({ title }: { title: string }) {
+  const m = /^([A-Z0-9][A-Z0-9./-]{0,14})\s+[-–—]\s+(.+)$/i.exec(title.trim());
+  return m && /\d/.test(m[1])
+    ? <><b className="font-bold text-slate-900 dark:text-slate-100">{m[1]}</b> · {m[2]}</>
+    : <b className="font-bold text-slate-900 dark:text-slate-100">{title}</b>;
+}
+
+/** "25% · goal 100%": where it is, a thin bar, and the shift's goal marked. */
+function Progress({ right, print }: { right: string; print?: boolean }) {
+  const m = /^(\d+)%(?: · goal (\d+)%)?$/.exec(right.trim());
+  if (!m) return <span className={`font-mono font-semibold text-slate-700 dark:text-slate-200 ${print ? "text-[8pt]" : "text-[12px]"}`}>{right}</span>;
+  const pct = Math.min(100, +m[1]), goal = m[2] != null ? Math.min(100, +m[2]) : null;
+  return (
+    <span className="inline-flex flex-col items-end gap-1">
+      <span className={`font-mono font-semibold text-slate-900 dark:text-slate-100 whitespace-nowrap ${print ? "text-[8pt]" : "text-[12px]"}`}>
+        {pct}%{goal != null && <span className="font-normal text-slate-500 dark:text-slate-400"> → {goal}%</span>}
+      </span>
+      <span className={`relative block h-1 rounded-full bg-slate-200 dark:bg-slate-700 ${print ? "w-16" : "w-20"}`} aria-hidden>
+        <span className="absolute inset-y-0 left-0 rounded-full bg-slate-900 dark:bg-slate-200" style={{ width: `${pct}%` }} />
+        {goal != null && <span className="absolute -top-[3px] w-0.5 h-2.5 bg-slate-500" style={{ left: `calc(${goal}% - 1px)` }} />}
+      </span>
+    </span>
+  );
+}
+
+/** One line per step, grouped under its equipment: the task to read first,
+ *  then what's going on with it (quiet unless it matters), when, who, WO,
+ *  how far along. The same reading order in every list. */
 function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerLine, flat }: {
   rows: TRow[]; print: boolean; box?: boolean; rightHead?: string; whenHead?: string;
   /** One list in the given order, the equipment named on each line (a
@@ -1556,50 +1723,49 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
   // Narrowed to one crew, every row's Who is that crew.
   const hasWho = !crew && rows.some((r) => r.who);
   const hasWo = rows.some((r) => r.wo);
-  const cols = (box ? 1 : 0) + (hasN ? 1 : 0) + 3 + (hasWho ? 1 : 0) + (hasWo ? 1 : 0);
-  const one = "whitespace-nowrap overflow-hidden text-ellipsis";
-  const cell = print ? "px-1 py-[1px]" : "px-1.5 py-[3px]";
-  const nameOf = (r: TRow) => open && !print ? (
+  // A When column that says the same thing on every line ("Day crew") says it once, in the heading.
+  const hasWhen = new Set(rows.map((r) => r.when)).size > 1;
+  const cols = (box ? 1 : 0) + (hasN ? 1 : 0) + 2 + (hasWhen ? 1 : 0) + (hasWho ? 1 : 0) + (hasWo ? 1 : 0);
+  const critical = (r: TRow) => (r.tags ?? []).some((t) => t?.t === "critical");
+  const statusOf = (r: TRow) => (r.tags ?? []).filter((t): t is TagT => !!t && t.t !== "critical");
+  const nameOf = (r: TRow, cls: string) => open && !print ? (
     <button type="button" onClick={() => open(r.id)} title="When it's due, the goal for the shift, what comes next"
-      className={`text-left hover:underline decoration-dotted underline-offset-2 ${r.done ? "line-through text-slate-400" : "font-semibold"}`}>{r.name}</button>
-  ) : <span className={r.done ? "line-through text-slate-400" : "font-semibold"}>{r.name}</span>;
+      className={`text-left hover:underline decoration-dotted underline-offset-2 ${r.done ? "line-through text-slate-400" : cls}`}>{r.name}</button>
+  ) : <span className={r.done ? "line-through text-slate-400" : cls}>{r.name}</span>;
+  const cell = print ? "px-1 py-[3px]" : "px-2 py-2";
+  const taskCls = `font-semibold text-slate-900 dark:text-slate-50 ${print ? "text-[9pt]" : "text-[13.5px]"}`;
   return (
     <>
-    {/* On a phone: a full-width line per step — name, tags, when and who,
-        where it stands — instead of a table squeezed into the width. */}
+    {/* On a phone: a full-width line per step — the task, what's going on
+        with it, who · when · WO, and how far along. */}
     {!print && (
-      <div className="sm:hidden rounded-md border border-slate-300 dark:border-slate-700 overflow-hidden">
-        {rightHead && <div className="flex justify-between bg-slate-50 dark:bg-slate-800/60 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400"><span>{whenHead} · step</span><span>{rightHead}</span></div>}
+      <div className="sm:hidden">
         {groups.map(({ g, rows: list }) => (
-          <div key={g.key} className="border-t border-slate-200 dark:border-slate-700/60 first:border-t-0">
+          <div key={g.key} className="mt-3 first:mt-0">
             {g.title && (
-              <div className="bg-slate-100 dark:bg-slate-800 px-2.5 py-1.5">
-                <div className="text-[12.5px] font-bold text-[var(--color-text)] break-words">{g.title}</div>
-                {g.meta && <div className="font-mono text-[10px] text-slate-600 dark:text-slate-300">{g.meta}</div>}
+              <div className="pb-1 border-b border-slate-300 dark:border-slate-600 text-[12px] font-semibold text-slate-700 dark:text-slate-300">
+                <GroupTitle title={g.title} />
+                {g.meta && <div className="text-[11px] font-normal text-slate-500 dark:text-slate-400">{g.meta}</div>}
               </div>
             )}
             {list.map((r) => (
-              <div key={r.id} className="border-t border-slate-200 dark:border-slate-700/60 px-2.5 py-2">
+              <div key={r.id} className="py-2.5 border-b border-slate-100 dark:border-slate-800">
                 <div className="flex items-start gap-2">
-                  {box && <span className="pt-0.5"><Box /></span>}
-                  {r.n && <span className="pt-0.5"><Num n={r.n.num} tone={r.n.tone} /></span>}
-                  <div className="flex-1 min-w-0 text-[13px]">
-                    {flat && r.group.title && <span className="text-slate-500 dark:text-slate-400">{r.group.title} › </span>}
-                    {nameOf(r)}
-                    <div className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">
-                      <span className="font-mono font-bold">{r.when}</span>{!crew && r.who ? <> · {r.who}</> : null}{r.wo ? <> · <span className="font-mono">WO {r.wo}</span></> : null}
+                  {box && <span className="pt-1"><Box /></span>}
+                  {r.n && <span className="pt-0.5"><Num n={r.n.num} /></span>}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[14.5px] leading-snug">
+                      {flat && r.group.title && <span className="text-slate-500 dark:text-slate-400">{r.group.title} › </span>}
+                      {nameOf(r, "font-semibold text-slate-900 dark:text-slate-50")}{critical(r) && <CriticalTag />}
                     </div>
-                    {((r.tags ?? []).some(Boolean) || (!print && r.inline)) && (
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {r.tags!.filter((t): t is TagT => !!t).map((t) => <TagChip key={t.t} t={t.t} tone={t.tone} />)}
-                        {r.inline}
-                      </div>
-                    )}
-                    {r.note && <div className="text-[11px] italic text-slate-600 dark:text-slate-300 mt-0.5">{r.note}</div>}
+                    <StatusLine tags={statusOf(r)} />
+                    <div className="mt-1 text-[12px] text-slate-600 dark:text-slate-300">
+                      {[!crew && r.who ? r.who : null, r.when, r.wo ? `WO ${r.wo}` : null].filter(Boolean).join(" · ")}
+                    </div>
+                    {r.note && <div className="text-[11.5px] italic text-slate-600 dark:text-slate-300 mt-0.5">{r.note}</div>}
+                    {r.inline && <div className="mt-1.5">{r.inline}</div>}
                   </div>
-                  <div className="shrink-0 text-right font-mono font-bold text-[11px] text-slate-700 dark:text-slate-200 leading-tight">
-                    {r.right.split(" · ").map((part, i) => <div key={i}>{part}</div>)}
-                  </div>
+                  <div className="shrink-0 pt-0.5"><Progress right={r.right} /></div>
                 </div>
                 {r.control && <div className="mt-1.5">{r.control}</div>}
               </div>
@@ -1608,60 +1774,49 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
         ))}
       </div>
     )}
-    <div className={`${print ? "" : "hidden sm:block overflow-x-auto"} rounded-md border border-slate-300 dark:border-slate-700`}>
-      <table className={`w-full border-collapse table-fixed ${print ? "text-[8.5pt]" : "text-[12px]"}`}>
+    <div className={print ? "" : "hidden sm:block overflow-x-auto"}>
+      <table className={`w-full border-collapse table-fixed ${print ? "text-[8pt]" : "text-[12px]"}`}>
         <thead>
-          <tr className="bg-slate-50 dark:bg-slate-800/60 text-[9px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 text-left">
-            {box && <th className={`${cell} w-5`} />}
-            {hasN && <th className={`${cell} w-6`}>#</th>}
-            <th className={`${cell} ${print ? "w-[104px]" : "w-[76px] sm:w-[124px]"}`}>{whenHead}</th>
-            <th className={cell}>Step</th>
-            {/* Kept as zero-width columns on a phone (not removed), so the
-                equipment rows' full-width cells don't add phantom columns
-                that squeeze the step's. */}
-            {hasWho && <th className={`${cell} w-0 sm:w-[132px] print:w-[132px] max-sm:p-0 max-sm:text-[0px] overflow-hidden`}>Who</th>}
-            {hasWo && <th className={`${cell} w-0 md:w-[64px] print:w-[64px] max-md:p-0 max-md:text-[0px] overflow-hidden`}>WO</th>}
-            <th className={`${cell} w-[96px] sm:w-[124px] text-right`}>{rightHead}</th>
+          <tr className={`text-left font-medium text-slate-500 dark:text-slate-400 border-b border-slate-300 dark:border-slate-600 ${print ? "text-[7.5pt]" : "text-[11px]"}`}>
+            {box && <th className={`${cell} w-6 font-medium`} />}
+            {hasN && <th className={`${cell} w-7 font-medium text-right`}>#</th>}
+            <th className={`${cell} font-medium`}>Task</th>
+            {hasWhen && <th className={`${cell} font-medium ${print ? "w-[86px]" : "w-[112px]"}`}>{whenHead}</th>}
+            {hasWho && <th className={`${cell} font-medium ${print ? "w-[96px]" : "w-[124px]"}`}>Who</th>}
+            {hasWo && <th className={`${cell} font-medium ${print ? "w-[52px]" : "w-[70px]"}`}>WO</th>}
+            <th className={`${cell} font-medium text-right ${print ? "w-[84px]" : "w-[118px]"}`}>{rightHead}</th>
           </tr>
         </thead>
         <tbody>
           {groups.map(({ g, rows: list }) => (
             <React.Fragment key={g.key}>
               {g.title && (
-                <tr className="bg-slate-100 dark:bg-slate-800 border-t border-slate-300 dark:border-slate-700">
-                  <td colSpan={cols} className={`${cell} text-[11px]`}>
-                    <b>{g.title}</b>
-                    {g.crumbs && <span className="text-slate-500 dark:text-slate-400"> · {g.crumbs}</span>}
-                    {g.meta && <span className="float-right font-mono text-[10px] text-slate-600 dark:text-slate-300">{g.meta}</span>}
+                <tr className="border-b border-slate-300 dark:border-slate-600">
+                  <td colSpan={cols} className={`${print ? "px-1 pt-[7px] pb-[2px] text-[8pt]" : "px-2 pt-3.5 pb-1 text-[12px]"} font-semibold text-slate-700 dark:text-slate-300`}>
+                    <GroupTitle title={g.title} />
+                    {g.meta && <span className={`float-right font-normal text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-[11px]"}`}>{g.meta}</span>}
                   </td>
                 </tr>
               )}
               {list.map((r) => (
                 <React.Fragment key={r.id}>
-                  <tr className="border-t border-slate-200 dark:border-slate-700/60 align-top">
+                  <tr className="border-b border-slate-100 dark:border-slate-800 align-top">
                     {box && <td className={cell}><Box /></td>}
-                    {hasN && <td className={cell}>{r.n ? <Num n={r.n.num} tone={r.n.tone} /> : null}</td>}
-                    <td className={`${cell} font-mono tabular-nums font-bold text-[10.5px] break-words overflow-hidden`}>{r.when}</td>
+                    {hasN && <td className={`${cell} text-right`}>{r.n ? <Num n={r.n.num} /> : null}</td>}
                     <td className={cell}>
-                      {flat && r.group.title && <span className="text-slate-500 dark:text-slate-400">{r.group.title} › </span>}
-                      {open && !print ? (
-                        <button type="button" onClick={() => open(r.id)} title="When it's due, the goal for the shift, what comes next"
-                          className={`text-left hover:underline decoration-dotted underline-offset-2 ${r.done ? "line-through text-slate-400" : "font-semibold"}`}>{r.name}</button>
-                      ) : (
-                        <span className={r.done ? "line-through text-slate-400" : "font-semibold"}>{r.name}</span>
-                      )}
-                      {r.tags?.filter((t): t is TagT => !!t).map((t) => <span key={t.t} className="ml-1"><TagChip t={t.t} tone={t.tone} /></span>)}
-                      {!print && r.inline && <span className="ml-1.5 align-middle">{r.inline}</span>}
-                      {r.note && <div className="text-[10.5px] italic text-slate-600 dark:text-slate-300">{r.note}</div>}
-
+                      <div className="leading-snug">
+                        {flat && r.group.title && <span className="text-slate-500 dark:text-slate-400">{r.group.title} › </span>}
+                        {nameOf(r, taskCls)}{critical(r) && <CriticalTag print={print} />}
+                        {!print && r.inline && <span className="ml-2 align-middle">{r.inline}</span>}
+                      </div>
+                      <StatusLine tags={statusOf(r)} print={print} />
+                      {r.note && <div className={`italic text-slate-600 dark:text-slate-300 mt-0.5 ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>{r.note}</div>}
                       {ownerLine && <div className="text-[10px] text-slate-500 mt-0.5">Owner / decision: <span className="inline-block w-44 border-b border-dotted border-slate-400 align-baseline">&nbsp;</span></div>}
                     </td>
-                    {hasWho && <td className={`${cell} hidden sm:table-cell print:table-cell text-[10.5px] text-slate-600 dark:text-slate-300 max-w-[132px] ${one}`} title={r.who}>{r.who}</td>}
-                    {hasWo && <td className={`${cell} hidden md:table-cell print:table-cell font-mono text-[10px] text-slate-600 dark:text-slate-300 ${one}`}>{r.wo}</td>}
-                    {/* "40% · goal 100%": two short lines on a phone, one line where there's room. */}
-                    <td className={`${cell} text-right font-mono font-bold text-[10.5px] text-slate-700 dark:text-slate-200 whitespace-nowrap`}>
-                      {r.right.split(" · ").map((part, i) => <span key={i} className="block sm:inline">{i > 0 && <span className="hidden sm:inline"> · </span>}{part}</span>)}
-                    </td>
+                    {hasWhen && <td className={`${cell} text-slate-700 dark:text-slate-300 break-words`}>{r.when}</td>}
+                    {hasWho && <td className={`${cell} font-medium text-slate-900 dark:text-slate-100 truncate`} title={r.who}>{r.who}</td>}
+                    {hasWo && <td className={`${cell} font-mono text-slate-500 dark:text-slate-400 truncate ${print ? "text-[7.5pt]" : "text-[11.5px]"}`}>{r.wo}</td>}
+                    <td className={`${cell} text-right`}><Progress right={r.right} print={print} /></td>
                   </tr>
                   {/* The meeting's decision on this step — its own full-width line. */}
                   {!print && r.control && (
@@ -1702,19 +1857,19 @@ function DoneTasks({ rows, print }: { rows: Array<{ task: string; wo: string; st
           ))}
         </div>
       )}
-      <div className={`${print ? "" : "hidden sm:block"} rounded-md border border-slate-300 dark:border-slate-700`}>
-        <table className={`w-full border-collapse ${print ? "text-[8.5pt]" : "text-[12px]"}`}>
+      <div className={print ? "" : "hidden sm:block"}>
+        <table className={`w-full border-collapse ${print ? "text-[8pt]" : "text-[12.5px]"}`}>
           <thead>
-            <tr className="bg-slate-50 dark:bg-slate-800/60 text-[9px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 text-left">
-              <th className={`${cell} w-[20%]`}>Task</th>{hasWo && <th className={`${cell} w-[70px]`}>WO</th>}<th className={cell}>Done this shift</th><th className={`${cell} w-[16%]`}>Who</th>
-              <th className={`${cell} w-[24%]`}>What it means</th><th className={`${cell} w-[64px] text-right`}>vs plan</th>
+            <tr className="border-b border-slate-300 dark:border-slate-600 text-[11px] font-medium text-slate-500 dark:text-slate-400 text-left">
+              <th className={`${cell} w-[18%]`}>Task</th>{hasWo && <th className={`${cell} w-[62px]`}>WO</th>}<th className={cell}>Done this shift</th><th className={`${cell} w-[13%]`}>Who</th>
+              <th className={`${cell} w-[20%]`}>What it means</th><th className={`${cell} w-[64px] text-right`}>vs plan</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((x) => (
-              <tr key={x.ids.join(",")} className="border-t border-slate-200 dark:border-slate-700/60 align-top">
-                <td className={`${cell} font-bold break-words`}>{x.task}</td>
-                {hasWo && <td className={`${cell} font-mono text-[11px] whitespace-nowrap`}>{x.wo}</td>}
+              <tr key={x.ids.join(",")} className="border-b border-slate-100 dark:border-slate-800 align-top">
+                <td className={`${cell} font-semibold break-words`}>{x.task}</td>
+                {hasWo && <td className={`${cell} font-mono text-[11px] break-words`}>{x.wo.split(/,\s*/).map((w, i) => <span key={i} className="block">{w}</span>)}</td>}
                 <td className={`${cell} break-words`}>{x.steps}</td>
                 <td className={`${cell} text-[11.5px] text-[var(--color-text-muted)] break-words`}>{x.who}</td>
                 <td className={`${cell} font-bold break-words ${resultCls(x.result.tone)}`}>{x.result.text}</td>
@@ -1735,7 +1890,7 @@ function SimpleTable({ head, rows, print }: { head: string[]; rows: Array<{ id: 
     <div className={`rounded-md border border-slate-300 dark:border-slate-700 ${print ? "" : "overflow-x-auto"}`}>
       <table className={`w-full border-collapse ${print ? "text-[8.5pt]" : "text-[12px]"}`}>
         <thead>
-          <tr className="bg-slate-50 dark:bg-slate-800/60 text-[9px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 text-left">
+          <tr className="border-b border-slate-300 dark:border-slate-600 text-[11px] font-medium text-slate-500 dark:text-slate-400 text-left">
             {head.map((h) => <th key={h} className={cell}>{h}</th>)}
           </tr>
         </thead>

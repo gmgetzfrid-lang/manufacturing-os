@@ -7,8 +7,10 @@
 //   Night crews   which jobs have hands on nights (the rest is day work)
 //   Critical path where it comes from (the file can mark everything)
 //   Baseline      the plan progress is measured against
+//   Printed reports  the company letterhead reports print on (optional —
+//                 never counted as something to do)
 
-export type SetupItemId = "timezone" | "shifts" | "night" | "critical" | "baseline";
+export type SetupItemId = "timezone" | "shifts" | "night" | "critical" | "baseline" | "print";
 
 export interface SetupItem {
   id: SetupItemId;
@@ -19,6 +21,8 @@ export interface SetupItem {
   why: string;
   /** Still being read — neither shouted about nor shown as set. */
   checking?: boolean;
+  /** Nice to have: never counted as "to do". */
+  extra?: boolean;
 }
 
 export function setupChecklist(s: {
@@ -29,6 +33,8 @@ export function setupChecklist(s: {
   hasBaseline: boolean;
   /** Night crews decided: named jobs, or "follow the file". null = still loading. */
   nightDecided?: boolean | null;
+  /** A letterhead saved for printed reports. */
+  letterheadSet?: boolean;
 }): SetupItem[] {
   return [
     { id: "timezone", label: "Plant time zone", required: true, done: s.timezoneSet,
@@ -44,11 +50,16 @@ export function setupChecklist(s: {
       why: "Schedule files often mark nearly everything critical — choose where it comes from." },
     { id: "baseline", label: "Baseline", required: false, done: s.hasBaseline,
       why: "Without one, moving work later quietly erases the slip — progress is measured against today's plan." },
+    { id: "print", label: "Printed reports", required: false, extra: true, done: !!s.letterheadSet,
+      why: "Optional — upload your company letterhead (Word or PDF) and printed reports come out on it." },
   ];
 }
 
 /** Required items still open — the banner names them. */
 export const missingRequired = (items: SetupItem[]) => items.filter((i) => i.required && !i.done && !i.checking);
+
+/** Items still to do — the Setup button's count (optional extras aside). */
+export const toDo = (items: SetupItem[]) => items.filter((i) => !i.done && !i.checking && !i.extra);
 
 /** Opens Schedule setup at a step from anywhere on the page (the calendar's
  *  "Night crews"): window.dispatchEvent(new CustomEvent(OPEN_SETUP_EVENT, { detail: "night" })). */
