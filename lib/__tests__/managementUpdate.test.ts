@@ -45,7 +45,7 @@ describe("the update says what happened, in as few words as it takes", () => {
   it("leaves out what's empty: nothing unfinished, nothing blocked, nothing next", () => {
     // Everything planned today got done; Retube starts tomorrow — nothing
     // to hand over but what got done.
-    expect(sections.map((s) => s.id)).toEqual(["who", "stand", "done"]); // crews first, under the header
+    expect(sections.map((s) => s.id)).toEqual(["stand", "who", "done"]); // header, progress, crews, done
   });
 
   it("what got done: each step once, by its task, with no finish time claimed", () => {
@@ -103,7 +103,8 @@ describe("unfinished work: behind, or carrying over as planned", () => {
     const lists = text.slice(text.search(/^(DONE|NEXT) — /m));
     for (const name of ["Hydroblast", "Retube \\(2 days\\)", "Blast tower \\(2 days\\)"]) expect(lists.match(new RegExp(`${name} ·`, "g"))?.length).toBe(1);
     expect(text).not.toMatch(/PROBLEMS|ON PLAN —/);
-    expect(text.indexOf("CREWS")).toBeLessThan(text.indexOf("WHERE WE STAND")); // who was here, at the top
+    expect(text.indexOf("WHERE WE STAND")).toBeLessThan(text.indexOf("CREWS")); // progress, then crews
+    expect(text.indexOf("CREWS")).toBeLessThan(text.indexOf("CARRIES TO THE DAY SHIFT"));
     // Why it's behind: each step's hours on its own row — no separate table.
     expect(text).toMatch(/Retube \(2 days\) · .*behind plan .* · done 10% · −[\d.]+ h/);
     expect(text).toMatch(/Hydroblast · .*was due .* · done 60% · −[\d.]+ h/);

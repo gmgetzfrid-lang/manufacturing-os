@@ -367,6 +367,10 @@ export function expectedByParent(milestones: Milestone[], now: number, tz: strin
 /** The shift to open on: the one ending now while the job is running;
  *  before the job starts, the first shift with scheduled work; after it
  *  ends, the last one. Never an empty page by default. */
+/** How long after shift change the report still opens on the shift that
+ *  just ended. */
+export const REPORT_GRACE_MS = 4 * 3600_000;
+
 export function defaultReviewShift(milestones: Milestone[], now: number, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): ShiftWindow {
   let first = Infinity, last = -Infinity;
   // Steps only — a parent keeps its stored dates after its last steps move
@@ -379,7 +383,10 @@ export function defaultReviewShift(milestones: Milestone[], now: number, tz: str
     if (Number.isFinite(s)) first = Math.min(first, s);
     if (Number.isFinite(f)) last = Math.max(last, f);
   }
-  const current = shiftAt(now - 3600_000, tz, times);
+  // The turnover is written for the shift that just ended: for the first
+  // hours of a shift (the meeting, the email after it), that's still the
+  // one before. Opened at 20:09, a 06:00–18:00 day shift is the report.
+  const current = shiftAt(now - REPORT_GRACE_MS, tz, times);
   if (!Number.isFinite(first)) return current;
   if (now < first) return shiftAt(first, tz, times);
   if (now > last) return shiftAt(last - 1, tz, times);

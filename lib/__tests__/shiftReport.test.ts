@@ -112,6 +112,10 @@ describe("opening shift", () => {
   it("while running, opens on the shift ending now", () => {
     expect(defaultReviewShift([a, b], at("2026-10-26", "17:45"), CHI)).toMatchObject({ kind: "day", dayKey: "2026-10-26" });
     expect(defaultReviewShift([a, b], at("2026-10-27", "05:45"), CHI)).toMatchObject({ kind: "night", dayKey: "2026-10-26" });
+    // Hours into the next shift — writing the email after the meeting —
+    // it's still the shift that just ended.
+    expect(defaultReviewShift([a, b], at("2026-10-26", "20:09"), CHI)).toMatchObject({ kind: "day", dayKey: "2026-10-26" });
+    expect(defaultReviewShift([a, b], at("2026-10-26", "21:31"), CHI)).toMatchObject({ kind: "night", dayKey: "2026-10-26" });
   });
   it("after the job ends, opens on the last shift with work", () => {
     expect(defaultReviewShift([a, b], at("2026-11-20", "12:00"), CHI)).toMatchObject({ kind: "night", dayKey: "2026-10-28" });

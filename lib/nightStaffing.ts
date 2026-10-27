@@ -13,9 +13,11 @@
 //     "crew:*:<crew>"        that crew, on all its work
 //     "crew:<jobId>:<crew>"  that crew, only under that job
 //     "<jobId>"              that job, any crew (older setting; still honored)
-//   A crew is the step's responsible party; "" = steps with none named.
+//   A crew is the step's responsible party — or, left blank, its work
+//   order's (lib/workOrderCrew); "" = steps with none to be found.
 
 import type { Milestone } from "@/types/schema";
+import { inheritedCrews } from "@/lib/workOrderCrew";
 
 export type NightJobs = "file" | string[];
 
@@ -43,6 +45,8 @@ export function applyNightStaffing(milestones: Milestone[], night: NightJobs | u
   for (const e of night) { const x = parseEntry(e); if ("crew" in x) crews.push(x); else jobs.add(x.job); }
   const byId = new Map<string, Milestone>();
   for (const m of milestones) if (m.id) byId.set(m.id, m);
+  // A step with no crew named works with its work order's crew.
+  const woCrew = inheritedCrews(milestones);
   // The step and everything above it.
   const lineOf = (m: Milestone): Set<string> => {
     const out = new Set<string>();
@@ -54,7 +58,7 @@ export function applyNightStaffing(milestones: Milestone[], night: NightJobs | u
   const staffed = (m: Milestone): boolean => {
     const line = lineOf(m);
     for (const j of jobs) if (line.has(j)) return true;
-    const who = norm(m.responsibleParty);
+    const who = norm(m.responsibleParty || (m.id ? woCrew.get(m.id) : undefined));
     return crews.some((c) => norm(c.crew) === who && (c.job == null || line.has(c.job)));
   };
   // A job with any step on nights is worked on nights (its own row follows its steps).
@@ -85,6 +89,7 @@ export interface CrewChoice {
 /** The crews to offer, each with the jobs it works: crews with work the
  *  file puts at night first. */
 export function nightCrewChoices(milestones: Milestone[], isNightStep: (m: Milestone) => boolean): CrewChoice[] {
+  const woCrew = inheritedCrews(milestones);
   const byId = new Map<string, Milestone>();
   const parents = new Set<string>();
   for (const m of milestones) { if (m.id) byId.set(m.id, m); if (m.parentId) parents.add(m.parentId); }
@@ -96,7 +101,7 @@ export function nightCrewChoices(milestones: Milestone[], isNightStep: (m: Miles
   const crews = new Map<string, { label: string; steps: number; nightSteps: number; jobs: Map<string, { id: string; name: string; crumbs: string; steps: number; nightSteps: number; wbs: string }> }>();
   for (const m of milestones) {
     if (!m.id || parents.has(m.id)) continue; // steps only
-    const label = m.responsibleParty?.trim() ?? "";
+    const label = m.responsibleParty?.trim() || woCrew.get(m.id) || "";
     const key = norm(label);
     const c = crews.get(key) ?? { label, steps: 0, nightSteps: 0, jobs: new Map() };
     const night = isNightStep(m) ? 1 : 0;
@@ -119,6 +124,7 @@ export function nightCrewChoices(milestones: Milestone[], isNightStep: (m: Miles
 /** An older job-only setting as crew entries: each crew working under
  *  those jobs, on the jobs its steps are in. */
 export function toCrewEntries(milestones: Milestone[], night: string[]): string[] {
+  const woCrew = inheritedCrews(milestones);
   const out = new Set<string>();
   const jobs = new Set<string>();
   for (const e of night) { const x = parseEntry(e); if ("crew" in x) out.add(e); else jobs.add(x.job); }
@@ -130,7 +136,7 @@ export function toCrewEntries(milestones: Milestone[], night: string[]): string[
     if (!m.id || parents.has(m.id) || !m.parentId) continue;
     let under = false;
     for (let c: Milestone | undefined = m, g = 0; c?.id && g < 60; c = c.parentId ? byId.get(c.parentId) : undefined, g++) if (jobs.has(c.id)) { under = true; break; }
-    if (under) out.add(crewEntry(m.responsibleParty?.trim() ?? "", m.parentId));
+    if (under) out.add(crewEntry(m.responsibleParty?.trim() || woCrew.get(m.id) || "", m.parentId));
   }
   return [...out];
 }

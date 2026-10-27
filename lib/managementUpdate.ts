@@ -128,7 +128,10 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
         stats: [
           { label: "Complete", value: `${overall.actualPct}%`, tone: standTone },
           { label: "Plan by now", value: `${overall.plannedPct}%`, tone: "slate" },
-          { label: gap < -0.5 ? "Work ahead" : gap > 0.5 ? "Work behind" : "Gap", value: Math.abs(gap) <= 0.5 ? "even" : f.hrs(Math.abs(gap)), tone: standTone },
+          // Follows the same verdict as the header: never "Work ahead" beside ON TRACK.
+          overall.standing === "ahead" ? { label: "Work ahead", value: f.hrs(Math.abs(gap)), tone: standTone }
+            : overall.standing === "behind" ? { label: "Work behind", value: f.hrs(Math.abs(gap)), tone: standTone }
+              : { label: "Gap", value: Math.abs(gap) <= 0.5 ? "even" : `${f.hrs(Math.abs(gap))} ${gap < 0 ? "ahead" : "behind"}`, tone: standTone },
           { label: "Steps done", value: `${overall.stepsDone} / ${overall.stepsTotal}`, tone: "slate" },
         ],
         bars: overall.plannedStart != null && overall.plannedFinish != null
@@ -228,10 +231,10 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     });
   }
 
-  // ── Crews — at the top, under the header: who was here, who's coming.
+  // ── Crews — right after where we stand: who was here, who's coming.
   const cr = crewsOf(report, plan, f.hrs);
   if (cr.worked.length || cr.coming.length) {
-    out.unshift({
+    out.splice(out.findIndex((x) => x.id === "stand") + 1, 0, {
       id: "who", title: "Crews",
       blocks: [{ k: "columns", cols: [
         { title: `${shiftName(shift)} ${f.D(shift.start)} — who was here`, rows: cr.worked.length ? cr.worked.map((x) => ({ title: x.crew, value: x.text })) : [{ title: "No work planned", value: "" }] },

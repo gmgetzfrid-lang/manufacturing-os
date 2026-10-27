@@ -35,6 +35,7 @@ import {
 import type { Milestone } from "@/types/schema";
 import { buildProgressIndex, leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
+import { withWorkOrderCrews } from "@/lib/workOrderCrew";
 import { turnoverPlan, nextOf, standing, askedLine, doneOf, crewsOf, vsPlan, doneByTask } from "@/lib/turnoverPlan";
 import {
   buildShiftReport, shiftWindow, nextShift, previousShift, defaultReviewShift, nextShiftWithWork, expectedByParent, paceOf, expectedFraction, workShiftOf, staffedDueMs, meetingLeadMin, type Pace, type WorkShift,
@@ -87,7 +88,7 @@ const MEETINGS: Array<{ id: MeetingKind; label: string; Icon: typeof Rocket }> =
   { id: "closeout", label: "Close-out", Icon: Trophy },
 ];
 
-export default function ShiftReportView({ milestones: live, progress: liveProgress, criticalIds, projectId, projectName, cancelled = NONE_CANCELLED, userId, userName, canEdit = false }: Props) {
+export default function ShiftReportView({ milestones: rawLive, progress: liveProgress, criticalIds, projectId, projectName, cancelled = NONE_CANCELLED, userId, userName, canEdit = false }: Props) {
   const tz = useScheduleTz();
   // The project's shift-change times — the same on every device.
   const times = useShiftTimes(projectId);
@@ -104,6 +105,8 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
     catch (e) { setTimesMsg((e as Error).message); setTimesDraft(null); }
   };
   const [showTimes, setShowTimes] = useState(false);
+  // A step with no crew named is reported under its work order's crew.
+  const live = useMemo(() => withWorkOrderCrews(rawLive), [rawLive]);
 
   // Re-evaluated every minute so a tab left open rolls over a shift
   // boundary (and "as of now" stays current) without a reload.
@@ -983,13 +986,30 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   ];
   const nothingLast = review.scheduled.length === 0 && doneRows.length === 0;
 
-  // Who was here, and who's coming — the first thing on the turnover.
+  // Who was here, and who's coming — right after where we stand.
   const cr = crewsOf(report, plan, c.hrs);
   const crewCols = [
     { title: `${shiftName(shift)} ${c.D(shift.start)} — who was here`, rows: cr.worked },
     { title: `${shiftName(next)} ${c.D(next.start)} — who's coming`, rows: cr.coming },
   ];
   return [
+    {
+      id: "stand", title: "Where we stand", short: "Status",
+      sub: [overall.plannedFinish ? `Day ${overall.daysElapsed} of ${overall.daysTotal} · planned finish ${c.DT(overall.plannedFinish)}` : null,
+        overall.planBasis === "baseline" ? `vs baseline${overall.baselineSetAt ? ` of ${c.D(Date.parse(overall.baselineSetAt))}` : ""}` : "vs live dates (no baseline)",
+        overall.unscheduled > 0 ? `${overall.unscheduled} step${overall.unscheduled === 1 ? "" : "s"} without dates not counted` : null].filter(Boolean).join(" · "),
+      flag: overall.standing === "behind" ? "rose" : null,
+      body: () => (
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 keep">
+            {standStats.map((x) => <Stat key={x.label} label={x.label} value={x.value} tone={x.tone} />)}
+          </div>
+        </div>
+      ),
+      data: () => [
+        { k: "stats", items: standStats },
+      ],
+    },
     {
       id: "who", title: "Crews", short: "Crews",
       sub: `${cr.worked.length} on the ${shift.kind} shift · ${cr.coming.length} on the ${next.kind} shift`,
@@ -1013,23 +1033,6 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         </div>
       ),
       data: () => [{ k: "columns", cols: crewCols.map((col) => ({ title: col.title, rows: col.rows.length ? col.rows.map((x) => ({ title: x.crew, value: x.text })) : [{ title: "No work planned", value: "" }] })) }],
-    },
-    {
-      id: "stand", title: "Where we stand", short: "Status",
-      sub: [overall.plannedFinish ? `Day ${overall.daysElapsed} of ${overall.daysTotal} · planned finish ${c.DT(overall.plannedFinish)}` : null,
-        overall.planBasis === "baseline" ? `vs baseline${overall.baselineSetAt ? ` of ${c.D(Date.parse(overall.baselineSetAt))}` : ""}` : "vs live dates (no baseline)",
-        overall.unscheduled > 0 ? `${overall.unscheduled} step${overall.unscheduled === 1 ? "" : "s"} without dates not counted` : null].filter(Boolean).join(" · "),
-      flag: overall.standing === "behind" ? "rose" : null,
-      body: () => (
-        <div className="space-y-2">
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 keep">
-            {standStats.map((x) => <Stat key={x.label} label={x.label} value={x.value} tone={x.tone} />)}
-          </div>
-        </div>
-      ),
-      data: () => [
-        { k: "stats", items: standStats },
-      ],
     },
     {
       id: "safety", title: "Safety & people", short: "Safety",
