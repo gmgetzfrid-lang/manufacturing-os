@@ -1464,7 +1464,7 @@ function TagChip({ t, tone }: TagT) {
     : tone === "amber" ? "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900"
       : tone === "emerald" ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-900"
         : "bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
-  return <span className={`inline-block max-w-full whitespace-normal sm:whitespace-nowrap break-words px-1 py-px rounded border text-[8.5px] font-black uppercase tracking-wider align-middle ${cls}`}>{t}</span>;
+  return <span className={`inline-block max-w-full whitespace-nowrap px-1 py-px rounded border text-[8.5px] font-black uppercase tracking-wider align-middle ${cls}`}>{t}</span>;
 }
 
 type NumTone = "rose" | "amber" | "slate";
@@ -1525,8 +1525,56 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
   const cols = (box ? 1 : 0) + (hasN ? 1 : 0) + 3 + (hasWho ? 1 : 0) + (hasWo ? 1 : 0);
   const one = "whitespace-nowrap overflow-hidden text-ellipsis";
   const cell = print ? "px-1 py-[1px]" : "px-1.5 py-[3px]";
+  const nameOf = (r: TRow) => open && !print ? (
+    <button type="button" onClick={() => open(r.id)} title="When it's due, the goal for the shift, what comes next"
+      className={`text-left hover:underline decoration-dotted underline-offset-2 ${r.done ? "line-through text-slate-400" : "font-semibold"}`}>{r.name}</button>
+  ) : <span className={r.done ? "line-through text-slate-400" : "font-semibold"}>{r.name}</span>;
   return (
-    <div className={`rounded-md border border-slate-300 dark:border-slate-700 ${print ? "" : "overflow-x-auto"}`}>
+    <>
+    {/* On a phone: a full-width line per step — name, tags, when and who,
+        where it stands — instead of a table squeezed into the width. */}
+    {!print && (
+      <div className="sm:hidden rounded-md border border-slate-300 dark:border-slate-700 overflow-hidden">
+        {rightHead && <div className="flex justify-between bg-slate-50 dark:bg-slate-800/60 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400"><span>{whenHead} · step</span><span>{rightHead}</span></div>}
+        {groups.map(({ g, rows: list }) => (
+          <div key={g.key} className="border-t border-slate-200 dark:border-slate-700/60 first:border-t-0">
+            {g.title && (
+              <div className="bg-slate-100 dark:bg-slate-800 px-2.5 py-1.5">
+                <div className="text-[12.5px] font-bold text-[var(--color-text)] break-words">{g.title}</div>
+                {g.meta && <div className="font-mono text-[10px] text-slate-600 dark:text-slate-300">{g.meta}</div>}
+              </div>
+            )}
+            {list.map((r) => (
+              <div key={r.id} className="border-t border-slate-200 dark:border-slate-700/60 px-2.5 py-2">
+                <div className="flex items-start gap-2">
+                  {box && <span className="pt-0.5"><Box /></span>}
+                  {r.n && <span className="pt-0.5"><Num n={r.n.num} tone={r.n.tone} /></span>}
+                  <div className="flex-1 min-w-0 text-[13px]">
+                    {flat && r.group.title && <span className="text-slate-500 dark:text-slate-400">{r.group.title} › </span>}
+                    {nameOf(r)}
+                    <div className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">
+                      <span className="font-mono font-bold">{r.when}</span>{!crew && r.who ? <> · {r.who}</> : null}
+                    </div>
+                    {((r.tags ?? []).some(Boolean) || (!print && r.inline)) && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {r.tags!.filter((t): t is TagT => !!t).map((t) => <TagChip key={t.t} t={t.t} tone={t.tone} />)}
+                        {r.inline}
+                      </div>
+                    )}
+                    {r.note && <div className="text-[11px] italic text-slate-600 dark:text-slate-300 mt-0.5">{r.note}</div>}
+                  </div>
+                  <div className="shrink-0 text-right font-mono font-bold text-[11px] text-slate-700 dark:text-slate-200 leading-tight">
+                    {r.right.split(" · ").map((part, i) => <div key={i}>{part}</div>)}
+                  </div>
+                </div>
+                {r.control && <div className="mt-1.5">{r.control}</div>}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    )}
+    <div className={`${print ? "" : "hidden sm:block overflow-x-auto"} rounded-md border border-slate-300 dark:border-slate-700`}>
       <table className={`w-full border-collapse table-fixed ${print ? "text-[8.5pt]" : "text-[12px]"}`}>
         <thead>
           <tr className="bg-slate-50 dark:bg-slate-800/60 text-[9px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 text-left">
@@ -1592,6 +1640,7 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
         </tbody>
       </table>
     </div>
+    </>
   );
 }
 
