@@ -22,7 +22,7 @@ import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl from "@/components/projects/ProgressControl";
 import { assignGroupColors } from "@/lib/scheduleColors";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
-import { splitPlacements, compareDayPlacements, activeWindowOnDay, stepsOnDay, crewOf, stepShiftOnDay, startMsOf, finishMsOf, type DayPlacement, type DayCrew } from "@/lib/calendarPlacement";
+import { splitPlacements, compareDayPlacements, wbsCompare, activeWindowOnDay, stepsOnDay, crewOf, stepShiftOnDay, startMsOf, finishMsOf, type DayPlacement, type DayCrew } from "@/lib/calendarPlacement";
 import { addDays as addDaysTz, addMonths as addMonthsTz, clockLabel, dayDiff as dayDiffTz, dayKey, dayKeyToMs, dayOfWeek, fmtInTz, hasTimeOfDay, tzAbbrev, startOfDay as startOfDayTz, startOfMonth as startOfMonthTz, wallClock } from "@/lib/scheduleTz";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { DEFAULT_SHIFT_TIMES, workShiftOf, shiftWindow, type ShiftTimes } from "@/lib/shiftReport";
@@ -186,7 +186,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
       const key = u.id ?? u.name;
       if (!seen.has(key)) seen.set(key, u);
     }
-    return Array.from(seen.values()).sort((a, b) => startMs(a) - startMs(b));
+    return Array.from(seen.values()).sort((a, b) => startMs(a) - startMs(b) || finishMs(a) - finishMs(b) || wbsCompare(a.wbs, b.wbs));
   }, [mains, topGroupOf, palette, byId]);
 
   const span = useMemo(() => {
@@ -665,7 +665,8 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           of the task's history crowding in. Nothing leaves the grid. */}
       {subPopover && (() => {
         const dayKey = subPopover.dayKey;
-        const all = leafDescendants(subPopover.ms).slice().sort((a, b) => startMs(a) - startMs(b));
+        // By start, then the one that finishes first, then the file's order.
+        const all = leafDescendants(subPopover.ms).slice().sort((a, b) => startMs(a) - startMs(b) || finishMs(a) - finishMs(b) || wbsCompare(a.wbs, b.wbs));
         const coversDay = (l: Milestone) => {
           const s0 = startMs(l), f0 = finishMs(l);
           if (!Number.isFinite(s0) || !Number.isFinite(f0)) return false;
