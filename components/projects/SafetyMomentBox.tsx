@@ -9,8 +9,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Maximize2, ShieldAlert, X } from "lucide-react";
-import { rankHazards, type HazardJobInput } from "@/lib/safetyMoment";
-import { safetyBrief, splitLead, talkSources, projectFacts, type ProjectBase, type SafetyTopic } from "@/lib/safetyTalk";
+import { rankHazards, type HazardJobInput, type HazardKind } from "@/lib/safetyMoment";
+import { safetyBrief, splitLead, talkSources, projectFacts, RISKS_RANKED, type ProjectBase, type SafetyTopic } from "@/lib/safetyTalk";
 import type { ShiftWindow } from "@/lib/shiftReport";
 
 // Each card's color: the job in blue, the risks in red and orange.
@@ -20,7 +20,7 @@ const TONE = [
   { bar: "border-t-orange-500", num: "bg-orange-600", kick: "text-orange-800 dark:text-orange-300", dot: "bg-orange-500" },
 ];
 
-export function SafetyMomentBox({ jobs, shift, T, print, project, label }: {
+export function SafetyMomentBox({ jobs, shift, T, print, project, recent, label }: {
   jobs: HazardJobInput[];
   /** The shift being planned. */
   shift: ShiftWindow;
@@ -28,11 +28,15 @@ export function SafetyMomentBox({ jobs, shift, T, print, project, label }: {
   print: boolean;
   /** The project around the work: a turnaround, its unit, the day of the job. */
   project?: ProjectBase;
+  /** The risk cards of the shifts before (riskHistory): a kind of work two
+   *  shifts running steps aside unless it's still clearly on top. */
+  recent?: HazardKind[][];
   /** "Night shift Tue, Oct 27" — whose topics these are. */
   label?: string;
 }) {
-  const topics = useMemo(() => safetyBrief(rankHazards(jobs, { shift, T }), shift, { project: projectFacts(project, shift, jobs.map((j) => j.name)) }),
-    [jobs, shift, T, project]);
+  const topics = useMemo(() => safetyBrief(rankHazards(jobs, { shift, T, max: RISKS_RANKED }), shift,
+    { project: projectFacts(project, shift, jobs.map((j) => j.name)), recentRisks: recent }),
+  [jobs, shift, T, project, recent]);
   const [presenting, setPresenting] = useState<number | null>(null);
   // No work on the shift, no crew to talk to.
   if (jobs.length === 0 || topics.length === 0) return null;
@@ -45,7 +49,8 @@ export function SafetyMomentBox({ jobs, shift, T, print, project, label }: {
         </span>
         {!print && <span className="text-[11px] text-[var(--color-text-muted)]">Tap one to present it full screen</span>}
       </div>
-      <div className={print ? "grid grid-cols-3 gap-2" : "-mx-1 px-1 flex gap-2 overflow-x-auto snap-x snap-mandatory sm:grid sm:grid-cols-3 sm:overflow-visible scroll-quiet"}>
+      {/* No risky work at all: two topics, side by side at full width. */}
+      <div className={print ? `grid ${topics.length === 2 ? "grid-cols-2" : "grid-cols-3"} gap-2` : `-mx-1 px-1 flex gap-2 overflow-x-auto snap-x snap-mandatory sm:grid ${topics.length === 2 ? "sm:grid-cols-2" : "sm:grid-cols-3"} sm:overflow-visible scroll-quiet`}>
         {topics.map((t, i) => (
           <TopicCard key={t.key + i} t={t} n={i + 1} tone={TONE[i % TONE.length]} print={print} onPresent={() => setPresenting(i)} />
         ))}

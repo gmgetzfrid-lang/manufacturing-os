@@ -62,8 +62,8 @@ export const HAZARD_KINDS: Record<HazardKind, KindDef> = {
     label: "Hydroblasting", severity: 5, family: "hydroblast",
     re: /hydro[\s-]*blast|water[\s-]*blast|hydro[\s-]*jet|water[\s-]*jet|high[\s-]pressure water|\blancing\b|\bhpwj\b/i,
     checks: [
-      "Dump tested by tonight's operator at working pressure — not at idle, not by the last crew.",
-      "Reaction force rises with pressure and flow: high-flow tips need a lance holder, not a stronger hand.",
+      "Hoses rated for the pump's top pressure and inspected every shift. A blister or kink takes it out.",
+      "Whip-checks on every hose connection, and nobody straddles or stands on a live hose.",
       { t: "Flex lance in tubes: back-out preventer on, and the lance sized to the tube ID.", if: /tube|bundle/i },
       { t: "Blast zone covers the whole exchanger end and the far tubesheet — nobody at the other end.", if: /tube|bundle|shell|exchanger/i },
     ],
@@ -92,7 +92,7 @@ export const HAZARD_KINDS: Record<HazardKind, KindDef> = {
     label: "Bundle pull", severity: 4, family: "lifting",
     re: /\b(pull|extract|install|insert|re-?install|set)( the)? (tube )?bundles?\b|\bbundle (pull|extract|puller)|\bre-?bundle\b/i,
     checks: [
-      "Pull force climbing is a stop signal — soak, jack the tubesheet or re-plan; never 'a bit more'.",
+      "Tube ends and baffles are sharp. Cut-resistant gloves when you handle the bundle.",
       "Once the bundle clears the shell its balance point moves — re-check the extractor as it comes.",
       "Exposed deposits can heat as they dry (iron sulfide): keep them wet until blasting.",
       "Weight with fouling: a plugged bundle can be well over its dry weight.",
@@ -115,7 +115,7 @@ export const HAZARD_KINDS: Record<HazardKind, KindDef> = {
       "Gas test at the work point and down-drain — vapor travels along trenches to the spark.",
       "Drains and sewers within 35 ft sealed, not just covered with a mat.",
       "Fire watch looks below and behind walls — slag travels where nobody's watching.",
-      "Re-test after every break: an opened line nearby changes the air.",
+      "Welding ground clamped right at the work — stray current arcs through pipe, bolts and bearings.",
     ],
   },
   heights: {
@@ -154,7 +154,7 @@ export const HAZARD_KINDS: Record<HazardKind, KindDef> = {
     checks: [
       "Spent catalyst can be pyrophoric — keep it blanketed or wet until passivated.",
       "Entry into a bed is inert entry: supplied air and a standby rescue team.",
-      "Know this catalyst's SDS before the first opening — some release toxic metals.",
+      "Unloading a reactor? Bridged catalyst can let go and drop without warning — never stand under it.",
       "Dust at the dump chute travels — the people below need respirators too.",
     ],
   },
@@ -192,7 +192,7 @@ export const HAZARD_KINDS: Record<HazardKind, KindDef> = {
     label: "Excavation", severity: 4, family: "excavation",
     re: /\bexcavat|\btrench|\bdig(ging)?\b|\bhydro[\s-]*vac/i,
     checks: [
-      "Line markings can be off by feet — hydro-vac within the tolerance zone.",
+      "Hydro-vac slurry is liquid — keep it contained and out of drains and sewers.",
       "Equipment, spoil and vibration collapse walls — keep them back from the edge.",
       "Trenches collect heavy vapors — gas test before entry, every time.",
       "Water in the trench changes the soil — re-inspect after rain or washdown.",
@@ -202,7 +202,7 @@ export const HAZARD_KINDS: Record<HazardKind, KindDef> = {
     label: "Field machining", severity: 3, family: "machining",
     re: /\bmachin(e|ing)\b|\bflange fac(e|ing)\b|\bon[\s-]*site machin|\blapping\b|\bface (the )?flanges?\b/i,
     checks: [
-      "Rotating cutter: no gloves near it, sleeves tight, stop button within reach.",
+      "Check the cutter and inserts before every pass — a chipped insert throws pieces.",
       "Machine bolted to the flange and checked before it spins — not hand-held.",
       "Chips are sharp and hot; cover open nozzles so they don't fall in.",
       "Isolations stay on — a flange being faced is still a break in the line.",

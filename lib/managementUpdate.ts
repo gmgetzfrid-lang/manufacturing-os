@@ -11,8 +11,8 @@
 import { capacityOf, askedResult } from "@/lib/shiftHandover";
 import { turnoverPlan, nextOf, askedLine, crewsOf, vsPlan, doneByTask } from "@/lib/turnoverPlan";
 import { type PullCrew, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
-import { rankHazards, type HazardJobInput } from "@/lib/safetyMoment";
-import { safetyBrief, talkSources, projectFacts, type ProjectBase } from "@/lib/safetyTalk";
+import { rankHazards, type HazardJobInput, type HazardKind } from "@/lib/safetyMoment";
+import { safetyBrief, talkSources, projectFacts, RISKS_RANKED, type ProjectBase } from "@/lib/safetyTalk";
 import type { ExportBlock, ExportCell, ExportSection } from "@/lib/reportExport";
 
 export interface UpdateFormat {
@@ -47,6 +47,8 @@ export interface UpdateLookups {
   pull?: PullCrew | null;
   /** The project around the work, for the safety topic's general lines. */
   safetyProject?: ProjectBase;
+  /** The risk cards of the shifts before the next one (riskHistory). */
+  safetyRecent?: HazardKind[][];
 }
 
 /** The next shift's steps as the safety moment ranks them: their hours
@@ -259,7 +261,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   // ── Safety topics: the job as a whole, then the next shift's two riskiest
   // kinds of work — the things to say out loud. Left out unless ticked.
   const hj = hazardJobsOf(nextList, next, (r) => (r.carryOver ? `due ${f.DTs(r.dueAt)}` : `${f.T(Math.max(r.start, next.start))}–${r.finish <= next.end ? f.T(r.finish) : "…"}`), (id) => note(id));
-  const topics = hj.length ? safetyBrief(rankHazards(hj, { shift: next, T: f.T }), next, { project: projectFacts(look.safetyProject, next, hj.map((j) => j.name)) }) : [];
+  const topics = hj.length ? safetyBrief(rankHazards(hj, { shift: next, T: f.T, max: RISKS_RANKED }), next, { project: projectFacts(look.safetyProject, next, hj.map((j) => j.name)), recentRisks: look.safetyRecent }) : [];
   if (topics.length) {
     out.push({
       id: "safety", title: `Safety topics — ${shiftName(next).toLowerCase()}`, offByDefault: true,

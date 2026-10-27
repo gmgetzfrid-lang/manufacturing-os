@@ -38,7 +38,7 @@ import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { withWorkOrderCrews } from "@/lib/workOrderCrew";
 import { turnoverPlan, nextOf, standing, askedLine, doneOf, crewsOf, vsPlan, doneByTask } from "@/lib/turnoverPlan";
 import {
-  buildShiftReport, shiftWindow, nextShift, previousShift, defaultReviewShift, nextShiftWithWork, expectedByParent, paceOf, expectedFraction, workShiftOf, staffedDueMs, meetingLeadMin, type Pace, type WorkShift,
+  buildShiftReport, shiftWindow, shiftAt, nextShift, previousShift, defaultReviewShift, nextShiftWithWork, expectedByParent, paceOf, expectedFraction, workShiftOf, staffedDueMs, meetingLeadMin, type Pace, type WorkShift,
   DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftRow, type ShiftWindow, type ShiftReport, type PullCrew,
   crewsOnReport, filterShiftReport, whoOf,
 } from "@/lib/shiftReport";
@@ -53,8 +53,8 @@ import { loadProgressLog, scheduleAt, type ProgressLogRow } from "@/lib/progress
 import { effectiveSpans } from "@/lib/scheduleTime";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { SafetyMomentBox } from "@/components/projects/SafetyMomentBox";
-import type { ProjectBase } from "@/lib/safetyTalk";
-import type { HazardJobInput } from "@/lib/safetyMoment";
+import { riskHistory, type ProjectBase } from "@/lib/safetyTalk";
+import type { HazardJobInput, HazardKind } from "@/lib/safetyMoment";
 import { QuickLookCard, QuickLookOpen, TaskSearch, useQuickLookOpen } from "@/components/projects/TaskQuickLook";
 import { quickLook, quickLookIndex } from "@/lib/taskQuickLook";
 import type { CancelledJob } from "@/lib/cancelledJobs";
@@ -278,7 +278,11 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       behind: report.overall.standing === "behind",
     };
   }, [live, projectName, report.overall.plannedStart, report.overall.plannedFinish, report.overall.standing, tz]);
-  const safety = useMemo(() => ({ project: safetyProject }), [safetyProject]);
+  // The risk cards of the shifts before the next one, from the schedule —
+  // so a kind of work that's led two shifts running steps aside.
+  const nextStart = report.next.start;
+  const recentRisks = useMemo(() => riskHistory(live, shiftAt(nextStart, tz, times), tz, times), [live, nextStart, tz, times]);
+  const safety = useMemo(() => ({ project: safetyProject, recent: recentRisks }), [safetyProject, recentRisks]);
   const sections = useMemo(() => meeting === "kickoff"
     ? kickoffSections(kickoff, ctx)
     : meeting === "closeout"
@@ -379,6 +383,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           asked,
           pull: pullForReport,
           safetyProject: safety.project,
+          safetyRecent: safety.recent,
         })
         : withoutEmpty(sections.filter((x) => x.data).map((x) => ({ id: x.id, title: x.title, sub: x.sub, flag: x.flag ?? null, blocks: x.data!() }))),
     };
@@ -879,8 +884,8 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   /** The meeting's exceptions (lib/shiftHandover): steps the next shift
    *  could try, which crew; and what the last turnover asked of this one. */
   handover?: HandoverCtx;
-  /** The safety topic picked at the meeting. */
-  safety?: { project: ProjectBase } }): Sec[] {
+  /** The project around the work, and the risk cards of the shifts before. */
+  safety?: { project: ProjectBase; recent?: HazardKind[][] } }): Sec[] {
   const { overall, review, goals, shift, next } = report;
   // A step's latest comment, as one quiet line under it (each step shows once).
   const comment = (r: ShiftRow) => {
@@ -1068,7 +1073,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       sub: "Open every turnover here — then the work.",
       body: (print) => (
         <div className="space-y-2">
-          <SafetyMomentBox jobs={hazardJobs} shift={next} T={c.T} print={print} project={o.safety?.project} label={`${shiftName(next)} ${c.D(next.start)}`} />
+          <SafetyMomentBox jobs={hazardJobs} shift={next} T={c.T} print={print} project={o.safety?.project} recent={o.safety?.recent} label={`${shiftName(next)} ${c.D(next.start)}`} />
           <Prompts print={print} cols={3} items={[
             "Incidents, near misses, first aid since last turnover",
             "Permits and lock-outs open across the change",
