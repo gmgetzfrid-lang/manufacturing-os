@@ -13,6 +13,7 @@
 // never in a second list.
 
 import type { ShiftReport, ShiftRow } from "@/lib/shiftReport";
+import { equipmentTag } from "@/lib/safetyMoment";
 
 export type NextKind = "next" | "try" | "carry" | "held";
 export type NextTone = "rose" | "amber" | "emerald" | "muted";
@@ -191,9 +192,18 @@ export function gapStory(report: ShiftReport, t: Fmt, max = 5) {
   const d = overall.drivers;
   const gap = goals.gapHours;
   const h = (x: number) => t.hrs(Math.round(x * 10) / 10);
-  const headline = gap < -0.5 ? `Ahead by ${h(-gap)} of work — ${h(d.aheadHours)} done ahead of plan, less ${h(d.behindHours)} behind.`
-    : gap > 0.5 ? `Behind by ${h(gap)} of work — ${h(d.behindHours)} behind plan, less ${h(d.aheadHours)} done ahead.`
-      : `Even with the plan — ${h(d.aheadHours)} ahead and ${h(d.behindHours)} behind balance out.`;
+  // Plain words, with the jobs named: how the job can be ahead overall
+  // while some of it is late.
+  const headline = gap < -0.5 ? `Overall ahead of plan by ${h(-gap)} of work.`
+    : gap > 0.5 ? `Overall behind plan by ${h(gap)} of work.`
+      : "Overall even with the plan.";
+  const names = (xs: typeof d.ahead) => {
+    const top = xs.filter((x) => x.hours >= 0.1).slice(0, 4).map((x) => { const tag = equipmentTag(x.parentName, x.name); return tag && tag !== x.name ? `${tag}: ${x.name}` : x.name; });
+    const more = xs.filter((x) => x.hours >= 0.1).length - top.length;
+    return top.join(", ") + (more > 0 ? ` + ${more} more` : "");
+  };
+  const aheadLine = d.aheadHours >= 0.1 ? `${h(d.aheadHours)} of work done earlier than planned — ${names(d.ahead)}.` : null;
+  const behindLine = d.behindHours >= 0.1 ? `${h(d.behindHours)} of work the plan has done by now that isn't — ${names(d.behind)}.` : null;
   const now = report.now;
   const line = (x: (typeof d.ahead)[number], side: "ahead" | "behind") => ({
     task: x.parentName, step: x.name,
@@ -204,7 +214,7 @@ export function gapStory(report: ShiftReport, t: Fmt, max = 5) {
   });
   const rest = (xs: typeof d.ahead) => { const more = xs.slice(max); return more.length ? { count: more.length, hours: h(more.reduce((a, x) => a + x.hours, 0)) } : null; };
   return {
-    headline,
+    headline, aheadLine, behindLine,
     ahead: { total: h(d.aheadHours), lines: d.ahead.slice(0, max).map((x) => line(x, "ahead")), more: rest(d.ahead) },
     behind: { total: h(d.behindHours), lines: d.behind.slice(0, max).map((x) => line(x, "behind")), more: rest(d.behind) },
   };

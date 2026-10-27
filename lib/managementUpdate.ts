@@ -9,7 +9,7 @@
 // nothing is blocked.
 
 import { capacityOf, askedResult } from "@/lib/shiftHandover";
-import { turnoverPlan, nextOf, standing, askedLine, gapStory, crewsOf, vsPlan, offListDrivers, doneByTask } from "@/lib/turnoverPlan";
+import { turnoverPlan, nextOf, standing, askedLine, gapStory, crewsOf, vsPlan, doneByTask } from "@/lib/turnoverPlan";
 import { type PullCrew, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
 import { rankHazards, hazardContext, lessonFor, type HazardJobInput } from "@/lib/safetyMoment";
 import type { ExportBlock, ExportCell, ExportSection } from "@/lib/reportExport";
@@ -120,7 +120,6 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   const finishPassed = overall.plannedFinish != null && report.now > overall.plannedFinish && overall.actualPct < 100;
   const gap = report.goals.gapHours;
   const standTone = overall.standing === "behind" ? "rose" as const : overall.standing === "ahead" ? "emerald" as const : "slate" as const;
-  const off = offListDrivers(report, plan, f.hrs);
   out.push({
     id: "stand", title: "Where we stand",
     sub: overall.plannedFinish ? `Day ${overall.daysElapsed} of ${overall.daysTotal} · planned finish ${f.D(overall.plannedFinish)}` : undefined,
@@ -139,9 +138,8 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
         title: "Bottom line",
         lines: [
           { text: finishPassed ? `Planned finish ${fin} has passed — ${overall.actualPct}% done. ${story.headline}` : story.headline, tone: standTone === "slate" ? undefined : standTone },
-          { text: "Each step's share is in the “vs plan” column below." },
-          ...(off.ahead ? [{ label: "Also ahead (done on earlier shifts)", text: `${off.ahead}.`, tone: "emerald" as const }] : []),
-          ...(off.behind ? [{ label: "Also behind (not on the lists below)", text: `${off.behind}.`, tone: "rose" as const }] : []),
+          ...(story.aheadLine ? [{ label: "Ahead", text: story.aheadLine, tone: "emerald" as const }] : []),
+          ...(story.behindLine ? [{ label: "Behind", text: story.behindLine, tone: "rose" as const }] : []),
           { text: nextList.length ? `${shiftName(next)}: ${nextList.length} step${nextList.length === 1 ? "" : "s"}, ${f.hrs(nextHrs)}${tried.length ? ` — plus ${tried.length} to try if there's time` : ""}.` : `Nothing planned for the ${shiftName(next).toLowerCase()}.` },
           ...(carries.length ? [{ text: `${carries.length} step${carries.length === 1 ? "" : "s"} carr${carries.length === 1 ? "ies" : "y"} to the ${other} shift.`, tone: "amber" as const }] : []),
           ...(held.length ? [{ label: "Needs a decision", text: `${held.length} blocked or on hold.`, tone: "rose" as const }] : []),

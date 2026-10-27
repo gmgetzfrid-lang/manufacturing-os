@@ -136,7 +136,7 @@ describe("the update's first glance", () => {
     if (ov.k !== "overview") throw new Error("no overview");
     expect(ov.stats.map((x) => x.label)).toEqual(["Complete", "Plan by now", expect.any(String), "Steps done"]);
     expect(ov.title).toBe("Bottom line");
-    expect(ov.lines[0].text).toMatch(/^(Even with the plan|Behind by|Ahead by)/);
+    expect(ov.lines[0].text).toMatch(/^Overall (even with the plan|behind plan by|ahead of plan by)/);
     const safety = sections.find((s) => s.id === "safety");
     if (safety) expect(safety.offByDefault).toBe(true);
     const html = toEmailHtml({ kind: "Shift turnover", project: "P", when: "w", asOf: "a", sections });

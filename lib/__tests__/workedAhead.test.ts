@@ -54,7 +54,10 @@ describe("work done early and progress made show on the turnover", () => {
     expect(text).toMatch(/Pull bundle · Schultz · was due 10-26T21:00 · done 40% · −4.8 h/);
     expect(text).not.toMatch(/this shift ·.*−4.8 h/);
     // Why it's ahead: both early steps, with the hours each is worth.
-    expect(text).toMatch(/5.8 h done ahead of plan, less 4.8 h behind/);
+    // In plain words, the jobs named on each side.
+    expect(text).toMatch(/Overall ahead of plan by 1 h of work\./);
+    expect(text).toMatch(/Ahead: 5.8 h of work done earlier than planned — E-17 Exchanger: Remove components, E-17 Exchanger: Hydroblast\./);
+    expect(text).toMatch(/Behind: 4.8 h of work the plan has done by now that isn't — E-17 Exchanger: Pull bundle\./);
     // Each step credited once under Done.
     for (const name of ["Pull bundle", "Remove components", "Hydroblast"]) expect(doneSec.match(new RegExp(name, "g"))?.length).toBe(1);
   });
@@ -112,5 +115,12 @@ describe("ahead or behind is explained, and adds up", () => {
     const before = new Map(startPct); before.set("rc", 100);
     const r3 = buildShiftReport({ milestones: noTime, tz: CHI, shift: day, now: day.end, startPct: before });
     expect(r3.review.done.map((x) => x.leaf.id)).not.toContain("rc");
+  });
+});
+
+describe("the bottom line names jobs by their tag", () => {
+  it("a long equipment name shortens to its tag", async () => {
+    const { equipmentTag } = await import("@/lib/safetyMoment");
+    expect(equipmentTag("E-17 - Transmix Feed/Trans. Diesel Exchanger No. 1", "Pull Bundle")).toBe("E-17");
   });
 });
