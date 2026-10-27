@@ -241,6 +241,8 @@ export interface HazardJob {
   id: string;
   /** Short equipment tag ("E-17") or name. */
   equipment: string | null;
+  /** The equipment's full name ("V-7 - Fractionator"), to match lessons on. */
+  parentName?: string | null;
   name: string;
   who: string | null;
   when: string;
@@ -390,7 +392,7 @@ export function rankHazards(jobs: HazardJobInput[], opts: RankOptions = {}): Ran
       e.hours += Math.max(0, j.hours || 0);
       e.critical ||= !!j.critical;
       if (!e.jobs.some((x) => x.id === j.id)) {
-        e.jobs.push({ id: j.id, equipment: equipmentTag(j.parentName, j.name), name: j.name, who: j.who ?? null, when: j.when });
+        e.jobs.push({ id: j.id, equipment: equipmentTag(j.parentName, j.name), parentName: j.parentName, name: j.name, who: j.who ?? null, when: j.when });
         e.inputs.push(j);
       }
       byKind.set(k, e);
@@ -532,6 +534,8 @@ export interface SafetyLesson {
   prevent: string;
   /** The lesson as one line someone can say out loud at the meeting. */
   say: string;
+  /** Only for steps on this kind of equipment (a PSV, trays, a man-lift). */
+  if?: RegExp;
   source: { url: string; title: string };
 }
 

@@ -12,7 +12,7 @@ import { capacityOf, askedResult } from "@/lib/shiftHandover";
 import { turnoverPlan, nextOf, askedLine, crewsOf, vsPlan, doneByTask } from "@/lib/turnoverPlan";
 import { type PullCrew, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
 import { rankHazards, type HazardJobInput } from "@/lib/safetyMoment";
-import { safetyTalks, pickTalk, talkSources } from "@/lib/safetyTalk";
+import { safetyTalks, pickTalk, talkSources, projectFacts, type ProjectBase } from "@/lib/safetyTalk";
 import type { ExportBlock, ExportCell, ExportSection } from "@/lib/reportExport";
 
 export interface UpdateFormat {
@@ -47,6 +47,8 @@ export interface UpdateLookups {
   pull?: PullCrew | null;
   /** The safety topic picked at the meeting (lib/safetyTalk key). */
   safetyPick?: string | null;
+  /** The project around the work, for the safety topic's general lines. */
+  safetyProject?: ProjectBase;
 }
 
 /** The next shift's steps as the safety moment ranks them: their hours
@@ -257,9 +259,9 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
 
   // ── Safety topic: one, picked from what the next shift is doing (or at
   // the meeting) — the things to say out loud. Left out unless ticked.
-  const talk = pickTalk(safetyTalks(rankHazards(hazardJobsOf(nextList, next, (r) => (r.carryOver ? `due ${f.DTs(r.dueAt)}` : `${f.T(Math.max(r.start, next.start))}–${r.finish <= next.end ? f.T(r.finish) : "…"}`), (id) => note(id)),
-    { shift: next, T: f.T }), next), look.safetyPick);
-  if (talk) {
+  const hj = hazardJobsOf(nextList, next, (r) => (r.carryOver ? `due ${f.DTs(r.dueAt)}` : `${f.T(Math.max(r.start, next.start))}–${r.finish <= next.end ? f.T(r.finish) : "…"}`), (id) => note(id));
+  const talk = pickTalk(safetyTalks(rankHazards(hj, { shift: next, T: f.T }), next, { project: projectFacts(look.safetyProject, next, hj.map((j) => j.name)) }), look.safetyPick);
+  if (talk && hj.length > 0) {
     out.push({
       id: "safety", title: `Safety topic — ${shiftName(next).toLowerCase()}`, offByDefault: true,
       blocks: [{ k: "bullets", title: talk.title, lead: talk.today, tone: "amber", items: talk.points.map((p) => p.say), sources: talkSources(talk) }],

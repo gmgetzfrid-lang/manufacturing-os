@@ -3,19 +3,19 @@
 // SafetyMomentBox — the turnover's safety topic.
 //
 // One topic, picked from what the next shift is doing, given the way a
-// supervisor gives it: a line on why today, then four or five short things
-// to say out loud — lessons from real incidents, with their sources.
+// supervisor gives it: a line on why today, then five short things to say
+// out loud — two on the work, the rest on the job around it — with sources.
 // The other topics sit underneath, a tap away. Built in: no AI.
 
 import { useMemo } from "react";
 import { ShieldAlert } from "lucide-react";
 import { rankHazards, type HazardJobInput } from "@/lib/safetyMoment";
-import { safetyTalks, pickTalk, talkSources } from "@/lib/safetyTalk";
+import { safetyTalks, pickTalk, talkSources, projectFacts, type ProjectBase } from "@/lib/safetyTalk";
 import type { ShiftWindow } from "@/lib/shiftReport";
 
 const muted = "text-orange-900/75 dark:text-orange-200/70";
 
-export function SafetyMomentBox({ jobs, shift, T, print, pick, onPick }: {
+export function SafetyMomentBox({ jobs, shift, T, print, pick, onPick, project }: {
   jobs: HazardJobInput[];
   /** The shift being planned. */
   shift: ShiftWindow;
@@ -24,10 +24,14 @@ export function SafetyMomentBox({ jobs, shift, T, print, pick, onPick }: {
   /** The topic picked at the meeting; the best one when none is. */
   pick?: string | null;
   onPick?: (key: string) => void;
+  /** The project around the work: a turnaround, the day of the job, behind. */
+  project?: ProjectBase;
 }) {
-  const talks = useMemo(() => safetyTalks(rankHazards(jobs, { shift, T }), shift), [jobs, shift, T]);
+  const talks = useMemo(() => safetyTalks(rankHazards(jobs, { shift, T }), shift, { project: projectFacts(project, shift, jobs.map((j) => j.name)) }),
+    [jobs, shift, T, project]);
   const talk = pickTalk(talks, pick);
-  if (!talk) return null;
+  // No work on the shift, no crew to talk to.
+  if (!talk || jobs.length === 0) return null;
   const sources = talkSources(talk);
   const others = talks.filter((t) => t !== talk);
 

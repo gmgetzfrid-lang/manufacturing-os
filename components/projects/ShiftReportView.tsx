@@ -53,6 +53,7 @@ import { loadProgressLog, scheduleAt, type ProgressLogRow } from "@/lib/progress
 import { effectiveSpans } from "@/lib/scheduleTime";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { SafetyMomentBox } from "@/components/projects/SafetyMomentBox";
+import type { ProjectBase } from "@/lib/safetyTalk";
 import type { HazardJobInput } from "@/lib/safetyMoment";
 import { QuickLookCard, QuickLookOpen, TaskSearch, useQuickLookOpen } from "@/components/projects/TaskQuickLook";
 import { quickLook, quickLookIndex } from "@/lib/taskQuickLook";
@@ -274,7 +275,18 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     try { setSafetyPicks(JSON.parse(localStorage.getItem("shiftReport.safetyPick") ?? "{}") as Record<string, string>); } catch { /* private mode */ }
   }, []);
   const nextKey = String(view.next.start);
+  // The project around the work: its name and the schedule's groups (a
+  // turnaround?), the job's dates, and whether the whole job is behind.
+  const safetyProject = useMemo<ProjectBase>(() => {
+    const parents = new Set(live.map((m) => m.parentId).filter(Boolean));
+    return {
+      names: [projectName ?? "", ...live.filter((m) => m.isSummary || (m.id && parents.has(m.id))).map((m) => m.name)],
+      start: report.overall.plannedStart, finish: report.overall.plannedFinish, tz,
+      behind: report.overall.standing === "behind",
+    };
+  }, [live, projectName, report.overall.plannedStart, report.overall.plannedFinish, report.overall.standing, tz]);
   const safety = useMemo(() => ({
+    project: safetyProject,
     pick: safetyPicks[nextKey] ?? null,
     onPick: (k: string) => setSafetyPicks((cur) => {
       // The last few shifts' picks only.
@@ -282,7 +294,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
       try { localStorage.setItem("shiftReport.safetyPick", JSON.stringify(n)); } catch { /* private mode */ }
       return n;
     }),
-  }), [safetyPicks, nextKey]);
+  }), [safetyPicks, nextKey, safetyProject]);
   const sections = useMemo(() => meeting === "kickoff"
     ? kickoffSections(kickoff, ctx)
     : meeting === "closeout"
@@ -383,6 +395,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           asked,
           pull: pullForReport,
           safetyPick: safety.pick,
+          safetyProject: safety.project,
         })
         : withoutEmpty(sections.filter((x) => x.data).map((x) => ({ id: x.id, title: x.title, sub: x.sub, flag: x.flag ?? null, blocks: x.data!() }))),
     };
@@ -871,7 +884,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
    *  could try, which crew; and what the last turnover asked of this one. */
   handover?: HandoverCtx;
   /** The safety topic picked at the meeting. */
-  safety?: { pick: string | null; onPick: (key: string) => void } }): Sec[] {
+  safety?: { pick: string | null; onPick: (key: string) => void; project: ProjectBase } }): Sec[] {
   const { overall, review, goals, shift, next } = report;
   // A step's latest comment, as one quiet line under it (each step shows once).
   const comment = (r: ShiftRow) => {
@@ -1059,7 +1072,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       sub: "Open every turnover here — then the work.",
       body: (print) => (
         <div className="space-y-2">
-          <SafetyMomentBox jobs={hazardJobs} shift={next} T={c.T} print={print} pick={o.safety?.pick} onPick={o.safety?.onPick} />
+          <SafetyMomentBox jobs={hazardJobs} shift={next} T={c.T} print={print} pick={o.safety?.pick} onPick={o.safety?.onPick} project={o.safety?.project} />
           <Prompts print={print} cols={3} items={[
             "Incidents, near misses, first aid since last turnover",
             "Permits and lock-outs open across the change",
