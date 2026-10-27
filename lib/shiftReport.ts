@@ -483,6 +483,20 @@ export function workHours(m: Milestone, tz?: string): number {
   return Math.round(effectiveWeight(m, tz) * 10) / 10;
 }
 
+/** One step's share of the gap between done and planned. */
+export interface GapDriver {
+  id: string | null;
+  name: string;
+  parentName: string | null;
+  /** Work-hours ahead (or behind) of plan, always positive. */
+  hours: number;
+  percent: number;
+  /** Where the plan said it would be by now. */
+  planPct: number;
+  start: number;
+  finish: number;
+}
+
 export interface ShiftReport {
   tz: string;
   now: number;
@@ -508,6 +522,10 @@ export interface ShiftReport {
      *  (so moving work around can't hide slippage) or, when no baseline
      *  exists, the live planned dates. */
     planBasis: "baseline" | "current";
+    /** Why it's ahead or behind: each step's share of the gap, in work-hours
+     *  (done minus what the plan said by now), biggest first. Ahead and
+     *  behind add up to the gap: ahead total − behind total = −gapHours. */
+    drivers: { ahead: GapDriver[]; behind: GapDriver[]; aheadHours: number; behindHours: number };
     /** When the baseline was captured (latest stamp), for "measured
      *  against the plan as of …". Null without a baseline. */
     baselineSetAt: string | null;
@@ -712,6 +730,8 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   // same way (work-hours): a step with no dates can't be planned, so it
   // can't count against the actual either — it's reported as unscheduled.
   let wsum = 0, wplanned = 0, wactual = 0, stepsDone = 0, baselined = 0;
+  const aheadOf: GapDriver[] = [], behindOf: GapDriver[] = [];
+  let aheadSum = 0, behindSum = 0;
   let baselineSetAt: string | null = null;
   let plannedStart = Infinity, plannedFinish = -Infinity;
   for (const m of leaves) {
@@ -732,6 +752,14 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     const frac = expectedFraction(m, now, tz, times);
     const pct = pctOf(m);
     wsum += w; wplanned += w * frac; wactual += w * pct / 100;
+    const share = w * (pct / 100 - frac);
+    if (share > 0) aheadSum += share; else behindSum -= share;
+    if (Math.abs(share) >= 0.05) {
+      (share > 0 ? aheadOf : behindOf).push({
+        id: m.id ?? null, name: m.name, parentName: pathOf(m)[0]?.name ?? null, hours: Math.abs(share),
+        percent: pct, planPct: Math.round(frac * 100), start: startMsOf(m), finish: finishMsOf(m),
+      });
+    }
     if (DONE({ status: m.status, percent: pct })) stepsDone++;
   }
   const plannedPct = wsum > 0 ? roundPct((wplanned / wsum) * 100) : 0;
@@ -767,7 +795,10 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     if (!m.id || seenDone.has(m.id)) continue;
     const row = rowFor(m, shift);
     if (!DONE(row)) continue;
-    if (inWin(toMs(m.actualAt), shift)) { done.push(row); seenDone.add(m.id); }
+    // Finished during the shift: its completion time says so, or — with
+    // no time recorded — the progress log shows it open when the shift began.
+    const startPctOf = input.startPct?.get(m.id);
+    if (inWin(toMs(m.actualAt), shift) || (!Number.isFinite(toMs(m.actualAt)) && startPctOf != null && startPctOf < 100)) { done.push(row); seenDone.add(m.id); }
   }
   done.sort(cmp);
   const isOpen = (r: { status: MilestoneStatus; percent: number }) => !DONE(r) && (r.status === "in_progress" || r.percent > 0);
@@ -896,7 +927,9 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     .sort((a, b) => Number(b.critical) - Number(a.critical) || a.crewStart - b.crewStart || cmp(a, b));
   // Deficit in work-hours against the plan as of now: planned hours earned
   // by now minus hours actually done.
-  const gapHours = Math.round((wplanned - wactual) * 10) / 10;
+  // (wplanned − wactual is exactly behind − ahead; rounded from the two
+  // parts so the three numbers the report shows always add up.)
+  const gapHours = Math.round((Math.round(behindSum * 10) - Math.round(aheadSum * 10))) / 10;
   let backOnTrackAt: number | null = null;
   if (gapHours > 0.5) {   // "even" within half an hour: nothing to close
     let acc = 0;
@@ -912,6 +945,11 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     tz, now, shift, next,
     overall: {
       actualPct, plannedPct, variancePct, standing, stepsDone, stepsTotal: leaves.length, unscheduled,
+      drivers: {
+        ahead: aheadOf.sort((a, b) => b.hours - a.hours), behind: behindOf.sort((a, b) => b.hours - a.hours),
+        aheadHours: Math.round(aheadSum * 10) / 10,
+        behindHours: Math.round(behindSum * 10) / 10,
+      },
       plannedStart: hasSpan ? plannedStart : null, plannedFinish: hasSpan ? plannedFinish : null,
       daysElapsed, daysTotal,
       planBasis: baselined > 0 ? "baseline" : "current",

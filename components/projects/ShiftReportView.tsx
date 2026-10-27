@@ -28,13 +28,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  Printer, ChevronLeft, ChevronRight, ChevronDown, Sun, Moon, AlertTriangle, CheckCircle2, Flag, FastForward,
+  Printer, ChevronLeft, ChevronRight, ChevronDown, Sun, Moon, CheckCircle2, Flag, FastForward,
   TrendingUp, TrendingDown, Minus, Zap, Presentation, X, Settings2, Rocket, ArrowLeftRight, Trophy,
-  Copy, Mail, FileText, Pause,
+  Copy, Mail, FileText,
 } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { buildProgressIndex, leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
+import { turnoverPlan, nextOf, standing, askedLine, gainOf, doneOf, gapStory } from "@/lib/turnoverPlan";
 import {
   buildShiftReport, shiftWindow, nextShift, previousShift, defaultReviewShift, nextShiftWithWork, expectedByParent, paceOf, expectedFraction, workShiftOf, staffedDueMs, meetingLeadMin, type Pace, type WorkShift,
   DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftRow, type ShiftWindow, type ShiftReport, type PullCrew,
@@ -43,7 +44,7 @@ import {
 import { buildKickoff, buildCloseout, defaultMeeting, type MeetingKind, type PlanRow } from "@/lib/meetingPlan";
 import { clockLabel, fmtInTz, tzAbbrev } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
-import { toPlainText, toEmailHtml, type ExportBlock, type ExportDoc, type ExportStepRow } from "@/lib/reportExport";
+import { toPlainText, toEmailHtml, type ExportBlock, type ExportCell, type ExportDoc, type ExportStepRow } from "@/lib/reportExport";
 import { turnoverUpdate, withoutEmpty, noteLine, hazardJobsOf } from "@/lib/managementUpdate";
 import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
 import { latestNotes } from "@/lib/milestones";
@@ -217,7 +218,7 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
   const setDecision = useCallback((id: string, d: HandoverDecision) => { void updateDraft((cur) => ({ ...cur, [id]: d })); }, [updateDraft]);
   // Steps carried to the other crew — the ones the next shift could try —
   // and steps pulled forward from later in the schedule.
-  const carried = useMemo(() => [...report.goals.otherShift, ...report.goals.movedOff, ...report.goals.pulled], [report]);
+  const carried = useMemo(() => [...report.goals.otherShift, ...report.goals.movedOff, ...report.goals.paused, ...report.goals.pulled], [report]);
   // ── Add work for the next shift (PullAheadPicker) ──
   const [pickerOpen, setPickerOpen] = useState(false);
   // The whole remaining job, only while the picker is open.
@@ -849,13 +850,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   /** The meeting's exceptions (lib/shiftHandover): steps the next shift
    *  could try, which crew; and what the last turnover asked of this one. */
   handover?: HandoverCtx }): Sec[] {
-  const { overall, review, goals, blocked, shift, next } = report;
-  // A step's latest comment, as one quiet line under it — shown once: with
-  // the problem when it's one (that's where it's discussed), else under the
-  // next shift's step when it's there, else where the step appears.
-  const nextIds = new Set(goals.all.map((r) => r.leaf.id).filter(Boolean));
-  const comment = (r: ShiftRow, where: "last" | "next" | "other" | "problem") => {
-    if (where === "last" && r.leaf.id && nextIds.has(r.leaf.id)) return undefined;
+  const { overall, review, goals, shift, next } = report;
+  // A step's latest comment, as one quiet line under it (each step shows once).
+  const comment = (r: ShiftRow) => {
     const n = noteLine(r.leaf.id ? o.noteOf?.(r.leaf.id) : undefined, shift.start, c.D);
     return n ? `“${n}”` : undefined;
   };
@@ -867,36 +864,16 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     if (!s && !f) return "all shift";
     return `${s ?? "…"}–${f ?? "…"}`;
   };
-  const seen = new Set<string>();
-  const didNotFinish: ShiftRow[] = [];
-  // This crew's unfinished work — another crew's leftovers are theirs.
-  const ownWork = (r: ShiftRow) => r.work === "both" || r.work === shift.kind;
-  // Blocked / on-hold work is under "Needs a decision", with its reason.
   const isHeld = (r: ShiftRow) => r.status === "blocked" || r.status === "on_hold";
-  for (const r of [...review.carryOver, ...review.inProgress, ...review.notStarted]) {
-    if (!ownWork(r) || isHeld(r)) continue;
-    if (!r.leaf.id || seen.has(r.leaf.id)) continue;
-    seen.add(r.leaf.id); didNotFinish.push(r);
-  }
-  didNotFinish.sort((a, b) => Number(b.critical) - Number(a.critical) || Number(b.carryOver) - Number(a.carryOver) || a.start - b.start);
   const gap = goals.gapHours;
-  // One line, only when it says something the numbers above don't: which
-  // pulled-ahead items would close the gap.
-  const stretchMsg = gap > 0.5 && goals.backOnTrackAt
-    ? `Items 1–${goals.backOnTrackAt} (${c.hrs(goals.stretch.slice(0, goals.backOnTrackAt).reduce((a, r) => a + r.hoursLeft, 0))}) would close the ${c.hrs(gap)} gap.`
-    : null;
-  const critCarry = goals.carryOver.filter((r) => r.critical).length;
-  // What didn't finish: past due or behind the plan are problems; work
-  // simply carrying on as planned is the next shift's plan, not news.
-  const pastDue = didNotFinish.filter((r) => r.pace === "overdue" || r.carryOver);
-  const behindPlan = didNotFinish.filter((r) => !pastDue.includes(r) && r.pace === "behind");
-  const problemCount = pastDue.length + behindPlan.length + blocked.length;
-  // Settled under Problems & decisions — marked on the next shift's list.
-  const decidedIds = new Set([...pastDue, ...behindPlan, ...blocked].map((r) => r.leaf.id ?? ""));
-  // The next shift's one list: only work its crew does — carry-overs first,
-  // then its planned work in priority order. The other crew's work waits
-  // for that crew (Carries to …), never "if you can".
-  const planList = goals.all;
+  const ho = o.handover;
+  const tryOf = (r: ShiftRow) => (r.leaf.id && ho?.decisions[r.leaf.id]?.tryIt ? ho.decisions[r.leaf.id] : undefined);
+  // Where every step goes — decided once (lib/turnoverPlan), the same as
+  // the email: each step appears once, where it says what happens to it.
+  const plan = turnoverPlan(report, (id) => !!ho?.decisions[id]?.tryIt);
+  const { items, tried: tryList, pulled: pulledRows } = plan;
+  const planList = items.filter((x) => x.kind === "next").map((x) => x.r);
+  const planHrs = planList.reduce((a, r) => a + (r.hoursNext ?? 0), 0);
   const priorityOf = new Map<string, number>();
   planList.forEach((r, i) => { if (r.leaf.id) priorityOf.set(r.leaf.id, i + 1); });
   // "After #2": a step waiting on another step on this list names its
@@ -908,154 +885,102 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       ? { t: `after #${nums.join(", #")}`, tone: "amber" }
       : { t: `waits on ${r.waitingOn[0].name}${r.waitingOn.length > 1 ? ` +${r.waitingOn.length - 1}` : ""}`, tone: "amber" };
   };
-  // Done and where the plan says it should be, side by side.
-  const problemRow = (r: ShiftRow) => rowFromShift(r, c, {
-    when: r.offSchedule ? `due ${c.DTs(r.dueAt)}` : rowTime(r, shift),
-    note: comment(r, "problem"),
-    right: `${r.percent}% / ${r.expectedPct}%`,
+  const gainTag = (r: ShiftRow): TagT | null => { const g = gainOf(report, r); return g > 0 ? { t: `+${g} this shift`, tone: "emerald" } : null; };
+  // ── Done: finished, and moved forward but on no list below.
+  const doneIds = new Set(plan.done.map((r) => r.leaf.id ?? r.leaf.name));
+  const doneRows = [...plan.done, ...plan.moved].map((r) => {
+    const fin = doneIds.has(r.leaf.id ?? r.leaf.name);
+    // What it meant for the plan — on plan, early, late — not a bare ✓.
+    const d = doneOf(report, r, c);
+    return rowFromShift(r, c, {
+      when: r.offSchedule ? `planned ${c.D(r.start)}` : rowTime(r, shift),
+      right: fin ? d.label.toLowerCase() : d.label,
+      done: fin,
+      note: comment(r),
+      extraTags: [{ t: d.detail, tone: d.tone }],
+    });
   });
-  const pastRows = pastDue.map(problemRow), behindRows = behindPlan.map(problemRow);
-  // Done — and, for work planned after this shift, ahead of plan: a fact
-  // of the plan (it was planned for later and is done now), not a claim
-  // about the minute it finished (progress is often caught up later).
-  const aheadTag = (r: ShiftRow): TagT | null => (r.plannedLater ? { t: `ahead — planned ${c.DTs(r.crewStart)}`, tone: "emerald" } : null);
-  const doneRows = review.done.map((r) => rowFromShift(r, c, {
-    when: r.offSchedule ? `planned ${c.D(r.start)}` : rowTime(r, shift),
-    right: "done ✓",
-    done: true,
-    note: comment(r, "last"),
-    extraTags: [aheadTag(r)],
-  }));
-  // Moved forward but not finished: from where it was when the shift began
-  // (the progress log), or — without that record — later work with any
-  // progress (it can only be early).
-  const movedList = review.knownStart ? review.progressed : review.ahead.filter((r) => !review.done.includes(r) && r.percent < 100);
-  const movedRows = movedList.map((r) => rowFromShift(r, c, {
-    when: r.plannedLater ? `planned ${c.DTs(r.crewStart)}` : rowTime(r, shift),
-    right: review.knownStart && r.pctStart != null ? `${r.pctStart}% → ${r.percent}%` : `${r.percent}%`,
-    note: comment(r, "last"),
-    extraTags: [aheadTag(r)],
-  }));
-  const aheadCount = review.ahead.length;
-  const decideRows = blocked.map((r) => rowFromShift(r, c, {
-    when: `${r.percent}%`,
-    right: c.DTs(r.dueAt),
-    extraTags: [r.status === "blocked" ? { t: "blocked", tone: "rose" } : { t: "on hold", tone: "amber" }],
-    note: r.reason ? `Reason: ${r.reason}` : "No reason recorded — ask the crew lead.",
-  }));
-  const otherKind = next.kind === "day" ? "night" : "day";
-  const nextRows = planList.map((r) => rowFromShift(r, c, {
-    when: r.carryOver ? `due ${c.DTs(r.dueAt)}` : rowTime(r, next),
-    note: decidedIds.has(r.leaf.id ?? "") ? undefined : comment(r, "next"),
-    n: { num: priorityOf.get(r.leaf.id ?? "") ?? 0, tone: r.critical ? "rose" : r.carryOver ? "amber" : "slate" },
-    // Where it should be when the shift ends (one number with the email).
-    right: `${r.percent}% → ${r.goalPct ?? r.percent}%`,
-    extraTags: [
-      decidedIds.has(r.leaf.id ?? "") ? { t: "✓ decided above", tone: "muted" } : null,
-      r.carryOver ? { t: "carry-over", tone: "amber" } : null,
-      r.reflowed && !r.carryOver ? { t: `file had ${c.DTs(r.start)}`, tone: "muted" } : null,
-      !r.carryOver && r.lateStart ? { t: "late start", tone: "amber" } : null,
-      waitTag(r),
-      !r.carryOver && !r.reflowed && r.start < next.start ? { t: `since ${c.D(r.start)}`, tone: "muted" } : null,
-      r.finish > next.end ? { t: `to ${c.D(r.finish)}`, tone: "muted" } : null,
-    ],
-  }));
-  // The next shift's work as the safety moment ranks it: its hours on
-  // that shift (what's left, for work already past due).
-  const hazardJobs: HazardJobInput[] = hazardJobsOf(planList, next, (r) => (r.carryOver ? `due ${c.DTs(r.dueAt)}` : rowTime(r, next)));
-  // ── Carries to the other crew: its unfinished work, and work the file
-  // put in the next shift's hours with no crew on then. Its crew picks it
-  // up at its next shift.
-  const after = nextShift(next, c.tz, o.times);
-  const carries = [...goals.otherShift, ...goals.movedOff];
-  const ho = o.handover;
-  const tryOf = (r: ShiftRow) => (r.leaf.id && ho?.decisions[r.leaf.id]?.tryIt ? ho.decisions[r.leaf.id] : undefined);
-  const carriesRows = (print: boolean) => carries.filter((r) => !print || !tryOf(r)).map((r) => ({
-    ...rowFromShift(r, c, {
-      when: r.carryOver ? `due ${c.DTs(r.dueAt)}` : `${c.T(r.start)}–${c.T(r.finish)}`,
-      note: comment(r, "other"),
-      right: `${r.percent}%`,
-      extraTags: [
-        r.carryOver ? { t: "carry-over", tone: "amber" } : { t: `no ${next.kind} crew`, tone: "muted" },
-        tryOf(r) ? { t: `↑ listed for the ${next.kind} shift to try`, tone: "muted" } : null,
-      ],
-    }),
-    // The exception, marked here at the meeting (never printed). Once
-    // marked, it's edited where it's listed — one control per step.
-    control: ho && r.leaf.id && !tryOf(r) ? (
-      <TryControl key={`${ho.key}:${r.leaf.id}`} kind={next.kind} decision={ho.decisions[r.leaf.id]} suggestions={ho.suggest(r)} crews={ho.crews}
-        disabled={ho.locked} onChange={(d) => ho.set(r.leaf.id!, d)} />
-    ) : undefined,
-  }));
-  // Marked "could try": listed with the next shift's work, if possible.
-  // …and steps pulled forward from later in the schedule (the picker).
+  // Ahead or behind — and the steps that make it up (the same as the email).
+  const story = gapStory(report, c);
+  // One table: the steps that put the job ahead, then those behind.
+  const whyRows: Array<{ id: string; cells: React.ReactNode[] }> = [];
+  const whyData: ExportCell[][] = [];
+  for (const side of ["ahead", "behind"] as const) {
+    const g = story[side];
+    if (!g.lines.length) continue;
+    const cls = side === "ahead" ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-400";
+    const tone = side === "ahead" ? "emerald" as const : "rose" as const;
+    const title = side === "ahead" ? `Ahead of plan — ${g.total}` : `Behind plan — ${g.total}`;
+    whyRows.push({ id: side, cells: [<b key="t" className={cls}>{title}</b>, "", "", ""] });
+    whyData.push([{ t: title, tone, bold: true }, "", "", ""]);
+    g.lines.forEach((x, i) => {
+      whyRows.push({ id: `${side}${i}`, cells: [<b key="t">{x.task ?? ""}</b>, x.step, <span key="w" className="text-[var(--color-text-muted)]">{x.text}</span>, <b key="h" className={`font-mono whitespace-nowrap ${cls}`}>{x.hours}</b>] });
+      whyData.push([{ t: x.task ?? "", bold: true }, x.step, { t: x.text, tone: "muted" }, { t: x.hours, tone, bold: true }]);
+    });
+    if (g.more) {
+      const h = `${side === "ahead" ? "+" : "−"}${g.more.hours}`;
+      whyRows.push({ id: `${side}more`, cells: [<span key="m" className="text-[var(--color-text-muted)]">+ {g.more.count} more</span>, "", "", <b key="h" className={`font-mono ${cls}`}>{h}</b>] });
+      whyData.push([{ t: `+ ${g.more.count} more`, tone: "muted" }, "", "", { t: h, tone }]);
+    }
+  }
+  // ── Next: one list. The next crew's work (numbered, in priority order),
+  // what it could try, what waits for its own crew, what's blocked.
   const shiftHrs = (next.end - next.start) / 3_600_000;
-  const pulledRows = goals.pulled;
-  const tryList = [...carries.filter((r) => tryOf(r)), ...pulledRows];
-  // One count for the screen, print, email and picker (capacityOf): each
-  // step's share of one shift against the crew size actually set.
-  const capa = capacityOf(ho?.pullSet ?? null, tryList, shiftHrs);
-  const ps = ho?.pullSet;
-  const tryTitle = `Could try if possible — ${c.hrs(capa.used)}${capa.hours > 0 ? ` of ${c.hrs(capa.hours)}${capa.over ? " — over" : ""} (${ps?.crew ? `${ps.crew}, ` : ""}${ps!.hands} × ${Math.min(ps!.hours, shiftHrs)} h)` : ""}`;
-  const tryRows = (print: boolean) => tryList.map((r) => {
+  const nextRows = (print: boolean) => items.map(({ r, kind }) => {
     const pulled = pulledRows.includes(r);
     const d = tryOf(r);
-    const crewName = d?.crew ?? (pulled ? ho?.pullSet?.crew ?? null : null);
+    const crewName = kind === "try" ? d?.crew ?? (pulled ? ho?.pullSet?.crew ?? null : null) : null;
+    const x = nextOf(report, r, kind, c, { pulled, crew: crewName });
     const scope = pulled ? scopeOf({ row: r }, crewName) : null;
     return {
       ...rowFromShift(r, c, {
-        when: pulled ? `planned ${c.DTs(r.crewStart)}${r.reflowed ? " (crew hours)" : ""}` : r.carryOver ? `due ${c.DTs(r.dueAt)}` : `${c.T(r.start)}–${c.T(r.finish)}`,
-        note: d?.note ? `“${d.note}”` : undefined,
-        right: c.hrs(Math.min(r.hoursLeft, shiftHrs)),
+        when: x.label,
+        n: kind === "next" ? { num: priorityOf.get(r.leaf.id ?? "") ?? 0, tone: r.critical ? "rose" : r.carryOver ? "amber" : "slate" } : undefined,
+        right: standing(r, kind),
+        note: [kind === "try" && d?.note ? `“${d.note}”` : null, comment(r)].filter(Boolean).join(" ") || undefined,
         extraTags: [
-          pulled ? { t: "pulled ahead", tone: "amber" } : { t: `${otherKind} crew's`, tone: "muted" },
-          crewName ? { t: crewName, tone: "muted" } : null,
+          x.detail ? { t: x.detail, tone: x.tone ?? "muted" } : null,
+          gainTag(r),
+          kind === "next" || pulled ? waitTag(r) : null,
           scope ? { t: `${scope}'s scope — coordinate`, tone: "amber" } : null,
-          pulled ? waitTag(r) : null,
         ],
       }),
-      control: !print && ho && r.leaf.id ? (
+      // The meeting's call on it (never printed): could the next crew try
+      // it? One small button on the line; once marked, its crew and note.
+      inline: !print && ho && r.leaf.id && kind === "carry" ? (
+        <button type="button" disabled={ho.locked} onClick={() => ho.set(r.leaf.id!, { ...ho.decisions[r.leaf.id!], tryIt: true, crew: ho.suggest(r)[0]?.crew ?? null })}
+          className="whitespace-nowrap rounded-full border border-indigo-300 dark:border-indigo-800 px-1.5 py-px text-[10px] font-bold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 disabled:opacity-60 print:hidden">
+          + {next.kind} could try
+        </button>
+      ) : undefined,
+      control: !print && ho && r.leaf.id && kind === "try" ? (
         <TryControl key={`${ho.key}:${r.leaf.id}`} kind={next.kind} decision={ho.decisions[r.leaf.id]} suggestions={ho.suggest(r)} crews={ho.crews}
           inherit={pulled && ho.pullSet?.crew ? ho.pullSet.crew : undefined}
           disabled={ho.locked} onChange={(nd) => ho.set(r.leaf.id!, { ...nd, pulled: pulled || undefined })} />
       ) : undefined,
     };
   });
+  // The next shift's work as the safety moment ranks it.
+  const hazardJobs: HazardJobInput[] = hazardJobsOf(planList, next, (r) => (r.carryOver ? `due ${c.DTs(r.dueAt)}` : rowTime(r, next)));
+  const capa = capacityOf(ho?.pullSet ?? null, tryList, shiftHrs);
   const addButton = ho?.openPicker ? (
     <button type="button" onClick={ho.openPicker}
       className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-indigo-400 dark:border-indigo-700 px-3 py-1.5 text-[12px] font-bold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 print:hidden">
       <Zap className="w-3.5 h-3.5" /> Add work for the {next.kind} shift
     </button>
   ) : null;
-  // What the last turnover asked of this shift, as entered.
-  const askedRows = (ho?.asked ?? []).map((a) => ({
-    id: a.id, cells: [<b key="n">{a.name}</b>, a.why, a.crew ?? "—", `${a.from}%`, askedResult(a)],
-  }));
-  const askedDone = (ho?.asked ?? []).filter((a) => (a.now ?? 0) >= 100).length;
-  // The other crew's work under way, paused over the next shift: a line.
-  const pausedLine = goals.paused.length
-    ? `${otherKind === "day" ? "Day" : "Night"} crew's work paused until ${c.T(next.end)}: ${goals.paused.map((r) => `${r.parentName ? `${r.parentName} — ` : ""}${r.leaf.name} (${r.percent}%)`).join("; ")}.`
+  const asked = ho?.asked ?? [];
+  const askedText = asked.length ? `Asked last turnover: ${askedLine(asked, askedResult)}` : null;
+  const otherKind = next.kind === "day" ? "night" : "day";
+  const tryLine = tryList.length
+    ? `Could try if possible: ${tryList.length} step${tryList.length === 1 ? "" : "s"}, ${c.hrs(capa.used)}${capa.hours > 0 && ho?.pullSet ? ` of ${c.hrs(capa.hours)}${capa.over ? " — over" : ""} (${ho.pullSet.crew ? `${ho.pullSet.crew}, ` : ""}${ho.pullSet.hands} × ${Math.min(ho.pullSet.hours, shiftHrs)} h)` : ""}.`
     : null;
-  const pulledIds = new Set(pulledRows.map((r) => r.leaf.id));
-  const stretchRows = (print: boolean) => goals.stretch.map((r, i) => {
-    const closes = goals.backOnTrackAt != null && i + 1 <= goals.backOnTrackAt;
-    const added = pulledIds.has(r.leaf.id);
-    return {
-      ...rowFromShift(r, c, {
-        when: `planned ${c.DTs(r.crewStart)}`,
-        n: { num: i + 1, tone: closes ? "amber" : "slate" },
-        right: c.hrs(r.hoursLeft),
-        extraTags: [closes ? { t: "closes gap", tone: "amber" } : null, added ? { t: "✓ added", tone: "muted" } : null],
-      }),
-      // One click puts the app's suggestion on the shift.
-      control: !print && ho?.openPicker && r.leaf.id && !added ? (
-        <button type="button" onClick={() => ho.set(r.leaf.id!, { tryIt: true, pulled: true, crew: null })}
-          className="inline-flex items-center gap-1 rounded-full border border-indigo-300 dark:border-indigo-800 px-2 py-0.5 text-[10.5px] font-bold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 print:hidden">
-          + Add for the {next.kind} shift
-        </button>
-      ) : undefined,
-    };
-  });
+  const nextSub = [
+    `${planList.length} step${planList.length === 1 ? "" : "s"} · ${c.hrs(planHrs)}`,
+    tryList.length ? `${tryList.length} could try` : null,
+    plan.carries.length ? `${plan.carries.length} wait for ${otherKind} crew` : null,
+    plan.held.length ? `${plan.held.length} blocked or on hold` : null,
+  ].filter(Boolean).join(" · ");
   const pastDueAll = (o.whole ?? report).review.carryOver.filter((r) => !isHeld(r)).length;
   const forCrew = o.crew ? ` for ${o.crew}` : "";
   const standStats = [
@@ -1071,7 +996,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     // Past due across every crew (blocked work is counted under decisions).
     { label: o.crew ? "Past due · all crews" : "Past due", value: `${pastDueAll}`, tone: (pastDueAll ? "amber" : "emerald") as "amber" | "emerald" },
   ];
-  const nothingLast = review.scheduled.length === 0 && review.done.length === 0 && didNotFinish.length === 0;
+  const nothingLast = review.scheduled.length === 0 && doneRows.length === 0;
 
   return [
     {
@@ -1080,12 +1005,20 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         overall.planBasis === "baseline" ? `vs baseline${overall.baselineSetAt ? ` of ${c.D(Date.parse(overall.baselineSetAt))}` : ""}` : "vs live dates (no baseline)",
         overall.unscheduled > 0 ? `${overall.unscheduled} step${overall.unscheduled === 1 ? "" : "s"} without dates not counted` : null].filter(Boolean).join(" · "),
       flag: overall.standing === "behind" ? "rose" : null,
-      body: () => (
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 keep">
-          {standStats.map((x) => <Stat key={x.label} label={x.label} value={x.value} tone={x.tone} />)}
+      body: (print) => (
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 keep">
+            {standStats.map((x) => <Stat key={x.label} label={x.label} value={x.value} tone={x.tone} />)}
+          </div>
+          <div className={`text-[12.5px] font-bold ${overall.standing === "behind" ? "text-rose-700 dark:text-rose-300" : overall.standing === "ahead" ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text)]"}`}>{story.headline}</div>
+          {whyRows.length > 0 && <SimpleTable print={print} head={["Task", "Step", "Why", "Hours"]} rows={whyRows} />}
         </div>
       ),
-      data: () => [{ k: "stats", items: standStats }],
+      data: () => [
+        { k: "stats", items: standStats },
+        { k: "note", text: story.headline, tone: overall.standing === "behind" ? "rose" : overall.standing === "ahead" ? "emerald" : undefined } as ExportBlock,
+        ...(whyData.length ? [{ k: "table", head: ["Task", "Step", "Why", "Hours"], align: ["left", "left", "left", "right"], nowrap: [3], rows: whyData } as ExportBlock] : []),
+      ],
     },
     {
       id: "safety", title: "Safety & people", short: "Safety",
@@ -1101,79 +1034,38 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         </div>
       ),
     },
-    ...(askedRows.length ? [{
-      // ── What the last turnover asked this shift to try, and how far it got.
-      id: "asked", title: `Asked to try — ${shiftName(shift)}`, short: "Asked",
-      sub: `${askedDone} of ${askedRows.length} done · as entered`, count: askedRows.length,
-      body: (print: boolean) => <SimpleTable print={print} head={["Step", "Why", "Crew", "At ship", "Now"]} rows={askedRows} />,
-      data: () => [{ k: "table", head: ["Step", "Why", "Crew", "At ship", "Now"], rows: (ho?.asked ?? []).map((a) => [a.name, a.why, a.crew ?? "—", `${a.from}%`, askedResult(a)]) } as ExportBlock],
-    } as Sec] : []),
     {
-      // ── Completed — good news first, no decisions in it.
-      id: "done", title: `Completed — ${shiftName(shift)} ${c.D(shift.start)} ${c.win(shift)}`, short: "Completed",
-      sub: [`${review.scheduled.length} planned · ${review.done.length} done`, movedRows.length ? `${movedRows.length} moved forward` : null, aheadCount ? `${aheadCount} ahead of plan` : null, problemCount ? `${problemCount} problem${problemCount === 1 ? "" : "s"} next` : null].filter(Boolean).join(" · "),
-      count: review.done.length,
+      // ── Done — what the shift finished, and what it moved forward.
+      id: "done", title: `Done — ${shiftName(shift)} ${c.D(shift.start)} ${c.win(shift)}`, short: "Done",
+      sub: [`${plan.done.length} finished`, plan.moved.length ? `${plan.moved.length} moved forward` : null].filter(Boolean).join(" · "),
+      count: plan.done.length,
       flag: null,
-      data: () => (nothingLast && movedRows.length === 0) ? [{ k: "empty", text: `Nothing was planned${forCrew} on this shift.` }] : [
-        review.done.length === 0 ? { k: "empty", text: `Nothing was completed${forCrew} on this shift.` } : stepsBlock(doneRows, "Finished"),
-        ...(movedRows.length ? [{ k: "sub", title: review.knownStart ? "Progress this shift (as entered)" : "Worked ahead — progress on later work (as entered)", count: movedRows.length, tone: "emerald" } as ExportBlock, stepsBlock(movedRows, review.knownStart ? "Start → now" : "Done")] : []),
+      data: () => [
+        ...(askedText ? [{ k: "note", text: askedText } as ExportBlock] : []),
+        doneRows.length === 0 ? { k: "empty", text: `Nothing was ${nothingLast ? "planned" : "completed"}${forCrew} on this shift.` } : stepsBlock(doneRows, "Done"),
       ],
-      body: (print) => (nothingLast && movedRows.length === 0) ? (
-        <Empty>
-          Nothing was planned{forCrew} on this shift.
-          {o.onJump && o.jumpTarget && !print && (
-            <button onClick={o.onJump} className="ml-2 inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline">
-              <FastForward className="w-3.5 h-3.5" /> Jump to {o.jumpTarget.kind} shift, {c.D(o.jumpTarget.start)}
-            </button>
-          )}
-        </Empty>
-      ) : (
+      body: (print) => (
         <div className="space-y-2">
-          {review.done.length === 0 ? <Empty>Nothing was completed{forCrew} on this shift.</Empty> : <StepTable print={print} rightHead="Finished" rows={doneRows} />}
-          {movedRows.length > 0 && (
-            <>
-              <Sub tone="emerald" icon={<TrendingUp className="w-3.5 h-3.5" />} title={review.knownStart ? "Progress this shift (as entered)" : "Worked ahead — progress on later work (as entered)"} count={movedRows.length} />
-              <StepTable print={print} rightHead={review.knownStart ? "Start → now" : "Done"} rows={movedRows} />
-            </>
+          {askedText && <div className="text-[11.5px] font-semibold text-slate-700 dark:text-slate-200">{askedText}</div>}
+          {doneRows.length > 0 ? <StepTable print={print} rightHead="Done" rows={doneRows} /> : (
+            <Empty>
+              Nothing was {nothingLast ? "planned" : "completed"}{forCrew} on this shift.
+              {nothingLast && o.onJump && o.jumpTarget && !print && (
+                <button onClick={o.onJump} className="ml-2 inline-flex items-center gap-1 font-bold text-[var(--color-accent)] hover:underline">
+                  <FastForward className="w-3.5 h-3.5" /> Jump to {o.jumpTarget.kind} shift, {c.D(o.jumpTarget.start)}
+                </button>
+              )}
+            </Empty>
           )}
         </div>
       ),
     },
     {
-      // ── Problems & decisions — every one discussed once, here, with an
-      // owner; the next shift's list carries the decision.
-      id: "problems", title: "Problems & decisions", short: "Problems",
-      sub: problemCount === 0 ? "Nothing past due, behind or held." : [pastRows.length ? `${pastRows.length} past due` : null, behindRows.length ? `${behindRows.length} behind` : null, blocked.length ? `${blocked.length} blocked or on hold` : null].filter(Boolean).join(" · ") + " — name an owner for each",
-      count: problemCount, flag: pastDue.some((r) => r.critical) || blocked.some((r) => r.status === "blocked") ? "rose" : problemCount ? "amber" : null,
-      data: () => problemCount === 0 ? [{ k: "empty", text: "No problems — everything is on plan." }] : [
-        ...(pastRows.length ? [{ k: "sub", title: "Past due — carries over", count: pastRows.length, tone: "rose" } as ExportBlock, stepsBlock(pastRows, "Done / plan")] : []),
-        ...(behindRows.length ? [{ k: "sub", title: "Behind plan", count: behindRows.length, tone: "amber" } as ExportBlock, stepsBlock(behindRows, "Done / plan")] : []),
-        ...(blocked.length ? [{ k: "sub", title: "Blocked or on hold", count: blocked.length, tone: "amber" } as ExportBlock, stepsBlock(decideRows, "Due", "Done")] : []),
-      ],
-      body: (print) => problemCount === 0 ? <Empty>No problems — everything is on plan.</Empty> : (
-        <div className="space-y-2">
-          {pastRows.length > 0 && <>
-            <Sub tone="rose" icon={<AlertTriangle className="w-3.5 h-3.5" />} title="Past due — carries over" count={pastRows.length} />
-            <StepTable print={print} rightHead="Done / plan" ownerLine rows={pastRows} />
-          </>}
-          {behindRows.length > 0 && <>
-            <Sub tone="amber" icon={<TrendingDown className="w-3.5 h-3.5" />} title="Behind plan" count={behindRows.length} />
-            <StepTable print={print} rightHead="Done / plan" ownerLine rows={behindRows} />
-          </>}
-          {blocked.length > 0 && <>
-            <Sub tone="amber" icon={<AlertTriangle className="w-3.5 h-3.5" />} title="Blocked or on hold" count={blocked.length} />
-            <StepTable print={print} rightHead="Due" ownerLine rows={decideRows} whenHead="Done" />
-          </>}
-        </div>
-      ),
-    },
-    {
-      // ── Next shift — one numbered list; what was decided above is marked,
-      // not discussed again. Each step shows where it is and its goal by
-      // the end of the shift.
-      id: "next", title: `Next shift — ${shiftName(next)} ${c.D(next.start)} ${c.win(next)}`, short: "Next shift",
-      sub: [`${planList.length} steps`, `${c.hrs(goals.mustDoHours)} this shift`, planList.some((r) => decidedIds.has(r.leaf.id ?? "")) ? `${planList.filter((r) => decidedIds.has(r.leaf.id ?? "")).length} decided above` : null, goals.critical.length ? `${goals.critical.length} critical` : null].filter(Boolean).join(" · "),
-      count: planList.length, flag: critCarry ? "rose" : goals.carryOver.length ? "amber" : null,
+      // ── Next — one list, each step once, with what happens to it.
+      id: "next", title: `Next — ${shiftName(next)} ${c.D(next.start)} ${c.win(next)}`, short: "Next",
+      sub: nextSub,
+      count: planList.length,
+      flag: plan.held.some((r) => r.status === "blocked") ? "rose" : null,
       body: (print) => (
         <div className="space-y-2">
           {next.kind === "night" && o.times.nightJobs === undefined && (
@@ -1182,49 +1074,23 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
               <b>Night crews aren&apos;t set</b> — this list follows the schedule file&apos;s hours, which can hand day work to nights. Set them once in <b>Schedule setup → Night crews</b>.
             </div>
           )}
-          {planList.length === 0 ? <Empty>Nothing is scheduled for the next shift.</Empty> : (
-            <StepTable print={print} box rightHead="Now → goal" rows={nextRows} />
+          {items.length === 0 ? <Empty>Nothing is scheduled for the next shift.</Empty> : (
+            <StepTable print={print} box whenHead="Next" rightHead="Now → goal" rows={nextRows(print)} />
           )}
-          {tryList.length > 0 && (
-            <>
-              <Sub tone="amber" icon={<Zap className="w-3.5 h-3.5" />} title={tryTitle} count={tryList.length} />
-              <StepTable print={print} box rightHead="This shift" rows={tryRows(print)} />
-            </>
-          )}
+          {tryLine && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{tryLine}</div>}
           {goals.pulledHeld.length > 0 && (
             <div className="text-[11.5px] font-semibold text-rose-700 dark:text-rose-300">
               Blocked since it was added — not on the list: {goals.pulledHeld.map((r) => `${r.leaf.name}${r.reason ? ` (${r.reason})` : ""}`).join("; ")}.
             </div>
           )}
           {!print && addButton}
-          {goals.stretch.length > 0 && (
-            <>
-              <Sub tone={gap > 0.5 ? "amber" : "emerald"} icon={<Zap className="w-3.5 h-3.5" />} title="Can be pulled ahead" count={goals.stretch.length} />
-              {stretchMsg && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{stretchMsg}</div>}
-              <StepTable print={print} box rightHead="Left" rows={stretchRows(print)} />
-            </>
-          )}
-          {pausedLine && <div className="text-[11.5px] text-[var(--color-text-muted)]"><Pause className="inline w-3.5 h-3.5 -mt-0.5 mr-1" />{pausedLine}</div>}
         </div>
       ),
       data: () => [
-        planList.length === 0 ? { k: "empty", text: "Nothing is scheduled for the next shift." } : stepsBlock(nextRows, "Now → goal"),
-        ...(tryList.length ? [{ k: "sub", title: tryTitle, count: tryList.length, tone: "amber" } as ExportBlock, stepsBlock(tryRows(true), "This shift")] : []),
-        ...(goals.stretch.length > 0 ? [
-          { k: "sub", title: "Can be pulled ahead", count: goals.stretch.length, tone: gap > 0.5 ? "amber" : "emerald" } as ExportBlock,
-          ...(stretchMsg ? [{ k: "note", text: stretchMsg, tone: "amber" } as ExportBlock] : []),
-          stepsBlock(stretchRows(true), "Left"),
-        ] : []),
-        ...(pausedLine ? [{ k: "note", text: pausedLine } as ExportBlock] : []),
+        items.length === 0 ? { k: "empty", text: "Nothing is scheduled for the next shift." } : stepsBlock(nextRows(true), "Now → goal", "Next"),
+        ...(tryLine ? [{ k: "note", text: tryLine, tone: "amber" } as ExportBlock] : []),
       ],
     },
-    ...(carries.length ? [{
-      id: "carries", title: `Carries to ${otherKind} shift — ${c.D(after.start)} ${c.T(after.start)}`, short: `To ${otherKind} shift`,
-      sub: `${carries.length} step${carries.length === 1 ? "" : "s"} for the ${otherKind} crew — not on the ${next.kind} shift's list`,
-      count: carries.length,
-      body: (print: boolean) => carriesRows(print).length ? <StepTable print={print} rightHead="Done" rows={carriesRows(print)} /> : <Empty>All of it is on the {next.kind} shift&apos;s list to try.</Empty>,
-      data: () => [carriesRows(true).length ? stepsBlock(carriesRows(true), "Done") : { k: "empty", text: "All of it is listed to try." }],
-    } as Sec] : []),
     closeSection("Close", ["Outgoing supervisor", "Incoming supervisor", "Crew lead"]),
   ];
 }
@@ -1538,11 +1404,6 @@ function Stat({ label, value, tone }: { label: string; value: string; tone: "eme
   );
 }
 
-function Sub({ tone, icon, title, count }: { tone: "emerald" | "amber" | "rose" | "slate"; icon: React.ReactNode; title: string; count: number }) {
-  const t = tone === "emerald" ? "text-emerald-700 dark:text-emerald-400" : tone === "amber" ? "text-amber-700 dark:text-amber-400" : tone === "rose" ? "text-rose-700 dark:text-rose-400" : "text-slate-700 dark:text-slate-300";
-  return <div className={`inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-wide ${t}`}>{icon} {title} <span className="font-mono opacity-80">({count})</span></div>;
-}
-
 function Empty({ children }: { children: React.ReactNode }) {
   return <div className="py-1 text-[11.5px] text-[var(--color-text-muted)] italic">{children}</div>;
 }
@@ -1576,7 +1437,7 @@ function TagChip({ t, tone }: TagT) {
     : tone === "amber" ? "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900"
       : tone === "emerald" ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-900"
         : "bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
-  return <span className={`inline-block whitespace-nowrap px-1 py-px rounded border text-[8.5px] font-black uppercase tracking-wider align-middle ${cls}`}>{t}</span>;
+  return <span className={`inline-block max-w-full whitespace-normal sm:whitespace-nowrap break-words px-1 py-px rounded border text-[8.5px] font-black uppercase tracking-wider align-middle ${cls}`}>{t}</span>;
 }
 
 type NumTone = "rose" | "amber" | "slate";
@@ -1606,6 +1467,8 @@ interface TRow {
   note?: string;
   /** On screen only: a control under the step (the meeting's decision). */
   control?: React.ReactNode;
+  /** A small action beside the step's name (never printed). */
+  inline?: React.ReactNode;
 }
 
 /** One line per step, grouped under its equipment with the equipment's
@@ -1642,10 +1505,13 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
           <tr className="bg-slate-50 dark:bg-slate-800/60 text-[9px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 text-left">
             {box && <th className={`${cell} w-5`} />}
             {hasN && <th className={`${cell} w-6`}>#</th>}
-            <th className={`${cell} ${print ? "w-[104px]" : "w-[124px]"}`}>{whenHead}</th>
+            <th className={`${cell} ${print ? "w-[104px]" : "w-[76px] sm:w-[124px]"}`}>{whenHead}</th>
             <th className={cell}>Step</th>
-            {hasWho && <th className={`${cell} hidden sm:table-cell print:table-cell w-[132px]`}>Who</th>}
-            {hasWo && <th className={`${cell} hidden md:table-cell print:table-cell w-[64px]`}>WO</th>}
+            {/* Kept as zero-width columns on a phone (not removed), so the
+                equipment rows' full-width cells don't add phantom columns
+                that squeeze the step's. */}
+            {hasWho && <th className={`${cell} w-0 sm:w-[132px] print:w-[132px] max-sm:p-0 max-sm:text-[0px] overflow-hidden`}>Who</th>}
+            {hasWo && <th className={`${cell} w-0 md:w-[64px] print:w-[64px] max-md:p-0 max-md:text-[0px] overflow-hidden`}>WO</th>}
             <th className={`${cell} w-[96px] text-right`}>{rightHead}</th>
           </tr>
         </thead>
@@ -1676,6 +1542,7 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
                         <span className={r.done ? "line-through text-slate-400" : "font-semibold"}>{r.name}</span>
                       )}
                       {r.tags?.filter((t): t is TagT => !!t).map((t) => <span key={t.t} className="ml-1"><TagChip t={t.t} tone={t.tone} /></span>)}
+                      {!print && r.inline && <span className="ml-1.5 align-middle">{r.inline}</span>}
                       {r.note && <div className="text-[10.5px] italic text-slate-600 dark:text-slate-300">{r.note}</div>}
 
                       {ownerLine && <div className="text-[10px] text-slate-500 mt-0.5">Owner / decision: <span className="inline-block w-44 border-b border-dotted border-slate-400 align-baseline">&nbsp;</span></div>}

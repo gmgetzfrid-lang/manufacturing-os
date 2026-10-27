@@ -65,7 +65,22 @@ export type ExportBlock =
     cols: Array<{ title: string; tone?: Tone; rows: Array<{ title: string; text?: string; value?: string }> }>;
   }
   | { k: "list"; items: Array<{ text: string; note?: string }> }
+  /** A written list: "E-17 Exchanger · Pull bundle — 40%, was due 16:00",
+   *  under an optional heading. No grid — reads like a note. */
+  | { k: "lines"; title?: string; tone?: Tone; items: ExportLine[] }
   | { k: "empty"; text: string };
+
+export interface ExportLine {
+  /** Bold: what it is ("E-17 Exchanger · Pull bundle"). */
+  lead: string;
+  /** What about it ("40% done — was due Oct 26 16:00"). */
+  text: string;
+  tone?: Tone;
+  /** Who, or the hours — quiet, after the text. */
+  aside?: string;
+  /** A comment, on its own line under it. */
+  note?: string;
+}
 
 export interface ExportSection {
   /** Stable key ("stand", "last") — which sections a person leaves out is remembered by it. */
@@ -131,6 +146,13 @@ export function toPlainText(d: ExportDoc): string {
           break;
         case "list":
           for (const x of b.items) out.push(`   ✓ ${x.text}${x.note ? ` (${x.note})` : ""}`);
+          break;
+        case "lines":
+          if (b.title) out.push(`   ${b.title}`);
+          for (const x of b.items) {
+            out.push(`   • ${x.lead} — ${x.text}${x.aside ? ` · ${x.aside}` : ""}`);
+            if (x.note) out.push(`       "${x.note}"`);
+          }
           break;
         case "overview":
           out.push(`   ${b.stats.map((x) => `${x.label}: ${x.value}`).join("  |  ")}`);
@@ -231,6 +253,13 @@ function blockHtml(b: ExportBlock): string {
       return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">${b.items.map((x) =>
         `<tr>${td("font-size:12px;color:#059669;padding:1px 6px 1px 0;vertical-align:top;", "&#10003;")}${td(`font-size:12px;color:${INK};padding:1px 0;`,
           `${esc(x.text)}${x.note ? ` <span style="color:${MUTED};font-size:11px;">${esc(x.note)}</span>` : ""}`)}</tr>`).join("")}</table>`;
+    case "lines":
+      return (b.title ? `<p style="${FONT}font-size:12px;font-weight:bold;margin:10px 0 3px;color:${b.tone ? TONE[b.tone].fg : INK};">${esc(b.title)}</p>` : "") +
+        `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;">${b.items.map((x) =>
+          `<tr>${td(`font-size:13px;color:${MUTED};padding:3px 6px 3px 2px;vertical-align:top;width:10px;`, "&bull;")}${td(`font-size:13px;color:${INK};padding:3px 0;vertical-align:top;line-height:1.4;`,
+            `<b style="color:${INK};">${esc(x.lead)}</b> — <span style="color:${x.tone ? (x.tone === "muted" ? MUTED : TONE[x.tone].fg) : INK};">${esc(x.text)}</span>` +
+            (x.aside ? `<span style="color:${MUTED};"> · ${esc(x.aside)}</span>` : "") +
+            (x.note ? `<div style="${FONT}font-size:11px;font-style:italic;color:${MUTED};">“${esc(x.note)}”</div>` : ""))}</tr>`).join("")}</table>`;
     case "table": {
       // A column with nothing in it (no step started yet) isn't drawn.
       const keep = b.head.map((_, j) => j === 0 || b.rows.some((r) => cellText(r[j] ?? "") !== ""));

@@ -82,15 +82,14 @@ describe("pulled forward", () => {
     expect(d.cl).toMatchObject({ tryIt: true, pulled: true, pctAtShip: 0, name: "Clean flanges" });
     expect(typeof d.cl.plannedStart).toBe("number");
   });
-  it("the email lists them under Next shift with the crew, hours of capacity and why", () => {
+  it("the email lists them on the next shift's list with the crew, hours of capacity and why", () => {
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r, f, {
       pctOf: () => 0, finishOf: () => undefined,
       tryOf: (id) => (id === "cl" || id === "rt" ? { crew: "Maintenance (KE)", note: null } : undefined),
       pull: { crew: "Maintenance (KE)", hands: 2, hours: 12 },
     }) });
-    expect(text).toMatch(/Could try if possible — 16 h of 24 h \(Maintenance \(KE\), 2 × 12 h\)/i);
-    expect(text).toMatch(/Clean flanges · pulled ahead — planned/);
-    expect(text).toMatch(/Night shift could try: 2 extra steps \(16 h\)/);
+    expect(text).toMatch(/Could try if there's time: 2 steps, 16 h of 24 h \(Maintenance \(KE\), 2 × 12 h\)\./);
+    expect(text).toMatch(/Clean flanges · .*Night could try \(Maintenance \(KE\)\) — pulled ahead — planned/);
   });
 });
 
@@ -134,7 +133,7 @@ describe("audit fixes", () => {
     const mail = (pull: { crew: string | null; hands: number; hours: number } | null) => toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r, f, {
       pctOf: () => 0, finishOf: () => undefined, tryOf: (id) => (id === "cl" ? { crew: null, note: null } : undefined), pull,
     }) });
-    expect(mail(null)).toMatch(/Could try if possible — 4 h\b(?! of)/i);
+    expect(mail(null)).toMatch(/Could try if there's time: 1 step, 4 h\./);
     expect(mail({ crew: "KE", hands: 2, hours: 14 })).toMatch(/4 h of 24 h \(KE, 2 × 12 h\)/i);
   });
 });

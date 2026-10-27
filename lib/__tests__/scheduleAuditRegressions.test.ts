@@ -167,10 +167,12 @@ describe("the management email judges a crew on its own work", () => {
     const f = { D: (x: number) => new Date(x).toISOString().slice(5, 10), DTs: (x: number) => new Date(x).toISOString().slice(5, 16), T: (x: number) => new Date(x).toISOString().slice(11, 16), win: () => "", hrs: (h: number) => `${h} h` };
     const secs = turnoverUpdate(r, f, { pctOf: () => 45, finishOf: () => ms(at("2026-10-27", "04:00")), stepsOf: () => steps });
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: secs });
-    const last = text.split("\n").find((l) => l.includes("V-500 — 45%"))!;
-    expect(last).toMatch(/Overdue — next step was due/);   // its own day step
-    expect(last).not.toMatch(/Blocked/);         // the night step is listed with its reason
-    expect(text).toMatch(/PROBLEMS & DECISIONS[\s\S]*Night step · Blocked · permit/);
+    // Its own day step carries; the night step is blocked, with its reason —
+    // each on its own row, each said once.
+    expect(text).toMatch(/Day step · Waits for day crew — was due .* · 90%/);
+    expect(text).not.toMatch(/Day step · .*Blocked/);
+    expect(text).toMatch(/Night step · Blocked — permit/);
+    expect(text.match(/Night step ·/g)?.length).toBe(1);
   });
   it("comments fold line breaks and carry their date when older than the shift", () => {
     const D = (x: number) => new Date(x).toISOString().slice(5, 10);
@@ -453,10 +455,10 @@ describe("the next shift sees the other crew's unfinished and paused work", () =
   });
   it("the email says so — waiting for its own crew, never 'pick up if you can'", () => {
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r, f, { pctOf: () => 40, finishOf: () => undefined }) });
-    expect(text).toMatch(/CARRIES TO DAY SHIFT/);
-    expect(text).toMatch(/Blind \/ open manways · carry-over — was due/);
+    expect(text).toMatch(/Blind \/ open manways · Waits for day crew — was due/);
     expect(text).not.toMatch(/if you can/i);
-    expect(text).toMatch(/Day crew's work paused until .*: Retube \(30%\)/);
+    // Under way, continuing on the day crew's next shift — listed with where it stands.
+    expect(text).toMatch(/Retube · Waits for day crew — on plan, continues next day shift · 30%/);
   });
 });
 

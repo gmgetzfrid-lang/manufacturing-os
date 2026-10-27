@@ -43,20 +43,28 @@ describe("work done early and progress made show on the turnover", () => {
     expect(r.review.ahead.map((x) => x.leaf.id).sort()).toEqual(["hy", "rc"]);
     expect(r.review.done.map((x) => x.leaf.id)).toContain("rc");
   });
-  it("the email says so: ahead, planned when, and start → now", () => {
+  it("the email says so: ahead, planned when, and what moved this shift — each step once", () => {
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r, f, { pctOf: () => 40, finishOf: () => undefined }) });
-    expect(text).toMatch(/Remove components · .*✓ ahead — planned 10-27/);
-    expect(text).toMatch(/PROGRESS — DAY SHIFT/);
-    expect(text).toMatch(/Pull bundle · Schultz · 0% → 40%/);
-    expect(text).toMatch(/Hydroblast · 0% → 30% ahead — planned 10-28/);
-    expect(text).toMatch(/Ahead of plan: 2 steps planned for later were done or moved forward/);
+    expect(text).toMatch(/DONE — DAY SHIFT/);
+    expect(text).toMatch(/Remove components · .*done early \(planned 10-27T13:00\) — put you 4 h ahead/);
+    // Unfinished and due: it carries, with what this shift did on the same row.
+    expect(text).toMatch(/Pull bundle · Schultz · Waits for day crew — was due 10-26T21:00 · 40% · \+40 this shift/);
+    expect(text).toMatch(/Hydroblast · .*0% → 30% this shift, started early \(planned 10-28T11:00\) — put you 1.8 h ahead/);
+    // Why it's ahead: both early steps, with the hours each is worth.
+    expect(text).toMatch(/Ahead of plan — 5.8 h/);
+    expect(text).toMatch(/E-17 Exchanger — Remove components · done, plan had 0% by now .* · \+4 h/);
+    // Every step named once.
+    for (const name of ["Pull bundle", "Remove components", "Hydroblast"]) {
+      expect(text.slice(text.search(/^DONE — /m)).match(new RegExp(`${name} ·`, "g"))?.length).toBe(1);
+    }
   });
   it("without the record of the shift's start, later work with progress still shows — as entered", () => {
     const r2 = buildShiftReport({ milestones: all, tz: CHI, shift: day, now: day.end });
     expect(r2.review.knownStart).toBe(false);
     expect(r2.review.ahead.map((x) => x.leaf.id).sort()).toEqual(["hy", "rc"]);
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r2, f, { pctOf: () => 40, finishOf: () => undefined }) });
-    expect(text).toMatch(/WORKED AHEAD — PROGRESS ON LATER WORK/);
+    expect(text).toMatch(/Hydroblast · .*30% this shift, started early \(planned 10-28T11:00\)/);
+    expect(text).not.toMatch(/0% → 30%/); // no start on record: no "from"
   });
 });
 
@@ -85,5 +93,24 @@ describe("with night crews set, PSV and calibration aren't handed to nights", ()
     expect(r.goals.all.map((x) => x.leaf.id)).toEqual(["mw"]);
     const toDays = [...r.goals.otherShift, ...r.goals.movedOff, ...r.goals.paused].map((x) => x.leaf.id).sort();
     expect(toDays).toEqual(["ca", "p21"]);
+  });
+});
+
+describe("ahead or behind is explained, and adds up", () => {
+  const r = buildShiftReport({ milestones: all, tz: CHI, shift: day, now: day.end, startPct });
+  it("the steps ahead less the steps behind are exactly the gap", () => {
+    const d = r.overall.drivers;
+    expect(Math.round((d.behindHours - d.aheadHours) * 10) / 10).toBe(r.goals.gapHours);
+    expect(d.ahead.map((x) => x.id)).toEqual(expect.arrayContaining(["rc", "hy"]));
+    expect(d.ahead.find((x) => x.id === "rc")).toMatchObject({ percent: 100, planPct: 0, hours: 4 });
+  });
+  it("a step finished this shift with no finish time recorded is still done this shift (the log says it was open)", () => {
+    const noTime = all.map((m) => (m.id === "rc" ? { ...m, actualAt: undefined } : m));
+    const r2 = buildShiftReport({ milestones: noTime, tz: CHI, shift: day, now: day.end, startPct });
+    expect(r2.review.done.map((x) => x.leaf.id)).toContain("rc");
+    // …but one already done when the shift began is not this shift's news.
+    const before = new Map(startPct); before.set("rc", 100);
+    const r3 = buildShiftReport({ milestones: noTime, tz: CHI, shift: day, now: day.end, startPct: before });
+    expect(r3.review.done.map((x) => x.leaf.id)).not.toContain("rc");
   });
 });

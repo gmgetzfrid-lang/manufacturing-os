@@ -43,27 +43,20 @@ const sections = turnoverUpdate(report, f, { pctOf: (id) => progress.get(id)?.pe
 
 describe("the update says what happened, in as few words as it takes", () => {
   it("leaves out what's empty: nothing unfinished, nothing blocked, nothing next", () => {
-    // Meeting order: what got done, then (none here) problems, then the
-    // tasks on plan — nothing next, nothing held.
-    expect(sections.map((s) => s.id)).toEqual(["stand", "done", "onplan"]);
+    // Everything planned today got done; Retube starts tomorrow — nothing
+    // to hand over but what got done.
+    expect(sections.map((s) => s.id)).toEqual(["stand", "done"]);
   });
 
-  it("one row per task: % done, the NEXT step, and whether it's on plan", () => {
-    const table = sections.find((s) => s.id === "onplan")!.blocks.find((b) => b.k === "table")!;
-    if (table.k !== "table") throw new Error();
-    expect(table.head).toEqual(["Task", "Done / planned now", "Next step", "Status"]);
-    const cells = table.rows.map((r) => r.map((c) => (typeof c === "string" ? c : c.t)));
-    const row = (name: string) => cells.find((r) => r[0] === name)!;
-    // E-606: two steps done, Retube planned tomorrow — on its way, not unfinished.
-    expect(row("E-606 Exchanger")[2]).toBe("Retube");
-    expect(row("E-606 Exchanger")[3]).toMatch(/^On plan · planned finish .*10-27/);
-    expect(table.rows).toHaveLength(1); // a task once, not a line per step
-    // The finished tower is under Completed, by its step.
+  it("what got done: each step once, by its task, with no finish time claimed", () => {
     const done = sections.find((s) => s.id === "done")!.blocks.find((b) => b.k === "table")!;
     if (done.k !== "table") throw new Error();
-    expect(done.rows.map((r) => r.map((c) => (typeof c === "string" ? c : c.t)).join(" | ")).join("\n")).toMatch(/T-605 Tower \| Open manways \| .* \| ✓/);
-    // No finish time is claimed: when it was marked done isn't when it finished.
-    expect(done.head).toEqual(["Task", "Step", "Who", "Done"]);
+    const lines = done.rows.map((r) => r.map((c) => (typeof c === "string" ? c : c.t)).join(" | "));
+    expect(lines.join("\n")).toMatch(/T-605 Tower \| Open manways \| .* \| done, on plan$/m);
+    expect(lines.join("\n")).toMatch(/E-606 Exchanger \| Pull bundle \| .* \| done, on plan$/m);
+    expect(lines.filter((l) => l.startsWith("E-606"))).toHaveLength(1); // the task named once, its steps under it
+    // When it was marked done isn't when it finished — no time is claimed.
+    expect(done.head).toEqual(["Task", "Step", "Who", "Result"]);
   });
 
   it("no numbers, no stretch, no 'in this order'", () => {
@@ -99,14 +92,19 @@ describe("unfinished work: behind, or carrying over as planned", () => {
     expect(pace("fine")).toBe("on plan");
   });
 
-  it("each task says once what's wrong — the worst first — or that it's on plan", () => {
+  it("each step says once where it stands: overdue, behind plan, or on plan", () => {
     const secs = turnoverUpdate(r, f, { pctOf: (id) => (id === "ex" ? 40 : 55), finishOf: () => undefined, stepsOf: stepsOf(all, shift.end) });
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: secs });
-    // E-606's next step is Retube (behind), but Hydroblast is overdue — the worst is named.
-    expect(text).toMatch(/E-606 Exchanger — 40% · next Retube \(2 days\) \(10%\) · Overdue — Hydroblast was due .* \(\+1 more\)/);
-    expect(text).toMatch(/T-605 Tower — 55% · next Blast tower \(2 days\) \(55%\) · On plan/);
-    // Problems are listed before on-plan work.
-    expect(text.indexOf("E-606")).toBeLessThan(text.indexOf("T-605"));
+    expect(text).toMatch(/Hydroblast · Waits for day crew — was due 10-26 22:00 · 60%/);
+    expect(text).toMatch(/Retube \(2 days\) · Waits for day crew — behind plan \(plan had \d+%\), continues next day shift · 10%/);
+    expect(text).toMatch(/Blast tower \(2 days\) · Waits for day crew — on plan, continues next day shift · 55%/);
+    // Once in the done/next tables (the Why table above names steps on purpose, with their hours).
+    const lists = text.slice(text.search(/^(DONE|NEXT) — /m));
+    for (const name of ["Hydroblast", "Retube \\(2 days\\)", "Blast tower \\(2 days\\)"]) expect(lists.match(new RegExp(`${name} ·`, "g"))?.length).toBe(1);
+    expect(text).not.toMatch(/PROBLEMS|ON PLAN —|CREWS/);
+    // Why it's behind: the steps that make up the gap, with their hours.
+    expect(text).toMatch(/Behind plan — [\d.]+ h/);
+    expect(text).toMatch(/E-606 Exchanger — Retube \(2 days\) · 10% done, plan had \d+% by now · −[\d.]+ h/);
   });
 });
 
@@ -120,9 +118,9 @@ describe("a comment explains a step, quietly", () => {
   });
   it("50% on a multi-day step reads on plan, with the comment under the step", () => {
     const html = toEmailHtml({ kind: "k", project: "p", when: "w", asOf: "a", sections: secs });
-    expect(html).toMatch(/Calibrate meter \(50%\)<div[^>]*font-style:italic[^>]*>“Sent out for calibration — back Wednesday”/);
+    expect(html).toMatch(/Calibrate meter<div[^>]*font-style:italic[^>]*>“Sent out for calibration — back Wednesday”/);
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: secs });
-    expect(text).toMatch(/FT-101 Coriolis meter — 50% · next Calibrate meter \(50%\) \("Sent out for calibration — back Wednesday"\) · On plan/);
+    expect(text).toMatch(/FT-101 Coriolis meter — Calibrate meter \("Sent out for calibration — back Wednesday"\) · Waits for day crew — on plan, continues next day shift · 50%/);
   });
 });
 
@@ -131,9 +129,9 @@ describe("the update's first glance", () => {
     const stand = sections.find((s) => s.id === "stand")!;
     const ov = stand.blocks[0];
     if (ov.k !== "overview") throw new Error("no overview");
-    expect(ov.stats.map((x) => x.label)).toEqual(["Complete", "Plan", expect.any(String), "Steps done"]);
+    expect(ov.stats.map((x) => x.label)).toEqual(["Complete", "Plan by now", expect.any(String), "Steps done"]);
     expect(ov.title).toBe("Bottom line");
-    expect(ov.lines[0].text).toMatch(/^(On track|Behind|Ahead)/);
+    expect(ov.lines[0].text).toMatch(/^(Even with the plan|Behind by|Ahead by)/);
     const safety = sections.find((s) => s.id === "safety");
     if (safety) expect(safety.offByDefault).toBe(true);
     const html = toEmailHtml({ kind: "Shift turnover", project: "P", when: "w", asOf: "a", sections });

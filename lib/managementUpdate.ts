@@ -9,8 +9,9 @@
 // nothing is blocked.
 
 import { capacityOf, askedResult } from "@/lib/shiftHandover";
-import { BEHIND_POINTS, whoOf, type PullCrew, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
-import { rankHazards, hazardContext, lessonFor, equipmentTag, type HazardJobInput } from "@/lib/safetyMoment";
+import { turnoverPlan, nextOf, standing, askedLine, doneOf, gapStory, gainOf as gainOfRow } from "@/lib/turnoverPlan";
+import { type PullCrew, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
+import { rankHazards, hazardContext, lessonFor, type HazardJobInput } from "@/lib/safetyMoment";
 import type { ExportBlock, ExportCell, ExportSection } from "@/lib/reportExport";
 
 export interface UpdateFormat {
@@ -76,7 +77,6 @@ export function noteLine(n: string | { body: string; at?: string | number | null
 const MAX_ROWS = 12;
 
 const shiftName = (w: ShiftWindow) => (w.kind === "day" ? "Day shift" : "Night shift");
-const muted = (t: string): ExportCell => ({ t, tone: "muted" });
 
 /** Rows as a table where the task is named once, its steps under it. */
 function byTask(rows: ShiftRow[], cells: (r: ShiftRow) => ExportCell[]): ExportCell[][] {
@@ -93,342 +93,143 @@ function byTask(rows: ShiftRow[], cells: (r: ShiftRow) => ExportCell[]): ExportC
   }
   return out;
 }
+const muted = (t: string): ExportCell => ({ t, tone: "muted" });
 
 export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: UpdateLookups): Array<ExportSection & { id: string }> {
-  const { overall, review, goals, blocked, shift, next } = report;
+  // Three tables, no more: where we stand (and WHY), what got done (and
+  // what it meant), and what's next — every open step once, with what
+  // happens to it. lib/turnoverPlan decides where each step goes, the
+  // same as the screen report.
+  const { overall, shift, next } = report;
   const out: Array<ExportSection & { id: string }> = [];
+  const other = next.kind === "day" ? "night" : "day";
+  const nextShort = next.kind === "day" ? "Day" : "Night";
+  const shiftHrs = (next.end - next.start) / 3_600_000;
+  const t = { T: f.T, DTs: f.DTs, hrs: f.hrs };
+  const note = (id?: string | null) => (id ? noteLine(look.noteOf?.(id), shift.start, f.D) : undefined);
+  const who = (r: ShiftRow) => muted(r.leaf.responsibleParty?.trim() ?? "");
+  const plan = turnoverPlan(report, (id) => !!look.tryOf?.(id));
+  const { items, kindOf, tried, carries, held } = plan;
+  const nextList = items.filter((x) => x.kind === "next").map((x) => x.r);
+  const nextHrs = Math.round(nextList.reduce((a, r) => a + (r.hoursNext ?? 0), 0) * 10) / 10;
+  const capa = capacityOf(look.pull ?? null, tried, shiftHrs);
+  const asked = look.asked ?? [];
 
-  // ── Where we stand ──
-  const gap = goals.gapHours;
-  // The tile follows the headline verdict: "Work behind" only when the job
-  // is behind, never a red number under ON TRACK. In work-hours, said so.
-  const gapTile = overall.standing === "behind" ? { label: "Work behind", tone: "rose" as const }
-    : overall.standing === "ahead" ? { label: "Work ahead", tone: "emerald" as const }
-      : { label: "Work gap", tone: "slate" as const };
-  const standStats = [
-    { label: "Complete", value: `${overall.actualPct}%`, tone: overall.standing === "behind" ? "rose" : overall.standing === "ahead" ? "emerald" : "slate" },
-    { label: "Plan", value: `${overall.plannedPct}%`, tone: "slate" },
-    { label: gapTile.label, value: overall.standing !== "on track" ? f.hrs(Math.abs(gap)) : Math.abs(gap) <= 0.5 ? "even" : `${f.hrs(Math.abs(gap))} ${gap > 0 ? "behind" : "ahead"}`, tone: gapTile.tone },
-    { label: "Steps done", value: `${overall.stepsDone} / ${overall.stepsTotal}`, tone: "slate" },
-  ] as const;
-  // Filled in once the problems are known (the bottom line names them).
-  const stand: ExportSection & { id: string } = {
+  // ── 1. Where we stand — the numbers, and the steps that make the gap.
+  const story = gapStory(report, t);
+  const fin = overall.plannedFinish ? f.D(overall.plannedFinish) : null;
+  const finishPassed = overall.plannedFinish != null && report.now > overall.plannedFinish && overall.actualPct < 100;
+  const gap = report.goals.gapHours;
+  const standTone = overall.standing === "behind" ? "rose" as const : overall.standing === "ahead" ? "emerald" as const : "slate" as const;
+  const whyRows: ExportCell[][] = [];
+  for (const side of ["ahead", "behind"] as const) {
+    const g = story[side];
+    const tone = side === "ahead" ? "emerald" as const : "rose" as const;
+    if (g.lines.length) whyRows.push([{ t: side === "ahead" ? `Ahead of plan — ${g.total}` : `Behind plan — ${g.total}`, tone, bold: true }, "", "", ""]);
+    g.lines.forEach((x) => whyRows.push([{ t: x.task ?? "", bold: true }, x.step, { t: x.text, tone: "muted" }, { t: x.hours, tone, bold: true }]));
+    if (g.more) whyRows.push([muted(`+ ${g.more.count} more`), "", "", { t: `${side === "ahead" ? "+" : "−"}${g.more.hours}`, tone }]);
+  }
+  out.push({
     id: "stand", title: "Where we stand",
     sub: overall.plannedFinish ? `Day ${overall.daysElapsed} of ${overall.daysTotal} · planned finish ${f.D(overall.plannedFinish)}` : undefined,
-    blocks: [],
-  };
-  out.push(stand);
+    flag: overall.standing === "behind" ? "rose" : null,
+    blocks: [
+      {
+        k: "overview",
+        stats: [
+          { label: "Complete", value: `${overall.actualPct}%`, tone: standTone },
+          { label: "Plan by now", value: `${overall.plannedPct}%`, tone: "slate" },
+          { label: gap < -0.5 ? "Work ahead" : gap > 0.5 ? "Work behind" : "Gap", value: Math.abs(gap) <= 0.5 ? "even" : f.hrs(Math.abs(gap)), tone: standTone },
+          { label: "Steps done", value: `${overall.stepsDone} / ${overall.stepsTotal}`, tone: "slate" },
+        ],
+        bars: overall.plannedStart != null && overall.plannedFinish != null
+          ? { done: overall.actualPct, plan: overall.plannedPct, from: f.D(overall.plannedStart), to: f.D(overall.plannedFinish) } : undefined,
+        title: "Bottom line",
+        lines: [
+          { text: finishPassed ? `Planned finish ${fin} has passed — ${overall.actualPct}% done.` : story.headline, tone: standTone === "slate" ? undefined : standTone },
+          { text: nextList.length ? `${shiftName(next)}: ${nextList.length} step${nextList.length === 1 ? "" : "s"}, ${f.hrs(nextHrs)}${tried.length ? ` — plus ${tried.length} to try if there's time` : ""}.` : `Nothing planned for the ${shiftName(next).toLowerCase()}.` },
+          ...(carries.length ? [{ text: `${carries.length} step${carries.length === 1 ? "" : "s"} wait${carries.length === 1 ? "s" : ""} for the ${other} crew.`, tone: "amber" as const }] : []),
+          ...(held.length ? [{ label: "Needs a decision", text: `${held.length} blocked or on hold.`, tone: "rose" as const }] : []),
+        ],
+      },
+      ...(whyRows.length ? [{
+        k: "table", head: ["Task", "Step", "Why", "Hours"], align: ["left", "left", "left", "right"],
+        textLabels: ["", "", "", ""], nowrap: [3], rows: whyRows,
+      } as ExportBlock] : []),
+    ],
+  });
 
-  // ── Last shift ── one row per task the crew had: how far it is, what's
-  // next on it, and the one thing to know — on plan, behind, overdue, held
-  // or complete. Each task once; the steps behind it aren't repeated. Only
-  // this crew's steps (ones it had by the end of its shift) can make its
-  // row read behind: night work not yet started isn't the day crew's slip.
-  const own = (r: ShiftRow) => r.work === "both" || r.work === shift.kind;
-  const ownStep = (x: { work?: WorkShift; start: number }) => (x.work == null || x.work === "both" || x.work === shift.kind) && !(x.start >= shift.end);
-  const keyOf = (r: ShiftRow) => r.parentId ?? `solo:${r.leaf.id ?? r.leaf.name}`;
-  const touched = new Map<string, ShiftRow>();
-  for (const r of [...review.scheduled.filter(own), ...review.done, ...review.carryOver.filter(own), ...review.inProgress.filter(own)]) {
-    if (!touched.has(keyOf(r))) touched.set(keyOf(r), r);
-  }
-  // A comment shows once: under the next shift's step when it's there.
-  const nextIds = new Set(goals.all.map((r) => r.leaf.id).filter(Boolean));
-  const note = (id?: string | null) => (id ? noteLine(look.noteOf?.(id), shift.start, f.D) : undefined);
-  type Row = { cells: ExportCell[]; rank: number; behind: boolean; complete: boolean };
-  const rows: Row[] = [];
-  for (const r of touched.values()) {
-    const id = r.parentId;
-    const self = { id: r.leaf.id ?? undefined, name: r.leaf.name, start: r.start, finish: r.finish, dueAt: r.dueAt, percent: r.percent, pace: r.pace, expectedPct: r.expectedPct, status: r.status, work: r.work };
-    const steps = (id ? look.stepsOf?.(id) : undefined) ?? [self];
-    const pct = id ? look.pctOf(id) ?? 0 : r.percent;
-    const name: ExportCell = { t: r.parentName ?? r.leaf.name, bold: true };
-    // Complete means the whole task — every step under it — not just this crew's part.
-    if (pct >= 100) {
-      rows.push({ cells: [name, { t: "100%", bold: true, tone: "emerald" }, "", { t: "Complete", tone: "emerald" }], rank: 4, behind: false, complete: true });
-      continue;
-    }
-    const open = steps.filter((x) => x.pace !== "done").sort((a, b) => a.start - b.start);
-    const next = open[0];
-    const order = { overdue: 0, held: 1, behind: 2 } as Record<string, number>;
-    const issues = open.filter((x) => x.pace in order && ownStep(x)).sort((a, b) => order[a.pace] - order[b.pace]);
-    const worst = issues[0];
-    // Another crew's step past due or held: not this crew's slip, but the
-    // task isn't "on plan" either — say whose it is.
-    const otherIssue = worst ? undefined : open.find((x) => x.pace === "overdue" || x.pace === "held");
-    // Name the step the status is about — "next step" when it's the one in
-    // the Next step column — so a step's 0% isn't read as the task's.
-    const who = (x: typeof next) => (x === next ? "next step " : `${x.name} `);
-    const more = issues.length > 1 ? ` (+${issues.length - 1} more)` : "";
-    const plan = id ? look.planOf?.(id) : undefined;
-    const fin = id ? look.finishOf(id) : r.finish;
-    // The planned finish — not a forecast — and only while it's ahead.
-    const finText = fin != null && Number.isFinite(fin) && fin > report.now ? ` · planned finish ${f.DTs(fin)}` : "";
-    const status: ExportCell = worst
-      ? worst.pace === "overdue" ? { t: `Overdue — ${who(worst)}${Number.isFinite(worst.dueAt ?? worst.finish) ? `was due ${f.DTs(worst.dueAt ?? worst.finish)}` : "past due"}${more}`, tone: "rose" }
-        : worst.pace === "held" ? { t: `${worst.status === "blocked" ? "Blocked" : "On hold"} — ${worst === next ? "next step" : worst.name}${more} (reason below)`, tone: worst.status === "blocked" ? "rose" : "amber" }
-          : { t: `Behind — ${who(worst)}${worst.percent}% of ${worst.expectedPct}% planned${more}`, tone: "amber" }
-      : otherIssue ? { t: `${otherIssue.pace === "held" ? (otherIssue.status === "blocked" ? "Blocked" : "On hold") : "Past due"} — ${otherIssue.name} (${otherIssue.work === "night" ? "night" : otherIssue.work === "day" ? "day" : "other"} crew's step)`, tone: "amber" }
-        : plan != null && pct + BEHIND_POINTS <= plan ? { t: `Behind — ${pct}% of ${plan}% planned`, tone: "amber" }
-          : { t: `On plan${finText}`, tone: "emerald" };
-    const behind = typeof status !== "string" && (status.tone === "rose" || status.tone === "amber");
-    // The step's latest comment rides under it — why it reads 50%, what's
-    // really happening — and under the status when that names another step.
-    const noteFor = (x?: { id?: string }) => (x?.id && !nextIds.has(x.id) ? note(x.id) : undefined);
-    if (worst && worst !== next && typeof status !== "string") status.note = noteFor(worst);
-    rows.push({
-      // Done against where the plan has the task right now.
-      cells: [name, { t: plan != null ? `${pct}% / ${plan}%` : `${pct}%`, bold: true },
-        next ? { t: `${next.name}${next.percent > 0 ? ` (${next.percent}%)` : ""}`, note: noteFor(next) } : "", status],
-      rank: worst ? order[worst.pace] : behind ? 2 : 3, behind: worst ? worst.pace !== "held" : behind, complete: false,
-    });
-  }
-  // ── Completed ── good news first: the steps finished on the shift, and
-  // the steps moved forward on it. Work planned for after the shift that
-  // is done or moved is "ahead of plan" — a fact of the plan, not a claim
-  // about when it was finished (progress is often caught up later).
-  const aheadCell = (r: ShiftRow, text: string): ExportCell => (r.plannedLater ? { t: `${text} ahead — planned ${f.DTs(r.crewStart)}`, tone: "emerald", bold: true } : { t: text, tone: "emerald", bold: true });
-  const moved = review.knownStart ? review.progressed : review.ahead.filter((r) => !review.done.includes(r) && r.percent < 100);
-  if (review.done.length > 0) {
-    const list = review.done.slice(0, MAX_ROWS * 2);
-    const hiddenDone = review.done.length - list.length;
-    // Just "done": when it was marked done isn't when it finished
-    // (progress is often caught up later), so no time is claimed.
+  // ── 2. Done this shift — and what each one meant for the plan.
+  const doneRows = [...plan.done, ...plan.moved];
+  if (doneRows.length || asked.length) {
+    const shown = doneRows.slice(0, MAX_ROWS * 3);
     out.push({
-      id: "done", title: `Completed — ${shiftName(shift)} ${f.D(shift.start)}`,
-      sub: `${review.done.length} step${review.done.length === 1 ? "" : "s"} done`,
-      blocks: [{
-        k: "table", head: ["Task", "Step", "Who", "Done"], align: ["left", "left", "left", "right"], textLabels: ["", "", "by", ""],
-        rows: [...byTask(list, (r) => [r.leaf.name, muted(r.leaf.responsibleParty ?? ""), aheadCell(r, "✓")]),
-          ...(hiddenDone > 0 ? [[muted(`+ ${hiddenDone} more`), "", "", ""] as ExportCell[]] : [])],
-      }],
-    });
-  }
-
-  if (moved.length > 0) {
-    const list = moved.slice(0, MAX_ROWS * 2);
-    out.push({
-      id: "moved", title: review.knownStart ? `Progress — ${shiftName(shift)} ${f.D(shift.start)}` : "Worked ahead — progress on later work",
-      sub: `${moved.length} step${moved.length === 1 ? "" : "s"} moved forward · as entered`,
-      blocks: [{
-        k: "table", head: ["Task", "Step", "Who", review.knownStart ? "Start → now" : "Done"], align: ["left", "left", "left", "right"], textLabels: ["", "", "by", ""],
-        nowrap: [3],
-        rows: [...byTask(list, (r) => [r.leaf.name, muted(r.leaf.responsibleParty ?? ""),
-          aheadCell(r, review.knownStart && r.pctStart != null ? `${r.pctStart}% → ${r.percent}%` : `${r.percent}%`)]),
-          ...(moved.length > list.length ? [[muted(`+ ${moved.length - list.length} more`), "", "", ""] as ExportCell[]] : [])],
-      }],
-    });
-  }
-
-  // ── Asked to try ── what the last turnover asked of this shift.
-  const asked = look.asked ?? [];
-  const askedDone = asked.filter((a) => (a.now ?? 0) >= 100).length;
-  if (asked.length > 0) {
-    out.push({
-      id: "asked", title: `Asked to try — ${shiftName(shift)}`, sub: `${askedDone} of ${asked.length} done · as entered`,
-      blocks: [{ k: "table", head: ["Step", "Why", "Crew", "At ship", "Now"], align: ["left", "left", "left", "right", "right"],
-        rows: asked.map((a) => [a.name, muted(a.why ?? (a.pulled ? "pulled ahead" : "carry-over")), a.crew ?? muted("—"), `${a.from}%`, (a.now ?? 0) >= 100 ? { t: "done ✓", tone: "emerald", bold: true } : askedResult(a)]) }],
-    });
-  }
-
-  // ── Problems & decisions ── every task that's overdue, behind or held,
-  // once, with the blocked / on-hold steps and their reasons.
-  const problems = rows.filter((x) => x.rank <= 2).sort((a, b) => a.rank - b.rank);
-  if (problems.length > 0 || blocked.length > 0) {
-    const nBehind = problems.filter((x) => x.behind && x.rank !== 1).length;
-    out.push({
-      id: "problems", title: "Problems & decisions",
-      sub: [nBehind ? `${nBehind} task${nBehind === 1 ? "" : "s"} behind or past due` : null, blocked.length ? `${blocked.length} blocked or on hold` : null].filter(Boolean).join(" · "),
-      flag: problems.some((x) => x.rank === 0) || blocked.some((r) => r.status === "blocked") ? "rose" : "amber",
+      id: "done", title: `Done — ${shiftName(shift)} ${f.D(shift.start)}`,
+      sub: [`${plan.done.length} finished`, plan.moved.length ? `${plan.moved.length} moved forward` : null].filter(Boolean).join(" · "),
       blocks: [
-        ...(problems.length ? [{
-          k: "table", head: ["Task", "Done / planned now", "Next step", "Status"], align: ["left", "right", "left", "left"],
-          textLabels: ["", "done/planned", "next", ""],
-          rows: problems.map((x) => x.cells),
+        ...(shown.length ? [{
+          k: "table", head: ["Task", "Step", "Who", "Result"], align: ["left", "left", "left", "left"], textLabels: ["", "", "by", ""],
+          rows: [...byTask(shown, (r) => {
+            const d = doneOf(report, r, t);
+            return [{ t: r.leaf.name, note: note(r.leaf.id) }, who(r), { t: d.text, tone: d.tone === "amber" ? "amber" : "emerald", bold: d.label !== "Done" }];
+          }), ...(doneRows.length > shown.length ? [[muted(`+ ${doneRows.length - shown.length} more`), "", "", ""] as ExportCell[]] : [])],
         } as ExportBlock] : []),
-        ...(blocked.length ? [{
-          k: "table", head: ["Task", "Step", "Status", "Reason"], textLabels: ["", "", "", ""],
-          rows: byTask(blocked, (r) => [
-            r.leaf.name,
-            r.status === "blocked" ? { t: "Blocked", tone: "rose", bold: true } : { t: "On hold", tone: "amber", bold: true },
-            r.reason ?? muted("no reason recorded"),
-          ]),
-        } as ExportBlock] : []),
+        ...(asked.length ? [{ k: "note", text: `Asked to try last turnover: ${askedLine(asked, askedResult)}` } as ExportBlock] : []),
       ],
     });
   }
 
-  // ── On plan ── each other task once: where it is against the plan and
-  // its next step. (Finished tasks are in Completed.)
-  const quiet = rows.filter((x) => x.rank === 3);
-  if (quiet.length > 0) {
-    const shown = quiet.slice(0, MAX_ROWS);
-    const hiddenQuiet = quiet.length - shown.length;
-    out.push({
-      id: "onplan", title: "On plan",
-      sub: `${quiet.length} task${quiet.length === 1 ? "" : "s"}`,
-      blocks: [{
-        k: "table", head: ["Task", "Done / planned now", "Next step", "Status"], align: ["left", "right", "left", "left"],
-        textLabels: ["", "done/planned", "next", ""],
-        rows: [...shown.map((x) => x.cells), ...(hiddenQuiet > 0 ? [[muted(`+ ${hiddenQuiet} more on plan`), "", "", ""] as ExportCell[]] : [])],
-      }],
-    });
-  }
-
-  // ── Next shift ── its work, in the order it's listed for the crew; then
-  // one line each for the other crew's unfinished work (theirs, picked up
-  // if the next crew can) and its work paused until it's back.
-  const otherName = next.kind === "day" ? "Night" : "Day";
-  const names = (rows: ShiftRow[]) => {
-    const list = rows.slice(0, MAX_ROWS).map((r) => `${r.parentName ? `${r.parentName} — ` : ""}${r.leaf.name}${r.percent > 0 ? ` (${r.percent}%)` : ""}`);
-    return list.join("; ") + (rows.length > list.length ? `; + ${rows.length - list.length} more` : "");
-  };
-  // The other crew's work isn't the next shift's: it has its own section
-  // (Carries to …) below. Its work paused over the next shift is a line.
-  const carry: ExportBlock[] = [];
-  const extra: ExportBlock[] = goals.paused.length ? [{ k: "note", text: `${otherName} crew's work paused until ${f.T(next.end)}: ${names(goals.paused)}.` } as ExportBlock] : [];
-  if (goals.all.length === 0 && (carry.length || extra.length)) {
-    out.push({ id: "next", title: `Next shift — ${shiftName(next)} ${f.D(next.start)} ${f.win(next)}`, blocks: [...carry, ...extra] });
-  }
-  if (goals.all.length > 0) {
-    const nextList = goals.all.slice(0, MAX_ROWS * 2);
-    const nextHidden = goals.all.length - nextList.length;
-    out.push({
-      id: "next", title: `Next shift — ${shiftName(next)} ${f.D(next.start)} ${f.win(next)}`,
-      sub: `${goals.all.length} step${goals.all.length === 1 ? "" : "s"} · ${f.hrs(goals.mustDoHours)} this shift`,
-      blocks: [...carry, {
-        k: "table", head: ["Task", "Step", "Planned", "Who", "Now → goal"], align: ["left", "left", "left", "left", "right"],
-        textLabels: ["", "", "", "by", "now → goal"], nowrap: [2, 4],
-        rows: [...byTask(nextList, (r) => [
-          { t: r.leaf.name, note: note(r.leaf.id) },
-          r.carryOver ? { t: `carried over — was due ${f.DTs(r.dueAt)}`, tone: "rose" }
-            : r.reflowed ? { t: `${f.T(r.crewStart)}–${r.crewFinish <= next.end ? f.T(r.crewFinish) : "…"} · file had ${f.DTs(r.start)}`, tone: "amber" }
-            : r.start < next.start ? (r.pace === "behind" ? { t: "continues — behind", tone: "amber" } : muted("continues"))
-              : `${f.T(r.start)}–${r.finish <= next.end ? f.T(r.finish) : "…"}`,
-          muted(r.leaf.responsibleParty ?? ""),
-          `${r.percent}% → ${r.goalPct ?? r.percent}%`,
-        ]), ...(nextHidden > 0 ? [[muted(`+ ${nextHidden} more steps`), "", "", "", ""] as ExportCell[]] : [])],
-      }, ...extra],
-    });
-  }
-  // ── Carries to the other crew: its unfinished work, and work the file
-  // put in the next shift's hours that has no crew then.
-  const allCarries = [...goals.otherShift, ...goals.movedOff];
-  // Marked at the meeting: the other crew's carried work, and steps pulled
-  // forward from later in the schedule.
-  const pulledRows = goals.pulled.filter((r) => r.leaf.id && look.tryOf?.(r.leaf.id));
-  const tried = [...allCarries.filter((r) => r.leaf.id && look.tryOf?.(r.leaf.id)), ...pulledRows];
-  const carries = allCarries.filter((r) => !tried.includes(r));
-  const shiftHrs = (next.end - next.start) / 3_600_000;
-  // The same count as the screen and the picker (capacityOf); a crew size
-  // only when one was set — never a made-up one.
-  const capa = capacityOf(look.pull ?? null, tried, shiftHrs);
-  const triedHours = capa.used;
-  if (tried.length > 0) {
-    const nextSec = out.find((x) => x.id === "next");
-    const block: ExportBlock = {
-      k: "table", head: ["Task", "Step", "Why", "Crew", "This shift"], align: ["left", "left", "left", "left", "right"],
-      textLabels: ["", "", "", "crew", "this shift"], nowrap: [4],
-      rows: byTask(tried, (r) => {
-        const d = look.tryOf!(r.leaf.id!)!;
-        const pulled = pulledRows.includes(r);
-        const crew = d.crew ?? (pulled ? look.pull?.crew ?? null : null);
-        const who = r.leaf.responsibleParty?.trim();
-        const otherScope = pulled && who && crew && who.toLowerCase() !== crew.toLowerCase() ? ` · ${who}'s scope` : "";
-        return [
-          { t: r.leaf.name, note: d.note ? `“${d.note}”` : undefined },
-          pulled ? { t: `pulled ahead — planned ${f.DTs(r.crewStart)}${otherScope}`, tone: "amber" }
-            : r.carryOver ? { t: `carry-over — was due ${f.DTs(r.dueAt)}`, tone: "amber" } : muted(`${otherName.toLowerCase()} work — planned ${f.DTs(r.start)}`),
-          crew ?? muted("not named"),
-          f.hrs(Math.min(r.hoursLeft, shiftHrs)),
-        ];
-      }),
-    };
-    const ps = look.pull;
-    const sub: ExportBlock = { k: "sub", title: `Could try if possible — ${f.hrs(triedHours)}${capa.hours > 0 && ps ? ` of ${f.hrs(capa.hours)}${capa.over ? " — over" : ""} (${ps.crew ? `${ps.crew}, ` : ""}${ps.hands} × ${Math.min(ps.hours, shiftHrs)} h)` : ""}`, count: tried.length, tone: "amber" };
-    if (nextSec) nextSec.blocks.push(sub, block);
-    else out.push({ id: "next", title: `Next shift — ${shiftName(next)} ${f.D(next.start)} ${f.win(next)}`, blocks: [sub, block] });
-  }
-  if (carries.length > 0) {
-    const otherLower = otherName.toLowerCase();
-    out.push({
-      id: "carries", title: `Carries to ${otherLower} shift`,
-      sub: `${carries.length} step${carries.length === 1 ? "" : "s"} for the ${otherLower} crew — not on the ${next.kind} shift's list`,
-      blocks: [{
-        k: "table", head: ["Task", "Step", "Why", "Who", "Done"], align: ["left", "left", "left", "left", "right"],
-        textLabels: ["", "", "", "by", "done"], nowrap: [4],
-        rows: byTask(carries.slice(0, MAX_ROWS * 2), (r) => [
-          { t: r.leaf.name, note: note(r.leaf.id) },
-          r.carryOver ? { t: `carry-over — was due ${f.DTs(r.dueAt)}`, tone: "amber" } : muted(`no ${next.kind} crew — planned ${f.DTs(r.start)}`),
-          muted(r.leaf.responsibleParty ?? ""),
-          `${r.percent}%`,
-        ]),
-      }],
-    });
-  }
-  // ── The bottom line, beside the numbers: the verdict, the next shift's
-  // size, the one thing to watch, and what finishes on it.
-  const fin = overall.plannedFinish ? f.D(overall.plannedFinish) : null;
-  const finishPassed = overall.plannedFinish != null && report.now > overall.plannedFinish && overall.actualPct < 100;
-  const verdict = finishPassed ? `Planned finish ${fin} has passed — ${overall.actualPct}% done.`
-    : overall.standing === "behind" ? `Behind by ${f.hrs(Math.abs(gap))} of work${fin ? ` — planned finish ${fin} at risk` : ""}.`
-    : overall.standing === "ahead" ? `Ahead by ${f.hrs(Math.abs(gap))} of work${fin ? ` — planned finish ${fin}` : ""}.`
-      : `On track${fin ? ` — planned finish holds for ${fin}` : ""}.`;
-  const hoursBy = new Map<string, number>();
-  for (const r of goals.all) { const k = equipmentTag(r.parentName, r.leaf.name) ?? r.leaf.name; hoursBy.set(k, (hoursBy.get(k) ?? 0) + (r.hoursNext ?? 0)); }
-  const biggest = [...hoursBy].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k);
-  const size = goals.all.length
-    ? `${shiftName(next)} has ${goals.all.length} step${goals.all.length === 1 ? "" : "s"} (${f.hrs(goals.mustDoHours)})${biggest.length ? ` — most on ${biggest.join(", ")}` : ""}.`
-    : `Nothing is planned for the ${shiftName(next).toLowerCase()}.`;
-  const tasksOf = (rs: ShiftRow[]) => [...new Set(rs.map((r) => equipmentTag(r.parentName, r.leaf.name) ?? r.leaf.name))].slice(0, 3).join(", ");
-  const pastDue = review.carryOver.filter((r) => r.status !== "blocked" && r.status !== "on_hold");
-  const behindTasks = rows.filter((x) => x.rank === 2).length;
-  const watch = pastDue.length ? { text: `${pastDue.length} step${pastDue.length === 1 ? "" : "s"} past due — ${tasksOf(pastDue)}.`, tone: "rose" as const }
-    : blocked.length ? { text: `${blocked.length} step${blocked.length === 1 ? "" : "s"} blocked or on hold — ${tasksOf(blocked)}.`, tone: "rose" as const }
-      : behindTasks ? { text: `${behindTasks} task${behindTasks === 1 ? "" : "s"} behind plan — see Problems.`, tone: "amber" as const }
-        : null;
-  // Planned to finish on the next shift — only when every open step of the
-  // task is on that shift's list, none past due or held.
-  const onNext = new Set(goals.all.map((r) => r.leaf.id));
+  // ── 3. Next — every open step once, and what happens to it.
+  const onNext = new Set(nextList.map((r) => r.leaf.id));
   const canFinish = (pid: string) => (look.stepsOf?.(pid) ?? []).every((x) => x.pace === "done" || (onNext.has(x.id) && x.pace !== "overdue" && x.pace !== "held"));
-  const finishing = [...new Map(goals.all.filter((r) => r.parentId && !r.carryOver).map((r) => [r.parentId!, r])).values()]
+  const finishing = [...new Map(nextList.filter((r) => r.parentId && !r.carryOver).map((r) => [r.parentId!, r])).values()]
     .filter((r) => canFinish(r.parentId!))
     .map((r) => ({ name: r.parentName ?? r.leaf.name, at: look.finishOf(r.parentId!) }))
     .filter((x): x is { name: string; at: number } => x.at != null && x.at > next.start && x.at <= next.end)
     .sort((a, b) => a.at - b.at);
-  stand.blocks = [{
-    k: "overview", stats: [...standStats],
-    bars: overall.plannedStart != null && overall.plannedFinish != null
-      ? { done: overall.actualPct, plan: overall.plannedPct, from: f.D(overall.plannedStart), to: f.D(overall.plannedFinish) } : undefined,
-    title: "Bottom line",
-    lines: [
-      { text: verdict },
-      { text: size },
-      ...(watch ? [{ label: "Watch", text: watch.text, tone: watch.tone }] : []),
-      ...(review.ahead.length ? [{ label: "Ahead of plan", text: `${review.ahead.length} step${review.ahead.length === 1 ? "" : "s"} planned for later ${review.ahead.length === 1 ? "was" : "were"} done or moved forward on the ${shiftName(shift).toLowerCase()} — ${[...new Set(review.ahead.map((r) => equipmentTag(r.parentName, r.leaf.name) ?? r.parentName ?? r.leaf.name))].slice(0, 3).join(", ")}.`, tone: "emerald" as const }] : []),
-      ...(tried.length ? [{ label: `${shiftName(next)} could try`, text: `${tried.length} extra step${tried.length === 1 ? "" : "s"} (${f.hrs(triedHours)}), if possible — see Next shift.` }] : []),
-      ...(asked.length ? [{ label: "Asked last turnover", text: `${askedDone} of ${asked.length} done (as entered).` }] : []),
-      ...(finishing.length ? [{ label: `Planned to finish on ${shiftName(next).toLowerCase()}`, text: finishing.slice(0, 3).map((x) => `${x.name} (${f.T(x.at)})`).join(", ") + (finishing.length > 3 ? ` + ${finishing.length - 3} more` : "") }] : []),
-    ],
-  }];
-
-  // ── Crews on the next shift: how many steps and hours each has.
-  if (goals.all.length > 0) {
-    const crews = new Map<string, { steps: number; hours: number }>();
-    for (const r of goals.all) { const w = whoOf(r); const e = crews.get(w) ?? { steps: 0, hours: 0 }; e.steps++; e.hours += r.hoursNext ?? 0; crews.set(w, e); }
-    const list = [...crews].sort((a, b) => b[1].hours - a[1].hours || b[1].steps - a[1].steps || a[0].localeCompare(b[0], undefined, { numeric: true }))
-      .map(([who, e]) => ({ title: who, value: `${e.steps} step${e.steps === 1 ? "" : "s"} · ${f.hrs(e.hours)}` }));
-    const half = Math.ceil(list.length / 2);
-    const at = out.findIndex((s) => s.id === "next");
-    const crewSec: ExportSection & { id: string } = {
-      id: "crews", title: `Crews on ${shiftName(next).toLowerCase()}`,
-      blocks: [{ k: "columns", cols: list.length > 3 ? [{ title: "", rows: list.slice(0, half) }, { title: "", rows: list.slice(half) }] : [{ title: "", rows: list }] }],
-    };
-    out.splice(at >= 0 ? at : out.length, 0, crewSec);
+  const planCell = (r: ShiftRow): ExportCell => {
+    const kind = kindOf.get(r)!;
+    const d = kind === "try" ? look.tryOf!(r.leaf.id!)! : null;
+    const pulled = plan.pulled.includes(r);
+    const x = nextOf(report, r, kind, f, { pulled, crew: d ? d.crew ?? (pulled ? look.pull?.crew ?? null : null) : null });
+    const label = kind === "next" ? `${nextShort} ${x.label.charAt(0).toLowerCase()}${x.label.slice(1)}` : kind === "try" ? `${nextShort} ${x.label.replace(/^Could/, "could")}` : x.label;
+    const text = x.detail ? `${label} — ${x.detail}` : label;
+    return x.tone && x.tone !== "muted" ? { t: text, tone: x.tone, bold: kind === "held" } : text;
+  };
+  const progCell = (r: ShiftRow): ExportCell => {
+    const g = gainOfRow(report, r);
+    const s0 = standing(r, kindOf.get(r)!);
+    return g > 0 ? { t: `${s0} · +${g} this shift`, tone: "emerald", bold: true } : s0;
+  };
+  if (items.length > 0) {
+    const shown = items.slice(0, MAX_ROWS * 3).map((x) => x.r);
+    const ps = look.pull;
+    out.push({
+      id: "next", title: `Next — ${shiftName(next)} ${f.D(next.start)} ${f.win(next)}`,
+      sub: [
+        nextList.length ? `${nextList.length} for the ${next.kind} crew (${f.hrs(nextHrs)})` : null,
+        tried.length ? `${tried.length} could try` : null,
+        carries.length ? `${carries.length} wait for the ${other} crew` : null,
+        held.length ? `${held.length} blocked or on hold` : null,
+      ].filter(Boolean).join(" · "),
+      flag: held.some((r) => r.status === "blocked") ? "rose" : null,
+      blocks: [
+        {
+          k: "table", head: ["Task", "Step", "Who", "Next", "Done → goal"], align: ["left", "left", "left", "left", "right"],
+          textLabels: ["", "", "by", "", ""], nowrap: [4],
+          rows: [...byTask(shown, (r) => [
+            { t: r.leaf.name, note: [note(r.leaf.id), kindOf.get(r) === "try" ? look.tryOf!(r.leaf.id!)?.note ?? undefined : undefined].filter(Boolean).join(" · ") || undefined },
+            who(r), planCell(r), progCell(r),
+          ]), ...(items.length > shown.length ? [[muted(`+ ${items.length - shown.length} more`), "", "", "", ""] as ExportCell[]] : [])],
+        },
+        ...(tried.length ? [{ k: "note", text: `Could try if there's time: ${tried.length} step${tried.length === 1 ? "" : "s"}, ${f.hrs(capa.used)}${capa.hours > 0 && ps ? ` of ${f.hrs(capa.hours)}${capa.over ? " — over" : ""} (${ps.crew ? `${ps.crew}, ` : ""}${ps.hands} × ${Math.min(ps.hours, shiftHrs)} h)` : ""}.`, tone: "amber" } as ExportBlock] : []),
+        ...(finishing.length ? [{ k: "note", text: `Planned to finish on the ${shiftName(next).toLowerCase()}: ${finishing.slice(0, 4).map((x) => `${x.name} (${f.T(x.at)})`).join(", ")}${finishing.length > 4 ? ` + ${finishing.length - 4} more` : ""}.` } as ExportBlock] : []),
+      ],
+    });
   }
 
-  // ── Safety focus: the next shift's riskiest jobs, each with this shift's
-  // "don't miss" lesson. Left out of a copy unless ticked.
-  const hazards = rankHazards(hazardJobsOf(goals.all, next, (r) => (r.carryOver ? `due ${f.DTs(r.dueAt)}` : `${f.T(Math.max(r.start, next.start))}–${r.finish <= next.end ? f.T(r.finish) : "…"}`)), { max: 2 });
+  // ── Safety focus: the next shift's riskiest jobs. Left out unless ticked.
+  const hazards = rankHazards(hazardJobsOf(nextList, next, (r) => (r.carryOver ? `due ${f.DTs(r.dueAt)}` : `${f.T(Math.max(r.start, next.start))}–${r.finish <= next.end ? f.T(r.finish) : "…"}`)), { max: 2 });
   if (hazards.length > 0) {
     out.push({
       id: "safety", title: `Safety focus — ${shiftName(next).toLowerCase()}`, offByDefault: true,
