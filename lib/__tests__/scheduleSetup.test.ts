@@ -12,4 +12,11 @@ describe("schedule setup", () => {
     expect(missingRequired(items)).toEqual([]);
     expect(items.find((i) => i.id === "shifts")?.done).toBe(false);
   });
+  it("night crews aren't 'missing' before the project's saved setting has been read (a new device has no copy)", () => {
+    const items = setupChecklist({ timezoneSet: true, shiftTimesSaved: true, criticalChosen: true, hasBaseline: true, nightDecided: null });
+    expect(missingRequired(items)).toEqual([]);
+    expect(items.find((i) => i.id === "night")).toMatchObject({ done: false, checking: true });
+    // Read, and saved: set.
+    expect(setupChecklist({ timezoneSet: true, shiftTimesSaved: true, criticalChosen: true, hasBaseline: true, nightDecided: true }).every((i) => i.done)).toBe(true);
+  });
 });

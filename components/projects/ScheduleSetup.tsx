@@ -11,7 +11,7 @@ import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Moda
 import { setupChecklist, missingRequired, OPEN_SETUP_EVENT, type SetupItem, type SetupItemId } from "@/lib/scheduleSetup";
 import { browserTimeZone, listTimeZones, tzLabel, DEFAULT_SCHEDULE_TZ } from "@/lib/scheduleTz";
 import { updateProjectMeta } from "@/lib/projects";
-import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
+import { useShiftTimes, useShiftTimesState, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
 import { meetingLeadMin, workShiftOf, shiftAt, shiftWindow, type PullCrew, type ShiftTimes } from "@/lib/shiftReport";
 import { stepBandDays } from "@/lib/shiftBands";
 import { withWorkOrderCrews } from "@/lib/workOrderCrew";
@@ -24,7 +24,9 @@ import { CRITICAL_MODES, resolveCriticalPath, effectiveCriticalMode, type Critic
 import type { Milestone } from "@/types/schema";
 
 const ICON: Record<SetupItemId, typeof Clock> = { timezone: Globe2, shifts: Clock, night: Moon, critical: Zap, baseline: Flag };
-const SESSION_KEY = (projectId: string) => `scheduleSetup.shown:${projectId}`;
+// Opened by itself once per project on this device — after that the banner
+// (while anything's really missing) and the Setup button are the way in.
+const SHOWN_KEY = (projectId: string) => `scheduleSetup.autoOpened:${projectId}`;
 
 interface Props {
   projectId: string;
@@ -45,19 +47,24 @@ interface Props {
 export function ScheduleSetup(p: Props) {
   const saved = useShiftTimesSaved(p.projectId);
   const critical = useCriticalMode(p.projectId);
-  const nightDecided = useShiftTimes(p.projectId).nightJobs !== undefined;
+  const st = useShiftTimesState(p.projectId);
+  // Not known until the project's saved settings are read: a new device has
+  // no copy yet, and that isn't "not set".
+  const nightDecided = st.loaded ? st.times.nightJobs !== undefined : null;
   const items = useMemo(() => setupChecklist({
     timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided,
   }), [p.timezone, saved, critical, p.hasBaseline, nightDecided]);
   const missing = missingRequired(items);
-  // Opens by itself once per session for someone who can fix it.
+  // Opens by itself for someone who can fix it — only once everything has
+  // been read (nothing "checking"), and only once on this device.
   const [open, setOpen] = useState<SetupItemId | null>(null);
-  const first = p.canManage ? missing[0]?.id : undefined;
+  const settled = !items.some((i) => i.checking);
+  const first = p.canManage && settled ? missing[0]?.id : undefined;
   useEffect(() => {
     if (!first) return;
     try {
-      if (sessionStorage.getItem(SESSION_KEY(p.projectId)) === "1") return;
-      sessionStorage.setItem(SESSION_KEY(p.projectId), "1");
+      if (localStorage.getItem(SHOWN_KEY(p.projectId)) === "1") return;
+      localStorage.setItem(SHOWN_KEY(p.projectId), "1");
     } catch { /* private mode: the banner still shouts */ }
     // eslint-disable-next-line react-hooks/set-state-in-effect -- opens once, after the settings have loaded
     setOpen(first);
@@ -92,7 +99,8 @@ export function ScheduleSetup(p: Props) {
 export function ScheduleSetupButton(p: Props) {
   const saved = useShiftTimesSaved(p.projectId);
   const critical = useCriticalMode(p.projectId);
-  const nightDecided = useShiftTimes(p.projectId).nightJobs !== undefined;
+  const st = useShiftTimesState(p.projectId);
+  const nightDecided = st.loaded ? st.times.nightJobs !== undefined : null;
   const items = setupChecklist({ timezoneSet: !!p.timezone, shiftTimesSaved: saved, criticalChosen: critical != null, hasBaseline: p.hasBaseline, nightDecided });
   const todo = items.filter((i) => !i.done && !i.checking).length;
   const [open, setOpen] = useState(false);
@@ -284,13 +292,23 @@ type NightMode = "none" | "all" | "some";
  *  night work nobody's on, which waits for the day shift. */
 function NightStep({ projectId, milestones: given, canManage, done, onSaved }: Props & { done: boolean; onSaved: () => void }) {
   const tz = useScheduleTz();
-  const times = useShiftTimes(projectId);
+  const { times, loaded } = useShiftTimesState(projectId);
   const saved: NightJobs | undefined = times.nightJobs;
   // The schedule as the file has it: the saved night setting off, so what's
   // shown follows the choices made here, not the last ones saved.
   const milestones = useMemo(() => given.map((m) => (m.staffedShift ? { ...m, staffedShift: null } : m)), [given]);
   const [fileMode, setFileMode] = useState(saved === "file");
   const [picks, setPicks] = useState<Map<string, CrewPick>>(() => fromEntries(Array.isArray(saved) ? toCrewEntries(milestones, saved) : []));
+  // The saved setting can arrive after this opens (a new device): until a
+  // choice is made here, show what's saved.
+  const [touched, setTouched] = useState(false);
+  const savedKey = JSON.stringify(saved ?? null);
+  const [shownKey, setShownKey] = useState(savedKey);
+  if (!touched && savedKey !== shownKey) {
+    setShownKey(savedKey);
+    setFileMode(saved === "file");
+    setPicks(fromEntries(Array.isArray(saved) ? toCrewEntries(milestones, saved) : []));
+  }
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [savedNow, setSavedNow] = useState(false);
@@ -308,7 +326,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
   const modeOf = (crew: string): NightMode => { const p = pickOf(crew); return !p ? "none" : p.all ? "all" : "some"; };
   const isOn = (crew: string) => { const p = pickOf(crew); return !!p && (p.all || p.jobs.size > 0); };
   const update = (crew: string, fn: (cur: CrewPick | undefined) => CrewPick | undefined) => {
-    setSavedNow(false);
+    setSavedNow(false); setTouched(true);
     setPicks((cur) => { const n = new Map(cur); const v = fn(cur.get(key(crew))); if (v) n.set(key(crew), v); else n.delete(key(crew)); return n; });
   };
   const entries: string[] = [];
@@ -420,7 +438,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
             })}
           </div>
           <label className="flex items-start gap-2 text-[12px] text-[var(--color-text-muted)] cursor-pointer">
-            <input type="checkbox" className="mt-0.5" disabled={!canManage} checked={fileMode} onChange={(e) => { setFileMode(e.target.checked); setSavedNow(false); }} />
+            <input type="checkbox" className="mt-0.5" disabled={!canManage} checked={fileMode} onChange={(e) => { setFileMode(e.target.checked); setSavedNow(false); setTouched(true); }} />
             <span>Skip the crews — anything the schedule file puts in night hours is night work.</span>
           </label>
         </div>
@@ -524,8 +542,8 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
       <Msg err={err} />
       {canManage ? (
         <div className="flex items-center gap-3">
-          <button onClick={() => void save()} disabled={busy || (done && same)} className={btn}>
-            {busy && <Loader2 className="w-4 h-4 animate-spin" />} {done && same ? "Saved" : "Save night crews"}
+          <button onClick={() => void save()} disabled={busy || !loaded || (done && same)} className={btn}>
+            {(busy || !loaded) && <Loader2 className="w-4 h-4 animate-spin" />} {!loaded ? "Reading your saved night crews…" : done && same ? "Saved" : "Save night crews"}
           </button>
           {savedNow && <span className="text-[12px] font-semibold text-emerald-700 dark:text-emerald-400">Saved — the calendar and the turnover follow it now.</span>}
         </div>

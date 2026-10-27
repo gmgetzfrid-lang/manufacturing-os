@@ -81,14 +81,22 @@ export async function saveProjectShiftTimes(projectId: string, t: ShiftTimes): P
 /** The project's shift times, kept current: loads once, follows changes
  *  made in any view of this browser. */
 export function useShiftTimes(projectId?: string | null): ShiftTimes {
-  const [state, setState] = useState<{ projectId?: string | null; t: ShiftTimes }>(() => ({ projectId, t: readShiftTimes(projectId) }));
+  return useShiftTimesState(projectId).times;
+}
+
+/** The times, and whether the project's own copy has been read yet — until
+ *  then they're this browser's cached copy (or the 05:30 / 17:30 guess on a
+ *  device that has none), which mustn't be taken for "not set". */
+export function useShiftTimesState(projectId?: string | null): { times: ShiftTimes; loaded: boolean } {
+  const [state, setState] = useState<{ projectId?: string | null; t: ShiftTimes; loaded: boolean }>(() => ({ projectId, t: readShiftTimes(projectId), loaded: false }));
   // A different project: read its cached times at once (no effect needed).
-  const t = state.projectId === projectId ? state.t : readShiftTimes(projectId);
-  const setT = (x: ShiftTimes) => setState({ projectId, t: x });
+  const same = state.projectId === projectId;
+  const t = same ? state.t : readShiftTimes(projectId);
+  const setT = (x: ShiftTimes) => setState({ projectId, t: x, loaded: true });
   useEffect(() => {
     if (!projectId) return;
     let live = true;
-    loadProjectShiftTimes(projectId).then((x) => { if (live) setT(x); }).catch(() => undefined);
+    loadProjectShiftTimes(projectId).then((x) => { if (live) setT(x); }).catch(() => { if (live) setT(readShiftTimes(projectId)); });
     const on = (e: Event) => {
       if ((e as CustomEvent<{ projectId: string }>).detail?.projectId === projectId) setT(readShiftTimes(projectId));
     };
@@ -96,7 +104,7 @@ export function useShiftTimes(projectId?: string | null): ShiftTimes {
     return () => { live = false; window.removeEventListener(EVENT, on); };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- setT is rebuilt each render; projectId is what matters
   }, [projectId]);
-  return t;
+  return { times: t, loaded: same && state.loaded };
 }
 
 /** Have the project's shift times been saved, or is the app still on its

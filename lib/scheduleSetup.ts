@@ -27,8 +27,8 @@ export function setupChecklist(s: {
   shiftTimesSaved: boolean | null;
   criticalChosen: boolean;
   hasBaseline: boolean;
-  /** Night crews decided: named jobs, or "follow the file". */
-  nightDecided?: boolean;
+  /** Night crews decided: named jobs, or "follow the file". null = still loading. */
+  nightDecided?: boolean | null;
 }): SetupItem[] {
   return [
     { id: "timezone", label: "Plant time zone", required: true, done: s.timezoneSet,
@@ -38,7 +38,7 @@ export function setupChecklist(s: {
     // Required: a schedule file puts work in night hours that nights may not
     // staff — the turnover would hand day work to nights. One choice settles
     // it ("follow the file" is a choice too).
-    { id: "night", label: "Night crews", required: true, done: !!s.nightDecided,
+    { id: "night", label: "Night crews", required: true, done: s.nightDecided === true, checking: s.nightDecided === null,
       why: "Until it's set, every step the file put in night hours is handed to nights — even on jobs nights don't staff." },
     { id: "critical", label: "Critical path source", required: false, done: s.criticalChosen,
       why: "Schedule files often mark nearly everything critical — choose where it comes from." },
