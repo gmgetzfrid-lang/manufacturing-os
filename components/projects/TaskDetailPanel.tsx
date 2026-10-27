@@ -30,7 +30,7 @@ import {
 import { buildProgressIndex } from "@/lib/scheduleProgress";
 import StatusControl from "@/components/projects/StatusControl";
 import { CancelJobForm } from "@/components/projects/CancelledJobs";
-import ProgressControl, { ProgressSlider } from "@/components/projects/ProgressControl";
+import ProgressControl, { ProgressSlider, ProgressNoteForm } from "@/components/projects/ProgressControl";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 
 interface Props {
@@ -292,10 +292,27 @@ export default function TaskDetailPanel({
                       variant="pill"
                       disabled={!canEdit}
                       onPick={(s, reason, p) => void applyStatus(s, reason, p)}
+                      // "In progress" asks for the % (and what got done) — never a bare status.
+                      percent={effPct}
+                      onSetProgress={(p) => void applyProgress(p)}
+                      onStartWithNote={onStartNote && m.id ? async (p, n) => { const ok = await onStartNote(m.id!, p, n); loadNotes(); onChanged(); return ok; } : undefined}
                     />
                     <span className="text-[10px] text-[var(--color-text-faint)]">incl. on-hold / blocked</span>
                   </div>
-                  <ProgressSlider percent={effPct} onPick={(p) => void applyProgress(p)} disabled={!canEdit} busy={busyStatus} />
+                  {/* % done: one tap (or type it), with what got done — a
+                      correction too: pick the right number, say why. */}
+                  {onSetProgressNote && m.id && canEdit ? (
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">% done</span>
+                        <span className="text-sm font-black text-[var(--color-text)] tabular-nums">{effPct}%</span>
+                      </div>
+                      <ProgressNoteForm key={`${m.id}:${effPct}`} percent={effPct} autoFocus={false} busy={busyStatus}
+                        onSave={async (v, n) => { const ok = await onSetProgressNote(m.id!, v, n); loadNotes(); onChanged(); return ok; }} />
+                    </div>
+                  ) : (
+                    <ProgressSlider percent={effPct} onPick={(p) => void applyProgress(p)} disabled={!canEdit} busy={busyStatus} />
+                  )}
                 </div>
               ) : (
                 <div className="px-4 py-3 border-b border-[var(--color-border)]">

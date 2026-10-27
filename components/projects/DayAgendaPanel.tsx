@@ -713,15 +713,19 @@ function QuickEdit({ leaf, pct, canEdit, onSetStatus, onSetProgress, onAddNote, 
       )}
       {onAddNote && (
         <div className="flex items-center gap-1.5">
-          <span className="w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] text-[var(--color-text-muted)]">{noteMode === "edit" ? "Comment" : "Note"}</span>
+          {/* A % being saved needs its comment — said right on the box. */}
+          <span className={`w-16 shrink-0 font-black uppercase tracking-wider text-[9.5px] ${needsNote() ? "text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]"}`}>
+            {needsNote() ? <>What got done<span className="block normal-case tracking-normal">required</span></> : noteMode === "edit" ? "Comment" : "Note"}
+          </span>
           <input ref={noteRef} value={note} disabled={ro} onChange={(e) => { setNote(e.target.value); setNeedMsg(false); }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void commit(); } }}
-            placeholder={progressPending() ? "What got done? (needed to save the %)" : "Comment — shows on the shift report (e.g. sent out for calibration)"}
-            className={`flex-1 h-7 px-2 rounded-md border bg-[var(--color-surface)] pointer-coarse:h-9 focus:outline-none focus:border-[var(--color-accent-ring)] ${needMsg ? "border-rose-400" : "border-[var(--color-border-strong)]"}`} />
+            placeholder={progressPending() ? "e.g. bundle half out · or why it's corrected" : "Comment — shows on the shift report (e.g. sent out for calibration)"}
+            aria-required={needsNote()}
+            className={`flex-1 h-7 px-2 rounded-md bg-[var(--color-surface)] pointer-coarse:h-9 focus:outline-none focus:border-[var(--color-accent-ring)] ${needMsg ? "border-2 border-rose-500" : needsNote() ? "border-2 border-amber-400 bg-amber-50/60 dark:bg-amber-950/30" : "border border-[var(--color-border-strong)]"}`} />
           {progressPending() && (
             <button disabled={ro} onClick={() => void commit()}
-              className="shrink-0 h-7 px-2.5 rounded-md font-black bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 pointer-coarse:h-9">
-              Save {stagedPct ?? 0}%
+              className={`shrink-0 h-7 px-2.5 rounded-md font-black bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 pointer-coarse:h-9 ${needsNote() ? "opacity-70" : ""}`}>
+              {needsNote() ? "Add a comment to save" : `Save ${stagedPct ?? 0}%`}
             </button>
           )}
           {own && (
