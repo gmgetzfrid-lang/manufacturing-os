@@ -1022,7 +1022,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
                 <ul className="space-y-0.5">
                   {col.rows.map((x) => (
                     <li key={x.crew} className="flex items-baseline justify-between gap-3 text-[12.5px]">
-                      <b className="text-[var(--color-text)] break-words">{x.crew}</b>
+                      <span className="min-w-0"><b className="text-[var(--color-text)] break-words">{x.crew}</b>{x.note && <span className="block text-[11px] text-[var(--color-text-muted)] break-words">{x.note}</span>}</span>
                       <span className="shrink-0 font-mono text-[11px] text-[var(--color-text-muted)]">{x.text}</span>
                     </li>
                   ))}
@@ -1032,7 +1032,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           ))}
         </div>
       ),
-      data: () => [{ k: "columns", cols: crewCols.map((col) => ({ title: col.title, rows: col.rows.length ? col.rows.map((x) => ({ title: x.crew, value: x.text })) : [{ title: "No work planned", value: "" }] })) }],
+      data: () => [{ k: "columns", cols: crewCols.map((col) => ({ title: col.title, rows: col.rows.length ? col.rows.map((x) => ({ title: x.crew, value: x.text, note: x.note })) : [{ title: "No work planned", value: "" }] })) }],
     },
     {
       id: "safety", title: "Safety & people", short: "Safety",

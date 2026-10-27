@@ -136,8 +136,18 @@ describe("crews box", () => {
     const noCrew = mk({ id: "nc", name: "Set blinds", parentId: "e17", plannedStartAt: at("2026-10-26", "08:00"), plannedAt: at("2026-10-26", "10:00"), durationHours: 2, status: "completed", percentComplete: 100 });
     const r3 = buildShiftReport({ milestones: [...all, noCrew], tz: CHI, shift: day, now: day.end, startPct });
     const cr = crewsOf(r3, turnoverPlan(r3, () => false), (h) => `${h} h`);
-    const t = cr.worked.find((x) => x.crew === "No crew named")!.text;
-    expect(t).toContain("E-17 Exchanger: Set blinds");
-    expect(t).toMatch(/\(no responsible party set\)$/);
+    const row = cr.worked.find((x) => x.crew === "No crew named")!;
+    // The count stays short (fits beside the name on a phone); the steps go under the name.
+    expect(row.text).toBe("2 of 3 done");
+    expect(row.note).toContain("E-17 Exchanger: Set blinds");
+    expect(row.note).toMatch(/no responsible party set$/);
+  });
+});
+
+describe("crews box on a phone", () => {
+  it("counts read short and never wrap: '12 of 15 done', non-breaking spaces", async () => {
+    const { toEmailHtml } = await import("@/lib/reportExport");
+    const html = toEmailHtml({ kind: "k", project: "p", when: "w", asOf: "a", sections: [{ title: "Crews", blocks: [{ k: "columns", cols: [{ title: "Day", rows: [{ title: "Schultz", value: "12 of 15 done" }] }] }] }] });
+    expect(html).toContain("12&nbsp;of&nbsp;15&nbsp;done");
   });
 });

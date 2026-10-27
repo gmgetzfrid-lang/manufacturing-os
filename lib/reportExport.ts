@@ -62,7 +62,7 @@ export type ExportBlock =
    *  focus"), each a list of lines. */
   | {
     k: "columns";
-    cols: Array<{ title: string; tone?: Tone; rows: Array<{ title: string; text?: string; value?: string }> }>;
+    cols: Array<{ title: string; tone?: Tone; rows: Array<{ title: string; text?: string; value?: string; note?: string }> }>;
   }
   | { k: "list"; items: Array<{ text: string; note?: string }> }
   /** A written list: "E-17 Exchanger · Pull bundle — 40%, was due 16:00",
@@ -165,7 +165,7 @@ export function toPlainText(d: ExportDoc): string {
         case "columns":
           for (const c of b.cols) {
             if (c.title) out.push(`   ${c.title.toUpperCase()}`);
-            for (const r of c.rows) out.push(`   • ${r.title}${r.value ? ` — ${r.value}` : ""}${r.text ? ` — ${r.text}` : ""}`);
+            for (const r of c.rows) out.push(`   • ${r.title}${r.value ? ` — ${r.value}` : ""}${r.text ? ` — ${r.text}` : ""}${r.note ? ` (${r.note})` : ""}`);
           }
           break;
         case "table": {
@@ -317,7 +317,9 @@ function blockHtml(b: ExportBlock): string {
           `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;">` +
           c.rows.map((r) => r.text != null
             ? `<tr>${td(`font-size:12px;line-height:1.4;color:${INK};padding:2px 0 4px;`, `<b>${esc(r.title)}</b>${r.text ? `<br><span style="color:#475569;">${esc(r.text)}</span>` : ""}`)}</tr>`
-            : `<tr>${td(`font-size:12px;color:${INK};padding:3px 6px;border:1px solid #e2e8f0;`, `<b>${esc(r.title)}</b>`)}${td(`font-size:12px;color:${MUTED};padding:3px 6px;border:1px solid #e2e8f0;text-align:right;white-space:nowrap;`, esc(r.value ?? ""))}</tr>`).join("") +
+            // The value never wraps — non-breaking spaces too, for mail apps
+            // that ignore nowrap on a phone. A note goes under the name.
+            : `<tr>${td(`font-size:12px;color:${INK};padding:3px 6px;border:1px solid #e2e8f0;`, `<b>${esc(r.title)}</b>${r.note ? `<div style="${FONT}font-size:11px;color:${MUTED};">${esc(r.note)}</div>` : ""}`)}${td(`font-size:12px;color:${MUTED};padding:3px 6px;border:1px solid #e2e8f0;text-align:right;white-space:nowrap;vertical-align:top;`, esc(r.value ?? "").replace(/ /g, "&nbsp;"))}</tr>`).join("") +
           `</table>`, `width="${w}%" `)).join("") +
         `</tr></table>`;
     }

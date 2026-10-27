@@ -223,15 +223,16 @@ export function gapStory(report: ShiftReport, t: Fmt, max = 5) {
 /** Who was on the shift just worked, and who's on the next one — by crew,
  *  for the top of the turnover. */
 export function crewsOf(report: ShiftReport, plan: TurnoverPlan, hrs: (h: number) => string): {
-  worked: Array<{ crew: string; text: string }>;
-  coming: Array<{ crew: string; text: string }>;
+  worked: Array<{ crew: string; text: string; note?: string }>;
+  coming: Array<{ crew: string; text: string; note?: string }>;
 } {
   const who = (r: ShiftRow) => r.leaf.responsibleParty?.trim() || "No crew named";
   const sort = <T extends { n: number }>(m: Map<string, T>) => [...m].sort((a, b) => b[1].n - a[1].n || a[0].localeCompare(b[0], undefined, { numeric: true }));
   // Steps with no crew on them are named, so the missing crew can be filled in.
   const stepLabel = (r: ShiftRow) => (r.parentName ? `${r.parentName}: ${r.leaf.name}` : r.leaf.name);
   const wNames: string[] = [], cNames: string[] = [];
-  const unnamed = (crew: string, names: string[]) => (crew === "No crew named" && names.length ? ` — ${names.slice(0, 3).join("; ")}${names.length > 3 ? ` + ${names.length - 3} more` : ""} (no responsible party set)` : "");
+  // Under the crew's name, so the short count beside it never wraps.
+  const unnamed = (crew: string, names: string[]) => (crew === "No crew named" && names.length ? `${names.slice(0, 3).join("; ")}${names.length > 3 ? ` + ${names.length - 3} more` : ""} — no responsible party set` : undefined);
   // Worked: the shift's own planned work, and anything finished or moved on it.
   const seen = new Set<string>();
   const w = new Map<string, { n: number; done: number }>();
@@ -253,8 +254,9 @@ export function crewsOf(report: ShiftReport, plan: TurnoverPlan, hrs: (h: number
     c.set(who(x.r), e);
   }
   return {
-    worked: sort(w).map(([crew, e]) => ({ crew, text: `${e.n} step${e.n === 1 ? "" : "s"} · ${e.done} done${unnamed(crew, wNames)}` })),
-    coming: sort(c).map(([crew, e]) => ({ crew, text: `${e.n} step${e.n === 1 ? "" : "s"} · ${hrs(Math.round(e.hours * 10) / 10)}${unnamed(crew, cNames)}` })),
+    // Short, so it fits beside the name on a phone: "12 of 15 done", "2 steps · 6 h".
+    worked: sort(w).map(([crew, e]) => ({ crew, text: `${e.done} of ${e.n} done`, note: unnamed(crew, wNames) })),
+    coming: sort(c).map(([crew, e]) => ({ crew, text: `${e.n} step${e.n === 1 ? "" : "s"} · ${hrs(Math.round(e.hours * 10) / 10)}`, note: unnamed(crew, cNames) })),
   };
 }
 

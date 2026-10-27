@@ -240,8 +240,8 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     out.splice(out.findIndex((x) => x.id === "stand") + 1, 0, {
       id: "who", title: "Crews",
       blocks: [{ k: "columns", cols: [
-        { title: `${shiftName(shift)} ${f.D(shift.start)} — who was here`, rows: cr.worked.length ? cr.worked.map((x) => ({ title: x.crew, value: x.text })) : [{ title: "No work planned", value: "" }] },
-        { title: `${shiftName(next)} ${f.D(next.start)} — who's coming`, rows: cr.coming.length ? cr.coming.map((x) => ({ title: x.crew, value: x.text })) : [{ title: "No work planned", value: "" }] },
+        { title: `${shiftName(shift)} ${f.D(shift.start)} — who was here`, rows: cr.worked.length ? cr.worked.map((x) => ({ title: x.crew, value: x.text, note: x.note })) : [{ title: "No work planned", value: "" }] },
+        { title: `${shiftName(next)} ${f.D(next.start)} — who's coming`, rows: cr.coming.length ? cr.coming.map((x) => ({ title: x.crew, value: x.text, note: x.note })) : [{ title: "No work planned", value: "" }] },
       ] }],
     });
   }
