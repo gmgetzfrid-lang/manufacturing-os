@@ -868,8 +868,12 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           return a === "…" && b === "…" ? "all day" : `${a}–${b}`;
         };
         const pctOf = (l: Milestone) => (l.id ? progress?.get(l.id)?.percent : undefined) ?? (l.percentComplete != null ? Math.round(l.percentComplete) : (l.status === "completed" ? 100 : 0));
-        const Row = ({ leaf, muted }: { leaf: Milestone; muted?: boolean }) => (
-          <li className={`px-3 py-2 flex items-center gap-2 ${muted ? "opacity-60" : ""}`}>
+        // A plain function, not a component made here: a component made in
+        // render is a new type every render, so React would throw each row
+        // away on any redraw (a refresh, a resize, a phone's keyboard
+        // opening) — and the progress or status box open in it with it.
+        const stepRow = (leaf: Milestone, muted?: boolean) => (
+          <li key={leaf.id ?? leaf.name} className={`px-3 py-2 flex items-center gap-2 ${muted ? "opacity-60" : ""}`}>
             <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
               <StatusControl
                 status={leaf.status} size="sm" variant="dot" disabled={!canEdit || !onSetStatus || !leaf.id}
@@ -924,7 +928,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                 <div className="px-3 py-3 text-[11px] text-[var(--color-text-faint)]">Nothing under this task is scheduled on {dayLabel}.</div>
               ) : (
                 <ul className="divide-y divide-[var(--color-border)]">
-                  {onDay.map((leaf) => <Row key={leaf.id} leaf={leaf} />)}
+                  {onDay.map((leaf) => stepRow(leaf))}
                 </ul>
               )}
               {others.length > 0 && (
@@ -938,7 +942,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                   </button>
                   {popoverShowOthers && (
                     <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
-                      {others.map((leaf) => <Row key={leaf.id} leaf={leaf} muted />)}
+                      {others.map((leaf) => stepRow(leaf, true))}
                     </ul>
                   )}
                 </div>
