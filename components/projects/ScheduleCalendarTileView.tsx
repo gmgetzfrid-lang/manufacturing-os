@@ -25,7 +25,7 @@ import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { splitPlacements, compareDayPlacements, wbsCompare, crewOf, startMsOf, finishMsOf, type DayPlacement, type DayCrew } from "@/lib/calendarPlacement";
 import { addDays as addDaysTz, addMonths as addMonthsTz, clockLabel, dayDiff as dayDiffTz, dayKey, dayKeyToMs, dayOfWeek, fmtInTz, hasTimeOfDay, tzAbbrev, startOfDay as startOfDayTz, startOfMonth as startOfMonthTz, wallClock } from "@/lib/scheduleTz";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
-import { DEFAULT_SHIFT_TIMES, crewWindows, workShiftOf, workSpan, shiftWindow, type ShiftTimes } from "@/lib/shiftReport";
+import { DEFAULT_SHIFT_TIMES, crewWindows, workShiftOf, workSpan, shiftWindow, shiftAt, type ShiftTimes } from "@/lib/shiftReport";
 import { bandIndex, stepBandDays, type Band } from "@/lib/shiftBands";
 import ShiftMark from "@/components/projects/ShiftMark";
 import DayAgendaPanel from "@/components/projects/DayAgendaPanel";
@@ -207,7 +207,8 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   const [cursor, setCursor] = useState<Date>(() => firstOfMonthUTC(new Date(), tz));
   // Month, one week (tall days), or one day (its full step list).
   type Mode = "month" | "week" | "day";
-  const [mode, setModeState] = useState<Mode>("month");
+  // The week is where the work is read and updated; the month is an overview.
+  const [mode, setModeState] = useState<Mode>("week");
   const [focusDay, setFocusDay] = useState<Date>(() => startOfDayUTC(new Date(), tz));
   React.useEffect(() => {
     try {
@@ -299,45 +300,69 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
     const seen = new Set<string>();
     return [...b.day, ...b.night].filter((p) => { const k = p.ms.id ?? p.ms.name; if (seen.has(k)) return false; seen.add(k); return true; });
   };
+  // The shift on now, and the one just ended — the one being written up.
+  const [clock, setClock] = useState(() => Date.now());
+  React.useEffect(() => { const t = setInterval(() => setClock(Date.now()), 5 * 60_000); return () => clearInterval(t); }, []);
+  const shiftTags = useMemo(() => {
+    const now = shiftAt(clock, tz, shiftTimes);
+    const last = now.kind === "night" ? { kind: "day", dayKey: now.dayKey } : { kind: "night", dayKey: dayKey(addDaysTz(dayKeyToMs(now.dayKey, tz), -1, tz), tz) };
+    return { now: `${now.kind}:${now.dayKey}`, last: `${last.kind}:${last.dayKey}` };
+  }, [clock, tz, shiftTimes]);
+  const tagOf = (key: string, band: Band) => {
+    const k = `${band}:${key}`;
+    if (k === shiftTags.now) return <span className="shrink-0 rounded px-1 py-px text-[8.5px] font-black uppercase tracking-wider bg-rose-600 text-white">Now</span>;
+    if (k === shiftTags.last) return <span title="The shift that just ended — the one to write up" className="shrink-0 rounded px-1 py-px text-[8.5px] font-black uppercase tracking-wider bg-amber-500 text-white">Last shift</span>;
+    return null;
+  };
+  // Which shift the day list opens on (from a shift's heading).
+  const [agendaFocus, setAgendaFocus] = useState<Band | null>(null);
+  const openShift = (key: string, band: Band) => { setAgendaFocus(band); setAgendaDay(key); };
+  const partsOf = (key: string) => {
+    const all = byDay.get(key) ?? { day: [], night: [] };
+    return { idle: all.day.filter((p) => p.idleToday), day: all.day.filter((p) => !p.idleToday), night: all.night };
+  };
+  const bandHead = (key: string, band: Band, n: number, big = false, short = false) => {
+    const w = shiftWindow(key, band, tz, shiftTimes);
+    return (
+      <button type="button" onClick={() => openShift(key, band)}
+        title={`${band === "day" ? "Day" : "Night"} shift ${clockLabel(w.start, tz)}–${clockLabel(w.end, tz)}${band === "night" ? ` (into ${fmtInTz(w.end, tz, { weekday: "short" })} morning)` : ""} — open its list to enter progress`}
+        className={`shrink-0 flex items-center gap-1 px-1 min-w-0 ${big ? "text-[10.5px]" : "text-[9px]"} font-black uppercase tracking-wider hover:underline ${band === "day" ? "text-sky-800 dark:text-sky-300" : "text-violet-800 dark:text-violet-200"}`}>
+        {band === "day" ? <Sun className="w-2.5 h-2.5 shrink-0" aria-hidden /> : <Moon className="w-2.5 h-2.5 shrink-0" aria-hidden />}
+        {band === "day" ? "Day" : "Night"}
+        <span className="font-semibold normal-case tracking-normal opacity-80 truncate">{clockLabel(w.start, tz)}–{band === "night" && !short ? `${fmtInTz(w.end, tz, { weekday: "short" })} ` : ""}{clockLabel(w.end, tz)}</span>
+        {tagOf(key, band)}
+        <span className="ml-auto tabular-nums">{n}</span>
+      </button>
+    );
+  };
   // Work orders open across a day with no step on it: folded into one line.
   const [idleOpen, setIdleOpen] = useState<Set<string>>(new Set());
+  const idleLine = (key: string, idle: Placed[], big = false) => {
+    if (!idle.length) return null;
+    const open = idleOpen.has(key);
+    return (
+      <div key="idle" className="shrink-0 flex flex-col gap-1">
+        <button type="button" onClick={() => setIdleOpen((cur) => { const n = new Set(cur); if (n.has(key)) n.delete(key); else n.add(key); return n; })}
+          title={idle.map((p) => p.ms.name).join("\n")}
+          className={`flex items-center gap-1 px-1 text-left ${big ? "text-[10.5px]" : "text-[9.5px]"} font-semibold text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]`}>
+          <ChevronRight className={`w-3 h-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} aria-hidden />
+          {idle.length} open, no work this day
+        </button>
+        {open && <div className="flex flex-col gap-1 opacity-70">{idle.map((p) => chipFor(p, key))}</div>}
+      </div>
+    );
+  };
   // Day shift in blue, night shift in purple — the night box runs to the next morning.
   const renderBands = (key: string, big = false) => {
-    const all = byDay.get(key) ?? { day: [], night: [] };
-    const idle = all.day.filter((p) => p.idleToday);
-    const b = { day: all.day.filter((p) => !p.idleToday), night: all.night };
-    const out = (["day", "night"] as const).filter((band) => b[band].length > 0).map((band) => {
-      const w = shiftWindow(key, band, tz, shiftTimes);
-      const busy = b[band].length;
-      return (
-        <div key={band} className={`shrink-0 rounded-md p-0.5 flex flex-col gap-1 ${band === "day" ? "bg-sky-50 dark:bg-sky-950/30" : "bg-violet-100 dark:bg-violet-950/50"}`}>
-          <button type="button" onClick={() => setAgendaDay(key)}
-            title={`${band === "day" ? "Day" : "Night"} shift ${clockLabel(w.start, tz)}–${clockLabel(w.end, tz)}${band === "night" ? ` (into ${fmtInTz(w.end, tz, { weekday: "short" })} morning)` : ""} — open the list to enter progress`}
-            className={`flex items-center gap-1 px-1 ${big ? "text-[10.5px]" : "text-[9px]"} font-black uppercase tracking-wider ${band === "day" ? "text-sky-800 dark:text-sky-300" : "text-violet-800 dark:text-violet-200"}`}>
-            {band === "day" ? <Sun className="w-2.5 h-2.5" aria-hidden /> : <Moon className="w-2.5 h-2.5" aria-hidden />}
-            {band === "day" ? "Day" : "Night"}
-            <span className="font-semibold normal-case tracking-normal opacity-80 truncate">{clockLabel(w.start, tz)}–{band === "night" ? `${fmtInTz(w.end, tz, { weekday: "short" })} ` : ""}{clockLabel(w.end, tz)}</span>
-            <span className="ml-auto tabular-nums">{busy}</span>
-          </button>
-          {doneLast(b[band]).map((p) => chipFor(p, key))}
-        </div>
-      );
-    });
-    if (idle.length) {
-      const open = idleOpen.has(key);
-      out.push(
-        <div key="idle" className="shrink-0 flex flex-col gap-1">
-          <button type="button" onClick={() => setIdleOpen((cur) => { const n = new Set(cur); if (n.has(key)) n.delete(key); else n.add(key); return n; })}
-            title={idle.map((p) => p.ms.name).join("\n")}
-            className={`flex items-center gap-1 px-1 text-left ${big ? "text-[10.5px]" : "text-[9.5px]"} font-semibold text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]`}>
-            <ChevronRight className={`w-3 h-3 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} aria-hidden />
-            {idle.length} open, no work this day
-          </button>
-          {open && <div className="flex flex-col gap-1 opacity-70">{idle.map((p) => chipFor(p, key))}</div>}
-        </div>,
-      );
-    }
-    return out;
+    const b = partsOf(key);
+    const out = (["day", "night"] as const).filter((band) => b[band].length > 0).map((band) => (
+      <div key={band} className={`shrink-0 rounded-md p-0.5 flex flex-col gap-1 ${band === "day" ? "bg-sky-50 dark:bg-sky-950/30" : "bg-violet-100 dark:bg-violet-950/50"}`}>
+        {bandHead(key, band, b[band].length, big)}
+        {doneLast(b[band]).map((p) => chipFor(p, key))}
+      </div>
+    ));
+    const idle = idleLine(key, b.idle, big);
+    return idle ? [...out, idle] : out;
   };
 
   // 6-week grid starting on the Sunday on/before the 1st.
@@ -605,7 +630,8 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         <div className="divide-y divide-[var(--color-border)]">
           {weekDays.map((day) => {
             const key = ymd(day, tz);
-            const items = uniqueOf(key);
+            // Work that day (work orders with nothing on it don't count).
+            const items = uniqueOf(key).filter((p) => !p.idleToday);
             const nightN = (byDay.get(key)?.night ?? []).length;
             const isToday = sameDayUTC(day, today, tz);
             const isDone = isDonePl;
@@ -619,12 +645,105 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                     {items.length ? `${items.length} task${items.length === 1 ? "" : "s"}${nightN ? ` · ${nightN} night` : ""}${items.filter(isDone).length ? ` · ${items.filter(isDone).length} done` : ""} ›` : "Nothing scheduled"}
                   </span>
                 </button>
-                {items.length > 0 && <div className="flex flex-col gap-1.5">{renderBands(key, true)}</div>}
+                {uniqueOf(key).length > 0 && <div className="flex flex-col gap-1.5">{renderBands(key, true)}</div>}
               </section>
             );
           })}
         </div>
-      ) : (<>
+      ) : mode === "week" ? (() => {
+        // Two lanes: the day shifts under their dates, and the nights between
+        // them — each night card sits from its evening into the next morning.
+        const cols = { gridTemplateColumns: "repeat(15, minmax(0, 1fr))" };
+        const prevKey = ymd(addDaysUTC(weekDays[0], -1, tz), tz);
+        const nextDay = addDaysUTC(weekDays[6], 1, tz);
+        const prevNight = partsOf(prevKey).night;
+        // Each lane as tall as its busiest shift (cards don't shrink; a very
+        // busy shift scrolls inside its box).
+        const tall = (band: Band) => Math.max(...weekDays.map((d) => {
+          const k = ymd(d, tz), b = partsOf(k);
+          return 26 + b[band].length * 53 + (band === "day" && b.idle.length ? 22 : 0) + (band === "day" && sameDayUTC(d, today, tz) && overdueToday.length ? 42 : 0);
+        }));
+        const laneH = (band: Band) => `min(${Math.max(band === "day" ? 140 : 110, tall(band))}px, ${band === "day" ? 56 : 42}vh)`;
+        return (
+          <div>
+            <div className="grid border-b border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)]" style={cols}>
+              {weekDays.map((day, i) => {
+                const key = ymd(day, tz);
+                const isToday = sameDayUTC(day, today, tz);
+                return (
+                  <button key={key} type="button" onClick={() => { setAgendaFocus(null); setAgendaDay(key); }} style={{ gridColumn: `${2 * i + 1} / span 2` }}
+                    title="Open this day's list — every step, with progress entry"
+                    className={`px-2 py-1.5 text-center text-[11px] font-black uppercase tracking-wider border-r border-[var(--color-border)] hover:text-[var(--color-accent)] ${isToday ? "text-rose-600 dark:text-rose-400" : "text-[var(--color-text-muted)]"}`}>
+                    {fmtInTz(day, tz, { weekday: "short" })} {wallClock(day.getTime(), tz).day}
+                    {(() => { const n = uniqueOf(key).filter((p) => !p.idleToday).length; return n > 0 ? <span className="ml-1 font-semibold normal-case tracking-normal text-[var(--color-text-faint)]">· {n}</span> : null; })()}
+                  </button>
+                );
+              })}
+              <div style={{ gridColumn: "15 / span 1" }} className="px-1 py-1.5 text-center text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-faint)]">
+                {fmtInTz(nextDay, tz, { weekday: "short" })} am
+              </div>
+            </div>
+            {crewFilter !== "night" && (
+              <div className="grid border-b-2 border-violet-200 dark:border-violet-900" style={{ ...cols, height: laneH("day") }}>
+                {weekDays.map((day, i) => {
+                  const key = ymd(day, tz);
+                  const b = partsOf(key);
+                  const isToday = sameDayUTC(day, today, tz);
+                  const live = shiftTags.now === `day:${key}`;
+                  return (
+                    <div key={key} data-daykey={key} style={{ gridColumn: `${2 * i + 1} / span 2` }}
+                      onDragOver={(e) => { if (canEdit) e.preventDefault(); }} onDrop={(e) => void onDropDay(key, e)}
+                      className={`min-h-0 min-w-0 border-r border-sky-100 dark:border-sky-950 p-1 flex flex-col gap-1 bg-sky-50/70 dark:bg-sky-950/20 ${live ? "ring-2 ring-inset ring-rose-300 dark:ring-rose-800" : ""}`}>
+                      {bandHead(key, "day", b.day.length, false, true)}
+                      {isToday && overdueToday.length > 0 && (
+                        <button type="button" onClick={() => openShift(key, "day")}
+                          title={overdueToday.slice(0, 6).map((w) => `• ${w.leaf.name}`).join("\n") + (overdueToday.length > 6 ? `\n…and ${overdueToday.length - 6} more` : "")}
+                          className="shrink-0 w-full text-left rounded px-1.5 py-1 bg-rose-600 text-white text-[10px] font-black uppercase tracking-wide hover:bg-rose-700">
+                          ⚠ {overdueToday.length} carried over — not done
+                        </button>
+                      )}
+                      <DayScroller fade="from-sky-50 dark:from-sky-950">
+                        {doneLast(b.day).map((p) => chipFor(p, key))}
+                        {idleLine(key, b.idle)}
+                      </DayScroller>
+                    </div>
+                  );
+                })}
+                <div style={{ gridColumn: "15 / span 1" }} className="bg-slate-50/40 dark:bg-transparent" aria-hidden />
+              </div>
+            )}
+            {crewFilter !== "day" && (
+              <div className="grid" style={{ ...cols, height: laneH("night") }}>
+                {/* The night before the week: half a box, its count. */}
+                <button type="button" onClick={() => openShift(prevKey, "night")} style={{ gridColumn: "1 / span 1" }}
+                  title={`${fmtInTz(addDaysUTC(weekDays[0], -1, tz), tz, { weekday: "long" })} night — open its list`}
+                  className="min-w-0 border-r border-violet-200 dark:border-violet-900 bg-violet-100/60 dark:bg-violet-950/30 flex flex-col items-center justify-center gap-1 text-violet-800 dark:text-violet-200 hover:bg-violet-100">
+                  <Moon className="w-3.5 h-3.5" aria-hidden />
+                  <span className="text-[9px] font-black uppercase tracking-wider">{fmtInTz(addDaysUTC(weekDays[0], -1, tz), tz, { weekday: "short" })}</span>
+                  {prevNight.length > 0 && <span className="text-[10px] font-bold tabular-nums">{prevNight.length}</span>}
+                </button>
+                {weekDays.map((day, i) => {
+                  const key = ymd(day, tz);
+                  const b = partsOf(key);
+                  const live = shiftTags.now === `night:${key}`;
+                  return (
+                    <div key={key} data-daykey={key} style={{ gridColumn: `${2 * i + 2} / span 2` }}
+                      onDragOver={(e) => { if (canEdit) e.preventDefault(); }} onDrop={(e) => void onDropDay(key, e)}
+                      className={`relative min-h-0 min-w-0 border-r border-violet-200 dark:border-violet-900 p-1 flex flex-col gap-1 bg-violet-100/70 dark:bg-violet-950/40 ${live ? "ring-2 ring-inset ring-rose-300 dark:ring-rose-800" : ""}`}>
+                      {/* Midnight: where the night crosses into the next date. */}
+                      <span aria-hidden className="pointer-events-none absolute top-0 bottom-0 left-1/2 border-l border-dashed border-violet-300/70 dark:border-violet-800/70" />
+                      {bandHead(key, "night", b.night.length, false, true)}
+                      <DayScroller fade="from-violet-100 dark:from-violet-950">
+                        {doneLast(b.night).map((p) => chipFor(p, key))}
+                      </DayScroller>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })() : (<>
       {/* Weekday header */}
       <div className="grid grid-cols-7 border-b border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)]">
         {WEEKDAYS.map((d) => (
@@ -639,12 +758,12 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           // inside it (cards never shrink).
           // A week with nothing in it stays short, so the busy weeks get the room.
           <div key={wi} className="grid grid-cols-7 border-b border-[var(--color-border)] last:border-b-0"
-            style={{ height: mode === "week" ? "68vh" : week.some((d) => uniqueOf(ymd(d, tz)).length > 0) ? (compact ? 64 : 212) : (compact ? 40 : 56) }}>
+            style={{ height: week.some((d) => uniqueOf(ymd(d, tz)).length > 0) ? (compact ? 64 : 212) : (compact ? 40 : 56) }}>
             {week.map((day) => {
               const key = ymd(day, tz);
               const items = uniqueOf(key);
               const nightN = (byDay.get(key)?.night ?? []).length;
-              const inMonth = mode === "week" || wallClock(day.getTime(), tz).month === monthIdx;
+              const inMonth = wallClock(day.getTime(), tz).month === monthIdx;
               const isToday = sameDayUTC(day, today, tz);
               // Every task shows, in its shift; a busy day scrolls inside
               // its box. Open work first (in time order), finished below.
@@ -830,6 +949,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           search and open row are still there on the way back. */}
       {agendaDay && (
         <DayAgendaPanel
+          focus={agendaFocus}
           hidden={!!detailOpen}
           planNow={planNow}
           userId={userId}
@@ -847,8 +967,8 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           onStartNote={onStartNote}
           shiftTimes={shiftTimes}
           onOpenDetail={(m) => { onOpenDetail(m); }}
-          onChangeDay={setAgendaDay}
-          onClose={() => setAgendaDay(null)}
+          onChangeDay={(k) => { setAgendaFocus(null); setAgendaDay(k); }}
+          onClose={() => { setAgendaDay(null); setAgendaFocus(null); }}
           colorOf={(top) => colorFor(top)}
         />
       )}

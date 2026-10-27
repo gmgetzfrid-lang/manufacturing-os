@@ -17,7 +17,7 @@
 // or WO number. The full detail panel is one click away and never needed
 // for a progress update.
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, X as XIcon, CalendarDays, Layers, ExternalLink, Search, ArrowDown, Check, Sun, Moon } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import StatusControl from "@/components/projects/StatusControl";
@@ -30,6 +30,7 @@ import { DEFAULT_SHIFT_TIMES, expectedByParent, expectedFraction, shiftAt, shift
 import { latestNotes, updateMilestoneNote } from "@/lib/milestones";
 import ShiftMark from "@/components/projects/ShiftMark";
 import { stepBandDays, type BandDays } from "@/lib/shiftBands";
+import { inheritedWorkOrders } from "@/lib/workOrderCrew";
 
 interface Props {
   day: string; // "YYYY-MM-DD" in the plant zone
@@ -37,6 +38,8 @@ interface Props {
   hidden?: boolean;
   /** Shown in the page (the calendar's Day view) instead of sliding over it. */
   inline?: boolean;
+  /** Opened from a shift's heading: start at that shift. */
+  focus?: "day" | "night" | null;
   /** Each task's planned % by now over ALL its steps (a crew or search
    *  filter mustn't shrink the plan behind "x% of y% planned"). */
   planNow?: Map<string, number>;
@@ -87,10 +90,13 @@ interface EquipmentGroup {
 }
 
 export default function DayAgendaPanel({
-  day, tz, milestones, childrenByParent, ancestorsOf, progress, canEdit,
+  day, tz, milestones, childrenByParent, ancestorsOf, progress, canEdit, focus,
   onSetStatus, onSetProgress, onAddNote, onOpenDetail, onChangeDay, onClose, colorOf, shiftTimes = DEFAULT_SHIFT_TIMES, hidden, planNow: planNowAll, userId, onSetProgressNote, onStartNote, inline,
 }: Props) {
   const [query, setQuery] = useState("");
+  // A step's WO number: its own, else its work order's (or the file's WO column).
+  const wos = useMemo(() => inheritedWorkOrders(milestones), [milestones]);
+  const woOf = useCallback((m: Milestone) => m.workOrderRef?.trim() || (m.id ? wos.get(m.id) : undefined) || null, [wos]);
   const [openId, setOpenId] = useState<string | null>(null);
   // Each piece of equipment is a section that folds open and shut; which
   // ones the person opened or closed (by group key).
@@ -159,9 +165,9 @@ export default function DayAgendaPanel({
     const hit = (t?: string | null) => !!t && t.toLowerCase().replace(/[\s_-]+/g, "").includes(q);
     return groups.map((g) => {
       const groupHit = hit(g.parent?.name) || g.crumbs.some((c) => hit(c.name));
-      return { ...g, rows: groupHit ? g.rows : g.rows.filter((r) => hit(r.leaf.name) || hit(r.leaf.workOrderRef) || hit(r.leaf.responsibleParty) || hit(r.leaf.location)) };
+      return { ...g, rows: groupHit ? g.rows : g.rows.filter((r) => hit(r.leaf.name) || hit(woOf(r.leaf)) || hit(r.leaf.responsibleParty) || hit(r.leaf.location)) };
     }).filter((g) => g.rows.length > 0);
-  }, [groups, query]);
+  }, [groups, query, woOf]);
   // The day shift's work, then the night shift's: a step the night crew
   // works goes under Night shift, so night work never sits in the middle
   // of the day's list. The night shift runs into the next morning.
@@ -185,6 +191,14 @@ export default function DayAgendaPanel({
       ...(nightGroups.length ? [{ key: "night", shift: "night" as const, groups: nightGroups }] : []),
     ];
   }, [shownGroups, tz, shiftTimes, day]);
+
+  // Opened from a night shift's heading: start there.
+  const nightRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focus !== "night") return;
+    const id = requestAnimationFrame(() => nightRef.current?.scrollIntoView({ block: "start" }));
+    return () => cancelAnimationFrame(id);
+  }, [focus, day, sections.length]);
 
   // Each step's latest comment: on its row, and in its box to edit.
   const [latestByStep, setLatestByStep] = useState<Map<string, LatestNote>>(new Map());
@@ -254,6 +268,8 @@ export default function DayAgendaPanel({
   const windowOf = (r: Row) => {
     if (r.live === "overdue") return "OVERDUE";
     if (r.live === "started-early") return "early";
+    // Under a day long: its clock, across midnight too ("18:00–3:00").
+    if (r.finishMs > r.startMs && r.finishMs - r.startMs < 86_400_000 && (clockLabel(r.startMs, tz) || clockLabel(r.finishMs, tz))) return `${clockLabel(r.startMs, tz) || "0:00"}–${clockLabel(r.finishMs, tz) || "24:00"}`;
     const a = r.startsToday ? (clockLabel(r.startMs, tz) || "0:00") : "…";
     const b = r.endsToday ? (clockLabel(r.finishMs, tz) || "24:00") : "…";
     if (a === "…" && b === "…") return "all day";
@@ -335,7 +351,7 @@ export default function DayAgendaPanel({
               </div>
             )}
             {sec.shift === "night" && (
-              <div className="sticky top-0 z-[1] px-4 py-1.5 flex items-center gap-2 bg-violet-800 text-white dark:bg-violet-950">
+              <div ref={nightRef} className="sticky top-0 z-[1] px-4 py-1.5 flex items-center gap-2 bg-violet-800 text-white dark:bg-violet-950">
                 <Moon className="w-3.5 h-3.5 text-violet-200" aria-hidden />
                 <span className="text-[12px] font-black">Night shift</span>
                 <span className="text-[11px] text-violet-200">{shiftTimes.nightStart} → {fmtInTz(addDays(dayMs, 1, tz), tz, { weekday: "short" })} {shiftTimes.dayStart}</span>
@@ -399,7 +415,7 @@ export default function DayAgendaPanel({
                           title={canEdit ? "Update this step here — % done, status, what's blocking it, a note" : "Show this step"}>
                           <span className={`block text-[12px] leading-snug break-words font-semibold ${r.leaf.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{r.leaf.name}</span>
                           <span className="block text-[9.5px] text-[var(--color-text-faint)] truncate">
-                            {[note, r.leaf.responsibleParty, r.leaf.workOrderRef ? `WO ${r.leaf.workOrderRef}` : null].filter(Boolean).join(" · ")}
+                            {[note, r.leaf.responsibleParty, woOf(r.leaf) ? `WO ${woOf(r.leaf)}` : null].filter(Boolean).join(" · ")}
                           </span>
                           {r.leaf.id && latestByStep.get(r.leaf.id) && (
                             <span className="block text-[10px] italic text-[var(--color-text-muted)] break-words">&ldquo;{latestByStep.get(r.leaf.id)!.body}&rdquo;</span>
