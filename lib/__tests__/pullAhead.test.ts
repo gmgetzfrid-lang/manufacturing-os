@@ -89,7 +89,7 @@ describe("pulled forward", () => {
       pull: { crew: "Maintenance (KE)", hands: 2, hours: 12 },
     }) });
     expect(text).toMatch(/Could try if there's time: 2 steps, 16 h of 24 h \(Maintenance \(KE\), 2 × 12 h\)\./);
-    expect(text).toMatch(/Clean flanges · .*Night could try \(Maintenance \(KE\)\) — pulled ahead — planned/);
+    expect(text).toMatch(/Clean flanges · .*Could try \(Maintenance \(KE\)\) — pulled ahead — planned/);
   });
 });
 

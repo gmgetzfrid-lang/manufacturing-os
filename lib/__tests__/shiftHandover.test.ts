@@ -51,11 +51,11 @@ describe("shift handover", () => {
       pctOf: () => 0, finishOf: () => undefined, tryOf: (id) => (id === "hb" ? { crew: "Schultz - Tower", note: null } : undefined),
       asked: [{ id: "x", name: "Old step", crew: null, from: 20, now: 100 }],
     }) });
-    expect(text).toMatch(/Hydroblast · .*Night could try \(Schultz - Tower\) — day crew's/);
+    expect(text).toMatch(/Hydroblast · .*Could try \(Schultz - Tower\) — day crew's/);
     expect(text).toMatch(/Asked to try last turnover: 1 of 1 done \(as entered\)/);
     expect(text).toMatch(/Could try if there's time: 1 step, 4 h\./);
     // Once: marked to try, it isn't also "waits for day crew".
-    expect(text).not.toMatch(/Hydroblast · .*Waits for day crew/);
+    expect(text.split("CARRIES TO THE DAY SHIFT")[1] ?? "").not.toMatch(/Hydroblast/);
     expect(text.match(/Hydroblast ·/g)?.length).toBe(1);
   });
 });

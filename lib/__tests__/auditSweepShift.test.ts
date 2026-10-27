@@ -46,7 +46,7 @@ describe("night crews: only the jobs that have one", () => {
   it("the email says it waits for the day crew, and never says 'if you can'", () => {
     const r = buildShiftReport({ milestones: all, tz: CHI, shift: day26, now: day26.end });
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r, f, { pctOf: () => 0, finishOf: () => undefined }) });
-    expect(text).toMatch(/Hydroblast · .*Waits for day crew — no night crew/);
+    expect(text).toMatch(/Hydroblast · .*no night crew/);
     expect(text).not.toMatch(/if you can/i);
   });
   it("nothing changes until night crews are named", () => {

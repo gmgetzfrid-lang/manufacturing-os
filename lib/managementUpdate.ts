@@ -103,7 +103,6 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   const { overall, shift, next } = report;
   const out: Array<ExportSection & { id: string }> = [];
   const other = next.kind === "day" ? "night" : "day";
-  const nextShort = next.kind === "day" ? "Day" : "Night";
   const shiftHrs = (next.end - next.start) / 3_600_000;
   const t = { T: f.T, DTs: f.DTs, hrs: f.hrs };
   const note = (id?: string | null) => (id ? noteLine(look.noteOf?.(id), shift.start, f.D) : undefined);
@@ -144,7 +143,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
           ...(off.ahead ? [{ label: "Also ahead (done on earlier shifts)", text: `${off.ahead}.`, tone: "emerald" as const }] : []),
           ...(off.behind ? [{ label: "Also behind (not on the lists below)", text: `${off.behind}.`, tone: "rose" as const }] : []),
           { text: nextList.length ? `${shiftName(next)}: ${nextList.length} step${nextList.length === 1 ? "" : "s"}, ${f.hrs(nextHrs)}${tried.length ? ` — plus ${tried.length} to try if there's time` : ""}.` : `Nothing planned for the ${shiftName(next).toLowerCase()}.` },
-          ...(carries.length ? [{ text: `${carries.length} step${carries.length === 1 ? "" : "s"} wait${carries.length === 1 ? "s" : ""} for the ${other} crew.`, tone: "amber" as const }] : []),
+          ...(carries.length ? [{ text: `${carries.length} step${carries.length === 1 ? "" : "s"} carr${carries.length === 1 ? "ies" : "y"} to the ${other} shift.`, tone: "amber" as const }] : []),
           ...(held.length ? [{ label: "Needs a decision", text: `${held.length} blocked or on hold.`, tone: "rose" as const }] : []),
         ],
       },
@@ -182,7 +181,8 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     const d = kind === "try" ? look.tryOf!(r.leaf.id!)! : null;
     const pulled = plan.pulled.includes(r);
     const x = nextOf(report, r, kind, f, { pulled, crew: d ? d.crew ?? (pulled ? look.pull?.crew ?? null : null) : null });
-    const label = kind === "next" ? `${nextShort} ${x.label.charAt(0).toLowerCase()}${x.label.slice(1)}` : kind === "try" ? `${nextShort} ${x.label.replace(/^Could/, "could")}` : x.label;
+    // The table is the next shift's: its hours, or "Continues" / "Carried over".
+    const label = x.label;
     const text = x.detail ? `${label} — ${x.detail}` : label;
     return x.tone && x.tone !== "muted" ? { t: text, tone: x.tone, bold: kind === "held" } : text;
   };
@@ -191,33 +191,50 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     const s0 = standing(r, kindOf.get(r)!);
     return g > 0 ? { t: `${s0} · +${g} this shift`, tone: "emerald", bold: true } : s0;
   };
-  if (items.length > 0) {
-    const shown = items.slice(0, MAX_ROWS * 3).map((x) => x.r);
+  // The next crew's table holds only its own work (and what it could try);
+  // the other crew's carried work and anything blocked get their own.
+  const tonight = items.filter((x) => x.kind === "next" || x.kind === "try").map((x) => x.r);
+  const later = items.filter((x) => x.kind === "carry" || x.kind === "held").map((x) => x.r);
+  const vsCell = (r: ShiftRow): ExportCell => { const v = vsPlan(report, r, f.hrs); return { t: v.text, tone: v.tone, bold: true }; };
+  const stepCell = (r: ShiftRow): ExportCell => ({ t: r.leaf.name, note: [note(r.leaf.id), kindOf.get(r) === "try" ? look.tryOf!(r.leaf.id!)?.note ?? undefined : undefined].filter(Boolean).join(" · ") || undefined });
+  const more = (n: number, cols: number) => (n > 0 ? [[muted(`+ ${n} more`), ...Array(cols - 1).fill("")] as ExportCell[]] : []);
+  if (tonight.length || later.length) {
+    const shown = tonight.slice(0, MAX_ROWS * 3);
     const ps = look.pull;
     out.push({
       id: "next", title: `Next — ${shiftName(next)} ${f.D(next.start)} ${f.win(next)}`,
       sub: [
-        nextList.length ? `${nextList.length} for the ${next.kind} crew (${f.hrs(nextHrs)})` : null,
+        `${nextList.length} step${nextList.length === 1 ? "" : "s"} for the ${next.kind} crew (${f.hrs(nextHrs)})`,
         tried.length ? `${tried.length} could try` : null,
-        carries.length ? `${carries.length} wait for the ${other} crew` : null,
-        held.length ? `${held.length} blocked or on hold` : null,
       ].filter(Boolean).join(" · "),
-      flag: held.some((r) => r.status === "blocked") ? "rose" : null,
       blocks: [
-        {
-          k: "table", head: ["Task", "Step", "Who", "Next", "Done → goal", "vs plan"], align: ["left", "left", "left", "left", "right", "right"],
+        tonight.length ? {
+          k: "table", head: ["Task", "Step", "Who", "When", "Done → goal", "vs plan"], align: ["left", "left", "left", "left", "right", "right"],
           textLabels: ["", "", "by", "", "", "vs plan"], nowrap: [4, 5],
-          rows: [...byTask(shown, (r) => {
-            const v = vsPlan(report, r, f.hrs);
-            return [
-              { t: r.leaf.name, note: [note(r.leaf.id), kindOf.get(r) === "try" ? look.tryOf!(r.leaf.id!)?.note ?? undefined : undefined].filter(Boolean).join(" · ") || undefined },
-              who(r), planCell(r), progCell(r), { t: v.text, tone: v.tone, bold: true },
-            ];
-          }), ...(items.length > shown.length ? [[muted(`+ ${items.length - shown.length} more`), "", "", "", "", ""] as ExportCell[]] : [])],
-        },
+          rows: [...byTask(shown, (r) => [stepCell(r), who(r), planCell(r), progCell(r), vsCell(r)]), ...more(tonight.length - shown.length, 6)],
+        } as ExportBlock : { k: "note", text: `Nothing planned for the ${shiftName(next).toLowerCase()}.` } as ExportBlock,
         ...(tried.length ? [{ k: "note", text: `Could try if there's time: ${tried.length} step${tried.length === 1 ? "" : "s"}, ${f.hrs(capa.used)}${capa.hours > 0 && ps ? ` of ${f.hrs(capa.hours)}${capa.over ? " — over" : ""} (${ps.crew ? `${ps.crew}, ` : ""}${ps.hands} × ${Math.min(ps.hours, shiftHrs)} h)` : ""}.`, tone: "amber" } as ExportBlock] : []),
         ...(finishing.length ? [{ k: "note", text: `Planned to finish on the ${shiftName(next).toLowerCase()}: ${finishing.slice(0, 4).map((x) => `${x.name} (${f.T(x.at)})`).join(", ")}${finishing.length > 4 ? ` + ${finishing.length - 4} more` : ""}.` } as ExportBlock] : []),
       ],
+    });
+  }
+  if (later.length > 0) {
+    const shown = later.slice(0, MAX_ROWS * 3);
+    const why = (r: ShiftRow): ExportCell => {
+      const x = nextOf(report, r, kindOf.get(r)!, f);
+      const text = kindOf.get(r) === "held" ? `${x.label} — ${x.detail}` : x.detail ?? "";
+      return x.tone && x.tone !== "muted" ? { t: text, tone: x.tone, bold: kindOf.get(r) === "held" } : text;
+    };
+    const doneCell = (r: ShiftRow): ExportCell => { const g = gainOfRow(report, r); return g > 0 ? { t: `${r.percent}% · +${g} this shift`, tone: "emerald", bold: true } : `${r.percent}%`; };
+    out.push({
+      id: "carries", title: `Carries to the ${other} shift`,
+      sub: [carries.length ? `${carries.length} for the ${other} crew` : null, held.length ? `${held.length} blocked or on hold` : null].filter(Boolean).join(" · ") + ` — not the ${next.kind} shift's work`,
+      flag: held.some((r) => r.status === "blocked") ? "rose" : null,
+      blocks: [{
+        k: "table", head: ["Task", "Step", "Who", "Why it carries", "Done", "vs plan"], align: ["left", "left", "left", "left", "right", "right"],
+        textLabels: ["", "", "by", "", "done", "vs plan"], nowrap: [4, 5],
+        rows: [...byTask(shown, (r) => [stepCell(r), who(r), why(r), doneCell(r), vsCell(r)]), ...more(later.length - shown.length, 6)],
+      }],
     });
   }
 

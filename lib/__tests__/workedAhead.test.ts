@@ -49,7 +49,7 @@ describe("work done early and progress made show on the turnover", () => {
     // One row for E-17: both steps, what they meant, and the hours together.
     expect(text).toMatch(/E-17 Exchanger — 1 done, 1 moved: Remove components, Hydroblast \(0% → 30%\) · .*1 done early \(planned 10-27T13:00\); 1 started early \(planned 10-28T11:00\) · \+5.8 h/);
     // Unfinished and due: it carries, with what this shift did on the same row.
-    expect(text).toMatch(/Pull bundle · Schultz · Waits for day crew — was due 10-26T21:00 · 40% · \+40 this shift/);
+    expect(text).toMatch(/Pull bundle · Schultz · was due 10-26T21:00 · 40% · \+40 this shift/);
     // Why it's ahead: both early steps, with the hours each is worth.
     expect(text).toMatch(/5.8 h done ahead of plan, less 4.8 h behind/);
     // Every step named once.

@@ -96,19 +96,20 @@ describe("unfinished work: behind, or carrying over as planned", () => {
   it("each step says once where it stands: overdue, behind plan, or on plan", () => {
     const secs = turnoverUpdate(r, f, { pctOf: (id) => (id === "ex" ? 40 : 55), finishOf: () => undefined, stepsOf: stepsOf(all, shift.end) });
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: secs });
-    expect(text).toMatch(/Hydroblast · Waits for day crew — was due 10-26 22:00 · 60%/);
-    expect(text).toMatch(/Retube \(2 days\) · Waits for day crew — behind plan \(plan had \d+%\), continues next day shift · 10%/);
-    expect(text).toMatch(/Blast tower \(2 days\) · Waits for day crew — on plan, continues next day shift · 55%/);
+    expect(text).toMatch(/Hydroblast · was due 10-26 22:00 · done 60%/);
+    expect(text).toMatch(/Retube \(2 days\) · behind plan \(plan had \d+%\), continues next day shift · done 10%/);
+    expect(text).toMatch(/Blast tower \(2 days\) · on plan, continues next day shift · done 55%/);
     // Once in the done/next tables (the Why table above names steps on purpose, with their hours).
     const lists = text.slice(text.search(/^(DONE|NEXT) — /m));
     for (const name of ["Hydroblast", "Retube \\(2 days\\)", "Blast tower \\(2 days\\)"]) expect(lists.match(new RegExp(`${name} ·`, "g"))?.length).toBe(1);
     expect(text).not.toMatch(/PROBLEMS|ON PLAN —/);
     expect(text.indexOf("CREWS")).toBeLessThan(text.indexOf("WHERE WE STAND")); // who was here, at the top
-    // Why it's behind: the steps that make up the gap, with their hours.
     // Why it's behind: each step's hours on its own row — no separate table.
-    expect(text).toMatch(/Retube \(2 days\) · .*behind plan .* · 10% · −[\d.]+ h/);
-    expect(text).toMatch(/Hydroblast · .*was due .* · 60% · −[\d.]+ h/);
-    expect(text).not.toMatch(/WHY/);
+    expect(text).toMatch(/Retube \(2 days\) · .*behind plan .* · done 10% · −[\d.]+ h/);
+    expect(text).toMatch(/Hydroblast · .*was due .* · done 60% · −[\d.]+ h/);
+    // The day crew's work is in its own table, not the night shift's list.
+    expect(text).toMatch(/CARRIES TO THE DAY SHIFT/);
+    expect(text).toMatch(/^NEXT — NIGHT SHIFT[^\n]*\n   Nothing planned for the night shift\./m);
   });
 });
 
@@ -124,7 +125,7 @@ describe("a comment explains a step, quietly", () => {
     const html = toEmailHtml({ kind: "k", project: "p", when: "w", asOf: "a", sections: secs });
     expect(html).toMatch(/Calibrate meter<div[^>]*font-style:italic[^>]*>“Sent out for calibration — back Wednesday”/);
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: secs });
-    expect(text).toMatch(/FT-101 Coriolis meter — Calibrate meter \("Sent out for calibration — back Wednesday"\) · Waits for day crew — on plan, continues next day shift · 50%/);
+    expect(text).toMatch(/FT-101 Coriolis meter — Calibrate meter \("Sent out for calibration — back Wednesday"\) · on plan, continues next day shift · done 50%/);
   });
 });
 

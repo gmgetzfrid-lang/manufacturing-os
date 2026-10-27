@@ -169,7 +169,7 @@ describe("the management email judges a crew on its own work", () => {
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: secs });
     // Its own day step carries; the night step is blocked, with its reason —
     // each on its own row, each said once.
-    expect(text).toMatch(/Day step · Waits for day crew — was due .* · 90%/);
+    expect(text).toMatch(/Day step · was due .* · done 90%/);
     expect(text).not.toMatch(/Day step · .*Blocked/);
     expect(text).toMatch(/Night step · Blocked — permit/);
     expect(text.match(/Night step ·/g)?.length).toBe(1);
@@ -455,10 +455,12 @@ describe("the next shift sees the other crew's unfinished and paused work", () =
   });
   it("the email says so — waiting for its own crew, never 'pick up if you can'", () => {
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r, f, { pctOf: () => 40, finishOf: () => undefined }) });
-    expect(text).toMatch(/Blind \/ open manways · Waits for day crew — was due/);
+    // In its own table — not on the night shift's list.
+    expect(text).toMatch(/CARRIES TO THE DAY SHIFT/);
+    expect(text.split("CARRIES TO THE DAY SHIFT")[1]).toMatch(/Blind \/ open manways · was due/);
     expect(text).not.toMatch(/if you can/i);
     // Under way, continuing on the day crew's next shift — listed with where it stands.
-    expect(text).toMatch(/Retube · Waits for day crew — on plan, continues next day shift · 30%/);
+    expect(text).toMatch(/Retube · on plan, continues next day shift · done 30%/);
   });
 });
 

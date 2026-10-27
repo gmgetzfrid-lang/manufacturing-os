@@ -911,7 +911,10 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   // ── Next: one list. The next crew's work (numbered, in priority order),
   // what it could try, what waits for its own crew, what's blocked.
   const shiftHrs = (next.end - next.start) / 3_600_000;
-  const nextRows = (print: boolean) => items.map(({ r, kind }) => {
+  // The next crew's table: its own work and what it could try. The other
+  // crew's carried work and anything blocked: their own table below.
+  const isTonight = (k: string) => k === "next" || k === "try";
+  const nextRows = (print: boolean, tonight: boolean) => items.filter((x) => isTonight(x.kind) === tonight).map(({ r, kind }) => {
     const pulled = pulledRows.includes(r);
     const d = tryOf(r);
     const crewName = kind === "try" ? d?.crew ?? (pulled ? ho?.pullSet?.crew ?? null : null) : null;
@@ -919,7 +922,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     const scope = pulled ? scopeOf({ row: r }, crewName) : null;
     return {
       ...rowFromShift(r, c, {
-        when: x.label,
+        when: kind === "carry" ? `${otherKind === "day" ? "Day" : "Night"} crew` : x.label,
         n: kind === "next" ? { num: priorityOf.get(r.leaf.id ?? "") ?? 0, tone: r.critical ? "rose" : r.carryOver ? "amber" : "slate" } : undefined,
         right: standing(r, kind),
         note: [kind === "try" && d?.note ? `“${d.note}”` : null, comment(r)].filter(Boolean).join(" ") || undefined,
@@ -964,9 +967,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   const nextSub = [
     `${planList.length} step${planList.length === 1 ? "" : "s"} · ${c.hrs(planHrs)}`,
     tryList.length ? `${tryList.length} could try` : null,
-    plan.carries.length ? `${plan.carries.length} wait for ${otherKind} crew` : null,
-    plan.held.length ? `${plan.held.length} blocked or on hold` : null,
   ].filter(Boolean).join(" · ");
+  const laterCount = plan.carries.length + plan.held.length;
+  const laterSub = [plan.carries.length ? `${plan.carries.length} for the ${otherKind} crew` : null, plan.held.length ? `${plan.held.length} blocked or on hold` : null].filter(Boolean).join(" · ") + ` — not the ${next.kind} shift's work`;
   const pastDueAll = (o.whole ?? report).review.carryOver.filter((r) => !isHeld(r)).length;
   const forCrew = o.crew ? ` for ${o.crew}` : "";
   const standStats = [
@@ -1101,7 +1104,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       id: "next", title: `Next — ${shiftName(next)} ${c.D(next.start)} ${c.win(next)}`, short: "Next",
       sub: nextSub,
       count: planList.length,
-      flag: plan.held.some((r) => r.status === "blocked") ? "rose" : null,
+      flag: null,
       body: (print) => (
         <div className="space-y-2">
           {next.kind === "night" && o.times.nightJobs === undefined && (
@@ -1110,8 +1113,8 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
               <b>Night crews aren&apos;t set</b> — this list follows the schedule file&apos;s hours, which can hand day work to nights. Set them once in <b>Schedule setup → Night crews</b>.
             </div>
           )}
-          {items.length === 0 ? <Empty>Nothing is scheduled for the next shift.</Empty> : (
-            <StepTable print={print} box whenHead="Next" rightHead="Now → goal" rows={nextRows(print)} />
+          {planList.length + tryList.length === 0 ? <Empty>Nothing is scheduled for the next shift.</Empty> : (
+            <StepTable print={print} box whenHead="When" rightHead="Now → goal" rows={nextRows(print, true)} />
           )}
           {tryLine && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{tryLine}</div>}
           {goals.pulledHeld.length > 0 && (
@@ -1123,10 +1126,19 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         </div>
       ),
       data: () => [
-        items.length === 0 ? { k: "empty", text: "Nothing is scheduled for the next shift." } : stepsBlock(nextRows(true), "Now → goal", "Next"),
+        planList.length + tryList.length === 0 ? { k: "empty", text: "Nothing is scheduled for the next shift." } : stepsBlock(nextRows(true, true), "Now → goal", "When"),
         ...(tryLine ? [{ k: "note", text: tryLine, tone: "amber" } as ExportBlock] : []),
       ],
     },
+    ...(laterCount ? [{
+      // ── Carries to the other shift: its crew's unfinished and ongoing
+      // work, and anything blocked — not the next shift's list.
+      id: "carries", title: `Carries to the ${otherKind} shift`, short: `To ${otherKind} shift`,
+      sub: laterSub, count: laterCount,
+      flag: plan.held.some((r) => r.status === "blocked") ? "rose" : null,
+      body: (print: boolean) => <StepTable print={print} whenHead="Why" rightHead="Done" rows={nextRows(print, false)} />,
+      data: () => [stepsBlock(nextRows(true, false), "Done", "Why")],
+    } as Sec] : []),
     closeSection("Close", ["Outgoing supervisor", "Incoming supervisor", "Crew lead"]),
   ];
 }
