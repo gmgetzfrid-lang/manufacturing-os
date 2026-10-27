@@ -31,6 +31,147 @@ const CREWS_FOR: Partial<Record<HazardKind, number[]>> = {
   inert: [4, 0], hot_work: [4, 1], pressure_test: [5, 0], radiography: [0, 4], heights: [2, 1], electrical: [1, 4],
 };
 
+const CSB_STARTUP = { url: "https://www.csb.gov/assets/1/17/csb_start_shut_02.pdf", title: "CSB Safety Digest: Incidents during startups and shutdowns" };
+const CSB_BP = { url: "https://www.csb.gov/bp-america-texas-city-refinery-explosion/", title: "CSB: BP America Texas City Refinery Explosion" };
+const CSB_TOSCO = { url: "https://www.csb.gov/assets/1/20/Tosco_Digest.pdf", title: "CSB Digest: Tosco Avon refinery fire" };
+const CSB_WILLIAMS = { url: "https://www.csb.gov/csb-releases-final-case-study-into-2013-explosion-and-fire-at-williams-olefins-plant-in-geismar-louisiana/?F_All=y", title: "CSB: Williams Olefins Geismar final case study" };
+const CSB_TESORO = { url: "https://www.csb.gov/tesoro-refinery-fatal-explosion-and-fire/", title: "CSB: Tesoro Anacortes refinery explosion and fire" };
+const OSHA_EAP = { url: "https://www.osha.gov/laws-regs/regulations/standardnumber/1910/1910.38", title: "OSHA 1910.38: Emergency action plans" };
+const OSHA_H2S = { url: "https://www.osha.gov/hydrogen-sulfide", title: "OSHA: Hydrogen sulfide" };
+const OSHA_CSE = { url: "https://www.osha.gov/laws-regs/regulations/standardnumber/1910/1910.146", title: "OSHA 1910.146: Permit-required confined spaces" };
+const OSHA_LOTO = { url: "https://www.osha.gov/laws-regs/regulations/standardnumber/1910/1910.147", title: "OSHA 1910.147: Control of hazardous energy (lockout/tagout)" };
+const OSHA_HOT = { url: "https://www.osha.gov/laws-regs/regulations/standardnumber/1910/1910.252", title: "OSHA 1910.252: Welding, cutting and brazing — fire prevention" };
+const OSHA_FALL = { url: "https://www.osha.gov/laws-regs/regulations/standardnumber/1926/1926.502", title: "OSHA 1926.502: Fall protection systems" };
+const OSHA_ELEC = { url: "https://www.osha.gov/laws-regs/regulations/standardnumber/1910/1910.333", title: "OSHA 1910.333: Electrical safe work practices" };
+const OSHA_DIG = { url: "https://www.osha.gov/laws-regs/regulations/standardnumber/1926/1926.651", title: "OSHA 1926.651: Excavations" };
+
+/** The controls a supervisor says first for each kind of work, in site
+ *  language: `always` leads every time; the others come round in turn. */
+export const CORE: Record<HazardKind, { always: TalkPoint; more: TalkPoint[] }> = {
+  confined_space: {
+    always: { say: "Hole watch at the manway the whole entry, in constant contact with every entrant. Air monitored the whole time — on alarm, everyone evacuates.", source: OSHA_CSE },
+    more: [
+      { say: "Entry permit posted at the manway for this shift. Sign in and out on the log every time — the hole watch must know who's inside.", source: OSHA_CSE },
+      { say: "Rescue plan set before anyone enters. Never go in after someone without air and a rescue team — would-be rescuers die too.", source: OSHA_CSE },
+      { say: "Every line into the vessel blinded or disconnected — not just a closed valve. Verify it before entry.", source: OSHA_CSE },
+    ],
+  },
+  inert: {
+    always: { say: "Inert entry is supplied air only, with a dedicated hole watch and standby rescue at the manway. Nobody enters on a monitor alone.", source: OSHA_CSE },
+    more: [
+      { say: "Post and barricade every open manway: danger, nitrogen, no entry. Nobody puts their head into the opening." },
+      { say: "Watch the air supply as closely as the entrant. Lose air: the entrant comes out on the escape bottle, now." },
+    ],
+  },
+  hydroblast: {
+    always: { say: "Blast zone barricaded with red danger tape. Nobody inside but the blast crew, and only with the gunner's okay." },
+    more: [
+      { say: "Gunner and pump operator agree hand signals before starting and keep eye contact. Any doubt: release the dump." },
+      { say: "Full blast PPE every time: face shield, rain suit, metatarsal boots. No exceptions, even for a quick shot." },
+      { say: "Bleed it to zero before touching a fitting, hose or tip. Never tighten anything under pressure." },
+    ],
+  },
+  line_break: {
+    always: { say: "Line-break permit and LOTO verified with the operator before the first bolt. See the isolation — don't assume it.", source: OSHA_LOTO },
+    more: [
+      { say: "Break away from your body. Loosen the far-side bolts first so anything trapped sprays away from you." },
+      { say: "Know what was last in the line and wear the PPE for it: face shield, gloves, chemical suit if it calls for one." },
+      { say: "Catch pan in place and your escape route clear before you crack it." },
+    ],
+  },
+  lifting: {
+    always: { say: "Lift plan reviewed with everyone at the pre-lift meeting. One signal person, and everyone knows who it is.", source: OSHA_SWING },
+    more: [
+      { say: "Swing radius barricaded. Nobody walks under a suspended load — ever.", source: OSHA_SWING },
+      { say: "Tag lines guide the load; hands stay off it. Stop the lift if the wind picks up or the load won't sit right." },
+    ],
+  },
+  bundle_pull: {
+    always: { say: "Everyone out of the line of fire while pulling — a parted cable or sling whips. Spotter on the bundle the whole way out." },
+    more: [
+      { say: "Bundle puller inspected and rigged to the plan before the first pull. Pull zone barricaded." },
+      { say: "Once it's out, block and crib it before anyone works near it. Bundles roll." },
+    ],
+  },
+  startup: {
+    always: { say: "Only people with a start-up job stay in the unit. Everyone else clears out until it's lined out.", source: CSB_BP },
+    more: [
+      { say: "Blind list walked in the field before feed goes in. Every blind seen and signed off." },
+      { say: "Report every leak the moment you see it. Don't wait for turnover." },
+    ],
+  },
+  hot_work: {
+    always: { say: "Hot work permit and gas test before the first spark — and monitor continuously while you work.", source: OSHA_HOT },
+    more: [
+      { say: "Fire watch for the whole job and 30 minutes after, extinguisher in hand, watching where the sparks land.", source: OSHA_HOT },
+      { say: "Drains and sewers within 35 feet sealed. Sparks and slag travel farther than you think.", source: OSHA_HOT },
+    ],
+  },
+  heights: {
+    always: { say: "100% tie-off whenever you're exposed to a fall, anchored overhead. Inspect harness and lanyard before you go up.", source: OSHA_FALL },
+    more: [
+      { say: "Check the scaffold tag before you climb: green to use, red stay off. Never modify it — call the scaffold crew." },
+      { say: "Tools tethered and the area below barricaded. A dropped wrench kills." },
+    ],
+  },
+  pressure_test: {
+    always: { say: "Area barricaded and cleared before pressurizing. Nobody stands in line with blinds, flanges, caps or plugs." },
+    more: [
+      { say: "Pressure up in stages and hold at each one. A leak: depressure first, then fix it." },
+      { say: "Test rig's own gauge and relief, sized for the test. Never exceed the pressure on the permit." },
+    ],
+  },
+  electrical: {
+    always: { say: "Lock it out, then test before touch — live-dead-live with a meter. No test, no touch.", source: OSHA_ELEC },
+    more: [
+      { say: "Only qualified electricians inside the arc-flash boundary, in the PPE the label calls for.", source: OSHA_ELEC },
+      { say: "Keep water and wet work away from open panels. Cover them or stop." },
+    ],
+  },
+  catalyst: {
+    always: { say: "Spent catalyst can ignite in air. Keep it blanketed or wet, and follow the SDS for this catalyst." },
+    more: [
+      { say: "Entry into a reactor bed is inert entry: supplied air, hole watch and standby rescue at the manway.", source: OSHA_CSE },
+      { say: "Respirators for everyone near the dump chute — dust carries to the people below." },
+    ],
+  },
+  chemical: {
+    always: { say: "Know what's in the system and read the SDS before you open it. Eyewash and safety shower tested before you start." },
+    more: [
+      { say: "Chemical PPE matched to the chemical: goggles, face shield, gloves and suit — not your everyday gloves." },
+      { say: "H2S monitor on. Disturbed sludge releases H2S even in a cleaned vessel.", source: OSHA_H2S },
+    ],
+  },
+  heater: {
+    always: { say: "Fuel isolated and blinded at the burners before anyone enters the firebox. Verify it — don't trust a closed valve.", source: OSHA_LOTO },
+    more: [
+      { say: "Firebox fully purged before any light-off. No shortcuts on the purge time." },
+      { say: "Refractory dust is silica. Respirators inside the firebox." },
+    ],
+  },
+  radiography: {
+    always: { say: "The radiography barricade is a radiation boundary. Nobody crosses it until the RT crew clears the area." },
+    more: [
+      { say: "Know tonight's shoot times for your area and plan around them. Listen for the warning before each shot." },
+      { say: "The boundary covers every level — scaffold above the shot is inside it." },
+    ],
+  },
+  excavation: {
+    always: { say: "Dig permit and line locates before the first shovel. Hand dig or hydro-vac near marked lines.", source: OSHA_DIG },
+    more: [
+      { say: "Spoil and equipment at least two feet back from the edge. Walls inspected every shift.", source: OSHA_DIG },
+      { say: "Gas test before entering a trench — heavy vapors collect at the bottom.", source: OSHA_DIG },
+    ],
+  },
+  machining: {
+    always: { say: "Machine bolted down and guarded before it spins. Hands, gloves and sleeves clear of the cutter." },
+    more: [
+      { say: "Face shield over safety glasses — chips fly hot and sharp. Cover open nozzles so chips don't fall in." },
+      { say: "Isolation stays in place. A flange being machined is still an open line." },
+    ],
+  },
+};
+
 // What the crew is doing, in a few words, for the "today" line.
 const DOING: Record<HazardKind, string> = {
   confined_space: "entering", inert: "working nitrogen at", hydroblast: "blasting", line_break: "breaking into",
@@ -111,20 +252,13 @@ export function projectFacts(p: ProjectBase | undefined, shift: { start: number;
   };
 }
 
-const CSB_STARTUP = { url: "https://www.csb.gov/assets/1/17/csb_start_shut_02.pdf", title: "CSB Safety Digest: Incidents during startups and shutdowns" };
-const CSB_BP = { url: "https://www.csb.gov/bp-america-texas-city-refinery-explosion/", title: "CSB: BP America Texas City Refinery Explosion" };
-const CSB_TOSCO = { url: "https://www.csb.gov/assets/1/20/Tosco_Digest.pdf", title: "CSB Digest: Tosco Avon refinery fire" };
-const CSB_WILLIAMS = { url: "https://www.csb.gov/csb-releases-final-case-study-into-2013-explosion-and-fire-at-williams-olefins-plant-in-geismar-louisiana/?F_All=y", title: "CSB: Williams Olefins Geismar final case study" };
-const CSB_TESORO = { url: "https://www.csb.gov/tesoro-refinery-fatal-explosion-and-fire/", title: "CSB: Tesoro Anacortes refinery explosion and fire" };
-const OSHA_EAP = { url: "https://www.osha.gov/laws-regs/regulations/standardnumber/1910/1910.38", title: "OSHA 1910.38: Emergency action plans" };
-const OSHA_H2S = { url: "https://www.osha.gov/hydrogen-sulfide", title: "OSHA: Hydrogen sulfide" };
 
 /** Working in an operating plant: true of any job, said in turn. */
 const PLANT_POINTS: TalkPoint[] = [
   { say: "Operators own the unit. Check in with them before you start, and tell them when you stop or anything changes." },
   { say: "Never open, close or bump a valve that isn't yours. Ask the operator." },
-  { say: "Know the alarm and your muster point. If it sounds, stop and go. Don't finish the bolt.", source: OSHA_EAP },
-  { say: "Look at the windsock when you get to the job. Something leaks: get out crosswind, then upwind.", source: OSHA_H2S },
+  { say: "Know the alarm and your muster point. When it sounds, stop work and evacuate — don't finish the bolt.", source: OSHA_EAP },
+  { say: "Check the windsock when you start the job. If you evacuate, go crosswind first, then upwind to the muster point clear of the release.", source: OSHA_H2S },
 ];
 const PHASE_POINTS: Record<"shutdown" | "startup", TalkPoint[]> = {
   shutdown: [
@@ -187,14 +321,14 @@ const TA_THEMES: Array<{ key: string; title: string; points: TalkPoint[] }> = [
     { say: "Update your tags before you leave: who owns it, what's open, how to reach them.", source: OSHA_SIGNS },
   ] },
   { key: "gas", title: "Gas, wind & the unit next door", points: [
-    { say: "Gas monitor on and at your collar, even in the shut-down unit. The unit next door isn't shut down.", source: OSHA_H2S },
+    { say: "H2S monitor on and at your collar, even in the shut-down unit. The units next door are still running.", source: OSHA_H2S },
     PLANT_POINTS[3],
-    { say: "Monitor goes off or it smells wrong? Leave first, then call it. Don't go back for your tools." },
+    { say: "Monitor alarms or you smell gas? Stop work, evacuate to your muster point, then report it. Never go back for tools.", source: OSHA_EAP },
   ] },
   { key: "operators", title: "Operators own the unit", points: [
     PLANT_POINTS[0],
     PLANT_POINTS[1],
-    { say: "If the unit next door alarms, stop and go. Don't finish the bolt. Know your muster point.", source: OSHA_EAP },
+    { say: "Unit alarm sounds? Stop work, make the job safe, and evacuate to your muster point. Account for your whole crew there.", source: OSHA_EAP },
   ] },
 ];
 const PHASE_THEMES: Record<"shutdown" | "startup", { key: string; title: string; points: TalkPoint[] }> = {
@@ -256,15 +390,17 @@ export function safetyBrief(hazards: RankedHazard[], shift: { start: number; kin
     const crews = [...new Set(h.jobs.map((j) => j.who?.trim()).filter((x): x is string => !!x))];
     const who = crews.length === 1 ? crews[0] : crews.length ? andList(crews.slice(0, 2)) : "Crews";
     const where = andList(eqs.slice(0, 3)) + (eqs.length > 3 ? ` + ${eqs.length - 3} more` : "");
-    const withOthers = h.alongside.length > 0;
+    // The other crews — never one already doing this work.
+    const others = h.alongside.filter((a) => !crews.some((c) => c.toLowerCase() === a.trim().toLowerCase()));
+    const withOthers = others.length > 0;
     const steps = h.jobs.map((j) => `${j.parentName ?? j.equipment ?? ""} ${j.name}`);
     const crewLine = withOthers ? [CREWS_POINTS[CREWS_FOR[h.kind]?.[0] ?? rotate([0, 1, 4, 5], shift.start, 1, saltOf(h.kind))[0]]] : [];
     return {
       key: h.kind, kind: "risk" as const, hazard: h.kind,
       kicker: `Top risk ${when}${top.length > 1 ? ` · ${i + 1}` : ""}`,
       title: h.label,
-      why: `${who} ${DOING[h.kind]} ${where} ${when}${withOthers ? ` — next to ${andList(h.alongside.slice(0, 2))}` : ""}.`,
-      points: [...kindPoints(h.kind, shift.start, 3 - crewLine.length, lessons, steps), ...crewLine],
+      why: `${who} ${DOING[h.kind]} ${where} ${when}${withOthers ? ` — next to ${andList(others.slice(0, 2))}` : ""}.`,
+      points: riskPoints(h.kind, shift.start, lessons, steps, crewLine[0]),
     };
   });
 
@@ -275,6 +411,17 @@ export function safetyBrief(hazards: RankedHazard[], shift: { start: number; kin
     title: t.title, why: `Quiet ${shift.kind === "night" ? "night" : "day"} on the schedule — a good one to talk through.`, points: t.points.slice(0, 3),
   }));
   return [general, ...risks, ...extra];
+}
+
+/** A risk's three points: the control that's always said first; a lesson
+ *  from a real incident (one that fits these steps); then a second control
+ *  in turn — or, when other crews share the equipment, the line for them. */
+function riskPoints(kind: HazardKind, shiftStart: number, lessons: SafetyLesson[], steps: string[], crewLine?: TalkPoint): TalkPoint[] {
+  const core = CORE[kind];
+  const [lesson] = kindPoints(kind, shiftStart, 1, lessons, steps);
+  const second = crewLine ?? rotate(core.more, shiftStart, 1, saltOf(kind))[0];
+  const pts = [core.always, lesson ?? rotate(core.more, shiftStart, 2, saltOf(kind))[1], second].filter((p): p is TalkPoint => !!p);
+  return pts.filter((p, i) => pts.findIndex((q) => q.say === p.say) === i).slice(0, 3);
 }
 
 /** A point as the eye reads it: the first sentence (the thing to do), and

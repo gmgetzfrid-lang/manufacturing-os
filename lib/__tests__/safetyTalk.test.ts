@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import { rankHazards, type HazardJobInput } from "@/lib/safetyMoment";
 import { SAFETY_LESSONS } from "@/lib/safetyLessons";
-import { safetyBrief, talkSources, projectFacts, unitOf, splitLead, CREWS_POINTS, type ProjectBase } from "@/lib/safetyTalk";
+import { safetyBrief, talkSources, projectFacts, unitOf, splitLead, CREWS_POINTS, CORE, type ProjectBase } from "@/lib/safetyTalk";
 import { toEmailHtml, toPlainText, type ExportDoc } from "@/lib/reportExport";
 
 const H = 3600_000;
@@ -37,6 +37,15 @@ describe("three topics", () => {
     expect(ts[1]).toMatchObject({ title: "Hydroblasting", kicker: "Top risk today · 1", why: "Ancon blasting E-20 today — next to Schultz." });
     expect(ts[2].kicker).toBe("Top risk today · 2");
   });
+  it("a crew doing the work is never listed as 'next to' itself", () => {
+    const ts = brief(DAY, [
+      job("a", "Break Flange for Blind", "p1", "P-1 - Pump", 0, 3, "Maintenance (KE)"),
+      job("b", "Break Flange for Blind", "p2", "P-2 - Pump", 0, 3, "Schultz"),
+      job("c", "Remove Spool", "p2", "P-2 - Pump", 1, 2, "Maintenance (KE)"),
+    ]);
+    const lb = ts.find((t) => t.hazard === "line_break")!;
+    expect(lb.why).not.toMatch(/next to .*(Schultz|Maintenance)/);
+  });
   it("a night shift says tonight", () => {
     const night = { start: S + 12 * H, end: S + 24 * H, kind: "night" as const };
     const late = jobs.map((j) => ({ ...j, start: j.start! + 12 * H, end: j.end! + 12 * H }));
@@ -54,10 +63,23 @@ describe("three topics", () => {
       expect(new Set(t.points.map((p) => p.say)).size).toBe(3);
     }
   });
-  it("a risk: two lessons on the work, then the crews sharing the equipment", () => {
+  it("a risk: the core control first, a lesson from a real incident, then the crews sharing the equipment", () => {
     const r = brief()[1];
-    for (const p of r.points.slice(0, 2)) expect(SAFETY_LESSONS.some((l) => l.say === p.say && l.kind === "hydroblast")).toBe(true);
+    expect(r.points[0]).toEqual(CORE.hydroblast.always);
+    expect(SAFETY_LESSONS.some((l) => l.say === r.points[1].say && l.kind === "hydroblast")).toBe(true);
     expect(CREWS_POINTS).toContainEqual(r.points[2]);
+  });
+  it("vessel entry always leads with the hole watch and the air monitored the whole time", () => {
+    const ts = brief(DAY, [job("v", "Open Internal Manways", "v7", "V-7 - Fractionator", 0, 6, "Schultz")]);
+    const v = ts.find((t) => t.hazard === "confined_space")!;
+    expect(v.points[0].say).toMatch(/^Hole watch at the manway the whole entry, in constant contact with every entrant\. Air monitored the whole time/);
+  });
+  it("every core control is short, starts with the thing to do, and says evacuate — not 'get out'", () => {
+    for (const c of Object.values(CORE)) for (const p of [c.always, ...c.more]) {
+      expect(words(p.say)).toBeLessThanOrEqual(30);
+      expect(p.say).not.toMatch(/get out|leave first|stop and go/i);
+    }
+    for (const t of brief()) for (const p of t.points) expect(p.say).not.toMatch(/get out|leave first|stop and go/i);
   });
   it("follows the shift: the job's topic changes theme from one shift to the next", () => {
     const titles = [0, 1, 2, 3].map((k) => brief({ start: S + k * 12 * H, end: S + (k + 1) * 12 * H, kind: k % 2 ? "night" : "day" })[0].title);
