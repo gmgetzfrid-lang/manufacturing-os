@@ -228,6 +228,10 @@ export function crewsOf(report: ShiftReport, plan: TurnoverPlan, hrs: (h: number
 } {
   const who = (r: ShiftRow) => r.leaf.responsibleParty?.trim() || "No crew named";
   const sort = <T extends { n: number }>(m: Map<string, T>) => [...m].sort((a, b) => b[1].n - a[1].n || a[0].localeCompare(b[0], undefined, { numeric: true }));
+  // Steps with no crew on them are named, so the missing crew can be filled in.
+  const stepLabel = (r: ShiftRow) => (r.parentName ? `${r.parentName}: ${r.leaf.name}` : r.leaf.name);
+  const wNames: string[] = [], cNames: string[] = [];
+  const unnamed = (crew: string, names: string[]) => (crew === "No crew named" && names.length ? ` — ${names.slice(0, 3).join("; ")}${names.length > 3 ? ` + ${names.length - 3} more` : ""} (no responsible party set)` : "");
   // Worked: the shift's own planned work, and anything finished or moved on it.
   const seen = new Set<string>();
   const w = new Map<string, { n: number; done: number }>();
@@ -235,6 +239,7 @@ export function crewsOf(report: ShiftReport, plan: TurnoverPlan, hrs: (h: number
     const k = r.leaf.id ?? r.leaf.name;
     if (seen.has(k)) continue;
     seen.add(k);
+    if (!r.leaf.responsibleParty?.trim()) wNames.push(stepLabel(r));
     const e = w.get(who(r)) ?? { n: 0, done: 0 };
     e.n++; if (r.percent >= 100) e.done++;
     w.set(who(r), e);
@@ -242,13 +247,14 @@ export function crewsOf(report: ShiftReport, plan: TurnoverPlan, hrs: (h: number
   const c = new Map<string, { n: number; hours: number }>();
   for (const x of plan.items) {
     if (x.kind !== "next") continue;
+    if (!x.r.leaf.responsibleParty?.trim()) cNames.push(stepLabel(x.r));
     const e = c.get(who(x.r)) ?? { n: 0, hours: 0 };
     e.n++; e.hours += x.r.hoursNext ?? 0;
     c.set(who(x.r), e);
   }
   return {
-    worked: sort(w).map(([crew, e]) => ({ crew, text: `${e.n} step${e.n === 1 ? "" : "s"} · ${e.done} done` })),
-    coming: sort(c).map(([crew, e]) => ({ crew, text: `${e.n} step${e.n === 1 ? "" : "s"} · ${hrs(Math.round(e.hours * 10) / 10)}` })),
+    worked: sort(w).map(([crew, e]) => ({ crew, text: `${e.n} step${e.n === 1 ? "" : "s"} · ${e.done} done${unnamed(crew, wNames)}` })),
+    coming: sort(c).map(([crew, e]) => ({ crew, text: `${e.n} step${e.n === 1 ? "" : "s"} · ${hrs(Math.round(e.hours * 10) / 10)}${unnamed(crew, cNames)}` })),
   };
 }
 

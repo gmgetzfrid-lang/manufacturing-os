@@ -9,7 +9,7 @@
 // nothing is blocked.
 
 import { capacityOf, askedResult } from "@/lib/shiftHandover";
-import { turnoverPlan, nextOf, standing, askedLine, gapStory, crewsOf, vsPlan, doneByTask } from "@/lib/turnoverPlan";
+import { turnoverPlan, nextOf, standing, askedLine, crewsOf, vsPlan, doneByTask } from "@/lib/turnoverPlan";
 import { type PullCrew, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
 import { rankHazards, hazardContext, lessonFor, type HazardJobInput } from "@/lib/safetyMoment";
 import type { ExportBlock, ExportCell, ExportSection } from "@/lib/reportExport";
@@ -115,14 +115,12 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
   const asked = look.asked ?? [];
 
   // ── 1. Where we stand — the numbers, and the steps that make the gap.
-  const story = gapStory(report, t);
-  const fin = overall.plannedFinish ? f.D(overall.plannedFinish) : null;
   const finishPassed = overall.plannedFinish != null && report.now > overall.plannedFinish && overall.actualPct < 100;
   const gap = report.goals.gapHours;
   const standTone = overall.standing === "behind" ? "rose" as const : overall.standing === "ahead" ? "emerald" as const : "slate" as const;
   out.push({
     id: "stand", title: "Where we stand",
-    sub: overall.plannedFinish ? `Day ${overall.daysElapsed} of ${overall.daysTotal} · planned finish ${f.D(overall.plannedFinish)}` : undefined,
+    sub: overall.plannedFinish ? `Day ${overall.daysElapsed} of ${overall.daysTotal} · planned finish ${f.D(overall.plannedFinish)}${finishPassed ? " — passed" : ""}` : undefined,
     flag: overall.standing === "behind" ? "rose" : null,
     blocks: [
       {
@@ -135,15 +133,8 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
         ],
         bars: overall.plannedStart != null && overall.plannedFinish != null
           ? { done: overall.actualPct, plan: overall.plannedPct, from: f.D(overall.plannedStart), to: f.D(overall.plannedFinish) } : undefined,
-        title: "Bottom line",
-        lines: [
-          { text: finishPassed ? `Planned finish ${fin} has passed — ${overall.actualPct}% done. ${story.headline}` : story.headline, tone: standTone === "slate" ? undefined : standTone },
-          ...(story.aheadLine ? [{ label: "Ahead", text: story.aheadLine, tone: "emerald" as const }] : []),
-          ...(story.behindLine ? [{ label: "Behind", text: story.behindLine, tone: "rose" as const }] : []),
-          { text: nextList.length ? `${shiftName(next)}: ${nextList.length} step${nextList.length === 1 ? "" : "s"}, ${f.hrs(nextHrs)}${tried.length ? ` — plus ${tried.length} to try if there's time` : ""}.` : `Nothing planned for the ${shiftName(next).toLowerCase()}.` },
-          ...(carries.length ? [{ text: `${carries.length} step${carries.length === 1 ? "" : "s"} carr${carries.length === 1 ? "ies" : "y"} to the ${other} shift.`, tone: "amber" as const }] : []),
-          ...(held.length ? [{ label: "Needs a decision", text: `${held.length} blocked or on hold.`, tone: "rose" as const }] : []),
-        ],
+        // No bottom-line box: the numbers and bars get the whole width.
+        title: "", lines: [],
       },
     ],
   });

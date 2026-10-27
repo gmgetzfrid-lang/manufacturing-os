@@ -157,8 +157,10 @@ export function toPlainText(d: ExportDoc): string {
         case "overview":
           out.push(`   ${b.stats.map((x) => `${x.label}: ${x.value}`).join("  |  ")}`);
           if (b.bars) out.push(`   Job progress: ${b.bars.done}% done, ${b.bars.plan}% planned by now`);
-          out.push(`   ${b.title.toUpperCase()}`);
-          for (const l of b.lines) out.push(`   ${l.label ? `${l.label}: ` : ""}${l.text}`);
+          if (b.lines.length) {
+            out.push(`   ${b.title.toUpperCase()}`);
+            for (const l of b.lines) out.push(`   ${l.label ? `${l.label}: ` : ""}${l.text}`);
+          }
           break;
         case "columns":
           for (const c of b.cols) {
@@ -296,6 +298,8 @@ function blockHtml(b: ExportBlock): string {
           bar("Done", b.bars.done, "#0f766e") + bar("Plan", b.bars.plan, "#94a3b8") +
           `<tr>${td("", "")}${td(`font-size:9px;color:${MUTED};padding-top:1px;`, `${esc(b.bars.from)} → ${esc(b.bars.to)} · whole job`)}${td("", "")}</tr></table>`
         : "");
+      // No lines: the numbers and bars take the whole width.
+      if (!b.lines.length) return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;"><tr>${td("vertical-align:top;padding:0;", left)}</tr></table>`;
       const right = `<div style="${FONT}font-size:10px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;color:#4338ca;margin-bottom:3px;">${esc(b.title)}</div>` +
         b.lines.map((l, i) => `<div style="${FONT}font-size:12px;line-height:1.4;margin-top:${i ? 3 : 0}px;color:${l.tone ? TONE[l.tone].fg : INK};">${l.label ? `<b>${esc(l.label)}:</b> ` : ""}${i === 0 && !l.label ? `<b>${esc(l.text)}</b>` : esc(l.text)}</div>`).join("");
       return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;"><tr>` +

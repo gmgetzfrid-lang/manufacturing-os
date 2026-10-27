@@ -107,13 +107,13 @@ describe("can be pulled ahead — only when the step before it is done or on the
   });
 });
 
-describe("the email's bottom line", () => {
-  it("doesn't say a date holds once it has passed", () => {
+describe("where we stand", () => {
+  it("says when the planned finish has passed", () => {
     const s = mk({ id: "s", name: "Blind", plannedStartAt: at("2026-10-26", "05:30"), plannedAt: at("2026-10-26", "12:00"), status: "in_progress", percentComplete: 90 });
     const d = shiftWindow("2026-10-26", "day", CHI);
     const r = buildShiftReport({ milestones: [s], tz: CHI, shift: d, now: d.end });
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r, f, { pctOf: () => 90, finishOf: () => undefined }) });
-    expect(text).toMatch(/Planned finish .* has passed — \d+% done/);
+    expect(text).toMatch(/planned finish .* — passed/);
     expect(text).not.toMatch(/holds for/);
   });
 });

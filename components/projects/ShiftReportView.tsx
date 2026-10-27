@@ -35,7 +35,7 @@ import {
 import type { Milestone } from "@/types/schema";
 import { buildProgressIndex, leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
-import { turnoverPlan, nextOf, standing, askedLine, doneOf, gapStory, crewsOf, vsPlan, doneByTask } from "@/lib/turnoverPlan";
+import { turnoverPlan, nextOf, standing, askedLine, doneOf, crewsOf, vsPlan, doneByTask } from "@/lib/turnoverPlan";
 import {
   buildShiftReport, shiftWindow, nextShift, previousShift, defaultReviewShift, nextShiftWithWork, expectedByParent, paceOf, expectedFraction, workShiftOf, staffedDueMs, meetingLeadMin, type Pace, type WorkShift,
   DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftRow, type ShiftWindow, type ShiftReport, type PullCrew,
@@ -904,8 +904,6 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       extraTags: [{ t: d.detail, tone: d.tone }, vsTag(r)],
     });
   });
-  // Ahead or behind — and the steps that make it up (the same as the email).
-  const story = gapStory(report, c);
   // ── Next: one list. The next crew's work (numbered, in priority order),
   // what it could try, what waits for its own crew, what's blocked.
   const shiftHrs = (next.end - next.start) / 3_600_000;
@@ -1027,20 +1025,10 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 keep">
             {standStats.map((x) => <Stat key={x.label} label={x.label} value={x.value} tone={x.tone} />)}
           </div>
-          <div className={`text-[12.5px] font-bold ${overall.standing === "behind" ? "text-rose-700 dark:text-rose-300" : overall.standing === "ahead" ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text)]"}`}>{story.headline}</div>
-          {(story.aheadLine || story.behindLine) && (
-            <div className="space-y-0.5 text-[12.5px] text-[var(--color-text)]">
-              {story.aheadLine && <div><b className="text-emerald-700 dark:text-emerald-400">Ahead:</b> {story.aheadLine}</div>}
-              {story.behindLine && <div><b className="text-rose-700 dark:text-rose-400">Behind:</b> {story.behindLine}</div>}
-            </div>
-          )}
         </div>
       ),
       data: () => [
         { k: "stats", items: standStats },
-        { k: "note", text: story.headline, tone: overall.standing === "behind" ? "rose" : overall.standing === "ahead" ? "emerald" : undefined } as ExportBlock,
-        ...(story.aheadLine ? [{ k: "note", text: `Ahead: ${story.aheadLine}`, tone: "emerald" } as ExportBlock] : []),
-        ...(story.behindLine ? [{ k: "note", text: `Behind: ${story.behindLine}`, tone: "rose" } as ExportBlock] : []),
       ],
     },
     {

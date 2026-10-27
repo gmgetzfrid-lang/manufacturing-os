@@ -130,17 +130,17 @@ describe("a comment explains a step, quietly", () => {
 });
 
 describe("the update's first glance", () => {
-  it("puts the numbers, two bars and a bottom line in Where we stand, and the safety focus off by default", () => {
+  it("puts the numbers and two bars in Where we stand across the full width — no bottom-line box; the safety focus off by default", () => {
     const stand = sections.find((s) => s.id === "stand")!;
     const ov = stand.blocks[0];
     if (ov.k !== "overview") throw new Error("no overview");
     expect(ov.stats.map((x) => x.label)).toEqual(["Complete", "Plan by now", expect.any(String), "Steps done"]);
-    expect(ov.title).toBe("Bottom line");
-    expect(ov.lines[0].text).toMatch(/^Overall (even with the plan|behind plan by|ahead of plan by)/);
+    expect(ov.lines).toEqual([]);
     const safety = sections.find((s) => s.id === "safety");
     if (safety) expect(safety.offByDefault).toBe(true);
     const html = toEmailHtml({ kind: "Shift turnover", project: "P", when: "w", asOf: "a", sections });
-    expect(html).toContain("Bottom line");
+    expect(html).not.toContain("Bottom line");
+    expect(html).not.toContain("#eef2ff"); // the box itself
     expect(html).not.toMatch(/display:\s*(flex|grid)/);
   });
 });

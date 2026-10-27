@@ -54,10 +54,9 @@ describe("work done early and progress made show on the turnover", () => {
     expect(text).toMatch(/Pull bundle · Schultz · was due 10-26T21:00 · done 40% · −4.8 h/);
     expect(text).not.toMatch(/this shift ·.*−4.8 h/);
     // Why it's ahead: both early steps, with the hours each is worth.
-    // In plain words, the jobs named on each side.
-    expect(text).toMatch(/Overall ahead of plan by 1 h of work\./);
-    expect(text).toMatch(/Ahead: 5.8 h of work done earlier than planned — E-17 Exchanger: Remove components, E-17 Exchanger: Hydroblast\./);
-    expect(text).toMatch(/Behind: 4.8 h of work the plan has done by now that isn't — E-17 Exchanger: Pull bundle\./);
+    // No bottom-line box: the numbers, and each step's hours in "vs plan".
+    expect(text).not.toMatch(/BOTTOM LINE/);
+    expect(text).toMatch(/Work ahead: 1 h/);
     // Each step credited once under Done.
     for (const name of ["Pull bundle", "Remove components", "Hydroblast"]) expect(doneSec.match(new RegExp(name, "g"))?.length).toBe(1);
   });
@@ -122,5 +121,17 @@ describe("the bottom line names jobs by their tag", () => {
   it("a long equipment name shortens to its tag", async () => {
     const { equipmentTag } = await import("@/lib/safetyMoment");
     expect(equipmentTag("E-17 - Transmix Feed/Trans. Diesel Exchanger No. 1", "Pull Bundle")).toBe("E-17");
+  });
+});
+
+describe("crews box", () => {
+  it("names a step with no crew on it, so the missing crew can be filled in", async () => {
+    const { crewsOf, turnoverPlan } = await import("@/lib/turnoverPlan");
+    const noCrew = mk({ id: "nc", name: "Set blinds", parentId: "e17", plannedStartAt: at("2026-10-26", "08:00"), plannedAt: at("2026-10-26", "10:00"), durationHours: 2, status: "completed", percentComplete: 100 });
+    const r3 = buildShiftReport({ milestones: [...all, noCrew], tz: CHI, shift: day, now: day.end, startPct });
+    const cr = crewsOf(r3, turnoverPlan(r3, () => false), (h) => `${h} h`);
+    const t = cr.worked.find((x) => x.crew === "No crew named")!.text;
+    expect(t).toContain("E-17 Exchanger: Set blinds");
+    expect(t).toMatch(/\(no responsible party set\)$/);
   });
 });
