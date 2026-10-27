@@ -25,7 +25,7 @@ import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { splitPlacements, compareDayPlacements, wbsCompare, crewOf, startMsOf, finishMsOf, type DayPlacement, type DayCrew } from "@/lib/calendarPlacement";
 import { addDays as addDaysTz, addMonths as addMonthsTz, clockLabel, dayDiff as dayDiffTz, dayKey, dayKeyToMs, dayOfWeek, fmtInTz, hasTimeOfDay, tzAbbrev, startOfDay as startOfDayTz, startOfMonth as startOfMonthTz, wallClock } from "@/lib/scheduleTz";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
-import { DEFAULT_SHIFT_TIMES, workShiftOf, workSpan, shiftWindow, type ShiftTimes } from "@/lib/shiftReport";
+import { DEFAULT_SHIFT_TIMES, crewWindows, workShiftOf, workSpan, shiftWindow, type ShiftTimes } from "@/lib/shiftReport";
 import { bandIndex, stepBandDays, type Band } from "@/lib/shiftBands";
 import ShiftMark from "@/components/projects/ShiftMark";
 import DayAgendaPanel from "@/components/projects/DayAgendaPanel";
@@ -278,7 +278,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
         const dayIndex = Math.max(0, dayDiff(start, ymdToDate(key, tz), tz));
         const put = (band: Band, idle = false) => {
           const w = shiftWindow(key, band, tz, shiftTimes);
-          const win = idle ? { start: w.start, end: w.end } : windowIn(units.filter((st) => bandsOf(st)[band].has(key)), w.start, w.end, tz);
+          const win = idle ? { start: w.start, end: w.end } : windowIn(units.filter((st) => bandsOf(st)[band].has(key)), w.start, w.end, tz, shiftTimes);
           slot(key)[band].push({ ms, dayIndex, spanDays: total, todayStart: win.start, todayEnd: win.end, idleToday: idle, crew: band, band, bandStart: w.start, bandEnd: w.end });
         };
         const d = units.some((st) => bandsOf(st).day.has(key)), n = units.some((st) => bandsOf(st).night.has(key));
@@ -1142,12 +1142,15 @@ function chipTone(s: MilestoneStatus): string {
   }
 }
 
-/** When the work under a card runs in a shift: its steps' hours inside
- *  the shift (date-only steps as the whole shift); day-crew work written at
- *  night hours keeps its own hours. */
-function windowIn(steps: Milestone[], from: number, to: number, tz: string): { start: number; end: number } {
+/** When the work under a card runs in a shift: its steps' crew hours inside
+ *  the shift (date-only steps as the whole shift). */
+function windowIn(steps: Milestone[], from: number, to: number, tz: string, times: ShiftTimes): { start: number; end: number } {
   let s = Infinity, e = -Infinity;
-  const spans = steps.map((st) => workSpan(st, tz)).filter((x) => Number.isFinite(x.start) && Number.isFinite(x.finish));
+  // Its crew's hours (day work the file put overnight: the crew's next shift).
+  const spans = steps.flatMap((st) => {
+    const cw = crewWindows(st, tz, times).windows;
+    return cw.length ? cw.map(([a, b]) => ({ start: a, finish: b })) : [workSpan(st, tz)];
+  }).filter((x) => Number.isFinite(x.start) && Number.isFinite(x.finish));
   for (const x of spans) {
     const a = Math.max(x.start, from), b = Math.min(x.finish, to);
     if (b > a || (x.start === x.finish && x.start >= from && x.start < to)) { s = Math.min(s, a); e = Math.max(e, b, a); }

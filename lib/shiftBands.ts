@@ -1,12 +1,13 @@
 // shiftBands — which shift a step is worked on, by date: the day shift
-// (5:30–17:30) or that date's night shift (17:30 → 5:30 the next morning).
+// (the project's shift times, e.g. 6:00–18:00) or that date's night shift
+// (18:00 → 6:00 the next morning).
 // Night work after midnight belongs to the night before, the way the crews
 // and the shift report count it. The calendar's day boxes and the day list
 // split on this, so "yesterday's day shift" is exactly that shift's steps.
 
 import type { Milestone } from "@/types/schema";
 import { dayKey, dayKeyToMs, addDays } from "@/lib/scheduleTz";
-import { DEFAULT_SHIFT_TIMES, shiftAt, shiftWindowsBetween, workShiftOf, workSpan, type ShiftTimes } from "@/lib/shiftReport";
+import { DEFAULT_SHIFT_TIMES, crewWindows, shiftAt, shiftWindowsBetween, workShiftOf, workSpan, type ShiftTimes } from "@/lib/shiftReport";
 
 export type Band = "day" | "night";
 
@@ -30,39 +31,39 @@ function datesOf(start: number, finish: number, tz: string): string[] {
   return out;
 }
 
-/** The day and night shifts a step is worked on. Its crew decides: day
- *  crew work is day work whatever hours the file gave it; night crew work
- *  is the night it falls in; round-the-clock work, every shift it touches. */
+/** The day and night shifts a step is worked on — the shift report's own
+ *  rule (crewWindows): its crew decides. Day crew work is the day shifts
+ *  inside its span; planned wholly at night (no night crew on it), the
+ *  crew's next day shift. Night crew work, the same the other way round.
+ *  Round-the-clock work: every shift it touches. */
 export function stepBandDays(m: Milestone, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): BandDays {
   const out: BandDays = { day: new Set(), night: new Set() };
   const { start, finish, timed } = workSpan(m, tz);
   if (!Number.isFinite(start) || !Number.isFinite(finish)) return out;
   const crew = workShiftOf(m, tz, times);
-  if (!timed) {
-    // Date-only: its crew's shift on each date.
-    for (const d of datesOf(start, finish, tz)) {
-      if (crew !== "night") out.day.add(d);
-      if (crew !== "day") out.night.add(d);
+  if (crew === "both") {
+    if (!timed) {
+      // Date-only: both shifts of each of its dates.
+      for (const d of datesOf(start, finish, tz)) { out.day.add(d); out.night.add(d); }
+      return out;
     }
+    // The shifts its hours touch — a few minutes over a shift change don't count.
+    let wins = finish > start
+      ? shiftWindowsBetween(start, finish, tz, times).map((w) => ({ w, o: overlap(start, finish, w.start, w.end) })).filter((x) => x.o > 0)
+      : [{ w: shiftAt(start, tz, times), o: 0 }];
+    if (wins.some((x) => x.o >= SLIVER)) wins = wins.filter((x) => x.o >= SLIVER);
+    for (const { w } of wins) out[w.kind].add(w.dayKey);
     return out;
   }
-  // The shifts its hours touch — a few minutes over a shift change don't count.
-  let wins = finish > start
-    ? shiftWindowsBetween(start, finish, tz, times).map((w) => ({ w, o: overlap(start, finish, w.start, w.end) })).filter((x) => x.o > 0)
-    : [{ w: shiftAt(start, tz, times), o: 0 }];
-  if (wins.some((x) => x.o >= SLIVER)) wins = wins.filter((x) => x.o >= SLIVER);
-  const days = wins.filter((x) => x.w.kind === "day").map((x) => x.w.dayKey);
-  const nights = wins.filter((x) => x.w.kind === "night").map((x) => x.w.dayKey);
-  if (crew === "both") {
-    for (const d of days) out.day.add(d);
-    for (const d of nights) out.night.add(d);
-  } else if (crew === "night") {
-    // Night crew work at day hours (set by hand): the nights of its dates.
-    for (const d of nights.length ? nights : datesOf(start, finish, tz)) out.night.add(d);
-  } else {
-    // Day crew work at night hours (no night crew on it): the days of its dates.
-    for (const d of days.length ? days : datesOf(start, finish, tz)) out.day.add(d);
+  // Its crew's own hours — reflowed to the crew's next shift when the file
+  // put it all in the other crew's hours.
+  const { windows } = crewWindows(m, tz, times);
+  for (const [a, b] of windows) {
+    const w = shiftAt(a + (b - a) / 2, tz, times);
+    out[w.kind].add(w.dayKey);
   }
+  // A moment (a zero-length milestone): the shift it falls in.
+  if (!windows.length && finish <= start) out[shiftAt(start, tz, times).kind].add(shiftAt(start, tz, times).dayKey);
   return out;
 }
 
