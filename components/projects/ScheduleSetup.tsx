@@ -6,14 +6,14 @@
 // now filled in, so confirming a right answer is one click.
 
 import React, { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Check, ChevronLeft, ChevronRight, Clock, Flag, Globe2, Loader2, Moon, Settings2, Zap } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Flag, Globe2, Loader2, Moon, Settings2, Zap } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { setupChecklist, missingRequired, type SetupItem, type SetupItemId } from "@/lib/scheduleSetup";
 import { browserTimeZone, listTimeZones, tzLabel, DEFAULT_SCHEDULE_TZ } from "@/lib/scheduleTz";
 import { updateProjectMeta } from "@/lib/projects";
 import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
 import { meetingLeadMin, workShiftOf, type PullCrew, type ShiftTimes } from "@/lib/shiftReport";
-import { nightJobChoices, type NightJobs } from "@/lib/nightStaffing";
+import { nightCrewChoices, toCrewEntries, crewEntry, parseEntry, type NightJobs } from "@/lib/nightStaffing";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { useCriticalMode, useCriticalModeLoaded, saveCriticalMode } from "@/lib/criticalModeStore";
 import { CRITICAL_MODES, resolveCriticalPath, effectiveCriticalMode, type CriticalMode } from "@/lib/criticalPath";
@@ -266,8 +266,12 @@ function NightStep({ projectId, milestones, canManage, done, onSaved }: Props & 
   const tz = useScheduleTz();
   const times = useShiftTimes(projectId);
   const saved: NightJobs | undefined = times.nightJobs;
-  const [mode, setMode] = useState<"jobs" | "file">(saved === "file" ? "file" : "jobs");
-  const [ids, setIds] = useState<Set<string>>(() => new Set(Array.isArray(saved) ? saved : []));
+  const [mode, setMode] = useState<"crews" | "file">(saved === "file" ? "file" : "crews");
+  // Which crews work nights, and where: everywhere, or only on these jobs.
+  // (An older job-only setting is shown as the crews it covered.)
+  const [picks, setPicks] = useState<Map<string, { all: boolean; jobs: Set<string> }>>(() => fromEntries(Array.isArray(saved) ? toCrewEntries(milestones, saved) : []));
+  const [open, setOpen] = useState<string | null>(null);
+  const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   // Hands kept for extra work the turnover pulls forward (optional).
@@ -278,50 +282,114 @@ function NightStep({ projectId, milestones, canManage, done, onSaved }: Props & 
   const setHelpers = (p: PullCrew) => setEdited(p);
   const crews = useMemo(() => [...new Set(milestones.map((m) => m.responsibleParty?.trim()).filter((x): x is string => !!x))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), [milestones]);
   // The file's own hours, before any night-crew setting is applied.
-  const choices = useMemo(() => nightJobChoices(milestones, (m) => workShiftOf({ ...m, staffedShift: null }, tz, times) !== "day"), [milestones, tz, times]);
-  const byId = useMemo(() => new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m])), [milestones]);
-  // A job checked covers every job under it.
-  const coveredBy = (id: string): string | null => {
-    const seen = new Set<string>();
-    for (let m = byId.get(id), p = m?.parentId ? byId.get(m.parentId) : undefined; p && p.id && !seen.has(p.id); p = p.parentId ? byId.get(p.parentId) : undefined) {
-      seen.add(p.id);
-      if (ids.has(p.id)) return p.name;
-    }
-    return null;
-  };
-  const toggle = (id: string) => setIds((cur) => { const n = new Set(cur); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  const next: NightJobs = mode === "file" ? "file" : [...ids].filter((id) => !coveredBy(id));
+  const choices = useMemo(() => nightCrewChoices(milestones, (m) => workShiftOf({ ...m, staffedShift: null }, tz, times) !== "day"), [milestones, tz, times]);
+  const key = (crew: string) => crew.trim().toLowerCase();
+  const pickOf = (crew: string) => picks.get(key(crew));
+  const update = (crew: string, fn: (cur: { all: boolean; jobs: Set<string> } | undefined) => { all: boolean; jobs: Set<string> } | undefined) =>
+    setPicks((cur) => { const n = new Map(cur); const v = fn(cur.get(key(crew))); if (v) n.set(key(crew), v); else n.delete(key(crew)); return n; });
+  const entries: string[] = [];
+  for (const c of choices) {
+    const p = pickOf(c.crew);
+    if (!p) continue;
+    if (p.all) entries.push(crewEntry(c.crew, null));
+    else for (const j of c.jobs) if (p.jobs.has(j.id)) entries.push(crewEntry(c.crew, j.id));
+  }
+  const next: NightJobs = mode === "file" ? "file" : entries.sort();
+  const savedNorm = saved === "file" ? "file" : Array.isArray(saved) ? toCrewEntries(milestones, saved).sort() : undefined;
   const helpersSame = JSON.stringify(chosen) === JSON.stringify(times.helpers ?? null);
-  const same = helpersSame && JSON.stringify(next) === JSON.stringify(saved === "file" ? "file" : Array.isArray(saved) ? [...saved].filter((id) => byId.has(id)) : undefined);
+  const same = helpersSame && JSON.stringify(next) === JSON.stringify(savedNorm) && !(Array.isArray(saved) && saved.some((e) => !e.startsWith("crew:")));
   const save = async () => {
     setBusy(true); setErr(null);
     try { await saveProjectShiftTimes(projectId, { ...times, nightJobs: next, helpers: chosen ?? undefined }); setEdited(undefined); onSaved(); }
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); }
   };
+  const ql = q.trim().toLowerCase();
+  const shown = choices.filter((c) => !ql || c.crew.toLowerCase().includes(ql) || c.jobs.some((j) => `${j.name} ${j.crumbs}`.toLowerCase().includes(ql)));
+  const crewName = (c: string) => c || "No crew named";
+  const onNights = choices.filter((c) => pickOf(c.crew) && (pickOf(c.crew)!.all || pickOf(c.crew)!.jobs.size > 0));
   return (
     <div className="space-y-2.5">
-      <label className={`flex items-start gap-2.5 rounded-lg border px-3 py-2 cursor-pointer ${mode === "jobs" ? "border-orange-400 bg-orange-50 dark:border-orange-700 dark:bg-orange-950/40" : "border-[var(--color-border)]"}`}>
-        <input type="radio" name="night" disabled={!canManage} checked={mode === "jobs"} onChange={() => setMode("jobs")} className="mt-1" />
+      <label className={`flex items-start gap-2.5 rounded-lg border px-3 py-2 cursor-pointer ${mode === "crews" ? "border-orange-400 bg-orange-50 dark:border-orange-700 dark:bg-orange-950/40" : "border-[var(--color-border)]"}`}>
+        <input type="radio" name="night" disabled={!canManage} checked={mode === "crews"} onChange={() => setMode("crews")} className="mt-1" />
         <span className="flex-1 min-w-0">
-          <span className="block text-[13px] font-bold text-[var(--color-text)]">Only these jobs have a night crew</span>
-          <span className="block text-[12px] text-[var(--color-text-muted)]">Everything else is day work. Steps the file put overnight wait for the next day shift and are listed under &ldquo;Carries to day shift&rdquo;, not as night work. Tick none if nights don&apos;t work at all.</span>
+          <span className="block text-[13px] font-bold text-[var(--color-text)]">Only these crews work nights</span>
+          <span className="block text-[12px] text-[var(--color-text-muted)]">Pick each crew that has a night crew — on all its work, or only on the equipment you choose. Everything else is day work: steps the file put overnight wait for the next day shift. Pick none if nights don&apos;t work at all.</span>
         </span>
       </label>
-      {mode === "jobs" && (
-        <div className="max-h-64 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
-          {choices.length === 0 && <div className="px-3 py-2 text-[12px] text-[var(--color-text-muted)]">No jobs with steps yet — import the schedule first.</div>}
-          {choices.map((c) => {
-            const under = coveredBy(c.id);
-            return (
-              <label key={c.id} className="flex items-center gap-2 px-3 py-1.5 text-[12.5px] cursor-pointer hover:bg-[var(--color-surface-2)]" style={{ paddingLeft: 12 + c.depth * 16 }}>
-                <input type="checkbox" disabled={!canManage || !!under} checked={!!under || ids.has(c.id)} onChange={() => toggle(c.id)} />
-                <span className={`flex-1 min-w-0 truncate ${under ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`} title={c.name}>{c.name}</span>
-                <span className={`shrink-0 font-mono text-[11px] ${c.nightSteps ? "text-indigo-700 dark:text-indigo-300" : "text-[var(--color-text-faint)]"}`}
-                  title="Steps the schedule file puts in night hours">{c.nightSteps ? `${c.nightSteps} of ${c.steps} in night hours` : `${c.steps} step${c.steps === 1 ? "" : "s"}`}</span>
-              </label>
-            );
-          })}
+      {mode === "crews" && (
+        <div className="space-y-2">
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a crew or equipment (e.g. Schultz, tower, E-17)"
+            className={`${field} w-full`} aria-label="Find a crew or equipment" />
+          <div className="max-h-[420px] overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+            {choices.length === 0 && <div className="px-3 py-2 text-[12px] text-[var(--color-text-muted)]">No steps yet — import the schedule first.</div>}
+            {shown.map((c) => {
+              const p = pickOf(c.crew);
+              const on = !!p && (p.all || p.jobs.size > 0);
+              const expanded = open === c.crew || (!!ql && c.jobs.some((j) => `${j.name} ${j.crumbs}`.toLowerCase().includes(ql)));
+              const jobsShown = ql && !c.crew.toLowerCase().includes(ql) ? c.jobs.filter((j) => `${j.name} ${j.crumbs}`.toLowerCase().includes(ql)) : c.jobs;
+              return (
+                <div key={c.crew || "__none"} className={on ? "bg-indigo-50/60 dark:bg-indigo-950/30" : ""}>
+                  <div className="flex items-center gap-2 px-3 py-2">
+                    <input type="checkbox" disabled={!canManage} checked={on} aria-label={`${crewName(c.crew)} works nights`}
+                      onChange={() => { update(c.crew, (cur) => (cur && (cur.all || cur.jobs.size) ? undefined : { all: true, jobs: new Set() })); if (!on) setOpen(c.crew); }} />
+                    <button type="button" onClick={() => setOpen(open === c.crew ? null : c.crew)} className="flex-1 min-w-0 text-left">
+                      <span className={`block text-[13px] font-bold ${c.crew ? "text-[var(--color-text)]" : "italic text-[var(--color-text-muted)]"}`}>{crewName(c.crew)}</span>
+                      <span className="block text-[11.5px] text-[var(--color-text-muted)]">
+                        {c.steps} step{c.steps === 1 ? "" : "s"} on {c.jobs.length} job{c.jobs.length === 1 ? "" : "s"}
+                        {c.nightSteps > 0 && <span className="text-indigo-700 dark:text-indigo-300"> · {c.nightSteps} in night hours in the file</span>}
+                        {on && <b className="text-indigo-700 dark:text-indigo-300"> · nights: {p!.all ? "all its work" : `${p!.jobs.size} job${p!.jobs.size === 1 ? "" : "s"}`}</b>}
+                      </span>
+                    </button>
+                    <ChevronDown className={`w-4 h-4 shrink-0 text-[var(--color-text-muted)] transition-transform ${expanded ? "rotate-180" : ""}`} />
+                  </div>
+                  {expanded && (
+                    <div className="px-3 pb-2.5 pl-9 space-y-1.5">
+                      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={`Where ${crewName(c.crew)} works nights`}>
+                        {[{ v: "none", t: "No night crew" }, { v: "all", t: "Nights on all its work" }, { v: "some", t: "Nights only on these jobs" }].map((o) => {
+                          const cur = !on ? "none" : p!.all ? "all" : "some";
+                          return (
+                            <button key={o.v} type="button" role="radio" aria-checked={cur === o.v} disabled={!canManage}
+                              onClick={() => update(c.crew, (x) => (o.v === "none" ? undefined : o.v === "all" ? { all: true, jobs: x?.jobs ?? new Set() } : { all: false, jobs: x?.jobs ?? new Set() }))}
+                              className={`rounded-full border px-2.5 py-1 text-[11.5px] font-bold ${cur === o.v ? "border-indigo-500 bg-indigo-600 text-white" : "border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                              {o.t}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {(!on || !p!.all) && (
+                        <div className="rounded-md border border-[var(--color-border)] divide-y divide-[var(--color-border)] bg-[var(--color-surface)]">
+                          {jobsShown.length === 0 && <div className="px-2.5 py-1.5 text-[12px] text-[var(--color-text-muted)]">Its steps aren&apos;t under any job.</div>}
+                          {jobsShown.map((j) => (
+                            <label key={j.id} className="flex items-start gap-2 px-2.5 py-1.5 cursor-pointer hover:bg-[var(--color-surface-2)]">
+                              <input type="checkbox" className="mt-0.5" disabled={!canManage} checked={!!p && !p.all && p.jobs.has(j.id)}
+                                onChange={() => update(c.crew, (x) => { const jobs = new Set(x && !x.all ? x.jobs : []); if (jobs.has(j.id)) jobs.delete(j.id); else jobs.add(j.id); return jobs.size ? { all: false, jobs } : undefined; })} />
+                              <span className="flex-1 min-w-0">
+                                <span className="block text-[12.5px] font-semibold text-[var(--color-text)] break-words">{j.name}</span>
+                                {j.crumbs && <span className="block text-[11px] text-[var(--color-text-muted)] break-words">{j.crumbs}</span>}
+                              </span>
+                              <span className={`shrink-0 text-right font-mono text-[11px] ${j.nightSteps ? "text-indigo-700 dark:text-indigo-300" : "text-[var(--color-text-faint)]"}`}>
+                                {j.steps} step{j.steps === 1 ? "" : "s"}{j.nightSteps ? <><br />{j.nightSteps} at night</> : null}
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div className="rounded-md bg-[var(--color-surface-2)] px-3 py-2 text-[12px] text-[var(--color-text)]">
+            {onNights.length === 0 ? <span><b>No night crews</b> — all work is day work.</span> : (
+              <span><b>On nights:</b> {onNights.map((c) => {
+                const p = pickOf(c.crew)!;
+                const names = p.all ? "all its work" : c.jobs.filter((j) => p.jobs.has(j.id)).map((j) => j.name).join(", ");
+                return `${crewName(c.crew)} — ${names}`;
+              }).join("; ")}.</span>
+            )}
+          </div>
         </div>
       )}
       <label className={`flex items-start gap-2.5 rounded-lg border px-3 py-2 cursor-pointer ${mode === "file" ? "border-orange-400 bg-orange-50 dark:border-orange-700 dark:bg-orange-950/40" : "border-[var(--color-border)]"}`}>
@@ -350,11 +418,25 @@ function NightStep({ projectId, milestones, canManage, done, onSaved }: Props & 
       <Msg err={err} />
       {canManage ? (
         <button onClick={() => void save()} disabled={busy || (done && same)} className={btn}>
-          {busy && <Loader2 className="w-4 h-4 animate-spin" />} {done && same ? "Saved" : mode === "jobs" ? `Save — ${next.length} job${next.length === 1 ? "" : "s"} with a night crew` : "Save"}
+          {busy && <Loader2 className="w-4 h-4 animate-spin" />} {done && same ? "Saved" : mode === "crews" ? `Save — ${onNights.length} crew${onNights.length === 1 ? "" : "s"} on nights` : "Save"}
         </button>
       ) : <NoRights />}
     </div>
   );
+}
+
+/** Saved entries as the picker's state, by crew. */
+function fromEntries(entries: string[]): Map<string, { all: boolean; jobs: Set<string> }> {
+  const out = new Map<string, { all: boolean; jobs: Set<string> }>();
+  for (const e of entries) {
+    const x = parseEntry(e);
+    if (!("crew" in x)) continue;
+    const k = x.crew.trim().toLowerCase();
+    const cur = out.get(k) ?? { all: false, jobs: new Set<string>() };
+    if (x.job == null) cur.all = true; else cur.jobs.add(x.job);
+    out.set(k, cur);
+  }
+  return out;
 }
 
 function CriticalStep({ projectId, milestones, canManage, critical, onSaved }: Props & { critical: CriticalMode | null; onSaved: () => void }) {

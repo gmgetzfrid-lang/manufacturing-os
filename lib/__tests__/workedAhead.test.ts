@@ -46,16 +46,15 @@ describe("work done early and progress made show on the turnover", () => {
   it("the email says so: ahead, planned when, and what moved this shift — each step once", () => {
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r, f, { pctOf: () => 40, finishOf: () => undefined }) });
     expect(text).toMatch(/DONE — DAY SHIFT/);
-    expect(text).toMatch(/Remove components · .*done early \(planned 10-27T13:00\) — put you 4 h ahead/);
+    // One row for E-17: both steps, what they meant, and the hours together.
+    expect(text).toMatch(/E-17 Exchanger — 1 done, 1 moved: Remove components, Hydroblast \(0% → 30%\) · .*1 done early \(planned 10-27T13:00\); 1 started early \(planned 10-28T11:00\) · \+5.8 h/);
     // Unfinished and due: it carries, with what this shift did on the same row.
     expect(text).toMatch(/Pull bundle · Schultz · Waits for day crew — was due 10-26T21:00 · 40% · \+40 this shift/);
-    expect(text).toMatch(/Hydroblast · .*0% → 30% this shift, started early \(planned 10-28T11:00\) — put you 1.8 h ahead/);
     // Why it's ahead: both early steps, with the hours each is worth.
-    expect(text).toMatch(/Ahead of plan — 5.8 h/);
-    expect(text).toMatch(/E-17 Exchanger — Remove components · done, plan had 0% by now .* · \+4 h/);
+    expect(text).toMatch(/5.8 h done ahead of plan, less 4.8 h behind/);
     // Every step named once.
     for (const name of ["Pull bundle", "Remove components", "Hydroblast"]) {
-      expect(text.slice(text.search(/^DONE — /m)).match(new RegExp(`${name} ·`, "g"))?.length).toBe(1);
+      expect(text.slice(text.search(/^DONE — /m)).match(new RegExp(name, "g"))?.length).toBe(1);
     }
   });
   it("without the record of the shift's start, later work with progress still shows — as entered", () => {
@@ -63,7 +62,7 @@ describe("work done early and progress made show on the turnover", () => {
     expect(r2.review.knownStart).toBe(false);
     expect(r2.review.ahead.map((x) => x.leaf.id).sort()).toEqual(["hy", "rc"]);
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r2, f, { pctOf: () => 40, finishOf: () => undefined }) });
-    expect(text).toMatch(/Hydroblast · .*30% this shift, started early \(planned 10-28T11:00\)/);
+    expect(text).toMatch(/Hydroblast \(30%\) · .*started early \(planned 10-28T11:00\)/);
     expect(text).not.toMatch(/0% → 30%/); // no start on record: no "from"
   });
 });

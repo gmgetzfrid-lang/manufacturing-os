@@ -35,7 +35,7 @@ import {
 import type { Milestone } from "@/types/schema";
 import { buildProgressIndex, leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
-import { turnoverPlan, nextOf, standing, askedLine, gainOf, doneOf, gapStory } from "@/lib/turnoverPlan";
+import { turnoverPlan, nextOf, standing, askedLine, gainOf, doneOf, gapStory, crewsOf, vsPlan, offListDrivers, doneByTask } from "@/lib/turnoverPlan";
 import {
   buildShiftReport, shiftWindow, nextShift, previousShift, defaultReviewShift, nextShiftWithWork, expectedByParent, paceOf, expectedFraction, workShiftOf, staffedDueMs, meetingLeadMin, type Pace, type WorkShift,
   DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftRow, type ShiftWindow, type ShiftReport, type PullCrew,
@@ -44,7 +44,7 @@ import {
 import { buildKickoff, buildCloseout, defaultMeeting, type MeetingKind, type PlanRow } from "@/lib/meetingPlan";
 import { clockLabel, fmtInTz, tzAbbrev } from "@/lib/scheduleTz";
 import { startMsOf, finishMsOf } from "@/lib/calendarPlacement";
-import { toPlainText, toEmailHtml, type ExportBlock, type ExportCell, type ExportDoc, type ExportStepRow } from "@/lib/reportExport";
+import { toPlainText, toEmailHtml, type ExportBlock, type ExportDoc, type ExportStepRow } from "@/lib/reportExport";
 import { turnoverUpdate, withoutEmpty, noteLine, hazardJobsOf } from "@/lib/managementUpdate";
 import { useShiftTimes, useShiftTimesSaved, saveProjectShiftTimes, shiftTimesProblem } from "@/lib/shiftTimesStore";
 import { latestNotes } from "@/lib/milestones";
@@ -886,8 +886,14 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       : { t: `waits on ${r.waitingOn[0].name}${r.waitingOn.length > 1 ? ` +${r.waitingOn.length - 1}` : ""}`, tone: "amber" };
   };
   const gainTag = (r: ShiftRow): TagT | null => { const g = gainOf(report, r); return g > 0 ? { t: `+${g} this shift`, tone: "emerald" } : null; };
+  // Each step's hours ahead / behind ride on its own row (vsPlan); what
+  // isn't on the lists below gets a line, so the total adds up.
+  const off = offListDrivers(report, plan, c.hrs);
+  const vsTag = (r: ShiftRow): TagT | null => { const v = vsPlan(report, r, c.hrs); return v.text ? { t: `${v.text} vs plan`, tone: v.tone ?? "muted" } : null; };
   // ── Done: finished, and moved forward but on no list below.
   const doneIds = new Set(plan.done.map((r) => r.leaf.id ?? r.leaf.name));
+  // One row per task: its steps done or moved this shift, in one cell.
+  const doneTasks = doneByTask(report, plan, c);
   const doneRows = [...plan.done, ...plan.moved].map((r) => {
     const fin = doneIds.has(r.leaf.id ?? r.leaf.name);
     // What it meant for the plan — on plan, early, late — not a bare ✓.
@@ -897,32 +903,11 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       right: fin ? d.label.toLowerCase() : d.label,
       done: fin,
       note: comment(r),
-      extraTags: [{ t: d.detail, tone: d.tone }],
+      extraTags: [{ t: d.detail, tone: d.tone }, vsTag(r)],
     });
   });
   // Ahead or behind — and the steps that make it up (the same as the email).
   const story = gapStory(report, c);
-  // One table: the steps that put the job ahead, then those behind.
-  const whyRows: Array<{ id: string; cells: React.ReactNode[] }> = [];
-  const whyData: ExportCell[][] = [];
-  for (const side of ["ahead", "behind"] as const) {
-    const g = story[side];
-    if (!g.lines.length) continue;
-    const cls = side === "ahead" ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-400";
-    const tone = side === "ahead" ? "emerald" as const : "rose" as const;
-    const title = side === "ahead" ? `Ahead of plan — ${g.total}` : `Behind plan — ${g.total}`;
-    whyRows.push({ id: side, cells: [<b key="t" className={cls}>{title}</b>, "", "", ""] });
-    whyData.push([{ t: title, tone, bold: true }, "", "", ""]);
-    g.lines.forEach((x, i) => {
-      whyRows.push({ id: `${side}${i}`, cells: [<b key="t">{x.task ?? ""}</b>, x.step, <span key="w" className="text-[var(--color-text-muted)]">{x.text}</span>, <b key="h" className={`font-mono whitespace-nowrap ${cls}`}>{x.hours}</b>] });
-      whyData.push([{ t: x.task ?? "", bold: true }, x.step, { t: x.text, tone: "muted" }, { t: x.hours, tone, bold: true }]);
-    });
-    if (g.more) {
-      const h = `${side === "ahead" ? "+" : "−"}${g.more.hours}`;
-      whyRows.push({ id: `${side}more`, cells: [<span key="m" className="text-[var(--color-text-muted)]">+ {g.more.count} more</span>, "", "", <b key="h" className={`font-mono ${cls}`}>{h}</b>] });
-      whyData.push([{ t: `+ ${g.more.count} more`, tone: "muted" }, "", "", { t: h, tone }]);
-    }
-  }
   // ── Next: one list. The next crew's work (numbered, in priority order),
   // what it could try, what waits for its own crew, what's blocked.
   const shiftHrs = (next.end - next.start) / 3_600_000;
@@ -941,6 +926,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         extraTags: [
           x.detail ? { t: x.detail, tone: x.tone ?? "muted" } : null,
           gainTag(r),
+          vsTag(r),
           kind === "next" || pulled ? waitTag(r) : null,
           scope ? { t: `${scope}'s scope — coordinate`, tone: "amber" } : null,
         ],
@@ -998,26 +984,63 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   ];
   const nothingLast = review.scheduled.length === 0 && doneRows.length === 0;
 
+  // Who was here, and who's coming — the first thing on the turnover.
+  const cr = crewsOf(report, plan, c.hrs);
+  const crewCols = [
+    { title: `${shiftName(shift)} ${c.D(shift.start)} — who was here`, rows: cr.worked },
+    { title: `${shiftName(next)} ${c.D(next.start)} — who's coming`, rows: cr.coming },
+  ];
   return [
+    {
+      id: "who", title: "Crews", short: "Crews",
+      sub: `${cr.worked.length} on the ${shift.kind} shift · ${cr.coming.length} on the ${next.kind} shift`,
+      body: () => (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 keep">
+          {crewCols.map((col) => (
+            <div key={col.title} className="rounded-md border border-[var(--color-border)] px-3 py-2">
+              <div className="text-[10.5px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1">{col.title}</div>
+              {col.rows.length === 0 ? <div className="text-[12px] italic text-[var(--color-text-muted)]">No work planned</div> : (
+                <ul className="space-y-0.5">
+                  {col.rows.map((x) => (
+                    <li key={x.crew} className="flex items-baseline justify-between gap-3 text-[12.5px]">
+                      <b className="text-[var(--color-text)] break-words">{x.crew}</b>
+                      <span className="shrink-0 font-mono text-[11px] text-[var(--color-text-muted)]">{x.text}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      ),
+      data: () => [{ k: "columns", cols: crewCols.map((col) => ({ title: col.title, rows: col.rows.length ? col.rows.map((x) => ({ title: x.crew, value: x.text })) : [{ title: "No work planned", value: "" }] })) }],
+    },
     {
       id: "stand", title: "Where we stand", short: "Status",
       sub: [overall.plannedFinish ? `Day ${overall.daysElapsed} of ${overall.daysTotal} · planned finish ${c.DT(overall.plannedFinish)}` : null,
         overall.planBasis === "baseline" ? `vs baseline${overall.baselineSetAt ? ` of ${c.D(Date.parse(overall.baselineSetAt))}` : ""}` : "vs live dates (no baseline)",
         overall.unscheduled > 0 ? `${overall.unscheduled} step${overall.unscheduled === 1 ? "" : "s"} without dates not counted` : null].filter(Boolean).join(" · "),
       flag: overall.standing === "behind" ? "rose" : null,
-      body: (print) => (
+      body: () => (
         <div className="space-y-2">
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 keep">
             {standStats.map((x) => <Stat key={x.label} label={x.label} value={x.value} tone={x.tone} />)}
           </div>
           <div className={`text-[12.5px] font-bold ${overall.standing === "behind" ? "text-rose-700 dark:text-rose-300" : overall.standing === "ahead" ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text)]"}`}>{story.headline}</div>
-          {whyRows.length > 0 && <SimpleTable print={print} head={["Task", "Step", "Why", "Hours"]} rows={whyRows} />}
+          {(off.ahead || off.behind) && (
+            <div className="space-y-0.5 text-[12px]">
+              {off.ahead && <div><b className="text-emerald-700 dark:text-emerald-400">Also ahead (done on earlier shifts):</b> {off.ahead}.</div>}
+              {off.behind && <div><b className="text-rose-700 dark:text-rose-400">Also behind (not on the lists below):</b> {off.behind}.</div>}
+            </div>
+          )}
+          <div className="text-[11.5px] text-[var(--color-text-muted)]">Each step&apos;s hours ahead or behind are tagged on its row below (&ldquo;+4 h vs plan&rdquo;).</div>
         </div>
       ),
       data: () => [
         { k: "stats", items: standStats },
         { k: "note", text: story.headline, tone: overall.standing === "behind" ? "rose" : overall.standing === "ahead" ? "emerald" : undefined } as ExportBlock,
-        ...(whyData.length ? [{ k: "table", head: ["Task", "Step", "Why", "Hours"], align: ["left", "left", "left", "right"], nowrap: [3], rows: whyData } as ExportBlock] : []),
+        ...(off.ahead ? [{ k: "note", text: `Also ahead (done on earlier shifts): ${off.ahead}.`, tone: "emerald" } as ExportBlock] : []),
+        ...(off.behind ? [{ k: "note", text: `Also behind (not on the lists below): ${off.behind}.`, tone: "rose" } as ExportBlock] : []),
       ],
     },
     {
@@ -1042,12 +1065,25 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       flag: null,
       data: () => [
         ...(askedText ? [{ k: "note", text: askedText } as ExportBlock] : []),
-        doneRows.length === 0 ? { k: "empty", text: `Nothing was ${nothingLast ? "planned" : "completed"}${forCrew} on this shift.` } : stepsBlock(doneRows, "Done"),
+        doneRows.length === 0 ? { k: "empty", text: `Nothing was ${nothingLast ? "planned" : "completed"}${forCrew} on this shift.` }
+          : { k: "table", head: ["Task", "Done this shift", "Who", "What it means", "vs plan"], align: ["left", "left", "left", "left", "right"], nowrap: [4],
+            rows: doneTasks.map((x) => [{ t: x.task, bold: true }, x.steps, { t: x.who, tone: "muted" }, { t: x.result.text, tone: x.result.tone === "amber" ? "amber" : "emerald", bold: true }, { t: x.vs.text, tone: x.vs.tone, bold: true }]) } as ExportBlock,
       ],
       body: (print) => (
         <div className="space-y-2">
           {askedText && <div className="text-[11.5px] font-semibold text-slate-700 dark:text-slate-200">{askedText}</div>}
-          {doneRows.length > 0 ? <StepTable print={print} rightHead="Done" rows={doneRows} /> : (
+          {doneRows.length > 0 ? (
+            <SimpleTable print={print} head={["Task", "Done this shift", "Who", "What it means", "vs plan"]} rows={doneTasks.map((x) => ({
+              id: x.ids.join(","),
+              cells: [
+                <b key="t">{x.task}</b>,
+                <span key="s">{x.steps}</span>,
+                <span key="w" className="text-[var(--color-text-muted)]">{x.who}</span>,
+                <b key="r" className={x.result.tone === "amber" ? "text-amber-700 dark:text-amber-300" : "text-emerald-700 dark:text-emerald-400"}>{x.result.text}</b>,
+                <b key="v" className={`font-mono whitespace-nowrap ${x.vs.tone === "rose" ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"}`}>{x.vs.text}</b>,
+              ],
+            }))} />
+          ) : (
             <Empty>
               Nothing was {nothingLast ? "planned" : "completed"}{forCrew} on this shift.
               {nothingLast && o.onJump && o.jumpTarget && !print && (

@@ -45,18 +45,19 @@ describe("the update says what happened, in as few words as it takes", () => {
   it("leaves out what's empty: nothing unfinished, nothing blocked, nothing next", () => {
     // Everything planned today got done; Retube starts tomorrow — nothing
     // to hand over but what got done.
-    expect(sections.map((s) => s.id)).toEqual(["stand", "done"]);
+    expect(sections.map((s) => s.id)).toEqual(["who", "stand", "done"]); // crews first, under the header
   });
 
   it("what got done: each step once, by its task, with no finish time claimed", () => {
     const done = sections.find((s) => s.id === "done")!.blocks.find((b) => b.k === "table")!;
     if (done.k !== "table") throw new Error();
     const lines = done.rows.map((r) => r.map((c) => (typeof c === "string" ? c : c.t)).join(" | "));
-    expect(lines.join("\n")).toMatch(/T-605 Tower \| Open manways \| .* \| done, on plan$/m);
-    expect(lines.join("\n")).toMatch(/E-606 Exchanger \| Pull bundle \| .* \| done, on plan$/m);
-    expect(lines.filter((l) => l.startsWith("E-606"))).toHaveLength(1); // the task named once, its steps under it
+    // One row per task, its steps in one cell — not a line per sub-step.
+    expect(lines.join("\n")).toMatch(/^T-605 Tower \| 1 done: Open manways \| .* \| done, on plan \| $/m); // on plan: nothing in "vs plan"
+    expect(lines.join("\n")).toMatch(/^E-606 Exchanger \| 2 done: Pull bundle, Hydroblast \| .* \| done, on plan \| $/m);
+    expect(done.rows).toHaveLength(2);
     // When it was marked done isn't when it finished — no time is claimed.
-    expect(done.head).toEqual(["Task", "Step", "Who", "Result"]);
+    expect(done.head).toEqual(["Task", "Done this shift", "Who", "What it means", "vs plan"]);
   });
 
   it("no numbers, no stretch, no 'in this order'", () => {
@@ -101,10 +102,13 @@ describe("unfinished work: behind, or carrying over as planned", () => {
     // Once in the done/next tables (the Why table above names steps on purpose, with their hours).
     const lists = text.slice(text.search(/^(DONE|NEXT) — /m));
     for (const name of ["Hydroblast", "Retube \\(2 days\\)", "Blast tower \\(2 days\\)"]) expect(lists.match(new RegExp(`${name} ·`, "g"))?.length).toBe(1);
-    expect(text).not.toMatch(/PROBLEMS|ON PLAN —|CREWS/);
+    expect(text).not.toMatch(/PROBLEMS|ON PLAN —/);
+    expect(text.indexOf("CREWS")).toBeLessThan(text.indexOf("WHERE WE STAND")); // who was here, at the top
     // Why it's behind: the steps that make up the gap, with their hours.
-    expect(text).toMatch(/Behind plan — [\d.]+ h/);
-    expect(text).toMatch(/E-606 Exchanger — Retube \(2 days\) · 10% done, plan had \d+% by now · −[\d.]+ h/);
+    // Why it's behind: each step's hours on its own row — no separate table.
+    expect(text).toMatch(/Retube \(2 days\) · .*behind plan .* · 10% · −[\d.]+ h/);
+    expect(text).toMatch(/Hydroblast · .*was due .* · 60% · −[\d.]+ h/);
+    expect(text).not.toMatch(/WHY/);
   });
 });
 
