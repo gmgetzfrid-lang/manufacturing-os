@@ -11,7 +11,8 @@
 import { capacityOf, askedResult } from "@/lib/shiftHandover";
 import { turnoverPlan, nextOf, askedLine, crewsOf, vsPlan, doneByTask } from "@/lib/turnoverPlan";
 import { type PullCrew, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
-import { rankHazards, hazardContext, lessonFor, checksFor, type HazardJobInput } from "@/lib/safetyMoment";
+import { rankHazards, type HazardJobInput } from "@/lib/safetyMoment";
+import { safetyTalks, pickTalk, talkSources } from "@/lib/safetyTalk";
 import type { ExportBlock, ExportCell, ExportSection } from "@/lib/reportExport";
 
 export interface UpdateFormat {
@@ -44,6 +45,8 @@ export interface UpdateLookups {
   asked?: Array<{ id: string; name: string; crew: string | null; from: number; now: number | null; pulled?: boolean; why?: string }>;
   /** The crew kept for pulled-forward work, and its size. */
   pull?: PullCrew | null;
+  /** The safety topic picked at the meeting (lib/safetyTalk key). */
+  safetyPick?: string | null;
 }
 
 /** The next shift's steps as the safety moment ranks them: their hours
@@ -252,23 +255,14 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     });
   }
 
-  // ── Safety focus: the next shift's riskiest work — why it's here, what's
-  // specific to these steps, two veteran checks, one lesson. Left out unless ticked.
-  const hazards = rankHazards(hazardJobsOf(nextList, next, (r) => (r.carryOver ? `due ${f.DTs(r.dueAt)}` : `${f.T(Math.max(r.start, next.start))}–${r.finish <= next.end ? f.T(r.finish) : "…"}`), (id) => note(id)),
-    { max: 2, shift: next, T: f.T });
-  if (hazards.length > 0) {
+  // ── Safety topic: one, picked from what the next shift is doing (or at
+  // the meeting) — the things to say out loud. Left out unless ticked.
+  const talk = pickTalk(safetyTalks(rankHazards(hazardJobsOf(nextList, next, (r) => (r.carryOver ? `due ${f.DTs(r.dueAt)}` : `${f.T(Math.max(r.start, next.start))}–${r.finish <= next.end ? f.T(r.finish) : "…"}`), (id) => note(id)),
+    { shift: next, T: f.T }), next), look.safetyPick);
+  if (talk) {
     out.push({
-      id: "safety", title: `Safety focus — ${shiftName(next).toLowerCase()}`, offByDefault: true,
-      // One topic per block, full width — readable on a phone.
-      blocks: hazards.map((h, i) => {
-        const l = lessonFor(h.kind, next.start);
-        return { k: "columns", cols: [{ title: `${i + 1} · ${h.label} — ${hazardContext(h)}`, tone: "amber" as const, rows: [
-          { title: "Why it's here", text: h.why.join(" · ") },
-          ...h.tonight.slice(0, 2).map((t, n) => ({ title: n === 0 ? "On these steps" : "Also", text: t })),
-          { title: "Veteran check", text: checksFor(h.kind, next.start, 2, h.jobs.map((j) => `${j.equipment ?? ""} ${j.name}`)).join(" ") },
-          ...(l ? [{ title: "Don't miss", text: `${l.watch} → ${l.prevent}` }] : []),
-        ] }] } as ExportBlock;
-      }),
+      id: "safety", title: `Safety topic — ${shiftName(next).toLowerCase()}`, offByDefault: true,
+      blocks: [{ k: "bullets", title: talk.title, lead: talk.today, tone: "amber", items: talk.points.map((p) => p.say), sources: talkSources(talk) }],
     });
   }
   return out;

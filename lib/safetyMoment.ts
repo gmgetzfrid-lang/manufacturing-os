@@ -258,6 +258,8 @@ export interface RankedHazard {
   /** What's specific to this shift's steps — crews meeting on the same
    *  equipment, a hand-off, a note, a job picked up mid-way. Most telling first. */
   tonight: string[];
+  /** Other crews working the same equipment at the same time. */
+  alongside: string[];
 }
 
 const tagAtStart = (s: string): string | null => {
@@ -408,6 +410,7 @@ export function rankHazards(jobs: HazardJobInput[], opts: RankOptions = {}): Ran
     // Other crews on the same equipment: at the same time, or straight after.
     const met = new Set<string>();
     const handed = new Set<string>();
+    const alongside = new Set<string>();
     // Which reasons come from a clash between two steps (told once).
     const whyPairs = new Map<string, string[]>();
     for (const j of e.inputs) {
@@ -423,6 +426,7 @@ export function rankHazards(jobs: HazardJobInput[], opts: RankOptions = {}): Ran
           const f = specific ?? MEET[k]?.["*"] ?? fallbackMeet;
           const pair = [j.id, o.id].sort().join("|");
           lines.push({ text: f(x), weight: 5, pair });
+          if (differentCrew && o.who?.trim()) alongside.add(o.who.trim());
           const w = differentCrew ? `2 crews on ${x.eq} at once` : `2 jobs on ${x.eq} at once`;
           whyRank.push({ text: w, rank: 1 });
           whyPairs.set(w, [...(whyPairs.get(w) ?? []), pair]);
@@ -473,7 +477,7 @@ export function rankHazards(jobs: HazardJobInput[], opts: RankOptions = {}): Ran
     const kept = [...new Map(lines.sort((a, b) => b.weight - a.weight).map((l) => [l.text, l])).values()];
     ranked.push({
       kind: k, label: def.label, severity: def.severity, hours: Math.round(e.hours * 10) / 10, jobs: e.jobs,
-      score: def.severity * 10 + exposure + Math.min(bonus, 12), why, tonight: kept.map((l) => l.text),
+      score: def.severity * 10 + exposure + Math.min(bonus, 12), why, tonight: kept.map((l) => l.text), alongside: [...alongside],
     });
     pairsOf.set(ranked[ranked.length - 1], kept.map((l) => l.pair));
     whyPairsOf.set(ranked[ranked.length - 1], whyPairs);
@@ -526,6 +530,8 @@ export interface SafetyLesson {
   kind: HazardKind;
   watch: string;
   prevent: string;
+  /** The lesson as one line someone can say out loud at the meeting. */
+  say: string;
   source: { url: string; title: string };
 }
 

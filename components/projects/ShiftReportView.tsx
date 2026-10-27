@@ -267,12 +267,28 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     if (n && pastShift && n.at && Date.parse(n.at) > recordedBy) return undefined;
     return n;
   }, [notes, pastShift, recordedBy]);
+  // The safety topic picked at the meeting, per shift — kept on this device.
+  const [safetyPicks, setSafetyPicks] = useState<Record<string, string>>({});
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- read once after mount: the server has no localStorage
+    try { setSafetyPicks(JSON.parse(localStorage.getItem("shiftReport.safetyPick") ?? "{}") as Record<string, string>); } catch { /* private mode */ }
+  }, []);
+  const nextKey = String(view.next.start);
+  const safety = useMemo(() => ({
+    pick: safetyPicks[nextKey] ?? null,
+    onPick: (k: string) => setSafetyPicks((cur) => {
+      // The last few shifts' picks only.
+      const n = Object.fromEntries([...Object.entries(cur).filter(([x]) => x !== nextKey).slice(-13), [nextKey, k]]);
+      try { localStorage.setItem("shiftReport.safetyPick", JSON.stringify(n)); } catch { /* private mode */ }
+      return n;
+    }),
+  }), [safetyPicks, nextKey]);
   const sections = useMemo(() => meeting === "kickoff"
     ? kickoffSections(kickoff, ctx)
     : meeting === "closeout"
       ? closeoutSections(closeout, report, ctx, cancelled)
-      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx }),
-  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx]);
+      : turnoverSections(view, ctx, { onJump: jumpTarget ? () => pick(jumpTarget) : undefined, jumpTarget, noteOf: noteThen, times, crew, whole: report, handover: handoverCtx, safety }),
+  [meeting, kickoff, closeout, report, view, ctx, jumpTarget, noteThen, times, crew, cancelled, handoverCtx, safety]);
 
   // A step's card: asked about mid-meeting, answered from the schedule.
   const qlIndex = useMemo(() => quickLookIndex(milestones), [milestones]);
@@ -366,6 +382,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           tryOf: (id) => (decisions[id]?.tryIt ? decisions[id] : undefined),
           asked,
           pull: pullForReport,
+          safetyPick: safety.pick,
         })
         : withoutEmpty(sections.filter((x) => x.data).map((x) => ({ id: x.id, title: x.title, sub: x.sub, flag: x.flag ?? null, blocks: x.data!() }))),
     };
@@ -852,7 +869,9 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   crew?: string | null; whole?: ShiftReport;
   /** The meeting's exceptions (lib/shiftHandover): steps the next shift
    *  could try, which crew; and what the last turnover asked of this one. */
-  handover?: HandoverCtx }): Sec[] {
+  handover?: HandoverCtx;
+  /** The safety topic picked at the meeting. */
+  safety?: { pick: string | null; onPick: (key: string) => void } }): Sec[] {
   const { overall, review, goals, shift, next } = report;
   // A step's latest comment, as one quiet line under it (each step shows once).
   const comment = (r: ShiftRow) => {
@@ -1040,7 +1059,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       sub: "Open every turnover here — then the work.",
       body: (print) => (
         <div className="space-y-2">
-          <SafetyMomentBox jobs={hazardJobs} shift={next} T={c.T} print={print} />
+          <SafetyMomentBox jobs={hazardJobs} shift={next} T={c.T} print={print} pick={o.safety?.pick} onPick={o.safety?.onPick} />
           <Prompts print={print} cols={3} items={[
             "Incidents, near misses, first aid since last turnover",
             "Permits and lock-outs open across the change",

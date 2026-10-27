@@ -1,68 +1,71 @@
 "use client";
 
-// SafetyMomentBox — the turnover's safety moment.
+// SafetyMomentBox — the turnover's safety topic.
 //
-// The next shift's riskiest work, ranked from its steps. For each: why it
-// made the list, what's specific to these steps tonight (crews meeting on
-// the same equipment, a hand-off, a note, a job picked up part-way), two
-// veteran checks, and one "don't miss" lesson from a real incident with
-// its source. Built in: no AI, a different check and lesson each shift.
+// One topic, picked from what the next shift is doing, given the way a
+// supervisor gives it: a line on why today, then four or five short things
+// to say out loud — lessons from real incidents, with their sources.
+// The other topics sit underneath, a tap away. Built in: no AI.
 
 import { useMemo } from "react";
 import { ShieldAlert } from "lucide-react";
-import { rankHazards, hazardContext, lessonFor, checksFor, sourceLabel, type HazardJobInput } from "@/lib/safetyMoment";
+import { rankHazards, type HazardJobInput } from "@/lib/safetyMoment";
+import { safetyTalks, pickTalk, talkSources } from "@/lib/safetyTalk";
 import type { ShiftWindow } from "@/lib/shiftReport";
 
 const muted = "text-orange-900/75 dark:text-orange-200/70";
-const tag = "text-[9.5px] font-black uppercase tracking-wider text-orange-800 dark:text-orange-300";
 
-export function SafetyMomentBox({ jobs, shift, T, print }: {
+export function SafetyMomentBox({ jobs, shift, T, print, pick, onPick }: {
   jobs: HazardJobInput[];
   /** The shift being planned. */
   shift: ShiftWindow;
   T: (ms: number) => string;
   print: boolean;
+  /** The topic picked at the meeting; the best one when none is. */
+  pick?: string | null;
+  onPick?: (key: string) => void;
 }) {
-  const hazards = useMemo(() => rankHazards(jobs, { shift, T }), [jobs, shift, T]);
-  if (hazards.length === 0) return null;
-  const when = shift.kind === "night" ? "Tonight's" : "Today's";
+  const talks = useMemo(() => safetyTalks(rankHazards(jobs, { shift, T }), shift), [jobs, shift, T]);
+  const talk = pickTalk(talks, pick);
+  if (!talk) return null;
+  const sources = talkSources(talk);
+  const others = talks.filter((t) => t !== talk);
 
   return (
-    <div className="keep rounded-md border border-orange-300 bg-orange-50/70 px-3 py-1.5 dark:border-orange-900 dark:bg-orange-950/25">
-      <div className="flex items-baseline gap-2">
+    <div className="keep rounded-md border border-orange-300 bg-orange-50/70 px-3 py-2 dark:border-orange-900 dark:bg-orange-950/25">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
         <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-orange-800 dark:text-orange-300">
-          <ShieldAlert className="w-3 h-3 self-center" aria-hidden="true" /> Safety moment
+          <ShieldAlert className="w-3 h-3 self-center" aria-hidden="true" /> Safety topic
         </span>
-        <span className={`text-[11px] ${muted}`}>{when} {hazards.length === 1 ? "riskiest work" : `${hazards.length} riskiest`}</span>
+        <b className={`${print ? "text-[10pt]" : "text-[15px]"} text-[var(--color-text)]`}>{talk.title}</b>
       </div>
-      <ol className="divide-y divide-orange-200/80 dark:divide-orange-900/60">
-        {hazards.map((h, i) => {
-          const lesson = lessonFor(h.kind, shift.start);
-          return (
-            <li key={h.kind} className={`py-1.5 space-y-0.5 ${print ? "text-[8.5pt]" : "text-[12px]"} leading-snug`}>
-              <div className="flex flex-wrap items-baseline gap-x-2">
-                <b className="text-[var(--color-text)]">{i + 1} · {h.label}</b>
-                <span className={`text-[10.5px] ${muted}`}>{hazardContext(h)}</span>
-              </div>
-              <div className={`text-[11px] ${muted}`}><span className={tag}>Why it&apos;s here </span>{h.why.join(" · ")}</div>
-              {h.tonight.slice(0, 2).map((t, k) => (
-                <div key={k} className="text-[var(--color-text)]"><span className={tag}>{k === 0 ? "On these steps " : "Also "}</span>{t}</div>
-              ))}
-              <div className="text-[var(--color-text)]"><span className={tag}>Veteran check </span>{checksFor(h.kind, shift.start, 2, h.jobs.map((j) => `${j.equipment ?? ""} ${j.name}`)).join(" ")}</div>
-              {lesson && (
-                <div className="text-[var(--color-text)]">
-                  <span className={tag}>Don&apos;t miss </span>
-                  {lesson.watch} <span className="text-orange-700 dark:text-orange-300" aria-hidden="true">→</span> <b>{lesson.prevent}</b>{" "}
-                  <a href={lesson.source.url} target="_blank" rel="noreferrer" title={lesson.source.title}
-                    className={`text-[10px] underline underline-offset-2 decoration-orange-300 dark:decoration-orange-800 ${muted} hover:text-orange-950 dark:hover:text-orange-100`}>
-                    {sourceLabel(lesson.source)}
-                  </a>
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ol>
+      <p className={`${print ? "text-[8pt]" : "text-[12px]"} ${muted}`}>{talk.today}</p>
+      <ul className={`mt-1 list-disc space-y-1 pl-5 marker:text-orange-500 ${print ? "text-[9pt]" : "text-[14px]"} leading-snug text-[var(--color-text)]`}>
+        {talk.points.map((p, i) => <li key={i}>{p.say}</li>)}
+      </ul>
+      {sources.length > 0 && (
+        <div className={`mt-1 text-[10px] ${muted}`}>
+          From{" "}
+          {sources.map((s, i) => (
+            <span key={s.url}>
+              {i > 0 && " · "}
+              <a href={s.url} target="_blank" rel="noreferrer" title={s.title}
+                className="underline underline-offset-2 decoration-orange-300 dark:decoration-orange-800 hover:text-orange-950 dark:hover:text-orange-100">{s.label}</a>
+            </span>
+          ))}
+        </div>
+      )}
+      {!print && onPick && others.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1 print:hidden">
+          <span className={`text-[10.5px] ${muted}`}>Other topic:</span>
+          {others.map((t) => (
+            <button key={t.key} type="button" onClick={() => onPick(t.key)}
+              className="rounded-full border border-orange-300 dark:border-orange-800 px-2 py-px text-[10.5px] font-semibold text-orange-800 dark:text-orange-300 hover:bg-orange-100 dark:hover:bg-orange-950/50">
+              {t.title}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

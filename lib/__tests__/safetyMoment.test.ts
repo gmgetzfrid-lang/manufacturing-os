@@ -126,7 +126,7 @@ describe("the lesson library", () => {
 });
 
 describe("lessonFor", () => {
-  const lib: SafetyLesson[] = ["a", "b", "c"].map((w) => ({ kind: "hydroblast", watch: w, prevent: "p", source: { url: "https://x.test", title: "t" } }));
+  const lib: SafetyLesson[] = ["a", "b", "c"].map((w) => ({ kind: "hydroblast", watch: w, prevent: "p", say: w, source: { url: "https://x.test", title: "t" } }));
   const SHIFT = 43_200_000;
   it("gives a different lesson each shift, round the list, the same on every screen", () => {
     const t0 = Date.parse("2026-10-26T13:00:00Z");
