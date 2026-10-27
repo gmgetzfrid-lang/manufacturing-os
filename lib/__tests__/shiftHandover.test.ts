@@ -55,7 +55,7 @@ describe("shift handover", () => {
     expect(text).toMatch(/Asked to try last turnover: 1 of 1 done \(as entered\)/);
     expect(text).toMatch(/Could try if there's time: 1 step, 4 h\./);
     // Once: marked to try, it isn't also "waits for day crew".
-    expect(text.split("CARRIES TO THE DAY SHIFT")[1] ?? "").not.toMatch(/Hydroblast/);
+    expect(text.split("CARRIES OVER TO DAY SHIFT")[1] ?? "").not.toMatch(/Hydroblast/);
     expect(text.match(/Hydroblast ·/g)?.length).toBe(1);
   });
 });

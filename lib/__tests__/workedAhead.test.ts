@@ -57,6 +57,10 @@ describe("work done early and progress made show on the turnover", () => {
     // No bottom-line box: the numbers, and each step's hours in "vs plan".
     expect(text).not.toMatch(/BOTTOM LINE/);
     expect(text).toMatch(/Work ahead: 1 h/);
+    // Carries over to the next day shift, dated: Mon's day shift → Tue.
+    expect(text).toMatch(/^CARRIES OVER TO DAY SHIFT — 10-27/m);
+    // The 40% counts: an 8 h pull the plan has done by now, 40% done → 4.8 h behind, not 8.
+    expect(text).toMatch(/Pull bundle · .* · done 40% · −4.8 h/);
     // Every % reads as where it is now — never "0% → 25%".
     expect(text).not.toMatch(/% → /);
     // Each step credited once under Done.

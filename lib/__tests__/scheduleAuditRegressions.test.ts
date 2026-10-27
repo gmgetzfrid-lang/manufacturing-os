@@ -456,8 +456,8 @@ describe("the next shift sees the other crew's unfinished and paused work", () =
   it("the email says so — waiting for its own crew, never 'pick up if you can'", () => {
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r, f, { pctOf: () => 40, finishOf: () => undefined }) });
     // In its own table — not on the night shift's list.
-    expect(text).toMatch(/CARRIES TO THE DAY SHIFT/);
-    expect(text.split("CARRIES TO THE DAY SHIFT")[1]).toMatch(/Blind \/ open manways · was due/);
+    expect(text).toMatch(/CARRIES OVER TO DAY SHIFT/);
+    expect(text.split("CARRIES OVER TO DAY SHIFT")[1]).toMatch(/Blind \/ open manways · was due/);
     expect(text).not.toMatch(/if you can/i);
     // Under way, continuing on the day crew's next shift — listed with where it stands.
     expect(text).toMatch(/Retube · on plan, continues next day shift · done 30%/);

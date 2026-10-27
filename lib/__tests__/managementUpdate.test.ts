@@ -104,12 +104,12 @@ describe("unfinished work: behind, or carrying over as planned", () => {
     for (const name of ["Hydroblast", "Retube \\(2 days\\)", "Blast tower \\(2 days\\)"]) expect(lists.match(new RegExp(`${name} ·`, "g"))?.length).toBe(1);
     expect(text).not.toMatch(/PROBLEMS|ON PLAN —/);
     expect(text.indexOf("WHERE WE STAND")).toBeLessThan(text.indexOf("CREWS")); // progress, then crews
-    expect(text.indexOf("CREWS")).toBeLessThan(text.indexOf("CARRIES TO THE DAY SHIFT"));
+    expect(text.indexOf("CREWS")).toBeLessThan(text.indexOf("CARRIES OVER TO DAY SHIFT"));
     // Why it's behind: each step's hours on its own row — no separate table.
     expect(text).toMatch(/Retube \(2 days\) · .*behind plan .* · done 10% · −[\d.]+ h/);
     expect(text).toMatch(/Hydroblast · .*was due .* · done 60% · −[\d.]+ h/);
     // The day crew's work is in its own table, not the night shift's list.
-    expect(text).toMatch(/CARRIES TO THE DAY SHIFT/);
+    expect(text).toMatch(/CARRIES OVER TO DAY SHIFT/);
     expect(text).toMatch(/^NEXT — NIGHT SHIFT[^\n]*\n   Nothing planned for the night shift\./m);
   });
 });

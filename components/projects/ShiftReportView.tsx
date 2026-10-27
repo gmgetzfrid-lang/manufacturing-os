@@ -1121,7 +1121,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     ...(laterCount ? [{
       // ── Carries to the other shift: its crew's unfinished and ongoing
       // work, and anything blocked — not the next shift's list.
-      id: "carries", title: `Carries to the ${otherKind} shift`, short: `To ${otherKind} shift`,
+      id: "carries", title: `Carries over to ${otherKind} shift — ${c.D(next.end)}`, short: `To ${otherKind} shift`,
       sub: laterSub, count: laterCount,
       flag: plan.held.some((r) => r.status === "blocked") ? "rose" : null,
       body: (print: boolean) => <StepTable print={print} whenHead="Why" rightHead="Done" rows={nextRows(print, false)} />,

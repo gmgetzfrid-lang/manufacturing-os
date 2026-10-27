@@ -222,7 +222,8 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     };
     const doneCell = (r: ShiftRow): ExportCell => `${r.percent}%`;
     out.push({
-      id: "carries", title: `Carries to the ${other} shift`,
+      // The other crew's next shift starts when the next shift ends.
+      id: "carries", title: `Carries over to ${other} shift — ${f.D(next.end)}`,
       sub: [carries.length ? `${carries.length} for the ${other} crew` : null, held.length ? `${held.length} blocked or on hold` : null].filter(Boolean).join(" · ") + ` — not the ${next.kind} shift's work`,
       flag: held.some((r) => r.status === "blocked") ? "rose" : null,
       blocks: [{
