@@ -12,7 +12,7 @@ import { capacityOf, askedResult } from "@/lib/shiftHandover";
 import { turnoverPlan, nextOf, askedLine, crewsOf, vsPlan, doneByTask } from "@/lib/turnoverPlan";
 import { type PullCrew, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
 import { rankHazards, type HazardJobInput } from "@/lib/safetyMoment";
-import { safetyTalks, pickTalk, talkSources, projectFacts, type ProjectBase } from "@/lib/safetyTalk";
+import { safetyBrief, talkSources, projectFacts, type ProjectBase } from "@/lib/safetyTalk";
 import type { ExportBlock, ExportCell, ExportSection } from "@/lib/reportExport";
 
 export interface UpdateFormat {
@@ -45,8 +45,6 @@ export interface UpdateLookups {
   asked?: Array<{ id: string; name: string; crew: string | null; from: number; now: number | null; pulled?: boolean; why?: string }>;
   /** The crew kept for pulled-forward work, and its size. */
   pull?: PullCrew | null;
-  /** The safety topic picked at the meeting (lib/safetyTalk key). */
-  safetyPick?: string | null;
   /** The project around the work, for the safety topic's general lines. */
   safetyProject?: ProjectBase;
 }
@@ -258,14 +256,14 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     });
   }
 
-  // ── Safety topic: one, picked from what the next shift is doing (or at
-  // the meeting) — the things to say out loud. Left out unless ticked.
+  // ── Safety topics: the job as a whole, then the next shift's two riskiest
+  // kinds of work — the things to say out loud. Left out unless ticked.
   const hj = hazardJobsOf(nextList, next, (r) => (r.carryOver ? `due ${f.DTs(r.dueAt)}` : `${f.T(Math.max(r.start, next.start))}–${r.finish <= next.end ? f.T(r.finish) : "…"}`), (id) => note(id));
-  const talk = pickTalk(safetyTalks(rankHazards(hj, { shift: next, T: f.T }), next, { project: projectFacts(look.safetyProject, next, hj.map((j) => j.name)) }), look.safetyPick);
-  if (talk && hj.length > 0) {
+  const topics = hj.length ? safetyBrief(rankHazards(hj, { shift: next, T: f.T }), next, { project: projectFacts(look.safetyProject, next, hj.map((j) => j.name)) }) : [];
+  if (topics.length) {
     out.push({
-      id: "safety", title: `Safety topic — ${shiftName(next).toLowerCase()}`, offByDefault: true,
-      blocks: [{ k: "bullets", title: talk.title, lead: talk.today, tone: "amber", items: talk.points.map((p) => p.say), sources: talkSources(talk) }],
+      id: "safety", title: `Safety topics — ${shiftName(next).toLowerCase()}`, offByDefault: true,
+      blocks: topics.map((t, i) => ({ k: "bullets", title: `${i + 1}. ${t.title}`, lead: `${t.kicker} — ${t.why}`, tone: i === 0 ? "slate" : i === 1 ? "rose" : "amber", items: t.points.map((p) => p.say), sources: talkSources(t) } as ExportBlock)),
     });
   }
   return out;

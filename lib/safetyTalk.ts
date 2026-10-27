@@ -1,26 +1,16 @@
-// safetyTalk — the turnover's safety topic, the way it's given at the
-// meeting: one topic, picked from what the shift is doing; one line on why
-// today; and five short things to say out loud. Two are about the work
-// itself — lessons written in blood, each from a real incident report
-// (lib/safetyLessons). The rest are about the job around it: a turnaround
-// next to live units, the operators who own them, start-up or shutdown,
-// the day of the job, running behind, nights — read from the project and
-// its schedule. Read in a minute. Not a repeat of the schedule.
+// safetyTalk — the turnover's safety topics, the way they're given at the
+// meeting: three, side by side. The first is the job as a whole (a
+// turnaround next to live units, read from the project and its schedule);
+// the other two are the riskiest work on the shift being planned. Each is a
+// title, a line on why now, and three short things to say out loud —
+// lessons written in blood, each from a real incident report
+// (lib/safetyLessons). Read in a few minutes. Not a repeat of the schedule.
 
 import { HAZARD_KINDS, checksFor, lessonFor, sourceLabel, type HazardKind, type RankedHazard, type SafetyLesson } from "@/lib/safetyMoment";
 import { SAFETY_LESSONS } from "@/lib/safetyLessons";
 import { dayDiff } from "@/lib/scheduleTz";
 
 export interface TalkPoint { say: string; source?: { url: string; title: string } }
-export interface SafetyTalk {
-  /** Stable across a shift: the kind, plus "+crews" when crews overlap. */
-  key: string;
-  title: string;
-  /** Why this topic today, in a line. */
-  today: string;
-  points: TalkPoint[];
-}
-
 const OSHA_SIGNS = { url: "https://www.osha.gov/laws-regs/regulations/standardnumber/1910/1910.145", title: "OSHA 1910.145: Accident prevention signs and tags" };
 const OSHA_SWING = { url: "https://www.osha.gov/laws-regs/regulations/standardnumber/1926/1926.1424", title: "OSHA 1926.1424: Work area control" };
 
@@ -86,6 +76,8 @@ export interface ProjectFacts {
   night?: boolean;
   /** The shift's work takes the unit down or brings it back. */
   phase?: "shutdown" | "startup";
+  /** The unit the project is on ("Transmix-1"), from its name. */
+  unit?: string;
 }
 
 /** The project as the report knows it, before the shift is picked. */
@@ -100,7 +92,8 @@ export interface ProjectBase {
 
 const TA_RE = /\bturn[\s-]*arounds?\b|\bshut[\s-]*downs?\b|\boutages?\b/i;
 const TA_CODE = /\b(TA|TAR|T\/A|S\/D)\b/; // capitals only: "ta" is a word
-const SHUTDOWN_RE = /\bshut[\s-]*down\b|\bde-?inventor|\bsteam(ing)?[\s-]*out\b|\bdecon(tamination)?\b|\bpump[\s-]*out\b|\bgas[\s-]*free\b/i;
+// "Shutdown-required inspection" is work that needs the unit down, not the unit coming down.
+const SHUTDOWN_RE = /\bshut[\s-]*down\b(?![\s-]*req)|\bde-?inventor|\bsteam(ing)?[\s-]*out\b|\bdecon(tamination)?\b|\bpump[\s-]*out\b|\bgas[\s-]*free\b/i;
 
 /** The facts for one shift: the day of the job it falls on, and whether
  *  its own steps take the unit down or bring it back. */
@@ -114,6 +107,7 @@ export function projectFacts(p: ProjectBase | undefined, shift: { start: number;
     behind: p?.behind,
     night: shift.kind === "night",
     phase: steps.some((n) => HAZARD_KINDS.startup.re.test(n)) ? "startup" : steps.some((n) => SHUTDOWN_RE.test(n)) ? "shutdown" : undefined,
+    unit: unitOf(p?.names[0]) ?? undefined,
   };
 }
 
@@ -131,16 +125,6 @@ const PLANT_POINTS: TalkPoint[] = [
   { say: "Never open, close or bump a valve that isn't yours. Ask the operator." },
   { say: "Know the alarm and your muster point. If it sounds, stop and go. Don't finish the bolt.", source: OSHA_EAP },
   { say: "Look at the windsock when you get to the job. Something leaks: get out crosswind, then upwind.", source: OSHA_H2S },
-];
-/** A turnaround: the unit is down, the ones around it aren't. */
-const TURNAROUND_POINTS: TalkPoint[] = [
-  { say: "The units around us are running. At Tosco, a crew opened piping on a tower still in service. Four died. Treat every line as live.", source: CSB_TOSCO },
-  PLANT_POINTS[0],
-  { say: "Out-of-service equipment can still get heat or pressure from the live side. At Williams Olefins, an idle reboiler blew. Two died.", source: CSB_WILLIAMS },
-  { say: "Keep your gas monitor on and at your collar, even in the shut-down unit. The unit next door isn't shut down.", source: OSHA_H2S },
-  PLANT_POINTS[1],
-  { say: "If the unit next door alarms, stop and go. Don't finish the bolt. Know your muster point.", source: OSHA_EAP },
-  PLANT_POINTS[3],
 ];
 const PHASE_POINTS: Record<"shutdown" | "startup", TalkPoint[]> = {
   shutdown: [
@@ -165,82 +149,145 @@ function situationPoints(f: ProjectFacts, kind?: HazardKind): TalkPoint[] {
   return out;
 }
 
-/** n lines about the job around the work: one on where the job stands
- *  (start-up and shutdown first; the others in turn), the rest on working
- *  in a running plant — next to live units in a turnaround. */
-function projectPoints(f: ProjectFacts, shiftStart: number, n: number, salt: number, kind?: HazardKind): TalkPoint[] {
-  if (n <= 0) return [];
-  const sit = situationPoints(f, kind);
-  const one = f.phase && kind !== "startup" ? sit.slice(0, 1) : rotate(sit, shiftStart, 1, salt);
-  const base = rotate((f.turnaround ? TURNAROUND_POINTS : PLANT_POINTS).filter((p) => !one.includes(p)), shiftStart, n - one.length, salt);
-  return [...one, ...base];
+// ── The brief: three topics, side by side ───────────────────────────
+// 1. The job as a whole — a turnaround next to live units, read from the
+//    project and its schedule, a different theme each shift.
+// 2–3. The two riskiest kinds of work on the shift being planned.
+// Each: a title, one line on why, three things to say out loud.
+
+export interface SafetyTopic {
+  key: string;
+  kind: "general" | "risk";
+  /** Above the title: "Turnaround · Transmix-1" / "Top risk tonight". */
+  kicker: string;
+  title: string;
+  /** Why this topic now, in a line. */
+  why: string;
+  points: TalkPoint[];
+  hazard?: HazardKind;
 }
 
-/** The topics to choose from, best first: the riskiest work, then the job
- *  around it (a turnaround next to live units), then each other kind of
- *  work, then barricades and other crews. */
-export function safetyTalks(hazards: RankedHazard[], shift: { start: number; kind?: "day" | "night" }, opts: { project?: ProjectFacts; lessons?: SafetyLesson[] } = {}): SafetyTalk[] {
+const OSHA_PSM = { url: "https://www.osha.gov/laws-regs/regulations/standardnumber/1910/1910.119", title: "OSHA 1910.119: Process safety management (safe work practices, contractors)" };
+
+/** What a turnaround's general topic is about — one per shift, in turn. */
+const TA_THEMES: Array<{ key: string; title: string; points: TalkPoint[] }> = [
+  { key: "simops", title: "Live units & SIMOPS", points: [
+    { say: "Released means signed. Don't touch equipment until the operator signs it over on the permit and the JHA.", source: OSHA_PSM },
+    { say: "Treat every line you didn't open yourself as live. At Tosco, a crew opened piping on a tower still running. Four died.", source: CSB_TOSCO },
+    { say: "Know who's above, below and beside you. Talk to the crew next to you before you start." },
+  ] },
+  { key: "release", title: "Released equipment & sign-offs", points: [
+    { say: "Walk it down with the operator. Blinds, bleeders, locks — see them, don't assume them.", source: OSHA_PSM },
+    { say: "The JHA covers the job you were released for. Scope changes? Stop, redo the JHA, get a new sign-off." },
+    { say: "Out-of-service can still get heat or pressure from the live side. At Williams Olefins, an idle reboiler blew. Two died.", source: CSB_WILLIAMS },
+  ] },
+  { key: "handoff", title: "Shift change & handoffs", points: [
+    { say: "Hand over every open break, blank and barricade by name. Don't leave it for the next crew to find." },
+    { say: "Don't pick up what the last crew left until you've walked it. Ask what's open and what's live." },
+    { say: "Update your tags before you leave: who owns it, what's open, how to reach them.", source: OSHA_SIGNS },
+  ] },
+  { key: "gas", title: "Gas, wind & the unit next door", points: [
+    { say: "Gas monitor on and at your collar, even in the shut-down unit. The unit next door isn't shut down.", source: OSHA_H2S },
+    PLANT_POINTS[3],
+    { say: "Monitor goes off or it smells wrong? Leave first, then call it. Don't go back for your tools." },
+  ] },
+  { key: "operators", title: "Operators own the unit", points: [
+    PLANT_POINTS[0],
+    PLANT_POINTS[1],
+    { say: "If the unit next door alarms, stop and go. Don't finish the bolt. Know your muster point.", source: OSHA_EAP },
+  ] },
+];
+const PHASE_THEMES: Record<"shutdown" | "startup", { key: string; title: string; points: TalkPoint[] }> = {
+  startup: { key: "startup", title: "Start-up: hydrocarbons coming back", points: [
+    PHASE_POINTS.startup[0],
+    PHASE_POINTS.startup[1],
+    { say: "Every flange you touched gets watched as it heats up. Walk the blind list in the field." },
+  ] },
+  shutdown: { key: "shutdown", title: "Shutdown: units coming down", points: [
+    PHASE_POINTS.shutdown[0],
+    PHASE_POINTS.shutdown[1],
+    TA_THEMES[0].points[0],
+  ] },
+};
+
+const MONTHS = /\b(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sep(t(ember)?)?|oct(ober)?|nov(ember)?|dec(ember)?|spring|summer|fall|autumn|winter)\b/gi;
+/** The unit a project is on, from its name: "October 2026 Transmix-1
+ *  Turnaround" → "Transmix-1". Null when nothing's left to go on. */
+export function unitOf(projectName: string | null | undefined): string | null {
+  if (!projectName) return null;
+  const u = projectName.replace(MONTHS, " ").replace(/\b(19|20)\d{2}\b/g, " ").replace(TA_RE, " ").replace(TA_CODE, " ")
+    .replace(/[|,()]/g, " ").replace(/\s[-–—]\s/g, " ").replace(/\s+/g, " ").trim();
+  return u.length >= 2 && u.length <= 30 ? u : null;
+}
+
+/** The three topics for a shift: the job as a whole, then its two riskiest
+ *  kinds of work. A quiet shift gets more of the job's own topics. */
+export function safetyBrief(hazards: RankedHazard[], shift: { start: number; kind?: "day" | "night" }, opts: { project?: ProjectFacts; lessons?: SafetyLesson[] } = {}): SafetyTopic[] {
   const { lessons = SAFETY_LESSONS } = opts;
   const facts = opts.project ?? { turnaround: false, night: shift.kind === "night" };
-  const shiftStart = shift.start;
   const when = shift.kind === "night" ? "tonight" : "today";
-  const out: SafetyTalk[] = [];
-  const allAlongside = new Set<string>();
-  for (const h of hazards) {
+  const top = hazards.slice(0, 2);
+
+  // 1. The job as a whole. Start-up or shutdown work on the shift leads
+  // (unless start-up is already one of the risks); otherwise a turnaround
+  // theme in turn, so the same words don't come round every shift.
+  const ord = shiftOrdinal(shift.start);
+  const phase = facts.phase && !(facts.phase === "startup" && top.some((h) => h.kind === "startup")) ? PHASE_THEMES[facts.phase] : null;
+  const themes = facts.turnaround ? TA_THEMES : [TA_THEMES[3], TA_THEMES[0], TA_THEMES[2]];
+  const theme = phase ?? themes[ord % themes.length];
+  const unit = facts.unit ? ` · ${facts.unit}` : "";
+  const dayPart = facts.day != null && facts.days != null
+    ? (facts.day <= facts.days ? `Day ${facts.day} of ${facts.days}` : `Day ${facts.day} — past the planned ${facts.days}`) : "";
+  // One line on where the job stands, in place of the last theme line when it matters.
+  const sit = situationPoints({ ...facts, phase: undefined }).filter((p) => !/^Night:/.test(p.say) || !phase);
+  const situational = sit.find((p) => /^Day \d+ of long shifts|^We're behind|^New faces/.test(p.say));
+  const general: SafetyTopic = {
+    key: `general:${theme.key}`, kind: "general",
+    kicker: facts.turnaround ? `Turnaround${unit}` : `The job${unit}`,
+    title: theme.title,
+    why: [dayPart, facts.turnaround ? `live units and other crews all around the work ${when}` : `operators running the plant around the work ${when}`]
+      .filter(Boolean).join(" — ").replace(/^./, (c) => c.toUpperCase()) + ".",
+    points: situational ? [theme.points[0], theme.points[1], situational] : theme.points.slice(0, 3),
+  };
+
+  // 2–3. The riskiest work on the shift.
+  const risks: SafetyTopic[] = top.map((h, i) => {
     const eqs = [...new Set(h.jobs.map((j) => j.equipment).filter((x): x is string => !!x))];
     const crews = [...new Set(h.jobs.map((j) => j.who?.trim()).filter((x): x is string => !!x))];
-    const who = crews.length === 1 ? crews[0] : "Crews";
-    const where = andList(eqs.slice(0, 3)) + (eqs.length > 3 ? ` and ${eqs.length - 3} more` : "");
+    const who = crews.length === 1 ? crews[0] : crews.length ? andList(crews.slice(0, 2)) : "Crews";
+    const where = andList(eqs.slice(0, 3)) + (eqs.length > 3 ? ` + ${eqs.length - 3} more` : "");
     const withOthers = h.alongside.length > 0;
-    for (const a of h.alongside) allAlongside.add(a);
-    // Two lines on the work; one on the crews around it when they share
-    // the equipment; the rest on the job around it.
-    const work = kindPoints(h.kind, shiftStart, 2, lessons, h.jobs.map((j) => `${j.parentName ?? j.equipment ?? ""} ${j.name}`));
-    const crewLine = withOthers ? [CREWS_POINTS[CREWS_FOR[h.kind]?.[0] ?? rotate([0, 1, 4, 5], shiftStart, 1, saltOf(h.kind))[0]]] : [];
-    out.push({
-      key: withOthers ? `${h.kind}+crews` : h.kind,
-      title: withOthers ? `${h.label} next to other crews` : h.label,
-      today: `${who} ${DOING[h.kind]} ${where} ${when}${withOthers ? `, with ${andList(h.alongside.slice(0, 3))} working the same equipment` : ""}.`,
-      points: [...work, ...crewLine, ...projectPoints(facts, shiftStart, 5 - work.length - crewLine.length, saltOf(h.kind), h.kind)],
-    });
-  }
-  // The job itself, as a topic of its own — second, under the riskiest work.
-  // "Day 2 of 5 of the turnaround." / "Day 7 of the turnaround, past the planned 5 days."
-  const dayLine = (of: string) => facts.day == null || facts.days == null ? ""
-    : facts.day <= facts.days ? `Day ${facts.day} of ${facts.days} of ${of}. `
-      : `Day ${facts.day} of ${of}, past the planned ${facts.days} day${facts.days === 1 ? "" : "s"}. `;
-  const sit = situationPoints(facts);
-  const job: SafetyTalk = facts.turnaround
-    ? {
-      key: "turnaround", title: "Turnaround: working next to live units",
-      today: `${dayLine("the turnaround")}Live lines and running units are all around the work.`,
-      // Live units and the operators always; then where the job stands; then others in turn.
-      points: [TURNAROUND_POINTS[0], TURNAROUND_POINTS[1], ...sit.slice(0, 2), ...rotate(TURNAROUND_POINTS.slice(2), shiftStart, 3 - Math.min(2, sit.length), 3)],
-    }
-    : {
-      key: "plant", title: "Working around a running plant",
-      today: `${dayLine("the job")}Operators own the unit the work is in.`,
-      points: [...sit.slice(0, 2), ...PLANT_POINTS].slice(0, 5),
+    const steps = h.jobs.map((j) => `${j.parentName ?? j.equipment ?? ""} ${j.name}`);
+    const crewLine = withOthers ? [CREWS_POINTS[CREWS_FOR[h.kind]?.[0] ?? rotate([0, 1, 4, 5], shift.start, 1, saltOf(h.kind))[0]]] : [];
+    return {
+      key: h.kind, kind: "risk" as const, hazard: h.kind,
+      kicker: `Top risk ${when}${top.length > 1 ? ` · ${i + 1}` : ""}`,
+      title: h.label,
+      why: `${who} ${DOING[h.kind]} ${where} ${when}${withOthers ? ` — next to ${andList(h.alongside.slice(0, 2))}` : ""}.`,
+      points: [...kindPoints(h.kind, shift.start, 3 - crewLine.length, lessons, steps), ...crewLine],
     };
-  out.splice(Math.min(1, out.length), 0, job);
-  if (allAlongside.size > 0 || hazards.length >= 2) {
-    out.push({
-      key: "crews",
-      title: "Barricades and working around other crews",
-      today: allAlongside.size > 0 ? `Several crews are on the same equipment at the same time ${when}.` : `Several crews are doing high-risk work in the unit ${when}.`,
-      points: rotate(CREWS_POINTS, shiftStart, 5, 7),
-    });
-  }
-  return out;
+  });
+
+  // A quiet shift: the job's other topics fill the row.
+  const fill = (facts.turnaround ? TA_THEMES : themes).filter((t) => t.key !== theme.key);
+  const extra: SafetyTopic[] = rotate(fill, shift.start, Math.max(0, 2 - risks.length), 3).map((t) => ({
+    key: `general:${t.key}`, kind: "general", kicker: facts.turnaround ? `Turnaround${unit}` : `The job${unit}`,
+    title: t.title, why: `Quiet ${shift.kind === "night" ? "night" : "day"} on the schedule — a good one to talk through.`, points: t.points.slice(0, 3),
+  }));
+  return [general, ...risks, ...extra];
 }
 
-/** The topic's sources, once each, by site ("osha.gov"). */
-export function talkSources(t: SafetyTalk): Array<{ url: string; label: string; title: string }> {
+/** A point as the eye reads it: the first sentence (the thing to do), and
+ *  the rest (why, or the incident behind it). */
+export function splitLead(say: string): [string, string] {
+  const m = say.match(/^(.+?[.!?])\s+(.*)$/);
+  return m ? [m[1], m[2]] : [say, ""];
+}
+
+/** A topic's sources, once each, by site ("osha.gov"). */
+export function talkSources(t: { points: TalkPoint[] }): Array<{ url: string; label: string; title: string }> {
   const seen = new Map<string, { url: string; label: string; title: string }>();
   for (const p of t.points) if (p.source && !seen.has(p.source.url)) seen.set(p.source.url, { ...p.source, label: sourceLabel(p.source) });
   // One link per site: two OSHA pages read as "osha.gov" twice otherwise.
   return [...new Map([...seen.values()].map((x) => [x.label, x])).values()];
 }
-
-/** The topic picked at the meeting, else the best one. */
-export const pickTalk = (talks: SafetyTalk[], key?: string | null) => talks.find((t) => t.key === key) ?? talks[0];
