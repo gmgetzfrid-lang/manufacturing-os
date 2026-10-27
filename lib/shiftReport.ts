@@ -430,6 +430,10 @@ export interface ShiftRow {
   hoursLeft: number;
   /** On the next shift's list: its hours on that shift. */
   hoursNext?: number;
+  /** % at the start of the shift under review, when known. */
+  pctStart?: number;
+  /** Planned to start after the shift under review ends. */
+  plannedLater: boolean;
   /** On the next shift's list: the % it should reach by the end of that
    *  shift — never below where it is now, never above 100. One number for
    *  the screen, the print and the email. */
@@ -514,6 +518,15 @@ export interface ShiftReport {
     inProgress: ShiftRow[];
     notStarted: ShiftRow[];
     carryOver: ShiftRow[];
+    /** Work planned for after this shift that was done or moved forward
+     *  during it — the crew got ahead (done ones are also in `done`). */
+    ahead: ShiftRow[];
+    /** Steps not finished that moved forward during the shift (pctStart →
+     *  percent), as entered. Empty when the start isn't known. */
+    progressed: ShiftRow[];
+    /** The shift's start state was known (progress log), so "this shift"
+     *  is exact as entered; otherwise ahead = any progress on later work. */
+    knownStart: boolean;
   };
   goals: {
     /** MUST DO — everything the next shift should work to hold the plan:
@@ -575,6 +588,9 @@ export interface BuildShiftReportInput {
   lookAheadUntil?: number;
   /** Steps the meeting pulled forward for the next shift (goals.pulled). */
   pullIds?: Iterable<string>;
+  /** Each step's % at the start of the shift (from the progress log), to
+   *  say what progress was made on it during the shift. Absent: unknown. */
+  startPct?: Map<string, number>;
 }
 
 /** How ready a step is to be pulled forward onto the next shift. */
@@ -663,6 +679,8 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       startsInShift: s >= win.start && s < win.end,
       offSchedule: cw.windows.length ? !cw.windows.some(([a, b]) => a < win.end && b > win.start) : !(s < win.end && f > win.start),
       reflowed: cw.reflowed,
+      pctStart: m.id ? input.startPct?.get(m.id) : undefined,
+      plannedLater: (cw.windows[0]?.[0] ?? s) >= shift.end,
       crewStart: cw.windows[0]?.[0] ?? s,
       crewFinish: cw.windows[cw.windows.length - 1]?.[1] ?? f,
       reason: m.statusReason ?? null,
@@ -733,8 +751,12 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   // open work is what the next crew inherits wherever it was planned.
   const scheduled = leaves.filter((m) => overlaps(m, shift)).map((m) => rowFor(m, shift)).sort(cmp);
   // Carry-over = due by now and not done. Mid-shift, work due at 16:00
-  // isn't carried over at 10:00 — it's still this shift's.
-  for (const r of scheduled) r.carryOver = !DONE(r) && crewDueMs(r.leaf, tz, times) <= now;
+  // isn't carried over at 10:00 — it's still this shift's. From the
+  // turnover meeting on, the shift is handed over: anything due by its end
+  // and not done carries over.
+  const meetingAt = shift.end - meetingLeadMin(times) * 60_000;
+  const dueBy = now >= meetingAt ? Math.max(now, shift.end) : now;
+  for (const r of scheduled) r.carryOver = !DONE(r) && crewDueMs(r.leaf, tz, times) <= dueBy;
   const seenDone = new Set<string>();
   const done: ShiftRow[] = [];
   // Done on an earlier shift (a step that spans several) isn't this
@@ -752,15 +774,25 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   const inProgress = leaves
     .map((m) => rowFor(m, shift))
     .filter(isOpen)
-    .map((r) => { r.carryOver = crewDueMs(r.leaf, tz, times) <= now; return r; })
+    .map((r) => { r.carryOver = crewDueMs(r.leaf, tz, times) <= dueBy; return r; })
     .sort((a, b) => Number(a.offSchedule) - Number(b.offSchedule) || cmp(a, b));
   const notStarted = scheduled.filter((r) => !DONE(r) && !isOpen(r));
   // Carry-over also includes anything older that is still open: it was due
   // before this shift ended and nobody closed it.
   const carryOver = leaves
-    .filter((m) => crewDueMs(m, tz, times) <= now && !DONE({ status: m.status, percent: pctOf(m) }))
+    .filter((m) => crewDueMs(m, tz, times) <= dueBy && !DONE({ status: m.status, percent: pctOf(m) }))
     .map((m) => { const r = rowFor(m, shift); r.carryOver = true; return r; })
     .sort((a, b) => Number(b.critical) - Number(a.critical) || cmp(a, b));
+
+  // What moved during the shift. With the start known (progress log): every
+  // step that gained % since the shift began. Without it: work planned for
+  // later that has any progress at all (it can only be early).
+  const knownStart = !!input.startPct;
+  const gained = (r: ShiftRow) => knownStart ? r.pctStart != null && r.percent > r.pctStart : r.percent > 0;
+  const doneIds0 = new Set(done.map((r) => r.leaf.id));
+  const allRows = leaves.map((m) => rowFor(m, shift));
+  const ahead = allRows.filter((r) => r.plannedLater && (doneIds0.has(r.leaf.id) || (!DONE(r) && gained(r)))).sort(cmp);
+  const progressed = knownStart ? allRows.filter((r) => !DONE(r) && gained(r)).sort(cmp) : [];
 
   // ── 3. Goals for the next shift ──────────────────────────────────
   // Blocked / on-hold work can't be worked: it's listed under Blocked (with
@@ -885,7 +917,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       planBasis: baselined > 0 ? "baseline" : "current",
       baselineSetAt: baselined > 0 ? baselineSetAt : null,
     },
-    review: { scheduled, done, inProgress, notStarted, carryOver },
+    review: { scheduled, done, inProgress, notStarted, carryOver, ahead, progressed, knownStart },
     goals: { all, carryOver: goalsCarry, planned, critical, mustDoHours, otherShift, movedOff, paused, stretch, gapHours, backOnTrackAt, lookAhead, pulled, pulledHeld },
     blocked,
   };
@@ -935,6 +967,7 @@ export function filterShiftReport(report: ShiftReport, who: string): ShiftReport
     review: {
       scheduled: keep(review.scheduled), done: keep(review.done), inProgress: keep(review.inProgress),
       notStarted: keep(review.notStarted), carryOver: keep(review.carryOver),
+      ahead: keep(review.ahead), progressed: keep(review.progressed), knownStart: review.knownStart,
     },
     goals: {
       ...goals,

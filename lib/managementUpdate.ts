@@ -182,7 +182,12 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       rank: worst ? order[worst.pace] : behind ? 2 : 3, behind: worst ? worst.pace !== "held" : behind, complete: false,
     });
   }
-  // ── Completed ── good news first: the steps finished on the shift.
+  // ── Completed ── good news first: the steps finished on the shift, and
+  // the steps moved forward on it. Work planned for after the shift that
+  // is done or moved is "ahead of plan" — a fact of the plan, not a claim
+  // about when it was finished (progress is often caught up later).
+  const aheadCell = (r: ShiftRow, text: string): ExportCell => (r.plannedLater ? { t: `${text} ahead — planned ${f.DTs(r.crewStart)}`, tone: "emerald", bold: true } : { t: text, tone: "emerald", bold: true });
+  const moved = review.knownStart ? review.progressed : review.ahead.filter((r) => !review.done.includes(r) && r.percent < 100);
   if (review.done.length > 0) {
     const list = review.done.slice(0, MAX_ROWS * 2);
     const hiddenDone = review.done.length - list.length;
@@ -193,8 +198,23 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       sub: `${review.done.length} step${review.done.length === 1 ? "" : "s"} done`,
       blocks: [{
         k: "table", head: ["Task", "Step", "Who", "Done"], align: ["left", "left", "left", "right"], textLabels: ["", "", "by", ""],
-        rows: [...byTask(list, (r) => [r.leaf.name, muted(r.leaf.responsibleParty ?? ""), { t: "✓", tone: "emerald", bold: true }]),
+        rows: [...byTask(list, (r) => [r.leaf.name, muted(r.leaf.responsibleParty ?? ""), aheadCell(r, "✓")]),
           ...(hiddenDone > 0 ? [[muted(`+ ${hiddenDone} more`), "", "", ""] as ExportCell[]] : [])],
+      }],
+    });
+  }
+
+  if (moved.length > 0) {
+    const list = moved.slice(0, MAX_ROWS * 2);
+    out.push({
+      id: "moved", title: review.knownStart ? `Progress — ${shiftName(shift)} ${f.D(shift.start)}` : "Worked ahead — progress on later work",
+      sub: `${moved.length} step${moved.length === 1 ? "" : "s"} moved forward · as entered`,
+      blocks: [{
+        k: "table", head: ["Task", "Step", "Who", review.knownStart ? "Start → now" : "Done"], align: ["left", "left", "left", "right"], textLabels: ["", "", "by", ""],
+        nowrap: [3],
+        rows: [...byTask(list, (r) => [r.leaf.name, muted(r.leaf.responsibleParty ?? ""),
+          aheadCell(r, review.knownStart && r.pctStart != null ? `${r.pctStart}% → ${r.percent}%` : `${r.percent}%`)]),
+          ...(moved.length > list.length ? [[muted(`+ ${moved.length - list.length} more`), "", "", ""] as ExportCell[]] : [])],
       }],
     });
   }
@@ -384,6 +404,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       { text: verdict },
       { text: size },
       ...(watch ? [{ label: "Watch", text: watch.text, tone: watch.tone }] : []),
+      ...(review.ahead.length ? [{ label: "Ahead of plan", text: `${review.ahead.length} step${review.ahead.length === 1 ? "" : "s"} planned for later ${review.ahead.length === 1 ? "was" : "were"} done or moved forward on the ${shiftName(shift).toLowerCase()} — ${[...new Set(review.ahead.map((r) => equipmentTag(r.parentName, r.leaf.name) ?? r.parentName ?? r.leaf.name))].slice(0, 3).join(", ")}.`, tone: "emerald" as const }] : []),
       ...(tried.length ? [{ label: `${shiftName(next)} could try`, text: `${tried.length} extra step${tried.length === 1 ? "" : "s"} (${f.hrs(triedHours)}), if possible — see Next shift.` }] : []),
       ...(asked.length ? [{ label: "Asked last turnover", text: `${askedDone} of ${asked.length} done (as entered).` }] : []),
       ...(finishing.length ? [{ label: `Planned to finish on ${shiftName(next).toLowerCase()}`, text: finishing.slice(0, 3).map((x) => `${x.name} (${f.T(x.at)})`).join(", ") + (finishing.length > 3 ? ` + ${finishing.length - 3} more` : "") }] : []),

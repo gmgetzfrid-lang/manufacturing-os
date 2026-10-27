@@ -35,8 +35,11 @@ export function setupChecklist(s: {
       why: "Without it the schedule runs on UTC — plan-by-now, behind / on plan and the current shift are hours off." },
     { id: "shifts", label: "Shift change times", required: true, done: s.shiftTimesSaved === true, checking: s.shiftTimesSaved == null,
       why: "Every day / night split, the shift report and the turnover meeting time hang on these." },
-    { id: "night", label: "Night crews", required: false, done: !!s.nightDecided,
-      why: "Until it's set, every step the file put in night hours is listed as night work — even on jobs nights don't staff." },
+    // Required: a schedule file puts work in night hours that nights may not
+    // staff — the turnover would hand day work to nights. One choice settles
+    // it ("follow the file" is a choice too).
+    { id: "night", label: "Night crews", required: true, done: !!s.nightDecided,
+      why: "Until it's set, every step the file put in night hours is handed to nights — even on jobs nights don't staff." },
     { id: "critical", label: "Critical path source", required: false, done: s.criticalChosen,
       why: "Schedule files often mark nearly everything critical — choose where it comes from." },
     { id: "baseline", label: "Baseline", required: false, done: s.hasBaseline,

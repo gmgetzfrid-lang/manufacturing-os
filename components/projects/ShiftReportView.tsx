@@ -132,13 +132,21 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
   // end (late entries for the shift count). Without the log it reads
   // against today's progress, and says so.
   const pastShift = now > nextShift(shift, tz, times).end;
-  const [log, setLog] = useState<ProgressLogRow[] | null | undefined>(undefined);
+  // The turnover also reads it for the shift just ending: where each step
+  // stood when the shift began, so the report says what moved during it.
+  // Re-read as progress is entered.
+  const needLog = pastShift || meeting === "turnover";
+  const liveSig = useMemo(() => live.map((m) => `${m.id}:${m.percentComplete ?? 0}:${m.status}`).join("|"), [live]);
+  const [logState, setLogState] = useState<{ rows: ProgressLogRow[] | null } | undefined>(undefined);
   useEffect(() => {
-    if (!pastShift || log !== undefined) return;
+    if (!needLog) return;
     let alive = true;
-    loadProgressLog(projectId).then((l) => { if (alive) setLog(l); }).catch(() => { if (alive) setLog(null); });
-    return () => { alive = false; };
-  }, [pastShift, log, projectId]);
+    const t = setTimeout(() => {
+      loadProgressLog(projectId).then((l) => { if (alive) setLogState({ rows: l }); }).catch(() => { if (alive) setLogState({ rows: null }); });
+    }, 400);
+    return () => { alive = false; clearTimeout(t); };
+  }, [needLog, projectId, liveSig]);
+  const log = logState?.rows;
   const recordedBy = shift.end + 3_600_000;
   const history = useMemo(
     () => (pastShift && log ? scheduleAt(live, log, recordedBy) : null),
@@ -149,6 +157,13 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
   const asThen = history?.complete ? history : null;
   const milestones = asThen ? asThen.milestones : live;
   const progress = useMemo(() => (asThen ? buildProgressIndex(asThen.milestones, tz) : liveProgress), [asThen, liveProgress, tz]);
+  // Each step's % when the shift began — only when the record reaches back.
+  const startPct = useMemo(() => {
+    if (!log) return undefined;
+    const then = scheduleAt(live, log, shift.start);
+    if (!then.complete) return undefined;
+    return new Map(then.milestones.filter((m) => m.id).map((m) => [m.id!, m.status === "completed" ? 100 : m.percentComplete ?? 0]));
+  }, [log, live, shift.start]);
   const historyNote = !pastShift ? null
     : history?.complete ? `progress as recorded by ${clockLabel(recordedBy, tz)} ${fmtInTz(recordedBy, tz, { month: "short", day: "numeric" })}`
       : `progress as entered by now — the record doesn't reach back to this shift`;
@@ -171,8 +186,8 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
   const pullKey = useMemo(() => Object.entries(decisions).filter(([, d]) => d.tryIt && d.pulled).map(([id]) => id).sort().join(","), [decisions]);
 
   const report = useMemo(
-    () => buildShiftReport({ milestones, progress, criticalIds, tz, times, shift, now: asOf, pullIds: pullKey ? pullKey.split(",") : undefined }),
-    [milestones, progress, criticalIds, tz, times, shift, asOf, pullKey],
+    () => buildShiftReport({ milestones, progress, criticalIds, tz, times, shift, now: asOf, pullIds: pullKey ? pullKey.split(",") : undefined, startPct }),
+    [milestones, progress, criticalIds, tz, times, shift, asOf, pullKey, startPct],
   );
   // One crew at a time: the whole turnover narrows to their steps.
   const crews = useMemo(() => crewsOnReport(report), [report]);
@@ -900,14 +915,28 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     right: `${r.percent}% / ${r.expectedPct}%`,
   });
   const pastRows = pastDue.map(problemRow), behindRows = behindPlan.map(problemRow);
+  // Done — and, for work planned after this shift, ahead of plan: a fact
+  // of the plan (it was planned for later and is done now), not a claim
+  // about the minute it finished (progress is often caught up later).
+  const aheadTag = (r: ShiftRow): TagT | null => (r.plannedLater ? { t: `ahead — planned ${c.DTs(r.crewStart)}`, tone: "emerald" } : null);
   const doneRows = review.done.map((r) => rowFromShift(r, c, {
     when: r.offSchedule ? `planned ${c.D(r.start)}` : rowTime(r, shift),
-    // Just "done": when it's marked done isn't when it finished (progress
-    // is often caught up later), so no early / late is claimed.
     right: "done ✓",
     done: true,
     note: comment(r, "last"),
+    extraTags: [aheadTag(r)],
   }));
+  // Moved forward but not finished: from where it was when the shift began
+  // (the progress log), or — without that record — later work with any
+  // progress (it can only be early).
+  const movedList = review.knownStart ? review.progressed : review.ahead.filter((r) => !review.done.includes(r) && r.percent < 100);
+  const movedRows = movedList.map((r) => rowFromShift(r, c, {
+    when: r.plannedLater ? `planned ${c.DTs(r.crewStart)}` : rowTime(r, shift),
+    right: review.knownStart && r.pctStart != null ? `${r.pctStart}% → ${r.percent}%` : `${r.percent}%`,
+    note: comment(r, "last"),
+    extraTags: [aheadTag(r)],
+  }));
+  const aheadCount = review.ahead.length;
   const decideRows = blocked.map((r) => rowFromShift(r, c, {
     when: `${r.percent}%`,
     right: c.DTs(r.dueAt),
@@ -1082,12 +1111,14 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     {
       // ── Completed — good news first, no decisions in it.
       id: "done", title: `Completed — ${shiftName(shift)} ${c.D(shift.start)} ${c.win(shift)}`, short: "Completed",
-      sub: [`${review.scheduled.length} planned · ${review.done.length} done`, problemCount ? `${problemCount} problem${problemCount === 1 ? "" : "s"} next` : null].filter(Boolean).join(" · "),
+      sub: [`${review.scheduled.length} planned · ${review.done.length} done`, movedRows.length ? `${movedRows.length} moved forward` : null, aheadCount ? `${aheadCount} ahead of plan` : null, problemCount ? `${problemCount} problem${problemCount === 1 ? "" : "s"} next` : null].filter(Boolean).join(" · "),
       count: review.done.length,
-      data: () => nothingLast ? [{ k: "empty", text: `Nothing was planned${forCrew} on this shift.` }] : [
+      flag: null,
+      data: () => (nothingLast && movedRows.length === 0) ? [{ k: "empty", text: `Nothing was planned${forCrew} on this shift.` }] : [
         review.done.length === 0 ? { k: "empty", text: `Nothing was completed${forCrew} on this shift.` } : stepsBlock(doneRows, "Finished"),
+        ...(movedRows.length ? [{ k: "sub", title: review.knownStart ? "Progress this shift (as entered)" : "Worked ahead — progress on later work (as entered)", count: movedRows.length, tone: "emerald" } as ExportBlock, stepsBlock(movedRows, review.knownStart ? "Start → now" : "Done")] : []),
       ],
-      body: (print) => nothingLast ? (
+      body: (print) => (nothingLast && movedRows.length === 0) ? (
         <Empty>
           Nothing was planned{forCrew} on this shift.
           {o.onJump && o.jumpTarget && !print && (
@@ -1096,8 +1127,16 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
             </button>
           )}
         </Empty>
-      ) : review.done.length === 0 ? <Empty>Nothing was completed{forCrew} on this shift.</Empty> : (
-        <StepTable print={print} rightHead="Finished" rows={doneRows} />
+      ) : (
+        <div className="space-y-2">
+          {review.done.length === 0 ? <Empty>Nothing was completed{forCrew} on this shift.</Empty> : <StepTable print={print} rightHead="Finished" rows={doneRows} />}
+          {movedRows.length > 0 && (
+            <>
+              <Sub tone="emerald" icon={<TrendingUp className="w-3.5 h-3.5" />} title={review.knownStart ? "Progress this shift (as entered)" : "Worked ahead — progress on later work (as entered)"} count={movedRows.length} />
+              <StepTable print={print} rightHead={review.knownStart ? "Start → now" : "Done"} rows={movedRows} />
+            </>
+          )}
+        </div>
       ),
     },
     {
@@ -1137,6 +1176,12 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       count: planList.length, flag: critCarry ? "rose" : goals.carryOver.length ? "amber" : null,
       body: (print) => (
         <div className="space-y-2">
+          {next.kind === "night" && o.times.nightJobs === undefined && (
+            // Not decided: the list follows the schedule file's hours.
+            <div role="alert" className="rounded-md border-2 border-rose-400 dark:border-rose-700 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-[12px] text-rose-900 dark:text-rose-100">
+              <b>Night crews aren&apos;t set</b> — this list follows the schedule file&apos;s hours, which can hand day work to nights. Set them once in <b>Schedule setup → Night crews</b>.
+            </div>
+          )}
           {planList.length === 0 ? <Empty>Nothing is scheduled for the next shift.</Empty> : (
             <StepTable print={print} box rightHead="Now → goal" rows={nextRows} />
           )}
@@ -1524,12 +1569,13 @@ function Prompts({ items, print, lines = 0, cols = 2 }: { items: string[]; print
 }
 
 
-type TagTone = "rose" | "amber" | "muted";
+type TagTone = "rose" | "amber" | "emerald" | "muted";
 interface TagT { t: string; tone: TagTone }
 function TagChip({ t, tone }: TagT) {
   const cls = tone === "rose" ? "bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/40 dark:text-rose-200 dark:border-rose-900"
     : tone === "amber" ? "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900"
-      : "bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
+      : tone === "emerald" ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-900"
+        : "bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
   return <span className={`inline-block whitespace-nowrap px-1 py-px rounded border text-[8.5px] font-black uppercase tracking-wider align-middle ${cls}`}>{t}</span>;
 }
 
