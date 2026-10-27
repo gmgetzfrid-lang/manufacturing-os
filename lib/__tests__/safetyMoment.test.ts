@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  HAZARD_KINDS, classifyStep, rankHazards, equipmentTag, hazardContext, lessonFor, sourceLabel,
+  HAZARD_KINDS, classifyStep, rankHazards, equipmentTag, hazardContext, lessonFor, sourceLabel, checksFor,
   type HazardJobInput, type HazardKind, type SafetyLesson,
 } from "@/lib/safetyMoment";
 import { SAFETY_LESSONS } from "@/lib/safetyLessons";
@@ -78,13 +78,26 @@ describe("equipmentTag / hazardContext", () => {
     expect(hazardContext(hb)).toBe("E-17 18:00–22:00, E-12 4:00–… · Evergreen 1");
   });
 });
-describe("hit lists", () => {
-  it("every kind has a short standard hit list", () => {
+describe("veteran checks", () => {
+  it("every kind has four short checks — two show per shift, in turn", () => {
     for (const def of Object.values(HAZARD_KINDS)) {
-      expect(def.hitList.length).toBeGreaterThanOrEqual(4);
-      expect(def.hitList.length).toBeLessThanOrEqual(5);
-      for (const t of def.hitList) expect(t.split(/\s+/).length).toBeLessThanOrEqual(9);
+      expect(def.checks.length).toBe(4);
+      for (const c of def.checks) { const t = typeof c === "string" ? c : c.t; expect(t.split(/\s+/).length, t).toBeLessThanOrEqual(20); }
     }
+    const t0 = Date.parse("2026-10-26T13:00:00Z");
+    const a = checksFor("hydroblast", t0), b = checksFor("hydroblast", t0 + 43_200_000);
+    expect(a).toHaveLength(2);
+    expect(a).not.toEqual(b);
+  });
+  it("no rookie basics — the checks aren't the permit-and-PPE list", () => {
+    for (const def of Object.values(HAZARD_KINDS)) for (const c of def.checks) { const t = typeof c === "string" ? c : c.t; expect(t, t).not.toMatch(/^(wear|ppe|permit (signed|posted)|toolbox talk)/i); }
+  });
+  it("a check about a particular thing shows only when a step is about it", () => {
+    const t0 = Date.parse("2026-10-26T13:00:00Z");
+    const all = [0, 1, 2, 3].flatMap((n) => checksFor("line_break", t0 + n * 43_200_000, 2, ["Set Blinds; Verify LOTO"]));
+    expect(all.join(" ")).not.toMatch(/plug/i);
+    const withPlugs = [0, 1, 2, 3].flatMap((n) => checksFor("line_break", t0 + n * 43_200_000, 2, ["Pull 100% of the Plugs"]));
+    expect(withPlugs.join(" ")).toMatch(/plug/i);
   });
 });
 

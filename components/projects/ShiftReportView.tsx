@@ -949,7 +949,8 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     };
   });
   // The next shift's work as the safety moment ranks it.
-  const hazardJobs: HazardJobInput[] = hazardJobsOf(planList, next, (r) => (r.carryOver ? `due ${c.DTs(r.dueAt)}` : rowTime(r, next)));
+  const hazardJobs: HazardJobInput[] = hazardJobsOf(planList, next, (r) => (r.carryOver ? `due ${c.DTs(r.dueAt)}` : rowTime(r, next)),
+    (id) => noteLine(o.noteOf?.(id), shift.start, c.D));
   const capa = capacityOf(ho?.pullSet ?? null, tryList, shiftHrs);
   const addButton = ho?.openPicker ? (
     <button type="button" onClick={ho.openPicker}
@@ -1039,7 +1040,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       sub: "Open every turnover here — then the work.",
       body: (print) => (
         <div className="space-y-2">
-          <SafetyMomentBox jobs={hazardJobs} shiftKind={next.kind} shiftStart={next.start} print={print} />
+          <SafetyMomentBox jobs={hazardJobs} shift={next} T={c.T} print={print} />
           <Prompts print={print} cols={3} items={[
             "Incidents, near misses, first aid since last turnover",
             "Permits and lock-outs open across the change",

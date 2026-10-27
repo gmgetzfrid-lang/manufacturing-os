@@ -1,33 +1,31 @@
 "use client";
 
-// SafetyMomentBox — the turnover's safety moment, in the space the old
-// "safety moment" checkbox had.
+// SafetyMomentBox — the turnover's safety moment.
 //
-// The next shift's riskiest kinds of work, ranked from the schedule, three
-// lines each: the job, its hit list of essentials (permit, gas test,
-// attendant …), and one "don't miss" lesson drawn from a real incident —
-// what to look out for, then what prevents it — with its source. Built in:
-// no AI, nothing to click, a different lesson each shift.
+// The next shift's riskiest work, ranked from its steps. For each: why it
+// made the list, what's specific to these steps tonight (crews meeting on
+// the same equipment, a hand-off, a note, a job picked up part-way), two
+// veteran checks, and one "don't miss" lesson from a real incident with
+// its source. Built in: no AI, a different check and lesson each shift.
 
 import { useMemo } from "react";
 import { ShieldAlert } from "lucide-react";
-import {
-  HAZARD_KINDS, rankHazards, hazardContext, lessonFor, sourceLabel,
-  type HazardJobInput,
-} from "@/lib/safetyMoment";
+import { rankHazards, hazardContext, lessonFor, checksFor, sourceLabel, type HazardJobInput } from "@/lib/safetyMoment";
+import type { ShiftWindow } from "@/lib/shiftReport";
 
 const muted = "text-orange-900/75 dark:text-orange-200/70";
+const tag = "text-[9.5px] font-black uppercase tracking-wider text-orange-800 dark:text-orange-300";
 
-export function SafetyMomentBox({ jobs, shiftKind, shiftStart, print }: {
+export function SafetyMomentBox({ jobs, shift, T, print }: {
   jobs: HazardJobInput[];
-  shiftKind: "day" | "night";
-  /** The shift being planned — picks this shift's lessons. */
-  shiftStart: number;
+  /** The shift being planned. */
+  shift: ShiftWindow;
+  T: (ms: number) => string;
   print: boolean;
 }) {
-  const hazards = useMemo(() => rankHazards(jobs), [jobs]);
+  const hazards = useMemo(() => rankHazards(jobs, { shift, T }), [jobs, shift, T]);
   if (hazards.length === 0) return null;
-  const when = shiftKind === "night" ? "Tonight's" : "Today's";
+  const when = shift.kind === "night" ? "Tonight's" : "Today's";
 
   return (
     <div className="keep rounded-md border border-orange-300 bg-orange-50/70 px-3 py-1.5 dark:border-orange-900 dark:bg-orange-950/25">
@@ -35,25 +33,25 @@ export function SafetyMomentBox({ jobs, shiftKind, shiftStart, print }: {
         <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-orange-800 dark:text-orange-300">
           <ShieldAlert className="w-3 h-3 self-center" aria-hidden="true" /> Safety moment
         </span>
-        <span className={`text-[11px] ${muted}`}>{when} {hazards.length === 1 ? "riskiest job" : `${hazards.length} riskiest jobs`}</span>
+        <span className={`text-[11px] ${muted}`}>{when} {hazards.length === 1 ? "riskiest work" : `${hazards.length} riskiest`}</span>
       </div>
       <ol className="divide-y divide-orange-200/80 dark:divide-orange-900/60">
         {hazards.map((h, i) => {
-          const lesson = lessonFor(h.kind, shiftStart);
+          const lesson = lessonFor(h.kind, shift.start);
           return (
-            <li key={h.kind} className={`py-1 ${print ? "text-[8.5pt]" : "text-[11.5px]"} leading-snug`}>
+            <li key={h.kind} className={`py-1.5 space-y-0.5 ${print ? "text-[8.5pt]" : "text-[12px]"} leading-snug`}>
               <div className="flex flex-wrap items-baseline gap-x-2">
                 <b className="text-[var(--color-text)]">{i + 1} · {h.label}</b>
                 <span className={`text-[10.5px] ${muted}`}>{hazardContext(h)}</span>
               </div>
-              <div className="text-[var(--color-text)]">
-                {HAZARD_KINDS[h.kind].hitList.map((t, k) => (
-                  <span key={t}>{k > 0 && <span className="text-orange-500 font-black" aria-hidden="true"> · </span>}{t}</span>
-                ))}
-              </div>
+              <div className={`text-[11px] ${muted}`}><span className={tag}>Why it&apos;s here </span>{h.why.join(" · ")}</div>
+              {h.tonight.slice(0, 2).map((t, k) => (
+                <div key={k} className="text-[var(--color-text)]"><span className={tag}>{k === 0 ? "On these steps " : "Also "}</span>{t}</div>
+              ))}
+              <div className="text-[var(--color-text)]"><span className={tag}>Veteran check </span>{checksFor(h.kind, shift.start, 2, h.jobs.map((j) => `${j.equipment ?? ""} ${j.name}`)).join(" ")}</div>
               {lesson && (
                 <div className="text-[var(--color-text)]">
-                  <span className="text-[9.5px] font-black uppercase tracking-wider text-orange-800 dark:text-orange-300">Don&apos;t miss </span>
+                  <span className={tag}>Don&apos;t miss </span>
                   {lesson.watch} <span className="text-orange-700 dark:text-orange-300" aria-hidden="true">→</span> <b>{lesson.prevent}</b>{" "}
                   <a href={lesson.source.url} target="_blank" rel="noreferrer" title={lesson.source.title}
                     className={`text-[10px] underline underline-offset-2 decoration-orange-300 dark:decoration-orange-800 ${muted} hover:text-orange-950 dark:hover:text-orange-100`}>

@@ -11,7 +11,7 @@
 import { capacityOf, askedResult } from "@/lib/shiftHandover";
 import { turnoverPlan, nextOf, askedLine, crewsOf, vsPlan, doneByTask } from "@/lib/turnoverPlan";
 import { type PullCrew, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
-import { rankHazards, hazardContext, lessonFor, type HazardJobInput } from "@/lib/safetyMoment";
+import { rankHazards, hazardContext, lessonFor, checksFor, type HazardJobInput } from "@/lib/safetyMoment";
 import type { ExportBlock, ExportCell, ExportSection } from "@/lib/reportExport";
 
 export interface UpdateFormat {
@@ -48,15 +48,21 @@ export interface UpdateLookups {
 
 /** The next shift's steps as the safety moment ranks them: their hours
  *  on that shift (what's left, for work already past due). */
-export function hazardJobsOf(rows: ShiftRow[], next: ShiftWindow, when: (r: ShiftRow) => string): HazardJobInput[] {
+export function hazardJobsOf(rows: ShiftRow[], next: ShiftWindow, when: (r: ShiftRow) => string, noteOf?: (id: string) => string | undefined): HazardJobInput[] {
   return rows.map((r) => {
     const span = r.finish - r.start;
     const overlap = Math.max(0, Math.min(r.finish, next.end) - Math.max(r.start, next.start));
+    // Its hours on the shift: carried-over work takes the first hours; work
+    // moved onto its crew's hours, those.
+    const a = r.carryOver ? next.start : Math.max(r.reflowed ? r.crewStart : r.start, next.start);
+    const b = r.carryOver ? Math.min(next.end, next.start + Math.max(1, r.hoursLeft) * 3600_000) : Math.min(r.reflowed ? r.crewFinish : r.finish, next.end);
     return {
-      id: r.leaf.id ?? r.leaf.name, name: r.leaf.name, parentName: r.parentName, crumbs: r.path.slice(0, -1),
+      id: r.leaf.id ?? r.leaf.name, name: r.leaf.name, parentName: r.parentName, parentId: r.parentId, crumbs: r.path.slice(0, -1),
       who: r.leaf.responsibleParty ?? null, critical: r.critical,
       hours: overlap > 0 && span > 0 ? r.hours * (overlap / span) : r.hoursLeft,
       when: when(r),
+      start: a, end: Math.max(a, b), percent: r.percent, late: r.carryOver,
+      note: r.leaf.id ? noteOf?.(r.leaf.id) ?? null : null,
     };
   });
 }
@@ -246,17 +252,23 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     });
   }
 
-  // ── Safety focus: the next shift's riskiest jobs. Left out unless ticked.
-  const hazards = rankHazards(hazardJobsOf(nextList, next, (r) => (r.carryOver ? `due ${f.DTs(r.dueAt)}` : `${f.T(Math.max(r.start, next.start))}–${r.finish <= next.end ? f.T(r.finish) : "…"}`)), { max: 2 });
+  // ── Safety focus: the next shift's riskiest work — why it's here, what's
+  // specific to these steps, two veteran checks, one lesson. Left out unless ticked.
+  const hazards = rankHazards(hazardJobsOf(nextList, next, (r) => (r.carryOver ? `due ${f.DTs(r.dueAt)}` : `${f.T(Math.max(r.start, next.start))}–${r.finish <= next.end ? f.T(r.finish) : "…"}`), (id) => note(id)),
+    { max: 2, shift: next, T: f.T });
   if (hazards.length > 0) {
     out.push({
       id: "safety", title: `Safety focus — ${shiftName(next).toLowerCase()}`, offByDefault: true,
-      blocks: [{ k: "columns", cols: hazards.map((h, i) => {
+      // One topic per block, full width — readable on a phone.
+      blocks: hazards.map((h, i) => {
         const l = lessonFor(h.kind, next.start);
-        return { title: `${i + 1} · ${h.label}`, tone: "amber" as const, rows: [
-          { title: hazardContext(h), text: l ? `${l.watch} → ${l.prevent}` : "" },
-        ] };
-      }) }],
+        return { k: "columns", cols: [{ title: `${i + 1} · ${h.label} — ${hazardContext(h)}`, tone: "amber" as const, rows: [
+          { title: "Why it's here", text: h.why.join(" · ") },
+          ...h.tonight.slice(0, 2).map((t, n) => ({ title: n === 0 ? "On these steps" : "Also", text: t })),
+          { title: "Veteran check", text: checksFor(h.kind, next.start, 2, h.jobs.map((j) => `${j.equipment ?? ""} ${j.name}`)).join(" ") },
+          ...(l ? [{ title: "Don't miss", text: `${l.watch} → ${l.prevent}` }] : []),
+        ] }] } as ExportBlock;
+      }),
     });
   }
   return out;

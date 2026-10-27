@@ -5,7 +5,7 @@
 // the lesson, not the story: what to look out for on the job, and what
 // prevents it. The safety moment shows one per job, a different one each
 // shift (lessonFor). Add lessons here; keep them off the hit list's ground
-// (lib/safetyMoment HAZARD_KINDS[…].hitList).
+// (lib/safetyMoment HAZARD_KINDS[…].checks).
 
 import type { SafetyLesson } from "@/lib/safetyMoment";
 
