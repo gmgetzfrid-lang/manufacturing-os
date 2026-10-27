@@ -47,6 +47,12 @@ export async function loadProjectShiftTimes(projectId: string): Promise<ShiftTim
   return safe;
 }
 
+/** A crew size the app can count with: 0–50 hands, 0–24 h. */
+export function cleanPullCrew(c: { crew?: string | null; hands?: number; hours?: number }): { crew: string | null; hands: number; hours: number } {
+  const n = (v: unknown, max: number, dflt: number) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.min(max, Math.round(v * 10) / 10)) : dflt);
+  return { crew: (c.crew ?? "").trim() || null, hands: n(c.hands, 50, 2), hours: n(c.hours, 24, 12) };
+}
+
 /** Save the times for everyone on the project. */
 export async function saveProjectShiftTimes(projectId: string, t: ShiftTimes): Promise<void> {
   const problem = shiftTimesProblem(t);
@@ -56,6 +62,7 @@ export async function saveProjectShiftTimes(projectId: string, t: ShiftTimes): P
     ...(t.meetingBefore != null ? { meetingBefore: Math.round(t.meetingBefore) } : {}),
     // Which jobs have a night crew (lib/nightStaffing) — kept with the times.
     ...(t.nightJobs === "file" || Array.isArray(t.nightJobs) ? { nightJobs: t.nightJobs === "file" ? "file" : t.nightJobs.filter((x) => typeof x === "string") } : {}),
+    ...(t.helpers ? { helpers: cleanPullCrew(t.helpers) } : {}),
   };
   const { data, error } = await supabase.from("projects").update({ shift_times: clean }).eq("id", projectId).select("id");
   if (error) {

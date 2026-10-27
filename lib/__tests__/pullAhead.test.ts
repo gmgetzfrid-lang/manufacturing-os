@@ -1,0 +1,95 @@
+// Pulling work forward for the next shift: what's offered, in what order,
+// whether it's ready, whose scope it is, how full the crew is, and what
+// the turnover and email say.
+
+import { describe, it, expect } from "vitest";
+import { buildShiftReport, shiftWindow } from "@/lib/shiftReport";
+import { filterLookAhead, scopeOf } from "@/lib/pullAhead";
+import { decisionsToShip, capacityOf } from "@/lib/shiftHandover";
+import { turnoverUpdate } from "@/lib/managementUpdate";
+import { toPlainText } from "@/lib/reportExport";
+import type { Milestone } from "@/types/schema";
+
+const CHI = "America/Chicago";
+const at = (d: string, hm: string) => new Date(Date.parse(`${d}T${hm}:00-05:00`)).toISOString();
+const mk = (p: Partial<Milestone> & { id: string; name: string }): Milestone =>
+  ({ orgId: "o", weight: 1, status: "planned", source: "manual", createdBy: "u", ...p } as Milestone);
+const f = { D: (x: number) => new Date(x).toISOString().slice(5, 10), DTs: (x: number) => new Date(x).toISOString().slice(5, 16), T: (x: number) => new Date(x).toISOString().slice(11, 16), win: () => "", hrs: (h: number) => `${h} h` };
+
+// E-12: Open (tonight, night crew) → Blast (tomorrow, after Open). E-20:
+// Clean (tomorrow, ready, KE). H-1: Inspect (blocked). V-9: Retube (in 5
+// days, critical, ready).
+const e12 = mk({ id: "e12", name: "E-12 Condenser" });
+const open = mk({ id: "op", name: "Open heads", parentId: "e12", plannedStartAt: at("2026-10-26", "18:00"), plannedAt: at("2026-10-27", "02:00"), durationHours: 8, shift: "night", responsibleParty: "Schultz 2" });
+const blast = mk({ id: "bl", name: "Hydroblast", parentId: "e12", plannedStartAt: at("2026-10-27", "08:00"), plannedAt: at("2026-10-27", "14:00"), durationHours: 6, responsibleParty: "Ancon", workOrderRef: "4410023" });
+const e20 = mk({ id: "e20", name: "E-20 Trim cooler" });
+const clean = mk({ id: "cl", name: "Clean flanges", parentId: "e20", plannedStartAt: at("2026-10-27", "06:00"), plannedAt: at("2026-10-27", "10:00"), durationHours: 4, responsibleParty: "Maintenance (KE)" });
+const h1 = mk({ id: "h1", name: "H-1 Heater" });
+const insp = mk({ id: "in", name: "Inspect tubes", parentId: "h1", plannedStartAt: at("2026-10-27", "07:00"), plannedAt: at("2026-10-27", "11:00"), durationHours: 4, status: "blocked", statusReason: "scaffold" });
+const v9 = mk({ id: "v9", name: "V-9 Drum" });
+const retube = mk({ id: "rt", name: "Retube bundle", parentId: "v9", plannedStartAt: at("2026-10-31", "06:00"), plannedAt: at("2026-11-01", "17:00"), durationHours: 30, responsibleParty: "Maintenance (KE)" });
+const all = [e12, open, blast, e20, clean, h1, insp, v9, retube];
+const day = shiftWindow("2026-10-26", "day", CHI);
+const build = (pullIds?: string[]) => buildShiftReport({ milestones: all, tz: CHI, shift: day, now: day.end, lookAheadUntil: Infinity, pullIds });
+
+describe("look-ahead", () => {
+  const r = build();
+  const byId = new Map(r.goals.lookAhead.map((x) => [x.row.leaf.id, x]));
+  it("offers upcoming steps not on any list — not tonight's own work", () => {
+    expect(byId.has("op")).toBe(false);
+    expect([...byId.keys()].sort()).toEqual(["bl", "cl", "in", "rt"]);
+  });
+  it("reads readiness from the step order: after tonight's step, ready, blocked", () => {
+    expect(byId.get("bl")!.readiness).toBe("after-tonight");
+    expect(byId.get("bl")!.waits).toEqual(["Open heads"]);
+    expect(byId.get("cl")!.readiness).toBe("ready");
+    expect(byId.get("rt")!.readiness).toBe("ready");
+    expect(byId.get("in")!.readiness).toBe("held");
+  });
+  it("readiest first, then soonest", () => {
+    expect(r.goals.lookAhead.map((x) => x.row.leaf.id)).toEqual(["cl", "rt", "bl", "in"]);
+  });
+  it("without a search: the window and ready-only; a search finds anything in the job", () => {
+    const next = r.next;
+    const in3 = filterLookAhead(r.goals.lookAhead, { query: "", readyOnly: true, criticalOnly: false, until: next.end + 3 * 86_400_000 });
+    expect(in3.map((x) => x.row.leaf.id)).toEqual(["cl", "bl"]);
+    expect(filterLookAhead(r.goals.lookAhead, { query: "4410023", readyOnly: true, criticalOnly: false, until: 0 }).map((x) => x.row.leaf.id)).toEqual(["bl"]);
+    expect(filterLookAhead(r.goals.lookAhead, { query: "h-1 inspect", readyOnly: true, criticalOnly: false, until: 0 }).map((x) => x.row.leaf.id)).toEqual(["in"]);
+    expect(filterLookAhead(r.goals.lookAhead, { query: "e-20 nothing-like-this", readyOnly: false, criticalOnly: false, until: Infinity })).toEqual([]);
+  });
+  it("names another crew's scope; not the crew doing the work", () => {
+    const bl = byId.get("bl")!, cl = byId.get("cl")!;
+    expect(scopeOf(bl, "Maintenance (KE)")).toBe("Ancon");
+    expect(scopeOf(cl, "maintenance (ke)")).toBeNull();
+  });
+});
+
+describe("pulled forward", () => {
+  const r = build(["cl", "rt"]);
+  it("comes back as next-shift rows (still in the look-ahead, shown as added), at most one shift's hours each", () => {
+    expect(r.goals.pulled.map((x) => x.leaf.id)).toEqual(["cl", "rt"]);
+    expect(r.goals.lookAhead.map((x) => x.row.leaf.id)).toContain("cl");
+    const rt = r.goals.pulled.find((x) => x.leaf.id === "rt")!;
+    expect(rt.hoursNext).toBeLessThanOrEqual(12);
+  });
+  it("capacity counts each step's share of one shift", () => {
+    const c = capacityOf({ crew: "Maintenance (KE)", hands: 2, hours: 12 }, r.goals.pulled, 12);
+    expect(c).toEqual({ hours: 24, used: 16, over: false });
+    expect(capacityOf({ crew: null, hands: 1, hours: 12 }, r.goals.pulled, 12).over).toBe(true);
+  });
+  it("ships with where each stood and when it was planned", () => {
+    const d = decisionsToShip({ cl: { tryIt: true, pulled: true, crew: "Maintenance (KE)" } }, r.goals.pulled);
+    expect(d.cl).toMatchObject({ tryIt: true, pulled: true, pctAtShip: 0, name: "Clean flanges" });
+    expect(typeof d.cl.plannedStart).toBe("number");
+  });
+  it("the email lists them under Next shift with the crew, hours of capacity and why", () => {
+    const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r, f, {
+      pctOf: () => 0, finishOf: () => undefined,
+      tryOf: (id) => (id === "cl" || id === "rt" ? { crew: "Maintenance (KE)", note: null } : undefined),
+      pull: { crew: "Maintenance (KE)", hands: 2, hours: 12 },
+    }) });
+    expect(text).toMatch(/Could try if possible — 16 h of 24 h \(Maintenance \(KE\), 2 × 12 h\)/i);
+    expect(text).toMatch(/Clean flanges · pulled ahead — planned/);
+    expect(text).toMatch(/Night shift could try: 2 extra steps \(16 h\)/);
+  });
+});

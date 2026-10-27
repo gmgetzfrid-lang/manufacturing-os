@@ -9,8 +9,10 @@ import React, { useState } from "react";
 import { Loader2, Lock, Send, Unlock } from "lucide-react";
 import type { HandoverDecision } from "@/lib/shiftHandover";
 
-export function TryControl({ kind, decision, suggestions, crews, disabled, onChange }: {
+export function TryControl({ kind, decision, suggestions, crews, disabled, onChange, inherit }: {
   kind: "day" | "night";
+  /** Pulled-forward work with no crew of its own follows this one. */
+  inherit?: string;
   decision: HandoverDecision | undefined;
   suggestions: Array<{ crew: string; why: string }>;
   /** Every crew on the schedule, for anything the guesses miss. */
@@ -34,7 +36,7 @@ export function TryControl({ kind, decision, suggestions, crews, disabled, onCha
         <>
           <select disabled={disabled} value={decision?.crew ?? ""} onChange={(e) => onChange({ ...decision, tryIt: true, crew: e.target.value || null })}
             aria-label="Which crew" className="h-6 w-full sm:w-auto max-w-full sm:max-w-[240px] rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-[11px] text-[var(--color-text)]">
-            <option value="">No crew named</option>
+            <option value="">{inherit ? `${inherit} (crew for extra work)` : "No crew named"}</option>
             {suggestions.length > 0 && (
               <optgroup label={`On the ${kind} shift`}>
                 {suggestions.map((s) => <option key={s.crew} value={s.crew}>{s.crew} — {s.why}</option>)}

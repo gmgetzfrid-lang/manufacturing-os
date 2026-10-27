@@ -41,17 +41,20 @@ describe("shift handover", () => {
   });
   it("reads back what was asked, as entered", () => {
     const out = askedOutcomes({ shiftKey: "k", shippedAt: "x", shippedByName: null, decisions: { hb: { tryIt: true, crew: "Schultz - Tower", pctAtShip: 0, name: "Hydroblast" } } }, () => 100);
-    expect(out).toEqual([{ id: "hb", name: "Hydroblast", crew: "Schultz - Tower", from: 0, now: 100 }]);
+    expect(out).toEqual([{ id: "hb", name: "Hydroblast", crew: "Schultz - Tower", from: 0, now: 100, pulled: false }]);
+  });
+  it("a draft nobody shipped wasn't handed over — nothing to read back", () => {
+    expect(askedOutcomes({ shiftKey: "k", shippedAt: null, shippedByName: null, decisions: { hb: { tryIt: true, name: "Hydroblast" } } }, () => 100)).toEqual([]);
   });
   it("the email lists it under Next shift as could-try, not under Carries", () => {
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r, f, {
       pctOf: () => 0, finishOf: () => undefined, tryOf: (id) => (id === "hb" ? { crew: "Schultz - Tower", note: null } : undefined),
       asked: [{ id: "x", name: "Old step", crew: null, from: 20, now: 100 }],
     }) });
-    expect(text).toMatch(/Could try if possible — the day crew's work/i);
+    expect(text).toMatch(/Could try if possible — 4 h/i);
     expect(text).toMatch(/Hydroblast · .* · crew Schultz - Tower/);
     expect(text).toMatch(/ASKED TO TRY/);
-    expect(text).toMatch(/Night shift could try: 1 day-crew step, if possible/);
+    expect(text).toMatch(/Night shift could try: 1 extra step \(4 h\), if possible/);
     const carriesPart = text.split("CARRIES TO DAY SHIFT")[1] ?? "";
     expect(carriesPart).not.toMatch(/Hydroblast/);
   });

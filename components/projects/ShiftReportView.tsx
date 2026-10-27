@@ -37,7 +37,7 @@ import { buildProgressIndex, leafPercent, type ProgressInfo } from "@/lib/schedu
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import {
   buildShiftReport, shiftWindow, nextShift, previousShift, defaultReviewShift, nextShiftWithWork, expectedByParent, paceOf, expectedFraction, workShiftOf, staffedDueMs, meetingLeadMin, type Pace, type WorkShift,
-  DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftRow, type ShiftWindow, type ShiftReport,
+  DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftRow, type ShiftWindow, type ShiftReport, type PullCrew,
   crewsOnReport, filterShiftReport,
 } from "@/lib/shiftReport";
 import { buildKickoff, buildCloseout, defaultMeeting, type MeetingKind, type PlanRow } from "@/lib/meetingPlan";
@@ -57,6 +57,9 @@ import { quickLook, quickLookIndex } from "@/lib/taskQuickLook";
 import type { CancelledJob } from "@/lib/cancelledJobs";
 import { handoverKey, loadHandover, saveHandover, decisionsToShip, suggestCrews, askedOutcomes, type Handover, type HandoverDecision } from "@/lib/shiftHandover";
 import { TryControl, ShipBar } from "@/components/projects/HandoverControls";
+import { PullAheadPicker } from "@/components/projects/PullAheadPicker";
+import { useSerialSave } from "@/lib/useSerialSave";
+import { scopeOf } from "@/lib/pullAhead";
 
 /** The crew the report is narrowed to (tables then drop their Who column). */
 const ReportCrew = React.createContext<string | null>(null);
@@ -150,9 +153,52 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
     : history?.complete ? `progress as recorded by ${clockLabel(recordedBy, tz)} ${fmtInTz(recordedBy, tz, { month: "short", day: "numeric" })}`
       : `progress as entered by now — the record doesn't reach back to this shift`;
 
+  // ── The turnover as decided and shipped (lib/shiftHandover) ──
+  // Decisions are about the next shift (key = the shift handed to); the
+  // last turnover's are read back on this one (what was asked of it).
+  const hoKey = handoverKey(nextShift(shift, tz, times)), priorKey = handoverKey(shift);
+  const [ho, setHo] = useState<{ key: string; data: Handover | null; err: string | null }>({ key: "", data: null, err: null });
+  const [prior, setPrior] = useState<{ key: string; data: Handover | null }>({ key: "", data: null });
+  const [shipBusy, setShipBusy] = useState(false);
+  useEffect(() => {
+    if (meeting !== "turnover") return;
+    let alive = true;
+    loadHandover(projectId, hoKey).then((d) => { if (alive) setHo({ key: hoKey, data: d, err: null }); })
+      .catch((e: Error) => { if (alive) setHo({ key: hoKey, data: null, err: e.message }); });
+    loadHandover(projectId, priorKey).then((d) => { if (alive) setPrior({ key: priorKey, data: d }); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [meeting, projectId, hoKey, priorKey]);
+  const hoNow = ho.key === hoKey ? ho : { key: hoKey, data: null, err: null };
+  const decisions = useMemo(() => hoNow.data?.decisions ?? {}, [hoNow.data]);
+  const shippedAt = hoNow.data?.shippedAt ?? null;
+  // The crew kept for pulled-forward work: this turnover's, else the default.
+  const pullCrew: PullCrew = hoNow.data?.pull ?? times.helpers ?? { crew: null, hands: 2, hours: 12 };
+  const orgId = live[0]?.orgId ?? "";
+  const canShip = canEdit && !!userId && !!orgId;
+  // Saves go one at a time, in order; only the latest answer is shown — a
+  // slow earlier save can't overwrite a newer pick.
+  const serial = useSerialSave();
+  const savedPull = hoNow.data?.pull ?? null;
+  const saveDecisions = useCallback((next: Record<string, HandoverDecision>, ship?: { snapshot: unknown; byName?: string } | "unship", pull?: PullCrew | null) => {
+    if (!userId || !orgId) return Promise.resolve();
+    // The crew size rides along with every save that doesn't change it.
+    const keepPull = pull !== undefined ? pull : savedPull;
+    setHo((cur) => {
+      const was = cur.key === hoKey ? cur.data : null;
+      return { key: hoKey, data: { shiftKey: hoKey, decisions: next, pull: keepPull, shippedAt: was?.shippedAt ?? null, shippedByName: was?.shippedByName ?? null }, err: null };
+    });
+    return serial(
+      () => saveHandover({ orgId, projectId, shiftKey: hoKey, decisions: next, pull: keepPull, ship, userId }),
+      (saved) => setHo({ key: hoKey, data: saved, err: null }),
+      (e) => setHo((cur) => ({ ...cur, key: hoKey, err: e.message })),
+    );
+  }, [userId, orgId, projectId, hoKey, savedPull, serial]);
+  // Steps pulled forward for the next shift — on the report as rows.
+  const pullKey = useMemo(() => Object.entries(decisions).filter(([, d]) => d.tryIt && d.pulled).map(([id]) => id).sort().join(","), [decisions]);
+
   const report = useMemo(
-    () => buildShiftReport({ milestones, progress, criticalIds, tz, times, shift, now: asOf }),
-    [milestones, progress, criticalIds, tz, times, shift, asOf],
+    () => buildShiftReport({ milestones, progress, criticalIds, tz, times, shift, now: asOf, pullIds: pullKey ? pullKey.split(",") : undefined }),
+    [milestones, progress, criticalIds, tz, times, shift, asOf, pullKey],
   );
   // One crew at a time: the whole turnover narrows to their steps.
   const crews = useMemo(() => crewsOnReport(report), [report]);
@@ -170,44 +216,43 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
   const planByTask = useMemo(() => expectedByParent(milestones, asOf, tz, times), [milestones, asOf, tz, times]);
   const ctx = useMemo(() => makeCtx(tz, byId, progress, planByTask), [tz, byId, progress, planByTask]);
 
-  // ── The turnover as decided and shipped (lib/shiftHandover) ──
-  // Decisions are about the next shift (key = the shift handed to); the
-  // last turnover's are read back on this one (what was asked of it).
-  const hoKey = handoverKey(report.next), priorKey = handoverKey(report.shift);
-  const [ho, setHo] = useState<{ key: string; data: Handover | null; err: string | null }>({ key: "", data: null, err: null });
-  const [prior, setPrior] = useState<{ key: string; data: Handover | null }>({ key: "", data: null });
-  const [shipBusy, setShipBusy] = useState(false);
-  useEffect(() => {
-    if (meeting !== "turnover") return;
-    let alive = true;
-    loadHandover(projectId, hoKey).then((d) => { if (alive) setHo({ key: hoKey, data: d, err: null }); })
-      .catch((e: Error) => { if (alive) setHo({ key: hoKey, data: null, err: e.message }); });
-    loadHandover(projectId, priorKey).then((d) => { if (alive) setPrior({ key: priorKey, data: d }); }).catch(() => undefined);
-    return () => { alive = false; };
-  }, [meeting, projectId, hoKey, priorKey]);
-  const hoNow = ho.key === hoKey ? ho : { key: hoKey, data: null, err: null };
-  const decisions = useMemo(() => hoNow.data?.decisions ?? {}, [hoNow.data]);
-  const shippedAt = hoNow.data?.shippedAt ?? null;
-  const orgId = live[0]?.orgId ?? "";
-  const canShip = canEdit && !!userId && !!orgId;
-  const saveDecisions = useCallback(async (next: Record<string, HandoverDecision>, ship?: { snapshot: unknown; byName?: string } | "unship") => {
-    if (!userId || !orgId) return;
-    setHo((cur) => ({ key: hoKey, data: { shiftKey: hoKey, decisions: next, shippedAt: cur.key === hoKey ? cur.data?.shippedAt ?? null : null, shippedByName: cur.key === hoKey ? cur.data?.shippedByName ?? null : null }, err: null }));
-    try {
-      const saved = await saveHandover({ orgId, projectId, shiftKey: hoKey, decisions: next, ship, userId });
-      setHo({ key: hoKey, data: saved, err: null });
-    } catch (e) { const msg = (e as Error).message; setHo((cur) => ({ ...cur, key: hoKey, err: msg })); }
-  }, [userId, orgId, projectId, hoKey]);
   const setDecision = useCallback((id: string, d: HandoverDecision) => { void saveDecisions({ ...decisions, [id]: d }); }, [decisions, saveDecisions]);
-  // Steps carried to the other crew — the ones the next shift could try.
-  const carried = useMemo(() => [...report.goals.otherShift, ...report.goals.movedOff], [report]);
+  // Steps carried to the other crew — the ones the next shift could try —
+  // and steps pulled forward from later in the schedule.
+  const carried = useMemo(() => [...report.goals.otherShift, ...report.goals.movedOff, ...report.goals.pulled], [report]);
+  // ── Add work for the next shift (PullAheadPicker) ──
+  const [pickerOpen, setPickerOpen] = useState(false);
+  // The whole remaining job, only while the picker is open.
+  const lookAhead = useMemo(() => (pickerOpen
+    ? buildShiftReport({ milestones, progress, criticalIds, tz, times, shift, now: asOf, lookAheadUntil: Infinity, pullIds: pullKey ? pullKey.split(",") : undefined }).goals.lookAhead
+    : []), [pickerOpen, milestones, progress, criticalIds, tz, times, shift, asOf, pullKey]);
+  const togglePull = useCallback((r: ShiftRow, on: boolean) => {
+    const id = r.leaf.id;
+    if (!id) return;
+    const rest = { ...decisions };
+    // No crew of its own: it follows the crew set for the extra work.
+    if (on) rest[id] = { tryIt: true, pulled: true, crew: null };
+    else delete rest[id];
+    void saveDecisions(rest);
+  }, [decisions, saveDecisions]);
+  // Crew size typed in the picker: saved once typing pauses.
+  const pullTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [pullDraft, setPullDraft] = useState<PullCrew | null>(null);
+  const changePull = useCallback((p: PullCrew) => {
+    setPullDraft(p);
+    if (pullTimer.current) clearTimeout(pullTimer.current);
+    pullTimer.current = setTimeout(() => { setPullDraft(null); void saveDecisions(decisions, undefined, p); }, 600);
+  }, [decisions, saveDecisions]);
+  useEffect(() => () => { if (pullTimer.current) clearTimeout(pullTimer.current); }, []);
+  const pullShown = pullDraft ?? pullCrew;
   const allCrews = useMemo(() => [...new Set(live.map((m) => m.responsibleParty?.trim()).filter((x): x is string => !!x))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), [live]);
   const priorNow = prior.key === priorKey ? prior.data : null;
   const asked = useMemo(() => askedOutcomes(priorNow, (id) => progress?.get(id)?.percent ?? live.find((m) => m.id === id)?.percentComplete ?? undefined), [priorNow, progress, live]);
   const handoverCtx = useMemo(() => ({
     kind: report.next.kind, decisions, locked: !!shippedAt || !canShip, set: setDecision,
     suggest: (r: ShiftRow) => suggestCrews(r, report), crews: allCrews, asked,
-  }), [report, decisions, shippedAt, canShip, setDecision, allCrews, asked]);
+    pull: pullShown, openPicker: canShip && !shippedAt ? () => setPickerOpen(true) : undefined,
+  }), [report, decisions, shippedAt, canShip, setDecision, allCrews, asked, pullShown]);
 
   // The latest comment on each step ("sent out for calibration") — shown
   // as a quiet line under the step, here and in the copied update.
@@ -324,6 +369,7 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
           // what became of the last turnover's.
           tryOf: (id) => (decisions[id]?.tryIt ? decisions[id] : undefined),
           asked,
+          pull: pullCrew,
         })
         : withoutEmpty(sections.filter((x) => x.data).map((x) => ({ id: x.id, title: x.title, sub: x.sub, flag: x.flag ?? null, blocks: x.data!() }))),
     };
@@ -432,11 +478,18 @@ export default function ShiftReportView({ milestones: live, progress: liveProgre
         </div>
       </div>
 
+      {meeting === "turnover" && pickerOpen && (
+        <PullAheadPicker items={lookAhead} next={report.next} shiftHours={(report.next.end - report.next.start) / 3_600_000}
+          picked={report.goals.pulled} pull={pullShown} crews={allCrews} fmt={{ D: ctx.D, T: ctx.T }} locked={!!shippedAt || !canShip}
+          onToggle={togglePull} onPull={changePull}
+          onSaveDefault={(p) => { void saveProjectShiftTimes(projectId, { ...times, helpers: p }).catch(() => undefined); }}
+          onClose={() => setPickerOpen(false)} />
+      )}
       {meeting === "turnover" && (
         <ShipBar shippedAt={shippedAt} shippedBy={hoNow.data?.shippedByName ?? null} canShip={canShip} busy={shipBusy} err={hoNow.err}
           tries={Object.values(decisions).filter((d) => d.tryIt).length}
           when={(iso) => `${ctx.DTs(Date.parse(iso))}`}
-          onShip={() => { setShipBusy(true); void saveDecisions(decisionsToShip(decisions, carried), { snapshot: exportDoc(), byName: userName }).finally(() => setShipBusy(false)); }}
+          onShip={() => { setShipBusy(true); void saveDecisions(decisionsToShip(decisions, carried, pullCrew.crew), { snapshot: exportDoc(), byName: userName }).finally(() => setShipBusy(false)); }}
           onUnship={() => { setShipBusy(true); void saveDecisions(decisions, "unship").finally(() => setShipBusy(false)); }} />
       )}
       {head(false)}
@@ -698,6 +751,10 @@ interface HandoverCtx {
   suggest: (r: ShiftRow) => Array<{ crew: string; why: string }>;
   crews: string[];
   asked: ReturnType<typeof askedOutcomes>;
+  /** The crew kept for pulled-forward work, and its size. */
+  pull: PullCrew;
+  /** Opens "Add work for the next shift" — absent once shipped. */
+  openPicker?: () => void;
 }
 
 function makeCtx(tz: string, byId: Map<string, Milestone>, progress?: Map<string, ProgressInfo>, planOf?: Map<string, number>): Ctx {
@@ -894,7 +951,6 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   const carries = [...goals.otherShift, ...goals.movedOff];
   const ho = o.handover;
   const tryOf = (r: ShiftRow) => (r.leaf.id && ho?.decisions[r.leaf.id]?.tryIt ? ho.decisions[r.leaf.id] : undefined);
-  const nextName = next.kind === "day" ? "Day" : "Night";
   const carriesRows = (print: boolean) => carries.filter((r) => !print || !tryOf(r)).map((r) => ({
     ...rowFromShift(r, c, {
       when: r.carryOver ? `due ${c.DTs(r.dueAt)}` : `${c.T(r.start)}–${c.T(r.finish)}`,
@@ -911,29 +967,71 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
     ) : undefined,
   }));
   // Marked "could try": listed with the next shift's work, if possible.
-  const tryRows = carries.filter((r) => tryOf(r)).map((r) => rowFromShift(r, c, {
-    when: r.carryOver ? `due ${c.DTs(r.dueAt)}` : `${c.T(r.start)}–${c.T(r.finish)}`,
-    note: tryOf(r)?.note ? `“${tryOf(r)!.note}”` : undefined,
-    right: `${r.percent}%`,
-    extraTags: [{ t: tryOf(r)?.crew ? `${nextName.toLowerCase()} could try — ${tryOf(r)!.crew}` : `${nextName.toLowerCase()} could try`, tone: "amber" }],
-  }));
+  // …and steps pulled forward from later in the schedule (the picker).
+  const shiftHrs = (next.end - next.start) / 3_600_000;
+  const pulledRows = goals.pulled;
+  const tryList = [...carries.filter((r) => tryOf(r)), ...pulledRows];
+  const tryHours = Math.round(tryList.reduce((a, r) => a + Math.min(r.hoursLeft, shiftHrs), 0) * 10) / 10;
+  const cap = ho ? Math.round(ho.pull.hands * Math.min(ho.pull.hours, shiftHrs) * 10) / 10 : 0;
+  const tryTitle = `Could try if possible — ${tryList.length} step${tryList.length === 1 ? "" : "s"} · ${c.hrs(tryHours)}${cap > 0 ? ` of ${c.hrs(cap)}${ho?.pull.crew ? ` (${ho.pull.crew}, ${ho.pull.hands} × ${ho.pull.hours} h)` : ""}` : ""}`;
+  const tryRows = (print: boolean) => tryList.map((r) => {
+    const pulled = pulledRows.includes(r);
+    const d = tryOf(r);
+    const crewName = d?.crew ?? (pulled ? ho?.pull.crew ?? null : null);
+    const scope = pulled ? scopeOf({ row: r }, crewName) : null;
+    return {
+      ...rowFromShift(r, c, {
+        when: pulled ? `planned ${c.DTs(r.crewStart)}` : r.carryOver ? `due ${c.DTs(r.dueAt)}` : `${c.T(r.start)}–${c.T(r.finish)}`,
+        note: d?.note ? `“${d.note}”` : undefined,
+        right: c.hrs(Math.min(r.hoursLeft, shiftHrs)),
+        extraTags: [
+          pulled ? { t: "pulled ahead", tone: "amber" } : { t: `${otherKind} crew's`, tone: "muted" },
+          crewName ? { t: crewName, tone: "muted" } : null,
+          scope ? { t: `${scope}'s scope — coordinate`, tone: "amber" } : null,
+          pulled ? waitTag(r) : null,
+        ],
+      }),
+      control: !print && ho && r.leaf.id ? (
+        <TryControl key={r.leaf.id} kind={next.kind} decision={ho.decisions[r.leaf.id]} suggestions={ho.suggest(r)} crews={ho.crews}
+          inherit={pulled && ho.pull.crew ? ho.pull.crew : undefined}
+          disabled={ho.locked} onChange={(nd) => ho.set(r.leaf.id!, { ...nd, pulled: pulled || undefined })} />
+      ) : undefined,
+    };
+  });
+  const addButton = ho?.openPicker ? (
+    <button type="button" onClick={ho.openPicker}
+      className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-indigo-400 dark:border-indigo-700 px-3 py-1.5 text-[12px] font-bold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 print:hidden">
+      <Zap className="w-3.5 h-3.5" /> Add work for the {next.kind} shift
+    </button>
+  ) : null;
   // What the last turnover asked of this shift, as entered.
   const askedRows = (ho?.asked ?? []).map((a) => ({
-    id: a.id, cells: [<b key="n">{a.name}</b>, a.crew ?? "—", `${a.from}%`, a.now == null ? "—" : a.now >= 100 ? "done ✓" : a.now > a.from ? `${a.now}%` : "not started"],
+    id: a.id, cells: [<b key="n">{a.name}</b>, a.pulled ? "pulled ahead" : "carry-over", a.crew ?? "—", `${a.from}%`, a.now == null ? "—" : a.now >= 100 ? "done ✓" : a.now > a.from ? `${a.now}%` : "not started"],
   }));
   const askedDone = (ho?.asked ?? []).filter((a) => (a.now ?? 0) >= 100).length;
   // The other crew's work under way, paused over the next shift: a line.
   const pausedLine = goals.paused.length
     ? `${otherKind === "day" ? "Day" : "Night"} crew's work paused until ${c.T(next.end)}: ${goals.paused.map((r) => `${r.parentName ? `${r.parentName} — ` : ""}${r.leaf.name} (${r.percent}%)`).join("; ")}.`
     : null;
-  const stretchRows = goals.stretch.map((r, i) => {
+  const pulledIds = new Set(pulledRows.map((r) => r.leaf.id));
+  const stretchRows = (print: boolean) => goals.stretch.map((r, i) => {
     const closes = goals.backOnTrackAt != null && i + 1 <= goals.backOnTrackAt;
-    return rowFromShift(r, c, {
-      when: `planned ${c.DTs(r.start)}`,
-      n: { num: i + 1, tone: closes ? "amber" : "slate" },
-      right: c.hrs(r.hoursLeft),
-      extraTags: [closes ? { t: "closes gap", tone: "amber" } : null],
-    });
+    const added = pulledIds.has(r.leaf.id);
+    return {
+      ...rowFromShift(r, c, {
+        when: `planned ${c.DTs(r.start)}`,
+        n: { num: i + 1, tone: closes ? "amber" : "slate" },
+        right: c.hrs(r.hoursLeft),
+        extraTags: [closes ? { t: "closes gap", tone: "amber" } : null, added ? { t: "✓ added", tone: "muted" } : null],
+      }),
+      // One click puts the app's suggestion on the shift.
+      control: !print && ho?.openPicker && r.leaf.id && !added ? (
+        <button type="button" onClick={() => ho.set(r.leaf.id!, { tryIt: true, pulled: true, crew: null })}
+          className="inline-flex items-center gap-1 rounded-full border border-indigo-300 dark:border-indigo-800 px-2 py-0.5 text-[10.5px] font-bold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 print:hidden">
+          + Add for the {next.kind} shift
+        </button>
+      ) : undefined,
+    };
   });
   const pastDueAll = (o.whole ?? report).review.carryOver.filter((r) => !isHeld(r)).length;
   const forCrew = o.crew ? ` for ${o.crew}` : "";
@@ -984,8 +1082,8 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       // ── What the last turnover asked this shift to try, and how far it got.
       id: "asked", title: `Asked to try — ${shiftName(shift)}`, short: "Asked",
       sub: `${askedDone} of ${askedRows.length} done · as entered`, count: askedRows.length,
-      body: (print: boolean) => <SimpleTable print={print} head={["Step", "Crew", "At ship", "Now"]} rows={askedRows} />,
-      data: () => [{ k: "table", head: ["Step", "Crew", "At ship", "Now"], rows: (ho?.asked ?? []).map((a) => [a.name, a.crew ?? "—", `${a.from}%`, a.now == null ? "—" : a.now >= 100 ? "done ✓" : a.now > a.from ? `${a.now}%` : "not started"]) } as ExportBlock],
+      body: (print: boolean) => <SimpleTable print={print} head={["Step", "Why", "Crew", "At ship", "Now"]} rows={askedRows} />,
+      data: () => [{ k: "table", head: ["Step", "Why", "Crew", "At ship", "Now"], rows: (ho?.asked ?? []).map((a) => [a.name, a.pulled ? "pulled ahead" : "carry-over", a.crew ?? "—", `${a.from}%`, a.now == null ? "—" : a.now >= 100 ? "done ✓" : a.now > a.from ? `${a.now}%` : "not started"]) } as ExportBlock],
     } as Sec] : []),
     {
       // ── Completed — good news first, no decisions in it.
@@ -1048,17 +1146,18 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
           {planList.length === 0 ? <Empty>Nothing is scheduled for the next shift.</Empty> : (
             <StepTable print={print} box rightHead="Now → goal" rows={nextRows} />
           )}
-          {tryRows.length > 0 && (
+          {tryList.length > 0 && (
             <>
-              <Sub tone="amber" icon={<Zap className="w-3.5 h-3.5" />} title={`Could try if possible — the ${otherKind} crew's work`} count={tryRows.length} />
-              <StepTable print={print} box rightHead="Done" rows={tryRows} />
+              <Sub tone="amber" icon={<Zap className="w-3.5 h-3.5" />} title={tryTitle} count={tryList.length} />
+              <StepTable print={print} box rightHead="This shift" rows={tryRows(print)} />
             </>
           )}
+          {!print && addButton}
           {goals.stretch.length > 0 && (
             <>
               <Sub tone={gap > 0.5 ? "amber" : "emerald"} icon={<Zap className="w-3.5 h-3.5" />} title="Can be pulled ahead" count={goals.stretch.length} />
               {stretchMsg && <div className="text-[11.5px] font-semibold text-amber-800 dark:text-amber-300">{stretchMsg}</div>}
-              <StepTable print={print} box rightHead="Left" rows={stretchRows} />
+              <StepTable print={print} box rightHead="Left" rows={stretchRows(print)} />
             </>
           )}
           {pausedLine && <div className="text-[11.5px] text-[var(--color-text-muted)]"><Pause className="inline w-3.5 h-3.5 -mt-0.5 mr-1" />{pausedLine}</div>}
@@ -1066,11 +1165,11 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       ),
       data: () => [
         planList.length === 0 ? { k: "empty", text: "Nothing is scheduled for the next shift." } : stepsBlock(nextRows, "Now → goal"),
-        ...(tryRows.length ? [{ k: "sub", title: `Could try if possible — the ${otherKind} crew's work`, count: tryRows.length, tone: "amber" } as ExportBlock, stepsBlock(tryRows, "Done")] : []),
+        ...(tryList.length ? [{ k: "sub", title: tryTitle, count: tryList.length, tone: "amber" } as ExportBlock, stepsBlock(tryRows(true), "This shift")] : []),
         ...(goals.stretch.length > 0 ? [
           { k: "sub", title: "Can be pulled ahead", count: goals.stretch.length, tone: gap > 0.5 ? "amber" : "emerald" } as ExportBlock,
           ...(stretchMsg ? [{ k: "note", text: stretchMsg, tone: "amber" } as ExportBlock] : []),
-          stepsBlock(stretchRows, "Left"),
+          stepsBlock(stretchRows(true), "Left"),
         ] : []),
         ...(pausedLine ? [{ k: "note", text: pausedLine } as ExportBlock] : []),
       ],

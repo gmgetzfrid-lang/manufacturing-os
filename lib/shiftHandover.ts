@@ -8,7 +8,7 @@
 // how far each step got (as entered).
 
 import { supabase } from "@/lib/supabase";
-import { whoOf, type ShiftReport, type ShiftRow, type ShiftWindow } from "@/lib/shiftReport";
+import { whoOf, type PullCrew, type ShiftReport, type ShiftRow, type ShiftWindow } from "@/lib/shiftReport";
 
 export interface HandoverDecision {
   /** The next shift could try it (it isn't that crew's planned work). */
@@ -20,11 +20,18 @@ export interface HandoverDecision {
   pctAtShip?: number;
   /** Its name then — shown even if the step is renamed or removed later. */
   name?: string;
+  /** Pulled forward from later in the schedule (not the other crew's
+   *  carried work), and when it was planned. */
+  pulled?: boolean;
+  plannedStart?: number;
 }
 
 export interface Handover {
   shiftKey: string;
   decisions: Record<string, HandoverDecision>;
+  /** The crew kept for pulled-forward work on this shift, and its size —
+   *  this turnover's, else the project's default. */
+  pull?: PullCrew | null;
   shippedAt: string | null;
   shippedByName: string | null;
 }
@@ -35,6 +42,16 @@ export const handoverKey = (w: ShiftWindow) => `${w.dayKey}:${w.kind}`;
 const MISSING = "Shipping turnovers needs a one-time database update (20261103_shift_handovers.sql) — ask your admin to run it.";
 const missing = (msg: string) => /shift_handovers/.test(msg) || /does not exist/.test(msg);
 
+// The crew & size ride in the same JSON as the decisions, under a key no
+// step id can have.
+const PULL_KEY = "_pull";
+type Stored = Record<string, HandoverDecision> & { [PULL_KEY]?: PullCrew };
+function split(raw: Stored | null): { decisions: Record<string, HandoverDecision>; pull: PullCrew | null } {
+  const { [PULL_KEY]: pull, ...decisions } = raw ?? {};
+  return { decisions, pull: pull ?? null };
+}
+const join = (decisions: Record<string, HandoverDecision>, pull?: PullCrew | null): Stored => (pull ? { ...decisions, [PULL_KEY]: pull } : { ...decisions });
+
 /** The handover for a shift, or null when there's none yet. Throws a
  *  plain message when the table isn't there. */
 export async function loadHandover(projectId: string, shiftKey: string): Promise<Handover | null> {
@@ -42,38 +59,43 @@ export async function loadHandover(projectId: string, shiftKey: string): Promise
     .select("shift_key, decisions, shipped_at, shipped_by_name").eq("project_id", projectId).eq("shift_key", shiftKey).maybeSingle();
   if (error) throw new Error(missing(error.message) ? MISSING : error.message);
   if (!data) return null;
-  const r = data as { shift_key: string; decisions: Record<string, HandoverDecision> | null; shipped_at: string | null; shipped_by_name: string | null };
-  return { shiftKey: r.shift_key, decisions: r.decisions ?? {}, shippedAt: r.shipped_at, shippedByName: r.shipped_by_name };
+  const r = data as { shift_key: string; decisions: Stored | null; shipped_at: string | null; shipped_by_name: string | null };
+  return { shiftKey: r.shift_key, ...split(r.decisions), shippedAt: r.shipped_at, shippedByName: r.shipped_by_name };
 }
 
 /** Save the draft's decisions (anyone at the meeting sees the same). */
 export async function saveHandover(input: {
   orgId: string; projectId: string; shiftKey: string; decisions: Record<string, HandoverDecision>;
+  pull?: PullCrew | null;
   ship?: { snapshot: unknown; byName?: string } | "unship"; userId: string;
 }): Promise<Handover> {
   const now = new Date().toISOString();
   const row: Record<string, unknown> = {
     org_id: input.orgId, project_id: input.projectId, shift_key: input.shiftKey,
-    decisions: input.decisions, updated_at: now, updated_by: input.userId,
+    decisions: join(input.decisions, input.pull), updated_at: now, updated_by: input.userId,
   };
   if (input.ship === "unship") { row.shipped_at = null; row.shipped_by = null; row.shipped_by_name = null; }
   else if (input.ship) { row.shipped_at = now; row.shipped_by = input.userId; row.shipped_by_name = input.ship.byName ?? null; row.snapshot = input.ship.snapshot; }
   const { data, error } = await supabase.from("shift_handovers").upsert(row, { onConflict: "project_id,shift_key" })
     .select("shift_key, decisions, shipped_at, shipped_by_name").single();
   if (error) throw new Error(missing(error.message) ? MISSING : error.message);
-  const r = data as { shift_key: string; decisions: Record<string, HandoverDecision> | null; shipped_at: string | null; shipped_by_name: string | null };
-  return { shiftKey: r.shift_key, decisions: r.decisions ?? {}, shippedAt: r.shipped_at, shippedByName: r.shipped_by_name };
+  const r = data as { shift_key: string; decisions: Stored | null; shipped_at: string | null; shipped_by_name: string | null };
+  return { shiftKey: r.shift_key, ...split(r.decisions), shippedAt: r.shipped_at, shippedByName: r.shipped_by_name };
 }
 
 /** Decisions that still mean something: marked to try, with where each
  *  stood at ship time filled in. */
-export function decisionsToShip(decisions: Record<string, HandoverDecision>, rows: ShiftRow[]): Record<string, HandoverDecision> {
+export function decisionsToShip(decisions: Record<string, HandoverDecision>, rows: ShiftRow[], pullCrew?: string | null): Record<string, HandoverDecision> {
   const byId = new Map(rows.map((r) => [r.leaf.id ?? "", r]));
   const out: Record<string, HandoverDecision> = {};
   for (const [id, d] of Object.entries(decisions)) {
     const r = byId.get(id);
     if (!d.tryIt || !r) continue;
-    out[id] = { tryIt: true, crew: d.crew ?? null, note: d.note?.trim() || null, pctAtShip: r.percent, name: r.leaf.name };
+    out[id] = {
+      // Pulled work with no crew of its own went with the extra-work crew.
+      tryIt: true, crew: d.crew ?? (d.pulled ? pullCrew ?? null : null), note: d.note?.trim() || null, pctAtShip: r.percent, name: r.leaf.name,
+      ...(d.pulled ? { pulled: true, plannedStart: r.crewStart } : {}),
+    };
   }
   return out;
 }
@@ -99,8 +121,19 @@ export function suggestCrews(row: ShiftRow, report: ShiftReport): Array<{ crew: 
 
 /** What became of the steps the last turnover asked this shift to try —
  *  as entered so far (progress is often caught up later). */
-export function askedOutcomes(prior: Handover | null, pctOf: (id: string) => number | undefined): Array<{ id: string; name: string; crew: string | null; from: number; now: number | null }> {
-  if (!prior) return [];
+export function askedOutcomes(prior: Handover | null, pctOf: (id: string) => number | undefined): Array<{ id: string; name: string; crew: string | null; from: number; now: number | null; pulled: boolean }> {
+  // Only what was shipped: a draft nobody shipped wasn't handed over.
+  if (!prior?.shippedAt) return [];
   return Object.entries(prior.decisions).filter(([, d]) => d.tryIt)
-    .map(([id, d]) => ({ id, name: d.name ?? id, crew: d.crew ?? null, from: d.pctAtShip ?? 0, now: pctOf(id) ?? null }));
+    .map(([id, d]) => ({ id, name: d.name ?? id, crew: d.crew ?? null, from: d.pctAtShip ?? 0, now: pctOf(id) ?? null, pulled: !!d.pulled }));
+}
+
+/** Hours a step would take on one shift: what's left, at most a shift. */
+export const shiftShare = (r: ShiftRow, shiftHours: number) => Math.min(r.hoursLeft, shiftHours);
+
+/** The crew kept for pulled-forward work, and how full it is. */
+export function capacityOf(pull: PullCrew | null | undefined, picked: ShiftRow[], shiftHours: number): { hours: number; used: number; over: boolean } {
+  const hours = pull ? Math.round(pull.hands * Math.min(pull.hours, shiftHours) * 10) / 10 : 0;
+  const used = Math.round(picked.reduce((a, r) => a + shiftShare(r, shiftHours), 0) * 10) / 10;
+  return { hours, used, over: hours > 0 && used > hours };
 }

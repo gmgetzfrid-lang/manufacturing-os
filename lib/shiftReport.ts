@@ -20,6 +20,9 @@ import { startMsOf, finishMsOf, wbsCompare } from "@/lib/calendarPlacement";
 import { blocksStart, linkOf } from "@/lib/scheduleLinks";
 import type { NightJobs } from "@/lib/nightStaffing";
 
+/** A crew kept for work pulled forward, and its size for one shift. */
+export interface PullCrew { crew: string | null; hands: number; hours: number }
+
 export type ShiftKind = "day" | "night";
 
 export interface ShiftTimes {
@@ -33,6 +36,9 @@ export interface ShiftTimes {
   meetingBefore?: number;
   /** Jobs with a night crew — see lib/nightStaffing. */
   nightJobs?: NightJobs;
+  /** Hands kept for extra work pulled forward (lib/shiftHandover): the
+   *  crew's name as on the schedule, and its usual size. */
+  helpers?: PullCrew;
 }
 
 /** Minutes before a shift change the turnover meeting starts. */
@@ -530,6 +536,13 @@ export interface ShiftReport {
      *  other crew — paused over the next shift and resuming after it (so a
      *  job "continuing as planned" doesn't vanish from the next shift). */
     paused: ShiftRow[];
+    /** Look-ahead (when asked for): upcoming steps not on any list yet,
+     *  readiest first, then critical, then soonest — what the next shift
+     *  could pull forward. */
+    lookAhead: LookAheadItem[];
+    /** Steps the meeting pulled forward for the next shift (pullIds), as
+     *  next-shift rows — not on its planned list. */
+    pulled: ShiftRow[];
     /** STRETCH — work planned for the following shifts that is ready to
      *  pull forward (its predecessors done or on the must-do list), in
      *  schedule order. Doing it banks time or claws back a deficit. */
@@ -555,6 +568,25 @@ export interface BuildShiftReportInput {
   shift: ShiftWindow;
   /** "Now" for the planned-% comparison; defaults to the shift's end. */
   now?: number;
+  /** Look ahead for work the next shift could pull forward: steps planned
+   *  up to this time (goals.lookAhead). Off when absent. */
+  lookAheadUntil?: number;
+  /** Steps the meeting pulled forward for the next shift (goals.pulled). */
+  pullIds?: Iterable<string>;
+}
+
+/** How ready a step is to be pulled forward onto the next shift. */
+export type Readiness =
+  | "ready"          // nothing it waits on is open
+  | "after-tonight"  // waits only on steps the next shift is planned to finish
+  | "waiting"        // waits on something not done and not finishing then
+  | "held";          // blocked or on hold
+
+export interface LookAheadItem {
+  row: ShiftRow;
+  readiness: Readiness;
+  /** What it waits on that isn't done (names), for "waiting" / "after". */
+  waits: string[];
 }
 
 const DONE = (r: { status: MilestoneStatus; percent: number }) => r.status === "completed" || r.percent >= 100;
@@ -797,6 +829,29 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     .filter(forNext)
     .sort((a, b) => Number(b.critical) - Number(a.critical) || cmp(a, b))
     .slice(0, 12);
+  // ── Look-ahead & pulled forward ── upcoming work the next shift could
+  // do early. Not already on a list; its readiness from the same
+  // predecessors the report reads everywhere.
+  const onLists = new Set([...all, ...otherShift, ...movedOff].map((r) => r.leaf.id ?? ""));
+  const readinessOf = (m: Milestone): { readiness: Readiness; waits: string[] } => {
+    if (held(m)) return { readiness: "held", waits: [] };
+    const open = predecessorsOf(m).filter((p) => !doneIds.has(p.id ?? "") && blocksStart(linkOf(m.linkTypes, p.id ?? ""), { done: doneM(p), started: startedM(p) }));
+    if (open.length === 0) return { readiness: "ready", waits: [] };
+    const tonight = open.every((p) => mustIds.has(p.id ?? "") && !held(p));
+    return { readiness: tonight ? "after-tonight" : "waiting", waits: open.map((p) => p.name) };
+  };
+  const RANK: Record<Readiness, number> = { ready: 0, "after-tonight": 1, waiting: 2, held: 3 };
+  const lookAhead: LookAheadItem[] = input.lookAheadUntil == null ? [] : leaves
+    .filter((m) => m.id && !onLists.has(m.id) && !doneIds.has(m.id))
+    .map((m) => rowFor(m, next))
+    .filter((r) => r.crewFinish > next.start && r.crewStart < input.lookAheadUntil!)
+    .map((row) => ({ row, ...readinessOf(row.leaf) }))
+    .sort((a, b) => RANK[a.readiness] - RANK[b.readiness] || Number(b.row.critical) - Number(a.row.critical) || a.row.crewStart - b.row.crewStart || cmp(a.row, b.row));
+  const pullSet = new Set(input.pullIds ?? []);
+  const pulled = pullSet.size === 0 ? [] : leaves
+    .filter((m) => m.id && pullSet.has(m.id) && !onLists.has(m.id) && !doneIds.has(m.id))
+    .map((m) => { const r = rowFor(m, next); r.hoursNext = Math.min(r.hoursLeft, shiftHours); return r; })
+    .sort((a, b) => Number(b.critical) - Number(a.critical) || a.crewStart - b.crewStart || cmp(a, b));
   // Deficit in work-hours against the plan as of now: planned hours earned
   // by now minus hours actually done.
   const gapHours = Math.round((wplanned - wactual) * 10) / 10;
@@ -821,7 +876,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       baselineSetAt: baselined > 0 ? baselineSetAt : null,
     },
     review: { scheduled, done, inProgress, notStarted, carryOver },
-    goals: { all, carryOver: goalsCarry, planned, critical, mustDoHours, otherShift, movedOff, paused, stretch, gapHours, backOnTrackAt },
+    goals: { all, carryOver: goalsCarry, planned, critical, mustDoHours, otherShift, movedOff, paused, stretch, gapHours, backOnTrackAt, lookAhead, pulled },
     blocked,
   };
 }
@@ -853,7 +908,7 @@ export function crewsOnReport(report: ShiftReport): Array<{ who: string; steps: 
     seen.set(who, set);
   };
   const { review, goals, blocked } = report;
-  for (const list of [review.scheduled, review.done, review.carryOver, review.inProgress, review.notStarted, goals.all, goals.otherShift, goals.movedOff, goals.paused, blocked]) list.forEach(add);
+  for (const list of [review.scheduled, review.done, review.carryOver, review.inProgress, review.notStarted, goals.all, goals.otherShift, goals.movedOff, goals.pulled, goals.paused, blocked]) list.forEach(add);
   return [...seen].map(([who, ids]) => ({ who, steps: ids.size }))
     .sort((a, b) => Number(a.who === UNASSIGNED) - Number(b.who === UNASSIGNED) || b.steps - a.steps || a.who.localeCompare(b.who));
 }
@@ -876,6 +931,7 @@ export function filterShiftReport(report: ShiftReport, who: string): ShiftReport
       all, carryOver: keep(goals.carryOver), planned: keep(goals.planned), critical: keep(goals.critical),
       mustDoHours: Math.round(all.reduce((a, r) => a + (r.hoursNext ?? 0), 0) * 10) / 10,
       otherShift: keep(goals.otherShift), movedOff: keep(goals.movedOff), paused: keep(goals.paused), stretch: keep(goals.stretch),
+      lookAhead: goals.lookAhead.filter((x) => keep([x.row]).length > 0), pulled: keep(goals.pulled),
       backOnTrackAt: null,
     },
     blocked: keep(report.blocked),

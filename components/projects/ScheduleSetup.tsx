@@ -270,6 +270,9 @@ function NightStep({ projectId, milestones, canManage, done, onSaved }: Props & 
   const [ids, setIds] = useState<Set<string>>(() => new Set(Array.isArray(saved) ? saved : []));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Hands kept for extra work the turnover pulls forward (optional).
+  const [helpers, setHelpers] = useState(() => times.helpers ?? { crew: null as string | null, hands: 2, hours: 12 });
+  const crews = useMemo(() => [...new Set(milestones.map((m) => m.responsibleParty?.trim()).filter((x): x is string => !!x))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), [milestones]);
   // The file's own hours, before any night-crew setting is applied.
   const choices = useMemo(() => nightJobChoices(milestones, (m) => workShiftOf({ ...m, staffedShift: null }, tz, times) !== "day"), [milestones, tz, times]);
   const byId = useMemo(() => new Map(milestones.filter((m) => m.id).map((m) => [m.id!, m])), [milestones]);
@@ -284,10 +287,11 @@ function NightStep({ projectId, milestones, canManage, done, onSaved }: Props & 
   };
   const toggle = (id: string) => setIds((cur) => { const n = new Set(cur); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const next: NightJobs = mode === "file" ? "file" : [...ids].filter((id) => !coveredBy(id));
-  const same = JSON.stringify(next) === JSON.stringify(saved === "file" ? "file" : Array.isArray(saved) ? [...saved].filter((id) => byId.has(id)) : undefined);
+  const helpersSame = JSON.stringify(times.helpers ?? null) === JSON.stringify(helpers.crew ? helpers : times.helpers ?? null);
+  const same = helpersSame && JSON.stringify(next) === JSON.stringify(saved === "file" ? "file" : Array.isArray(saved) ? [...saved].filter((id) => byId.has(id)) : undefined);
   const save = async () => {
     setBusy(true); setErr(null);
-    try { await saveProjectShiftTimes(projectId, { ...times, nightJobs: next }); onSaved(); }
+    try { await saveProjectShiftTimes(projectId, { ...times, nightJobs: next, ...(helpers.crew ? { helpers } : {}) }); onSaved(); }
     catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); }
   };
@@ -323,6 +327,20 @@ function NightStep({ projectId, milestones, canManage, done, onSaved }: Props & 
           <span className="block text-[12px] text-[var(--color-text-muted)]">Whatever the file puts in night hours is night work.</span>
         </span>
       </label>
+      <div className="rounded-lg border border-[var(--color-border)] px-3 py-2 space-y-1.5">
+        <div className="text-[13px] font-bold text-[var(--color-text)]">Hands for extra work <span className="font-normal text-[12px] text-[var(--color-text-muted)]">— optional</span></div>
+        <div className="text-[12px] text-[var(--color-text-muted)]">The crew you keep for work pulled forward on the turnover (&ldquo;Add work for the night shift&rdquo;), and its usual size. Changeable on each turnover.</div>
+        <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
+          <select disabled={!canManage} value={helpers.crew ?? ""} onChange={(e) => setHelpers({ ...helpers, crew: e.target.value || null })} aria-label="Crew for extra work" className={`${field} max-w-[240px]`}>
+            <option value="">Not set</option>
+            {crews.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <input type="number" min={0} max={50} disabled={!canManage} value={helpers.hands} onChange={(e) => setHelpers({ ...helpers, hands: Math.max(0, Math.min(50, Number(e.target.value) || 0)) })} aria-label="Hands" className={`${field} w-16`} />
+          <span className="text-[var(--color-text-muted)]">hands ×</span>
+          <input type="number" min={0} max={24} step={0.5} disabled={!canManage} value={helpers.hours} onChange={(e) => setHelpers({ ...helpers, hours: Math.max(0, Math.min(24, Number(e.target.value) || 0)) })} aria-label="Hours each" className={`${field} w-16`} />
+          <span className="text-[var(--color-text-muted)]">h</span>
+        </div>
+      </div>
       <Msg err={err} />
       {canManage ? (
         <button onClick={() => void save()} disabled={busy || (done && same)} className={btn}>
