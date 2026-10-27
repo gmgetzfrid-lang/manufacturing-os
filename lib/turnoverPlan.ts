@@ -20,7 +20,8 @@ export type NextTone = "rose" | "amber" | "emerald" | "muted";
 export interface TurnoverPlan {
   /** Finished this shift. */
   done: ShiftRow[];
-  /** Moved forward this shift, not finished, and on no list below. */
+  /** Moved forward this shift, not finished — credited under Done even
+   *  when it's also on a list below (that list says what happens next). */
   moved: ShiftRow[];
   /** Everything still open, once each, the next crew's work first. */
   items: Array<{ r: ShiftRow; kind: NextKind }>;
@@ -65,10 +66,10 @@ export function turnoverPlan(report: ShiftReport, isTried: (id: string) => boole
   const kindOf = new Map(items.map((x) => [x.r, x.kind]));
   const done = review.done;
   const doneIds = new Set(done.map((r) => r.leaf.id ?? r.leaf.name));
-  // Moved this shift but on no list (mostly later work done early) — kept,
-  // so no progress goes unreported.
+  // Everything moved forward this shift but not finished — the shift gets
+  // credit for it under Done, wherever it goes next.
   const moved = (review.knownStart ? review.progressed : review.ahead)
-    .filter((r) => r.percent < 100 && !doneIds.has(r.leaf.id ?? r.leaf.name) && !seen.has(r.leaf.id ?? r.leaf.name));
+    .filter((r) => r.percent < 100 && !doneIds.has(r.leaf.id ?? r.leaf.name));
   return {
     done, moved, items, kindOf, tried, pulled,
     carries: items.filter((x) => x.kind === "carry").map((x) => x.r),
@@ -244,7 +245,7 @@ export function crewsOf(report: ShiftReport, plan: TurnoverPlan, hrs: (h: number
 /** What got done, one row per task (equipment): its steps finished or
  *  moved this shift in one cell, what that meant for the plan, and the
  *  hours it's worth — not a line per sub-step. */
-export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt): Array<{
+export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt, noteOf?: (id: string) => string | undefined): Array<{
   task: string; steps: string; who: string; result: { text: string; tone: NextTone }; vs: { text: string; tone?: "emerald" | "rose" }; ids: string[];
 }> {
   const groups = new Map<string, ShiftRow[]>();
@@ -261,21 +262,23 @@ export function doneByTask(report: ShiftReport, plan: TurnoverPlan, t: Fmt): Arr
     const stepText = [
       ...done.map((r) => r.leaf.name),
       ...moved.map((r) => { const g = gainOf(report, r); return `${r.leaf.name} (${g > 0 ? `${r.percent - g}% → ` : ""}${r.percent}%)`; }),
-    ].join(", ");
+    ].map((txt, i) => { const r = [...done, ...moved][i]; const n = r.leaf.id ? noteOf?.(r.leaf.id) : undefined; return n ? `${txt} “${n}”` : txt; }).join(", ");
     const parts: string[] = [];
     const onPlan = done.length - early.length - late.length;
     if (onPlan > 0) parts.push(done.length === onPlan && !moved.length ? "done, on plan" : `${onPlan} done on plan`);
     if (early.length) parts.push(`${early.length} done early (planned ${t.DTs(Math.min(...early.map((r) => r.crewStart)))}${early.length > 1 ? " on" : ""})`);
     if (late.length) parts.push(`${late.length} done late (was due ${t.DTs(Math.min(...late.map((r) => r.dueAt)))})`);
     if (movedEarly.length) parts.push(`${movedEarly.length} started early (planned ${t.DTs(Math.min(...movedEarly.map((r) => r.crewStart)))}${movedEarly.length > 1 ? " on" : ""})`);
-    if (moved.length - movedEarly.length) parts.push(`${moved.length - movedEarly.length} moved forward`);
+    if (moved.length - movedEarly.length) parts.push(`${moved.length - movedEarly.length} in progress`);
+    // Hours count once: a step still on a list below has them on that row.
+    const onList = new Set(plan.items.map((x) => x.r.leaf.id));
     let net = 0;
-    for (const r of rows) { const sh = shareOf(report, r.leaf.id); if (sh) net += sh.side === "ahead" ? sh.hours : -sh.hours; }
+    for (const r of rows) { if (onList.has(r.leaf.id)) continue; const sh = shareOf(report, r.leaf.id); if (sh) net += sh.side === "ahead" ? sh.hours : -sh.hours; }
     const h = t.hrs(Math.round(Math.abs(net) * 10) / 10);
     const who = [...new Set(rows.map((r) => r.leaf.responsibleParty?.trim()).filter(Boolean))].join(", ");
     return {
       task: rows[0].parentName ?? rows[0].leaf.name,
-      steps: `${done.length ? `${done.length} done` : ""}${done.length && moved.length ? ", " : ""}${moved.length ? `${moved.length} moved` : ""}: ${stepText}`,
+      steps: `${done.length ? `${done.length} done` : ""}${done.length && moved.length ? ", " : ""}${moved.length ? `${moved.length} in progress` : ""}: ${stepText}`,
       who,
       result: { text: parts.join("; "), tone: late.length ? "amber" : "emerald" },
       vs: Math.abs(net) < 0.1 ? { text: "" } : net > 0 ? { text: `+${h}`, tone: "emerald" } : { text: `−${h}`, tone: "rose" },

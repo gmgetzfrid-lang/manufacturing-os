@@ -46,16 +46,17 @@ describe("work done early and progress made show on the turnover", () => {
   it("the email says so: ahead, planned when, and what moved this shift — each step once", () => {
     const text = toPlainText({ kind: "k", project: "p", when: "w", asOf: "a", sections: turnoverUpdate(r, f, { pctOf: () => 40, finishOf: () => undefined }) });
     expect(text).toMatch(/DONE — DAY SHIFT/);
-    // One row for E-17: both steps, what they meant, and the hours together.
-    expect(text).toMatch(/E-17 Exchanger — 1 done, 1 moved: Remove components, Hydroblast \(0% → 30%\) · .*1 done early \(planned 10-27T13:00\); 1 started early \(planned 10-28T11:00\) · \+5.8 h/);
-    // Unfinished and due: it carries, with what this shift did on the same row.
-    expect(text).toMatch(/Pull bundle · Schultz · was due 10-26T21:00 · 40% · \+40 this shift/);
+    // One row for E-17: everything the shift did on it — finished AND in
+    // progress (the bundle pulled to 40% gets its credit), and the hours.
+    const doneSec = text.slice(text.search(/^DONE — /m), text.search(/^NEXT — |^CARRIES /m));
+    expect(doneSec).toMatch(/E-17 Exchanger — 1 done, 2 in progress: Remove components, Pull bundle \(0% → 40%\), Hydroblast \(0% → 30%\) · .*1 done early \(planned 10-27T13:00\); 1 started early \(planned 10-28T11:00\); 1 in progress · \+5.8 h/);
+    // Unfinished and due: it carries — where it stands, its hours counted here (once).
+    expect(text).toMatch(/Pull bundle · Schultz · was due 10-26T21:00 · done 40% · −4.8 h/);
+    expect(text).not.toMatch(/this shift ·.*−4.8 h/);
     // Why it's ahead: both early steps, with the hours each is worth.
     expect(text).toMatch(/5.8 h done ahead of plan, less 4.8 h behind/);
-    // Every step named once.
-    for (const name of ["Pull bundle", "Remove components", "Hydroblast"]) {
-      expect(text.slice(text.search(/^DONE — /m)).match(new RegExp(name, "g"))?.length).toBe(1);
-    }
+    // Each step credited once under Done.
+    for (const name of ["Pull bundle", "Remove components", "Hydroblast"]) expect(doneSec.match(new RegExp(name, "g"))?.length).toBe(1);
   });
   it("without the record of the shift's start, later work with progress still shows — as entered", () => {
     const r2 = buildShiftReport({ milestones: all, tz: CHI, shift: day, now: day.end });

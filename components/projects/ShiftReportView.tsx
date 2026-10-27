@@ -35,7 +35,7 @@ import {
 import type { Milestone } from "@/types/schema";
 import { buildProgressIndex, leafPercent, type ProgressInfo } from "@/lib/scheduleProgress";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
-import { turnoverPlan, nextOf, standing, askedLine, gainOf, doneOf, gapStory, crewsOf, vsPlan, offListDrivers, doneByTask } from "@/lib/turnoverPlan";
+import { turnoverPlan, nextOf, standing, askedLine, doneOf, gapStory, crewsOf, vsPlan, offListDrivers, doneByTask } from "@/lib/turnoverPlan";
 import {
   buildShiftReport, shiftWindow, nextShift, previousShift, defaultReviewShift, nextShiftWithWork, expectedByParent, paceOf, expectedFraction, workShiftOf, staffedDueMs, meetingLeadMin, type Pace, type WorkShift,
   DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftRow, type ShiftWindow, type ShiftReport, type PullCrew,
@@ -885,7 +885,6 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
       ? { t: `after #${nums.join(", #")}`, tone: "amber" }
       : { t: `waits on ${r.waitingOn[0].name}${r.waitingOn.length > 1 ? ` +${r.waitingOn.length - 1}` : ""}`, tone: "amber" };
   };
-  const gainTag = (r: ShiftRow): TagT | null => { const g = gainOf(report, r); return g > 0 ? { t: `+${g} this shift`, tone: "emerald" } : null; };
   // Each step's hours ahead / behind ride on its own row (vsPlan); what
   // isn't on the lists below gets a line, so the total adds up.
   const off = offListDrivers(report, plan, c.hrs);
@@ -893,7 +892,8 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
   // ── Done: finished, and moved forward but on no list below.
   const doneIds = new Set(plan.done.map((r) => r.leaf.id ?? r.leaf.name));
   // One row per task: its steps done or moved this shift, in one cell.
-  const doneTasks = doneByTask(report, plan, c);
+  const doneTasks = doneByTask(report, plan, c, (id) => noteLine(o.noteOf?.(id), shift.start, c.D));
+  const creditedIds = new Set([...plan.done, ...plan.moved].map((r) => r.leaf.id));
   const doneRows = [...plan.done, ...plan.moved].map((r) => {
     const fin = doneIds.has(r.leaf.id ?? r.leaf.name);
     // What it meant for the plan — on plan, early, late — not a bare ✓.
@@ -925,10 +925,10 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
         when: kind === "carry" ? `${otherKind === "day" ? "Day" : "Night"} crew` : x.label,
         n: kind === "next" ? { num: priorityOf.get(r.leaf.id ?? "") ?? 0, tone: r.critical ? "rose" : r.carryOver ? "amber" : "slate" } : undefined,
         right: standing(r, kind),
-        note: [kind === "try" && d?.note ? `“${d.note}”` : null, comment(r)].filter(Boolean).join(" ") || undefined,
+        // The step's comment shows once: with its credit under Done, if it moved.
+        note: [kind === "try" && d?.note ? `“${d.note}”` : null, creditedIds.has(r.leaf.id) ? null : comment(r)].filter(Boolean).join(" ") || undefined,
         extraTags: [
           x.detail ? { t: x.detail, tone: x.tone ?? "muted" } : null,
-          gainTag(r),
           vsTag(r),
           kind === "next" || pulled ? waitTag(r) : null,
           scope ? { t: `${scope}'s scope — coordinate`, tone: "amber" } : null,

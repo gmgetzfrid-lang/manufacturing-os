@@ -9,7 +9,7 @@
 // nothing is blocked.
 
 import { capacityOf, askedResult } from "@/lib/shiftHandover";
-import { turnoverPlan, nextOf, standing, askedLine, gapStory, crewsOf, vsPlan, offListDrivers, doneByTask, gainOf as gainOfRow } from "@/lib/turnoverPlan";
+import { turnoverPlan, nextOf, standing, askedLine, gapStory, crewsOf, vsPlan, offListDrivers, doneByTask } from "@/lib/turnoverPlan";
 import { type PullCrew, type Pace, type ShiftReport, type ShiftRow, type ShiftWindow, type WorkShift } from "@/lib/shiftReport";
 import { rankHazards, hazardContext, lessonFor, type HazardJobInput } from "@/lib/safetyMoment";
 import type { ExportBlock, ExportCell, ExportSection } from "@/lib/reportExport";
@@ -152,7 +152,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
 
   // ── 2. Done this shift — and what each one meant for the plan.
   const doneRows = [...plan.done, ...plan.moved];
-  const byTaskDone = doneByTask(report, plan, t);
+  const byTaskDone = doneByTask(report, plan, t, (id) => note(id));
   if (doneRows.length || asked.length) {
     out.push({
       id: "done", title: `Done — ${shiftName(shift)} ${f.D(shift.start)}`,
@@ -187,16 +187,17 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
     return x.tone && x.tone !== "muted" ? { t: text, tone: x.tone, bold: kind === "held" } : text;
   };
   const progCell = (r: ShiftRow): ExportCell => {
-    const g = gainOfRow(report, r);
-    const s0 = standing(r, kindOf.get(r)!);
-    return g > 0 ? { t: `${s0} · +${g} this shift`, tone: "emerald", bold: true } : s0;
+    // What this shift did is credited under Done; here, where it stands.
+    return standing(r, kindOf.get(r)!);
   };
   // The next crew's table holds only its own work (and what it could try);
   // the other crew's carried work and anything blocked get their own.
   const tonight = items.filter((x) => x.kind === "next" || x.kind === "try").map((x) => x.r);
   const later = items.filter((x) => x.kind === "carry" || x.kind === "held").map((x) => x.r);
   const vsCell = (r: ShiftRow): ExportCell => { const v = vsPlan(report, r, f.hrs); return { t: v.text, tone: v.tone, bold: true }; };
-  const stepCell = (r: ShiftRow): ExportCell => ({ t: r.leaf.name, note: [note(r.leaf.id), kindOf.get(r) === "try" ? look.tryOf!(r.leaf.id!)?.note ?? undefined : undefined].filter(Boolean).join(" · ") || undefined });
+  // A step's comment shows once: with its credit under Done, if it moved.
+  const credited = new Set([...plan.done, ...plan.moved].map((r) => r.leaf.id));
+  const stepCell = (r: ShiftRow): ExportCell => ({ t: r.leaf.name, note: [credited.has(r.leaf.id) ? undefined : note(r.leaf.id), kindOf.get(r) === "try" ? look.tryOf!(r.leaf.id!)?.note ?? undefined : undefined].filter(Boolean).join(" · ") || undefined });
   const more = (n: number, cols: number) => (n > 0 ? [[muted(`+ ${n} more`), ...Array(cols - 1).fill("")] as ExportCell[]] : []);
   if (tonight.length || later.length) {
     const shown = tonight.slice(0, MAX_ROWS * 3);
@@ -225,7 +226,7 @@ export function turnoverUpdate(report: ShiftReport, f: UpdateFormat, look: Updat
       const text = kindOf.get(r) === "held" ? `${x.label} — ${x.detail}` : x.detail ?? "";
       return x.tone && x.tone !== "muted" ? { t: text, tone: x.tone, bold: kindOf.get(r) === "held" } : text;
     };
-    const doneCell = (r: ShiftRow): ExportCell => { const g = gainOfRow(report, r); return g > 0 ? { t: `${r.percent}% · +${g} this shift`, tone: "emerald", bold: true } : `${r.percent}%`; };
+    const doneCell = (r: ShiftRow): ExportCell => `${r.percent}%`;
     out.push({
       id: "carries", title: `Carries to the ${other} shift`,
       sub: [carries.length ? `${carries.length} for the ${other} crew` : null, held.length ? `${held.length} blocked or on hold` : null].filter(Boolean).join(" · ") + ` — not the ${next.kind} shift's work`,
