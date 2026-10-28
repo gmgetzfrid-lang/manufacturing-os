@@ -1,17 +1,20 @@
 "use client";
 
-// DateTimePicker: when something happened, entered by tapping. A date chip
-// and a time chip. The date opens a month calendar (nothing after today;
-// the planned day carries a dot). Picking a day moves on to the time: a
-// wheel of hour, minute and AM/PM. Planned and Now fill both at once.
+// DateTimePicker: when something happened. A date chip and a time box.
+// The date opens a month calendar (nothing after today; the planned day
+// carries a dot). Picking a day moves on to the time: a wheel of hour,
+// minute and AM/PM to spin (finger, mouse drag or scroll), or type the
+// time in the box and the wheel follows. Planned and Now fill both.
 // Underneath, the shift the time falls on ("Mon night shift"), so 3 AM on
 // Tuesday reads as Monday's night. Plant time. The value is
 // "YYYY-MM-DDTHH:MM", or "YYYY-MM-DD" while the time isn't picked, or "".
 
 import React, { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { CalendarDays, Clock, ChevronLeft, ChevronRight } from "lucide-react";
 import { shiftAt, type ShiftTimes } from "@/lib/shiftReport";
 import { fmtInTz, toDateTimeInput, fromDateTimeInput, dayKey } from "@/lib/scheduleTz";
+import { parseTypedTime } from "@/lib/typedTime";
 
 const ROW = 36;
 const HOURS = Array.from({ length: 12 }, (_, i) => String(i + 1));
@@ -54,7 +57,6 @@ export default function DateTimePicker({ label, value, onChange, tz, times, plan
   };
   // A time not picked yet starts at the planned time of day, or now.
   const openTime = () => {
-    if (panel === "time") { setPanel(null); return; }
     if (!time) {
       const t = Date.now(); setNowMs(t);
       const hm = toDateTimeInput(hasPlan ? planned! : t, tz).slice(11, 16);
@@ -84,16 +86,17 @@ export default function DateTimePicker({ label, value, onChange, tz, times, plan
         <button type="button" disabled={disabled} aria-expanded={panel === "date"} aria-label={`${label}: day`} onClick={() => setPanel((x) => (x === "date" ? null : "date"))} className={chip(panel === "date", !date)}>
           <CalendarDays className="w-4 h-4 opacity-70" />{date ? (date === today ? `Today, ${dayWords(date).split(", ")[1]}` : dayWords(date)) : "Pick day"}
         </button>
-        <button type="button" disabled={disabled} aria-expanded={panel === "time"} aria-label={`${label}: time`} onClick={openTime} className={chip(panel === "time", !time)}>
-          <Clock className="w-4 h-4 opacity-70" />{time ? time12(time) : "Pick time"}
-        </button>
+        <TimeBox value={time} label={`${label}: time`} open={panel === "time"} onOpen={openTime} onSet={setTime} disabled={disabled} className={chip(panel === "time", !time)} />
         {sh && (t > nowMs + 60_000
           ? <span className="text-[12px] font-semibold text-rose-700 dark:text-rose-400">in the future</span>
           : <span className="text-[12px] text-[var(--color-text-muted)]">{fmtInTz(sh.start, tz, { weekday: "short" })} {sh.kind} shift</span>)}
       </div>
       {panel === "date" && <Month value={date} today={today} planned={plannedDay} onPick={pickDay} />}
       {panel === "time" && (
-        <TimeWheels h24={h24} mi={mi} onSet={setTime} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]" />
+        <div className="space-y-1">
+          <TimeWheels h24={h24} mi={mi} onSet={setTime} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]" />
+          <div className="text-[11px] text-[var(--color-text-muted)]">Spin it, or type in the box: 1030p, 22:30</div>
+        </div>
       )}
     </div>
   );
@@ -103,23 +106,76 @@ export default function DateTimePicker({ label, value, onChange, tz, times, plan
 export function TimeChip({ value, onChange, tz, label = "Time" }: { value: string; onChange: (hm: string) => void; tz: string; label?: string }) {
   const [open, setOpen] = useState(false);
   const h24 = value ? Number(value.slice(0, 2)) : 0, mi = value ? Number(value.slice(3, 5)) : 0;
-  const toggle = () => {
-    if (!open && !value) onChange(toDateTimeInput(Date.now(), tz).slice(11, 16));
-    setOpen(!open);
+  const set = (h: number, m: number) => onChange(`${p2(h)}:${p2(m)}`);
+  const show = () => {
+    if (!value) onChange(toDateTimeInput(Date.now(), tz).slice(11, 16));
+    setOpen(true);
   };
   return (
     <div className="relative inline-block">
-      <button type="button" aria-expanded={open} aria-label={label} onClick={toggle}
-        className={`inline-flex items-center gap-1 h-7 px-2 rounded-md border text-[12px] font-semibold ${value ? "border-[var(--color-border-strong)] bg-[var(--color-surface)]" : "border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
-        <Clock className="w-3.5 h-3.5 opacity-70" />{value ? time12(value) : "Time"}
-      </button>
+      <TimeBox value={value} label={label} open={open} onOpen={show} onSet={set} placeholder="Time"
+        className={`relative z-50 inline-flex items-center gap-1 h-7 px-2 rounded-md border text-[12px] font-semibold bg-[var(--color-surface)] ${value ? "border-[var(--color-border-strong)]" : "border-dashed border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`} />
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <TimeWheels h24={h24} mi={mi} onSet={(h, m) => onChange(`${p2(h)}:${p2(m)}`)} className="absolute left-0 top-full mt-1 z-50 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-lg" />
+          <TimeWheels h24={h24} mi={mi} onSet={set} className="absolute left-0 top-full mt-1 z-50 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-lg" />
         </>
       )}
     </div>
+  );
+}
+
+/** The time box: shows "10:30 PM". Tap it for the wheel; type in it
+ *  ("1030p", "22:30") and the wheel follows. With a mouse it's ready to
+ *  type at once; on a touch screen the first tap opens the wheel (no
+ *  keyboard), a second tap types. */
+function TimeBox({ value, label, open, onOpen, onSet, className, disabled, placeholder = "Pick time" }: {
+  value: string; label: string; open: boolean; onOpen: () => void; onSet: (h: number, m: number) => void;
+  className: string; disabled?: boolean; placeholder?: string;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  const ptr = useRef("");
+  const [typing, setTyping] = useState(false);
+  const [draft, setDraft] = useState<string | null>(null);
+  // What it was before typing — put back if what's typed isn't a time.
+  const before = useRef<string | null>(null);
+  const pm = value ? Number(value.slice(0, 2)) >= 12 : false;
+  const bad = draft != null && draft.trim() !== "" && !parseTypedTime(draft, pm);
+  const startTyping = () => {
+    flushSync(() => setTyping(true));
+    const el = ref.current;
+    if (el) { el.blur(); el.focus(); el.select(); }
+  };
+  return (
+    <label className={`${className} cursor-text ${bad ? "!border-rose-500 !ring-rose-500" : ""}`}>
+      <Clock className="w-4 h-4 shrink-0 opacity-70" />
+      <input ref={ref} value={draft ?? (value ? time12(value) : "")} placeholder={placeholder} aria-label={label} disabled={disabled}
+        readOnly={!typing} autoComplete="off" spellCheck={false} enterKeyHint="done" size={8}
+        onPointerDown={(e) => { ptr.current = e.pointerType; }}
+        // A mouse or the keyboard: ready to type.
+        onFocus={() => { if (ptr.current !== "touch") setTyping(true); }}
+        onClick={() => {
+          if (!open) onOpen();
+          if (ptr.current === "touch") { if (open && !typing) startTyping(); return; }
+          // After the time it opens on is in.
+          ref.current?.select();
+          requestAnimationFrame(() => { if (before.current == null) ref.current?.select(); });
+        }}
+        onChange={(e) => {
+          if (draft == null) before.current = value;
+          setDraft(e.target.value);
+          if (!open) onOpen();
+          const r = parseTypedTime(e.target.value, pm);
+          if (r) onSet(r.h, r.m);
+        }}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); ref.current?.blur(); } }}
+        onBlur={() => {
+          const b = before.current;
+          if (bad && b) onSet(Number(b.slice(0, 2)), Number(b.slice(3, 5)));
+          before.current = null; setDraft(null); setTyping(false); ptr.current = "";
+        }}
+        className="w-[70px] min-w-0 bg-transparent font-semibold outline-none placeholder:text-[var(--color-text-muted)] placeholder:font-semibold" />
+    </label>
   );
 }
 
@@ -178,12 +234,18 @@ function Wheel({ label, items, index, onPick }: { label: string; items: string[]
   const ref = useRef<HTMLDivElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const placed = useRef(false);
-  // Follow the value: Planned, Now, or a tap.
+  // A mouse drag: where it started, how fast it's going.
+  const drag = useRef<{ y: number; top: number; moved: boolean; lastY: number; lastT: number; v: number } | null>(null);
+  const dragged = useRef(false);
+  // A scroll the user made (finger, scroll wheel, keys) picks; the wheel
+  // rolling to a value set elsewhere doesn't.
+  const byUser = useRef(false);
+  // Follow the value: Planned, Now, a tap, or a typed time.
   useEffect(() => {
     const el = ref.current;
-    if (!el) return;
+    if (!el || drag.current?.moved) return;
     const top = index * ROW;
-    if (Math.abs(el.scrollTop - top) > 2) el.scrollTo({ top, behavior: placed.current ? "smooth" : "auto" });
+    if (Math.abs(el.scrollTop - top) > 2) { byUser.current = false; el.scrollTo({ top, behavior: placed.current ? "smooth" : "auto" }); }
     placed.current = true;
   }, [index]);
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
@@ -191,24 +253,61 @@ function Wheel({ label, items, index, onPick }: { label: string; items: string[]
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
       const el = ref.current;
-      if (!el) return;
+      if (!el || drag.current?.moved || !byUser.current) return;
       const i = Math.max(0, Math.min(items.length - 1, Math.round(el.scrollTop / ROW)));
       if (i !== index) onPick(i);
     }, 120);
+  };
+  const clampI = (i: number) => Math.max(0, Math.min(items.length - 1, i));
+  // Fingers and scroll wheels scroll it natively; a mouse drags it.
+  const down = (e: React.PointerEvent<HTMLDivElement>) => {
+    byUser.current = true;
+    if (e.pointerType !== "mouse" || e.button !== 0 || !ref.current) return;
+    drag.current = { y: e.clientY, top: ref.current.scrollTop, moved: false, lastY: e.clientY, lastT: e.timeStamp, v: 0 };
+    dragged.current = false;
+  };
+  const move = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = drag.current, el = ref.current;
+    if (!d || !el) return;
+    const dy = e.clientY - d.y;
+    if (!d.moved) {
+      if (Math.abs(dy) < 4) return;
+      d.moved = true;
+      el.setPointerCapture(e.pointerId);
+      el.style.scrollSnapType = "none";
+    }
+    el.scrollTop = d.top - dy;
+    const dt = e.timeStamp - d.lastT;
+    if (dt > 0) d.v = (e.clientY - d.lastY) / dt;
+    d.lastY = e.clientY; d.lastT = e.timeStamp;
+  };
+  const up = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = drag.current, el = ref.current;
+    drag.current = null;
+    if (!d || !el || !d.moved) return;
+    dragged.current = true;
+    el.style.scrollSnapType = "";
+    // A flick carries on a little.
+    const fling = e.timeStamp - d.lastT < 80 ? d.v * 250 : 0;
+    const i = clampI(Math.round((el.scrollTop - fling) / ROW));
+    el.scrollTo({ top: i * ROW, behavior: "smooth" });
+    if (i !== index) onPick(i);
   };
   const fade = "linear-gradient(to bottom, transparent 0%, rgba(0,0,0,.35) 22%, #000 40%, #000 60%, rgba(0,0,0,.35) 78%, transparent 100%)";
   return (
     <div className="relative w-16">
       <div ref={ref} onScroll={settle} role="listbox" aria-label={label} tabIndex={0}
+        onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+        onWheel={() => { byUser.current = true; }} onTouchStart={() => { byUser.current = true; }}
         onKeyDown={(e) => {
           if (e.key === "ArrowDown") { e.preventDefault(); onPick(Math.min(items.length - 1, index + 1)); }
           if (e.key === "ArrowUp") { e.preventDefault(); onPick(Math.max(0, index - 1)); }
         }}
-        className="relative h-[180px] overflow-y-scroll overscroll-contain snap-y snap-mandatory [scrollbar-width:none] [&::-webkit-scrollbar]:hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)] rounded-md"
+        className="relative h-[180px] cursor-grab active:cursor-grabbing overflow-y-scroll overscroll-contain snap-y snap-mandatory [scrollbar-width:none] [&::-webkit-scrollbar]:hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)] rounded-md"
         style={{ paddingBlock: ROW * 2, maskImage: fade, WebkitMaskImage: fade }}>
         {items.map((x, i) => (
-          <div key={x} role="option" aria-selected={i === index} onClick={() => onPick(i)}
-            className={`h-9 snap-center flex items-center justify-center text-[18px] tabular-nums cursor-pointer select-none ${i === index ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{x}</div>
+          <div key={x} role="option" aria-selected={i === index} onClick={() => { if (!dragged.current) onPick(i); dragged.current = false; }}
+            className={`h-9 snap-center flex items-center justify-center text-[18px] tabular-nums select-none ${i === index ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{x}</div>
         ))}
       </div>
     </div>
