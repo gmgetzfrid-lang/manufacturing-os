@@ -10,7 +10,7 @@
 import React, { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Play, Check } from "lucide-react";
 import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
-import { workHours, type ShiftTimes } from "@/lib/shiftReport";
+import { shiftAt, workHours, type ShiftTimes } from "@/lib/shiftReport";
 import { fmtInTz, toDateTimeInput, fromDateTimeInput } from "@/lib/scheduleTz";
 import DateTimePicker from "@/components/projects/DateTimePicker";
 import PctSlider from "@/components/projects/PctSlider";
@@ -39,11 +39,33 @@ interface HistoryEvent {
   key: string; at: number; text: string;
   said: Array<{ text: string; note: MilestoneNote | null }>;
   logId?: number; fix?: "start" | "finish"; noteIds: string[];
+  /** Where it sits: its time, or — when its time wasn't saved — just
+   *  before what was entered after it. `seq` breaks ties (entry order). */
+  sort: number; seq: number;
+  /** "unset": the time it happened wasn't saved (it reads the time it was
+   *  typed in); "order": the time picked is after what came next. */
+  unsure?: "unset" | "order";
+  /** Its comment (a hold's reason, or what got done) — edited with it. */
+  comment?: { note: MilestoneNote; text: string };
 }
 /** A logged change in words: "Started", "Progress · 25%", "Blocked". */
-const logWords = (x: ProgressLogRow) => x.new_status === "completed" ? "Finished"
-  : x.new_status === "in_progress" && (x.old_status === "planned" || x.old_status === "missed") ? "Started"
-    : `${describeChange(x.old_status, x.old_percent, x.new_status, x.new_percent)}${x.new_status === "in_progress" ? ` · ${Number(x.new_percent ?? 0)}%` : ""}`;
+const logWords = (x: ProgressLogRow) => {
+  const pct = Number(x.new_percent ?? 0), o = x.old_status;
+  switch (x.new_status) {
+    case "completed": return "Finished";
+    case "in_progress":
+      return o === "planned" || o === "missed" ? "Started"
+        : o === "blocked" ? `Block lifted${pct ? ` · ${pct}%` : ""}`
+          : o === "on_hold" ? `Off hold${pct ? ` · ${pct}%` : ""}`
+            : o === "completed" ? `Reopened · ${pct}%` : `Progress · ${pct}%`;
+    case "blocked": return "Blocked";
+    case "on_hold": return "On hold";
+    case "planned": return "Set back to not started";
+    case "missed": return "Missed";
+    default: return describeChange(x.old_status, x.old_percent, x.new_status, x.new_percent);
+  }
+};
+const hoursWords = (h: number) => (h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : `${Math.round(h * 10) / 10} h`);
 const ms = (v: unknown) => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
 const H = 3_600_000;
 
@@ -85,32 +107,59 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       : { t: `${what} ${v} early`, tone: "text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/40" };
   })();
 
-  // What's happened, newest first: started and finished at the times they
-  // really happened (the step's actual times — the log's own time is when
-  // it was typed in), progress and holds from the log, and each comment on
-  // the event it came with.
+  // What's happened, in the order it happened, by shift. Things are
+  // entered one after another as they happen, so the order they were
+  // entered in is the order of events: a change whose time wasn't saved
+  // (it reads the time it was typed in — later than what was entered after
+  // it) keeps its place in that order, flagged to set. Started and
+  // finished at the step's actual times; each comment on the change it
+  // came with.
   const history = useMemo(() => {
     const ev: HistoryEvent[] = [];
-    if (Number.isFinite(as)) ev.push({ key: "start", at: as, text: "Started", said: [], fix: "start", noteIds: [] });
-    if (done && Number.isFinite(af)) ev.push({ key: "finish", at: af, text: "Finished", said: [], fix: "finish", noteIds: [] });
+    if (Number.isFinite(as)) ev.push({ key: "start", at: as, sort: as, seq: -1, text: "Started", said: [], fix: "start", noteIds: [] });
+    if (done && Number.isFinite(af)) ev.push({ key: "finish", at: af, sort: af, seq: 1e9, text: "Finished", said: [], fix: "finish", noteIds: [] });
+    const real = rows.filter((x) => x.old_status != null && !(x.old_status === x.new_status && Number(x.old_percent ?? 0) === Number(x.new_percent ?? 0)))
+      .sort((a, b) => (a.id ?? 0) - (b.id ?? 0) || Date.parse(a.at) - Date.parse(b.at));
+    // The earliest time of anything entered after each change.
+    const after = real.map(() => Infinity);
+    for (let i = real.length - 2; i >= 0; i--) after[i] = Math.min(after[i + 1], Date.parse(real[i + 1].at));
+    const unsure = real.map((x, i): HistoryEvent["unsure"] => (Date.parse(x.at) > after[i] + 60_000 ? (x.entered_at ? "order" : "unset") : undefined));
     // Each saved change, by when it was saved — a comment goes with the
     // change it was saved with.
     const saves: Array<{ at: number; key: string }> = [];
-    for (const x of rows) {
-      if (x.old_status == null || (x.old_status === x.new_status && Number(x.old_percent ?? 0) === Number(x.new_percent ?? 0))) continue;
+    let startOwned = false;
+    for (let i = 0; i < real.length; i++) {
+      const x = real[i], t = Date.parse(x.at);
       const savedAt = Date.parse(x.entered_at ?? x.at);
-      // Starts and finishes are told by the actual times.
-      // Its log line goes with it when the time is fixed (the latest one).
-      const own = (k: string) => { const e = ev.find((y) => y.key === k); if (e && x.id != null) e.logId = x.id; };
+      // Starts and finishes are told by the actual times; the log line goes
+      // with them when the time is fixed.
+      const own = (k: string) => { const e = ev.find((y) => y.key === k); if (e) { if (x.id != null) e.logId = x.id; e.seq = i; } };
       if (x.new_status === "completed") { if (done) { saves.push({ at: savedAt, key: "finish" }); own("finish"); } continue; }
-      if (x.new_status === "in_progress" && (x.old_status === "planned" || x.old_status === "missed")) { if (Number.isFinite(as)) { saves.push({ at: savedAt, key: "start" }); own("start"); } continue; }
+      if (x.new_status === "in_progress" && (x.old_status === "planned" || x.old_status === "missed")) { if (Number.isFinite(as)) { saves.push({ at: savedAt, key: "start" }); own("start"); startOwned = true; } continue; }
+      let text = logWords(x);
+      // Back to work after a hold: how long it was held, when both times are known.
+      const prev = real[i - 1];
+      if (x.new_status === "in_progress" && (x.old_status === "blocked" || x.old_status === "on_hold") && prev && prev.new_status === x.old_status && !unsure[i] && !unsure[i - 1]) {
+        const h = (t - Date.parse(prev.at)) / H;
+        if (h > 0) text += ` · ${x.old_status === "blocked" ? "blocked" : "on hold"} ${hoursWords(h)}`;
+      }
       const key = `r${x.id ?? ""}${x.at}${x.new_status}${x.new_percent}`;
-      ev.push({ key, at: Date.parse(x.at), text: logWords(x), said: [], logId: x.id, noteIds: [] });
+      ev.push({ key, at: t, sort: unsure[i] ? after[i] : t, seq: i, text, said: [], logId: x.id, noteIds: [], unsure: unsure[i] });
       saves.push({ at: savedAt, key });
+    }
+    // Started straight off a hold (blocked before it began): one line.
+    if (!startOwned && Number.isFinite(as)) {
+      const off = ev.find((e) => e.logId != null && !e.unsure && Math.abs(e.at - as) <= 2 * 60_000 && /^(Block lifted|Off hold)/.test(e.text));
+      if (off) {
+        off.text = off.text.replace(/^Block lifted/, "Started — block lifted").replace(/^Off hold/, "Started — off hold");
+        off.fix = "start";
+        ev.splice(ev.findIndex((e) => e.key === "start"), 1);
+      }
     }
     const near = 10 * 60_000;
     for (const n of notes) {
-      const body = n.body?.trim();
+      // "(for Mon night shift)" — said by the time it's saved with.
+      const body = n.happenedAt ? n.body?.trim().replace(/\s*\(for [^()]*shift\)\s*$/i, "") : n.body?.trim();
       if (!body || n.kind === "reschedule" || /^Progress → \d+%$/.test(body) || /^Actual times corrected/.test(body)) continue;
       if (n.kind === "status" && !(n.statusAt === "on_hold" || n.statusAt === "blocked")) continue;
       const at = ms(n.happenedAt ?? n.createdAt);
@@ -120,10 +169,11 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       const viaSave = saves.filter((x) => Math.abs(x.at - typed) <= near).sort((a, b) => Math.abs(a.at - typed) - Math.abs(b.at - typed))[0];
       const host = (viaSave ? ev.find((e) => e.key === viaSave.key) : undefined)
         ?? ev.filter((e) => Math.abs(e.at - at) <= near).sort((a, b) => Math.abs(a.at - at) - Math.abs(b.at - at))[0];
-      if (host) { host.said.push(line); if (n.id) host.noteIds.push(n.id); }
-      else ev.push({ key: `n${n.id ?? n.createdAt}`, at, text: "", said: [line], noteIds: n.id ? [n.id] : [] });
+      const comment = n.id && n.kind !== "behind" ? { note: n, text: body } : undefined;
+      if (host) { host.said.push(line); if (n.id) host.noteIds.push(n.id); if (!host.comment && comment) host.comment = comment; }
+      else ev.push({ key: `n${n.id ?? n.createdAt}`, at, sort: at, seq: 1e8, text: "", said: [line], noteIds: n.id ? [n.id] : [], comment });
     }
-    return ev.filter((e) => Number.isFinite(e.at)).sort((a, b) => b.at - a.at);
+    return ev.filter((e) => Number.isFinite(e.sort)).sort((a, b) => a.sort - b.sort || a.seq - b.seq);
   }, [rows, notes, as, af, done]);
   const [allHistory, setAllHistory] = useState(false);
   // The step's last logged change: a time put in has to come after it
@@ -143,26 +193,47 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   // Fixing the time of something in the history.
   const [fixing, setFixing] = useState<string | null>(null);
   const [fixV, setFixV] = useState("");
+  const [fixText, setFixText] = useState("");
   const [fixMsg, setFixMsg] = useState<string | null>(null);
   const [fixBusy, setFixBusy] = useState(false);
   const canFix = (x: HistoryEvent) => canEdit && (x.fix ? !!onFixTimes : x.logId != null || x.noteIds.length > 0);
-  const openFix = (x: HistoryEvent) => { setFixing(fixing === x.key ? null : x.key); setFixV(toDateTimeInput(x.at, tz)); setFixMsg(null); setSaved(null); };
+  const canEditEntry = (x: HistoryEvent) => canFix(x) || (canEdit && !!x.comment);
+  const openFix = (x: HistoryEvent) => {
+    setFixing(fixing === x.key ? null : x.key); setFixMsg(null); setSaved(null);
+    setFixV(toDateTimeInput(x.unsure === "unset" ? x.sort : x.at, tz));
+    setFixText(x.comment?.text ?? "");
+  };
+  // Saves what changed: the time (its log line, the actual start or
+  // finish, its comments move together) and the comment's words.
   const saveFix = async (x: HistoryEvent) => {
     const t = fixV.length >= 16 ? toMs(fixV) : NaN;
     if (!Number.isFinite(t)) { setFixMsg("Pick the day and the time."); return; }
-    if (t > Date.now() + 60_000) { setFixMsg("That time is in the future."); return; }
-    if (x.fix === "start" && Number.isFinite(af) && t > af) { setFixMsg(`It finished ${when(af)} — it can't start after that.`); return; }
-    if (x.fix === "finish" && Number.isFinite(as) && t < as) { setFixMsg(`It started ${when(as)} — it can't finish before that.`); return; }
-    // It stays between what came before it and what came after.
-    if (x.logId != null) {
-      const seq = rows.filter((r) => r.old_status != null && r.id != null).sort((a, b) => a.id! - b.id!);
-      const i = seq.findIndex((r) => r.id === x.logId);
-      const prev = i > 0 ? seq[i - 1] : null, next = i >= 0 ? seq[i + 1] : null;
-      if (prev && t < Date.parse(prev.at)) { setFixMsg(`That's before “${logWords(prev)}” at ${when(Date.parse(prev.at))}, which came first. If that one's wrong, fix it first.`); return; }
-      if (next && t > Date.parse(next.at)) { setFixMsg(`That's after “${logWords(next)}” at ${when(Date.parse(next.at))}, which came next. If that one's wrong, fix it first.`); return; }
+    const text = fixText.trim();
+    if (x.comment && !text) { setFixMsg("The comment can't be empty."); return; }
+    const timeChanged = canFix(x) && (x.unsure === "unset" || Math.abs(t - x.at) >= 60_000);
+    const textChanged = !!x.comment && text !== x.comment.text;
+    if (!timeChanged && !textChanged) { setFixing(null); return; }
+    if (timeChanged) {
+      if (t > Date.now() + 60_000) { setFixMsg("That time is in the future."); return; }
+      if (x.fix === "start" && Number.isFinite(af) && t > af) { setFixMsg(`It finished ${when(af)} — it can't start after that.`); return; }
+      if (x.fix === "finish" && Number.isFinite(as) && t < as) { setFixMsg(`It started ${when(as)} — it can't finish before that.`); return; }
+      // It stays between what came before it and what came after (ones
+      // whose time wasn't saved don't count — theirs is the time typed).
+      if (x.logId != null) {
+        const seq = rows.filter((r) => r.old_status != null && r.id != null).sort((a, b) => a.id! - b.id!);
+        const unsaved = (j: number) => !seq[j].entered_at && Date.parse(seq[j].at) > Math.min(Infinity, ...seq.slice(j + 1).map((y) => Date.parse(y.at))) + 60_000;
+        const k = seq.findIndex((r) => r.id === x.logId);
+        let prev: ProgressLogRow | null = null, next: ProgressLogRow | null = null;
+        for (let j = k - 1; j >= 0 && !prev; j--) if (!unsaved(j)) prev = seq[j];
+        for (let j = k + 1; k >= 0 && j < seq.length && !next; j++) if (!unsaved(j)) next = seq[j];
+        if (prev && t < Date.parse(prev.at)) { setFixMsg(`That's before “${logWords(prev)}” at ${when(Date.parse(prev.at))}, which came first. If that one's wrong, fix it first.`); return; }
+        if (next && t > Date.parse(next.at)) { setFixMsg(`That's after “${logWords(next)}” at ${when(Date.parse(next.at))}, which came next. If that one's wrong, fix it first.`); return; }
+      }
     }
     setFixBusy(true); setFixMsg(null);
     try {
+      if (textChanged && x.comment?.note.id) await updateMilestoneNote(x.comment.note.id, text);
+      if (!timeChanged) { window.dispatchEvent(new CustomEvent("milestone-notes:changed")); setFixing(null); setSaved("Comment saved"); return; }
       if (x.logId != null) {
         const r = await setProgressTime(x.logId, t);
         if (r !== "ok") { setFixMsg(r === "missing" ? "Fixing a time needs the database update run first." : r === "range" ? "That's more than 60 days back." : "Not saved."); return; }
@@ -171,7 +242,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       // Its comments go with it.
       for (const id of x.noteIds) await setNoteTime(id, t).catch(() => undefined);
       window.dispatchEvent(new CustomEvent("milestone-notes:changed"));
-      setFixing(null); setSaved(`Time fixed: ${when(t)}`);
+      setFixing(null); setSaved(`Saved: ${when(t)}`);
     } catch (e) { setFixMsg((e as Error).message || "Not saved."); }
     finally { setFixBusy(false); }
   };
@@ -287,7 +358,16 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   ].filter((x) => x.a !== main?.a);
 
   const cell = "py-0.5 pr-3 whitespace-nowrap";
-  const shown = allHistory ? history : history.slice(0, 6);
+  // The latest few, oldest first; the rest a tap away.
+  const LATEST = 8;
+  const hidden = allHistory ? 0 : Math.max(0, history.length - LATEST);
+  const shown = history.slice(hidden);
+  const toSet = history.filter((x) => x.unsure === "unset").length;
+  const shiftOf = (t: number) => {
+    const w = shiftAt(t, tz, times);
+    return { key: `${w.dayKey}:${w.kind}`, night: w.kind === "night", label: `${fmtInTz(w.start, tz, { weekday: "short", month: "short", day: "numeric" })} · ${w.kind} shift` };
+  };
+  const clock = (t: number) => fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true });
   const pickLabel = action === "start" || action === "resume" ? "Started" : action === "finish" ? "Finished" : action === "hold" ? "Stopped" : action === "edit" ? "Finished" : "When";
   return (
     <div className="px-3 pb-3 pl-7 space-y-2 bg-[var(--color-surface)] text-[12.5px]">
@@ -357,33 +437,54 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       )}
 
       <div className="border-t border-[var(--color-border)] pt-1.5">
-        <div className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-0.5">History</div>
+        <div className="flex items-baseline justify-between gap-2 mb-0.5">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">History</span>
+          {toSet > 0 && <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-400">{toSet === 1 ? "1 time" : `${toSet} times`} to set</span>}
+        </div>
         {history.length === 0 ? <div className="text-[var(--color-text-muted)]">Nothing yet.</div> : (
-          <ol className="space-y-0.5">
-            {shown.map((x) => (
-              <li key={x.key} className="text-[12px] break-words">
-                {canFix(x)
-                  ? <button type="button" onClick={() => openFix(x)} title="Fix this time" aria-expanded={fixing === x.key}
-                    className="mr-1.5 whitespace-nowrap text-[var(--color-text-muted)] underline decoration-dotted underline-offset-2 hover:text-[var(--color-text)]">{when(x.at)}</button>
-                  : <span className="text-[var(--color-text-muted)] mr-1.5 whitespace-nowrap">{when(x.at)}</span>}
-                {x.text && <b className="text-[var(--color-text)]">{x.text}</b>}
-                {x.said.map((c, i) => <HistoryNote key={i} text={c.text} note={canEdit ? c.note : null} lead={!!x.text || i > 0} />)}
-                {fixing === x.key && (
-                  <div className="mt-1 mb-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-2.5 space-y-2 text-[12.5px]">
-                    <DateTimePicker label="When it happened" value={fixV} onChange={(v) => { setFixV(v); setFixMsg(null); }} tz={tz} times={times} showNow={false} disabled={fixBusy} />
-                    {fixMsg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{fixMsg}</div>}
-                    <div className="flex items-center gap-2">
-                      <button type="button" onClick={() => void saveFix(x)} disabled={fixBusy}
-                        className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-60">{fixBusy ? "Saving…" : "Save time"}</button>
-                      <button type="button" onClick={() => setFixing(null)} className="h-9 px-3 rounded-lg text-[var(--color-text-muted)] font-semibold hover:text-[var(--color-text)]">Cancel</button>
+          <>
+            {hidden > 0 && <button type="button" onClick={() => setAllHistory(true)} className="mb-0.5 text-[11.5px] font-semibold text-[var(--color-accent)] hover:underline">Show {hidden} earlier</button>}
+            <ol>
+              {shown.map((x, i) => {
+                const sh = shiftOf(x.sort), head = i === 0 || shiftOf(shown[i - 1].sort).key !== sh.key;
+                const editable = canEditEntry(x);
+                const time = x.unsure === "unset" ? "set time" : x.unsure === "order" ? `⚠ ${when(x.at)}` : clock(x.at);
+                const timeCls = x.unsure === "unset" ? "rounded px-1 text-[11px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300"
+                  : x.unsure === "order" ? "font-semibold text-amber-700 dark:text-amber-400" : "text-[var(--color-text-muted)]";
+                const tip = x.unsure === "unset" ? "When it happened wasn't saved — tap to set it" : x.unsure === "order" ? "This time is after what came next — check it" : undefined;
+                return (
+                  <li key={x.key} className="text-[12px] break-words">
+                    {head && <div className={`mt-1.5 text-[10.5px] font-bold uppercase tracking-wide ${sh.night ? "text-violet-700 dark:text-violet-300" : "text-sky-700 dark:text-sky-300"}`}>{sh.label}</div>}
+                    <div className="py-0.5 pl-2 border-l-2 border-[var(--color-border)]">
+                      {x.unsure && editable
+                        ? <button type="button" onClick={() => openFix(x)} title={tip} className={`mr-1.5 whitespace-nowrap ${timeCls}`}>{time}</button>
+                        : <span title={tip} className={`mr-1.5 whitespace-nowrap ${timeCls}`}>{time}</span>}
+                      {x.text && <b className="text-[var(--color-text)]">{x.text}</b>}
+                      {x.said.map((c, k) => <span key={k} className="text-[var(--color-text)]">{x.text || k > 0 ? " — " : ""}{c.text}</span>)}
+                      {editable && fixing !== x.key && <button type="button" onClick={() => openFix(x)} className="ml-1.5 text-[11px] font-semibold text-[var(--color-accent)] hover:underline">Edit</button>}
                     </div>
-                  </div>
-                )}
-              </li>
-            ))}
-          </ol>
+                    {fixing === x.key && (
+                      <div className="mt-1 mb-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-2.5 space-y-2 text-[12.5px]">
+                        {canFix(x) && <DateTimePicker label="When it happened" value={fixV} onChange={(v) => { setFixV(v); setFixMsg(null); }} tz={tz} times={times} showNow={false} disabled={fixBusy} />}
+                        {x.comment && (
+                          <input value={fixText} onChange={(e) => { setFixText(e.target.value); setFixMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") void saveFix(x); }}
+                            aria-label="Comment" disabled={fixBusy} className="h-9 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px]" />
+                        )}
+                        {fixMsg && <div role="alert" className="font-semibold text-rose-700 dark:text-rose-400">{fixMsg}</div>}
+                        <div className="flex items-center gap-2">
+                          <button type="button" onClick={() => void saveFix(x)} disabled={fixBusy}
+                            className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[13px] font-bold hover:bg-[var(--color-accent-hover)] disabled:opacity-60">{fixBusy ? "Saving…" : "Save"}</button>
+                          <button type="button" onClick={() => setFixing(null)} className="h-9 px-3 rounded-lg text-[var(--color-text-muted)] font-semibold hover:text-[var(--color-text)]">Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+            {allHistory && history.length > LATEST && <button type="button" onClick={() => setAllHistory(false)} className="mt-0.5 text-[11.5px] font-semibold text-[var(--color-accent)] hover:underline">Less</button>}
+          </>
         )}
-        {history.length > 6 && <button type="button" onClick={() => setAllHistory((v) => !v)} className="mt-0.5 text-[11.5px] font-semibold text-[var(--color-accent)] hover:underline">{allHistory ? "Less" : `All ${history.length}`}</button>}
       </div>
 
       {canEdit && onMoveDays && m.id && !started && (
@@ -394,34 +495,5 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
         </div>
       )}
     </div>
-  );
-}
-
-/** A comment on an event — fixed in place. */
-function HistoryNote({ text, note, lead }: { text: string; note: MilestoneNote | null; lead: boolean }) {
-  const [edit, setEdit] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const save = async () => {
-    if (!note?.id || edit == null) return;
-    if (!edit.trim()) { setErr("A comment can't be empty."); return; }
-    setBusy(true);
-    try { await updateMilestoneNote(note.id, edit); setEdit(null); setErr(null); }
-    catch (e) { setErr((e as Error).message); }
-    finally { setBusy(false); }
-  };
-  if (edit != null) return (
-    <span className="flex flex-wrap items-center gap-1 w-full mt-0.5">
-      <input value={edit} autoFocus onChange={(e) => setEdit(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void save(); if (e.key === "Escape") setEdit(null); }}
-        className="h-8 flex-1 min-w-[160px] rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-[12.5px]" aria-label="Edit comment" />
-      <button type="button" disabled={busy} onClick={() => void save()} className="h-8 px-2.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-[12px] font-bold">{busy ? "Saving…" : "Save"}</button>
-      <button type="button" onClick={() => setEdit(null)} className="h-8 px-2 rounded-md text-[12px] text-[var(--color-text-muted)]">Cancel</button>
-      {err && <span className="w-full text-rose-700 dark:text-rose-400">{err}</span>}
-    </span>
-  );
-  return (
-    <span className="text-[var(--color-text)]">{lead ? " — " : ""}{text}
-      {note && <button type="button" onClick={() => setEdit((note.body ?? "").trim())} className="ml-1 text-[11px] font-semibold text-[var(--color-accent)] hover:underline">edit</button>}
-    </span>
   );
 }

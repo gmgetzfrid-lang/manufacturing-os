@@ -618,9 +618,9 @@ export default function ExecutionView({
   }, [byId, orgId, userId, userName]);
   const progressWithNote = useCallback(async (id: string, pct: number, note: string, forShift?: ShiftCredit): Promise<boolean> => {
     const ok = await setProgress(id, pct, forShift);
-    if (ok && note) await addNote(id, noteFor(note, forShift && forShift.at < shiftAt(Date.now(), tz, shiftTimes).start ? forShift : undefined, tz, shiftTimes), forShift?.at, pct >= 100 ? "completed" : undefined);
+    if (ok && note) await addNote(id, note, forShift?.at, pct >= 100 ? "completed" : undefined);
     return ok;
-  }, [setProgress, addNote, tz, shiftTimes]);
+  }, [setProgress, addNote]);
   // The calendar quick view's one Save: the status or % (stamped and filed
   // at the time it happened), the comment that goes on the report, and why
   // it's behind.
@@ -643,13 +643,13 @@ export default function ExecutionView({
     } else if (cur !== u.status) ok = await setStatus(id, u.status, undefined, undefined, w);
     if (!ok) return false;
     // What got done goes on the report (a hold's reason already did).
-    if (u.status !== "on_hold" && u.status !== "blocked" && u.note.trim()) await addNote(id, noteFor(u.note, u.at < shiftAt(Date.now(), tz, shiftTimes).start ? w : undefined, tz, shiftTimes), u.at, u.status);
+    if (u.status !== "on_hold" && u.status !== "blocked" && u.note.trim()) await addNote(id, u.note, u.at, u.status);
     if (u.why) {
       try { await addMilestoneNote({ orgId, milestoneId: id, kind: "behind", statusAt: u.status, body: u.why, createdBy: userId, createdByName: userName, happenedAt: new Date(u.at).toISOString() }); }
       catch (e) { notify((e as Error).message, "warning"); }
     }
     return true;
-  }, [byId, tz, shiftTimes, setProgress, setStatus, addNote, orgId, userId, userName, notify]);
+  }, [byId, tz, setProgress, setStatus, addNote, orgId, userId, userName, notify]);
   // When a step really started / finished, corrected (the calendar shows it
   // where it happened; the reports measure it from there).
   const fixTimes = useCallback(async (id: string, t: { start?: number | null; finish?: number | null }): Promise<boolean> => {
@@ -756,10 +756,10 @@ export default function ExecutionView({
   }, [canEdit, onMoveMany, byId, tz, shiftTimes, orgId, userId, userName, userEmail, userRole, announce, notify, onRefresh]);
   const startWithNote = useCallback(async (id: string, pct: number, note: string, forShift?: ShiftCredit): Promise<boolean> => {
     const ok = pct >= 100 ? await setStatus(id, "completed", undefined, undefined, forShift) : await setStatus(id, "in_progress", undefined, pct, forShift);
-    // Said for an earlier shift only when it was; the time it happened is kept.
-    if (ok && note) await addNote(id, noteFor(note, forShift && forShift.at < shiftAt(Date.now(), tz, shiftTimes).start ? forShift : undefined, tz, shiftTimes), forShift?.at, pct >= 100 ? "completed" : "in_progress");
+    // The comment carries the time it happened.
+    if (ok && note) await addNote(id, note, forShift?.at, pct >= 100 ? "completed" : "in_progress");
     return ok;
-  }, [setStatus, addNote, tz, shiftTimes]);
+  }, [setStatus, addNote]);
 
   // Delete the selection — with everything under a selected phase when the
   // person says so — and offer Undo, which brings back the tasks, their
@@ -833,10 +833,9 @@ export default function ExecutionView({
 
       if (succeeded.length > 0) {
         // At the time it happened, with its comment — like marking one.
-        const earlier = when.at < shiftAt(Date.now(), tz, shiftTimes).start;
         for (const id of succeeded) {
           if (prev.get(id) !== next) await fileUnder(id, when);
-          await addNote(id, noteFor(note, earlier ? when : undefined, tz, shiftTimes), when.at, next);
+          await addNote(id, note, when.at, next);
         }
         // Only offer to undo what actually changed.
         announce(`${succeeded.length} task${succeeded.length === 1 ? "" : "s"} → ${statusWord(next)} · ${when.label}`,
@@ -848,7 +847,7 @@ export default function ExecutionView({
     } finally {
       setBusy((s) => { const n = new Set(s); for (const id of ids) n.delete(id); return n; });
     }
-  }, [canEdit, onSetStatus, byId, announce, notify, restore, fileUnder, addNote, tz, shiftTimes]);
+  }, [canEdit, onSetStatus, byId, announce, notify, restore, fileUnder, addNote]);
 
   // Bulk move for an explicit id set → open the confirmation sheet.
   const bulkMoveIds = useCallback((ids: string[], deltaDays: number) => {
@@ -1482,13 +1481,6 @@ export default function ExecutionView({
   );
 }
 
-// A comment filed under an earlier shift says which.
-function noteFor(note: string, w: ShiftCredit | undefined, tz: string, times: ShiftTimes): string {
-  if (!w) return note;
-  // The shift by name ("Sat night"), not a clock time.
-  const s = shiftAt(w.at, tz, times);
-  return `${note} (for ${fmtInTz(s.start, tz, { weekday: "short" })} ${s.kind} shift)`;
-}
 // Trim a task name for toast messages.
 function truncate(s: string, n = 28): string {
   return s.length > n ? s.slice(0, n - 1) + "…" : s;
